@@ -22,7 +22,7 @@ if (exact.length !== 1) {
 
 const entry = exact[0];
 const meta = effectiveMeta(entry.meta || {});
-const target = resolveRuntime(entry.slug, meta);
+const target = resolveRuntime(entry.slug, meta, { isAdminAuthor: true });
 const lease = target.runtime.acquireLease(target, { kind: "vscode-start", id: `vscode-${process.pid}` });
 try {
   await target.runtime.ensureUp(target, { announce: (message) => console.log(message) });

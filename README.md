@@ -302,8 +302,9 @@ background and scheduled engine run uses the same runtime boundary.
 
 1. **Containers establish the default boundary.** Each conversation gets its own home and declared
    work/runtime mounts. Other channel workspaces and the operator's home are excluded by default.
-   An explicit, off-by-default Full-access home-sharing option exposes the operator's whole home
-   to admitted authors in those channels; choose shared work folders and this option deliberately.
+   An explicit, off-by-default Admin home-access option exposes the operator's whole home only
+   to current organization admins in Admin channels. Other members use a separate project
+   container with Worker permissions and isolated HOME, scratch files, artifacts and histories.
 2. **Egress goes through a per-channel proxy.** Containers run with no network of their own; the
    daemon's egress proxy is their only way out. It enforces the *Allow network* switch on every
    request (off: engine endpoints and selected connectors only), always refuses private, loopback

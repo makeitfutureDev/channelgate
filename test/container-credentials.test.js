@@ -56,7 +56,7 @@ test("prepareTarget is pure: same inputs, same target, no container touched", ()
   const a = target("pure-chan", settings);
   const b = target("pure-chan", settings);
   assert.deepEqual(a.container, b.container);
-  assert.equal(a.container.name, `cg-${currentInstallId()}-slack-pure-chan`);
+  assert.equal(a.container.name, `cgp2-${currentInstallId()}-slack-pure-chan`);
   assert.equal(a.container.homeVolume, `${a.container.name}-home`);
   assert.equal(a.container.image, "channelgate/runtime:latest");
   // Egress proxy mode (the default): no network of its own. With no egress service registered
@@ -75,7 +75,7 @@ test("prepareTarget is pure: same inputs, same target, no container touched", ()
   assert.equal(a.container.labels["cg.channel"], "pure-chan");
   assert.equal(a.runtime, containerBackend);
   assert.equal(a.backend, "container");
-  assert.match(a.artifactDir, /[\\/]\.runtime[\\/]slack[\\/]pure-chan$/);
+  assert.match(a.artifactDir, /[\\/]\.runtime-project-v2[\\/]slack[\\/]pure-chan$/);
 });
 
 test("Claude: token, else a RELAY of the resolved login — the login file is NEVER copied into a container", () => {

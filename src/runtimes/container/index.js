@@ -7,7 +7,7 @@
 // message naming the remedy. It NEVER silently falls back to the host backend — only the explicit
 // gateway kill switch does that, in resolve.js.
 import { channelArtifactDir, runtimeSocketDir } from "../../config/paths.js";
-import { containerLabels, containerName, homeVolumeName, tmpVolumeNames } from "./names.js";
+import { containerLabels, containerName, homeVolumeName, tmpVolumeNames, runtimeArtifactDir } from "./names.js";
 import { createContainerCli } from "./cli.js";
 import { createContainerImage } from "./image.js";
 import { createContainerLifecycle, buildMounts, containerFingerprint, volumeHostPath } from "./lifecycle.js";
@@ -93,6 +93,8 @@ export const containerBackend = Object.freeze({
   // actually delegated, and which engine credentials exist — are SETTLED by ensureUp() before the
   // fingerprint is computed and before anything is created.
   prepareTarget(base) {
+    // Fail closed for daemon callers that did not resolve a verified author scope.
+    base = { ...base, runtimeScope: base.runtimeScope === "admin" ? "admin" : "project" };
     const settings = base.settings || {};
     const name = containerName(base);
     const uid = typeof process.getuid === "function" ? process.getuid() : null;
@@ -142,7 +144,7 @@ export const containerBackend = Object.freeze({
       ...base,
       backend: "container",
       runtime: containerBackend,
-      artifactDir: base.artifactDir || channelArtifactDir(base.slug, base.platform),
+      artifactDir: base.artifactDir || runtimeArtifactDir(base.slug, base.platform, base.runtimeScope),
       socketDir: runtimeSocketDir(),
       // The declared credential source; ensureUp replaces it with the resolved real path, or drops
       // the mount when the gateway has no Codex login at all. Behind the egress proxy there is no

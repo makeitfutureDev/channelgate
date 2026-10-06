@@ -110,7 +110,7 @@ test("grants live on channel meta, dedupe, audit as a list, and the home-grant b
   for (const adminMode of [true, false]) {
     for (const fullAccessHome of [true, false, undefined]) {
       const settings = { fullAccessHome };
-      assert.equal(access.sshBlockedByHomeGrant({ adminMode }, settings), operatorHomeGranted({ meta: { adminMode }, settings }), `adminMode=${adminMode} fullAccessHome=${fullAccessHome}`);
+      assert.equal(access.sshBlockedByHomeGrant({ adminMode }, settings), operatorHomeGranted({ runtimeScope: "admin", meta: { adminMode }, settings }), `adminMode=${adminMode} fullAccessHome=${fullAccessHome}`);
     }
   }
   assert.equal(access.parseUserRef("<@U123ABC|tibi>"), "U123ABC");

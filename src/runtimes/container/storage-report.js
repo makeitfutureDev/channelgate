@@ -105,7 +105,7 @@ export function classifyStorage({ containers = [], images = [], volumes = [], in
     const kept = users.filter((c) => c.action === KEEP);
     const row = { ...v, containers: users.length };
     if (kept.length) return { ...row, action: KEEP, reason: `attached to ${kept.length} container(s) that stay` };
-    const match = /^cg-([0-9a-f]+)-/.exec(v.name);
+    const match = /^(?:cg|cgp2)-([0-9a-f]+)-/.exec(v.name);
     if (match && match[1] === installId) {
       // Even with its container gone, this is a channel's engine sessions, CLI logins and tools.
       return { ...row, action: KEEP, reason: "this gateway's channel HOME — never removed by this tool (delete it by hand only for a channel that is gone for good)" };

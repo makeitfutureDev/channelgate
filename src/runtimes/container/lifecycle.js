@@ -1,5 +1,5 @@
 // The container state machine: create, reuse, restart, recreate, destroy — plus the boot
-// reconcile. One channel, one container, one in-process mutex keyed by its name, because two turns
+// reconcile. Each channel has separate project/admin containers, with a mutex per name. Two turns
 // in the same channel (a foreground reply and a scheduled run) race here by design.
 //
 // Reuse is decided by a FINGERPRINT of the create-time-immutable configuration (§7), carried in
@@ -11,8 +11,7 @@ import { lstatSync, mkdirSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { acquireKeyedLock } from "../../util/keyed-lock.js";
-import { channelArtifactDir } from "../../config/paths.js";
-import { containerLabels, installFilterArgs, isOurContainer, labelArgs, LABEL_CHANNEL, LABEL_FINGERPRINT, LABEL_IMAGE, LABEL_INSTALL, LABEL_MOUNTS, LABEL_PLATFORM } from "./names.js";
+import { containerLabels, installFilterArgs, isOurContainer, labelArgs, LABEL_CHANNEL, LABEL_FINGERPRINT, LABEL_IMAGE, LABEL_INSTALL, LABEL_MOUNTS, LABEL_PLATFORM, runtimeArtifactDir } from "./names.js";
 import { CODEX_CONTAINER_AUTH_FILE, containerEnvDefaults, settleCredentialModes } from "./credentials.js";
 import { CONTAINER_EGRESS_CA, CONTAINER_EGRESS_DIR, CONTAINER_SOCKET_DIR } from "./image-paths.js";
 import { ensureEgressFor, releaseEgressFor } from "./egress-hook.js";
@@ -238,14 +237,11 @@ export function egressMounts(base) {
   ];
 }
 
-// The operator-home grant: ONLY for a channel in Full access (adminMode) and ONLY while the
-// gateway-wide switch is on. It is a create-time input like every other mount, so flipping either
-// side recreates the container at the channel's next turn (the HOME volume survives). The mount is
-// per CHANNEL, not per author — a container is shared by every turn of its channel — so every
-// author the channel admits can READ the home through the engine's file tools; only an admin
-// author's live turn gets the write-capable bypass tools on top.
+// The operator home is granted only in the trusted admin runtime scope, Admin channel mode,
+// and with the gateway-wide switch on. A member target is a separate project-only container,
+// with separate state and artifacts, so its Worker tools never reach an admin's home mount.
 export function operatorHomeGranted(base) {
-  return Boolean(base?.meta?.adminMode) && base?.settings?.fullAccessHome === true;
+  return base?.runtimeScope === "admin" && Boolean(base?.meta?.adminMode) && base?.settings?.fullAccessHome === true;
 }
 
 export function operatorHomeDir() {
@@ -667,7 +663,10 @@ export function createContainerLifecycle({
     if (!caps.ok) throw new Error(caps.reason);
     const channelVolumes = [target.container.homeVolume, ...Object.values(target.container.tmpVolumes || {})];
     await removeContainer(caps, name, { volumes: volumes ? channelVolumes : "", strictVolumes });
-    await releaseEgressFor(target);
+    const siblings = await listOurContainers(caps);
+    if (!siblings.some((entry) => entry.status === "running" && entry.labels[LABEL_CHANNEL] === target.slug && entry.labels[LABEL_PLATFORM] === target.platform)) {
+      await releaseEgressFor(target);
+    }
     log(`[container] removed ${name}${volumes ? " and its HOME and temp volumes" : ""}${reason ? ` (${reason})` : ""}`);
   }
 
@@ -690,7 +689,7 @@ export function createContainerLifecycle({
       const slug = entry.labels[LABEL_CHANNEL] || "";
       const platform = entry.labels[LABEL_PLATFORM] || "";
       const leaseTarget = slug ? {
-        slug, platform, artifactDir: channelArtifactDir(slug, platform), container: { name: entry.name },
+        slug, platform, artifactDir: runtimeArtifactDir(slug, platform, entry.name.startsWith("cgp2-") ? "project" : "admin"), container: { name: entry.name },
       } : null;
       reaper.markRunning(entry.name, leaseTarget, { lastActivity: now() });
       if (leaseTarget) sweepRunCredentials(leaseTarget);

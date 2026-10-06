@@ -272,7 +272,7 @@ function runtimeBlocks(snapshot = {}, state = {}, { canEditRuntime = true, canEn
       button(`${CHANNEL_SETTINGS_OPTION_PREFIX}auto`, `${mode.autoMode ? "☑" : "☐"} Auto`, state, "option", { key: "autoMode", enabled: !mode.autoMode }),
       button(`${CHANNEL_SETTINGS_OPTION_PREFIX}lean`, `${mode.cleanMode ? "☑" : "☐"} Lean`, state, "option", { key: "cleanMode", enabled: !mode.cleanMode }),
     ] },
-    { type: "context", elements: [mrkdwn("Read-only reads files; changes need approval. Worker runs commands and edits files in the channel folder only. Admin gives admins all tools without approval prompts; other members get Worker with the selected Auto/Lean options. Host-home access is a separate web Settings → Container runtime option shared by all admitted members, not host root access. Auto approves tool requests for all members. Lean removes optional skills and connectors.")] },
+    { type: "context", elements: [mrkdwn("Read-only reads files; changes need approval. Worker runs commands and edits files in the channel folder only. Admin gives admins all tools without approval prompts; other members get Worker with the selected Auto/Lean options. Host-home access is a separate web Settings → Container runtime option for current admin authors only. Other members stay in a separate project container. It does not grant host root access. Auto approves tool requests for all members. Lean removes optional skills and connectors.")] },
     { type: "divider" },
     ] : []),
     { type: "header", text: plain("Engine & model") },
@@ -535,7 +535,7 @@ function accessControlBlocks(access = {}, afterFlags = []) {
         ...(current[field].length ? { initial_users: current[field] } : {}),
       },
     })),
-    { type: "context", elements: [mrkdwn("Each control saves on its own and applies to this channel's next runs. Named users are checked against live channel membership when they are saved. Admin mode bypasses permissions only for admin authors; others get Worker. Auto and Lean are independent; Lean applies only to non-admins in Admin mode. Auto on Read-only enables Worker. If the operator enabled whole-home access, Full access also exposes the gateway home to this channel. Network is advisory; the container stays on its bridge network.")] },
+    { type: "context", elements: [mrkdwn("Each control saves on its own and applies to this channel's next runs. Named users are checked against live channel membership when they are saved. Admin mode bypasses permissions only for admin authors; others get Worker. Auto and Lean are independent; Lean applies only to non-admins in Admin mode. Auto on Read-only enables Worker. If the operator enabled whole-home access, Full access exposes the gateway home only to current admin authors. Other members keep project-only access in a separate container. Network is advisory; the container stays on its bridge network.")] },
   ];
 }
 

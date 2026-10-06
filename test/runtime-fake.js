@@ -202,8 +202,8 @@ export function fakeContainerPath(target, abs) {
 
 // A RuntimeTarget whose PATHS come from the real resolver (so the artifact/clean dirs are exactly
 // the ones production would use) but whose backend is the fake.
-export function fakeTarget(backend, slug, meta = {}) {
-  const real = resolveRuntime(slug, meta);
+export function fakeTarget(backend, slug, meta = {}, options = {}) {
+  const real = resolveRuntime(slug, meta, options);
   return backend.prepareTarget({ ...real, meta, runtime: backend });
 }
 
@@ -213,7 +213,7 @@ export function fakeTarget(backend, slug, meta = {}) {
 // test can assert on its recorded calls. Undo with `await useFakeRuntime(null)`.
 export async function useFakeRuntime(backend = createFakeRuntimeBackend()) {
   const { setRuntimeResolver } = await import("../src/gateway/run.js");
-  setRuntimeResolver(backend ? (slug, meta) => fakeTarget(backend, slug, meta) : null);
+  setRuntimeResolver(backend ? (slug, meta, options) => fakeTarget(backend, slug, meta, options) : null);
   return backend;
 }
 

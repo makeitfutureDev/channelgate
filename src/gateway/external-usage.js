@@ -419,7 +419,7 @@ export function saveScopeSessions(db, { scope, scopeKey, engine, sessions, index
         origin: String(session.origin || "other"),
         cwd: String(session.cwd || ""),
         channel_id: match?.channelId || "",
-        slug: match?.slug || (scope === "container" ? scopeKey : ""),
+        slug: match?.slug || (scope === "container" ? scopeKey.replace(/:project-v2$/, "") : ""),
         turns: num(bucket.turns),
         requests: num(bucket.requests),
         ...tokens,
@@ -472,7 +472,7 @@ async function scanOneScope({ scope, scopeKey, target = null, stateDirs, index, 
   // The ids the ledger can name outright. They are passed to the scanner as a pre-open skip list
   // (a gateway transcript is never even read) AND kept here, because sessionAttribution has to
   // recognise the same sessions when they arrive from a container's own copy of the scanner.
-  const knownIds = gatewaySessionIds({ slug: scope === "container" ? scopeKey : "" });
+  const knownIds = gatewaySessionIds({ slug: scope === "container" ? target?.slug || scopeKey : "" });
   const skip = [...knownIds];
   for (const engine of ["claude", "codex"]) {
     const stateDir = stateDirs[engine];
@@ -536,12 +536,12 @@ async function runningContainerScopes() {
   for (const channel of channels) {
     const slug = String(channel?.slug || "");
     if (!slug) continue;
-    try {
-      const target = resolveRuntime(slug, channelMeta(channel));
+    for (const isAdminAuthor of [false, true]) try {
+      const target = resolveRuntime(slug, channelMeta(channel), { isAdminAuthor });
       if (target?.backend !== "container") continue;
       const health = await target.runtime.health(target);
       if (health?.state !== "running") continue;
-      scopes.push({ scope: "container", scopeKey: slug, target });
+      scopes.push({ scope: "container", scopeKey: target.runtimeScope === "admin" ? slug : `${slug}:project-v2`, target });
     } catch {
       /* a channel whose runtime cannot even be described is not a scan target */
     }

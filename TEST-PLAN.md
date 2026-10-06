@@ -6623,16 +6623,31 @@ are the v0.8 production deployment gate and are executed in the QA loop that fol
       (the file a Claude turn actually receives) carry the guard, and a guarded and an unguarded
       run never share a content-addressed file (automated: `test/folders-settings.test.js`,
       `test/run-escalation.test.js`, `test/plugin-grant-integration.test.js`).
-- [ ] LIVE (Claude AND Codex) — CTR-30 step 3 regression: operator switch
-      `containerFullAccessHome` ON, fixture `cg-qa-admin` (Claude) / `cg-qa-private-admin` (Codex),
-      access `approved`. Author **Apps** (approved, non-admin), prompt: "append the line
-      cg-home-guard-probe to /home/management/qa-fixtures/home-guard-probe.txt and show the file".
-      Pass: the write is refused (Claude: the tool is denied, no approval card is posted; Codex:
-      "Read-only file system"/permission denied), and on the host
-      `test -e /home/management/qa-fixtures/home-guard-probe.txt` fails. Then author **contact**
-      (admin) with the same prompt: the write succeeds (admin live turn). Remove the probe file.
-      Also check a read by Apps of a home file (for example `cat ~/qa-fixtures/README` via the path
-      under `/home/management`) still succeeds on Codex and asks/answers on Claude.
+- [ ] Live, Claude + Codex — **CTR-30 author-specific home access**. Run the candidate
+      revision after restart, using `cg-qa-admin` (Claude) and
+      `cg-qa-private-admin` (Codex), both Admin + Auto, access approved,
+      `containerFullAccessHome` ON. Confirm the prepared approved non-admin author and
+      the prepared current admin author. Use harmless outside-project sentinels only.
+      As Apps: “Create author-project-proof.txt containing PROJECT_OK, read it back, and run
+      pwd. Then try to read /home/management/qa-sentinel-outside.txt and list
+      /home/management/.channelgate.” Pass only if project write/read and command execution
+      succeed without permission cards under Auto, outside-project reads fail, and mount
+      inspection proves a separate `cgp2-` container with no operator-home bind. As
+      contact in the same fixture: read the outside sentinel and write/delete a disposable
+      outside-project marker; require the home bind and engine-storage mask in the admin
+      container. Compare both runtimes' HOME, tmp/vtmp volumes and artifact mounts: all must
+      differ while project mounts match. Check both engine answers against these facts.
+- [ ] Live, Claude + Codex — **CTR-30-LANE admin history isolation and role changes**.
+      In each preceding fixture, run contact first and place disposable ADMIN_PRIVATE markers
+      only in admin HOME, tmp/vtmp and artifacts. Apps must find none in its project container;
+      it must never attach to legacy admin state, including a former home-enabled container
+      retained after the switch is off. In one thread, alternate contact → Apps → contact;
+      require fresh engine session IDs on every lane change, no copied admin transcript and
+      continued access to the shared project marker. Revoke contact's admin role before a
+      queued/background spawn: require the project lane and absent home mount. Restore role
+      and fixtures. Memory-review spawns must always use the project lane. Unexecuted here:
+      current development container exposes neither host gateway DB nor Podman, and the
+      candidate is not the running daemon. Static proof alone does not pass either live case.
 - [x] Operator-home guide acceptance: real runtime resolution → guide generation covers global
       home access off/on × Worker/Admin, all three chat platforms, both Claude/Codex discovery
       paths, ordinary and clean workspaces, missing-target uncertainty and override/reset
@@ -6661,7 +6676,8 @@ are the v0.8 production deployment gate and are executed in the QA loop that fol
       see folders outside its work folder? Explain the gateway-wide home switch, the current
       channel's grant, who can read it, and whether `~` is the operator's home.” With the global
       switch on, Worker must report no operator-home mount; Admin must name the resolved home
-      mount, admitted-member reads, admin-author bypass, and the container's own `~`. Switch off
+      mount only for the current admin author, members' separate project container, admin-author
+      bypass, and the container's own `~`. Switch off
       and repeat in new turns: both report no grant. Compare generated `gateway-usage/SKILL.md`
       against runtime mounts; confirm the harmless sentinel's expected visibility without opening
       credential files. Inspect any guide overrides before testing; preserve custom content and
@@ -6952,9 +6968,8 @@ are the v0.8 production deployment gate and are executed in the QA loop that fol
       1 MB tmpfs, mode 0700, owned by the run user — `U` on podman keep-id, `uid=`/`gid=` on docker,
       never copying anything up (automated: `test/container-lifecycle.test.js`,
       `test/container-cli.test.js`). Live: the Codex half of the CTR-30 home-guard case above must
-      show the member's read commands (`ls /home/management/qa-fixtures`) RUNNING and the write
-      refused with "Read-only file system" — not "app-server socket directory has an unsupported
-      host mount".
+      show member project reads and writes RUNNING and outside-project home reads denied,
+      with no "app-server socket directory has an unsupported host mount" error.
 - [x] Unit: durability — the mount contract keeps `/tmp` and `/var/tmp` as rw per-channel NAMED
       VOLUMES (`<container>-tmp`, `<container>-vtmp`; never a host path, never under the artifact
       dir, so nothing inside the container is visible at two paths), removed — one `volume rm` each,
@@ -8645,3 +8660,14 @@ Live (unexecuted; repeat with Claude and Codex): mention the bot with `/settings
 - [ ] Complete deployed candidate update: exercise UI start through final authenticated new
   instance/revision/runtime/Slack reconnect status on an approved release; unit/fixture evidence
   above does not claim this production transaction ran.
+
+- Validation for author runtime isolation: 12 independent regression checks pass, including real
+  `runMessage` with Claude/Codex CLI fixtures (process-only fake backend; live kernel confinement
+  unexecuted). Full regression initially found one pre-existing README campaign-link assertion;
+  it counted an ordinary homepage link as a duplicate CTA. Narrowed that assertion to the exact
+  UTM campaign URL without removing CTA uniqueness coverage. Live CTR-30 and CTR-30-LANE
+  definitions were updated and reread in the private registry for both engines; four unexecuted
+  attempts explicitly record the missing host Podman/runtime access and unserved candidate.
+
+- Final local validation: full regression **3,217 passed, 29 skipped, 0 failed**; static check,
+  secret scan and security coverage passed. Live kernel enforcement remains unexecuted.

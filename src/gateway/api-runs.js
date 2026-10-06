@@ -421,7 +421,7 @@ async function buildResumeCommand({ slug, cwd, sessionId, engine }) {
   let target = null;
   try {
     const stored = await getChannelMeta(slug);
-    target = resolveRuntime(slug, effectiveMeta(stored || {}));
+    target = resolveRuntime(slug, effectiveMeta(stored || {}), { isAdminAuthor: true });
   } catch {
     /* the host form below */
   }

@@ -24,7 +24,7 @@ const SETTINGS = {
 };
 
 function target(slug, overrides = {}) {
-  return resolveRuntime(slug, { platform: "slack", channelId: "C1", runtime: "container", ...overrides }, { settings: SETTINGS });
+  return resolveRuntime(slug, { platform: "slack", channelId: "C1", runtime: "container", ...overrides }, { isAdminAuthor: true, settings: SETTINGS });
 }
 
 // A fake CLI that always resolves the image and answers `inspect` from a mutable state object.
@@ -107,7 +107,7 @@ test("mounts: nothing under the gateway root but the clean workspace, the MCP so
 test("operator home: granted only to adminMode channels while the gateway switch is on", () => {
   const home = operatorHomeDir();
   const on = { ...SETTINGS, fullAccessHome: true };
-  const admin = resolveRuntime("home-admin", { platform: "slack", channelId: "C2", adminMode: true }, { settings: on });
+  const admin = resolveRuntime("home-admin", { platform: "slack", channelId: "C2", adminMode: true }, { isAdminAuthor: true, settings: on });
   assert.equal(operatorHomeGranted(admin), true);
   const kinds = admin.container.mounts.map((m) => m.kind);
   assert.deepEqual(kinds, ["workdir", "clean", "artifacts", "tmp", "var-tmp", "codex-socket", "home", "socket", "codex-auth", "operator-home", "mask"]);
@@ -124,32 +124,32 @@ test("operator home: granted only to adminMode channels while the gateway switch
 
   // The switch alone grants nothing to a non-admin channel; admin mode alone grants nothing
   // while the switch is off (the product default).
-  const worker = resolveRuntime("home-worker", { platform: "slack", channelId: "C3", allowBash: true }, { settings: on });
+  const worker = resolveRuntime("home-worker", { platform: "slack", channelId: "C3", allowBash: true }, { isAdminAuthor: true, settings: on });
   assert.equal(operatorHomeGranted(worker), false);
   assert.ok(!worker.container.mounts.some((m) => m.kind === "operator-home" || m.kind === "mask"));
-  const adminOff = resolveRuntime("home-admin-off", { platform: "slack", channelId: "C4", adminMode: true }, { settings: SETTINGS });
+  const adminOff = resolveRuntime("home-admin-off", { platform: "slack", channelId: "C4", adminMode: true }, { isAdminAuthor: true, settings: SETTINGS });
   assert.equal(operatorHomeGranted(adminOff), false);
   assert.ok(!adminOff.container.mounts.some((m) => m.kind === "operator-home" || m.kind === "mask"));
   // A truthy non-boolean never counts as "on": the setting is a boolean or nothing.
-  const adminStr = resolveRuntime("home-admin-str", { platform: "slack", channelId: "C5", adminMode: true }, { settings: { ...SETTINGS, fullAccessHome: "yes" } });
+  const adminStr = resolveRuntime("home-admin-str", { platform: "slack", channelId: "C5", adminMode: true }, { isAdminAuthor: true, settings: { ...SETTINGS, fullAccessHome: "yes" } });
   assert.equal(operatorHomeGranted(adminStr), false);
 });
 
 test("operator home: the grant is a create-time input — toggling it retires the container", () => {
-  const off = resolveRuntime("home-fp", { platform: "slack", channelId: "C6", adminMode: true }, { settings: SETTINGS });
+  const off = resolveRuntime("home-fp", { platform: "slack", channelId: "C6", adminMode: true }, { isAdminAuthor: true, settings: SETTINGS });
   off.container.imageId = "sha256:one";
-  const on = resolveRuntime("home-fp", { platform: "slack", channelId: "C6", adminMode: true }, { settings: { ...SETTINGS, fullAccessHome: true } });
+  const on = resolveRuntime("home-fp", { platform: "slack", channelId: "C6", adminMode: true }, { isAdminAuthor: true, settings: { ...SETTINGS, fullAccessHome: true } });
   on.container.imageId = "sha256:one";
   assert.notEqual(containerFingerprint(on), containerFingerprint(off), "the home mount must move the fingerprint");
   // Flipping the channel out of Full access retires it the same way.
-  const demoted = resolveRuntime("home-fp", { platform: "slack", channelId: "C6", allowBash: true }, { settings: { ...SETTINGS, fullAccessHome: true } });
+  const demoted = resolveRuntime("home-fp", { platform: "slack", channelId: "C6", allowBash: true }, { isAdminAuthor: true, settings: { ...SETTINGS, fullAccessHome: true } });
   demoted.container.imageId = "sha256:one";
   assert.equal(containerFingerprint(demoted), containerFingerprint(off));
 });
 
 test("operator home: the create argv binds the home read-write and masks the storage dir with a tmpfs", () => {
   const home = operatorHomeDir();
-  const t = resolveRuntime("home-argv", { platform: "slack", channelId: "C7", adminMode: true }, { settings: { ...SETTINGS, fullAccessHome: true } });
+  const t = resolveRuntime("home-argv", { platform: "slack", channelId: "C7", adminMode: true }, { isAdminAuthor: true, settings: { ...SETTINGS, fullAccessHome: true } });
   const caps = { uidStrategy: "keep-id", supportsInit: true };
   const args = buildCreateArgs(t, caps, { fingerprint: "c1-test" });
   const volumes = [];
@@ -169,7 +169,7 @@ test("operator home: the create argv binds the home read-write and masks the sto
     assert.ok(!volumes.some((v) => v.startsWith(`${masked}:`)), "a mask is never a bind");
   }
   // Without the grant, no tmpfs but /run and no home bind at all.
-  const plain = buildCreateArgs(resolveRuntime("home-argv-off", { platform: "slack", channelId: "C8", adminMode: true }, { settings: SETTINGS }), caps, { fingerprint: "c1-test" });
+  const plain = buildCreateArgs(resolveRuntime("home-argv-off", { platform: "slack", channelId: "C8", adminMode: true }, { isAdminAuthor: true, settings: SETTINGS }), caps, { fingerprint: "c1-test" });
   const plainTmpfs = plain.filter((a, i) => plain[i - 1] === "--tmpfs" && !a.startsWith("/tmp/codex-daemon-"));
   assert.deepEqual(plainTmpfs, ["/run:rw,noexec,size=64m"]);
   assert.ok(!plain.some((a, i) => plain[i - 1] === "-v" && a === `${home}:${home}`));
@@ -229,8 +229,8 @@ test("mount fingerprint: the paths a container can SEE, and nothing about how it
   assert.notEqual(containerMountFingerprint(moved), base, "a moved work folder moves the mount fingerprint");
 
   // So does the operator-home grant, which is a whole extra bind plus its mask.
-  const granted = resolveRuntime("mfp-home", { platform: "slack", channelId: "C9", adminMode: true }, { settings: { ...SETTINGS, fullAccessHome: true } });
-  const plain = resolveRuntime("mfp-home", { platform: "slack", channelId: "C9", adminMode: true }, { settings: SETTINGS });
+  const granted = resolveRuntime("mfp-home", { platform: "slack", channelId: "C9", adminMode: true }, { isAdminAuthor: true, settings: { ...SETTINGS, fullAccessHome: true } });
+  const plain = resolveRuntime("mfp-home", { platform: "slack", channelId: "C9", adminMode: true }, { isAdminAuthor: true, settings: SETTINGS });
   assert.notEqual(containerMountFingerprint(granted), containerMountFingerprint(plain));
 });
 

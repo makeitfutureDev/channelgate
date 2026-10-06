@@ -495,7 +495,7 @@ test("the Resume Session tab renders the live session resolved from the store", 
 
   // A session minted by Codex must be printed as a Codex resume line even though the channel
   // default is Claude: a session id belongs to exactly one harness.
-  await saveSession(entry.slug, "1700000000.000100", "resume-session-id", "codex");
+  await saveSession(entry.slug, "1700000000.000100", "resume-session-id", "codex", null, JSON.stringify({ backend: "container", scope: "project" }));
   const resume = await resolveResumeSession({ entry, meta }, "1700000000.000100");
   assert.equal(resume.sessionId, "resume-session-id");
   assert.equal(resume.engine, "codex");
