@@ -1,8 +1,11 @@
 # ChannelGate — Test Plan
 
-## Model shortcuts acceptance (2026-10-04)
+## Model shortcuts acceptance (2026-10-06)
 
 - [x] Automated: `test/model-shortcuts.test.js` checks parsing, saving, repointing, clearing and refusing invalid mappings.
+- [x] Browser: `test/model-shortcuts-browser.test.js` ran in Chromium against a disposable admin API and store. Added a Codex shortcut from the current catalog, saved and reloaded it, repointed its model and engine, and removed it; no page errors.
+- [x] Pipeline: `test/model-shortcut-pipeline.test.js` ran the real Slack pipeline with spawned Claude/Codex fixture CLIs. Verified Slack's inserted space, model flags on new/resumed turns, a Codex→Claude switch, stable pins after repointing a shortcut, stripped prefixes on runtime-card retries, and refusal before pin changes for runtime permissions, disabled engines and a dedicated Codex login. These are integration fixtures, not live provider acceptance.
+- Integration check: static checks passed (781 JavaScript files). Full suite: 3,211 passed, 30 skipped, one existing failure in `test/readme.test.js` asserting a single non-partner website link; the new documentation link makes the count two. `README.md` and that test are identical to the beta base. Focused shortcut tests and the explicit Chromium run passed.
 - [ ] Live: In gateway Settings, add `astra` → Codex / a currently offered model and `opus` → Claude / a currently offered model. Save and reload; verify both mappings remain. Repoint `astra` to another offered Codex model, save and reload.
 - [ ] Live: In a Slack channel with runtime changes allowed for the author, select the bot from Slack's mention picker and send `@agent :astra summarize this thread` as a new root message, retaining Slack's inserted space. Verify the reply uses the selected Codex model and the thread settings show the pin. Reply `@agent :opus` in the same thread; verify the switch acknowledgement and the next ordinary request uses the selected Claude model with earlier thread context available.
 - [ ] Live: In a channel restricted to admin runtime changes, verify a non-admin's `@agent :astra task` is refused and leaves the thread runtime unchanged. Verify an unknown name is refused. In a channel with its own Codex login, verify a Claude shortcut is refused.

@@ -1086,8 +1086,11 @@ export async function processMessageEvent(event, client, { botUserId = "", teamI
     // A colon immediately after the bot mention selects a configured model shortcut. The
     // setting is read for each message, so admins can repoint names without restarting Slack.
     // Persist the resolved target on this thread; later edits to the shortcut affect new picks.
-    const shortcut = !syntheticFork && !engineChoice ? parseModelShortcut(prompt) : null;
-    if (shortcut) {
+    const shortcut = !syntheticFork ? parseModelShortcut(prompt) : null;
+    // A retry/switch card already selected the runtime. Keep its choice, but remove the
+    // original shortcut prefix before replaying the task to the engine.
+    if (shortcut && engineChoice) prompt = shortcut.task;
+    if (shortcut && !engineChoice) {
       const shortcuts = getModelShortcuts();
       const target = Object.hasOwn(shortcuts, shortcut.name) ? shortcuts[shortcut.name] : null;
       if (!target) {
