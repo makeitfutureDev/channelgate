@@ -72,6 +72,9 @@ product overview.
 - Allow `@agent /fork :model-shortcut <new message>` to select the fork's model on the source
   engine, preserving the original thread's settings. Invalid or unauthorized shortcuts are
   rejected before creating a thread.
+- A `/fork` model shortcut for another engine now creates a linked fresh session and carries
+  the source Slack conversation into it, like switching an existing thread's engine. Same-engine
+  shortcuts retain native session forking; clean threads continue without history replay.
 - Fix a history-transfer deadlock when `/sudo` crosses a container whose mounts need recreation.
   Transfer preparation now excludes its own lease, reports waits, handles Stop, and times out
   into transcript recovery instead of hanging indefinitely.

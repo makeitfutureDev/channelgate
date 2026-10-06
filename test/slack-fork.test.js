@@ -13,7 +13,7 @@ const { useFakeRuntime } = await import("./runtime-fake.js");
 const runtime = await useFakeRuntime();
 const { saveSettings } = await import("../src/config/settings.js");
 const { setUser, getChannelEntry, upsertChannelEntry, saveChannelMeta } = await import("../src/config/store.js");
-const { getThreadEngine, getThreadModel, getThreadEffort, setThreadModel, setThreadEffort } = await import("../src/gateway/thread-engine.js");
+const { getThreadEngine, getThreadModel, getThreadEffort, getThreadClean, setThreadModel, setThreadEffort, setThreadClean } = await import("../src/gateway/thread-engine.js");
 const { getSession, getSessionEngine } = await import("../src/gateway/sessions.js");
 const { buildClaudeArgs } = await import("../src/engines/claude.js");
 const { buildCodexArgs } = await import("../src/engines/codex.js");
@@ -152,7 +152,7 @@ test("fork shortcut failures create no child thread or engine turn", async () =>
     { settings: { modelShortcuts: {} }, text: ":unknown New task", expected: /Unknown model shortcut/ },
     { settings: { modelShortcuts: { branch: { engine: "codex", model: "invalid" } } }, text: ":branch New task", expected: /enabled engine and valid model/ },
     { settings: { modelShortcuts: { branch: { engine: "codex", model: "gpt-6-astra" } }, engineEnabled: { claude: true, codex: false } }, text: ":branch New task", expected: /enabled engine and valid model/ },
-    { settings: { modelShortcuts: { branch: { engine: "claude", model: "claude-opus-5-5" } }, engineEnabled: { claude: true, codex: true } }, text: ":branch New task", expected: /native fork must keep \*Codex\*/ },
+    { settings: { modelShortcuts: { branch: { engine: "claude", model: "claude-opus-5-5" } }, engineEnabled: { claude: true, codex: true } }, text: ":branch New task", expected: /could not read the source thread/ },
     { settings: { modelShortcuts: { branch: { engine: "codex", model: "gpt-6-astra" } }, modelChangeAccess: "admins" }, text: ":branch New task", expected: /Only admins/ },
     { settings: { modelChangeAccess: "users" }, text: ":branch", expected: /Use `\/fork/ },
   ];
@@ -168,4 +168,97 @@ test("fork shortcut failures create no child thread or engine turn", async () =>
     assert.equal(await getSession(entry.slug, event.ts), sourceId);
     assert.equal(await getThreadModel(entry.slug, event.ts), "gpt-6.1-sol");
   }
+});
+
+for (const sourceEngine of ["claude", "codex"]) {
+  test(`${sourceEngine} /fork to another engine starts fresh with source Slack history`, async () => {
+    const childEngine = sourceEngine === "claude" ? "codex" : "claude";
+    const model = childEngine === "codex" ? "gpt-6-astra" : "claude-opus-5-5";
+    saveSettings({ engine: sourceEngine, engineEnabled: { claude: true, codex: true }, modelShortcuts: { other: { engine: childEngine, model } } });
+    const user = `U_FORK_HANDOFF_${sourceEngine}`;
+    const channel = `D_FORK_HANDOFF_${sourceEngine}`;
+    await setUser(user, { name: "Fork User", approved: true });
+    const client = slack();
+    const event = { type: "message", channel, channel_type: "im", user, ts: "8000.001", text: "Remember FORK-HISTORY-42" };
+    await processMessageEvent(event, client, { botUserId: "UBOT" });
+    const entry = await getChannelEntry(channel);
+    const sourceId = await getSession(entry.slug, event.ts);
+    const sourceModel = sourceEngine === "codex" ? "gpt-6.1-sol" : "claude-sonnet-4-6";
+    await setThreadModel(entry.slug, event.ts, sourceModel);
+    await setThreadEffort(entry.slug, event.ts, "high");
+    const historyCalls = [];
+    client.conversations.replies = async (args) => {
+      historyCalls.push(args);
+      return { messages: [
+        { user, ts: event.ts, text: "Remember FORK-HISTORY-42" },
+        { user: "UBOT", ts: "8000.002", text: "Our decision was to use SQLite." },
+        { user, ts: "8000.003", text: "/fork :other Continue the decision" },
+        { user, ts: "8000.004", text: "FUTURE-MESSAGE-MUST-NOT-TRANSFER" },
+      ], response_metadata: {} };
+    };
+    const before = runtime.calls.spawn.length;
+    await processMessageEvent({ ...event, ts: "8000.003", thread_ts: event.ts, text: "<@UBOT> /fork :other Continue the decision" }, client, { botUserId: "UBOT" });
+    const childTs = client.posted.find((m) => /New request from/.test(m.text || ""))?.thread_ts;
+    assert.ok(childTs);
+    assert.ok(client.posted.some((m) => !m.thread_ts && /from Slack history/.test(m.text || "")));
+    assert.equal(await getSessionEngine(entry.slug, childTs), childEngine);
+    assert.equal(await getThreadModel(entry.slug, childTs), model);
+    assert.equal(await getThreadEffort(entry.slug, childTs), "");
+    const childId = await getSession(entry.slug, childTs);
+    assert.ok(childId);
+    assert.notEqual(childId, sourceId);
+    const spawn = runtime.calls.spawn.slice(before).find((call) => call.args.includes(model));
+    assert.ok(spawn);
+    assert.ok(!spawn.args.includes("fork") && !spawn.args.includes("--fork-session") && !spawn.args.includes("resume") && !spawn.args.includes("-r"), "other engine starts fresh");
+    assert.ok(!spawn.args.includes(sourceId), "source session ID never reaches the other CLI");
+    const prompt = spawn.args.find((arg) => arg.includes("Continue the decision"));
+    assert.match(prompt, /FORK-HISTORY-42/);
+    assert.match(prompt, /Our decision was to use SQLite/);
+    assert.match(prompt, /https:\/\/slack.test\/archives\//);
+    assert.doesNotMatch(prompt, /:other|FUTURE-MESSAGE-MUST-NOT-TRANSFER/);
+    assert.deepEqual(historyCalls.filter((call) => call.limit === 200).map((call) => call.ts), [event.ts], "only the source thread is replayed");
+    const followupStart = runtime.calls.spawn.length;
+    await processMessageEvent({ ...event, ts: "8001.001", thread_ts: childTs, text: "Keep going" }, client, { botUserId: "UBOT" });
+    assert.equal(await getSession(entry.slug, childTs), childId);
+    assert.equal(await getSession(entry.slug, event.ts), sourceId);
+    assert.equal(await getSessionEngine(entry.slug, event.ts), sourceEngine);
+    assert.equal(await getThreadModel(entry.slug, event.ts), sourceModel);
+    assert.equal(await getThreadEffort(entry.slug, event.ts), "high");
+    assert.equal(historyCalls.filter((call) => call.limit === 200).length, 1, "child follow-up resumes without replaying the source again");
+    assert.ok(runtime.calls.spawn.slice(followupStart).some((call) => call.args.includes(childId)));
+  });
+}
+
+test("another-engine fork respects clean mode and a dedicated channel Codex login", async () => {
+  saveSettings({ engine: "codex", modelChangeAccess: "users", engineEnabled: { claude: true, codex: true }, modelShortcuts: { other: { engine: "claude", model: "claude-opus-5-5" } } });
+  const user = "U_FORK_CLEAN_HANDOFF";
+  const channel = "D_FORK_CLEAN_HANDOFF";
+  await setUser(user, { name: "Fork User", approved: true });
+  const client = slack();
+  const event = { type: "message", channel, channel_type: "im", user, ts: "8100.001", text: "Source task" };
+  await processMessageEvent(event, client, { botUserId: "UBOT" });
+  const entry = await getChannelEntry(channel);
+  await setThreadClean(entry.slug, event.ts, true);
+  let historyReads = 0;
+  client.conversations.replies = async (args) => {
+    if (args.limit === 200) { historyReads++; throw new Error("clean fork must not replay history"); }
+    return { messages: [], response_metadata: {} };
+  };
+  const before = runtime.calls.spawn.length;
+  await processMessageEvent({ ...event, ts: "8100.002", thread_ts: event.ts, text: "/fork :other Clean alternative" }, client, { botUserId: "UBOT" });
+  const childTs = client.posted.find((m) => /New request from/.test(m.text || ""))?.thread_ts;
+  assert.ok(childTs);
+  assert.equal(await getThreadClean(entry.slug, childTs), true);
+  assert.ok(client.posted.some((m) => /clean session; no history replay/.test(m.text || "")));
+  const prompt = runtime.calls.spawn.slice(before).flatMap((call) => call.args).find((arg) => arg.includes("Clean alternative"));
+  assert.ok(prompt);
+  assert.doesNotMatch(prompt, /Thread context|Source task|Source thread:/);
+  assert.equal(historyReads, 0);
+  await saveChannelMeta(entry.slug, { channelId: channel, name: entry.name, type: "im", isDM: true, codexAuthSource: "channel", engine: "codex" });
+  const count = client.posted.length;
+  const spawns = runtime.calls.spawn.length;
+  await processMessageEvent({ ...event, ts: "8100.003", thread_ts: event.ts, text: "/fork :other Forbidden engine" }, client, { botUserId: "UBOT" });
+  assert.match(client.posted.at(-1).text, /engine stays Codex/);
+  assert.ok(client.posted.slice(count).every((m) => m.thread_ts === event.ts));
+  assert.equal(runtime.calls.spawn.length, spawns);
 });

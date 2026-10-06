@@ -5473,7 +5473,7 @@ none` for its cases and live gates. Kept as history.
       model on the source engine for Claude and Codex, strips the prefix from the request,
       clears the child effort pin and preserves source pins/session. The native fork receives
       the selected model, and a follow-up retains the resolved pin after the shortcut is repointed.
-      Unknown/invalid/disabled targets, another engine, unauthorized channel changes and empty
+      Unknown/invalid/disabled targets, unavailable source history, unauthorized channel changes and empty
       request text create no child thread and spawn no engine.
 - [ ] Live Slack shortcut acceptance (Claude and Codex separately): configure a shortcut for
       another valid model on the source engine. Complete a source turn that remembers a token,
@@ -5481,9 +5481,21 @@ none` for its cases and live gates. Kept as history.
       Verify linked threads, the task without the shortcut prefix, inherited token, a distinct
       child session ID and the selected model in usage/footer. Confirm the source model/effort
       pins are unchanged and follow-ups in the child retain its model. Reject an unknown name,
-      a shortcut for the other engine, and a shortcut without a message before posting a root;
+      and a shortcut without a message before posting a root;
       with model changes limited to admins, repeat as an approved non-admin in a channel and
       confirm denial, while its DM permits a valid shortcut. No live pass claimed by fixtures.
+- [x] Unit/fixture (`test/slack-fork.test.js`): Claude → Codex and Codex → Claude shortcuts
+      create fresh child sessions with the source Slack context/link and selected model, using
+      neither native fork nor resume flags. The command/later messages are excluded, follow-ups
+      resume the child, and source IDs/model/effort remain unchanged. Clean handoffs omit history;
+      a dedicated channel Codex login refuses another engine without posting a child/spawning.
+- [ ] Live Slack engine-handoff acceptance (both directions): complete a source turn that
+      remembers a token and decision; configure a shortcut for a model on the other engine.
+      Send `@agent /fork :other Repeat the token and continue our decision`. Verify linked
+      threads and source token/decision in the selected engine's answer, a fresh child session
+      and correct model in footer/usage. Continue both threads independently. A clean source
+      starts a bare child with no replay and an explanatory root; a dedicated channel Codex
+      login refuses Claude. Simulate unavailable Slack history and confirm no child root.
 - [ ] Live Slack acceptance (Claude and Codex separately): finish a source turn, send
       `@agent /fork Compare an alternative approach` in its thread, and verify the source link,
       child root, separate request and answer. Follow up in both threads; each must remember its

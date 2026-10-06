@@ -1626,8 +1626,13 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
   the engine's distinct child ID. Engine, model, effort and clean-mode pins carry into the branch.
   `@agent /fork :model-shortcut <new message>` selects a configured model for the child and
   clears its inherited effort pin, leaving the source unchanged. It uses the same model-change
-  access policy as ordinary shortcuts. Unknown, disabled or invalid targets, shortcuts for a
-  different engine, and missing request text are refused before a child thread is posted.
+  access policy as ordinary shortcuts. A shortcut for a different engine starts a fresh session
+  in the linked child thread and replays the source's Slack messages through the existing bounded
+  context handoff. It does not transfer the old engine's native transcript/tool state. The fork
+  command and later source messages are excluded; unavailable Slack history is refused before
+  creating the child. Clean threads stay bare without history replay. Dedicated channel Codex
+  logins stay on Codex. Unknown, disabled or invalid targets and missing request text are refused
+  before a child thread is posted.
   A running or sudo/source-host session is refused until it can be forked safely.
 - Gateway-wide **default model** per engine (Settings → Engine & runtime, validated like `/model`):
   when a thread/channel/DM-template sets no model, the run gets the gateway default as an explicit

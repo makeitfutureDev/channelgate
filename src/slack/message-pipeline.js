@@ -764,29 +764,45 @@ export async function processMessageEvent(event, client, { botUserId = "", teamI
             if (!isEngineEnabled(forkTarget.engine) || !modelBelongsToEngine(forkTarget.model, forkTarget.engine)) {
               await reply(`Model shortcut \`:${forkShortcut.name}\` needs an enabled engine and valid model. Update it in Settings.`); return;
             }
-            if (forkTarget.engine !== sourceEngine) {
-              await reply(`A native fork must keep *${engineLabel(sourceEngine)}*. Choose a model shortcut for that engine.`); return;
+            if (meta.codexAuthSource === "channel" && forkTarget.engine !== "codex") {
+              await reply("This channel uses its own Codex login, so its engine stays Codex."); return;
             }
           }
-          abortPooled(runKey); // close an idle Claude process so its transcript is settled before cloning
+          const childEngine = forkTarget ? forkTarget.engine : sourceEngine;
+          const nativeFork = childEngine === sourceEngine;
+          const sourceClean = await getThreadClean(entry.slug, threadKey);
+          if (nativeFork) abortPooled(runKey); // settle the source transcript before cloning
           const sourceUrl = await slackPermalink(client, event.channel, threadKey);
-          const root = await client.chat.postMessage({ channel: event.channel, text: `↪️ Fork of <${sourceUrl}|this thread>` });
+          let sourceContext = "";
+          if (!nativeFork && !sourceClean) {
+            sourceContext = await fetchThreadContext(client, { channelId: event.channel, threadTs: threadKey, currentTs: event.ts, botUserId });
+            if (!sourceContext) {
+              await reply("I could not read the source thread's messages. Please try the fork again once its Slack history is available."); return;
+            }
+            sourceContext = `You are continuing a conversation in a new Slack thread using ${engineLabel(childEngine)}. Source thread: ${sourceUrl}. The quoted history below comes from that source thread; continue with the user's new request after it.\n\n${sourceContext}`;
+          }
+          const handoffNote = nativeFork ? "" : ` · continuing with ${engineLabel(childEngine)}${sourceClean ? " (clean session; no history replay)" : " from Slack history"}`;
+          const root = await client.chat.postMessage({ channel: event.channel, text: `↪️ Fork of <${sourceUrl}|this thread>${handoffNote}` });
           if (!root?.ts) throw new Error("Slack did not return a thread timestamp for the fork.");
           const forkKey = String(root.ts);
           const pendingKey = `${entry.slug}::${forkKey}`;
           pendingForkThreads.add(pendingKey);
           try {
-            await setThreadEngine(entry.slug, forkKey, sourceEngine);
+            await setThreadEngine(entry.slug, forkKey, childEngine);
             await setThreadModel(entry.slug, forkKey, forkTarget ? forkTarget.model : await getThreadModel(entry.slug, threadKey));
             // Like ordinary shortcuts, a new model clears the inherited model-specific effort.
             await setThreadEffort(entry.slug, forkKey, forkTarget ? "" : await getThreadEffort(entry.slug, threadKey));
-            await setThreadClean(entry.slug, forkKey, await getThreadClean(entry.slug, threadKey));
+            await setThreadClean(entry.slug, forkKey, sourceClean);
             const request = await client.chat.postMessage({ channel: event.channel, thread_ts: forkKey, text: `*New request from <@${event.user}>:* ${task}` });
             if (!request?.ts) throw new Error("Slack did not return a message timestamp for the fork request.");
             const forkUrl = await slackPermalink(client, event.channel, forkKey);
             await reply(`↪️ Fork started in <${forkUrl}|a new thread>.`);
+            // A fresh engine uses the captured Slack snapshot, so the source may continue now.
+            if (!nativeFork) pendingForkSources.delete(runKey);
             await processMessageEvent({ ...event, ts: request.ts, thread_ts: forkKey, text: task, files: [] }, client, {
-              botUserId, teamId, bypassMention: true, syntheticFork: { sourceSessionId: sourceId, sourceRunKey: runKey },
+              botUserId, teamId, bypassMention: true, syntheticFork: {
+                sourceSessionId: nativeFork ? sourceId : "", sourceRunKey: runKey, threadContext: sourceContext,
+              },
             });
           } finally {
             pendingForkThreads.delete(pendingKey);
@@ -1539,7 +1555,7 @@ export async function processMessageEvent(event, client, { botUserId = "", teamI
       // after the queue so a turn queued behind this thread's first run resumes instead of
       // replaying. Runs after the progress indicator starts, so the fetch + name resolution
       // happen behind visible feedback.
-      let threadContext = "";
+      let threadContext = threadClean ? "" : syntheticFork?.threadContext || "";
       // Replay the earlier thread when the bot is first pulled into an existing thread OR when the
       // engine was just switched (the new engine starts a fresh, blind session — give it context).
       if (!syntheticFork && !threadClean && event.thread_ts && (!(await hasThreadSession(entry.slug, threadKey)) || engineSwitched)) {
@@ -1588,7 +1604,7 @@ export async function processMessageEvent(event, client, { botUserId = "", teamI
         isDM: Boolean(meta.isDM),
         ...(questionSubmissionId ? { questionSubmissionId } : {}),
         text: textForRun,
-        ...(syntheticFork ? { forkSourceSessionId: syntheticFork.sourceSessionId } : {}),
+        ...(syntheticFork?.sourceSessionId ? { forkSourceSessionId: syntheticFork.sourceSessionId } : {}),
         attachments: attachmentPaths,
         startedAt: Date.now(),
       };
@@ -1609,8 +1625,8 @@ export async function processMessageEvent(event, client, { botUserId = "", teamI
 
         text: textForRun,
         threadKey,
-        ...(syntheticFork ? { forkSourceSessionId: syntheticFork.sourceSessionId } : {}),
-        onForkSessionResolved: syntheticFork ? () => {
+        ...(syntheticFork?.sourceSessionId ? { forkSourceSessionId: syntheticFork.sourceSessionId } : {}),
+        onForkSessionResolved: syntheticFork?.sourceSessionId ? () => {
           recordActiveRun(runId, { ...promotedRun, forkSourceSessionId: "" });
           pendingForkThreads.delete(`${entry.slug}::${threadKey}`);
           pendingForkSources.delete(syntheticFork.sourceRunKey);
