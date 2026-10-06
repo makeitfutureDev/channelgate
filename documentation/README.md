@@ -74,8 +74,8 @@ the implementation. Preserve existing technical-reference URLs when adding short
 
 The acceptance results for the complete-functionality expansion are tracked in its section
 of `TEST-PLAN.md`. Earlier 15- and 75-page publication records are historical evidence.
-Complete the expanded build, peer review, browser, export, preview, and production checks
-before marking the new candidate published.
+Build, peer review, browser and export checks pass. Preview and production results and
+the exact published deployment are recorded in that acceptance section.
 
 Only the public documentation build is exported. Do not add deployment secrets, private
 instructions, local runtime state, or private source files to this project or the website

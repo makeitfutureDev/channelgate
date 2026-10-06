@@ -33,8 +33,8 @@
   canonical operator references and implementation. Microsoft Teams and Google Chat remain
   explicitly Beta; optional VPN provisioning, engine-specific approvals and admin-only host
   access retain their documented restrictions. This documentation change introduces no gateway
-  runtime behavior. Publication of the complete-functionality expansion follows its build,
-  browser, export, preview and production gates in `TEST-PLAN.md`.
+  runtime behavior. The complete-functionality expansion is published at `/docs`; build,
+  browser, export, preview and production evidence is recorded in `TEST-PLAN.md`.
 
 ## Conversation sources and Teams names
 
