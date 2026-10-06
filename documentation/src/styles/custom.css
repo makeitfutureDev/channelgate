@@ -21,3 +21,53 @@
 .sl-markdown-content a { text-underline-offset: .2em; }
 .hero h1 { letter-spacing: -.04em; }
 .hero .actions .primary { background: #ff642f; color: #121c15; border-color: #ff642f; }
+
+/* A shared handbook layout: persistent navigation, quiet surfaces, readable articles. */
+:root {
+  --sl-sidebar-width: 18rem;
+  --sl-content-width: 50rem;
+  --sl-text-h1: 2.2rem;
+  --sl-color-hairline-light: #273b30;
+  --handbook-orange: #ff642f;
+}
+:root[data-theme='light'] { --sl-color-hairline-light: #e1e7dc; }
+.site-title { font-size: 1.1rem; font-weight: 700; letter-spacing: -.03em; }
+.site-title img { height: 1.9rem; }
+.docs-header-brand { display: flex; align-items: center; gap: .75rem; }
+.docs-badge { font-size: .72rem; font-weight: 600; border: 1px solid var(--sl-color-hairline-light); color: var(--sl-color-text-accent); padding: .12rem .45rem; border-radius: .4rem; }
+.docs-header-actions { display: flex; align-items: center; justify-content: flex-end; gap: 1.1rem; }
+.docs-header-actions nav { display: flex; align-items: center; gap: 1.1rem; font-size: .83rem; }
+.docs-header-actions a { text-decoration: none; color: var(--sl-color-text); }
+.docs-header-actions a:hover { color: var(--sl-color-text-accent); }
+.sidebar-content { padding-top: 1.35rem; }
+.sidebar-content summary { font-size: .82rem; letter-spacing: -.015em; }
+.sidebar-content a { border-radius: .4rem; font-size: .86rem; padding-block: .35rem; }
+.sidebar-content a[aria-current='page'] { font-weight: 650; }
+h1 { letter-spacing: -.045em; line-height: 1.15; }
+.sl-markdown-content { line-height: 1.8; }
+.sl-markdown-content h2 { margin-top: 2.35rem; font-size: 1.42rem; }
+.sl-markdown-content h3 { font-size: 1.1rem; }
+.sl-markdown-content table { font-size: .9rem; }
+.card-grid { gap: .85rem; }
+.sl-link-card { border-radius: .65rem; box-shadow: none; }
+.sl-link-card:hover { border-color: var(--sl-color-text-accent); }
+.handbook-intro { margin: 1rem 0 1.5rem; }
+.handbook-eyebrow { font-size: .68rem; font-weight: 700; letter-spacing: .13em; color: var(--sl-color-text-accent); }
+.handbook-lead { font-size: 1.7rem; font-weight: 650; line-height: 1.35; letter-spacing: -.035em; margin-top: .65rem; }
+.directory-count { color: var(--sl-color-text-accent); font-size: .8rem; font-weight: 600; }
+.feature-directory-group { margin-block: 2.25rem; }
+@media (max-width: 49.99rem) {
+  .docs-badge, .docs-header-actions nav { display: none; }
+  .docs-header-actions { gap: .25rem; }
+  .site-title { font-size: .95rem; }
+  .site-title img { height: 1.6rem; }
+  .handbook-lead { font-size: 1.4rem; }
+}
+
+.docs-header { display: flex; justify-content: space-between; align-items: center; gap: 1rem; height: 100%; }
+.docs-header-brand { min-width: 0; }
+.docs-header-search { display: flex; min-width: 0; }
+@media (min-width: 50rem) {
+  .docs-header { display: grid; grid-template-columns: calc(var(--sl-sidebar-width) - 1.5rem) minmax(12rem, 1fr) auto; }
+  .docs-header-search { max-width: 25rem; }
+}

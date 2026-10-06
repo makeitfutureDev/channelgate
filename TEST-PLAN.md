@@ -1,5 +1,43 @@
 # ChannelGate — Test Plan
 
+## Feature and configuration handbook expansion (2026-10-06)
+
+- [x] Source coverage and cross-review: dedicated user guides cover conversations, threads,
+  workspace/files, steering, questions, instructions, session recovery, engines/models,
+  memory, skills/plugins, accounts/MCP/secrets, access and approvals, network/container/host/SSH
+  boundaries, chat platforms, schedules, background jobs, run API and operations. The coverage
+  review added native report artifacts, Google Drive workspace sync and thread loops, bringing
+  the feature directory to 45 guides. Thirteen configuration guides cover the supported scopes
+  and settings. Teams and Google Chat are marked Beta; privileged and optional capabilities
+  keep their actual admission/setup requirements. Peer review checks claims against current
+  implementation rather than copying stale UI explanatory text.
+- [x] Navigation source review: one registry drives both directory cards and sidebar groups;
+  Start here includes welcome, walkthrough, installation and both directory pages. Welcome
+  uses the article layout with persistent navigation. Existing reference routes remain present.
+- [x] Intermediate local build: the initial expanded 72-page candidate passed Starlight route,
+  canonical URL, heading, sidebar, search-index and 7,029 internal-link checks. This result
+  precedes the final three coverage pages and is not evidence for the full 75-page candidate.
+- [x] Final local build: `cd documentation && npm run build` produced all 75 handbook and
+  retained-reference routes, one heading per page, persistent sidebar, production canonical
+  URLs, bundled assets and Pagefind. Verified 7,540 internal links and heading anchors.
+- [x] Export regression: `cd documentation && npm test` preserved existing home/blog/RSS
+  and API configuration while replacing docs sitemap entries without stale/duplicate URLs.
+- [x] Local browser: open welcome, feature directory and configuration directory; follow a
+  feature into its configuration link and retain `/docs` navigation. Verify current-page state,
+  previous/next article controls, search results, themes, and mobile navigation. At 390×844
+  inspect horizontal overflow, menu usability, and browser console errors.
+- [ ] Combined Vercel preview: all 75 routes, nested configuration/features, assets, search and
+  sitemap must work on the existing website project. Compare unchanged website/blog/RSS files
+  and preserve existing API rewrites and license public-key response. Recheck current production
+  before promotion so a newer website/blog deployment is not overwritten.
+- [ ] Production: publish the exact verified candidate, then check all 75 route responses,
+  production canonicals, directory navigation, search, themes/mobile controls, sitemap and
+  unchanged main website/blog/API endpoints. Record deployment ID and observed results.
+- [x] Source gates: static check passed (777 JavaScript files); staged-file secret scan
+  passed (1,020 files/blobs). Documentation audit at the high-severity gate passed; it reports
+  10 moderate transitive findings from Expressive Code/PostCSS, no high/critical findings. This handbook-only change does not claim new live Claude/Codex
+  runtime acceptance or stable-release promotion.
+
 ## Public documentation on the existing website (2026-10-06)
 
 - [x] Local build: `cd documentation && npm run build` synchronizes 13 canonical Markdown

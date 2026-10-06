@@ -1,35 +1,34 @@
 ---
-title: ChannelGate documentation
-description: Install, connect, and operate AI agents in your team chat.
-template: splash
-hero:
-  title: Your team’s agents. Your environment.
-  tagline: Install ChannelGate, connect your chat, and give each conversation a governed workspace.
-  actions:
-    - text: Start your first conversation
-      link: /docs/getting-started
-      icon: right-arrow
-      variant: primary
-    - text: Installation guide
-      link: /docs/installation
-      icon: document
+title: Welcome to ChannelGate
+description: Learn every feature, configure your deployment, and put your team's agents to work.
+tableOfContents: false
 ---
 
 import { CardGrid, LinkCard } from '@astrojs/starlight/components';
 
-ChannelGate is a self-hosted Linux gateway that runs Claude Code and Codex in your team chat. Each conversation has its own container, work folder, and persistent memory; each thread has its own engine session.
+<div className="handbook-intro"><span className="handbook-eyebrow">THE CHANNELGATE HANDBOOK</span><p className="handbook-lead">Everything your team needs to work with agents in chat.</p></div>
+
+ChannelGate brings coding agents into Slack, Microsoft Teams, and Google Chat. Your deployment runs on your Linux infrastructure, with a separate workspace, container, and persistent memory for each conversation. Each thread keeps its own agent session.
+
+Start with a walkthrough, explore a feature, or find the setting you need. Microsoft Teams and Google Chat are currently in Beta.
 
 <CardGrid>
-  <LinkCard title="Connect your chat" description="Set up Slack, or review Microsoft Teams and Google Chat Beta support." href="/docs/platforms" />
-  <LinkCard title="Engines and permissions" description="Choose an engine and understand modes, tools, and approvals." href="/docs/engines" />
-  <LinkCard title="Skills and plugins" description="Share workflows, grant skills, and manage reusable instructions." href="/docs/skills" />
-  <LinkCard title="Operate your deployment" description="Containers, updates, backups, and troubleshooting." href="/docs/operations" />
-  <LinkCard title="Privacy and data flow" description="Understand storage, credentials, and external provider requests." href="/docs/privacy" />
-  <LinkCard title="License keys and limits" description="Activate an organization key and understand usage limits." href="/docs/licensing" />
+  <LinkCard title="Get started" description="Install ChannelGate and complete your first useful conversation." href="/docs/getting-started" />
+  <LinkCard title="Explore every feature" description="Learn how workspaces, agents, skills, integrations, and automation work." href="/docs/features" />
+  <LinkCard title="Configure your deployment" description="Find gateway defaults, channel settings, account connections, and access controls." href="/docs/configuration" />
+  <LinkCard title="Operate with confidence" description="Monitor your instance, maintain the runtime, and plan backups and updates." href="/docs/features/admin-dashboard" />
 </CardGrid>
 
-## Find your next step
+## Find your way
 
-New operator? Follow [installation](/docs/installation), then [your first conversation](/docs/getting-started). Managing an existing deployment? Start with [operations](/docs/operations) and [compatibility](/docs/compatibility).
+**Working with agents?** Start with [conversations](/docs/features/conversations), [threads and sessions](/docs/features/threads-and-sessions), and [shared workspaces](/docs/features/shared-workspaces).
 
-For release changes, read the [changelog](/docs/changelog). For help, see [support](/docs/support).
+**Giving agents context and tools?** Read [persistent memory](/docs/features/memory), [skills](/docs/features/skills), [connected accounts](/docs/features/connected-accounts), and [MCP tools](/docs/features/mcp).
+
+**Managing a deployment?** Follow [installation](/docs/installation), [gateway settings](/docs/configuration/gateway-settings), and [channel configuration](/docs/configuration/channel-settings).
+
+**Understanding access?** Review [modes and permissions](/docs/features/permissions), [approvals](/docs/features/approvals), [container isolation](/docs/features/container-isolation), and [network policy](/docs/configuration/network-policy).
+
+:::tip[One page, one topic]
+Each feature has its own guide with practical steps, examples, configuration links, and limits. The **Technical reference** section keeps the longer installation, operations, compatibility, and licensing documents available alongside the handbook.
+:::

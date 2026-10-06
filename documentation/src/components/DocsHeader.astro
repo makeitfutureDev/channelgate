@@ -1,0 +1,14 @@
+---
+import SiteTitle from '@astrojs/starlight/components/SiteTitle.astro';
+import Search from '@astrojs/starlight/components/Search.astro';
+import ThemeSelect from '@astrojs/starlight/components/ThemeSelect.astro';
+---
+<div class="docs-header">
+<div class="docs-header-brand"><SiteTitle {...Astro.props} /><span class="docs-badge">Docs</span></div>
+<div class="docs-header-search"><Search {...Astro.props} /></div>
+<div class="docs-header-actions">
+  <nav aria-label="Website links"><a href="https://channelgate.dev/">Website <span aria-hidden="true">↗</span></a><a href="https://github.com/makeitfutureDev/channelgate">GitHub <span aria-hidden="true">↗</span></a></nav>
+  <ThemeSelect {...Astro.props} />
+</div>
+
+</div>

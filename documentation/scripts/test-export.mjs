@@ -4,6 +4,8 @@ import { tmpdir } from 'node:os';
 import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { execFileSync } from 'node:child_process';
+import { handbookSlugs } from '../src/data/handbook.mjs';
+import { guides } from './catalog.mjs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const fixture = await mkdtemp(resolve(tmpdir(), 'channelgate-docs-export-'));
@@ -25,7 +27,7 @@ try {
   assert.match(await readFile(resolve(fixture, 'docs/installation/index.html'), 'utf8'), /Install ChannelGate/);
   const sitemap = await readFile(resolve(fixture, 'sitemap.xml'), 'utf8');
   const locations = [...sitemap.matchAll(/<loc>(.*?)<\/loc>/g)].map(([, location]) => location);
-  assert.equal(locations.length, 16);
+  assert.equal(locations.length, 3 + handbookSlugs.length + guides.length);
   assert.equal(new Set(locations).size, locations.length);
   assert.ok(locations.includes('https://channelgate.dev/docs'));
   assert.ok(!locations.includes('https://channelgate.dev/docs/removed'));

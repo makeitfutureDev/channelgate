@@ -1,0 +1,29 @@
+---
+title: Configure ChannelGate
+description: Find every configuration guide, from gateway defaults to individual conversation settings.
+tableOfContents: false
+---
+
+import { CardGrid, LinkCard } from '@astrojs/starlight/components';
+import { configurationPages } from '../../data/handbook.mjs';
+
+Configure ChannelGate at the right scope. Gateway defaults establish the deployment, conversation settings adapt a workspace, and personal connections belong to the person using them.
+
+## Choose a scope
+
+| Scope | What it controls | Where to start |
+| --- | --- | --- |
+| Gateway | Chat connections, default agents, runtime, organization settings | [Gateway settings](/docs/configuration/gateway-settings) |
+| Conversation | Access, workspace, instructions, tools, and model defaults | [Channel settings](/docs/configuration/channel-settings) |
+| Person | Personal accounts, credentials, and granted skills | [Connected accounts](/docs/configuration/connections) |
+| Thread | The engine/model selection and session for one piece of work | [Model defaults](/docs/configuration/model-defaults) |
+
+Permissions depend on your role and the conversation's management policy. An organization administrator manages gateway-wide settings; a conversation setting does not grant gateway administrator rights.
+
+## Configuration guides
+
+<CardGrid>{configurationPages.map((page) => <LinkCard title={page.label} description={page.description} href={`/docs/configuration/${page.slug}`} />)}</CardGrid>
+
+:::note[Hosted website and your instance]
+The website at channelgate.dev provides public documentation and organization licensing. Configure agents, users, channels, and tools in your own instance's admin interface.
+:::
