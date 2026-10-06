@@ -16,9 +16,7 @@ product overview.
 > | Makeitfuture Sustainable Use License 1.1 | 2026-08-20 | never published |
 > | Makeitfuture Sustainable Use License 1.0 | 2026-08-06 | never published |
 
-## Unreleased
-
-## 0.6.1 — release candidate
+## 0.6.1 — 2026-10-06
 
 - Channel Runtime now shows only engine and model controls for the shared login. Dedicated Codex
   sign-in uses a method dropdown: choosing ChatGPT starts the device flow and clicking its code
