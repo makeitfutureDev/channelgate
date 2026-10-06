@@ -5469,6 +5469,21 @@ none` for its cases and live gates. Kept as history.
       Claude uses `--resume <source> --fork-session`, Codex uses `exec fork <source>`, and both
       keep confinement flags. A fake Slack DM receives a linked top-level root, a separate new
       request in that thread and the engine reply there; source and child IDs remain distinct.
+- [x] Unit/fixture (`test/slack-fork.test.js`): `/fork :shortcut <new message>` resolves a
+      model on the source engine for Claude and Codex, strips the prefix from the request,
+      clears the child effort pin and preserves source pins/session. The native fork receives
+      the selected model, and a follow-up retains the resolved pin after the shortcut is repointed.
+      Unknown/invalid/disabled targets, another engine, unauthorized channel changes and empty
+      request text create no child thread and spawn no engine.
+- [ ] Live Slack shortcut acceptance (Claude and Codex separately): configure a shortcut for
+      another valid model on the source engine. Complete a source turn that remembers a token,
+      then send `@agent /fork :shortcut Repeat the token and explore another approach`.
+      Verify linked threads, the task without the shortcut prefix, inherited token, a distinct
+      child session ID and the selected model in usage/footer. Confirm the source model/effort
+      pins are unchanged and follow-ups in the child retain its model. Reject an unknown name,
+      a shortcut for the other engine, and a shortcut without a message before posting a root;
+      with model changes limited to admins, repeat as an approved non-admin in a channel and
+      confirm denial, while its DM permits a valid shortcut. No live pass claimed by fixtures.
 - [ ] Live Slack acceptance (Claude and Codex separately): finish a source turn, send
       `@agent /fork Compare an alternative approach` in its thread, and verify the source link,
       child root, separate request and answer. Follow up in both threads; each must remember its
