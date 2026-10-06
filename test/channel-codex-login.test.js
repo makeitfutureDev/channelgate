@@ -18,7 +18,17 @@ function fakeChild() {
   child.kill = () => { child.emit("close", null); return true; };
   return child;
 }
-const settle = () => new Promise((resolve) => setImmediate(resolve));
+async function waitForPhase(readStatus, phase) {
+  const deadline = Date.now() + 2_000;
+  let status;
+  do {
+    status = await readStatus();
+    if (status.phase === phase) return status;
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  } while (Date.now() < deadline);
+  assert.equal(status.phase, phase);
+  return status;
+}
 
 test("device code login exposes only the approved URL/code and selects the channel on success", async () => {
   const id = `C_DEVICE_${Date.now()}`;
@@ -40,8 +50,7 @@ test("device code login exposes only the approved URL/code and selects the chann
   assert.ok(!JSON.stringify(waiting).includes("sk-hidden"));
   await writeFile(path.join(channelCodexHome(id), "auth.json"), JSON.stringify({ tokens: { refresh_token: "refresh-secret" } }), { mode: 0o600 });
   child.emit("close", 0);
-  await settle();
-  const done = await channelCodexLoginStatus(id);
+  const done = await waitForPhase(() => channelCodexLoginStatus(id), "complete");
   assert.equal(done.phase, "complete");
   assert.equal(done.method, "chatgpt");
   assert.equal(done.code, "");
@@ -80,8 +89,7 @@ test("API key enters Codex through stdin and never appears in status or argv", a
   assert.ok(!JSON.stringify(state).includes(key));
   await writeFile(path.join(channelCodexHome(id), "auth.json"), JSON.stringify({ OPENAI_API_KEY: key }), { mode: 0o600 });
   child.emit("close", 0);
-  await settle();
-  const done = await channelCodexLoginStatus(id);
+  const done = await waitForPhase(() => channelCodexLoginStatus(id), "complete");
   assert.equal(done.phase, "complete");
   assert.equal(done.method, "api-key");
   assert.ok(!JSON.stringify(done).includes(key));
@@ -95,14 +103,12 @@ test("failed and cancelled sign-in never selects the channel", async () => {
   let saved = 0;
   await startChannelCodexLogin(id, "device", { spawnImpl: () => child, onAuthenticated: async () => { saved++; } });
   assert.equal(cancelChannelCodexLogin(id), true);
-  await settle();
   assert.equal((await channelCodexLoginStatus(id)).phase, "idle");
   assert.equal(saved, 0);
   const child2 = fakeChild();
   await startChannelCodexLogin(id, "device", { spawnImpl: () => child2, onAuthenticated: async () => { saved++; } });
   child2.emit("close", 1);
-  await settle();
-  assert.equal((await channelCodexLoginStatus(id)).phase, "failed");
+  await waitForPhase(() => channelCodexLoginStatus(id), "failed");
   assert.equal(saved, 0);
 });
 
@@ -119,8 +125,7 @@ test("shared gateway sign-in targets the service account's CODEX_HOME", async ()
   assert.ok(!JSON.stringify(command[1]).includes(key));
   await writeFile(path.join(process.env.CODEX_HOME, "auth.json"), JSON.stringify({ OPENAI_API_KEY: key }), { mode: 0o600 });
   child.emit("close", 0);
-  await settle();
-  const done = await gatewayCodexLoginStatus();
+  const done = await waitForPhase(gatewayCodexLoginStatus, "complete");
   assert.equal(done.phase, "complete");
   assert.equal(done.method, "api-key");
   assert.ok(!JSON.stringify(done).includes(key));
