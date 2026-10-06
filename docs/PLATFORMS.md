@@ -249,6 +249,8 @@ Task-module dialogs and broadcast mentions remain unavailable.
   members open their own requester-bound `/settings` card.
   Initially only the section menu is shown; selecting a section reveals its controls below the
   menu. Switching sections replaces the controls while keeping the menu visible.
+  The full-width native layout uses two-column navigation, grouped panels and a separate Save
+  footer. All form inputs stay in one Adaptive Card so Execute and Submit collect the same values.
   General edits channel defaults and current-session engine/model/effort independently, with
   engine-labelled model choices, inherited labels and Follow channel default. One Apply to channel
   or Apply to thread button saves that scope's engine/model/effort together after compatibility

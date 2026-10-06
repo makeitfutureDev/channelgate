@@ -119,7 +119,7 @@ export async function renderGeneral(ctx, ui) {
     ...Object.fromEntries(RUNTIME_FIELDS.filter(field => Object.hasOwn(draft.inputs, `${scope}_${field}`)).map(field => [field, draft.inputs[`${scope}_${field}`]])),
   } });
   const meta = effectiveMeta(ctx.meta), manager = managed(ctx.meta, ctx);
-  const body = [ui.text('Choose engine, model and effort, then Apply once at the bottom for that scope. Apply saves only General; changes in other sections stay pending. Model names include their engine; the combination must be compatible. Channel defaults affect new sessions; thread overrides apply to this session.'), ui.heading('Channel defaults'), ...runtimeRows('channel', displayedRuntime('channel', channel), locked, ui)];
+  const body = [ui.text('Edit channel defaults or this thread, then save General once below. Changes in other sections stay pending. Model choices include their compatible engine.'), ui.heading('Channel defaults'), ...runtimeRows('channel', displayedRuntime('channel', channel), locked, ui)];
   if (locked) {
     const login = await channelCodexLoginStatus(ctx.channelId);
     body.push(ui.text(`Channel Codex login: ${login.authenticated ? 'Signed in' : login.phase === 'pending' ? 'Sign-in in progress' : 'No channel login yet'}.`));

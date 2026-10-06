@@ -36,8 +36,9 @@ async function fixture({ admin = true, privateChat = true, personal = false } = 
   return { controls, connector, sent, replies, args, invoke, entry, owner, channelId, stateId };
 }
 const value = result => result.body.value;
-const input = (card, id) => card.body.find(item => item.id === id);
-const allActions = card => [...card.body.filter(row => row.type === 'ActionSet').flatMap(row => row.actions), ...(card.actions || [])];
+const elements = card => card.body.flatMap(function visit(row) { return [row, ...(row.items || []).flatMap(visit)]; });
+const input = (card, id) => elements(card).find(item => item.id === id);
+const allActions = card => [...elements(card).filter(row => row.type === 'ActionSet').flatMap(row => row.actions), ...(card.actions || [])];
 const open = async (f, page) => value(await f.invoke({ stateId: f.stateId, page }, 'settings.page'));
 const draftAction = async (f, verb, data = {}) => value(await f.invoke({ stateId: f.stateId, ...data }, verb));
 
@@ -48,8 +49,24 @@ test('every editable section ends with the scoped Apply pair; Resume remains rea
     const applies = actions.filter(action => action.title.startsWith('Apply'));
     assert.deepEqual(applies.map(action => action.title), page === 'resume' ? [] : ['Apply to channel', 'Apply to thread']);
     assert.ok(!actions.some(action => ['Save variable', 'Save connections', 'Apply template'].includes(action.title)));
+    const fields = elements(card).filter(item => item.type?.startsWith('Input.'));
+    assert.equal(new Set(fields.map(item => item.id)).size, fields.length, 'grouping preserves unique input IDs');
+    for (const action of actions) {
+      assert.deepEqual(action.fallback.data, action.data, 'Submit retains the same state and scope');
+      assert.equal(action.fallback.associatedInputs, action.associatedInputs);
+    }
     adaptiveCardAttachment(card);
   }
+});
+test('complete grouped General card stays within the delivery budget with a maximum-size roster', async () => {
+  const f = await fixture();
+  f.connector.api.listMembers = async () => [{ id: f.owner, name: 'Settings owner' }, ...Array.from({ length: 24 }, (_, i) => ({ id: `29:${i}-` + 'u'.repeat(245), name: 'Member ' + 'n'.repeat(95) }))];
+  const card = await open(f, 'general');
+  adaptiveCardAttachment(card);
+  assert.equal(card.msteams.width, 'Full');
+  assert.equal(allActions(card).filter(action => action.verb === 'settings.runtime.apply').length, 2);
+  assert.ok(input(card, 'channel_model'));
+  assert.ok(input(card, 'thread_model'));
 });
 test('variables stage multiple edits, preserve them across navigation and save only the chosen scope', async () => {
   const f = await fixture(); await open(f, 'secrets');
@@ -189,18 +206,18 @@ test('six settings pages stay in the source conversation and update the same car
   assert.deepEqual(menu.actions, []);
   const tabs = menu.body.filter(item => item.type === 'ActionSet').flatMap(item => item.actions);
   assert.deepEqual(tabs.map(action => action.title), ['General', 'Variables', 'MCPs', 'Skills', 'Automations', 'Resume']);
-  assert.equal(menu.body.at(-1).type, 'ActionSet');
+  assert.ok(menu.body.at(-1).text.includes('Choose a section'));
   for (const page of ['general', 'secrets', 'mcp', 'skills', 'automations', 'resume']) {
     const action = tabs.find(item => item.data.page === page);
     const card = value(await f.invoke(action.data, action.verb));
     assert.equal(card.body[0].text, 'Channel settings');
     adaptiveCardAttachment(card);
-    assert.equal(card.body.filter(item => item.type === 'ActionSet').slice(0, 2).flatMap(item => item.actions).length, 6);
+    assert.equal(allActions(card).filter(action => action.verb === 'settings.page').length, 6);
     assert.equal(f.sent.at(-1).conversationId, f.channelId.slice(6));
     assert.equal(f.sent.at(-1).messageId, 'card1');
     assert.deepEqual(f.sent.at(-1).card, card);
-    assert.ok(card.body.length > menu.body.length);
-    assert.ok(card.body.filter(item => item.type === 'ActionSet').slice(0, 2).flatMap(item => item.actions).some(item => item.title === `• ${action.title}`));
+    assert.ok(elements(card).length > elements(menu).length);
+    assert.ok(allActions(card).some(item => item.verb === 'settings.page' && item.title === `✓ ${action.title}`));
     if (page !== 'general') assert.equal(input(card, 'channel_engine'), undefined);
   }
   const secrets = value(await f.invoke({ stateId: f.stateId, page: 'secrets' }, 'settings.page'));
@@ -214,19 +231,19 @@ test('/secrets opens Variables directly while /settings starts with the menu', a
   await f.controls.onCommand(f.args('/secrets'));
   const secrets = f.sent.at(-1).card;
   assert.ok(input(secrets, 'variableValue'));
-  assert.ok(secrets.body.filter(item => item.type === 'ActionSet').slice(0, 2).flatMap(item => item.actions).some(item => item.title === '• Variables'));
+  assert.ok(allActions(secrets).some(item => item.verb === 'settings.page' && item.title === '✓ Variables'));
 });
 test('combined runtime Apply actions save the chosen scope through Execute and Submit', async () => {
   const f = await fixture({ admin: false });
   const general = value(await f.invoke({ stateId: f.stateId, page: 'general' }, 'settings.page'));
-  const applies = general.body.filter(item => item.type === 'ActionSet').flatMap(item => item.actions).filter(item => item.verb === 'settings.runtime.apply');
+  const applies = elements(general).filter(item => item.type === 'ActionSet').flatMap(item => item.actions).filter(item => item.verb === 'settings.runtime.apply');
   assert.deepEqual(applies.map(item => item.title), ['Apply to channel', 'Apply to thread']);
   const channel = applies[0];
   const saved = value(await f.invoke({ ...channel.data, channel_engine: 'codex', channel_model: modelsForEngine('codex')[0].value,
     channel_effort: 'high', thread_engine: 'claude' }, channel.verb));
   assert.equal((await getChannelMeta(f.entry.slug)).engine, 'codex');
   assert.equal(await getThreadEngine(f.entry.slug, 'original-session'), '');
-  const thread = saved.body.filter(item => item.type === 'ActionSet').flatMap(item => item.actions).find(item => item.data?.scope === 'thread' && item.verb === 'settings.runtime.apply');
+  const thread = elements(saved).filter(item => item.type === 'ActionSet').flatMap(item => item.actions).find(item => item.data?.scope === 'thread' && item.verb === 'settings.runtime.apply');
   const before = f.sent.length;
   const result = await f.controls.onInvoke({ type: 'message', from: { id: f.owner }, recipient: { id: '28:bot' },
     conversation: { id: f.channelId.slice(6) }, replyToId: 'forged-target', serviceUrl: 'https://smba.trafficmanager.net/teams/',
@@ -278,7 +295,7 @@ test('Submit navigation updates the stored channel card once, ignoring a forged 
   assert.equal(f.sent.length, before + 1);
   assert.equal(f.sent.at(-1).messageId, 'card1');
   assert.equal(f.sent.at(-1).conversationId, f.channelId.slice(6));
-  assert.ok(f.sent.at(-1).card.body.some(item => item.text === 'Skills'));
+  assert.ok(elements(f.sent.at(-1).card).some(item => item.text === 'Skills'));
 });
 test('shared Resume never publishes an administrator session command', async () => {
   const f = await fixture();
@@ -380,10 +397,10 @@ test('automation pages keep later schedules reachable and native cards within bo
     prompt: `Schedule ${index}`, description: `Schedule ${index}`, cron: '0 * * * *', createdBy: f.owner });
   const first = value(await f.invoke({ stateId: f.stateId, page: 'automations' }, 'settings.page'));
   adaptiveCardAttachment(first);
-  assert.ok(first.actions.some(action => action.title === 'Next'));
-  const last = value(await f.invoke(first.actions.find(action => action.title === 'Next').data, 'settings.automation.page'));
+  assert.ok(allActions(first).some(action => action.title === 'Next'));
+  const last = value(await f.invoke(allActions(first).find(action => action.title === 'Next').data, 'settings.automation.page'));
   adaptiveCardAttachment(last);
-  assert.ok(last.body.some(item => item.text === 'Schedule 14'));
+  assert.ok(elements(last).some(item => item.text === 'Schedule 14'));
 });
 test('named member grants reject bots and targets removed during write authorization', async () => {
   const f = await fixture();

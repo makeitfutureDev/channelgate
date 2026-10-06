@@ -699,7 +699,9 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
   Settings console**: General, Variables, MCPs, Skills, Automations and Resume. `/settings` opens
   with just the section menu in the original channel/thread or chat; selecting a section reveals
   its settings below the menu in the same card, keeping its conversation and session. `/secrets`
-  starts on Variables. General shows both channel defaults and session pins, filters compatible
+  starts on Variables. Full-width native cards use compact two-column navigation, a clear header,
+  grouped settings panels and a separate Save footer. All inputs remain in the same card for
+  Execute/Submit compatibility. General shows both channel defaults and session pins, filters compatible
   models/efforts, labels inheritance, respects dedicated Codex login locks and offers Follow
   channel default. Every editable section has one **Apply to channel** and one **Apply to thread**
   button. Apply saves only the open section; drafts in other sections stay pending.

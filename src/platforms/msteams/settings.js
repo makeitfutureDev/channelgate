@@ -11,6 +11,7 @@ import { renderGeneral, handleGeneral, captureGeneralDraft } from './settings-ge
 import { handleCatalogAction } from './settings-catalog.js';
 import { captureCatalogDraft, renderDraftCatalogPage, handleDraftCatalogAction } from './settings-drafts.js';
 import { renderAutomations, handleAutomations } from './settings-automations.js';
+import { settingsPanels } from './settings-layout.js';
 
 export const TEAMS_SETTINGS_PAGES = Object.freeze([
   ['general', 'General'], ['secrets', 'Variables'], ['mcp', 'MCPs'],
@@ -28,7 +29,7 @@ export function teamsSettingsUi(stateId) {
   return {
     text, execute,
     heading: value => ({ ...text(value), weight: 'Bolder', separator: true }),
-    buttons: actions => ({ type: 'ActionSet', actions }),
+    buttons: actions => ({ type: 'ActionSet', spacing: 'Small', actions }),
     choice: (id, label, value, choices) => ({ type: 'Input.ChoiceSet', id, label, style: 'compact',
       value: String(value ?? ''), choices: choices.map(item => ({ title: String(item.title || item.label || item.value).slice(0, 100), value: String(item.value) })) }),
     input: (id, label, value = '') => ({ type: 'Input.Text', id, label, value: String(value), maxLength: 8000,
@@ -92,13 +93,17 @@ export async function buildTeamsSettings(ctx, stateId) {
     : page === 'automations' ? renderAutomations(ctx, ui)
       : page === 'resume' ? await resume(ctx, ui)
         : page ? await renderDraftCatalogPage(page, ctx, ui) : { body: [], actions: [] };
-  // Three tabs per row keeps every page visible without exceeding Teams' action-row limit.
-  const tabs = TEAMS_SETTINGS_PAGES.map(([id, title]) => ui.execute(id === page ? `• ${title}` : title, 'settings.page', { page: id }, 'auto'));
+  // Two tabs per row keep long labels readable in narrow Teams/mobile surfaces.
+  const tabs = TEAMS_SETTINGS_PAGES.map(([id, title]) => ui.execute(id === page ? `✓ ${title}` : title, 'settings.page', { page: id }, 'auto'));
+  const sectionTitle = TEAMS_SETTINGS_PAGES.find(([id]) => id === page)?.[1];
   return { $schema: 'http://adaptivecards.io/schemas/adaptive-card.json', type: 'AdaptiveCard', version: '1.4',
-    body: [ui.heading('Channel settings'), ui.text(`Settings for ${ctx.entry.name || 'this conversation'}. Changes apply to the next turn.`),
-      ...(ctx.isShared ? [ui.text('These controls belong to the person who opened them. Other members can open their own /settings.')] : []),
-      ui.buttons(tabs.slice(0, 3)), ui.buttons(tabs.slice(3)),
-      ...(ctx.state.notice ? [ui.text(ctx.state.notice)] : []), ...content.body], actions: content.actions || [] };
+    msteams: { width: 'Full' },
+    body: [{ ...ui.text('Channel settings'), size: 'Large', weight: 'Bolder', spacing: 'None' },
+      { ...ui.text(ctx.entry.name || 'This conversation'), size: 'Small', isSubtle: true, spacing: 'Small' },
+      ...(ctx.isShared ? [{ ...ui.text('Your controls · Other members can open /settings'), size: 'Small', isSubtle: true, spacing: 'Small' }] : []),
+      ui.buttons(tabs.slice(0, 2)), ui.buttons(tabs.slice(2, 4)), ui.buttons(tabs.slice(4)),
+      ...(ctx.state.notice ? [{ type: 'Container', style: 'emphasis', spacing: 'Medium', items: [{ ...ui.text(ctx.state.notice), size: 'Small' }] }] : []),
+      ...(page ? settingsPanels(content, sectionTitle) : [{ ...ui.text('Choose a section to edit its settings.'), size: 'Small', isSubtle: true, spacing: 'Medium' }])], actions: [] };
 }
 
 const destructive = (action, data) => !action.startsWith('settings.draft.') && (action.endsWith('.remove') || action.endsWith('.delete') || action === 'settings.thread.reset'

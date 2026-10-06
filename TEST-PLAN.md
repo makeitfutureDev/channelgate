@@ -8738,6 +8738,8 @@ modal/wizard cases exercise the shared runtime validators.
 Scoped batch regressions exercise all five editable footer Apply pairs and read-only Resume;
 no writes before Apply; several staged variables; drafts surviving navigation/same-view clicks;
 open-section Apply for both scopes while another section remains pending;
+grouped-card nested input IDs, retained Execute/Submit payloads, and the full-card byte limit with
+a maximum-size roster;
 cross-page forged verbs; invalid Make combinations and staged Make disconnection; channel/thread
 CAS conflicts; per-section Follow channel reset; one-shot General access/runtime writes; aggregate
 automation limits and exact execution bindings. Claude and Codex fake-engine fresh/resumed turns
@@ -8765,6 +8767,8 @@ case. Also run a group with an external member to check tenant/channel delivery 
    original channel/thread or chat, unchanged workspace/session identity and no proactive DM.
    Initially require the six-option menu with no section inputs. Selecting a tab reveals only
    that section below the persistent menu; `/secrets` still opens Variables directly.
+   Check the full-width layout on desktop and a narrow mobile surface: every navigation label
+   stays readable, grouped panels retain their inputs, and the section Apply pair appears last.
    Block proactive DM delivery: settings still opens in the channel. Use each tab's actual
    Execute and Submit action and require the same posted message ID to update. Another member
    cannot operate the owner's card; they can open an independent card. Confirm installed manifest
