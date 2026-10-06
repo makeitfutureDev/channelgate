@@ -1,5 +1,36 @@
 # ChannelGate — Test Plan
 
+## Public documentation on the existing website (2026-10-06)
+
+- [x] Local build: `cd documentation && npm run build` synchronizes 13 canonical Markdown
+  guides and two authored pages, generating Starlight HTML, bundled assets and Pagefind.
+  `scripts/check-output.mjs` verifies all 15 canonical page routes and 819 internal links,
+  including heading fragments.
+- [x] Export regression: `cd documentation && npm test` checks that existing home, blog,
+  RSS and API routing files are preserved; docs sitemap entries replace obsolete/duplicate
+  entries exactly once; unsupported sitemap types fail before writes; literal Markdown
+  examples are not rewritten as source links.
+- [x] Local browser: home → Installation stays on `/docs/installation`; search for
+  `rootless Podman` returns a prerequisite heading and navigates to its anchor. Theme
+  changes and the mobile sidebar work. At 390×844, document width equals viewport width;
+  no browser errors were recorded.
+- [x] Vercel preview: all 15 docs routes return Starlight HTML with production canonical
+  URLs; CSS, Pagefind, sitemap and the license public-key API return 200. Six existing
+  website/blog responses match the current site's source after excluding Vercel's preview
+  toolbar. The combined deployment input preserves all 77 original non-docs/sitemap files
+  byte for byte, including all blog files and `vercel.json` API rewrites.
+- [x] Production: https://channelgate.dev/docs and all 14 other docs routes return 200
+  with canonical URLs. Existing home, blog, article, RSS, contact and licensing responses
+  are unchanged. The sitemap has one `/docs` entry plus the nested routes, and the license
+  public-key endpoint returns its PEM. Browser navigation to Installation stays on the
+  website; Pagefind search for `rootless Podman` navigates to
+  `/docs/installation#1-prerequisites`. The mobile menu and theme controls work at 390×844
+  without horizontal overflow or browser errors. Published via the existing Vercel project
+  `channelgate` (production deployment `dpl_WFgAFJozrUktbCwWypZb4s1qyzSp`).
+- [x] Source gates: root static check passes (777 JS files); staged-file secret scan is
+  clean; documentation dependency audit has no high/critical advisories (10 inherited
+  moderate advisories in the code-block formatter dependency chain).
+
 ## Conversation sources and Teams names (2026-10-06)
 
 - [x] Automated: `test/conversation-source-names.test.js` covers channel/DM source classification,

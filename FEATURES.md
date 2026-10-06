@@ -1,5 +1,16 @@
 # ChannelGate — Features
 
+## Public documentation website
+
+- `documentation/` builds a static Astro/Starlight documentation section for
+  `channelgate.dev/docs` in the same Vercel website project as the marketing pages and blog.
+  It includes an overview, a first-conversation walkthrough, navigation, and local search.
+- Thirteen published guides are generated at build time from this repository's canonical
+  Markdown files; the other two pages are authored in `documentation/src/content/docs/`.
+  Repository-relative links resolve to a published guide or the source file on GitHub's `beta`
+  branch. The export copies only the `/docs` subtree and entry point into an existing static
+  website output, then merges documentation URLs into its sitemap.
+
 ## Conversation sources and Teams names
 
 - Conversations has an independent source filter: All sources, Google Chat, Slack, or Teams.
