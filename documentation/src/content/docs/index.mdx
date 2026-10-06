@@ -1,0 +1,36 @@
+---
+title: Welcome to ChannelGate
+description: Learn every feature, configure your deployment, and put your team's agents to work.
+tableOfContents: false
+---
+
+import { CardGrid, LinkCard } from '@astrojs/starlight/components';
+
+<div className="handbook-intro"><span className="handbook-eyebrow">THE CHANNELGATE HANDBOOK</span><p className="handbook-lead">Everything your team needs to work with agents in chat.</p></div>
+
+ChannelGate brings coding agents into Slack, Microsoft Teams, and Google Chat. Your deployment runs on your Linux infrastructure, with a separate workspace, container, and persistent memory for each conversation. Each thread keeps its own agent session.
+
+Start with a walkthrough, explore a feature, or find the setting you need. Microsoft Teams and Google Chat are currently in Beta.
+
+<CardGrid>
+  <LinkCard title="Get started" description="Install ChannelGate and complete your first useful conversation." href="/docs/getting-started" />
+  <LinkCard title="Explore every feature" description="Learn how workspaces, agents, skills, integrations, and automation work." href="/docs/features" />
+  <LinkCard title="Configure your deployment" description="Find gateway defaults, channel settings, account connections, and access controls." href="/docs/configuration" />
+  <LinkCard title="Operate with confidence" description="Monitor your instance, maintain the runtime, and plan backups and updates." href="/docs/features/admin-dashboard" />
+</CardGrid>
+
+See the [complete functionality map](/docs/functionality) for coverage across chat, agent execution, administration, and operations. The [control reference](/docs/controls) documents exact tool names and inputs.
+
+## Find your way
+
+**Working with agents?** Start with [conversations](/docs/features/conversations), [threads and sessions](/docs/features/threads-and-sessions), and [shared workspaces](/docs/features/shared-workspaces).
+
+**Giving agents context and tools?** Read [persistent memory](/docs/features/memory), [skills](/docs/features/skills), [connected accounts](/docs/features/connected-accounts), and [MCP tools](/docs/features/mcp).
+
+**Managing a deployment?** Follow [installation](/docs/installation), [gateway settings](/docs/configuration/gateway-settings), and [channel configuration](/docs/configuration/channel-settings).
+
+**Understanding access?** Review [modes and permissions](/docs/features/permissions), [approvals](/docs/features/approvals), [container isolation](/docs/features/container-isolation), and [network policy](/docs/configuration/network-policy).
+
+:::tip[One page, one topic]
+Each feature has its own guide with practical steps, examples, configuration links, and limits. The **Technical reference** section keeps the longer installation, operations, compatibility, and licensing documents available alongside the handbook.
+:::

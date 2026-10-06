@@ -27,6 +27,9 @@ two_segments="no"
 subagents="no"
 transient_times=0
 capacity_plain="no"
+capacity_after_tool="no"
+capacity_always="no"
+capacity_empty="no"
 transient_after_tool="no"
 reject_model="no"
 reject_all_models="no"
@@ -60,6 +63,9 @@ for arg in "$@"; do
     *CODEX_STUB_TRANSIENT_TWICE*) transient_times=2 ;;
     *CODEX_STUB_TRANSIENT_ALWAYS*) transient_times=999 ;;
     *CODEX_STUB_CAPACITY_PLAIN*) capacity_plain="yes" ;;
+    *CODEX_STUB_CAPACITY_AFTER_TOOL*) capacity_after_tool="yes" ;;
+    *CODEX_STUB_CAPACITY_ALWAYS*) capacity_after_tool="yes"; capacity_always="yes" ;;
+    *CODEX_STUB_CAPACITY_EMPTY*) capacity_after_tool="yes"; capacity_empty="yes" ;;
     *CODEX_STUB_TRANSIENT_AFTER_TOOL*) transient_after_tool="yes" ;;
     *CODEX_STUB_REJECT_MODEL_BODY*) reject_model_body="yes" ;;
     *CODEX_STUB_REJECT_ALL_MODELS_BODY*) reject_all_models_body="yes" ;;
@@ -175,6 +181,25 @@ fi
 if [ "$capacity_plain" = "yes" ]; then
   printf '%s\n' '{"type":"turn.failed","error":"Selected model is at capacity. Please try a different model."}'
   exit 1
+fi
+if [ "$capacity_after_tool" = "yes" ]; then
+  printf '%s\n' '{"type":"thread.started","thread_id":"codex-stub-capacity-session"}'
+  printf '%s\n' '{"type":"item.started","item":{"id":"capacity-tool","type":"command_execution","command":"already-ran"}}'
+  count=$(tr -dc 0-9 < .cg-stub-capacity-work 2>/dev/null); count=${count:-0}
+  echo $((count + 1)) > .cg-stub-capacity-work
+  if [ "$capacity_always" = "yes" ]; then echo yes > .cg-stub-capacity-always; fi
+  if [ "$capacity_empty" = "yes" ]; then echo yes > .cg-stub-capacity-empty; fi
+  printf '%s\n' '{"type":"turn.failed","error":"Selected model is at capacity. Please try a different model."}'
+  exit 1
+fi
+if [ "$resume" = "yes" ] && [ -f .cg-stub-capacity-always ]; then
+  printf '%s\n' '{"type":"turn.failed","error":"Selected model is at capacity. Please try a different model."}'
+  exit 1
+fi
+if [ "$resume" = "yes" ] && [ -f .cg-stub-capacity-empty ]; then
+  printf '%s\n' '{"type":"thread.started","thread_id":"codex-stub-capacity-session"}'
+  printf '%s\n' '{"type":"turn.completed","usage":{"input_tokens":0,"output_tokens":0}}'
+  exit 0
 fi
 # The same outage AFTER a tool ran: the turn may have mutated something, so it must NOT be retried.
 if [ "$transient_after_tool" = "yes" ]; then

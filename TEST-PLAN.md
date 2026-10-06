@@ -8,6 +8,138 @@
 - [ ] Live: In a channel restricted to admin runtime changes, verify a non-admin's `@agent :astra task` is refused and leaves the thread runtime unchanged. Verify an unknown name is refused. In a channel with its own Codex login, verify a Claude shortcut is refused.
 - [ ] Live: Run the reverse engine path with `@agent :opus task` as a new root message and `@agent :astra` within that thread, confirming the Codex answer retains earlier context. Check both engines' recorded model and effort (the shortcut clears a previous effort pin).
 
+## Complete functionality handbook (2026-10-06)
+
+- [x] Inventory reconciliation: all 45 functional areas map to detailed guides; 106 feature
+  guides grouped into 12 categories, 13 configuration guides, and 13 control references.
+  All 104 gateway plus 10 external-library registrations are documented exactly once. This is
+  an inventory/source-registration gate, not an automated semantic proof of every behavior.
+- [x] Independent source review: knowledge/execution/operations authors cross-reviewed the
+  other scopes, including actual tool schemas, authority, UI paths, limits and Beta/optional
+  statuses. Removed obsolete 12,000-character background-report cap; corrected Skills → Sync
+  settings navigation, source-form choices, external usage dry-run and sticky-engine recovery.
+  Late images/voice/canvas guides received independent source review.
+- [x] Static check: 777 JavaScript files passed syntax, identifier, secret-write and whitespace
+  checks. The documentation lockfile is unchanged; the previous high-severity dependency
+  audit remains applicable (10 moderate transitive findings; no high/critical findings).
+- [x] Final build and export: all 151 page routes, canonical URLs, headings, persistent sidebar
+  and search/assets passed; 26,792 internal links/anchors checked. Website-preserving export
+  regression passed, including sitemap idempotence and validation before writes.
+- [x] Local browser: functionality map, nested control guide, active sidebar and search return
+  correct guides; 390×844 menu/themes usable, document width 390 without horizontal overflow.
+- [x] Staged secret scan: 1,099 files/blobs checked; authored pages, schema examples and CI
+  updates contain no detected secrets.
+- [x] Existing-site preview: deployment `dpl_13PjoVqsJ7mcM9qw1WPbw96VZ3mV` passed all
+  151 routes, CSS/Pagefind, unique 151-entry docs sitemap and license PEM endpoint (200). All
+  77 non-sitemap original static website files remain unchanged; six website/blog/RSS responses
+  matched the recovered source (excluding Vercel preview toolbar injection). The automatic
+  remote build also checks source-registration coverage. Production remained
+  `dpl_9jr56xsg2dothGHQhFLFQkZrMoyb` before promotion.
+- [x] Production: Ready deployment `dpl_Fh6a8Nf6Vxfm3gx6WAHC1a5Pnjd5` is aliased to
+  channelgate.dev and www. All 151 page responses passed canonical/sidebar checks; CSS,
+  Pagefind, unique 151-entry docs sitemap and license PEM returned 200. Six original website/
+  blog/RSS responses match source bytes exactly. Live browser shows all 45 mapped areas,
+  search results, theme controls, and mobile navigation without overflow or console errors.
+- This documentation/CI slice changes no gateway runtime and does not promote a stable release
+  or claim new live Claude/Codex acceptance.
+
+## Feature and configuration handbook expansion (2026-10-06)
+
+- [x] Source coverage and cross-review: dedicated user guides cover conversations, threads,
+  workspace/files, steering, questions, instructions, session recovery, engines/models,
+  memory, skills/plugins, accounts/MCP/secrets, access and approvals, network/container/host/SSH
+  boundaries, chat platforms, schedules, background jobs, run API and operations. The coverage
+  review added native report artifacts, Google Drive workspace sync and thread loops, bringing
+  the feature directory to 45 guides. Thirteen configuration guides cover the supported scopes
+  and settings. Teams and Google Chat are marked Beta; privileged and optional capabilities
+  keep their actual admission/setup requirements. Peer review checks claims against current
+  implementation rather than copying stale UI explanatory text.
+- [x] Navigation source review: one registry drives both directory cards and sidebar groups;
+  Start here includes welcome, walkthrough, installation and both directory pages. Welcome
+  uses the article layout with persistent navigation. Existing reference routes remain present.
+- [x] Intermediate local build: the initial expanded 72-page candidate passed Starlight route,
+  canonical URL, heading, sidebar, search-index and 7,029 internal-link checks. This result
+  precedes the final three coverage pages and is not evidence for the full 75-page candidate.
+- [x] Final local build: `cd documentation && npm run build` produced all 75 handbook and
+  retained-reference routes, one heading per page, persistent sidebar, production canonical
+  URLs, bundled assets and Pagefind. Verified 7,540 internal links and heading anchors.
+- [x] Export regression: `cd documentation && npm test` preserved existing home/blog/RSS
+  and API configuration while replacing docs sitemap entries without stale/duplicate URLs.
+- [x] Local browser: open welcome, feature directory and configuration directory; follow a
+  feature into its configuration link and retain `/docs` navigation. Verify current-page state,
+  previous/next article controls, search results, themes, and mobile navigation. At 390×844
+  inspect horizontal overflow, menu usability, and browser console errors.
+- [x] Combined Vercel preview: all 75 routes, nested configuration/features, assets, search and
+  sitemap passed on deployment `dpl_HfxoR39FU2Ep5G8fTEykCG6VFjYx`. All 77 original non-sitemap website files
+  were unchanged locally; six website/blog/RSS responses matched the recovered source in preview
+  (excluding Vercel toolbar injection). Existing API rewrites and the license PEM response passed. The production ID
+  was still `dpl_WFgAFJozrUktbCwWypZb4s1qyzSp` immediately before promotion.
+- [x] Automatic website build: the existing project build command invokes the public
+  `documentation/scripts/vercel-build.sh`; Vercel cloned public beta into a temporary checkout,
+  built 75 pages and checked 7,540 links, then exported only docs and sitemap into the static
+  website. The checkout is removed; no private website source was committed publicly.
+- [x] Production: promoted the verified preview; Vercel production deployment
+  `dpl_9jr56xsg2dothGHQhFLFQkZrMoyb` is Ready and aliased to `channelgate.dev`. All 75
+  page responses passed canonical/sidebar checks; CSS, Pagefind, unique 75-entry docs sitemap
+  and license PEM returned 200. Six main website/blog/RSS routes matched source bytes exactly.
+  Live browser verified the welcome sidebar, directory navigation, search results, themes and
+  mobile menu without horizontal overflow or console errors.
+- [x] Source gates: static check passed (777 JavaScript files); staged-file secret scan
+  passed (1,020 files/blobs). Documentation audit at the high-severity gate passed; it reports
+  10 moderate transitive findings from Expressive Code/PostCSS, no high/critical findings. This handbook-only change does not claim new live Claude/Codex
+  runtime acceptance or stable-release promotion.
+
+## Public documentation on the existing website (2026-10-06)
+
+- [x] Local build: `cd documentation && npm run build` synchronizes 13 canonical Markdown
+  guides and two authored pages, generating Starlight HTML, bundled assets and Pagefind.
+  `scripts/check-output.mjs` verifies all 15 canonical page routes and 819 internal links,
+  including heading fragments.
+- [x] Export regression: `cd documentation && npm test` checks that existing home, blog,
+  RSS and API routing files are preserved; docs sitemap entries replace obsolete/duplicate
+  entries exactly once; unsupported sitemap types fail before writes; literal Markdown
+  examples are not rewritten as source links.
+- [x] Local browser: home → Installation stays on `/docs/installation`; search for
+  `rootless Podman` returns a prerequisite heading and navigates to its anchor. Theme
+  changes and the mobile sidebar work. At 390×844, document width equals viewport width;
+  no browser errors were recorded.
+- [x] Vercel preview: all 15 docs routes return Starlight HTML with production canonical
+  URLs; CSS, Pagefind, sitemap and the license public-key API return 200. Six existing
+  website/blog responses match the current site's source after excluding Vercel's preview
+  toolbar. The combined deployment input preserves all 77 original non-docs/sitemap files
+  byte for byte, including all blog files and `vercel.json` API rewrites.
+- [x] Production: https://channelgate.dev/docs and all 14 other docs routes return 200
+  with canonical URLs. Existing home, blog, article, RSS, contact and licensing responses
+  are unchanged. The sitemap has one `/docs` entry plus the nested routes, and the license
+  public-key endpoint returns its PEM. Browser navigation to Installation stays on the
+  website; Pagefind search for `rootless Podman` navigates to
+  `/docs/installation#1-prerequisites`. The mobile menu and theme controls work at 390×844
+  without horizontal overflow or browser errors. Published via the existing Vercel project
+  `channelgate` (production deployment `dpl_WFgAFJozrUktbCwWypZb4s1qyzSp`).
+- [x] Source gates: root static check passes (777 JS files); staged-file secret scan is
+  clean; documentation dependency audit has no high/critical advisories (10 inherited
+  moderate advisories in the code-block formatter dependency chain).
+
+## Conversation sources and Teams names (2026-10-06)
+
+- [x] Automated: `test/conversation-source-names.test.js` covers channel/DM source classification,
+  legacy Slack rows, Teams payload names, directory lookup/cache/retry, validated regional URLs,
+  default General, and refreshing names without changing slugs or settings.
+- [x] Browser acceptance (engine-independent; no engine is invoked): serve the admin UI with
+  fixture Slack, Google Chat and Teams channels and DMs. Select each Source and each
+  All / Channels / DMs choice, type a matching/nonmatching search, then clear both filters.
+  Pass: only the intersection appears; reset restores all rows; selecting a visible row keeps
+  its original detail settings. Passed actual UI with mocked API fixtures: four channels and
+  three DMs, all source × kind combinations, search, empty states and reset at 1440/800/390px;
+  no page errors or state-changing requests. Qualified Teams/Google ID deep links remain a
+  separate preexisting routing limitation; this change preserves IDs and slugs.
+- [ ] Teams naming acceptance (engine-independent; normalization/directory/provisioning precede
+  engine selection): use a verified channel activity fixture with team `Delivery Team`, channel
+  `General`, and a native reply-chain ID. Repeat with missing names and bot directory responses,
+  then a directory 403. Pass: list and detail show `#delivery-team-general`; native ID/thread and
+  work-folder slug remain stable; failed lookup preserves a good name. A real Teams directory
+  integration check remains a release gate, using a disposable Teams channel and a bot mention.
+
 ## Runtime history transfer and Google Chat failure recovery (2026-10-02)
 
 - [x] Automated: `test/session-carry.test.js`, `test/container-carry.test.js`,
@@ -4670,6 +4802,19 @@ placeholders and `--network none`).
       "Reconnecting… (unexpected status 429 …)" progress line is transient (never a limit), and
       from stderr (`source: "stderr"`) only the explicit limit/auth phrasings count; the knobs are
       read per turn (clamped, duration syntax, unparseable → default).
+- [x] Codex capacity continuation (`test/transient-retry.test.js`): the fixture emits a session id,
+      starts a tool once, and returns the plain-text capacity verdict. Require a single new turn
+      that resumes that id, answers on another catalog model when the model is not pinned, leaves
+      the tool counter at one, writes one `run_capacity_continuation` event, and writes no
+      `run_transient_retry` event. Pin `gpt-6-sol` on the thread and require continuation on that
+      model. Make the resumed turn fail too and require one bounded continuation with the second
+      provider error surfaced. A generic 503 after tool use still never replays the prompt.
+- [ ] Live Codex capacity acceptance (`ENG-13` in the private QA registry): in a disposable channel with an available alternate Codex
+      model, cause a capacity refusal after a harmless completed tool action in a real Codex
+      session. Require the same session id on the continuation, no duplicate tool action, a
+      visible continuation notice and a final answer on the alternate model. Repeat with a pinned
+      model and require no model switch. If the provider does not offer a reproducible capacity
+      fixture, record this gate as unexecuted; a stub result is not a live pass.
 - [x] Integration: a channel whose PRIMARY harness is Codex hits its usage limit and the turn is
       answered by Claude (reason note, thread transcript replayed into the fresh session,
       `fellBack`/`fallbackFrom` set); the same limit on stderr behaves identically; a limit that
@@ -5909,6 +6054,17 @@ none` for its cases and live gates. Kept as history.
       two surfaces.
 
 ### Scheduling & reminders — time zone, label, acknowledgment + escalation (Slice 8.9)
+- [x] Unit: `interval_days:14` creates an exact fixed interval, the scheduler runs once when due,
+      advances from the planned due time, and does not replay missed periods. `dm-on-match` makes
+      no start or routine post, while a `FOUND:` result goes only to the creator's DM
+      (`test/schedule-conditional.test.js`).
+- [ ] Live (Claude and Codex): in a disposable channel, create a two-week conditional check with
+      `delivery:"dm-on-match"`, `match_prefix:"FOUND:"`, and a prompt whose first run returns
+      `NO_UPDATE`. Move its due time forward using the test database, fire it, and require no
+      channel or DM post. Then return `FOUND: <unique test URL>` from the next run and require
+      exactly one creator DM, no channel post, and a disabled schedule to avoid repeat alerts. Inspect status
+      after a controlled failure; require an error recorded without a Slack post.
+      Private QA cases: AUT-QUIET-01-C and AUT-QUIET-01-X.
 - [x] Unit: the daemon's zone is resolved from `TZ` (POSIX `:Zone` spelling included) or the
       platform, `zonedStamp` renders "2026-09-08 09:15 Europe/Bucharest (06:15 UTC)" (full UTC date
       when the two calendars disagree, no parenthetical on a UTC daemon, no throw on an unusable
@@ -7621,7 +7777,7 @@ companion skill; every change is announced in the reply.
       checks, atomic state transitions, terminal idempotency, and strict non-secret public status.
 - [x] Unit: configured Claude/Codex smoke uses a disposable confined container with memory/dreaming off,
       no MCP/bypass, a fixed exact response, the shared stall watchdog, and unconditional cleanup.
-      Engines that passed baseline must pass after restart. Internal route requires loopback plus the daemon secret.
+      This remains a separate diagnostic, not an update gate. Internal route requires loopback plus the daemon secret.
 - [x] Unit: disk sizing covers dependency/recovery staging plus explicit missing-Whisper space;
       high/critical audit counts block while moderate counts are preserved; readiness requires a
       replacement instance on the expected boot revision, container runtime, and prior Slack connectivity.
@@ -7638,15 +7794,15 @@ companion skill; every change is announced in the reply.
       active transaction and no second `npm ci`, restart, or rollback occurs.
 - [ ] **Preflight refusal is non-mutating:** separately force a dirty tracked tree, inaccessible Git
       upstream, divergent branch, malformed settings, insufficient calculated disk, missing active
-      service, and failing baseline Claude smoke. Each returns `refused`; Git revision and
+      service, and unhealthy daemon identity. Each returns `refused`; Git revision and
       dependencies remain unchanged.
 - [ ] **Candidate success:** with origin one safe commit ahead, start from `/update`. The dashboard
       follows the same transaction id through phases; the candidate restarts on the expected
-      revision; Slack reconnects; the real gated Claude smoke passes; the requesting thread receives
+      revision; Slack reconnects; local image executable checks pass; the requesting thread receives
       exactly one `updated` message; a later restart does not repost it.
-- [ ] **Automatic rollback:** inject a candidate-only post-restart smoke failure. The checkout and
+- [ ] **Automatic rollback:** inject a candidate-only post-restart readiness failure. The checkout and
       lockfile dependencies return to the recorded old revision, the service restarts again, the
-      same health/smoke gate passes, status is `rolled_back`, and Slack/Admin report the candidate
+      same daemon readiness gate passes, status is `rolled_back`, and Slack/Admin report the candidate
       error without claiming success.
 - [ ] **Rollback failure:** also break restored-build readiness. Status is `failed` with separate
       candidate and rollback summaries; `update-backups/<transaction>/` remains available for
@@ -7665,6 +7821,18 @@ companion skill; every change is announced in the reply.
       a box whose daemon is a USER unit at `~/.config/systemd/user/channelgate.service`. Systemd
       signals only the validated positive `MainPID` (the macOS launchd leg retired 2026-09-03 —
       Linux only).
+
+- [x] Regression: managed launcher invokes the host Bash entry point with credentials only in the
+      inherited environment; no container engine/provider endpoint is called by the updater.
+- [x] Regression: same-revision updates snapshot, reinstall exact dependencies, audit, test,
+      provision, inspect/rebuild the image and restart; an install failure rolls back even when Git
+      did not move. Restart signals only the safe MainPID with the restart signal for the detected service scope and restart policy.
+- [ ] **Host update repair (engine-independent):** on an isolated systemd test install with a scratch
+      runtime, disconnect provider logins and remove a fixture dependency. Click Update, or invoke
+      `npm run update`. Pass: one Bash transaction repairs the dependency, checks local image
+      binaries without network/credentials, restarts on the same/upstream revision and returns
+      updated. Repeat with broken image build: result names the image warning, never full success.
+      No Slack account is used by this fixture; bot connectivity comes from the daemon health data.
 
 ### Codex usage accounting and API-equivalent rates
 - [ ] Settings → Behavior shows the Codex/OpenAI rates table prefilled with the rates verified
@@ -8056,7 +8224,7 @@ the suite runs as an enterprise deployment because it holds a license it actuall
       the restart; an authentication failure, a missing CLI or an unexpected answer still fails it
       (`test/update-smoke.test.js`).
 
-- Both Claude and Codex fixtures: configure each login, invoke the internal authenticated update smoke route, require exact CG_UPDATE_SMOKE_OK responses per engine. Verify isolated target, no bypass/MCP injection, no host engine child, and removal of the ephemeral container, HOME volume and work folders. Invalid configured credentials must fail; absent credentials must be explicitly skipped; zero probes fails.
+- Both Claude and Codex fixtures: configure each login, invoke the internal authenticated update smoke route, require exact CG_UPDATE_SMOKE_OK responses per engine. Verify the synthetic channel has a bound ID and is live only during the probe so the Codex relay can swap through the egress proxy; its relay must not receive a `channel-idle` refusal. Verify isolated target, no bypass/MCP injection, no host engine child, and removal of the ephemeral container, HOME volume and work folders. Invalid configured credentials must fail; absent credentials must be explicitly skipped; zero probes fails.
 - Image recovery: build old pins, change the desired Codex pin without changing imageSpecVersion, make the first build fail, then run Update again on the same checkout revision. Require retry and matching built/desired source digest; a build exiting zero with stale labels fails verification. Existing channels retain HOME and adopt the new image when idle.
 - Admin container status: require actual built and desired Claude/Codex versions, rebuild-needed status, and count of containers awaiting adoption. A custom image reference must never report a successful default-image rebuild.
 - Live acceptance fixtures: private disposable `update-smoke-<uuid>` container per gateway; authenticated local IPC only, no Slack posting. Run both engine cases on each deployment. Airtable cases must mirror these actions and exact pass evidence using the requester's personal connection.
@@ -8457,3 +8625,20 @@ Live (unexecuted; repeat with Claude and Codex): mention the bot with `/settings
   same thread and a fresh thread; both must report absent. Preserve exact prompts, configured
   engine, safe boolean tool output and thread evidence. Restore fixture state. Local handler
   regressions do not claim live Slack-client or dual-engine acceptance.
+
+### Host Bash update and repair acceptance (2026-10-06)
+
+- [x] Engine-independent live systemd fixture: `node scripts/check-update-service-survival.mjs`.
+  Disposable parent/child user units only; the shipped launcher invokes `bash scripts/update.sh`
+  with private stdin environment. Actual `defaultRestart` signals the fixture MainPID with
+  SIGUSR2 under Restart=on-failure; parent records restart exit 1, PID changes, and updater child
+  survives in its own cgroup after the original wrapper exits. Synthetic token is never logged.
+- [x] Isolated regression: same-revision dependency repair runs snapshot/install/audit/tests/
+  provisioning/image/restart/readiness; failed installation restores and verifies the prior
+  revision. Enterprise UI exposes Repair gateway at zero commits behind. Production provider
+  authentication is never consulted by update gates.
+- [x] Live image executable probe: installed runtime Node/Claude/Codex `--version` succeeds in a
+  disposable network-off, read-only container without host mounts or credentials.
+- [ ] Complete deployed candidate update: exercise UI start through final authenticated new
+  instance/revision/runtime/Slack reconnect status on an approved release; unit/fixture evidence
+  above does not claim this production transaction ran.

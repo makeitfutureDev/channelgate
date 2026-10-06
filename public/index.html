@@ -82,6 +82,15 @@
               <button type="button" data-seg="channels">Channels</button>
               <button type="button" data-seg="dms">DMs</button>
             </div>
+            <div class="conv-source-filter">
+              <label for="conv-source">Source</label>
+              <select id="conv-source">
+                <option value="all">All sources</option>
+                <option value="googlechat">Google Chat</option>
+                <option value="slack">Slack</option>
+                <option value="msteams">Teams</option>
+              </select>
+            </div>
             <div id="channel-list" class="list">Loading…</div>
           </div>
           <div class="detail-pane" id="channel-detail">
@@ -1102,7 +1111,7 @@
           </fieldset>
           <label class="field"><span>Notification</span><select id="schedule-modal-notify"><option value="channel">Notify channel</option><option value="user">Notify person</option><option value="none">Quiet</option></select></label>
           <label id="schedule-modal-notify-user-wrap" class="field"><span>Person ID</span><input id="schedule-modal-notify-user" type="text" placeholder="U…" /></label>
-          <label id="schedule-modal-delivery-wrap" class="field schedule-wide"><span>Delivery</span><select id="schedule-modal-delivery"><option value="channel">Post directly in channel</option><option value="standard">Start a new thread for every run</option><option value="daily-thread">Reuse one thread per day</option></select></label>
+          <label id="schedule-modal-delivery-wrap" class="field schedule-wide"><span>Delivery</span><select id="schedule-modal-delivery"><option value="channel">Post directly in channel</option><option value="standard">Start a new thread for every run</option><option value="daily-thread">Reuse one thread per day</option><option value="dm-on-match">DM creator only when result matches</option></select></label>
         </div>
         <label class="field schedule-prompt-field">
           <span>Prompt</span>

@@ -1,6 +1,7 @@
 // Graph supplies Entra IDs; the Bot Framework roster is the authority for the addressable
 // reactor identity. Never run under the original author's permissions on a reaction.
 import { createHash } from "node:crypto";
+import { activityConversationName } from "./conversation-name.js";
 import { makeInbound } from "../inbound.js";
 import { isRobotReaction, quotedReplyId, stripMentionTags } from "./activity.js";
 
@@ -45,7 +46,7 @@ export async function normalizeGraphEvents(message, row, { botId, resolveMember,
     const eventId = digest([row.conversationId, message.id, trigger, actorId, stamp]);
     const reaction = trigger === "reaction";
     result.push(makeInbound({
-      platform: "msteams", conversationId: conversation.id, conversationName: conversation.name,
+      platform: "msteams", conversationId: conversation.id, conversationName: activityConversationName(context),
       kind, threadKey: kind === "channel" ? String(message.replyToId || message.id) : "",
       messageId: reaction ? `reaction:${eventId}` : String(message.id),
       replyToId: reaction ? String(message.id) : quotedReplyId({ text: message.body?.content }),
@@ -55,7 +56,7 @@ export async function normalizeGraphEvents(message, row, { botId, resolveMember,
       // Graph attachment retrieval has a separate permission path. Preserve descriptors so the
       // shared attachment sink reports unavailable files instead of silently dropping them.
       attachments: (message.attachments || []).map(file => ({ name: String(file.name || "attachment"), contentType: String(file.contentType || "application/octet-stream"), download: null, ...(file.contentUrl ? { reference: { contentUrl: file.contentUrl } } : {}) })),
-      raw: { eventId, aadObjectId: actorId, tenantId: context.channelData?.tenant?.id || "",
+      raw: { context, eventId, aadObjectId: actorId, tenantId: context.channelData?.tenant?.id || "",
         serviceUrl: context.serviceUrl || "", teamId: context.channelData?.team?.aadGroupId || "" },
     }));
   }

@@ -20,6 +20,22 @@ product overview.
 
 - Gateway Settings now lets admins map short names to an engine and model. In Slack, select the bot mention and type `:astra` after Slack's inserted space (`@agent :astra`) to pin that model to a thread, with an optional task after the name. Mappings can be updated as models change.
 
+- Conversations can filter by Google Chat, Slack or Teams alongside search and Channels / DMs.
+  Teams channel names now use `#team-channel`, resolving missing names through the bot directory
+  on incoming messages while preserving conversation IDs, work folders and settings.
+
+- Update runs the host Bash entry point, repairs exact dependencies and provisioning even when code
+  is current, checks image executables without provider sign-in, and uses a bounded graceful restart
+  with a longer startup readiness window. Provider authentication no longer blocks gateway repairs.
+
+- Codex now continues a partially completed turn in the same session after a model-capacity
+  refusal. It avoids rerunning completed tool actions and tries another model unless the thread's
+  model was explicitly pinned.
+- Update smoke now binds and marks its disposable channel live for the duration of the probe,
+  allowing the Codex login relay through the egress proxy and releasing it on cleanup.
+- Scheduled checks can run every fixed number of days and DM their creator only when the result
+  begins with a configured match prefix. Routine checks make no Slack posts.
+
 - Add `@agent /fork <new message>` for Claude and Codex sessions in Slack. It starts a separate
   engine branch in a linked new thread and runs the supplied message there.
 - Fix a history-transfer deadlock when `/sudo` crosses a container whose mounts need recreation.
@@ -28,6 +44,8 @@ product overview.
 - Google Chat now reports a fatal Pub/Sub receiver error as a failed connection, stops intake,
   and gives an actionable Subscriber-role hint for permission errors. Reconnect restores status
   without allowing an old connection's late error to overwrite it.
+
+## 0.6.1 — 2026-10-06
 
 - Channel Runtime now shows only engine and model controls for the shared login. Dedicated Codex
   sign-in uses a method dropdown: choosing ChatGPT starts the device flow and clicking its code

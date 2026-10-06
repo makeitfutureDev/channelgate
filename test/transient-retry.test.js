@@ -3,6 +3,7 @@
 // usage-limit failures that belong to cross-engine failover. Drives the real orchestrator against
 // the stub CLIs, which fail the first N invocations of a folder and then answer.
 import path from "node:path";
+import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
 import assert from "node:assert/strict";
@@ -21,8 +22,10 @@ process.env.PATH = `${fixtureBin}${path.delimiter}${process.env.PATH || ""}`;
 process.env.SESSION_KEEPALIVE = "0";
 
 const { setUser, upsertChannelEntry, saveChannelMeta } = await import("../src/config/store.js");
+const { cleanWorkspaceFolder } = await import("../src/config/paths.js");
 const { saveSettings } = await import("../src/config/settings.js");
-const { runMessage, resetEngineCooldowns, transientProviderFailure, transientRetryAttempts, transientRetryDelayMs } = await import("../src/gateway/run.js");
+const { runMessage, resetEngineCooldowns, transientProviderFailure, transientRetryAttempts, transientRetryDelayMs, codexCapacityContinuation } = await import("../src/gateway/run.js");
+const { setThreadModel } = await import("../src/gateway/thread-engine.js");
 const { classifyCodexFailure } = await import("../src/engines/codex.js");
 const { claudeProviderError } = await import("../src/engines/stream.js");
 const { PersistentClaudeSession } = await import("../src/engines/persistent-session.js");
@@ -110,6 +113,75 @@ test("only a replay-safe transient failure of the engine that ran is retried", (
   assert.equal(transientProviderFailure(codex("transient", false), "codex"), "", "a turn that may have run a tool is never replayed");
   assert.equal(transientProviderFailure(codex("transient"), "claude"), "", "the error must come from the engine that ran");
   assert.equal(transientProviderFailure(new Error("plain"), "codex"), "");
+});
+
+test("only a partial-work Codex capacity verdict with a session can continue", () => {
+  const details = { engine: "codex", providerError: true, providerKind: "transient", replaySafe: false, sessionId: "session", toolUseCount: 1 };
+  assert.equal(codexCapacityContinuation({ message: "Selected model is at capacity. Please try a different model.", details }), true);
+  assert.equal(codexCapacityContinuation({ message: "unexpected status 503 Service Unavailable", details }), false);
+  assert.equal(codexCapacityContinuation({ message: "Selected model is at capacity", details: { ...details, sessionId: "" } }), false);
+  assert.equal(codexCapacityContinuation({ message: "Selected model is at capacity", details: { ...details, replaySafe: true } }), false);
+});
+
+test("Codex capacity after a tool resumes its session with another model without rerunning the tool", async () => {
+  resetEngineCooldowns();
+  saveSettings({ engine: "codex", defaultCodexModel: "gpt-6-sol", engineFallback: true, engineEnabled: { claude: true, codex: true }, composioMode: "personal" });
+  await setUser("U_TR_CONTINUE", { name: "Capacity Continuation", approved: true, isAdmin: false });
+  const entry = await channel("D_TR_CONTINUE", "capacity-continuation", "codex");
+
+  const result = await turn("D_TR_CONTINUE", "U_TR_CONTINUE", "CODEX_STUB_CAPACITY_AFTER_TOOL", "1903.004");
+  assert.equal(result.engine, "codex");
+  assert.equal(result.model, "gpt-6-astra");
+  assert.match(result.content, /continuing the same session with gpt-6-astra/);
+  assert.match(result.content, /resume=yes.*model=gpt-6-astra/);
+  assert.equal((await readFile(path.join(result.cwd, ".cg-stub-capacity-work"), "utf8")).trim(), "1");
+  assert.equal(retryEvents(entry.slug).length, 0, "the original prompt was never replayed");
+  assert.equal(readEvents({ limit: 100 }).filter((event) => event.event === "run_capacity_continuation" && event.slug === entry.slug).length, 1);
+});
+
+test("a user-pinned Codex model stays pinned during capacity continuation", async () => {
+  resetEngineCooldowns();
+  saveSettings({ engine: "codex", defaultCodexModel: "gpt-6-sol", engineFallback: true, engineEnabled: { claude: true, codex: true }, composioMode: "personal" });
+  await setUser("U_TR_PINNED", { name: "Pinned Continuation", approved: true, isAdmin: false });
+  const entry = await channel("D_TR_PINNED", "capacity-pinned", "codex");
+  await setThreadModel(entry.slug, "1903.005", "gpt-6-sol");
+
+  const result = await turn("D_TR_PINNED", "U_TR_PINNED", "CODEX_STUB_CAPACITY_AFTER_TOOL", "1903.005");
+  assert.equal(result.model, "gpt-6-sol");
+  assert.match(result.content, /resume=yes.*model=gpt-6-sol/);
+  assert.equal((await readFile(path.join(result.cwd, ".cg-stub-capacity-work"), "utf8")).trim(), "1");
+});
+
+test("failed capacity continuation stops after one new turn and preserves its error", async () => {
+  resetEngineCooldowns();
+  saveSettings({ engine: "codex", defaultCodexModel: "gpt-6-sol", engineFallback: true, engineEnabled: { claude: true, codex: true }, composioMode: "personal" });
+  await setUser("U_TR_STILL_FULL", { name: "Full Continuation", approved: true, isAdmin: false });
+  const entry = await channel("D_TR_STILL_FULL", "capacity-still-full", "codex");
+
+  await assert.rejects(
+    turn("D_TR_STILL_FULL", "U_TR_STILL_FULL", "CODEX_STUB_CAPACITY_ALWAYS", "1903.006"),
+    (error) => {
+      assert.match(error.message, /Selected model is at capacity/);
+      assert.equal(error.details.capacityContinuation, true);
+      return true;
+    },
+  );
+  const folder = cleanWorkspaceFolder(entry.slug);
+  assert.equal((await readFile(path.join(folder, ".cg-stub-capacity-work"), "utf8")).trim(), "1");
+});
+
+test("an empty capacity continuation never heals by replaying the original request", async () => {
+  resetEngineCooldowns();
+  saveSettings({ engine: "codex", defaultCodexModel: "gpt-6-sol", engineFallback: true, engineEnabled: { claude: true, codex: true }, composioMode: "personal" });
+  await setUser("U_TR_EMPTY_CONTINUE", { name: "Empty Continuation", approved: true, isAdmin: false });
+  const entry = await channel("D_TR_EMPTY_CONTINUE", "capacity-empty", "codex");
+
+  await assert.rejects(
+    turn("D_TR_EMPTY_CONTINUE", "U_TR_EMPTY_CONTINUE", "CODEX_STUB_CAPACITY_EMPTY", "1903.007"),
+    (error) => error.details?.capacityContinuation === true && /returned no output/.test(error.message),
+  );
+  const folder = cleanWorkspaceFolder(entry.slug);
+  assert.equal((await readFile(path.join(folder, ".cg-stub-capacity-work"), "utf8")).trim(), "1");
 });
 
 test("Codex: two transient failures, then the answer — retried in place, the reply says so", async () => {

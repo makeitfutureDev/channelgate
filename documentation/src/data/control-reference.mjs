@@ -1,0 +1,15 @@
+export const controlPages = [
+  { slug: 'agent-interaction', label: 'Agents and human interaction', description: 'Background agents, shell jobs, progress, approvals, and questions.' },
+  { slug: 'knowledge-and-instructions', label: 'Memory and instructions', description: 'Search, retrieve, and maintain durable knowledge and standing rules.' },
+  { slug: 'mcp-connections', label: 'MCP connections', description: 'Discover, select, and remove engine-specific connections.' },
+  { slug: 'skills', label: 'Skill management', description: 'All catalog, grant, template, revision, source, and governance controls.' },
+  { slug: 'accounts-and-secrets', label: 'Accounts and secrets', description: 'Manage personal connector tokens and protected variables.' },
+  { slug: 'conversation-settings', label: 'Conversation and gateway settings', description: 'Modes, folders, Drive sync, VPN state, updates, and operating guides.' },
+  { slug: 'automation', label: 'Automation', description: 'Create, inspect, and delete schedules and reminders.' },
+  { slug: 'workspace-and-files', label: 'Workspace and file transfer', description: 'Bounded file inspection, Composio staging, and public links.' },
+  { slug: 'slack', label: 'Slack reports and history', description: 'Tables, charts, snippets, files, lists, and scoped history reads.' },
+  { slug: 'ssh', label: 'SSH access', description: 'Personal public keys, channel admission, and connection instructions.' },
+  { slug: 'database', label: 'Private database reads', description: 'Supported bounded operations on the provisioned channel database.' },
+  { slug: 'licensing', label: 'License management', description: 'Inspect state, activate a key, and remove it.' },
+  { slug: 'skills-library', label: 'External skills library', description: 'The separate scoped library service for other clients and gateways.' },
+];

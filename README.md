@@ -385,6 +385,11 @@ white-label — are described at
 
 ## Documentation
 
+Read the [public documentation](https://channelgate.dev/docs) for guided setup, operating
+instructions and searchable reference pages. The standalone Astro/Starlight build in
+[`documentation/`](./documentation/README.md) is designed for `/docs` alongside the existing
+website and blog; it generates its reference pages from the Markdown guides below.
+
 | Guide | What it covers |
 | --- | --- |
 | [Installation](./INSTALL.md) | Prerequisites, Slack app setup, engine credentials and systemd service installation |

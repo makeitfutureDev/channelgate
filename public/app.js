@@ -6,6 +6,8 @@ import { conversationKindForChannel, conversationRouteForPath, pathForConversati
 import {
   accessGrantSkillOptions,
   captureGrantMcpSelection,
+  conversationChannelName,
+  matchesConversationSource,
   changedSettingKeys,
   channelGuestAcceptedIds,
   channelGuestSavePatch,
@@ -57,6 +59,7 @@ const SETTINGS_NON_VALUE_KEYS = ["ok", "stale", "code", "error", "slack", "platf
 // Unified Conversations selection key: "ch:<channelId>" (channel) or "dm:<channelId>" (DM). One
 // key drives both list highlight + detail. (The User/Admin DM templates live under Settings now.)
 let selectedConv = null;
+let convSource = "all";
 let convFilter = "all"; // segmented control: all | channels | dms
 let CONV_COSTS = null; // { byId: {channelId→cost}, bySlug: {slug→cost} }; null until first (soft) fetch
 let convCostsFetched = false;
@@ -1478,7 +1481,8 @@ function renderConvList() {
   // Channels — sorted by name; capdot + profile label (+ network) sub-line; 30-day cost if known.
   if (showChannels) {
     const chans = CHANNELS
-      .filter((c) => !f || (c.name || "").toLowerCase().includes(f) || (c.slug || "").toLowerCase().includes(f))
+      .filter((c) => matchesConversationSource(c, convSource))
+      .filter((c) => !f || conversationChannelName(c).toLowerCase().includes(f) || (c.name || "").toLowerCase().includes(f) || (c.slug || "").toLowerCase().includes(f))
       .sort((a, b) => (a.name || a.slug || "").localeCompare(b.name || b.slug || "", undefined, { sensitivity: "base" }));
     const g = document.createElement("div");
     g.className = "list-group";
@@ -1490,13 +1494,14 @@ function renderConvList() {
       e.textContent = CHANNELS.length ? "No channels match." : "No channels yet — invite the bot and send a message.";
       list.appendChild(e);
     } else {
-      for (const c of chans) list.appendChild(convRow("ch:" + c.channelId, capColorOf(c.meta || {}), hashName(c.name || c.slug), capLabelOf(c.meta || {}), costFor(c.channelId, c.slug), c.workDirConflict));
+      for (const c of chans) list.appendChild(convRow("ch:" + c.channelId, capColorOf(c.meta || {}), conversationChannelName(c), capLabelOf(c.meta || {}), costFor(c.channelId, c.slug), c.workDirConflict));
     }
   }
 
   // Direct messages — capdot by the DM's effective capability; sub-line = template name.
   if (showDms) {
     const dmItems = DMS
+      .filter((d) => matchesConversationSource(d, convSource))
       .filter((d) => !f || (d.userName || "").toLowerCase().includes(f) || (d.dmUserId || "").toLowerCase().includes(f) || (d.slug || "").toLowerCase().includes(f))
       .sort((a, b) => (a.userName || a.slug || "").localeCompare(b.userName || b.slug || "", undefined, { sensitivity: "base" }));
     const g = document.createElement("div");
@@ -1982,7 +1987,7 @@ function renderChannelDetail(ch) {
   const meta = ch.meta || { allowedUsers: [], allowedMcps: [], skills: [], adminMode: false };
   const node = document.getElementById("channel-card").content.cloneNode(true);
   const card = node.querySelector(".conv-detail");
-  card.querySelector(".ch-name").textContent = hashName(ch.name || ch.slug);
+  card.querySelector(".ch-name").textContent = conversationChannelName(ch);
   card.querySelector(".ch-type").textContent = ch.type + (ch.isDM ? " · DM" : "");
   card.querySelector(".ch-slug").textContent = ch.slug;
 
@@ -2839,6 +2844,7 @@ function parseScheduleCron(cron) {
 
 function friendlySchedule(schedule) {
   if (schedule.once) return `Once · ${schedule.runAt ? new Date(schedule.runAt).toLocaleString() : "time unavailable"}`;
+  if (schedule.intervalDays) return `Every ${schedule.intervalDays} days · next ${schedule.runAt ? new Date(schedule.runAt).toLocaleString() : "time unavailable"}`;
   const parsed = parseScheduleCron(schedule.cron);
   const at = parsed.time ? ` at ${parsed.time}` : "";
   if (parsed.frequency === "daily") return `Daily${at}`;
@@ -2859,8 +2865,9 @@ function localDateTimeValue(value) {
 
 function syncScheduleTimingFields() {
   const once = Boolean(scheduleEditor?.schedule.once);
+  const interval = Boolean(scheduleEditor?.schedule.intervalDays);
   const frequency = document.getElementById("schedule-frequency").value;
-  document.getElementById("schedule-recurring-fields").hidden = once;
+  document.getElementById("schedule-recurring-fields").hidden = once || interval;
   document.getElementById("schedule-once-wrap").hidden = !once;
   document.getElementById("schedule-day-wrap").hidden = once || frequency !== "weekly";
   document.getElementById("schedule-month-day-wrap").hidden = once || frequency !== "monthly";
@@ -2893,6 +2900,7 @@ function openScheduleEditor(schedule) {
     scheduleDetail("Channel", schedule.channelName || schedule.slug || schedule.channelId),
     scheduleDetail("Type", schedule.kind === "reminder" ? "Reminder" : "Task"),
     scheduleDetail("Status", status),
+    ...(schedule.intervalDays ? [scheduleDetail("Timing", friendlySchedule(schedule))] : []),
   ].join("");
   document.getElementById("schedule-modal-description").value = schedule.description || "";
   document.getElementById("schedule-modal-enabled").checked = Boolean(schedule.enabled);
@@ -2912,6 +2920,7 @@ function openScheduleEditor(schedule) {
   const delivery = document.getElementById("schedule-modal-delivery");
   delivery.value = schedule.delivery || "standard";
   delivery.querySelector('option[value="daily-thread"]').disabled = Boolean(schedule.once);
+  delivery.querySelector('option[value="dm-on-match"]').disabled = !schedule.matchPrefix;
   prompt.value = schedule.prompt || "";
   syncScheduleTimingFields();
   error.textContent = "";
@@ -2954,7 +2963,7 @@ async function saveScheduleEditor() {
     // datetime-local is in the browser's timezone. Send an explicit instant so a daemon in
     // another timezone cannot shift it (or turn a future task into an immediately due one).
     if (schedule.once) body.runAt = new Date(document.getElementById("schedule-modal-run-at").value).toISOString();
-    else body.cron = cronFromScheduleEditor();
+    else if (!schedule.intervalDays) body.cron = cronFromScheduleEditor();
     if (schedule.kind !== "reminder") body.delivery = document.getElementById("schedule-modal-delivery").value;
     const result = await api(`/api/schedules/${scheduleEditor.schedule.id}`, {
       method: "PUT",
@@ -3004,7 +3013,7 @@ function renderSchedules() {
       row.className = "sched-row";
       // Last-run: a status dot (ok/warn) + relative-ish text; "never run" when it hasn't fired yet.
       const runHtml = s.lastRun
-        ? `<span class="sched-run"><span class="dot ${s.lastStatus && s.lastStatus !== "ok" ? "warn" : "ok"}"></span>last ${escapeHtml(new Date(s.lastRun).toLocaleString())}</span>`
+        ? `<span class="sched-run"><span class="dot ${s.lastStatus && !["ok", "found"].includes(s.lastStatus) ? "warn" : "ok"}"></span>last ${escapeHtml(new Date(s.lastRun).toLocaleString())}</span>`
         : `<span class="sched-run"><span class="dot off"></span>never run</span>`;
       row.innerHTML = `
         <label class="toggle inline"><input type="checkbox" class="sched-enabled" ${s.enabled ? "checked" : ""}/></label>
@@ -4451,7 +4460,7 @@ function paintContainerRuntimeHealth(state) {
 // treating any replacement daemon as success.
 const UPDATE_PHASES = {
   queued: "queued",
-  preflight: "checking Git, disk, config, service, and container engines",
+  preflight: "checking host Git, disk, config, service, and daemon health",
   snapshotting: "creating a recovery snapshot",
   checkout: "checking out the candidate",
   installing: "installing exact dependencies",
@@ -4460,7 +4469,7 @@ const UPDATE_PHASES = {
   provisioning: "provisioning optional components",
   image: "rebuilding the channel container image",
   restarting: "restarting the gateway",
-  verifying: "checking daemon, Slack, and container engines",
+  verifying: "checking daemon revision, runtime, and Slack reconnect",
   rolling_back: "rolling back to the previous revision",
 };
 
@@ -4476,7 +4485,7 @@ function updateResultHtml(transaction) {
     return `<span class="statuschip"><span class="dot warn"></span>container image needs attention — ${escapeHtml(transaction.imageWarning)}</span>`;
   }
   if (transaction.result === "updated" && transaction.changed === false) {
-    return `<span class="statuschip"><span class="dot ok"></span>already up to date${revision}; checks passed</span>`;
+    return `<span class="statuschip"><span class="dot ok"></span>repair complete${revision}; restart verified</span>`;
   }
   if (transaction.result === "updated") {
     return `<span class="statuschip"><span class="dot ok"></span>update complete${revision}; extended checks passed</span>`;
@@ -4580,6 +4589,10 @@ async function loadUpdateStatus() {
       document.getElementById("update-now").addEventListener("click", runGatewayUpdate);
     } else {
       el.innerHTML = `${cur}<span class="statuschip"><span class="dot ${u.checked ? "ok" : "warn"}"></span>${u.checked ? "up to date" : "update check unavailable — could not reach remote"}</span>`;
+      if (u.checked && u.automaticUpdates === true) {
+        el.innerHTML += `<button id="update-now" class="ghost update-btn">Repair gateway</button>`;
+        document.getElementById("update-now").addEventListener("click", runGatewayUpdate);
+      }
     }
   } catch {
     el.innerHTML = ""; // non-admin / locked-down — just hide the chip
@@ -4588,9 +4601,9 @@ async function loadUpdateStatus() {
 
 async function runGatewayUpdate() {
   const ok = await confirmDialog({
-    title: "Update the gateway now?",
-    body: "It checks the installation, installs and tests the candidate, then restarts and verifies it. This can take several minutes; failures trigger rollback.",
-    confirmLabel: "Update",
+    title: "Update or repair the gateway now?",
+    body: "It checks the host installation, repairs dependencies and the runtime image, then restarts and verifies the gateway. This can take several minutes; failures trigger rollback.",
+    confirmLabel: "Update / Repair",
   });
   if (!ok) return;
   const el = document.getElementById("update");
@@ -4704,6 +4717,10 @@ for (const b of document.querySelectorAll(".nav-item")) {
 document.getElementById("apidoc-gen").addEventListener("click", gotoApiTokenSettings);
 document.getElementById("apidoc-goto-settings").addEventListener("click", (e) => { e.preventDefault(); gotoApiTokenSettings(); });
 document.getElementById("channel-search").addEventListener("input", () => renderConvList());
+document.getElementById("conv-source").addEventListener("change", (event) => {
+  convSource = event.target.value;
+  renderConvList();
+});
 // Segmented filter (All / Channels / DMs) — narrows the one conversation list.
 for (const b of document.querySelectorAll("#conv-seg button")) {
   b.addEventListener("click", () => {

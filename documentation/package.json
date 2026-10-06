@@ -1,0 +1,21 @@
+{
+  "name": "channelgate-documentation",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "sync": "node scripts/sync-content.mjs",
+    "dev": "npm run sync && astro dev",
+    "build": "npm run sync && astro build && node scripts/check-output.mjs",
+    "preview": "astro preview",
+    "export": "node scripts/export-site.mjs",
+    "test": "node scripts/test-export.mjs"
+  },
+  "dependencies": {
+    "@astrojs/starlight": "0.42.5",
+    "astro": "7.3.5"
+  },
+  "engines": {
+    "node": ">=22.12.0"
+  }
+}

@@ -5,6 +5,7 @@ import { gatewayRoot } from "../config/paths.js";
 import { ENGINE_IDS, requireAdapter } from "../engines/registry.js";
 import { resolveRuntime } from "../runtimes/resolve.js";
 import { getContainerRuntime } from "../config/settings.js";
+import { markLive } from "./egress/liveness.js";
 
 const RESPONSE = "CG_UPDATE_SMOKE_OK";
 const PROMPT =
@@ -95,7 +96,9 @@ function safeError(error) {
 export async function runUpdateSmoke({
   root = gatewayRoot(),
   engines = ENGINE_IDS.map(requireAdapter).filter((entry) => entry.updateSmoke),
-  resolveTarget = (slug) => resolveRuntime(slug, { adminMode: false, allowNetwork: true }, {
+  // The disposable channel has no channels-index row. Give its egress listener and
+  // Codex login relay the same temporary identity so the proxy can bind the grant.
+  resolveTarget = (slug) => resolveRuntime(slug, { adminMode: false, allowNetwork: true, channelId: slug }, {
     settings: { ...getContainerRuntime(), fullAccessHome: false },
   }),
   requiredEngines = [],
@@ -103,13 +106,14 @@ export async function runUpdateSmoke({
 } = {}) {
   const startedAt = Date.now();
   const results = [];
-  let target, probe, release, owned = false;
+  let target, probe, release, releaseLive, owned = false;
   try {
     target = resolveTarget(`update-smoke-${randomUUID()}`);
     if (target?.backend !== "container" || !target.runtime?.capabilities?.isolated) {
       throw new Error("Update smoke requires an isolated container target");
     }
     owned = true;
+    releaseLive = markLive({ channelId: target.meta?.channelId, kind: "turn", id: target.slug });
     probe = await prepareUpdateSmokeFolder({ root, folder: target.cwd });
     release = target.runtime.acquireLease(target, { kind: "update-smoke" });
     await target.runtime.ensureUp(target, { forceImage: true });
@@ -158,6 +162,7 @@ export async function runUpdateSmoke({
       for (const dir of [target.cleanWorkDir, target.artifactDir]) if (dir) await cleanup(() => rm(dir, { recursive: true, force: true }));
     }
     if (typeof release === "function") release();
+    if (typeof releaseLive === "function") releaseLive();
   }
   for (const id of requiredEngines) {
     if (!results.some((entry) => entry.engine === id && entry.ok)) {

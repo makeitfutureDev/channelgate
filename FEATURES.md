@@ -4,6 +4,51 @@
 
 Admins can add gateway-wide model shortcuts in Settings → Access & security → Model shortcuts. Each name selects an engine and model. In Slack, `@agent :astra task` pins that engine and model to the current thread and runs the task; `@agent :astra` switches the thread without starting an agent turn. Slack's automatically inserted space after the mention is accepted. Changing a mapping affects later shortcut selections, while threads already pinned keep their selected model. Channel runtime-change access and dedicated Codex-login restrictions apply.
 
+## Public documentation website
+
+- `documentation/` builds a static Astro/Starlight documentation section for
+  `channelgate.dev/docs` in the same Vercel website project as the marketing pages and blog.
+  The public handbook source now covers 151 pages: 106 dedicated feature guides in 12 groups,
+  13 configuration guides, 13 control references, four directories/maps, and the existing
+  15 overview, walkthrough, installation,
+  technical-reference and resource pages. Feature guides explain use, setup, examples,
+  permissions and practical limits; configuration guides distinguish gateway, conversation,
+  personal and thread scopes.
+- The welcome page keeps the same persistent sidebar as articles, with a Start here section,
+  grouped feature navigation, configuration guides, technical references and resources. Search,
+  current-page navigation, theme controls and responsive layout use Starlight. A shared handbook
+  registry defines directory cards and sidebar entries together. Native Slack report artifacts,
+  Google Drive workspace sync and durable thread loops have their own guides alongside the
+  workspace, engine, knowledge/integration, access, platform, automation and operations topics.
+- Thirteen published guides are generated at build time from this repository's canonical
+  Markdown files; the other 138 pages are authored in `documentation/src/content/docs/`.
+  Repository-relative links resolve to a published guide or the source file on GitHub's `beta`
+  branch. The export copies only the `/docs` subtree and entry point into an existing static
+  website output, then merges documentation URLs into its sitemap. The existing Vercel project
+  builds these docs automatically from public beta on each website deployment using
+  `documentation/scripts/vercel-build.sh` and a temporary checkout outside the website output.
+- The functionality map links all 45 areas of the product inventory to practical guides.
+  The control reference documents all 104 gateway and 10 external skills-library tool definitions
+  with inputs, defaults, authority, results, limits and examples. A source-registration check
+  requires each tool exactly once; unknown or duplicate reference headings fail the build.
+  Documentation CI also runs on tool-source and feature-catalog changes. This verifies inventory
+  and control coverage; peer review verifies user-facing claims against current implementation.
+- Handbook source and configuration were cross-reviewed against the public feature record,
+  canonical operator references and implementation. Microsoft Teams and Google Chat remain
+  explicitly Beta; optional VPN provisioning, engine-specific approvals and admin-only host
+  access retain their documented restrictions. This documentation change introduces no gateway
+  runtime behavior. The complete-functionality expansion is published at `/docs`; build,
+  browser, export, preview and production evidence is recorded in `TEST-PLAN.md`.
+
+## Conversation sources and Teams names
+
+- Conversations has an independent source filter: All sources, Google Chat, Slack, or Teams.
+  It combines with search and All / Channels / DMs, including legacy Slack records.
+- Teams channel titles use `#team-channel`, taking names from activities or the bot’s
+  team/channel directory. Existing ID-only records refresh on the next Teams message;
+  the UI shows `#teams-channel` while unresolved. IDs, work folders, and settings stay stable.
+  Directory errors preserve a previously resolved name and never block a turn.
+
 ## Runtime history transfer and Google Chat failure recovery
 
 - Switching a thread between its container and `/sudo` host carries native history without
@@ -1333,6 +1378,12 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
   sessions remain fresh per run — the session key is minted per fire and never derived from the
   reused anchor, so grouping the day's results never joins them into one conversation. Existing
   schedules retain standard per-run announcements. → TEST-PLAN: Scheduling & reminders.
+- Scheduled tasks can use `interval_days` for a fixed 24-hour-day cadence (including exactly
+  14 days), and `delivery:"dm-on-match"` with a required `match_prefix` for quiet monitoring.
+  The scheduler posts no start or routine result; only a result beginning with the prefix is
+  sent as a DM to the creator, then the schedule stops. Failed runs remain in schedule status and events. The next interval
+  advances from the planned due time, skipping missed periods rather than replaying checks.
+  → TEST-PLAN: Scheduling & reminders.
 - Native `/loop` in a thread: Claude Code's own loop skill paces itself with `ScheduleWakeup` /
   `CronCreate`, both of which are session-local (the harness documents its cron store as "gone when
   Claude exits") and therefore inert in a headless turn. The daemon reads the pacing call out of the
@@ -1598,6 +1649,15 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
   `availability` / `connection` (an overload, a 5xx, a `server_error` label, a dropped connection —
   never the catch-all `provider` kind or the bare "API Error:" prefix a rejected request also
   carries). The knobs are read per turn, so `.env` / settings values count without a restart.
+  → TEST-PLAN: Engines.
+- **Codex capacity after partial work continues in its existing session.** A plain provider
+  "Selected model is at capacity" verdict after a tool or streamed output starts one new Codex
+  turn against the same session id, with a prompt to inspect completed work and finish the
+  remaining request. It never resends the original prompt, so prior tool actions are not replayed
+  by the gateway. An unpinned model switches to another model in Codex's catalog; a model chosen
+  specifically for the thread stays pinned. The status and final answer identify the continuation,
+  an audit event records the model switch, and a second failure stops rather than looping.
+  Replay-safe capacity failures before any work still use the transient retry/failover path above.
   → TEST-PLAN: Engines.
 - **Bidirectional harness failover** when the engine driving a turn hits its usage/session/plan
   limit or its authentication is unavailable — Claude→Codex and Codex→Claude are the same mechanism,
@@ -3377,6 +3437,7 @@ are retired, bullet by bullet; everything else stands.
   restore, or log rotation. → TEST-PLAN: Update regression path isolation.
 - **Enterprise managed updates and durable progress**: only an entitled Enterprise deployment
   exposes the Update button and accepts managed update requests (Admin UI, Slack, or MCP).
+  The button also offers Repair gateway when code is current.
   Other editions retain the behind count and host-managed `npm run update`. Eligibility follows
   the existing verified-license and outage-grace rules. A separate systemd user service carries
   the updater across daemon cgroup teardown; inherited credentials travel through stdin, not unit
@@ -3389,7 +3450,8 @@ are retired, bullet by bullet; everything else stands.
   active transaction instead of starting an overlapping updater. Before touching Git, the runner
   checks the attached/clean/fast-forward checkout and upstream access, Node/npm, parseable
   settings, an active systemd service (the launchd probe retired 2026-09-03 — Linux only),
-  available disk, current daemon health, and a real isolated Claude turn. Missing Whisper assets
+  available disk and current daemon health. The detached host launcher runs `bash scripts/update.sh`;
+  provider logins, quotas and engine turns never gate installation. Missing Whisper assets
   add 2 GiB of required staging space to the 1 GiB base requirement (the extra macOS build staging
   retired 2026-09-03 — Linux only); the 1.5 GiB optional model is never downloaded silently when
   local Whisper is disabled.
@@ -3400,10 +3462,11 @@ are retired, bullet by bullet; everything else stands.
   lockfile, local config, `.env`, and a consistent SQLite copy under mode-0700
   `~/.channelgate/update-backups/<transaction>/`; fast-forwards, runs exact `npm ci --include=dev`, the
   production advisory gate, all tests, and optional provisioning; then restarts through the exact
-  systemd `MainPID` (the launchd restart retired 2026-09-03 — Linux only). Success requires a new
+  systemd `MainPID` with a bounded active-run drain (SIGUSR2 for Restart=on-failure; SIGTERM for always/on-success). Success requires a new
   daemon instance on the expected revision,
-  container runtime availability, Slack reconnect when it was previously connected, and another real
-  container smoke for every engine that passed baseline. A post-checkout failure resets the old revision, reinstalls its lockfile, restarts,
+  container runtime availability and Slack reconnect when it was previously connected. Readiness allows
+  ten minutes for startup catalog reconciliation. The same full transaction repairs exact dependencies,
+  provisioning and image drift even when Git is current, then restarts. A failed install resets the old revision, reinstalls its lockfile, restarts,
   and proves the restored build with the same checks. Runtime snapshots are operator recovery
   material and are never auto-restored, so writes made while a candidate briefly ran are not
   discarded.
@@ -3414,7 +3477,7 @@ are retired, bullet by bullet; everything else stands.
   `cg.image.version` label, expected version from the CANDIDATE's `containers/versions.json`, never
   a constant the runner imported before the checkout moved). It is the one step that never blocks:
   a failed build reports `run \`npm run build:image\`` and the update continues to the restart,
-  because the image already on disk still runs every container channel. Failed builds remain visible
+  with an explicit warning that new container runs may be blocked until the image is repaired. Failed builds remain visible
   and digest drift triggers a retry even when the checkout revision is unchanged. → TEST-PLAN: Container runtime (v0.8 P1).
 - **Truthful update status and final reporting**: atomic, non-secret phase/result state lives in
   `~/.channelgate/update-state.json`; logs live in `logs/update.log`; `/api/health` exposes the
@@ -4165,7 +4228,7 @@ are retired, bullet by bullet; everything else stands.
   fails any commit range that lacks a well-formed `Signed-off-by` trailer, wired into CI as a
   pull-request job, and `test/dco-check.test.js` covers the pure trailer check.
 
-- **Verified container updates:** update health probes run in a disposable confined container through each configured Claude/Codex runner; missing logins are explicit skips and no probes is a failure. Image source fingerprints detect stale CLI pins even when the image spec or checkout revision is unchanged, allowing Update to retry failed builds. Container status shows desired/built CLI versions and containers awaiting image adoption. Custom image refs require operator rebuilds and failed builds remain visible in update results.
+- **Verified container updates:** image checks run Node, Claude and Codex `--version` in a disposable network-off, read-only container without host mounts or credentials. The engine response probe remains a separate diagnostic, never an update prerequisite. Image source fingerprints detect stale CLI pins even when the image spec or checkout revision is unchanged, allowing Update to retry failed builds. Container status shows desired/built CLI versions and containers awaiting image adoption. Custom image refs require operator rebuilds and failed builds remain visible in update results.
 
 ### Real project skill synchronization and workspace reset
 

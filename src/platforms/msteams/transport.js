@@ -48,7 +48,7 @@ export async function startTeams({
     auth: deps.graphAuth || createTeamsAuth({ clientId: appId, clientSecret: appPassword, tenantId, scope: GRAPH_SCOPE }),
     allowedDriveIds: fileDriveIds,
   }) : null;
-  const connector = deps.connector || createTeamsConnector({ auth, capabilities, api, botId, tenantId, serviceUrl, log });
+  const connector = deps.connector || createTeamsConnector({ auth, capabilities, api, apiForServiceUrl: deps.apiForServiceUrl, botId, tenantId, serviceUrl, log });
   const jwks = deps.jwks || createJwksCache();
   let graph = null;
   let eventStore = null;
@@ -172,7 +172,7 @@ export async function startTeams({
       context: { conversation: { id: nativeId, conversationType: kind, name: activity.conversation?.name || "" },
         serviceUrl: trustedService, recipient: { id: botId },
         channelData: { tenant: { id: tenantId },
-          ...(kind === "channel" ? { team: { aadGroupId: teamGuid, ...(activity.channelData?.team?.id ? { id: activity.channelData.team.id } : {}) }, channel: { id: activity.channelData?.channel?.id || nativeId } } : {}) } },
+          ...(kind === "channel" ? { team: { ...(activity.channelData?.team?.name ? { name: activity.channelData.team.name } : {}), aadGroupId: teamGuid, ...(activity.channelData?.team?.id ? { id: activity.channelData.team.id } : {}) }, channel: { id: activity.channelData?.channel?.id || nativeId, ...(activity.channelData?.channel?.name ? { name: activity.channelData.channel.name } : {}) } } : {}) } },
     };
     // Subscription errors are retried by Graph maintenance and never block a normal bot turn.
     void graph.ensure(row).catch(() => log.warn?.("[msteams] could not register conversation event subscription"));
