@@ -51,6 +51,7 @@ import { isSubscriptionName } from "../../platforms/googlechat/pubsub.js";
 import { logEvent } from "../../util/logger.js";
 import { checkForUpdate, startUpdate } from "../../gateway/updater.js";
 import { isValidModel } from "../../slack/util.js";
+import { MODEL_SHORTCUT_NAME_RE, MAX_MODEL_SHORTCUTS } from "../../config/model-shortcuts.js";
 // Organization-wide environment secrets. WRITE-ONLY, exactly like the per-channel ones:
 // listOrgEnv is the only shape that may leave the process (config/scoped-env.js).
 import { listOrgEnv, patchOrgEnv } from "../../config/scoped-env.js";
@@ -341,6 +342,20 @@ export function createSettingsRouter({
         patch.engine = body.engine;
       }
       if (typeof body.modelChangeAccess === "string" && MODEL_CHANGE_ACCESS_MODES.includes(body.modelChangeAccess)) patch.modelChangeAccess = body.modelChangeAccess;
+      if (body.modelShortcuts !== undefined) {
+        const entries = body.modelShortcuts && typeof body.modelShortcuts === "object" && !Array.isArray(body.modelShortcuts)
+          ? Object.entries(body.modelShortcuts) : null;
+        if (!entries || entries.length > MAX_MODEL_SHORTCUTS) return res.status(400).json({ error: `modelShortcuts must contain at most ${MAX_MODEL_SHORTCUTS} names` });
+        const shortcuts = {};
+        for (const [rawName, target] of entries) {
+          const name = rawName.toLowerCase();
+          if (!MODEL_SHORTCUT_NAME_RE.test(name) || Object.hasOwn(shortcuts, name)) return res.status(400).json({ error: `invalid or duplicate model shortcut "${rawName}"` });
+          if (!target || !ENGINES.includes(target.engine) || typeof target.model !== "string" || !isValidModel(target.model) || !modelBelongsToEngine(target.model, target.engine))
+            return res.status(400).json({ error: `invalid model target for shortcut "${rawName}"` });
+          shortcuts[name] = { engine: target.engine, model: target.model };
+        }
+        patch.modelShortcuts = shortcuts;
+      }
       // Gateway default model per engine (blank clears → CLI default). Same isValidModel guard as
       // /model and the channel-meta routes — a typo'd id here would break EVERY defaulted run.
       // Keys come from the ADAPTERS, not a literal pair: a harness added later (Qwen) would

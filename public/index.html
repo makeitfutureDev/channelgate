@@ -918,6 +918,12 @@
                   </label>
                 </div>
                 <div class="setcard">
+                  <h4>Model shortcuts</h4>
+                  <p class="desc">Mention the bot, then type a colon and a name after Slack's inserted space, for example <code>@agent :astra review this</code>. The selected engine and model are pinned to that thread. Use the same form without a task to switch an existing thread. Names apply gateway-wide; channel runtime permissions still apply.</p>
+                  <div id="model-shortcuts-editor"></div>
+                  <button type="button" class="clear-tok" id="add-model-shortcut" disabled>Add shortcut</button>
+                </div>
+                <div class="setcard">
                   <h4>Container runtime</h4>
                   <p class="desc">Every channel's engine processes run inside <strong>its own long-lived Linux container</strong> — separate HOME, separate CLI logins, its own process namespace, and none of the host's files reachable beyond the channel's own folders. This is the only runtime: the daemon needs <code>podman</code> or <code>docker</code> on this machine plus a built image (<code>npm run build:image</code>). Admin-mode channels run in their container too; the permission bypass applies inside it, never on the host.</p>
                   <label class="field">

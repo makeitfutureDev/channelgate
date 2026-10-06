@@ -39,7 +39,8 @@ import { noteBotReply, noteUserActivity } from "../gateway/nudges.js";
 import { applyLoopWakeup, stopLoops, stopThreadLoops } from "../gateway/loops.js";
 import { buildPendingReportForUser } from "../gateway/followups.js";
 
-import { resolveSlackConfig, getProgressView, getContextWindow, getTrustedBotApps, getDefaultChannelAccess, applyChannelTemplate, getDefaultNudges, getSlackAdminUserToken, canChangeChannelRuntime, getWhisperEnabled, getEngineFallbackMode } from "../config/settings.js";
+import { resolveSlackConfig, getProgressView, getContextWindow, getTrustedBotApps, getDefaultChannelAccess, applyChannelTemplate, getDefaultNudges, getSlackAdminUserToken, canChangeChannelRuntime, getWhisperEnabled, getEngineFallbackMode, getModelShortcuts, isEngineEnabled } from "../config/settings.js";
+import { parseModelShortcut } from "../config/model-shortcuts.js";
 import { mdToMrkdwn, resolveMentions } from "./format.js";
 import { answerImageBlocks, shareAnswerImageFiles } from "./images.js";
 import { appendSlackTables, extractSlackTables, formatSlackTables } from "./block-content.js";
@@ -1082,6 +1083,43 @@ export async function processMessageEvent(event, client, { botUserId = "", teamI
     // stamp), and the session-stamp comparison after the directive blocks (covers switches made
     // out-of-band — the /model wizard, the admin UI, a flipped gateway default).
     let engineSwitched = false;
+    // A colon immediately after the bot mention selects a configured model shortcut. The
+    // setting is read for each message, so admins can repoint names without restarting Slack.
+    // Persist the resolved target on this thread; later edits to the shortcut affect new picks.
+    const shortcut = !syntheticFork ? parseModelShortcut(prompt) : null;
+    // A retry/switch card already selected the runtime. Keep its choice, but remove the
+    // original shortcut prefix before replaying the task to the engine.
+    if (shortcut && engineChoice) prompt = shortcut.task;
+    if (shortcut && !engineChoice) {
+      const shortcuts = getModelShortcuts();
+      const target = Object.hasOwn(shortcuts, shortcut.name) ? shortcuts[shortcut.name] : null;
+      if (!target) {
+        await client.chat.postMessage({ channel: event.channel, thread_ts: threadKey, text: `Unknown model shortcut \`:${shortcut.name}\`. Ask an admin to add it in Settings → Model shortcuts.` });
+        return;
+      }
+      if (!isDM && !canChangeChannelRuntime(authorIsAdmin)) {
+        await client.chat.postMessage({ channel: event.channel, thread_ts: threadKey, text: "Only admins can change the model in this channel." });
+        return;
+      }
+      if (!isEngineEnabled(target.engine) || !modelBelongsToEngine(target.model, target.engine)) {
+        await client.chat.postMessage({ channel: event.channel, thread_ts: threadKey, text: `Model shortcut \`:${shortcut.name}\` needs an enabled engine and valid model. Update it in Settings.` });
+        return;
+      }
+      if (meta.codexAuthSource === "channel" && target.engine !== "codex") {
+        await client.chat.postMessage({ channel: event.channel, thread_ts: threadKey, text: "This channel uses its own Codex login, so its engine stays Codex." });
+        return;
+      }
+      engineSwitched = (await getThreadEngine(entry.slug, threadKey)) !== target.engine;
+      await setThreadEngine(entry.slug, threadKey, target.engine);
+      await setThreadModel(entry.slug, threadKey, target.model);
+      // Effort is model-specific. A prior thread pin must not leak into a new shortcut.
+      await setThreadEffort(entry.slug, threadKey, "");
+      prompt = shortcut.task;
+      if (!prompt && files.length === 0) {
+        await client.chat.postMessage({ channel: event.channel, thread_ts: threadKey, text: `✅ This thread now uses *${engineLabel(target.engine)}* · \`${target.model}\`.` });
+        return;
+      }
+    }
     // A harness-switch card click: the person chose where this message runs. "Switch" pins the
     // thread there (the same per-thread choice the `claude` / `codex` directive makes); "try
     // again" leaves the thread as it is. Any engine directive in the text was already applied
@@ -1101,7 +1139,7 @@ export async function processMessageEvent(event, client, { botUserId = "", teamI
     // switch phrase ("try again with codex", "switch to codex", "use claude") — a switch verb
     // immediately before the engine name, so an incidental mention ("the codex CLI") won't flip it.
     // It sticks until changed; the rest of the message is the task.
-    if (!syntheticFork && files.length === 0) {
+    if (!syntheticFork && !shortcut && files.length === 0) {
       const trimmed = prompt.trim();
       const anchored = new RegExp(`^(${engineIdAlternation()})\\b[\\s:,.;–—-]*([\\s\\S]*)$`, "i").exec(trimmed);
       // Only a switch INTENT near the START counts (index ≤ 12, allowing a short lead like
