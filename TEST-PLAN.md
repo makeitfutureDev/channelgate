@@ -8655,12 +8655,71 @@ located and compared by sha256 only):
   filters, save/reload and unavailable-template handling. This is engine-independent presentation;
   no engine execution or grant-resolution behavior changes.
 
-## Teams settings card placement
+## Teams private settings parity
 
-Automated: `node --test test/teams-controls.test.js` verifies source conversation/thread delivery, foreign actor/conversation denial, one-use settings submission and private file controls.
+Automated:
 
-Live (unexecuted; repeat with Claude and Codex): mention the bot with `/settings` in an owned channel thread and group chat, then send `/settings` in a DM. Require the form in that same conversation (and channel thread), no private-delivery notice, and a valid owner submission affecting that session only. Another member must be denied; revoke the owner before submitting and require denial. Files and secrets remain private.
+```sh
+node --test test/teams-controls.test.js test/teams-settings.test.js \
+  test/teams-settings-general.test.js test/teams-settings-catalog.test.js \
+  test/channel-settings-modal.test.js test/model-wizard-channel-scope-thread.test.js \
+  test/teams-native-cards.test.js test/platform-teams.test.js
+```
 
+Scratch SQLite, verified-envelope fixtures and real Teams normalization cover all six pages,
+channel/session isolation, approved non-admin runtime choices, incompatible/disabled runtime
+rejection, Codex channel-login locks, per-field writes ignoring stale neighbours, current manager
+and roster checks, demotion during roster/discovery, all three variable scopes through confirmation,
+write-only/masked credentials, host-rule rotation, MCP discovery/grants, skills/template inheritance,
+automation paging and foreign IDs, one-use confirmation replay, bounded cards and private-delivery
+refusal. Existing Slack modal/wizard cases exercise the shared runtime validators.
+
+Live acceptance — **unexecuted; must run once with Claude and once with Codex**. Private QA
+registry records are also **pending**: this task's available connector is the shared identity,
+while deployment rules require the requester's selected personal connection for registry writes.
+No fixture result counts as live Microsoft client evidence.
+
+Fixtures: a disposable registered Teams channel/thread; a registered group chat; the owner's
+personal chat with the bot installed; approved owner/member, nonmember, current manager and admin
+identities; one direct skill, one organization skill, two templates; one recurring task, one
+one-time reminder and one loop; synthetic variables with no live credentials. Start the channel
+on the engine under test and record its original slug/session key and safe metadata before each
+case. Also run a group with an external member to check tenant/private-delivery behavior.
+
+1. In a channel/thread or group, quote the original message or bot reply and send
+   `@bot /settings`; in personal chat send `/settings`. Require a private card with all six tabs,
+   a source-room private-delivery notice only, and unchanged original workspace/session identity.
+   Block proactive DM delivery: require an actionable refusal and no console in the group.
+2. General: switch a channel field, then a session field; require only the dispatched scope/field
+   and invalid dependents to change. Models/efforts follow their own engine; inherited labels name
+   their actual fallback. Open a dedicated-Codex-login fixture and require its engine to remain
+   locked. Follow channel default requires confirmation and clears only the original session pins.
+   Run a follow-up and verify the selected engine/model; a pre-existing session's engine remains
+   explicitly labelled until an engine is selected or the session is cleared.
+3. Access: approved non-manager can view General and edit runtime but cannot mutate access.
+   Manager can change mode/options/access policies and current native roster selections; forged
+   nonmember selections fail. Revoke manager/admin/owner access while the card is open and again
+   while the roster/discovery request is held: require denial and no mutation. Large/over-budget
+   rosters explicitly defer complete-list edits without dropping grants; former-member selections
+   show a replacement warning before Apply.
+4. Variables/MCPs: rotate synthetic channel and personal values; admin additionally rotates an
+   organization value. Require blank/masked inputs after refresh, masked listing only, preserved
+   Used-on-hosts unless explicitly replaced/cleared, and no values in card JSON or event logs.
+   Remove each scope through a confirmation and replay the token: exactly one effect. A member
+   cannot forge an organization write or Cloud MCP change. Blank connection tokens keep existing
+   values; invalid Make URL writes nothing; disconnect affects only the selected connection.
+5. Skills: assign/clear a template, activate/deactivate a direct skill, page a catalog and template
+   list, then verify the next turn's grants. Organization grants remain inherited and immutable
+   here; personal/private catalog skills cannot be assigned to other authors by forged payloads.
+6. Automations: page past twelve rows, pause/resume a recurring task, cancel a one-time reminder,
+   stop a loop and replay the confirmation. Only this conversation's rows may change; one-time
+   and loop pause attempts fail; enabled-schedule limits still apply when resuming.
+7. Resume: after a turn, require the current session ID, its minting engine and correct container
+   terminal command. Clear the session and refresh: no stale ID/command. Navigate every page in
+   Teams desktop/mobile and exercise Execute plus legacy Submit fallback without duplicate effects.
+8. Record exact fixture, engine, prompts/actions, safe before/after scope evidence, observed client
+   card placement and pass/fail for each case in the private registry through the personal identity.
+   Any unexecuted, blocked or failed case remains pending acceptance; no release-readiness claim.
 
 ## Slack Secrets tab removal and form navigation (2026-09-09)
 

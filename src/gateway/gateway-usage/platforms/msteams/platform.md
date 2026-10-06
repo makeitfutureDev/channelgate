@@ -38,3 +38,14 @@ tag you write yourself is escaped and pings nobody. Full rules: `references/ment
 Files attached in a **1:1 chat** download directly. Files posted in a **channel** live in
 SharePoint/OneDrive and may need a tenant grant the gateway does not have — if a file won't open,
 say so plainly rather than guessing at its contents.
+
+## Conversation settings
+
+`/settings` opens the private General, Variables, MCPs, Skills, Automations and Resume pages in
+personal chat while retaining the original conversation/session. `/secrets` opens Variables.
+Each field needs Apply; changing tabs discards unsaved drafts. Runtime, channel credentials,
+skills and automation controls are available to authorized users. Access policy requires current
+managers/admins, Cloud MCP and organization variable writes require admins. Stored credential
+values are never shown or prefilled. If private delivery fails, open/install the personal bot chat;
+never put credential inputs in a shared room. Native rosters and secret inputs have size limits;
+complete oversized edits use the authenticated browser settings.

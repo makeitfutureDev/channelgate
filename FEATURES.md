@@ -678,15 +678,28 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
   updates at most every 30 seconds with elapsed time, last activity, and running subagents;
   pending progress edits finish before the final answer replaces the placeholder. Interactive
   permission escalation is not enabled by these text controls.
-- Native Adaptive Cards provide Approve/Deny/Request changes actions and an inline session engine/model/effort
-  form. `/settings` opens in the source channel thread, group chat or DM, with submissions restricted
-  to the requesting user and current runtime policy. `/secrets` privately opens the same form with a link
-  to the existing authenticated administration website. This does not introduce a secret input
-  card or expose secret values in Teams. Signed Bot Framework invoke envelopes establish the
-  actor; opaque expiring card state retains the source conversation and session. An optional
-  changes comment refuses the current action even if Approve was clicked. Task-module dialogs
-  and broadcast mentions remain unimplemented. Current approval/channel access is rechecked
-  when deciding, including for the original requester using a private fallback link.
+- Native Adaptive Cards provide Approve/Deny/Request changes actions and a private **six-page
+  Settings console**: General, Variables, MCPs, Skills, Automations and Resume. `/settings` opens
+  in the requester's personal chat, keeping the original conversation and session; `/secrets`
+  starts on Variables. General shows both channel defaults and session pins, filters compatible
+  models/efforts, labels inheritance, respects dedicated Codex login locks and offers Follow
+  channel default. Teams uses explicit per-field Apply buttons, rather than Slack's save-on-pick.
+  Runtime edits in this console admit every authorized member, independently of the `/model`
+  text-command policy. Access policy and native member selection require managers/admins; Cloud
+  MCP and organization variable changes require admins. Complete roster selectors fall back to
+  the authenticated website above 25 members or the native card budget; stored selections are
+  never silently dropped. VPN uses the existing service, reporting unavailable where that
+  service does not support the Teams identifier.
+  Variable scopes, connection tokens, skill grants/templates and schedules share Slack's stores;
+  catalogs/templates/automations paginate. Inputs never prefill saved secrets, new secret entries
+  are masked, and destructive controls use consumed server-held confirmation tokens. Native
+  secret entry follows the existing 8,000-character/16-KiB submission bounds. Resume reads the
+  current session and its engine/container terminal command at display time. A failed personal
+  delivery never exposes these cards in a group. Signed invoke/Submit envelopes establish the
+  actor; opaque expiring state binds the original workspace, user and delivery conversation.
+  Current membership and roles are checked again on every interaction and at sensitive writes.
+  Task-module dialogs and broadcast mentions remain unimplemented. An optional approval changes
+  comment refuses the current action even if Approve was clicked.
 - `/files [folder]` opens a private, paginated workspace browser. Download, upload and eligible
   text-edit links use the existing signed browser grants, filesystem confinement and edit policy,
   with current Teams membership and gateway authorization checked again at use. A failed private

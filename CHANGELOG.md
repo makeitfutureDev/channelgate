@@ -18,6 +18,11 @@ product overview.
 
 ## Unreleased
 
+- Teams `/settings` now offers the same six sections as Slack, including channel defaults and
+  session overrides, variables, MCP connections, skills, automations and session resume. The
+  console opens privately, uses explicit Apply buttons and confirms removals without revealing
+  stored credentials. `/secrets` opens Variables directly.
+
 - Users already allowed in a channel, including named guests, can enable their own SSH access
   without manager or admin approval. Registering/removing personal keys and revoking one’s
   own SSH grant are also self-service. Changes for other people remain manager controlled.

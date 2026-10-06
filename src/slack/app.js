@@ -23,6 +23,8 @@ import { getSessionMap } from "../gateway/sessions.js";
 import { getThreadEffort, getThreadEngine, getThreadModel, resolveThreadEngine, setThreadEffort, setThreadEngine, setThreadModel } from "../gateway/thread-engine.js";
 
 import { logEvent } from "../util/logger.js";
+import { nextRuntimeTriple, runtimeSettingsPatch } from "../gateway/runtime-settings.js";
+export { nextRuntimeTriple, runtimeSettingsPatch } from "../gateway/runtime-settings.js";
 
 import { clearUpdateMarker, formatUpdateResult, readTerminalUpdateMarker } from "../gateway/updater.js";
 
@@ -738,20 +740,6 @@ export async function runtimeScopes(slug, meta, snapshot, threadKey) {
   };
 }
 
-// Apply ONE dropdown. Engine, model and effort are not independent — a model is a flag for exactly
-// one harness and an effort for exactly one model — so changing a field drops the two below it
-// when the new value invalidates them, the same rule the /model wizard and the in-thread
-// `claude`/`codex` directive apply. `inheritedEngine` is what an empty engine falls back to:
-// the gateway default for the channel scope, the channel's own engine for a thread.
-export function nextRuntimeTriple(current = {}, field, value, inheritedEngine) {
-  const clean = (raw) => (raw === SETTINGS_DEFAULT_VALUE ? "" : String(raw || "").trim());
-  const next = { engine: clean(current.engine), model: clean(current.model), effort: clean(current.effort), [field]: clean(value) };
-  const engine = next.engine || inheritedEngine;
-  if (!modelBelongsToEngine(next.model, engine)) next.model = "";
-  if (!effortBelongsToModel(next.effort, engine, next.model || getDefaultModel(engine))) next.effort = "";
-  return next;
-}
-
 // A thread-scope pick must never silently widen to the channel because the thread id was lost.
 function requireThread(state) {
   const threadTs = String(state?.threadTs || "");
@@ -795,22 +783,6 @@ function runtimeNotice(scope, { engine, model, effort }, resolvedEngine) {
   const where = scope === "thread" ? "This thread" : "Channel default";
   const engineText = engine ? engineLabel(engine) : `${engineLabel(resolvedEngine)} (inherited)`;
   return `✅ ${where}: *${engineText}* · \`${model || "inherited model"}\` · \`${effort || "inherited effort"}\`.`;
-}
-
-export function runtimeSettingsPatch(form = {}, {
-  gatewayEngine = getEngine(),
-  enabledEngines = getEnabledEngines(),
-} = {}) {
-  const engine = form.engine === SETTINGS_DEFAULT_VALUE ? "" : String(form.engine || "");
-  const actualEngine = engine || gatewayEngine;
-  if (!enabledEngines.includes(actualEngine)) throw new Error("That engine is no longer enabled.");
-  const model = form.model === SETTINGS_DEFAULT_VALUE ? "" : String(form.model || "");
-  if (model && !modelBelongsToEngine(model, actualEngine)) throw new Error("That model does not belong to the selected engine.");
-  const effort = form.effort === SETTINGS_DEFAULT_VALUE ? "" : String(form.effort || "");
-  if (effort && !effortBelongsToModel(effort, actualEngine, model || getDefaultModel(actualEngine))) {
-    throw new Error("That effort is not supported by the selected model.");
-  }
-  return { patch: { engine, model, effort }, actualEngine };
 }
 
 export function connectionSettingsPatch(current = {}, form = {}) {
