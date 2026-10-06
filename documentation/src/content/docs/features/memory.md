@@ -30,3 +30,7 @@ Agent memory is on by default, with a per-conversation override. Inspect its eff
 Memory retrieval is conversation-scoped; unrelated conversations do not automatically share it. A custom shared working folder deserves the same access review as shared project files.
 
 Related: [threads and sessions](/docs/features/threads-and-sessions), [channel settings](/docs/configuration/channel-settings), and [skills](/docs/features/skills).
+
+## Knowledge controls
+
+Use the [memory and instruction reference](/docs/controls/knowledge-and-instructions) for exact search, read, batch-save, and standing-rule arguments. For gateway-wide agent procedures, see [the operating guide](/docs/features/gateway-operating-guide).

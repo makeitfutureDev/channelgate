@@ -34,3 +34,7 @@ Credential forms show configured or masked state and do not prefill saved secret
 Standard MCP mode is available without Enterprise entitlement. Enterprise Composio SDK mode is Beta and can provision separate user/channel identities and reusable thread sessions. Lean suppresses optional connectors in ordinary runs.
 
 Related: [connection settings](/docs/configuration/connections), [MCP](/docs/features/mcp), [secrets](/docs/features/secrets), and [privacy](/docs/privacy).
+
+## Account references
+
+See [account and secret controls](/docs/controls/accounts-and-secrets) for the supported personal key and environment operations. Separate guides cover [Enterprise SDK mode](/docs/features/composio-sdk), [Toolbox and Make](/docs/features/toolbox-and-make), and [business workflow examples](/docs/features/business-workflows).

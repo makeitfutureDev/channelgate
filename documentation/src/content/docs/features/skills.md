@@ -34,3 +34,17 @@ Organization and channel skills are synchronized into the project. Personal gran
 Catalog revisions preserve the exact package files and support history and rollback. External source ownership can require a proposal or companion skill instead of an in-place edit. Heavy profiles receive a warning above the default 6,000-token soft context threshold; this is a warning, not a permission or storage limit.
 
 Lean removes optional skill grants. Related: [skill sources](/docs/configuration/skill-sources), [plugins](/docs/features/plugins), and the [complete skills reference](/docs/skills).
+
+## Explore the skills handbook
+
+- [Discovery and inspection](/docs/features/skill-discovery)
+- [Grants and dependencies](/docs/features/skill-grants)
+- [Templates](/docs/features/skill-templates)
+- [Authoring](/docs/features/skill-authoring)
+- [Reviews, history, and rollback](/docs/features/skill-reviews)
+- [Governance and scope](/docs/features/skill-governance)
+- [Sources and synchronization](/docs/features/skill-synchronization)
+- [Git publishing](/docs/features/skill-publishing)
+- [Usage and context cost](/docs/features/skill-usage)
+- [External skills library](/docs/features/skills-library-mcp)
+- [All thirty skill controls](/docs/controls/skills)

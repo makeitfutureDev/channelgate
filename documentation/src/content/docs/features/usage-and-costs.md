@@ -35,3 +35,6 @@ Administrators can maintain pricing and inspect external-usage evidence through 
 - [Model defaults](/docs/configuration/model-defaults)
 - [Schedules](/docs/features/schedules)
 - [Licensing](/docs/features/licensing)
+
+- [Pricing and usage repair](/docs/features/pricing-and-usage-repair)
+- [Activity and audit](/docs/features/activity-and-audit)

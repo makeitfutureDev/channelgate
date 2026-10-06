@@ -4,6 +4,9 @@ import { fileURLToPath } from 'node:url';
 import assert from 'node:assert/strict';
 import { guides } from './catalog.mjs';
 import { handbookSlugs } from '../src/data/handbook.mjs';
+import { checkFunctionalityCoverage } from './check-functionality.mjs';
+
+await checkFunctionalityCoverage();
 
 const dist = resolve(dirname(fileURLToPath(import.meta.url)), '../dist');
 export const pages = ['', 'getting-started', ...handbookSlugs, ...guides.map((guide) => guide.slug)];

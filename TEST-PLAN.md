@@ -1,5 +1,34 @@
 # ChannelGate — Test Plan
 
+## Complete functionality handbook (2026-10-06)
+
+- [x] Inventory reconciliation: all 45 functional areas map to detailed guides; 106 feature
+  guides grouped into 12 categories, 13 configuration guides, and 13 control references.
+  All 104 gateway plus 10 external-library registrations are documented exactly once. This is
+  an inventory/source-registration gate, not an automated semantic proof of every behavior.
+- [x] Independent source review: knowledge/execution/operations authors cross-reviewed the
+  other scopes, including actual tool schemas, authority, UI paths, limits and Beta/optional
+  statuses. Removed obsolete 12,000-character background-report cap; corrected Skills → Sync
+  settings navigation, source-form choices, external usage dry-run and sticky-engine recovery.
+  Late images/voice/canvas guides received independent source review.
+- [x] Static check: 777 JavaScript files passed syntax, identifier, secret-write and whitespace
+  checks. The documentation lockfile is unchanged; the previous high-severity dependency
+  audit remains applicable (10 moderate transitive findings; no high/critical findings).
+- [x] Final build and export: all 151 page routes, canonical URLs, headings, persistent sidebar
+  and search/assets passed; 26,792 internal links/anchors checked. Website-preserving export
+  regression passed, including sitemap idempotence and validation before writes.
+- [x] Local browser: functionality map, nested control guide, active sidebar and search return
+  correct guides; 390×844 menu/themes usable, document width 390 without horizontal overflow.
+- [x] Staged secret scan: 1,099 files/blobs checked; authored pages, schema examples and CI
+  updates contain no detected secrets.
+- [ ] Existing-site preview: recover the latest production static source, overlay docs only,
+  compare original files, verify all 151 routes, Pagefind/CSS, sitemap and license PEM endpoint.
+  Recheck production before promotion to preserve concurrent website/blog work.
+- [ ] Production: record Ready deployment and domain aliases, all 151 route responses,
+  representative existing website/blog/RSS bytes, search and mobile navigation.
+- This documentation/CI slice changes no gateway runtime and does not promote a stable release
+  or claim new live Claude/Codex acceptance.
+
 ## Feature and configuration handbook expansion (2026-10-06)
 
 - [x] Source coverage and cross-review: dedicated user guides cover conversations, threads,

@@ -24,6 +24,12 @@ Open **Settings → Resume Session** or use `/resume` for the current thread's h
 
 Open **Settings → General** to inspect both the channel defaults and the thread's own engine, model, and effort selections. An explicit thread selection takes precedence. An existing session can keep the engine that created it even after a default changes; the settings view makes that state visible.
 
+## Branch or manage accumulated context
+
+Use [conversation forks](/docs/features/conversation-forks) to branch an eligible completed Claude or Codex container session into another Slack thread. The source history remains intact, while both threads still share the workspace.
+
+Use [context and compaction](/docs/features/context-and-compaction) to inspect the last turn’s context estimate or compact an eligible Claude session. [Thread Clean](/docs/features/lean-context) deliberately starts a bare context boundary and has its own session reset rules.
+
 ## Know what carries forward
 
 Changing engines creates an engine-appropriate session rather than reusing the other engine's ID. ChannelGate can replay relevant chat history, but this is not a complete transfer of private engine state. Stop a long turn before making a deliberate handoff.
