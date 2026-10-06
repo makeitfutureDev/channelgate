@@ -18,6 +18,10 @@ product overview.
 
 ## Unreleased
 
+- Update runs the host Bash entry point, repairs exact dependencies and provisioning even when code
+  is current, checks image executables without provider sign-in, and uses a bounded graceful restart
+  with a longer startup readiness window. Provider authentication no longer blocks gateway repairs.
+
 - Codex now continues a partially completed turn in the same session after a model-capacity
   refusal. It avoids rerunning completed tool actions and tries another model unless the thread's
   model was explicitly pinned.

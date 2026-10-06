@@ -2,7 +2,8 @@
 // Runs in an independent systemd user service. Environment values arrive on a private stdin
 // pipe instead of becoming visible in ExecStart, systemd unit properties, or temporary files.
 // Apply them before importing the updater and its runtime-path modules.
-import { pathToFileURL } from "node:url";
+import { spawn } from "node:child_process";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import path from "node:path";
 
 export async function launchUpdate({ input = process.stdin, env = process.env, run } = {}) {
@@ -22,8 +23,24 @@ export async function launchUpdate({ input = process.stdin, env = process.env, r
   // Replace rather than merge: user-manager defaults must not change this install's identity.
   for (const key of Object.keys(env)) delete env[key];
   Object.assign(env, inherited);
-  const main = run || (await import("./update-runner.mjs")).main;
-  return main();
+  if (run) return run();
+  // The managed button runs the same host Bash entry point as npm run update.
+  // Keep the daemon's Node directory available even when systemd has a minimal PATH.
+  env.PATH = `${path.dirname(process.execPath)}:${env.PATH || "/usr/local/bin:/usr/bin:/bin"}`;
+  const script = fileURLToPath(new URL("./update.sh", import.meta.url));
+  return runUpdateShell({ script, args: process.argv.slice(2), env });
+}
+
+export function runUpdateShell({ script, args = [], env = process.env, spawnImpl = spawn } = {}) {
+  return new Promise((resolve, reject) => {
+    const child = spawnImpl("bash", [script, ...args], { cwd: path.dirname(path.dirname(script)), env, stdio: "inherit", shell: false });
+    child.once("error", reject);
+    child.once("close", (code, signal) => {
+      if (signal) return reject(new Error("Update shell was interrupted"));
+      process.exitCode = code ?? 1;
+      resolve(code ?? 1);
+    });
+  });
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) {

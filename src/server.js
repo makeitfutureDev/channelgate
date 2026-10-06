@@ -416,13 +416,13 @@ async function main() {
     .catch((e) => console.error("[gateway] usage maintenance failed:", e?.message || e));
 }
 
-for (const sig of ["SIGINT", "SIGTERM"]) {
+for (const sig of ["SIGINT", "SIGTERM", "SIGUSR2"]) {
   process.on(sig, () => {
     // Release the runtime services first: unlink the control socket (and drop any container
     // connections still holding it open) and stop the container reaper's timers. Both are fast and
     // best-effort — deliberately NOT awaited, so they can never delay or block the real drain.
     void stopRuntimeServices(sig);
-    requestShutdown({ slack, code: 0, reason: sig });
+    requestShutdown({ slack, code: sig === "SIGUSR2" ? restartExitCode() : 0, reason: sig });
   });
 }
 
