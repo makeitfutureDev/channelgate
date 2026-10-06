@@ -6,6 +6,7 @@ const { createTeamsControls } = await import('../src/platforms/msteams/controls.
 const { upsertChannelEntry, saveChannelMeta, getChannelMeta, patchChannelMeta, setUser } = await import('../src/config/store.js');
 const { addSchedule, listForChannel } = await import('../src/config/schedules.js');
 const { getThreadEngine, setThreadEngine, getThreadModel } = await import('../src/gateway/thread-engine.js');
+const { saveSession } = await import('../src/gateway/sessions.js');
 const { adaptiveCardAttachment } = await import('../src/platforms/msteams/cards.js');
 const { modelsForEngine } = await import('../src/engines/registry.js');
 const { getDb } = await import('../src/db/index.js');
@@ -48,6 +49,18 @@ test('six private settings pages render bounded cards, without a browser-admin d
   assert.ok(input(secrets, 'variableValue'));
   assert.equal(input(secrets, 'variableValue').value, '');
   assert.equal(input(secrets, 'variableValue').style, 'password');
+});
+test('Resume permits current admins and protects admin sessions from members', async () => {
+  for (const admin of [true, false]) {
+    const f = await fixture({ admin });
+    await saveSession(f.entry.slug, 'original-session', 'admin-session', 'claude', null, JSON.stringify({ backend: 'container', scope: 'admin' }));
+    const card = value(await f.invoke({ stateId: f.stateId, page: 'resume' }, 'settings.page'));
+    if (admin) assert.match(input(card, 'resumeCommand')?.value || '', /admin-session/);
+    else assert.equal(input(card, 'resumeCommand'), undefined);
+    await saveSession(f.entry.slug, 'original-session', 'project-session', 'claude', null, JSON.stringify({ backend: 'container', scope: 'project' }));
+    const projectCard = value(await f.invoke({ stateId: f.stateId, page: 'resume' }, 'settings.page'));
+    assert.match(input(projectCard, 'resumeCommand')?.value || '', /project-session/);
+  }
 });
 test('approved member runtime changes write only the dispatched field to the original scope', async () => {
   const f = await fixture({ admin: false });

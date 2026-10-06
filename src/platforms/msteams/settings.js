@@ -97,7 +97,7 @@ function automations(ctx, ui) {
 }
 
 async function resume(ctx, ui) {
-  const current = await resolveResumeSession({ entry: ctx.entry, meta: effectiveMeta(ctx.meta) }, ctx.sessionKey);
+  const current = await resolveResumeSession({ entry: ctx.entry, meta: effectiveMeta(ctx.meta), isAdminAuthor: ctx.userIsAdmin }, ctx.sessionKey);
   const body = [ui.heading('Resume Session')];
   if (!current.command) body.push(ui.text(current.inThread ? 'This session has not run a turn yet.' : 'Open settings from the session you want to resume.'));
   else body.push(ui.text(`Engine: ${current.engine}`), ui.text(`Session: ${current.sessionId}`), ui.text(`Folder: ${current.workDir}`),
