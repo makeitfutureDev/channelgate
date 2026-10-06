@@ -33,8 +33,8 @@ The exporter requires the destination directory, verifies the docs build, copies
 HTML, CSS, JavaScript, and Pagefind assets into its `/docs` subtree, writes the root
 `docs.html` entry point for the website's clean URL routing, and merges docs URLs into the
 existing root sitemap. It does not build or replace the main website. Test the combined
-output in a Vercel preview before publishing it. Every subsequent main-site deployment must
-include this export step, otherwise an older website build can replace the docs entry point.
+output in a Vercel preview before publishing it. The existing Vercel project now runs the automatic documentation build described below
+on website deployments. Other pipelines must also include this export step.
 The website keeps its existing Vercel configuration, including its API rewrites.
 
 ## Source of truth
@@ -70,9 +70,8 @@ the implementation. Preserve existing technical-reference URLs when adding short
 
 The expanded handbook's final build, browser, export, preview and production acceptance are
 tracked in the handbook section of `TEST-PLAN.md`. The final 75-page build passed
-7,540 internal-link/anchor checks, and the export regression passed. Publication of this
-expanded candidate remains pending until its actual acceptance results and production
-deployment are recorded there. The earlier 15-page documentation deployment is historical
+7,540 internal-link/anchor checks, and the export regression passed. Preview deployment of the full handbook passed; the production checks and exact deployment
+ID are recorded there. The earlier 15-page documentation deployment is historical
 evidence, not proof that these new pages are already live.
 
 Only the public documentation build is exported. Do not add deployment secrets, private

@@ -19,14 +19,15 @@
   Markdown files; the other 62 pages are authored in `documentation/src/content/docs/`.
   Repository-relative links resolve to a published guide or the source file on GitHub's `beta`
   branch. The export copies only the `/docs` subtree and entry point into an existing static
-  website output, then merges documentation URLs into its sitemap.
+  website output, then merges documentation URLs into its sitemap. The existing Vercel project
+  builds these docs automatically from public beta on each website deployment using
+  `documentation/scripts/vercel-build.sh` and a temporary checkout outside the website output.
 - Handbook source and configuration were cross-reviewed against the public feature record,
   canonical operator references and implementation. Microsoft Teams and Google Chat remain
   explicitly Beta; optional VPN provisioning, engine-specific approvals and admin-only host
   access retain their documented restrictions. This documentation change introduces no gateway
-  runtime behavior. Publication of the expanded handbook requires the build, browser and combined
-  Vercel acceptance recorded separately in `TEST-PLAN.md`; the initial 15-page deployment remains
-  the prior published baseline until those gates pass.
+  runtime behavior. The expanded handbook is published; build, browser, export, combined
+  Vercel preview and production acceptance are recorded in `TEST-PLAN.md`.
 
 ## Conversation sources and Teams names
 
