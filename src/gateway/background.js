@@ -80,19 +80,22 @@ export function resolveJobCap(kind, requested = 0) {
 // toolchain, with only the channel's mounts, and calling that "unsandboxed on the daemon" asks the
 // approver to sign off on a danger that is not there (and hides the one thing they'd want to know —
 // which image). Driven by the declared capability, never by a backend id.
+// How a shell job's environment is described to an approver (the card) and in a refusal. Only the
+// non-isolated variant ever reaches a card today: a container job in Auto mode starts without one
+// (see _start), so the isolated wording is kept for the refusal text and the audit trail.
 export function shellJobRuntimeNotice({ isolated = false, image = "" } = {}) {
   if (!isolated) {
     return {
       toolName: "Background shell job (unsandboxed)",
       where: "Runs OUTSIDE the engine sandbox as the daemon user.",
-      why: "Shell jobs run unsandboxed on the daemon, so Auto mode needs an explicit admin approval.",
+      why: "Shell jobs on the daemon run outside every container, so they need an explicit admin approval.",
     };
   }
   const tag = String(image || "").trim();
   return {
     toolName: "Background shell job (in this channel's container)",
     where: `Runs inside this channel's container${tag ? ` (${tag})` : ""}, not on the daemon — the image's toolchain, only this channel's mounts.`,
-    why: "Shell jobs run outside the engine's own confinement, so Auto mode needs an explicit admin approval.",
+    why: "Inside the channel's container, Auto mode already approves every foreground command, so a background shell job starts without a card.",
   };
 }
 
@@ -257,12 +260,16 @@ export class BackgroundJobs {
 
   // Start a tracked background job. Returns { ok, id?, label?, error? }. Two kinds:
   //   - "shell" (default): a bash command. Gating is authoritative here (the security boundary),
-  //     and it is gated by the selected trust tier: Auto mode requires a gateway admin to approve
-  //     the exact command via Slack buttons; Admin mode skips that second click only for an admin
-  //     author, matching the foreground sandbox-off contract they explicitly selected. The Auto
-  //     approval exists because a shell job runs OUTSIDE every engine sandbox — normally as plain
-  //     bash inside the resolved channel container, or on the daemon account for `/sudo` — so
-  //     prompt-injected Auto turns must never reach it on channel mode alone.
+  //     and it is gated by the selected trust tier AND by where the job runs. Inside the channel's
+  //     CONTAINER, Auto mode starts the job directly: Auto already auto-approves every foreground
+  //     `Bash` call in that same container, and `run_agent_in_background` runs there with no card,
+  //     so a second admin-tier click bought nothing but a stall for non-admin authors (the
+  //     Symphonia finding of 2026-10-06). Outside a container — the `/sudo` host lane, or an
+  //     embedder's unisolated backend — the job is plain bash on the daemon account, so Auto mode
+  //     still requires a gateway admin to approve the exact command; Admin mode skips that second
+  //     click only for an admin author, matching the foreground sandbox-off contract they
+  //     explicitly selected. Nothing a run can do changes what its container mounts, so the
+  //     container job gains no access a foreground Auto turn did not already have.
   //   - "agent": a full engine run (Claude or Codex via runMessage) on a FRESH session in this
   //     channel's folder — the durable form of a subagent. No extra gate: the run enforces the
   //     channel's own mode exactly like a foreground turn (permission prompts still surface as
@@ -332,7 +339,12 @@ export class BackgroundJobs {
       // The author's rank, where the HTTP run API principal (an admin key) counts as an admin.
       const adminAuthorInAdminMode = meta.adminMode === true && (await isAdminPrincipal(authorId));
       const allowed = meta.autoMode === true || adminAuthorInAdminMode;
-      if (adminAuthorInAdminMode && !approval.approvalGranted) {
+      // Auto mode inside the channel's container: the same confinement and the same auto-approval
+      // every foreground command already runs under, so no second click. The author is the audit
+      // identity, exactly as for an admin author in Admin mode.
+      const autoInContainer = meta.autoMode === true && isolatedJob;
+      const startsDirectly = adminAuthorInAdminMode || autoInContainer;
+      if (startsDirectly && !approval.approvalGranted) {
         approvedBy = String(authorId || "").replace(/[<@>]/g, "");
       }
       if (!allowed) {
@@ -349,7 +361,7 @@ export class BackgroundJobs {
       if (cmd.length > MAX_SHELL_APPROVAL_CMD) {
         return { ok: false, error: `Shell command is ${cmd.length} chars — too long to display fully on the approval card (max ${MAX_SHELL_APPROVAL_CMD}). Write it to a script file and run the file instead.` };
       }
-      if (!approval.approvalGranted && !adminAuthorInAdminMode) {
+      if (!approval.approvalGranted && !startsDirectly) {
         // Gate 2 — fail closed: without an approval channel there is no legitimate way to run
         // daemon-side unsandboxed shell.
         if (typeof this.requestShellApproval !== "function") {
@@ -585,7 +597,7 @@ export class BackgroundJobs {
     }
 
     await this._postStarted(rec);
-    await logEvent("bg_start", { id, kind, slug: entry.slug, channel: channelId, label: rec.label, cwd, logFile, approvedBy: approvedBy || "", approvalId: approval.approvalId || "" });
+    await logEvent("bg_start", { id, kind, slug: entry.slug, channel: channelId, label: rec.label, cwd, logFile, approvedBy: approvedBy || "", approvalId: approval.approvalId || "", isolated: isolatedJob });
     return { ok: true, id, label: rec.label };
   }
 
