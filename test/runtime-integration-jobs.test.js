@@ -136,11 +136,12 @@ test("a recovered container job the backend says is gone is finished, not signal
   assert.deepEqual(backend.calls.signal, []);
 });
 
-test("the approval card describes the environment the job will actually run in", async () => {
+test("a container job in Auto mode starts without a card; an unisolated one still gets the admin-tier card", async () => {
   // The second click used to exist because a shell job was plain bash on the daemon account. In a
-  // container channel that claim is false — and the approver's real question ("which image?")
-  // went unanswered. The wording is capability-driven, not a backend-id branch, and it names the
-  // image.
+  // container channel that claim is false, and Auto mode already auto-approves every foreground
+  // command in that same container — so the container job starts directly, as the author's own
+  // work, and only an UNISOLATED target still posts the exact-command card (admin tier, naming the
+  // daemon account). The wording is capability-driven, not a backend-id branch.
   await autoChannel("C_JOB_CARD", "job-card");
   const asked = [];
   const deny = async (request) => {
@@ -150,15 +151,27 @@ test("the approval card describes the environment the job will actually run in",
 
   const backend = createFakeRuntimeBackend();
   const inContainer = new BackgroundJobs({ requestShellApproval: deny, resolveTarget: (slug, meta) => fakeTarget(backend, slug, meta) });
-  const containerRefusal = await inContainer.start({ channelId: "C_JOB_CARD", authorId: "U_JOB", threadKey: "t-card-ctr", command: "rm -rf build", label: "clean" });
-  assert.equal(containerRefusal.ok, false);
-  const containerCard = asked.at(-1);
-  assert.equal(containerCard.toolName, "Background shell job (in this channel's container)");
-  assert.match(containerCard.toolInput.details, /Runs inside this channel's container \(channelgate\/runtime:test\)/);
-  assert.ok(containerCard.toolInput.details.includes(FAKE_IMAGE), "the approver must be told which image");
-  assert.doesNotMatch(containerCard.toolInput.details, /unsandboxed|as the daemon user/i);
-  assert.doesNotMatch(containerRefusal.error, /unsandboxed on the daemon/);
-  // Still an admin-tier click: less dangerous is not "no approval".
-  assert.equal(containerCard.requiredTier, "admin");
-  assert.equal(containerCard.approvalType, "agent");
+  const containerStart = await inContainer.start({ channelId: "C_JOB_CARD", authorId: "U_JOB", threadKey: "t-card-ctr", command: "true", label: "clean" });
+  assert.equal(containerStart.ok, true, containerStart.error);
+  assert.equal(containerStart.pendingApproval, undefined);
+  assert.equal(asked.length, 0, "no card for a container job in Auto mode");
+  assert.equal(backend.calls.spawn.length, 1, "the job was spawned through the container backend");
+  assert.equal(backend.calls.spawn[0].kind, "job");
+  const deadline = Date.now() + 15_000;
+  while (inContainer.count() > 0 && Date.now() < deadline) await new Promise((r) => setTimeout(r, 25));
+  assert.equal(inContainer.count(), 0);
+
+  const hostBackend = createFakeRuntimeBackend({ isolated: false });
+  const onHost = new BackgroundJobs({ requestShellApproval: deny, resolveTarget: (slug, meta) => fakeTarget(hostBackend, slug, meta) });
+  const hostRefusal = await onHost.start({ channelId: "C_JOB_CARD", authorId: "U_JOB", threadKey: "t-card-host", command: "rm -rf build", label: "clean" });
+  assert.equal(hostRefusal.ok, false);
+  assert.equal(hostBackend.calls.spawn.length, 0, "a denied host job never spawns");
+  const hostCard = asked.at(-1);
+  assert.equal(hostCard.toolName, "Background shell job (unsandboxed)");
+  assert.match(hostCard.toolInput.details, /as the daemon user/i);
+  assert.doesNotMatch(hostCard.toolInput.details, /container/i);
+  // Still an admin-tier click: outside a container, less convenient is not "no approval".
+  assert.equal(hostCard.requiredTier, "admin");
+  assert.equal(hostCard.approvalType, "agent");
+  assert.match(hostRefusal.error, /run outside every container/);
 });

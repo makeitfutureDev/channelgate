@@ -3,8 +3,8 @@
 Developers can open a real SSH session — terminal, VS Code Remote-SSH, sftp, port forwards —
 inside a channel's own container, the same box the assistant works in, without any account on
 the gateway host and without any container ever listening on a port. One key per person,
-registered once from chat; access granted per channel by that channel's managers; the container
-stays up for as long as a session is open.
+registered once from chat; users enable their own access per channel without manager or admin
+approval; the container stays up for as long as a session is open.
 
 ## How it works
 
@@ -76,10 +76,13 @@ yet, and `show_channel_ssh` names the installer.
    "add my SSH key `ssh-ed25519 AAAA… me@laptop`" (the `.pub` line, never the private key). The
    assistant answers with the SHA256 fingerprint. Keys are per person, up to five, and a key can
    belong to one account only.
-2. **Get granted on a channel**: a manager of that channel (an admin, or whoever `manageAccess`
-   names) says "grant SSH access to @you" there. Grants are per channel, audited as
-   `channel_meta_changed` (`sshUsers`), and never admit someone the channel's access policy
-   would refuse.
+2. **Enable your own access**: say "enable SSH access for me" in that channel. Anyone already
+   allowed there, including a named guest, can use `grant_channel_ssh` with no `user` argument
+   (or their own id/mention), with no manager or admin approval. Personal key registration and
+   removal also need no approval. Grants are per channel, audited as `channel_meta_changed`
+   (`sshUsers`), and never admit someone the channel's access policy would refuse. Managers
+   can still grant or revoke access for other people, with a manager approval card.
+   To remove your own access, say "remove my SSH access" (`revoke_channel_ssh`, no `user`).
 3. **Connect**: "show SSH access" in the channel prints the block to paste into `~/.ssh/config`:
 
    ```
@@ -210,7 +213,6 @@ none of this applies: values are real, and the network is the container's own.
 ## What the daemon checks on every connection
 
 - the presented key is registered (unknown keys are refused before anything else is looked up);
-- its owner is an approved user or an admin;
 - the channel exists and admits that user (`isAuthorized()`: the channel's access policy, guest
   grants, DM peer);
 - the user is on the channel's `sshUsers` grant list;
@@ -299,7 +301,8 @@ ended); `show_channel_ssh` lists the live ones.
   leaves this out on purpose — a guessed path would lock out exactly those agent-only setups.
 - *"this SSH key is not registered"* — register it from chat; the key must be the same one the
   ssh client offers (`ssh -v` shows which).
-- *"you have no SSH grant on …"* — a manager grants it in that channel.
+- *"you have no SSH grant on …"* — say "enable SSH access for me" in that channel; no manager
+  or admin approval is needed.
 - *"the gateway attach socket is unavailable"* — the daemon is down, or the installer ran with a
   different `CG_SSH_DIR` than the daemon's `CHANNELGATE_SSH_DIR`.
 - *Attach fails with `ENOENT` although the daemon looks healthy* (`ss -xl` still lists

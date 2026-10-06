@@ -17,15 +17,15 @@ test("the guide states the resolved home grant for every platform and refreshes 
   try {
     for (const platform of ["slack", "msteams", "googlechat"]) {
       for (const [adminMode, fullAccessHome] of [[false, false], [false, true], [true, true], [true, false]]) {
-        const target = resolveRuntime("guide-grant", { platform, adminMode }, { settings: { fullAccessHome } });
+        const target = resolveRuntime("guide-grant", { platform, adminMode }, { isAdminAuthor: true, settings: { fullAccessHome } });
         await applyGatewayGuide(cwd, { platform, target });
         const skill = await readGuide(cwd);
         assert.match(skill, new RegExp("containerFullAccessHome` is \\*\\*" + (fullAccessHome ? "on" : "off") + "\\*\\*"));
         if (adminMode && fullAccessHome) {
           assert.ok(skill.includes(JSON.stringify(os.homedir())));
           assert.match(skill, /resolved runtime includes the operator-home mount/);
-          assert.match(skill, /Every admitted author can read/);
-          assert.match(skill, /every other author's turn runs read-only/);
+          assert.match(skill, /Non-admin authors run in a separate project-only container/);
+          assert.match(skill, /normal Worker tools/);
           assert.doesNotMatch(skill, /has no operator-home mount/);
         } else {
           assert.match(skill, /resolved runtime has no operator-home mount/);
@@ -35,10 +35,10 @@ test("the guide states the resolved home grant for every platform and refreshes 
         assert.doesNotMatch(skill, /\{\{CONTAINER_ACCESS\}\}|host paths do not exist in here, for anyone|nothing of the host/);
         const admin = await readGuide(cwd, "references/administration.md");
         assert.match(admin, /containerFullAccessHome.*off by default/);
-        assert.match(admin, /ONLY when this channel is in Admin\/Full-access mode/);
+        assert.match(admin, /ONLY for a current organization admin[\s\S]*Admin\/Full-access/);
         assert.match(admin, /no MCP tool can flip it/);
-        assert.match(admin, /storage is masked/);
-        assert.match(admin, /configuration, logs, metadata and credential/);
+        assert.match(admin, /storage stays masked/);
+        assert.match(admin, /configuration,[\s\S]*logs, metadata and credential/);
         assert.doesNotMatch(admin, /whatever the mode|sees one host directory|they \*\*do not exist\*\*/);
       }
     }
@@ -49,7 +49,7 @@ test("folder provisioning carries the resolved grant into ordinary and clean eng
   for (const cleanMode of [false, true]) {
     const slug = "provision-home-guide-" + cleanMode;
     const meta = { platform: "slack", adminMode: true, cleanMode, allowedMcps: [], skills: [] };
-    const target = resolveRuntime(slug, meta, { settings: { fullAccessHome: true } });
+    const target = resolveRuntime(slug, meta, { isAdminAuthor: true, settings: { fullAccessHome: true } });
     const { cwd } = await ensureChannelFolder(slug, meta, { target });
     const claude = await readGuide(cwd);
     const codex = await readFile(path.join(cwd, ".agents/skills/gateway-usage/SKILL.md"), "utf8");
@@ -66,7 +66,7 @@ test("missing runtime facts remain unknown and admin overrides retain their docu
     assert.match(await readGuide(cwd), /no resolved runtime target was supplied/);
     assert.doesNotMatch(await readGuide(cwd), /containerFullAccessHome` is \*\*off/);
     await updateGatewayGuide({ file: "SKILL.md", content: "# Operator customization\n\n{{CONTAINER_ACCESS}}\n" });
-    const target = resolveRuntime("override-home", { adminMode: true }, { settings: { fullAccessHome: true } });
+    const target = resolveRuntime("override-home", { adminMode: true }, { isAdminAuthor: true, settings: { fullAccessHome: true } });
     await applyGatewayGuide(cwd, { target });
     assert.match(await readGuide(cwd), /^# Operator customization/);
     assert.match(await readGuide(cwd), /resolved runtime includes the operator-home mount/);

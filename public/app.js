@@ -183,6 +183,60 @@ function syncModelOptions({ engineSelect, modelSelect, value, engine, blankLabel
   modelSelect.value = options.some(([v]) => v === current) ? current : "";
 }
 
+function addModelShortcutRow(name = "", target = {}) {
+  const box = document.getElementById("model-shortcuts-editor");
+  const row = document.createElement("div");
+  row.className = "model-shortcut-row";
+  row.style.cssText = "display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:8px 0";
+  row.innerHTML = `<input class="shortcut-name" type="text" maxlength="24" placeholder="astra" aria-label="Shortcut name" style="max-width:120px" />
+    <select class="shortcut-engine" aria-label="Engine"></select>
+    <select class="shortcut-model" aria-label="Model"></select>
+    <button type="button" class="clear-tok shortcut-remove">Remove</button>`;
+  const engineSelect = row.querySelector(".shortcut-engine");
+  const modelSelect = row.querySelector(".shortcut-model");
+  engineSelect.innerHTML = engineOptionsHtml();
+  if (target.engine && ![...engineSelect.options].some((option) => option.value === target.engine)) {
+    const option = document.createElement("option");
+    option.value = target.engine;
+    option.textContent = `${target.engine} (disabled)`;
+    engineSelect.add(option);
+  }
+  engineSelect.value = target.engine || engineSelect.options[0]?.value || "claude";
+  const fillModels = (value = "") => {
+    const engine = engineSelect.value;
+    const manifestModels = ENGINE_MANIFESTS.find((m) => m.id === engine)?.models || [];
+    const options = manifestModels.length ? manifestModels.map((m) => [m.value, m.label || m.value]) : [...(MODEL_OPTIONS[engine] || [])];
+    if (value && !options.some(([id]) => id === value)) options.push([value, value]);
+    modelSelect.innerHTML = options.map(([id, label]) => `<option value="${escapeHtml(id)}">${escapeHtml(label)}</option>`).join("");
+    modelSelect.value = value && options.some(([id]) => id === value) ? value : (options[0]?.[0] || "");
+  };
+  row.querySelector(".shortcut-name").value = name;
+  fillModels(target.model);
+  engineSelect.addEventListener("change", () => fillModels());
+  row.querySelector(".shortcut-remove").addEventListener("click", () => { row.remove(); markSettingsDirty(); });
+  box.append(row);
+}
+
+function paintModelShortcuts(shortcuts) {
+  const box = document.getElementById("model-shortcuts-editor");
+  box.replaceChildren();
+  for (const [name, target] of Object.entries(shortcuts || {})) addModelShortcutRow(name, target);
+  document.getElementById("add-model-shortcut").disabled = false;
+}
+
+function collectModelShortcuts() {
+  const shortcuts = {};
+  for (const row of document.querySelectorAll("#model-shortcuts-editor .model-shortcut-row")) {
+    const name = row.querySelector(".shortcut-name").value.trim().toLowerCase();
+    if (!/^[a-z][a-z0-9_-]{0,23}$/.test(name)) throw new Error(`Invalid model shortcut name: ${name || "(blank)"}`);
+    if (Object.hasOwn(shortcuts, name)) throw new Error(`Duplicate model shortcut: ${name}`);
+    shortcuts[name] = { engine: row.querySelector(".shortcut-engine").value, model: row.querySelector(".shortcut-model").value };
+  }
+  return shortcuts;
+}
+
+document.getElementById("add-model-shortcut").addEventListener("click", () => { addModelShortcutRow(); markSettingsDirty(); });
+
 function checkboxList(container, items, selected, valueKey = "value", labelKey = "label") {
   container.innerHTML = "";
   if (!items.length) {
@@ -3615,6 +3669,7 @@ function readSettingsForm() {
     defaultCodexModel: document.getElementById("set-default-codex-model").value,
     ...collectQwenProviders(),
     modelChangeAccess: document.getElementById("set-model-change-access").value,
+    modelShortcuts: collectModelShortcuts(),
     engineEnabled: { ...ENGINE_ENABLED },
     engineFallback: document.getElementById("set-engine-fallback").checked,
     engineFallbackMode: document.getElementById("set-engine-fallback-mode").value,
@@ -3748,6 +3803,7 @@ function paintSettings(s) {
   syncModelOptions({ modelSelect: document.getElementById("set-default-claude-model"), engine: "claude", value: s.defaultClaudeModel || "", blankLabel: "CLI default" });
   syncModelOptions({ modelSelect: document.getElementById("set-default-codex-model"), engine: "codex", value: s.defaultCodexModel || "", blankLabel: "CLI default" });
   document.getElementById("set-model-change-access").value = s.modelChangeAccess || "admins";
+  paintModelShortcuts(s.modelShortcuts);
   document.getElementById("set-engine-fallback").checked = s.engineFallback !== false;
   document.getElementById("set-engine-fallback-mode").value = s.engineFallbackMode || "auto";
   document.getElementById("set-show-message-cost").checked = s.showMessageCost !== false;
@@ -4156,7 +4212,9 @@ function bindSettings() {
     saved.textContent = "saving…";
     // Only the fields this admin actually changed. Everything else is left to whatever the daemon
     // holds now — the whole point: an unrelated save must not revert another writer.
-    const form = readSettingsForm();
+    let form;
+    try { form = readSettingsForm(); }
+    catch (e) { saved.textContent = "✗ " + e.message; return; }
     const patch = diffSettingsPayload(SETTINGS_BASELINE || {}, form);
     const newPw = form.adminPassword || "";
     // Only (re)connect Slack when a Slack token was actually changed in this save — a normal

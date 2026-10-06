@@ -11,7 +11,7 @@
 // Trust: the wrapper's claims (which key, which channel) are believed because nothing but the
 // forced command can run as the login account (sshd_config Match + `restrict,command=` on every
 // key line); the socket is group-writable for that account only. The daemon still verifies the
-// key exists, the user is approved, the channel admits them and the grant is present — so a
+// key exists, the channel admits its owner and the grant is present — so a
 // forged header from that account could at most name a key it cannot use anyway.
 import net from "node:net";
 import path from "node:path";
@@ -90,12 +90,11 @@ export async function authorizeSshAttach(header, { settings = getContainerRuntim
   const user = await getUser(key.userId);
   const admin = Boolean(user?.isAdmin);
   const approved = Boolean(user?.approved || admin);
-  if (!approved) return refuse("your gateway account is not approved");
   const found = await findChannel(header?.channel);
   if (!found.ok) return refuse(found.error);
   const meta = await resolveMeta(found.entry);
   if (!isAuthorized(meta, key.userId, meta.isDM, { isAdminUser: admin, isApprovedUser: approved })) return refuse(`you are not allowed in ${found.entry.slug}`);
-  if (!sshUsersOf(meta).includes(key.userId)) return refuse(`you have no SSH grant on ${found.entry.slug} — ask one of its managers to say “grant SSH access to @you” there`);
+  if (!sshUsersOf(meta).includes(key.userId)) return refuse(`you have no SSH grant on ${found.entry.slug} — say “enable SSH access for me” there; no manager or admin approval is needed`);
   if (sshBlockedByHomeGrant(meta, settings)) {
     return refuse(`SSH into ${found.entry.slug} is refused while the channel is in Admin mode and the gateway's containerFullAccessHome switch is on: that container would expose the operator's whole home. Turn one of them off.`);
   }

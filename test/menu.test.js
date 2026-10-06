@@ -85,7 +85,7 @@ test("Resume never selects another thread and reads cleared state on click", asy
 });
 for (const engine of ["claude", "codex"]) test(`Resume uses stored ${engine} owner and container command`, async () => {
   const f = await fixture();
-  await saveSession(f.entry.slug, "100.1", "menu-session", engine);
+  await saveSession(f.entry.slug, "100.1", "menu-session", engine, null, JSON.stringify({ backend: "container", scope: "project" }));
   await setThreadEngine(f.entry.slug, "100.1", engine === "claude" ? "codex" : "claude");
   await click(f);
   const view = JSON.stringify(f.opened[0]);
@@ -93,7 +93,7 @@ for (const engine of ["claude", "codex"]) test(`Resume uses stored ${engine} own
 });
 test("Resume uses the per-thread clean workspace", async () => {
   const f = await fixture();
-  await saveSession(f.entry.slug, "100.1", "clean-session", "claude");
+  await saveSession(f.entry.slug, "100.1", "clean-session", "claude", null, JSON.stringify({ backend: "container", scope: "project" }));
   await setThreadClean(f.entry.slug, "100.1", true);
   await click(f);
   const { effectiveWorkDir } = await import("../src/gateway/folders.js");

@@ -1,15 +1,15 @@
 // SSH access to this channel's container, from chat (docs/SSH-ACCESS.md): a person registers
-// their ONE public key (bound to the identity that pasted it), a channel manager grants them SSH
+// their ONE public key (bound to the identity that pasted it), then enables their own SSH
 // on this channel, and `show_channel_ssh` hands out the ssh config block. The daemon-side broker
 // (src/gateway/ssh-broker.js) does the actual attach; nothing here can open a session.
 import { z } from "zod";
-import { getUser, isAdmin, isApproved, patchChannelMeta } from "../../config/store.js";
+import { getUser, patchChannelMeta } from "../../config/store.js";
 import { logChannelPolicyChange } from "../../config/channel-audit.js";
 import { getContainerRuntime } from "../../config/settings.js";
 import { effectiveWorkDir } from "../../gateway/folders.js";
 import {
-  addSshKey, connectSnippet, exportHostAuthorizedKeys, grantSshUser, keysForUsers, listSshKeys, listSshSessions, parseUserRef,
-  removeSshKey, revokeSshUser, sshAccessState, sshBlockedByHomeGrant, sshUsersOf, SSH_PUBLIC_KEY_HELP,
+  addSshKey, connectSnippet, exportHostAuthorizedKeys, grantSshUser, keysForUsers, listSshKeys, listSshSessions,
+  removeSshKey, revokeSshUser, sshAccessState, sshBlockedByHomeGrant, sshRequestTarget, sshUsersOf, SSH_PUBLIC_KEY_HELP,
 } from "../../gateway/ssh-access.js";
 
 const KEY_DOC = "Keys are per PERSON (one laptop key registered once), never per channel; the channel is chosen when connecting.";
@@ -20,7 +20,7 @@ function when(ms) {
 
 export function register(server, ctx) {
   const { channelId, slug, createdBy, text, principalTrusted, requireManage, requireChannelAccess, loadMeta } = ctx;
-  const approvedAuthor = async () => principalTrusted && Boolean(createdBy) && ((await isAdmin(createdBy)) || (await isApproved(createdBy)));
+  const admittedAuthor = async () => principalTrusted && Boolean(createdBy) && await requireChannelAccess();
   const displayName = async (userId) => {
     const user = await getUser(userId);
     return user?.name ? `@${user.name}` : userId;
@@ -49,12 +49,12 @@ export function register(server, ctx) {
     "add_my_ssh_key",
     {
       description:
-        `Register YOUR OWN SSH public key with the gateway so a channel manager can grant you SSH access into channel containers. ${KEY_DOC} `
+        `Register YOUR OWN SSH public key with the gateway, then enable your own SSH access with grant_channel_ssh. No manager or admin approval is needed for your own access. ${KEY_DOC} `
         + `Pass the single line of the .pub file exactly as pasted. Never accept a private key. ${SSH_PUBLIC_KEY_HELP}`,
       inputSchema: { public_key: z.string(), label: z.string().optional() },
     },
     async ({ public_key, label }) => {
-      if (!(await approvedAuthor())) return text("Only an approved user can register an SSH key, and only for their own account.");
+      if (!(await admittedAuthor())) return text("Only a user allowed in this channel can register an SSH key, and only for their own account.");
       let result;
       try {
         result = await addSshKey(createdBy, public_key, { label });
@@ -66,7 +66,7 @@ export function register(server, ctx) {
         ? "The gateway host now accepts it."
         : `The gateway host is not set up for SSH access yet (${exported.reason}); the key is stored and will be exported once it is.`;
       return text(`${result.created ? "✅ Registered" : "ℹ️ Already registered"} your ${result.parsed.family} key **${result.key.fingerprint}**${result.key.label ? ` (${result.key.label})` : ""}. ${host}\n`
-        + "Next: a manager of the channel you need grants you access there (“grant SSH access to @you”), then `show_channel_ssh` in that channel gives you the ssh config block.");
+        + "Next: say “enable SSH access for me” in the channel you need (grant_channel_ssh with no user), then show_channel_ssh gives you the ssh config block. No manager or admin approval is needed.");
     },
   );
 
@@ -97,22 +97,25 @@ export function register(server, ctx) {
     "grant_channel_ssh",
     {
       description:
-        "CHANNEL MANAGERS / ADMINS. Grant a person SSH access into THIS channel's container: a full shell as the channel (its files, its CLI logins, Claude and Codex), "
-        + "the same box the assistant works in. The person must be an approved user allowed in this channel and must have registered their own key (add_my_ssh_key). "
-        + "Pass their user id or @mention.",
-      inputSchema: { user: z.string() },
+        "Enable YOUR OWN SSH access into THIS channel's container immediately, without manager or admin approval. Omit user or pass your own id/mention. This gives a full shell as the channel (its files, its CLI logins, Claude and Codex), "
+        + "the same box the assistant works in. You must already be allowed in this channel; connecting requires your own registered key (add_my_ssh_key). "
+        + "Granting another person access requires a channel manager/admin and their approval. Pass that person's user id or @mention.",
+      inputSchema: { user: z.string().optional() },
     },
     async ({ user }) => {
-      if (!(await requireManage())) return text("Only this channel's managers (or an admin) can grant SSH access.");
-      const userId = parseUserRef(user);
+      const userId = sshRequestTarget(user, createdBy);
       if (!userId) return text("Name the person as a user id or @mention.");
+      const self = principalTrusted && userId === createdBy;
+      if (self) {
+        if (!(await admittedAuthor())) return text("You are not allowed in this channel.");
+      } else if (!(await requireManage())) return text("Only this channel's managers (or an admin) can grant SSH access to another person.");
       const record = await getUser(userId);
-      if (!record || !(record.approved || record.isAdmin)) return text(`${userId} is not an approved user of this gateway — an admin approves them first.`);
+      if (!self && (!record || !(record.approved || record.isAdmin))) return text(`${userId} is not an approved user of this gateway — an admin approves them first.`);
       const meta = await loadMeta();
       if (!meta) return text("Channel isn't set up yet — send a normal message first.");
       const grant = grantSshUser(meta, userId);
       if (!grant.changed) return text(`${await displayName(userId)} already has SSH access here.`);
-      if (!(await patchAuditedMeta({ sshUsers: grant.sshUsers }))) return text("Channel isn't set up yet — send a normal message first.");
+      if (!(await patchAuditedMeta(current => ({ sshUsers: grantSshUser(current, userId).sshUsers })))) return text("Channel isn't set up yet — send a normal message first.");
       const keys = await keysForUsers([userId]);
       const setup = sshAccessState();
       const notes = [];
@@ -125,16 +128,16 @@ export function register(server, ctx) {
 
   server.registerTool(
     "revoke_channel_ssh",
-    { description: "CHANNEL MANAGERS / ADMINS. Revoke a person's SSH access into THIS channel's container. New connections are refused at once; a session already open ends when it disconnects.", inputSchema: { user: z.string() } },
+    { description: "Remove YOUR OWN SSH access immediately (omit user or pass your own id/mention). Revoking another person's access requires a channel manager/admin and their approval. New connections are refused at once; a session already open ends when it disconnects.", inputSchema: { user: z.string().optional() } },
     async ({ user }) => {
-      if (!(await requireManage())) return text("Only this channel's managers (or an admin) can revoke SSH access.");
-      const userId = parseUserRef(user);
+      const userId = sshRequestTarget(user, createdBy);
       if (!userId) return text("Name the person as a user id or @mention.");
+      if (!(principalTrusted && userId === createdBy) && !(await requireManage())) return text("Only this channel's managers (or an admin) can revoke SSH access to another person.");
       const meta = await loadMeta();
       if (!meta) return text("Channel isn't set up yet — send a normal message first.");
       const change = revokeSshUser(meta, userId);
       if (!change.changed) return text(`${await displayName(userId)} has no SSH access here.`);
-      if (!(await patchAuditedMeta({ sshUsers: change.sshUsers }))) return text("Channel isn't set up yet — send a normal message first.");
+      if (!(await patchAuditedMeta(current => ({ sshUsers: revokeSshUser(current, userId).sshUsers })))) return text("Channel isn't set up yet — send a normal message first.");
       const live = listSshSessions({ slug, live: true }).filter((session) => session.userId === userId);
       return text(`✅ SSH access for ${await displayName(userId)} revoked here.${live.length ? ` ${live.length} open session(s) of theirs will end when they disconnect.` : ""}`);
     },
@@ -161,7 +164,7 @@ export function register(server, ctx) {
       if (sshBlockedByHomeGrant(meta, getContainerRuntime())) {
         lines.push("• ⚠️ Connections are REFUSED right now: this channel is in Admin mode while the gateway's `containerFullAccessHome` switch is on (its container would expose the operator's whole home). Turn one of them off.");
       }
-      if (!granted.length) lines.push("• Granted: nobody yet — a manager says “grant SSH access to @person”.");
+      if (!granted.length) lines.push("• Granted: nobody yet — say “enable SSH access for me”; no manager or admin approval is needed.");
       else {
         const parts = [];
         for (const userId of granted) {
@@ -179,7 +182,7 @@ export function register(server, ctx) {
       const myKeys = createdBy ? await listSshKeys(createdBy) : [];
       const mine = createdBy && granted.includes(createdBy);
       if (mine && !myKeys.length) lines.push(`• You are granted but have no key registered: ${SSH_PUBLIC_KEY_HELP} Then add_my_ssh_key.`);
-      else if (!mine && createdBy) lines.push(`• You are not granted here${myKeys.length ? "" : " and have no key registered"}.`);
+      else if (!mine && createdBy) lines.push(`• You are not granted here${myKeys.length ? "" : " and have no key registered"}. Say “enable SSH access for me”; no manager or admin approval is needed.`);
       if (setup.configured) {
         lines.push("", "Once granted, add this to `~/.ssh/config` on your laptop (your usual key; nothing per channel), then `ssh " + slug + "` or open it with VS Code Remote-SSH:", "```", connectSnippet({ endpoint: setup.endpoint, channel: slug }), "```",
           `To open VS Code straight on the channel folder: \`code --remote ssh-remote+${slug} ${effectiveWorkDir(slug, meta)}\` (from Remote-SSH's own connect menu, File → Open Folder starts in that folder; press OK).`,

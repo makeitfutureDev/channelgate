@@ -16,8 +16,8 @@ export function buildMenuCard(channelId, threadTs, authorId) {
 
 // Read the current session on click so an old card cannot resurrect a cleared session or select
 // another thread. No container needs to start just to display these controls.
-export async function buildMenuResumeView({ entry, meta }, threadTs) {
-  const resume = await resolveResumeSession({ entry, meta }, threadTs || "");
+export async function buildMenuResumeView({ entry, meta, userIsAdmin = false }, threadTs) {
+  const resume = await resolveResumeSession({ entry, meta, isAdminAuthor: userIsAdmin }, threadTs || "");
   let text = threadTs
     ? "No session in this thread yet. Send a message first, then open Resume again."
     : "Open a conversation thread and send `@agent /menu` there to resume its session. In a DM thread, no mention is needed.";

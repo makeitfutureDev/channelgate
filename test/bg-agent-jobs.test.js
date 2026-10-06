@@ -8,11 +8,15 @@ import path from "node:path";
 import { ensureTestEnv } from "./helpers.js";
 
 const scratch = ensureTestEnv();
-const { useFakeRuntime: __useFakeRuntime, fakeTarget: __fakeTarget } = await import("./runtime-fake.js");
+const { useFakeRuntime: __useFakeRuntime, fakeTarget: __fakeTarget, createFakeRuntimeBackend: __createFakeBackend } = await import("./runtime-fake.js");
 const __fakeBackend = await __useFakeRuntime();
 // BackgroundJobs resolves its own target (not through run.js), so every instance below gets the
 // same fake container backend — a runner with no container image must never reach the real one.
 const __resolveTarget = (slug, meta) => __fakeTarget(__fakeBackend, slug, meta);
+// The one UNISOLATED target a shell job can still land on: plain bash on the daemon account (the
+// `/sudo` host lane, or an embedder's own backend). This is where the exact-command card remains.
+const __hostBackend = __createFakeBackend({ isolated: false });
+const __resolveHostTarget = (slug, meta) => __fakeTarget(__hostBackend, slug, meta);
 // Keep default channel workspaces inside the scratch dir (never the operator's real ~/ChannelGate).
 process.env.CG_WORKSPACE_DIR = path.join(scratch, "workspaces");
 
@@ -84,48 +88,87 @@ test("sudo background work rechecks the author and passes only the admin host po
   assert.equal(resolvedMeta, null, "a non-admin sudo job is rejected before runtime resolution");
 });
 
-// the 2026-08 update plan (internal repo) A1: shell jobs run OUTSIDE the engine sandbox (plain bash on the daemon
-// account), so Auto mode needs an explicit admin approval of the exact command. Admin mode skips
-// that second click only for an admin author, matching its explicit foreground sandbox-off tier.
-test("shell jobs require approval in Auto mode but not for an admin author in Admin mode", async () => {
+// Where a shell job runs decides whether it needs a second click. Inside the channel's CONTAINER,
+// Auto mode starts it directly — Auto already auto-approves every foreground command there, so an
+// admin-tier card on top only stalled non-admin authors (the Symphonia finding of 2026-10-06).
+// On an UNISOLATED target (plain bash on the daemon account) Auto mode still needs an explicit
+// admin approval of the exact command; Admin mode skips that second click only for an admin
+// author, matching its explicit foreground sandbox-off tier.
+test("a container shell job in Auto mode starts without an approval card, as the author's own work", async () => {
+  const entry = await upsertChannelEntry("C-bgshell-ctr", { name: "bgshell-ctr", type: "channel", isDM: false });
+  const asked = [];
+  const record = async (req) => (asked.push(req), { allow: false, reason: "Denied by <@U9>" });
+
+  // Mode gate first: without auto/admin mode the job is refused BEFORE any approval is requested,
+  // container or not.
+  await saveChannelMeta(entry.slug, { channelId: "C-bgshell-ctr", autoMode: false });
+  const gated = new BackgroundJobs({ resolveTarget: __resolveTarget, requestShellApproval: record });
+  assert.match((await gated.start({ channelId: "C-bgshell-ctr", authorId: "U1", threadKey: "t0", command: "echo hi" })).error, /aren't allowed in this channel/);
+  assert.equal(asked.length, 0);
+
+  // Auto mode + container: no card, no approval channel needed, and a non-admin author's job runs.
+  await saveChannelMeta(entry.slug, { channelId: "C-bgshell-ctr", autoMode: true, adminMode: false });
+  mkdirSync(path.join(process.env.CG_WORKSPACE_DIR, "slack", entry.slug), { recursive: true });
+  const JOB_WAIT_MS = 15_000;
+  const direct = new BackgroundJobs({ resolveTarget: __resolveTarget, requestShellApproval: record });
+  const started = await direct.start({ channelId: "C-bgshell-ctr", authorId: "U1", threadKey: "t1", command: "true", label: "direct" });
+  assert.equal(started.ok, true, started.error);
+  assert.equal(started.pendingApproval, undefined, "a container job in Auto mode is never parked on a card");
+  assert.equal(asked.length, 0, "no approval request was made for a container job in Auto mode");
+  const deadline = Date.now() + JOB_WAIT_MS;
+  while (direct.count() > 0 && Date.now() < deadline) await new Promise((r) => setTimeout(r, 25));
+  assert.equal(direct.count(), 0, "the unprompted container job runs to completion");
+  // The audit trail names the author as the authority, exactly like an admin author in Admin mode,
+  // and records that the job was isolated.
+  const startEvent = getDb().prepare("SELECT data FROM events WHERE event = 'bg_start' ORDER BY rowid DESC LIMIT 1").get();
+  const audit = fromJson(startEvent.data, {});
+  assert.equal(audit.approvedBy, "U1");
+  assert.equal(audit.isolated, true);
+  assert.equal(audit.approvalId, "");
+
+  // The same without any approval channel wired at all: still starts (the card is not the gate).
+  const bare = new BackgroundJobs({ resolveTarget: __resolveTarget });
+  const bareStart = await bare.start({ channelId: "C-bgshell-ctr", authorId: "U1", threadKey: "t2", command: "true" });
+  assert.equal(bareStart.ok, true, bareStart.error);
+  const bareDeadline = Date.now() + JOB_WAIT_MS;
+  while (bare.count() > 0 && Date.now() < bareDeadline) await new Promise((r) => setTimeout(r, 25));
+  assert.equal(bare.count(), 0);
+});
+
+test("an unisolated shell job requires an admin approval in Auto mode but not for an admin author in Admin mode", async () => {
   const entry = await upsertChannelEntry("C-bgshell", { name: "bgshell", type: "channel", isDM: false });
   const asked = [];
   const record = async (req) => (asked.push(req), { allow: false, reason: "Denied by <@U9>" });
 
-  // Mode gate first: without auto/admin mode the job is refused BEFORE any approval is requested.
-  await saveChannelMeta(entry.slug, { channelId: "C-bgshell", autoMode: false });
-  const gated = new BackgroundJobs({ resolveTarget: __resolveTarget,  requestShellApproval: record });
-  assert.match((await gated.start({ channelId: "C-bgshell", authorId: "U1", threadKey: "t0", command: "echo hi" })).error, /aren't allowed in this channel/);
-  assert.equal(asked.length, 0);
-
   await saveChannelMeta(entry.slug, { channelId: "C-bgshell", autoMode: true });
 
   // Fail closed: auto mode alone is NOT enough when no approval channel exists.
-  const bare = new BackgroundJobs({ resolveTarget: __resolveTarget });
+  const bare = new BackgroundJobs({ resolveTarget: __resolveHostTarget });
   assert.match((await bare.start({ channelId: "C-bgshell", authorId: "U1", threadKey: "t0", command: "echo hi" })).error, /no approval channel/);
 
-  // A denial (with its reason) refuses the job; the request carried the exact command and the
-  // never-auto-approved "agent" type.
+  // A denial (with its reason) refuses the job; the request carried the exact command, the
+  // never-auto-approved "agent" type and the admin tier.
+  const gated = new BackgroundJobs({ resolveTarget: __resolveHostTarget, requestShellApproval: record });
   const denied = await gated.start({ channelId: "C-bgshell", authorId: "U1", threadKey: "t0", command: "echo hi" });
   assert.match(denied.error, /not approved/);
   assert.match(denied.error, /Denied by <@U9>/);
   assert.equal(asked.length, 1);
   assert.equal(asked[0].approvalType, "agent");
+  assert.equal(asked[0].requiredTier, "admin");
   assert.equal(asked[0].authorId, "U1");
   assert.match(asked[0].toolInput.details, /echo hi/);
-  // The card names where the job really runs: inside this channel's container, not on the daemon.
-  assert.match(asked[0].toolInput.details, /Runs inside this channel's container/);
-  assert.match(asked[0].toolInput.details, /not on the daemon/);
-  assert.doesNotMatch(asked[0].toolInput.details, /OUTSIDE the engine sandbox/);
+  // The card names where the job really runs: on the daemon, outside every container.
+  assert.equal(asked[0].toolName, "Background shell job (unsandboxed)");
+  assert.match(asked[0].toolInput.details, /OUTSIDE the engine sandbox as the daemon user/);
 
   // An approval-layer failure also refuses the job (never spawn on error).
-  const broken = new BackgroundJobs({ resolveTarget: __resolveTarget,  requestShellApproval: async () => { throw new Error("slack down"); } });
+  const broken = new BackgroundJobs({ resolveTarget: __resolveHostTarget, requestShellApproval: async () => { throw new Error("slack down"); } });
   assert.match((await broken.start({ channelId: "C-bgshell", authorId: "U1", threadKey: "t0", command: "echo hi" })).error, /Couldn't request approval.*slack down/);
 
   // Durable approval creation returns immediately without spawning. The exact serialized action
   // is later passed back through startApproved() by the Slack click handler, which rechecks mode.
   const durableRequests = [];
-  const pendingJobs = new BackgroundJobs({ resolveTarget: __resolveTarget,
+  const pendingJobs = new BackgroundJobs({ resolveTarget: __resolveHostTarget,
     requestShellApproval: async (request) => {
       durableRequests.push(request);
       return { allow: false, pending: true, approvalId: "approval-1" };
@@ -147,19 +190,17 @@ test("shell jobs require approval in Auto mode but not for an admin author in Ad
     maxMs: 60 * 60 * 1000,
   });
 
-  // Approved → the job actually spawns and completes. Inside a container the job is watched by
-  // the backend's liveness probe (every 5s), not by the daemon-side client's exit, so completion
-  // takes up to one probe interval.
+  // Approved → the job actually spawns and completes.
   const JOB_WAIT_MS = 15_000;
   mkdirSync(path.join(process.env.CG_WORKSPACE_DIR, "slack", entry.slug), { recursive: true });
-  const approving = new BackgroundJobs({ resolveTarget: __resolveTarget,  requestShellApproval: async () => ({ allow: true, reason: "Approved by <@U1>" }) });
+  const approving = new BackgroundJobs({ resolveTarget: __resolveHostTarget, requestShellApproval: async () => ({ allow: true, reason: "Approved by <@U1>" }) });
   const started = await approving.start({ channelId: "C-bgshell", authorId: "U1", threadKey: "t1", command: "true" });
   assert.equal(started.ok, true, started.error);
   const deadline = Date.now() + JOB_WAIT_MS;
   while (approving.count() > 0 && Date.now() < deadline) await new Promise((r) => setTimeout(r, 25));
   assert.equal(approving.count(), 0, "approved shell job should run to completion");
 
-  const approvedAfterRestart = new BackgroundJobs({ resolveTarget: __resolveTarget });
+  const approvedAfterRestart = new BackgroundJobs({ resolveTarget: __resolveHostTarget });
   const restarted = await approvedAfterRestart.startApproved({
     id: "approval-2",
     decidedBy: "U1",

@@ -9,8 +9,9 @@ Contributor workflow).
 A **self-hosted Linux daemon** (Node ESM, Express, `node:sqlite`) that runs coding agents inside
 team chat. Every conversation — a Slack DM, group or channel; Microsoft Teams and Google Chat in
 Beta — gets its **own work folder** (`~/ChannelGate/<platform>/<slug>/`), its **own rootless
-Podman container**, its own persistent memory and one engine session per thread. Each ordinary message runs
-a **headless engine turn inside that container**: Claude Code (`claude -p`, the primary engine),
+Podman containers for project and admin authors**, its own persistent memory and one engine
+session per thread and runtime lane. Each ordinary message runs a **headless engine turn inside
+that container**: Claude Code (`claude -p`, the primary engine),
 OpenAI Codex (`codex exec`), or OpenCode (a proof adapter admitted only read-only and
 network-off). An organization admin can explicitly turn one Slack thread into a direct-host
 `/sudo` thread; only admins may then message it. The container is the default confinement boundary;
@@ -385,8 +386,8 @@ Config that stays as **files** (read wholesale / bootstrap, hand-editable):
 ## Non-negotiable rules
 
 - **Confinement is the product, and the container is the default boundary.** Every ordinary turn —
-  foreground, background job, schedule, API run, memory review — runs inside the channel's own container
-  (rootless Podman, image-shipped toolchain, `--cap-drop ALL`, no `sudo`): a per-channel HOME
+  foreground, background job, schedule, API run, memory review — runs inside the channel's
+  selected author container (rootless Podman, image-shipped toolchain, `--cap-drop ALL`, no `sudo`): a per-channel HOME
   volume at `/home/agent` (engine sessions, CLI logins, installed tools) and, bind-mounted at
   their identical absolute paths, ONLY the channel's work folder, its clean workspace and its
   artifact dir (`~/ChannelGate/.runtime/<platform>/<slug>`, which also backs `/tmp` and
@@ -422,13 +423,19 @@ Config that stays as **files** (read wholesale / bootstrap, hand-editable):
   container, everything in it included. That is the intended trust model for admin channels; put
   nothing in such a folder that the channel must not see. The one operator-chosen widening is the
   gateway-wide *Admin channels can access the host home* switch (Settings → Container runtime,
-  `containerFullAccessHome`, OFF by default): while it is on, every Admin-mode channel's container
-  also bind-mounts the daemon user's WHOLE home read-write at its identical path — every channel's
-  work folder and memory, every repo, the gateway root with its logs, metadata and credential
-  stores — with only the container engine's own storage masked. It is a boolean, never a path
-  (`operatorHomeMounts` in `src/runtimes/container/lifecycle.js`), it is part of the create-time
-  fingerprint, no MCP tool can flip it, and it is per CHANNEL: every author the channel admits can
-  read the home through the file tools, only an admin author's turn writes with the bypass tools.
+  `containerFullAccessHome`, OFF by default): only a currently authorized organization admin's
+  run in an Admin-mode channel gets the daemon user's WHOLE home read-write at its identical
+  path — other channel folders, repositories, gateway metadata and credential stores — with
+  the container engine's storage masked. Non-admin members and guests use a separate project
+  container, retain Worker with the selected Auto/Lean options, and cannot read the operator
+  home, other channels or admin engine histories. The daemon checks the author's current role
+  when resolving each foreground or background spawn; metadata, prompt text and a stored job's
+  claimed role cannot grant a mount. Admins retain the legacy container/HOME/artifact lane;
+  project authors use a fresh `cgp2-` container, HOME and temporary volumes and a separate
+  `.runtime-project-v2/<platform>/<slug>` artifact root. The project and clean workspace remain
+  shared, so files deliberately stored there are visible to admitted authors. Lane changes start fresh engine sessions and
+  do not transfer admin history. Memory reviews always use the project lane. The switch remains
+  boolean, part of create-time reconciliation, and unavailable through MCP tools.
 - **Secrets never ride a listing response.** `/api/settings`, `/api/channels`, `/api/users` and the
   channel-meta PUT return `has*`/`last4` ONLY. A value is fetched one at a time from
   `POST /api/secrets/reveal`, which re-checks the admin password even for a valid session and

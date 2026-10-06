@@ -121,11 +121,19 @@ function requesterLabel(authorId) {
   return isApiPrincipal(authorId) ? "An HTTP API run" : `<@${authorId}>`;
 }
 
-function approvalBlocks(id, toolName, target, authorId, { approvalType = "permission", approveText = "Approve", denyText = "Deny", durable = false } = {}) {
+// The authority a card needs, stated ON the card: a member who could only ever Deny must learn
+// that before clicking, not from the ephemeral refusal after (the Symphonia finding of 2026-10-06).
+function tierNotice(requiredTier = "") {
+  if (requiredTier === "admin") return " Only a gateway *admin* can approve this; anyone eligible may Deny or Comment.";
+  if (requiredTier === "manage") return " Only a channel *manager* (or a gateway admin) can approve this; anyone eligible may Deny or Comment.";
+  return "";
+}
+
+function approvalBlocks(id, toolName, target, authorId, { approvalType = "permission", approveText = "Approve", denyText = "Deny", durable = false, requiredTier = "" } = {}) {
   const preview = fencedPreview(target);
   if (approvalType === "agent") {
     return [
-      { type: "section", text: { type: "mrkdwn", text: `*${toolName}*${preview}\n${requesterLabel(authorId)} asked for approval${durable ? ". This exact request remains actionable across gateway restarts until handled." : " before continuing."}` } },
+      { type: "section", text: { type: "mrkdwn", text: `*${toolName}*${preview}\n${requesterLabel(authorId)} asked for approval${durable ? ". This exact request remains actionable across gateway restarts until handled." : " before continuing."}${tierNotice(requiredTier)}` } },
       {
         type: "actions",
         elements: [
@@ -296,6 +304,7 @@ export async function requestApproval(slack, { channelId, slug, authorId, thread
               approveText: existing.approveText,
               denyText: existing.denyText,
               durable: true,
+              requiredTier: existing.requiredTier || "",
             }),
             context: { approvalId: existing.id, toolName: existing.toolName },
           });
@@ -343,7 +352,7 @@ export async function requestApproval(slack, { channelId, slug, authorId, thread
         threadTs: cardThread(threadKey),
         approval: { id, title: toolName, target, authorId, approvalType, scopes: approvalScopesFor({ approvalType, durable }) },
         text: `Approval requested: ${toolName}`,
-        blocks: approvalBlocks(id, toolName, target, authorId, { approvalType, approveText, denyText, durable: true }),
+        blocks: approvalBlocks(id, toolName, target, authorId, { approvalType, approveText, denyText, durable: true, requiredTier }),
         context: { approvalId: id, toolName, slug },
       });
       patchPendingApproval(id, { msgTs: ts });
@@ -380,7 +389,7 @@ export async function requestApproval(slack, { channelId, slug, authorId, thread
       threadTs: cardThread(threadKey),
         approval: { id, title: toolName, target, authorId, approvalType, scopes: approvalScopesFor({ approvalType, durable }) },
       text: approvalType === "agent" ? `Approval requested: ${toolName}` : `🔒 Permission needed: ${toolName}`,
-      blocks: approvalBlocks(id, toolName, target, authorId, { approvalType, approveText, denyText }),
+      blocks: approvalBlocks(id, toolName, target, authorId, { approvalType, approveText, denyText, requiredTier }),
       context: { approvalId: id, toolName, slug },
     });
   } catch (error) {

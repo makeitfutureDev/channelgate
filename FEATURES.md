@@ -1,5 +1,9 @@
 # ChannelGate — Features
 
+## Gateway model shortcuts
+
+Admins can add gateway-wide model shortcuts in Settings → Access & security → Model shortcuts. Each name selects an engine and model. In Slack, `@agent :astra task` pins that engine and model to the current thread and runs the task; `@agent :astra` switches the thread without starting an agent turn. Slack's automatically inserted space after the mention is accepted. Changing a mapping affects later shortcut selections, while threads already pinned keep their selected model. Channel runtime-change access and dedicated Codex-login restrictions apply.
+
 ## Public documentation website
 
 - `documentation/` builds a static Astro/Starlight documentation section for
@@ -2400,31 +2404,34 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
   approved-domain `network_proxy`, which then resets every tunnel (allowed domains included) —
   the boot assessment flags a stale pre-Codex install of the profile and says to re-run
   `--apply`. → TEST-PLAN: Security (Linux userns sandbox).
-- **Retired 2026-09-03 (Linux + containers only):** the rationale only — the job runs inside the channel's container, and both gates stay. Background shell jobs have two independent gates: the channel must be auto-mode (or admin-mode
-  with an admin author), then a gateway admin must click the durable exact-command Slack approval.
-  The second gate is never auto-approved because the command runs outside the engine sandbox.
-  → TEST-PLAN: Security (background gating).
-- **Retired 2026-09-03 (Linux + containers only):** admin channels run in containers too — the admin author's live turn keeps the bypass flag, its
-  work folder is bind-mounted read-write like any other's (a host directory used as the work folder
-  is visible in full, nothing beside it), and nothing else of the host is reachable — unless the
-  operator turns on **Full-access channels see the gateway home** (2026-09-06, Settings → Container
-  runtime, `containerFullAccessHome`, off by default): then every Full-access channel's container
-  also bind-mounts the gateway user's whole home read-write at its identical path (every channel's
-  work folder + memory, every repo, the gateway root incl. logs/metadata/credential stores; only
-  `~/.local/share/containers` masked), Claude's admin-run settings list it in
-  `permissions.additionalDirectories` (derived from the resolved mount), the grant is part of the
-  create-time fingerprint, no MCP tool can flip it, and it is per channel (every admitted author
-  reads; an admin author's turn writes). Because the mount is read-write for the whole container,
-  every run there that is NOT an admin author's — a member's or guest's turn, their background
-  agents — is **home-guarded** (2026-09-27, CTR-30): Claude's per-run settings deny `Bash`, `Write`,
-  `Edit`, `MultiEdit` and `NotebookEdit` outright (deny, not ask: a run's own author may approve
-  their own card), Codex runs in its read-only sandbox with no auto-approved escalation, and
-  plugin command servers are refused. An admin author's live turn (bypass) and the admin unattended
-  tier are unchanged. → TEST-PLAN: Container runtime (operator-home grant). **Admin mode delivers its documented contract** — "full tools, sandbox off": an admin author's
-  live foreground turn in an admin-mode channel runs with the bypass AND `sandbox.enabled: false`
-  (the flag alone never lifts the sandbox), so it can genuinely reach the whole account — while
-  the shared settings keep every other run fully sandboxed, and unattended admin runs stay at the
-  sandboxed auto tier. → TEST-PLAN: Security (Admin sandbox-off).
+- **Background shell jobs are gated by mode AND by where they run (2026-10-06).** The mode gate
+  is unchanged: the channel must be auto-mode (or admin-mode with an admin author). Inside the
+  channel's CONTAINER, an Auto-mode job then starts directly, as the author's own work — Auto
+  already auto-approves every foreground command in that same container and
+  `run_agent_in_background` runs there with no card, so the former admin-tier "Run it" card bought
+  nothing but a stall for non-admin authors (five of five durable cards in the Symphonia channel
+  were container jobs a non-admin could only Deny). Nothing a run can do changes what its container
+  mounts, so the job gains no access a foreground Auto turn did not have. Only an UNISOLATED
+  target — the `/sudo` host lane, or an embedder's own backend — still posts the durable
+  exact-command card, at the admin tier and naming the daemon account; that card is never
+  auto-approved. The `bg_start` audit event records the authority (`approvedBy`: the author for a
+  direct start, the clicker otherwise) and whether the job was isolated. Every agent-type approval
+  card now states its authority tier on the card ("Only a gateway *admin* can approve this; anyone
+  eligible may Deny or Comment"), so a member learns it before clicking rather than from the
+  ephemeral refusal after. → TEST-PLAN: Security (background gating), Automation.
+- **Admin home access is author-specific:** current organization admins in Admin/Full-access
+  channels can receive the optional operator-home mount (`containerFullAccessHome`, off by
+  default). Members and guests use a separate project container with Worker and the selected
+  Auto/Lean options, so they can edit the project without reading the operator home. The daemon
+  checks current roles at each spawn, including background work; memory reviews always use the
+  project lane. Admins retain legacy container/HOME/artifact state. Project authors get a fresh
+  `cgp2-` container, HOME and scratch volumes and a separate `.runtime-project-v2` artifact root;
+  they cannot
+  inherit old admin transcripts, CLI logins or run artifacts. Switching lanes starts fresh
+  engine history without importing admin context. Project files and channel memory remain
+  shared. The existing SSH refusal for home-enabled Admin channels remains in force.
+  The defensive home guard still denies writable tools if an untrusted run somehow receives a
+  home-mounted target. → TEST-PLAN: Container runtime (author-specific home access).
 - Approval-based authorization: admins + approved (MakeItFuture-list) users may talk in any
   channel they're in and in DMs; unknown users denied everywhere (incl. DMs) unless added as a
   per-channel guest. New users are recorded as un-approved pending an admin's approval.
@@ -2434,7 +2441,7 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
   boundary and the optional Admin/Full-access operator-home grant. Each generated guide names the
   resolved runtime's `containerFullAccessHome` setting and operator-home mount, including a gateway
   with the switch on but a Worker channel without the mount. It distinguishes the channel's own
-  `$HOME` from the mounted operator home, channel-wide reads from admin-author bypass tools, and
+  `$HOME` from the mounted operator home, admin-only home access from members' project access, and
   a missing runtime target from a known absent grant. The same facts reach Claude and Codex skill
   discovery, including clean workspaces. Admin guide overrides keep their documented precedence.
   → TEST-PLAN: Container runtime (operator-home guide acceptance).
@@ -2575,8 +2582,11 @@ are retired, bullet by bullet; everything else stands.
 - **Developers SSH into a channel container, not into the host** (`docs/SSH-ACCESS.md`). A person
   registers ONE public key once from chat (`add_my_ssh_key`, bound to the identity that pasted it,
   fingerprinted like `ssh-keygen -lf`, private keys and DSA refused, RSA under 2048 bits refused);
-  a channel manager grants that person SSH on a channel (`grant_channel_ssh` / `revoke_channel_ssh`,
-  audited as the `sshUsers` policy key, never admitting anyone `isAuthorized()` would refuse);
+  anyone already allowed in a channel, including a named guest, enables or removes their own SSH
+  access without manager/admin approval (`grant_channel_ssh` / `revoke_channel_ssh`, omit `user`
+  or pass their own id/mention). Personal key registration/removal are also self-service. Changes
+  for other people retain manager authorization and a manager approval card. Grants are audited
+  as the `sshUsers` policy key and never admit anyone `isAuthorized()` would refuse;
   `show_channel_ssh` prints the `~/.ssh/config` block. The connection goes to a dedicated,
   unprivileged login account on the gateway host whose sshd Match block forces the
   `cg-ssh-attach` wrapper (no pty, no forwarding, no shell; every exported key line is

@@ -14,7 +14,7 @@ export const HELP_TEXT =
   "• *Reminders and schedules:* ask naturally, for example `remind me in 2 hours to call the client` or `every Monday at 09:00 summarize new messages`. Reminders only post a nudge; scheduled tasks wake the agent to do work. Ask `list schedules` or `delete schedule <id>` to manage them.\n" +
   "• *Long-running work:* ask me to run it in the background. In an Auto/Full-access channel, the gateway keeps the job alive after the current turn and reports back in this thread when it finishes.\n" +
   "• *Direct host work:* an organization admin can enable `/sudo` for one thread. Its admin messages run directly as the gateway daemon OS user, outside the channel container; non-admin messages to that thread are rejected. Use `/sudo off` to restore the normal container.\n" +
-  "• *Useful checks:* `/status` shows active runs, background jobs, and schedules; `/pending` shows threads waiting on your decision; `/model` changes Claude/Codex, model, and effort; `/mode` shows the channel's tool-access mode.\n\n" +
+  "• *Useful checks:* `/status` shows active runs, background jobs, and schedules; `/pending` shows threads waiting on your decision; `/model` changes Claude/Codex, model, and effort; `@agent :shortcut task` picks a configured model for this thread; `/mode` shows the channel's tool-access mode.\n\n" +
   "*Commands* (this thread/channel)\n" +
   "• `/menu` — show only the Files, Variables, and Settings buttons; use `@agent /menu` inside a channel thread\n" +
   "• `/help` — show this guide\n" +

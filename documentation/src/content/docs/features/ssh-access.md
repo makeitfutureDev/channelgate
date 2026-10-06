@@ -18,7 +18,7 @@ See the [SSH setup reference](/docs/ssh-access) for service-account and Node-pat
 ## Developer setup
 
 1. Ask the assistant to register your **public** key: `add my SSH key ssh-ed25519 AAAA… me@laptop`.
-2. Ask a channel manager or organization admin to grant you SSH access in the intended channel.
+2. Ask `enable SSH access for me` in the intended channel. Anyone already allowed there, including a named guest, can enable their own access without manager or admin approval.
 3. Ask `show SSH access` there and copy the returned block into your laptop's SSH configuration.
 4. Connect using the alias from that block, or use its provided VS Code command.
 
@@ -27,6 +27,8 @@ ssh project-channel
 sftp project-channel
 ssh -L 3000:localhost:3000 project-channel
 ```
+
+Key registration and removal are also self-service. Managers can grant or revoke access for other people with a manager approval card. Ask `remove my SSH access` to revoke your own grant immediately.
 
 Replace the sample alias with the one actually returned. Keys are registered per person, with up to five keys; channel access and the separate SSH grant are checked when connecting.
 

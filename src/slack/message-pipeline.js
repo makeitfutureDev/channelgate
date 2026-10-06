@@ -39,7 +39,8 @@ import { noteBotReply, noteUserActivity } from "../gateway/nudges.js";
 import { applyLoopWakeup, stopLoops, stopThreadLoops } from "../gateway/loops.js";
 import { buildPendingReportForUser } from "../gateway/followups.js";
 
-import { resolveSlackConfig, getProgressView, getContextWindow, getTrustedBotApps, getDefaultChannelAccess, applyChannelTemplate, getDefaultNudges, getSlackAdminUserToken, canChangeChannelRuntime, getWhisperEnabled, getEngineFallbackMode } from "../config/settings.js";
+import { resolveSlackConfig, getProgressView, getContextWindow, getTrustedBotApps, getDefaultChannelAccess, applyChannelTemplate, getDefaultNudges, getSlackAdminUserToken, canChangeChannelRuntime, getWhisperEnabled, getEngineFallbackMode, getModelShortcuts, isEngineEnabled } from "../config/settings.js";
+import { parseModelShortcut } from "../config/model-shortcuts.js";
 import { mdToMrkdwn, resolveMentions } from "./format.js";
 import { answerImageBlocks, shareAnswerImageFiles } from "./images.js";
 import { appendSlackTables, extractSlackTables, formatSlackTables } from "./block-content.js";
@@ -745,6 +746,10 @@ export async function processMessageEvent(event, client, { botUserId = "", teamI
           const sourceRuntime = await getSessionRuntime(entry.slug, threadKey);
           if (!sourceId || !["claude", "codex"].includes(sourceEngine)) { await reply("This thread needs a completed Claude or Codex turn before it can be forked."); return; }
           if (sourceRuntime?.backend !== "container") { await reply("This session's history is outside the channel container. Run another turn here to carry it into the container before forking."); return; }
+          const sourceScope = sourceRuntime.scope || "admin";
+          if (sourceScope !== (authorIsAdmin ? "admin" : "project")) {
+            await reply("Run a new turn under your own access level before forking this thread."); return;
+          }
           abortPooled(runKey); // close an idle Claude process so its transcript is settled before cloning
           const sourceUrl = await slackPermalink(client, event.channel, threadKey);
           const root = await client.chat.postMessage({ channel: event.channel, text: `↪️ Fork of <${sourceUrl}|this thread>` });
@@ -859,8 +864,12 @@ export async function processMessageEvent(event, client, { botUserId = "", teamI
         // reopened by a bare CLI on the host, and its transcript is not in the daemon's engine dirs
         // either. A resolve failure must not swallow either half — both fall back to the host form.
         let runtimeTarget = null;
-        try { runtimeTarget = resolveRuntime(entry.slug, meta); } catch { /* fall back to the host form */ }
+        try { runtimeTarget = resolveRuntime(entry.slug, meta, { isAdminAuthor: authorIsAdmin }); } catch { /* fall back to the host form */ }
         if (!sc.arg) {
+          const storedRuntime = await getSessionRuntime(entry.slug, threadKey);
+          const adminSession = storedRuntime?.scope !== "project";
+          if (adminSession && !authorIsAdmin) { await reply("Run a new turn under your own access level before resuming this thread."); return; }
+          runtimeTarget = resolveRuntime(entry.slug, meta, { isAdminAuthor: adminSession });
           const cmd = buildResumeCommand(workDir, sessionId, threadEngine, runtimeTarget);
           await reply(
             cmd
@@ -891,7 +900,7 @@ export async function processMessageEvent(event, client, { botUserId = "", teamI
         // resolution could hand a Claude session to Codex (or back) and run.js would drop it as a
         // harness switch. Evict any warm process still bound to the OLD session id, and drop the
         // stopped-turn/context remnants of the conversation being replaced.
-        await saveSession(entry.slug, threadKey, plan.sessionId, plan.engine);
+        await saveSession(entry.slug, threadKey, plan.sessionId, plan.engine, undefined, JSON.stringify({ backend: runtimeTarget?.backend || "host", scope: runtimeTarget?.runtimeScope, container: runtimeTarget?.container?.name || "" }));
         await setThreadEngine(entry.slug, threadKey, plan.engine);
         // A model/effort override left over from the other harness is not a valid flag for this
         // one — same rule the engine-switch path applies.
@@ -1082,6 +1091,43 @@ export async function processMessageEvent(event, client, { botUserId = "", teamI
     // stamp), and the session-stamp comparison after the directive blocks (covers switches made
     // out-of-band — the /model wizard, the admin UI, a flipped gateway default).
     let engineSwitched = false;
+    // A colon immediately after the bot mention selects a configured model shortcut. The
+    // setting is read for each message, so admins can repoint names without restarting Slack.
+    // Persist the resolved target on this thread; later edits to the shortcut affect new picks.
+    const shortcut = !syntheticFork ? parseModelShortcut(prompt) : null;
+    // A retry/switch card already selected the runtime. Keep its choice, but remove the
+    // original shortcut prefix before replaying the task to the engine.
+    if (shortcut && engineChoice) prompt = shortcut.task;
+    if (shortcut && !engineChoice) {
+      const shortcuts = getModelShortcuts();
+      const target = Object.hasOwn(shortcuts, shortcut.name) ? shortcuts[shortcut.name] : null;
+      if (!target) {
+        await client.chat.postMessage({ channel: event.channel, thread_ts: threadKey, text: `Unknown model shortcut \`:${shortcut.name}\`. Ask an admin to add it in Settings → Model shortcuts.` });
+        return;
+      }
+      if (!isDM && !canChangeChannelRuntime(authorIsAdmin)) {
+        await client.chat.postMessage({ channel: event.channel, thread_ts: threadKey, text: "Only admins can change the model in this channel." });
+        return;
+      }
+      if (!isEngineEnabled(target.engine) || !modelBelongsToEngine(target.model, target.engine)) {
+        await client.chat.postMessage({ channel: event.channel, thread_ts: threadKey, text: `Model shortcut \`:${shortcut.name}\` needs an enabled engine and valid model. Update it in Settings.` });
+        return;
+      }
+      if (meta.codexAuthSource === "channel" && target.engine !== "codex") {
+        await client.chat.postMessage({ channel: event.channel, thread_ts: threadKey, text: "This channel uses its own Codex login, so its engine stays Codex." });
+        return;
+      }
+      engineSwitched = (await getThreadEngine(entry.slug, threadKey)) !== target.engine;
+      await setThreadEngine(entry.slug, threadKey, target.engine);
+      await setThreadModel(entry.slug, threadKey, target.model);
+      // Effort is model-specific. A prior thread pin must not leak into a new shortcut.
+      await setThreadEffort(entry.slug, threadKey, "");
+      prompt = shortcut.task;
+      if (!prompt && files.length === 0) {
+        await client.chat.postMessage({ channel: event.channel, thread_ts: threadKey, text: `✅ This thread now uses *${engineLabel(target.engine)}* · \`${target.model}\`.` });
+        return;
+      }
+    }
     // A harness-switch card click: the person chose where this message runs. "Switch" pins the
     // thread there (the same per-thread choice the `claude` / `codex` directive makes); "try
     // again" leaves the thread as it is. Any engine directive in the text was already applied
@@ -1101,7 +1147,7 @@ export async function processMessageEvent(event, client, { botUserId = "", teamI
     // switch phrase ("try again with codex", "switch to codex", "use claude") — a switch verb
     // immediately before the engine name, so an incidental mention ("the codex CLI") won't flip it.
     // It sticks until changed; the rest of the message is the task.
-    if (!syntheticFork && files.length === 0) {
+    if (!syntheticFork && !shortcut && files.length === 0) {
       const trimmed = prompt.trim();
       const anchored = new RegExp(`^(${engineIdAlternation()})\\b[\\s:,.;–—-]*([\\s\\S]*)$`, "i").exec(trimmed);
       // Only a switch INTENT near the START counts (index ≤ 12, allowing a short lead like

@@ -339,7 +339,7 @@ export async function handleMenuResumeAction({ ack, body, action, client }) {
       throw new Error("This menu isn't yours. Open your own with `/menu`.");
     }
     const context = await fileExplorerContext(client, { channelId, userId, verifyMembership: true });
-    const view = await buildMenuResumeView({ ...context, meta: effectiveMeta(context.meta) }, value.t);
+    const view = await buildMenuResumeView({ ...context, meta: effectiveMeta(context.meta), userIsAdmin: await isAdmin(userId) }, value.t);
     await client.views.open({ trigger_id: body.trigger_id, view });
   } catch (error) {
     if (channelId && userId) await client.chat.postEphemeral({ channel: channelId, user: userId, text: error.message || "Couldn't open Resume." });
@@ -946,7 +946,7 @@ async function settingsRootView(entry, meta, state, userIsAdmin, { tab = state.t
   const threadTs = state.threadTs || "";
   const [scopes, resume, secretScopes] = await Promise.all([
     runtimeScopes(entry.slug, meta, snapshot, threadTs),
-    resolveResumeSession({ entry, meta: effectiveMeta(meta) }, threadTs)
+    resolveResumeSession({ entry, meta: effectiveMeta(meta), isAdminAuthor: userIsAdmin }, threadTs)
       .catch(() => ({ inThread: Boolean(threadTs), sessionId: "", engine: "", workDir: "", command: "" })),
     // The other two credential scopes, so the Secrets tab shows what a run will ACTUALLY receive.
     // `personal` is the VIEWER's own — state.ownerId is the only person this modal answers to.

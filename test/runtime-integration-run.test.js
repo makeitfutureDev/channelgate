@@ -98,9 +98,9 @@ async function channel(id, name, meta = {}) {
 
 // Route every turn in a test through `backend`, with the real resolver supplying the paths.
 function useBackend(backend, { record = null } = {}) {
-  setRuntimeResolver((slug, meta) => {
+  setRuntimeResolver((slug, meta, options) => {
     record?.push(meta);
-    return fakeTarget(backend, slug, meta);
+    return fakeTarget(backend, slug, meta, options);
   });
 }
 
@@ -108,6 +108,7 @@ function useBackend(backend, { record = null } = {}) {
 // looks like. The fixture stamps the state directly so this test can isolate host→container carry
 // from the sudo admission path, then plants the transcript where a direct host turn writes it.
 async function hostThread(channelId, threadKey, { entry, meta }) {
+  await setUser("U_RT", { isAdmin: true });
   useBackend(createFakeRuntimeBackend());
   const first = await runMessage({ channelId, authorId: "U_RT", text: "one", threadKey, origin: "slack_foreground", preferCold: true });
   await saveSession(entry.slug, threadKey, first.sessionId, "claude", null, JSON.stringify({ backend: "host", fingerprint: "host", image: "" }));
@@ -326,7 +327,7 @@ test("a thread that last ran on the host has its engine history carried in befor
   assert.deepEqual(carried.map((e) => e.rel), [`projects/${key}/${sessionId}.jsonl`, `projects/${key}/${sessionId}`]);
   // It really arrived in the runtime's state dir, subagent transcripts included (the fake mirrors
   // the container's /home/agent tree under the artifact dir — see fakeContainerPath).
-  const ctrTarget = fakeTarget(backend, entry.slug, meta);
+  const ctrTarget = fakeTarget(backend, entry.slug, meta, { isAdminAuthor: true });
   const ctrProjects = path.join(fakeContainerPath(ctrTarget, ctrTarget.container.claudeConfigDir), "projects", key);
   assert.equal(readFileSync(path.join(ctrProjects, `${sessionId}.jsonl`), "utf8"), "host transcript\n");
   assert.equal(readFileSync(path.join(ctrProjects, sessionId, "sub.jsonl"), "utf8"), "subagent\n");
@@ -422,7 +423,7 @@ test("a per-run API mode narrows tools but never changes what the channel's cont
     // The operator-home grant is the one mount a channel's mode decides; with the gateway switch on
     // it must follow the CHANNEL (Admin), or a single API run rebuilds the container both ways.
     assert.equal(resolved[0].adminMode, true, `${mode}: the runtime target keeps the channel's Admin posture`);
-    assert.equal(operatorHomeGranted({ meta: resolved[0], settings: { fullAccessHome: true } }), true, `${mode}: the mount set is unchanged`);
+    assert.equal(operatorHomeGranted({ runtimeScope: "admin", meta: resolved[0], settings: { fullAccessHome: true } }), true, `${mode}: the mount set is unchanged`);
     assert.equal(backend.calls.spawn.length, 1);
     // The API key is an admin credential: in this Admin channel a Full run escalates exactly like an
     // admin's Slack message, and a narrowed mode does not.

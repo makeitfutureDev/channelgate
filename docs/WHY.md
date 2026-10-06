@@ -610,11 +610,15 @@ terse catalog of what exists lives in `FEATURES.md`; this is the argument for it
 
 #### Background jobs gated to auto/admin channels
 - **What:** `run_in_background` is refused in channels where bash would require per-command Slack
-  approval.
+  approval. Where it is allowed, a job inside the channel's container starts directly in Auto mode;
+  only a job on the daemon account itself (the `/sudo` host lane) still needs an admin's
+  exact-command click.
 - **Value:** closes an approval-bypass hole — no unattended shell in channels that demand
-  human-in-the-loop.
-- **Reason:** background jobs run un-prompted on the daemon; allowing them in approval-required
-  channels would have made "run it in the background" a one-line policy bypass.
+  human-in-the-loop — without a second, admin-only click for work the container already confines.
+- **Reason:** background jobs run un-prompted; allowing them in approval-required channels would
+  have made "run it in the background" a one-line policy bypass. Inside a container, Auto mode
+  already auto-approves every foreground command, so an admin-tier card on top only stalled
+  non-admin authors (every durable card in one production channel was one they could only Deny).
 
 #### Approval-based user authorization (fail-closed)
 - **What:** only admins and approved users may talk to the bot — in channels *and* DMs; unknown

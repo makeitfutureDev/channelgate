@@ -140,7 +140,7 @@ function editorAttached(ctx) {
   const slug = String(ctx?.slug || "");
   if (!slug) return false;
   try {
-    return activeEditorLeases({ slug, container: { name: containerName({ slug, platform: ctx?.platform }) } }).length > 0;
+    return ["admin", "project"].some((runtimeScope) => activeEditorLeases({ slug, container: { name: containerName({ slug, platform: ctx?.platform, runtimeScope }) } }).length > 0);
   } catch {
     return false;
   }

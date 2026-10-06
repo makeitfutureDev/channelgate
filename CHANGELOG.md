@@ -23,6 +23,24 @@ product overview.
   console opens privately, uses explicit Apply buttons and confirms removals without revealing
   stored credentials. `/secrets` opens Variables directly.
 
+- Users already allowed in a channel, including named guests, can enable their own SSH access
+  without manager or admin approval. Registering/removing personal keys and revoking one’s
+  own SSH grant are also self-service. Changes for other people remain manager controlled.
+
+- Background shell jobs (`run_in_background`) inside a channel's container now start directly in
+  Auto mode, with no "Run it" card: the container is the boundary and Auto mode already
+  auto-approves every foreground command there, so the former admin-only click only stalled
+  non-admin authors. A job on the daemon account itself (the `/sudo` host lane) still needs an
+  admin's exact-command approval. Every agent-type approval card now says on the card who can
+  approve it ("Only a gateway *admin* can approve this; anyone eligible may Deny or Comment").
+
+- Gateway Settings now lets admins map short names to an engine and model. In Slack, select the bot mention and type `:astra` after Slack's inserted space (`@agent :astra`) to pin that model to a thread, with an optional task after the name. Mappings can be updated as models change.
+
+- Admin channels now keep non-admin members and guests in a separate project container with
+  Worker permissions and the selected Auto/Lean options. Only current organization admins
+  receive the optional host-home mount. HOME, scratch files, artifacts and engine histories
+  are separated, and switching author lanes starts fresh history.
+
 - Conversations can filter by Google Chat, Slack or Teams alongside search and Channels / DMs.
   Teams channel names now use `#team-channel`, resolving missing names through the bot directory
   on incoming messages while preserving conversation IDs, work folders and settings.

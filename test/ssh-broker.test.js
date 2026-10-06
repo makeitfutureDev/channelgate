@@ -304,7 +304,14 @@ test("refusals name the remedy and leave no lease, no session and no exec behind
 test("authorization refuses an unapproved account, a channel that does not admit the user, and the operator-home grant", async () => {
   await access.addSshKey("U_BROKER_UNAPPROVED", "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA");
   const unapproved = await broker.authorizeSshAttach({ key: "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", channel: entry.slug }, authorizeOptions);
-  assert.match(unapproved.error, /not approved/);
+  assert.match(unapproved.error, /not allowed in/);
+  const guestMeta = async e => ({ ...e.meta, allowedUsers: ["U_BROKER_UNAPPROVED"], sshUsers: ["U_BROKER_UNAPPROVED"] });
+  const guest = await broker.authorizeSshAttach({ key: "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", channel: entry.slug }, { ...authorizeOptions, resolveMeta: guestMeta });
+  assert.equal(guest.ok, true, "a named channel guest needs no separate gateway approval");
+  const guestWithoutGrant = await broker.authorizeSshAttach({ keyId: guest.key.id, channel: entry.slug }, { ...authorizeOptions, resolveMeta: async e => ({ ...(await guestMeta(e)), sshUsers: [] }) });
+  assert.match(guestWithoutGrant.error, /no SSH grant/);
+  const removedGuest = await broker.authorizeSshAttach({ keyId: guest.key.id, channel: entry.slug }, { ...authorizeOptions, resolveMeta: async e => ({ ...(await guestMeta(e)), allowedUsers: [] }) });
+  assert.match(removedGuest.error, /not allowed in/);
   const closed = await broker.authorizeSshAttach({ key: ED25519, channel: entry.slug }, { ...authorizeOptions, resolveMeta: async (e) => ({ ...e.meta, access: "admins" }) });
   assert.match(closed.error, /not allowed in/);
   const blocked = await broker.authorizeSshAttach({ key: ED25519, channel: entry.slug }, { settings: { fullAccessHome: true }, resolveMeta: async (e) => ({ ...e.meta, adminMode: true }) });

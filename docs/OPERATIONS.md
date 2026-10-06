@@ -356,7 +356,7 @@ image until idle. A manual `git pull` still needs a matching image rebuild.
 | Max containers running at once | default 8; past it the least-recently-used **idle** container is stopped |
 | Process / memory / CPU limit | `--pids-limit` (default 1024), `--memory` (e.g. `2g`), `--cpus` (e.g. `1.5`); blank = no limit |
 | Claude token for container runs | the output of `claude setup-token` on the gateway host — write-only |
-| Full-access channels see the gateway home | off by default; on = every Full-access channel's container also mounts the gateway user's whole home read-write (see below) |
+| Full-access channels see the gateway home | off by default; on = current admin authors in Admin channels mount the gateway user's home; members keep a separate project container (see below) |
 | Legacy open network (no egress proxy) | off by default (`containerEgressMode = "proxy"`); on (`"bridge"`) = the pre-proxy behavior: the open bridge network and raw secret values (see **Network** below) |
 | Withhold readable variables | `containerEgressSecretsStrict`: ON for a new install, OFF for an install that existed before this default (stored once at boot; your choice is never changed); on = a secret with no egress rule is not given to proxy-mode containers at all, off = it is injected raw and listed as unprotected |
 
@@ -490,21 +490,26 @@ and only that directory, to its container: everything in it is visible there (th
 `.env` included), nothing beside it is. That is the intended trust model for admin channels; put
 nothing in such a folder that the channel must not see.
 
-**Full-access channels see the gateway home** (Settings → Container runtime, off by default) is
-the one deliberate widening. While it is on, every channel in Full access also gets the gateway
-user's whole home directory bind-mounted read-write at its identical path inside its container —
-every channel's work folder and memory, every repo under that home, the gateway root with its
-logs and per-channel metadata, and its credential stores (`~/.claude`, `~/.codex`, `~/.ssh`,
-`config/`, `gateway.db`). Only the container engine's own storage (`~/.local/share/containers`)
-is masked, because a write into a running container's layers corrupts it. Use it for an overseer
-channel that must see every agent and every repository; leave it off everywhere else. It is a
-boolean, never a path — the grant is the daemon user's home and nothing else — and it is per
-channel: every author the channel admits can read the home through the engine's file tools (an
-admin author's turn can also write, with the bypass tools). Flipping the switch, or moving a
-channel in or out of Full access, changes the container's create-time fingerprint, so its
-container is recreated at the next turn; the HOME volume survives. Other Linux users' homes stay
-unreadable (there is no `sudo` in the image), and the host's system directories are the image's
-own.
+**Admin channels can access the host home** (Settings → Container runtime, off by default)
+widens only current organization admins' runs in Admin/Full-access channels. Those runs get
+read-write access to the gateway user's home at its identical path, including repositories,
+other channels, logs, metadata and credential stores. Container-engine storage stays masked;
+the grant does not provide host root access or the host's process namespace.
+
+Non-admin members and guests use a separate project container even when this switch is on.
+They keep Worker with the channel's Auto/Lean options and cannot read outside the declared
+project mounts. The daemon checks the author's current admin role at each spawn, including
+background work; revocation removes the grant on the next resolved run. Memory reviews always
+use the project container. Shared project files and channel memory remain visible to admitted
+members, so do not put admin-only data in that working folder.
+
+Admin authors retain the legacy container name, HOME and artifact directory, even in Worker
+channels or with the switch off. Project authors use a fresh `cgp2-` container and separate
+HOME, `/tmp`, `/var/tmp` and `.runtime-project-v2/<platform>/<slug>` artifact directory.
+This prevents old admin transcripts, logins and scratch files from becoming visible to project authors. Switching
+between lanes starts a fresh engine session without importing admin history. Container
+recreation preserves each lane's own volumes. SSH access remains refused for a channel with
+the optional Admin home grant enabled; this change does not extend that broker's authority.
 
 **Where things live.** Containers and the per-channel HOME volumes live in the rootless podman store
 under the daemon user's home — `~/.local/share/containers` by default; `podman info --format
@@ -512,8 +517,9 @@ under the daemon user's home — `~/.local/share/containers` by default; `podman
 is the same `~/ChannelGate/<platform>/<slug>` (or the channel's custom workdir) bind-mounted at the
 identical absolute path, so host tooling and VS Code see the agent's files instantly. Per-run
 engine-facing files (the settings copy, the MCP config, plugin dirs, job logs) live in
-`~/ChannelGate/.runtime/<platform>/<slug>`, also bind-mounted at the identical path. Nothing under
-`~/.channelgate/` is mounted except the channel's clean workspace and the read-only control-socket
+`~/ChannelGate/.runtime/<platform>/<slug>` for admins and
+`~/ChannelGate/.runtime-project-v2/<platform>/<slug>` for project authors, each bind-mounted
+at the identical path. Nothing under `~/.channelgate/` is mounted except the channel's clean workspace and the read-only control-socket
 directory.
 
 **What persists where.** The short version: everything a channel *accumulates* survives, and only
@@ -524,10 +530,10 @@ data.
 
 | Where | Holds | Survives a `stop`/`start` | Survives a `rm` + recreate |
 | --- | --- | --- | --- |
-| Per-channel HOME **volume** (`/home/agent`) | engine sessions and transcripts, CLI logins (`gh`, `vercel`, `supabase`, MCP auth), `npm -g`, `pip --user`/`pipx`/`uv`/`cargo` installs, caches, dotfiles | yes | yes — the daemon removes a HOME volume only when the CHANNEL is deleted, never on a rollback, a reconfiguration or an image bump |
-| `/tmp` and `/var/tmp` (per-channel **volumes** `<container>-tmp` / `<container>-vtmp`) | scratch files, Claude Code's per-session scratchpad, anything an agent parks between turns | yes | yes |
+| Per-channel, per-author-lane HOME **volume** (`/home/agent`) | engine sessions and transcripts, CLI logins (`gh`, `vercel`, `supabase`, MCP auth), `npm -g`, `pip --user`/`pipx`/`uv`/`cargo` installs, caches, dotfiles | yes | yes — the daemon removes a HOME volume only when the CHANNEL is deleted, never on a rollback, a reconfiguration or an image bump |
+| `/tmp` and `/var/tmp` (per-lane **volumes** `<container>-tmp` / `<container>-vtmp`) | scratch files, Claude Code's per-session scratchpad, anything an agent parks between turns | yes | yes |
 | Channel work directory (`~/ChannelGate/<platform>/<slug>`, bind mount) | the project itself | yes — it is a host directory | yes |
-| Per-run artifacts (`~/ChannelGate/.runtime/<platform>/<slug>`, bind mount) | this run's settings copy, MCP config, job logs | yes | yes |
+| Per-run artifacts (`~/ChannelGate/.runtime/<platform>/<slug>` or `~/ChannelGate/.runtime-project-v2/<platform>/<slug>`, bind mount) | this run's settings copy, MCP config, job logs | yes | yes |
 | Engine session history (Claude transcripts, Codex rollouts, subagent transcripts) | inside the HOME volume | yes | yes |
 | `/run` (tmpfs, 64m, `noexec`) | run-helper pid files, the read-only control socket | **no** — fresh on every start, deliberately | no |
 | `/tmp/codex-daemon-<uid>` (tmpfs, 1m, 0700, owned by the agent user) | Codex's app-server socket, which its sandbox requires on its own user-owned mount | **no** — a socket needs nothing kept | no |

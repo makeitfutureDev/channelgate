@@ -22,7 +22,7 @@ So there are exactly three durable mechanisms, all of them daemon-side:
 
 | To… | Use | Needs |
 | --- | --- | --- |
-| run one long shell command that outlives the turn | `run_in_background` (below) | auto mode, or admin mode with an admin author |
+| run one long shell command that outlives the turn | `run_in_background` (below) | auto mode (starts directly in the container), or admin mode with an admin author |
 | delegate agent work that outlives the turn | `run_agent_in_background` (below) | any mode |
 | repeat or resume later, on a clock | `create_schedule` (`references/reminders.md`), or a loop (`references/loops.md`) | any mode |
 
@@ -48,19 +48,22 @@ Use for long-running commands — builds, transcription/ASR, test suites, data j
 - `label` — a short human name shown in Slack.
 
 The channel must be in **auto mode**, or in **admin mode with an admin author**. In Auto mode the
-daemon posts a durable approval with the exact command, and a gateway **admin** must click **Run
-it** before the job starts (anyone may Deny) — the job runs inside this channel's resolved runtime,
-normally its container. In a `/sudo` thread it instead runs directly as the daemon OS user and is
-available only to current organization admins. In Admin mode, an admin author's job starts directly without
-that second approval because the live turn already runs with the admin bypass. Non-admin authors
-never inherit that bypass. The Auto-mode approval is
-single-use, remains valid across daemon/engine restarts, and starts only the displayed command.
+job runs inside this channel's container and **starts directly, with no approval card** — the
+container is the boundary and Auto mode already auto-approves every foreground command there, so
+the job has exactly the access your own `Bash` calls have (same mounts, same network switch, same
+environment names). In a `/sudo` thread it instead runs directly as the daemon OS user and is
+available only to current organization admins; an admin author's job there also starts directly.
+In Admin mode, an admin author's job starts directly because the live turn already runs with the
+admin bypass; non-admin authors never inherit that bypass, and in Admin mode WITHOUT Auto their
+call is refused on the mode gate. Only a job on an unisolated target (plain bash on the daemon
+account) still posts a durable exact-command card that a gateway **admin** must click (the card
+says so; anyone may Deny) — single-use, valid across restarts, starting only the displayed command.
 End the turn as soon as the tool returns; no engine process needs to wait for a decision or job.
-The command must fit the card in full — commands over
+The command must fit a card in full — commands over
 2000 characters are refused outright, so put long logic in a script file and run the file. If the work can run as a normal
-confined agent, prefer `run_agent_in_background` — it needs no approval. If refused on the mode
-gate, ask an admin to enable auto mode (`references/administration.md`), or run it inline if it's
-actually short.
+confined agent, `run_agent_in_background` is the alternative — it works in every mode. If refused
+on the mode gate, say so plainly and ask an admin to enable auto mode
+(`references/administration.md`), or run it inline if it's actually short.
 
 **Deploy CLIs (Vercel, Supabase, Make.com API): run them here FIRST.** The channel runtime ships
 `vercel` and `supabase`, and this channel's own credential arrives as environment from its

@@ -34,7 +34,7 @@ function write(file, body = "x\n") {
 // A container target whose "inside" is a scratch directory: the exec that would run in the image
 // runs here instead, so a real /bin/sh proves the script and the assertions can read the result.
 function harness(slug, { execResult = null } = {}) {
-  const target = resolveRuntime(slug, { platform: "slack", channelId: "C1", runtime: "container" }, { settings: SETTINGS });
+  const target = resolveRuntime(slug, { platform: "slack", channelId: "C1", runtime: "container" }, { settings: SETTINGS, isAdminAuthor: true });
   mkdirSync(target.artifactDir, { recursive: true });
   const inside = tempDir(`cg-inside-${slug}-`);
   const calls = [];

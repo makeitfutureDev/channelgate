@@ -8,14 +8,14 @@
 // the thread's own flag because a clean thread runs in a different folder, and the resume command
 // has to name the folder the session was actually minted in.
 import { buildResumeCommand } from "./footer.js";
-import { getSession, getSessionEngine } from "../gateway/sessions.js";
+import { getSession, getSessionEngine, getSessionRuntime } from "../gateway/sessions.js";
 import { effectiveWorkDir } from "../gateway/folders.js";
 import { getThreadClean, resolveThreadEngine } from "../gateway/thread-engine.js";
 import { resolveRuntime } from "../runtimes/resolve.js";
 
 // Returns { inThread, sessionId, engine, workDir, command }. `command` is "" whenever there is
 // nothing to resume — outside a thread, or in a thread that has not run a turn yet.
-export async function resolveResumeSession({ entry, meta }, threadTs = "") {
+export async function resolveResumeSession({ entry, meta, isAdminAuthor = false }, threadTs = "") {
   const inThread = Boolean(threadTs);
   const slug = entry?.slug || "";
   if (!inThread || !slug) return { inThread, sessionId: "", engine: "", workDir: "", command: "" };
@@ -32,7 +32,10 @@ export async function resolveResumeSession({ entry, meta }, threadTs = "") {
   // WHERE the channel runs decides the shape of the command: a session minted inside the
   // channel's container cannot be reopened by a bare CLI on the host. A resolve failure falls
   // back to the host form rather than leaving the user with no command at all.
+  const stamp = await getSessionRuntime(slug, threadTs);
+  const adminSession = stamp?.scope !== "project";
+  if (adminSession && !isAdminAuthor) return { inThread, sessionId, engine, workDir, command: "" };
   let target = null;
-  try { target = resolveRuntime(slug, channelMeta); } catch { /* fall back to the host form */ }
+  try { target = resolveRuntime(slug, channelMeta, { isAdminAuthor: adminSession }); } catch { /* fall back to the host form */ }
   return { inThread, sessionId, engine, workDir, command: buildResumeCommand(workDir, sessionId, engine, target) };
 }

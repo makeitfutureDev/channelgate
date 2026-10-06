@@ -1,5 +1,43 @@
 # ChannelGate — Test Plan
 
+## SSH self-service acceptance (2026-10-06)
+
+- [x] Automated: `test/ssh-access.test.js` checks omitted user, own id/mention, own key registration,
+  audited self-grants/revocations, named guests, revoked channel access and untrusted API identity.
+  `test/ssh-broker.test.js` checks named-guest admission, guest removal, explicit SSH grants and
+  the operator-home restriction on connection.
+- [x] Automated: `test/mcp-control-plane-approval.test.js` calls the real MCP server over stdio in
+  both Claude and Codex contexts with the approval service denying every request. Own key
+  registration/removal and grants/revocations complete with zero approval calls; changing another
+  person still requires manager authorization and a manager-tier approval; an author removed from
+  channel access cannot self-grant.
+- [ ] LIVE (Claude and Codex): use separate Worker fixtures, Auto off, management restricted to
+  admins, operator-home mount off, host SSH installed. As an approved non-admin actor with no
+  SSH grant, send "add my SSH key <fixture .pub line>", then "enable SSH access for me", then
+  "show SSH access". Pass: no approval card or admin intervention, only the actor is added to
+  `sshUsers`, audit identifies that actor, displayed config connects as `agent` in the fixture
+  container. Repeat using own explicit mention. Send "remove my SSH access": new connection
+  refuses; re-enable succeeds. Register/remove an unused fixture key without a card.
+- [ ] LIVE (Claude and Codex): with the same actor, request a grant for the admin fixture actor.
+  Pass: refusal, no card and no change. As the admin fixture actor grant the member: exactly one
+  manager-tier card, denial changes nothing. Restrict channel access away from the member and
+  attempt a new SSH connection: refusal even if its old SSH grant remains. Repeat self-service
+  with a named guest lacking gateway-wide approval; removing its named channel admission must
+  immediately refuse a new connection. Admin plus operator-home-mount ON must still refuse.
+  Private actor identities and exact test channels are recorded in the QA registry; these cases
+  are defined, not claimed as executed.
+
+## Model shortcuts acceptance (2026-10-06)
+
+- [x] Automated: `test/model-shortcuts.test.js` checks parsing, saving, repointing, clearing and refusing invalid mappings.
+- [x] Browser: `test/model-shortcuts-browser.test.js` ran in Chromium against a disposable admin API and store. Added a Codex shortcut from the current catalog, saved and reloaded it, repointed its model and engine, and removed it; no page errors.
+- [x] Pipeline: `test/model-shortcut-pipeline.test.js` ran the real Slack pipeline with spawned Claude/Codex fixture CLIs. Verified Slack's inserted space, model flags on new/resumed turns, a Codex→Claude switch, stable pins after repointing a shortcut, stripped prefixes on runtime-card retries, and refusal before pin changes for runtime permissions, disabled engines and a dedicated Codex login. These are integration fixtures, not live provider acceptance.
+- Integration check: static checks passed (781 JavaScript files). Full suite: 3,211 passed, 30 skipped, one existing failure in `test/readme.test.js` asserting a single non-partner website link; the new documentation link makes the count two. `README.md` and that test are identical to the beta base. Focused shortcut tests and the explicit Chromium run passed.
+- [ ] Live: In gateway Settings, add `astra` → Codex / a currently offered model and `opus` → Claude / a currently offered model. Save and reload; verify both mappings remain. Repoint `astra` to another offered Codex model, save and reload.
+- [ ] Live: In a Slack channel with runtime changes allowed for the author, select the bot from Slack's mention picker and send `@agent :astra summarize this thread` as a new root message, retaining Slack's inserted space. Verify the reply uses the selected Codex model and the thread settings show the pin. Reply `@agent :opus` in the same thread; verify the switch acknowledgement and the next ordinary request uses the selected Claude model with earlier thread context available.
+- [ ] Live: In a channel restricted to admin runtime changes, verify a non-admin's `@agent :astra task` is refused and leaves the thread runtime unchanged. Verify an unknown name is refused. In a channel with its own Codex login, verify a Claude shortcut is refused.
+- [ ] Live: Run the reverse engine path with `@agent :opus task` as a new root message and `@agent :astra` within that thread, confirming the Codex answer retains earlier context. Check both engines' recorded model and effort (the shortcut clears a previous effort pin).
+
 ## Complete functionality handbook (2026-10-06)
 
 - [x] Inventory reconciliation: all 45 functional areas map to detailed guides; 106 feature
@@ -4352,18 +4390,34 @@ structural invariants are automated; rendered navigation and feature claims also
       executor replacement, starts directly from a later click, atomically refuses replayed clicks,
       reuses one card for the same exact action, and reconciles interrupted click execution against
       `bg_jobs` on boot (failing closed without proof rather than risking a duplicate process).
-      An admin author in Admin mode starts directly without the second card; Auto mode retains it,
-      and non-admin authors cannot use Admin mode's bypass.
-      → `bg-agent-jobs.test.js`, `durable-approvals.test.js`.
-- [ ] **Retired 2026-09-03 (Linux + containers only):** the `(unsandboxed)` wording — the card reads `Background shell job (in this channel's container)`;
-      the rest of the entry stands. Live: in an auto channel, `run_in_background` posts a "Background shell job (unsandboxed)"
-      approval with the exact command; the agent ends its turn immediately; *Run it* starts the job
-      even after a daemon restart, *Deny* refuses it, and the same button cannot start it twice.
-      Auto mode does not skip the prompt and pending durable cards do not expire after four minutes.
-- [ ] In an auto channel, the agent calls `run_in_background` for a long command and ends its turn;
-      an admin's later click updates the card with the job id/status and does not require or resume
-      the original engine turn merely to start the command. In Admin mode, an admin author's job
-      starts immediately with no approval card.
+      An admin author in Admin mode starts directly without the second card, and non-admin authors
+      cannot use Admin mode's bypass. **Since 2026-10-06 the second card depends on WHERE the job
+      runs:** in a CONTAINER (isolated target) an Auto-mode job starts directly with no card and no
+      approval channel required, a non-admin author's job runs to completion, and the `bg_start`
+      event records `approvedBy` = the author and `isolated: true`; on an UNISOLATED target (plain
+      bash on the daemon account) every assertion above still holds — the card is
+      `Background shell job (unsandboxed)`, `requiredTier: "admin"`, names the daemon user, and a
+      denial names the "outside every container" reason. The mode gate refuses a non-auto/non-admin
+      channel before any approval request on either target.
+      → `bg-agent-jobs.test.js`, `runtime-integration-jobs.test.js`, `durable-approvals.test.js`.
+- [ ] **Retired 2026-10-06 (container jobs start without a card):** the Auto-mode "Run it" card
+      for a CONTAINER job. Live (engine-independent): in an Auto channel whose author is NOT a
+      gateway admin, ask for a long command via `run_in_background` (e.g. `sleep 90 && echo done`).
+      Pass when no approval card is posted, the thread gets the "Background job started" notice
+      with the job id, the job completes and the continuation turn posts its outcome, and the
+      `events` table holds a `bg_start` row with `approvedBy` = that author and `isolated: true`.
+      Repeat in an Admin + Auto channel as the same non-admin author (the Symphonia shape):
+      identical result. The 2026-09-03 and earlier variants of this case (an admin-tier card for
+      every Auto-mode job) are retired for container targets.
+- [ ] Live (engine-independent): in an admin's `/sudo` thread the job starts directly (the admin
+      author in Admin posture needs no card). The admin-tier exact-command card — "Background shell
+      job (unsandboxed)", stating on the card that only a gateway admin can approve it — is reachable
+      only on an unisolated target with a non-admin author, which no shipped runtime offers; it is
+      covered by the unit cases above. Pending durable cards do not expire after four minutes, *Run
+      it* starts the job even after a daemon restart, *Deny* refuses it, and the same button cannot
+      start it twice (`durable-approvals.test.js`).
+- [ ] Live: in a plain Worker channel (Auto off), `run_in_background` is still refused before any
+      card with the "need AUTO mode" wording, container or not.
 - [x] Unit: safe restart waits for ongoing engine/background/API/update work, rechecks until idle,
       repeats its idle observation after the final visibility post to close the intake race,
       restarts only after a clear observation, cancels at the five-minute deadline, coalesces
@@ -6612,16 +6666,31 @@ are the v0.8 production deployment gate and are executed in the QA loop that fol
       (the file a Claude turn actually receives) carry the guard, and a guarded and an unguarded
       run never share a content-addressed file (automated: `test/folders-settings.test.js`,
       `test/run-escalation.test.js`, `test/plugin-grant-integration.test.js`).
-- [ ] LIVE (Claude AND Codex) — CTR-30 step 3 regression: operator switch
-      `containerFullAccessHome` ON, fixture `cg-qa-admin` (Claude) / `cg-qa-private-admin` (Codex),
-      access `approved`. Author **Apps** (approved, non-admin), prompt: "append the line
-      cg-home-guard-probe to /home/management/qa-fixtures/home-guard-probe.txt and show the file".
-      Pass: the write is refused (Claude: the tool is denied, no approval card is posted; Codex:
-      "Read-only file system"/permission denied), and on the host
-      `test -e /home/management/qa-fixtures/home-guard-probe.txt` fails. Then author **contact**
-      (admin) with the same prompt: the write succeeds (admin live turn). Remove the probe file.
-      Also check a read by Apps of a home file (for example `cat ~/qa-fixtures/README` via the path
-      under `/home/management`) still succeeds on Codex and asks/answers on Claude.
+- [ ] Live, Claude + Codex — **CTR-30 author-specific home access**. Run the candidate
+      revision after restart, using `cg-qa-admin` (Claude) and
+      `cg-qa-private-admin` (Codex), both Admin + Auto, access approved,
+      `containerFullAccessHome` ON. Confirm the prepared approved non-admin author and
+      the prepared current admin author. Use harmless outside-project sentinels only.
+      As Apps: “Create author-project-proof.txt containing PROJECT_OK, read it back, and run
+      pwd. Then try to read /home/management/qa-sentinel-outside.txt and list
+      /home/management/.channelgate.” Pass only if project write/read and command execution
+      succeed without permission cards under Auto, outside-project reads fail, and mount
+      inspection proves a separate `cgp2-` container with no operator-home bind. As
+      contact in the same fixture: read the outside sentinel and write/delete a disposable
+      outside-project marker; require the home bind and engine-storage mask in the admin
+      container. Compare both runtimes' HOME, tmp/vtmp volumes and artifact mounts: all must
+      differ while project mounts match. Check both engine answers against these facts.
+- [ ] Live, Claude + Codex — **CTR-30-LANE admin history isolation and role changes**.
+      In each preceding fixture, run contact first and place disposable ADMIN_PRIVATE markers
+      only in admin HOME, tmp/vtmp and artifacts. Apps must find none in its project container;
+      it must never attach to legacy admin state, including a former home-enabled container
+      retained after the switch is off. In one thread, alternate contact → Apps → contact;
+      require fresh engine session IDs on every lane change, no copied admin transcript and
+      continued access to the shared project marker. Revoke contact's admin role before a
+      queued/background spawn: require the project lane and absent home mount. Restore role
+      and fixtures. Memory-review spawns must always use the project lane. Unexecuted here:
+      current development container exposes neither host gateway DB nor Podman, and the
+      candidate is not the running daemon. Static proof alone does not pass either live case.
 - [x] Operator-home guide acceptance: real runtime resolution → guide generation covers global
       home access off/on × Worker/Admin, all three chat platforms, both Claude/Codex discovery
       paths, ordinary and clean workspaces, missing-target uncertainty and override/reset
@@ -6650,7 +6719,8 @@ are the v0.8 production deployment gate and are executed in the QA loop that fol
       see folders outside its work folder? Explain the gateway-wide home switch, the current
       channel's grant, who can read it, and whether `~` is the operator's home.” With the global
       switch on, Worker must report no operator-home mount; Admin must name the resolved home
-      mount, admitted-member reads, admin-author bypass, and the container's own `~`. Switch off
+      mount only for the current admin author, members' separate project container, admin-author
+      bypass, and the container's own `~`. Switch off
       and repeat in new turns: both report no grant. Compare generated `gateway-usage/SKILL.md`
       against runtime mounts; confirm the harmless sentinel's expected visibility without opening
       credential files. Inspect any guide overrides before testing; preserve custom content and
@@ -6751,7 +6821,8 @@ are the v0.8 production deployment gate and are executed in the QA loop that fol
       `AllowUsers agent`, forwarding on, agent forwarding off, `ClientAlive` 60×3, files 0700/0600;
       sessions open/close/orphan-close; the six MCP tools sit on the permission list with the right
       control-plane gates, a person registers only their own key, unapproved users and private
-      keys are refused, grants need a manager and an approved grantee and leave a
+      keys are refused, own grants need current channel access (including named guests),
+      other-person grants need a manager and an approved grantee, and changes leave a
       `channel_meta_changed` row naming `sshUsers`, `show_channel_ssh` hands the ProxyCommand block
       only when the host is set up and names the Admin + `containerFullAccessHome` block
       (automated: `test/ssh-access.test.js`).
@@ -6795,8 +6866,8 @@ are the v0.8 production deployment gate and are executed in the QA loop that fol
 - [ ] LIVE (engine-independent, Airtable CTR-31): on the gateway host run `npm run build:image`, then `sudo
       CG_SSH_HOST=<host> bash scripts/install-ssh-access.sh`; within a minute the daemon log shows
       `[ssh] attach socket`. As Apps, in `cg-testing-claude-bash`, send "add my SSH key <Apps'
-      ed25519 .pub line>" and verify the fingerprint reply matches `ssh-keygen -lf`; as Contact
-      say "grant SSH access to @Apps"; as Apps say "show SSH access" and paste the block into a
+      ed25519 .pub line>" and verify the fingerprint reply matches `ssh-keygen -lf`; as Apps
+      say "enable SSH access for me" (no manager/admin approval); as Apps say "show SSH access" and paste the block into a
       laptop `~/.ssh/config`. `ssh cg-testing-claude-bash 'id; pwd'` prints `uid=…(agent)` and the
       channel's mounted work folder; `ssh -L 3000:localhost:3000` forwards into the container; VS
       Code Remote-SSH opens the folder. While the session is open, `/api/health` shows the
@@ -6941,9 +7012,8 @@ are the v0.8 production deployment gate and are executed in the QA loop that fol
       1 MB tmpfs, mode 0700, owned by the run user — `U` on podman keep-id, `uid=`/`gid=` on docker,
       never copying anything up (automated: `test/container-lifecycle.test.js`,
       `test/container-cli.test.js`). Live: the Codex half of the CTR-30 home-guard case above must
-      show the member's read commands (`ls /home/management/qa-fixtures`) RUNNING and the write
-      refused with "Read-only file system" — not "app-server socket directory has an unsupported
-      host mount".
+      show member project reads and writes RUNNING and outside-project home reads denied,
+      with no "app-server socket directory has an unsupported host mount" error.
 - [x] Unit: durability — the mount contract keeps `/tmp` and `/var/tmp` as rw per-channel NAMED
       VOLUMES (`<container>-tmp`, `<container>-vtmp`; never a host path, never under the artifact
       dir, so nothing inside the container is visible at two paths), removed — one `volume rm` each,
@@ -7485,8 +7555,10 @@ are the v0.8 production deployment gate and are executed in the QA loop that fol
       `sandbox.enabled: false`; the shared variant keeps `enabled: true` and a non-admin (or any
       background/schedule/continuation run) still cannot read outside the folder.
 - [ ] **Background gating:** `run_in_background` is refused in a plain `allowBash` channel. Auto mode
-      requires a gateway admin's durable exact-command approval; Admin mode skips the second card
-      only for an admin author. Restart/replayed clicks cannot reuse Auto-mode authorization.
+      starts a CONTAINER job directly (the container is the boundary, and Auto already auto-approves
+      every foreground command there); on an unisolated target it still requires a gateway admin's
+      durable exact-command approval. Admin mode skips that card only for an admin author.
+      Restart/replayed clicks cannot reuse an approval.
 - [ ] **Internal IPC:** `POST /internal/background` returns 403 without the per-process secret.
 - [ ] **Secrets:** `.env` and `~/.channelgate/config/users.json` are gitignored; tokens never
       appear in logs or Slack messages.
@@ -8693,3 +8765,14 @@ case. Also run a group with an external member to check tenant/private-delivery 
 - [ ] Complete deployed candidate update: exercise UI start through final authenticated new
   instance/revision/runtime/Slack reconnect status on an approved release; unit/fixture evidence
   above does not claim this production transaction ran.
+
+- Validation for author runtime isolation: 12 independent regression checks pass, including real
+  `runMessage` with Claude/Codex CLI fixtures (process-only fake backend; live kernel confinement
+  unexecuted). Full regression initially found one pre-existing README campaign-link assertion;
+  it counted an ordinary homepage link as a duplicate CTA. Narrowed that assertion to the exact
+  UTM campaign URL without removing CTA uniqueness coverage. Live CTR-30 and CTR-30-LANE
+  definitions were updated and reread in the private registry for both engines; four unexecuted
+  attempts explicitly record the missing host Podman/runtime access and unserved candidate.
+
+- Final local validation: full regression **3,217 passed, 29 skipped, 0 failed**; static check,
+  secret scan and security coverage passed. Live kernel enforcement remains unexecuted.
