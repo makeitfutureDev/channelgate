@@ -318,7 +318,7 @@ export class BackgroundJobs {
     let isolatedJob = false;
     if (!isAgent) {
       try {
-        target = this.resolveTarget(entry.slug, meta);
+        target = this.resolveTarget(entry.slug, meta, { isAdminAuthor: await isAdminPrincipal(authorId) });
         isolatedJob = runtimeSupports(target, "isolated");
       } catch (e) {
         return { ok: false, error: `Background job could not resolve this channel's runtime: ${redactSecretValues(e.message, serviceSecretValues())}` };
@@ -1003,8 +1003,9 @@ export class BackgroundJobs {
   async _attachRecoveredRuntime(rec) {
     try {
       const meta = effectiveMeta((await getChannelMeta(rec.slug)) || {});
-      const target = this.resolveTarget(rec.slug, meta);
+      const target = this.resolveTarget(rec.slug, meta, { isAdminAuthor: await isAdminPrincipal(rec.authorId) });
       if (!target || target.backend !== rec.runtime.backend) return;
+      if (rec.runtime.container && target.container?.name !== rec.runtime.container) return;
       rec.target = target;
       // The minimal runtime child the backend needs: the runId IS the handle to the job's process
       // group inside the runtime (attachRuntime records the same shape at spawn).

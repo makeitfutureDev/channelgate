@@ -70,7 +70,7 @@ test("a quiet channel's /status still says where its turns run", async () => {
   // the line names it even when the container CLI is missing on this machine (the state then says
   // so — an unavailable backend is exactly when someone types /status).
   assert.match(report, /Runtime\*: container — /);
-  assert.match(report, new RegExp(`\`cg-[^\`]*${entry.slug}[^\`]*\``), "the channel's own container is named");
+  assert.match(report, new RegExp(`\`cgp2-[^\`]*${entry.slug}[^\`]*\``), "the channel's own container is named");
 });
 
 test("the reply footer names the image for a container turn and is unchanged for a host turn", () => {

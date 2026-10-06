@@ -20,6 +20,11 @@ product overview.
 
 - Gateway Settings now lets admins map short names to an engine and model. In Slack, select the bot mention and type `:astra` after Slack's inserted space (`@agent :astra`) to pin that model to a thread, with an optional task after the name. Mappings can be updated as models change.
 
+- Admin channels now keep non-admin members and guests in a separate project container with
+  Worker permissions and the selected Auto/Lean options. Only current organization admins
+  receive the optional host-home mount. HOME, scratch files, artifacts and engine histories
+  are separated, and switching author lanes starts fresh history.
+
 - Conversations can filter by Google Chat, Slack or Teams alongside search and Channels / DMs.
   Teams channel names now use `#team-channel`, resolving missing names through the bot directory
   on incoming messages while preserving conversation IDs, work folders and settings.

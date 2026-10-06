@@ -746,6 +746,10 @@ export async function processMessageEvent(event, client, { botUserId = "", teamI
           const sourceRuntime = await getSessionRuntime(entry.slug, threadKey);
           if (!sourceId || !["claude", "codex"].includes(sourceEngine)) { await reply("This thread needs a completed Claude or Codex turn before it can be forked."); return; }
           if (sourceRuntime?.backend !== "container") { await reply("This session's history is outside the channel container. Run another turn here to carry it into the container before forking."); return; }
+          const sourceScope = sourceRuntime.scope || "admin";
+          if (sourceScope !== (authorIsAdmin ? "admin" : "project")) {
+            await reply("Run a new turn under your own access level before forking this thread."); return;
+          }
           abortPooled(runKey); // close an idle Claude process so its transcript is settled before cloning
           const sourceUrl = await slackPermalink(client, event.channel, threadKey);
           const root = await client.chat.postMessage({ channel: event.channel, text: `↪️ Fork of <${sourceUrl}|this thread>` });
@@ -860,8 +864,12 @@ export async function processMessageEvent(event, client, { botUserId = "", teamI
         // reopened by a bare CLI on the host, and its transcript is not in the daemon's engine dirs
         // either. A resolve failure must not swallow either half — both fall back to the host form.
         let runtimeTarget = null;
-        try { runtimeTarget = resolveRuntime(entry.slug, meta); } catch { /* fall back to the host form */ }
+        try { runtimeTarget = resolveRuntime(entry.slug, meta, { isAdminAuthor: authorIsAdmin }); } catch { /* fall back to the host form */ }
         if (!sc.arg) {
+          const storedRuntime = await getSessionRuntime(entry.slug, threadKey);
+          const adminSession = storedRuntime?.scope !== "project";
+          if (adminSession && !authorIsAdmin) { await reply("Run a new turn under your own access level before resuming this thread."); return; }
+          runtimeTarget = resolveRuntime(entry.slug, meta, { isAdminAuthor: adminSession });
           const cmd = buildResumeCommand(workDir, sessionId, threadEngine, runtimeTarget);
           await reply(
             cmd
@@ -892,7 +900,7 @@ export async function processMessageEvent(event, client, { botUserId = "", teamI
         // resolution could hand a Claude session to Codex (or back) and run.js would drop it as a
         // harness switch. Evict any warm process still bound to the OLD session id, and drop the
         // stopped-turn/context remnants of the conversation being replaced.
-        await saveSession(entry.slug, threadKey, plan.sessionId, plan.engine);
+        await saveSession(entry.slug, threadKey, plan.sessionId, plan.engine, undefined, JSON.stringify({ backend: runtimeTarget?.backend || "host", scope: runtimeTarget?.runtimeScope, container: runtimeTarget?.container?.name || "" }));
         await setThreadEngine(entry.slug, threadKey, plan.engine);
         // A model/effort override left over from the other harness is not a valid flag for this
         // one — same rule the engine-switch path applies.

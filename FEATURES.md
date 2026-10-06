@@ -2395,27 +2395,19 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
   with an admin author), then a gateway admin must click the durable exact-command Slack approval.
   The second gate is never auto-approved because the command runs outside the engine sandbox.
   → TEST-PLAN: Security (background gating).
-- **Retired 2026-09-03 (Linux + containers only):** admin channels run in containers too — the admin author's live turn keeps the bypass flag, its
-  work folder is bind-mounted read-write like any other's (a host directory used as the work folder
-  is visible in full, nothing beside it), and nothing else of the host is reachable — unless the
-  operator turns on **Full-access channels see the gateway home** (2026-09-06, Settings → Container
-  runtime, `containerFullAccessHome`, off by default): then every Full-access channel's container
-  also bind-mounts the gateway user's whole home read-write at its identical path (every channel's
-  work folder + memory, every repo, the gateway root incl. logs/metadata/credential stores; only
-  `~/.local/share/containers` masked), Claude's admin-run settings list it in
-  `permissions.additionalDirectories` (derived from the resolved mount), the grant is part of the
-  create-time fingerprint, no MCP tool can flip it, and it is per channel (every admitted author
-  reads; an admin author's turn writes). Because the mount is read-write for the whole container,
-  every run there that is NOT an admin author's — a member's or guest's turn, their background
-  agents — is **home-guarded** (2026-09-27, CTR-30): Claude's per-run settings deny `Bash`, `Write`,
-  `Edit`, `MultiEdit` and `NotebookEdit` outright (deny, not ask: a run's own author may approve
-  their own card), Codex runs in its read-only sandbox with no auto-approved escalation, and
-  plugin command servers are refused. An admin author's live turn (bypass) and the admin unattended
-  tier are unchanged. → TEST-PLAN: Container runtime (operator-home grant). **Admin mode delivers its documented contract** — "full tools, sandbox off": an admin author's
-  live foreground turn in an admin-mode channel runs with the bypass AND `sandbox.enabled: false`
-  (the flag alone never lifts the sandbox), so it can genuinely reach the whole account — while
-  the shared settings keep every other run fully sandboxed, and unattended admin runs stay at the
-  sandboxed auto tier. → TEST-PLAN: Security (Admin sandbox-off).
+- **Admin home access is author-specific:** current organization admins in Admin/Full-access
+  channels can receive the optional operator-home mount (`containerFullAccessHome`, off by
+  default). Members and guests use a separate project container with Worker and the selected
+  Auto/Lean options, so they can edit the project without reading the operator home. The daemon
+  checks current roles at each spawn, including background work; memory reviews always use the
+  project lane. Admins retain legacy container/HOME/artifact state. Project authors get a fresh
+  `cgp2-` container, HOME and scratch volumes and a separate `.runtime-project-v2` artifact root;
+  they cannot
+  inherit old admin transcripts, CLI logins or run artifacts. Switching lanes starts fresh
+  engine history without importing admin context. Project files and channel memory remain
+  shared. The existing SSH refusal for home-enabled Admin channels remains in force.
+  The defensive home guard still denies writable tools if an untrusted run somehow receives a
+  home-mounted target. → TEST-PLAN: Container runtime (author-specific home access).
 - Approval-based authorization: admins + approved (MakeItFuture-list) users may talk in any
   channel they're in and in DMs; unknown users denied everywhere (incl. DMs) unless added as a
   per-channel guest. New users are recorded as un-approved pending an admin's approval.
@@ -2425,7 +2417,7 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
   boundary and the optional Admin/Full-access operator-home grant. Each generated guide names the
   resolved runtime's `containerFullAccessHome` setting and operator-home mount, including a gateway
   with the switch on but a Worker channel without the mount. It distinguishes the channel's own
-  `$HOME` from the mounted operator home, channel-wide reads from admin-author bypass tools, and
+  `$HOME` from the mounted operator home, admin-only home access from members' project access, and
   a missing runtime target from a known absent grant. The same facts reach Claude and Codex skill
   discovery, including clean workspaces. Admin guide overrides keep their documented precedence.
   → TEST-PLAN: Container runtime (operator-home guide acceptance).

@@ -7,7 +7,8 @@
 // by the `cg.install` label — a container that happens to answer to our name but carries a foreign
 // or missing install label is never touched.
 import { createHash } from "node:crypto";
-import { gatewayRoot, installId, platformFolder } from "../../config/paths.js";
+import path from "node:path";
+import { gatewayRoot, installId, platformFolder, runtimeArtifactsRoot } from "../../config/paths.js";
 
 // Container names are clamped to 63 characters (the conservative DNS-label ceiling both CLIs are
 // happy with, and what a podman network alias accepts). The HOME volume is the same name plus
@@ -40,8 +41,9 @@ function clamp(name, max) {
   return `${name.slice(0, max - digest.length - 1)}-${digest}`;
 }
 
-export function containerName({ slug, platform } = {}) {
-  const stem = `cg-${currentInstallId()}-${safeComponent(platformFolder(platform))}-${safeComponent(slug) || "unknown"}`;
+export function containerName({ slug, platform, runtimeScope = "admin" } = {}) {
+  const stem = `${runtimeScope === "project" ? "cgp2" : "cg"}-${currentInstallId()}-${safeComponent(platformFolder(platform))}-${safeComponent(slug) || "unknown"}`;
+  // Legacy state belongs to the admin lane. Members never reuse its sessions or temp files.
   return clamp(stem, STEM_MAX);
 }
 
@@ -104,4 +106,10 @@ export function installFilterArgs() {
 
 export function isOurContainer(labels) {
   return String(labels?.[LABEL_INSTALL] || "") === currentInstallId();
+}
+
+// Separate artifact ROOTS: slug suffixes would collide with another channel's admin artifacts.
+export function runtimeArtifactDir(slug, platform, scope = "project") {
+  const root = runtimeArtifactsRoot();
+  return path.join(scope === "admin" ? root : `${root}-project-v2`, platformFolder(platform), slug);
 }

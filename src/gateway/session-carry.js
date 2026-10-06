@@ -81,6 +81,8 @@ export async function carrySession({
   const from = storedRuntimeBackend(storedRuntime);
   // A recreated container is the same backend on purpose: its persistent HOME already has state.
   if (!sessionId || !target || from === to) return null;
+  // Host transcripts can contain admin-only filesystem/tool history. Never import them for members.
+  if (target.runtimeScope === "project") return null;
 
   try {
     signal?.throwIfAborted();
@@ -89,7 +91,7 @@ export async function carrySession({
       return null;
     }
     const direction = to === "host" ? CARRY_DIRECTIONS.OUT : CARRY_DIRECTIONS.IN;
-    const source = resolveFor(target.slug, target.meta || {}, { backend: from });
+    const source = resolveFor(target.slug, target.meta || {}, { backend: from, isAdminAuthor: target.runtimeScope === "admin" });
     const destination = target;
     const entries = buildCarryEntries({
       engine,

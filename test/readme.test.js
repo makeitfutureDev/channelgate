@@ -78,7 +78,7 @@ test("the single Makeitfuture CTA carries the mailto and both UTM-tagged links",
   );
   // Attribution is only useful if it is unambiguous: one campaign, one CTA block.
   assert.equal(countOf(readme, /utm_campaign=channelgate/g), 2);
-  assert.equal(countOf(readme, /https:\/\/channelgate\.dev\/(?!partners)/g), 1);
+  assert.equal(readme.split(`https://channelgate.dev/?${UTM}`).length - 1, 1, "the campaign CTA must appear once; ordinary product links are allowed");
 });
 
 test("every relative link in the README resolves to a file that exists", async () => {

@@ -6,10 +6,11 @@
 // Background jobs, memory-review runs and scheduled runs resolve through here at THEIR OWN spawn
 // time — they outlive the turn that created them.
 import { effectiveWorkDir } from "../gateway/folders.js";
-import { channelArtifactDir, cleanWorkspaceFolder } from "../config/paths.js";
+import { cleanWorkspaceFolder } from "../config/paths.js";
 import { getContainerRuntime } from "../config/settings.js";
 import { platformOr } from "../platforms/registry.js";
 import { DEFAULT_RUNTIME_BACKEND, isRuntimeBackendId, runtimeBackend } from "./registry.js";
+import { runtimeArtifactDir } from "./container/names.js";
 import { hasSudoRuntimeAuthority } from "./sudo-authority.js";
 
 // Kept as a function so every caller asks "where does this turn run?" through one door. Stored
@@ -24,9 +25,10 @@ export function decideRuntimeBackend(meta = {}) {
  * @param {string} slug
  * @param {object} meta                 the effective channel meta
  * @param {object} [options]
+ * @param {boolean} [options.isAdminAuthor] verified current principal rank; defaults to project-only
  * @param {object} [options.settings]   the container-runtime settings snapshot
  */
-export function resolveRuntime(slug, meta = {}, { settings = getContainerRuntime(), backend: forced = "" } = {}) {
+export function resolveRuntime(slug, meta = {}, { settings = getContainerRuntime(), backend: forced = "", isAdminAuthor = false } = {}) {
   const platform = platformOr(meta?.platform).id;
   const decided = decideRuntimeBackend(meta);
   const { backend: id, reason } = isRuntimeBackendId(forced)
@@ -45,9 +47,13 @@ export function resolveRuntime(slug, meta = {}, { settings = getContainerRuntime
     cwd,
     workDir,
     cleanWorkDir: cleanWorkspaceFolder(slug, platform),
-    artifactDir: id === "container" ? channelArtifactDir(slug, platform) : null,
+    artifactDir: id === "container" ? runtimeArtifactDir(slug, platform, isAdminAuthor === true ? "admin" : "project") : null,
     settings,
+    // Trusted caller option, never channel metadata or a caller-supplied author attribution.
+    runtimeScope: isAdminAuthor === true ? "admin" : "project",
     container: null,
   };
   return backend.prepareTarget(base);
 }
+
+export { runtimeArtifactDir } from "./container/names.js";

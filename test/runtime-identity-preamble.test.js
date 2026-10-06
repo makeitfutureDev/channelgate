@@ -158,7 +158,7 @@ for (const engine of ["claude", "codex"]) {
         assert.match(prompt, /resolved runtime has no operator-home mount/);
         assert.doesNotMatch(prompt, /resolved runtime includes the operator-home mount/);
       }
-      assert.match(prompt, /Switching this channel to Admin\/Full-access qualifies it.*ONLY while that gateway switch is on/);
+      assert.match(prompt, /operator-home mount is available ONLY to a trusted admin author.*Admin\/Full-access channel while that gateway switch is on/);
     }
   });
 }

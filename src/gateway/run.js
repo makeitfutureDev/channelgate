@@ -849,7 +849,7 @@ export async function runMessage({ channelId, authorId, workspaceId = "", text, 
   // asks "is this a container?" — it asks the target's declared capabilities.
   //
   // cleanMode is taken from the RUN meta on purpose — it changes the cwd the container mounts.
-  const target = runtimeResolver(entry.slug, overrides ? { ...meta, adminMode: Boolean(meta.adminMode || channelAdminMode) } : meta);
+  const target = runtimeResolver(entry.slug, overrides ? { ...meta, adminMode: Boolean(meta.adminMode || channelAdminMode) } : meta, { isAdminAuthor: trustedAdminAuthor });
   const isolatedRuntime = runtimeSupports(target, "isolated");
   // The engine's own credential inside an isolated runtime: the container has no access to the
   // daemon's Claude state dir, so a setup-token — or a relay of the resolved login's current access
@@ -882,6 +882,8 @@ export async function runMessage({ channelId, authorId, workspaceId = "", text, 
   // fingerprint, so a recreated container is visibly a different environment.
   const runtimeStamp = JSON.stringify({
     backend: target.backend,
+    scope: target.runtimeScope,
+    container: target.container?.name || "",
     fingerprint: target.runtime.fingerprint(target),
     image: target.container?.image || "",
   });
@@ -930,6 +932,19 @@ export async function runMessage({ channelId, authorId, workspaceId = "", text, 
     isNew = true;
   } else {
     ({ sessionId, isNew, engine: sessionEngine, runtime: sessionRuntime } = await resolveSession(entry.slug, threadKey, engine, runtimeStamp));
+    if (!isNew && target.backend === "container" && target.runtimeScope) {
+      let prior = null;
+      try { prior = JSON.parse(sessionRuntime); } catch { /* legacy unclassified state */ }
+      const previousScope = prior?.scope || "admin";
+      if (previousScope !== target.runtimeScope) {
+        abortPooled(`${entry.slug}::${threadKey}`);
+        if (!engineExplicit && sessionEngine && isEngineEnabled(sessionEngine)) engine = sessionEngine;
+        sessionId = await resetSession(entry.slug, threadKey, engine, sessionGen, runtimeStamp);
+        isNew = true;
+        switchedEngine = true; // replay the chat-visible context, never privileged native state
+        forkSourceSessionId = "";
+      }
+    }
     // A recovering fork may have a provisional row from before the engine announced its child id.
     // Its first attempt must fork the source, never resume that uncreated provisional id.
     if (forkSourceSessionId) isNew = true;

@@ -261,7 +261,7 @@ function volumeView(target, inside) {
 async function storesFor(engine, { dirs = {}, target = null } = {}) {
   const stores = [];
   const hostDir = engine === "claude" ? dirs.claude || claudeStateDir() : dirs.codex || codexStateDir();
-  if (hostDir) stores.push(directoryStore("host", hostDir));
+  if (hostDir && target?.runtimeScope !== "project") stores.push(directoryStore("host", hostDir));
   const inside = containerStateDir(engine, target);
   if (!inside) return stores;
   const onHost = volumeView(target, inside);
