@@ -11,10 +11,10 @@ const { adaptiveCardAttachment } = await import('../src/platforms/msteams/cards.
 const { modelsForEngine } = await import('../src/engines/registry.js');
 const { getDb } = await import('../src/db/index.js');
 let sequence = 0;
-async function fixture({ admin = true, privateChat = true } = {}) {
-  const suffix = ++sequence, channelId = `teams:19:settings-${suffix}@thread.v2`, owner = `29:settings-${suffix}`;
-  const entry = await upsertChannelEntry(channelId, { name: `Settings ${suffix}`, platform: 'msteams', type: 'mpim' });
-  const meta = { channelId, platform: 'msteams', engine: 'claude', access: 'approved', manageAccess: 'admins', allowBash: true, allowNetwork: false };
+async function fixture({ admin = true, privateChat = true, personal = false } = {}) {
+  const suffix = ++sequence, channelId = personal ? `teams:a:settings-${suffix}` : `teams:19:settings-${suffix}@thread.v2`, owner = `29:settings-${suffix}`;
+  const entry = await upsertChannelEntry(channelId, { name: `Settings ${suffix}`, platform: 'msteams', type: personal ? 'dm' : 'mpim' });
+  const meta = { channelId, isDM: personal, platform: 'msteams', engine: 'claude', access: 'approved', manageAccess: 'admins', allowBash: true, allowNetwork: false };
   await saveChannelMeta(entry.slug, meta); await setUser(owner, { approved: true, isAdmin: admin });
   const sent = [], replies = [];
   const connector = { botId: '28:bot', api: { sendActivity: async () => ({ messageId: 'file-consent' }), listMembers: async () => [{ id: owner, name: 'Settings owner' }] },
@@ -22,9 +22,9 @@ async function fixture({ admin = true, privateChat = true } = {}) {
     updateCard: async value => sent.push(value), openDm: async () => privateChat ? `a:private-${suffix}` : '' };
   const controls = createTeamsControls({ connector, publicUrl: () => 'https://gateway.example' });
   const args = command => ({ message: { text: command, trigger: 'message', conversationId: channelId,
-    rawConversationId: channelId.slice(6), userId: owner, isDM: false, threadKey: 'original-root' },
+    rawConversationId: channelId.slice(6), userId: owner, isDM: personal, threadKey: 'original-root' },
     entry, meta, sessionKey: 'original-session', authorIsAdmin: admin, reply: async value => replies.push(value) });
-  const invoke = (data, action, actor = owner, destination = `a:private-${suffix}`) => controls.onInvoke({
+  const invoke = (data, action, actor = owner, destination = channelId.slice(6)) => controls.onInvoke({
     type: 'invoke', name: 'adaptiveCard/action', from: { id: actor }, conversation: { id: destination },
     replyToId: 'card1', serviceUrl: 'https://smba.trafficmanager.net/teams/',
     value: { action: { type: 'Action.Execute', verb: action, data } },
@@ -35,15 +35,20 @@ async function fixture({ admin = true, privateChat = true } = {}) {
 }
 const value = result => result.body.value;
 const input = (card, id) => card.body.find(item => item.id === id);
-test('six private settings pages render bounded cards, without a browser-admin dependency', async () => {
+test('six settings pages stay in the source conversation and update the same card', async () => {
   const f = await fixture();
-  assert.equal(f.sent[0].conversationId, 'a:private-1');
-  assert.equal(f.sent[0].threadKey, undefined);
+  assert.equal(f.sent[0].conversationId, f.channelId.slice(6));
+  assert.equal(f.sent[0].threadKey, 'original-root');
+  assert.equal(f.sent[0].text, 'Conversation settings');
+  assert.deepEqual(f.replies, []);
   for (const page of ['general', 'secrets', 'mcp', 'skills', 'automations', 'resume']) {
     const card = value(await f.invoke({ stateId: f.stateId, page }, 'settings.page'));
     assert.equal(card.body[0].text, 'Channel settings');
     adaptiveCardAttachment(card);
     assert.equal(card.body.filter(item => item.type === 'ActionSet').slice(0, 2).flatMap(item => item.actions).length, 6);
+    assert.equal(f.sent.at(-1).conversationId, f.channelId.slice(6));
+    assert.equal(f.sent.at(-1).messageId, 'card1');
+    assert.deepEqual(f.sent.at(-1).card, card);
   }
   const secrets = value(await f.invoke({ stateId: f.stateId, page: 'secrets' }, 'settings.page'));
   assert.ok(input(secrets, 'variableValue'));
@@ -52,7 +57,7 @@ test('six private settings pages render bounded cards, without a browser-admin d
 });
 test('Resume permits current admins and protects admin sessions from members', async () => {
   for (const admin of [true, false]) {
-    const f = await fixture({ admin });
+    const f = await fixture({ admin, personal: true });
     await saveSession(f.entry.slug, 'original-session', 'admin-session', 'claude', null, JSON.stringify({ backend: 'container', scope: 'admin' }));
     const card = value(await f.invoke({ stateId: f.stateId, page: 'resume' }, 'settings.page'));
     if (admin) assert.match(input(card, 'resumeCommand')?.value || '', /admin-session/);
@@ -75,14 +80,48 @@ test('approved member runtime changes write only the dispatched field to the ori
   assert.equal(updated.body[0].text, 'Channel settings');
   assert.equal(await getThreadModel(f.entry.slug, 'original-session'), modelsForEngine('codex')[0].value);
 });
-test('private delivery refusal never publishes settings or secret inputs to the source room', async () => {
+test('settings do not require personal-chat delivery', async () => {
   const f = await fixture({ privateChat: false });
-  assert.deepEqual(f.sent, []);
-  assert.match(f.replies[0], /personal chat/);
+  assert.equal(f.sent[0].conversationId, f.channelId.slice(6));
+  assert.deepEqual(f.replies, []);
+});
+test('Submit navigation updates the stored channel card once, ignoring a forged reply target', async () => {
+  const f = await fixture();
+  const skills = f.sent[0].card.body.filter(item => item.type === 'ActionSet').flatMap(item => item.actions).find(action => action.data.page === 'skills');
+  assert.equal(skills.fallback.associatedInputs, 'none');
+  const before = f.sent.length;
+  const result = await f.controls.onInvoke({ type: 'message', from: { id: f.owner },
+    conversation: { id: `${f.channelId.slice(6)};messageid=1760000000000` }, recipient: { id: '28:bot' },
+    replyToId: 'forged-message', serviceUrl: 'https://smba.trafficmanager.net/teams/', value: skills.fallback.data });
+  assert.deepEqual(result, { status: 200, body: {} });
+  assert.equal(f.sent.length, before + 1);
+  assert.equal(f.sent.at(-1).messageId, 'card1');
+  assert.equal(f.sent.at(-1).conversationId, f.channelId.slice(6));
+  assert.ok(f.sent.at(-1).card.body.some(item => item.text === 'Skills'));
+});
+test('shared Resume never publishes an administrator session command', async () => {
+  const f = await fixture();
+  await saveSession(f.entry.slug, 'original-session', 'admin-private-session', 'claude', null, JSON.stringify({ backend: 'container', scope: 'admin' }));
+  const card = value(await f.invoke({ stateId: f.stateId, page: 'resume' }, 'settings.page'));
+  assert.equal(input(card, 'resumeCommand'), undefined);
+  assert.doesNotMatch(JSON.stringify(card), /admin-private-session/);
+});
+test('a different bot recipient cannot open or operate the settings card', async () => {
+  const f = await fixture();
+  const args = f.args('/settings'); args.message.raw = { activity: { recipient: { id: '28:other-bot' } } };
+  const before = f.sent.length;
+  await f.controls.onCommand(args);
+  assert.equal(f.sent.length, before);
+  assert.match(f.replies.at(-1), /different bot/);
+  const result = await f.controls.onInvoke({ type: 'invoke', name: 'adaptiveCard/action', from: { id: f.owner },
+    recipient: { id: '28:other-bot' }, conversation: { id: f.channelId.slice(6) }, serviceUrl: 'https://smba.trafficmanager.net/teams/',
+    value: { action: { type: 'Action.Execute', verb: 'settings.page', data: { stateId: f.stateId, page: 'secrets' } } } });
+  assert.equal(value(result).body[0].text, 'Bot registration mismatch');
+  assert.equal(f.sent.length, before);
 });
 test('card ownership, delivery conversation and revoked roles are checked for every interaction', async () => {
   const f = await fixture();
-  for (const [actor, destination] of [['29:other', 'a:private-4'], [f.owner, f.channelId.slice(6)]]) {
+  for (const [actor, destination] of [['29:other', f.channelId.slice(6)], [f.owner, 'a:foreign']]) {
     const result = value(await f.invoke({ stateId: f.stateId, page: 'mcp' }, 'settings.page', actor, destination));
     assert.equal(result.body[0].text, 'Action could not be completed');
   }
@@ -126,7 +165,7 @@ test('metadata audit logs contain policy keys and never submitted credential inp
   assert.doesNotMatch(logs, /private-neighbour-value/);
 });
 test('all variable scopes can be removed through normalized Teams inputs and one-use confirmations', async () => {
-  const f = await fixture();
+  const f = await fixture({ personal: true });
   const { listChannelEnv } = await import('../src/config/channel-env.js');
   const { listUserEnv, listOrgEnv } = await import('../src/config/scoped-env.js');
   for (const scope of ['channel', 'personal', 'organization']) {

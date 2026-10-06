@@ -1,4 +1,4 @@
-// Teams' private settings console. The opaque card state owns conversation/session authority;
+// Teams' conversation settings console. The opaque card state owns conversation/session authority;
 // submitted fields are values only and are never saved in the navigation state.
 import { randomUUID } from 'node:crypto';
 import { getChannelMeta, patchChannelMeta, isAdmin, isApproved } from '../../config/store.js';
@@ -41,7 +41,8 @@ export function teamsSettingsUi(stateId) {
 
 export function createTeamsSettingsContext(state, { connector, authorize }) {
   const context = { state, connector, ownerId: state.message.userId,
-    channelId: state.message.conversationId, sessionKey: state.sessionKey, entry: state.entry, meta: state.meta };
+    channelId: state.message.conversationId, sessionKey: state.sessionKey, entry: state.entry, meta: state.meta,
+    isShared: state.sharedSettings === true };
   context.authorize = async () => {
     const fresh = await authorize({ channelId: context.channelId, slug: state.entry.slug, ownerId: context.ownerId }, { connector });
     // Roles/policy may have changed during the roster request. Read them again after it returns.
@@ -97,9 +98,11 @@ function automations(ctx, ui) {
 }
 
 async function resume(ctx, ui) {
-  const current = await resolveResumeSession({ entry: ctx.entry, meta: effectiveMeta(ctx.meta), isAdminAuthor: ctx.userIsAdmin }, ctx.sessionKey);
+  const current = await resolveResumeSession({ entry: ctx.entry, meta: effectiveMeta(ctx.meta), isAdminAuthor: ctx.userIsAdmin && !ctx.isShared }, ctx.sessionKey);
   const body = [ui.heading('Resume Session')];
-  if (!current.command) body.push(ui.text(current.inThread ? 'This session has not run a turn yet.' : 'Open settings from the session you want to resume.'));
+  if (!current.command) body.push(ui.text(current.sessionId && ctx.isShared
+    ? 'This session has a private administrator runtime. Open Resume in authenticated settings.'
+    : current.inThread ? 'This session has not run a turn yet.' : 'Open settings from the session you want to resume.'));
   else body.push(ui.text(`Engine: ${current.engine}`), ui.text(`Session: ${current.sessionId}`), ui.text(`Folder: ${current.workDir}`),
     { ...ui.input('resumeCommand', 'Copy terminal command', current.command), isMultiline: true });
   return { body, actions: [] };
@@ -116,6 +119,7 @@ export async function buildTeamsSettings(ctx, stateId) {
   const tabs = TEAMS_SETTINGS_PAGES.map(([id, title]) => ui.execute(id === page ? `• ${title}` : title, 'settings.page', { page: id }, 'none'));
   return { $schema: 'http://adaptivecards.io/schemas/adaptive-card.json', type: 'AdaptiveCard', version: '1.4',
     body: [ui.heading('Channel settings'), ui.text(`Settings for ${ctx.entry.name || 'this conversation'}. Changes apply to the next turn.`),
+      ...(ctx.isShared ? [ui.text('These controls belong to the person who opened them. Other members can open their own /settings.')] : []),
       ui.buttons(tabs.slice(0, 3)), ui.buttons(tabs.slice(3)),
       ...(ctx.state.notice ? [ui.text(ctx.state.notice)] : []), ...content.body], actions: content.actions || [] };
 }
@@ -139,6 +143,9 @@ function confirmationDetails(action, data, ctx) {
 export async function handleTeamsSettings(action, data, ctx, stateId) {
   const ui = teamsSettingsUi(stateId);
   await ctx.authorize();
+  if (ctx.isShared && action.startsWith('settings.variable.') && data.variableScope !== 'channel') {
+    throw new Error('Personal and organization variables require authenticated settings.');
+  }
   if (action === 'settings.page') {
     if (!validPage(data.page)) throw new Error('Unknown settings page.');
     ctx.state.tab = data.page; ctx.state.notice = ''; ctx.state.confirmation = null;

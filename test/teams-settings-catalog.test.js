@@ -83,6 +83,31 @@ test('all variable scopes render masked and no stored value becomes a card field
   patchOrgEnv({ remove: 'ORG_CARD_SECRET' });
 });
 
+test('shared channel cards omit private metadata and reject private-scope mutations', async () => {
+  const ctx = await context({ admin: true, fields: {
+    env: patchChannelEnv({}, { set: { name: 'CHANNEL_VISIBLE_TOKEN', value: 'channel-secret-fixture' } }),
+    composioToken: 'channel-composio-secret-XYZ4', composioTokenLabel: 'Private account label',
+  } });
+  await invoke(ctx, 'settings.variable.save', { variableScope: 'personal', variableName: 'PERSON_PRIVATE_TOKEN', variableValue: 'personal-secret-fixture' });
+  patchOrgEnv({ set: { name: 'ORG_PRIVATE_TOKEN', value: 'org-private-fixture' } });
+  ctx.isShared = true;
+  const variables = await renderCatalogPage('secrets', ctx, ui);
+  const contents = JSON.stringify(variables);
+  assert.match(contents, /CHANNEL_VISIBLE_TOKEN/);
+  assert.doesNotMatch(contents, /PERSON_PRIVATE_TOKEN|ORG_PRIVATE_TOKEN/);
+  assert.deepEqual(variables.body.find(item => item.id === 'variableScope').choices.map(item => item.value), ['channel']);
+  for (const scope of ['personal', 'organization']) {
+    await assert.rejects(invoke(ctx, 'settings.variable.save', { variableScope: scope, variableName: 'FORGED_PRIVATE_TOKEN', variableValue: 'forged-private-fixture' }), /authenticated settings/);
+    await assert.rejects(invoke(ctx, 'settings.variable.remove', { variableScope: scope, name: 'ORG_PRIVATE_TOKEN' }), /authenticated settings/);
+    await assert.rejects(invoke(ctx, 'settings.catalog.page', { page: 'secrets', variableScope: scope, variableName: 'ORG_PRIVATE_TOKEN' }), /authenticated settings/);
+  }
+  const connections = await renderCatalogPage('mcp', ctx, ui);
+  assert.doesNotMatch(JSON.stringify(connections), /XYZ4|Private account label|Organization Composio/);
+  await invoke(ctx, 'settings.connections.save', { composioToken: '', composioTokenLabel: '', toolboxToken: '' });
+  assert.equal((await getChannelMeta(ctx.entry.slug)).composioTokenLabel, 'Private account label');
+  patchOrgEnv({ remove: 'ORG_PRIVATE_TOKEN' });
+});
+
 test('connection rotation preserves blank tokens and validates Make URLs atomically', async () => {
   const ctx = await context({ fields: { composioToken: 'existing-composio-fixture', toolboxToken: 'existing-toolbox-fixture', makeToolboxUrl: 'https://eu1.make.com/mcp/server/catalog-fixture', makeToolboxKey: 'existing-make-fixture' } });
   await invoke(ctx, 'settings.connections.save', { composioToken: '', toolboxToken: '', composioTokenLabel: 'Shared account', makeToolboxUrl: ctx.meta.makeToolboxUrl, makeToolboxKey: '' });

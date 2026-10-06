@@ -242,11 +242,11 @@ personal-chat file consent, then upload/install that app revision with the Teams
 above. Adaptive Cards and their inline forms do not require additional Graph RSC permissions.
 Task-module dialogs and broadcast mentions remain unavailable.
 
-- `/settings` opens a private six-page console in the requester's personal chat: General,
+- `/settings` opens a six-page console in the original channel/thread or chat: General,
   Variables, MCPs, Skills, Automations and Resume. It retains the source conversation and session
   even when opened from a channel or group chat. `/secrets` opens its Variables page directly.
-  A failed private delivery never publishes the console into the source room. Install/open the
-  bot's personal chat first if tenant policy prevents proactive delivery.
+  No proactive personal chat is opened for settings. Buttons update that same card; other
+  members open their own requester-bound `/settings` card.
   General edits channel defaults and current-session engine/model/effort independently, with
   compatible choices, inherited labels and Follow channel default. Each field has an explicit
   Apply button; page navigation discards unsaved drafts. Authorized users can edit runtime,
@@ -260,10 +260,18 @@ Task-module dialogs and broadcast mentions remain unavailable.
   masked input style, and removal/reset actions require a one-use confirmation. Native entries
   follow the existing 8,000-character field and 16-KiB submission limits; larger values need the
   authenticated browser editor. Catalogs, templates and automations paginate. Resume resolves
-  the current session at display time and provides its terminal command.
+  the current session at display time and provides its terminal command. Shared channel cards
+  expose channel variable metadata only and never administrator session commands or ungranted
+  private connection catalogs. Personal/organization variable controls remain in authenticated
+  settings or an explicitly opened personal conversation.
+  The sender name is the installed Teams app/bot identity. If another bot name appears, verify
+  that the installed manifest bot ID, the configured Teams App ID and the Azure bot messaging
+  endpoint all belong to the intended installation; changing card text cannot rename that app.
   Native approvals provide Approve/Deny/Request changes and supported scope choices. An optional
   changes comment refuses the current action, including when Approve was clicked. Card submissions
-  take identity from the verified Microsoft envelope and repeat membership/role checks.
+  take identity from the verified Microsoft envelope and repeat membership/role checks. Verified
+  Execute errors use the Teams invoke response envelope; invalid request authentication remains
+  an HTTP rejection. Legacy Submit replacements use only the card's server-stored message target.
 - `/files [folder]` privately browses the current conversation workspace. Open a file to download
   it or edit eligible text; users with file-write access can open the uploader. Browser links are
   short-lived grants and recheck current Teams membership and gateway policy. A group request
