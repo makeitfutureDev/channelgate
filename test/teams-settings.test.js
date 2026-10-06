@@ -73,6 +73,26 @@ test('/secrets opens Variables directly while /settings starts with the menu', a
   assert.ok(input(secrets, 'variableValue'));
   assert.ok(secrets.body.filter(item => item.type === 'ActionSet').slice(0, 2).flatMap(item => item.actions).some(item => item.title === '• Variables'));
 });
+test('combined runtime Apply actions save the chosen scope through Execute and Submit', async () => {
+  const f = await fixture({ admin: false });
+  const general = value(await f.invoke({ stateId: f.stateId, page: 'general' }, 'settings.page'));
+  const applies = general.body.filter(item => item.type === 'ActionSet').flatMap(item => item.actions).filter(item => item.verb === 'settings.runtime.apply');
+  assert.deepEqual(applies.map(item => item.title), ['Apply to channel', 'Apply to thread']);
+  const channel = applies[0];
+  const saved = value(await f.invoke({ ...channel.data, channel_engine: 'codex', channel_model: modelsForEngine('codex')[0].value,
+    channel_effort: 'high', thread_engine: 'claude' }, channel.verb));
+  assert.equal((await getChannelMeta(f.entry.slug)).engine, 'codex');
+  assert.equal(await getThreadEngine(f.entry.slug, 'original-session'), '');
+  const thread = saved.body.filter(item => item.type === 'ActionSet').flatMap(item => item.actions).find(item => item.data?.scope === 'thread' && item.verb === 'settings.runtime.apply');
+  const before = f.sent.length;
+  const result = await f.controls.onInvoke({ type: 'message', from: { id: f.owner }, recipient: { id: '28:bot' },
+    conversation: { id: f.channelId.slice(6) }, replyToId: 'forged-target', serviceUrl: 'https://smba.trafficmanager.net/teams/',
+    value: { ...thread.fallback.data, thread_engine: 'claude', thread_model: modelsForEngine('claude')[0].value, thread_effort: 'high', channel_engine: 'claude' } });
+  assert.deepEqual(result, { status: 200, body: {} });
+  assert.equal(await getThreadEngine(f.entry.slug, 'original-session'), 'claude');
+  assert.equal((await getChannelMeta(f.entry.slug)).engine, 'codex');
+  assert.equal(f.sent.length, before + 1); assert.equal(f.sent.at(-1).messageId, 'card1');
+});
 test('Resume permits current admins and protects admin sessions from members', async () => {
   for (const admin of [true, false]) {
     const f = await fixture({ admin, personal: true });

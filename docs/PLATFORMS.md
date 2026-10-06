@@ -250,8 +250,10 @@ Task-module dialogs and broadcast mentions remain unavailable.
   Initially only the section menu is shown; selecting a section reveals its controls below the
   menu. Switching sections replaces the controls while keeping the menu visible.
   General edits channel defaults and current-session engine/model/effort independently, with
-  compatible choices, inherited labels and Follow channel default. Each field has an explicit
-  Apply button; page navigation discards unsaved drafts. Authorized users can edit runtime,
+  engine-labelled model choices, inherited labels and Follow channel default. One Apply to channel
+  or Apply to thread button saves that scope's engine/model/effort together after compatibility
+  checks. No intermediate runtime writes are needed; stale forms must be reopened. Other settings
+  keep their explicit controls. Page navigation discards unsaved drafts. Authorized users can edit runtime,
   variables, connections, channel skills and automations, matching Slack Settings. Access controls
   require a current manager/admin, organization variable changes and Cloud MCP require admins.
   Native member selectors defer to the authenticated website when the complete roster exceeds

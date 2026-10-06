@@ -92,6 +92,26 @@ export async function setThreadEffort(slug, threadKey, effort) {
   setOverride(slug, threadKey, "effort", String(effort || "").trim());
 }
 
+// One native form saves a complete runtime selection. Keep the triple atomic without touching
+// the thread's independent clean/sudo posture; callers validate model compatibility/authority.
+export function setThreadRuntimeOverrides(slug, threadKey, { engine = "", model = "", effort = "" }, { expected } = {}) {
+  if (engine && !VALID.has(engine)) throw new Error("Unknown thread engine.");
+  const db = getDb();
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    if (expected && ["engine", "model", "effort"].some(kind => getOverride(slug, threadKey, kind) !== expected[kind])) {
+      throw new Error("Thread settings changed. Reopen General before applying your changes.");
+    }
+    setOverride(slug, threadKey, "engine", engine);
+    setOverride(slug, threadKey, "model", String(model || "").trim());
+    setOverride(slug, threadKey, "effort", String(effort || "").trim());
+    db.exec("COMMIT");
+  } catch (error) {
+    try { db.exec("ROLLBACK"); } catch { /* transaction already gone */ }
+    throw error;
+  }
+}
+
 // ── Per-thread CLEAN override ("/clean" directive) ────────────────────────────────────────────
 // A thread flagged clean runs bare (channel cleanMode semantics, scoped to this thread): empty
 // strict MCP config, bare gateway folder, no skills, no provenance/replay. Sticky by design — the
