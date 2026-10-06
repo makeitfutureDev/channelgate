@@ -18,6 +18,11 @@ product overview.
 
 ## Unreleased
 
+- Container turns now prepare a protected Claude login even when Codex, Qwen or Qwen EU is the
+  selected engine. Explicit nested `claude -p` commands authenticate through the host's existing
+  relay; Qwen's main process retains its own provider settings. No additional interactive login
+  or thread switch is needed when the host already has Claude authentication.
+
 - Teams `/settings` now offers the same six sections as Slack, including channel defaults and
   session overrides, variables, MCP connections, skills, automations and session resume. The
   console opens privately, uses explicit Apply buttons and confirms removals without revealing

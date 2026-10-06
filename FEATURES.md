@@ -1,5 +1,22 @@
 # ChannelGate — Features
 
+## Claude login for nested commands
+
+- Before each container turn, the gateway refreshes a protected Claude login independently of the
+  selected engine. A Codex, Qwen or Qwen EU turn can explicitly run `claude -p --model <Claude model>`
+  without switching its thread. Fresh, resumed, background-agent, scheduled and API turns use the
+  same setup. The channel HOME retains only a channel-bound egress placeholder; OAuth refresh
+  tokens and real API keys stay on the daemon. Missing authentication clears the managed login
+  without preventing another configured engine from starting.
+- Qwen's main process keeps its own provider endpoint and credential. A nested `claude` launcher
+  clears the inherited provider settings and nested-session guard, then loads the Anthropic relay.
+  SSH/editor launchers preserve the same HOME fallback. API-key installations also use protected
+  relay grants limited to `api.anthropic.com`; rotation, revocation and live-work checks remain
+  enforced by the proxy. Persistent setup requires proxy mode and a bound channel; host and legacy
+  bridge runs retain their existing authentication paths. API keys configured for a custom
+  Anthropic-compatible endpoint are excluded from the nested Anthropic relay. This does not create a provider login
+  when the operator has configured none, or add gateway accounting/MCP context to a bare child CLI.
+
 ## Gateway model shortcuts
 
 Admins can add gateway-wide model shortcuts in Settings → Access & security → Model shortcuts. Each name selects an engine and model. In Slack, `@agent :astra task` pins that engine and model to the current thread and runs the task; `@agent :astra` switches the thread without starting an agent turn. Slack's automatically inserted space after the mention is accepted. Changing a mapping affects later shortcut selections, while threads already pinned keep their selected model. Channel runtime-change access and dedicated Codex-login restrictions apply.

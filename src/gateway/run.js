@@ -24,6 +24,7 @@ import { mintsOwnSessionId, usesMcpConfigFile, engineSupports, requireAdapter, f
 import { validateRunContext } from "../engines/contract.js";
 import { getEngine, getDefaultModel, getDmTemplate, getEngineFallback, isEngineEnabled, getEnabledEngines, ENGINES, getOrgAccessGrants } from "../config/settings.js";
 import { claudeTokenFingerprint, resolveContainerClaudeToken } from "./claude-token-relay.js";
+import { installNestedClaudeLogin } from "./nested-claude-login.js";
 import { resolveRuntime } from "../runtimes/resolve.js";
 import { newRunId, runtimeSupports } from "../runtimes/contract.js";
 import { getThreadEngine, getThreadClean, getThreadModel, getThreadEffort, getThreadSudo } from "./thread-engine.js";
@@ -1809,6 +1810,10 @@ export async function runMessage({ channelId, authorId, workspaceId = "", text, 
       // see that settled path before it snapshots a resumed session, or the footer shows the
       // whole session's cumulative tokens/value instead of this message's delta.
       refreshRuntimeReadPaths(grantArtifacts, target);
+      // Every engine may explicitly delegate to Claude. Refresh its protected HOME login before
+      // spawn, including fresh/resumed, background, scheduled and API turns. Missing Claude auth
+      // leaves the main Codex/Qwen turn usable and clears any previous managed child login.
+      await installNestedClaudeLogin(target, { resolveToken: claudeRelayOnce });
       if (warmup?.created || warmup?.started) {
         console.log(`[gateway] ${entry.slug}: ${target.backend} runtime ${warmup.created ? "created" : "started"} in ${Date.now() - warmupStartedAt}ms`);
       }

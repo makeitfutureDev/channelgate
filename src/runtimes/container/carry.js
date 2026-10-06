@@ -232,7 +232,8 @@ export function createContainerCarry({ exec, lifecycle, log = () => {} } = {}) {
   // container created before the relay, with the operator's real auth.json mounted there), a write
   // THROUGH it would overwrite the operator's login. The script refuses a mounted destination
   // outright, and a rename over a mountpoint fails (EBUSY) as a second guard.
-  async function writeHomeFile(target, { file, body } = {}) {
+  async function writeHomeFile(target, { file, body, mode = 0o600 } = {}) {
+    if (mode !== 0o600 && mode !== 0o700) throw new Error("a runtime HOME file must be private (0600 or 0700)");
     const home = String(target?.container?.home || "/home/agent");
     const to = path.posix.normalize(String(file || ""));
     if (!to.startsWith(`${home}/`) || to.includes("/../")) throw new Error(`refusing to write ${to || "(no path)"} outside the runtime HOME`);
@@ -242,14 +243,14 @@ export function createContainerCarry({ exec, lifecycle, log = () => {} } = {}) {
       mkdirSync(stagingDir, { recursive: true, mode: 0o700 });
       const staged = path.join(stagingDir, "file");
       writeFileSync(staged, String(body ?? ""), { mode: 0o600 });
-      const temporary = `${to}.cg-tmp`;
+      const temporary = `${to}.${newCarryId()}.cg-tmp`;
       const script = [
         "set -e",
         "umask 077",
         `if grep -q ${shellQuote(` ${to} `)} /proc/self/mountinfo 2>/dev/null; then echo "refusing: ${to} is a mount" >&2; exit 3; fi`,
         `mkdir -p ${shellQuote(path.posix.dirname(to))}`,
         `cp ${shellQuote(staged)} ${shellQuote(temporary)}`,
-        `chmod 600 ${shellQuote(temporary)}`,
+        `chmod ${mode.toString(8)} ${shellQuote(temporary)}`,
         `mv -f ${shellQuote(temporary)} ${shellQuote(to)}`,
       ].join("\n");
       const result = await runScript(target, script);

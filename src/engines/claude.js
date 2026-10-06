@@ -97,6 +97,9 @@ export function buildClaudeEnv({ home = "", configDir = "", extraEnv = {}, brows
     // on every attempt. Gateway-owned and in this last group (DISABLE_TELEMETRY is a reserved
     // name), so a channel secret cannot turn it back on.
     if (env.CG_EGRESS === "proxy") Object.assign(env, CLAUDE_PROXY_TELEMETRY_ENV);
+    // The channel launcher consumes this before exec'ing a gateway-managed main process.
+    // Its children inherit no marker, so bare `claude` can use the independent nested login.
+    if (env.CG_EGRESS === "proxy" && !providerEnv) env.CG_CLAUDE_MAIN = "1";
     return applyProviderEnv(env, providerEnv);
   }
   return applyProviderEnv(buildChildEnv({
@@ -269,7 +272,9 @@ export async function runClaude({
     // Minimal allowlisted env — the sandbox can't hide the child's own environment (see child-env.js).
     // detached → own process group, so kills take the MCP grandchildren too (see util/proc.js).
     const child = trackEngineChild(spawnEngineChild(runtime, {
-      cmd: "claude",
+      // A provider's main process keeps its provider env; bare nested `claude` goes through the
+      // channel launcher, which resets that env to the protected Anthropic login.
+      cmd: providerEnv && isIsolatedTarget(runtime) ? "/usr/local/bin/claude" : "claude",
       args,
       cwd,
       env: buildClaudeEnv({ home, configDir, extraEnv, browserNamespace, target: runtime, oauthToken: claudeOauthToken, providerEnv }),

@@ -96,6 +96,37 @@ async function channel(id, name, meta = {}) {
   return { entry, meta: full };
 }
 
+test("Claude, Codex and both Qwen engines prepare the nested Claude login before fresh and resumed spawns", async () => {
+  saveSettings({ memoryReviewEvery: 0, engineFallback: false, codexEnabled: true,
+    engineEnabled: { claude: true, codex: true, qwen: true, "qwen-eu": true },
+    qwenApiKey: "fake-qwen", qwenEuApiKey: "fake-qwen-eu", qwenEuBaseUrl: "https://qwen-eu.invalid/apps/anthropic" });
+  try {
+    for (const engine of ["claude", "codex", "qwen", "qwen-eu"]) {
+      const backend = createFakeRuntimeBackend({ egress: { active: true, mode: "proxy", network: "none" } });
+      const writes = [];
+      backend.writeHomeFile = async (_, file) => writes.push({ ...file, spawnsBefore: backend.calls.spawn.length });
+      useBackend(backend);
+      const id = `C_RT_NESTED_${engine.toUpperCase()}`;
+      await channel(id, `rt-nested-${engine}`, { engine, allowBash: true, allowNetwork: true });
+      for (const text of ["hello", "continue"]) {
+        const result = await runMessage({ channelId: id, authorId: "U_RT", text, threadKey: "nested.001", origin: "slack_foreground", preferCold: true });
+        assert.equal(result.engine, engine);
+      }
+      assert.equal(writes.length, 4, "login and launcher refreshed before each spawn");
+      assert.deepEqual(writes.map((entry) => entry.spawnsBefore), [0, 0, 1, 1]);
+      assert.ok(writes[0].body.includes("cgph_r"));
+      assert.ok(!JSON.stringify(writes).includes(OPERATOR_RELAY_TOKEN));
+      assert.equal(backend.calls.spawn.length, 2);
+      if (engine.startsWith("qwen")) {
+        assert.ok(backend.calls.spawn.every((call) => call.cmd === "/usr/local/bin/claude"));
+        assert.ok(backend.calls.spawn.every((call) => !call.env.CLAUDE_CODE_OAUTH_TOKEN));
+      }
+    }
+  } finally {
+    saveSettings({ engineEnabled: undefined, qwenApiKey: "", qwenEuApiKey: "", qwenEuBaseUrl: "" });
+  }
+});
+
 // Route every turn in a test through `backend`, with the real resolver supplying the paths.
 function useBackend(backend, { record = null } = {}) {
   setRuntimeResolver((slug, meta, options) => {
