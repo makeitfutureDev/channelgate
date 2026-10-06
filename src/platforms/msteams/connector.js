@@ -1,4 +1,5 @@
 // The Microsoft Teams ChatConnector.
+import { createTeamsConversationNameResolver } from "./conversation-name.js";
 import { adaptiveCardAttachment } from "./cards.js";
 import { validateConnector } from "../connector.js";
 import { parseConversationId } from "../ids.js";
@@ -14,7 +15,7 @@ export function toConversationId(conversationId) {
   return platform === "msteams" ? id : value;
 }
 
-export function createTeamsConnector({ auth, capabilities, api = null, botId = "", tenantId = "", serviceUrl, log = console } = {}) {
+export function createTeamsConnector({ auth, capabilities, api = null, apiForServiceUrl = null, botId = "", tenantId = "", serviceUrl, log = console } = {}) {
   const teams = api || createTeamsApi({ auth, ...(serviceUrl ? { serviceUrl } : {}) });
   const directories = new Map();
   const threadFor = (key) => (/^[0-9]+$/.test(String(key || "")) ? String(key) : null);
@@ -52,6 +53,7 @@ export function createTeamsConnector({ auth, capabilities, api = null, botId = "
     capabilities,
     ready: () => true,
     api: teams,
+    conversationName: createTeamsConversationNameResolver({ auth, apiForServiceUrl }),
     botId,
 
     // `mentions` is the entity array the Teams formatter produced alongside this chunk's text. Text

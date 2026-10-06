@@ -1,5 +1,25 @@
 # ChannelGate — Test Plan
 
+## Conversation sources and Teams names (2026-10-06)
+
+- [x] Automated: `test/conversation-source-names.test.js` covers channel/DM source classification,
+  legacy Slack rows, Teams payload names, directory lookup/cache/retry, validated regional URLs,
+  default General, and refreshing names without changing slugs or settings.
+- [x] Browser acceptance (engine-independent; no engine is invoked): serve the admin UI with
+  fixture Slack, Google Chat and Teams channels and DMs. Select each Source and each
+  All / Channels / DMs choice, type a matching/nonmatching search, then clear both filters.
+  Pass: only the intersection appears; reset restores all rows; selecting a visible row keeps
+  its original detail settings. Passed actual UI with mocked API fixtures: four channels and
+  three DMs, all source × kind combinations, search, empty states and reset at 1440/800/390px;
+  no page errors or state-changing requests. Qualified Teams/Google ID deep links remain a
+  separate preexisting routing limitation; this change preserves IDs and slugs.
+- [ ] Teams naming acceptance (engine-independent; normalization/directory/provisioning precede
+  engine selection): use a verified channel activity fixture with team `Delivery Team`, channel
+  `General`, and a native reply-chain ID. Repeat with missing names and bot directory responses,
+  then a directory 403. Pass: list and detail show `#delivery-team-general`; native ID/thread and
+  work-folder slug remain stable; failed lookup preserves a good name. A real Teams directory
+  integration check remains a release gate, using a disposable Teams channel and a bot mention.
+
 ## Runtime history transfer and Google Chat failure recovery (2026-10-02)
 
 - [x] Automated: `test/session-carry.test.js`, `test/container-carry.test.js`,

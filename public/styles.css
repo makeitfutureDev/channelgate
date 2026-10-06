@@ -1255,3 +1255,8 @@ button.clear-tok.armed { background: rgba(229, 96, 77, .14); border-color: rgba(
   .sh-chart-svg { height: 215px; }
   .sh-hardware-group > strong { min-height: 0; }
 }
+
+/* Conversation source is independent of the Channels / DMs filter. */
+.conv-source-filter { display: flex; align-items: center; gap: 8px; margin: 8px 12px; }
+.conv-source-filter label { color: var(--muted); font-size: 11px; }
+.conv-source-filter select { min-width: 0; flex: 1; font-size: 12px; padding: 6px 8px; }

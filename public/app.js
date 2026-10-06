@@ -6,6 +6,8 @@ import { conversationKindForChannel, conversationRouteForPath, pathForConversati
 import {
   accessGrantSkillOptions,
   captureGrantMcpSelection,
+  conversationChannelName,
+  matchesConversationSource,
   changedSettingKeys,
   channelGuestAcceptedIds,
   channelGuestSavePatch,
@@ -57,6 +59,7 @@ const SETTINGS_NON_VALUE_KEYS = ["ok", "stale", "code", "error", "slack", "platf
 // Unified Conversations selection key: "ch:<channelId>" (channel) or "dm:<channelId>" (DM). One
 // key drives both list highlight + detail. (The User/Admin DM templates live under Settings now.)
 let selectedConv = null;
+let convSource = "all";
 let convFilter = "all"; // segmented control: all | channels | dms
 let CONV_COSTS = null; // { byId: {channelId→cost}, bySlug: {slug→cost} }; null until first (soft) fetch
 let convCostsFetched = false;
@@ -1425,6 +1428,7 @@ function renderConvList() {
   // Channels — sorted by name; capdot + profile label (+ network) sub-line; 30-day cost if known.
   if (showChannels) {
     const chans = CHANNELS
+      .filter((c) => matchesConversationSource(c, convSource))
       .filter((c) => !f || (c.name || "").toLowerCase().includes(f) || (c.slug || "").toLowerCase().includes(f))
       .sort((a, b) => (a.name || a.slug || "").localeCompare(b.name || b.slug || "", undefined, { sensitivity: "base" }));
     const g = document.createElement("div");
@@ -1437,13 +1441,14 @@ function renderConvList() {
       e.textContent = CHANNELS.length ? "No channels match." : "No channels yet — invite the bot and send a message.";
       list.appendChild(e);
     } else {
-      for (const c of chans) list.appendChild(convRow("ch:" + c.channelId, capColorOf(c.meta || {}), hashName(c.name || c.slug), capLabelOf(c.meta || {}), costFor(c.channelId, c.slug), c.workDirConflict));
+      for (const c of chans) list.appendChild(convRow("ch:" + c.channelId, capColorOf(c.meta || {}), conversationChannelName(c), capLabelOf(c.meta || {}), costFor(c.channelId, c.slug), c.workDirConflict));
     }
   }
 
   // Direct messages — capdot by the DM's effective capability; sub-line = template name.
   if (showDms) {
     const dmItems = DMS
+      .filter((d) => matchesConversationSource(d, convSource))
       .filter((d) => !f || (d.userName || "").toLowerCase().includes(f) || (d.dmUserId || "").toLowerCase().includes(f) || (d.slug || "").toLowerCase().includes(f))
       .sort((a, b) => (a.userName || a.slug || "").localeCompare(b.userName || b.slug || "", undefined, { sensitivity: "base" }));
     const g = document.createElement("div");
@@ -1929,7 +1934,7 @@ function renderChannelDetail(ch) {
   const meta = ch.meta || { allowedUsers: [], allowedMcps: [], skills: [], adminMode: false };
   const node = document.getElementById("channel-card").content.cloneNode(true);
   const card = node.querySelector(".conv-detail");
-  card.querySelector(".ch-name").textContent = hashName(ch.name || ch.slug);
+  card.querySelector(".ch-name").textContent = conversationChannelName(ch);
   card.querySelector(".ch-type").textContent = ch.type + (ch.isDM ? " · DM" : "");
   card.querySelector(".ch-slug").textContent = ch.slug;
 
@@ -4655,6 +4660,10 @@ for (const b of document.querySelectorAll(".nav-item")) {
 document.getElementById("apidoc-gen").addEventListener("click", gotoApiTokenSettings);
 document.getElementById("apidoc-goto-settings").addEventListener("click", (e) => { e.preventDefault(); gotoApiTokenSettings(); });
 document.getElementById("channel-search").addEventListener("input", () => renderConvList());
+document.getElementById("conv-source").addEventListener("change", (event) => {
+  convSource = event.target.value;
+  renderConvList();
+});
 // Segmented filter (All / Channels / DMs) — narrows the one conversation list.
 for (const b of document.querySelectorAll("#conv-seg button")) {
   b.addEventListener("click", () => {
