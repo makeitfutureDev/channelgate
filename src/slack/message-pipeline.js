@@ -735,8 +735,9 @@ export async function processMessageEvent(event, client, { botUserId = "", teamI
       if (sc.cmd === "help") {
         await reply(HELP_TEXT);
       } else if (sc.cmd === "fork") {
-        const task = sc.arg.trim();
-        if (!task) { await reply("Use `/fork <new message>` inside a thread with a Claude or Codex session."); return; }
+        const forkShortcut = parseModelShortcut(sc.arg);
+        const task = forkShortcut ? forkShortcut.task : sc.arg.trim();
+        if (!task) { await reply("Use `/fork [:model-shortcut] <new message>` inside a thread with a Claude or Codex session."); return; }
         if (runQueue.isActive(runKey)) { await reply("Wait for this thread's current run to finish before forking it."); return; }
         pendingForkSources.add(runKey);
         try {
@@ -750,6 +751,23 @@ export async function processMessageEvent(event, client, { botUserId = "", teamI
           if (sourceScope !== (authorIsAdmin ? "admin" : "project")) {
             await reply("Run a new turn under your own access level before forking this thread."); return;
           }
+          let forkTarget = null;
+          if (forkShortcut) {
+            const shortcuts = getModelShortcuts();
+            forkTarget = Object.hasOwn(shortcuts, forkShortcut.name) ? shortcuts[forkShortcut.name] : null;
+            if (!forkTarget) {
+              await reply(`Unknown model shortcut \`:${forkShortcut.name}\`. Ask an admin to add it in Settings → Model shortcuts.`); return;
+            }
+            if (!isDM && !canChangeChannelRuntime(authorIsAdmin)) {
+              await reply("Only admins can change the model in this channel."); return;
+            }
+            if (!isEngineEnabled(forkTarget.engine) || !modelBelongsToEngine(forkTarget.model, forkTarget.engine)) {
+              await reply(`Model shortcut \`:${forkShortcut.name}\` needs an enabled engine and valid model. Update it in Settings.`); return;
+            }
+            if (forkTarget.engine !== sourceEngine) {
+              await reply(`A native fork must keep *${engineLabel(sourceEngine)}*. Choose a model shortcut for that engine.`); return;
+            }
+          }
           abortPooled(runKey); // close an idle Claude process so its transcript is settled before cloning
           const sourceUrl = await slackPermalink(client, event.channel, threadKey);
           const root = await client.chat.postMessage({ channel: event.channel, text: `↪️ Fork of <${sourceUrl}|this thread>` });
@@ -759,8 +777,9 @@ export async function processMessageEvent(event, client, { botUserId = "", teamI
           pendingForkThreads.add(pendingKey);
           try {
             await setThreadEngine(entry.slug, forkKey, sourceEngine);
-            await setThreadModel(entry.slug, forkKey, await getThreadModel(entry.slug, threadKey));
-            await setThreadEffort(entry.slug, forkKey, await getThreadEffort(entry.slug, threadKey));
+            await setThreadModel(entry.slug, forkKey, forkTarget ? forkTarget.model : await getThreadModel(entry.slug, threadKey));
+            // Like ordinary shortcuts, a new model clears the inherited model-specific effort.
+            await setThreadEffort(entry.slug, forkKey, forkTarget ? "" : await getThreadEffort(entry.slug, threadKey));
             await setThreadClean(entry.slug, forkKey, await getThreadClean(entry.slug, threadKey));
             const request = await client.chat.postMessage({ channel: event.channel, thread_ts: forkKey, text: `*New request from <@${event.user}>:* ${task}` });
             if (!request?.ts) throw new Error("Slack did not return a message timestamp for the fork request.");
