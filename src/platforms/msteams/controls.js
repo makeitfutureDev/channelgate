@@ -3,7 +3,6 @@
 import { randomUUID } from 'node:crypto';
 import { getPublicUrl, canChangeChannelRuntime, getDefaultModel } from '../../config/settings.js';
 import { ENGINE_IDS, modelsForEngine, effortsForModel } from '../../engines/registry.js';
-import { resolveThreadEngine, getThreadModel, getThreadEffort } from '../../gateway/thread-engine.js';
 import { teamsWorkspaceContext } from './workspace-access.js';
 import { listVisibleDirectory, normalizeRelativePath, canEditChannelFiles, readEditableFile } from '../../slack/file-explorer.js';
 import { createFileDownloadGrantUrl } from '../../web/file-download.js';
@@ -12,6 +11,8 @@ import { createFileUploadGrantUrl } from '../../web/file-upload.js';
 import { createTeamsFileConsent } from './file-consent.js';
 import { createTeamsInteractionHandler } from './interactions.js';
 import { handlePlatformApproval } from '../../slack/approvals.js';
+import { acquireKeyedLock } from '../../util/keyed-lock.js';
+import { buildTeamsSettings, createTeamsSettingsContext, handleTeamsSettings } from './settings.js';
 
 const card = (title, body = [], actions = []) => ({ type: 'AdaptiveCard', version: '1.4', body: [{ type: 'TextBlock', text: title, weight: 'Bolder', wrap: true }, ...body], actions });
 const text = value => ({ type: 'TextBlock', text: String(value), wrap: true });
@@ -25,16 +26,9 @@ export function createTeamsControls({ connector, now = Date.now, authorize = tea
   const prune = () => { for (const [id, state] of states) if (state.expires < now()) states.delete(id); while (states.size > 500) states.delete(states.keys().next().value); };
   const grant = state => ({ channelId: state.message.conversationId, slug: state.entry.slug, ownerId: state.message.userId, threadTs: state.sessionKey });
   async function settings(state, stateId) {
-    const engine = await resolveThreadEngine(state.entry.slug, state.sessionKey, state.meta);
-    const model = await getThreadModel(state.entry.slug, state.sessionKey) || state.meta.model || getDefaultModel(engine);
-    const effort = await getThreadEffort(state.entry.slug, state.sessionKey) || state.meta.effort || '';
-    const body = [text('These controls apply to this session. Channel settings and secrets open in the authenticated admin website.'),
-      { type: 'Input.ChoiceSet', id: 'engine', label: 'Engine', value: engine, choices: ENGINE_IDS.map(value => ({ title: value, value })) },
-      { type: 'Input.ChoiceSet', id: 'model', label: 'Model (choose an engine-compatible model)', value: model || 'default', choices: [{ title: 'Inherited default', value: 'default' }, ...ENGINE_IDS.flatMap(id => modelsForEngine(id).map(item => ({ title: `${id}: ${item.label || item.value}`, value: item.value })))] },
-      { type: 'Input.ChoiceSet', id: 'effort', label: 'Effort', value: effort || 'default', choices: [{ title: 'Inherited default', value: 'default' }, ...[...new Set(ENGINE_IDS.flatMap(id => modelsForEngine(id).flatMap(item => effortsForModel(id, item.value))))].map(value => ({ title: value, value }))] }];
-    const actions = [execute('Save session settings', 'model.save', stateId)];
-    const base = publicUrl(); if (base) actions.push(link('Channel settings and secrets', `${base}/conversations`));
-    return card('Session settings', body, actions);
+    const ctx = createTeamsSettingsContext(state, { connector, authorize });
+    await ctx.authorize();
+    return buildTeamsSettings(ctx, stateId);
   }
   async function files(state, stateId, relative = '', page = 0) {
     const context = await authorize(grant(state), { connector });
@@ -55,14 +49,14 @@ export function createTeamsControls({ connector, now = Date.now, authorize = tea
     prune(); const id = randomUUID();
     state = { ...state, deliveryId: destination, expires: now() + 15 * 60_000 };
     states.set(id, state);
-    try { await connector.postCard({ conversationId: destination, threadKey: inConversation ? state.message.threadKey : undefined, card: await build(state, id), text: inConversation ? 'Session settings' : 'Private conversation controls' }); }
+    try { await connector.postCard({ conversationId: destination, threadKey: inConversation ? state.message.threadKey : undefined, card: await build(state, id), text: 'Private conversation controls' }); }
     catch (error) { states.delete(id); throw error; }
   }
   async function onCommand(args) {
     const { message, reply } = args;
     if (message.trigger === 'reaction') return false;
     if (message.text.trim().toLowerCase() === '/help') {
-      await reply('Commands: /settings (native session form), /files [folder], /secrets (authenticated settings), /sendfile <path> (personal file consent), /status, /model, /effort, /stop, /cancel, /clear. In group chats, quote the original message or bot reply and mention the bot to control that session. Voice notes require local Whisper.');
+      await reply('Commands: /settings (private conversation settings), /files [folder], /secrets (private Variables page), /sendfile <path> (personal file consent), /status, /model, /effort, /stop, /cancel, /clear. In group chats, quote the original message or bot reply and mention the bot to control that session. Voice notes require local Whisper.');
       return true;
     }
     const match = /^\/(settings|files|secrets|sendfile)(?:\s+(.*))?$/is.exec(message.text.trim());
@@ -74,9 +68,12 @@ export function createTeamsControls({ connector, now = Date.now, authorize = tea
         await reply('Check your personal chat to accept or decline the file.');
         return true;
       }
-      const inConversation = match[1].toLowerCase() === 'settings';
-      await deliverCard(args, (state, id) => match[1].toLowerCase() === 'files' ? files(state, id, match[2] || '') : settings(state, id), inConversation);
-      if (!inConversation && !message.isDM) await reply('I sent the controls to your personal chat.');
+      const command = match[1].toLowerCase();
+      // Slack's modal is private. Teams' equivalent lives in the requester's personal chat,
+      // while its state still points to the original conversation and session.
+      await deliverCard({ ...args, tab: command === 'secrets' ? 'secrets' : 'general' },
+        (state, id) => command === 'files' ? files(state, id, match[2] || '') : settings(state, id));
+      if (!message.isDM) await reply('I sent the controls to your personal chat.');
     } catch (error) { await reply(error.message); }
     return true;
   }
@@ -87,6 +84,15 @@ export function createTeamsControls({ connector, now = Date.now, authorize = tea
     }
     prune(); const state = states.get(interaction.data.stateId);
     if (!state || state.message.userId !== interaction.actorId || state.deliveryId !== interaction.nativeConversationId) throw new Error('These controls expired or belong to a different conversation/user. Reopen them.');
+    if (interaction.action.startsWith('settings.')) {
+      const release = await acquireKeyedLock('teams-settings-card', interaction.data.stateId);
+      try {
+        prune();
+        if (states.get(interaction.data.stateId) !== state) throw new Error('These controls expired. Reopen them.');
+        const ctx = createTeamsSettingsContext(state, { connector, authorize });
+        return response(await handleTeamsSettings(interaction.action, interaction.data, ctx, interaction.data.stateId));
+      } finally { release(); }
+    }
     const context = await authorize(grant(state), { connector });
     state.meta = context.meta; state.authorIsAdmin = context.userIsAdmin;
     if (interaction.action === 'files.browse') return response(await files(state, interaction.data.stateId, interaction.data.relative || '', Number(interaction.data.page) || 0));

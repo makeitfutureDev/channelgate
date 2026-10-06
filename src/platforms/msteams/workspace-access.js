@@ -16,5 +16,5 @@ export async function teamsWorkspaceContext(grant, { connector = liveConnector('
   if (!meta || !isAuthorized(meta, grant.ownerId, Boolean(meta.isDM), { isAdminUser: userIsAdmin, isApprovedUser: approved })) throw new Error('You are no longer allowed to use this workspace.');
   const members = await connector.api.listMembers(parsed.id);
   if (!members.some(member => member.id === grant.ownerId)) throw new Error('Teams conversation membership could not be confirmed.');
-  return { root: effectiveWorkDir(entry.slug, meta), meta, entry, userIsAdmin, userId: grant.ownerId };
+  return { root: effectiveWorkDir(entry.slug, meta), meta, entry, userIsAdmin, userId: grant.ownerId, members };
 }

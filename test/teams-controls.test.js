@@ -8,6 +8,7 @@ ensureTestEnv();
 const { createTeamsControls } = await import('../src/platforms/msteams/controls.js');
 const { teamsWorkspaceContext } = await import('../src/platforms/msteams/workspace-access.js');
 const { upsertChannelEntry, saveChannelMeta, setUser } = await import('../src/config/store.js');
+await setUser('29:owner', { approved: true, isAdmin: true });
 const root = await mkdtemp(path.join(os.tmpdir(), 'teams-controls-'));
 await writeFile(path.join(root, 'hello.txt'), 'hello');
 const message = text => ({ text, trigger: 'message', conversationId: 'teams:19:source@thread.v2', rawConversationId: '19:source@thread.v2', userId: '29:owner', isDM: false });
@@ -47,11 +48,11 @@ test('reaction content never opens native commands; failed private delivery does
 });
 test('model form uses existing controls and consumes its state on a successful submit', async () => {
   const f = fixture(); await f.controls.onCommand(f.args('/settings'));
-  const stateId = f.sent[0].card.actions[0].data.stateId;
+  const stateId = f.sent[0].card.body.find(item => item.type === 'ActionSet').actions[0].data.stateId;
   const payload = { stateId, engine: 'claude', model: 'default', effort: 'default' };
-  await f.controls.onInvoke(invoke(payload, 'model.save', '29:owner', '19:source@thread.v2'));
+  await f.controls.onInvoke(invoke(payload, 'model.save'));
   assert.deepEqual(f.commands, ['/model claude default', '/effort default']);
-  await f.controls.onInvoke(invoke(payload, 'model.save', '29:owner', '19:source@thread.v2')); assert.equal(f.commands.length, 2);
+  await f.controls.onInvoke(invoke(payload, 'model.save')); assert.equal(f.commands.length, 2);
 });
 test('approval invocation trusts envelope identity over malicious card data', async () => {
   let received;
@@ -80,14 +81,14 @@ test('legacy Submit explicitly updates its private card', async () => {
   assert.equal(f.sent.length, 2); assert.equal(f.sent[1].messageId, 'card1'); assert.equal(f.sent[1].conversationId, 'a:private');
 });
 
-test('settings stay in the source thread and reject another actor or conversation', async () => {
+test('settings are private, retain the source session and reject another actor or conversation', async () => {
   const f = fixture(); const args = f.args('/settings'); args.message.threadKey = 'root-message';
   await f.controls.onCommand(args);
-  assert.equal(f.sent[0].conversationId, args.message.rawConversationId);
-  assert.equal(f.sent[0].threadKey, 'root-message');
-  assert.deepEqual(f.replies, []);
-  const data = { ...f.sent[0].card.actions[0].data, engine: 'claude', model: 'default', effort: 'default' };
-  for (const [actor, conversation] of [['29:other', args.message.rawConversationId], ['29:owner', 'a:private']]) {
+  assert.equal(f.sent[0].conversationId, 'a:private');
+  assert.equal(f.sent[0].threadKey, undefined);
+  assert.deepEqual(f.replies, ['I sent the controls to your personal chat.']);
+  const data = { ...f.sent[0].card.body.find(item => item.type === 'ActionSet').actions[0].data, engine: 'claude', model: 'default', effort: 'default' };
+  for (const [actor, conversation] of [['29:other', 'a:private'], ['29:owner', args.message.rawConversationId]]) {
     const result = await f.controls.onInvoke(invoke(data, 'model.save', actor, conversation));
     assert.equal(result.body.value.body[0].text, 'Action could not be completed');
   }

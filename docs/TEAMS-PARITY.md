@@ -53,8 +53,8 @@ acceptance remain unexecuted. They are not deployed by keeping work on `teams-ms
 | Feature | Implemented behavior | Boundary |
 | --- | --- | --- |
 | Approval cards | Native Approve/Deny/Request changes with optional comment, supported scope choices, Execute and Submit fallback, verified actor identity | A changes comment refuses the current action even with Approve; escalation policy is separate |
-| Session form | `/settings` opens engine/model/effort choices in the source channel thread, group chat or DM through existing controls | Runtime-change authorization and active-session safeguards still apply |
-| Settings and secrets | `/secrets` and the session card link to the existing authenticated admin website | No secret values or new secret-entry form in Teams |
+| Conversation settings | `/settings` opens six native pages privately: General, Variables, MCPs, Skills, Automations, Resume; source channel/session remain bound server-side | Explicit per-field Apply; runtime changes match authorized Slack Settings users; access changes require managers |
+| Settings and secrets | `/secrets` opens the native Variables page; channel/personal/organization scopes, connection rotation and confirmed removal share existing stores | Stored values never prefill inputs; organization writes and Cloud MCP admin-only; failed private delivery never publishes the card |
 | Workspace browser | `/files [folder]` provides private pagination and browser download/upload/text-edit links | Source workspace and current Teams membership are rechecked; no public fallback |
 | Native file sending | `/sendfile <relative-path>` asks for personal-chat Accept/Decline and sends the approved file snapshot | Nonempty files up to 10 MB; ten-minute consent; bounded pending pool; manifest `supportsFiles: true` |
 | Group/channel file reading | Optional Graph resolution of canonical SharePoint paths inside explicitly allowed drives | External selected-site read grants; no `/shares` route or shortlinks; redirects blocked and token isolated |
@@ -75,7 +75,7 @@ acceptance remain unexecuted. They are not deployed by keeping work on `teams-ms
 | App Home onboarding and channel visibility | Slack App Home has no implemented Teams home surface | Personal app/tab or concise DM onboarding backed by the same user/channel authorization |
 | Membership changes and conversation metadata refresh | Slack has join/leave handlers and home refresh logic | Handle Teams membership/install/remove events to refresh safe metadata and retire subscriptions; do not infer approval from membership |
 | Message shortcut/context menu actions | Slack exposes file-browser and selected-message shortcuts | A Teams message action extension would require a manifest/UI/verified invoke handler; text/quote/reaction triggers cover the immediate need |
-| In-thread loop, pending tasks, context and resume controls | Stores/engine capabilities exist, but each Slack control has explicit behavior | Port controls incrementally with session-scoped tests, including synthetic keys and author permissions |
+| In-thread loop creation, pending tasks and context controls | Settings provides automation pause/resume/removal and current-session terminal resume; loop creation, pending-task and context controls remain separate gaps | Port remaining controls incrementally with session-scoped tests, including synthetic keys and author permissions |
 
 ## Microsoft integration constraints and separate permission work
 

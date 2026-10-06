@@ -18,6 +18,11 @@ product overview.
 
 ## Unreleased
 
+- Teams `/settings` now offers the same six sections as Slack, including channel defaults and
+  session overrides, variables, MCP connections, skills, automations and session resume. The
+  console opens privately, uses explicit Apply buttons and confirms removals without revealing
+  stored credentials. `/secrets` opens Variables directly.
+
 - Conversations can filter by Google Chat, Slack or Teams alongside search and Channels / DMs.
   Teams channel names now use `#team-channel`, resolving missing names through the bot directory
   on incoming messages while preserving conversation IDs, work folders and settings.

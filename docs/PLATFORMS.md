@@ -242,12 +242,28 @@ personal-chat file consent, then upload/install that app revision with the Teams
 above. Adaptive Cards and their inline forms do not require additional Graph RSC permissions.
 Task-module dialogs and broadcast mentions remain unavailable.
 
-- `/settings` opens a session engine/model/effort form in the source channel thread, group chat or DM.
-  Only the requesting user may submit it, subject to current access policy. `/secrets` privately opens the same card with
-  a link to the existing authenticated admin website. Enter secrets there, never in Teams cards.
+- `/settings` opens a private six-page console in the requester's personal chat: General,
+  Variables, MCPs, Skills, Automations and Resume. It retains the source conversation and session
+  even when opened from a channel or group chat. `/secrets` opens its Variables page directly.
+  A failed private delivery never publishes the console into the source room. Install/open the
+  bot's personal chat first if tenant policy prevents proactive delivery.
+  General edits channel defaults and current-session engine/model/effort independently, with
+  compatible choices, inherited labels and Follow channel default. Each field has an explicit
+  Apply button; page navigation discards unsaved drafts. Authorized users can edit runtime,
+  variables, connections, channel skills and automations, matching Slack Settings. Access controls
+  require a current manager/admin, organization variable changes and Cloud MCP require admins.
+  Native member selectors defer to the authenticated website when the complete roster exceeds
+  25 members, exceeds the card budget; no hidden
+  selection is silently removed. Former-member selections have an explicit replacement warning. VPN reports the existing service's actual availability;
+  operator provisioning and unsupported Teams service identifiers are not changed by this UI.
+  Variables and tokens are write-only: stored values never prefill a card, new entries use Teams'
+  masked input style, and removal/reset actions require a one-use confirmation. Native entries
+  follow the existing 8,000-character field and 16-KiB submission limits; larger values need the
+  authenticated browser editor. Catalogs, templates and automations paginate. Resume resolves
+  the current session at display time and provides its terminal command.
   Native approvals provide Approve/Deny/Request changes and supported scope choices. An optional
   changes comment refuses the current action, including when Approve was clicked. Card submissions
-  take identity from the verified Microsoft envelope.
+  take identity from the verified Microsoft envelope and repeat membership/role checks.
 - `/files [folder]` privately browses the current conversation workspace. Open a file to download
   it or edit eligible text; users with file-write access can open the uploader. Browser links are
   short-lived grants and recheck current Teams membership and gateway policy. A group request
