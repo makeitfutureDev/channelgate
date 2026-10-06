@@ -347,6 +347,53 @@ test("an unauthorized caller gets the handler refusal, not an approval card", as
   assert.equal(approvalRequests.length, 0, "no approval spam for callers who could never pass authz");
 });
 
+test("both engine contexts enable own SSH without approvals; other-user changes keep the manager gate", async () => {
+  const original = await getChannelMeta(SLUG);
+  const publicKey = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA ssh-self-service-fixture";
+  approvalResponse = { allow: false, reason: "self-service must not ask" };
+  try {
+    for (const engine of ["claude", "codex"]) {
+      approvalRequests.length = 0;
+      await saveChannelMeta(SLUG, { ...original, sshUsers: [], manageAccess: "admins" });
+      await withGateway({ author: "U_CTRL_MEMBER", engine }, async client => {
+        const registered = await client.callTool({ name: "add_my_ssh_key", arguments: { public_key: publicKey } });
+        assert.match(resultText(registered), /Registered your ED25519 key/);
+        for (const args of [{}, { user: "U_CTRL_MEMBER" }, { user: "<@U_CTRL_MEMBER|member>" }]) {
+          const granted = await client.callTool({ name: "grant_channel_ssh", arguments: args });
+          assert.match(resultText(granted), /may now SSH|already has SSH access/);
+          assert.doesNotMatch(resultText(granted), approvalReceipt);
+        }
+        assert.deepEqual((await getChannelMeta(SLUG)).sshUsers, ["U_CTRL_MEMBER"]);
+        const other = await client.callTool({ name: "grant_channel_ssh", arguments: { user: "U_CTRL_ADMIN" } });
+        assert.match(resultText(other), /Only this channel's managers/);
+        assert.deepEqual((await getChannelMeta(SLUG)).sshUsers, ["U_CTRL_MEMBER"]);
+        const revoked = await client.callTool({ name: "revoke_channel_ssh", arguments: {} });
+        assert.match(resultText(revoked), /revoked here/);
+        assert.deepEqual((await getChannelMeta(SLUG)).sshUsers, []);
+        const keys = await client.callTool({ name: "list_my_ssh_keys", arguments: {} });
+        const fingerprint = resultText(keys).match(/SHA256:[A-Za-z0-9+/]+/)[0];
+        assert.match(resultText(await client.callTool({ name: "remove_my_ssh_key", arguments: { key: fingerprint } })), /Removed your key/);
+      });
+      assert.equal(approvalRequests.length, 0, `${engine}: own SSH never contacts the approval service`);
+      await withGateway({ engine }, async client => {
+        assert.match(resultText(await client.callTool({ name: "grant_channel_ssh", arguments: { user: "U_CTRL_MEMBER" } })), /needs a human Approve click/);
+      });
+      assert.equal(approvalRequests.length, 1, `${engine}: granting someone else still asks a manager`);
+      assert.equal(approvalRequests[0].body.requiredTier, "manage");
+      assert.deepEqual((await getChannelMeta(SLUG)).sshUsers, []);
+      approvalRequests.length = 0;
+      await saveChannelMeta(SLUG, { ...original, sshUsers: [], access: "admins", allowedUsers: [] });
+      await withGateway({ author: "U_CTRL_MEMBER", engine }, async client => {
+        assert.match(resultText(await client.callTool({ name: "grant_channel_ssh", arguments: {} })), /not allowed in this channel/);
+      });
+      assert.equal(approvalRequests.length, 0);
+      assert.deepEqual((await getChannelMeta(SLUG)).sshUsers, []);
+    }
+  } finally {
+    await saveChannelMeta(SLUG, original);
+  }
+});
+
 test("every registered gateway tool is consciously classified as gated or open (drift tripwire)", async () => {
   // A NEW state-changing tool that nobody adds to CONTROL_PLANE ships approval-free by
   // omission. This inventory forces the classification to be a reviewed decision: an
@@ -365,9 +412,8 @@ test("every registered gateway tool is consciously classified as gated or open (
     // server is where the real value may go (src/gateway/secret-host-approvals.js)
     "set_secret_mode", "allow_secret_host",
     "set_license_key", "clear_license_key", // gateway-wide licensing state (src/ee/)
-    // SSH access (src/gateway/ssh-access.js): a registered key is what a grant turns into a shell
-    // inside a container, and a grant IS that shell — persistent, and never on the model's word alone.
-    "add_my_ssh_key", "remove_my_ssh_key", "grant_channel_ssh", "revoke_channel_ssh",
+    // SSH grants for OTHER people retain the manager approval; own changes return null details.
+    "grant_channel_ssh", "revoke_channel_ssh",
     // skills platform: the ORGANIZATION tier (admin decisions, org grants, sources, governance,
     // moving a skill in or out of the shared library) and Git publishing keep their card
     "decide_skill_proposal", "sync_skill_sources",
@@ -404,6 +450,7 @@ test("every registered gateway tool is consciously classified as gated or open (
     "list_skill_sources", // admin read
     "list_secrets", // one masked name listing across the three scopes; there is no reveal path anywhere
     "list_my_ssh_keys", "show_channel_ssh", // the requester's own keys; this channel's SSH state and the connection block
+    "add_my_ssh_key", "remove_my_ssh_key", // personal keys are self-service
     // operator decision 2026-09-05: a member's OWN skill tier (what only their runs carry) is
     // self-service like starring in a skill library — reversible, affects nobody else, no card.
     "add_my_skills", "remove_my_skills",

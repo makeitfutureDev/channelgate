@@ -222,9 +222,12 @@ THIS channel's container, the same box you work in. One key per person, granted 
   channel. Refuse to accept a private key; if one was pasted, say it is now compromised. Never
   repeat key material back; quote the fingerprint the tool returns.
 - `list_my_ssh_keys` / `remove_my_ssh_key` — the requester's own keys only.
-- `grant_channel_ssh` / `revoke_channel_ssh` (managers) — who may SSH into this channel's
-  container. Granting is handing someone a shell as the channel (its files, its CLI logins, Claude
-  and Codex): say so, and never grant on the requester's word alone when they are not a manager.
+- `grant_channel_ssh` / `revoke_channel_ssh` — users already allowed here (including named guests)
+  enable or remove their OWN SSH access immediately: omit `user` or pass their own id/mention.
+  Personal key registration/removal and own grants need no manager or admin approval. Use this
+  for "enable SSH access for me"; never send the requester to an admin for their own grant.
+  Changes for OTHER people require a manager/admin and their approval. Granting gives a full
+  shell as the channel (its files, its CLI logins, Claude and Codex); announce that result.
 - `show_channel_ssh` — whether the host is set up, who is granted, live sessions, and the
   `~/.ssh/config` block to paste (the channel rides in the ProxyCommand; one key reaches several
   channels). Use it for "how do I SSH in", "who has SSH here", "give me the connection info".

@@ -35,6 +35,7 @@ import { register as registerWorkspaceRead } from "./tools/workspace-read.js";
 import { register as registerSkills } from "./tools/skills.js";
 import { register as registerQuestions } from "./tools/questions.js";
 import { register as registerSshAccess } from "./tools/ssh-access.js";
+import { sshRequestTarget } from "../gateway/ssh-access.js";
 import { register as registerFileSharing, describeDuration } from "./tools/file-sharing.js";
 import { prepareInstructionApproval } from "../gateway/instruction-approvals.js";
 
@@ -253,7 +254,8 @@ export function gateAuthz(gate, args = {}) {
   return typeof gate?.authz === "function" ? gate.authz(args ?? {}) : gate?.authz;
 }
 
-export function buildControlPlane({ loadMeta }) {
+export function buildControlPlane({ loadMeta, createdBy, principalTrusted }) {
+  const ownSsh = ({ user }) => principalTrusted === true && Boolean(createdBy) && sshRequestTarget(user, createdBy) === createdBy;
   return new Map([
     ["set_channel_admin_mode", { authz: "admin", details: ({ enabled }) => `Turn ADMIN MODE (no sandbox, no prompts for admin authors) ${onOff(enabled)} for this channel.` }],
     ["set_channel_vpn", { authz: "manage", details: ({ enabled }) => `Turn the configured isolated VPN service ${onOff(enabled)} for this channel. This also changes automatic startup.` }],
@@ -342,13 +344,18 @@ export function buildControlPlane({ loadMeta }) {
       `Make the ${secretModeLabel(scope)} secret ${summarize(name)} ${mode === "auto" ? "hidden or readable automatically" : mode.toUpperCase()}${mode === "readable" ? " — containers will receive its RAW value" : ""}.` }],
     ["allow_secret_host", { authz: "admin", details: ({ name, host, scope }) =>
       `Allow the ${secretModeLabel(scope)} secret ${summarize(name)} to be sent to ${summarize(host)} — the egress proxy will swap in its real value on that server.` }],
-    // SSH access to channel containers (src/gateway/ssh-access.js): a registered key is what a
-    // later grant turns into a shell inside a container, and a grant IS that shell. Never echo the
-    // key material in the card — the fingerprint is computed after approval.
-    ["add_my_ssh_key", { authz: "any", details: ({ label }) => `Register an SSH public key for YOUR account${label ? ` (${summarize(label)})` : ""} — a channel manager can then grant it a shell inside channel containers.` }],
-    ["remove_my_ssh_key", { authz: "any", details: ({ key }) => `Remove YOUR SSH key ${summarize(key)} — every channel grant using it stops working.` }],
-    ["grant_channel_ssh", { authz: "manage", details: ({ user }) => `Grant ${summarize(user)} SSH access into THIS channel's container: a full shell as the channel, with its files and CLI logins.` }],
-    ["revoke_channel_ssh", { authz: "manage", details: ({ user }) => `Revoke ${summarize(user)}'s SSH access into this channel's container.` }],
+    // Operator decision: personal keys and a trusted user's own SSH grant are self-service.
+    // Only changes for OTHER users retain the manager tier and its human approval card.
+    ["grant_channel_ssh", {
+      authz: args => ownSsh(args) ? "any" : "manage",
+      details: ({ user }) => ownSsh({ user }) ? null
+        : `Grant ${summarize(user)} SSH access into THIS channel's container: a full shell as the channel, with its files and CLI logins.`,
+    }],
+    ["revoke_channel_ssh", {
+      authz: args => ownSsh(args) ? "any" : "manage",
+      details: ({ user }) => ownSsh({ user }) ? null
+        : `Revoke ${summarize(user)}'s SSH access into this channel's container.`,
+    }],
     // The deployment's license key: gateway-wide, persistent, and the thing that decides how many
     // conversations and messages this install may serve. `get_license_status` is read-only and stays
     // un-gated. Never echo the key value in the card.

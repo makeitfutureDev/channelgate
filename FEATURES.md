@@ -2569,8 +2569,11 @@ are retired, bullet by bullet; everything else stands.
 - **Developers SSH into a channel container, not into the host** (`docs/SSH-ACCESS.md`). A person
   registers ONE public key once from chat (`add_my_ssh_key`, bound to the identity that pasted it,
   fingerprinted like `ssh-keygen -lf`, private keys and DSA refused, RSA under 2048 bits refused);
-  a channel manager grants that person SSH on a channel (`grant_channel_ssh` / `revoke_channel_ssh`,
-  audited as the `sshUsers` policy key, never admitting anyone `isAuthorized()` would refuse);
+  anyone already allowed in a channel, including a named guest, enables or removes their own SSH
+  access without manager/admin approval (`grant_channel_ssh` / `revoke_channel_ssh`, omit `user`
+  or pass their own id/mention). Personal key registration/removal are also self-service. Changes
+  for other people retain manager authorization and a manager approval card. Grants are audited
+  as the `sshUsers` policy key and never admit anyone `isAuthorized()` would refuse;
   `show_channel_ssh` prints the `~/.ssh/config` block. The connection goes to a dedicated,
   unprivileged login account on the gateway host whose sshd Match block forces the
   `cg-ssh-attach` wrapper (no pty, no forwarding, no shell; every exported key line is

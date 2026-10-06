@@ -18,6 +18,10 @@ product overview.
 
 ## Unreleased
 
+- Users already allowed in a channel, including named guests, can enable their own SSH access
+  without manager or admin approval. Registering/removing personal keys and revoking one’s
+  own SSH grant are also self-service. Changes for other people remain manager controlled.
+
 - Background shell jobs (`run_in_background`) inside a channel's container now start directly in
   Auto mode, with no "Run it" card: the container is the boundary and Auto mode already
   auto-approves every foreground command there, so the former admin-only click only stalled
