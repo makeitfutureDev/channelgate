@@ -34,3 +34,10 @@ Check the effective engine, conversation grant, saved credential, and server hea
 The ordinary container's outbound requests follow network policy; header-bearing managed remote connections can be relayed by the daemon without placing their credentials in the container. This is not a grant to unrelated host tools.
 
 Related: [MCP server configuration](/docs/configuration/mcp-servers), [connected accounts](/docs/features/connected-accounts), [network policy](/docs/configuration/network-policy), and [engine capabilities](/docs/engines).
+
+## Reference and specialized connections
+
+- [Engine-specific MCP connection controls](/docs/controls/mcp-connections)
+- [External skills library endpoint](/docs/features/skills-library-mcp)
+- [Enterprise Composio SDK mode](/docs/features/composio-sdk)
+- [Toolbox and Make connections](/docs/features/toolbox-and-make)

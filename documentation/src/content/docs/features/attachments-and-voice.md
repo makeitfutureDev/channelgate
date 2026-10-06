@@ -5,6 +5,8 @@ description: Give the agent documents, images, recordings, and spoken instructio
 
 Attach source material to the message that requests work. After the normal trigger and access checks pass, ChannelGate downloads supported attachments into the conversation workspace and tells the engine where to find them.
 
+Focused guides: [images and screenshots](/docs/features/image-understanding), [voice prompts](/docs/features/voice-prompts), and [video recordings](/docs/features/video-understanding).
+
 ## Work from a document or image
 
 In a Slack channel, attach the file and mention the bot:
@@ -25,6 +27,6 @@ Typed text remains part of the instructions. Raw audio is not passed directly to
 
 ## Review a recording
 
-Bundled media tools can extract video frames and speech inside the workspace. Ask for a concrete outcome, such as a walkthrough summary with observed steps. Processing depends on available tools, permissions, and the recording size.
+Follow the [video and screen-recording guide](/docs/features/video-understanding) for sampling, timestamped speech, and evidence handling. Bundled media tools can extract video frames and speech inside the workspace. Ask for a concrete outcome, such as a walkthrough summary with observed steps. Processing depends on available tools, permissions, and the recording size.
 
 Teams and Google Chat are Beta with their own attachment limitations; consult [platforms](/docs/platforms). Related: [files and editor](/docs/features/files-and-editor), [gateway settings](/docs/configuration/gateway-settings), and [privacy](/docs/privacy).

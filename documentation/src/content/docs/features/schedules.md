@@ -45,3 +45,7 @@ Acknowledgement reminders close when someone reacts ✅. Without acknowledgement
 - [Background jobs](/docs/features/background-jobs)
 - [Usage and costs](/docs/features/usage-and-costs)
 - [Licensing](/docs/features/licensing)
+
+- [Reminders and acknowledgments](/docs/features/reminders-and-acknowledgments)
+- [Conditional monitoring](/docs/features/conditional-monitoring)
+- [Automation delivery](/docs/features/automation-delivery)

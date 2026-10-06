@@ -39,20 +39,24 @@ The website keeps its existing Vercel configuration, including its API rewrites.
 
 ## Source of truth
 
-The handbook has **75 pages**: **45 feature guides**, **13 configuration guides**, two
-directory pages, and the existing 15 overview, walkthrough, generated-reference and resource
-pages. `src/data/handbook.mjs` is the shared navigation registry: it supplies the sidebar and
-feature/configuration directory cards, and the output checker uses its slugs. Feature groups
-cover working together, agents/models, knowledge/integrations, security/access, chat platforms,
-automation and operations. The welcome page uses persistent article navigation rather than
-a separate splash layout.
+The handbook groups practical guides by chat work, files/reports, engines, memory, skills,
+connections, security, developer tools, platforms, automation, administration, and operations.
+The expanded catalog is **151 pages**: **106 feature guides**, **13 configuration guides**,
+**13 control references**, four directories/maps, and 15 retained overview, walkthrough,
+technical-reference and resource pages. `src/data/handbook.mjs` supplies feature/configuration
+navigation; `control-reference.mjs` supplies control navigation. `functionality-coverage.mjs`
+maps 45 product areas to their detailed articles.
 
 Feature articles live under `src/content/docs/features/`; configuration articles live under
 `src/content/docs/configuration/`. Author practical guides with a YAML title/description,
 an explanation of the feature or setting, verified configuration locations, examples,
 permissions/defaults/limits, and related `/docs` links. Add a new topic to the registry and
-verify its route in the final build. Search includes both authored handbook articles and
-retained technical references.
+verify its route in the final build. Search includes authored handbook articles, the control reference, and retained technical references.
+
+`npm run build` also verifies all 104 gateway and 10 external skills-library tools against
+their source registrations. Every tool must have exactly one heading in the control reference;
+unknown or duplicate headings fail the build. New tools therefore require documentation in
+the same change. CI runs this gate on tool-source, feature-catalog and documentation changes.
 
 `scripts/catalog.mjs` lists the 13 canonical guides. `npm run sync` reads those Markdown
 files from the ChannelGate repository and generates copies under
@@ -68,11 +72,10 @@ the canonical guides and current implementation. Keep Beta status, optional oper
 admin-only capabilities and engine differences visible; explanatory UI text can lag behind
 the implementation. Preserve existing technical-reference URLs when adding shorter guides.
 
-The expanded handbook's final build, browser, export, preview and production acceptance are
-tracked in the handbook section of `TEST-PLAN.md`. The final 75-page build passed
-7,540 internal-link/anchor checks, and the export regression passed. Preview deployment of the full handbook passed; the production checks and exact deployment
-ID are recorded there. The earlier 15-page documentation deployment is historical
-evidence, not proof that these new pages are already live.
+The acceptance results for the complete-functionality expansion are tracked in its section
+of `TEST-PLAN.md`. Earlier 15- and 75-page publication records are historical evidence.
+Complete the expanded build, peer review, browser, export, preview, and production checks
+before marking the new candidate published.
 
 Only the public documentation build is exported. Do not add deployment secrets, private
 instructions, local runtime state, or private source files to this project or the website

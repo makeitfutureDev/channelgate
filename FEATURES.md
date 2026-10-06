@@ -4,8 +4,9 @@
 
 - `documentation/` builds a static Astro/Starlight documentation section for
   `channelgate.dev/docs` in the same Vercel website project as the marketing pages and blog.
-  The public handbook has 75 pages: 45 dedicated feature guides, 13 configuration guides,
-  feature/configuration directories, and the existing 15 overview, walkthrough, installation,
+  The public handbook source now covers 151 pages: 106 dedicated feature guides in 12 groups,
+  13 configuration guides, 13 control references, four directories/maps, and the existing
+  15 overview, walkthrough, installation,
   technical-reference and resource pages. Feature guides explain use, setup, examples,
   permissions and practical limits; configuration guides distinguish gateway, conversation,
   personal and thread scopes.
@@ -16,18 +17,24 @@
   Google Drive workspace sync and durable thread loops have their own guides alongside the
   workspace, engine, knowledge/integration, access, platform, automation and operations topics.
 - Thirteen published guides are generated at build time from this repository's canonical
-  Markdown files; the other 62 pages are authored in `documentation/src/content/docs/`.
+  Markdown files; the other 138 pages are authored in `documentation/src/content/docs/`.
   Repository-relative links resolve to a published guide or the source file on GitHub's `beta`
   branch. The export copies only the `/docs` subtree and entry point into an existing static
   website output, then merges documentation URLs into its sitemap. The existing Vercel project
   builds these docs automatically from public beta on each website deployment using
   `documentation/scripts/vercel-build.sh` and a temporary checkout outside the website output.
+- The functionality map links all 45 areas of the product inventory to practical guides.
+  The control reference documents all 104 gateway and 10 external skills-library tool definitions
+  with inputs, defaults, authority, results, limits and examples. A source-registration check
+  requires each tool exactly once; unknown or duplicate reference headings fail the build.
+  Documentation CI also runs on tool-source and feature-catalog changes. This verifies inventory
+  and control coverage; peer review verifies user-facing claims against current implementation.
 - Handbook source and configuration were cross-reviewed against the public feature record,
   canonical operator references and implementation. Microsoft Teams and Google Chat remain
   explicitly Beta; optional VPN provisioning, engine-specific approvals and admin-only host
   access retain their documented restrictions. This documentation change introduces no gateway
-  runtime behavior. The expanded handbook is published; build, browser, export, combined
-  Vercel preview and production acceptance are recorded in `TEST-PLAN.md`.
+  runtime behavior. Publication of the complete-functionality expansion follows its build,
+  browser, export, preview and production gates in `TEST-PLAN.md`.
 
 ## Conversation sources and Teams names
 

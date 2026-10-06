@@ -15,7 +15,7 @@ Open **Skills → Sources → + Add source** in the admin interface.
 4. Choose **review — stage every change for approval** or **auto — activate on sync**.
 5. Select **Add and sync**, inspect the imported files, and approve staged revisions in **Review** when using review mode.
 
-Host folder sources are also supported through the skill-source tools/API. **Synchronization → Re-import host folders** imports operator folders. A host source directory is not a folder the ordinary channel agent can necessarily access.
+Host folder sources are also supported through the skill-source tools/API. **Skills → Sync settings → Re-import host folders** imports operator folders. A host source directory is not a folder the ordinary channel agent can necessarily access.
 
 | Control | Verified default or effect |
 | --- | --- |
@@ -34,7 +34,7 @@ Members can adjust their conversation's skills. Administrators manage organizati
 
 ## Publishing and webhooks
 
-**Skills → Synchronization → Publishing to Git** has a repository, publishing token, folder, and mode. An empty repository disables publishing; the default folder is `skills`. Keep publishing credentials separate from read-only source tokens.
+**Skills → Sync settings → Publishing to Git** has a repository, publishing token, folder, and mode. An empty repository disables publishing; the default folder is `skills`. Keep publishing credentials separate from read-only source tokens.
 
 For faster source updates, configure **GitHub webhook** with a secret and register its displayed endpoint on the repository. It needs a reachable public gateway URL. Do not paste webhook secrets into a skill's instructions.
 

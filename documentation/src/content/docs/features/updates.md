@@ -47,3 +47,6 @@ A candidate failure triggers the documented rollback path for code and dependenc
 - [Container isolation](/docs/features/container-isolation)
 - [System health](/docs/features/system-health)
 - [Operations reference](/docs/operations)
+
+- [Restart and recovery](/docs/features/restart-and-recovery)
+- [Runtime lifecycle](/docs/features/runtime-lifecycle)

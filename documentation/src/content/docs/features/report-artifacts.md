@@ -43,7 +43,12 @@ These native report surfaces are Slack features. Teams and Google Chat simplify 
 
 ## Related guides
 
+- [Slack data tables and exports](/docs/features/slack-tables)
+- [Native Slack charts](/docs/features/slack-charts)
+- [Editable Slack Lists](/docs/features/slack-lists)
 - [Slack](/docs/features/slack)
 - [Share and export files](/docs/features/file-sharing)
 - [Connected accounts](/docs/features/connected-accounts)
 - [Attachments and voice](/docs/features/attachments-and-voice)
+
+For a persistent shared document, see [Slack canvases](/docs/features/slack-canvases).

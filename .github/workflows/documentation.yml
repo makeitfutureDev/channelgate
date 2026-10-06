@@ -6,6 +6,9 @@ on:
     paths:
       - 'documentation/**'
       - 'docs/**'
+      - 'src/mcp/tools/**'
+      - 'src/web/skills-mcp.js'
+      - 'FEATURES.md'
       - 'INSTALL.md'
       - 'CHANGELOG.md'
       - 'SUPPORT.md'
@@ -14,6 +17,9 @@ on:
     paths:
       - 'documentation/**'
       - 'docs/**'
+      - 'src/mcp/tools/**'
+      - 'src/web/skills-mcp.js'
+      - 'FEATURES.md'
       - 'INSTALL.md'
       - 'CHANGELOG.md'
       - 'SUPPORT.md'

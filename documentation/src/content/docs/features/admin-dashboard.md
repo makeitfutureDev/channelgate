@@ -13,15 +13,15 @@ A public deployment should set **Settings → Connection → Public URL** to its
 
 ## Choose the right page
 
-- **Overview:** run, token, cost, model, user, conversation, and skill summaries.
-- **Conversations:** work folders, engine settings, access, network, secrets, and grants.
-- **Users:** approvals, admin roles, and user-specific configuration.
-- **Automations:** recurring tasks and reminders.
-- **Activity:** run records and diagnostic events.
-- **Skills:** catalog content, revisions, sources, templates, and assignment.
-- **API:** examples and status for HTTP-triggered runs.
-- **Settings:** gateway-wide connections, agent defaults, container runtime, license, and system controls.
-- **System health:** host resource and storage history.
+- **[Overview](/docs/features/usage-and-costs):** run, token, cost, model, user, conversation, and skill summaries.
+- **[Conversations](/docs/features/conversation-administration):** work folders, engine settings, access, network, secrets, and grants.
+- **[Users](/docs/features/user-administration):** approvals, admin roles, and user-specific configuration.
+- **[Automations](/docs/features/schedules):** recurring tasks and reminders.
+- **[Activity](/docs/features/activity-and-audit):** run records and diagnostic events.
+- **[Skills](/docs/features/skills):** catalog content, revisions, sources, templates, and assignment.
+- **[API](/docs/features/run-api):** examples and status for HTTP-triggered runs.
+- **[Settings](/docs/features/settings-search-and-conflicts):** gateway-wide connections, agent defaults, container runtime, license, and system controls.
+- **[System health](/docs/features/system-health):** host resource and storage history.
 
 For example, to investigate a failing automation, inspect its schedule in Automations, its conversation settings, and its run in Activity. Change the narrowest applicable setting rather than copying gateway defaults into every conversation.
 
@@ -39,3 +39,10 @@ Chat admins and the password-authenticated web session are distinct ways of auth
 - [Channel settings](/docs/configuration/channel-settings)
 - [Access and users](/docs/configuration/access-and-users)
 - [Usage and costs](/docs/features/usage-and-costs)
+
+- [Live sessions](/docs/features/live-sessions)
+- [Conversation administration](/docs/features/conversation-administration)
+- [User administration](/docs/features/user-administration)
+- [Activity and audit](/docs/features/activity-and-audit)
+- [Settings search and conflicts](/docs/features/settings-search-and-conflicts)
+- [Website and customer portal](/docs/features/website-and-customer-portal)

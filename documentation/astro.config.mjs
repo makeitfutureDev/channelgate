@@ -1,5 +1,6 @@
 import { defineConfig } from 'astro/config';
 import starlight from '@astrojs/starlight';
+import { controlPages } from './src/data/control-reference.mjs';
 import { featureGroups, configurationPages } from './src/data/handbook.mjs';
 
 export default defineConfig({
@@ -21,6 +22,8 @@ export default defineConfig({
           { label: 'Your first conversation', slug: 'getting-started' },
           { label: 'Installation', slug: 'installation' },
           { label: 'All features', slug: 'features' },
+          { label: 'Functionality map', slug: 'functionality' },
+          { label: 'Control reference', slug: 'controls' },
           { label: 'Configuration overview', slug: 'configuration' },
         ] },
         ...featureGroups.map((group) => ({
@@ -28,6 +31,7 @@ export default defineConfig({
           items: group.items.map((page) => ({ label: page.label, slug: `features/${page.slug}` })),
         })),
         { label: 'Configuration guides', collapsed: true, items: configurationPages.map((page) => ({ label: page.label, slug: `configuration/${page.slug}` })) },
+        { label: 'Gateway controls', collapsed: true, items: controlPages.map((page) => ({ label: page.label, slug: `controls/${page.slug}` })) },
         { label: 'Technical reference', collapsed: true, items: [
           { label: 'Chat platform setup', slug: 'platforms' },
           { label: 'Engine capabilities', slug: 'engines' },

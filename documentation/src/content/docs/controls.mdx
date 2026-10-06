@@ -1,0 +1,16 @@
+---
+title: Gateway control reference
+description: Find every gateway and external skills-library tool, its arguments, authorization, and limits.
+tableOfContents: false
+---
+
+import { CardGrid, LinkCard } from '@astrojs/starlight/components';
+import { controlPages } from '../../data/control-reference.mjs';
+
+Ask the agent for an outcome in ordinary language. It can use the controls below when its current permissions, platform, and connections allow them. These reference pages explain the exact tool names, inputs, results, and restrictions for people building integrations or checking how an action works.
+
+The gateway defines **104 controls**. The separate [skills-library service](/docs/controls/skills-library) defines **10 more**. A run receives an authorized subset; a tool appearing here does not mean it is enabled in every conversation. The library endpoint uses its own access tokens.
+
+For practical workflows, browse the [feature directory](/docs/features). For deployment and conversation defaults, open [configuration](/docs/configuration). The [functionality map](/docs/functionality) connects the broader product areas to their guides.
+
+<CardGrid>{controlPages.map((page) => <LinkCard title={page.label} description={page.description} href={`/docs/controls/${page.slug}`} />)}</CardGrid>
