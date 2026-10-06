@@ -143,10 +143,10 @@ export function formatUpdateResult(transaction = {}) {
   const reason = transaction.reason || transaction.candidateError ? safeMessage(transaction.reason || transaction.candidateError) : "";
   if (transaction.result === "updated" && transaction.imageWarning) return `⚠️ Gateway code is current${revision}; container image needs attention: ${transaction.imageWarning}`;
   if (transaction.result === "updated" && transaction.changed === false) {
-    return `✅ Gateway already up to date${revision}. ${transaction.reason || "Preflight and configured container engine smoke checks passed."}`;
+    return `✅ Gateway already up to date${revision}. ${transaction.reason || "Host checks and gateway restart verification passed."}`;
   }
   if (transaction.result === "updated") {
-    return `✅ Update complete — running${revision}. ${transaction.reason || "Daemon revision, Slack reconnect, and configured container engine smoke checks passed."}`;
+    return `✅ Update complete — running${revision}. ${transaction.reason || "Daemon revision, runtime and Slack reconnect checks passed."}`;
   }
   if (transaction.result === "rolled_back") {
     const failure = safeMessage(transaction.candidateError || reason);

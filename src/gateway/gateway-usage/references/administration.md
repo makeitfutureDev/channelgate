@@ -360,9 +360,9 @@ admin rights or change the permissions required by separate gateway control tool
 - The caller must still be a gateway admin. In Auto/Admin mode no additional Slack approval card is
   posted; in Read/Worker mode the exact update action still requires a click.
 - Before changing Git it checks upstream/clean-tree safety, runtime/config/service prerequisites,
-  calculated disk space, current health, and a real isolated Claude turn. A candidate is installed,
+  calculated disk space, current daemon health. The independent host service runs `bash scripts/update.sh`; provider logins and engine responses do not gate installation. A candidate is installed,
   security-audited, fully tested, provisioned, restarted, and accepted only after daemon revision,
-  Slack, and another isolated Claude check pass.
+  runtime availability and Slack reconnect pass. Exact dependencies and provisioning are repaired even when Git is current. Image binaries receive local version-only checks without provider authentication.
 - If a post-change check fails, it restores the previous revision and dependencies, restarts, and
   proves the restored build. The final thread reply distinguishes success, preflight refusal,
   successful rollback, and candidate-plus-rollback failure. Details are in
