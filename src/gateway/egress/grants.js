@@ -13,7 +13,7 @@
 // Placeholders are stable per key — (scope, channel, owner, name) — so a warm engine process, a
 // background job and the next turn all hold the same string, and the pool fingerprint does not
 // churn on a rotation. Scopes (DB spelling → placeholder letter): organization → o (channel ''),
-// channel → c, personal → p (per channel AND author: another author's turn never receives it),
+// channel → c, thread → c (distinct database scope, owner is the thread key), personal → p (per channel AND author: another author's turn never receives it),
 // relay → r (an engine login relay, per channel: the Claude access token `CLAUDE_CODE_OAUTH_TOKEN`,
 // and its Codex twin `CODEX_ACCESS_TOKEN` — codex-token-relay.js — keyed by secret name).
 import { getDb } from "../../db/index.js";
@@ -30,8 +30,8 @@ import { corePlaceholder, mintPlaceholder, PLACEHOLDER_SHAPES, wrapPlaceholder }
 import { CLAUDE_API_RELAY_NAMES, CODEX_API_RELAY_SECRET_NAME, CODEX_RELAY_SECRET_NAME, RELAY_SECRET_NAME, relayRuleFor, rulesFor } from "./catalog-rules.js";
 import { engineHostsFor } from "./engine-hosts.js";
 
-export const GRANT_SCOPES = Object.freeze(["organization", "channel", "personal", "relay"]);
-const MINT_SCOPE = { organization: "org", channel: "channel", personal: "personal", relay: "relay" };
+export const GRANT_SCOPES = Object.freeze(["organization", "channel", "thread", "personal", "relay"]);
+const MINT_SCOPE = { organization: "org", channel: "channel", thread: "channel", personal: "personal", relay: "relay" };
 export const RELAY_CACHE_MS = 60_000;
 export const MATERIAL_CACHE_MS = 5_000;
 
@@ -50,7 +50,7 @@ function keyFor({ scope, channelId = "", ownerId = "", secretName }) {
     scope,
     // The organization's placeholder is shared by every channel; everything else is bound to one.
     channelId: scope === "organization" ? "" : String(channelId || ""),
-    ownerId: scope === "personal" ? String(ownerId || "") : "",
+    ownerId: ["personal", "thread"].includes(scope) ? String(ownerId || "") : "",
     secretName: name,
   };
 }
@@ -73,7 +73,7 @@ function rowOut(row) {
 export function placeholderFor({ scope, channelId = "", ownerId = "", secretName, now = Date.now() }) {
   const key = keyFor({ scope, channelId, ownerId, secretName });
   if (key.scope !== "organization" && !key.channelId) throw new Error(`a ${key.scope} egress grant needs a channel`);
-  if (key.scope === "personal" && !key.ownerId) throw new Error("a personal egress grant needs an owner");
+  if (["personal", "thread"].includes(key.scope) && !key.ownerId) throw new Error(`a ${key.scope} egress grant needs an owner`);
   const db = getDb();
   const find = () => db.prepare(
     "SELECT placeholder FROM egress_grants WHERE scope = ? AND channel_id = ? AND owner_id = ? AND secret_name = ? AND revoked_ms = 0",
@@ -206,6 +206,17 @@ export async function resolveGrantMaterial(row, deps = {}) {
     const values = meta ? await (deps.resolveChannelEnv || resolveChannelEnv)(meta) : {};
     return { value: String(values[name] || ""), entry, exists: Boolean(entry) };
   }
+  if (row.scope === "thread") {
+    const meta = await channelMetaFor(row.channelId, deps);
+    const entry = await getChannelEntry(row.channelId);
+    const slug = String(meta?.slug || entry?.slug || "");
+    const settings = deps.threadSettings
+      ? await deps.threadSettings(row.channelId, row.ownerId)
+      : slug ? (await import("../thread-settings.js")).getThreadSettings(slug, row.ownerId, "secrets") : {};
+    const entries = normalizeChannelEnv(settings?.env);
+    const values = await (deps.resolveChannelEnv || resolveChannelEnv)({ ...meta, env: entries });
+    return { value: String(values[name] || ""), entry: entries[name] || null, exists: Boolean(entries[name]) };
+  }
   if (row.scope === "personal") {
     const entry = (await (deps.userEntries || getUserEnv)(row.ownerId))[name] || null;
     const values = await (deps.resolveUserEnv || resolveUserEnv)(row.ownerId);
@@ -228,10 +239,12 @@ export async function resolveEgressGrant(core, deps = {}) {
   if (!row) return null;
   const now = Date.now();
   let material = materialCache.get(row.placeholder);
-  if (row.scope === "relay" || !material || now - material.at > MATERIAL_CACHE_MS) {
+  if (["relay", "thread"].includes(row.scope) || !material || now - material.at > MATERIAL_CACHE_MS) {
     material = { at: now, ...(await resolveGrantMaterial(row, deps)) };
     materialCache.set(row.placeholder, material);
   }
+  // A removal can commit while a provider resolves. Never resurrect a revoked row.
+  if (!lookupGrant(row.placeholder)) return null;
   if (!material.exists) {
     revokeGrants({ scope: row.scope, channelId: row.channelId, ownerId: row.ownerId, secretName: row.secretName });
     return null;
@@ -275,14 +288,26 @@ function strictSetting(target) {
 export async function resolveEgressRunEnv({ meta = {}, channelId = "", authorId = "", untrustedPrincipal = false, clean = false, target = null, deps = {} } = {}) {
   const empty = { env: {}, scopes: {}, placeholders: {}, hosts: {}, unprotected: [], withheld: [], approval: [], realValues: [], personalPaused: false };
   if (clean) return empty;
-  const [org, user, channel] = await Promise.all([
+  const threadEntries = normalizeChannelEnv(meta?.threadEnv);
+  const threadKey = String(meta?.threadSettingsKey || "");
+  if (Object.keys(threadEntries).length && !threadKey) throw new Error("Thread secrets need a bound thread key.");
+  const [org, user, channel, thread] = await Promise.all([
     (deps.resolveOrgEnv || resolveOrgEnv)(),
     (deps.resolveUserEnv || resolveUserEnv)(authorId, { untrustedPrincipal }),
     (deps.resolveChannelEnv || resolveChannelEnv)(meta),
+    (deps.resolveChannelEnv || resolveChannelEnv)({ ...meta, env: threadEntries }),
   ]);
+  // Removing an inherited channel entry is a thread-only override. It never deletes the
+  // channel entry or the author/organization fallback.
+  for (const name of meta?.threadEnvRemoved || []) delete channel[name];
   const merged = mergeRunEnv({ org, user, channel });
+  for (const [name, value] of Object.entries(thread)) {
+    if (typeof value !== "string" || !value) continue;
+    merged.env[name] = value;
+    merged.scopes[name] = "thread";
+  }
   const real = safeSpawnEnv(merged.env);
-  const realValues = [...new Set([...Object.values(safeSpawnEnv(org)), ...Object.values(safeSpawnEnv(user)), ...Object.values(safeSpawnEnv(channel))])];
+  const realValues = [...new Set([...Object.values(safeSpawnEnv(org)), ...Object.values(safeSpawnEnv(user)), ...Object.values(safeSpawnEnv(channel)), ...Object.values(safeSpawnEnv(thread))])];
   if (!egressActive(target)) {
     return { env: merged.env, scopes: merged.scopes, placeholders: {}, hosts: {}, unprotected: [], withheld: [], approval: [], realValues, personalPaused: false };
   }
@@ -292,6 +317,7 @@ export async function resolveEgressRunEnv({ meta = {}, channelId = "", authorId 
     organization: deps.orgEntries ? deps.orgEntries() : getOrgEnv(),
     personal: personalOwner ? await (deps.userEntries || getUserEnv)(personalOwner) : {},
     channel: normalizeChannelEnv(meta?.env),
+    thread: threadEntries,
   };
   // Reconcile first: a secret REMOVED since the last run loses its placeholder now, even if the
   // change listener never saw the write. Keyed by the STORED entry names, never by what resolved: a
@@ -300,6 +326,8 @@ export async function resolveEgressRunEnv({ meta = {}, channelId = "", authorId 
   revokeMissing({ scope: "organization", present: Object.keys(entries.organization) });
   if (channelKey) revokeMissing({ scope: "channel", channelId: channelKey, present: Object.keys(entries.channel) });
   if (channelKey && personalOwner) revokeMissing({ scope: "personal", channelId: channelKey, ownerId: personalOwner, present: Object.keys(entries.personal) });
+
+  if (channelKey && threadKey) revokeMissing({ scope: "thread", channelId: channelKey, ownerId: threadKey, present: Object.keys(entries.thread) });
 
   const strict = strictSetting(target);
   const env = {};
@@ -314,9 +342,9 @@ export async function resolveEgressRunEnv({ meta = {}, channelId = "", authorId 
   for (const name of Object.keys(real).sort()) {
     const scope = merged.scopes[name];
     const rule = rulesFor(name, entries[scope]?.[name] || null, { value: real[name] });
-    const bindable = scope === "organization" || (channelKey && (scope !== "personal" || personalOwner));
+    const bindable = scope === "organization" || (channelKey && (scope !== "personal" || personalOwner) && (scope !== "thread" || threadKey));
     if (rule && bindable) {
-      const placeholder = placeholderFor({ scope, channelId: channelKey, ownerId: personalOwner, secretName: name });
+      const placeholder = placeholderFor({ scope, channelId: channelKey, ownerId: scope === "thread" ? threadKey : personalOwner, secretName: name });
       env[name] = placeholder;
       scopes[name] = scope;
       placeholders[name] = placeholder;

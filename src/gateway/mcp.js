@@ -150,7 +150,7 @@ export async function buildMcpConfig(options = {}) {
  * when there is one — the caller owns one hold on it, see registerRemoteMcps) and `rejectedRemotes` (a remote an
  * isolated run could not be given, `[{ name, reason }]`, for the caller's rejected-MCP note).
  */
-export async function buildMcpRuntimePayload({ composioUserEndpoint = null, composioEndpoint = null, composioUserToken = "", composioToken = "", toolboxToken = "", makeToolboxUrl = "", makeToolboxKey = "", channelId = "", slug = "", authorId = "", threadKey = "", origin = "", progressReport = false, engine = "claude", principalTrusted = true, gatewayFsRoot = "", gatewayWorkspaceRoot = "", toolset = "", target = null, ttlMs = undefined } = {}) {
+export async function buildMcpRuntimePayload({ composioUserEndpoint = null, composioEndpoint = null, composioUserToken = "", composioToken = "", toolboxToken = "", makeToolboxUrl = "", makeToolboxKey = "", channelId = "", slug = "", authorId = "", threadKey = "", settingsSourceThreadKey = "", origin = "", progressReport = false, engine = "claude", principalTrusted = true, gatewayFsRoot = "", gatewayWorkspaceRoot = "", toolset = "", target = null, ttlMs = undefined } = {}) {
   // Identity claim — fail closed on garbage instead of silently signing as Claude.
   const normalizedEngine = requireAdapter(engine || "claude").id;
   // Fail closed on an unknown capability key; a target that is absent or host-backed is today's path.
@@ -192,6 +192,7 @@ export async function buildMcpRuntimePayload({ composioUserEndpoint = null, comp
     slug,
     authorId,
     threadKey,
+    settingsSourceThreadKey,
     origin,
     engine: normalizedEngine,
     principalTrusted,

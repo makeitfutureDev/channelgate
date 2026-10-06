@@ -104,6 +104,7 @@ function currentUserSkillGrants(names, authorId, lookupSkill) {
 export async function resolveRunAccessGrants({
   organization = {},
   channel = {},
+  thread = {},
   authorId = "",
   untrustedPrincipal = false,
   loadUser = async () => null,
@@ -111,10 +112,19 @@ export async function resolveRunAccessGrants({
 } = {}) {
   const storedUser = untrustedPrincipal ? {} : ((await loadUser(authorId)) || {});
   const user = { ...storedUser, skills: currentUserSkillGrants(storedUser.skills, authorId, lookupSkill) };
+  // Per-thread MCP selections replace only the conversation's selectable tier. The immutable
+  // organization defaults and authenticated author's personal tier still union in normally.
+  // Skills are additive: the shared project skill tree is never rewritten for one thread.
+  const scopedChannel = { ...channel };
+  for (const field of ACCESS_GRANT_FIELDS.filter(field => field !== 'skills')) {
+    if (Object.hasOwn(thread, field)) scopedChannel[field] = thread[field];
+  }
+  scopedChannel.skills = unionGrantEntries(sanitizeSkillGrantNames(channel.skills), sanitizeSkillGrantNames(thread.skills));
   return {
     shared: resolveAccessGrants({ organization, channel }),
-    effective: resolveAccessGrants({ organization, channel, user }),
+    effective: resolveAccessGrants({ organization, channel: scopedChannel, user }),
     user: resolveAccessGrants({ user }),
+    thread: resolveAccessGrants({ channel: thread }),
   };
 }
 

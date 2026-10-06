@@ -39,7 +39,7 @@ function validRemoteMcps(claims) {
     claims.remoteMcps.every(validRemoteMcpName) && new Set(claims.remoteMcps).size === claims.remoteMcps.length;
 }
 
-export function mintGatewayCapability({ secret, channelId, slug, authorId, threadKey, origin, engine, principalTrusted = true, toolset = "", progressReport = false, composioSessions = [], remoteMcps = undefined, jti = undefined, now = Date.now(), ttlMs = DEFAULT_TTL_MS } = {}) {
+export function mintGatewayCapability({ secret, channelId, slug, authorId, threadKey, settingsSourceThreadKey = "", origin, engine, principalTrusted = true, toolset = "", progressReport = false, composioSessions = [], remoteMcps = undefined, jti = undefined, now = Date.now(), ttlMs = DEFAULT_TTL_MS } = {}) {
   if (!secret || !channelId || !slug || !authorId || !threadKey || !ORIGINS.has(origin)) {
     throw new Error("Cannot mint gateway capability without a complete run identity");
   }
@@ -54,6 +54,7 @@ export function mintGatewayCapability({ secret, channelId, slug, authorId, threa
     slug,
     authorId,
     threadKey,
+    ...(settingsSourceThreadKey ? { settingsSourceThreadKey } : {}),
     origin,
     engine: String(engine || ""),
     principalTrusted: principalTrusted === true,
@@ -68,8 +69,13 @@ export function mintGatewayCapability({ secret, channelId, slug, authorId, threa
   };
   if (!validComposioGrants(claims)) throw new Error("Invalid Composio session grants");
   if (!validRemoteMcps(claims)) throw new Error("Invalid remote MCP grants");
+  if (!validSettingsSource(claims)) throw new Error("Invalid thread settings source");
   const payload = encode(JSON.stringify(claims));
   return `${payload}.${sign(payload, secret)}`;
+}
+
+function validSettingsSource(claims) {
+  return claims.settingsSourceThreadKey === undefined || (typeof claims.settingsSourceThreadKey === 'string' && claims.settingsSourceThreadKey.length > 0 && claims.settingsSourceThreadKey.length <= 4096 && !/[\u0000-\u001f\u007f]/.test(claims.settingsSourceThreadKey));
 }
 
 function validComposioGrants(claims) {
@@ -108,6 +114,7 @@ export function verifyGatewayCapability(token, { secret, now = Date.now() } = {}
   if (claims.toolset !== undefined && typeof claims.toolset !== "string") return { ok: false, reason: "invalid capability toolset" };
   if (claims.progressReport !== undefined && typeof claims.progressReport !== "boolean") return { ok: false, reason: "invalid capability progress claim" };
   if (!validRemoteMcps(claims)) return { ok: false, reason: "invalid remote MCP grants" };
+  if (!validSettingsSource(claims)) return { ok: false, reason: "invalid thread settings source" };
   if (!Number.isFinite(claims.iat) || !Number.isFinite(claims.exp) || claims.iat > now + 30_000 || claims.exp <= now || claims.exp - claims.iat > MAX_TTL_MS) {
     return { ok: false, reason: "expired or invalid capability lifetime" };
   }

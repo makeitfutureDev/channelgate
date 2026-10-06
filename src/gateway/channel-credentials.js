@@ -5,13 +5,13 @@ import { safeSpawnEnv } from "../config/channel-env.js";
 // has to be able to say WHICH account it acted as, and "the name was there" no longer answers
 // that. Names only — a scope is not a value.
 function scopeLines(names, scopes) {
-  const by = { organization: [], personal: [], channel: [] };
+  const by = { organization: [], personal: [], channel: [], thread: [] };
   for (const name of names) by[scopes[name] || "channel"].push(name);
   // Said whenever a name is NOT the conversation's own. The list above is headed "channel
   // environment variable names", so a run whose only secrets were organization-wide got no line
   // saying so, and Codex told the user an organization secret was "a channel credential"
   // (SEC-LIST-01). Only a purely channel-scoped run skips it: there the heading already is the scope.
-  if (!by.organization.length && !by.personal.length) return [];
+  if (!by.organization.length && !by.personal.length && !by.thread.length) return [];
   const lines = [];
   if (by.organization.length) {
     lines.push(`Organization-wide variables (shared by every conversation in this deployment): ${JSON.stringify(by.organization)}.`);
@@ -19,6 +19,7 @@ function scopeLines(names, scopes) {
   if (by.personal.length) {
     lines.push(`Personal variables belonging to the author of THIS message, injected only into runs they authored: ${JSON.stringify(by.personal)}.`);
   }
+  if (by.thread.length) lines.push(`This thread's variables (override channel variables for this thread): ${JSON.stringify(by.thread)}.`);
   if (by.channel.length) {
     lines.push(`This conversation's own variables: ${JSON.stringify(by.channel)}.`);
   }
@@ -55,6 +56,8 @@ function egressLines(names, { scopes = {}, placeholders = {}, hosts = {}, unprot
     lines.push(`Personal placeholders ${JSON.stringify(personal)} work only while their owner is the one working in this conversation: they PAUSE (the proxy answers 403 another-author-active or another-person-ssh-session) while another person's turn, background job or SSH session is active here. Say so and retry later rather than asking for the raw value.`);
   }
   if (personalPaused && personal.length) lines.push(`Personal secrets are PAUSED right now: another person's turn, background job or SSH session is active in this conversation's container, so the egress proxy refuses to use ${JSON.stringify(personal)} (403 "another-author-active" or "another-person-ssh-session") until it ends. Do not retry or substitute another credential; tell the author, or use a conversation/organization credential they approve.`);
+  const thread = names.filter((name) => placeholders[name] && scopes[name] === "thread");
+  if (thread.length) lines.push(`Thread placeholders ${JSON.stringify(thread)} work only while this thread has live work and no other thread, SSH session or editor is active in the shared channel container (403 thread-not-live or another-thread-active). Retry later; never substitute another credential.`);
   const raw = unprotected.filter((name) => names.includes(name));
   if (raw.length) lines.push(`Readable (the RAW value is in the environment, because it is used outside an HTTPS request — a password, connection string or signing key — or an admin marked it readable): ${JSON.stringify(raw)}. Never print or send it anywhere it does not belong.`);
   if (withheld.length) lines.push(`Withheld by the gateway's strict egress setting (no egress rule, so not injected at all): ${JSON.stringify([...withheld].sort())}. Ask an admin to declare "used on hosts" for them if this task needs them.`);

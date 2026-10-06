@@ -86,31 +86,57 @@ function runtimeRows(scope, snapshot, locked, ui) {
       : scope === 'thread' ? 'Follow compatible channel effort / engine default' : 'Engine default';
     body.push(ui.choice(`${scope}_${field}`, field[0].toUpperCase() + field.slice(1), selected || RUNTIME_DEFAULT_VALUE, [defaultChoice(inherited), ...choices]));
   }
-  body.push(ui.buttons([ui.execute(scope === 'channel' ? 'Apply to channel' : 'Apply to thread', 'settings.runtime.apply', { scope })]));
   return body;
 }
 
+export function captureGeneralDraft(data, ctx) {
+  if (ctx.state.tab !== 'general' || !ctx.state.generalDraft) return;
+  const draft = ctx.state.generalDraft;
+  for (const key of draft.renderedInputs || []) {
+    if (!Object.hasOwn(data, key)) continue;
+    const value = data[key];
+    const accessField = key.startsWith('access_') ? key.slice(7) : '';
+    if (typeof value !== 'string' || value.length > (namedFields.includes(accessField) ? MAX_NATIVE_ROSTER * 257 : 128)) throw new Error('Select a valid General settings value.');
+    if (accessChoices[accessField] && !accessChoices[accessField].some(choice => choice.value === value)) throw new Error('Invalid access setting.');
+    if (flagFields.includes(accessField) && !['on', 'off'].includes(value)) throw new Error('Invalid access option.');
+    draft.inputs[key] = value;
+  }
+}
+function clearGeneralDraft(ctx) {
+  delete ctx.state.generalDraft;
+  delete ctx.state.runtimeBaseline;
+  delete ctx.state.accessBaseline;
+}
 export async function renderGeneral(ctx, ui) {
   const { channel, thread, locked } = await generalRuntimeScopes(ctx);
-  ctx.state.runtimeBaseline = { channel: { ...channel.values, locked }, ...(thread ? { thread: { ...thread.values, locked } } : {}) };
+  if (!ctx.state.generalDraft) {
+    ctx.state.generalDraft = { inputs: {}, renderedInputs: [] };
+    ctx.state.runtimeBaseline = { channel: { ...channel.values, locked }, ...(thread ? { thread: { ...thread.values, locked } } : {}) };
+    ctx.state.accessBaseline = {};
+  }
+  const draft = ctx.state.generalDraft;
+  const displayedRuntime = (scope, snapshot) => ({ ...snapshot, values: { ...snapshot.values,
+    ...Object.fromEntries(RUNTIME_FIELDS.filter(field => Object.hasOwn(draft.inputs, `${scope}_${field}`)).map(field => [field, draft.inputs[`${scope}_${field}`]])),
+  } });
   const meta = effectiveMeta(ctx.meta), manager = managed(ctx.meta, ctx);
-  const body = [ui.text('Choose engine, model and effort, then Apply once for that scope. Model names include their engine; the combination must be compatible. Channel defaults affect new sessions; thread overrides apply to this session.'), ui.heading('Channel defaults'), ...runtimeRows('channel', channel, locked, ui)];
+  const body = [ui.text('Choose engine, model and effort, then Apply once at the bottom for that scope. Apply saves only General; changes in other sections stay pending. Model names include their engine; the combination must be compatible. Channel defaults affect new sessions; thread overrides apply to this session.'), ui.heading('Channel defaults'), ...runtimeRows('channel', displayedRuntime('channel', channel), locked, ui)];
   if (locked) {
     const login = await channelCodexLoginStatus(ctx.channelId);
     body.push(ui.text(`Channel Codex login: ${login.authenticated ? 'Signed in' : login.phase === 'pending' ? 'Sign-in in progress' : 'No channel login yet'}.`));
   }
   if (thread) {
-    body.push(ui.heading('Current session'), ...runtimeRows('thread', thread, locked, ui));
+    body.push(ui.heading('Current session'), ...runtimeRows('thread', displayedRuntime('thread', thread), locked, ui));
     if (thread.sessionEngine) body.push(ui.text(`This session already runs on ${engineLabel(thread.sessionEngine)}. A channel default does not replace its live engine; choose an engine here to switch it.`));
     body.push(ui.buttons([ui.execute('Follow channel default', 'settings.thread.reset', {}, 'none')]));
   }
-  body.push(ui.heading(ctx.meta.isDM ? 'Mode and network' : 'Access'), ui.text('Only current managers can change channel access settings. Admin tool permissions still require an admin author.'));
+  body.push(ui.heading(ctx.meta.isDM ? 'Mode and network' : 'Access'), ui.text('Access settings apply to the channel only. Use Apply to channel to save them together with channel runtime choices. Apply to thread saves runtime choices and refuses changed access settings. Admin tool permissions still require an admin author.'));
   if (manager || ctx.meta.isDM) {
     const fields = ctx.meta.isDM ? ['mode', ...flagFields.filter(field => field !== 'allowNetwork')] : [...Object.keys(accessChoices), ...flagFields];
     for (const field of fields) {
       const value = field === 'mode' ? channelMode(meta) : field === 'access' ? meta.access || 'approved' : field === 'manageAccess' ? meta.manageAccess || 'admins' : meta[field] ? 'on' : 'off';
       const choices = accessChoices[field] || [{ label: 'On', value: 'on' }, { label: 'Off', value: 'off' }];
-      body.push(ui.choice(`access_${field}`, labels[field], value, choices), ui.buttons([ui.execute(`Apply ${labels[field].split(' — ')[0]}`, 'settings.access', { field })]));
+      if (!Object.hasOwn(ctx.state.accessBaseline, field)) ctx.state.accessBaseline[field] = value;
+      body.push(ui.choice(`access_${field}`, labels[field], draft.inputs[`access_${field}`] ?? value, choices));
     }
     if (!ctx.meta.isDM) {
       try {
@@ -122,23 +148,29 @@ export async function renderGeneral(ctx, ui) {
             body.push(ui.text(`${labels[field]}: ${selected.length} saved. This conversation has ${members.length} members; edit the complete list in the authenticated channel settings website.`));
             continue;
           }
-          if (selected.some(id => !members.some(member => member.id === id))) namedRows.push(ui.text(`${labels[field]} includes former members. Applying this field replaces it with the current members selected below.`));
-          namedRows.push({ type: 'Input.ChoiceSet', id: `access_${field}`, label: labels[field], isMultiSelect: true, style: 'compact', value: selected.filter(id => members.some(member => member.id === id)).join(','), choices: members.map(member => ({ title: String(member.name || member.email || member.id).slice(0, 80), value: member.id })) });
-          namedRows.push(ui.buttons([ui.execute(`Apply ${labels[field]}`, 'settings.access', { field })]));
+          if (selected.some(id => !members.some(member => member.id === id))) namedRows.push(ui.text(`${labels[field]} includes former members. Changing this selection replaces its saved list with the current members selected below.`));
+          namedRows.push({ type: 'Input.ChoiceSet', id: `access_${field}`, label: labels[field], isMultiSelect: true, style: 'compact', value: draft.inputs[`access_${field}`] ?? selected.filter(id => members.some(member => member.id === id)).join(','), choices: members.map(member => ({ title: String(member.name || member.email || member.id).slice(0, 80), value: member.id })) });
+          if (!Object.hasOwn(ctx.state.accessBaseline, field)) ctx.state.accessBaseline[field] = selected.filter(id => members.some(member => member.id === id)).sort().join(',');
         }
         if (Buffer.byteLength(JSON.stringify([...body, ...namedRows])) <= MAX_GENERAL_BODY_BYTES) body.push(...namedRows);
-        else body.push(ui.text('The complete member selectors are too large for this Teams card. Edit guest access and named managers in the authenticated channel settings website. All saved selections remain unchanged.'));
+        else {
+          for (const field of namedFields) delete ctx.state.accessBaseline[field];
+          body.push(ui.text('The complete member selectors are too large for this Teams card. Edit guest access and named managers in the authenticated channel settings website. All saved selections remain unchanged.'));
+        }
       } catch { body.push(ui.text('Named users cannot be edited until current Teams membership is available.')); }
     }
   } else body.push(ui.text(`Mode: ${channelMode(meta)}${meta.autoMode ? ' · Auto' : ''}${meta.cleanMode ? ' · Lean' : ''}. Only current managers can change channel access settings.`));
   body.push(ui.text(networkLabel(meta, { detail: true })));
   let vpn = unconfiguredChannelVpnStatus(ctx.meta);
   if (!vpn) { try { vpn = await getChannelVpnStatus(ctx.channelId); } catch { vpn = { state: 'unavailable', message: 'VPN status is unavailable for this Teams conversation.' }; } }
-  body.push(ui.heading('VPN'), ui.text(vpn.message || `VPN: ${vpn.state}`));
+  body.push(ui.heading('VPN'), ui.text(vpn.message || `VPN: ${vpn.state}`), ui.text('VPN buttons operate the service immediately; they are separate from saved settings.'));
   if (vpn.configured && manager && !vpn.busy && vpn.state !== 'unavailable') {
     const enabled = !(vpn.enabled || vpn.running || ['on', 'starting'].includes(vpn.state));
     if (!enabled || (vpn.allowNetwork && !vpn.missingSecrets?.length && vpn.state !== 'stopping')) body.push(ui.buttons([ui.execute(enabled ? 'Enable VPN' : 'Disable VPN', 'settings.vpn', { enabled }, 'none')]));
   }
+  draft.renderedInputs = body.filter(row => row.type?.startsWith('Input.')).map(row => row.id);
+  body.push(ui.buttons([ui.execute('Discard General changes', 'settings.general.discard', {}, 'none')]));
+  body.push(ui.buttons([ui.execute('Apply to channel', 'settings.runtime.apply', { scope: 'channel' }), ...(thread ? [ui.execute('Apply to thread', 'settings.runtime.apply', { scope: 'thread' })] : [])]));
   return { body, actions: [] };
 }
 
@@ -170,7 +202,7 @@ function validatedSelection(current, field, value, inheritedEngine) {
 function assertRuntimeBaseline(ctx, scope, own, locked) {
   const baseline = ctx.state.runtimeBaseline?.[scope];
   if (!baseline || baseline.locked !== locked || RUNTIME_FIELDS.some(field => baseline[field] !== own[field])) {
-    throw new Error('These settings changed. Reopen General before applying your changes.');
+    throw new Error('These settings changed. Discard General changes to load current values before applying.');
   }
 }
 function combinedRuntimeSelection(data, scope, meta, inheritedEngine) {
@@ -190,17 +222,83 @@ function combinedRuntimeSelection(data, scope, meta, inheritedEngine) {
   return { ...patch, effort: form.effort };
 }
 
+function accessValue(meta, field) {
+  const effective = effectiveMeta(meta);
+  if (namedFields.includes(field)) return [...new Set(effective[field] || [])].sort().join(',');
+  if (field === 'mode') return channelMode(effective);
+  if (field === 'access') return effective.access || 'approved';
+  if (field === 'manageAccess') return effective.manageAccess || 'admins';
+  return effective[field] ? 'on' : 'off';
+}
+function accessChanges(ctx, data) {
+  const baseline = ctx.state.accessBaseline || {};
+  const changes = {};
+  for (const key of Object.keys(data).filter(key => key.startsWith('access_'))) {
+    const field = key.slice(7);
+    if (!Object.hasOwn(baseline, field)) throw new Error('This access setting was not available in this form. Reopen General.');
+    const raw = data[key];
+    if (typeof raw !== 'string') throw new Error('Select a valid access setting.');
+    if (accessChoices[field] && !accessChoices[field].some(choice => choice.value === raw)) throw new Error('Invalid access setting.');
+    if (flagFields.includes(field) && !['on', 'off'].includes(raw)) throw new Error('Invalid access option.');
+    const value = namedFields.includes(field) ? [...new Set(raw.split(',').map(id => id.trim()).filter(Boolean))].sort().join(',') : raw;
+    if (namedFields.includes(field) && value.split(',').filter(Boolean).length > 100) throw new Error('Choose up to 100 current members.');
+    if (value !== baseline[field]) changes[field] = value;
+  }
+  return changes;
+}
+function accessBatchPatch(ctx, current, changes, members) {
+  if (!Object.keys(changes).length) return {};
+  if (current.isDM) {
+    assertCurrentAuthorized(ctx, current);
+    if (Object.keys(changes).some(field => !['mode', 'autoMode', 'cleanMode'].includes(field))) throw new Error('This setting is managed by the DM template.');
+  } else assertManager(ctx, current);
+  for (const field of Object.keys(changes)) {
+    // Named selectors deliberately omit former members. Keep their unrendered grants unless the
+    // human actually edits that selector; other policy fields need exact stale-form checks.
+    const saved = accessValue(current, field);
+    const comparable = namedFields.includes(field) ? saved.split(',').filter(id => members.some(member => member.id === id)).join(',') : saved;
+    if (comparable !== ctx.state.accessBaseline[field]) throw new Error('These access settings changed. Discard General changes to load current values before applying.');
+  }
+  for (const field of namedFields.filter(field => Object.hasOwn(changes, field))) {
+    const selected = changes[field].split(',').filter(Boolean);
+    if (selected.some(id => id.startsWith('28:') || id === ctx.connector?.botId || !members.some(member => member.id === id))) throw new Error('Named users must still be current human conversation members.');
+  }
+  const baseline = effectiveMeta(current);
+  const options = {
+    ...(changes.mode ? { mode: changes.mode } : {}),
+    ...Object.fromEntries(['autoMode', 'cleanMode'].filter(field => Object.hasOwn(changes, field)).map(field => [field, changes[field] === 'on'])),
+  };
+  const patch = modeSettingsPatch(baseline, options, { isAdminUser: ctx.userIsAdmin, canEnableAdmin: !current.isDM || ctx.userIsAdmin });
+  for (const [field, value] of Object.entries(changes)) {
+    if (['mode', 'autoMode', 'cleanMode'].includes(field)) continue;
+    patch[field] = namedFields.includes(field) ? value.split(',').filter(Boolean) : flagFields.includes(field) ? value === 'on' : value;
+  }
+  return current.isDM && ['user', 'admin'].includes(current.template) ? { ...baseline, ...patch, template: 'custom' } : patch;
+}
+
 export async function handleGeneral(action, data, ctx, _ui) {
+  if (action === 'settings.general.discard') {
+    clearGeneralDraft(ctx); ctx.state.notice = 'Pending General changes discarded.'; return true;
+  }
   if (action === 'settings.runtime.apply') {
     const { scope } = data;
     if (!['channel', 'thread'].includes(scope)) throw new Error('Unknown runtime control.');
+    const changes = accessChanges(ctx, data);
+    if (scope === 'thread' && Object.keys(changes).length) throw new Error('Access settings apply to the channel only. Use Apply to channel, or restore those selections before applying to the thread.');
+    let members = [];
+    if (scope === 'channel' && namedFields.some(field => Object.hasOwn(changes, field))) {
+      const fresh = await ctx.authorize(); assertManager(fresh, fresh.meta);
+      members = await roster(fresh);
+    }
     if (scope === 'channel') {
       ctx.meta = await ctx.patch((current, fresh) => {
         assertCurrentAuthorized(fresh, current);
         const locked = current.codexAuthSource === 'channel';
         const own = { engine: locked ? 'codex' : current.engine || '', model: current.model || '', effort: current.effort || '' };
         assertRuntimeBaseline(ctx, scope, own, locked);
-        return combinedRuntimeSelection(data, scope, current, parentEngine(current));
+        const runtime = combinedRuntimeSelection(data, scope, current, parentEngine(current));
+        const access = accessBatchPatch({ ...fresh, state: ctx.state }, current, changes, Array.isArray(fresh.members) ? fresh.members : members);
+        return { ...access, ...runtime };
       });
     } else {
       const session = requireSession(ctx), release = await acquireKeyedLock('teams-settings-runtime', `${ctx.entry.slug}:${session}`);
@@ -219,6 +317,7 @@ export async function handleGeneral(action, data, ctx, _ui) {
         setThreadRuntimeOverrides(ctx.entry.slug, session, { ...next, engine: locked ? '' : next.engine }, { expected: { engine, model, effort } });
       } finally { release(); }
     }
+    clearGeneralDraft(ctx);
     ctx.state.tab = 'general';
     ctx.state.notice = `${scope === 'channel' ? 'Channel defaults' : 'Thread overrides'} updated. Applies to the next turn.`;
     await logEvent(scope === 'channel' ? 'channel_runtime_updated' : 'thread_runtime_updated', {
@@ -250,6 +349,7 @@ export async function handleGeneral(action, data, ctx, _ui) {
         await Promise.all([setThreadEngine(ctx.entry.slug, session, latest.meta.codexAuthSource === 'channel' ? '' : next.engine), setThreadModel(ctx.entry.slug, session, next.model), setThreadEffort(ctx.entry.slug, session, next.effort)]);
       } finally { release(); }
     }
+    clearGeneralDraft(ctx);
     ctx.state.notice = `${scope === 'channel' ? 'Channel default' : 'Current session'} ${field} updated. Applies to the next turn.`;
     await logEvent(scope === 'channel' ? 'channel_runtime_updated' : 'thread_runtime_updated', { channel: ctx.channelId, slug: ctx.entry.slug, author: ctx.ownerId, field });
     return true;
@@ -260,6 +360,7 @@ export async function handleGeneral(action, data, ctx, _ui) {
       const fresh = await ctx.authorize(); assertCurrentAuthorized(fresh);
       await Promise.all([setThreadEngine(ctx.entry.slug, session, ''), setThreadModel(ctx.entry.slug, session, ''), setThreadEffort(ctx.entry.slug, session, '')]);
     } finally { release(); }
+    clearGeneralDraft(ctx);
     ctx.state.notice = 'Session overrides cleared. Its model and effort follow channel defaults; an existing session retains its engine until you explicitly switch it.';
     return true;
   }
@@ -294,6 +395,7 @@ export async function handleGeneral(action, data, ctx, _ui) {
       const patch = field === 'mode' ? modeSettingsPatch(baseline, { mode: value }, { canEnableAdmin: !current.isDM || fresh.userIsAdmin }) : ['autoMode', 'cleanMode'].includes(field) ? modeSettingsPatch(baseline, { [field]: value }, { isAdminUser: fresh.userIsAdmin }) : { [field]: value };
       return current.isDM && ['user', 'admin'].includes(current.template) ? { ...baseline, ...patch, template: 'custom' } : patch;
     });
+    clearGeneralDraft(ctx);
     ctx.state.notice = 'Access setting saved. Applies to this conversation’s next runs.';
     return true;
   }

@@ -184,11 +184,16 @@ test("an unisolated shell job requires an admin approval in Auto mode but not fo
     slug: entry.slug,
     authorId: "U1",
     threadKey: "t-durable",
+    settingsSourceThreadKey: "t-durable",
     command: "true",
     workDir: path.join(process.env.CG_WORKSPACE_DIR, "slack", entry.slug),
     label: "durable true",
     maxMs: 60 * 60 * 1000,
   });
+  const { approvalActionKey } = await import('../src/gateway/approval-requests.js');
+  const approvedAction = durableRequests[0].durableAction;
+  assert.equal(approvalActionKey(approvedAction), approvalActionKey({ ...approvedAction, settingsSourceThreadKey: undefined }), 'the default source preserves existing durable approvals');
+  assert.notEqual(approvalActionKey(approvedAction), approvalActionKey({ ...approvedAction, settingsSourceThreadKey: 'substituted-source' }), 'a different thread credential source cannot reuse the approved action');
 
   // Approved → the job actually spawns and completes.
   const JOB_WAIT_MS = 15_000;

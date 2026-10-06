@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { ensureTestEnv } from './helpers.js';
 ensureTestEnv();
-const { renderGeneral, handleGeneral, generalRuntimeScopes } = await import('../src/platforms/msteams/settings-general.js');
+const { renderGeneral, handleGeneral, generalRuntimeScopes, captureGeneralDraft } = await import('../src/platforms/msteams/settings-general.js');
 const { nextRuntimeTriple, runtimeSettingsPatch } = await import('../src/gateway/runtime-settings.js');
 const { saveSettings } = await import('../src/config/settings.js');
 const { getThreadEngine, getThreadModel, getThreadEffort, setThreadEngine, setThreadModel, setThreadEffort, setThreadRuntimeOverrides, setThreadClean, getThreadClean, setThreadSudo, getThreadSudo } = await import('../src/gateway/thread-engine.js');
@@ -29,7 +29,7 @@ function context(meta = {}, options = {}) {
   return ctx;
 }
 
-test('runtime forms allow cross-engine choices with one Apply at the end of each scope', async () => {
+test('General runtime forms allow cross-engine choices with one Apply pair at the bottom', async () => {
   saveSettings({ engine: 'claude', defaultCodexModel: 'gpt-6-sol', defaultClaudeModel: 'opus', engineEnabled: {} });
   const ctx = context({ engine: 'claude', model: 'opus' });
   await saveSession(ctx.entry.slug, ctx.sessionKey, 'codex-session', 'codex');
@@ -47,17 +47,14 @@ test('runtime forms allow cross-engine choices with one Apply at the end of each
   const applies = body.filter(row => row.type === 'ActionSet').flatMap(row => row.actions).filter(action => action.verb === 'settings.runtime.apply');
   assert.deepEqual(applies.map(item => item.title), ['Apply to channel', 'Apply to thread']);
   assert.equal(body.filter(row => row.type === 'ActionSet').flatMap(row => row.actions).filter(action => action.verb === 'settings.runtime').length, 0);
-  for (const scope of ['channel', 'thread']) {
-    const lastInput = body.findIndex(row => row.id === `${scope}_effort`);
-    assert.equal(body[lastInput + 1].actions[0].data.scope, scope);
-  }
+  assert.deepEqual(body.at(-1).actions.map(action => action.data.scope), ['channel', 'thread']);
 });
 
 test('one channel Apply saves the full valid triple and ignores other-scope inputs', async () => {
   const ctx = context({ engine: 'claude', model: 'opus', cleanMode: true });
   await setThreadEngine(ctx.entry.slug, ctx.sessionKey, 'claude');
   await renderGeneral(ctx, ui);
-  await handleGeneral('settings.runtime.apply', { scope: 'channel', channel_engine: 'codex', channel_model: 'gpt-6-sol', channel_effort: 'high', thread_engine: 'codex', access_cleanMode: 'off' }, ctx, ui);
+  await handleGeneral('settings.runtime.apply', { scope: 'channel', channel_engine: 'codex', channel_model: 'gpt-6-sol', channel_effort: 'high', thread_engine: 'codex' }, ctx, ui);
   assert.equal(ctx.meta.engine, 'codex'); assert.equal(ctx.meta.model, 'gpt-6-sol'); assert.equal(ctx.meta.effort, 'high');
   assert.equal(ctx.meta.cleanMode, true); assert.equal(await getThreadEngine(ctx.entry.slug, ctx.sessionKey), 'claude');
 });
@@ -267,4 +264,106 @@ test('shared helpers validate runtime triples while clearing only incompatible d
   assert.deepEqual(nextRuntimeTriple({ engine: 'codex', model: 'gpt-6-sol', effort: 'ultra' }, 'engine', 'claude', 'claude'), { engine: 'claude', model: '', effort: '' });
   assert.throws(() => runtimeSettingsPatch({ engine: 'unknown' }), /no longer enabled/);
   assert.throws(() => nextRuntimeTriple({}, 'unknown', '', 'claude'), /Unknown runtime/);
+});
+
+
+test('General channel Apply batches runtime and changed access in one write', async () => {
+  const ctx = context({ engine: 'claude', model: 'opus', manageAccess: 'members', allowNetwork: false, managers: [] });
+  await renderGeneral(ctx, ui);
+  let writes = 0;
+  const patch = ctx.patch;
+  ctx.patch = updater => { writes++; return patch(updater); };
+  await handleGeneral('settings.runtime.apply', { scope: 'channel', channel_engine: 'codex', channel_model: 'gpt-6-sol', channel_effort: 'high',
+    access_mode: 'worker', access_allowNetwork: 'on', access_managers: '29:guest', access_access: 'admins' }, ctx, ui);
+  assert.equal(writes, 1);
+  assert.equal(ctx.meta.engine, 'codex'); assert.equal(ctx.meta.allowNetwork, true); assert.equal(ctx.meta.allowBash, true);
+  assert.equal(ctx.meta.access, 'admins'); assert.deepEqual(ctx.meta.managers, ['29:guest']);
+});
+
+test('General thread Apply refuses channel Access edits without changing runtime', async () => {
+  const ctx = context({ engine: 'claude', model: 'opus', manageAccess: 'members', allowNetwork: false });
+  await renderGeneral(ctx, ui);
+  await assert.rejects(handleGeneral('settings.runtime.apply', { scope: 'thread', thread_engine: 'codex', thread_model: 'gpt-6-sol', thread_effort: 'high', access_allowNetwork: 'on' }, ctx, ui), /Access settings apply to the channel only/);
+  assert.equal(await getThreadEngine(ctx.entry.slug, ctx.sessionKey), ''); assert.equal(ctx.meta.allowNetwork, false);
+});
+
+test('General access validation failure never partially saves the runtime batch', async () => {
+  const ctx = context({ engine: 'claude', model: 'opus', manageAccess: 'members', allowNetwork: false });
+  await renderGeneral(ctx, ui);
+  const data = { scope: 'channel', channel_engine: 'codex', channel_model: 'gpt-6-sol', channel_effort: 'high', access_allowNetwork: 'on' };
+  ctx.meta.allowNetwork = true;
+  await assert.rejects(handleGeneral('settings.runtime.apply', data, ctx, ui), /access settings changed/);
+  assert.equal(ctx.meta.engine, 'claude');
+  ctx.meta.allowNetwork = false;
+  ctx.meta.manageAccess = 'admins';
+  await assert.rejects(handleGeneral('settings.runtime.apply', data, ctx, ui), /current channel managers/);
+  assert.equal(ctx.meta.engine, 'claude'); assert.equal(ctx.meta.allowNetwork, false);
+});
+
+test('General batch rejects unrendered controls and former members', async () => {
+  const ctx = context({ engine: 'claude', model: 'opus' });
+  await renderGeneral(ctx, ui);
+  const data = { scope: 'channel', channel_engine: 'codex', channel_model: 'gpt-6-sol', channel_effort: 'high' };
+  await assert.rejects(handleGeneral('settings.runtime.apply', { ...data, access_mode: 'worker' }, ctx, ui), /not available in this form/);
+  ctx.meta.manageAccess = 'members'; await renderGeneral(ctx, ui);
+  await assert.rejects(handleGeneral('settings.runtime.apply', { ...data, access_allowedUsers: '29:former' }, ctx, ui), /current human/);
+  assert.equal(ctx.meta.engine, 'claude'); assert.equal(ctx.meta.allowedUsers, undefined);
+});
+
+test('General has no individual access Apply buttons and ignores unchanged Access for thread Apply', async () => {
+  const ctx = context({ engine: 'claude', model: 'opus', manageAccess: 'members', allowNetwork: false });
+  const { body } = await renderGeneral(ctx, ui);
+  assert.equal(body.flatMap(row => row.actions || []).filter(action => action.verb === 'settings.access').length, 0);
+  await handleGeneral('settings.runtime.apply', { scope: 'thread', thread_engine: 'codex', thread_model: 'gpt-6-sol', thread_effort: 'high', access_allowNetwork: 'off', access_mode: 'read' }, ctx, ui);
+  assert.equal(await getThreadEngine(ctx.entry.slug, ctx.sessionKey), 'codex'); assert.equal(ctx.meta.allowNetwork, false);
+});
+
+
+test('General edits survive navigation without refreshing original scope baselines', async () => {
+  const ctx = context({ engine: 'claude', model: 'opus', manageAccess: 'members', allowNetwork: false });
+  ctx.state.tab = 'general';
+  await renderGeneral(ctx, ui);
+  const original = structuredClone(ctx.state.runtimeBaseline);
+  captureGeneralDraft({ channel_engine: 'codex', channel_model: 'gpt-6-sol', channel_effort: 'high', access_allowNetwork: 'on', arbitrary: 'ignored' }, ctx);
+  ctx.state.tab = 'skills';
+  captureGeneralDraft({ channel_engine: 'claude' }, ctx);
+  ctx.state.tab = 'general';
+  const { body } = await renderGeneral(ctx, ui);
+  assert.equal(body.find(row => row.id === 'channel_engine').value, 'codex');
+  assert.equal(body.find(row => row.id === 'channel_model').value, 'gpt-6-sol');
+  assert.equal(body.find(row => row.id === 'access_allowNetwork').value, 'on');
+  assert.deepEqual(ctx.state.runtimeBaseline, original); assert.equal(ctx.state.generalDraft.inputs.arbitrary, undefined);
+  const data = Object.fromEntries(body.filter(row => row.id).map(row => [row.id, row.value]));
+  await handleGeneral('settings.runtime.apply', { ...data, scope: 'channel' }, ctx, ui);
+  assert.equal(ctx.meta.engine, 'codex'); assert.equal(ctx.meta.allowNetwork, true); assert.equal(ctx.state.generalDraft, undefined);
+});
+
+test('General navigation preserves stale baseline and explicit Discard refreshes it', async () => {
+  const ctx = context({ engine: 'claude', model: 'opus' }); ctx.state.tab = 'general';
+  await renderGeneral(ctx, ui);
+  captureGeneralDraft({ channel_engine: 'codex', channel_model: 'gpt-6-sol', channel_effort: 'high' }, ctx);
+  ctx.meta.model = 'sonnet'; ctx.state.tab = 'mcp'; ctx.state.tab = 'general';
+  const { body } = await renderGeneral(ctx, ui);
+  const data = Object.fromEntries(body.filter(row => row.id).map(row => [row.id, row.value]));
+  await assert.rejects(handleGeneral('settings.runtime.apply', { ...data, scope: 'channel' }, ctx, ui), /settings changed/);
+  assert.equal(ctx.meta.engine, 'claude'); assert.equal(ctx.meta.model, 'sonnet');
+  await handleGeneral('settings.general.discard', {}, ctx, ui);
+  const refreshed = await renderGeneral(ctx, ui);
+  assert.equal(refreshed.body.find(row => row.id === 'channel_model').value, 'sonnet');
+  assert.equal(ctx.state.runtimeBaseline.channel.model, 'sonnet');
+});
+
+test('General captures partial navigation input and keeps thread baseline independent', async () => {
+  const ctx = context({ engine: 'claude', model: 'opus' }); ctx.state.tab = 'general';
+  await renderGeneral(ctx, ui);
+  captureGeneralDraft({ channel_engine: 'codex' }, ctx);
+  const first = await renderGeneral(ctx, ui);
+  assert.equal(first.body.find(row => row.id === 'channel_engine').value, 'codex');
+  assert.equal(first.body.find(row => row.id === 'channel_model').value, 'opus');
+  await setThreadModel(ctx.entry.slug, ctx.sessionKey, 'sonnet');
+  captureGeneralDraft({ thread_engine: 'codex', thread_model: 'gpt-6-sol', thread_effort: 'high' }, ctx);
+  const second = await renderGeneral(ctx, ui);
+  const data = Object.fromEntries(second.body.filter(row => row.id).map(row => [row.id, row.value]));
+  await assert.rejects(handleGeneral('settings.runtime.apply', { ...data, scope: 'thread' }, ctx, ui), /settings changed/);
+  assert.equal(await getThreadModel(ctx.entry.slug, ctx.sessionKey), 'sonnet'); assert.equal(await getThreadEngine(ctx.entry.slug, ctx.sessionKey), '');
 });

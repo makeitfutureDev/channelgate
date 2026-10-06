@@ -39,7 +39,7 @@ import { loadOrCreateEgressCa } from "./ca.js";
 import { createEgressProxy } from "./proxy.js";
 import { normalizeHost } from "./rules.js";
 import { resolveEgressGrant, revokeMissing } from "./grants.js";
-import { isChannelLive, isOwnerLive, otherOwnerActive, otherSshOpen } from "./liveness.js";
+import { isChannelLive, isThreadLive, otherThreadActive, isOwnerLive, otherOwnerActive, otherSshOpen } from "./liveness.js";
 import { activeEditorLeases } from "../../runtimes/container/editor-lease.js";
 import { containerName } from "../../runtimes/container/names.js";
 import { engineHostsFor, hostOfUrl } from "./engine-hosts.js";
@@ -150,8 +150,14 @@ function editorAttached(ctx) {
 // was issued to; the organization's from any channel), then liveness (liveness.js).
 export function canUseGrant(grant, ctx) {
   const channelId = String(ctx?.channelId || "");
+  if (!["organization", "channel", "thread", "personal", "relay"].includes(grant?.scope)) return { ok: false, reason: "unknown-scope" };
   if (!channelId) return { ok: false, reason: "unbound-channel" };
   if (grant.scope !== "organization" && String(grant.channelId || "") !== channelId) return { ok: false, reason: "other-channel" };
+  if (grant.scope === "thread") {
+    if (!isThreadLive(channelId, grant.owner)) return { ok: false, reason: "thread-not-live" };
+    if (otherThreadActive(channelId, grant.owner) || editorAttached(ctx)) return { ok: false, reason: "another-thread-active" };
+    return { ok: true };
+  }
   if (grant.scope === "personal") {
     if (!isOwnerLive(channelId, grant.owner)) return { ok: false, reason: "owner-not-live" };
     if (otherSshOpen(channelId, grant.owner)) return { ok: false, reason: "another-person-ssh-session" };
@@ -233,6 +239,12 @@ function watchConfig(log) {
     try {
       if (change.kind === "org-env") revokeMissing({ scope: "organization", present: Object.keys(getOrgEnv()) });
       else if (change.kind === "user" && change.userId) revokeMissing({ scope: "personal", ownerId: change.userId, present: Object.keys(await getUserEnv(change.userId)) });
+      else if (change.kind === "thread-settings" && change.slug && change.threadKey && change.section === "secrets") {
+        const index = await getChannelsIndex();
+        const channelId = Object.entries(index).find(([, entry]) => entry?.slug === change.slug)?.[0];
+        const settings = (await import("../thread-settings.js")).getThreadSettings(change.slug, change.threadKey, "secrets");
+        if (channelId) revokeMissing({ scope: "thread", channelId, ownerId: change.threadKey, present: Object.keys(normalizeChannelEnv(settings?.env)) });
+      }
       else if (change.kind === "channel-meta" && change.slug) {
         const meta = await getChannelMeta(change.slug);
         if (meta?.channelId) revokeMissing({ scope: "channel", channelId: meta.channelId, present: Object.keys(normalizeChannelEnv(meta.env)) });

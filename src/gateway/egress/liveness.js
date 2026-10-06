@@ -24,12 +24,12 @@ let sshSource = () => liveSshSessions();
 
 // → release(). Idempotent: a second call does nothing, so a finally block and an error path may
 // both call it.
-export function markLive({ channelId, ownerId = "", kind, id = "" } = {}) {
+export function markLive({ channelId, ownerId = "", kind, id = "", threadKey = "" } = {}) {
   if (!LIVE_KINDS.includes(kind)) throw new Error(`unknown liveness kind: ${kind}`);
   const channel = String(channelId || "");
   if (!channel) return () => {};
   const key = `${kind}:${id || randomUUID()}:${randomUUID()}`;
-  live.set(key, { channelId: channel, ownerId: String(ownerId || ""), kind, id: String(id || ""), since: Date.now() });
+  live.set(key, { channelId: channel, ownerId: String(ownerId || ""), kind, id: String(id || ""), threadKey: String(threadKey || (kind === "turn" ? id : "") || ""), since: Date.now() });
   let released = false;
   return () => {
     if (released) return;
@@ -46,14 +46,14 @@ function sshSessionsIn(channelId) {
 
 // The most recent live TURN in the channel (a turn's liveness id is its thread key) →
 // { threadKey, ownerId } or null. Where an approval card for this channel's traffic is posted.
-export function liveTurnIn(channelId) {
+export function liveTurnIn(channelId, threadKey = "") {
   const channel = String(channelId || "");
   let best = null;
   for (const entry of live.values()) {
-    if (entry.channelId !== channel || entry.kind !== "turn" || !entry.id) continue;
+    if (entry.channelId !== channel || entry.kind !== "turn" || !entry.id || (threadKey && entry.threadKey !== threadKey)) continue;
     if (!best || entry.since > best.since) best = entry;
   }
-  return best ? { threadKey: best.id, ownerId: best.ownerId } : null;
+  return best ? { threadKey: threadKey ? best.threadKey : best.id, ownerId: best.ownerId } : null;
 }
 
 export function isChannelLive(channelId) {
@@ -61,6 +61,19 @@ export function isChannelLive(channelId) {
   if (!channel) return false;
   for (const entry of live.values()) if (entry.channelId === channel) return true;
   return sshSessionsIn(channel).length > 0;
+}
+
+// Threads share the channel container. Unknown-thread work and all SSH sessions therefore
+// pause a thread placeholder, even when the author is the same person.
+export function isThreadLive(channelId, threadKey) {
+  if (!channelId || !threadKey) return false;
+  return [...live.values()].some((entry) => entry.channelId === String(channelId) && entry.threadKey === String(threadKey));
+}
+
+export function otherThreadActive(channelId, threadKey) {
+  if (!channelId || !threadKey) return true;
+  return [...live.values()].some((entry) => entry.channelId === String(channelId) && entry.threadKey !== String(threadKey))
+    || sshSessionsIn(channelId).length > 0;
 }
 
 export function isOwnerLive(channelId, ownerId) {

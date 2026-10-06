@@ -33,7 +33,7 @@ function pager(ui, pageKey, page, totalPages, extra = {}) {
   if (page + 1 < totalPages) actions.push(ui.execute('Next', 'settings.catalog.page', { page: pageKey, index: page + 1, ...extra }, 'none'));
   return actions;
 }
-function skillItems(ctx) {
+export function skillItems(ctx) {
   const channel = new Set(channelSkillGrants(effectiveMeta(ctx.meta)).map(value => value.toLowerCase()));
   const org = orgKeys();
   const direct = new Set((ctx.meta.skills || []).map(value => value.toLowerCase()));
@@ -48,7 +48,7 @@ function skillItems(ctx) {
   for (const key of ctx.meta.skills || []) if (!rows.has(key.toLowerCase())) rows.set(key.toLowerCase(), { key, name: key, description: 'Unavailable in catalog', direct: true, active: true, inherited: org.has(key.toLowerCase()) });
   return [...rows.values()].sort((a, b) => Number(b.active) - Number(a.active) || a.name.localeCompare(b.name));
 }
-async function cloudItems(ctx, engine) {
+export async function cloudItems(ctx, engine) {
   const field = selectionFieldForEngine(engine);
   const direct = ctx.meta[field] || [];
   const org = getOrgAccessGrants()[field] || [];
