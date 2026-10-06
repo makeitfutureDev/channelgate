@@ -221,6 +221,7 @@ function paintModelShortcuts(shortcuts) {
   const box = document.getElementById("model-shortcuts-editor");
   box.replaceChildren();
   for (const [name, target] of Object.entries(shortcuts || {})) addModelShortcutRow(name, target);
+  document.getElementById("add-model-shortcut").disabled = false;
 }
 
 function collectModelShortcuts() {

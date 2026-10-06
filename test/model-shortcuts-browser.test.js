@@ -28,7 +28,7 @@ test("settings creates, repoints and removes model shortcuts through the live ca
   const errors = [];
   page.on("pageerror", (error) => errors.push(error.message));
   await page.goto(`http://127.0.0.1:${server.address().port}/settings`);
-  await page.waitForFunction(() => globalThis.document.querySelector("#settings-dirty-msg")?.textContent === "All changes saved");
+  await page.waitForFunction(() => globalThis.document.querySelector("#add-model-shortcut")?.disabled === false);
   const persist = async () => {
     const response = page.waitForResponse((r) => r.url().endsWith("/api/settings") && r.request().method() === "PUT");
     await page.locator("#save-settings").click();
