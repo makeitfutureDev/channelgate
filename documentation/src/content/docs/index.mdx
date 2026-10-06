@@ -1,0 +1,35 @@
+---
+title: ChannelGate documentation
+description: Install, connect, and operate AI agents in your team chat.
+template: splash
+hero:
+  title: Your team’s agents. Your environment.
+  tagline: Install ChannelGate, connect your chat, and give each conversation a governed workspace.
+  actions:
+    - text: Start your first conversation
+      link: /docs/getting-started
+      icon: right-arrow
+      variant: primary
+    - text: Installation guide
+      link: /docs/installation
+      icon: document
+---
+
+import { CardGrid, LinkCard } from '@astrojs/starlight/components';
+
+ChannelGate is a self-hosted Linux gateway that runs Claude Code and Codex in your team chat. Each conversation has its own container, work folder, and persistent memory; each thread has its own engine session.
+
+<CardGrid>
+  <LinkCard title="Connect your chat" description="Set up Slack, or review Microsoft Teams and Google Chat Beta support." href="/docs/platforms" />
+  <LinkCard title="Engines and permissions" description="Choose an engine and understand modes, tools, and approvals." href="/docs/engines" />
+  <LinkCard title="Skills and plugins" description="Share workflows, grant skills, and manage reusable instructions." href="/docs/skills" />
+  <LinkCard title="Operate your deployment" description="Containers, updates, backups, and troubleshooting." href="/docs/operations" />
+  <LinkCard title="Privacy and data flow" description="Understand storage, credentials, and external provider requests." href="/docs/privacy" />
+  <LinkCard title="License keys and limits" description="Activate an organization key and understand usage limits." href="/docs/licensing" />
+</CardGrid>
+
+## Find your next step
+
+New operator? Follow [installation](/docs/installation), then [your first conversation](/docs/getting-started). Managing an existing deployment? Start with [operations](/docs/operations) and [compatibility](/docs/compatibility).
+
+For release changes, read the [changelog](/docs/changelog). For help, see [support](/docs/support).
