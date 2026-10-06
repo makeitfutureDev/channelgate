@@ -26,13 +26,21 @@
   feature into its configuration link and retain `/docs` navigation. Verify current-page state,
   previous/next article controls, search results, themes, and mobile navigation. At 390×844
   inspect horizontal overflow, menu usability, and browser console errors.
-- [ ] Combined Vercel preview: all 75 routes, nested configuration/features, assets, search and
-  sitemap must work on the existing website project. Compare unchanged website/blog/RSS files
-  and preserve existing API rewrites and license public-key response. Recheck current production
-  before promotion so a newer website/blog deployment is not overwritten.
-- [ ] Production: publish the exact verified candidate, then check all 75 route responses,
-  production canonicals, directory navigation, search, themes/mobile controls, sitemap and
-  unchanged main website/blog/API endpoints. Record deployment ID and observed results.
+- [x] Combined Vercel preview: all 75 routes, nested configuration/features, assets, search and
+  sitemap passed on deployment `dpl_HfxoR39FU2Ep5G8fTEykCG6VFjYx`. All 77 original non-sitemap website files
+  were unchanged locally; six website/blog/RSS responses matched the recovered source in preview
+  (excluding Vercel toolbar injection). Existing API rewrites and the license PEM response passed. The production ID
+  was still `dpl_WFgAFJozrUktbCwWypZb4s1qyzSp` immediately before promotion.
+- [x] Automatic website build: the existing project build command invokes the public
+  `documentation/scripts/vercel-build.sh`; Vercel cloned public beta into a temporary checkout,
+  built 75 pages and checked 7,540 links, then exported only docs and sitemap into the static
+  website. The checkout is removed; no private website source was committed publicly.
+- [x] Production: promoted the verified preview; Vercel production deployment
+  `dpl_9jr56xsg2dothGHQhFLFQkZrMoyb` is Ready and aliased to `channelgate.dev`. All 75
+  page responses passed canonical/sidebar checks; CSS, Pagefind, unique 75-entry docs sitemap
+  and license PEM returned 200. Six main website/blog/RSS routes matched source bytes exactly.
+  Live browser verified the welcome sidebar, directory navigation, search results, themes and
+  mobile menu without horizontal overflow or console errors.
 - [x] Source gates: static check passed (777 JavaScript files); staged-file secret scan
   passed (1,020 files/blobs). Documentation audit at the high-severity gate passed; it reports
   10 moderate transitive findings from Expressive Code/PostCSS, no high/critical findings. This handbook-only change does not claim new live Claude/Codex
