@@ -25,8 +25,10 @@ product overview.
 
 - Teams `/settings` now offers the same six sections as Slack, including channel defaults and
   session overrides, variables, MCP connections, skills, automations and session resume. The
-  console opens privately, uses explicit Apply buttons and confirms removals without revealing
+  console opens in the original channel/thread or chat, uses explicit Apply buttons and confirms removals without revealing
   stored credentials. `/secrets` opens Variables directly.
+  Buttons update the same requester-bound card. Shared cards omit personal/organization
+  credential metadata, ungranted private connection catalogs and administrator session commands.
 
 - Users already allowed in a channel, including named guests, can enable their own SSH access
   without manager or admin approval. Registering/removing personal keys and revoking one’s

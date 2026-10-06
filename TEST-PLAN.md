@@ -8709,7 +8709,7 @@ located and compared by sha256 only):
   filters, save/reload and unavailable-template handling. This is engine-independent presentation;
   no engine execution or grant-resolution behavior changes.
 
-## Teams private settings parity
+## Teams conversation settings parity
 
 Automated:
 
@@ -8725,8 +8725,12 @@ channel/session isolation, approved non-admin runtime choices, incompatible/disa
 rejection, Codex channel-login locks, per-field writes ignoring stale neighbours, current manager
 and roster checks, demotion during roster/discovery, all three variable scopes through confirmation,
 write-only/masked credentials, host-rule rotation, MCP discovery/grants, skills/template inheritance,
-automation paging and foreign IDs, one-use confirmation replay, bounded cards and private-delivery
-refusal. Existing Slack modal/wizard cases exercise the shared runtime validators.
+automation paging and foreign IDs, one-use confirmation replay, bounded cards, source-channel
+delivery without a DM, same-message updates for Execute/Submit, mismatched bot recipients,
+shared-card private metadata isolation and forged private-scope rejection. Native-card cases
+cover Teams error envelopes, retry deduplication, malformed inputs and rejected private Submit
+attempts without card writes. Existing Slack
+modal/wizard cases exercise the shared runtime validators.
 
 Live acceptance — **unexecuted; must run once with Claude and once with Codex**. Private QA
 registry records are also **pending**: this task's available connector is the shared identity,
@@ -8738,12 +8742,16 @@ personal chat with the bot installed; approved owner/member, nonmember, current 
 identities; one direct skill, one organization skill, two templates; one recurring task, one
 one-time reminder and one loop; synthetic variables with no live credentials. Start the channel
 on the engine under test and record its original slug/session key and safe metadata before each
-case. Also run a group with an external member to check tenant/private-delivery behavior.
+case. Also run a group with an external member to check tenant/channel delivery behavior.
 
 1. In a channel/thread or group, quote the original message or bot reply and send
-   `@bot /settings`; in personal chat send `/settings`. Require a private card with all six tabs,
-   a source-room private-delivery notice only, and unchanged original workspace/session identity.
-   Block proactive DM delivery: require an actionable refusal and no console in the group.
+   `@bot /settings`; in personal chat send `/settings`. Require a card with all six tabs in the
+   original channel/thread or chat, unchanged workspace/session identity and no proactive DM.
+   Block proactive DM delivery: settings still opens in the channel. Use each tab's actual
+   Execute and Submit action and require the same posted message ID to update. Another member
+   cannot operate the owner's card; they can open an independent card. Confirm installed manifest
+   bot ID, configured App ID and Azure messaging endpoint match the target beta bot; a different
+   recipient must be refused. Record sender identity and callback delivery privately.
 2. General: switch a channel field, then a session field; require only the dispatched scope/field
    and invalid dependents to change. Models/efforts follow their own engine; inherited labels name
    their actual fallback. Open a dedicated-Codex-login fixture and require its engine to remain
@@ -8756,8 +8764,10 @@ case. Also run a group with an external member to check tenant/private-delivery 
    while the roster/discovery request is held: require denial and no mutation. Large/over-budget
    rosters explicitly defer complete-list edits without dropping grants; former-member selections
    show a replacement warning before Apply.
-4. Variables/MCPs: rotate synthetic channel and personal values; admin additionally rotates an
-   organization value. Require blank/masked inputs after refresh, masked listing only, preserved
+4. Variables/MCPs: in the channel rotate synthetic channel values; in an explicitly opened
+   personal conversation also rotate personal and admin organization values. The shared card
+   must omit personal/org names, token suffixes/account labels and ungranted private MCP catalogs;
+   forged private-scope actions on it fail before confirmation or mutation. Require blank/masked inputs after refresh, masked listing only, preserved
    Used-on-hosts unless explicitly replaced/cleared, and no values in card JSON or event logs.
    Remove each scope through a confirmation and replay the token: exactly one effect. A member
    cannot forge an organization write or Cloud MCP change. Blank connection tokens keep existing
@@ -8768,8 +8778,10 @@ case. Also run a group with an external member to check tenant/private-delivery 
 6. Automations: page past twelve rows, pause/resume a recurring task, cancel a one-time reminder,
    stop a loop and replay the confirmation. Only this conversation's rows may change; one-time
    and loop pause attempts fail; enabled-schedule limits still apply when resuming.
-7. Resume: after a turn, require the current session ID, its minting engine and correct container
-   terminal command. Clear the session and refresh: no stale ID/command. Navigate every page in
+7. Resume: after a project turn, require the current session ID, its minting engine and correct
+   container terminal command. Administrator sessions never expose commands in a shared card;
+   current admins can access them in authenticated settings or an explicit personal conversation.
+   Clear the session and refresh: no stale ID/command. Navigate every page in
    Teams desktop/mobile and exercise Execute plus legacy Submit fallback without duplicate effects.
 8. Record exact fixture, engine, prompts/actions, safe before/after scope evidence, observed client
    card placement and pass/fail for each case in the private registry through the personal identity.

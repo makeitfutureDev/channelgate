@@ -9,7 +9,7 @@ import { createFileDownloadGrantUrl } from '../../web/file-download.js';
 import { createFileEditorGrantUrl } from '../../web/file-editor.js';
 import { createFileUploadGrantUrl } from '../../web/file-upload.js';
 import { createTeamsFileConsent } from './file-consent.js';
-import { createTeamsInteractionHandler } from './interactions.js';
+import { createTeamsInteractionHandler, normalizeTeamsInteraction } from './interactions.js';
 import { handlePlatformApproval } from '../../slack/approvals.js';
 import { acquireKeyedLock } from '../../util/keyed-lock.js';
 import { buildTeamsSettings, createTeamsSettingsContext, handleTeamsSettings } from './settings.js';
@@ -47,16 +47,20 @@ export function createTeamsControls({ connector, now = Date.now, authorize = tea
     const destination = inConversation || state.message.isDM ? state.message.rawConversationId : await connector.openDm(state.message.userId);
     if (!destination) throw new Error('Open a personal chat with the bot first; private controls could not be delivered.');
     prune(); const id = randomUUID();
-    state = { ...state, deliveryId: destination, expires: now() + 15 * 60_000 };
+    state = { ...state, deliveryId: destination, inConversation, expires: now() + 15 * 60_000 };
     states.set(id, state);
-    try { await connector.postCard({ conversationId: destination, threadKey: inConversation ? state.message.threadKey : undefined, card: await build(state, id), text: 'Private conversation controls' }); }
+    try {
+      const posted = await connector.postCard({ conversationId: destination, threadKey: inConversation ? state.message.threadKey : undefined,
+        card: await build(state, id), text: inConversation ? 'Conversation settings' : 'Private conversation controls' });
+      state.messageId = posted?.messageId || '';
+    }
     catch (error) { states.delete(id); throw error; }
   }
   async function onCommand(args) {
     const { message, reply } = args;
     if (message.trigger === 'reaction') return false;
     if (message.text.trim().toLowerCase() === '/help') {
-      await reply('Commands: /settings (private conversation settings), /files [folder], /secrets (private Variables page), /sendfile <path> (personal file consent), /status, /model, /effort, /stop, /cancel, /clear. In group chats, quote the original message or bot reply and mention the bot to control that session. Voice notes require local Whisper.');
+      await reply('Commands: /settings (settings in this conversation), /files [folder], /secrets (channel Variables page), /sendfile <path> (personal file consent), /status, /model, /effort, /stop, /cancel, /clear. In group chats, quote the original message or bot reply and mention the bot to control that session. Voice notes require local Whisper.');
       return true;
     }
     const match = /^\/(settings|files|secrets|sendfile)(?:\s+(.*))?$/is.exec(message.text.trim());
@@ -69,11 +73,15 @@ export function createTeamsControls({ connector, now = Date.now, authorize = tea
         return true;
       }
       const command = match[1].toLowerCase();
-      // Slack's modal is private. Teams' equivalent lives in the requester's personal chat,
-      // while its state still points to the original conversation and session.
-      await deliverCard({ ...args, tab: command === 'secrets' ? 'secrets' : 'general' },
-        (state, id) => command === 'files' ? files(state, id, match[2] || '') : settings(state, id));
-      if (!message.isDM) await reply('I sent the controls to your personal chat.');
+      // Settings stay with the conversation/session that opened them. File controls remain private.
+      const inConversation = command !== 'files';
+      const recipient = message.raw?.activity?.recipient?.id;
+      if (inConversation && recipient && connector.botId && recipient !== connector.botId) {
+        throw new Error('This command is addressed to a different bot. Check the Teams app registration and messaging endpoint.');
+      }
+      await deliverCard({ ...args, sharedSettings: inConversation && !message.isDM, tab: command === 'secrets' ? 'secrets' : 'general' },
+        (state, id) => command === 'files' ? files(state, id, match[2] || '') : settings(state, id), inConversation);
+      if (!message.isDM && !inConversation) await reply('I sent the controls to your personal chat.');
     } catch (error) { await reply(error.message); }
     return true;
   }
@@ -90,7 +98,12 @@ export function createTeamsControls({ connector, now = Date.now, authorize = tea
         prune();
         if (states.get(interaction.data.stateId) !== state) throw new Error('These controls expired. Reopen them.');
         const ctx = createTeamsSettingsContext(state, { connector, authorize });
-        return response(await handleTeamsSettings(interaction.action, interaction.data, ctx, interaction.data.stateId));
+        const updated = await handleTeamsSettings(interaction.action, interaction.data, ctx, interaction.data.stateId);
+        // Updating the bot's stored card works for both Execute and Submit clients and avoids
+        // depending on the client's user-specific Execute response replacing a shared message.
+        if (state.inConversation && state.messageId) await connector.updateCard({ conversationId: state.deliveryId,
+          messageId: state.messageId, card: updated, text: 'Conversation settings' });
+        return response(updated);
       } finally { release(); }
     }
     const context = await authorize(grant(state), { connector });
@@ -126,15 +139,31 @@ export function createTeamsControls({ connector, now = Date.now, authorize = tea
     throw new Error('Unsupported Teams action.');
   } });
   async function onInvoke(activity) {
+    if (activity.recipient?.id && connector.botId && activity.recipient.id !== connector.botId) {
+      return response(card('Bot registration mismatch', [text('Reopen settings with the bot installed in this channel. An administrator must check its Teams app registration and messaging endpoint.')]));
+    }
     if (activity.type === 'invoke' && activity.name === 'fileConsent/invoke') return consent.handle(activity);
+    // Only an existing private card owned by this actor can receive a legacy replacement.
+    // Capture its server-held destination before dispatch, which may consume the state.
+    let privateSubmitState;
+    if (activity.type === 'message') {
+      try {
+        const interaction = normalizeTeamsInteraction(activity);
+        const state = states.get(interaction.data.stateId);
+        if (state && !state.inConversation && state.expires >= now()
+          && state.message.userId === interaction.actorId && state.deliveryId === interaction.nativeConversationId) {
+          privateSubmitState = state;
+        }
+      } catch { /* Invalid submissions have no card-update authority. */ }
+    }
     const result = await dispatchInvoke(activity);
     // Legacy Submit is a message activity: HTTP response cards are ignored by Teams clients.
-    // Deliver the replacement explicitly, only to the already verified interaction conversation.
+    // Shared settings update inside their authorized dispatcher; private cards use stored IDs.
     if (activity.type === 'message' && result.body?.type === 'application/vnd.microsoft.card.adaptive') {
-      const destination = String(activity.conversation.id).split(';messageid=')[0];
-      const update = { conversationId: destination, messageId: activity.replyToId, card: result.body.value, text: 'Conversation controls' };
-      if (update.messageId) await connector.updateCard(update);
-      else await connector.postCard(update);
+      if (privateSubmitState?.messageId && privateSubmitState.expires >= now()) {
+        await connector.updateCard({ conversationId: privateSubmitState.deliveryId,
+          messageId: privateSubmitState.messageId, card: result.body.value, text: 'Conversation controls' });
+      }
       return { status: 200, body: {} };
     }
     return result;

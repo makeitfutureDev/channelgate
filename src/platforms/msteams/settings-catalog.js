@@ -41,7 +41,7 @@ function skillItems(ctx) {
   for (const skill of listSkills({ viewer: ctx.userIsAdmin ? '*' : ctx.ownerId })) {
     const key = skill.slug.toLowerCase();
     const active = channel.has(key) || org.has(key);
-    if (skill.visibility === 'personal' || !canSeeSkill(skill, { userId: ctx.ownerId, isAdmin: ctx.userIsAdmin, active })) continue;
+    if (skill.visibility === 'personal' || !canSeeSkill(skill, { userId: ctx.ownerId, isAdmin: ctx.userIsAdmin && !ctx.isShared, active })) continue;
     rows.set(key, { key: skill.slug, name: skill.name || skill.slug, description: skill.description || '', active, inherited: org.has(key), direct: direct.has(key) });
   }
   // Preserve removal controls for legacy grants whose source disappeared.
@@ -54,7 +54,8 @@ async function cloudItems(ctx, engine) {
   const org = getOrgAccessGrants()[field] || [];
   const directKeys = new Set(direct.map(item => keyFor(engine, item)));
   const inheritedKeys = new Set(org.map(item => keyFor(engine, item)));
-  const available = await requireAdapter(engine).discoverMcps({ channelId: engine === 'codex' && ctx.meta.codexAuthSource === 'channel' ? ctx.channelId : '' });
+  // A channel card must not publish the administrator's ungranted/private connection catalog.
+  const available = ctx.isShared ? [] : await requireAdapter(engine).discoverMcps({ channelId: engine === 'codex' && ctx.meta.codexAuthSource === 'channel' ? ctx.channelId : '' });
   const rows = new Map();
   for (const source of [...available, ...direct, ...org]) {
     const key = keyFor(engine, source);
@@ -67,11 +68,13 @@ async function cloudItems(ctx, engine) {
 export async function renderCatalogPage(page, ctx, ui) {
   const body = [], actions = [];
   if (page === 'secrets') {
-    body.push(ui.heading('Variables'), ui.text('Values are write-only. Rotating a value keeps its existing destination rule unless you replace or clear Used on hosts. Personal variables belong to you; organization variables are shared across conversations.'));
+    body.push(ui.heading('Variables'), ui.text('Values are write-only. Rotating a value keeps its existing destination rule unless you replace or clear Used on hosts.'),
+      ui.text(ctx.isShared ? 'This channel card manages channel variables. Personal and organization variables remain in authenticated settings.'
+        : 'Personal variables belong to you; organization variables are shared across conversations.'));
     const rows = [
       ...listChannelEnv(ctx.meta).map(row => ({ ...row, scope: 'channel' })),
-      ...(await listUserEnv(ctx.ownerId)).map(row => ({ ...row, scope: 'personal' })),
-      ...listOrgEnv().map(row => ({ ...row, scope: 'organization' })),
+      ...(ctx.isShared ? [] : (await listUserEnv(ctx.ownerId)).map(row => ({ ...row, scope: 'personal' }))),
+      ...(ctx.isShared ? [] : listOrgEnv().map(row => ({ ...row, scope: 'organization' }))),
     ];
     const slice = pageSlice(rows, ctx.state.variablePage);
     body.push(ui.text(`${rows.length} variables — page ${slice.page + 1}/${slice.totalPages}`));
@@ -82,8 +85,9 @@ export async function renderCatalogPage(page, ctx, ui) {
         ui.execute('Remove', 'settings.variable.remove', { variableScope: row.scope, name: row.name }, 'none'),
       ]));
     }
-    const scope = SCOPES.includes(ctx.state.variableScope) && (ctx.state.variableScope !== 'organization' || ctx.userIsAdmin) ? ctx.state.variableScope : 'channel';
-    body.push(ui.heading('Add or update variable'), ui.choice('variableScope', 'Scope', scope, SCOPES.filter(value => value !== 'organization' || ctx.userIsAdmin).map(value => ({ title: label(value), value }))),
+    const scopes = ctx.isShared ? ['channel'] : SCOPES.filter(value => value !== 'organization' || ctx.userIsAdmin);
+    const scope = scopes.includes(ctx.state.variableScope) ? ctx.state.variableScope : 'channel';
+    body.push(ui.heading('Add or update variable'), ui.choice('variableScope', 'Scope', scope, scopes.map(value => ({ title: label(value), value }))),
       ui.input('variableName', 'Name', ctx.state.variableName || ''), ui.input('variableValue', 'New value (never displayed)', ''),
       ui.choice('variableHostsMode', 'Used on hosts', 'preserve', [{ title: 'Keep existing rule', value: 'preserve' }, { title: 'Replace rule with hosts below', value: 'replace' }, { title: 'Clear declared rule', value: 'clear' }]),
       ui.input('variableHosts', 'Hosts (comma-separated; HTTPS hostnames only)', ''));
@@ -112,9 +116,12 @@ export async function renderCatalogPage(page, ctx, ui) {
   }
   if (page !== 'mcp') return null;
   const meta = ctx.meta;
-  body.push(ui.heading('MCP connections'), ui.text(`Composio (${getComposioMode()}): ${configured(meta.composioToken)}${meta.composioTokenLabel ? ` · ${meta.composioTokenLabel}` : ''}\nToolbox: ${configured(meta.toolboxToken)}\nMake MCP: ${configured(meta.makeToolboxUrl && meta.makeToolboxKey)}\nOrganization Composio: ${configured(getDefaultComposioToken())}\nOrganization Toolbox: ${configured(getDefaultToolboxToken())}`),
+  const connectionSummary = ctx.isShared
+    ? `Composio (${getComposioMode()}): ${meta.composioToken ? 'Configured' : 'Not configured'}\nToolbox: ${meta.toolboxToken ? 'Configured' : 'Not configured'}\nMake MCP: ${meta.makeToolboxUrl && meta.makeToolboxKey ? 'Configured' : 'Not configured'}`
+    : `Composio (${getComposioMode()}): ${configured(meta.composioToken)}${meta.composioTokenLabel ? ` · ${meta.composioTokenLabel}` : ''}\nToolbox: ${configured(meta.toolboxToken)}\nMake MCP: ${configured(meta.makeToolboxUrl && meta.makeToolboxKey)}\nOrganization Composio: ${configured(getDefaultComposioToken())}\nOrganization Toolbox: ${configured(getDefaultToolboxToken())}`;
+  body.push(ui.heading('MCP connections'), ui.text(connectionSummary),
     ui.text('Leave token fields blank to keep their stored value.'), ui.input('composioToken', 'New Composio token', ''),
-    ui.input('composioTokenLabel', 'Composio account label', meta.composioTokenLabel || ''), ui.input('toolboxToken', 'New Toolbox token', ''),
+    ui.input('composioTokenLabel', ctx.isShared ? 'New account label (blank keeps existing)' : 'Composio account label', ctx.isShared ? '' : meta.composioTokenLabel || ''), ui.input('toolboxToken', 'New Toolbox token', ''),
     ui.input('makeToolboxUrl', 'Make MCP server URL', meta.makeToolboxUrl || ''), ui.input('makeToolboxKey', 'New Make MCP token', ''),
     ui.buttons([ui.execute('Save connections', 'settings.connections.save')]),
     ui.text(`Inherited organization/personal credentials: ${meta.noDefaultTokens ? 'Disabled' : 'Enabled'}`),
@@ -126,6 +133,7 @@ export async function renderCatalogPage(page, ctx, ui) {
   if (disconnect.length) body.push(ui.buttons(disconnect));
   body.push(ui.heading('Cloud MCP'));
   if (!ctx.userIsAdmin) { body.push(ui.text('Only administrators can manage Cloud MCP.')); return { body, actions }; }
+  if (ctx.isShared) body.push(ui.text('Active channel connections are shown here. Browse additional private connections in authenticated settings.'));
   const engine = ctx.state.cloudEngine === 'codex' ? 'codex' : 'claude';
   body.push(ui.buttons(['claude', 'codex'].map(value => ui.execute(value === 'codex' ? 'Codex catalog' : 'Claude catalog', 'settings.catalog.page', { page: 'mcp', engine: value, index: 0 }, 'none'))));
   const all = await cloudItems(ctx, engine), slice = pageSlice(all, ctx.state.cloudPage);
@@ -146,6 +154,7 @@ async function fresh(ctx) {
 }
 function requireScope(scope, ctx) {
   if (!SCOPES.includes(scope)) throw new Error('Choose a valid variable scope.');
+  if (ctx.isShared && scope !== 'channel') throw new Error('Personal and organization variables require authenticated settings.');
   if (scope === 'organization' && !ctx.userIsAdmin) throw new Error('Only administrators can change organization variables.');
   if (scope === 'personal' && !ctx.ownerId) throw new Error('No authenticated personal account.');
 }
@@ -201,7 +210,7 @@ export async function handleCatalogAction(action, data, ctx, _ui) {
     await current.patch(stored => {
       const patch = resolveMakeToolboxUpdate(stored, { makeToolboxUrl: form.makeToolboxUrl, makeToolboxKey: form.makeToolboxKey });
       if (form.composioToken) patch.composioToken = form.composioToken;
-      if (typeof data.composioTokenLabel === 'string') patch.composioTokenLabel = form.composioTokenLabel;
+      if (typeof data.composioTokenLabel === 'string' && (!current.isShared || form.composioTokenLabel)) patch.composioTokenLabel = form.composioTokenLabel;
       if (form.toolboxToken) patch.toolboxToken = form.toolboxToken;
       return patch;
     });

@@ -60,7 +60,11 @@ test("interaction authority comes exclusively from signed envelope, form scopes 
   assert.throws(() => normalizeTeamsInteraction({ ...activity(), from: {} }), /actor/);
   let called = false;
   const denied = createTeamsInteractionHandler({ dispatch: async () => { called = true; }, authorize: async () => false });
-  assert.equal((await denied(activity())).status, 403);
+  const denial = await denied(activity());
+  assert.equal(denial.status, 200);
+  assert.equal(denial.body.statusCode, 403);
+  assert.equal(denial.body.type, 'application/vnd.microsoft.error');
+  assert.equal(denial.body.value.code, 'Forbidden');
   assert.equal(called, false);
 });
 
@@ -89,6 +93,56 @@ test("signed invoke waits for dispatcher response and retries share a single out
   assert.equal(first.code, 200);
   assert.deepEqual(first.body, second.body);
   assert.equal(first.body.value.body[1].text, "Saved");
+});
+
+test("signed Execute parsing and authorization errors use the Teams envelope without reflecting inputs", async () => {
+  let dispatched = 0;
+  const dispatch = createTeamsInteractionHandler({ dispatch: async () => { dispatched++; }, authorize: async () => false });
+  const handler = createTeamsWebhook({ appId: APP, jwks: { get: async () => jwk }, onMessage() {}, onInvoke: dispatch });
+  for (const [index, body, expected] of [
+    [0, activity({ privateValue: { secret: 'never-return-this' } }), 400],
+    [1, activity({ privateValue: 'never-return-this' }), 403],
+  ]) {
+    body.id = `invalid-${index}`;
+    const res = response();
+    await handler({ body, headers: { authorization: `Bearer ${token()}` } }, res);
+    assert.equal(res.code, 200);
+    assert.equal(res.body.statusCode, expected);
+    assert.equal(res.body.type, 'application/vnd.microsoft.error');
+    assert.equal(typeof res.body.value.message, 'string');
+    assert.ok(!JSON.stringify(res.body).includes('never-return-this'));
+  }
+  assert.equal(dispatched, 0);
+  const legacy = await dispatch({ ...activity(), type: 'message', value: { cgAction: 'settings.page', stateId: 'opaque' } });
+  assert.equal(legacy.status, 403); // Message Submit doesn't use the Execute response protocol.
+});
+
+test("verified Execute failures before or during dispatch return structured errors and retain dedupe", async () => {
+  const request = body => ({ body, headers: { authorization: `Bearer ${token()}` } });
+  const options = { appId: APP, jwks: { get: async () => jwk }, onMessage() {}, log: { error() {} } };
+  const missingHandler = createTeamsWebhook(options);
+  const unavailable = response();
+  await missingHandler(request(activity()), unavailable);
+  assert.equal(unavailable.code, 200);
+  assert.equal(unavailable.body.statusCode, 501);
+  assert.equal(unavailable.body.value.code, 'NotImplemented');
+  let calls = 0;
+  const handler = createTeamsWebhook({ ...options, onInvoke: async () => { calls++; throw new Error('secret=never-return-this'); } });
+  const incomplete = response();
+  await handler(request({ ...activity(), from: {} }), incomplete);
+  assert.equal(incomplete.code, 200);
+  assert.equal(incomplete.body.statusCode, 400);
+  assert.equal(calls, 0);
+  const first = response(), second = response();
+  await handler(request(activity()), first);
+  await handler(request(activity()), second);
+  assert.equal(first.code, 200);
+  assert.equal(first.body.statusCode, 500);
+  assert.equal(first.body.type, 'application/vnd.microsoft.error');
+  assert.equal(first.body.value.code, 'InternalServerError');
+  assert.deepEqual(first.body, second.body);
+  assert.equal(calls, 1);
+  assert.ok(!JSON.stringify(first.body).includes('never-return-this'));
 });
 
 test("forged invoke signatures and forged service URLs never reach card dispatcher", async () => {

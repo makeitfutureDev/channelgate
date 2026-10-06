@@ -695,9 +695,9 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
   updates at most every 30 seconds with elapsed time, last activity, and running subagents;
   pending progress edits finish before the final answer replaces the placeholder. Interactive
   permission escalation is not enabled by these text controls.
-- Native Adaptive Cards provide Approve/Deny/Request changes actions and a private **six-page
+- Native Adaptive Cards provide Approve/Deny/Request changes actions and a **six-page
   Settings console**: General, Variables, MCPs, Skills, Automations and Resume. `/settings` opens
-  in the requester's personal chat, keeping the original conversation and session; `/secrets`
+  in the original channel/thread or chat, keeping its conversation and session; `/secrets`
   starts on Variables. General shows both channel defaults and session pins, filters compatible
   models/efforts, labels inheritance, respects dedicated Codex login locks and offers Follow
   channel default. Teams uses explicit per-field Apply buttons, rather than Slack's save-on-pick.
@@ -711,8 +711,12 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
   catalogs/templates/automations paginate. Inputs never prefill saved secrets, new secret entries
   are masked, and destructive controls use consumed server-held confirmation tokens. Native
   secret entry follows the existing 8,000-character/16-KiB submission bounds. Resume reads the
-  current session and its engine/container terminal command at display time. A failed personal
-  delivery never exposes these cards in a group. Signed invoke/Submit envelopes establish the
+  current project session and its engine/container terminal command at display time. Shared
+  cards list channel variables only, omit personal/organization credential metadata and private
+  ungranted MCP catalogs, and never publish administrator session commands. Private scopes remain
+  available in authenticated settings or an explicitly opened personal conversation. Accepted
+  tab and Apply actions update the same server-held card message, for Execute and Submit clients.
+  The card remains requester-bound; other members open their own controls. Signed invoke/Submit envelopes establish the
   actor; opaque expiring state binds the original workspace, user and delivery conversation.
   Current membership and roles are checked again on every interaction and at sensitive writes.
   Task-module dialogs and broadcast mentions remain unimplemented. An optional approval changes

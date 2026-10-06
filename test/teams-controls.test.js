@@ -50,9 +50,9 @@ test('model form uses existing controls and consumes its state on a successful s
   const f = fixture(); await f.controls.onCommand(f.args('/settings'));
   const stateId = f.sent[0].card.body.find(item => item.type === 'ActionSet').actions[0].data.stateId;
   const payload = { stateId, engine: 'claude', model: 'default', effort: 'default' };
-  await f.controls.onInvoke(invoke(payload, 'model.save'));
+  await f.controls.onInvoke(invoke(payload, 'model.save', '29:owner', f.args('/settings').message.rawConversationId));
   assert.deepEqual(f.commands, ['/model claude default', '/effort default']);
-  await f.controls.onInvoke(invoke(payload, 'model.save')); assert.equal(f.commands.length, 2);
+  await f.controls.onInvoke(invoke(payload, 'model.save', '29:owner', f.args('/settings').message.rawConversationId)); assert.equal(f.commands.length, 2);
 });
 test('approval invocation trusts envelope identity over malicious card data', async () => {
   let received;
@@ -76,19 +76,41 @@ test('legacy Submit explicitly updates its private card', async () => {
   const f = fixture(); await f.controls.onCommand(f.args('/files'));
   const action = f.sent[0].card.actions[0];
   const activity = invoke(action.data); activity.type = 'message'; delete activity.name; activity.value = { ...action.data, cgAction: 'files.browse' };
+  activity.replyToId = 'forged-target'; activity.conversation.id += ';messageid=another-target';
   const result = await f.controls.onInvoke(activity);
   assert.deepEqual(result, { status: 200, body: {} });
   assert.equal(f.sent.length, 2); assert.equal(f.sent[1].messageId, 'card1'); assert.equal(f.sent[1].conversationId, 'a:private');
 });
 
-test('settings are private, retain the source session and reject another actor or conversation', async () => {
+test('rejected legacy Submit cannot overwrite or post a private card', async () => {
+  let time = 0; const f = fixture({ now: () => time }); await f.controls.onCommand(f.args('/files'));
+  const action = f.sent[0].card.actions[0];
+  for (const [stateId, actor, conversation] of [
+    ['forged-state', '29:owner', 'a:private'],
+    [action.data.stateId, '29:other', 'a:private'],
+    [action.data.stateId, '29:owner', 'a:other'],
+  ]) {
+    const activity = invoke({}, 'files.browse', actor, conversation);
+    activity.type = 'message'; delete activity.name;
+    activity.value = { cgAction: 'files.browse', stateId }; activity.replyToId = 'forged-target';
+    assert.deepEqual(await f.controls.onInvoke(activity), { status: 200, body: {} });
+    assert.equal(f.sent.length, 1);
+  }
+  time = 16 * 60_000;
+  const expired = invoke(action.data); expired.type = 'message'; delete expired.name;
+  expired.value = { ...action.data, cgAction: 'files.browse' };
+  assert.deepEqual(await f.controls.onInvoke(expired), { status: 200, body: {} });
+  assert.equal(f.sent.length, 1);
+});
+
+test('settings retain their source conversation, thread and actor without opening a DM', async () => {
   const f = fixture(); const args = f.args('/settings'); args.message.threadKey = 'root-message';
   await f.controls.onCommand(args);
-  assert.equal(f.sent[0].conversationId, 'a:private');
-  assert.equal(f.sent[0].threadKey, undefined);
-  assert.deepEqual(f.replies, ['I sent the controls to your personal chat.']);
+  assert.equal(f.sent[0].conversationId, args.message.rawConversationId);
+  assert.equal(f.sent[0].threadKey, 'root-message');
+  assert.deepEqual(f.replies, []);
   const data = { ...f.sent[0].card.body.find(item => item.type === 'ActionSet').actions[0].data, engine: 'claude', model: 'default', effort: 'default' };
-  for (const [actor, conversation] of [['29:other', 'a:private'], ['29:owner', args.message.rawConversationId]]) {
+  for (const [actor, conversation] of [['29:other', args.message.rawConversationId], ['29:owner', 'a:private']]) {
     const result = await f.controls.onInvoke(invoke(data, 'model.save', actor, conversation));
     assert.equal(result.body.value.body[0].text, 'Action could not be completed');
   }

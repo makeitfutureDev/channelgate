@@ -41,11 +41,14 @@ say so plainly rather than guessing at its contents.
 
 ## Conversation settings
 
-`/settings` opens the private General, Variables, MCPs, Skills, Automations and Resume pages in
-personal chat while retaining the original conversation/session. `/secrets` opens Variables.
+`/settings` opens General, Variables, MCPs, Skills, Automations and Resume in the original
+channel/thread or chat. `/secrets` opens Variables. Settings never proactively opens a personal chat.
+Buttons update the same requester-bound card; other members can open their own `/settings`.
 Each field needs Apply; changing tabs discards unsaved drafts. Runtime, channel credentials,
 skills and automation controls are available to authorized users. Access policy requires current
 managers/admins, Cloud MCP and organization variable writes require admins. Stored credential
-values are never shown or prefilled. If private delivery fails, open/install the personal bot chat;
-never put credential inputs in a shared room. Native rosters and secret inputs have size limits;
+values are never shown or prefilled. Shared cards list only channel variables and omit private
+credential metadata, ungranted private connections and administrator session commands. Personal
+and organization variables remain in authenticated settings or explicitly opened personal chats.
+Native rosters and secret inputs have size limits;
 complete oversized edits use the authenticated browser settings.
