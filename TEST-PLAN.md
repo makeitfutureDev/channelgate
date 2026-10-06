@@ -21,11 +21,17 @@
   correct guides; 390×844 menu/themes usable, document width 390 without horizontal overflow.
 - [x] Staged secret scan: 1,099 files/blobs checked; authored pages, schema examples and CI
   updates contain no detected secrets.
-- [ ] Existing-site preview: recover the latest production static source, overlay docs only,
-  compare original files, verify all 151 routes, Pagefind/CSS, sitemap and license PEM endpoint.
-  Recheck production before promotion to preserve concurrent website/blog work.
-- [ ] Production: record Ready deployment and domain aliases, all 151 route responses,
-  representative existing website/blog/RSS bytes, search and mobile navigation.
+- [x] Existing-site preview: deployment `dpl_13PjoVqsJ7mcM9qw1WPbw96VZ3mV` passed all
+  151 routes, CSS/Pagefind, unique 151-entry docs sitemap and license PEM endpoint (200). All
+  77 non-sitemap original static website files remain unchanged; six website/blog/RSS responses
+  matched the recovered source (excluding Vercel preview toolbar injection). The automatic
+  remote build also checks source-registration coverage. Production remained
+  `dpl_9jr56xsg2dothGHQhFLFQkZrMoyb` before promotion.
+- [x] Production: Ready deployment `dpl_Fh6a8Nf6Vxfm3gx6WAHC1a5Pnjd5` is aliased to
+  channelgate.dev and www. All 151 page responses passed canonical/sidebar checks; CSS,
+  Pagefind, unique 151-entry docs sitemap and license PEM returned 200. Six original website/
+  blog/RSS responses match source bytes exactly. Live browser shows all 45 mapped areas,
+  search results, theme controls, and mobile navigation without overflow or console errors.
 - This documentation/CI slice changes no gateway runtime and does not promote a stable release
   or claim new live Claude/Codex acceptance.
 
