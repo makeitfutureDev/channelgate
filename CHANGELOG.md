@@ -32,6 +32,8 @@ product overview.
   and gives an actionable Subscriber-role hint for permission errors. Reconnect restores status
   without allowing an old connection's late error to overwrite it.
 
+## 0.6.1 — 2026-10-06
+
 - Channel Runtime now shows only engine and model controls for the shared login. Dedicated Codex
   sign-in uses a method dropdown: choosing ChatGPT starts the device flow and clicking its code
   copies it; the API key field appears only for that method. The shared sign-in moved to Settings.

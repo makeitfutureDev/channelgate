@@ -1,5 +1,10 @@
 # Release checklist
 
+> 0.6.1 was selected for release by the owner on 2026-10-06 after the exact candidate's
+> automated checks and CI passed. The owner was told that the remaining channel-specific Codex
+> account isolation, Cloud MCP, UI, and failover live cases are unexecuted and requested promotion
+> anyway. Those cases remain open in TEST-PLAN.md; this decision does not mark them as passed.
+
 > 0.5.0 was published on 2026-09-06 by decision of the Licensor. Items still unticked below stay
 > tracked for the next release.
 > 0.5.1 was published on 2026-09-21 by explicit owner decision after the full automated gate and
