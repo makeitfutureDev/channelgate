@@ -18,6 +18,13 @@ product overview.
 
 ## Unreleased
 
+- Background shell jobs (`run_in_background`) inside a channel's container now start directly in
+  Auto mode, with no "Run it" card: the container is the boundary and Auto mode already
+  auto-approves every foreground command there, so the former admin-only click only stalled
+  non-admin authors. A job on the daemon account itself (the `/sudo` host lane) still needs an
+  admin's exact-command approval. Every agent-type approval card now says on the card who can
+  approve it ("Only a gateway *admin* can approve this; anyone eligible may Deny or Comment").
+
 - Gateway Settings now lets admins map short names to an engine and model. In Slack, select the bot mention and type `:astra` after Slack's inserted space (`@agent :astra`) to pin that model to a thread, with an optional task after the name. Mappings can be updated as models change.
 
 - Admin channels now keep non-admin members and guests in a separate project container with

@@ -2391,10 +2391,21 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
   approved-domain `network_proxy`, which then resets every tunnel (allowed domains included) —
   the boot assessment flags a stale pre-Codex install of the profile and says to re-run
   `--apply`. → TEST-PLAN: Security (Linux userns sandbox).
-- **Retired 2026-09-03 (Linux + containers only):** the rationale only — the job runs inside the channel's container, and both gates stay. Background shell jobs have two independent gates: the channel must be auto-mode (or admin-mode
-  with an admin author), then a gateway admin must click the durable exact-command Slack approval.
-  The second gate is never auto-approved because the command runs outside the engine sandbox.
-  → TEST-PLAN: Security (background gating).
+- **Background shell jobs are gated by mode AND by where they run (2026-10-06).** The mode gate
+  is unchanged: the channel must be auto-mode (or admin-mode with an admin author). Inside the
+  channel's CONTAINER, an Auto-mode job then starts directly, as the author's own work — Auto
+  already auto-approves every foreground command in that same container and
+  `run_agent_in_background` runs there with no card, so the former admin-tier "Run it" card bought
+  nothing but a stall for non-admin authors (five of five durable cards in the Symphonia channel
+  were container jobs a non-admin could only Deny). Nothing a run can do changes what its container
+  mounts, so the job gains no access a foreground Auto turn did not have. Only an UNISOLATED
+  target — the `/sudo` host lane, or an embedder's own backend — still posts the durable
+  exact-command card, at the admin tier and naming the daemon account; that card is never
+  auto-approved. The `bg_start` audit event records the authority (`approvedBy`: the author for a
+  direct start, the clicker otherwise) and whether the job was isolated. Every agent-type approval
+  card now states its authority tier on the card ("Only a gateway *admin* can approve this; anyone
+  eligible may Deny or Comment"), so a member learns it before clicking rather than from the
+  ephemeral refusal after. → TEST-PLAN: Security (background gating), Automation.
 - **Admin home access is author-specific:** current organization admins in Admin/Full-access
   channels can receive the optional operator-home mount (`containerFullAccessHome`, off by
   default). Members and guests use a separate project container with Worker and the selected

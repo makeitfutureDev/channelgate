@@ -4363,18 +4363,34 @@ structural invariants are automated; rendered navigation and feature claims also
       executor replacement, starts directly from a later click, atomically refuses replayed clicks,
       reuses one card for the same exact action, and reconciles interrupted click execution against
       `bg_jobs` on boot (failing closed without proof rather than risking a duplicate process).
-      An admin author in Admin mode starts directly without the second card; Auto mode retains it,
-      and non-admin authors cannot use Admin mode's bypass.
-      → `bg-agent-jobs.test.js`, `durable-approvals.test.js`.
-- [ ] **Retired 2026-09-03 (Linux + containers only):** the `(unsandboxed)` wording — the card reads `Background shell job (in this channel's container)`;
-      the rest of the entry stands. Live: in an auto channel, `run_in_background` posts a "Background shell job (unsandboxed)"
-      approval with the exact command; the agent ends its turn immediately; *Run it* starts the job
-      even after a daemon restart, *Deny* refuses it, and the same button cannot start it twice.
-      Auto mode does not skip the prompt and pending durable cards do not expire after four minutes.
-- [ ] In an auto channel, the agent calls `run_in_background` for a long command and ends its turn;
-      an admin's later click updates the card with the job id/status and does not require or resume
-      the original engine turn merely to start the command. In Admin mode, an admin author's job
-      starts immediately with no approval card.
+      An admin author in Admin mode starts directly without the second card, and non-admin authors
+      cannot use Admin mode's bypass. **Since 2026-10-06 the second card depends on WHERE the job
+      runs:** in a CONTAINER (isolated target) an Auto-mode job starts directly with no card and no
+      approval channel required, a non-admin author's job runs to completion, and the `bg_start`
+      event records `approvedBy` = the author and `isolated: true`; on an UNISOLATED target (plain
+      bash on the daemon account) every assertion above still holds — the card is
+      `Background shell job (unsandboxed)`, `requiredTier: "admin"`, names the daemon user, and a
+      denial names the "outside every container" reason. The mode gate refuses a non-auto/non-admin
+      channel before any approval request on either target.
+      → `bg-agent-jobs.test.js`, `runtime-integration-jobs.test.js`, `durable-approvals.test.js`.
+- [ ] **Retired 2026-10-06 (container jobs start without a card):** the Auto-mode "Run it" card
+      for a CONTAINER job. Live (engine-independent): in an Auto channel whose author is NOT a
+      gateway admin, ask for a long command via `run_in_background` (e.g. `sleep 90 && echo done`).
+      Pass when no approval card is posted, the thread gets the "Background job started" notice
+      with the job id, the job completes and the continuation turn posts its outcome, and the
+      `events` table holds a `bg_start` row with `approvedBy` = that author and `isolated: true`.
+      Repeat in an Admin + Auto channel as the same non-admin author (the Symphonia shape):
+      identical result. The 2026-09-03 and earlier variants of this case (an admin-tier card for
+      every Auto-mode job) are retired for container targets.
+- [ ] Live (engine-independent): in an admin's `/sudo` thread the job starts directly (the admin
+      author in Admin posture needs no card). The admin-tier exact-command card — "Background shell
+      job (unsandboxed)", stating on the card that only a gateway admin can approve it — is reachable
+      only on an unisolated target with a non-admin author, which no shipped runtime offers; it is
+      covered by the unit cases above. Pending durable cards do not expire after four minutes, *Run
+      it* starts the job even after a daemon restart, *Deny* refuses it, and the same button cannot
+      start it twice (`durable-approvals.test.js`).
+- [ ] Live: in a plain Worker channel (Auto off), `run_in_background` is still refused before any
+      card with the "need AUTO mode" wording, container or not.
 - [x] Unit: safe restart waits for ongoing engine/background/API/update work, rechecks until idle,
       repeats its idle observation after the final visibility post to close the intake race,
       restarts only after a clear observation, cancels at the five-minute deadline, coalesces
@@ -7511,8 +7527,10 @@ are the v0.8 production deployment gate and are executed in the QA loop that fol
       `sandbox.enabled: false`; the shared variant keeps `enabled: true` and a non-admin (or any
       background/schedule/continuation run) still cannot read outside the folder.
 - [ ] **Background gating:** `run_in_background` is refused in a plain `allowBash` channel. Auto mode
-      requires a gateway admin's durable exact-command approval; Admin mode skips the second card
-      only for an admin author. Restart/replayed clicks cannot reuse Auto-mode authorization.
+      starts a CONTAINER job directly (the container is the boundary, and Auto already auto-approves
+      every foreground command there); on an unisolated target it still requires a gateway admin's
+      durable exact-command approval. Admin mode skips that card only for an admin author.
+      Restart/replayed clicks cannot reuse an approval.
 - [ ] **Internal IPC:** `POST /internal/background` returns 403 without the per-process secret.
 - [ ] **Secrets:** `.env` and `~/.channelgate/config/users.json` are gitignored; tokens never
       appear in logs or Slack messages.
