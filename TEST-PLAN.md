@@ -1,5 +1,32 @@
 # ChannelGate — Test Plan
 
+## SSH self-service acceptance (2026-10-06)
+
+- [x] Automated: `test/ssh-access.test.js` checks omitted user, own id/mention, own key registration,
+  audited self-grants/revocations, named guests, revoked channel access and untrusted API identity.
+  `test/ssh-broker.test.js` checks named-guest admission, guest removal, explicit SSH grants and
+  the operator-home restriction on connection.
+- [x] Automated: `test/mcp-control-plane-approval.test.js` calls the real MCP server over stdio in
+  both Claude and Codex contexts with the approval service denying every request. Own key
+  registration/removal and grants/revocations complete with zero approval calls; changing another
+  person still requires manager authorization and a manager-tier approval; an author removed from
+  channel access cannot self-grant.
+- [ ] LIVE (Claude and Codex): use separate Worker fixtures, Auto off, management restricted to
+  admins, operator-home mount off, host SSH installed. As an approved non-admin actor with no
+  SSH grant, send "add my SSH key <fixture .pub line>", then "enable SSH access for me", then
+  "show SSH access". Pass: no approval card or admin intervention, only the actor is added to
+  `sshUsers`, audit identifies that actor, displayed config connects as `agent` in the fixture
+  container. Repeat using own explicit mention. Send "remove my SSH access": new connection
+  refuses; re-enable succeeds. Register/remove an unused fixture key without a card.
+- [ ] LIVE (Claude and Codex): with the same actor, request a grant for the admin fixture actor.
+  Pass: refusal, no card and no change. As the admin fixture actor grant the member: exactly one
+  manager-tier card, denial changes nothing. Restrict channel access away from the member and
+  attempt a new SSH connection: refusal even if its old SSH grant remains. Repeat self-service
+  with a named guest lacking gateway-wide approval; removing its named channel admission must
+  immediately refuse a new connection. Admin plus operator-home-mount ON must still refuse.
+  Private actor identities and exact test channels are recorded in the QA registry; these cases
+  are defined, not claimed as executed.
+
 ## Model shortcuts acceptance (2026-10-06)
 
 - [x] Automated: `test/model-shortcuts.test.js` checks parsing, saving, repointing, clearing and refusing invalid mappings.
@@ -6794,7 +6821,8 @@ are the v0.8 production deployment gate and are executed in the QA loop that fol
       `AllowUsers agent`, forwarding on, agent forwarding off, `ClientAlive` 60×3, files 0700/0600;
       sessions open/close/orphan-close; the six MCP tools sit on the permission list with the right
       control-plane gates, a person registers only their own key, unapproved users and private
-      keys are refused, grants need a manager and an approved grantee and leave a
+      keys are refused, own grants need current channel access (including named guests),
+      other-person grants need a manager and an approved grantee, and changes leave a
       `channel_meta_changed` row naming `sshUsers`, `show_channel_ssh` hands the ProxyCommand block
       only when the host is set up and names the Admin + `containerFullAccessHome` block
       (automated: `test/ssh-access.test.js`).
@@ -6838,8 +6866,8 @@ are the v0.8 production deployment gate and are executed in the QA loop that fol
 - [ ] LIVE (engine-independent, Airtable CTR-31): on the gateway host run `npm run build:image`, then `sudo
       CG_SSH_HOST=<host> bash scripts/install-ssh-access.sh`; within a minute the daemon log shows
       `[ssh] attach socket`. As Apps, in `cg-testing-claude-bash`, send "add my SSH key <Apps'
-      ed25519 .pub line>" and verify the fingerprint reply matches `ssh-keygen -lf`; as Contact
-      say "grant SSH access to @Apps"; as Apps say "show SSH access" and paste the block into a
+      ed25519 .pub line>" and verify the fingerprint reply matches `ssh-keygen -lf`; as Apps
+      say "enable SSH access for me" (no manager/admin approval); as Apps say "show SSH access" and paste the block into a
       laptop `~/.ssh/config`. `ssh cg-testing-claude-bash 'id; pwd'` prints `uid=…(agent)` and the
       channel's mounted work folder; `ssh -L 3000:localhost:3000` forwards into the container; VS
       Code Remote-SSH opens the folder. While the session is open, `/api/health` shows the

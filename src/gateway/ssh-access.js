@@ -212,6 +212,11 @@ export function parseUserRef(input) {
   return "";
 }
 
+/** Omitted user means the verified requester; explicit mentions use the same parser everywhere. */
+export function sshRequestTarget(input, requester) {
+  return input === undefined ? String(requester || "") : parseUserRef(input);
+}
+
 // ── The host side: endpoint facts and the exported authorized_keys ─────────────────────────────
 export const SSH_ENDPOINT_FILE = "endpoint.json";
 export const SSH_AUTHORIZED_KEYS_FILE = "authorized_keys";
