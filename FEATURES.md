@@ -4,12 +4,29 @@
 
 - `documentation/` builds a static Astro/Starlight documentation section for
   `channelgate.dev/docs` in the same Vercel website project as the marketing pages and blog.
-  It includes an overview, a first-conversation walkthrough, navigation, and local search.
+  The public handbook has 75 pages: 45 dedicated feature guides, 13 configuration guides,
+  feature/configuration directories, and the existing 15 overview, walkthrough, installation,
+  technical-reference and resource pages. Feature guides explain use, setup, examples,
+  permissions and practical limits; configuration guides distinguish gateway, conversation,
+  personal and thread scopes.
+- The welcome page keeps the same persistent sidebar as articles, with a Start here section,
+  grouped feature navigation, configuration guides, technical references and resources. Search,
+  current-page navigation, theme controls and responsive layout use Starlight. A shared handbook
+  registry defines directory cards and sidebar entries together. Native Slack report artifacts,
+  Google Drive workspace sync and durable thread loops have their own guides alongside the
+  workspace, engine, knowledge/integration, access, platform, automation and operations topics.
 - Thirteen published guides are generated at build time from this repository's canonical
-  Markdown files; the other two pages are authored in `documentation/src/content/docs/`.
+  Markdown files; the other 62 pages are authored in `documentation/src/content/docs/`.
   Repository-relative links resolve to a published guide or the source file on GitHub's `beta`
   branch. The export copies only the `/docs` subtree and entry point into an existing static
   website output, then merges documentation URLs into its sitemap.
+- Handbook source and configuration were cross-reviewed against the public feature record,
+  canonical operator references and implementation. Microsoft Teams and Google Chat remain
+  explicitly Beta; optional VPN provisioning, engine-specific approvals and admin-only host
+  access retain their documented restrictions. This documentation change introduces no gateway
+  runtime behavior. Publication of the expanded handbook requires the build, browser and combined
+  Vercel acceptance recorded separately in `TEST-PLAN.md`; the initial 15-page deployment remains
+  the prior published baseline until those gates pass.
 
 ## Conversation sources and Teams names
 

@@ -3,15 +3,18 @@ import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import assert from 'node:assert/strict';
 import { guides } from './catalog.mjs';
+import { handbookSlugs } from '../src/data/handbook.mjs';
 
 const dist = resolve(dirname(fileURLToPath(import.meta.url)), '../dist');
-const pages = ['', 'getting-started', ...guides.map((guide) => guide.slug)];
+export const pages = ['', 'getting-started', ...handbookSlugs, ...guides.map((guide) => guide.slug)];
 const htmlByPath = new Map();
 for (const slug of pages) {
   const route = `/docs${slug ? `/${slug}` : ''}`;
   const html = await readFile(resolve(dist, slug, 'index.html'), 'utf8');
   assert.ok(html.includes(`href="https://channelgate.dev${route}"`), `Missing canonical: ${route}`);
   assert.ok(html.includes('starlight'), `Missing Starlight layout: ${route}`);
+  assert.ok(html.includes('aria-label="Main"'), `Missing persistent sidebar: ${route}`);
+  assert.equal([...html.matchAll(/<h1(?:\s|>)/g)].length, 1, `Expected one page heading: ${route}`);
   htmlByPath.set(route, html);
 }
 let internalLinks = 0;
