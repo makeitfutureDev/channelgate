@@ -18,6 +18,10 @@ product overview.
 
 ## Unreleased
 
+- Conversations can filter by Google Chat, Slack or Teams alongside search and Channels / DMs.
+  Teams channel names now use `#team-channel`, resolving missing names through the bot directory
+  on incoming messages while preserving conversation IDs, work folders and settings.
+
 - Update runs the host Bash entry point, repairs exact dependencies and provisioning even when code
   is current, checks image executables without provider sign-in, and uses a bounded graceful restart
   with a longer startup readiness window. Provider authentication no longer blocks gateway repairs.

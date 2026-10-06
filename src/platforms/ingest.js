@@ -1,7 +1,7 @@
 // From a normalized inbound message to an answered turn, for platforms that are not Slack.
 // Text controls, per-session serialization and conservative progress edits use the same gateway
 // policy/stores as Slack. Interactive approval escalation remains deliberately unavailable here.
-import { upsertChannelEntry, getChannelMeta, saveChannelMeta, defaultChannelMeta, getUser, setUser, isAdmin, isApproved } from "../config/store.js";
+import { upsertChannelEntry, getChannelMeta, saveChannelMeta, patchChannelMeta, defaultChannelMeta, getUser, setUser, isAdmin, isApproved } from "../config/store.js";
 import { getDefaultChannelAccess, applyChannelTemplate, getDefaultNudges } from "../config/settings.js";
 import { effectiveWorkDir, ensureChannelFolder } from "../gateway/folders.js";
 import { isAuthorized } from "../gateway/modes.js";
@@ -27,9 +27,11 @@ const STORE_TYPE = { dm: "im", group: "mpim", channel: "channel" };
 // Register (or refresh) the conversation and make sure its gated folder exists. The platform is
 // stamped explicitly: reading a missing platform falls back to Slack, and a Google Chat space that
 // silently claimed to be a Slack channel would be handed Slack's reply modes and Slack's guide.
-export async function ensureConversation(message) {
+export async function ensureConversation(message, connector = null) {
+  // Directory failures must not block a turn or replace an already resolved name with an ID.
+  const resolvedName = await connector?.conversationName?.(message).catch(() => "");
   const info = {
-    name: message.conversationName || message.conversationId,
+    name: resolvedName || message.conversationName || undefined,
     type: STORE_TYPE[message.kind] || "channel",
     isDM: message.isDM,
     platform: message.platform,
@@ -37,11 +39,12 @@ export async function ensureConversation(message) {
   const entry = await upsertChannelEntry(message.conversationId, info);
   let meta = await getChannelMeta(entry.slug);
   if (!meta) {
-    meta = applyChannelTemplate(defaultChannelMeta({ channelId: message.conversationId, ...info }));
+    meta = applyChannelTemplate(defaultChannelMeta({ channelId: message.conversationId, ...info, name: entry.name }));
     if (!info.isDM) meta.access = getDefaultChannelAccess();
     if (info.isDM) meta.dmUserId = message.userId;
     await saveChannelMeta(entry.slug, meta);
   }
+  if (meta.name !== entry.name) meta = await patchChannelMeta(entry.slug, () => ({ name: entry.name }));
   await ensureChannelFolder(entry.slug, meta);
   return { entry, meta };
 }
@@ -78,7 +81,7 @@ export function createIngest({ connector, log = console, run = runMessage, onCom
     // operator grants Teams RSC or Chat's space-wide events later.
     if (!message.isDM && !message.mentionsBot && !(message.trigger === "reaction" && platformSupports(adapter.id, "reactionTriggers"))) return { skipped: "not-mentioned" };
 
-    const { entry, meta } = await ensureConversation(message);
+    const { entry, meta } = await ensureConversation(message, connector);
     await ensureUserKnown(message);
 
     const authorIsAdmin = await isAdmin(message.userId);

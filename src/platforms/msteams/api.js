@@ -135,6 +135,13 @@ export function createTeamsApi({ auth, serviceUrl = DEFAULT_SERVICE_URL, fetchIm
       return call(`v3/teams/${encodeURIComponent(teamId)}`, { method: "GET" });
     },
 
+    // Bot Framework team-scoped channel directory; no Graph application consent required.
+    async listChannels(teamId) {
+      if (!isConversationId(teamId)) throw new Error("Teams team id contains invalid characters");
+      const result = await call(`v3/teams/${encodeURIComponent(teamId)}/conversations`, { method: "GET" });
+      return Array.isArray(result?.conversations) ? result.conversations : [];
+    },
+
     // Roster for mention resolution. In a channel this needs RSC consent; without it Teams answers
     // 403 and the caller keeps its previous (possibly empty) directory.
     async listMembers(conversationId) {

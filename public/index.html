@@ -82,6 +82,15 @@
               <button type="button" data-seg="channels">Channels</button>
               <button type="button" data-seg="dms">DMs</button>
             </div>
+            <div class="conv-source-filter">
+              <label for="conv-source">Source</label>
+              <select id="conv-source">
+                <option value="all">All sources</option>
+                <option value="googlechat">Google Chat</option>
+                <option value="slack">Slack</option>
+                <option value="msteams">Teams</option>
+              </select>
+            </div>
             <div id="channel-list" class="list">Loading…</div>
           </div>
           <div class="detail-pane" id="channel-detail">

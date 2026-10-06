@@ -1,4 +1,5 @@
 // Bot Framework activity → the gateway's neutral inbound record.
+import { activityConversationName } from "./conversation-name.js";
 import { makeInbound } from "../inbound.js";
 
 // Hosts a Teams attachment may legitimately be fetched from. The download URL arrives inside the
@@ -89,7 +90,7 @@ export function normalizeActivity(activity, { botId = "", fetchImpl = fetch, res
   return makeInbound({
     platform: "msteams",
     conversationId,
-    conversationName: String(conversation.name || activity.channelData?.team?.name || ""),
+    conversationName: activityConversationName(activity),
     kind,
     // In a channel the user's own message is the root a reply must thread under; a 1:1 or group
     // chat is flat, so nothing is carried and replies land in the chat itself.

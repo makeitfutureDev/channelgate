@@ -1,5 +1,14 @@
 # ChannelGate — Features
 
+## Conversation sources and Teams names
+
+- Conversations has an independent source filter: All sources, Google Chat, Slack, or Teams.
+  It combines with search and All / Channels / DMs, including legacy Slack records.
+- Teams channel titles use `#team-channel`, taking names from activities or the bot’s
+  team/channel directory. Existing ID-only records refresh on the next Teams message;
+  the UI shows `#teams-channel` while unresolved. IDs, work folders, and settings stay stable.
+  Directory errors preserve a previously resolved name and never block a turn.
+
 ## Runtime history transfer and Google Chat failure recovery
 
 - Switching a thread between its container and `/sudo` host carries native history without
