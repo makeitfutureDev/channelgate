@@ -42,6 +42,7 @@ import { createCodexUsageReader, subtractCodexTokenUsage } from "./codex-usage.j
 import { MCP_STARTUP_TIMEOUT_SECONDS } from "./mcp-timeouts.js";
 import { gatewayRoot, runTmpDir } from "../config/paths.js";
 import { readCodexAuthState, describeCodexAuth } from "./codex-auth.js";
+import { channelCodexHome } from "../gateway/channel-codex-auth.js";
 import { remoteMcpServerProblem } from "../mcp/remote-mcp-registry.js";
 import { CODEX_NO_TELEMETRY } from "./codex-telemetry.js";
 
@@ -901,7 +902,7 @@ export function buildCodexEnv({ extraEnv = {}, browserNamespace = "", target = n
       ...safeSpawnEnv(extraEnv),
       ...browserSpawnEnv(browserNamespace, { target }),
       NODE_USE_ENV_PROXY: "1",
-      ...(source.CODEX_API_KEY || source.OPENAI_API_KEY ? { CODEX_API_KEY: source.CODEX_API_KEY || source.OPENAI_API_KEY } : {}),
+      ...(target?.meta?.codexAuthSource !== "channel" && (source.CODEX_API_KEY || source.OPENAI_API_KEY) ? { CODEX_API_KEY: source.CODEX_API_KEY || source.OPENAI_API_KEY } : {}),
     }, source);
     // The egress proxy/CA variables are gateway-owned and applied last (see buildClaudeEnv).
     const env = applyEgressEnv({
@@ -911,6 +912,10 @@ export function buildCodexEnv({ extraEnv = {}, browserNamespace = "", target = n
       TMPDIR: image.tmpDir,
       PATH: image.path,
     }, target);
+    if (target?.meta?.codexAuthSource === "channel" || target?.container?.credentialMode?.codex === "relay") {
+      delete env.OPENAI_API_KEY;
+      delete env.CODEX_API_KEY;
+    }
     // Behind the proxy NODE_USE_ENV_PROXY=1 makes Node 22 print its experimental-EnvHttpProxyAgent
     // warning on every node process's stderr — the Codex npm launcher's and every node child a
     // shell command starts. Gateway-owned and set LAST: NODE_OPTIONS is a reserved name a channel
@@ -920,11 +925,17 @@ export function buildCodexEnv({ extraEnv = {}, browserNamespace = "", target = n
     if (env.CG_EGRESS === "proxy") env.NODE_OPTIONS = CODEX_PROXY_NODE_OPTIONS;
     return env;
   }
-  return buildChildEnv({
+  const hostEnv = buildChildEnv({
     ...safeSpawnEnv(extraEnv),
     ...browserSpawnEnv(browserNamespace),
     NODE_USE_ENV_PROXY: "1",
   }, source);
+  if (target?.meta?.codexAuthSource === "channel") {
+    hostEnv.CODEX_HOME = channelCodexHome(target.meta.channelId);
+    delete hostEnv.OPENAI_API_KEY;
+    delete hostEnv.CODEX_API_KEY;
+  }
+  return hostEnv;
 }
 
 // Write the relayed Codex login into an isolated runtime's HOME. → null when placed, else the
@@ -939,7 +950,7 @@ export async function installRelayedCodexLogin(target, deps = null) {
   }
   const credential = deps?.credential || (await import("../gateway/egress/grants.js")).containerCodexCredential;
   const relayed = await credential({ target, channelId: target?.meta?.channelId || "" });
-  if (!relayed?.authJson) return `${CODEX_CONTAINER_LOGIN_PREFIX}${relayed?.error || "the gateway has no Codex sign-in to relay"}. Run \`codex login\` on the gateway host.`;
+  if (!relayed?.authJson) return `${CODEX_CONTAINER_LOGIN_PREFIX}${relayed?.error || "the gateway has no Codex sign-in to relay"}. Run \`codex login\` in the selected Codex home on the gateway host.`;
   await target.runtime.writeHomeFile(target, { file: `${containerPaths(target).codexHome}/auth.json`, body: relayed.authJson });
   return null;
 }
@@ -1015,7 +1026,8 @@ export async function runCodex({
   if (isolated && typeof runtime.runtime.credentialError === "function") {
     credentialFailure = await runtime.runtime.credentialError(runtime, "codex");
   } else if (!isolated) {
-    const state = await readCodexAuthState({ codexHome: codexStateDir });
+    const channelHome = runtime?.meta?.codexAuthSource === "channel" ? channelCodexHome(runtime.meta.channelId) : "";
+    const state = await readCodexAuthState({ codexHome: channelHome || codexStateDir, hostCodexHome: channelHome || undefined, env: channelHome ? { CODEX_HOME: channelHome } : process.env });
     if (state.known && !state.authenticated) credentialFailure = describeCodexAuth(state);
   }
   // Behind the egress proxy the container has no Codex login of its own: it gets the channel's

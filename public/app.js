@@ -64,7 +64,7 @@ let detailDirty = false; // whether the open conversation detail has unsaved edi
 // Controls that save through their OWN request are never part of a card's "Unsaved changes" state.
 // Environment secrets and VPN control have independent writes and must never round-trip through
 // the card's Save or tell the admin the card has edits waiting.
-const SELF_SAVING_CONTROLS = ".channel-env-card, .ch-vpn-controls";
+const SELF_SAVING_CONTROLS = ".channel-env-card, .ch-vpn-controls, .ch-codex-login";
 const viewLoaded = {};
 
 const EFFORT_OPTIONS = {
@@ -683,38 +683,34 @@ function stackValue(point, entry, metric) {
   return entry.rest.reduce((total, model) => total + (Number(models[model]?.[metric]) || 0), 0);
 }
 
-// Stacked area chart. Same stretched viewBox and non-scaling strokes as sparkArea, so it drops into
-// the existing chart cards unchanged. Bands are separated by a 2px stroke in the CARD's own colour
-// rather than a gap in the geometry: at one-pixel bucket widths a geometric gap would swallow thin
-// series whole.
-function stackedArea(series, keys, metric, opts = {}) {
+// One stacked column per time bucket. Keep the columns centered within their buckets so the hover
+// target and the visible bar always refer to the same day, hour or month.
+function stackedColumns(series, keys, metric, opts = {}) {
   const W = 300, H = opts.height || 110, pad = 4;
   const n = series.length;
   const cls = "spark" + (opts.tall ? " spark-tall" : "");
   if (!n || !keys.length) return `<svg class="${cls}" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none"></svg>`;
   const totals = series.map((point) => keys.reduce((sum, entry) => sum + stackValue(point, entry, metric), 0));
   const max = Math.max(1e-9, ...totals);
-  const xs = (i) => (n <= 1 ? W / 2 : (i / (n - 1)) * W);
   const ys = (v) => H - pad - (v / max) * (H - pad * 2);
+  const step = W / n;
+  const width = Math.max(1, step - Math.min(2, step * 0.2));
   const grid = opts.grid
     ? [1, 2].map((k) => `<line x1="0" y1="${((H * k) / 3).toFixed(1)}" x2="${W}" y2="${((H * k) / 3).toFixed(1)}" stroke="var(--line-soft)" stroke-width="1" vector-effect="non-scaling-stroke"/>`).join("")
     : "";
-  // Cumulative from the baseline up, so each band's lower edge is the previous band's upper edge.
   const running = new Array(n).fill(0);
-  const bands = [];
+  const columns = [];
   for (const entry of keys) {
-    const lower = running.map((v) => v);
-    for (let i = 0; i < n; i++) running[i] += stackValue(series[i], entry, metric);
-    const upper = running.map((v) => v);
-    if (upper.every((v, i) => v === lower[i])) continue; // a model with nothing in this window
-    const top = upper.map((v, i) => `${xs(i).toFixed(1)},${ys(v).toFixed(1)}`);
-    const bottom = lower.map((v, i) => `${xs(i).toFixed(1)},${ys(v).toFixed(1)}`).reverse();
-    bands.push(
-      `<path d="M${top.join(" L")} L${bottom.join(" L")} Z" fill="${entry.color}" opacity="0.72"/>` +
-      `<path d="M${top.join(" L")}" fill="none" stroke="${entry.color}" stroke-width="2" vector-effect="non-scaling-stroke"/>`
-    );
+    for (let i = 0; i < n; i++) {
+      const value = stackValue(series[i], entry, metric);
+      if (value <= 0) continue;
+      const bottom = ys(running[i]);
+      running[i] += value;
+      const top = ys(running[i]);
+      columns.push(`<rect x="${(i * step + (step - width) / 2).toFixed(2)}" y="${top.toFixed(2)}" width="${width.toFixed(2)}" height="${(bottom - top).toFixed(2)}" fill="${entry.color}"/>`);
+    }
   }
-  return `<svg class="${cls}" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none">${grid}${bands.join("")}</svg>`;
+  return `<svg class="${cls}" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none">${grid}${columns.join("")}</svg>`;
 }
 
 // Legend for a stacked chart. Always rendered when there is more than one series — identity must
@@ -726,13 +722,12 @@ function modelLegend(keys) {
     .join("")}</span>`;
 }
 
-// A stacked chart card, with the hover layer the plain sparkline cards do not need: an area chart
-// that stacks eight series is unreadable without being able to ask "what is this band, here".
+// A stacked chart card with a hover layer for the model totals in each time bucket.
 function stackedChartCard(id, title, series, keys, metric, peak, axis, fmt, opts = {}) {
   return `<div class="chart-card">
     <div class="chart-title"><h3>${escapeHtml(title)}</h3><span class="chart-peak">${peak}</span></div>
     <div class="spark-hover" data-stack="${escapeHtml(id)}" data-metric="${escapeHtml(metric)}" data-fmt="${escapeHtml(fmt)}">
-      ${stackedArea(series, keys, metric, opts)}
+      ${stackedColumns(series, keys, metric, opts)}
       <span class="spark-cursor" hidden></span>
       <div class="spark-tip" role="status" hidden></div>
     </div>
@@ -754,7 +749,14 @@ function barTrack(pct, { color = "", stack = null } = {}) {
   const segments = parts
     .map((part) => `<i style="width:${((part.value / total) * 100).toFixed(2)}%;background:${part.entry.color}" title="${escapeHtml(part.entry.label)}"></i>`)
     .join("");
-  return `<span class="bar-track"><span class="bar-fill bar-stack" style="width:${pct}%">${segments}</span></span>`;
+  const format = stack.metric === "cost" ? fmtUSD : stack.metric === "tokens" ? fmtCompact : fmtNum;
+  const metricName = { cost: "Token cost", tokens: "Tokens", runs: "Runs" }[stack.metric] || stack.metric;
+  const details = parts.map((part) => `<span class="spark-tip-row"><span class="dot" style="background:${part.entry.color}"></span>${escapeHtml(part.entry.label)}<b>${format(part.value)}</b></span>`).join("");
+  const accessible = `${stack.row.name || "Usage"}, ${metricName}: ${format(total)}. ${parts.map((part) => `${part.entry.label}: ${format(part.value)}`).join(", ")}`;
+  return `<span class="bar-hover" role="img" tabindex="0" aria-label="${escapeHtml(accessible)}">
+    <span class="bar-track"><span class="bar-fill bar-stack" style="width:${pct}%">${segments}</span></span>
+    <span class="spark-tip bar-tip"><span class="spark-tip-head">${escapeHtml(metricName)} · <strong>${format(total)}</strong></span>${details}</span>
+  </span>`;
 }
 
 // Single-metric horizontal bar list, descending. Row: name · bar (width ∝ value) · value.
@@ -1100,13 +1102,12 @@ async function loadDashboard() {
   </div>`;
   }).join("");
 
-  // Token cost is the hero (2fr wide, gridlines, peak dated). Runs + tokens ride at 1fr but share the
-  // hero's chart height so all three axis labels line up along the same bottom edge.
+  // Four compact cards share one row: cost, runs, tokens and the usage-source breakdown.
   const costPeak = peakBucket((x) => x.cost);
   const costPeakLabel = costPeak && costPeak.cost > 0
     ? `peak ${fmtUSD(costPeak.cost)}${costPeak.key ? " · " + bucketLabel(costPeak.key, unit) : ""}`
     : "no value yet";
-  // Every hero chart is stacked by the model that actually answered, so a rising cost line can be
+  // Every time chart is stacked by the model that actually answered, so a rising cost column can be
   // read as "we moved onto a pricier model" rather than only "we ran more". One colour map and one
   // key list across all three, so a band means the same thing in each and the legend is shared.
   const allModels = d.models || [];
@@ -1164,21 +1165,20 @@ async function loadDashboard() {
     <div class="kpi-row">${kpiHtml}</div>
     <div id="dash-approvals"></div>
     <div class="dash-legend">${modelLegend(keys)}</div>
-    <div class="dash-grid">${charts}</div>
-    <div class="dash-two">
+    <div class="dash-grid">${charts}${originsCard}</div>
+    <div class="dash-stack">
       ${modelsCard}
-      ${originsCard}
-      <div class="chart-card">
-        <div class="chart-title"><h3>Runs per user</h3><span class="chart-peak">${users.length} of ${fmtNum(t.users)}</span></div>
-        ${barList(users, (u) => u.runs, (u) => `<span>${fmtNum(u.runs)} runs</span><span>${fmtCompact(u.tokens)} tokens</span><span>${fmtUSD(u.cost)} est.</span>`, "#91c9ce", "No user activity yet.", { keys, metric: "runs" })}
-        ${moreUsers > 0 ? `<p class="hint" style="margin:8px 0 0">+ ${moreUsers} more</p>` : ""}
-      </div>
       <div class="chart-card">
         <div class="chart-title"><h3>Channels — runs, token cost &amp; tokens</h3>
           <span class="chart-peak">three bars per channel, split by model</span>
         </div>
         ${channelBars(channels, keys)}
         ${moreChannels > 0 ? `<p class="hint" style="margin:8px 0 0">+ ${moreChannels} more</p>` : ""}
+      </div>
+      <div class="chart-card">
+        <div class="chart-title"><h3>Runs per user</h3><span class="chart-peak">${users.length} of ${fmtNum(t.users)}</span></div>
+        ${barList(users, (u) => u.runs, (u) => `<span>${fmtNum(u.runs)} runs</span><span>${fmtCompact(u.tokens)} tokens</span><span>${fmtUSD(u.cost)} est.</span>`, "#91c9ce", "No user activity yet.", { keys, metric: "runs" })}
+        ${moreUsers > 0 ? `<p class="hint" style="margin:8px 0 0">+ ${moreUsers} more</p>` : ""}
       </div>
       <div class="chart-card">
         <div class="chart-title"><h3>Top skills — usage</h3><span class="chart-peak">last 30 days</span></div>
@@ -1209,8 +1209,8 @@ async function loadDashboard() {
   }
 }
 
-// Crosshair + tooltip for the stacked charts. A stacked area with up to eight bands cannot be read
-// without asking "which band is this, and how much"; the legend names the colours, this says the
+// Crosshair + tooltip for the stacked time charts. A column with up to eight segments cannot be read
+// without asking "which model is this, and how much"; the legend names the colours, this says the
 // numbers. Pointer-driven and keyboard-reachable (the chart is focusable and arrow keys step
 // buckets), so the reading is not mouse-only.
 const STACK_FMT = { usd: (v) => fmtUSD(v), num: (v) => fmtNum(v), compact: (v) => fmtCompact(v) };
@@ -1228,7 +1228,7 @@ function renderStackTip(host, index) {
   const total = rows.reduce((sum, row) => sum + row.value, 0);
   const tip = host.querySelector(".spark-tip");
   const cursor = host.querySelector(".spark-cursor");
-  const pct = data.series.length <= 1 ? 50 : (index / (data.series.length - 1)) * 100;
+  const pct = ((index + 0.5) / data.series.length) * 100;
   cursor.style.left = `${pct}%`;
   cursor.hidden = false;
   tip.hidden = false;
@@ -1262,7 +1262,7 @@ function wireStackHover(root) {
       if (!n) return;
       const rect = host.getBoundingClientRect();
       if (!rect.width) return;
-      show(Math.round(((event.clientX - rect.left) / rect.width) * (n - 1)));
+      show(Math.floor(((event.clientX - rect.left) / rect.width) * n));
     });
     host.addEventListener("pointerleave", hide);
     host.addEventListener("focus", () => show(current >= 0 ? current : count() - 1));
@@ -1544,6 +1544,7 @@ function initializeMcpBox(box, { claude = [], codex = [] } = {}) {
 
 function captureMcpSelection(box) {
   if (box.dataset.engine === "both") {
+    if (box.dataset.mcpLoading) return;
     const state = mcpBoxState(box);
     for (const engine of ["claude", "codex"]) {
       state[engine] = [...box.querySelectorAll(`input[type="checkbox"][data-mcp-engine="${engine}"]:checked`)]
@@ -1564,7 +1565,7 @@ function captureMcpSelection(box) {
 }
 
 function catalogWithSavedEntries(box, engine) {
-  const catalog = AVAILABLE_MCPS[engine] || [];
+  const catalog = AVAILABLE_MCPS[engine === "codex" ? (box.dataset.mcpCodexKey || "codex") : engine] || [];
   const state = mcpBoxState(box);
   const wanted = new Set(state[engine]);
   const merged = [...catalog];
@@ -1607,34 +1608,37 @@ function paintAllMcpBoxes(box) {
   }
 }
 
-async function loadMcpCatalog(engine) {
-  if (Array.isArray(AVAILABLE_MCPS[engine])) return AVAILABLE_MCPS[engine];
-  if (!MCP_CATALOG_LOADS[engine]) {
-    MCP_CATALOG_LOADS[engine] = api(`/api/mcp/available?engine=${encodeURIComponent(engine)}`)
+async function loadMcpCatalog(engine, channelId = "") {
+  const key = engine === "codex" && channelId ? `codex:${channelId}` : engine;
+  if (Array.isArray(AVAILABLE_MCPS[key])) return AVAILABLE_MCPS[key];
+  if (!MCP_CATALOG_LOADS[key]) {
+    MCP_CATALOG_LOADS[key] = api(`/api/mcp/available?engine=${encodeURIComponent(engine)}${channelId && engine === "codex" ? `&channelId=${encodeURIComponent(channelId)}` : ""}`)
       .then((result) => {
-        AVAILABLE_MCPS[engine] = Array.isArray(result.servers) ? result.servers : [];
-        return AVAILABLE_MCPS[engine];
+        AVAILABLE_MCPS[key] = Array.isArray(result.servers) ? result.servers : [];
+        return AVAILABLE_MCPS[key];
       })
       .finally(() => {
-        delete MCP_CATALOG_LOADS[engine];
+        delete MCP_CATALOG_LOADS[key];
       });
   }
-  return MCP_CATALOG_LOADS[engine];
+  return MCP_CATALOG_LOADS[key];
 }
 
-async function renderMcpBoxForEngine(box, engineValue, countEl) {
+async function renderMcpBoxForEngine(box, engineValue, countEl, channelId = "") {
   captureMcpSelection(box);
   box.dataset.engine = "both";
-  const missing = ["claude", "codex"].filter((engine) => !Array.isArray(AVAILABLE_MCPS[engine]));
+  const codexKey = channelId ? `codex:${channelId}` : "codex";
+  box.dataset.mcpCodexKey = codexKey;
+  const missing = ["claude", "codex"].filter((engine) => !Array.isArray(AVAILABLE_MCPS[engine === "codex" ? codexKey : engine]));
   if (missing.length) {
     box.dataset.mcpLoading = "both";
     box.classList.add("empty");
     box.textContent = "loading Claude and Codex MCP lists…";
     updateChecksCount(box, countEl);
     await Promise.all(missing.map(async (engine) => {
-      try { await loadMcpCatalog(engine); } catch { AVAILABLE_MCPS[engine] = []; }
+      try { await loadMcpCatalog(engine, engine === "codex" ? channelId : ""); } catch { AVAILABLE_MCPS[engine === "codex" ? codexKey : engine] = []; }
     }));
-    if (!box.isConnected) return;
+    if (!box.isConnected || box.dataset.mcpCodexKey !== codexKey) return;
   }
   delete box.dataset.mcpLoading;
   paintAllMcpBoxes(box);
@@ -1831,6 +1835,92 @@ async function pollDriveSync(channelId, resultEl, stillOpen) {
     resultEl.textContent = `⏳ Syncing… ${Math.round((Date.now() - started) / 1000)}s`;
     await new Promise((r) => setTimeout(r, 3000));
   }
+}
+
+// Both the shared gateway and a channel login use the same private Codex sign-in controls.
+// The server returns only a method and the temporary device code; never render raw CLI output.
+function mountCodexLoginBox(box, url, { onComplete = () => {} } = {}) {
+  const statusEl = box.querySelector(".ch-codex-login-status");
+  const deviceBox = box.querySelector(".ch-codex-device-code");
+  const deviceSection = box.querySelector(".ch-codex-device-section");
+  const apiSection = box.querySelector(".ch-codex-api-section");
+  const apiNote = box.querySelector(".ch-codex-api-note");
+  const methodSelect = box.querySelector(".ch-codex-login-method");
+  const apiKeyInput = box.querySelector(".ch-codex-api-key");
+  const cancelButton = box.querySelector(".ch-codex-device-cancel");
+  let poll = null;
+  let observedPending = false;
+  let startedHere = false;
+  let latestState = null;
+  const paintMethod = () => {
+    deviceSection.hidden = methodSelect.value !== "device";
+    apiSection.hidden = methodSelect.value !== "api-key";
+    apiNote.hidden = methodSelect.value !== "api-key";
+  };
+  const paint = (state) => {
+    latestState = state;
+    if (state.phase === "pending" && methodSelect.value !== "device") methodSelect.value = "device";
+    paintMethod();
+    statusEl.textContent = state.phase === "pending" ? (state.code && state.url ? "Enter this code to finish signing in:" : "Requesting a ChatGPT sign-in code…")
+      : state.phase === "failed" ? state.error
+      : state.authenticated ? `Signed in with ${state.method === "chatgpt" ? "ChatGPT" : "an API key"}`
+      : "No login yet";
+    deviceBox.hidden = !(state.phase === "pending" && state.code && state.url);
+    if (!deviceBox.hidden) {
+      box.querySelector(".ch-codex-device-link").href = state.url;
+      box.querySelector(".ch-codex-device-value").textContent = state.code;
+    }
+    cancelButton.hidden = state.phase !== "pending";
+    if (state.phase === "pending") observedPending = true;
+    if (state.phase === "complete" && (observedPending || startedHere)) {
+      onComplete();
+      observedPending = false;
+      startedHere = false;
+    }
+    if (state.phase === "pending" && !poll) {
+      poll = setInterval(() => {
+        if (!box.isConnected) { clearInterval(poll); poll = null; return; }
+        void api(url).then(paint).catch(() => { statusEl.textContent = "Could not check sign-in status"; });
+      }, 2000);
+    } else if (state.phase !== "pending" && poll) {
+      clearInterval(poll);
+      poll = null;
+    }
+  };
+  void api(url).then(paint).catch((error) => { statusEl.textContent = `Could not check sign-in: ${error.message}`; });
+  methodSelect.addEventListener("change", async () => {
+    paintMethod();
+    if (methodSelect.value === "api-key" && latestState?.phase === "pending") {
+      try { await api(url, { method: "DELETE" }); paint(await api(url)); }
+      catch (error) { statusEl.textContent = error.message; }
+    }
+    if (methodSelect.value !== "device" || latestState?.phase === "pending") return;
+    startedHere = true;
+    statusEl.textContent = "Starting ChatGPT sign-in…";
+    try { paint(await api(url, { method: "POST", body: JSON.stringify({ method: "device" }) })); }
+    catch (error) { startedHere = false; statusEl.textContent = error.message; }
+  });
+  box.querySelector(".ch-codex-device-value").addEventListener("click", async () => {
+    const code = box.querySelector(".ch-codex-device-value").textContent;
+    if (!code) return;
+    const result = box.querySelector(".ch-codex-copy-state");
+    try { await navigator.clipboard.writeText(code); result.textContent = "Copied"; }
+    catch { result.textContent = "Could not copy code"; }
+  });
+  box.querySelector(".ch-codex-key-save").addEventListener("click", async () => {
+    const key = apiKeyInput.value;
+    apiKeyInput.value = "";
+    if (!key) { statusEl.textContent = "Enter an OpenAI API key"; return; }
+    startedHere = true;
+    statusEl.textContent = "Saving API key sign-in…";
+    try { paint(await api(url, { method: "POST", body: JSON.stringify({ method: "api-key", key }) })); }
+    catch (error) { startedHere = false; statusEl.textContent = error.message; }
+  });
+  cancelButton.addEventListener("click", async () => {
+    try { await api(url, { method: "DELETE" }); paint(await api(url)); }
+    catch (error) { statusEl.textContent = error.message; }
+  });
+  paintMethod();
 }
 
 function renderChannelDetail(ch) {
@@ -2060,7 +2150,31 @@ function renderChannelDetail(ch) {
   }
   const engineSelect = card.querySelector(".ch-engine");
   engineSelect.value = meta.engine || "";
-  renderMcpBoxForEngine(mcpsBox, engineSelect.value, mcpsCount);
+  const authSource = card.querySelector(".ch-codex-auth-source");
+  const channelPanel = card.querySelector(".ch-auth-channel-panel");
+  const modelSelect = card.querySelector(".ch-model");
+  const effortSelect = card.querySelector(".ch-effort");
+  const effortLabel = card.querySelector(".ch-effort-label");
+  const paintAuthScope = () => {
+    const dedicated = authSource.value === "channel";
+    channelPanel.hidden = !dedicated;
+    card.querySelector(".ch-engine-field").hidden = dedicated;
+    if (dedicated) engineSelect.value = "codex";
+    syncModelOptions({ engineSelect, modelSelect, value: modelMatchesEngine(modelSelect.value, effectiveEngine(engineSelect.value)) ? modelSelect.value : "", blankLabel: "gateway default (Settings)" });
+    syncEffortOptions({ engineSelect, modelSelect, effortSelect, label: effortLabel });
+    renderMcpBoxForEngine(mcpsBox, engineSelect.value, mcpsCount, dedicated ? ch.channelId : "");
+  };
+  authSource.value = meta.codexAuthSource || "gateway";
+  authSource.addEventListener("change", paintAuthScope);
+  mountCodexLoginBox(channelPanel.querySelector(".ch-codex-login"), `/api/channels/${encodeURIComponent(ch.channelId)}/codex-login`, {
+    onComplete: () => {
+      authSource.value = "channel";
+      ch.meta = { ...(ch.meta || {}), codexAuthSource: "channel", engine: "codex" };
+      delete AVAILABLE_MCPS[`codex:${ch.channelId}`];
+      paintAuthScope();
+    },
+  });
+  renderMcpBoxForEngine(mcpsBox, engineSelect.value, mcpsCount, authSource.value === "channel" ? ch.channelId : "");
   syncModelOptions({
     engineSelect,
     modelSelect: card.querySelector(".ch-model"),
@@ -2074,6 +2188,7 @@ function renderChannelDetail(ch) {
     label: card.querySelector(".ch-effort-label"),
     value: meta.effort || "",
   });
+  paintAuthScope();
   engineSelect.addEventListener("change", () => {
     syncModelOptions({
       engineSelect,
@@ -2191,6 +2306,7 @@ function renderChannelDetail(ch) {
           memory: card.querySelector(".ch-memory").checked,
           noDefaultTokens: card.querySelector(".ch-nodefaulttokens").checked,
           engine: engineSelect.value,
+          codexAuthSource: card.querySelector(".ch-codex-auth-source").value,
           workDir: card.querySelector(".ch-workdir").value,
           syncDriveFolder: card.querySelector(".ch-syncdrive").value,
           model: card.querySelector(".ch-model").value,
@@ -4750,6 +4866,13 @@ async function init() {
   startActiveRunsStream();
   loadUpdateStatus().catch(() => {}); // version chip + update button — off the critical path
   bindSettings();
+  mountCodexLoginBox(document.getElementById("gateway-codex-login"), "/api/gateway/codex-login", {
+    onComplete: () => {
+      delete AVAILABLE_MCPS.codex;
+      const box = document.querySelector("#channel-detail .ch-mcps");
+      if (box && box.dataset.mcpCodexKey === "codex") void renderMcpBoxForEngine(box, "codex", document.querySelector("#channel-detail .ch-mcps-count"));
+    },
+  });
   const { skills } = await api("/api/skills");
   try {
     SKILL_TEMPLATES = (await api("/api/skills/templates")).templates || [];

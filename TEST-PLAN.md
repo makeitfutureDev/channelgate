@@ -1,5 +1,67 @@
 # ChannelGate — Test Plan
 
+## Channel-specific Codex authentication (2026-09-29)
+
+- [x] Automated: Chromium confirms the shared-login channel view has no gateway status/sign-in
+  panel; choosing a channel login hides engine selection, choosing ChatGPT starts device sign-in,
+  clicking the code copies it, and choosing API key reveals its field. Slack modal tests confirm
+  a dedicated login's status, Codex-only runtime controls and channel model. Codex discovery
+  tests confirm channel `CODEX_HOME` and no inherited gateway API key.
+- [ ] Live: with a disposable channel account, confirm its Codex Cloud MCP catalog and selected
+  tools match that account, while a shared-login channel still uses the gateway catalog. Confirm
+  the shared Codex sign-in is available under Settings → Agent defaults.
+- [x] Automated: current colored Codex CLI device output yields the complete code and approved
+  URL. Chromium selects ChatGPT from the method dropdown, observes its POST and the displayed code,
+  then clicks the code to copy it.
+- [x] Isolated CLI probe (2026-10-01): the real Codex CLI, with a scratch login home and proxy
+  CA, reached the pending device step with a complete code and URL; the probe was cancelled.
+- [x] Automated: channel meta save forces Codex and clears a saved Claude model when the channel
+  login is selected; the `/model` wizard skips the harness step and rejects a stale Claude button;
+  thread engine resolution reports Codex even for an old Claude session or thread pin.
+- [ ] Live UI acceptance: select **This channel's own login**. The engine picker disappears,
+  the method dropdown starts ChatGPT sign-in or reveals the API key field, and clicking the code
+  copies it. In a thread with an old Claude session, `/model` offers only Codex models and the
+  next message starts a Codex session. Switching back to the shared login restores engine choice.
+- [x] Automated: the Codex login service and admin API tests cover both channel and shared
+  gateway sign-in, including API key delivery through stdin, safe status payloads, authenticated
+  routes and CSRF refusal.
+- [ ] Live admin UI acceptance: open Runtime in a disposable channel. The login source choice
+  appears before the engine/model controls. **Default gateway login** shows only engine/model/effort;
+  **This channel's own login** shows the channel Codex sign-in method and status. Switch between them without signing in and save:
+  a new Codex thread must use the selected source. Sign in to the shared gateway using a
+  disposable API key and confirm a different channel using gateway default sees that method;
+  the channel-specific login remains separate. Revoke the test key afterward.
+- [x] Automated: `node --test test/channel-codex-login.test.js`. Admin UI device sign-in exposes
+  only an approved ChatGPT URL and one-time code, then selects the channel after a saved login;
+  API key sign-in sends the key only through CLI standard input. Failed/cancelled flows do not
+  select the channel. The authenticated admin API refuses unknown channels and invalid input.
+- [ ] Live admin UI acceptance: in a disposable channel open Runtime → Codex authentication,
+  start ChatGPT sign-in, follow the browser link and code, and observe **Signed in with ChatGPT**
+  and **This channel's login** selected. Repeat with a disposable API key in a second channel;
+  observe **Signed in with an API key**, a cleared password field, and no key in the browser
+  response, gateway logs, or audit. Cancel a third device flow and confirm it remains unsigned.
+- [x] Automated: `node --test test/codex-token-relay.test.js
+  test/container-credentials.test.js test/engine-runtime-isolated.test.js
+  test/codex-args.test.js test/channel-env.test.js`. A channel-selected login has no gateway
+  fallback. A synthetic subscription cache yields an access-only channel placeholder and leaves
+  the refresh token on the host. A synthetic API-key cache yields a separate placeholder swapped
+  only in the Authorization header at `api.openai.com`; the real key never enters container
+  `auth.json`. Proxy mode never mounts either host login file.
+- [x] CLI shape check: Codex CLI 0.156.1 `login status` accepts a temporary, synthetic API-key
+  `auth.json` with `auth_mode: "apikey"`; no real credential or provider request was used.
+- [ ] Live Codex acceptance: in a disposable channel, select **This channel's login**, sign in
+  as a different permitted ChatGPT account under the displayed host `CODEX_HOME`, and ask for a
+  harmless answer. Pass: Codex answers, the host file keeps the refresh token, the container file
+  has only the channel's placeholder and an empty refresh token, and the egress audit records a
+  relay on the Codex hosts. Then remove the channel file while the gateway login remains valid:
+  the channel must fail authentication rather than use the gateway account. Restore afterward.
+- [ ] Live Codex API-key acceptance: use a disposable OpenAI project key in a second channel's
+  displayed host `CODEX_HOME`, send the same harmless prompt, and require a response and an
+  `api.openai.com` relay audit entry. The container file contains only the placeholder; a copied
+  placeholder sent to `chatgpt.com` is not swapped. Revoke the test key afterward.
+- [ ] Live Claude isolation: with either Codex channel choice selected, run a Claude turn in the
+  same disposable channel and require the existing Claude login and normal reply.
+
 ## Live-case definitions corrected for the container-secrets contract (2026-09-27 QA campaign)
 
 The 2026-09-27 live campaign failed or blocked these registry cases only because their written
@@ -1221,9 +1283,23 @@ unchecked live gate above.
       snapshot, OpenAI id, unknown id, empty). Engine-independent: this is ledger SQL, not harness
       behaviour.
 - [x] `test/usage-model-breakdown.test.js` also pins the Overview's chart contract: the categorical
-      palette hexes (changing one obliges re-running the dataviz validator), the stacked-area
+      palette hexes (changing one obliges re-running the dataviz validator), the stacked-column
       renderer, a legend for every multi-series chart, the models bar chart, and that hues are
       keyed on the model rather than cycled by position in a filtered list.
+- [x] `test/dashboard-chart-layout.test.js`: stacked columns occupy separate time buckets and
+      reconcile their heights with per-model values; source, channel and user bars expose the
+      matching model breakdown on hover and keyboard focus; the four compact cards and four
+      full-width cards render in the requested order. Engine-independent: these are browser UI
+      functions over the already-aggregated dashboard payload.
+- [ ] Live acceptance (Overview chart layout): open Overview with a range containing usage from
+      two or more models. Require four cards across at desktop width: Token est. cost, Runs,
+      Tokens, Where usage came from. Require separate stacked columns for each time bucket and
+      verify the hovered column shows that bucket's model values. Below, require full-width Models,
+      Channels, Runs per user, Top skills in that order. Hover and keyboard-focus one source bar,
+      one channel metric bar and one user bar; each tooltip must show the bar's total and model
+      breakdown in the same colours as the legend. Repeat at a narrow viewport to check card
+      wrapping and that tooltips remain readable. Engine-independent: the UI reads a fixed API
+      payload and no engine turn is involved.
 - [x] `test/external-usage.test.js`: Claude transcript parsing into per-hour/per-model aggregates
       (subagent spend counted, synthetic error replies not, tool results and subagent prompts not
       counted as turns, dated snapshots collapsed onto the billing id); the cache-write TTL split,
@@ -2456,6 +2532,24 @@ pass. Many checks are manual (require a real Slack workspace + an authenticated 
 
 ## Complete background-agent report delivery
 
+- [x] `test/durable-delivery.test.js`: a completed nested-agent report saved with both delivery
+  attempts exhausted gets one repair delivery on recovery, retires its row after success, and never
+  calls the runner. A failed repair records its one-time marker and cannot reset the attempt budget
+  again on a later restart. Focused delivery suite: 65 passed.
+- [ ] Live Claude and Codex, separate private fixtures: stage a completed nested-agent report
+  with a synthetic key, saved output and two exhausted attempts; restart safely on the fixed beta
+  revision. Pass when the original report appears once in the root thread, the row retires, and no
+  engine work is rerun. Preserve the original failed delivery evidence and the exact retest links.
+- [x] `test/deliver.test.js`: a nested agent session key with two `::agent-` suffixes delivers
+  its report and menu into the launching Slack thread; a synthetic scheduled key produces a
+  channel-level post with no `thread_ts`. `test/durable-delivery.test.js` checks that a completed
+  agent's report is delivered directly and its durable row retires only after delivery.
+- [ ] Live Claude and Codex, separate private Auto fixtures: start a background agent that starts
+  another background agent returning a short read-only report. Capture the root thread timestamp
+  and both synthetic session keys. Pass when the nested agent's completed report appears exactly
+  once in the root thread, no `invalid_thread_ts` warning appears, and its `bg_jobs` row retires.
+  Repeat with a channel-level scheduled report: it must post without a `thread_ts`. Keep each
+  engine's observed evidence and any failed attempt for the exact candidate.
 - [x] `test/durable-delivery.test.js`: both engine result shapes retain a report longer than
   12,000 characters through an unavailable transport, persisted state, and recovery. Exact
   content and the final sentinel survive, known secret values remain redacted, and the completed
@@ -3386,6 +3480,15 @@ exercise the `qwen-eu` adapter itself, in a scratch runtime root (no production 
       hours, keeps a live run's directories and any explicitly protected path, and never touches a
       directory that is not the suite's. Manual: `ls /tmp | grep -c '^cg-'` before and after a full
       `npm test` must not grow.
+- [x] `test/folders-generator-paths.test.js`: the four custom workdir fixtures are created inside
+      `~/ChannelGate Testing/folders-generator-*`, never as `cg-*` siblings in the account home.
+      The process-exit cleanup removes the run folder; `pretest` removes only stale
+      `folders-generator-*` folders in that parent and leaves recent runs and unrelated folders.
+      The aggregate runner snapshots that parent before and after the suite and fails on a new
+      leftover run folder.
+      Run `node --test test/folders-generator-paths.test.js test/test-scratch-cleanup.test.js`;
+      pass when both files pass, no `cg-{custom,mirror,project,workdir}-*` directories appear
+      directly under the home, and no `folders-generator-*` directory remains after the run.
 - [x] `npm run check:static`: every tracked JavaScript source/test/script parses under the supported
       Node runtime and fails on tabs or trailing whitespace. This is the deliberately incremental,
       dependency-free static/format gate; repo-wide ESLint/typed-JS adoption remains a future
@@ -4486,6 +4589,19 @@ placeholders and `--network none`).
       authentication failure answers via the OTHER harness with a reason note and observes its
       per-engine per-channel / gateway-wide ~15-min cooldown; with failover OFF, the engine's own
       error surfaces. A post-tool failure never replays.
+- [x] Automatic failover stays on the answering harness (`test/claude-fallback-e2e.test.js`,
+      `test/codex-failover-e2e.test.js`): in a Claude-default channel, trigger the fixture's
+      replay-safe Claude limit and let Codex answer; reset cooldown and send another message in
+      the same thread. Pass: the second turn runs on Codex with `resume=yes`, with no new failover
+      note. Repeat in a Codex-default channel with the Codex limit and Claude answer. For an older
+      session fixture with a Claude main row and a successful Codex fallback row, send an unpinned
+      continuation; pass: it resumes Codex and moves that session to the main thread key. A manual
+      thread engine/model choice keeps its existing precedence. Live acceptance on either engine:
+      use a test account whose primary harness is genuinely limited, observe the fallback answer,
+      then send a second message in the same thread after its cooldown; pass only if the second
+      reply footer names the fallback harness and continues its prior context. Private Airtable
+      live definitions `ENG-11` (Claude→Codex on Atlas) and `ENG-12` (Codex→Claude on Xavier)
+      are registered and remain unexecuted until their limited-account fixtures are available.
 - [x] Unit: the Codex runner classifies its plan-limit rejection ("purchase more credits…") as a
       replay-safe `usage_limit` — as a JSON error event AND on stderr with a nonzero exit — while
       model rejections keep routing to the same-engine model retry, server/connection errors
@@ -5852,18 +5968,31 @@ none` for its cases and live gates. Kept as history.
       (`thread_ts` = the current thread), not the channel root.
 - [ ] Empty `content` is refused with a one-line message; no channel context returns a friendly error.
 - [ ] Hard-scoped to the current channel — it never uploads to an arbitrary channel id.
-- [ ] Asking for a file directly ("send me `REPORT.md`", "share that file here", "attach the JSON")
-      makes the AI upload it with `slack_upload_snippet` under its real name/extension instead of
-      only naming the path, and the reply is a one-line summary rather than the pasted content.
-      Engine-independent guidance; verify on Claude and Codex.
-- [ ] The injected `gateway-usage` skill (`platforms/slack/writing-replies.md`, the capability map,
-      and rule 3 in `SKILL.md`) states: any UTF-8 text file may be uploaded; `.html` uploads and
-      downloads but previews as source, not a rendered page; images keep the `![alt](path.png)`
-      auto-upload route; binaries (PDF/PPTX/XLSX/ZIP) are refused and named as inline-code paths for
-      the 📄 file-explorer button; files above roughly 1 MB are offered rather than uploaded by
-      reflex.
-- [ ] The `slack_upload_snippet` tool description itself names the share-a-file use and the UTF-8
-      text restriction, so an engine that never loads the skill still picks the right route.
+
+### Agent file sharing into the thread (control MCP)
+Fixture: a Slack channel whose working folder holds `artifacts/Contract.pdf` (a real PDF, a few
+hundred KB) and `artifacts/link.txt`, a symlink to a file outside the folder. Run each prompt on
+Claude and on Codex.
+- [ ] Prompt "send me `artifacts/Contract.pdf` here" → the AI calls `slack_share_file` (not
+      `stage_file_for_composio`, not a Composio `SLACK_*` upload, no `ask_questions` account card);
+      the PDF appears in THIS thread as a native Slack PDF with a preview, byte-identical to the file
+      on disk; the reply is one line and does not paste content. Pass: all four hold on both engines.
+- [ ] The file is posted by the bot user, in the current thread (`thread_ts` = the thread), and an
+      `events` row `channel_file_shared` records channel, author, slug, relative file, bytes and
+      `via: "agent"`.
+- [ ] `slack_share_file` with `../…`, an absolute path, `artifacts/link.txt` (symlink out of the
+      folder) or a path under the mounted operator home answers `Sharing refused: …` and uploads
+      nothing.
+- [ ] A file over 25 MB is refused with the size limit named; an empty file is refused; a Slack API
+      error (e.g. missing `files:write`) answers `Couldn't share the file: …`, never "Shared".
+- [ ] From a scheduled run (`sched-…` thread key) the file posts top-level in the channel, not an
+      `invalid_thread_ts` error.
+- [ ] The tool is OPEN in the control-plane classification (no approval card), like the explorer's
+      Share button, and available to any allowed user.
+- [ ] `gateway-usage` (SKILL.md rule 3 and capability map, `writing-replies.md`,
+      `sharing-files.md`) and the `slack_upload_snippet` / `stage_file_for_composio` descriptions all
+      point "send the file into this thread" at `slack_share_file`; Composio Slack upload is named
+      only for other channels/DMs.
 
 ### Native Slack charts (control MCP)
 - [ ] `slack_post_chart chart_type:"line" ...` posts a Block Kit `data_visualization` into the
@@ -7868,6 +7997,12 @@ the suite runs as an enterprise deployment because it holds a license it actuall
   verdicts remain outstanding and automated evidence must not be recorded as a live pass.
 
 ## Container update verification and recovery
+
+- [x] Unit — the update engine smoke counts a provider usage limit (thrown or returned: Claude's
+      weekly/session limit, Codex's usage limit, a rate limit) as reachable with a
+      "reachable but usage-limited" note, both before the update and for an engine required after
+      the restart; an authentication failure, a missing CLI or an unexpected answer still fails it
+      (`test/update-smoke.test.js`).
 
 - Both Claude and Codex fixtures: configure each login, invoke the internal authenticated update smoke route, require exact CG_UPDATE_SMOKE_OK responses per engine. Verify isolated target, no bypass/MCP injection, no host engine child, and removal of the ephemeral container, HOME volume and work folders. Invalid configured credentials must fail; absent credentials must be explicitly skipped; zero probes fails.
 - Image recovery: build old pins, change the desired Codex pin without changing imageSpecVersion, make the first build fail, then run Update again on the same checkout revision. Require retry and matching built/desired source digest; a build exiting zero with stale labels fails verification. Existing channels retain HOME and adopt the new image when idle.

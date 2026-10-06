@@ -70,37 +70,33 @@ Practical rules:
 ## Sending the file itself — when they ask for it
 
 Naming the path gives the reader a 📄 button to open. When they ask for the **file**, not a pointer
-to it — "send it here", "share the file", "can you just attach it", "put it in the thread" — upload
-it with `slack_upload_snippet` (gateway control tool, bot token, always available). Read the file
-and pass its text as `content`, keeping the real name in `filename`:
+to it — "send it here", "share the file", "attach the PDF", "trimite fișierul" — send it with
+`slack_share_file` (gateway control tool, bot token, always available). It is the same upload as
+the file explorer's Share button:
 
 ```
-slack_upload_snippet
-  filename: "REPORT.md"
-  title:    "Migration report"
-  comment:  "Full write-up — 3 blockers, all fixed."
-  content:  <the file's full text>
+slack_share_file
+  path:    "artifacts/Contract_completat.pdf"   # relative to the working folder
+  comment: "Completed and signed."              # optional
 ```
 
-- **Any UTF-8 text file works** — `.md`, `.txt`, `.json`, `.html`, `.csv`/`.tsv`, `.yaml`, `.sql`,
-  `.py`, a diff, a log. The extension decides the preview: `.csv`/`.tsv` render as a scrollable
-  spreadsheet grid, `.md`/`.txt`/code extensions as a text snippet Slack shows inline behind a
-  "see it in full" expander. Keep the file's own extension — renaming `.json` to `.txt` only loses
-  the syntax highlighting.
-- **`.html` uploads and downloads fine, but Slack previews the source, not the rendered page.** Say
-  that in one line and tell the reader to download it and open it in a browser. Never promise a
-  rendered preview in Slack.
-- **Images are already handled.** Reference them as `![alt](reports/chart.png)` (above) and the
-  gateway uploads them as native files with inline thumbnails. Don't snippet an image.
-- **Binaries can't ride this tool** — `.pdf`, `.pptx`, `.xlsx`, `.zip`, anything not text. `content`
-  is a string, so the bytes would be mangled. Name the path in inline code instead and point the
-  user at the 📄 footer button, whose file explorer can share the real file into the channel.
-- **Big files stay buttons.** The whole file passes through your context to become `content`, so a
-  multi-megabyte upload is slow and expensive. Above roughly 1 MB, name the path and offer to send
-  it rather than uploading by reflex.
+- **Any file type** — PDF, DOCX, XLSX, PPTX, ZIP, images, HTML, Markdown, JSON. The bytes go from
+  the folder to Slack unchanged; nothing passes through your context, so size costs you nothing up
+  to the **25 MB** limit.
+- **It posts as the bot, into this thread.** No Composio account is involved, so there is no
+  "which account?" question to ask. Use a Composio Slack upload only when the file must go to a
+  DIFFERENT channel or DM, or must appear as a person.
+- **Only files inside this channel's working folder.** Not the operator home even when it is
+  mounted, and not through a symlink. On a refusal, say so; don't copy the file in to get around it.
+- **`.html` arrives as a download; Slack previews the source**, not the rendered page. Say that in
+  one line.
+- **Images in an answer are already handled** — `![alt](reports/chart.png)` (above) uploads them
+  with an inline thumbnail. Use `slack_share_file` for an image only when they asked for the file.
+- **Text you generate that isn't on disk** — a table, an export — goes through `slack_upload_snippet`
+  instead (CSV/TSV renders as a spreadsheet grid; see `references/tables.md`).
 - **Send what was asked for** — the file they named, or the few they named, not the whole folder.
-- **Don't do both.** After the upload succeeds, reply with a one-line summary; never paste the same
-  content into the message as well.
+- **Don't do both.** After the share succeeds, reply with a one-line summary; never paste the
+  content or also send it another way.
 
 ## Avoid these
 - Long heading hierarchies. Use a short bold label for compact Slack answers.

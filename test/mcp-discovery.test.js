@@ -96,12 +96,17 @@ test("Codex app-server inventory performs initialize then requests tool status",
   };
 
   let spawnedArgs = null;
+  let spawnedOptions = null;
   const result = await discovery.listCodexRuntimeMcps({
-    spawnImpl: (_cmd, args) => { spawnedArgs = args; return child; },
+    channelId: "C_DISCOVERY_ACCOUNT",
+    spawnImpl: (_cmd, args, options) => { spawnedArgs = args; spawnedOptions = options; return child; },
     timeoutMs: 250,
   });
 
   assert.deepEqual(spawnedArgs, ["-c", "analytics.enabled=false", "app-server"], "discovery sends no usage metrics");
+  const { channelCodexHome } = await import("../src/gateway/channel-codex-auth.js");
+  assert.equal(spawnedOptions.env.CODEX_HOME, channelCodexHome("C_DISCOVERY_ACCOUNT"));
+  assert.equal(spawnedOptions.env.OPENAI_API_KEY, undefined, "the gateway key cannot leak into channel discovery");
   assert.deepEqual(result.map((entry) => entry.id), ["boost_space"]);
   assert.deepEqual(requests.map((message) => message.method), [
     "initialize",

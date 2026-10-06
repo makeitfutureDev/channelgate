@@ -126,6 +126,19 @@ export async function uploadLocalFile({ filePath, rootPath = "", filename = "", 
   return uploadBytes({ bytes, filename: filename || path.basename(filePath), title, channelId, threadTs, comment });
 }
 
+// Upload from a descriptor the caller has ALREADY proven is inside the channel folder
+// (openConfinedFile). Reading the handle instead of reopening a path is what keeps a symlink
+// swapped in behind the proof from reaching the unsandboxed daemon. The caller closes the handle.
+export async function uploadOpenedFile({ handle, filename, title = "", channelId = "", threadTs = "", comment = "" } = {}) {
+  const info = await handle.stat();
+  if (!info.isFile()) throw new Error("Only regular files can be shared.");
+  if (info.size > MAX_FILE_UPLOAD_BYTES) throw new Error(`File is larger than the ${Math.round(MAX_FILE_UPLOAD_BYTES / 1024 / 1024)} MB Slack upload limit.`);
+  if (info.size === 0) throw new Error("The file is empty.");
+  const bytes = await handle.readFile();
+  if (bytes.length > MAX_FILE_UPLOAD_BYTES) throw new Error(`File grew larger than the ${Math.round(MAX_FILE_UPLOAD_BYTES / 1024 / 1024)} MB Slack upload limit before it could be shared.`);
+  return { ...(await uploadBytes({ bytes, filename, title, channelId, threadTs, comment })), bytes: bytes.length };
+}
+
 // Delete a Slack file by id (used by the verification harness to clean up test uploads).
 export async function deleteFile(fileId) {
   if (!fileId) return;

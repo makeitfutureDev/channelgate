@@ -219,6 +219,7 @@ export function defaultChannelMeta({ channelId, name, type, isDM, platform }) {
     noDefaultTokens: false, // refuse the org-default token fallback here (channel/user tokens still apply)
     memory: undefined, // folder-scoped MEMORY.md: undefined = use the gateway default; true/false to override
     engine: "", // per-channel engine: "" = use the global default, or "claude" / "codex"
+    codexAuthSource: "gateway", // gateway login, or a separate host-side login for this channel
     approvedTools: [], // tool names "approved forever" here — auto-approved without a prompt
     workDir: "", // custom absolute path to run Claude in (empty = the default gateway folder)
     syncDriveFolder: "", // Google Drive folder link to 2-way sync (scheduled) with this channel's working folder (empty = off)

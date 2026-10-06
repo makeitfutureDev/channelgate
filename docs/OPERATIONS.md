@@ -372,8 +372,8 @@ in on the host is all a channel needs. Nothing is copied or mounted. Optionally 
 `claude setup-token` on the gateway host and paste the value into *Claude token for container runs*:
 that token is then used instead and never needs refreshing. Codex is RELAYED the same way behind
 the egress proxy (see **Codex login relay** below): keep the host signed in with `codex login`;
-nothing is mounted. Only the legacy open-network mode and an API-key Codex login still bind-mount
-the gateway's real `auth.json` read-write into every container (Codex rewrites it in place, so a
+nothing is mounted. Only the legacy open-network mode still bind-mounts
+the selected `auth.json` read-write into a container (Codex rewrites it in place, so a
 copy would fork the refresh chain). Codex *sessions* and history are per channel either way.
 
 **Network (the egress proxy).** Every channel container runs with `--network none`: its only
@@ -650,7 +650,7 @@ gone — a finished test run, not a second live gateway sharing this account. A 
 is never removed by it. The space estimate counts image layers once each. To make it routine,
 schedule the report and read it; schedule `--apply` only if you have decided to.
 
-Codex uses the same shared login file already mounted for chat turns. Claude's rotating credential
+Codex uses the channel's selected login, relayed in proxy mode. Claude's rotating credential
 file is still never copied or mounted: the helper refreshes the gateway's normal subscription
 access-token relay every 20 minutes and exposes only that access token to interactive `claude`
 commands. Closing VS Code removes the live token and releases the lease; an interrupted helper is
@@ -696,9 +696,9 @@ per-channel or gateway-wide "back to the host" switch: the container is the only
 - **Per-user Codex skill grants are not delivered in containers.** The per-run Codex skill overlay
   was built for a synthetic host HOME that a container does not have; a Codex run gets the
   channel's skills through the mounted workdir, but not that overlay.
-- **Codex sessions are per channel; the sign-in is shared only outside the proxy.** Under the
-  legacy open-network mode (or with an API-key `auth.json`) every container mounts the same
-  `auth.json` the gateway uses. A `codex login` on the host that *replaces* the file leaves a
+- **Codex sessions are per channel; the sign-in is mounted only outside the proxy.** Under the
+  legacy open-network mode each container mounts its selected host `auth.json`. A `codex login`
+  on the host that *replaces* the file leaves a
   running container holding the old inode — `/status` and `/api/health` report the drift; restart
   the channel's container (or let the reaper stop it) to pick the new one up. Behind the proxy the
   login is relayed and a new `codex login` takes effect on the next turn.
@@ -709,10 +709,8 @@ per-channel or gateway-wide "back to the host" switch: the container is the only
   dies within hours). A daemon that authenticates Claude with its own `ANTHROPIC_API_KEY` still
   passes that key through raw — the proxy does not rewrite it.
 - **Engine keys that still reach a proxy-mode container raw.** A Qwen harness's provider key
-  (`ANTHROPIC_AUTH_TOKEN` pointed at the provider) and a daemon `CODEX_API_KEY`/`OPENAI_API_KEY`
-  handed to Codex are real values in the container environment; Codex's own sign-in is the shared
-  `auth.json` mount (the engine-login broker is a later phase). They are reachable only on their
-  engine endpoints through the proxy, but a process in the container can read them.
+  (`ANTHROPIC_AUTH_TOKEN` pointed at the provider) still reaches that engine as a real value.
+  Codex logins stored in `auth.json`, including API-key logins, are relayed behind the proxy.
 - **A self-hosted Qwen endpoint on a private address is refused in proxy mode.** The proxy never
   connects to loopback, private, link-local or CGNAT addresses, and a configured Qwen base URL is no
   exception: point the harness at a public endpoint, or run that channel under the legacy bridge
@@ -727,9 +725,8 @@ per-channel or gateway-wide "back to the host" switch: the container is the only
   the names of any unprotected (`egressUnprotected`) or withheld (`egressWithheld`) secrets.
   `networkEnforcedFor(target)` in `src/engines/network-policy.js` is the one question every surface
   asks.
-- **Codex's sign-in is a placeholder in proxy mode.** See **Codex login relay** below. What remains
-  raw: the legacy bridge mode's shared file, an API-key `auth.json`, and a daemon
-  `OPENAI_API_KEY`/`CODEX_API_KEY`, which reaches the container env as `CODEX_API_KEY` unchanged.
+- **Codex's sign-in is a placeholder in proxy mode.** See **Codex login relay** below. The legacy
+  bridge mode still mounts the selected `auth.json` file because it has no proxy swap.
 - **SSH and VS Code sessions** run in the same `--network none` container with the proxy env and
   hold placeholders like a turn (container-secrets P3, `docs/SSH-ACCESS.md`); SSH `-L` forwards to
   external hosts do not work without the network.
@@ -754,6 +751,43 @@ out or its token expired and could not be renewed — run `codex login` on the h
 turn after upgrading recreates each channel's container once (the mount is gone from its
 fingerprint), and `cg-init` deletes an old copied Codex login carrying a refresh token from the
 volume. The legacy open-network mode keeps the shared read-write mount (and says so in `/status`).
+
+**A separate Codex login for one channel.** In the admin channel editor, Runtime → **Codex
+login source** → **This channel's own login**. The choice comes before the engine and model
+settings. **Default gateway login** shows the shared Slack, Claude and Codex status, with links
+to the gateway Slack/Claude settings and direct ChatGPT or API-key sign-in for shared Codex.
+Slack and Claude currently use the gateway connection regardless of the Codex choice. Choose
+**This channel's own login** to show the dedicated Codex controls; channel connector overrides
+remain in MCP Connections and Environment tokens.
+
+Use **Sign in with ChatGPT** to start a device code
+flow in the admin page; open the displayed link, enter its code, and wait for the status to show
+the completed ChatGPT login. Device code sign-in may first need enabling in ChatGPT security
+settings or workspace permissions. Alternatively, enter a Platform key in the private password
+field and choose **Use API key**. A successful sign-in selects and saves **This channel's login**.
+The page shows only the method and sign-in status after completion; it never returns the key.
+
+For a terminal fallback, the editor shows that channel's Codex home directory on the **gateway
+host**. Create it under the gateway service account and sign in there. For ChatGPT subscription
+access, use `CODEX_HOME=<displayed directory> codex login
+--device-auth` and complete the browser code flow. For an OpenAI Platform API key, use
+`CODEX_HOME=<displayed directory> codex login --with-api-key`, supplying the key on standard
+input as prompted by the CLI. Never put the key on the command line, in Slack, or in the channel
+folder. `CODEX_HOME=<displayed directory> codex login status` checks the selected method. OpenAI
+bills API-key runs separately from a ChatGPT subscription. The channel login does not fall back
+to the gateway login if it is missing or expired.
+
+For a laptop login, OpenAI documents copying `~/.codex/auth.json` to a headless host as a
+fallback when device login is unavailable. Use an encrypted SSH transfer into the **displayed
+host directory** with restrictive permissions and run Codex as the gateway service account so
+the one host-side file can refresh. The file contains full credentials, including a refresh
+token: do not upload it through Slack or the admin UI. Channel containers receive only a
+channel-bound placeholder. A ChatGPT login is relayed as the JWT-shaped access token described
+above; an API-key login is relayed as a separate placeholder swapped only in the Authorization
+header at `api.openai.com`. The channel setting affects new Codex turns; it does not change
+Claude authentication. An Admin channel with the optional full operator-home mount can read
+host files under that mount, including the gateway's runtime root; use ordinary project channels
+for credential isolation.
 
 **Remote MCP relay (container-secrets P1).** Composio (`composio-user`, `composio-agent` in token
 mode), the MakeItFuture toolbox and the Make toolbox never reach a container with their token. The

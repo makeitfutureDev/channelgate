@@ -7,6 +7,7 @@ import { tempDir } from "./helpers.js";
 import {
   prepareUpdateSmokeFolder,
   runUpdateSmoke,
+  usageLimitedSmoke,
   validSmokeResponse,
 } from "../src/gateway/update-smoke.js";
 
@@ -144,4 +145,39 @@ test("a rejected target is never destroyed and cleanup failures fail verificatio
   assert.equal(existsSync(f.target.cwd), false);
   assert.equal(f.calls.at(-1), "release");
   rmSync(root, { recursive: true, force: true });
+});
+
+// Live on Atlas (2026-09-28): the update was refused because the Claude plan had hit its weekly
+// limit. A usage-limit answer proves the CLI started in the new container, authenticated and reached
+// its provider — the probe's whole purpose — so it counts as reachable, never as a broken gateway.
+test("a provider usage limit counts as reachable, thrown or returned; real failures still refuse", async () => {
+  for (const text of [
+    "Claude usage limit reached: You've hit your weekly limit · resets Sep 29, 11pm (Europe/Bucharest)",
+    "Codex usage limit reached: You've hit your usage limit. Visit chatgpt.com/codex/settings/usage",
+    "You've hit your session limit · resets 4pm",
+    "rate_limit_error: too many requests",
+  ]) assert.equal(usageLimitedSmoke(text), true, text);
+  for (const text of ["authentication failed", "Engine smoke probe returned an unexpected response.", "ENOENT: claude not found", ""]) {
+    assert.equal(usageLimitedSmoke(text), false, text);
+  }
+  const root = tempRoot(); const f = fixture(root);
+  try {
+    const limited = await runUpdateSmoke({ root, resolveTarget: f.resolveTarget, engines: [
+      { id: "claude", updateSmoke: async () => { throw new Error("Claude usage limit reached: You've hit your weekly limit · resets Sep 29, 11pm (Europe/Bucharest)"); } },
+      { id: "codex", updateSmoke: async () => ({ content: "You've hit your usage limit. Visit chatgpt.com/codex/settings/usage" }) },
+    ] });
+    assert.equal(limited.ok, true, limited.error);
+    assert.deepEqual(limited.engines.map((e) => [e.engine, e.ok, e.usageLimited]), [["claude", true, true], ["codex", true, true]]);
+    assert.match(limited.engines[0].note, /reachable but usage-limited: Claude usage limit reached/);
+    // A required engine (it passed before the update) that is usage-limited afterwards still passes;
+    // one that genuinely breaks still refuses.
+    const after = await runUpdateSmoke({ root, resolveTarget: f.resolveTarget, requiredEngines: ["claude"], engines: [
+      { id: "claude", updateSmoke: async () => { throw new Error("Claude usage limit reached: weekly"); } },
+    ] });
+    assert.equal(after.ok, true);
+    const broken = await runUpdateSmoke({ root, resolveTarget: f.resolveTarget, engines: [
+      { id: "claude", updateSmoke: async () => { throw new Error("authentication failed"); } },
+    ] });
+    assert.equal(broken.ok, false);
+  } finally { rmSync(root, { recursive: true, force: true }); }
 });

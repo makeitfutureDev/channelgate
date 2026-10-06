@@ -9,7 +9,7 @@
 // Usage: node scripts/run-tests.mjs [--coverage] [extra node flags...]
 // `--coverage` expands to the coverage flags with the enforced floors below; any other flags are
 // passed to the spawned `node` in front of `--test`.
-import { readdirSync } from "node:fs";
+import { mkdirSync, readdirSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { spawnSync } from "node:child_process";
 import os from "node:os";
@@ -53,14 +53,15 @@ const nodeFlags = process.argv
   .flatMap((flag) => (flag === "--coverage" ? coverageFlags() : [flag]));
 
 // ── Real-home leak guard ──────────────────────────────────────────────────────────────────────
-// Tests must run entirely in temp directories, pinned through CHANNELGATE_DIR / CHANNELGATE_DB /
-// CG_WORKSPACE_DIR (see test/helpers.js). A file that forgets to call ensureTestEnv() silently
+// Tests use temp directories, except the one dedicated home folder for custom workdir fixtures.
+// Runtime paths are pinned through CHANNELGATE_DIR / CHANNELGATE_DB / CG_WORKSPACE_DIR
+// (see test/helpers.js). A file that forgets to call ensureTestEnv() silently
 // falls back to the DEFAULTS and provisions folders in the operator's real home — which on this
 // project is a machine running the daemon in production. That is invisible in a green run, so the
-// runner snapshots the four root names (current and pre-rename) plus one level beneath each,
+// runner snapshots the runtime roots (current and pre-rename) and the fixture parent plus one level beneath each,
 // before and after, and fails the run on anything new. It is a diff, so directories that leaked in
 // an earlier run do not fail every run forever — only a NEW entry does.
-const HOME_ROOTS = [".channelgate", "ChannelGate", ".claude-gateway", "Slack Agent"];
+const HOME_ROOTS = [".channelgate", "ChannelGate", ".claude-gateway", "Slack Agent", "ChannelGate Testing"];
 
 function homeSnapshot() {
   const home = os.homedir();
@@ -88,6 +89,9 @@ for (const key of ["CHANNELGATE_DIR", "CHANNELGATE_DB", "CLAUDE_GATEWAY_DIR", "C
   delete testEnv[key];
 }
 
+// The folder-generator test deliberately uses this one named home folder. Include its children
+// in the before/after leak guard so a missed cleanup fails the suite.
+mkdirSync(path.join(os.homedir(), "ChannelGate Testing"), { recursive: true, mode: 0o700 });
 const before = homeSnapshot();
 const result = spawnSync(process.execPath, [...nodeFlags, "--test", ...files], {
   cwd: repoRoot,
@@ -103,8 +107,8 @@ if (result.error) {
 if (leaked.length) {
   console.error(`\n✖ Tests wrote into the real home directory (${os.homedir()}):`);
   for (const entry of leaked) console.error(`    ${path.join(os.homedir(), entry)}`);
-  console.error("  Every test must run in a temp directory. Call ensureTestEnv() from test/helpers.js");
-  console.error("  before anything resolves a path, or pin CHANNELGATE_DIR / CG_WORKSPACE_DIR yourself.");
+  console.error("  Use ensureTestEnv() for runtime paths. Register custom workdir fixtures with");
+  console.error("  trackTempDir() so ChannelGate Testing is empty after the test process exits.");
   process.exit(1);
 }
 process.exit(result.status ?? 1);

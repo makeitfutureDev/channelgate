@@ -60,6 +60,7 @@ export async function setThreadEngine(slug, threadKey, engine) {
 //   4. the gateway default.
 // Never throws: a card that cannot resolve an engine still has to be posted.
 export async function resolveThreadEngine(slug, threadKey, meta = {}) {
+  if (meta?.codexAuthSource === "channel") return "codex";
   if (slug && threadKey) {
     const override = await getThreadEngine(slug, threadKey).catch(() => "");
     if (override) return override;

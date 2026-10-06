@@ -16,6 +16,52 @@ product overview.
 > | Makeitfuture Sustainable Use License 1.1 | 2026-08-20 | never published |
 > | Makeitfuture Sustainable Use License 1.0 | 2026-08-06 | never published |
 
+## Unreleased
+
+## 0.6.1 — release candidate
+
+- Channel Runtime now shows only engine and model controls for the shared login. Dedicated Codex
+  sign-in uses a method dropdown: choosing ChatGPT starts the device flow and clicking its code
+  copies it; the API key field appears only for that method. The shared sign-in moved to Settings.
+  Slack Settings names the dedicated login and its channel defaults. Codex Cloud MCP discovery
+  and launch now use that channel account when selected.
+- ChatGPT sign-in displays the device link and complete code from current Codex CLI output;
+  proxied hosts pass the public TLS CA bundle to the login process.
+- A channel using its own Codex login now stays on Codex across settings, `/model`, and existing
+  threads. The settings page hides the redundant engine picker and
+  explains login storage without showing the internal path.
+- **The agent can send any file into the thread.** New gateway tool `slack_share_file` posts a file
+  from the channel's working folder — PDF, Word, Excel, PowerPoint, ZIP, images, HTML — into the
+  current thread as the bot, up to 25 MB, exactly like the file explorer's Share button. "Trimite
+  fișierul" no longer ends in a "which Slack account?" question card: a Composio upload is only for
+  other channels or DMs now. Files outside the channel folder (including the mounted operator home)
+  and symlinks out of it are refused.
+
+- Completed nested background reports stranded by the earlier `invalid_thread_ts` error get one
+  bounded recovery attempt from their saved output after restart. Their work is not rerun.
+- Channel Runtime settings now ask for the Codex login source first. Shared gateway Codex sign-in
+  is available from the admin Settings page.
+- **Nested background agent reports reach their Slack thread.** Delivery now turns an agent's
+  synthetic session key into the launching thread timestamp before posting the report and menu.
+  Scheduled reports with synthetic keys post at channel level. This prevents `invalid_thread_ts`
+  from stranding a completed report.
+- Admin channel settings now start ChatGPT device code sign-in or accept an OpenAI API key for a
+  dedicated Codex login, show its status, and select it after success.
+- Channels can select a separate host-side Codex login for ChatGPT subscription access or an
+  OpenAI API key. Proxy-mode containers receive only channel-bound credential placeholders.
+
+- **Automatic engine switches now stay with the conversation.** When Claude reaches its limit and
+  Codex answers, the next message resumes that Codex session instead of retrying Claude. The same
+  holds when Codex switches to Claude. Existing threads with a successful fallback session adopt
+  it on their next message; a manual thread engine or model choice still takes precedence.
+
+- Overview now draws separate stacked columns for each time bucket, shows model totals when a
+  source, channel or user bar is hovered or focused, and arranges usage sources beside the three
+  time charts above Models, Channels, Users and Skills.
+
+- **The folder-generator test no longer scatters projects across the operator's home.** Its custom-workdir fixtures now live under one `ChannelGate Testing` folder, are removed when the test process exits, and stale runs are swept before the next test suite.
+- **A provider usage limit no longer blocks an update.** Before and after updating, the updater sends each engine a tiny test prompt inside a throwaway container. A reply like "You've hit your weekly limit" used to refuse the update, even though it proves the engine starts, logs in and reaches its provider. It now counts as reachable. A broken login or engine still stops the update.
+
 ## 0.6.0 — 2026-09-28
 
 - **Claude model choices now show exact versions.** The `/model` picker and admin selectors list

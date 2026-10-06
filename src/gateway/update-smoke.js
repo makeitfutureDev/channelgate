@@ -71,6 +71,16 @@ export async function prepareUpdateSmokeFolder({
   };
 }
 
+// A provider USAGE LIMIT (a weekly/session plan cap, spent credits, a rate limit) is not a broken
+// gateway: to get that answer the engine CLI started inside the new container, authenticated with
+// the configured login and reached its provider — everything this probe exists to prove. Refusing
+// an update over it (live on Atlas, 2026-09-28: "claude: Claude usage limit reached: You've hit your
+// weekly limit") would hold every host hostage to a quota. Such an engine counts as reachable.
+const USAGE_LIMIT_RE = /usage limit|(?:hit|reached|exceeded)[^.\n]{0,40}(?:session|usage|weekly|monthly|daily|account|spend|credit|rate|quota|token)\s+limit|rate[_ -]?limit|quota exceeded|out of credits?|purchase more credits|insufficient (?:credits?|quota|balance|funds)|claude\.ai\/settings\/usage|codex\/settings\/usage/i;
+export function usageLimitedSmoke(text) {
+  return USAGE_LIMIT_RE.test(String(text ?? ""));
+}
+
 export function validSmokeResponse(content) {
   return String(content ?? "").trim() === RESPONSE;
 }
@@ -122,9 +132,17 @@ export async function runUpdateSmoke({
           timeoutMs,
         });
         const ok = validSmokeResponse(result?.content);
+        if (!ok && usageLimitedSmoke(result?.content)) {
+          results.push({ engine: engine.id, ok: true, usageLimited: true, durationMs: Date.now() - engineStart, note: `reachable but usage-limited: ${String(result?.content || "").split(/\r?\n/, 1)[0].slice(0, 160)}` });
+          continue;
+        }
         results.push({ engine: engine.id, ok, durationMs: Date.now() - engineStart,
           ...(!ok ? { error: "Engine smoke probe returned an unexpected response." } : {}) });
       } catch (error) {
+        if (usageLimitedSmoke(error?.message)) {
+          results.push({ engine: engine.id, ok: true, usageLimited: true, durationMs: Date.now() - engineStart, note: `reachable but usage-limited: ${safeError(error)}` });
+          continue;
+        }
         results.push({ engine: engine.id, ok: false, durationMs: Date.now() - engineStart, error: safeError(error) });
       }
     }

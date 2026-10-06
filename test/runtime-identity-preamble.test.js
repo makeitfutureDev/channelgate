@@ -220,9 +220,9 @@ test("cross-engine fallback and its model retry use their own engine, model, eff
   const followupStart = backend.calls.spawn.length;
   await runMessage({ ...context, text: "CODEX_STUB_REJECT_MODEL" });
   const followup = attempts(followupStart);
-  assert.equal(followup.length, 2, "the cooldown resumes the existing fallback conversation");
+  assert.equal(followup.length, 2, "the promoted Codex session resumes after its model retry");
   for (const call of followup) assert.ok(call.args.some((arg) => String(arg).includes("Clean mode for this attempt: **enabled**")));
-  assert.deepEqual(metadata(followup[1]), { engine: "codex", configured_model: "gpt-5.6-sol", configured_effort: null, session: "resumed" });
+  assert.deepEqual(metadata(followup[1]), { engine: "codex", configured_model: "gpt-5.6-sol", configured_effort: "high", session: "resumed" });
 });
 
 test("a lost resumed session gets fresh metadata when the gateway heals it", async (t) => {

@@ -23,10 +23,11 @@ import { normalizeChannelEnv, resolveChannelEnv, safeSpawnEnv } from "../../conf
 import { getOrgEnv, getUserEnv, mergeRunEnv, resolveOrgEnv, resolveUserEnv } from "../../config/scoped-env.js";
 import { getContainerRuntime } from "../../config/settings.js";
 import { resolveContainerClaudeToken } from "../claude-token-relay.js";
-import { renderContainerCodexAuth, resolveContainerCodexToken } from "../codex-token-relay.js";
+import { renderContainerCodexApiAuth, renderContainerCodexAuth, resolveContainerCodexToken } from "../codex-token-relay.js";
+import { codexLoginCandidatesFor } from "../channel-codex-auth.js";
 import { egressActive } from "../../runtimes/container/egress-hook.js";
 import { corePlaceholder, mintPlaceholder, PLACEHOLDER_SHAPES, wrapPlaceholder } from "./placeholders.js";
-import { CODEX_RELAY_SECRET_NAME, RELAY_SECRET_NAME, relayRuleFor, rulesFor } from "./catalog-rules.js";
+import { CODEX_API_RELAY_SECRET_NAME, CODEX_RELAY_SECRET_NAME, RELAY_SECRET_NAME, relayRuleFor, rulesFor } from "./catalog-rules.js";
 import { engineHostsFor } from "./engine-hosts.js";
 
 export const GRANT_SCOPES = Object.freeze(["organization", "channel", "personal", "relay"]);
@@ -141,16 +142,23 @@ export function revokeMissing({ scope, channelId, ownerId, present, now = Date.n
 // One cache per relay (secret name): the live token behind the channel placeholders, resolved —
 // and refreshed when it is about to expire — at most once a minute.
 const relayCaches = new Map(); // secret name → { at, promise }
-async function cachedRelayToken(secretName, deps) {
-  const resolve = secretName === CODEX_RELAY_SECRET_NAME
+async function cachedRelayToken(secretName, deps, channelId = "") {
+  const codexSecret = secretName === CODEX_RELAY_SECRET_NAME || secretName === CODEX_API_RELAY_SECRET_NAME;
+  const resolve = codexSecret
     ? (deps.codexRelayToken || resolveContainerCodexToken)
     : (deps.relayToken || resolveContainerClaudeToken);
   const now = Date.now();
-  let cache = relayCaches.get(secretName);
+  const meta = codexSecret ? await channelMetaFor(channelId, deps) : null;
+  const cacheKey = codexSecret ? `${secretName}:${channelId}:${meta?.codexAuthSource || "gateway"}` : secretName;
+  let cache = relayCaches.get(cacheKey);
   if (!cache || now - cache.at > RELAY_CACHE_MS) {
-    cache = { at: now, promise: Promise.resolve().then(() => resolve()) };
-    relayCaches.set(secretName, cache);
-    cache.promise.catch(() => { if (relayCaches.get(secretName) === cache) relayCaches.delete(secretName); });
+    cache = { at: now, promise: Promise.resolve().then(async () => {
+      if (!codexSecret) return resolve();
+      const token = await resolve({ candidates: codexLoginCandidatesFor(meta) });
+      return token?.source === (secretName === CODEX_API_RELAY_SECRET_NAME ? "api-key" : "chatgpt") ? token : { token: "" };
+    }) };
+    relayCaches.set(cacheKey, cache);
+    cache.promise.catch(() => { if (relayCaches.get(cacheKey) === cache) relayCaches.delete(cacheKey); });
   }
   const relay = await cache.promise;
   return String(relay?.token || "");
@@ -173,7 +181,7 @@ export async function resolveGrantMaterial(row, deps = {}) {
   const name = row.secretName;
   if (row.scope === "relay") {
     if (!relayRuleFor(name)) return { value: "", entry: null, exists: false };
-    return { value: await cachedRelayToken(name, deps), entry: null, exists: true };
+    return { value: await cachedRelayToken(name, deps, row.channelId), entry: null, exists: true };
   }
   if (row.scope === "organization") {
     const entry = (deps.orgEntries ? deps.orgEntries() : getOrgEnv())[name] || null;
@@ -208,7 +216,7 @@ export async function resolveEgressGrant(core, deps = {}) {
   if (!row) return null;
   const now = Date.now();
   let material = materialCache.get(row.placeholder);
-  if (!material || now - material.at > MATERIAL_CACHE_MS) {
+  if (row.scope === "relay" || !material || now - material.at > MATERIAL_CACHE_MS) {
     material = { at: now, ...(await resolveGrantMaterial(row, deps)) };
     materialCache.set(row.placeholder, material);
   }
@@ -361,6 +369,10 @@ export function codexRelayPlaceholderFor({ channelId }) {
   return placeholderFor({ scope: "relay", channelId, secretName: CODEX_RELAY_SECRET_NAME });
 }
 
+export function codexApiRelayPlaceholderFor({ channelId }) {
+  return placeholderFor({ scope: "relay", channelId, secretName: CODEX_API_RELAY_SECRET_NAME });
+}
+
 // What a containerized Codex reads as its sign-in: the body of the ACCESS-ONLY auth.json the
 // runner writes into the channel's HOME volume (codex-token-relay.js renderContainerCodexAuth).
 // Needs the proxy as this target's egress — with no swap, a placeholder cannot authenticate, and
@@ -370,8 +382,16 @@ export async function containerCodexCredential({ target, channelId = "", resolve
   if (!egressActive(target)) return { error: "the egress proxy is not this container's network, so Codex cannot use a relayed sign-in" };
   const key = String(channelId || target?.meta?.channelId || "") || (await channelIdOfTarget(target));
   if (!key) return { error: "the run has no channel to bind Codex's relayed sign-in to" };
-  const relay = await resolveRelay();
+  const relay = await resolveRelay({ candidates: codexLoginCandidatesFor(target?.meta) });
   if (!relay?.token) return { error: relay?.error || "the gateway has no Codex sign-in to relay", source: relay?.source || "none" };
+  if (relay.source === "api-key") {
+    return {
+      authJson: renderContainerCodexApiAuth({ apiKey: codexApiRelayPlaceholderFor({ channelId: key }) }),
+      expiresAt: 0,
+      source: "api-key",
+      placeholder: true,
+    };
+  }
   const accessToken = wrapPlaceholder(codexRelayPlaceholderFor({ channelId: key }), { shape: "jwt", claimsFrom: relay.token });
   return {
     authJson: renderContainerCodexAuth({ accessToken, idToken: relay.idToken, accountId: relay.accountId, now }),
