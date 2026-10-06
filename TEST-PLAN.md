@@ -8747,6 +8747,8 @@ case. Also run a group with an external member to check tenant/channel delivery 
 1. In a channel/thread or group, quote the original message or bot reply and send
    `@bot /settings`; in personal chat send `/settings`. Require a card with all six tabs in the
    original channel/thread or chat, unchanged workspace/session identity and no proactive DM.
+   Initially require the six-option menu with no section inputs. Selecting a tab reveals only
+   that section below the persistent menu; `/secrets` still opens Variables directly.
    Block proactive DM delivery: settings still opens in the channel. Use each tab's actual
    Execute and Submit action and require the same posted message ID to update. Another member
    cannot operate the owner's card; they can open an independent card. Confirm installed manifest

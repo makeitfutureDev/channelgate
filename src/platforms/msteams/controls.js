@@ -79,7 +79,7 @@ export function createTeamsControls({ connector, now = Date.now, authorize = tea
       if (inConversation && recipient && connector.botId && recipient !== connector.botId) {
         throw new Error('This command is addressed to a different bot. Check the Teams app registration and messaging endpoint.');
       }
-      await deliverCard({ ...args, sharedSettings: inConversation && !message.isDM, tab: command === 'secrets' ? 'secrets' : 'general' },
+      await deliverCard({ ...args, sharedSettings: inConversation && !message.isDM, tab: command === 'secrets' ? 'secrets' : '' },
         (state, id) => command === 'files' ? files(state, id, match[2] || '') : settings(state, id), inConversation);
       if (!message.isDM && !inConversation) await reply('I sent the controls to your personal chat.');
     } catch (error) { await reply(error.message); }

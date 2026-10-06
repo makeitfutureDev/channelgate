@@ -110,11 +110,12 @@ async function resume(ctx, ui) {
 
 export async function buildTeamsSettings(ctx, stateId) {
   const ui = teamsSettingsUi(stateId);
-  const page = validPage(ctx.state.tab) ? ctx.state.tab : 'general';
+  const page = validPage(ctx.state.tab) ? ctx.state.tab : '';
   ctx.state.tab = page;
   const content = page === 'general' ? await renderGeneral(ctx, ui)
     : page === 'automations' ? automations(ctx, ui)
-      : page === 'resume' ? await resume(ctx, ui) : await renderCatalogPage(page, ctx, ui);
+      : page === 'resume' ? await resume(ctx, ui)
+        : page ? await renderCatalogPage(page, ctx, ui) : { body: [], actions: [] };
   // Three tabs per row keeps every page visible without exceeding Teams' action-row limit.
   const tabs = TEAMS_SETTINGS_PAGES.map(([id, title]) => ui.execute(id === page ? `• ${title}` : title, 'settings.page', { page: id }, 'none'));
   return { $schema: 'http://adaptivecards.io/schemas/adaptive-card.json', type: 'AdaptiveCard', version: '1.4',
