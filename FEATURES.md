@@ -3354,6 +3354,7 @@ are retired, bullet by bullet; everything else stands.
   restore, or log rotation. → TEST-PLAN: Update regression path isolation.
 - **Enterprise managed updates and durable progress**: only an entitled Enterprise deployment
   exposes the Update button and accepts managed update requests (Admin UI, Slack, or MCP).
+  The button also offers Repair gateway when code is current.
   Other editions retain the behind count and host-managed `npm run update`. Eligibility follows
   the existing verified-license and outage-grace rules. A separate systemd user service carries
   the updater across daemon cgroup teardown; inherited credentials travel through stdin, not unit
@@ -3366,7 +3367,8 @@ are retired, bullet by bullet; everything else stands.
   active transaction instead of starting an overlapping updater. Before touching Git, the runner
   checks the attached/clean/fast-forward checkout and upstream access, Node/npm, parseable
   settings, an active systemd service (the launchd probe retired 2026-09-03 — Linux only),
-  available disk, current daemon health, and a real isolated Claude turn. Missing Whisper assets
+  available disk and current daemon health. The detached host launcher runs `bash scripts/update.sh`;
+  provider logins, quotas and engine turns never gate installation. Missing Whisper assets
   add 2 GiB of required staging space to the 1 GiB base requirement (the extra macOS build staging
   retired 2026-09-03 — Linux only); the 1.5 GiB optional model is never downloaded silently when
   local Whisper is disabled.
@@ -3377,10 +3379,11 @@ are retired, bullet by bullet; everything else stands.
   lockfile, local config, `.env`, and a consistent SQLite copy under mode-0700
   `~/.channelgate/update-backups/<transaction>/`; fast-forwards, runs exact `npm ci --include=dev`, the
   production advisory gate, all tests, and optional provisioning; then restarts through the exact
-  systemd `MainPID` (the launchd restart retired 2026-09-03 — Linux only). Success requires a new
+  systemd `MainPID` with a bounded active-run drain (SIGUSR2 for Restart=on-failure; SIGTERM for always/on-success). Success requires a new
   daemon instance on the expected revision,
-  container runtime availability, Slack reconnect when it was previously connected, and another real
-  container smoke for every engine that passed baseline. A post-checkout failure resets the old revision, reinstalls its lockfile, restarts,
+  container runtime availability and Slack reconnect when it was previously connected. Readiness allows
+  ten minutes for startup catalog reconciliation. The same full transaction repairs exact dependencies,
+  provisioning and image drift even when Git is current, then restarts. A failed install resets the old revision, reinstalls its lockfile, restarts,
   and proves the restored build with the same checks. Runtime snapshots are operator recovery
   material and are never auto-restored, so writes made while a candidate briefly ran are not
   discarded.
@@ -3391,7 +3394,7 @@ are retired, bullet by bullet; everything else stands.
   `cg.image.version` label, expected version from the CANDIDATE's `containers/versions.json`, never
   a constant the runner imported before the checkout moved). It is the one step that never blocks:
   a failed build reports `run \`npm run build:image\`` and the update continues to the restart,
-  because the image already on disk still runs every container channel. Failed builds remain visible
+  with an explicit warning that new container runs may be blocked until the image is repaired. Failed builds remain visible
   and digest drift triggers a retry even when the checkout revision is unchanged. → TEST-PLAN: Container runtime (v0.8 P1).
 - **Truthful update status and final reporting**: atomic, non-secret phase/result state lives in
   `~/.channelgate/update-state.json`; logs live in `logs/update.log`; `/api/health` exposes the
@@ -4142,7 +4145,7 @@ are retired, bullet by bullet; everything else stands.
   fails any commit range that lacks a well-formed `Signed-off-by` trailer, wired into CI as a
   pull-request job, and `test/dco-check.test.js` covers the pure trailer check.
 
-- **Verified container updates:** update health probes run in a disposable confined container through each configured Claude/Codex runner; missing logins are explicit skips and no probes is a failure. Image source fingerprints detect stale CLI pins even when the image spec or checkout revision is unchanged, allowing Update to retry failed builds. Container status shows desired/built CLI versions and containers awaiting image adoption. Custom image refs require operator rebuilds and failed builds remain visible in update results.
+- **Verified container updates:** image checks run Node, Claude and Codex `--version` in a disposable network-off, read-only container without host mounts or credentials. The engine response probe remains a separate diagnostic, never an update prerequisite. Image source fingerprints detect stale CLI pins even when the image spec or checkout revision is unchanged, allowing Update to retry failed builds. Container status shows desired/built CLI versions and containers awaiting image adoption. Custom image refs require operator rebuilds and failed builds remain visible in update results.
 
 ### Real project skill synchronization and workspace reset
 

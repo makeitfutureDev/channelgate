@@ -4394,7 +4394,7 @@ function paintContainerRuntimeHealth(state) {
 // treating any replacement daemon as success.
 const UPDATE_PHASES = {
   queued: "queued",
-  preflight: "checking Git, disk, config, service, and container engines",
+  preflight: "checking host Git, disk, config, service, and daemon health",
   snapshotting: "creating a recovery snapshot",
   checkout: "checking out the candidate",
   installing: "installing exact dependencies",
@@ -4403,7 +4403,7 @@ const UPDATE_PHASES = {
   provisioning: "provisioning optional components",
   image: "rebuilding the channel container image",
   restarting: "restarting the gateway",
-  verifying: "checking daemon, Slack, and container engines",
+  verifying: "checking daemon revision, runtime, and Slack reconnect",
   rolling_back: "rolling back to the previous revision",
 };
 
@@ -4419,7 +4419,7 @@ function updateResultHtml(transaction) {
     return `<span class="statuschip"><span class="dot warn"></span>container image needs attention — ${escapeHtml(transaction.imageWarning)}</span>`;
   }
   if (transaction.result === "updated" && transaction.changed === false) {
-    return `<span class="statuschip"><span class="dot ok"></span>already up to date${revision}; checks passed</span>`;
+    return `<span class="statuschip"><span class="dot ok"></span>repair complete${revision}; restart verified</span>`;
   }
   if (transaction.result === "updated") {
     return `<span class="statuschip"><span class="dot ok"></span>update complete${revision}; extended checks passed</span>`;
@@ -4523,6 +4523,10 @@ async function loadUpdateStatus() {
       document.getElementById("update-now").addEventListener("click", runGatewayUpdate);
     } else {
       el.innerHTML = `${cur}<span class="statuschip"><span class="dot ${u.checked ? "ok" : "warn"}"></span>${u.checked ? "up to date" : "update check unavailable — could not reach remote"}</span>`;
+      if (u.checked && u.automaticUpdates === true) {
+        el.innerHTML += `<button id="update-now" class="ghost update-btn">Repair gateway</button>`;
+        document.getElementById("update-now").addEventListener("click", runGatewayUpdate);
+      }
     }
   } catch {
     el.innerHTML = ""; // non-admin / locked-down — just hide the chip
@@ -4531,9 +4535,9 @@ async function loadUpdateStatus() {
 
 async function runGatewayUpdate() {
   const ok = await confirmDialog({
-    title: "Update the gateway now?",
-    body: "It checks the installation, installs and tests the candidate, then restarts and verifies it. This can take several minutes; failures trigger rollback.",
-    confirmLabel: "Update",
+    title: "Update or repair the gateway now?",
+    body: "It checks the host installation, repairs dependencies and the runtime image, then restarts and verifies the gateway. This can take several minutes; failures trigger rollback.",
+    confirmLabel: "Update / Repair",
   });
   if (!ok) return;
   const el = document.getElementById("update");

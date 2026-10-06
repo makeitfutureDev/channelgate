@@ -7569,7 +7569,7 @@ companion skill; every change is announced in the reply.
       checks, atomic state transitions, terminal idempotency, and strict non-secret public status.
 - [x] Unit: configured Claude/Codex smoke uses a disposable confined container with memory/dreaming off,
       no MCP/bypass, a fixed exact response, the shared stall watchdog, and unconditional cleanup.
-      Engines that passed baseline must pass after restart. Internal route requires loopback plus the daemon secret.
+      This remains a separate diagnostic, not an update gate. Internal route requires loopback plus the daemon secret.
 - [x] Unit: disk sizing covers dependency/recovery staging plus explicit missing-Whisper space;
       high/critical audit counts block while moderate counts are preserved; readiness requires a
       replacement instance on the expected boot revision, container runtime, and prior Slack connectivity.
@@ -7586,15 +7586,15 @@ companion skill; every change is announced in the reply.
       active transaction and no second `npm ci`, restart, or rollback occurs.
 - [ ] **Preflight refusal is non-mutating:** separately force a dirty tracked tree, inaccessible Git
       upstream, divergent branch, malformed settings, insufficient calculated disk, missing active
-      service, and failing baseline Claude smoke. Each returns `refused`; Git revision and
+      service, and unhealthy daemon identity. Each returns `refused`; Git revision and
       dependencies remain unchanged.
 - [ ] **Candidate success:** with origin one safe commit ahead, start from `/update`. The dashboard
       follows the same transaction id through phases; the candidate restarts on the expected
-      revision; Slack reconnects; the real gated Claude smoke passes; the requesting thread receives
+      revision; Slack reconnects; local image executable checks pass; the requesting thread receives
       exactly one `updated` message; a later restart does not repost it.
-- [ ] **Automatic rollback:** inject a candidate-only post-restart smoke failure. The checkout and
+- [ ] **Automatic rollback:** inject a candidate-only post-restart readiness failure. The checkout and
       lockfile dependencies return to the recorded old revision, the service restarts again, the
-      same health/smoke gate passes, status is `rolled_back`, and Slack/Admin report the candidate
+      same daemon readiness gate passes, status is `rolled_back`, and Slack/Admin report the candidate
       error without claiming success.
 - [ ] **Rollback failure:** also break restored-build readiness. Status is `failed` with separate
       candidate and rollback summaries; `update-backups/<transaction>/` remains available for
@@ -7613,6 +7613,18 @@ companion skill; every change is announced in the reply.
       a box whose daemon is a USER unit at `~/.config/systemd/user/channelgate.service`. Systemd
       signals only the validated positive `MainPID` (the macOS launchd leg retired 2026-09-03 —
       Linux only).
+
+- [x] Regression: managed launcher invokes the host Bash entry point with credentials only in the
+      inherited environment; no container engine/provider endpoint is called by the updater.
+- [x] Regression: same-revision updates snapshot, reinstall exact dependencies, audit, test,
+      provision, inspect/rebuild the image and restart; an install failure rolls back even when Git
+      did not move. Restart signals only the safe MainPID with the restart signal for the detected service scope and restart policy.
+- [ ] **Host update repair (engine-independent):** on an isolated systemd test install with a scratch
+      runtime, disconnect provider logins and remove a fixture dependency. Click Update, or invoke
+      `npm run update`. Pass: one Bash transaction repairs the dependency, checks local image
+      binaries without network/credentials, restarts on the same/upstream revision and returns
+      updated. Repeat with broken image build: result names the image warning, never full success.
+      No Slack account is used by this fixture; bot connectivity comes from the daemon health data.
 
 ### Codex usage accounting and API-equivalent rates
 - [ ] Settings → Behavior shows the Codex/OpenAI rates table prefilled with the rates verified
@@ -8405,3 +8417,20 @@ Live (unexecuted; repeat with Claude and Codex): mention the bot with `/settings
   same thread and a fresh thread; both must report absent. Preserve exact prompts, configured
   engine, safe boolean tool output and thread evidence. Restore fixture state. Local handler
   regressions do not claim live Slack-client or dual-engine acceptance.
+
+### Host Bash update and repair acceptance (2026-10-06)
+
+- [x] Engine-independent live systemd fixture: `node scripts/check-update-service-survival.mjs`.
+  Disposable parent/child user units only; the shipped launcher invokes `bash scripts/update.sh`
+  with private stdin environment. Actual `defaultRestart` signals the fixture MainPID with
+  SIGUSR2 under Restart=on-failure; parent records restart exit 1, PID changes, and updater child
+  survives in its own cgroup after the original wrapper exits. Synthetic token is never logged.
+- [x] Isolated regression: same-revision dependency repair runs snapshot/install/audit/tests/
+  provisioning/image/restart/readiness; failed installation restores and verifies the prior
+  revision. Enterprise UI exposes Repair gateway at zero commits behind. Production provider
+  authentication is never consulted by update gates.
+- [x] Live image executable probe: installed runtime Node/Claude/Codex `--version` succeeds in a
+  disposable network-off, read-only container without host mounts or credentials.
+- [ ] Complete deployed candidate update: exercise UI start through final authenticated new
+  instance/revision/runtime/Slack reconnect status on an approved release; unit/fixture evidence
+  above does not claim this production transaction ran.

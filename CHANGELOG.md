@@ -16,6 +16,15 @@ product overview.
 > | Makeitfuture Sustainable Use License 1.1 | 2026-08-20 | never published |
 > | Makeitfuture Sustainable Use License 1.0 | 2026-08-06 | never published |
 
+## 0.6.2 — 2026-10-06
+
+- Update runs the gateway host Bash entry point and repairs dependencies, provisioning and runtime
+  images even when code is already current. Enterprise offers a Repair gateway button.
+- Provider sign-in no longer blocks installation. Updates validate local image executables and
+  daemon readiness, survive service restarts, drain active work, and retain automatic rollback.
+- Startup verification allows ten minutes for larger installations. Image failures remain visible
+  and can block new container runs until repaired.
+
 ## 0.6.1 — 2026-10-06
 
 - Channel Runtime now shows only engine and model controls for the shared login. Dedicated Codex
