@@ -29,6 +29,7 @@ product overview.
   stored credentials. `/secrets` opens Variables directly.
   Buttons update the same requester-bound card. Shared cards omit personal/organization
   credential metadata, ungranted private connection catalogs and administrator session commands.
+  `/settings` initially shows only the section menu; selecting an option opens its settings below.
 
 - Users already allowed in a channel, including named guests, can enable their own SSH access
   without manager or admin approval. Registering/removing personal keys and revoking one’s

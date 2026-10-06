@@ -41,19 +41,37 @@ test('six settings pages stay in the source conversation and update the same car
   assert.equal(f.sent[0].threadKey, 'original-root');
   assert.equal(f.sent[0].text, 'Conversation settings');
   assert.deepEqual(f.replies, []);
+  const menu = f.sent[0].card;
+  assert.ok(!menu.body.some(item => item.type.startsWith('Input.')));
+  assert.deepEqual(menu.actions, []);
+  const tabs = menu.body.filter(item => item.type === 'ActionSet').flatMap(item => item.actions);
+  assert.deepEqual(tabs.map(action => action.title), ['General', 'Variables', 'MCPs', 'Skills', 'Automations', 'Resume']);
+  assert.equal(menu.body.at(-1).type, 'ActionSet');
   for (const page of ['general', 'secrets', 'mcp', 'skills', 'automations', 'resume']) {
-    const card = value(await f.invoke({ stateId: f.stateId, page }, 'settings.page'));
+    const action = tabs.find(item => item.data.page === page);
+    const card = value(await f.invoke(action.data, action.verb));
     assert.equal(card.body[0].text, 'Channel settings');
     adaptiveCardAttachment(card);
     assert.equal(card.body.filter(item => item.type === 'ActionSet').slice(0, 2).flatMap(item => item.actions).length, 6);
     assert.equal(f.sent.at(-1).conversationId, f.channelId.slice(6));
     assert.equal(f.sent.at(-1).messageId, 'card1');
     assert.deepEqual(f.sent.at(-1).card, card);
+    assert.ok(card.body.length > menu.body.length);
+    assert.ok(card.body.filter(item => item.type === 'ActionSet').slice(0, 2).flatMap(item => item.actions).some(item => item.title === `• ${action.title}`));
+    if (page !== 'general') assert.equal(input(card, 'channel_engine'), undefined);
   }
   const secrets = value(await f.invoke({ stateId: f.stateId, page: 'secrets' }, 'settings.page'));
   assert.ok(input(secrets, 'variableValue'));
   assert.equal(input(secrets, 'variableValue').value, '');
   assert.equal(input(secrets, 'variableValue').style, 'password');
+});
+test('/secrets opens Variables directly while /settings starts with the menu', async () => {
+  const f = await fixture();
+  assert.equal(input(f.sent[0].card, 'variableValue'), undefined);
+  await f.controls.onCommand(f.args('/secrets'));
+  const secrets = f.sent.at(-1).card;
+  assert.ok(input(secrets, 'variableValue'));
+  assert.ok(secrets.body.filter(item => item.type === 'ActionSet').slice(0, 2).flatMap(item => item.actions).some(item => item.title === '• Variables'));
 });
 test('Resume permits current admins and protects admin sessions from members', async () => {
   for (const admin of [true, false]) {

@@ -697,7 +697,8 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
   permission escalation is not enabled by these text controls.
 - Native Adaptive Cards provide Approve/Deny/Request changes actions and a **six-page
   Settings console**: General, Variables, MCPs, Skills, Automations and Resume. `/settings` opens
-  in the original channel/thread or chat, keeping its conversation and session; `/secrets`
+  with just the section menu in the original channel/thread or chat; selecting a section reveals
+  its settings below the menu in the same card, keeping its conversation and session. `/secrets`
   starts on Variables. General shows both channel defaults and session pins, filters compatible
   models/efforts, labels inheritance, respects dedicated Codex login locks and offers Follow
   channel default. Teams uses explicit per-field Apply buttons, rather than Slack's save-on-pick.

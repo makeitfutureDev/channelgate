@@ -44,6 +44,7 @@ say so plainly rather than guessing at its contents.
 `/settings` opens General, Variables, MCPs, Skills, Automations and Resume in the original
 channel/thread or chat. `/secrets` opens Variables. Settings never proactively opens a personal chat.
 Buttons update the same requester-bound card; other members can open their own `/settings`.
+The initial card shows only the section menu; selecting an option displays its settings below.
 Each field needs Apply; changing tabs discards unsaved drafts. Runtime, channel credentials,
 skills and automation controls are available to authorized users. Access policy requires current
 managers/admins, Cloud MCP and organization variable writes require admins. Stored credential

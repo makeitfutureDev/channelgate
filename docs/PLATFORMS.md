@@ -247,6 +247,8 @@ Task-module dialogs and broadcast mentions remain unavailable.
   even when opened from a channel or group chat. `/secrets` opens its Variables page directly.
   No proactive personal chat is opened for settings. Buttons update that same card; other
   members open their own requester-bound `/settings` card.
+  Initially only the section menu is shown; selecting a section reveals its controls below the
+  menu. Switching sections replaces the controls while keeping the menu visible.
   General edits channel defaults and current-session engine/model/effort independently, with
   compatible choices, inherited labels and Follow channel default. Each field has an explicit
   Apply button; page navigation discards unsaved drafts. Authorized users can edit runtime,
