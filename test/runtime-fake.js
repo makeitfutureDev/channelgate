@@ -11,6 +11,7 @@
 // It validates against src/runtimes/contract.js on construction: a fake that drifted from the
 // contract would prove the wrong thing.
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { reduceCodexUsage } from "../src/engines/codex-usage.js";
 import { attachRuntime, validateRuntimeBackend } from "../src/runtimes/contract.js";
 import { copyCarryEntries } from "../src/runtimes/copy.js";
@@ -103,7 +104,10 @@ export function createFakeRuntimeBackend({
       const env = spec.env && isolated
         ? { ...spec.env, PATH: process.env.PATH || "", HOME: process.env.HOME || spec.env.HOME, TMPDIR: process.env.TMPDIR || "/tmp" }
         : spec.env;
-      const child = localRuntime.spawn(target, { ...spec, env });
+      // A provider main deliberately bypasses the per-channel launcher using the image binary.
+      // Translate that image-only path to our CLI fixture while recording the real command above.
+      const cmd = spec.cmd === "/usr/local/bin/claude" ? fileURLToPath(new URL("./fixtures/claude", import.meta.url)) : spec.cmd;
+      const child = localRuntime.spawn(target, { ...spec, cmd, env });
       child.once?.("exit", () => { if (spec.runId) exited.add(spec.runId); });
       return attachRuntime(child, { backend, runId: spec.runId, target, kind: spec.kind });
     },

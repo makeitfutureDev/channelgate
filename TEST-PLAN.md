@@ -1,5 +1,44 @@
 # ChannelGate — Test Plan
 
+## Nested Claude login acceptance (2026-10-06)
+
+- Automated: `test/nested-claude-login.test.js` checks placeholder-only HOME writes, removal,
+  API-key and bearer grants resolving live/revoking, no persistence outside a bound proxy runtime,
+  executable launcher permissions, inherited Qwen routing/session-guard removal, preserving the
+  main Claude endpoint and consuming its launcher marker, refusing custom-endpoint API keys, editor-wrapper
+  fallback after its temporary token disappears, and Qwen main routing.
+  `test/runtime-integration-run.test.js` checks preparation before fresh/resumed spawns for Claude,
+  Codex, Qwen and Qwen EU. These use fake host credentials and fixture CLIs, not live providers.
+  `test/container-credentials.test.js` verifies private 0600/0700 HOME writes, separate temporary
+  names, rename-over-destination, mounted-path refusal and staging cleanup.
+- [ ] LIVE (Claude and Codex): use separate Worker+Auto proxy fixtures with operator-home mounts
+  OFF, a valid host Claude login/setup-token, and a currently supported Claude model. As the
+  approved QA actor send: "Run claude -p 'Reply exactly NESTED_CLAUDE_OK' --model <Claude model>
+  --setting-sources '' --mcp-config '{\"mcpServers\":{}}' --strict-mcp-config, and report its exit
+  code and answer without printing credentials." Repeat in the same thread, then a fresh thread.
+  Pass: exit 0 and the requested answer on all runs, with the thread's selected parent engine
+  unchanged. Host-side inspection reports only booleans that the managed HOME env file contains
+  cgph_r placeholders, no real credential and no refresh token; file mode 0600, launcher 0700.
+- [ ] LIVE (Qwen and Qwen EU): use separate configured external-provider Worker+Auto fixtures,
+  the same host Claude login, no operator-home mount, and a supported model for each provider.
+  Send the same nested Claude prompt, then ask a simple ordinary follow-up. Pass: the child uses
+  Anthropic and answers NESTED_CLAUDE_OK; the parent remains on its configured Qwen provider/model
+  before and after, including a resumed turn. No Anthropic credential is sent to a Qwen endpoint.
+- [ ] LIVE (isolated OAuth/API-key/no-login deployment fixtures; Claude, Codex and Qwen): repeat
+  with a configured setup-token and an API-key-only host. Remove/rotate only that disposable
+  deployment's Claude credential and repeat a parent Codex/Qwen turn. Pass: rotation reaches the
+  live proxy, removal empties the managed login, the parent continues, and a child reports missing
+  Claude authentication rather than using Qwen. While idle, a saved placeholder is refused; a
+  placeholder from another channel is refused. An SSH/editor attach followed by close must not
+  remove the turn's HOME fallback. Never remove production credentials for this case.
+- Live cases are registered in the private QA catalog. They require host/deployment access and
+  are not claimed as executed from the development container.
+- Verification: 107 focused tests passed. Full `npm run test:coverage`: 3,270 passed, 30 skipped,
+  zero failures; lines 93.84%, branches 84.84%, functions 89.42%. Static checks (791 JS files),
+  secret scanning and required security coverage passed. Production dependency audit exited 0
+  at the high-severity threshold, with two existing moderate findings. Independent credential
+  boundary review found no remaining blockers; live provider gates above remain unexecuted.
+
 ## SSH self-service acceptance (2026-10-06)
 
 - [x] Automated: `test/ssh-access.test.js` checks omitted user, own id/mention, own key registration,

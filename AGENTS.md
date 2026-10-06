@@ -524,7 +524,12 @@ Config that stays as **files** (read wholesale / bootstrap, hand-editable):
   applied last in the child env so a channel secret cannot displace it — and in a proxy-mode
   container not even that: the channel's relay PLACEHOLDER (`containerClaudeCredential`), which
   the egress proxy swaps for the current access token on `api.anthropic.com` only. A turn with no resolvable
-  login fails closed with the remedy named; it never runs on a guessed credential. A new consumer
+  login fails closed with the remedy named when Claude is the selected engine; a missing optional
+  child login does not block Codex or Qwen. Before every proxy-mode container turn,
+  `nested-claude-login.js` prepares a private HOME env file containing only channel-bound relay
+  placeholders and the nested CLI launcher. Qwen's main CLI bypasses that launcher; nested
+  `claude` clears inherited provider settings before loading the Anthropic relay. API-key child
+  logins also use destination-bound relay grants. A new consumer
   asks the resolver; it never adds a second notion of "the login". The ONE login file the gateway
   writes is an interactive SSH session's (`src/gateway/ssh-session.js`): an ACCESS-ONLY
   `.credentials.json` in the channel's config dir — the relayed token, its expiry and plan facts,

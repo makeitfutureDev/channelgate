@@ -603,9 +603,12 @@ test("writeHomeFile stages 0600, renames into place, refuses a mounted destinati
     const exec = fake.last("exec");
     const script = exec[exec.length - 1];
     assert.match(script, /grep -q ' \/home\/agent\/\.codex\/auth\.json ' \/proc\/self\/mountinfo/, "a mounted destination is refused");
-    assert.match(script, /mv -f \/home\/agent\/\.codex\/auth\.json\.cg-tmp \/home\/agent\/\.codex\/auth\.json/, "renamed into place");
+    assert.match(script, /mv -f \/home\/agent\/\.codex\/auth\.json\.[a-z0-9]+-[a-f0-9]+\.cg-tmp \/home\/agent\/\.codex\/auth\.json/, "renamed into place using a separate temporary name per writer");
     assert.doesNotMatch(script, /cp [^\n]* \/home\/agent\/\.codex\/auth\.json$/m, "never copied ONTO the destination (a write through a mount)");
     assert.match(script, /umask 077/);
+    await assert.rejects(containerBackend.writeHomeFile(t, { file: "/home/agent/bin/claude", body: "x", mode: 0o755 }), /private/);
+    await containerBackend.writeHomeFile(t, { file: "/home/agent/.local/bin/claude", body: "#!/bin/sh\n", mode: 0o700 });
+    assert.match(fake.last("exec").at(-1), /chmod 700/);
     const carry = path.join(t.artifactDir, "carry");
     assert.deepEqual(existsSync(carry) ? readdirSync(carry) : [], [], "the staged copy is removed");
   } finally {

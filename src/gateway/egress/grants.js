@@ -27,13 +27,20 @@ import { renderContainerCodexApiAuth, renderContainerCodexAuth, resolveContainer
 import { codexLoginCandidatesFor } from "../channel-codex-auth.js";
 import { egressActive } from "../../runtimes/container/egress-hook.js";
 import { corePlaceholder, mintPlaceholder, PLACEHOLDER_SHAPES, wrapPlaceholder } from "./placeholders.js";
-import { CODEX_API_RELAY_SECRET_NAME, CODEX_RELAY_SECRET_NAME, RELAY_SECRET_NAME, relayRuleFor, rulesFor } from "./catalog-rules.js";
+import { CLAUDE_API_RELAY_NAMES, CODEX_API_RELAY_SECRET_NAME, CODEX_RELAY_SECRET_NAME, RELAY_SECRET_NAME, relayRuleFor, rulesFor } from "./catalog-rules.js";
 import { engineHostsFor } from "./engine-hosts.js";
 
 export const GRANT_SCOPES = Object.freeze(["organization", "channel", "personal", "relay"]);
 const MINT_SCOPE = { organization: "org", channel: "channel", personal: "personal", relay: "relay" };
 export const RELAY_CACHE_MS = 60_000;
 export const MATERIAL_CACHE_MS = 5_000;
+
+// A key configured for a custom Anthropic-compatible gateway must never be repurposed for the
+// real Anthropic API. Its ordinary main-process environment keeps that custom destination.
+function hasCanonicalClaudeApiEndpoint(env) {
+  const base = String(env?.ANTHROPIC_BASE_URL || "").trim().replace(/\/+$/, "");
+  return !base || base === "https://api.anthropic.com";
+}
 
 function keyFor({ scope, channelId = "", ownerId = "", secretName }) {
   if (!GRANT_SCOPES.includes(scope)) throw new Error(`unknown egress grant scope: ${scope}`);
@@ -181,6 +188,11 @@ export async function resolveGrantMaterial(row, deps = {}) {
   const name = row.secretName;
   if (row.scope === "relay") {
     if (!relayRuleFor(name)) return { value: "", entry: null, exists: false };
+    if (CLAUDE_API_RELAY_NAMES.includes(name)) {
+      const env = deps.env || process.env;
+      const value = hasCanonicalClaudeApiEndpoint(env) ? String(env[name] || "") : "";
+      return { value, entry: null, exists: Boolean(value) };
+    }
     return { value: await cachedRelayToken(name, deps, row.channelId), entry: null, exists: true };
   }
   if (row.scope === "organization") {
@@ -350,6 +362,20 @@ export function containerClaudeCredential({ target, relay, channelId = "" }) {
   if (!key) return relay;
   const placeholder = relayPlaceholderFor({ channelId: key });
   return { ...relay, token: `${PLACEHOLDER_SHAPES["anthropic-oauth"]}${placeholder}`, placeholder: true };
+}
+
+// The durable nested-CLI login holds only channel-bound placeholders. An API-key installation
+// gets the same protection as OAuth; never persist a daemon key or a raw legacy-bridge token.
+export function nestedClaudeLoginEnv({ target, relay, channelId = "", env = process.env }) {
+  const key = String(channelId || target?.meta?.channelId || "");
+  if (!egressActive(target) || !key) return {};
+  if (relay?.token) {
+    return { CLAUDE_CODE_OAUTH_TOKEN: containerClaudeCredential({ target, relay, channelId: key }).token };
+  }
+  if (relay?.source !== "api-key" || !hasCanonicalClaudeApiEndpoint(env)) return {};
+  return Object.fromEntries(CLAUDE_API_RELAY_NAMES.filter((name) => env[name]).map((name) => [name,
+    placeholderFor({ scope: "relay", channelId: key, secretName: name }),
+  ]));
 }
 
 // ── The Codex relay (the twin) ────────────────────────────────────────────────────────────────
