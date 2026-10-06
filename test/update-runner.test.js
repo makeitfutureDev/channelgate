@@ -18,6 +18,8 @@ import {
   runCommand,
   serviceProbes,
   validSystemdPid,
+  defaultRestart,
+  verifyImageExecutables,
   builtImageSpecVersion,
   containerSettings,
   defaultImageBuild,
@@ -467,7 +469,7 @@ test("a failed image build reports the remedy and never blocks the update", asyn
   assert.equal(result.failed, true);
   assert.equal(result.built, false);
   assert.match(logs.join("\n"), /npm run build:image/);
-  assert.match(logs.join("\n"), /Continuing with the update/i);
+  assert.match(logs.join("\n"), /Continuing with the daemon update/i);
 });
 
 test("the image step runs after provisioning and before the restart, and a throwing one still restarts", async () => {
@@ -536,16 +538,17 @@ test("a failed pin rebuild is retried on the next update even with an unchanged 
   const retry = fakeRun({ desired, builtDigest: "old-pins" });
   const reserved = reserveUpdate({ root, source: "test", pidAlive: () => false });
   const state = await executeUpdateTransaction({ root, owner: reserved.owner, ops: {
+    ...repairOps(context),
     preflight: async () => context,
     provision: async () => {},
     image: () => defaultImageBuild({ root, repoRoot, context, run: retry.run, log: () => {} }),
-    verifyImage: async ({ context: received }) => { assert.deepEqual(received.smokeEngines, ["claude", "codex"]); verified = true; },
+    verify: async ({ expectedRevision }) => { verified = true; return { revision: expectedRevision }; },
     checkout: () => assert.fail("must not change an up-to-date checkout"),
-    restart: () => assert.fail("an image-only repair does not restart active turns"),
+    restart: async () => {},
   } });
   assert.equal(retry.built(), true);
   assert.equal(verified, true);
-  assert.match(state.reason, /image rebuilt and verified/);
+  assert.match(state.reason, /runtime image checked; restart verified/);
 });
 
 test("an up-to-date update still runs provisioning so optional host tools can be repaired", async () => {
@@ -553,15 +556,16 @@ test("an up-to-date update still runs provisioning so optional host tools can be
   const calls = [];
   const reserved = reserveUpdate({ root, source: "test", pidAlive: () => false });
   const state = await executeUpdateTransaction({ root, owner: reserved.owner, ops: {
+    ...repairOps({ oldRevision: "same", targetRevision: "same" }),
     preflight: async () => ({ oldRevision: "same", targetRevision: "same" }),
     provision: async () => calls.push("provision"),
     image: async () => { calls.push("image"); return { built: false }; },
     checkout: () => assert.fail("must not change an up-to-date checkout"),
-    restart: () => assert.fail("provision-only repair does not restart active turns"),
+    restart: async () => calls.push("restart"),
   } });
-  assert.deepEqual(calls, ["provision", "image"]);
+  assert.deepEqual(calls, ["provision", "image", "restart"]);
   assert.equal(state.changed, false);
-  assert.match(state.reason, /Already up to date/);
+  assert.match(state.reason, /code is current; dependencies/);
 });
 
 test("a successful builder exit cannot claim a still-stale image was rebuilt", async () => {
@@ -596,14 +600,74 @@ test("image digest detects pin and helper changes without a spec bump", () => {
   assert.equal(expectedImageBuild(repoRoot).digest, expectedImageBuild(repoRoot).digest);
 });
 
-test("image-only repair preserves a failed post-build smoke as a visible warning", async () => {
+test("same-revision repair preserves a local image check failure as a visible warning", async () => {
   const root = containerRoot();
   const reserved = reserveUpdate({ root, source: "test", pidAlive: () => false });
   const state = await executeUpdateTransaction({ root, owner: reserved.owner, ops: {
-    preflight: async () => ({ oldRevision: "same", targetRevision: "same", smokeEngines: ["codex"] }),
-    image: async () => ({ built: true }),
-    verifyImage: async () => { throw new Error("Codex failed in rebuilt image"); },
+    ...repairOps({ oldRevision: "same", targetRevision: "same" }),
+    image: async () => { throw new Error("Codex executable failed in rebuilt image"); },
   } });
-  assert.match(state.imageWarning, /Codex failed/);
+  assert.match(state.imageWarning, /Codex executable failed/);
   assert.match(state.reason, /needs attention/);
+});
+
+function repairOps(context) {
+  return { preflight: async () => context, snapshot: async () => "backup", install: async () => {},
+    audit: async () => ({ high: 0, critical: 0 }), test: async () => {}, provision: async () => {},
+    restart: async () => {}, verify: async ({expectedRevision}) => ({revision: expectedRevision}) };
+}
+
+test("same-revision updates repair exact dependencies and use rollback on install failure", async () => {
+  const root = tempRoot();
+  const reserved = reserve(root);
+  const calls = [];
+  const state = await executeUpdateTransaction({root, owner: reserved.owner, ops: {
+    ...repairOps({oldRevision:"same",targetRevision:"same"}),
+    snapshot: async () => calls.push("snapshot"),
+    checkout: () => assert.fail("same revision must not checkout"),
+    install: async ({rollback}) => { calls.push(rollback ? "restore-deps" : "install"); if(!rollback)throw new Error("damaged install"); },
+    restore: async () => calls.push("restore-code"),
+    restart: async () => calls.push("restart"),
+    verify: async () => {calls.push("verify");return {revision:"same"};},
+  }});
+  assert.equal(state.result,"rolled_back");
+  assert.deepEqual(calls,["snapshot","install","restore-code","restore-deps","restart","verify"]);
+});
+
+test("restart drains the exact service process in its detected scope", async () => {
+  const root = tempRoot();
+  const calls = [];
+  await defaultRestart({root,service:{kind:"systemd",scope:"user",unit:"fixture.service"},
+    run:async (command,args)=>{calls.push([command,args]);return {stdout:args.includes("MainPID") ? "123" : "always"};},
+    signal:(pid,sig)=>calls.push([pid,sig]),
+  });
+  assert.deepEqual(calls.at(-1),[123,"SIGTERM"]);
+  assert.equal(calls[0][1][0],"--user");
+});
+
+test("unsafe service restart policies do not signal the daemon", async () => {
+  await assert.rejects(defaultRestart({root:tempRoot(),service:{kind:"systemd",unit:"fixture.service"},
+    run:async (_command,args)=>({stdout:args.includes("MainPID")?"123":"no"}),
+    signal:()=>assert.fail("must not stop a service that will remain stopped"),
+  }),/must support restart exits/);
+});
+
+test("image executable validation has no host mounts, network or provider login", async () => {
+  let invocation;
+  await verifyImageExecutables({cli:"podman",image:"fixture:image",run:async(...args)=>{invocation=args;}});
+  const [command,args]=invocation;
+  assert.equal(command,"podman");
+  assert.ok(args.includes("none"));
+  assert.ok(args.includes("--read-only"));
+  assert.ok(args.includes("--rm"));
+  assert.doesNotMatch(args.join(" "),/login|auth.json|--volume|--env/);
+});
+
+ test("standard on-failure installations receive a restart signal", async () => {
+  let received;
+  await defaultRestart({root:tempRoot(),service:{kind:"systemd",scope:"user",unit:"fixture.service"},
+    run:async (_command,args)=>({stdout:args.includes("MainPID")?"123":"on-failure"}),
+    signal:(pid,sig)=>{received=[pid,sig];},
+  });
+  assert.deepEqual(received,[123,"SIGUSR2"]);
 });

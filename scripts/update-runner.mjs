@@ -37,7 +37,7 @@ const DEFAULT_SYSTEMD_UNIT = "channelgate.service";
 const LEGACY_SYSTEMD_UNIT = "claude-gateway.service";
 const GIB = 1024 ** 3;
 const COMMAND_TIMEOUT_MS = 10 * 60_000;
-const HEALTH_TIMEOUT_MS = 3 * 60_000;
+const HEALTH_TIMEOUT_MS = 10 * 60_000;
 // A cold channel-image build compiles nothing but installs a Debian toolchain and five pinned npm
 // CLIs; 45 minutes is a runaway backstop, not an expectation.
 const IMAGE_BUILD_TIMEOUT_MS = 45 * 60_000;
@@ -196,23 +196,14 @@ async function fetchJson(url, options = {}, timeoutMs = 20_000) {
 }
 
 // /api/health only volunteers revision/claude/slack to a caller it can identify, and the detached
-// updater has no browser session — so it authenticates the same way smokeAt does, with the
-// same-machine internal secret. Without the header the readiness predicates would see a bare
+// updater has no browser session — so it authenticates with the same-machine internal secret.
+// Without the header the readiness predicates would see a bare
 // {ok,instanceId} and could never clear (see baselineFailure/readinessFailure above).
 export async function healthAt(auth) {
   return fetchJson(
     `http://127.0.0.1:${auth.port}/api/health`,
     { headers: { "x-cg-secret": auth.secret } },
     10_000,
-  );
-}
-
-async function smokeAt(root, requiredEngines = []) {
-  const auth = internalAuth(root); // refreshed after every restart; the secret rotates per process.
-  return fetchJson(
-    `http://127.0.0.1:${auth.port}/internal/update-smoke`,
-    { method: "POST", headers: { "content-type": "application/json", "x-cg-secret": auth.secret }, body: JSON.stringify({ requiredEngines }) },
-    15 * 60_000,
   );
 }
 
@@ -259,7 +250,7 @@ function freeBytes(folder) {
 }
 
 async function defaultPreflight({ root, repoRoot }) {
-  logStep("→ Preflight: Git, runtime, configuration, service, disk, and container engine smoke…");
+  logStep("→ Preflight: Git, runtime, configuration, service, disk, and daemon health…");
   await runCommand("git", ["--version"], { cwd: repoRoot, quiet: true });
   await runCommand("npm", ["--version"], { cwd: repoRoot, quiet: true });
   const [nodeMajor, nodeMinor] = process.versions.node.split(".").map(Number);
@@ -308,8 +299,6 @@ async function defaultPreflight({ root, repoRoot }) {
   if (availableBytes < needBytes) {
     throw refusal(`insufficient disk space: need ${(needBytes / GIB).toFixed(1)} GiB, have ${(availableBytes / GIB).toFixed(1)} GiB`);
   }
-  const smoke = await smokeAt(root).catch((error) => ({ ok: false, error: safeMessage(error) }));
-  if (!smoke.ok) throw refusal(`pre-update container engine smoke failed: ${smoke.error || "unknown error"}`);
 
   return {
     branch,
@@ -319,7 +308,6 @@ async function defaultPreflight({ root, repoRoot }) {
     previousInstanceId: baselineHealth.instanceId || "",
     requireSlack: baselineHealth.slack?.connected === true,
     baselineHealth,
-    smokeEngines: (smoke.engines || []).filter((entry) => entry.ok).map((entry) => entry.engine),
     service,
     needBytes,
     availableBytes,
@@ -448,6 +436,13 @@ export function expectedImageSpecVersion(repoRoot) {
   }
 }
 
+// Local executable checks only: no login, token relay, MCP or provider request.
+export async function verifyImageExecutables({ cli, image, repoRoot = REPO_ROOT, run = runCommand }) {
+  await run(cli, ["run", "--rm", "--network", "none", "--read-only", "--cap-drop", "ALL",
+    "--entrypoint", "/bin/sh", image, "-c", "node --version && claude --version && codex --version"],
+  { cwd: repoRoot, timeoutMs: 60_000, quiet: true });
+}
+
 export async function defaultImageBuild({
   root = gatewayRoot(),
   repoRoot = REPO_ROOT,
@@ -467,6 +462,7 @@ export async function defaultImageBuild({
   const desired = expectedImageBuild(repoRoot);
   const drift = (built) => needsImageBuild({ builtSpecVersion: built.version, expectedSpecVersion: desired.version, builtDigest: built.digest, expectedDigest: desired.digest });
   if (!needsImageBuild({ changedPaths, builtSpecVersion: before.version, expectedSpecVersion: desired.version, builtDigest: before.digest, expectedDigest: desired.digest })) {
+    await verifyImageExecutables({ cli: before.cli || settings.cli, image: settings.image, repoRoot, run });
     log(`→ Channel image ${settings.image} is current (spec ${before.version}, digest ${before.digest}) — no rebuild needed.`);
     return { built: false, needed: false, reason: "the built image already matches this revision" };
   }
@@ -483,27 +479,35 @@ export async function defaultImageBuild({
     if (result.code !== 0) throw new Error(`image builder exited ${result.code}`);
     const after = await builtImageInfo({ cli: before.cli || settings.cli, image: settings.image, run });
     if (!after.id || drift(after)) throw new Error(`built image ${settings.image} does not match the requested toolchain digest ${desired.digest}`);
+    await verifyImageExecutables({ cli: before.cli || settings.cli, image: settings.image, repoRoot, run });
     log(`→ Channel image rebuilt: ${settings.image} → ${after.id}. Idle channels pick it up on their next turn.`);
     return { built: true, needed: true, imageId: after.id, digest: after.digest };
   } catch (error) {
     const reason = safeMessage(error);
-    log(`⚠ channel image build failed — run \`npm run build:image\` (${reason}). Continuing with the update; container channels keep running the image they have. The next update will retry while the image digest differs.`);
+    log(`⚠ channel image build failed — run \`npm run build:image\` (${reason}). Continuing with the daemon update; new container runs may be blocked until the image is repaired. The next update will retry while the image digest differs.`);
     return { built: false, needed: true, failed: true, reason };
   }
 }
 
-async function defaultRestart({ service, root = gatewayRoot() }) {
+export async function defaultRestart({ service, root = gatewayRoot(), run = runCommand, signal = process.kill.bind(process) }) {
   // Never restart onto a stale cached definition.
-  await applyPendingServiceReload({ root, service });
+  await applyPendingServiceReload({ root, service, run });
   if (service.kind === "systemd") {
     // Ask the SAME scope detectService found the unit in — a user unit is invisible to system-scope
     // `systemctl show`, which answers MainPID=0 and would fail the restart on a healthy box.
     const scope = service.scope === "user" ? ["--user"] : [];
-    const result = await runCommand("systemctl", [...scope, "show", "--property", "MainPID", "--value", service.unit], { quiet: true, timeoutMs: 10_000 });
+    const result = await run("systemctl", [...scope, "show", "--property", "MainPID", "--value", service.unit], { quiet: true, timeoutMs: 10_000 });
     const pid = validSystemdPid(result.stdout);
     if (!pid) throw new Error(`could not resolve a safe MainPID for ${service.unit}`);
     logStep(`→ Restarting systemd service ${service.unit} (${service.scope || "system"} scope, pid ${pid})…`);
-    process.kill(pid, "SIGUSR2");
+    const restart = await run("systemctl", [...scope, "show", "--property", "Restart", "--value", service.unit], { quiet: true, timeoutMs: 10_000 });
+    const policy = restart.stdout.trim();
+    if (!["always", "on-success", "on-failure"].includes(policy)) {
+      throw new Error(`service ${service.unit} must support restart exits (Restart=always, on-success or on-failure)`);
+    }
+    // The shipped unit restarts on failure: SIGUSR2 drains and exits with restartExitCode().
+    // Clean-exit units instead use SIGTERM. Older daemons also restart on an unhandled SIGUSR2.
+    signal(pid, policy === "on-failure" ? "SIGUSR2" : "SIGTERM");
     return;
   }
   throw new Error(`unsupported service manager: ${service.kind || "unknown"}`);
@@ -522,8 +526,6 @@ async function defaultVerify({ root, context, expectedRevision }) {
         requireSlack: context.requireSlack,
       });
       if (!lastReason) {
-        const smoke = await smokeAt(root, context.smokeEngines || []).catch((error) => ({ ok: false, error: safeMessage(error) }));
-        if (!smoke.ok) throw new Error(`post-restart container engine smoke failed: ${smoke.error || "unknown error"}`);
         return health;
       }
     } catch (error) {
@@ -563,10 +565,6 @@ function defaultOps({ root, repoRoot }) {
     },
     provision: () => runCommand("bash", [path.join(repoRoot, "scripts", "update-provision.sh")], { cwd: repoRoot, timeoutMs: 90 * 60_000 }),
     image: ({ context, owner }) => defaultImageBuild({ root, repoRoot, context, owner }),
-    verifyImage: async ({ context }) => {
-      const smoke = await smokeAt(root, context.smokeEngines || []);
-      if (!smoke.ok) throw new Error(`Rebuilt image smoke failed: ${smoke.error || "unknown error"}`);
-    },
     restart: ({ context }) => defaultRestart({ service: context.service, root }),
     verify: ({ context, expectedRevision }) => defaultVerify({ root, context, expectedRevision }),
     restore: ({ context }) => runCommand("git", ["reset", "--hard", context.oldRevision], { cwd: repoRoot, quiet: true, timeoutMs: 60_000 }),
@@ -605,35 +603,15 @@ export async function executeUpdateTransaction({
         optionalDownloadBytes: Number(context.optionalDownloadBytes) || 0,
       },
     });
-    if (context.oldRevision === context.targetRevision) {
-      // Provisioning is also a repair operation. In particular, an operator may enable Drive sync
-      // after the last code update and then run Update to install rclone; an up-to-date checkout
-      // must not skip that repair path.
-      phase(root, owner, "provisioning");
-      await ops.provision?.({ context, owner });
-      let imageResult;
-      try {
-        imageResult = await ops.image?.({ context, owner });
-        if (imageResult?.built) {
-          phase(root, owner, "verifying");
-          await ops.verifyImage({ context, owner });
-        }
-      } catch (error) {
-        imageResult = { failed: true, reason: safeMessage(error) };
-        logStep(`⚠ channel image check failed: ${imageResult.reason}`);
-      }
-      return finishUpdate({
-        root,
-        owner,
-        result: "updated",
-        patch: { phase: "complete", changed: false, runningRevision: context.oldRevision, imageWarning: imageResult?.failed || imageResult?.manual ? imageResult.reason : "", reason: imageResult?.failed || imageResult?.manual ? `Checkout is up to date; image needs attention: ${imageResult.reason}` : imageResult?.built ? "Checkout is up to date; channel image rebuilt and verified." : "Already up to date." },
-      });
-    }
-
     phase(root, owner, "snapshotting");
     const backupPath = await ops.snapshot({ context, owner });
-    phase(root, owner, "checkout", { backupPath: backupPath || "" });
-    await ops.checkout({ context, owner });
+    updateUpdateState({ root, owner, patch: { backupPath: backupPath || "" } });
+    if (context.oldRevision !== context.targetRevision) {
+      phase(root, owner, "checkout");
+      await ops.checkout({ context, owner });
+    }
+    // Reinstalling dependencies mutates the install even when Git is already current.
+    // It gets the same snapshot, audit, tests, restart and rollback as a code update.
     changed = true;
     updateUpdateState({ root, owner, patch: { phase: "installing", changed: true } });
     await ops.install({ context, owner, rollback: false });
@@ -649,8 +627,8 @@ export async function executeUpdateTransaction({
     await ops.provision({ context, owner });
     // The channel image, after dependencies and BEFORE the restart, so a container channel's next
     // turn already runs this revision's toolchain. Optional and non-blocking on purpose: a build
-    // that fails must not leave the daemon on the old revision — the previously built image still
-    // runs every container channel, and the operator is told exactly which command to re-run. The
+    // that fails must not prevent repairing the host daemon. Report the image warning explicitly:
+    // missing/stale images can block new container runs until the operator repairs them. The
     // step reports its own phase only when it actually builds.
     let imageResult;
     try {
@@ -669,12 +647,14 @@ export async function executeUpdateTransaction({
       result: "updated",
       patch: {
         phase: "complete",
-        changed: true,
+        changed: context.oldRevision !== context.targetRevision,
         runningRevision: health?.revision || context.targetRevision,
         imageWarning: imageResult?.failed || imageResult?.manual ? imageResult.reason : "",
         reason: imageResult?.failed || imageResult?.manual
           ? `Daemon updated; container image needs attention: ${imageResult.reason}`
-          : "Candidate passed daemon, Slack, and configured container engine smoke checks.",
+          : context.oldRevision === context.targetRevision
+            ? "Gateway code is current; dependencies, provisioning and runtime image checked; restart verified."
+            : "Candidate passed daemon revision, runtime and Slack reconnect checks.",
       },
     });
   } catch (error) {

@@ -339,15 +339,12 @@ turn (the container fingerprint follows the resolved image ID, not the moving ta
 **A self-update rebuilds it for you.** The transactional updater runs the build itself, after
 dependencies and before the restart, whenever the candidate
 changed anything under `containers/`, bumped `imageSpecVersion`, or no image is built at all — so a
-`/update` no longer leaves every container channel on the previous toolchain. The build is the one
-step that never blocks: if it fails, the update reports `channel image build failed — run
-\`npm run build:image\`` and carries on to the restart, because the image already on disk keeps
-running every container channel. A manual `git pull` still needs a manual rebuild; the daemon
-compares the built image's `cg.image.version` label against the spec this checkout expects and logs
-`the built image is spec X but this checkout expects Y` at boot when they differ. An older image
-still runs — it is just missing whatever the newer spec added. After a rolled-back update the same
-line can appear the other way round (the image is NEWER than the restored checkout); that image
-runs too, and the next successful update settles it.
+`/update` checks the image against the checkout's expected version and source digest. Build or
+executable-check failures leave an explicit image warning while the host daemon can still restart.
+New container runs fail closed when the image is missing or stale; an existing image is not a
+promise that channels remain usable. Run `npm run build:image` to repair it, or retry Update / Repair
+(the build is retried even when Git is already current). Active containers retain their current
+image until idle. A manual `git pull` still needs a matching image rebuild.
 
 **Settings → Container runtime** (admin UI):
 
@@ -959,8 +956,15 @@ Container runtime status displays built/desired Claude and Codex versions, wheth
 needed, and how many existing containers await adoption. Active turns keep their image until idle.
 Update results retain image-build warnings even when the daemon update succeeds.
 
-Update smoke checks use a disposable channel container and the same Claude/Codex runners as live
-turns. Each configured engine must return `CG_UPDATE_SMOKE_OK`; absent logins are explicit skips,
-and zero tested engines fails. No smoke engine runs on the host. The fixture's container, HOME
-volume and working files are removed afterwards. An expired operator Claude token must be
-refreshed before updating; the smoke probe does not launch a host token-refresh turn.
+Update runs directly on the gateway host through `bash scripts/update.sh`. The managed button
+starts it in an independent systemd user service so it survives the daemon restart. Provider
+logins, token relays, quotas and engine responses are not installation prerequisites. Git safety,
+recovery snapshots, exact dependency installation, security audit, regression checks, provisioning,
+image drift/build checks, graceful restart and authenticated daemon readiness still apply.
+The same complete repair runs when the checkout is already current. Node, Claude and Codex
+executables are checked using `--version` in a temporary network-off, read-only container without
+host mounts or credentials. Image build failures remain explicit warnings and are retried next time.
+The restart signal drains active work: SIGUSR2 exits with the restart code for the shipped
+Restart=on-failure unit; SIGTERM supports Restart=always and on-success.
+Readiness allows ten minutes for large skill catalogs to reconcile. The isolated engine response
+probe remains available as a separate diagnostic.

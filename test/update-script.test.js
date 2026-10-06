@@ -18,7 +18,8 @@ test("update shell is a strict compatibility wrapper around the Node transaction
 test("runner retains targeted systemd service support and has no launchd path left", () => {
   assert.match(runner, /systemctl/);
   assert.match(runner, /MainPID/);
-  assert.match(runner, /SIGUSR2/);
+  assert.match(runner, /signal\(pid, policy === "on-failure" \? "SIGUSR2" : "SIGTERM"\)/);
+  assert.doesNotMatch(runner, /process\.kill\(pid, "SIGUSR2"\)/);
   // Linux only: the launchd probe/restart/reload paths retired with macOS support.
   assert.doesNotMatch(runner, /launchctl|kickstart|\.plist|darwin/);
 });
@@ -49,4 +50,16 @@ test("fresh deployments and updates share a checksum-verified host rclone instal
   assert.match(installRclone, /SHA256SUMS/);
   assert.match(installRclone, /sha256sum -c/);
   assert.match(installRclone, /\.local\/bin/);
+});
+
+// A broken provider/login must not prevent installing the version that repairs it.
+test("updates use local host checks without calling the daemon engine smoke endpoint", () => {
+  assert.doesNotMatch(runner, /internal\/update-smoke|smokeAt/);
+  assert.match(runner, /node --version && claude --version && codex --version/);
+});
+
+ test("daemon restart signals use its bounded shutdown and systemd restart exit code", () => {
+  const server = readFileSync(new URL("../src/server.js", import.meta.url), "utf8");
+  assert.match(server, /for \(const sig of \["SIGINT", "SIGTERM", "SIGUSR2"\]\)/);
+  assert.match(server, /requestShutdown\(\{ slack, code: sig === "SIGUSR2" \? restartExitCode\(\) : 0, reason: sig \}\)/);
 });
