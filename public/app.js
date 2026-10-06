@@ -1429,7 +1429,7 @@ function renderConvList() {
   if (showChannels) {
     const chans = CHANNELS
       .filter((c) => matchesConversationSource(c, convSource))
-      .filter((c) => !f || (c.name || "").toLowerCase().includes(f) || (c.slug || "").toLowerCase().includes(f))
+      .filter((c) => !f || conversationChannelName(c).toLowerCase().includes(f) || (c.name || "").toLowerCase().includes(f) || (c.slug || "").toLowerCase().includes(f))
       .sort((a, b) => (a.name || a.slug || "").localeCompare(b.name || b.slug || "", undefined, { sensitivity: "base" }));
     const g = document.createElement("div");
     g.className = "list-group";
