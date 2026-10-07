@@ -109,10 +109,13 @@ never-expiring) card; the rest are automatic for an admin (`references/administr
   to that template.
 - `update_skill_template` — add skills to or remove them from a template; every conversation
   following it is affected on its next message.
-- The organization-wide admin tools (`decide_skill_proposal`, `update_skill_template`, sources,
-  org grants, governance, exclusion, `set_skill_scope`, `publish_skill`) **always** show an Approve/Deny card:
-  they change every conversation at once, and a proposal's text is written by someone else.
-  Auto mode and admin mode do NOT skip it.
+- Of the organization-wide admin tools, the four that push content into every conversation
+  (`add_skill_source`, `add_org_skills`, `update_skill_template` when it ADDS,
+  `decide_skill_proposal` when it APPROVES — a proposal's text is written by someone else)
+  **always** show a durable Approve/Deny card that never expires; end your turn and the gateway
+  applies the call on the admin's click. Auto mode and admin mode do NOT skip it. The rest
+  (removals, rejections, sources' settings and sync, governance, exclusion, `set_skill_scope`,
+  `publish_skill`) are automatic for an admin or manager and refused for anyone else.
 - `sync_skill_sources` — pull the configured sources now (a source in *review* mode stages new
   revisions for approval in the admin UI; *auto* activates them).
 - `list_skill_sources` / `add_skill_source` / `set_skill_source` / `remove_skill_source` — the

@@ -185,9 +185,10 @@ test("a resolved approval cannot be replayed — a second click reports it expir
 
 // Doc vs gate (live QA, SKL-02): the skills docs claimed the chat verbs "show an Approve/Deny card
 // unless the conversation is in auto mode", but approvals.js applies the auto-mode shortcut only to
-// approvalType "permission" — control-plane verbs always post a card, which is the product contract
-// (Auto never bypasses control-plane approvals). The behaviour is right; the sentence was wrong, and
-// a wrong sentence in a shipped guide is what the agent tells the user.
+// approvalType "permission" — a control-plane card is never decided by Auto. Since 2026-10-07 only
+// the four verbs that push content into every conversation carry that (durable) card; the docs must
+// name them and say Auto never decides it. A wrong sentence in a shipped guide is what the agent
+// tells the user.
 test("no shipped doc claims auto mode skips a control-plane skills approval", () => {
   const files = [
     "../docs/SKILLS.md",
@@ -205,10 +206,14 @@ test("no shipped doc claims auto mode skips a control-plane skills approval", ()
   // Both must state the positive rule, not merely omit the wrong one: the organization-wide admin
   // verbs always carry a card that Auto does not skip, and (operator decision 2026-09-27) personal
   // and channel skill changes carry none at all.
-  assert.match(docs, /\*\*always\*\* post an Approve\/Deny card/i);
-  assert.match(docs, /Auto mode does not bypass it/i);
-  assert.match(guide, /\*\*always\*\* show an Approve\/Deny card/i);
+  for (const text of [docs, guide]) {
+    for (const verb of ["add_skill_source", "add_org_skills", "update_skill_template", "decide_skill_proposal"]) assert.match(text, new RegExp(verb));
+    assert.match(text, /durable/i, "the surviving card is described as durable");
+  }
+  assert.match(docs, /Auto mode never decides a\s+card/i);
+  assert.match(guide, /\*\*always\*\* show a durable Approve\/Deny card/i);
   assert.match(guide, /Auto mode and admin mode do NOT skip it/i);
+  assert.match(guide, /automatic for an admin or manager/i);
   assert.match(docs, /Personal and channel changes never post an approval card/i);
   assert.match(guide, /Personal and channel changes never wait for anyone/i);
 });
