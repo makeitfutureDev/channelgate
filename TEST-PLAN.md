@@ -1,5 +1,25 @@
 # ChannelGate — Test Plan
 
+## Provider selection readiness (2026-10-08)
+
+- [x] Regression: `node --test test/provider-selection-surfaces.test.js
+  test/qwen-provider-settings-route.test.js test/model-wizard-channel-scope-thread.test.js
+  test/channel-settings-modal.test.js test/platform-controls.test.js test/qwen-engine.test.js`.
+  Missing optional-provider configuration rejects selections before default/channel/DM/thread
+  persistence. Existing engine/model/effort survive rejected choices. A different provider's key
+  does not satisfy the selected provider. Combined own key/endpoint/default save succeeds;
+  clearing a credential keeps the explicit default. Configured directives succeed.
+- [ ] Live acceptance, repeat with a thread initially pinned to **Claude**, then **Codex** in an
+  isolated QA deployment. Enable an optional provider but leave its own key/endpoint empty; keep a
+  different optional provider configured. Try `/model` thread and channel choices, Slack Settings
+  channel and thread engine picks, admin default/channel/DM engine saves, and `use qwen-eu`.
+  Each rejects with the missing-configuration remedy and the original engine/model/effort remains;
+  send `say READY` and verify the original engine answers. No other account receives a request.
+  Add the selected provider's own key and endpoint, choose it again, and send `say READY`; verify
+  configured provider identity and provider activity without credentials in logs or response.
+  Remove its key and verify its existing pin remains and execution fails closed rather than
+  choosing a different account. Restore fixture settings after each engine's run.
+
 ## Custom MCP connections (2026-10-01)
 
 ### Regression

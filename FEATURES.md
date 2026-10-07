@@ -1,5 +1,16 @@
 # ChannelGate — Features
 
+## Provider selection readiness
+
+- Enabled optional providers must have their own configured credential and endpoint before a
+  runtime selection is saved in `/model`, Slack Settings, admin default/channel/DM saves, model
+  shortcuts or explicit provider directives. Rejection explains the required Settings repair and
+  preserves the existing engine/model/effort pins; it never substitutes another provider account.
+- Provider admission is an optional adapter hook, separate from CLI installation/health. Admin
+  settings validate the complete candidate so enabling/configuring/selecting a provider can be one
+  atomic save. Removing a credential does not rewrite existing pins or defaults; the selected
+  provider still fails closed at execution until repaired.
+
 ## Automation health and quiet delivery
 
 - Automations have independent controls for **run visibility** (`visible` or `silent`), **result

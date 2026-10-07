@@ -1,3 +1,4 @@
+import { assertEngineSelectable } from "../engines/selection.js";
 // Slack Socket Mode gateway. Receives message events across DM / group DM / public & private
 // channels, applies the gating rules (DM → no mention needed; everywhere else → require an
 // explicit @bot mention), authorizes the author against the channel's allowedUsers, then runs
@@ -769,6 +770,7 @@ export async function applyThreadRuntimeSelection({ entry, meta, state, actorId,
   };
   const next = nextRuntimeTriple(current, field, value, inheritedEngine);
   const { patch, actualEngine } = runtimeSettingsPatch(next, { gatewayEngine: inheritedEngine });
+  if (field === "engine" && patch.engine) await assertEngineSelectable(patch.engine);
   if (patch.engine !== current.engine) await setThreadEngine(entry.slug, threadKey, patch.engine);
   if (patch.model !== current.model) await setThreadModel(entry.slug, threadKey, patch.model);
   if (patch.effort !== current.effort) await setThreadEffort(entry.slug, threadKey, patch.effort);
@@ -1544,6 +1546,7 @@ async function connectAndWire(app) {
           const inheritedEngine = inheritedChannelRuntime(meta).engine;
           const next = nextRuntimeTriple({ engine: meta.engine, model: meta.model, effort: meta.effort }, field, value, inheritedEngine);
           const { patch, actualEngine } = runtimeSettingsPatch(next, { gatewayEngine: inheritedEngine });
+          if (field === "engine" && patch.engine) await assertEngineSelectable(patch.engine);
           meta = await patchAuditedChannelSettings(entry, clicker, patch);
           await logEvent("channel_runtime_updated", {
             channel: state.channelId, slug: entry.slug, engine: actualEngine,

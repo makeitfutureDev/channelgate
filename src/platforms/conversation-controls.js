@@ -1,3 +1,4 @@
+import { assertEngineSelectable } from "../engines/selection.js";
 // Authorized text controls and a process-local lane per conversation/session. Engine/session
 // persistence stays in the existing gateway stores; the lane only owns live work and cancellation.
 import { clearSession } from '../gateway/sessions.js';
@@ -59,6 +60,7 @@ export function createConversationControls() {
         const selectedEngine = isEngineId(parts[0]) ? parts.shift() : engine;
         const selectedModel = parts.join(' ') === 'default' ? '' : parts.join(' ');
         if (parts.length > 1 || !modelBelongsToEngine(selectedModel, selectedEngine)) return await respond('Use /model [engine] [model|default] with a model belonging to that engine.');
+        try { await assertEngineSelectable(selectedEngine); } catch (error) { return await respond(error.message); }
         await setThreadEngine(slug, sessionKey, selectedEngine);
         await setThreadModel(slug, sessionKey, selectedModel);
         if (selectedEngine !== engine || !effortBelongsToModel(effort, selectedEngine, selectedModel)) await setThreadEffort(slug, sessionKey, '');

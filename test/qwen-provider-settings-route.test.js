@@ -91,3 +91,19 @@ test("a provider's gateway default model is validated against THAT provider's ca
   assert.equal(settings.getDefaultModel(entry.id), entry.models[0].value, "the rejected save changed nothing");
   clearAll();
 });
+
+
+test("enabled provider cannot become default without its own key and endpoint; combined save is atomic", async () => {
+  clearAll();
+  settings.saveSettings({ engine: "claude", engineEnabled: { claude: true, codex: true, "qwen-eu": true } });
+  const rejected = await put({ engine: "qwen-eu" }, 400);
+  assert.match(rejected.error, /Qwen EU.*not configured|no API key or endpoint/);
+  assert.equal(settings.getEngine(), "claude");
+  await put({ engine: "qwen-eu", qwenEuApiKey: "fixture-provider-key", qwenEuBaseUrl: "https://ws-test.example/apps/anthropic" });
+  assert.equal(settings.getEngine(), "qwen-eu");
+  // Existing defaults remain explicit when credentials are removed; no account substitution.
+  await put({ clearQwenEuApiKey: true });
+  assert.equal(settings.getEngine(), "qwen-eu");
+  settings.saveSettings({ engine: "claude" });
+  clearAll();
+});

@@ -18,6 +18,10 @@ product overview.
 
 ## Unreleased
 
+- Refuse runtime selections for enabled optional providers whose own credential or endpoint is
+  missing, preserving existing pins and reporting the Settings repair. A complete provider
+  configuration and its default selection can be saved together without account fallback.
+
 - Far fewer approval cards. A gateway tool that changes channel or gateway state is now automatic
   for the admin or channel manager who asked for it (modes, network, folders, MCP servers,
   secrets, tokens, skill settings, gateway update and restart, the license key, instruction

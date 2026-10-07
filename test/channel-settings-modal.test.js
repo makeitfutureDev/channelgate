@@ -801,3 +801,16 @@ test("Automations controls act only on this channel's rows and respect the enabl
   assert.equal(schedules.listForChannel(mine).some((s) => s.id === once.id), false);
   for (const row of [...schedules.listForChannel(mine), other]) schedules.deleteSchedule(row.id);
 });
+
+
+test("Slack settings reject an unconfigured provider before replacing thread pins", async () => {
+  const { saveSettings } = await import("../src/config/settings.js");
+  const { setThreadEngine, setThreadModel, setThreadEffort, getThreadEngine, getThreadModel, getThreadEffort } = await import("../src/gateway/thread-engine.js");
+  saveSettings({ engineEnabled: { claude: true, codex: true, "qwen-eu": true }, qwenEuApiKey: "", qwenEuBaseUrl: "" });
+  const entry = { slug: "provider-settings-pins" }, threadTs = "1800000000.345678";
+  await setThreadEngine(entry.slug, threadTs, "codex");
+  await setThreadModel(entry.slug, threadTs, "gpt-6-sol");
+  await setThreadEffort(entry.slug, threadTs, "high");
+  await assert.rejects(applyThreadRuntimeSelection({ entry, meta: { engine: "claude" }, state: { channelId: "C_PROVIDER", threadTs }, actorId: "U_MANAGER", field: "engine", value: "qwen-eu" }), /not configured/);
+  assert.deepEqual([await getThreadEngine(entry.slug, threadTs), await getThreadModel(entry.slug, threadTs), await getThreadEffort(entry.slug, threadTs)], ["codex", "gpt-6-sol", "high"]);
+});
