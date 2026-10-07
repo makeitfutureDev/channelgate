@@ -21,6 +21,8 @@ product overview.
 - Claude Cloud MCP discovery now marks connected servers without an admissible transport as
   unavailable, suppresses unsafe CLI targets, and rejects new selections against fresh host
   definitions. Existing invalid picks remain removable and are still dropped safely at run time.
+  Teams Settings applies the same fresh admission check after cached discovery and hides Activate
+  for unavailable definitions while retaining Deactivate for existing grants.
 
 - Far fewer approval cards. A gateway tool that changes channel or gateway state is now automatic
   for the admin or channel manager who asked for it (modes, network, folders, MCP servers,

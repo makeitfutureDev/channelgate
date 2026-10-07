@@ -9,6 +9,11 @@
   new selections; healthy definitions work. Unsafe CLI display text never appears in discovery.
   Operator edits after cached discovery are revalidated. Existing invalid selections remain stored
   on unrelated saves but are dropped at execution; healthy siblings continue.
+- [x] Teams catalog regression: `node --test test/teams-settings-catalog.test.js`. Connected
+  credential-free HTTP fixtures activate with their exact transport selectors; missing and
+  credential-bearing definitions cannot activate. An operator edit after cached discovery is
+  rejected before saving. Unavailable rows omit Activate, existing invalid grants retain
+  Deactivate, and role rechecks plus bounded catalog pagination remain intact.
 - [ ] Live acceptance, isolated QA deployment, repeat from **Claude** and **Codex** threads:
   configure three host Claude MCP fixtures: credential-free `healthy` echo server, a CLI-connected
   `credentialed` server needing an operator env/header, and a discovered `missing` server whose
@@ -21,6 +26,11 @@
   with no host credential in staged artifacts. In the Codex thread send `say QA_MCP_READY`; verify
   Codex remains pinned, answers normally and receives none of the Claude-only grants. Existing
   invalid selections remain removable in both clients. Restore the isolated operator fixtures.
+- [ ] Repeat the Cloud MCP card checks in authenticated Teams Settings using both engine catalogs:
+  unavailable Claude rows have no Activate action, an existing invalid grant has Deactivate,
+  and a cached healthy definition changed to require credentials is refused on activation without
+  changing grants. A healthy credential-free HTTP definition activates; retain the current
+  Claude/Codex runtime pin and verify role revocation still prevents the write.
 
 ## Custom MCP connections (2026-10-01)
 
