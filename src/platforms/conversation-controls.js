@@ -15,8 +15,9 @@ export function createConversationControls() {
   return {
     async command({ message, sessionKey, slug, meta, authorIsAdmin, reply }) {
       // Reaction target text is content, never a second user's administrative command.
-      if (message.trigger === 'reaction') return false;
-      const match = /^\/(help|status|clear|stop|cancel|model|effort)(?:\s+(.*))?$/is.exec(message.text.trim());
+      const reactionStop = message.trigger === 'reaction' && message.reactionAction === 'stop';
+      if (message.trigger === 'reaction' && !reactionStop) return false;
+      const match = reactionStop ? ['', 'stop', ''] : /^\/(help|status|clear|stop|cancel|model|effort)(?:\s+(.*))?$/is.exec(message.text.trim());
       if (!match) return false;
       const [, name, raw = ''] = match;
       const command = name.toLowerCase();

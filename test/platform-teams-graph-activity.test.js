@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import { normalizeGraphEvents } from '../src/platforms/msteams/graph-activity.js';
 const row = { conversationId: 'teams:19:test@thread.v2', startedAt: '2026-09-09T10:00:00Z', context: { conversation: { id: '19:test@thread.v2', conversationType: 'groupchat' }, serviceUrl: 'https://smba.trafficmanager.net/teams/', channelData: { tenant: { id: 'tenant' } } } };
 const reaction = { reactionType: '🤖', user: { user: { id: 'reactor' } } };
@@ -11,9 +12,11 @@ test('robot reaction runs as reactor and anchors the original message', async ()
   assert.equal(event.replyToId, 'message1'); assert.equal(event.text, 'Handle this & that');
   assert.equal(event.mentionsBot, false); assert.equal(event.threadKey, '');
   assert.match(event.messageId, /^reaction:/);
+  const legacyId = createHash('sha256').update(JSON.stringify([row.conversationId, 'message1', 'reaction', 'reactor', '2026-09-09T10:01:00Z'])).digest('hex');
+  assert.equal(event.raw.eventId, legacyId, 'upgrading must not replay already-dispatched robot events');
 });
 test('documented Teams robot IDs trigger Graph reactions without granting authority to other emoji', async () => {
-  for (const reactionType of ['smilerobot', 'hearteyesrobot']) {
+  for (const reactionType of ['smilerobot', 'hearteyesrobot', 'stopsign', '2705_whiteheavycheckmark']) {
     const message = fixture();
     message.reactions = [{ ...reaction, reactionType }];
     message.messageHistory[0].reaction = message.reactions[0];
@@ -21,10 +24,11 @@ test('documented Teams robot IDs trigger Graph reactions without granting author
     assert.equal(event.userId, '29:reactor');
     assert.equal(event.replyToId, 'message1');
     assert.equal(event.trigger, 'reaction');
+    assert.equal(event.reactionAction, ({ stopsign: 'stop', '2705_whiteheavycheckmark': 'ack' })[reactionType] || 'engage');
     message.reactions = [];
     assert.deepEqual(await normalizeGraphEvents(message, row, opts), []);
   }
-  for (const reactionType of ['stopsign', '2705_whiteheavycheckmark', 'hearteyes', 'hearteyesdog']) {
+  for (const reactionType of ['hearteyes', 'hearteyesdog']) {
     const message = fixture();
     message.reactions = [{ ...reaction, reactionType }];
     message.messageHistory[0].reaction = message.reactions[0];

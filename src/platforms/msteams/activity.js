@@ -1,3 +1,4 @@
+import { teamsReactionAction } from "./reactions.js";
 // Bot Framework activity → the gateway's neutral inbound record.
 import { activityConversationName } from "./conversation-name.js";
 import { makeInbound } from "../inbound.js";
@@ -72,7 +73,11 @@ export function quotedReplyId(activity) {
 export function normalizeActivity(activity, { botId = "", fetchImpl = fetch, resolveFile = null } = {}) {
   const type = String(activity?.type || "").toLowerCase();
   const edit = type === "messageupdate" && activity.channelData?.eventType === "editMessage";
-  const reaction = type === "messagereaction" && (activity.reactionsAdded || []).some(r => isRobotReaction(r?.type));
+  const actions = type === "messagereaction" ? [...new Set((activity.reactionsAdded || []).map(r => teamsReactionAction(r?.type)).filter(Boolean))] : [];
+  // A mixed control payload must not choose one destructive action arbitrarily.
+  if (actions.length > 1) return null;
+  const reactionAction = actions[0] || "";
+  const reaction = Boolean(reactionAction);
   if (type !== "message" && !edit && !reaction) return null;
   if (reaction && !activity.replyToId) return null;
   const from = activity.from || {};
@@ -97,6 +102,7 @@ export function normalizeActivity(activity, { botId = "", fetchImpl = fetch, res
     threadKey: threadKey || (kind === "channel" ? String((reaction ? activity.replyToId : activity.id) || "") : ""),
     messageId: String(activity.id || ""),
     trigger: reaction ? "reaction" : edit ? "edit" : "message",
+    reactionAction,
     // Teams SDK quoted replies carry an entity; text markup alone is not a trustworthy
     // reference. Ignore ambiguous multiple quotes and quotes explicitly marked deleted.
     replyToId: reaction ? String(activity.replyToId) : quotedReplyId(activity),
@@ -168,5 +174,5 @@ async function fetchBytes(url, fetchImpl) {
 export function isRobotReaction(value) {
   // Teams names these Smile robot and Heart eyes robot in its reaction picker/reference.
   // Keep the existing Unicode/legacy spellings for older event payloads.
-  return ["🤖", "robot", "robot_face", "smilerobot", "hearteyesrobot"].includes(String(value || "").replace(/\uFE0F/g, ""));
+  return teamsReactionAction(value) === "engage";
 }
