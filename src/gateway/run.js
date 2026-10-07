@@ -25,6 +25,8 @@ import { validateRunContext } from "../engines/contract.js";
 import { getEngine, getDefaultModel, getDmTemplate, getEngineFallback, isEngineEnabled, getEnabledEngines, ENGINES, getOrgAccessGrants } from "../config/settings.js";
 import { claudeTokenFingerprint, resolveContainerClaudeToken } from "./claude-token-relay.js";
 import { installNestedClaudeLogin } from "./nested-claude-login.js";
+import { installPerplexityResearchLogin, perplexityResearchPreamble } from "./perplexity-research.js";
+import { getPerplexityResearchConfig } from "../config/settings.js";
 import { resolveRuntime } from "../runtimes/resolve.js";
 import { newRunId, runtimeSupports } from "../runtimes/contract.js";
 import { getThreadEngine, getThreadClean, getThreadModel, getThreadEffort, getThreadSudo } from "./thread-engine.js";
@@ -1097,6 +1099,7 @@ export async function runMessage({ channelId, authorId, workspaceId = "", text, 
     ...Object.values(channelEnv).filter((value) => !placeholderValues.has(value)),
     ...egressRunEnv.realValues,
     ...serviceSecretValues(),
+    getPerplexityResearchConfig().sessionToken,
   ])];
   // Resolve integration credentials before constructing the streaming holdback. No engine has
   // started yet, so all values passed to either primary or fallback are covered from its first byte.
@@ -1186,6 +1189,7 @@ export async function runMessage({ channelId, authorId, workspaceId = "", text, 
   let mcpConfigFingerprint = "";
   let gatewayCapability = "";
   let pluginMcpServers = [];
+  let managedMcpServers = [];
   // The relay registrations this turn's capabilities took (primary and fallback; containers only):
   // the turn holds each until it settles, and releases it in the `finally` below. A cold engine's
   // bridges have hung up by then, so the grant goes with the run; a warm Claude process keeps it
@@ -1217,7 +1221,7 @@ export async function runMessage({ channelId, authorId, workspaceId = "", text, 
   const mintGatewayMcpRuntime = async () => {
     let rejectedMcps = [];
     let relayJti = "";
-    ({ mcpConfigJson, mcpConfigFingerprint, gatewayCapability, relayJti = "", pluginServers: pluginMcpServers = [], rejectedMcps = [] } = await buildEngineMcpRuntime({ ...mcpRuntimeInput, pluginRuntime: grantArtifacts.pluginRuntime, engine, target, allowedMcps: meta[adapter.mcpMetaKey] || [] }));
+    ({ mcpConfigJson, mcpConfigFingerprint, gatewayCapability, relayJti = "", pluginServers: pluginMcpServers = [], managedServers: managedMcpServers = [], rejectedMcps = [] } = await buildEngineMcpRuntime({ ...mcpRuntimeInput, pluginRuntime: grantArtifacts.pluginRuntime, engine, target, allowedMcps: meta[adapter.mcpMetaKey] || [] }));
     if (relayJti) relayJtis.push(relayJti);
     mcpDropNote = await reportRejectedMcps(rejectedMcps, engine);
     // A remote MCP the container dials itself (a selected catalog server with no credential) stays
@@ -1434,6 +1438,7 @@ export async function runMessage({ channelId, authorId, workspaceId = "", text, 
     const prompt = (fresh && !forkSourceSessionId ? memoryPrefix : "") + composioIdentityPrefix + channelCredentialsPrefix
       + runtimeIdentityPreamble({ engine, model: modelOverride, effort, fresh })
       + runtimeAccessPreamble(target, { clean, allowNetwork: Boolean(meta.allowNetwork) })
+      + perplexityResearchPreamble(target, { clean })
       + (promptOverride ?? turnText);
     return adapter.run(validateRunContext({
       principal: { kind: untrustedPrincipal ? "daemon" : PRINCIPAL_KIND_BY_ORIGIN[origin] || "daemon", id: authorId },
@@ -1462,7 +1467,7 @@ export async function runMessage({ channelId, authorId, workspaceId = "", text, 
         codexStateDir: grantArtifacts.codexStateDir,
         personalSkillCatalog: grantArtifacts.personalSkillCatalog,
         pluginRuntime: grantArtifacts.pluginRuntime,
-        pluginMcpServers,
+        pluginMcpServers, managedMcpServers,
         grantFingerprint,
         attachments,
       },
@@ -1673,7 +1678,7 @@ export async function runMessage({ channelId, authorId, workspaceId = "", text, 
         principal: { kind: untrustedPrincipal ? "daemon" : PRINCIPAL_KIND_BY_ORIGIN[origin] || "daemon", id: authorId }, origin, cwd,
         prompt: (fbFresh ? memoryPrefix : "") + composioIdentityPrefix + channelCredentialsPrefix
           + runtimeIdentityPreamble({ engine: fallbackEngine, model: modelOverride, effort: "", fresh: fbFresh })
-          + runtimeAccessPreamble(target, { clean, allowNetwork: Boolean(meta.allowNetwork) }) + fbPrompt,
+          + runtimeAccessPreamble(target, { clean, allowNetwork: Boolean(meta.allowNetwork) }) + perplexityResearchPreamble(target, { clean }) + fbPrompt,
         session: { id: fbSid, fresh: fbFresh }, policy: fallbackConfinement,
         // The SAME runtime target: failing over to the other harness changes which CLI runs, not
         // which machine boundary the channel runs behind.
@@ -1702,6 +1707,7 @@ export async function runMessage({ channelId, authorId, workspaceId = "", text, 
           personalSkillCatalog: grantArtifacts.personalSkillCatalog,
           pluginRuntime: grantArtifacts.pluginRuntime,
           pluginMcpServers: fallbackMcpRuntime.pluginServers || [],
+          managedMcpServers: fallbackMcpRuntime.managedServers || [],
           grantFingerprint },
       }));
     };
@@ -1818,6 +1824,7 @@ export async function runMessage({ channelId, authorId, workspaceId = "", text, 
       // spawn, including fresh/resumed, background, scheduled and API turns. Missing Claude auth
       // leaves the main Codex/Qwen turn usable and clears any previous managed child login.
       await installNestedClaudeLogin(target, { resolveToken: claudeRelayOnce });
+      await installPerplexityResearchLogin(target, { clean });
       if (warmup?.created || warmup?.started) {
         console.log(`[gateway] ${entry.slug}: ${target.backend} runtime ${warmup.created ? "created" : "started"} in ${Date.now() - warmupStartedAt}ms`);
       }

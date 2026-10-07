@@ -338,6 +338,7 @@ const codex = validateEngineAdapter({
     const catalog = await listEngineMcps("codex", { channelId: target?.meta?.codexAuthSource === "channel" ? target.meta.channelId : "" }).catch(() => []);
     const codexMcpPolicy = codexMcpPolicyFor(catalog, r.allowedMcps || []);
     codexMcpPolicy.servers.push(...(r.pluginMcpServers || []));
+    codexMcpPolicy.servers.push(...(r.managedMcpServers || []));
     // Mirrors the drop resolveOptionalMcpConfig already recorded for the payload: a selected server
     // with no credential-safe definition is disabled for this launch instead of failing the turn.
     // Plugin-provided servers arrive with their definition already proven by run-engine-mcp.js.

@@ -743,6 +743,10 @@ export function buildCodexArgs({ prompt, sessionId, isNewSession, forkSourceSess
     if (!definition) throw new Error(`Optional MCP ${server.name} is missing a complete safe definition`);
     args.push("-c", `mcp_servers.${name}.enabled=true`);
     args.push("-c", `mcp_servers.${name}.startup_timeout_sec=${MCP_STARTUP_TIMEOUT_SECONDS}`);
+    // Managed research can take several minutes. Ordinary selected/plugin servers retain the
+    // CLI default; only daemon-owned metadata opts into this bounded call window/approval.
+    if (Number.isInteger(server.toolTimeoutSec) && server.toolTimeoutSec > 0 && server.toolTimeoutSec <= 3600) args.push("-c", `mcp_servers.${name}.tool_timeout_sec=${server.toolTimeoutSec}`);
+    if (server.defaultToolsApprovalMode === "approve") args.push("-c", `mcp_servers.${name}.default_tools_approval_mode="approve"`);
     if (definition.transport === "http" && definition.url) {
       args.push("-c", `mcp_servers.${name}.url=${JSON.stringify(definition.url)}`);
     } else if (definition.transport === "stdio" && definition.command) {
