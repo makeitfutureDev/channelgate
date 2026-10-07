@@ -23,7 +23,7 @@ export const TEAMS_HELP_TEXT =
   '• `/secrets` — open the conversation Variables page\n\n' +
   '• `/sendfile <path>` — send a workspace-relative file through personal-chat consent\n\n' +
   '• `/status` — show runtime settings and active/queued requests for this session\n\n' +
-  '• `/model [engine] [model|default]` — show or change this session’s engine/model, subject to runtime policy\n\n' +
+  '• `/model` — show the current selection and open the engine, model and effort picker for this session. Choose a compatible combination and Apply. `/model [engine] [model|default]` also changes it directly, subject to runtime policy\n\n' +
   '• `/effort [level|default]` — show or change this session’s reasoning effort\n\n' +
   '• `/stop` or `/cancel` — stop this session’s active and queued work\n\n' +
   '• `/clear` — stop and clear this session; the next request starts fresh';
