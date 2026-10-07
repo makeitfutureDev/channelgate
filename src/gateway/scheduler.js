@@ -9,7 +9,10 @@ import { cronMatches, elapsedMinutes } from "../util/cron.js";
 import { runMessage as defaultRunMessage } from "./run.js";
 import { applyLoopWakeup, consumeTick, isLoopRow, stopThreadLoops } from "./loops.js";
 import { logEvent } from "../util/logger.js";
-import { createUsageBank } from "./usage.js";
+import { automationPrompt, classifyScheduleResult, suppressScheduleResult } from "./schedule-outcome.js";
+import { createScheduleRun, getScheduleRun, updateScheduleRun, appendScheduleRunEvent } from "./schedule-runs.js";
+import { redactLogValue } from "../util/redact.js";
+import { normalizeUsage, createUsageBank } from "./usage.js";
 import { deliverResult, postNoticeWithMenu } from "../slack/deliver.js";
 import { runQueue } from "../slack/message-lifecycle.js";
 import { postNotice, postDirectMessage, automationTarget } from "../platforms/notify.js";
@@ -34,15 +37,34 @@ function isQuietMatch(sched, result) {
 }
 
 async function deliverScheduledResult(client, sched, result, threadTs, deliver) {
+  const run = getScheduleRun(sched.activeRunId);
+  updateScheduleRun(sched.activeRunId, { deliveryAttempts: (run?.deliveryAttempts || 0) + 1, deliveryStatus: "pending" });
+  appendScheduleRunEvent(sched.activeRunId, { kind: "delivery_attempt" });
+  if (suppressScheduleResult(sched, result)) {
+    updateScheduleRun(sched.activeRunId, { deliveryStatus: "suppressed" });
+    appendScheduleRunEvent(sched.activeRunId, { kind: "delivery_suppressed" });
+    return;
+  }
   if (sched.delivery === "dm-on-match") {
     if (isQuietMatch(sched, result)) {
       const sent = await postDirectMessage(client, { userId: sched.createdBy, text: result.content.trim() });
       if (!sent) throw new Error("conditional schedule could not open or deliver the creator DM");
     }
+    updateScheduleRun(sched.activeRunId, { deliveryStatus: isQuietMatch(sched, result) ? "delivered" : "suppressed" });
     return;
   }
+  // A silent daily-thread schedule creates its day's thread only once useful output exists.
+  if (sched.executionVisibility === "silent" && sched.delivery === "daily-thread" && !threadTs) {
+    threadTs = await taskDeliveryThread(client, sched, sched.description || "Scheduled task", new Date(), true);
+    sched.executionThread = threadTs;
+    updateSchedule(sched.id, { executionThread: threadTs });
+  }
+  const outcome = result.automationOutcome;
+  const content = result.content?.trim() || (outcome ? `Automation ${outcome.status}: ${outcome.summary}` : "Automation task outcome was not reported.");
   await deliver(client, { channel: sched.channelId, threadKey: threadTs || undefined,
-    result, trustedPrefix: sched.delivery === "channel" ? notifyPrefix(sched) : "" });
+    result: { ...result, content }, trustedPrefix: sched.delivery === "channel" ? notifyPrefix(sched) : "" });
+  updateScheduleRun(sched.activeRunId, { deliveryStatus: "delivered", deliveryThread: threadTs || "" });
+  appendScheduleRunEvent(sched.activeRunId, { kind: "delivered" });
 }
 
 export function nextIntervalRun(sched, now = Date.now()) {
@@ -91,7 +113,11 @@ export function scheduleDayKey(now = new Date()) {
 // visible top-level anchor per server-local calendar day; later fires reuse it without another
 // channel-level banner. Persist immediately after Slack accepts the anchor, before the engine run,
 // so a daemon restart mid-run still finds the correct thread.
-export async function taskDeliveryThread(client, sched, title, now = new Date()) {
+export async function taskDeliveryThread(client, sched, title, now = new Date(), resultAnchor = false) {
+  if (sched.delivery === "thread") return sched.deliveryThread || null;
+  if (sched.executionVisibility === "silent" && !resultAnchor) {
+    return sched.delivery === "daily-thread" && sched.dailyThreadDate === scheduleDayKey(now) ? sched.dailyThreadTs || null : null;
+  }
   // Channel delivery intentionally skips the "Running" anchor. The result is posted top-level
   // after the run, giving admins a true channel-vs-thread choice rather than a cosmetic label.
   if (["channel", "dm-on-match"].includes(sched.delivery)) return null;
@@ -100,7 +126,7 @@ export async function taskDeliveryThread(client, sched, title, now = new Date())
     if (sched.dailyThreadDate === date && sched.dailyThreadTs) return sched.dailyThreadTs;
     const anchor = await postNotice(client, {
       conversationId: sched.channelId,
-      text: `${notifyPrefix(sched)}⏰ *Running:* ${title}`,
+      text: resultAnchor ? `⏰ *Automation reports:* ${title}` : `${notifyPrefix(sched)}⏰ *Running:* ${title}`,
     });
     const anchorThread = anchor?.threadKey || anchor?.messageId || null;
     if (anchorThread) {
@@ -144,13 +170,25 @@ export function scheduleSessionKey(sched, now = Date.now()) {
 
 export async function runSchedule(sched, { runner: runMessage = defaultRunMessage, deliver = deliverResult } = {}) {
   if (running.has(sched.id)) return;
+  if (isOneTime(sched) && sched.executionState === "delivered") { retireOneTime(sched); return; }
   running.add(sched.id);
   const client = automationTarget(slackRef, sched.channelId);
-  let threadTs = sched.executionThread || null;
+  let threadTs = sched.executionThread || (sched.delivery === "thread" ? sched.deliveryThread : null) || null;
+  // Reuse the same run for recovery/delivery; a new fire gets a distinct immutable history id.
+  const recovering = Boolean(sched.pendingDelivery || ["queued", "running"].includes(sched.executionState));
+  let run;
   try {
+    run = recovering && sched.activeRunId ? getScheduleRun(sched.activeRunId) : null;
+    if (!run) run = createScheduleRun(sched);
+    sched.activeRunId = run.id;
+    updateSchedule(sched.id, { activeRunId: run.id });
     if (!client) {
       // No destination transport = no delivery. A one-time schedule keeps its durable row (and its full attempt
       // budget) so the next tick after the outage still runs it, instead of being deleted unrun.
+      updateScheduleRun(run.id, sched.pendingDelivery
+        ? { deliveryStatus: "failed", errorKind: "delivery", error: "Destination transport is not connected." }
+        : { status: "skipped", completedAt: new Date().toISOString(), summary: "Destination transport is not connected.", deliveryStatus: "failed" });
+      appendScheduleRunEvent(run.id, { kind: "transport_unavailable" });
       await logEvent("schedule_skip", { id: sched.id, reason: "destination transport not connected" });
       return;
     }
@@ -161,13 +199,18 @@ export async function runSchedule(sched, { runner: runMessage = defaultRunMessag
     // A completed output can be retried without re-running its tools. A previous execution
     // without that checkpoint has unknown external effects and requires a human reconciliation.
     if (sched.pendingDelivery) {
+      // Older checkpoints have no task report: classify conservatively without rerunning tools.
+      if (!sched.pendingDelivery.automationOutcome) sched.pendingDelivery = classifyScheduleResult(sched.pendingDelivery);
+      recordTaskOutcome(run.id, sched.pendingDelivery);
       await deliverScheduledResult(client, sched, sched.pendingDelivery, threadTs, deliver);
       await finishScheduleDelivery(client, sched, sched.pendingDelivery, threadTs);
       return;
     }
     if (sched.executionState === "running" || (isOneTime(sched) && sched.runAttempts > 0 && !sched.executionState && sched.kind !== "reminder")) {
       updateSchedule(sched.id, { enabled: false, executionState: "interrupted", lastStatus: "interrupted: external actions unknown; inspect before retrying" });
-      if (sched.delivery !== "dm-on-match") await postNotice(client, { conversationId: sched.channelId, threadKey: threadTs || "",
+      updateScheduleRun(run.id, { status: "interrupted", taskStatus: "interrupted", engineStatus: "interrupted", deliveryStatus: "suppressed", completedAt: new Date().toISOString(), summary: "Interrupted before result checkpoint; external actions unknown. Inspect before retrying." });
+      appendScheduleRunEvent(run.id, { kind: "interrupted" });
+      if (sched.failureNotify !== false && sched.delivery !== "dm-on-match") await postNotice(client, { conversationId: sched.channelId, threadKey: threadTs || "",
         text: "⏰ A scheduled task was interrupted before its result was saved. It was paused without running again because external actions may already have happened. Inspect the task before explicitly retrying." });
       return;
     }
@@ -177,10 +220,12 @@ export async function runSchedule(sched, { runner: runMessage = defaultRunMessag
     if (isOneTime(sched)) {
       const attempts = (sched.runAttempts || 0) + 1;
       if (attempts > MAX_ONCE_ATTEMPTS) {
+        updateScheduleRun(run.id, { status: "failed", taskStatus: "failed", engineStatus: "not-started", outcomeSource: "gateway", completedAt: new Date().toISOString(), deliveryStatus: "suppressed", summary: "One-time execution attempt budget exhausted.", errorKind: "attempt_budget" });
+        appendScheduleRunEvent(run.id, { kind: "attempt_budget_exhausted" });
         deleteSchedule(sched.id);
         await logEvent("schedule_giveup", { id: sched.id, channel: sched.channelId, attempts });
         try {
-          await postNotice(client, { conversationId: sched.channelId, text: `⏰ Scheduled task *${(sched.description || sched.prompt || sched.id).trim()}* failed ${MAX_ONCE_ATTEMPTS} times and was cancelled. Schedule it again when you're ready.` });
+          if (sched.failureNotify !== false && sched.delivery !== "dm-on-match") await postNotice(client, { conversationId: sched.channelId, text: `⏰ Scheduled task *${(sched.description || sched.prompt || sched.id).trim()}* failed ${MAX_ONCE_ATTEMPTS} times and was cancelled. Schedule it again when you're ready.` });
         } catch {
           /* ignore */
         }
@@ -226,6 +271,8 @@ export async function runSchedule(sched, { runner: runMessage = defaultRunMessag
           escalationStyle: sched.escalationStyle || "thread",
         });
       }
+      updateScheduleRun(run.id, { status: "succeeded", taskStatus: "succeeded", deliveryStatus: "delivered", outcomeSource: "gateway", completedAt: new Date().toISOString(), summary: "Reminder delivered." });
+      appendScheduleRunEvent(run.id, { kind: "delivered" });
       updateSchedule(sched.id, { lastRun: new Date().toISOString(), lastStatus: "ok" });
       retireOneTime(sched); // the reminder is posted — that IS this schedule's delivery
       return;
@@ -272,15 +319,26 @@ export async function runSchedule(sched, { runner: runMessage = defaultRunMessag
       // A `stop` in the thread while this tick waited its turn already deleted the loop row and
       // marked the handle aborted. Honor it rather than spending a turn nobody is waiting for.
       if (loopTick && loopHandle.aborted) {
+        updateScheduleRun(run.id, { status: "skipped", completedAt: new Date().toISOString(), deliveryStatus: "suppressed", summary: "Loop cancelled before execution." });
         await logEvent("loop_tick_aborted", { id: sched.id, loopId: sched.loopId, channel: sched.channelId });
         return;
       }
       sched.executionState = "running";
       updateSchedule(sched.id, { executionState: "running", executionThread: threadTs });
+      updateScheduleRun(run.id, { status: "running", engineStatus: "running" });
+      appendScheduleRunEvent(run.id, { kind: "agent_requested" });
       result = await runMessage({
         channelId: sched.channelId,
         authorId: sched.createdBy,
-        text: sched.prompt,
+        text: loopTick ? sched.prompt : automationPrompt(sched.prompt),
+        onRuntimeResolved: (runtime) => updateScheduleRun(run.id, { engine: runtime.engine || "", model: runtime.model || "" }),
+        onEvent: (event) => {
+          if (["tool_use", "tool_result", "thinking", "quiet", "agent_activity"].includes(event?.kind)) {
+            const current = getScheduleRun(run.id);
+            if (!current.agentStartedAt) updateScheduleRun(run.id, { agentStartedAt: new Date().toISOString() });
+          }
+          if (["tool_use", "tool_result", "thinking", "quiet", "notice", "engine_note", "run_queued", "agent_activity"].includes(event?.kind)) appendScheduleRunEvent(run.id, event);
+        },
         threadKey: loopTick ? sched.threadTs : scheduleSessionKey(sched),
         signal: loopHandle?.controller.signal ?? null,
         origin: "schedule",
@@ -289,6 +347,8 @@ export async function runSchedule(sched, { runner: runMessage = defaultRunMessag
       if (loopTick) runQueue.release(loopRunKey, loopHandle);
     }
 
+    result = classifyScheduleResult(result);
+    recordTaskOutcome(run.id, result);
     sched.executionState = "completed";
     sched.pendingDelivery = result;
     updateSchedule(sched.id, { executionState: "completed", pendingDelivery: result, executionThread: threadTs });
@@ -301,11 +361,21 @@ export async function runSchedule(sched, { runner: runMessage = defaultRunMessag
     await finishScheduleDelivery(client, sched, result, threadTs);
 
   } catch (err) {
-    updateSchedule(sched.id, { lastRun: new Date().toISOString(), lastStatus: `error: ${err.message}`,
-      ...(sched.executionState === "running" ? { enabled: false, executionState: "interrupted" } : {}) });
-    await logEvent("schedule_error", { id: sched.id, error: err.message });
+    const safeError = redactLogValue(plainFailureText(err.message) || "The run failed.");
+    const deliveryFailure = sched.executionState === "completed" || Boolean(sched.pendingDelivery);
+    const failedResult = err.details?.result || { engine: err.details?.engine, usage: err.details?.usage, costUSD: err.details?.costUSD };
+    const usage = normalizeUsage(failedResult);
+    updateScheduleRun(run?.id, { ...(deliveryFailure ? { deliveryStatus: "failed" } : {
+      status: "failed", taskStatus: "failed", engineStatus: "failed", deliveryStatus: "suppressed", completedAt: new Date().toISOString(),
+      engine: failedResult.engine || err.details?.engine || run?.engine || "", model: failedResult.runtimeModel || failedResult.model || run?.model || "", durationMs: failedResult.durationMs || (run ? Date.now() - Date.parse(run.startedAt) : 0), toolUseCount: Number(failedResult.toolUseCount || err.details?.toolUseCount) || 0,
+      tokensIn: usage.inTok, tokensOut: usage.outTok, costUsd: usage.costUSD, effectsUnknown: sched.executionState === "running" && err.details?.replaySafe !== true }),
+      error: safeError, errorKind: deliveryFailure ? "delivery" : err.details?.providerKind || "execution" });
+    appendScheduleRunEvent(run?.id, { kind: deliveryFailure ? "delivery_failed" : "execution_failed" });
+    updateSchedule(sched.id, { lastRun: new Date().toISOString(), lastStatus: `error: ${safeError}`,
+      ...(sched.executionState === "running" ? err.details?.replaySafe === true ? { executionState: "failed" } : { enabled: false, executionState: "interrupted" } : {}) });
+    await logEvent("schedule_error", { id: sched.id, error: safeError });
     try {
-      if (client && sched.delivery !== "dm-on-match") await postNoticeWithMenu(client, { channel: sched.channelId, threadKey: threadTs || "", text: `⏰ Scheduled run failed: ${plainFailureText(err.message) || "the run failed"}` });
+      if (client && sched.failureNotify !== false && sched.delivery !== "dm-on-match") await postNoticeWithMenu(client, { channel: sched.channelId, threadKey: threadTs || "", text: `⏰ Scheduled run failed: ${safeError}` });
     } catch {
       /* ignore */
     }
@@ -325,10 +395,24 @@ export async function runSchedule(sched, { runner: runMessage = defaultRunMessag
   }
 }
 
+function recordTaskOutcome(id, result) {
+  const previous = getScheduleRun(id);
+  const o = result.automationOutcome || { status: "unreported", summary: "Task outcome not reported.", connections: [], source: "unreported" };
+  const usage = normalizeUsage(result);
+  const refused = result.licenseRefused || result.accessRefused || result.engineRefused;
+  updateScheduleRun(id, { status: o.status, taskStatus: o.status, engineStatus: refused ? "not-started" : result.interrupted ? "interrupted" : result.engineError || result.completed === false ? "failed" : "completed",
+    summary: o.summary, connections: o.connections, outcomeSource: o.source, engine: result.engine || "", model: result.runtimeModel || result.model || "",
+    durationMs: result.durationMs || 0, tokensIn: usage.inTok, tokensOut: usage.outTok, costUsd: usage.costUSD, costEstimated: usage.estimated,
+    toolUseCount: Number(result.toolUseCount) || 0, completedAt: previous?.completedAt || new Date().toISOString(), ...(o.errorKind ? { errorKind: o.errorKind } : {}) });
+  appendScheduleRunEvent(id, { kind: "task_outcome" });
+}
+
 async function finishScheduleDelivery(client, sched, result, threadTs) {
+  const run = getScheduleRun(sched.activeRunId);
+  if (run?.errorKind === "delivery") updateScheduleRun(sched.activeRunId, { error: "", errorKind: "" });
   const loopTick = isLoopRow(sched) && Boolean(sched.resumeThread);
   const matched = isQuietMatch(sched, result);
-  updateSchedule(sched.id, { lastRun: new Date().toISOString(), lastStatus: matched ? "found" : "ok", executionState: "delivered", pendingDelivery: null, executionThread: null,
+  updateSchedule(sched.id, { lastRun: new Date().toISOString(), lastStatus: matched ? "found" : result.automationOutcome?.status || "unreported", executionState: "delivered", pendingDelivery: null, executionThread: null, activeRunId: null,
     ...(matched ? { enabled: false } : {}),
     ...(sched.intervalDays ? { runAt: nextIntervalRun(sched) } : {}) });
   // A loop spends one tick of its budget per delivered fire, then re-arms from whatever pacing
@@ -441,6 +525,18 @@ function needsRecovery(sched) {
 // same tick must skip them (firedThisMinute is keyed per minute and won't).
 // Returns { deferred, started }: `deferred` is true when the concurrency cap cut the minute short,
 // which the caller MUST NOT treat as "this minute is done".
+function recordDeferral(sched, minuteMs, reason) {
+  // This is an observed missed attempt, not a claim. A transport recovery may still execute
+  // the same due minute inside the scheduler's bounded catch-up window.
+  const key = `${minuteMs}:${reason}`;
+  if (sched.lastDeferralKey === key) return;
+  const run = createScheduleRun({ ...sched, lastCronFireMs: minuteMs });
+  updateScheduleRun(run.id, { status: "skipped", outcomeSource: "gateway", summary: reason, errorKind: "deferred", deliveryStatus: "suppressed", completedAt: new Date().toISOString() });
+  appendScheduleRunEvent(run.id, { kind: "deferred" });
+  updateSchedule(sched.id, { lastDeferralKey: key, lastDeferredAt: new Date().toISOString(), lastStatus: `deferred: ${reason}` });
+  sched.lastDeferralKey = key;
+}
+
 function runDueForMinute(now, scheds, firedOnce, runOptions) {
   const mk = minuteKey(now);
   const started = [];
@@ -470,6 +566,7 @@ function runDueForMinute(now, scheds, firedOnce, runOptions) {
     // Fan-out ceiling: if too many schedules are already executing, leave the rest for the next
     // tick rather than stampeding the host.
     if (running.size >= MAX_CONCURRENT_SCHED) {
+      if (!recovering) recordDeferral(sched, minuteMs, `Scheduler concurrency cap ${MAX_CONCURRENT_SCHED}`);
       logEvent("schedule_deferred", { id: sched.id, reason: `concurrency cap ${MAX_CONCURRENT_SCHED}` });
       deferred = true;
       break;
@@ -478,6 +575,7 @@ function runDueForMinute(now, scheds, firedOnce, runOptions) {
       // No connected transport means no attempt: leave the cursor behind this minute so a
       // brief outage recovers it within the same bounded catch-up window.
       if (!automationTarget(slackRef, sched.channelId)) {
+        recordDeferral(sched, minuteMs, "Destination transport is not connected");
         deferred = true;
         continue;
       }

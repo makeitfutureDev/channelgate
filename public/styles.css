@@ -896,6 +896,20 @@ button.clear-tok.armed { background: rgba(229, 96, 77, .14); border-color: rgba(
 .schedule-empty { display: flex; flex-direction: column; gap: 4px; color: var(--muted); }
 .schedule-modal-error { margin: 8px 0 0; color: var(--danger); font-size: 12px; }
 #schedule-modal-save:disabled { cursor: wait; opacity: .65; }
+.schedule-task-control small, #schedule-modal-thread-wrap small { color: var(--faint); font-size: 11px; }
+.sched-history { white-space: nowrap; font-size: 11px; }
+.sched-run { flex-basis: 260px; overflow: hidden; text-overflow: ellipsis; }
+.schedule-history-list { display: flex; flex-direction: column; margin: 12px 0; }
+.schedule-run-row { display: grid; grid-template-columns: 170px minmax(100px, 1fr) minmax(100px, 1fr) 170px; align-items: center; gap: 10px; text-align: left; padding: 12px 8px; background: var(--panel-dark); color: var(--ink); border: 1px solid var(--line-soft); border-radius: 6px; margin-bottom: 5px; font-size: 12px; cursor: pointer; }
+.schedule-run-row:hover, .schedule-run-row:focus-visible { background: var(--panel-2); }
+.schedule-run-row > * { overflow-wrap: anywhere; }
+.schedule-run-row time { color: var(--faint); font-size: 11px; }
+#schedule-history-detail { margin-top: 18px; padding-top: 14px; border-top: 1px solid var(--line); }
+.schedule-run-summary { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 12px; }
+.schedule-run-events { padding-left: 22px; font-size: 12px; overflow-wrap: anywhere; }
+.schedule-run-events li { margin: 8px 0; }
+.schedule-run-events time { color: var(--faint); font-size: 11px; }
+@media (max-width: 760px) { .schedule-run-row { grid-template-columns: 1fr; gap: 5px; } }
 
 /* ── Responsive: turn the left rail into a compact row above the sections ─── */
 @media (max-width: 900px) {

@@ -9243,3 +9243,56 @@ case. Also run a group with an external member to check tenant/channel delivery 
 
 - Final local validation: full regression **3,217 passed, 29 skipped, 0 failed**; static check,
   secret scan and security coverage passed. Live kernel enforcement remains unexecuted.
+
+
+## Automation health, logs and silent execution
+
+- Automated: `node --test test/automation-health.test.js test/schedule-health-admin.test.js
+  test/scheduler-restart.test.js test/schedule-daily-thread.test.js
+  test/schedule-conditional.test.js test/migrations.test.js`. Scratch SQLite and fake
+  transport/runner fixtures prove explicit healthy no-op silence, missing/duplicate/malformed
+  outcomes, refused/incomplete engine precedence, contradictory connection evidence, task-success
+  versus engine-completion KPIs, bounded/scoped redacted logs, retained one-offs, fixed-thread fresh
+  sessions, lazy silent daily anchors, delivery retry without side-effect replay, disconnected
+  transport preservation, a distinct row per actual cron fire, attempt budgets, replay safety, and
+  due-minute deferral deduplication. Existing real CLI subprocess fixtures continue to exercise
+  daily-thread session separation.
+- Automated admin/API: atomically save visibility/result/error/delivery options; reject invalid or
+  synthetic thread IDs and hidden reminder policies; list/detail access history after deletion;
+  escape summaries/connection names and render unknown task outcomes separately from completed
+  engines. New MCP read/mutation tools are consciously classified as open within the existing scoped
+  schedule policy.
+- [x] Chromium UI acceptance (engine-independent):
+  `CG_BROWSER_MODULE=/usr/local/lib/node_modules/playwright/index.mjs
+  PLAYWRIGHT_BROWSERS_PATH=/opt/channelgate/browsers node --test
+  test/schedule-health-browser.test.js`. Actual admin router and scratch database: save
+  silent/on-result/explicit thread/error-off settings; inspect blocked connection and safe tool log;
+  observe a running run/detail update automatically; close dialog and require polling stops; delete
+  schedule and retrieve its history from All run history.
+- [ ] Live Claude and Codex, separately in an owned disposable Worker conversation: create an hourly
+  task, silent/on-result, chosen current real thread, with harmless prompt “Check the fixture count.
+  If zero, report a healthy empty check; if positive, report the count.” Run first with zero then
+  one. Require two distinct run IDs/session IDs, first engine-completed/task-no-op/suppressed with
+  zero chat messages, second succeeded/delivered in the selected thread with no startup banner.
+  Repeat silent daily-thread and require no anchor for the no-op, one report anchor when useful
+  output exists, and subsequent same-day output under that anchor. Default visible task still
+  announces and replies.
+- [ ] Live Claude and Codex connection failure, separately: in a fixture without a disposable
+  required connector, ask to check through that exact connector without connecting/falling back.
+  Require blocked/unreported task rather than success, matching unavailable/unknown evidence, and
+  visible actionable failure. Repeat with failure notifications off; require no chat failure and
+  preserved history. Use an approved engine fixture to inject expired-token/model-not-available
+  failures; assert engine failure, safe diagnostic, and no guessed task completion. Do not
+  invalidate production credentials.
+- [ ] Live Claude and Codex delivery/restart fixtures: block only owned test-result delivery after a
+  harmless completed run, restore and restart fixture transport; require same history ID, no extra
+  tool execution/spend, successful delivery and a retained prior delivery-failure event. Interrupt
+  before result checkpoint and require paused task/unknown external effects with no blind replay.
+  Delete an owned completed task and require retained health history. Private QA definitions
+  AUT-HEALTH-01 through AUT-HEALTH-09 cover both engines (18 engine executions); live runs remain
+  unexecuted release gates.
+
+- Full-suite baseline correction: the existing platform voice test expected a bare reply although
+  the production pipeline adds the standard engine footer. The failure reproduced on unchanged
+  `origin/beta`; the assertion now verifies the exact voice answer with only the optional standard
+  footer, preserving transcript/raw-audio checks.

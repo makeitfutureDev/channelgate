@@ -83,6 +83,7 @@ export const teamsAdapter = validatePlatformAdapter({
       "the Teams transport is not connected (Azure bot app id + client secret in Settings)",
     );
   },
+  validDeliveryThread: (key, conversationId) => /^[0-9]+$/.test(String(key)) && /@thread\.(?:tacv2|skype)(?:;|$)/.test(String(conversationId)),
   normalizeName,
   async workspaceAccess(grant) {
     const { teamsWorkspaceContext } = await import("./msteams/workspace-access.js");

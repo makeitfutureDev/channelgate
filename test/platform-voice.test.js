@@ -44,7 +44,7 @@ test('audio-only success becomes a text request with progress before transcripti
   await setUser('voice-approved', { approved: true });
   const wire = connector(); let seen;
   const ingest = createIngest({ connector: wire, voice: (message, paths, options) => prepareVoiceAttachments(message, paths, { ...options, enabled: true, transcribe: async () => { assert.match(wire.posts[0].text, /voice transcription/); return { transcripts: [{ name: 'clip.wav', text: 'Say VOICE_OK' }], failed: [] }; } }), run: async (args) => { seen = args; return { content: 'VOICE_OK' }; } });
-  await ingest(inbound()); assert.equal(seen.text, 'Say VOICE_OK'); assert.deepEqual(seen.attachments, []); assert.equal(wire.edits.at(-1).text, 'VOICE_OK');
+  await ingest(inbound()); assert.equal(seen.text, 'Say VOICE_OK'); assert.deepEqual(seen.attachments, []); assert.match(wire.edits.at(-1).text, /^VOICE_OK(?:\n\n_[^\n]+_)?$/, 'transcribed answer may carry the standard engine footer');
 });
 
 test('standalone failed audio never invokes engine; typed fallback invokes it and reports missing transcript', async () => {
