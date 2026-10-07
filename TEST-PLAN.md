@@ -9317,3 +9317,9 @@ case. Also run a group with an external member to check tenant/channel delivery 
   the production pipeline adds the standard engine footer. The failure reproduced on unchanged
   `origin/beta`; the assertion now verifies the exact voice answer with only the optional standard
   footer, preserving transcript/raw-audio checks.
+
+### Typed watchdog recovery acceptance
+
+- Automated: `node --test test/watchdog-recovery.test.js test/watchdog.test.js test/persistent-session-stdin.test.js test/message-to-reply-e2e.test.js` exercises real cold/warm runner callbacks with a fake runtime for silence-budget and definite process-gone verdicts; verifies typed classification despite changed prose and explicit-stop/SIGKILL/provider-error guards.
+- LIVE Claude special fixture: use a disposable QA channel, with cold and warm variants, a controlled engine that goes silent until `CG_MAX_SILENCE` then answers after resume. Ask “Finish the watchdog recovery fixture and report its marker.” Require one `run_auto_resume`, same session, one completion. Repeat with a fixture silent on both attempts: require one automatic continuation followed by terminal failure. Restore limits afterwards. A separate externally killed fixture and explicit Stop must never auto-resume.
+- LIVE Codex control: in a disposable Codex QA channel run a fixture killed after a tool starts and a fixture exceeding its silence budget. Require incomplete failure evidence and no automatic replay. Live cases are pending; do not induce provider failure in production.

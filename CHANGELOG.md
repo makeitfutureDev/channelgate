@@ -2661,3 +2661,5 @@ copying cross-channel auto-memory.
   injected into `CLAUDE.md`; visible working folders under `~/Slack Agent/<channel>`.
 - Optional **admin-UI password**; one-command installer; encrypted config **backup/restore**;
   **launchd** service with `npm run update`.
+
+- Restore bounded Claude watchdog continuation for cold and warm silence-budget failures using typed error details; retain Stop and ambiguous-kill exclusions.

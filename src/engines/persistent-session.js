@@ -9,7 +9,7 @@ import { appendTail } from "../util/tail.js";
 import { conciseProcessDiagnostic, processFailureMessage } from "../util/process-outcome.js";
 import { probeEngineChild, runtimeTargetOr, signalEngineChild, spawnEngineChild } from "./runtime-target.js";
 import { newRunId } from "../runtimes/contract.js";
-import { createStallWatchdog, describeSilence, DEFAULT_SILENCE_WINDOWS } from "./watchdog.js";
+import { createStallWatchdog, watchdogFailureDetails, describeSilence, DEFAULT_SILENCE_WINDOWS } from "./watchdog.js";
 
 const MAX_RETAINED = 64_000; // stderr kept for the death message — tail only, never unbounded
 
@@ -192,11 +192,11 @@ export class PersistentClaudeSession {
           // _die rejects this turn and evicts the session from the pool; the next message
           // cold-resumes into a fresh warm process instead of queueing forever.
           this._die(
-            new Error(
+            Object.assign(new Error(
               reason === "process-gone"
                 ? "Warm Claude session exited unexpectedly"
                 : `Warm Claude turn produced no output for ${describeSilence(silentMs)} — giving up`,
-            ),
+            ), { details: watchdogFailureDetails({ engine: "claude", reason }) }),
           );
         },
       });

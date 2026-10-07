@@ -4549,3 +4549,7 @@ Development branches integrate into `beta`, with CI on both `beta` and `main`. S
 requires a full test pass, applicable Claude/Codex live acceptance evidence, and explicit user
 confirmation for the exact release candidate. `AGENTS.md` (also read through `CLAUDE.md`) and
 `CONTRIBUTING.md` define the workflow; these are contributor rules, not a technical branch lock.
+
+### Typed Claude watchdog recovery
+
+Cold and warm Claude watchdog failures carry stable `ENGINE_SILENCE_BUDGET` or `ENGINE_PROCESS_GONE` details. Slack recognizes those verdicts independently of message wording and continues the existing session at most once. Explicit Stop, AbortError, external SIGKILL/exit 137, provider errors and incomplete unsafe turns remain ineligible for automatic continuation. Quiet windows still only report liveness; only the absolute silence budget or confirmed process loss ends a turn.
