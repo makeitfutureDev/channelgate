@@ -155,3 +155,32 @@ test("Codex failure without terminal usage preserves root and child rollout acco
   assert.equal(result.usageAccounting.children[0].sessionId, "child-reviewer");
   assert.equal(error.details.replaySafe, false);
 });
+
+const reconnect = { type: "error", message: "Reconnecting... 5/5 (stream disconnected before completion: websocket closed by server before response.completed)" };
+
+test("Codex accepts a recovered reconnect notice only after clean terminal completion", async () => {
+  const { result, error } = await simulate({ events: [reconnect, message("Recovered answer", "final_answer"), completed] });
+  assert.equal(error, undefined);
+  assert.equal(result.content, "Recovered answer");
+  assert.equal(result.usage.output_tokens, 4);
+});
+
+test("Codex unrecovered retries and terminal failures remain failures after work", async () => {
+  for (const events of [
+    [reconnect],
+    [reconnect, { type: "turn.failed", error: { message: reconnect.message } }, completed],
+    [{ type: "error", message: "unexpected status 503 Service Unavailable" }, completed],
+    [completed, reconnect],
+  ]) {
+    const { error, result } = await simulate({ events: [message("Partial answer", "final_answer"), ...events] });
+    assert.equal(result, undefined);
+    assert.ok(error);
+    assert.equal(error.details.replaySafe, false);
+    assert.equal(error.details.partialContent, "Partial answer");
+  }
+  for (const exit of [{ code: 1 }, { code: null, signal: "SIGKILL" }]) {
+    const { error } = await simulate({ ...exit, events: [reconnect, message("Partial answer"), completed] });
+    assert.ok(error);
+    assert.equal(error.details.replaySafe, false);
+  }
+});

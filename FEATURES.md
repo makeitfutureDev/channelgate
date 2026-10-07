@@ -4549,3 +4549,7 @@ Development branches integrate into `beta`, with CI on both `beta` and `main`. S
 requires a full test pass, applicable Claude/Codex live acceptance evidence, and explicit user
 confirmation for the exact release candidate. `AGENTS.md` (also read through `CLAUDE.md`) and
 `CONTRIBUTING.md` define the workflow; these are contributor rules, not a technical branch lock.
+
+### Recovered Codex reconnect notices
+
+Codex reconnect progress events no longer fail a turn that subsequently reports `turn.completed` and exits cleanly. Terminal `turn.failed`, other errors, missing completion, nonzero exits and signals still fail; no attempt that ran tools or produced output is replayed.

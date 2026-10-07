@@ -9317,3 +9317,9 @@ case. Also run a group with an external member to check tenant/channel delivery 
   the production pipeline adds the standard engine footer. The failure reproduced on unchanged
   `origin/beta`; the assertion now verifies the exact voice answer with only the optional standard
   footer, preserving transcript/raw-audio checks.
+
+### Codex reconnect recovery acceptance
+
+- Automated: `node scripts/run-tests.mjs test/codex-completion.test.js` injects reconnect → final answer → completion, plus unrecovered retry, terminal failure, post-completion error and killed/nonzero exit variants. Require recovered answer/usage and failure evidence without unsafe replay.
+- LIVE Codex special fixture: in a disposable QA conversation use a controlled CLI stream fixture that emits an `error` message `Reconnecting... 1/5 (stream disconnected before completion)`, then a final answer and `turn.completed` with exit zero. Ask “Run the reconnect recovery fixture once and report its marker.” Require one final answer and no failure/diagnosis or duplicate tool execution. Repeat with terminal `turn.failed` after a tool; require one failure and no automatic replay.
+- LIVE Claude control: in a separate disposable Claude QA conversation ask “Write a unique marker file once, then report it.” Require ordinary completion, one marker and unchanged Claude behavior. Live acceptance remains pending.
