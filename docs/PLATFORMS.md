@@ -242,7 +242,9 @@ personal-chat file consent, then upload/install that app revision with the Teams
 above. Adaptive Cards and their inline forms do not require additional Graph RSC permissions.
 Task-module dialogs and broadcast mentions remain unavailable.
 
-- `/help` provides a practical **How to use me** guide and the supported Teams command list.
+- `/help` provides a practical **How to use me** guide and the supported Teams command list
+  in a native Adaptive Card, with separate headings, spaced paragraphs, individual emoji/command
+  rows and monospace command text. Full spaced text is the fallback if card delivery fails.
   It explains personal/channel/group session continuity, mentions, voice, files, settings,
   connections, skills, memory, reminders, schedules and background work. In channels and group
   chats, mention the bot with the command; quote the original message or bot reply in a group

@@ -2,6 +2,16 @@
 
 ## Microsoft Teams help guide acceptance (2026-10-07)
 
+- Native layout regression: `test/help-text.test.js`, `test/teams-controls.test.js` and
+  `test/teams-native-cards.test.js` verify separate headings/paragraphs, three emoji rows,
+  ten command rows with native monospace runs, complete copy without Markdown markers or
+  truncation, and the supported card payload budget. Authorized personal/channel/group `/help`
+  delivery uses a native card in the source conversation before an engine turn; a quoted group
+  card retains the original session. Card failure falls back to the complete spaced text.
+- Layout verification: 53 focused tests passed, zero failures/skips; static checks and secret
+  scanning passed. The complete card validates against the official Adaptive Cards schema.
+  Local Adaptive Cards SDK rendering at 900px and 390px showed clear section/row spacing,
+  no horizontal overflow and no validation events. This is not live Teams client acceptance.
 - Automated reaction mapping: `test/platform-teams-events.test.js` and
   `test/platform-teams-graph-activity.test.js` verify `hearteyesrobot` / `smilerobot` trigger through
   native and Graph normalization as the reactor, preserving the original target and removed-event
@@ -29,9 +39,11 @@
   personal chat, one test channel and one group chat. Send `/help` in personal chat;
   mention the bot with `/help` in a channel thread; quote the bot's reply in group chat and
   mention it with `/help`. Pass: each guide appears in its source conversation/thread, reads
-  correctly on desktop/mobile, includes **How to use me** and the complete supported command
-  list, and advertises no Slack-only controls. No agent turn, runtime change, file browser or
-  proactive personal settings card is started. Engine selection cannot affect this copy or
+  correctly on desktop/mobile, with a distinct title, section dividers, spaced paragraphs,
+  separate emoji/command rows and monospace commands. It includes **How to use me** and the
+  complete supported command list, and advertises no Slack-only controls. Quote the group help
+  card with a mentioned `/status`; it must address the original session. No agent turn, runtime
+  change, file browser or proactive personal settings card is started. Engine selection cannot affect this copy or
   routing because the native command returns before `runMessage`.
 - [ ] Private QA catalog registration: mirror this engine-independent case with the requesting
   user's personal Airtable connection. That connection is not exposed in this development run;

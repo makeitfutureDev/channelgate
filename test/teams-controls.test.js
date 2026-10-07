@@ -10,6 +10,7 @@ const { TEAMS_HELP_TEXT } = await import('../src/platforms/msteams/help.js');
 const { teamsWorkspaceContext } = await import('../src/platforms/msteams/workspace-access.js');
 const { createIngest } = await import('../src/platforms/ingest.js');
 const { makeInbound } = await import('../src/platforms/inbound.js');
+const { sessionKeyForMessage } = await import('../src/platforms/reply-sessions.js');
 const { upsertChannelEntry, saveChannelMeta, setUser } = await import('../src/config/store.js');
 await setUser('29:owner', { approved: true, isAdmin: true });
 const root = await mkdtemp(path.join(os.tmpdir(), 'teams-controls-'));
@@ -35,8 +36,11 @@ test('Teams /help returns the practical guide without opening controls or changi
 });
 test('Teams ingest delivers help in personal, channel and quoted group sessions before any engine runs', async () => {
   const posted = [];
+  const cards = [];
   const connector = { platform: 'msteams', api: {
     sendActivity: async () => assert.fail('/help must not send a file-consent card'),
+  }, postCard: async value => {
+    cards.push(value); return { messageId: `help-card-${cards.length}` };
   }, post: async value => {
     posted.push(value); return { messageId: `help-${posted.length}` };
   } };
@@ -49,20 +53,35 @@ test('Teams ingest delivers help in personal, channel and quoted group sessions 
       mentionsBot: kind !== 'dm', threadKey: kind === 'channel' ? 'help-thread' : '',
       replyToId: kind === 'group' ? 'quoted-message' : '' });
     assert.deepEqual(await ingest(message), { command: true });
-    assert.equal(posted.at(-1).conversationId, message.rawConversationId);
-    assert.equal(posted.at(-1).threadKey, message.threadKey);
-    assert.match(posted.at(-1).text, /How to use me/);
-    assert.match(posted.at(-1).text, /\/clear/);
+    assert.equal(cards.at(-1).conversationId, message.rawConversationId);
+    assert.equal(cards.at(-1).threadKey, message.threadKey);
+    assert.equal(cards.at(-1).card.body[0].text, 'How to use me');
+    assert.match(JSON.stringify(cards.at(-1).card), /\/clear/);
+    if (kind === 'group') {
+      assert.equal(sessionKeyForMessage(makeInbound({ platform: 'msteams', kind: 'group',
+        conversationId: message.rawConversationId, userId: '29:owner', messageId: 'quoted-help',
+        replyToId: `help-card-${cards.length}`, text: '/status', mentionsBot: true })), sessionKeyForMessage(message));
+    }
   }
-  assert.equal(posted.length, 3);
+  assert.equal(cards.length, 3);
+  assert.equal(posted.length, 0);
   assert.deepEqual(await ingest(makeInbound({ platform: 'msteams', kind: 'channel',
     text: '/help', conversationId: '19:help-unmentioned', userId: '29:owner',
     messageId: 'unmentioned', mentionsBot: false })), { skipped: 'not-mentioned' });
   assert.deepEqual(await ingest(makeInbound({ platform: 'msteams', kind: 'dm',
     text: '/help', conversationId: 'a:help-unapproved', userId: '29:help-unapproved',
     messageId: 'unapproved' })), { skipped: 'unauthorized' });
-  assert.equal(posted.length, 4);
+  assert.equal(cards.length, 3);
+  assert.equal(posted.length, 1);
   assert.doesNotMatch(posted.at(-1).text, /How to use me/);
+});
+test('failed native help delivery falls back to the complete spaced guide', async () => {
+  const f = fixture(); const args = f.args('/help');
+  args.replyCard = async () => { throw new Error('Card delivery unavailable'); };
+  assert.equal(await f.controls.onCommand(args), true);
+  assert.deepEqual(f.replies, [TEAMS_HELP_TEXT]);
+  assert.match(f.replies[0], /\n\n• `\/clear`/);
+  assert.deepEqual(f.commands, []);
 });
 test('files are sent privately and browser actions preserve original workspace identity', async () => {
   const f = fixture(); await f.controls.onCommand(f.args('/files'));

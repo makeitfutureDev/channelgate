@@ -2,12 +2,16 @@
 
 ## Microsoft Teams help guide
 
-- Teams `/help` returns a practical **How to use me** guide and its supported command list.
+- Teams `/help` returns a practical **How to use me** guide and its supported command list
+  in a native Adaptive Card. Separate title/section blocks, spaced paragraphs, individual emoji
+  and command rows, and native monospace command styling keep the guide readable without relying
+  on Markdown soft line breaks. Full paragraph-spaced text is the fallback if card delivery fails.
   It covers mentions and session continuity, reaction activation, local voice transcription,
   stop/queue behavior, private workspace files and file consent, settings and variables,
   Composio, skills, conversation memory/rules, reminders, schedules and background work.
   Examples use Teams controls and explain their permissions and configuration requirements.
   The authorized native command responds before an engine turn, in the requesting conversation.
+  Quoting the help card in a group chat continues the same session.
 - Reaction labels identify `:robot_face:` as Heart eyes robot, `:octagonal_sign:` as Stop sign,
   and `:white_check_mark:` as Tick button. Teams reaction intake accepts Microsoft's documented
   `hearteyesrobot` and `smilerobot` IDs alongside the legacy robot spellings, using the same

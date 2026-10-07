@@ -117,7 +117,12 @@ export function createIngest({ connector, log = console, run = runMessage, onCom
     };
 
     const reply = async (text) => deliver(connector, message, null, text, rememberReply);
-    if (onCommand && await onCommand({ message, sessionKey, entry, meta, authorIsAdmin, reply, controls })) return { command: true };
+    // Native command replies share the same source conversation and group quote mapping as text.
+    const replyCard = platformSupports(adapter.id, 'richCards') !== 'none' && typeof connector.postCard === 'function' ? async ({ card, text = '' }) => {
+      rememberReply(await connector.postCard({ conversationId: message.rawConversationId,
+        threadKey: message.threadKey, card, text }));
+    } : null;
+    if (onCommand && await onCommand({ message, sessionKey, entry, meta, authorIsAdmin, reply, replyCard, controls })) return { command: true };
     if (await controls.command({ message, sessionKey, slug: entry.slug, meta, authorIsAdmin, reply })) return { command: true };
     return controls.execute({ message, sessionKey, queued: reply, work: async (signal) => {
     // These surfaces have no typing indicator the daemon can drive for minutes, and no streaming.
