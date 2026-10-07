@@ -18,6 +18,10 @@ product overview.
 
 ## Unreleased
 
+- Teams settings now show only models for the selected engine in each channel/session list.
+  After changing Engine, Load models refreshes the choices without saving; Apply saves the
+  complete selection for that scope.
+
 - Teams can activate a request with 👽 Alien (`:alien:`), its bare ID, Unicode form, or documented
   `1f47d_extraterrestrialalien` ID. Help recommends Alien; robot and Like remain supported.
   A separate saved cutoff prevents older Alien reactions replaying after the upgrade.

@@ -8927,6 +8927,14 @@ located and compared by sha256 only):
 
 ## Teams conversation settings parity
 
+Engine-filtered model lists (2026-10-07): the focused suite below passed 143 tests, zero
+failures/skips; static checks and secret scanning passed. Scratch fixtures verify different channel/session engines, retained-session
+default resolution, draft refresh without writes, incompatible draft clearing, compatible saved
+full IDs, stale/disabled/locked/revoked forms and same-message Execute/Submit refresh.
+Live Teams client acceptance and private QA registry updates remain unexecuted. This run has
+only the shared connector identity; the deployment requires the requester's selected personal
+connection for registry writes, so an agent connection must not substitute.
+
 Automated:
 
 ```sh
@@ -8977,8 +8985,15 @@ case. Also run a group with an external member to check tenant/channel delivery 
    Invalid/missing values refuse all writes. Change the stored triple from another authorized
    card before submitting the first: require stale-form refusal, preserving the newer triple.
    Clear model to default and validate effort against the actual inherited model. Engine-labelled
-   models from enabled engines allow switching engine/model in one submission; inherited labels name
-   their actual fallback. Open a dedicated-Codex-login fixture and require its engine to remain
+   model choices must include only models for the scope's selected engine. With channel Claude
+   and a retained Codex session, require separate Claude-only and Codex-only lists, each retaining
+   its default option. Select a different engine and click **Load models**: require that scope's
+   list to refresh, incompatible draft model/effort to clear to default and no stored runtime
+   changes. Choose a matching model/effort and Apply: require the complete triple to save. Repeat
+   with channel and thread scopes, Execute and legacy Submit, and Teams desktop/mobile. Default
+   engine preview resolves template/gateway inheritance for channel scope and the retained session
+   engine for thread scope. Saved compatible full model IDs absent from discovery remain selectable.
+   Inherited labels name their actual fallback. Open a dedicated-Codex-login fixture and require its engine to remain
    locked. Follow channel default requires confirmation and clears only the original session pins.
    Run a follow-up and verify the selected engine/model; a pre-existing session's engine remains
    explicitly labelled until an engine is selected or the session is cleared.

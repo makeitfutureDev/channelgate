@@ -8,7 +8,7 @@ const { addSchedule, listForChannel } = await import('../src/config/schedules.js
 const { getThreadEngine, setThreadEngine, getThreadModel } = await import('../src/gateway/thread-engine.js');
 const { saveSession } = await import('../src/gateway/sessions.js');
 const { adaptiveCardAttachment } = await import('../src/platforms/msteams/cards.js');
-const { modelsForEngine } = await import('../src/engines/registry.js');
+const { modelsForEngine, modelBelongsToEngine } = await import('../src/engines/registry.js');
 const { getDb } = await import('../src/db/index.js');
 let sequence = 0;
 async function fixture({ admin = true, privateChat = true, personal = false } = {}) {
@@ -92,6 +92,28 @@ test('combined runtime Apply actions save the chosen scope through Execute and S
   assert.equal(await getThreadEngine(f.entry.slug, 'original-session'), 'claude');
   assert.equal((await getChannelMeta(f.entry.slug)).engine, 'codex');
   assert.equal(f.sent.length, before + 1); assert.equal(f.sent.at(-1).messageId, 'card1');
+});
+test('Load models refreshes the same requester card through Execute and Submit without saving', async () => {
+  const f = await fixture({ admin: false });
+  const general = value(await f.invoke({ stateId: f.stateId, page: 'general' }, 'settings.page'));
+  const load = general.body.filter(item => item.type === 'ActionSet').flatMap(item => item.actions).find(item => item.verb === 'settings.runtime.models' && item.data.scope === 'channel');
+  assert.equal(load.title, 'Load models');
+  assert.equal(load.associatedInputs, 'auto');
+  assert.equal(load.fallback.associatedInputs, 'auto');
+  const before = await getChannelMeta(f.entry.slug);
+  const updated = value(await f.invoke({ ...load.data, channel_engine: 'codex', channel_model: '__default__', channel_effort: '__default__' }, load.verb));
+  assert.ok(input(updated, 'channel_model').choices.slice(1).every(item => modelBelongsToEngine(item.value, 'codex')));
+  assert.equal(input(updated, 'channel_engine').value, 'codex');
+  assert.deepEqual(await getChannelMeta(f.entry.slug), before);
+  const sent = f.sent.length;
+  await f.controls.onInvoke({ type: 'message', from: { id: f.owner }, recipient: { id: '28:bot' },
+    conversation: { id: f.channelId.slice(6) }, replyToId: 'forged-target', serviceUrl: 'https://smba.trafficmanager.net/teams/',
+    value: { ...load.fallback.data, channel_engine: 'claude', channel_model: '__default__', channel_effort: '__default__' } });
+  assert.equal(f.sent.length, sent + 1);
+  assert.equal(f.sent.at(-1).messageId, 'card1');
+  assert.ok(input(f.sent.at(-1).card, 'channel_model').choices.slice(1).every(item => modelBelongsToEngine(item.value, 'claude')));
+  assert.deepEqual(await getChannelMeta(f.entry.slug), before);
+  assert.equal(await getThreadEngine(f.entry.slug, 'original-session'), '');
 });
 test('Resume permits current admins and protects admin sessions from members', async () => {
   for (const admin of [true, false]) {
