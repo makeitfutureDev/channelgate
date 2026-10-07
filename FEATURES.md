@@ -1,5 +1,16 @@
 # ChannelGate — Features
 
+## Microsoft Teams model command
+
+- Bare `/model` opens a native engine/model/effort picker in the source conversation, showing
+  the current session selection. Choose a compatible combination and **Apply to this session**
+  to change its next turn; `/settings` → General manages conversation defaults. Typed
+  `/model <engine> <model|default>` and `/effort <level|default>` remain available.
+- The picker preserves channel threads and group quote/session continuity, offers enabled
+  engines, respects a dedicated channel Codex login, and rechecks membership and runtime policy
+  on submission. Busy sessions refuse changes; expired, foreign and replayed controls cannot
+  write. Execute and legacy Submit both replace the original card with the outcome.
+
 ## Unavailable skill grants
 
 - An unavailable personal skill or `requires:` dependency no longer blocks the author's entire

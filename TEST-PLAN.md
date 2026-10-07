@@ -1,5 +1,35 @@
 # ChannelGate — Test Plan
 
+## Microsoft Teams model command acceptance (2026-10-07)
+
+- Automated: `test/teams-model-command.test.js` uses scratch SQLite, fake Teams transport and
+  the real conversation controls to verify retained session engine/model/effort, enabled model
+  choices, Execute/Submit persistence and original-card replacement, session isolation, replay,
+  invalid/incomplete/disabled selections, actor/conversation binding, live runtime policy,
+  personal chat changes, dedicated Codex login, expiry/access revocation, busy refusal, typed
+  argument passthrough, reaction exclusion, delivery fallback and quoted group-card continuity.
+- Verification: 66 focused model/control/card/settings/help tests passed without failures or
+  skips. Static checks, secret scan and security coverage checks passed.
+- [ ] LIVE (`TEAMS-MODEL-01`, Claude and Codex): approved beta Teams QA personal, group and
+  channel fixtures, with both engines enabled. In a personal chat send `/model`; in a channel
+  thread send `@agent /model`; in a group quote the session's original message/bot reply and
+  send `@agent /model`. Pass: current session selection plus an actionable picker in the same
+  conversation/thread. Choose Claude plus a listed Claude model and supported effort, Apply,
+  then send `Reply exactly TEAMS_MODEL_CLAUDE_OK` in that session. Repeat with Codex plus a
+  listed Codex model and supported effort, prompting `Reply exactly TEAMS_MODEL_CODEX_OK`.
+  Pass: confirmation, `/status` and next-turn runtime evidence agree with each selection;
+  conversation defaults and another session stay unchanged. Quote the picker/confirmation in
+  a group and verify `/status` continues the same session. Exercise Execute and legacy Submit
+  clients where available; both must replace the original card with the outcome.
+- [ ] LIVE (`TEAMS-MODEL-02`, Claude and Codex): in the same disposable fixtures, start a long
+  request, then try Apply; pass: busy refusal and unchanged runtime. Stop the request, reopen
+  and retry. Use a non-admin actor with runtime changes restricted, another actor clicking
+  the original owner's card, a card older than 15 minutes, and a dedicated channel Codex
+  login with a forged different engine; pass: no unauthorized change or engine turn.
+- Live client/next-turn acceptance remains unexecuted. The private ChannelGate QA Airtable
+  records remain pending: this run exposes only the shared agent connection; deployment rules
+  require the requesting user's selected personal connection for registry writes.
+
 ## Unavailable skill grants acceptance (2026-10-07)
 
 - Automated: `test/run-grant-isolation.test.js` verifies deduplicated omissions, no empty personal

@@ -121,8 +121,10 @@ export function createIngest({ connector, log = console, run = runMessage, onCom
     const reply = async (text) => deliver(connector, message, null, text, rememberReply);
     // Native command replies share the same source conversation and group quote mapping as text.
     const replyCard = platformSupports(adapter.id, 'richCards') !== 'none' && typeof connector.postCard === 'function' ? async ({ card, text = '' }) => {
-      rememberReply(await connector.postCard({ conversationId: message.rawConversationId,
-        threadKey: message.threadKey, card, text }));
+      const sent = await connector.postCard({ conversationId: message.rawConversationId,
+        threadKey: message.threadKey, card, text });
+      rememberReply(sent);
+      return sent;
     } : null;
     if (message.trigger === "reaction" && message.reactionAction === "ack") {
       await acknowledgeReaction({ message, reply });
