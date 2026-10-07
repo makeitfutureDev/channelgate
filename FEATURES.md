@@ -10,6 +10,7 @@
   settings validate the complete candidate so enabling/configuring/selecting a provider can be one
   atomic save. Removing a credential does not rewrite existing pins or defaults; the selected
   provider still fails closed at execution until repaired.
+
 ## Processed Slack attachment retention
 
 - Successful nonempty attachment downloads leave a small delivery receipt under the thread's
@@ -17,6 +18,7 @@
   ordinary thread reply to download them again. Failed downloads stay retryable. A newly attached
   file or explicit `slack_download_file` request can still download its original. Receipts contain
   no private URLs, credentials, or attachment content, and use the same no-follow writer.
+
 ## Claude Cloud MCP selection admission
 
 - Claude discovery separates CLI connectivity from isolated-runtime admissibility. A connected
@@ -27,6 +29,7 @@
   operator definitions before saving, including stale cached discoveries. Previously stored
   selections remain removable; unrelated saves preserve them and runtime admission still drops
   unusable optional connectors with a notice while allowing the turn to continue.
+
 ## Drive sync status for unlinked channels
 
 `get_channel_drive_folder` distinguishes the gateway's enabled/key-configured state from an
@@ -107,6 +110,7 @@ control-plane status.
   writing MCP config files, which the engines ignore (`--setting-sources ""`,
   `--strict-mcp-config`, Codex `--ignore-user-config`).
   → TEST-PLAN: Custom MCP connections.
+
 ## Platform activation emoji settings
 
 - Admin Settings → Agent defaults → **Message activation reactions** has independent Slack,
@@ -2258,6 +2262,7 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
   one owner and refuses a different clicker, and the admin UI reaches them per user record.
 
 ### A channel's own
+
 ## Getting files out of a channel folder
 
 - **Composio file staging (`stage_file_for_composio`).** Composio's file-taking tools
@@ -4381,6 +4386,7 @@ are retired, bullet by bullet; everything else stands.
   header) against `slack-app-manifest.json` and, when a scope is missing, logs it and DMs admins the
   exact "add these + reinstall" list — once per change in the gap, so an upgrade that needs a new
   scope is self-announcing. → TEST-PLAN: Scope self-check.
+
 ## Phase F operational readiness
 
 - **Renamed to ChannelGate** (formerly *Claude Gateway for Slack*): display name, npm package
@@ -4588,12 +4594,15 @@ confirmation for the exact release candidate. `AGENTS.md` (also read through `CL
 ### Recovered Codex reconnect notices
 
 Codex reconnect progress events no longer fail a turn that subsequently reports `turn.completed` and exits cleanly. Terminal `turn.failed`, other errors, missing completion, nonzero exits and signals still fail; no attempt that ran tools or produced output is replayed.
+
 ### Typed Claude watchdog recovery
 
 Cold and warm Claude watchdog failures carry stable `ENGINE_SILENCE_BUDGET` or `ENGINE_PROCESS_GONE` details. Slack recognizes those verdicts independently of message wording and continues the existing session at most once. Explicit Stop, AbortError, external SIGKILL/exit 137, provider errors and incomplete unsafe turns remain ineligible for automatic continuation. Quiet windows still only report liveness; only the absolute silence budget or confirmed process loss ends a turn.
+
 ### Observed tool context on engine hard kills
 
 Claude cold/warm and Codex hard-kill failures identify tool calls that had no recorded result at exit. Structured diagnostics retain only bounded tool names and `killedDuringTool`; commands, inputs and results are omitted. The reply explicitly leaves the cause unknown. This observation does not establish that a tool killed the engine, infer OOM, suppress diagnosis or permit automatic replay.
+
 ### Composio scripting guide
 
 The bundled `gateway-usage` capability map routes bulk app calls and large saved results to

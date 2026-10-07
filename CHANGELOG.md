@@ -35,6 +35,8 @@ product overview.
   definitions. Existing invalid picks remain removable and are still dropped safely at run time.
 - An unlinked channel's Drive status reports gateway readiness without claiming that the channel
   will sync on the next sweep. It explicitly asks for a folder link before channel sync can start.
+- Refresh the locked MCP SDK, URI and IP parsing dependencies to patched compatible releases;
+  production dependency auditing reports zero advisories.
 
 - Far fewer approval cards. A gateway tool that changes channel or gateway state is now automatic
   for the admin or channel manager who asked for it (modes, network, folders, MCP servers,

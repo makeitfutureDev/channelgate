@@ -19,6 +19,7 @@
   configured provider identity and provider activity without credentials in logs or response.
   Remove its key and verify its existing pin remains and execution fails closed rather than
   choosing a different account. Restore fixture settings after each engine's run.
+
 ## Processed Slack attachment retention (2026-10-08)
 
 - [x] Regression: `node --test test/slack-download-file.test.js test/managed-write-symlinks.test.js`.
@@ -29,6 +30,7 @@
   request the original and verify it returns. Record separate engine evidence in private QA.
 - [ ] Operator storage check: inspect current server utilization before any targeted cleanup.
   This change prevents future repeated downloads; it does not claim a production storage sweep.
+
 ## Claude Cloud MCP admission (2026-10-08)
 
 - [x] Regression: `node --test test/claude-mcp-selection-admission.test.js
@@ -50,6 +52,12 @@
   with no host credential in staged artifacts. In the Codex thread send `say QA_MCP_READY`; verify
   Codex remains pinned, answers normally and receives none of the Claude-only grants. Existing
   invalid selections remain removable in both clients. Restore the isolated operator fixtures.
+
+## Runtime dependency advisory refresh (2026-10-08)
+
+- [x] `npm audit --omit=dev --audit-level=high`: patched compatible lockfile resolves zero advisories.
+- [ ] Run the full combined regression/security coverage on a clean install of the patched lockfile,
+  including remote MCP HTTP/stdio transports, OAuth metadata, and public-address guards.
 
 ## Custom MCP connections (2026-10-01)
 
@@ -122,6 +130,7 @@ example server behind HTTPS on a public host. Record the token's last four chara
 - [ ] Lean: enable Lean. Pass: neither `custom-qa` nor `my-qa2` appears in either engine.
 - [ ] SSH (engine-independent wiring, both CLIs): open an SSH session as the QA author; `claude`
   and `codex` inside list `custom-qa` and `my-qa2`.
+
 ## Platform activation emoji acceptance (2026-10-07)
 
 - Automated settings/API coverage: `test/platform-reaction-settings.test.js` verifies separate
@@ -1556,6 +1565,7 @@ HTTP MCP server reached through an https URL plus a rewriting `fetch`. Token fix
       last. This is the reported symptom ("the cursor jumps to the left").
 - [x] `test/skills-source-browser.test.js` updated for the new contract: filling the source search
       leaves the table unfiltered until Enter, then it filters. Re-run green.
+
 ## Composio file staging
 
 - [x] `test/composio-files.test.js` drives the three-step flow against an injected fetch: the
@@ -1637,6 +1647,7 @@ HTTP MCP server reached through an https URL plus a rewriting `fetch`. Token fix
 - [ ] Live acceptance, negative: in an Admin channel whose container mounts the operator home, ask
       for a public link to a file under that mounted home (outside the channel's working folder).
       Require a refusal, and require `list_public_file_links` to show nothing new.
+
 ## Container storage report
 
 - [x] `test/runtime-storage-report.test.js`: this gateway's running containers are kept even on an
@@ -2660,6 +2671,7 @@ The skipped/live cases below remain unverified; this branch is not a release can
   even if the previous engine completes late. New unquoted group `/stop` must not stop a different
   root. Verify `/status`, `/help`, permitted `/model` and `/effort`, and rejected non-admin channel
   runtime changes. A final answer must never be overwritten by a late progress edit.
+
 ## Reply menu on every answer
 
 - [x] Automated: `node --test test/deliver.test.js test/slack-progress.test.js test/slack-requester-tag.test.js
@@ -8147,6 +8159,7 @@ Manual checks for the daemon-level behavior:
       next message. Stderr chatter must not reset the stdout silence budget.
 - [ ] **Scheduler catch-up:** a tick delayed past a minute boundary still fires that minute's
       cron exactly once; one-time schedules never double-fire.
+
 ### Scheduling restart durability
 
 - [x] Automated: `node --test test/scheduler-restart.test.js test/cron-catchup.test.js
@@ -8196,6 +8209,7 @@ Manual checks for the daemon-level behavior:
       run under DISTINCT synthetic session keys (neither resumes the other; the spawned argv
       carries no `-r`) while both answers post under the one anchor of the day
       (`test/schedule-daily-thread.test.js`, `test/durable-delivery.test.js`).
+
 ### Skills platform (governance and usage)
 
 - [x] Unit/API: migration 19 preserves existing discoverability; catalog search covers source
@@ -8783,6 +8797,7 @@ the suite runs as an enterprise deployment because it holds a license it actuall
       still resolve on disk (`~/Slack Agent/dev-skillsmanager-uk` ×60,
       `~/Slack Agent/gateway-slack` ×6 — both custom-`workDir` folders that were deliberately never
       moved). Exit code 0.
+
 # Development acceptance policy
 
 - [ ] Each changed feature has reproducible acceptance definitions for applicable Claude/Codex
@@ -8903,6 +8918,7 @@ portable fixtures before landing.
 - [ ] **Secondary errors, Claude and Codex:** isolated runner fixture emits nested provider JSON on
   automatic continuation or the second harness of an ask-mode fallback. Require readable provider
   sentence, no raw JSON in the message/card, and retained structured audit outcome facts.
+
 ### Runtime-owned Codex child visibility and accounting (2026-09-07)
 
 - [x] Automated: `node --test test/codex-runtime-usage.test.js
@@ -9386,15 +9402,18 @@ case. Also run a group with an external member to check tenant/channel delivery 
 - Automated: `node scripts/run-tests.mjs test/codex-completion.test.js` injects reconnect → final answer → completion, plus unrecovered retry, terminal failure, post-completion error and killed/nonzero exit variants. Require recovered answer/usage and failure evidence without unsafe replay.
 - LIVE Codex special fixture: in a disposable QA conversation use a controlled CLI stream fixture that emits an `error` message `Reconnecting... 1/5 (stream disconnected before completion)`, then a final answer and `turn.completed` with exit zero. Ask “Run the reconnect recovery fixture once and report its marker.” Require one final answer and no failure/diagnosis or duplicate tool execution. Repeat with terminal `turn.failed` after a tool; require one failure and no automatic replay.
 - LIVE Claude control: in a separate disposable Claude QA conversation ask “Write a unique marker file once, then report it.” Require ordinary completion, one marker and unchanged Claude behavior. Live acceptance remains pending.
+
 ### Typed watchdog recovery acceptance
 
 - Automated: `node --test test/engine-runtime-seam.test.js test/watchdog-recovery.test.js test/watchdog.test.js test/persistent-session-stdin.test.js test/message-to-reply-e2e.test.js` exercises real cold/warm runner callbacks with a fake runtime for silence-budget and definite process-gone verdicts; verifies backend process-gone reason details, typed classification despite changed prose and explicit-stop/SIGKILL/provider-error guards. All 39 focused tests passed.
 - LIVE Claude special fixture: use a disposable QA channel, with cold and warm variants, a controlled engine that goes silent until `CG_MAX_SILENCE` then answers after resume. Ask “Finish the watchdog recovery fixture and report its marker.” Require one `run_auto_resume`, same session, one completion. Repeat with a fixture silent on both attempts: require one automatic continuation followed by terminal failure. Restore limits afterwards. A separate externally killed fixture and explicit Stop must never auto-resume.
 - LIVE Codex control: in a disposable Codex QA channel run a fixture killed after a tool starts and a fixture exceeding its silence budget. Require incomplete failure evidence and no automatic replay. Live cases are pending; do not induce provider failure in production.
+
 ### Hard-kill tool lifecycle acceptance
 
 - Automated: `node --test test/mid-tool-kill.test.js test/process-outcome.test.js test/codex-failover-e2e.test.js test/persistent-session-stdin.test.js test/stream.test.js` tests cold/warm Claude and Codex hard kills both before and after recorded tool results. Require metadata only for pending tools, no argument/result leakage, cause unknown, diagnostic eligibility retained and no automatic continuation/replay.
 - LIVE Claude and Codex: in separate disposable Admin QA channels, use a controlled engine fixture which starts a shell tool and exits 137 before the result. Ask “Run the isolated hard-kill lifecycle fixture once.” Require one failed reply noting the missing tool result and unknown cause, bounded `killedDuringTool`/tool names in `run_error`, no second execution and diagnosis still eligible. Repeat after the fixture records a tool result: require ordinary hard-kill wording and no pending-tool metadata. Claude must cover cold and warm settings. Do not kill an actual gateway or production turn. Live acceptance remains pending.
+
 ### Composio scripting guide
 
 - Regression: run `node --test test/composio-guide.test.js test/container-access-guide.test.js`.
