@@ -3,12 +3,13 @@
 // engine environment: a chat turn (run.js) and an interactive SSH session (ssh-session.js), which
 // must be the same environment or "it works in Slack but not over SSH" is the bug. Moved out of
 // run.js verbatim; run.js re-exports the Composio resolvers so their existing importers stay put.
-import { getComposioToken, getToolboxToken, isAdmin, isApproved } from "../config/store.js";
+import { getComposioToken, getToolboxToken, getUser, isAdmin, isApproved } from "../config/store.js";
 import { getComposioMode, getDefaultComposioToken, getDefaultToolboxToken } from "../config/settings.js";
 import { resolveSdkSession } from "../ee/composio-sdk.js";
 import { requireComposioSdkEntitlement } from "../ee/composio-entitlement.js";
 import { canManage } from "./modes.js";
 import { resolveMakeToolboxRuntime } from "./make-toolbox.js";
+import { resolveCustomMcpsForRun } from "./custom-mcps.js";
 import { resolveRunUserIdentity } from "./access-grants.js";
 import { composioIdentitiesForRun, composioIdentityPreamble } from "./mcp.js";
 
@@ -185,10 +186,18 @@ export async function resolveRunIntegrations({ meta = {}, channelId = "", author
     makeToolboxKey: meta.makeToolboxKey,
     clean,
   });
+  // Custom MCP connections: the conversation's own, plus the AUTHOR's personal ones — never a
+  // personal list for an author the run did not authenticate (the run API), same as composio-user.
+  const customMcps = resolveCustomMcpsForRun({
+    channelList: meta.customMcps,
+    userList: !clean && !untrustedPrincipal && authorId ? (await getUser(authorId))?.customMcps : [],
+    clean,
+    principalTrusted: !untrustedPrincipal,
+  });
   return {
     userIdentity, composio, toolbox, identities,
     composioUserToken, composioToken, composioUserEndpoint, composioEndpoint, toolboxToken: toolbox.token,
-    makeToolboxUrl, makeToolboxKey,
+    makeToolboxUrl, makeToolboxKey, customMcps,
     composioIdentityPrefix: composioIdentityPreamble(identities),
   };
 }

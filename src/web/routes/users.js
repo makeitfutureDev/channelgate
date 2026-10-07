@@ -11,6 +11,8 @@ import { revokeRemoteMcpsForAuthor } from "../../mcp/remote-mcp-registry.js";
 // channel's: listUserEnv's masked shape is the only thing that may leave the process.
 import { listUserEnv, patchUserEnv } from "../../config/scoped-env.js";
 import { listEnvVars, normalizeEnvName, swapRuleFieldsFrom } from "../../config/channel-env.js";
+import { listCustomMcps } from "../../gateway/custom-mcps.js";
+import { listUserCustomMcps, removeUserCustomMcp, saveUserCustomMcp } from "../../gateway/custom-mcp-store.js";
 
 // The user listing is built field by field, never `...u`. That is the property that matters here:
 // a stored user record can carry secrets this file has never heard of — a personal token from an
@@ -40,6 +42,8 @@ function maskUsers(users) {
       // Names + last4 only, like every other secret surface. Listing them here is what makes the
       // scope administrable at all: nobody but the person can see them from chat.
       secrets: listEnvVars(u.env),
+      // Name, server name, URL and last4 only — the token is write-only (gateway/custom-mcps.js).
+      customMcps: listCustomMcps(u.customMcps, "user"),
       ...cleanAccessGrants(u),
     };
   }
@@ -152,6 +156,48 @@ export function createUsersRouter() {
       }
       logEvent("user_env_removed", { user: userId, name, actor: USER_SECRET_ACTOR });
       res.json({ ok: true, vars });
+    } catch (e) {
+      next(e);
+    }
+  });
+
+  // ── One person's own custom MCP connections (gateway/custom-mcps.js) ───────
+  // Injected as `my-<name>` only into runs this person authored. Write-only like their secrets.
+  router.get("/users/:userId/custom-mcps", async (req, res, next) => {
+    try {
+      res.json({ servers: await listUserCustomMcps(req.params.userId) });
+    } catch (e) {
+      next(e);
+    }
+  });
+
+  router.put("/users/:userId/custom-mcps/:name", async (req, res, next) => {
+    try {
+      let servers;
+      try {
+        servers = await saveUserCustomMcp(req.params.userId, {
+          name: req.params.name,
+          url: typeof req.body?.url === "string" ? req.body.url : "",
+          token: typeof req.body?.token === "string" ? req.body.token : "",
+        }, { actor: USER_SECRET_ACTOR });
+      } catch (e) {
+        return res.status(400).json({ error: e.message });
+      }
+      res.json({ ok: true, servers });
+    } catch (e) {
+      next(e);
+    }
+  });
+
+  router.delete("/users/:userId/custom-mcps/:name", async (req, res, next) => {
+    try {
+      let servers;
+      try {
+        servers = await removeUserCustomMcp(req.params.userId, req.params.name, { actor: USER_SECRET_ACTOR });
+      } catch (e) {
+        return res.status(400).json({ error: e.message });
+      }
+      res.json({ ok: true, servers });
     } catch (e) {
       next(e);
     }

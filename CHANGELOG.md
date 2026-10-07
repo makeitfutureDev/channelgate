@@ -18,6 +18,12 @@ product overview.
 
 ## Unreleased
 
+- **Custom MCP servers.** An admin can add a remote MCP server by URL and Bearer token to a
+  conversation (Connections → *Custom MCP servers*, reached as `custom-<name>`) or to one person
+  (*Personal MCP servers*, reached as `my-<name>` in that person's runs only). Claude and Codex
+  both receive them. The gateway connects on the agent's behalf, so the token never enters the
+  container. URLs must be HTTPS and public, checked at save and on every connection. Tokens are
+  write-only. Servers that need OAuth still go through Composio.
 - Admin settings now offer independent message-activation emoji lists for Slack, Teams and Google
   Chat. Slack keeps its existing selection; Teams applies its list to native and Graph reactions
   and shows it in help. Teams configuration changes exclude older queued/history activations.

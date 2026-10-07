@@ -39,6 +39,7 @@ import { runtimeSupports } from "../runtimes/contract.js";
 import { requireComposioSdkEntitlement } from "../ee/composio-entitlement.js";
 import { mintGatewayCapability, mintedCapabilityClaims } from "./mcp-capability.js";
 import { registerRemoteMcps, remoteMcpServerProblem } from "../mcp/remote-mcp-registry.js";
+import { customMcpRemotes } from "./custom-mcps.js";
 
 const GATEWAY_PATH = fileURLToPath(new URL("../mcp/gateway-server.js", import.meta.url));
 const COMPOSIO_SDK_BRIDGE_PATH = fileURLToPath(new URL("../ee/composio-sdk-bridge.js", import.meta.url));
@@ -150,7 +151,7 @@ export async function buildMcpConfig(options = {}) {
  * when there is one — the caller owns one hold on it, see registerRemoteMcps) and `rejectedRemotes` (a remote an
  * isolated run could not be given, `[{ name, reason }]`, for the caller's rejected-MCP note).
  */
-export async function buildMcpRuntimePayload({ composioUserEndpoint = null, composioEndpoint = null, composioUserToken = "", composioToken = "", toolboxToken = "", makeToolboxUrl = "", makeToolboxKey = "", channelId = "", slug = "", authorId = "", threadKey = "", origin = "", progressReport = false, engine = "claude", principalTrusted = true, gatewayFsRoot = "", gatewayWorkspaceRoot = "", toolset = "", target = null, ttlMs = undefined } = {}) {
+export async function buildMcpRuntimePayload({ composioUserEndpoint = null, composioEndpoint = null, composioUserToken = "", composioToken = "", toolboxToken = "", makeToolboxUrl = "", makeToolboxKey = "", customMcps = {}, channelId = "", slug = "", authorId = "", threadKey = "", origin = "", progressReport = false, engine = "claude", principalTrusted = true, gatewayFsRoot = "", gatewayWorkspaceRoot = "", toolset = "", target = null, ttlMs = undefined } = {}) {
   // Identity claim — fail closed on garbage instead of silently signing as Claude.
   const normalizedEngine = requireAdapter(engine || "claude").id;
   // Fail closed on an unknown capability key; a target that is absent or host-backed is today's path.
@@ -169,6 +170,12 @@ export async function buildMcpRuntimePayload({ composioUserEndpoint = null, comp
   if (sharedRemote) httpRemotes["composio-agent"] = sharedRemote;
   if (toolboxToken) httpRemotes["makeitfuture-toolbox"] = { url: toolboxUrl(), headers: { Authorization: `Bearer ${toolboxToken}` } };
   if (makeToolboxUrl && makeToolboxKey) httpRemotes["make-toolbox"] = { url: makeToolboxUrl, headers: { Authorization: `Bearer ${makeToolboxKey}` } };
+  // Custom MCP connections (src/gateway/custom-mcps.js): `custom-<name>` / `my-<name>`, Bearer
+  // header, `publicOnly` so the relay re-checks the destination on every dial. The prefixes keep
+  // them from ever replacing one of the built-in entries above.
+  for (const [name, remote] of Object.entries(customMcpRemotes(customMcps))) {
+    if (!Object.hasOwn(httpRemotes, name)) httpRemotes[name] = remote;
+  }
   // Each server is checked on its own before anything is registered. The relay dials https only
   // and carries bounded, single-line text headers; a remote that fails that (a plain-http
   // COMPOSIO_MCP_URL / TOOLBOX_MCP_URL override, a malformed endpoint header) cannot be relayed,
@@ -278,9 +285,9 @@ export async function buildMcpRuntimePayload({ composioUserEndpoint = null, comp
     const entry = isolated && httpRemotes[name] ? relayServer(name) : composioServer(endpoint, legacyToken, composioOpts);
     if (entry) servers[name] = entry;
   }
-  for (const name of ["makeitfuture-toolbox", "make-toolbox"]) {
+  for (const name of ["makeitfuture-toolbox", "make-toolbox", ...Object.keys(customMcpRemotes(customMcps))]) {
     const remote = httpRemotes[name];
-    if (remote) servers[name] = isolated ? relayServer(name) : { type: "http", url: remote.url, headers: remote.headers };
+    if (remote && !servers[name]) servers[name] = isolated ? relayServer(name) : { type: "http", url: remote.url, headers: remote.headers };
   }
   return { configJson: JSON.stringify({ mcpServers: servers }), relayDigest, gatewayCapability, relayedMcps, relayJti: relayedMcps.length ? jti : "", rejectedRemotes };
 }

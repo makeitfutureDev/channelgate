@@ -107,9 +107,18 @@ process.stdout.write(JSON.stringify({ [HEADER]: PREFIX + value }));
 // MCP credentials are relayed by the daemon (see addSecretRemote), and the artifact dir the bundle
 // lives in is readable by every process in the container. A sudo-host turn keeps the tokens its
 // headers helpers read.
-export function codexSecretBundle({ isolated = false, gatewayCapability = "", composioUserToken = "", composioToken = "", toolboxToken = "", makeToolboxKey = "" } = {}) {
+export function codexSecretBundle({ isolated = false, gatewayCapability = "", composioUserToken = "", composioToken = "", toolboxToken = "", makeToolboxKey = "", customMcps = {} } = {}) {
   if (isolated) return { gatewayCapability };
-  return { gatewayCapability, composioUserToken, composioToken, toolboxToken, makeToolboxKey };
+  const bundle = { gatewayCapability, composioUserToken, composioToken, toolboxToken, makeToolboxKey };
+  for (const [name, entry] of Object.entries(customMcps || {})) {
+    if (entry?.token) bundle[customMcpSecretName(name)] = entry.token;
+  }
+  return bundle;
+}
+
+// The bundle key a custom MCP's token is stored under for its headers helper (a sudo-host turn).
+export function customMcpSecretName(serverName) {
+  return `customMcp:${serverName}`;
 }
 
 // Names that can ride in a `-c` dotted key path. TOML bare keys are exactly [A-Za-z0-9_-]; anything
@@ -656,7 +665,7 @@ export function codexSpawnDropsCapabilities({ target = null, cwd = "", dangerous
 }
 
 // Build `codex exec` argv. `outFile` receives the final agent message (authoritative content).
-export function buildCodexArgs({ prompt, sessionId, isNewSession, forkSourceSessionId = "", cwd, dangerouslySkip, writable = false, networkMode = "off", clean = false, autoApprove = false, composioUserEndpoint = null, composioEndpoint = null, composioUserToken = "", composioToken = "", toolboxToken = "", makeToolboxUrl = "", makeToolboxKey = "", secretBundlePath = "", codexMcpPolicy = null, gatewayCapability = "", gatewayFsRoot = "", gatewayWorkspaceRoot = "", progressReport = false, model = "", effort = "", personalSkills = null, pluginSkills = null, attachments = [], target = null, outFile, headerHelpers = [] }) {
+export function buildCodexArgs({ prompt, sessionId, isNewSession, forkSourceSessionId = "", cwd, dangerouslySkip, writable = false, networkMode = "off", clean = false, autoApprove = false, composioUserEndpoint = null, composioEndpoint = null, composioUserToken = "", composioToken = "", toolboxToken = "", makeToolboxUrl = "", makeToolboxKey = "", customMcps = {}, secretBundlePath = "", codexMcpPolicy = null, gatewayCapability = "", gatewayFsRoot = "", gatewayWorkspaceRoot = "", progressReport = false, model = "", effort = "", personalSkills = null, pluginSkills = null, attachments = [], target = null, outFile, headerHelpers = [] }) {
   const runtimeTarget = runtimeTargetOr(target, cwd);
   const isolated = isIsolatedTarget(runtimeTarget);
   const helper = (name) => runtimeTarget.runtime.helperCommand(runtimeTarget, name);
@@ -872,6 +881,13 @@ export function buildCodexArgs({ prompt, sessionId, isNewSession, forkSourceSess
     addSecretRemote("make-toolbox", makeToolboxUrl, "makeToolboxKey", "Authorization", "Bearer ", { Authorization: `Bearer ${makeToolboxKey}` });
   }
 
+  // Custom MCP connections (src/gateway/custom-mcps.js): `custom-<name>` / `my-<name>`, both bare
+  // TOML keys by construction. Relayed by the daemon in a container exactly like the toolboxes.
+  for (const [name, entry] of Object.entries(clean ? {} : customMcps || {})) {
+    if (!entry?.url || !entry?.token || !BARE_TOML_KEY.test(name)) continue;
+    addSecretRemote(name, entry.url, customMcpSecretName(name), "Authorization", "Bearer ", { Authorization: `Bearer ${entry.token}` });
+  }
+
   // Prompt must come before image flags: Codex's `-i/--image <FILE>...` option is variadic, so any
   // positional after the last `-i` is consumed as another image and the CLI exits with no prompt.
   args.push(argvSafePrompt((clean ? "" : codexPersonalSkillPrefix(personalSkills))
@@ -983,6 +999,7 @@ export async function runCodex({
   toolboxToken = "",
   makeToolboxUrl = "",
   makeToolboxKey = "",
+  customMcps = {},
   codexMcpPolicy = null,
   gatewayCapability = "",
   gatewayFsRoot = "",
@@ -1073,7 +1090,7 @@ export async function runCodex({
   const scratchDir = await mkdtemp(path.join(scratchBase, "run-"));
   const outFile = path.join(scratchDir, `cg-codex-${randomUUID()}.txt`);
   const secretDir = artifactDir ? path.join(artifactDir, "run") : runTmpDir();
-  const bundle = codexSecretBundle({ isolated, gatewayCapability, composioUserToken, composioToken, toolboxToken, makeToolboxKey });
+  const bundle = codexSecretBundle({ isolated, gatewayCapability, composioUserToken, composioToken, toolboxToken, makeToolboxKey, customMcps });
   const secretBundlePath = !clean && Object.values(bundle).some(Boolean)
     ? path.join(secretDir, `cg-codex-secrets-${randomUUID()}.json`)
     : "";
@@ -1085,7 +1102,7 @@ export async function runCodex({
   // pure argv builder. They carry no credential of their own — each one reads its entry out of the
   // 0600 bundle above — but they are still per-run files, created and removed with it.
   const headerHelpers = [];
-  const args = buildCodexArgs({ prompt, sessionId, isNewSession, forkSourceSessionId, cwd, dangerouslySkip, writable, networkMode, clean, autoApprove, composioUserEndpoint, composioEndpoint, composioUserToken, composioToken, toolboxToken, makeToolboxUrl, makeToolboxKey, secretBundlePath, codexMcpPolicy, gatewayCapability, gatewayFsRoot, gatewayWorkspaceRoot, progressReport, model, effort, codexStateDir, personalSkills, pluginSkills, attachments, target: runtime, outFile, headerHelpers });
+  const args = buildCodexArgs({ prompt, sessionId, isNewSession, forkSourceSessionId, cwd, dangerouslySkip, writable, networkMode, clean, autoApprove, composioUserEndpoint, composioEndpoint, composioUserToken, composioToken, toolboxToken, makeToolboxUrl, makeToolboxKey, customMcps, secretBundlePath, codexMcpPolicy, gatewayCapability, gatewayFsRoot, gatewayWorkspaceRoot, progressReport, model, effort, codexStateDir, personalSkills, pluginSkills, attachments, target: runtime, outFile, headerHelpers });
   for (const spec of headerHelpers) {
     await writeFile(spec.path, headerHelperSource({ ...spec, bundlePath: secretBundlePath }), { mode: 0o700 });
   }

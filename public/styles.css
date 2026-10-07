@@ -676,6 +676,9 @@ button.clear-tok.armed { background: rgba(229, 96, 77, .14); border-color: rgba(
 .vars-table td.state { color: var(--faint); font-style: normal; white-space: nowrap; }
 .vars-table .vars-secret, .vars-table .vars-readable { white-space: nowrap; }
 .vars-table .vars-actions { text-align: right; width: 1%; white-space: nowrap; }
+/* Custom MCP servers (public/admin-custom-mcps.js): a long URL truncates (full value in the title)
+   so the row's Edit/Remove actions stay on screen. */
+.vars-table td.cmcp-url-cell { max-width: 0; width: 40%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .secret-add { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .secret-add input { flex: 1 1 220px; min-width: 0; box-sizing: border-box; background: var(--panel-2); border: 1px solid var(--line); color: var(--ink); padding: 9px 12px; border-radius: 8px; font: inherit; }
 .secret-add .secret-save { flex: none; }
@@ -744,6 +747,8 @@ button.clear-tok.armed { background: rgba(229, 96, 77, .14); border-color: rgba(
 .drawer .ud-name { width: 100%; box-sizing: border-box; background: var(--panel-2); border: 1px solid var(--line); color: var(--ink); padding: 9px 12px; border-radius: 8px; font: inherit; }
 .drawer .ud-row .state { display: block; font-size: 11px; color: var(--faint); margin-top: 4px; }
 .drawer .ud-row .fldlab .state { display: inline; margin: 0 0 0 7px; text-transform: none; letter-spacing: 0; font-weight: 400; }
+/* …but a .state TABLE CELL (the custom MCP and secret tables) must stay a cell. */
+.drawer .ud-row .vars-table td.state { display: table-cell; margin-top: 0; font-size: inherit; }
 .drawer-foot { display: flex; align-items: center; gap: 12px; margin-top: 16px; }
 .drawer .tokchip .empty { color: var(--faint); }
 

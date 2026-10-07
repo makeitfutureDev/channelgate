@@ -37,6 +37,7 @@ import { allowedFsRoot, resolveWithinRoot } from "../../web/security.js";
 import { formatUpdateResult, startUpdate } from "../../gateway/updater.js";
 import { updateGatewayGuide, resetGatewayGuide, readGatewayGuide } from "../../gateway/guide.js";
 import { slackThreadFor } from "../../slack/thread-keys.js";
+import { listCustomMcps } from "../../gateway/custom-mcps.js";
 
 export function register(server, ctx) {
   const { channelId, slug, createdBy, threadKey, activeEngine, text, daemon, requireAdmin, requireManage, loadMeta } = ctx;
@@ -78,7 +79,11 @@ export function register(server, ctx) {
       const meta = await loadMeta();
       const field = selectionFieldForEngine(activeEngine);
       const names = (meta?.[field] || []).map((m) => m.name);
-      return text(names.length ? `Allowed here for ${engineLabel(activeEngine)}: ${names.join(", ")}` : `No extra ${engineLabel(activeEngine)} MCP servers are allowed in this channel (personal/shared Composio + gateway controls are built in when configured).`);
+      // Custom MCP connections (gateway/custom-mcps.js) are added by a person in the admin UI and
+      // reach every engine; names only — a URL may carry a query-string key.
+      const custom = listCustomMcps(meta?.customMcps, "channel").map((m) => m.serverName);
+      const customLine = custom.length ? `\nCustom MCP servers here (every engine; managed in the admin UI): ${custom.join(", ")}` : "";
+      return text((names.length ? `Allowed here for ${engineLabel(activeEngine)}: ${names.join(", ")}` : `No extra ${engineLabel(activeEngine)} MCP servers are allowed in this channel (personal/shared Composio + gateway controls are built in when configured).`) + customLine);
     }
   );
 

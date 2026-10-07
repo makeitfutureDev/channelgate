@@ -1270,6 +1270,12 @@
               <button type="button" class="ghost ch-make-toolbox-clear">Clear</button>
             </div>
           </div>
+          <div class="setcard custom-mcp-card">
+            <h4>Custom MCP servers <em class="state cmcp-state"></em></h4>
+            <p class="desc">Remote MCP servers every run in this conversation receives, each as <code>custom-&lt;name&gt;</code>, authenticated with a Bearer token (servers that need an OAuth sign-in go through Composio). HTTPS only, public addresses only. The gateway connects on the agent's behalf, so the token never enters the conversation's container. Saved and removed immediately; write-only — a stored token is never shown again.</p>
+            <!-- Built by public/admin-custom-mcps.js, shared with the user drawer. -->
+            <div class="ch-custom-mcps"></div>
+          </div>
         </div>
 
         <!-- ── MCP SERVERS ───────────────────────────────────────────────── -->
@@ -1456,6 +1462,12 @@
           <input class="ud-toolboxtoken-label tok-label" type="text" placeholder="owner — whose account? (label, optional)" autocomplete="off" />
           <input class="ud-toolboxtoken" type="password" placeholder="Toolbox token (Authorization: Bearer)" />
           <em class="state ud-toolbox-state"></em>
+        </div>
+
+        <div class="ud-row ud-custom-mcps-row">
+          <label class="fldlab">Personal MCP servers<em class="state cmcp-state"></em></label>
+          <p class="desc">Remote MCP servers injected as <code>my-&lt;name&gt;</code> only into runs <strong>this person</strong> authors, in every conversation they talk in. Bearer token only (OAuth servers go through Composio); HTTPS, public addresses only. Saved and removed immediately, separately from the Save button below. Write-only: a stored token is never shown again.</p>
+          <div class="ud-custom-mcps"></div>
         </div>
 
         <div class="ud-row ud-secrets-row">

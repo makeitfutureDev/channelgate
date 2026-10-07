@@ -113,7 +113,9 @@ post/edit the reply in the thread (degraded to the surface's capabilities) → u
   and TTL), `composio-user` (the author's personal token only), `composio-agent` (channel token →
   organization default; suppressed in DMs), the toolbox/Make servers when a token resolves, then
   — through the engine adapter — the channel/organization-selected catalog servers ("Cloud MCP")
-  and plugin-package servers mapped onto explicitly selected connections. Lean injects nothing.
+  and plugin-package servers mapped onto explicitly selected connections, plus the custom MCP
+  connections people add by URL + Bearer token (`custom-mcps.js` rules, `custom-mcp-store.js`
+  writes; relayed with a per-dial public-address check, `src/mcp/public-fetch.js`). Lean injects nothing.
   Slack beyond the gateway's own bot tools is the **Composio** Slack toolkit — there is no
   separate hosted Slack MCP. Composio SDK mode is Enterprise-only (`src/ee/`).
 - `src/gateway/modes.js` — the three base modes `read` (Read-only), `worker` (shell + file

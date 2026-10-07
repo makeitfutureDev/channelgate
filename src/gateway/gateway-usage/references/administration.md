@@ -81,6 +81,12 @@ gateway applies them; explicitly exempt tools do not receive a human-approval re
 - `list_available_mcps` — servers the host offers.
 - `list_channel_mcps` — what's allowed here now.
 - `add_channel_mcps` / `remove_channel_mcps` — allow/stop MCP servers here (by name).
+- **Custom MCP servers** (a remote server by URL + Bearer token) are added by a person, never by
+  you: an admin opens the admin UI → the conversation → Connections → *Custom MCP servers* (they
+  reach every run here as `custom-<name>`), or the user drawer → *Personal MCP servers* (only
+  that person's runs, as `my-<name>`). HTTPS and public addresses only; OAuth-only servers go
+  through Composio instead. Never ask for the token in chat, and never write an MCP definition
+  into a settings or `.mcp.json` file — the engine ignores them.
 
 ## Skills in this channel (any member, no card)
 - `show_channel_skills` — what is active here, by tier, with the context cost.

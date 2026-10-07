@@ -116,7 +116,9 @@ export function registerRemoteMcps({ jti, exp, servers, meta = {}, now = Date.no
     const server = servers[name];
     const problem = remoteMcpServerProblem(server);
     if (problem) throw new Error(`remote MCP server refused: ${problem}`);
-    map.set(name, Object.freeze({ url: server.url, headers: Object.freeze({ ...(server.headers || {}) }) }));
+    // `publicOnly` (a custom MCP a person added, src/gateway/custom-mcps.js): the relay re-checks
+    // the destination against the SSRF policy on every dial and pins the connection to it.
+    map.set(name, Object.freeze({ url: server.url, headers: Object.freeze({ ...(server.headers || {}) }), publicOnly: server.publicOnly === true }));
   }
   sweep(now);
   registrations.set(jti, { exp, servers: map, meta: cleanMeta(meta), holds: 1 });
@@ -150,7 +152,7 @@ export function releaseRemoteMcps(jti) {
   if (entry.holds <= 0) drop(jti);
 }
 
-/** `{ url, headers }` for one server of one live registration, or null. Never the stored object. */
+/** `{ url, headers, publicOnly }` for one server of one live registration, or null. Never the stored object. */
 // Runs on every relayed request (the relay re-authorizes each one), so the full sweep is throttled;
 // the entry being asked about is always checked against its own expiry.
 export function lookupRemoteMcp(jti, name, now = Date.now()) {
@@ -161,7 +163,7 @@ export function lookupRemoteMcp(jti, name, now = Date.now()) {
     return null;
   }
   const server = entry?.servers.get(typeof name === "string" ? name : "");
-  return server ? { url: server.url, headers: { ...server.headers } } : null;
+  return server ? { url: server.url, headers: { ...server.headers }, ...(server.publicOnly ? { publicOnly: true } : {}) } : null;
 }
 
 /**
@@ -212,6 +214,26 @@ export function clearRemoteMcpsWhere(predicate) {
 export function revokeRemoteMcpsForAuthor(authorId) {
   if (typeof authorId !== "string" || !authorId) return 0;
   return clearRemoteMcpsWhere((meta) => meta.authorId === authorId);
+}
+
+/**
+ * A custom MCP connection was removed or its token/URL replaced (src/gateway/custom-mcps.js): take
+ * that ONE server out of every registration whose metadata matches, so the old credential stops
+ * working at the relay's next request while the rest of a live turn's servers (Composio, the
+ * toolboxes) keep running. Returns how many registrations lost the server.
+ */
+export function revokeRemoteMcpServer(predicate, name) {
+  if (!validRemoteMcpName(name)) return 0;
+  let revoked = 0;
+  for (const [jti, entry] of [...registrations]) {
+    if (!entry.servers.has(name)) continue;
+    let match = false;
+    try { match = Boolean(predicate(entry.meta, jti)); } catch { match = false; }
+    if (!match) continue;
+    entry.servers.delete(name);
+    revoked += 1;
+  }
+  return revoked;
 }
 
 /** Counts only — for tests and diagnostics; never a name, a URL or a header. */

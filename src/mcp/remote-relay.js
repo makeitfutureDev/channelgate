@@ -15,6 +15,7 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { SSEClientTransport } from "@modelcontextprotocol/sdk/client/sse.js";
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
+import { publicPinnedFetch } from "./public-fetch.js";
 import {
   CallToolRequestSchema,
   CallToolResultSchema,
@@ -62,8 +63,12 @@ function unavailable(status) {
   });
 }
 
-export async function connectRemoteClient({ url, headers = {}, fetch = undefined, retryDelaysMs = REMOTE_CONNECT_RETRY_DELAYS_MS } = {}) {
+// `publicOnly` (a custom MCP, src/gateway/custom-mcps.js) dials through publicPinnedFetch: every
+// request re-resolves the host, refuses an internal address and pins the connection to the vetted
+// records (src/mcp/public-fetch.js). An injected test `fetch` still wins.
+export async function connectRemoteClient({ url, headers = {}, fetch = undefined, publicOnly = false, retryDelaysMs = REMOTE_CONNECT_RETRY_DELAYS_MS } = {}) {
   const target = validateRemoteUrl(url);
+  if (publicOnly && !fetch) fetch = publicPinnedFetch;
   const requestInit = { headers: { ...headers } };
   for (let attempt = 0; ; attempt++) {
     const streamable = new Client(CLIENT_INFO, { capabilities: {} });
@@ -158,12 +163,12 @@ export function createRelayHandlers(remote, authorize) {
  * (a connected Client-like object) or `connect` may be injected by tests; production dials
  * `url` with `headers` through connectRemoteClient.
  */
-export async function runRemoteRelay({ url, headers = {}, transport, authorize, remote = null, connect = connectRemoteClient } = {}) {
+export async function runRemoteRelay({ url, headers = {}, publicOnly = false, transport, authorize, remote = null, connect = connectRemoteClient } = {}) {
   if (typeof authorize !== "function") throw new Error("remote MCP relay requires an authorization check");
   if (!transport) throw new Error("remote MCP relay requires a transport");
   authorize();
   validateRemoteUrl(url);
-  const client = remote || await connect({ url, headers });
+  const client = remote || await connect({ url, headers, ...(publicOnly ? { publicOnly: true } : {}) });
   const handlers = createRelayHandlers(client, authorize);
   const instructions = typeof client.getInstructions === "function" ? client.getInstructions() : undefined;
   const server = new Server(

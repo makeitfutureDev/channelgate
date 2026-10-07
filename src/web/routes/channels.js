@@ -27,6 +27,8 @@ import {
 import { syncWorkspaceSkillsOrThrow } from "../../gateway/skills/workspace-sync.js";
 import { ensureChannelFolder, effectiveWorkDir, gatewayInstructionsBlock, splitGatewayBlock, channelSeed } from "../../gateway/folders.js";
 import { workspaceConflictsBySlug } from "../../gateway/workspace-assignments.js";
+import { listCustomMcps } from "../../gateway/custom-mcps.js";
+import { removeChannelCustomMcp, saveChannelCustomMcp } from "../../gateway/custom-mcp-store.js";
 import { memoryEnabled, countMemoryFacts, MEM_FILE, MEM_DIR } from "../../gateway/channel-memory.js";
 import {
   ENGINES,
@@ -102,6 +104,8 @@ export function maskChannelMeta(meta = {}) {
     makeToolboxKey: undefined,
     hasMakeToolboxKey: mk.has,
     makeToolboxKeyLast4: mk.last4,
+    // Name, server name, URL and last4 only — the token is write-only (gateway/custom-mcps.js).
+    customMcps: listCustomMcps(meta.customMcps, "channel"),
   };
 }
 
@@ -699,6 +703,57 @@ export function createChannelsRouter({
       await ensureChannelFolder(ctx.entry.slug, effectiveMeta(saved));
       logEvent("channel_env_removed", { slug: ctx.entry.slug, name, actor: WEB_ADMIN_ACTOR });
       res.json({ ok: true, vars: listChannelEnv(saved) });
+    } catch (e) {
+      next(e);
+    }
+  });
+
+  // ── Custom MCP connections (gateway/custom-mcps.js) ─────────────────────────
+  // A remote MCP server this conversation's runs receive as `custom-<name>`, authenticated with a
+  // Bearer token. Same write-only contract as the environment secrets: GET lists name + URL +
+  // last4, and there is no reveal route — a token is replaced by entering a new one.
+  router.get("/channels/:channelId/custom-mcps", async (req, res, next) => {
+    try {
+      const ctx = await resolveChannelCtx(req.params.channelId);
+      if (!ctx) return res.status(404).json({ error: "unknown channel" });
+      res.json({ servers: listCustomMcps(ctx.meta.customMcps, "channel") });
+    } catch (e) {
+      next(e);
+    }
+  });
+
+  // Add or update one server. `token` may be omitted on an update to keep the stored one.
+  router.put("/channels/:channelId/custom-mcps/:name", async (req, res, next) => {
+    try {
+      const ctx = await resolveChannelCtx(req.params.channelId);
+      if (!ctx) return res.status(404).json({ error: "unknown channel" });
+      let servers;
+      try {
+        servers = await saveChannelCustomMcp(ctx.entry.slug, {
+          name: req.params.name,
+          url: typeof req.body?.url === "string" ? req.body.url : "",
+          token: typeof req.body?.token === "string" ? req.body.token : "",
+        }, { actor: WEB_ADMIN_ACTOR });
+      } catch (e) {
+        return res.status(400).json({ error: e.message });
+      }
+      res.json({ ok: true, servers });
+    } catch (e) {
+      next(e);
+    }
+  });
+
+  router.delete("/channels/:channelId/custom-mcps/:name", async (req, res, next) => {
+    try {
+      const ctx = await resolveChannelCtx(req.params.channelId);
+      if (!ctx) return res.status(404).json({ error: "unknown channel" });
+      let servers;
+      try {
+        servers = await removeChannelCustomMcp(ctx.entry.slug, req.params.name, { actor: WEB_ADMIN_ACTOR });
+      } catch (e) {
+        return res.status(400).json({ error: e.message });
+      }
+      res.json({ ok: true, servers });
     } catch (e) {
       next(e);
     }

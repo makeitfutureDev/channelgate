@@ -6,6 +6,7 @@ import { access, cp, lstat, mkdir, mkdtemp, readFile, readdir, readlink, rename,
 import os from "node:os";
 import path from "node:path";
 import { buildSettings, enableSkills } from "./folders.js";
+import { admitCustomMcpsInSettings } from "./custom-mcps.js";
 import { ensureRealDir } from "./safe-fs.js";
 import { parseFrontmatter, skillMetadata } from "./skills/frontmatter.js";
 import { grantedPluginPackages, compilePluginPackage, relocatePluginServers, pluginSkillCatalog } from "./plugin-runtime.js";
@@ -192,6 +193,8 @@ export async function createRunGrantArtifacts({
   allowBypass = false,
   // A home-guarded run (run.js homeGuardRequired): read-only tools, and no plugin command servers.
   homeGuard = false,
+  // This run's custom MCP connections, `[{ name, url }]` (src/gateway/custom-mcps.js).
+  customMcpServers = [],
   target = null,
 } = {}) {
   // WHERE this run's engine-facing files go: under the channel's artifact dir, which the container
@@ -334,6 +337,7 @@ export async function createRunGrantArtifacts({
         settings.allowedMcpServers.push({ serverName: server.name });
         settings.permissions.allow.push(`mcp__${server.name}`);
       }
+      admitCustomMcpsInSettings(settings, customMcpServers);
       const content = `${JSON.stringify(settings, null, 2)}\n`;
       const digest = createHash("sha256").update(content).digest("hex").slice(0, 24);
       const settingsRoot = path.join(stableArtifactRoot, "claude-settings");
