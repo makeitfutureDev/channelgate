@@ -1,5 +1,43 @@
 # ChannelGate — Test Plan
 
+## Platform activation emoji acceptance (2026-10-07)
+
+- Automated settings/API coverage: `test/platform-reaction-settings.test.js` verifies separate
+  defaults, retained legacy Slack selection, independent partial saves, bounded validation,
+  reserved controls, atomic invalid-request refusal, default reset and safe API roundtrip.
+  Teams effective-setting changes record a monotonic timestamp inside the settings write lock;
+  equivalent aliases/order, unrelated saves and client-forged timestamp fields cannot alter it.
+- Browser: `test/platform-reaction-settings-browser.test.js` launches the real admin HTML/JS with
+  an isolated authenticated settings fixture. Verify three fields, save/paint/reload persistence,
+  Teams-only diffs, mobile viewport, Google Chat limitation and zero browser page errors.
+- Runtime: `test/platform-activation-reactions.test.js` plus the existing Teams activity,
+  Graph normalizer/subscription/transport and help/control suites verify configured Unicode/IDs,
+  removed defaults, fixed Stop/Tick, exact robot metadata, canonical equivalent aliases,
+  fresh additions, historical/legacy queued rejection, A→B→A setting changes between Graph reads,
+  existing dedup identities and current help. Google Chat reaction events remain ignored.
+- Verification: 148 focused runtime/settings/help/authorization tests and one real browser test
+  passed without failures or skips. Static checks, secret scan and security coverage passed.
+- [ ] LIVE `SLACK-ACTIVATION-EMOJI-01` (Claude and Codex): use isolated operator-owned Slack QA
+  channels pinned separately to each engine. Set Slack activation to `rocket`, Teams to `alien`,
+  Google Chat to `🤖`; react 🚀 to a fresh unmentioned human message and a reply in an engaged
+  thread. Expect one run as the authorized reactor, correct session/workspace and engine.
+  🤖 is inactive while replaced; repeated events/removals do not duplicate runs; Stop/ack controls
+  still work. Restore the prior settings. Record message/run IDs and outcomes for both engines.
+- [ ] LIVE `TEAMS-ACTIVATION-EMOJI-01` (Claude and Codex): disposable operator-owned Teams QA
+  personal/group/channel fixtures with trusted native event delivery and consented Graph events.
+  Set Teams activation to `1f680_rocket, 🚀` while Slack uses `robot_face`. Add 🚀 to fresh human
+  messages without a mention; expect one run as the authorized reactor in the correct engine/session.
+  Removed default emojis are inactive, 🛑 stops only authorized work, ✅ acknowledges tracked reminders.
+  Change away and back without waiting for Graph maintenance: historical/queued activations remain
+  inactive; a fresh addition after the saved setting works. Restore the prior selection and verify
+  help updates. Record native/Graph payload shape, timestamps, message/run IDs and outcomes.
+- [ ] LIVE `PLATFORM-ACTIVATION-SETTINGS-01` (engine-independent): isolated authenticated admin
+  browser fixture. Set distinct valid values on the three fields, save, reload and verify isolation,
+  partial updates, invalid-request atomicity and empty-list defaults. Verify the Google Chat field
+  states configuration-only support and no reaction-trigger capability is advertised.
+- Private registry writes require the requester's explicitly selected personal Airtable connection.
+  Definitions prepared; account selection and live execution remain pending. These are not PASS cases.
+
 ## Microsoft Teams model command acceptance (2026-10-07)
 
 - Automated: `test/teams-model-command.test.js` uses scratch SQLite, fake Teams transport and

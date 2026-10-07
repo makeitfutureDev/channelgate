@@ -70,10 +70,10 @@ export function quotedReplyId(activity) {
   return ids.size === 1 ? [...ids][0] : "";
 }
 
-export function normalizeActivity(activity, { botId = "", fetchImpl = fetch, resolveFile = null } = {}) {
+export function normalizeActivity(activity, { botId = "", fetchImpl = fetch, resolveFile = null, activationReactions } = {}) {
   const type = String(activity?.type || "").toLowerCase();
   const edit = type === "messageupdate" && activity.channelData?.eventType === "editMessage";
-  const actions = type === "messagereaction" ? [...new Set((activity.reactionsAdded || []).map(r => teamsReactionAction(r?.type)).filter(Boolean))] : [];
+  const actions = type === "messagereaction" ? [...new Set((activity.reactionsAdded || []).map(r => teamsReactionAction(r?.type, activationReactions)).filter(Boolean))] : [];
   // A mixed control payload must not choose one destructive action arbitrarily.
   if (actions.length > 1) return null;
   const reactionAction = actions[0] || "";

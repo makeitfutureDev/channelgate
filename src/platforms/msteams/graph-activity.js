@@ -5,7 +5,7 @@ import { activityConversationName } from "./conversation-name.js";
 import { makeInbound } from "../inbound.js";
 import { quotedReplyId, stripMentionTags } from "./activity.js";
 
-import { teamsGraphReactionAction, teamsGraphReactionCutoverField } from "./reactions.js";
+import { teamsGraphReactionAction, teamsGraphReactionCutoverField, teamsActivationFingerprint, DEFAULT_TEAMS_ACTIVATION_REACTIONS } from "./reactions.js";
 
 const digest = parts => createHash("sha256").update(JSON.stringify(parts)).digest("hex");
 const userId = identity => String(identity?.user?.id || "");
@@ -26,7 +26,7 @@ function plainBody(body) {
   return text.trim();
 }
 
-export async function normalizeGraphEvents(message, row, { botId, resolveMember, now = Date.now } = {}) {
+export async function normalizeGraphEvents(message, row, { botId, resolveMember, now = Date.now, activationReactions = DEFAULT_TEAMS_ACTIVATION_REACTIONS, activationVersion } = {}) {
   if (!message?.id || message.deletedDateTime || message.messageType !== "message") return [];
   const started = Date.parse(row.startedAt);
   if (!Number.isFinite(started)) return [];
@@ -83,7 +83,7 @@ export async function normalizeGraphEvents(message, row, { botId, resolveMember,
   // replay an earlier addition from the same fetched history (especially an earlier stop).
   const latest = new Map();
   for (const item of message.messageHistory || []) {
-    const action = teamsGraphReactionAction(item.reaction);
+    const action = teamsGraphReactionAction(item.reaction, activationReactions);
     const transition = reactionTransition(item.actions);
     if (!transition || !action) continue;
     const actor = userId(item.reaction?.user);
@@ -95,8 +95,19 @@ export async function normalizeGraphEvents(message, row, { botId, resolveMember,
   }
   for (const item of latest.values()) {
     if (item.transition !== "added") continue;
-    const action = teamsGraphReactionAction(item.reaction);
+    const action = teamsGraphReactionAction(item.reaction, activationReactions);
     const stamp = item.modifiedDateTime;
+    if (action === 'engage') {
+      if (activationVersion !== undefined && row.activationReactionsVersion !== activationVersion) continue;
+      const fingerprint = teamsActivationFingerprint(activationReactions);
+      const custom = fingerprint !== teamsActivationFingerprint();
+      // A custom selection requires a persisted cutoff. Legacy default rows retain their
+      // existing identities; prepared production rows always carry the configuration version.
+      if (custom || row.activationReactionsFingerprint !== undefined) {
+        if (row.activationReactionsFingerprint !== fingerprint
+          || !(Date.parse(stamp) > Date.parse(row.activationReactionsStartedAt))) continue;
+      }
+    }
     const cutoverField = teamsGraphReactionCutoverField(item.reaction);
     if (cutoverField) {
       const cutover = Date.parse(row[cutoverField]);
@@ -104,7 +115,7 @@ export async function normalizeGraphEvents(message, row, { botId, resolveMember,
     }
     const actor = userId(item.reaction?.user);
     // A removed reaction must not start a new run when a delayed notification is fetched.
-    if (!(message.reactions || []).some(reaction => teamsGraphReactionAction(reaction) === action && userId(reaction.user) === actor)) continue;
+    if (!(message.reactions || []).some(reaction => teamsGraphReactionAction(reaction, activationReactions) === action && userId(reaction.user) === actor)) continue;
     await emit(actor, "reaction", stamp, action);
   }
   return result;

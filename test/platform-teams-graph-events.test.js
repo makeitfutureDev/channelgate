@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { createTeamsGraphEvents } from "../src/platforms/msteams/graph-events.js";
+import { normalizeGraphEvents } from "../src/platforms/msteams/graph-activity.js";
 
 function fixture(options = {}) {
   const rows = new Map(), requests = [], messages = [], logs = [];
@@ -10,6 +11,8 @@ function fixture(options = {}) {
     notificationUrl: "https://example.org/api/teams/graph", now: () => time,
     intervalMs: options.intervalMs || 60_000,
     enqueueNotifications: options.enqueueNotifications || null,
+    getActivationReactions: options.getActivationReactions,
+    getActivationVersion: options.getActivationVersion,
     log: (...args) => logs.push(args),
     store: { list: async () => [...rows.values()].map(row => ({ ...row })), put: async row => rows.set(row.conversationId, { ...row }), remove: async id => rows.delete(id) },
     onMessage: async (...args) => { if (options.failCallback) throw new Error("queue unavailable"); messages.push(args); },
@@ -283,4 +286,65 @@ test('Graph Unicode robot metadata gets a separate cutoff before cached reuse or
   assert.equal(f.messages[0][1].graphRobotStartedAt, '2026-09-09T10:23:00.000Z');
   assert.equal(f.messages[0][1].reactionAliasesStartedAt, aliases);
   assert.equal(f.messages[0][1].alienReactionStartedAt, alien);
+});
+
+
+test("Graph activation cutoff changes only when the effective platform selection changes", async () => {
+  let selection = ['alien', 'like'];
+  const f = fixture({ getActivationReactions: () => selection });
+  await f.service.ensure(f.row);
+  const initial = { ...f.rows.get(f.row.conversationId) };
+  f.advance(60_000);
+  selection = ['👍🏽', ':alien:'];
+  await f.service.ensure(f.row);
+  assert.equal(f.rows.get(f.row.conversationId).activationReactionsStartedAt, initial.activationReactionsStartedAt);
+  selection = ['🚀'];
+  await f.service.ensure(f.row);
+  const changed = f.rows.get(f.row.conversationId);
+  assert.equal(changed.activationReactionsStartedAt, '2026-09-09T10:01:00.000Z');
+  assert.equal(changed.alienReactionStartedAt, initial.alienReactionStartedAt);
+  assert.equal(changed.graphRobotStartedAt, initial.graphRobotStartedAt);
+  assert.equal(f.requests.length, 1, 'changing selection needs no new subscription');
+  f.advance(60_000);
+  selection = ['alien', 'like'];
+  await f.service.processNotifications([{ event: f.notification() }]);
+  assert.equal(f.messages[0][1].activationReactionsStartedAt, '2026-09-09T10:02:00.000Z');
+  assert.equal(f.rows.get(f.row.conversationId).activationReactionsStartedAt, '2026-09-09T10:02:00.000Z');
+});
+
+
+test("Graph A→B→A saves reset cutoff even when no notifications observed the intermediate selection", async () => {
+  let version = '2026-09-09T09:59:00Z';
+  const f = fixture({ getActivationReactions: () => ['🚀'], getActivationVersion: () => version });
+  await f.service.ensure(f.row);
+  const initial = f.rows.get(f.row.conversationId);
+  f.advance(120_000);
+  version = '2026-09-09T10:01:30Z';
+  await f.service.processNotifications([{ event: f.notification() }]);
+  const current = f.rows.get(f.row.conversationId);
+  assert.equal(current.activationReactionsFingerprint, initial.activationReactionsFingerprint);
+  assert.equal(current.activationReactionsVersion, version);
+  assert.equal(current.activationReactionsStartedAt, '2026-09-09T10:01:30.000Z');
+  assert.equal(f.messages[0][1].activationReactionsVersion, version);
+});
+
+test("first reaction after a saved selection survives a later Graph refresh", async () => {
+  let selection = ['alien'], version = '2026-09-09T09:59:00Z';
+  const f = fixture({ getActivationReactions: () => selection, getActivationVersion: () => version });
+  f.row.context.conversation.conversationType = 'groupchat';
+  await f.service.ensure(f.row);
+  selection = ['🚀']; version = '2026-09-09T10:00:30.000Z';
+  f.advance(120_000);
+  const prepared = await f.service.refresh(f.rows.get(f.row.conversationId));
+  const reaction = { reactionType: '🚀', user: { user: { id: 'reactor' } } };
+  const message = { id: '123', messageType: 'message', from: { user: { id: 'author' } },
+    body: { contentType: 'text', content: 'Handle this' }, reactions: [reaction],
+    messageHistory: [{ actions: 'reactionAdded', modifiedDateTime: '2026-09-09T10:00:31Z', reaction }] };
+  const options = { activationReactions: selection, activationVersion: version,
+    now: () => Date.parse('2026-09-09T10:02:00Z'), resolveMember: async id => ({ id: `29:${id}` }) };
+  const [event] = await normalizeGraphEvents(message, prepared, options);
+  assert.equal(event.reactionAction, 'engage');
+  assert.equal(event.userId, '29:reactor');
+  message.messageHistory[0].modifiedDateTime = '2026-09-09T10:00:29Z';
+  assert.deepEqual(await normalizeGraphEvents(message, prepared, options), []);
 });

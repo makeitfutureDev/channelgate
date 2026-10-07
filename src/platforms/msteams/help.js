@@ -30,6 +30,18 @@ export const TEAMS_HELP_TEXT =
 
 // This fixed guide uses only bold and inline code. Native text runs preserve those styles
 // without relying on Teams' client-dependent Markdown support or soft line breaks.
+export function teamsHelpText(activationReactions) {
+  if (!activationReactions) return TEAMS_HELP_TEXT;
+  const codes = activationReactions.map(value => `\`${value}\``).join(', ');
+  const start = TEAMS_HELP_TEXT.indexOf('• **Act on a message:**');
+  const end = TEAMS_HELP_TEXT.indexOf('• **Voice prompts:**');
+  return TEAMS_HELP_TEXT.slice(0, start) +
+    `• **Act on a message:** Where Teams reaction events are enabled and delivered, react with one of the configured activation emojis: ${codes}. An administrator can change this platform’s selection under Settings → Agent defaults → Message activation reactions. Otherwise, mention me with your request.\n\n` +
+    '• **Reaction names:**\n\n🛑 Stop sign — `stopsign`\n\n✅ Tick button (Checkmark button) — `2705_whiteheavycheckmark`\n\n' +
+    'Choose activation emojis in the Teams reaction picker; typing a code as a message does not add a reaction. Stop sign stops the selected session’s active and queued work; only its author or an administrator may stop it. Tick button acknowledges a tracked reminder. Removing a reaction does not reopen an acknowledged reminder. Reaction actions require Teams events to be enabled and delivered; `/stop` and `/cancel` also remain available.\n\n' +
+    TEAMS_HELP_TEXT.slice(end);
+}
+
 function helpParagraph(text) {
   return {
     type: 'RichTextBlock', spacing: 'Small',
@@ -41,9 +53,9 @@ function helpParagraph(text) {
   };
 }
 
-export function createTeamsHelpCard() {
+export function createTeamsHelpCard(activationReactions) {
   const body = [];
-  for (const paragraph of TEAMS_HELP_TEXT.split('\n\n')) {
+  for (const paragraph of teamsHelpText(activationReactions).split('\n\n')) {
     const heading = /^(?:• )?\*\*([^*]+)\*\*(?:\s+([\s\S]*))?$/.exec(paragraph);
     if (!heading) { body.push(helpParagraph(paragraph)); continue; }
     body.push({ type: 'TextBlock', text: heading[1].replace(/:$/, ''), weight: 'Bolder',

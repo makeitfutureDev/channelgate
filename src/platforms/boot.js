@@ -38,6 +38,7 @@ async function startGoogleChatTransport(config, log, { onFatal } = {}) {
 }
 
 async function startTeamsTransport(config, log) {
+  const { getMentionReactions, getTeamsMentionReactionsUpdatedAt } = await import('../config/settings.js');
   const capabilities = requirePlatform("msteams").capabilities;
   const auth = createTeamsAuth({ clientId: config.appId, clientSecret: config.appPassword, tenantId: config.tenantId });
   const api = createTeamsApi({ auth });
@@ -46,7 +47,7 @@ async function startTeamsTransport(config, log) {
   });
   const controls = createTeamsControls({ connector });
   const ingest = createIngest({ connector, log, onCommand: controls.onCommand });
-  return startTeams({ ...config, capabilities, onMessage: ingest, onInvoke: controls.onInvoke, onStop: controls.stop, log, deps: { auth, api, connector } });
+  return startTeams({ ...config, capabilities, getActivationReactions: () => getMentionReactions('msteams'), getActivationVersion: getTeamsMentionReactionsUpdatedAt, onMessage: ingest, onInvoke: controls.onInvoke, onStop: controls.stop, log, deps: { auth, api, connector } });
 }
 
 export function createPlatformTransports({ log = console } = {}) {

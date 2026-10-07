@@ -1,5 +1,25 @@
 # Chat platforms
 
+## Message activation emoji settings
+
+Admin Settings → Agent defaults → **Message activation reactions** stores independent values for
+Slack, Microsoft Teams and Google Chat. Comma-separated entries are supported; a blank list resets
+the platform defaults. Slack uses emoji names (such as `robot_face` or `rocket`). Teams accepts
+reaction IDs or pasted Unicode; its robot/Alien/Like/Heart families and single-code-point reference
+IDs are matched across native and Graph forms. For other named Teams IDs, include the pasted
+Unicode emoji as another entry because Graph can return Unicode rather than the picker name.
+
+Teams saves take effect in reaction matching without reconnecting. The separate **Observe edits
+and robot reactions on all messages** option, installed app consent and healthy notification
+subscription are still required for reactions on unmentioned group/channel content. Changing an
+activation list does not change Stop/Tick controls. Old history and pending requests from a prior
+selection do not activate after a change; add a fresh reaction after saving.
+
+Google Chat stores a Unicode-only selection. Its current Pub/Sub interaction transport does not
+receive reaction events, so the field alone does not enable activation. Operational reaction
+intake would require a [Google Workspace Events subscription](https://developers.google.com/workspace/events/guides/events-chat)
+plus authenticated actor/message handling; this change does not create subscriptions or consent.
+
 ChannelGate speaks to three chat surfaces. Slack is GA; Google Chat and Microsoft Teams are in
 **Beta** — their in-chat feature set is deliberately smaller (see *What works where* below).
 Google Chat has been exercised against a live tenant; Teams still needs live tenant acceptance.

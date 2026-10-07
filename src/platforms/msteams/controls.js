@@ -1,7 +1,7 @@
 // Native Teams controls hold conversation/session authority server-side. Card data carries only
 // an opaque, expiring state ID; editing the card payload cannot select another user's workspace.
 import { randomUUID } from 'node:crypto';
-import { getPublicUrl, canChangeChannelRuntime, getDefaultModel } from '../../config/settings.js';
+import { getPublicUrl, canChangeChannelRuntime, getDefaultModel, getMentionReactions } from '../../config/settings.js';
 import { modelsForEngine, effortsForModel, modelBelongsToEngine } from '../../engines/registry.js';
 import { teamsWorkspaceContext } from './workspace-access.js';
 import { listVisibleDirectory, normalizeRelativePath, canEditChannelFiles, readEditableFile } from '../../slack/file-explorer.js';
@@ -15,7 +15,7 @@ import { acquireKeyedLock } from '../../util/keyed-lock.js';
 import { buildTeamsSettings, createTeamsSettingsContext, handleTeamsSettings, teamsSettingsUi } from './settings.js';
 import { generalRuntimeScopes } from './settings-general.js';
 import { effectiveMeta } from '../../gateway/run.js';
-import { TEAMS_HELP_TEXT, createTeamsHelpCard } from './help.js';
+import { teamsHelpText, createTeamsHelpCard } from './help.js';
 
 const card = (title, body = [], actions = []) => ({ type: 'AdaptiveCard', version: '1.4', body: [{ type: 'TextBlock', text: title, weight: 'Bolder', wrap: true }, ...body], actions });
 const text = value => ({ type: 'TextBlock', text: String(value), wrap: true });
@@ -88,11 +88,11 @@ export function createTeamsControls({ connector, now = Date.now, authorize = tea
     if (message.text.trim().toLowerCase() === '/help') {
       if (args.replyCard) {
         try {
-          await args.replyCard({ card: createTeamsHelpCard(), text: 'Teams help' });
+          await args.replyCard({ card: createTeamsHelpCard(getMentionReactions('msteams')), text: 'Teams help' });
           return true;
         } catch { /* Keep the full, spaced guide available if native card delivery fails. */ }
       }
-      await reply(TEAMS_HELP_TEXT);
+      await reply(teamsHelpText(getMentionReactions('msteams')));
       return true;
     }
     if (message.text.trim().toLowerCase() === '/model') {

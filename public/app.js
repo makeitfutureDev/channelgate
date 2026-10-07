@@ -3631,6 +3631,8 @@ function readSettingsForm() {
     ...(document.getElementById("clear-admin-user").classList.contains("armed") ? { clearSlackAdminUserToken: true } : {}),
     sessionKeepalive: document.getElementById("set-keepalive").value,
     mentionReactions: document.getElementById("set-mention-reactions").value,
+    teamsMentionReactions: document.getElementById("set-teams-mention-reactions").value,
+    googleChatMentionReactions: document.getElementById("set-google-chat-mention-reactions").value,
     trustedBotApps: document.getElementById("set-trusted-apps").value,
     defaultChannelAccess: document.getElementById("set-channel-access").value,
     composioMode: document.getElementById("set-composio-mode").value,
@@ -3750,6 +3752,8 @@ function paintSettings(s) {
   attachReveal(document.getElementById("set-admin-user"), { has: s.tokens.hasAdminUserToken, last4: s.tokens.adminUserTokenLast4, fetch: revealSecret("settings", "slackAdminUserToken") });
   document.getElementById("set-keepalive").value = s.sessionKeepalive || "";
   document.getElementById("set-mention-reactions").value = (s.mentionReactions || []).join(", ");
+  document.getElementById("set-teams-mention-reactions").value = (s.teamsMentionReactions || []).join(", ");
+  document.getElementById("set-google-chat-mention-reactions").value = (s.googleChatMentionReactions || []).join(", ");
   document.getElementById("set-trusted-apps").value = (s.trustedBotApps || []).join(", ");
   if (s.defaultChannelAccess) document.getElementById("set-channel-access").value = s.defaultChannelAccess;
   document.getElementById("set-composio-mode").value = s.composioMode === "sdk" ? "sdk" : "personal";

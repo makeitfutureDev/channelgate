@@ -120,3 +120,14 @@ test("/help describes creating files and broad UTF-8 text editing", () => {
 test("help does not advertise the removed files command", () => {
   assert.doesNotMatch(HELP_TEXT, /\/files/);
 });
+
+test('Teams help reflects the selected activation emojis in cards and text', async () => {
+  const { teamsHelpText } = await import('../src/platforms/msteams/help.js');
+  const text = teamsHelpText(['🚀']);
+  assert.match(text, /configured activation emojis: `🚀`/);
+  assert.doesNotMatch(text, /choose 👽|Like .*starts a request/);
+  assert.match(text, /Stop sign/);
+  const runs = createTeamsHelpCard(['🚀']).body.flatMap(block => block.inlines || []).map(run => run.text).join(' ');
+  assert.match(runs, /🚀/);
+  assert.doesNotMatch(runs, /Alien/);
+});
