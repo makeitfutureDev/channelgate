@@ -1,5 +1,11 @@
 # ChannelGate — Test Plan
 
+## Runtime dependency advisory refresh (2026-10-08)
+
+- [x] `npm audit --omit=dev --audit-level=high`: patched compatible lockfile resolves zero advisories.
+- [ ] Run the full combined regression/security coverage on a clean install of the patched lockfile,
+  including remote MCP HTTP/stdio transports, OAuth metadata, and public-address guards.
+
 ## Custom MCP connections (2026-10-01)
 
 ### Regression

@@ -18,6 +18,9 @@ product overview.
 
 ## Unreleased
 
+- Refresh the locked MCP SDK, URI and IP parsing dependencies to patched compatible releases;
+  production dependency auditing reports zero advisories.
+
 - Far fewer approval cards. A gateway tool that changes channel or gateway state is now automatic
   for the admin or channel manager who asked for it (modes, network, folders, MCP servers,
   secrets, tokens, skill settings, gateway update and restart, the license key, instruction
