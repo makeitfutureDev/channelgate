@@ -20,14 +20,16 @@ test('edit event subtype is explicit; real mention entity is required for the me
 });
 
 test('supported reaction additions carry explicit action, reactor identity and target', () => {
-  for (const reaction of ['🤖', 'robot', 'robot_face', '🤖\uFE0F', 'smilerobot', 'hearteyesrobot', ':hearteyesrobot:', ' :HeartEyesRobot: ', 'like', 'LIKE', '👍', '👍\uFE0F', '👍🏻', '👍🏿', 'like-tone1', 'like-tone5']) {
+  for (const reaction of ['alien', ':alien:', ' :Alien: ', '👽', '👽\uFE0F', '1f47d_extraterrestrialalien', '🤖', 'robot', 'robot_face', '🤖\uFE0F', 'smilerobot', 'hearteyesrobot', ':hearteyesrobot:', ' :HeartEyesRobot: ', 'like', 'LIKE', '👍', '👍\uFE0F', '👍🏻', '👍🏿', 'like-tone1', 'like-tone5']) {
     const value = normalize({ type: 'messageReaction', replyToId: 'bot-answer', text: '', entities: [], reactionsAdded: [{ type: reaction }] });
     assert.equal(value.reactionAction, 'engage'); assert.equal(value.trigger, 'reaction'); assert.equal(value.replyToId, 'bot-answer'); assert.equal(value.userId, '29:author'); assert.equal(value.mentionsBot, false);
   }
   assert.equal(normalize({ type: 'messageReaction', replyToId: 'bot-answer', reactionsRemoved: [{ type: 'robot' }] }), null);
   assert.equal(normalize({ type: 'messageReaction', replyToId: 'bot-answer', reactionsRemoved: [{ type: ':hearteyesrobot:' }] }), null);
+  assert.equal(normalize({ type: 'messageReaction', replyToId: 'target', reactionsRemoved: [{ type: ':alien:' }] }), null);
+  assert.equal(normalize({ text: ':alien:', entities: [] }).trigger, 'message');
   assert.equal(normalize({ text: ':hearteyesrobot:', entities: [] }).trigger, 'message', 'typed shortcut is not a reaction');
-  for (const reaction of ['heart', 'hearteyes', 'hearteyesdog', 'like-tone0', 'like-tone6', '👎', ':hearteyesrobot', 'hearteyesrobot:', '::hearteyesrobot::']) {
+  for (const reaction of ['alienmonster', '👾', ':alien', 'alien:', '::alien::', 'heart', 'hearteyes', 'hearteyesdog', 'like-tone0', 'like-tone6', '👎', ':hearteyesrobot', 'hearteyesrobot:', '::hearteyesrobot::']) {
     assert.equal(normalize({ type: 'messageReaction', replyToId: 'bot-answer', reactionsAdded: [{ type: reaction }] }), null);
   }
   for (const [type, action] of [['stopsign', 'stop'], ['🛑', 'stop'], ['2705_whiteheavycheckmark', 'ack'], ['✅', 'ack']]) {

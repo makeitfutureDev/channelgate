@@ -10,7 +10,7 @@ const { teamsAdapter } = await import('../src/platforms/msteams.js');
 
 test("Teams /help includes practical workflows and its supported commands", () => {
   for (const expected of [
-    '**How to use me**', '`@agent /help`', 'quote the original message', 'choose **Heart eyes robot**',
+    '**How to use me**', '`@agent /help`', 'quote the original message', 'choose 👽 **Alien**', '👽 Alien — `:alien:`',
     'Heart eyes robot — `:hearteyesrobot:`', '👍 Like (`like`) also starts a request', 'Stop sign — `stopsign`',
     'Tick button (Checkmark button) — `2705_whiteheavycheckmark`',
     'typing a code as a message does not add a reaction', 'Tick button acknowledges a tracked reminder', 'Removing a reaction does not reopen',
@@ -56,7 +56,7 @@ test('Teams help card separates headings, paragraphs, emoji and commands without
   const words = text => text.replace(/[•:]/g, '').split(/\s+/).filter(Boolean);
   assert.deepEqual(words(card.body.map(item => item.text || plain(item)).join(' ')), words(expected));
   assert.equal(rows.filter(item => /^• \/.* — /.test(plain(item))).length, 10);
-  assert.equal(rows.filter(item => /^(?:Heart eyes robot|🛑 Stop sign|✅ Tick button).* — /.test(plain(item))).length, 3);
+  assert.equal(rows.filter(item => /^(?:👽 Alien|Heart eyes robot|🛑 Stop sign|✅ Tick button).* — /.test(plain(item))).length, 4);
   assert.ok(rows.some(item => item.inlines.some(run => run.text === '/help' && run.fontType === 'Monospace')));
   assert.ok(!JSON.stringify(card).includes('`'));
   assert.equal(card.actions, undefined);

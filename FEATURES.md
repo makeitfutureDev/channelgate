@@ -21,11 +21,14 @@
   Examples use Teams controls and explain their permissions and configuration requirements.
   The authorized native command responds before an engine turn, in the requesting conversation.
   Quoting the help card in a group chat continues the same session.
-- Reaction labels show Teams picker names and actual IDs: Heart eyes robot (`:hearteyesrobot:`),
+- Reaction labels show Teams picker names and actual IDs: Alien (`:alien:`), Heart eyes robot (`:hearteyesrobot:`),
   Stop sign (`stopsign`), and Tick button / Checkmark button (`2705_whiteheavycheckmark`).
   The guide explains that typing an ID as a message does not add a reaction. Teams intake recognizes
   both `hearteyesrobot` and the picker shortcut `:hearteyesrobot:` as activation IDs. Like (`like` or
-  Unicode 👍, including skin tones) is an alternative. Existing robot IDs remain supported alongside
+  Unicode 👍, including skin tones) is an alternative. Alien accepts `alien`, `:alien:`, Unicode 👽
+  and the documented `1f47d_extraterrestrialalien` ID; help recommends Alien. Its separate persisted
+  introduction cutoff excludes Alien history from before this expansion without resetting earlier
+  cutoffs. Existing robot IDs remain supported alongside
   `stopsign` and `2705_whiteheavycheckmark`, plus Unicode/legacy aliases. Activation starts a request
   as the reactor. Stop cancels only the selected session’s active and queued work with the same
   author/admin checks as `/stop`. Channel replies and group quotes resolve to their stored root.

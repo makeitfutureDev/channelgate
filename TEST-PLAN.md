@@ -33,6 +33,27 @@
 
 ## Microsoft Teams reaction actions acceptance (2026-10-07)
 
+- Alien verification: 88 focused tests passed, zero failures/skips. Live delivery remains unverified.
+- Alien activation: native and Graph normalizer tests accept `alien`, exact picker shortcut
+  `:alien:`, Unicode 👽 and `1f47d_extraterrestrialalien`. Shared ingest covers approved/unapproved
+  reactors and personal/group/channel session targets. Typed shortcuts, removals and Alien monster
+  stay inactive. A separate persisted Alien cutoff prevents old reactions replaying even when the
+  subscription already has the older shortcut/Like cutoff; refresh, renewal and recreation retain it.
+- [ ] LIVE (`TEAMS-ALIEN-01`, Claude and Codex): approved beta Teams personal, group and channel
+  QA fixtures with event delivery enabled. After loading this candidate and creating the scoped
+  subscription, post an unmentioned group/channel message "Reply exactly ALIEN_TRIGGER_OK".
+  Approved actor adds **Alien** (`:alien:`) from the reaction picker. Pass: one ALIEN_TRIGGER_OK
+  response as the reactor in that source session; retried notifications produce no second response.
+  In personal chat react to a bot reply: the same session resumes once. Remove the reaction: no run.
+  Repeat with an unapproved actor: no run. Capture the actual event reaction type, arrival,
+  normalization and dispatched run; picker UI alone is not delivery evidence.
+- [ ] LIVE (`TEAMS-ALIEN-02`, engine-independent history gate): before upgrade leave Alien on
+  a message in an existing shortcut/Like subscription; upgrade/restart, then edit the message or
+  add an unrelated reaction. Pass: no activation from old Alien history. Remove and add Alien
+  after the persisted cutoff: exactly one activation. Existing robot/Like cutoff is unchanged.
+- Private Alien QA registration and live execution remain pending: the requesting user's selected
+  personal Airtable connection and exact failed-message link are unavailable in this run.
+
 - Shortcut/Like verification: 79 focused tests passed, zero failures/skips. Independent review
   identified old-reaction replay when adding aliases; a persisted cutoff fixed it and the updated
   review found no blocking defects. Static checks and secret scanning passed. Live event delivery
