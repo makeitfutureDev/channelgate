@@ -174,10 +174,10 @@ test('Graph control event identity separates stop/tick and only emits the latest
   assert.deepEqual(await normalizeGraphEvents(message, row, opts), []);
 });
 
-for (const [label, value] of [['Like', 'like'], ['Heart eyes robot shortcut', ':hearteyesrobot:']])
+for (const [label, value] of [['Alien shortcut', ':alien:'], ['Like', 'like'], ['Heart eyes robot shortcut', ':hearteyesrobot:']])
 for (const source of ['native', 'graph']) for (const kind of ['personal', 'groupchat', 'channel']) {
   test(`${source} ${label} starts a ${kind} engine turn as the approved reactor`, async () => {
-    const conversation = { id: `19:activate-${value === 'like' ? 'like' : 'robot'}-${source}-${kind}@thread.v2`, conversationType: kind };
+    const conversation = { id: `19:activate-${value.replace(/:/g, '')}-${source}-${kind}@thread.v2`, conversationType: kind };
     let event;
     if (source === 'native') {
       event = normalized(activity(conversation, { type: 'messageReaction', id: 'activation-event',
@@ -185,14 +185,14 @@ for (const source of ['native', 'graph']) for (const kind of ['personal', 'group
       assert.equal(normalized(activity(conversation, { type: 'messageReaction',
         replyToId: 'target', reactionsRemoved: [{ type: value }] })), null);
     } else {
-      const reaction = { reactionType: value === 'like' ? '👍' : value, user: { user: { id: 'reactor-aad' } } };
+      const reaction = { reactionType: value === 'like' ? '👍' : value === ':alien:' ? '👽' : value, user: { user: { id: 'reactor-aad' } } };
       [event] = await normalizeGraphEvents({ id: 'target', messageType: 'message',
         replyToId: kind === 'channel' ? 'channel-root' : null,
         from: { user: { id: 'original-author-aad' } },
         body: { content: 'Reply exactly LIKE_TRIGGER_OK' }, reactions: [reaction],
         messageHistory: [{ actions: 'reactionAdded', modifiedDateTime: '2026-10-07T10:01:00Z', reaction }] },
         { conversationId: `teams:${conversation.id}`, startedAt: '2026-10-07T10:00:00Z',
-          reactionAliasesStartedAt: '2026-10-07T10:00:00Z', context: { conversation } },
+          reactionAliasesStartedAt: '2026-10-07T10:00:00Z', alienReactionStartedAt: '2026-10-07T10:00:00Z', context: { conversation } },
         { botId, now: () => Date.parse('2026-10-07T11:00:00Z'), resolveMember: async () => ({ id: owner }) });
     }
     const calls = [];

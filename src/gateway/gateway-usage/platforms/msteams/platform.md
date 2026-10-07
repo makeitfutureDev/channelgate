@@ -57,8 +57,9 @@ complete oversized edits use the authenticated browser settings.
 
 ## Reaction controls
 
-When Teams reaction events are enabled and delivered to the gateway, **Heart eyes robot**
-(`hearteyesrobot`, picker shortcut `:hearteyesrobot:`) starts a request as the reactor. 👍 **Like**
+When Teams reaction events are enabled and delivered to the gateway, 👽 **Alien**
+(`alien`, picker shortcut `:alien:` or Unicode 👽) starts a request as the reactor. **Heart eyes robot**
+(`hearteyesrobot`, picker shortcut `:hearteyesrobot:`) also starts a request. 👍 **Like**
 (`like`, or Unicode 👍 with an optional skin tone) is also accepted. Use the reaction picker;
 sending a shortcut as text does not add a reaction. Smile robot IDs remain recognized
 when Teams delivers them. **Stop sign** (`stopsign`)

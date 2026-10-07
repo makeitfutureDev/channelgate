@@ -223,3 +223,43 @@ test('queued notification initializes a missing alias cutoff before fetching mes
   await f.service.processNotifications([{ event }]);
   assert.equal(f.messages[1][1].reactionAliasesStartedAt, cutoff);
 });
+
+
+test('Alien cutoff initializes separately and persists across renewals and service recreation', async () => {
+  const f = fixture();
+  await f.service.ensure(f.row);
+  const stored = f.rows.get(f.row.conversationId);
+  const aliases = stored.reactionAliasesStartedAt;
+  delete stored.alienReactionStartedAt; // subscription from shortcut/Like version
+  f.advance(60_000);
+  await f.service.renew();
+  const cutoff = f.rows.get(f.row.conversationId).alienReactionStartedAt;
+  assert.equal(cutoff, '2026-09-09T10:01:00.000Z');
+  assert.equal(f.rows.get(f.row.conversationId).reactionAliasesStartedAt, aliases);
+  assert.equal(f.requests.length, 1, 'cached subscription stays active');
+  f.advance(21 * 60_000);
+  await f.service.ensure(f.row);
+  assert.equal(f.rows.get(f.row.conversationId).alienReactionStartedAt, cutoff);
+  const recreated = createTeamsGraphEvents({
+    auth: { token: async () => 'test-token' }, tenantId: 'tenant',
+    notificationUrl: 'https://example.org/api/teams/graph',
+    now: () => Date.parse('2026-09-09T10:23:00Z'),
+    store: { list: async () => [...f.rows.values()].map(item => ({ ...item })),
+      put: async item => f.rows.set(item.conversationId, { ...item }) },
+    onMessage: async () => {}, fetchImpl: async () => assert.fail('fresh subscription should be reused'),
+  });
+  await recreated.ensure(f.row);
+  assert.equal(f.rows.get(f.row.conversationId).alienReactionStartedAt, cutoff);
+  assert.equal(f.rows.get(f.row.conversationId).reactionAliasesStartedAt, aliases);
+});
+
+test('first notification persists a missing Alien cutoff before fetching history', async () => {
+  const f = fixture();
+  await f.service.ensure(f.row);
+  const aliases = f.rows.get(f.row.conversationId).reactionAliasesStartedAt;
+  delete f.rows.get(f.row.conversationId).alienReactionStartedAt;
+  f.advance(60_000);
+  await f.handle({ value: [f.notification()] });
+  assert.equal(f.messages[0][1].alienReactionStartedAt, '2026-09-09T10:01:00.000Z');
+  assert.equal(f.messages[0][1].reactionAliasesStartedAt, aliases);
+});

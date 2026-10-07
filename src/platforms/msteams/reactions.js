@@ -8,16 +8,19 @@ export function teamsReactionAction(value) {
   // Like is Teams' standard activation reaction. Graph can return its Unicode form,
   // including a skin tone; native activities use the documented `like` ID.
   if (/^👍[\u{1F3FB}-\u{1F3FF}]?$/u.test(name) || /^like(?:-tone[1-5])?$/.test(name)) return 'engage';
+  if (['👽', 'alien', '1f47d_extraterrestrialalien'].includes(name)) return 'engage';
   if (['🤖', 'robot', 'robot_face', 'smilerobot', 'hearteyesrobot'].includes(name)) return 'engage';
   if (['🛑', 'stopsign', 'stop_sign', 'octagonal_sign'].includes(name)) return 'stop';
   if (['✅', '2705_whiteheavycheckmark', 'white_check_mark'].includes(name)) return 'ack';
   return '';
 }
 
-// These spellings were ignored before the shortcut/Like expansion. Graph history can contain
-// old current reactions, so they need a persisted introduction cutoff before replay admission.
-export function teamsReactionRequiresCutover(value) {
+// Each expansion needs its own persisted introduction cutoff. A cutoff from an earlier
+// deployment cannot prevent newly supported reactions replaying pre-upgrade history.
+export function teamsReactionCutoverField(value) {
   const raw = String(value || '').replace(/\uFE0F/g, '').toLowerCase();
-  return Boolean(teamsReactionAction(value)) && (raw.includes(':') || raw !== raw.trim()
-    || /^👍/u.test(raw) || /^like(?:-tone[1-5])?$/.test(raw));
+  const name = raw.trim().replace(/^:([a-z0-9_]+):$/, '$1');
+  if (['👽', 'alien', '1f47d_extraterrestrialalien'].includes(name)) return 'alienReactionStartedAt';
+  return teamsReactionAction(value) && (raw.includes(':') || raw !== raw.trim()
+    || /^👍/u.test(raw) || /^like(?:-tone[1-5])?$/.test(raw)) ? 'reactionAliasesStartedAt' : '';
 }

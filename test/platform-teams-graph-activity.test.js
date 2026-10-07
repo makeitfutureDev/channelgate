@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { normalizeGraphEvents } from '../src/platforms/msteams/graph-activity.js';
-const row = { conversationId: 'teams:19:test@thread.v2', startedAt: '2026-09-09T10:00:00Z', reactionAliasesStartedAt: '2026-09-09T10:00:00Z', context: { conversation: { id: '19:test@thread.v2', conversationType: 'groupchat' }, serviceUrl: 'https://smba.trafficmanager.net/teams/', channelData: { tenant: { id: 'tenant' } } } };
+const row = { conversationId: 'teams:19:test@thread.v2', startedAt: '2026-09-09T10:00:00Z', reactionAliasesStartedAt: '2026-09-09T10:00:00Z', alienReactionStartedAt: '2026-09-09T10:00:00Z', context: { conversation: { id: '19:test@thread.v2', conversationType: 'groupchat' }, serviceUrl: 'https://smba.trafficmanager.net/teams/', channelData: { tenant: { id: 'tenant' } } } };
 const reaction = { reactionType: '🤖', user: { user: { id: 'reactor' } } };
 const fixture = () => ({ id: 'message1', messageType: 'message', from: { user: { id: 'author' } }, body: { contentType: 'html', content: '<p>Handle this &amp; that</p>' }, reactions: [reaction], messageHistory: [{ actions: 'reactionAdded', modifiedDateTime: '2026-09-09T10:01:00Z', reaction }] });
 const opts = { now: () => Date.parse('2026-09-09T11:00:00Z'), botId: '28:bot', resolveMember: async id => ({ id: `29:${id}`, name: id }) };
@@ -16,7 +16,7 @@ test('robot reaction runs as reactor and anchors the original message', async ()
   assert.equal(event.raw.eventId, legacyId, 'upgrading must not replay already-dispatched robot events');
 });
 test('Teams activation and control IDs trigger Graph reactions without granting authority to other emoji', async () => {
-  for (const reactionType of ['like', '👍', '👍🏽', 'like-tone3', 'smilerobot', 'hearteyesrobot', ':hearteyesrobot:', 'stopsign', '2705_whiteheavycheckmark']) {
+  for (const reactionType of ['alien', ':alien:', '👽', '1f47d_extraterrestrialalien', 'like', '👍', '👍🏽', 'like-tone3', 'smilerobot', 'hearteyesrobot', ':hearteyesrobot:', 'stopsign', '2705_whiteheavycheckmark']) {
     const message = fixture();
     message.reactions = [{ ...reaction, reactionType }];
     message.messageHistory[0].reaction = message.reactions[0];
@@ -94,4 +94,27 @@ test('expanded reaction aliases require persisted cutoff and cannot replay older
   }
   // Existing robot IDs retain their admission and stable dedup behavior on upgrade.
   assert.equal((await normalizeGraphEvents(fixture(), { ...row, reactionAliasesStartedAt: undefined }, opts)).length, 1);
+});
+
+
+test('Alien expansion has its own cutoff even on a previously upgraded subscription', async () => {
+  for (const reactionType of ['alien', ':alien:', '👽', '👽\uFE0F', '1f47d_extraterrestrialalien']) {
+    const message = fixture();
+    message.reactions = [{ ...reaction, reactionType }];
+    message.messageHistory[0].reaction = message.reactions[0];
+    const upgraded = { ...row, alienReactionStartedAt: '2026-09-09T10:02:00Z' };
+    assert.deepEqual(await normalizeGraphEvents(message, upgraded, opts), [], 'old Alien must not replay');
+    for (const cutoff of [undefined, 'invalid']) {
+      assert.deepEqual(await normalizeGraphEvents(message, { ...upgraded, alienReactionStartedAt: cutoff }, opts), []);
+    }
+    message.messageHistory[0].modifiedDateTime = upgraded.alienReactionStartedAt;
+    assert.deepEqual(await normalizeGraphEvents(message, upgraded, opts), [], 'cutoff equality is excluded');
+    message.messageHistory[0].modifiedDateTime = '2026-09-09T10:03:00Z';
+    const [event] = await normalizeGraphEvents(message, upgraded, opts);
+    assert.equal(event.reactionAction, 'engage');
+    assert.equal(event.userId, '29:reactor');
+    assert.equal(event.raw.eventId, (await normalizeGraphEvents(message, upgraded, opts))[0].raw.eventId);
+    message.messageHistory.push({ actions: 'reactionRemoved', modifiedDateTime: '2026-09-09T10:04:00Z', reaction: message.reactions[0] });
+    assert.deepEqual(await normalizeGraphEvents(message, upgraded, opts), []);
+  }
 });

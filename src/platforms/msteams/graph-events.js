@@ -68,8 +68,14 @@ export function createTeamsGraphEvents({ auth, notificationUrl, tenantId, store,
   // Persist before fetching history or reusing a live subscription. Once set, this survives
   // renewals/restarts; newly recognized aliases must never activate pre-upgrade reactions.
   async function prepareReactionAliases(row) {
-    if (Number.isFinite(Date.parse(row.reactionAliasesStartedAt))) return row;
-    const prepared = { ...row, reactionAliasesStartedAt: new Date(now()).toISOString() };
+    const prepared = { ...row };
+    let changed = false;
+    for (const field of ['reactionAliasesStartedAt', 'alienReactionStartedAt']) {
+      if (Number.isFinite(Date.parse(prepared[field]))) continue;
+      prepared[field] = new Date(now()).toISOString();
+      changed = true;
+    }
+    if (!changed) return row;
     await store.put(prepared);
     return prepared;
   }

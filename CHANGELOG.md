@@ -18,6 +18,10 @@ product overview.
 
 ## Unreleased
 
+- Teams can activate a request with 👽 Alien (`:alien:`), its bare ID, Unicode form, or documented
+  `1f47d_extraterrestrialalien` ID. Help recommends Alien; robot and Like remain supported.
+  A separate saved cutoff prevents older Alien reactions replaying after the upgrade.
+
 - Missing personal skill grants or dependencies no longer prevent unrelated requests from
   running. Available skills load normally, and streamed/final replies warn about omissions,
   including after engine fallback. Ownership and confinement checks remain enforced.
