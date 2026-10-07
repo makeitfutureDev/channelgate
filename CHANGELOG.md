@@ -18,6 +18,10 @@ product overview.
 
 ## Unreleased
 
+- Claude Cloud MCP discovery now marks connected servers without an admissible transport as
+  unavailable, suppresses unsafe CLI targets, and rejects new selections against fresh host
+  definitions. Existing invalid picks remain removable and are still dropped safely at run time.
+
 - Far fewer approval cards. A gateway tool that changes channel or gateway state is now automatic
   for the admin or channel manager who asked for it (modes, network, folders, MCP servers,
   secrets, tokens, skill settings, gateway update and restart, the license key, instruction

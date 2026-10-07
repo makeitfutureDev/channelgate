@@ -1,3 +1,4 @@
+import { assertNewMcpSelections } from "../../gateway/mcp-selection.js";
 // Channel-admin tools for the gateway control MCP server: the channel's MCP allowlist, the
 // mode switches (admin/bash/network/auto), working folder, Google Drive sync link, standing
 // instructions + memory, the gateway updater, and the gateway-usage guide. Split out of
@@ -68,7 +69,7 @@ export function register(server, ctx) {
       const meta = await loadMeta();
       const servers = await requireAdapter(activeEngine).discoverMcps({ channelId: activeEngine === "codex" && meta?.codexAuthSource === "channel" ? channelId : "" });
       if (!servers.length) return text("No MCP servers available on the host.");
-      return text(servers.map((s) => `• ${s.name}${s.connected ? "" : " (offline)"}`).join("\n"));
+      return text(servers.map((s) => `• ${s.name}${s.selectable === false ? " (unavailable: " + s.admissionReason + ")" : s.connected ? "" : " (offline)"}`).join("\n"));
     }
   );
 
@@ -97,6 +98,10 @@ export function register(server, ctx) {
       if (!(await requireManage())) return text("Only this channel's managers (or an admin) can change its MCP servers.");
       const sourceMeta = await loadMeta();
       const available = await requireAdapter(activeEngine).discoverMcps({ channelId: activeEngine === "codex" && sourceMeta?.codexAuthSource === "channel" ? channelId : "" });
+      const requested = available.filter(s => names.some(name => s.name.toLowerCase() === String(name).toLowerCase()))
+        .map(s => persistedSelectionForEngine(activeEngine, s)).filter(Boolean);
+      try { await assertNewMcpSelections(activeEngine, requested); }
+      catch (error) { return text(error.message); }
       const field = selectionFieldForEngine(activeEngine);
       const added = [];
       const unknown = [];

@@ -1,3 +1,4 @@
+import { assertNewMcpSelections } from "../gateway/mcp-selection.js";
 // Slack Socket Mode gateway. Receives message events across DM / group DM / public & private
 // channels, applies the gating rules (DM → no mention needed; everywhere else → require an
 // explicit @bot mention), authorizes the author against the channel's allowedUsers, then runs
@@ -841,6 +842,8 @@ async function cloudManagerItems(meta, engine) {
       name: String(entry.name || entry.id || key),
       description: String(entry.description || entry.target || entry.kind || ""),
       connected: entry.connected !== false,
+      selectable: entry.selectable !== false && available.includes(entry),
+      admissionReason: entry.admissionReason || (!available.includes(entry) ? "is no longer available in the host catalog" : ""),
       direct: directKeys.has(key),
       inherited: inheritedKeys.has(key),
       active: directKeys.has(key) || inheritedKeys.has(key),
@@ -1631,7 +1634,8 @@ async function connectAndWire(app) {
           const available = await requireAdapter(engine).discoverMcps({ channelId: engine === "codex" && meta?.codexAuthSource === "channel" ? meta.channelId : "" });
           selection = available.find((item) => cloudSelectionKey(engine, item) === key);
           selection = persistedSelectionForEngine(engine, selection);
-          if (!selection) throw new Error("That MCP capability is no longer available. Refresh the catalog and try again.");
+          if (!selection) throw new Error("That MCP capability has no admissible transport. Refresh the catalog or repair its host definition.");
+          await assertNewMcpSelections(engine, [selection]);
         }
         meta = await patchAuditedChannelSettings(entry, clicker, (current) => {
           return { [field]: cloudSelectionsAfterToggle(current[field], engine, key, { activate, selection }) };

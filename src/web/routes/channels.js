@@ -1,3 +1,4 @@
+import { assertNewMcpSelections } from "../../gateway/mcp-selection.js";
 // Channel + DM admin routes: per-DM config, the channel list/members/meta, Make-toolbox and
 // Drive-sync probes, the org-wide access/runtime resets, channel memory, and channel
 // instructions (CLAUDE.md). Split from admin.js; mounted by createAdminRouter so every URL is
@@ -263,6 +264,10 @@ export function createChannelsRouter({
       const body = req.body ?? {};
       const badModel = invalidModelOrEffort(body);
       if (badModel) return res.status(400).json({ error: badModel });
+      if (Array.isArray(body.allowedMcps)) {
+        try { await assertNewMcpSelections("claude", sanitizeMcps(body.allowedMcps), current.allowedMcps); }
+        catch (error) { return res.status(400).json({ error: error.message }); }
+      }
       const next_ = { ...current };
       if (["user", "admin", "custom"].includes(body.template)) next_.template = body.template;
       if (Array.isArray(body.skills)) next_.skills = body.skills;
@@ -358,6 +363,11 @@ export function createChannelsRouter({
       const body = req.body ?? {};
       const badModel = invalidModelOrEffort(body);
       if (badModel) return res.status(400).json({ error: badModel });
+      if (Array.isArray(body.allowedMcps)) {
+        const current = await getChannelMeta(entry.slug);
+        try { await assertNewMcpSelections("claude", sanitizeMcps(body.allowedMcps), current?.allowedMcps); }
+        catch (error) { return res.status(400).json({ error: error.message }); }
+      }
       // Custom working folder: Claude gets sandboxed to (and admin-mode runs execute in) this
       // path, so it must not be steerable to arbitrary host locations — require an existing
       // directory that realpath-resolves inside the allowlisted root (see /fs/list). Blank

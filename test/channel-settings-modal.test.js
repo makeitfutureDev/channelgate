@@ -801,3 +801,18 @@ test("Automations controls act only on this channel's rows and respect the enabl
   assert.equal(schedules.listForChannel(mine).some((s) => s.id === once.id), false);
   for (const row of [...schedules.listForChannel(mine), other]) schedules.deleteSchedule(row.id);
 });
+
+
+test("Cloud MCP manager marks inadmissible definitions and offers only removal for existing selections", () => {
+  const items = [
+    { key: "missing", name: "missing", selectable: false, admissionReason: "is not defined", active: false },
+    { key: "credentialed", name: "credentialed", selectable: false, admissionReason: "needs host credentials", direct: true, active: true },
+    { key: "healthy", name: "healthy", selectable: true, active: false },
+  ];
+  const view = buildCatalogManagerView(items, state, { kind: "cloud", channelName: "fixture", engine: "claude" });
+  const rows = view.blocks.filter(block => block.type === "section" && /missing|credentialed|healthy/.test(block.text?.text || ""));
+  assert.equal(rows.find(row => row.text.text.includes("*missing*")).accessory, undefined);
+  assert.equal(rows.find(row => row.text.text.includes("*credentialed*")).accessory.text.text, "Deactivate");
+  assert.equal(rows.find(row => row.text.text.includes("*healthy*")).accessory.text.text, "Activate");
+  assert.match(rendered(view), /unavailable:.*is not defined/);
+});

@@ -1,3 +1,4 @@
+import { assertNewMcpSelections } from "../../gateway/mcp-selection.js";
 // Settings + lifecycle admin routes: daemon settings (Slack tokens + options), on-demand
 // secret reveal, gateway self-update, daemon restart/stop, Slack reconnect/disconnect, the
 // filesystem browser, and UI reference data (/skills, /mcp/available). Split from admin.js;
@@ -26,6 +27,8 @@ import {
   getEngine,
   isEngineEnabled,
   getDmTemplates,
+  getOrgAccessGrants,
+  getChannelTemplate,
   APPROVAL_LINK_MODES,
   AI_TESTING_USER_ID_RE,
   CHANNEL_ACCESS_MODES,
@@ -574,6 +577,12 @@ export function createSettingsRouter({
       // Empty = the compiled-in default (src/ee/tiers.js). Staging points it elsewhere.
       if (typeof body.platformUrl === "string") patch.platformUrl = body.platformUrl.trim().replace(/\/+$/, "");
 
+      try {
+        if (patch.accessGrants) await assertNewMcpSelections("claude", patch.accessGrants.allowedMcps, getOrgAccessGrants().allowedMcps);
+        if (patch.channelTemplate) await assertNewMcpSelections("claude", patch.channelTemplate.allowedMcps, getChannelTemplate().allowedMcps);
+        if (patch.dmTemplates) for (const name of ["user", "admin"])
+          await assertNewMcpSelections("claude", patch.dmTemplates[name].allowedMcps, getDmTemplates()[name].allowedMcps);
+      } catch (error) { return res.status(400).json({ error: error.message }); }
       // Compare-and-swap when the client echoed the version it loaded: a save that would otherwise
       // revert somebody else's change (another admin, the skills sync, a license write, the
       // first-boot password upgrade) is refused rather than applied. A client that sends no
