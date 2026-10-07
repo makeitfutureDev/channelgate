@@ -6,6 +6,9 @@ import { getDefaultChannelAccess, applyChannelTemplate, getDefaultNudges } from 
 import { effectiveWorkDir, ensureChannelFolder } from "../gateway/folders.js";
 import { isAuthorized } from "../gateway/modes.js";
 import { runMessage } from "../gateway/run.js";
+import { footerText } from "../gateway/reply-stats.js";
+import { createConversationProgress } from "./conversation-progress.js";
+export { createConversationProgress } from "./conversation-progress.js";
 import { createUsageBank } from "../gateway/usage.js";
 import { logEvent } from "../util/logger.js";
 import { platformOr, platformSupports } from "./registry.js";
@@ -174,6 +177,7 @@ export function createIngest({ connector, log = console, run = runMessage, onCom
         signal,
         onDelta: progress.activity,
         onEvent: progress.event,
+        onRuntimeResolved: progress.runtime,
         progressReport: false,
         // Not `slack_foreground`: that origin is what permits escalation to dangerous permissions,
         // and it means "a watched, Slack-authenticated turn". These turns are watched and
@@ -197,6 +201,7 @@ export function createIngest({ connector, log = console, run = runMessage, onCom
     if (skipped.length) {
       text += `\n\n_Couldn't read ${skipped.length} attachment(s): ${skipped.join(", ")} — this surface only hands the bot files it uploaded directly._`;
     }
+    text += `\n\n_${footerText(result)}_`;
     await deliver(connector, message, placeholder, text, rememberReply);
     return { result };
     } });
@@ -240,42 +245,4 @@ async function deliver(connector, message, placeholder, text, rememberReply = ()
     formatted: { chunks },
     onPosted: rememberReply,
   });
-}
-
-// Progress contains state only, never model/tool payloads. At most one periodic update per
-// 30 seconds, with in-flight edits drained before the final answer to prevent stale overwrites.
-export function createConversationProgress({ connector, message, placeholder, adapter, log = console, intervalMs = 30000, now = Date.now }) {
-  const started = now();
-  let lastActivity = started;
-  let state = 'Working';
-  let pending = Promise.resolve();
-  let updating = false;
-  let stopped = false;
-  const agents = new Set();
-  const tick = () => {
-    if (stopped || updating) return;
-    const text = `${state} — ${Math.floor((now() - started) / 1000)}s elapsed; last activity ${Math.floor((now() - lastActivity) / 1000)}s ago; ${agents.size} subagent(s) running. Still connected.`;
-    updating = true;
-    pending = Promise.resolve().then(() => placeholder?.messageId && adapter.capabilities.messageEdit
-      ? connector.edit({ conversationId: placeholder.conversationId || message.rawConversationId, messageId: placeholder.messageId, text })
-      : connector.post({ conversationId: message.rawConversationId, threadKey: message.threadKey, text }))
-      .catch((err) => log.warn?.(`[${adapter.id}] progress update failed: ${err?.message || err}`))
-      .finally(() => { updating = false; });
-  };
-  const timer = setInterval(tick, Math.max(30000, intervalMs));
-  timer.unref?.();
-  return {
-    phase(label) { state = label; lastActivity = now(); },
-    activity() { lastActivity = now(); state = 'Working'; },
-    event(event) {
-      if (event?.kind === 'agent_activity') {
-        const key = String(event.id || event.name || 'agent');
-        if (event.status === 'running') agents.add(key); else agents.delete(key);
-      }
-      if (event?.kind === 'run_queued') state = `Waiting for a gateway run slot (position ${Number(event.position) || 1})`;
-      else if (event?.kind === 'notice') state = 'Working; waiting for the engine';
-      else { lastActivity = now(); state = 'Working'; }
-    },
-    async stop() { stopped = true; clearInterval(timer); await pending; },
-  };
 }

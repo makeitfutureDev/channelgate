@@ -3410,6 +3410,32 @@ unchanged-Slack-behaviour proof for the extracted mention matcher.
 
 ## Google Chat and Teams transports
 
+### Run details and app activity (2026-10-07)
+
+- [x] Automated: `node --test test/platform-run-details.test.js test/platform-controls.test.js
+      test/platform-ingest.test.js test/message-cost-visibility.test.js
+      test/runtime-integration-surfaces.test.js` — 43 passed. The actual Teams connector runs
+      against a fake Bot Framework API for Claude/Codex result shapes; final edits and failed-edit
+      fresh delivery include Slack's exact statistics and respect hidden cost. Fake-clock status
+      fixtures cover model changes/defaults, app use/failure, 100-event burst coalescing, payload
+      exclusion, alias-aware subagent counts, heartbeat and draining delayed edits before stop.
+      Long Teams replies preserve thread routing and put statistics once in the final chunk.
+      These are deterministic transport fixtures, not live engine acceptance.
+- [ ] LIVE, separately pinned to Claude and Codex: use an approved author in one owned Teams
+      personal chat, one installed group and one channel thread. Enable an already-connected,
+      read-only app tool for that author/channel. Send `Use the connected app's account metadata
+      tool to identify its account, then explain what you verified.` (mention the bot outside the
+      personal chat). Capture status with the configured model and app/server/tool name; no tool
+      arguments or returned data may appear in status. A longer run must show changing elapsed
+      time/last activity. The final answer must replace status and carry model, duration, this
+      turn's tokens, context use and the image. Repeat with Show message cost on/off; only cost
+      changes. Repeat a long answer that spans chunks; statistics occur once after the answer.
+      Stop a run while an app call is active; status must never overwrite the terminal stop.
+      Record exact private conversation IDs, engine pins, prompt, screenshots and observed pass
+      evidence in the private QA registry. Also smoke-check the shared path in a Google Chat
+      test space. Live evidence and private registry cases remain pending; this task's run has
+      no requester-personal Airtable connection, which deployment rules require for writes.
+
 - [x] Flat Teams/Google Chat DMs reach the real capability signer with a stable, nonempty session
       key. Flat groups start separate sessions per new message; quotes of original user messages,
       bot answers, and follow-ups resume the original. Conversation isolation and mention gating
