@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { normalizeGraphEvents } from '../src/platforms/msteams/graph-activity.js';
-const row = { conversationId: 'teams:19:test@thread.v2', startedAt: '2026-09-09T10:00:00Z', context: { conversation: { id: '19:test@thread.v2', conversationType: 'groupchat' }, serviceUrl: 'https://smba.trafficmanager.net/teams/', channelData: { tenant: { id: 'tenant' } } } };
+const row = { conversationId: 'teams:19:test@thread.v2', startedAt: '2026-09-09T10:00:00Z', reactionAliasesStartedAt: '2026-09-09T10:00:00Z', context: { conversation: { id: '19:test@thread.v2', conversationType: 'groupchat' }, serviceUrl: 'https://smba.trafficmanager.net/teams/', channelData: { tenant: { id: 'tenant' } } } };
 const reaction = { reactionType: '🤖', user: { user: { id: 'reactor' } } };
 const fixture = () => ({ id: 'message1', messageType: 'message', from: { user: { id: 'author' } }, body: { contentType: 'html', content: '<p>Handle this &amp; that</p>' }, reactions: [reaction], messageHistory: [{ actions: 'reactionAdded', modifiedDateTime: '2026-09-09T10:01:00Z', reaction }] });
 const opts = { now: () => Date.parse('2026-09-09T11:00:00Z'), botId: '28:bot', resolveMember: async id => ({ id: `29:${id}`, name: id }) };
@@ -15,8 +15,8 @@ test('robot reaction runs as reactor and anchors the original message', async ()
   const legacyId = createHash('sha256').update(JSON.stringify([row.conversationId, 'message1', 'reaction', 'reactor', '2026-09-09T10:01:00Z'])).digest('hex');
   assert.equal(event.raw.eventId, legacyId, 'upgrading must not replay already-dispatched robot events');
 });
-test('documented Teams robot IDs trigger Graph reactions without granting authority to other emoji', async () => {
-  for (const reactionType of ['smilerobot', 'hearteyesrobot', 'stopsign', '2705_whiteheavycheckmark']) {
+test('Teams activation and control IDs trigger Graph reactions without granting authority to other emoji', async () => {
+  for (const reactionType of ['like', '👍', '👍🏽', 'like-tone3', 'smilerobot', 'hearteyesrobot', ':hearteyesrobot:', 'stopsign', '2705_whiteheavycheckmark']) {
     const message = fixture();
     message.reactions = [{ ...reaction, reactionType }];
     message.messageHistory[0].reaction = message.reactions[0];
@@ -45,7 +45,7 @@ test('history dedup key survives later snapshots but remove/readd gets a distinc
   assert.notEqual(first.raw.eventId, added.raw.eventId);
 });
 test('removed, historical, nonrobot, missing roster and deleted messages do not trigger', async () => {
-  for (const change of [m => { m.reactions = []; }, m => { m.messageHistory[0].modifiedDateTime = row.startedAt; }, m => { m.messageHistory = [{ actions: 'reactionRemoved', reaction }]; }, m => { m.deletedDateTime = 'now'; }, m => { m.messageHistory[0].reaction = { ...reaction, reactionType: '👍' }; }]) {
+  for (const change of [m => { m.reactions = []; }, m => { m.messageHistory[0].modifiedDateTime = row.startedAt; }, m => { m.messageHistory = [{ actions: 'reactionRemoved', reaction }]; }, m => { m.deletedDateTime = 'now'; }, m => { m.messageHistory[0].reaction = { ...reaction, reactionType: '👎' }; }]) {
     const message = fixture(); change(message); assert.deepEqual(await normalizeGraphEvents(message, row, opts), []);
   }
   assert.deepEqual(await normalizeGraphEvents(fixture(), row, { ...opts, resolveMember: async () => null }), []);
@@ -78,4 +78,20 @@ test('channel reply reactions stay in native thread and quoted edits keep the re
 
 test('old history never replays after inbox tombstone retention', async () => {
   assert.deepEqual(await normalizeGraphEvents(fixture(), row, { ...opts, now: () => Date.parse('2026-09-20T11:00:00Z') }), []);
+});
+
+test('expanded reaction aliases require persisted cutoff and cannot replay older history', async () => {
+  for (const reactionType of ['like', '👍', ':hearteyesrobot:', ':stopsign:', ':white_check_mark:']) {
+    const message = fixture();
+    message.reactions = [{ ...reaction, reactionType }];
+    message.messageHistory[0].reaction = message.reactions[0];
+    message.lastModifiedDateTime = '2026-09-09T10:04:00Z'; // unrelated update must not replay old addition
+    const beforeUpgrade = { ...row, reactionAliasesStartedAt: '2026-09-09T10:02:00Z' };
+    assert.deepEqual(await normalizeGraphEvents(message, beforeUpgrade, opts), []);
+    assert.deepEqual(await normalizeGraphEvents(message, { ...row, reactionAliasesStartedAt: undefined }, opts), []);
+    message.messageHistory[0].modifiedDateTime = '2026-09-09T10:03:00Z';
+    assert.equal((await normalizeGraphEvents(message, beforeUpgrade, opts)).length, 1);
+  }
+  // Existing robot IDs retain their admission and stable dedup behavior on upgrade.
+  assert.equal((await normalizeGraphEvents(fixture(), { ...row, reactionAliasesStartedAt: undefined }, opts)).length, 1);
 });

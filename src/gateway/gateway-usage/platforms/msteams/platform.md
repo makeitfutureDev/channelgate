@@ -58,7 +58,10 @@ complete oversized edits use the authenticated browser settings.
 ## Reaction controls
 
 When Teams reaction events are enabled and delivered to the gateway, **Heart eyes robot**
-(`hearteyesrobot`, also Smile robot) starts a request as the reactor. **Stop sign** (`stopsign`)
+(`hearteyesrobot`, picker shortcut `:hearteyesrobot:`) starts a request as the reactor. 👍 **Like**
+(`like`, or Unicode 👍 with an optional skin tone) is also accepted. Use the reaction picker;
+sending a shortcut as text does not add a reaction. Smile robot IDs remain recognized
+when Teams delivers them. **Stop sign** (`stopsign`)
 requests cancellation of that session’s active and queued work; only the author or an administrator
 can stop it. React to the original message or a bot reply to select the session. **Tick button**
 (`2705_whiteheavycheckmark`) acknowledges a tracked reminder, including its second notice.

@@ -12,12 +12,12 @@
   Examples use Teams controls and explain their permissions and configuration requirements.
   The authorized native command responds before an engine turn, in the requesting conversation.
   Quoting the help card in a group chat continues the same session.
-- Reaction labels show Teams picker names and actual IDs: Heart eyes robot (`hearteyesrobot`),
+- Reaction labels show Teams picker names and actual IDs: Heart eyes robot (`:hearteyesrobot:`),
   Stop sign (`stopsign`), and Tick button / Checkmark button (`2705_whiteheavycheckmark`).
-  Heart eyes robot uses its picker name without a misleading plain robot glyph. The guide explains
-  that typing an ID as a message does not add a reaction. Teams intake recognizes the documented
-  robot IDs,
-  `stopsign` and `2705_whiteheavycheckmark`, plus Unicode/legacy aliases. Robot starts a request
+  The guide explains that typing an ID as a message does not add a reaction. Teams intake recognizes
+  both `hearteyesrobot` and the picker shortcut `:hearteyesrobot:` as activation IDs. Like (`like` or
+  Unicode 👍, including skin tones) is an alternative. Existing robot IDs remain supported alongside
+  `stopsign` and `2705_whiteheavycheckmark`, plus Unicode/legacy aliases. Activation starts a request
   as the reactor. Stop cancels only the selected session’s active and queued work with the same
   author/admin checks as `/stop`. Channel replies and group quotes resolve to their stored root.
   Tick closes a tracked reminder’s acknowledgment chain from its original or escalation message;
@@ -25,7 +25,8 @@
   Teams personal follow-up dismissal remains unavailable. All actions pass conversation admission,
   reactor authorization and the sudo thread gate before any mutation; target text cannot execute
   a slash command. Graph and native events retain single transport ownership, stable deduplication
-  and fresh/current reaction checks. Group/channel reactions need configured event delivery and
+  and fresh/current reaction checks. Newly accepted alias spellings have a persisted subscription
+  cutoff so older reactions cannot activate on later unrelated Graph updates. Group/channel reactions need configured event delivery and
   Microsoft permissions. The handlers precede engine dispatch for Stop/Tick.
 
 ## Claude login for nested commands

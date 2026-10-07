@@ -173,3 +173,37 @@ test('Graph control event identity separates stop/tick and only emits the latest
   message.reactions = [];
   assert.deepEqual(await normalizeGraphEvents(message, row, opts), []);
 });
+
+for (const [label, value] of [['Like', 'like'], ['Heart eyes robot shortcut', ':hearteyesrobot:']])
+for (const source of ['native', 'graph']) for (const kind of ['personal', 'groupchat', 'channel']) {
+  test(`${source} ${label} starts a ${kind} engine turn as the approved reactor`, async () => {
+    const conversation = { id: `19:activate-${value === 'like' ? 'like' : 'robot'}-${source}-${kind}@thread.v2`, conversationType: kind };
+    let event;
+    if (source === 'native') {
+      event = normalized(activity(conversation, { type: 'messageReaction', id: 'activation-event',
+        replyToId: 'target', entities: [], reactionsAdded: [{ type: value }] }));
+      assert.equal(normalized(activity(conversation, { type: 'messageReaction',
+        replyToId: 'target', reactionsRemoved: [{ type: value }] })), null);
+    } else {
+      const reaction = { reactionType: value === 'like' ? '👍' : value, user: { user: { id: 'reactor-aad' } } };
+      [event] = await normalizeGraphEvents({ id: 'target', messageType: 'message',
+        replyToId: kind === 'channel' ? 'channel-root' : null,
+        from: { user: { id: 'original-author-aad' } },
+        body: { content: 'Reply exactly LIKE_TRIGGER_OK' }, reactions: [reaction],
+        messageHistory: [{ actions: 'reactionAdded', modifiedDateTime: '2026-10-07T10:01:00Z', reaction }] },
+        { conversationId: `teams:${conversation.id}`, startedAt: '2026-10-07T10:00:00Z',
+          reactionAliasesStartedAt: '2026-10-07T10:00:00Z', context: { conversation } },
+        { botId, now: () => Date.parse('2026-10-07T11:00:00Z'), resolveMember: async () => ({ id: owner }) });
+    }
+    const calls = [];
+    const f = fixture(async args => { calls.push(args); return { content: 'LIKE_TRIGGER_OK' }; });
+    await f.ingest({ ...event, userId: '29:like-unapproved' });
+    assert.equal(calls.length, 0, 'Activation cannot grant gateway authorization');
+    await f.ingest(event);
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0].authorId, owner);
+    assert.equal(calls[0].text, event.text);
+    assert.equal(calls[0].threadKey, kind === 'channel' ? (source === 'graph' ? 'channel-root' : 'target')
+      : kind === 'groupchat' ? 'group:target' : event.conversationId);
+  });
+}

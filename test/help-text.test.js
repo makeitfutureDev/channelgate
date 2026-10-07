@@ -11,7 +11,7 @@ const { teamsAdapter } = await import('../src/platforms/msteams.js');
 test("Teams /help includes practical workflows and its supported commands", () => {
   for (const expected of [
     '**How to use me**', '`@agent /help`', 'quote the original message', 'choose **Heart eyes robot**',
-    'Heart eyes robot — `hearteyesrobot`', 'Stop sign — `stopsign`',
+    'Heart eyes robot — `:hearteyesrobot:`', '👍 Like (`like`) also starts a request', 'Stop sign — `stopsign`',
     'Tick button (Checkmark button) — `2705_whiteheavycheckmark`',
     'typing a code as a message does not add a reaction', 'Tick button acknowledges a tracked reminder', 'Removing a reaction does not reopen',
     'local Whisper', 'Only the run author or an administrator', 'requests for the same session queue',
