@@ -6,7 +6,7 @@ import { mdToMrkdwn, chunkMrkdwn, resolveMentions, createMentionStream } from ".
 import { createTtlSet, isSlackInvalidBlocksError, postChunkedReply, MAX_SLACK_CHARS } from "./util.js";
 import { footerText, footerButtons, footerBlocks } from "./footer.js";
 import { answerImageBlocks, shareAnswerImageFiles } from "./images.js";
-import { setAgentSessionStatus, agentSessionsMode, SESSION_STATUS } from "./agent-sessions.js";
+import { setAgentSessionStatus, nativeSessionStatus, SESSION_STATUS } from "./agent-sessions.js";
 import { modelLabel } from "../gateway/model-info.js";
 import { engineLabel } from "../engines/registry.js";
 import { describeSilence } from "../engines/watchdog.js";
@@ -53,7 +53,10 @@ function normalizeLoadingMessage(message) {
 export function setAssistantStatus(client, channel, threadTs, status, loadingMessages = []) {
   if (!threadTs) return Promise.resolve(false);
   const key = `${channel}:${threadTs}`;
-  if (assistantStatusOff.has(key)) return Promise.resolve(false);
+  // A CLEAR is never gated: a thread that refused an activity write may still hold a native
+  // session in `processing` (the Stop button up), and Slack never moves it off that on its own.
+  // agent-sessions.js remembers per thread which surface refused, so this costs nothing extra.
+  if (status && assistantStatusOff.has(key)) return Promise.resolve(false);
   const normalizedLoadingMessages = loadingMessages
     .slice(0, SLACK_LOADING_MESSAGE_MAX_COUNT)
     .map(normalizeLoadingMessage);
@@ -61,20 +64,23 @@ export function setAssistantStatus(client, channel, threadTs, status, loadingMes
     .then((accepted) => {
       // Not an assistant thread / not a member / unusable thread_ts — fall back to the placeholder
       // edit, and stop asking for this thread.
-      if (!accepted) assistantStatusOff.add(key);
+      if (!accepted && status) assistantStatusOff.add(key);
       return accepted;
     })
     .catch(() => {
-      assistantStatusOff.add(key);
+      if (status) assistantStatusOff.add(key);
       return false;
     });
 }
 
 // A mid-turn rollover closes a live message while the turn goes on. On the native session surface
 // `chat.stopStream` would otherwise mark the session `active` (no Stop button, no loading UX)
-// until the next status heartbeat re-asserts it — keep it `processing` across the rollover.
-function rolloverStopArgs(args = {}) {
-  return agentSessionsMode().status === "native" ? { ...args, session_status: SESSION_STATUS.processing } : args;
+// until the next status heartbeat re-asserts it — keep it `processing` across the rollover, but
+// only on a thread whose session is known to be processing natively.
+function rolloverStopArgs(channel, threadTs, args = {}) {
+  return nativeSessionStatus(channel, threadTs) === SESSION_STATUS.processing
+    ? { ...args, session_status: SESSION_STATUS.processing }
+    : args;
 }
 
 // Turn a tool name (and assembled target) into a readable label. MCP tools come through as
@@ -963,7 +969,7 @@ function startStreamingProgress(client, { channel, threadTs, isDM, authorId, tea
         const compiledMarkdown = streamMarkdown;
         const fence = hadAnswer ? activeMarkdownFence(streamMarkdown) : null;
         try {
-          await retiring.stop(rolloverStopArgs({
+          await retiring.stop(rolloverStopArgs(channel, threadTs, {
             markdown_text: hadAnswer
               ? `${fence ? `\n${fence.marker}` : ""}\n\n_⏳ Refreshing the live reply below…_`
               : "_⏳ Refreshing live progress below…_",
@@ -1005,7 +1011,7 @@ function startStreamingProgress(client, { channel, threadTs, isDM, authorId, tea
         if (terminal || timelineOff || stopped || !timelineStreamer) return;
         const retiring = timelineStreamer;
         const retiringTs = retiring.ts;
-        await retiring.stop(rolloverStopArgs({ chunks: timeline.retirementSnapshot() }));
+        await retiring.stop(rolloverStopArgs(channel, threadTs, { chunks: timeline.retirementSnapshot() }));
         shimmer?.afterMessageActivity?.({ immediate: true });
         timelineStreamer = client.chatStream(streamArgs);
         timelineStartedAt = null;
@@ -1251,10 +1257,11 @@ function startStreamingProgress(client, { channel, threadTs, isDM, authorId, tea
         // streamed head closes without them — and without the composed blocks, which follow it.
         const finalFooterBlocks = hasOverflow ? [] : footerBlocks(result, menu);
         const composedBlocks = hasOverflow ? [] : replyBlocks;
-        // Terminal block sets, richest first. Slack rejects a whole stopStream for one bad block,
-        // so a rejected write is retried with progressively fewer: the agent's composed blocks go
-        // first (the most varied Block Kit), then image previews (a bad/unreachable URL is the
-        // known failure), then the feedback controls, so none of them ever discards the stats
+        // Terminal block sets, richest first. Slack rejects a whole stopStream for one bad block
+        // without saying which, so a rejected write is retried with ONE suspect removed at a time
+        // — image previews first (a bad/unreachable URL is the known failure), then the agent's
+        // composed blocks, then the feedback controls — before anything else is given up, so a
+        // valid chart is not discarded for a broken image, and nothing ever discards the stats
         // footer.
         const plainFooterBlocks = hasOverflow ? [] : footerBlocks(result, menu, { feedback: false });
         const candidates = [];
@@ -1263,7 +1270,10 @@ function startStreamingProgress(client, { channel, threadTs, isDM, authorId, tea
           if (!candidates.some((candidate) => candidate.key === key)) candidates.push({ key, blocks });
         };
         addCandidate([...imageBlocks, ...composedBlocks, ...finalFooterBlocks]);
+        addCandidate([...composedBlocks, ...finalFooterBlocks]);
         addCandidate([...imageBlocks, ...finalFooterBlocks]);
+        addCandidate([...imageBlocks, ...composedBlocks, ...plainFooterBlocks]);
+        addCandidate([...composedBlocks, ...plainFooterBlocks]);
         addCandidate(finalFooterBlocks);
         addCandidate(plainFooterBlocks);
         addCandidate([]);
@@ -1294,17 +1304,25 @@ function startStreamingProgress(client, { channel, threadTs, isDM, authorId, tea
             // sends blocks only — never the terminal markdown a second time: that text is still in
             // ChatStreamer's buffer from the rejected request. A stop that Slack accepts ends the
             // stream, so the loop ends on the first success whether or not the seal then lands.
-            let delivered = false;
+            let accepted = false;
             for (const { blocks } of candidates.slice(1)) {
               try {
                 await answerStreamer.stop(blocks.length ? { blocks } : undefined);
-                delivered = await sealDelivered();
+                accepted = true;
                 break;
               } catch (retryError) {
                 if (!isSlackInvalidBlocksError(retryError)) break;
               }
             }
-            if (delivered) return;
+            // The seal is outside the loop: a stop Slack accepted has ended the stream, and a
+            // seal that then fails must not make the loop call stop() on a completed stream.
+            if (accepted) {
+              try {
+                if (await sealDelivered()) return;
+              } catch (sealError) {
+                reportStreamFailure("stop seal", sealError);
+              }
+            }
           }
           failed = true;
         }

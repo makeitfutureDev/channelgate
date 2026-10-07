@@ -94,6 +94,33 @@ test("an ordinary channel thread that only the native surface accepts still gets
   ]);
 });
 
+test("a transient native failure never strands a processing session, and the clear is never gated", async () => {
+  const calls = [];
+  let fail = false;
+  const client = {
+    apiCall: async (method, payload) => {
+      calls.push([method, payload.status]);
+      if (method === "agents.sessions.setStatus" && fail) throw slackError("internal_error");
+      if (method === "assistant.threads.setStatus") throw slackError("invalid_thread"); // an ordinary channel thread
+    },
+  };
+  assert.equal(await setAssistantStatus(client, "C_T", "7.7", "is thinking…"), true);
+  fail = true;
+  // A transient failure while already processing is not a refusal of the thread…
+  assert.equal(await setAgentSessionStatus(client, { channel: "C_T", threadTs: "7.7", phrase: "is using Bash…", status: "processing" }), true);
+  assert.equal(nativeSessionStatus("C_T", "7.7"), "processing");
+  // …and a clear always reaches Slack, even for a thread whose activity writes were refused.
+  assert.equal(await setAssistantStatus(client, "C_T", "9.9", "is thinking…"), false); // refused on both surfaces
+  fail = false;
+  await setAssistantStatus(client, "C_T", "7.7", "");
+  await setAssistantStatus(client, "C_T", "9.9", "");
+  // 7.7's first processing, 9.9's failed processing attempt, then both clears — no native write for
+  // 7.7's phrase change while it was already processing.
+  assert.deepEqual(calls.filter(([method]) => method === "agents.sessions.setStatus").map(([, status]) => status),
+    ["processing", "processing", "active", "active"]);
+  assert.equal(nativeSessionStatus("C_T", "7.7"), "active");
+});
+
 test("renames go native with the 200-character title and empty titles are ignored", async () => {
   const calls = [];
   const client = { apiCall: async (method, payload) => { calls.push([method, payload]); } };
@@ -154,15 +181,15 @@ test("the native Stop button stops only that thread for an authorized user and c
   await handler({ event: { channel: "C1", thread_ts: "2.2", user: "U_OK", event_ts: "2.5" }, client, body: { event_id: "Ev2" } });
   assert.equal(stops.length, 2);
   assert.deepEqual(statuses, [["C1", "2.2", ""]]);
-  // An unauthorized user stops nothing but still cannot leave the loading UX stuck.
+  // An unauthorized user stops nothing and does not touch the session the run still owns.
   await handler({ event: { channel: "C1", thread_ts: "3.3", user: "U_NOPE", event_ts: "3.5" }, client, body: { event_id: "Ev3" } });
   assert.equal(stops.length, 2);
-  assert.deepEqual(statuses.at(-1), ["C1", "3.3", ""]);
+  assert.equal(statuses.length, 1);
   // The bot's own events and malformed payloads are ignored.
   await handler({ event: { channel: "C1", thread_ts: "4.4", user: "UBOT", event_ts: "4.5" }, client, body: { event_id: "Ev4" } });
   await handler({ event: { channel: "C1" }, client, body: { event_id: "Ev5" } });
   assert.equal(stops.length, 2);
-  assert.equal(statuses.length, 2);
+  assert.equal(statuses.length, 1);
   assert.ok(app.events.get("agent_session_title_changed"));
 });
 

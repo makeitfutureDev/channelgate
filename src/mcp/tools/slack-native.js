@@ -351,8 +351,11 @@ export function register(server, ctx) {
   // ── Composed replies — Block Kit attached to the FINAL answer ──────────────────
   // The handler validates and acknowledges; the daemon reads the call from the engine stream
   // (engines/stream.js, engines/codex.js → slack/reply-blocks.js) and progress.js appends the
-  // blocks under the answer text on chat.stopStream. Same ack-only posture as report_progress.
-  server.registerTool(
+  // blocks under the answer text on chat.stopStream. Same ack-only posture as report_progress —
+  // and the same gate: only a run with a live Slack progress writer (a foreground turn, a visible
+  // API run) is offered the tool, so a scheduled, background or clean run never stages blocks
+  // that nothing would render.
+  if (ctx.progressReport) server.registerTool(
     "slack_compose_reply",
     {
       description:

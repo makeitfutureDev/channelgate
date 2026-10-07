@@ -10,7 +10,7 @@
 // here, so the same path serves Claude and Codex and nothing a tool result says can inject blocks.
 import { z } from "zod";
 import { buildChartBlock } from "./charts.js";
-import { buildTableBlock } from "./tables.js";
+import { buildTableBlock, TABLE_ROW_ACTION_ID } from "./tables.js";
 import { mdToMrkdwn } from "./format.js";
 
 const TOOL_NAMES = new Set(["slack_compose_reply", "mcp__gateway__slack_compose_reply"]);
@@ -30,7 +30,7 @@ const MAX_LINK_BUTTONS = 5;
 const trimmed = (max) => z.string().trim().min(1).max(max);
 // No zod .url(): since zod 4 it normalizes before later checks. The refine sees the raw value.
 const urlSchema = z.string().max(3000).refine((value) => {
-  if (value !== value.trim()) return false;
+  if (value !== value.trim() || /[\s\x00-\x1f\x7f]/.test(value)) return false;
   try {
     const parsed = new URL(value);
     return Boolean(parsed.hostname) && (parsed.protocol === "http:" || parsed.protocol === "https:");
@@ -111,6 +111,15 @@ function mrkdwnSection(markdown) {
   return { type: "section", text: { type: "mrkdwn", text } };
 }
 
+// Card copy is model text too: it goes through the same Markdown→mrkdwn conversion as a section,
+// which defangs raw Slack control sequences (`<!channel>`, `<@U…>`, `<url|label>`) — a composed
+// card must not be the one place an injected answer can fire a broadcast.
+function cardText(value, field, max) {
+  const text = mdToMrkdwn(String(value || "")).trim();
+  if (text.length > max) throw new Error(`\`${field}\` must be ${max} characters or fewer once rendered.`);
+  return text ? { type: "mrkdwn", text } : null;
+}
+
 function linkButton({ label, url }, actionId) {
   return {
     type: "button",
@@ -149,6 +158,8 @@ export function buildReplyBlocks(sections) {
           rows: section.rows,
           pageSize: section.page_size,
           rowHeaderColumn: section.row_header_column ?? 0,
+          // Two tables in one reply must not repeat a row button's action_id.
+          actionIdPrefix: `${TABLE_ROW_ACTION_ID}_s${index}`,
         }).block);
         break;
       case "collapsible":
@@ -161,11 +172,16 @@ export function buildReplyBlocks(sections) {
         });
         break;
       case "card": {
-        const card = { type: "card", title: { type: "mrkdwn", text: section.title } };
-        if (section.subtitle) card.subtitle = { type: "mrkdwn", text: section.subtitle };
-        if (section.body) card.body = { type: "mrkdwn", text: section.body };
-        if (section.subtext) card.subtext = { type: "mrkdwn", text: section.subtext };
-        if (section.image_url) card.hero_image = { type: "image", image_url: section.image_url, alt_text: section.title };
+        const title = cardText(section.title, `${field}.title`, MAX_CARD_TEXT);
+        if (!title) throw new Error(`\`${field}.title\` is required.`);
+        const card = { type: "card", title };
+        const subtitle = cardText(section.subtitle, `${field}.subtitle`, MAX_CARD_TEXT);
+        const body = cardText(section.body, `${field}.body`, MAX_CARD_BODY);
+        const subtext = cardText(section.subtext, `${field}.subtext`, MAX_CARD_BODY);
+        if (subtitle) card.subtitle = subtitle;
+        if (body) card.body = body;
+        if (subtext) card.subtext = subtext;
+        if (section.image_url) card.hero_image = { type: "image", image_url: section.image_url, alt_text: String(section.title).slice(0, 150) };
         if (section.buttons?.length) {
           card.actions = section.buttons.map((button) => linkButton(button, `cg_reply_link_${buttonSeq++}`));
         }

@@ -40,7 +40,7 @@ a header row, pagination, sorting, and filtering.
     (a column sorts numerically only when every cell in it is a number);
   - a **string** — plain text, or lightweight Markdown that becomes a formatted cell:
     `[label](https://…)` and bare `https://` URLs become clickable links, `**bold**`, `` `code` ``,
-    `~~strike~~` style the text, `<@U…>` is a real mention. Use `"—"` for deliberately empty values;
+    `~~strike~~` style the text (a raw `<@U…>` stays text). Use `"—"` for deliberately empty values;
   - an **object**, when you want to be explicit: `{text, url}` a link, `{text, bold|italic|strike|
     code: true}` formatting, `{user: "U…"}` a mention, `{button: {label, url}}` a **row button**
     that opens the URL (*Open task*, *View invoice*, *Inspect run*). Buttons take public https

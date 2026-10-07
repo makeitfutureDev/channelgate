@@ -6747,7 +6747,10 @@ none` for its cases and live gates. Kept as history.
       button, a unique `cg_table_row_<row>_<col>` action id and a plain-text fallback; a header
       with markers is stripped to plain text; `ftp:` URLs, a button without URL or label, a
       malformed user id, an empty object and `null` are refused before the call; readable text (not
-      markup) counts against the cap.
+      markup) counts against the cap. A raw `<@U…>` in a string stays text (only the `{user}` cell
+      pings), URLs keep balanced parentheses and shed trailing punctuation, `** not bold **` stays
+      literal, a cell of 19,000 `[` parses in linear time and an oversized table is refused before
+      parsing.
 - [ ] Live, both Claude and Codex: ask for a table of three open items with a link in one column
       and an *Open* row button per row. Expect one native data table whose links are clickable,
       whose buttons open the URL (no Slack warning triangle after the click — the ack-only handler
@@ -6827,15 +6830,19 @@ Claude and on Codex.
       distinct `cg_reply_link_<n>` button ids; an empty list, a pie without segments, a
       `javascript:` button URL, a ragged table, four card buttons and thirteen sections are
       refused with the reason; the normalizer accepts a JSON string or object and returns `null`
-      for anything invalid.
+      for anything invalid. Card title/subtitle/body are defanged like reply text (`<!channel>`,
+      `<!here>`, `<url|label>` never reach Slack raw); two tables in one reply get distinct row
+      button ids; a URL with a newline is refused. The tool is registered only when the run has a
+      live progress writer (`ctx.progressReport`), and `reply_blocks` events are dropped in clean
+      runs, so a scheduled, background or clean run is never told its blocks will render.
 - [x] Automated (same file): a Codex `mcp_tool_call` item for `slack_compose_reply` becomes the
       `reply_blocks` event and no tool row (its completion is dropped); a Claude stream-json
       `tool_use` of `mcp__gateway__slack_compose_reply` becomes the same event and no `tool_use`
       row; `finalize` appends the LATEST snapshot's blocks between the answer text and the stats
       footer (`section, divider, context, actions, context_actions`); an `invalid_blocks` answer is
-      retried without the composed blocks, then without the feedback controls, each retry sending
-      blocks only and never a duplicate classic answer; the classic fallback carries the composed
-      blocks on the answer message.
+      retried with one suspect removed at a time — image previews, then the composed blocks, then
+      the feedback controls — each retry sending blocks only and never a duplicate classic answer;
+      the classic fallback carries the composed blocks on the answer message.
 - [ ] Live, both Claude and Codex, in an owned QA fixture: ask "give me Q3 spend: a short takeaway,
       a bar chart by month, a sortable vendor table with an Open button per row, and a collapsed
       Sources panel — all in one message". Expect ONE reply message: the streamed takeaway text,
@@ -6860,9 +6867,12 @@ Claude and on Codex.
       thread neither surface accepts reports `false`; an ordinary channel thread that only the
       native surface accepts still gets `processing` → `active`; renames go native with a
       200-character title; the `agent_session_stopped` handler stops only the event's thread for an
-      authorized user, ignores a redelivered `event_id`, moves a stale or unauthorized session to
-      `active` instead of leaving it `processing`, ignores the bot's own events and malformed
-      payloads; `agent_session_title_changed` is registered.
+      authorized user, ignores a redelivered `event_id`, moves an authorized press on a stale
+      session to `active` instead of leaving it `processing`, leaves an unauthorized press alone,
+      ignores the bot's own events and malformed payloads; `agent_session_title_changed` is
+      registered. A transient native failure (`internal_error`) while already `processing` is not
+      a refusal and never flips the mode; a status CLEAR is never gated by an earlier refused
+      activity write, so a session can always be moved off `processing`.
 - [x] Automated (`test/channelgate-rename.test.js`, `test/slack-agent-sessions.test.js`): the
       manifest subscribes to `agent_session_stopped` and `agent_session_title_changed` (13 bot
       events) and registers `/model`.

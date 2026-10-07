@@ -31,7 +31,10 @@ export function registerAgentInterfaceHandlers(app, {
       const entry = await authorizedControlEntry(target.channel, target.user);
       let stopped = 0;
       if (entry) stopped = await stopRunsInChannel(client, target.channel, entry.slug, target.user, target.threadTs);
-      if (!stopped) void setAssistantStatus?.(client, target.channel, target.threadTs, "");
+      // A stopped run clears its own session. An authorized press that found nothing running
+      // (a stale session) still has to move it off `processing`, or the loading UX stays up for
+      // an hour. An unauthorized press changes nothing: the run it could not stop goes on.
+      if (entry && !stopped) void setAssistantStatus?.(client, target.channel, target.threadTs, "");
       void logEvent("agent_session_stopped", {
         channel: target.channel,
         threadKey: target.threadTs,

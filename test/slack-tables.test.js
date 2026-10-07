@@ -124,6 +124,38 @@ test("rich cells: links, formatting, mentions and row buttons become rich_text /
   assert.equal(new Set(ids).size, ids.length);
 });
 
+test("cell Markdown keeps literal data literal: raw mentions, globs, URL parentheses and punctuation", () => {
+  const table = buildTableMessage({
+    caption: "Edge cases",
+    headers: ["A"],
+    rows: [
+      ["ping <@U123ABC> please"],
+      ["see https://en.wikipedia.org/wiki/Foo_(bar), then (https://a.example/c) and https://x.example/z."],
+      ["[w](https://en.wikipedia.org/wiki/Foo_(bar)) and ** not bold ** and **bold**"],
+    ],
+  }).blocks[0];
+  assert.deepEqual(table.rows[1][0], { type: "raw_text", text: "ping <@U123ABC> please" }, "a raw mention in a string is never a ping");
+  assert.deepEqual(table.rows[2][0].elements[0].elements, [
+    { type: "text", text: "see " },
+    { type: "link", url: "https://en.wikipedia.org/wiki/Foo_(bar)" },
+    { type: "text", text: ", then (" },
+    { type: "link", url: "https://a.example/c" },
+    { type: "text", text: ") and " },
+    { type: "link", url: "https://x.example/z" },
+    { type: "text", text: "." },
+  ]);
+  assert.deepEqual(table.rows[3][0].elements[0].elements, [
+    { type: "link", url: "https://en.wikipedia.org/wiki/Foo_(bar)", text: "w" },
+    { type: "text", text: " and ** not bold ** and " },
+    { type: "text", text: "bold", style: { bold: true } },
+  ]);
+  // A cell full of openers costs linear time, and an oversized table is refused before parsing.
+  const started = Date.now();
+  buildTableMessage({ caption: "x", headers: ["A"], rows: [["[".repeat(19_000)]] });
+  assert.ok(Date.now() - started < 1_000);
+  assert.throws(() => buildTableMessage({ caption: "x", headers: ["A"], rows: Array.from({ length: 50 }, () => ["[".repeat(2_000)]) }), /20,000-character limit/);
+});
+
 test("rich cells are validated before the API call", () => {
   assert.throws(() => buildTableMessage({ caption: "x", headers: ["A"], rows: [[{ url: "ftp://nope" }]] }), /absolute http\(s\) URL/);
   assert.throws(() => buildTableMessage({ caption: "x", headers: ["A"], rows: [[{ button: { label: "Open" } }]] }), /button\.url.*required/);

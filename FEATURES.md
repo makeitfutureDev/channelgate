@@ -1719,9 +1719,10 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
   rows with exact rectangular-shape validation, numeric cells kept as `raw_number` for numeric
   sorting, an accessible row-header column, and Slack's 20,000-character aggregate cell limit
   (readable text; markup and link URLs do not count). **Rich cells**: a string carrying lightweight
-  Markdown — `[label](url)`, a bare https URL, `**bold**`, `` `code` ``, `~~strike~~`, `<@U…>` —
-  becomes a `rich_text` cell with real links, styling and mentions; an explicit object cell
-  `{text, url}` / `{text, bold|italic|strike|code}` / `{user}` does the same, and
+  Markdown — `[label](url)`, a bare https URL, `**bold**`, `` `code` ``, `~~strike~~` — becomes a
+  `rich_text` cell with real links and styling (a raw `<@U…>` in a string stays text, as in a
+  reply); an explicit object cell `{text, url}` / `{text, bold|italic|strike|code}` does the
+  same, `{user}` is the one way cell data pings someone, and
   `{button: {label, url}}` becomes an `action_cell` **row button** (unique `cg_table_row_<r>_<c>`
   action ids, acknowledged by the ack-only handler) that opens a public https URL. Header cells
   stay plain text (markers stripped) because Slack refuses rich text there; URLs are validated as
@@ -1785,10 +1786,14 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
   With an overflowing answer the blocks ride the last follow-up with the footer; the classic
   fallback carries them on the answer message. **Tiered terminal recovery**: Slack rejects a whole
   `stopStream` for one bad block, so an `invalid_blocks` answer is retried with progressively
-  fewer — without the composed blocks, then without image previews, then without the feedback
-  controls, then with no blocks — each retry sending blocks only (never the terminal Markdown the
-  SDK already retains), so no visual can ever discard the answer or its stats footer. Buttons take
-  public https URLs only (`cg_reply_link_<n>` ids, ack-only). The `gateway-usage` skill documents
+  fewer, one suspect at a time — image previews (the known failure), then the composed blocks,
+  then the feedback controls, then with no blocks — each retry sending blocks only (never the
+  terminal Markdown the SDK already retains), so no visual can ever discard the answer or its
+  stats footer. Card copy is converted and defanged like reply text, so an injected `<!channel>`
+  never fires. Buttons take public https URLs only (`cg_reply_link_<n>` ids, ack-only). The tool
+  is offered only to runs with a live Slack progress writer (the same `progressReport` gate as
+  `report_progress`), so a scheduled, background or clean run is never told its blocks will
+  render. The `gateway-usage` skill documents
   it in `references/composed-replies.md` with a row in the capability map and pointers from the
   chart and table references. Slack only: other surfaces ignore the event. Any allowed user.
   → TEST-PLAN: Composed replies.

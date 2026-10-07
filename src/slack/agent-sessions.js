@@ -48,7 +48,8 @@ function threadState(key) {
 }
 
 // Error codes that mean "the native surface is unavailable here" — fall back to the legacy method
-// for the rest of this process. Anything else is a per-call/per-thread refusal.
+// for the rest of this process. Only unambiguous capability facts belong here: an argument or
+// permission error can be about one thread and must never flip every thread.
 const LEGACY_FALLBACK_CODES = new Set([
   "unknown_method",
   "method_not_supported",
@@ -60,6 +61,18 @@ const LEGACY_FALLBACK_CODES = new Set([
   "missing_agent_session_stopped_event_subscription",
   "not_an_agent",
   "app_not_an_agent",
+]);
+// Error codes that mean "this thread cannot carry a native session" — stop asking for that thread.
+// Anything else (a rate limit, an internal error, a network failure) is transient: the next write
+// simply tries again.
+const THREAD_REFUSAL_CODES = new Set([
+  "not_authorized",
+  "not_in_channel",
+  "channel_not_found",
+  "thread_not_found",
+  "thread_ts_required",
+  "thread_ts_not_allowed",
+  "invalid_thread_ts",
   "invalid_arguments",
   "invalid_arg_name",
   "not_allowed",
@@ -114,7 +127,10 @@ export async function setAgentSessionStatus(client, { channel, threadTs, phrase 
         nativeAccepted = true;
       } catch (error) {
         if (fallsBackToLegacy(error)) noteFallback("status", error);
-        else state.nativeOff = true;
+        else if (THREAD_REFUSAL_CODES.has(errorCode(error))) state.nativeOff = true;
+        // A failed RE-ASSERT of a session already in this status is not a refusal: the session is
+        // still what the caller asked for, and the next write tries again.
+        else if (state.native === nativeStatus) nativeAccepted = true;
       }
     } else {
       nativeAccepted = true;

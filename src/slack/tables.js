@@ -4,11 +4,12 @@
 //
 // Cells come in three shapes. A finite number is a `raw_number` (numeric sorting). A plain string
 // is a `raw_text` — unless it carries lightweight Markdown (a `[label](url)` link, a bare https
-// URL, `**bold**`, `` `code` ``, `~~strike~~`, a `<@U…>` mention), which becomes a `rich_text`
-// cell so links stay clickable and mentions stay real. An object cell is explicit: `{text, url,
-// bold, italic, strike, code, user}` builds a formatted/link/mention cell and `{button: {label,
-// url}}` builds an `action_cell` whose row button opens the URL. Header cells are always plain
-// text (Slack rejects rich text there), so Markdown markers are stripped from them.
+// URL, `**bold**`, `` `code` ``, `~~strike~~`), which becomes a `rich_text` cell so links stay
+// clickable. An object cell is explicit: `{text, url, bold, italic, strike, code}` builds a
+// formatted/link cell, `{user}` a real mention (the ONLY way cell data pings someone — a raw
+// `<@U…>` in a string stays text, exactly as it does in a reply), and `{button: {label, url}}`
+// builds an `action_cell` whose row button opens the URL. Header cells are always plain text
+// (Slack rejects rich text there), so Markdown markers are stripped from them.
 // The engine stream readers (engines/stream.js, engines/codex.js) import the block builder through
 // reply-blocks.js, and config/settings.js imports the engine registry — so the settings read for
 // the default bot token is deferred to the post itself, keeping this module out of that cycle.
@@ -43,10 +44,13 @@ function boundedArray(value, field, max) {
   return value;
 }
 
-// Absolute http(s) URL or nothing. Slack rejects anything else in a link/button element.
+// Absolute http(s) URL or nothing. Slack rejects anything else in a link/button element. No
+// whitespace or control character anywhere: `new URL()` would silently strip a newline that
+// Slack then rejects, taking the whole block set with it.
 function httpUrl(value, field) {
   const raw = String(value ?? "").trim();
   if (!raw) return "";
+  if (/[\s\x00-\x1f\x7f]/.test(raw)) throw new Error(`\`${field}\` must be an absolute http(s) URL.`);
   let parsed;
   try { parsed = new URL(raw); } catch { throw new Error(`\`${field}\` must be an absolute http(s) URL.`); }
   if ((parsed.protocol !== "http:" && parsed.protocol !== "https:") || !parsed.hostname) {
@@ -57,9 +61,38 @@ function httpUrl(value, field) {
 }
 
 // Lightweight Markdown → rich_text elements. Everything outside a recognized span is plain text.
+// Spans: `[label](url)` (one level of balanced parentheses inside the URL), `**bold**` (no
+// space inside the markers, so a glob such as `src/**/x` stays literal), `` `code` ``,
+// `~~strike~~`, and a bare https URL (trailing punctuation and an unbalanced `)` excluded).
+// No `<@U…>` here: a mention in cell data is only ever the explicit `{user}` cell, exactly as a
+// raw `<@U…>` in a reply is escaped rather than pinged. Every span excludes its own opener from
+// its body so a cell full of `[` or `*` costs linear time, not quadratic.
 // A fresh regex per call: a shared global one carries `lastIndex` between test() and matchAll().
-const SPAN_SOURCE = String.raw`\[([^\]\n]+)\]\((https?:\/\/[^\s)]+)\)|<@([UW][A-Z0-9]{2,})>|\*\*([^*\n]+)\*\*|` + "`([^`\\n]+)`" + String.raw`|~~([^~\n]+)~~|(https?:\/\/[^\s<>()]*[^\s<>().,;:!?'"])`;
+const SPAN_SOURCE = String.raw`\[([^\[\]\n]+)\]\((https?:\/\/(?:[^\s()<>|]|\([^\s()<>|]*\))+)\)` +
+  String.raw`|\*\*(?=\S)([^*\n]+?)(?<=\S)\*\*` +
+  "|`([^`\\n]+)`" +
+  String.raw`|~~(?=\S)([^~\n]+?)(?<=\S)~~` +
+  String.raw`|(https?:\/\/[^\s<>|]+)`;
 const spanRegex = () => new RegExp(SPAN_SOURCE, "g");
+
+// A bare URL's run stops at whitespace, which swallows sentence punctuation and a closing
+// parenthesis the URL did not open. Trim those back into the surrounding text.
+function trimBareUrl(url) {
+  let end = url.length;
+  for (;;) {
+    const last = url[end - 1];
+    if (!last) break;
+    if (".,;:!?'\"".includes(last)) { end -= 1; continue; }
+    if (last === ")") {
+      const body = url.slice(0, end);
+      const opens = (body.match(/\(/g) || []).length;
+      const closes = (body.match(/\)/g) || []).length;
+      if (closes > opens) { end -= 1; continue; }
+    }
+    break;
+  }
+  return url.slice(0, end);
+}
 
 export function richTextElements(text) {
   const source = String(text ?? "");
@@ -67,18 +100,24 @@ export function richTextElements(text) {
   let last = 0;
   const pushText = (value, style) => {
     if (!value) return;
-    elements.push(style ? { type: "text", text: value, style } : { type: "text", text: value });
+    const previous = elements[elements.length - 1];
+    if (previous?.type === "text" && !previous.style && !style) previous.text += value;
+    else elements.push(style ? { type: "text", text: value, style } : { type: "text", text: value });
   };
   for (const match of source.matchAll(spanRegex())) {
+    const [whole, linkText, linkUrl, bold, code, strike, bareUrl] = match;
+    let consumed = whole.length;
     pushText(source.slice(last, match.index));
-    const [, linkText, linkUrl, user, bold, code, strike, bareUrl] = match;
     if (linkUrl) elements.push({ type: "link", url: linkUrl, text: linkText });
-    else if (user) elements.push({ type: "user", user_id: user });
     else if (bold) pushText(bold, { bold: true });
     else if (code) pushText(code, { code: true });
     else if (strike) pushText(strike, { strike: true });
-    else if (bareUrl) elements.push({ type: "link", url: bareUrl });
-    last = match.index + match[0].length;
+    else if (bareUrl) {
+      const url = trimBareUrl(bareUrl);
+      consumed = url.length;
+      elements.push({ type: "link", url });
+    }
+    last = match.index + consumed;
   }
   pushText(source.slice(last));
   return elements;
@@ -125,7 +164,7 @@ function styledElements({ text, url, user, bold, italic, strike, code }, field) 
   return Object.keys(style).length ? [{ type: "text", text: label, style }] : richTextElements(label);
 }
 
-function actionCell(button, { field, row, column }) {
+function actionCell(button, { field, row, column, actionIdPrefix }) {
   const label = requiredText(button?.label, `${field}.button.label`, MAX_BUTTON_LABEL);
   const url = httpUrl(button?.url, `${field}.button.url`);
   if (!url) throw new Error(`\`${field}.button.url\` is required.`);
@@ -135,7 +174,7 @@ function actionCell(button, { field, row, column }) {
       type: "button",
       // Unique per cell: Slack refuses duplicate action_ids inside one block. The stable prefix is
       // what the ack-only handler in app.js matches.
-      action_id: `${TABLE_ROW_ACTION_ID}_${row}_${column}`,
+      action_id: `${actionIdPrefix}_${row}_${column}`,
       text: { type: "plain_text", text: label, emoji: true },
       url,
       value: JSON.stringify({ r: row, c: column }),
@@ -181,20 +220,36 @@ function clippedFallback(value) {
 
 // The data_table block alone (no message wrapper) — shared by the standalone post and composed
 // replies (reply-blocks.js).
-export function buildTableBlock({ caption, headers, rows, pageSize, rowHeaderColumn = 0 } = {}) {
+// The raw size of a cell before any parsing: the cheap bound that refuses an oversized table
+// before the span parser ever runs over it.
+function rawCellLength(cell) {
+  if (typeof cell === "string") return cell.length;
+  if (typeof cell === "number") return String(cell).length;
+  if (cell && typeof cell === "object") return String(cell.text ?? "").length + String(cell.button?.label ?? "").length;
+  return 0;
+}
+
+export function buildTableBlock({ caption, headers, rows, pageSize, rowHeaderColumn = 0, actionIdPrefix = TABLE_ROW_ACTION_ID } = {}) {
   const cleanCaption = requiredText(caption, "caption", 300);
-  const cleanHeaders = boundedArray(headers, "headers", MAX_COLUMNS)
+  const headerList = boundedArray(headers, "headers", MAX_COLUMNS);
+  const rowList = boundedArray(rows, "rows", MAX_DATA_ROWS);
+  const rawChars = rowList.flat().reduce((total, cell) => total + rawCellLength(cell), 0)
+    + headerList.reduce((total, header) => total + String(header ?? "").length, 0);
+  if (rawChars > MAX_CELL_CHARS * 2) {
+    throw new Error("Table cells exceed Slack's 20,000-character limit; use `slack_upload_snippet` for a large export.");
+  }
+  const cleanHeaders = headerList
     .map((header, index) => {
       const text = requiredText(header, `headers[${index}]`, 200);
       return { type: "raw_text", text: hasRichSpans(text) ? plainText(richTextElements(text)) || text : text };
     });
   const columnCount = cleanHeaders.length;
-  const cleanRows = boundedArray(rows, "rows", MAX_DATA_ROWS).map((row, rowIndex) => {
+  const cleanRows = rowList.map((row, rowIndex) => {
     if (!Array.isArray(row)) throw new Error(`\`rows[${rowIndex}]\` must be an array.`);
     if (row.length !== columnCount) {
       throw new Error(`Every row must contain exactly ${columnCount} cell${columnCount === 1 ? "" : "s"}.`);
     }
-    return row.map((cell, columnIndex) => dataCell(cell, `rows[${rowIndex}][${columnIndex}]`, { row: rowIndex, column: columnIndex }));
+    return row.map((cell, columnIndex) => dataCell(cell, `rows[${rowIndex}][${columnIndex}]`, { row: rowIndex, column: columnIndex, actionIdPrefix }));
   });
 
   const requestedPageSize = pageSize ?? Math.min(10, cleanRows.length);

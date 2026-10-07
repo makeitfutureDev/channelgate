@@ -51,6 +51,39 @@ test("buildReplyBlocks refuses what Slack would refuse, with the reason", () => 
   assert.ok(MAX_REPLY_BLOCKS <= 50);
 });
 
+test("card copy is defanged like any reply text, and two tables never share a row-button id", () => {
+  const [card] = buildReplyBlocks([{ type: "card", title: "<!channel> alert", subtitle: "<!here>", body: "<https://evil.example|Official> **ok**" }]);
+  assert.doesNotMatch(card.title.text, /<!channel>/);
+  assert.doesNotMatch(card.subtitle.text, /<!here>/);
+  assert.doesNotMatch(card.body.text, /<https:\/\/evil\.example\|Official>/);
+  assert.match(card.body.text, /\*ok\*/);
+  const [first, second] = buildReplyBlocks([
+    { type: "table", caption: "a", headers: ["X"], rows: [[{ button: { label: "Open", url: "https://e.x/1" } }]] },
+    { type: "table", caption: "b", headers: ["X"], rows: [[{ button: { label: "Open", url: "https://e.x/2" } }]] },
+  ]);
+  const ids = [first.rows[1][0].element.action_id, second.rows[1][0].element.action_id];
+  assert.notEqual(ids[0], ids[1]);
+  assert.ok(ids.every((id) => id.startsWith("cg_table_row_")));
+  assert.throws(() => buildReplyBlocks([{ type: "links", buttons: [{ label: "x", url: "https://a.example/a\nb" }] }]), /http/);
+});
+
+test("composed blocks are only offered to, and only rendered for, runs with a live progress writer", async () => {
+  const { register } = await import("../src/mcp/tools/slack-native.js");
+  const { ctxFromClaims } = await import("../src/mcp/gateway-server.js");
+  const { createScopedRunEventHandler } = await import("../src/gateway/run.js");
+  const registered = (progressReport) => {
+    const names = [];
+    register({ registerTool: (name) => names.push(name) }, ctxFromClaims({ channelId: "C1", slug: "s", authorId: "U1", threadKey: "1.1", principalTrusted: true, progressReport }));
+    return names;
+  };
+  assert.ok(registered(true).includes("slack_compose_reply"));
+  assert.ok(!registered(false).includes("slack_compose_reply"), "a scheduled/background/clean run has nothing to render the blocks");
+  const seen = [];
+  createScopedRunEventHandler((event) => seen.push(event.kind), { progressReport: true, clean: true })({ kind: "reply_blocks", blocks: [] });
+  createScopedRunEventHandler((event) => seen.push(event.kind), { progressReport: true, clean: false })({ kind: "reply_blocks", blocks: [] });
+  assert.deepEqual(seen, ["reply_blocks"]);
+});
+
 test("normalizeReplyBlocks accepts JSON strings and objects and drops invalid snapshots silently", () => {
   const event = normalizeReplyBlocks(JSON.stringify({ sections: [{ type: "divider" }, { type: "text", markdown: "hi" }] }));
   assert.equal(event.kind, "reply_blocks");
@@ -124,10 +157,11 @@ test("a rejected composed block set is retried without the composed blocks, then
   progress.onEvent(normalizeReplyBlocks({ sections: [{ type: "divider" }] }));
   progress.onDelta("Answer.");
   await progress.finalize({ content: "Answer.", durationMs: 5, usage: { input_tokens: 1, output_tokens: 1 } });
+  // One suspect at a time: the composed blocks, then (with them back) the feedback controls.
   assert.deepEqual(stops.map((stop) => stop.blocks.map((block) => block.type)), [
     ["divider", "context", "actions", "context_actions"],
     ["context", "actions", "context_actions"],
-    ["context", "actions"],
+    ["divider", "context", "actions"],
   ]);
   assert.equal(stops[1].markdown_text, undefined, "retries never re-append the SDK's retained markdown");
   assert.equal(posts.length, 0, "the streamed answer is never duplicated through the classic fallback");

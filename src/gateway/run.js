@@ -423,7 +423,7 @@ export function progressReportIsVisible({ progressReport = false, clean = false 
 export function createScopedRunEventHandler(onEvent, options = {}) {
   const progressReportEnabled = progressReportIsVisible(options);
   return (event) => {
-    if (!progressReportEnabled && event?.kind === "report_progress") return;
+    if (!progressReportEnabled && (event?.kind === "report_progress" || event?.kind === "reply_blocks")) return;
     return onEvent?.(event);
   };
 }
