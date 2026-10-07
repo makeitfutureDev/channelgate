@@ -160,6 +160,7 @@ credential or connection is needed, without exposing its value.
 | Make a tracker people edit over time           | `references/tables.md`            | `gateway` → `slack_list_create`, `…_add_item`, `…_update_item`, `…_items`, `…_info` |
 | Create / edit a canvas document                | `references/canvases.md`          | chosen Composio account (`composio-agent` / `composio-user`) |
 | Catch up / summarize / read a thread           | `references/reading.md`           | `gateway` → `slack_channel_history`, `slack_thread_replies`; cross-channel via Composio Slack |
+| Script bulk app calls or process large Composio results | `references/composio-scripts.md` | chosen identity's `COMPOSIO_SEARCH_TOOLS`, `COMPOSIO_MULTI_EXECUTE_TOOL`, `COMPOSIO_REMOTE_WORKBENCH` |
 | Send a file to Drive / an email attachment / any Composio destination | `references/sharing-files.md` | `gateway` → `stage_file_for_composio` (returns the `{name, mimetype, s3key}` those tools require) |
 | Give a file a temporary public URL (API that ingests by URL, or a person who wants a link) | `references/sharing-files.md` | `gateway` → `create_public_file_link` (ask the duration for a person; 48h max), `list_public_file_links`, `revoke_public_file_link` |
 | Get a file shared earlier in this channel/thread ("download it", "try again with the video") | `references/reading.md` | `gateway` → `slack_download_file` (local path back; this channel only, ≤ 500 MB) |

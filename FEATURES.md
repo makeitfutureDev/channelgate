@@ -4577,3 +4577,11 @@ Cold and warm Claude watchdog failures carry stable `ENGINE_SILENCE_BUDGET` or `
 ### Observed tool context on engine hard kills
 
 Claude cold/warm and Codex hard-kill failures identify tool calls that had no recorded result at exit. Structured diagnostics retain only bounded tool names and `killedDuringTool`; commands, inputs and results are omitted. The reply explicitly leaves the cause unknown. This observation does not establish that a tool killed the engine, infer OOM, suppress diagnosis or permit automatic replay.
+### Composio scripting guide
+
+The bundled `gateway-usage` capability map routes bulk app calls and large saved results to
+`references/composio-scripts.md`. The reference explains current search sessions and complete
+schemas, selected identities/accounts, independent multi-execute batches, persistent remote Python
+workbench scripts, pagination and resumable checkpoints. Local file staging, protected credentials
+and operator overrides retain their existing rules. This is agent guidance, not a local Composio
+sandbox or a new runtime tool.

@@ -9362,3 +9362,24 @@ case. Also run a group with an external member to check tenant/channel delivery 
 
 - Automated: `node --test test/mid-tool-kill.test.js test/process-outcome.test.js test/codex-failover-e2e.test.js test/persistent-session-stdin.test.js test/stream.test.js` tests cold/warm Claude and Codex hard kills both before and after recorded tool results. Require metadata only for pending tools, no argument/result leakage, cause unknown, diagnostic eligibility retained and no automatic continuation/replay.
 - LIVE Claude and Codex: in separate disposable Admin QA channels, use a controlled engine fixture which starts a shell tool and exits 137 before the result. Ask “Run the isolated hard-kill lifecycle fixture once.” Require one failed reply noting the missing tool result and unknown cause, bounded `killedDuringTool`/tool names in `run_error`, no second execution and diagnosis still eligible. Repeat after the fixture records a tool result: require ordinary hard-kill wording and no pending-tool metadata. Claude must cover cold and warm settings. Do not kill an actual gateway or production turn. Live acceptance remains pending.
+### Composio scripting guide
+
+- Regression: run `node --test test/composio-guide.test.js test/container-access-guide.test.js`.
+  Independently materialize the default guide for Slack, Teams and Google Chat in scratch folders;
+  require the scripting capability row and new reference on each surface. No live guide update
+  or connector mutation is needed for this check.
+- Checked: eight existing guide tests passed; scratch materialization delivered the exact reference
+  and capability pointer on all three surfaces; the Python example parses successfully.
+- [ ] Live Claude and Codex, separately, in a disposable private channel with a selected personal
+  Composio connection and an owned read-only fixture dataset: ask, “Read only: use my selected
+  connection to count the complete fixture dataset. Use discovered schemas and Python bulk calls
+  if the saved results are large. Explain where the files live; make no external changes.” Require
+  selected-identity search/session/schema evidence, correct account metadata, exhausted pagination,
+  matching fixture count, bounded workbench batches with checked helper errors, and no unresolved
+  slugs/arguments. Small results should stay inline. A returned remote artifact must be described
+  as remote; any requested download must use the helper's returned URL.
+- [ ] Live Claude and Codex file-boundary control in the same fixture: give the engine a harmless
+  local text file and ask how it would attach that file through the selected connection, without
+  uploading or sending it. Require `stage_file_for_composio` with the matching identity, unchanged
+  returned file object, no base64/chunk workaround and no local credentials copied to the remote
+  sandbox. Live execution and corresponding private QA registration remain pending release gates.
