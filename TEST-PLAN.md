@@ -9317,3 +9317,8 @@ case. Also run a group with an external member to check tenant/channel delivery 
   the production pipeline adds the standard engine footer. The failure reproduced on unchanged
   `origin/beta`; the assertion now verifies the exact voice answer with only the optional standard
   footer, preserving transcript/raw-audio checks.
+
+### Hard-kill tool lifecycle acceptance
+
+- Automated: `node --test test/mid-tool-kill.test.js test/process-outcome.test.js test/codex-failover-e2e.test.js test/persistent-session-stdin.test.js test/stream.test.js` tests cold/warm Claude and Codex hard kills both before and after recorded tool results. Require metadata only for pending tools, no argument/result leakage, cause unknown, diagnostic eligibility retained and no automatic continuation/replay.
+- LIVE Claude and Codex: in separate disposable Admin QA channels, use a controlled engine fixture which starts a shell tool and exits 137 before the result. Ask “Run the isolated hard-kill lifecycle fixture once.” Require one failed reply noting the missing tool result and unknown cause, bounded `killedDuringTool`/tool names in `run_error`, no second execution and diagnosis still eligible. Repeat after the fixture records a tool result: require ordinary hard-kill wording and no pending-tool metadata. Claude must cover cold and warm settings. Do not kill an actual gateway or production turn. Live acceptance remains pending.

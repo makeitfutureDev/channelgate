@@ -4549,3 +4549,7 @@ Development branches integrate into `beta`, with CI on both `beta` and `main`. S
 requires a full test pass, applicable Claude/Codex live acceptance evidence, and explicit user
 confirmation for the exact release candidate. `AGENTS.md` (also read through `CLAUDE.md`) and
 `CONTRIBUTING.md` define the workflow; these are contributor rules, not a technical branch lock.
+
+### Observed tool context on engine hard kills
+
+Claude cold/warm and Codex hard-kill failures identify tool calls that had no recorded result at exit. Structured diagnostics retain only bounded tool names and `killedDuringTool`; commands, inputs and results are omitted. The reply explicitly leaves the cause unknown. This observation does not establish that a tool killed the engine, infer OOM, suppress diagnosis or permit automatic replay.

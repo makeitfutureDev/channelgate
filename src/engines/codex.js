@@ -36,7 +36,7 @@ import { isProgressReportTool, normalizeProgressReport } from "./progress-report
 import { thinkingSummary } from "./stream.js";
 import { createStallWatchdog, describeSilence, DEFAULT_SILENCE_WINDOWS } from "./watchdog.js";
 import { redactLogValue } from "../util/redact.js";
-import { conciseProcessDiagnostic, embeddedJsonObject, plainFailureText, processFailureMessage } from "../util/process-outcome.js";
+import { conciseProcessDiagnostic, midToolKillDetails, embeddedJsonObject, plainFailureText, processFailureMessage } from "../util/process-outcome.js";
 import { acquireKeyedLock } from "../util/keyed-lock.js";
 import { createCodexUsageReader, subtractCodexTokenUsage } from "./codex-usage.js";
 import { MCP_STARTUP_TIMEOUT_SECONDS } from "./mcp-timeouts.js";
@@ -1142,6 +1142,7 @@ export async function runCodex({
     let raw = null;
     let turnError = null;
     let toolUseCount = 0;
+    const pendingTools = new Map();
     let timedOut = false;
     let liveFailure = null;
     let stderrBuffer = "";
@@ -1228,8 +1229,13 @@ export async function runCodex({
       const explicitPhase = p.item?.phase ?? p.phase;
       if (messageId && explicitPhase) messagePhases.set(messageId, explicitPhase);
       if (codexItemMayExecuteTool(p.item)) {
-        if (p.type === "item.started") toolUseCount += 1;
-        else if (p.type === "item.completed" && toolUseCount === 0) toolUseCount = 1;
+        if (p.type === "item.started") {
+          toolUseCount += 1;
+          if (messageId) pendingTools.set(messageId, p.item.type);
+        } else if (p.type === "item.completed") {
+          if (toolUseCount === 0) toolUseCount = 1;
+          pendingTools.delete(messageId);
+        }
       }
       switch (p.type) {
         case "thread.started":
@@ -1344,7 +1350,7 @@ export async function runCodex({
       watchdog.stop();
       rm(scratchDir, { recursive: true, force: true }).catch(() => {});
       for (const file of removeRunSecrets()) rm(file, { force: true }).catch(() => {});
-      reject(commandError(processFailureMessage("Codex", { spawnError: err, diagnostic: withoutNodeRuntimeNoise(stderr) }), {
+      reject(commandError(processFailureMessage("Codex", { spawnError: err, diagnostic: withoutNodeRuntimeNoise(stderr), pendingToolNames: [...pendingTools.values()] }), {
         stderr: stderr.slice(0, 4000),
         exitCode: null,
         signal: null,
@@ -1517,7 +1523,7 @@ export async function runCodex({
             signal: exitSignal || null,
           }));
         }
-        return reject(commandError(processFailureMessage("Codex", { code, signal: exitSignal, diagnostic: withoutNodeRuntimeNoise(stderr) }), {
+        return reject(commandError(processFailureMessage("Codex", { code, signal: exitSignal, diagnostic: withoutNodeRuntimeNoise(stderr), pendingToolNames: [...pendingTools.values()] }), {
           ...failureDetails,
           stderr: stderr.slice(0, 4000),
           exitCode: code,
@@ -1525,6 +1531,7 @@ export async function runCodex({
           engine: "codex",
           runtime: runtime.backend,
           processEnded: true,
+          ...midToolKillDetails({ code, signal: exitSignal, pendingToolNames: [...pendingTools.values()] }),
         }));
       }
 

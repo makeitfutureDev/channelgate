@@ -2661,3 +2661,5 @@ copying cross-channel auto-memory.
   injected into `CLAUDE.md`; visible working folders under `~/Slack Agent/<channel>`.
 - Optional **admin-UI password**; one-command installer; encrypted config **backup/restore**;
   **launchd** service with `npm run update`.
+
+- Add observed pending-tool context to Claude and Codex hard-kill diagnostics without attributing the cause, suppressing diagnosis or replaying ambiguous work.
