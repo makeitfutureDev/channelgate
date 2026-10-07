@@ -10,6 +10,13 @@
   settings validate the complete candidate so enabling/configuring/selecting a provider can be one
   atomic save. Removing a credential does not rewrite existing pins or defaults; the selected
   provider still fails closed at execution until repaired.
+## Processed Slack attachment retention
+
+- Successful nonempty attachment downloads leave a small delivery receipt under the thread's
+  `uploads/<thread>/.downloaded/` folder. Removing processed originals no longer causes every
+  ordinary thread reply to download them again. Failed downloads stay retryable. A newly attached
+  file or explicit `slack_download_file` request can still download its original. Receipts contain
+  no private URLs, credentials, or attachment content, and use the same no-follow writer.
 
 ## Automation health and quiet delivery
 

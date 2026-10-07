@@ -18,9 +18,15 @@ product overview.
 
 ## Unreleased
 
+- Fix completed Codex turns being reported as failures after recovered reconnect notices; retain terminal failure and unsafe-replay safeguards.
+- Restore bounded Claude watchdog continuation for cold and warm silence-budget failures using typed error details; retain Stop and ambiguous-kill exclusions.
+- Add observed pending-tool context to Claude and Codex hard-kill diagnostics without attributing the cause, suppressing diagnosis or replaying ambiguous work.
+
 - Refuse runtime selections for enabled optional providers whose own credential or endpoint is
   missing, preserving existing pins and reporting the Settings repair. A complete provider
   configuration and its default selection can be saved together without account fallback.
+- Processed Slack originals stay removed on ordinary thread replies after a successful download.
+  Explicit attachment downloads remain available, and failed downloads can still retry.
 
 - Far fewer approval cards. A gateway tool that changes channel or gateway state is now automatic
   for the admin or channel manager who asked for it (modes, network, folders, MCP servers,
@@ -2666,6 +2672,3 @@ copying cross-channel auto-memory.
 - Optional **admin-UI password**; one-command installer; encrypted config **backup/restore**;
   **launchd** service with `npm run update`.
 
-- Fix completed Codex turns being reported as failures after recovered reconnect notices; retain terminal failure and unsafe-replay safeguards.
-- Restore bounded Claude watchdog continuation for cold and warm silence-budget failures using typed error details; retain Stop and ambiguous-kill exclusions.
-- Add observed pending-tool context to Claude and Codex hard-kill diagnostics without attributing the cause, suppressing diagnosis or replaying ambiguous work.
