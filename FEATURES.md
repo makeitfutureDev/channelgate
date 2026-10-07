@@ -4549,3 +4549,12 @@ Development branches integrate into `beta`, with CI on both `beta` and `main`. S
 requires a full test pass, applicable Claude/Codex live acceptance evidence, and explicit user
 confirmation for the exact release candidate. `AGENTS.md` (also read through `CLAUDE.md`) and
 `CONTRIBUTING.md` define the workflow; these are contributor rules, not a technical branch lock.
+
+### Composio scripting guide
+
+The bundled `gateway-usage` capability map routes bulk app calls and large saved results to
+`references/composio-scripts.md`. The reference explains current search sessions and complete
+schemas, selected identities/accounts, independent multi-execute batches, persistent remote Python
+workbench scripts, pagination and resumable checkpoints. Local file staging, protected credentials
+and operator overrides retain their existing rules. This is agent guidance, not a local Composio
+sandbox or a new runtime tool.

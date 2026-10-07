@@ -18,6 +18,10 @@ product overview.
 
 ## Unreleased
 
+- The bundled gateway guide now explains Composio discovery, independent tool batches and Python
+  workbench scripts for bulk operations, including account selection, remote result files and safe
+  file staging. It applies on every chat surface without overwriting operator guide overrides.
+
 - Far fewer approval cards. A gateway tool that changes channel or gateway state is now automatic
   for the admin or channel manager who asked for it (modes, network, folders, MCP servers,
   secrets, tokens, skill settings, gateway update and restart, the license key, instruction
