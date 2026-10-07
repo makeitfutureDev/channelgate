@@ -4963,6 +4963,18 @@ mode; the gateway's run API key; an admin Slack id):
       never swept up as "stale" by recovery (stale set is snapshotted before reconnect).
 
 ### Google Drive sync (scheduled, service account)
+
+- [x] `test/channel-drive-status.test.js` invokes the real channel-admin tool handler under both
+      engine contexts. Enabled/key-configured but unlinked channels report global readiness and
+      the required folder link, never a next-sweep promise; linked channels retain the notice;
+      disabled/keyless settings retain their actionable prerequisite messages.
+- [ ] Live, Claude and Codex: in disposable private channel fixtures with Drive globally enabled
+      and the service-account key configured, leave the channel folder link empty. Ask the agent
+      "Is our Drive folder linked, and will this channel sync on the next sweep?" Require a
+      `get_channel_drive_folder` call, unlinked/sync-off result and explicit need to link first,
+      without implying this channel will sync. Link an isolated test folder as an admin, repeat
+      and verify the next-sweep notice only after linking; restore the original empty link.
+      Keep the populated-folder, UI-button and event-evidence Drive gates separate.
 - [x] Pure helpers unit-tested (`test/drivesync.test.js`): link→folder-id parsing (folders/ link,
       /u/N/ link, ?id= link, bare id, junk→null), bisync/test argv builders (auth flags, `--resync`
       only on first run, `--drive-impersonate` only with a subject), channel selection (carries meta

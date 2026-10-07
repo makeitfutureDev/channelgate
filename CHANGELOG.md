@@ -18,6 +18,9 @@ product overview.
 
 ## Unreleased
 
+- An unlinked channel's Drive status reports gateway readiness without claiming that the channel
+  will sync on the next sweep. It explicitly asks for a folder link before channel sync can start.
+
 - Far fewer approval cards. A gateway tool that changes channel or gateway state is now automatic
   for the admin or channel manager who asked for it (modes, network, folders, MCP servers,
   secrets, tokens, skill settings, gateway update and restart, the license key, instruction

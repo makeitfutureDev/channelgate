@@ -1,5 +1,13 @@
 # ChannelGate — Features
 
+## Drive sync status for unlinked channels
+
+`get_channel_drive_folder` distinguishes the gateway's enabled/key-configured state from an
+individual channel's folder link. An unlinked channel reports sync off and asks for a link;
+only a linked channel receives the next-sweep notice. Missing gateway prerequisites still
+report the disabled switch or missing service-account key. Both Claude and Codex read the same
+control-plane status.
+
 ## Automation health and quiet delivery
 
 - Automations have independent controls for **run visibility** (`visible` or `silent`), **result

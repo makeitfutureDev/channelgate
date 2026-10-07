@@ -372,10 +372,14 @@ export function register(server, ctx) {
   // key are separate admin-only Settings — the folder link alone does nothing until those are set.
 
   // Advisory one-liner: is the scheduled sync actually armed right now? (folder link aside.)
-  function driveSyncStatusLine() {
+  function driveSyncStatusLine({ linked = true } = {}) {
     const enabled = getDriveSyncEnabled();
     const hasKey = Boolean((getDriveSyncKeyJson() || "").trim() || (getDriveSyncKeyFile() || "").trim());
-    if (enabled && hasKey) return "Drive sync is enabled and a service-account key is configured — this folder will sync on the next sweep.";
+    if (enabled && hasKey) {
+      return linked
+        ? "Drive sync is enabled and a service-account key is configured — this folder will sync on the next sweep."
+        : "Drive sync is enabled and a service-account key is configured. Link a folder to this channel to enable its sync.";
+    }
     const missing = [];
     if (!enabled) missing.push("the global switch is OFF");
     if (!hasKey) missing.push("no service-account key is configured");
@@ -388,7 +392,7 @@ export function register(server, ctx) {
     async () => {
       const meta = await loadMeta();
       const link = (meta?.syncDriveFolder || "").trim();
-      if (!link) return text(`No Google Drive folder is linked to this channel (sync off).\n${driveSyncStatusLine()}`);
+      if (!link) return text(`No Google Drive folder is linked to this channel (sync off).\n${driveSyncStatusLine({ linked: false })}`);
       const id = parseDriveFolderId(link);
       let last = "";
       try {
