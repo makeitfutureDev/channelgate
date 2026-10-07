@@ -1,3 +1,4 @@
+import { assertEngineSelectable } from "../engines/selection.js";
 // The message pipeline (extracted from slack/app.js — the 2026-08 restructure notes (internal repo) Phase 2.5): gating,
 // authorization, canonical hydration, in-thread slash commands, attachment download, thread
 // context replay, run orchestration and reply delivery for one inbound Slack message.
@@ -770,6 +771,7 @@ export async function processMessageEvent(event, client, { botUserId = "", teamI
               await reply("This channel uses its own Codex login, so its engine stays Codex."); return;
             }
           }
+          if (forkTarget) await assertEngineSelectable(forkTarget.engine);
           const childEngine = forkTarget ? forkTarget.engine : sourceEngine;
           const nativeFork = childEngine === sourceEngine;
           const sourceClean = await getThreadClean(entry.slug, threadKey);
@@ -1154,6 +1156,7 @@ export async function processMessageEvent(event, client, { botUserId = "", teamI
         await client.chat.postMessage({ channel: event.channel, thread_ts: threadKey, text: "This channel uses its own Codex login, so its engine stays Codex." });
         return;
       }
+      await assertEngineSelectable(target.engine);
       engineSwitched = (await getThreadEngine(entry.slug, threadKey)) !== target.engine;
       await setThreadEngine(entry.slug, threadKey, target.engine);
       await setThreadModel(entry.slug, threadKey, target.model);
@@ -1174,6 +1177,7 @@ export async function processMessageEvent(event, client, { botUserId = "", teamI
         await client.chat.postMessage({ channel: event.channel, thread_ts: threadKey, text: "This channel uses its own Codex login, so its engine stays Codex." });
         return;
       }
+      await assertEngineSelectable(engineChoice);
       engineSwitched = (await getThreadEngine(entry.slug, threadKey)) !== engineChoice;
       await setThreadEngine(entry.slug, threadKey, engineChoice);
       if (!modelBelongsToEngine(await getThreadModel(entry.slug, threadKey), engineChoice)) await setThreadModel(entry.slug, threadKey, "");
@@ -1202,6 +1206,7 @@ export async function processMessageEvent(event, client, { botUserId = "", teamI
           return;
         }
         if (!engineChoice) {
+          await assertEngineSelectable(eng);
           engineSwitched = (await getThreadEngine(entry.slug, threadKey)) !== eng;
           await setThreadEngine(entry.slug, threadKey, eng);
           // A thread model/effort pinned by the /model wizard is engine-specific — switching the
@@ -1853,6 +1858,10 @@ export async function processMessageEvent(event, client, { botUserId = "", teamI
       runQueue.release(runKey, handle); // clears ONLY this turn's entry; promotes the next queued one
     }
   } catch (outer) {
+    if (outer?.code === "engine_selection_unavailable") {
+      await client.chat.postMessage({ channel: event.channel, thread_ts: event.thread_ts ?? event.ts, text: outer.message });
+      return;
+    }
     console.error("[slack] handler error:", outer);
     if (outer?.code === "workspace_selection_conflict") {
       try {

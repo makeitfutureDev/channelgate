@@ -1,3 +1,4 @@
+import { assertEngineSelectable } from "../engines/selection.js";
 // The /model wizard (extracted from slack/app.js — the 2026-08 restructure notes (internal repo) Phase 2.3).
 // ONE command for the whole runtime (the old /engine and /effort are folded in): /model walks
 // through four steps in a single message that updates in place —
@@ -441,6 +442,7 @@ export async function handleModelWizard({ ack, body, action, client, respond }) 
       const engine = actionId.slice("cg_mw_engine_".length);
       if (codexLocked && engine !== "codex") { await ephemeral("This channel uses its own Codex login, so its engine stays Codex."); return; }
       if (!adapterFor(engine)) throw new Error(`Unknown engine choice: ${engine}`);
+      await assertEngineSelectable(engine);
       let current = "";
       if (scope === "thread") {
         await setThreadEngine(entry.slug, threadTs, engine);
@@ -534,6 +536,6 @@ export async function handleModelWizard({ ack, body, action, client, respond }) 
     }
   } catch (e) {
     console.error("[slack] model wizard error:", e.message);
-    if (channel) await ephemeral("Couldn't update runtime settings — check the gateway logs.");
+    if (channel) await ephemeral(e.code === "engine_selection_unavailable" ? e.message : "Couldn't update runtime settings — check the gateway logs.");
   }
 }

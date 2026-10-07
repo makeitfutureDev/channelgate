@@ -84,3 +84,15 @@ test('progress keeps its 30s heartbeat and drains pending edit before stop', asy
   let stopped = false; const stop = progress.stop().then(() => { stopped = true; }); await Promise.resolve(); assert.equal(stopped, false);
   wait.resolve(); await stop; t.mock.timers.tick(60000); assert.equal(edits.length, 1);
 });
+
+
+test('text model command refuses an unconfigured provider and retains the existing engine', async () => {
+  const { saveSettings } = await import('../src/config/settings.js');
+  const { getThreadEngine, setThreadEngine } = await import('../src/gateway/thread-engine.js');
+  saveSettings({ engineEnabled: { claude: true, codex: true, "qwen-eu": true }, qwenEuApiKey: '', qwenEuBaseUrl: '' });
+  await setThreadEngine('controls', 'root', 'codex');
+  const controls = createConversationControls(), replies = [];
+  assert.equal(await args(controls, '/model qwen-eu qwen3.8-max', { reply: async text => replies.push(text) }), true);
+  assert.match(replies.at(-1), /not configured/);
+  assert.equal(await getThreadEngine('controls', 'root'), 'codex');
+});
