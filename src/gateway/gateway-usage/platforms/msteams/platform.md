@@ -54,3 +54,17 @@ credential metadata, ungranted private connections and administrator session com
 and organization variables remain in authenticated settings or explicitly opened personal chats.
 Native rosters and secret inputs have size limits;
 complete oversized edits use the authenticated browser settings.
+
+## Reaction controls
+
+When Teams reaction events are enabled and delivered to the gateway, **Heart eyes robot**
+(`hearteyesrobot`, also Smile robot) starts a request as the reactor. **Stop sign** (`stopsign`)
+requests cancellation of that session’s active and queued work; only the author or an administrator
+can stop it. React to the original message or a bot reply to select the session. **Tick button**
+(`2705_whiteheavycheckmark`) acknowledges a tracked reminder, including its second notice.
+Removing the tick does not reopen that reminder. A tick on an ordinary message has no tracked
+reminder to close. Teams personal follow-up dismissal is not available.
+
+Group/channel reaction delivery requires the configured all-message Graph events and Microsoft
+permissions. In personal chat, delivered Bot Framework reaction activities use the same controls.
+Typed `/stop` and `/cancel` remain available with the normal channel/group mention and quote rules.

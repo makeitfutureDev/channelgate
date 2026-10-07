@@ -18,6 +18,10 @@ product overview.
 
 ## Unreleased
 
+- Teams Stop sign reactions now cancel the selected session’s active and queued requests with
+  author/admin checks. Tick button reactions acknowledge tracked reminders, including escalation
+  notices. Native and Graph intake recognize their Teams IDs; help describes the supported actions.
+
 - Teams `/help` now uses a native card with separate headings, spaced paragraphs, emoji rows
   and commands, avoiding the run-on layout caused by Markdown soft line breaks. Card delivery
   falls back to the complete spaced guide, and quoted group help cards keep their session.

@@ -1,5 +1,44 @@
 # ChannelGate — Test Plan
 
+## Microsoft Teams reaction actions acceptance (2026-10-07)
+
+- Automated: `test/teams-reaction-actions.test.js` exercises native reaction → normalization →
+  shared ingest → control/ack store. Native and Graph Stop additions cancel active and queued
+  requests for personal, group and channel sessions; reject an approved non-author; permit
+  administrators; leave another
+  group session running; maps a native channel reply reaction back to its recorded root. Tick
+  closes original and escalation reminders, rejects unapproved reactors and sudo non-admins,
+  retains custom-emoji reminders, preserves engine sessions and never starts an engine turn.
+- `test/platform-teams-events.test.js`, `test/platform-teams-graph-activity.test.js` and
+  `test/platform-teams-event-transport.test.js` cover documented IDs/aliases, reactor identity,
+  target/root routing, authenticated webhook/retry handling, native/Graph ownership, action-specific
+  event identities, stable legacy robot/edit dedup IDs, latest history transitions, current-reaction
+  checks, combined history flags and removal suppression. Stop/Tick target text cannot dispatch
+  `/clear` or other commands.
+- Verification: 77 focused tests passed with zero failures/skips. A broader run passed 257 of
+  258 tests; the sole failure is the pre-existing `platform-voice.test.js` exact-output assertion
+  (the real answer includes its statistics footer), reproduced unchanged on baseline `beta`.
+  Static checks and secret scanning passed. Independent review checked authorization, session
+  scope and Graph event handling; its combined-history-flag finding was corrected and tested.
+- [ ] LIVE (Claude and Codex): separate approved beta Teams QA personal chats, group sessions and
+  channel threads; enable delivered reaction events (Graph group/channel consent and subscription).
+  As fixture author start "Wait for 120 seconds, then reply EMOJI_RUN_DONE"; quote the same request
+  with "Reply QUEUED_EMOJI_DONE". An approved other actor adds Stop sign to the working reply:
+  pass only if work continues with an author/admin notice. Author adds Stop sign: pass if active
+  work stops, queued work never starts and unrelated sessions continue. Repeat with admin stopper.
+  Heart eyes robot on "Reply exactly EMOJI_ROBOT_OK" must run once as the reactor on each engine.
+- [ ] LIVE, engine-independent: create a Teams QA reminder with acknowledgment enabled, default
+  Tick button and short escalation interval. Add Tick button to the original reminder, then repeat
+  on a separate reminder’s second notice. Pass: acknowledgment notice, pending ack removed,
+  escalation chain ends, no engine turn. Removing/readding the tick cannot reopen it. Unapproved
+  reactors and non-admin sudo actors cannot resolve it. Tick on normal content reports no pending
+  reminder. Both acknowledgment and intake run before engine dispatch; model choice cannot affect
+  this result. Check `/help` advertises all supported actions and the event-delivery prerequisites.
+- [ ] Private QA registration: mirror these exact fixtures/actions/pass rules using the requester’s
+  personal Airtable connection. Only the agent identity is available in this run; no substitution.
+  Live Teams delivery remains unexecuted. The agent Teams connection identifies a different
+  account; a permitted beta QA conversation/action fixture has not been established for live tests.
+
 ## Microsoft Teams help guide acceptance (2026-10-07)
 
 - Native layout regression: `test/help-text.test.js`, `test/teams-controls.test.js` and
@@ -15,15 +54,16 @@
 - Automated reaction mapping: `test/platform-teams-events.test.js` and
   `test/platform-teams-graph-activity.test.js` verify `hearteyesrobot` / `smilerobot` trigger through
   native and Graph normalization as the reactor, preserving the original target and removed-event
-  suppression. `stopsign`, `2705_whiteheavycheckmark`, plain heart eyes and heart eyes dog do not
-  start a request. Help regression checks all three requested shortcode/name pairs.
+  suppression. Stop and Tick use explicit controls before an engine turn; plain heart eyes and
+  heart eyes dog remain ignored. Help regression checks all three shortcode/name pairs.
 - Verification of the emoji correction: 54 focused tests passed, zero failures/skips;
   static checks and secret scanning passed. The expanded guide still fits one Teams message.
 - [ ] LIVE (Claude and Codex): in separate approved beta Teams QA group/channel sessions with
   reaction event delivery enabled, post "Reply exactly ROBOT_MAPPING_OK", then as an approved
   test actor add **Heart eyes robot** from the Teams picker. Pass: one run under the reactor's
   gateway identity replies ROBOT_MAPPING_OK in the source session for each engine. Remove the
-  reaction; delayed removed events must not run. Stop sign and Tick button must not start a run.
+  reaction; delayed removed events must not run. Stop sign and Tick button invoke only their
+  authorized session-stop/reminder-acknowledgment controls (see reaction actions acceptance).
   Mirror these cases in the private QA catalog through the requesting user's personal connection;
   that connection is unavailable in this run and these live cases remain unexecuted.
 - [x] Automated: `node --test test/help-text.test.js test/teams-controls.test.js

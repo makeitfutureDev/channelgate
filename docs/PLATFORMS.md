@@ -254,7 +254,13 @@ Task-module dialogs and broadcast mentions remain unavailable.
   `smilerobot` event IDs. Microsoft calls the green tick **Checkmark button**, ID
   `2705_whiteheavycheckmark`; Stop sign is `stopsign`. See the
   [Teams reactions reference](https://learn.microsoft.com/en-us/microsoftteams/platform/agents-in-teams/teams-reactions-reference).
-  Stop/Tick reactions have no gateway action in Teams; stop work with `/stop` or `/cancel`.
+  Stop sign cancels the selected session’s active and queued requests, with author/admin checks.
+  Tick button acknowledges a tracked reminder from its original or second-notice message; removing
+  it does not reopen the reminder. A tick on ordinary content reports no pending reminder.
+  Teams personal follow-up dismissal is not available. All actions require authorized reactors and
+  delivered reaction events. Group/channel delivery uses configured Graph events and Microsoft
+  permissions; personal chat accepts delivered Bot Framework reactions. `/stop` and `/cancel`
+  remain available as typed commands.
 - `/settings` opens a six-page console in the original channel/thread or chat: General,
   Variables, MCPs, Skills, Automations and Resume. It retains the source conversation and session
   even when opened from a channel or group chat. `/secrets` opens its Variables page directly.

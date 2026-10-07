@@ -12,7 +12,7 @@ test("Teams /help includes practical workflows and its supported commands", () =
   for (const expected of [
     '**How to use me**', '`@agent /help`', 'quote the original message', 'react 🤖',
     '`:robot_face:` — Heart eyes robot', '`:octagonal_sign:` — Stop sign',
-    '`:white_check_mark:` — Tick button', 'reactions currently have no gateway action',
+    '`:white_check_mark:` — Tick button', 'Tick button acknowledges a tracked reminder', 'Removing a reaction does not reopen',
     'local Whisper', 'Only the run author or an administrator', 'requests for the same session queue',
     'allowed drives and Microsoft permissions', '10 MB', 'Public URL', 'personal chat',
     'Stored credential values are never shown', 'Composio', 'list skills', 'remember that …',
@@ -25,7 +25,7 @@ test("Teams /help includes practical workflows and its supported commands", () =
 
   // These are Slack-specific controls; Teams has session queues and its own native console.
   assert.doesNotMatch(TEAMS_HELP_TEXT, /\/(?:menu|sudo|fork|delete|pending|context|compact|mode|next|update|resume)\b/);
-  assert.doesNotMatch(TEAMS_HELP_TEXT, /Slack|Steer Conversation|Generate transcript|react 🛑|📂 button/);
+  assert.doesNotMatch(TEAMS_HELP_TEXT, /Slack|Steer Conversation|Generate transcript|📂 button/);
 });
 
 test("Teams help survives the platform formatter within its message budget", () => {

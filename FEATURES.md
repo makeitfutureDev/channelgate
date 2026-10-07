@@ -13,10 +13,17 @@
   The authorized native command responds before an engine turn, in the requesting conversation.
   Quoting the help card in a group chat continues the same session.
 - Reaction labels identify `:robot_face:` as Heart eyes robot, `:octagonal_sign:` as Stop sign,
-  and `:white_check_mark:` as Tick button. Teams reaction intake accepts Microsoft's documented
-  `hearteyesrobot` and `smilerobot` IDs alongside the legacy robot spellings, using the same
-  verified reactor identity, membership and event gates. Stop and Tick reactions do not control
-  Teams work; `/stop` and `/cancel` remain the supported cancellation commands.
+  and `:white_check_mark:` as Tick button. Teams intake recognizes the documented robot IDs,
+  `stopsign` and `2705_whiteheavycheckmark`, plus Unicode/legacy aliases. Robot starts a request
+  as the reactor. Stop cancels only the selected session’s active and queued work with the same
+  author/admin checks as `/stop`. Channel replies and group quotes resolve to their stored root.
+  Tick closes a tracked reminder’s acknowledgment chain from its original or escalation message;
+  reaction removal cannot reopen it. A tick on an ordinary message reports no pending reminder.
+  Teams personal follow-up dismissal remains unavailable. All actions pass conversation admission,
+  reactor authorization and the sudo thread gate before any mutation; target text cannot execute
+  a slash command. Graph and native events retain single transport ownership, stable deduplication
+  and fresh/current reaction checks. Group/channel reactions need configured event delivery and
+  Microsoft permissions. The handlers precede engine dispatch for Stop/Tick.
 
 ## Claude login for nested commands
 

@@ -17,6 +17,7 @@ import { sessionKeyForMessage, rememberReplySession } from "./reply-sessions.js"
 import { saveInboundAttachments } from "./attachments.js";
 import path from "node:path";
 import { removeRegularFileWithin } from "../gateway/safe-fs.js";
+import { acknowledgeReaction } from "./reaction-controls.js";
 import { getThreadSudo } from "../gateway/thread-engine.js";
 
 // Conversation kinds as the channel store spells them. The store's vocabulary is Slack's, and it is
@@ -101,6 +102,7 @@ export function createIngest({ connector, log = console, run = runMessage, onCom
     }
 
     const sessionKey = sessionKeyForMessage(message);
+    if (message.trigger === "reaction" && message.threadKey) message = { ...message, threadKey: sessionKey };
     if (await getThreadSudo(entry.slug, sessionKey) && !authorIsAdmin) {
       await connector.post({
         conversationId: message.rawConversationId,
@@ -111,7 +113,7 @@ export function createIngest({ connector, log = console, run = runMessage, onCom
       return { skipped: "sudo-admin-only" };
     }
     const rememberReply = (sent) => {
-      if (message.kind === "group" && !message.threadKey && sent?.messageId) {
+      if (message.kind !== "dm" && sent?.messageId) {
         rememberReplySession(message.conversationId, sent.messageId, sessionKey);
       }
     };
@@ -122,6 +124,10 @@ export function createIngest({ connector, log = console, run = runMessage, onCom
       rememberReply(await connector.postCard({ conversationId: message.rawConversationId,
         threadKey: message.threadKey, card, text }));
     } : null;
+    if (message.trigger === "reaction" && message.reactionAction === "ack") {
+      await acknowledgeReaction({ message, reply });
+      return { command: true };
+    }
     if (onCommand && await onCommand({ message, sessionKey, entry, meta, authorIsAdmin, reply, replyCard, controls })) return { command: true };
     if (await controls.command({ message, sessionKey, slug: entry.slug, meta, authorIsAdmin, reply })) return { command: true };
     return controls.execute({ message, sessionKey, queued: reply, work: async (signal) => {
