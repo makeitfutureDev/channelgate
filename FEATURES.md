@@ -1,5 +1,16 @@
 # ChannelGate — Features
 
+## Microsoft Teams model command
+
+- Bare `/model` opens a native engine/model/effort picker in the source conversation, showing
+  the current session selection. Choose a compatible combination and **Apply to this session**
+  to change its next turn; `/settings` → General manages conversation defaults. Typed
+  `/model <engine> <model|default>` and `/effort <level|default>` remain available.
+- The picker preserves channel threads and group quote/session continuity, offers enabled
+  engines, respects a dedicated channel Codex login, and rechecks membership and runtime policy
+  on submission. Busy sessions refuse changes; expired, foreign and replayed controls cannot
+  write. Execute and legacy Submit both replace the original card with the outcome.
+
 ## Unavailable skill grants
 
 - An unavailable personal skill or `requires:` dependency no longer blocks the author's entire
@@ -28,7 +39,10 @@
   Unicode 👍, including skin tones) is an alternative. Alien accepts `alien`, `:alien:`, Unicode 👽
   and the documented `1f47d_extraterrestrialalien` ID; help recommends Alien. Its separate persisted
   introduction cutoff excludes Alien history from before this expansion without resetting earlier
-  cutoffs. Existing robot IDs remain supported alongside
+  cutoffs. Graph also accepts the Heart eyes robot variant encoded as 😍 only with the exact
+  provider name `Heart eyes robot` and no custom content URL in both added history and current
+  reactions. Plain Heart eyes and unnamed history stay inactive. Its separate persisted cutoff
+  prevents newly recognized robot metadata replaying older history. Existing robot IDs remain supported alongside
   `stopsign` and `2705_whiteheavycheckmark`, plus Unicode/legacy aliases. Activation starts a request
   as the reactor. Stop cancels only the selected session’s active and queued work with the same
   author/admin checks as `/stop`. Channel replies and group quotes resolve to their stored root.

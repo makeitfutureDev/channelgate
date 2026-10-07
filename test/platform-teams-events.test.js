@@ -29,7 +29,7 @@ test('supported reaction additions carry explicit action, reactor identity and t
   assert.equal(normalize({ type: 'messageReaction', replyToId: 'target', reactionsRemoved: [{ type: ':alien:' }] }), null);
   assert.equal(normalize({ text: ':alien:', entities: [] }).trigger, 'message');
   assert.equal(normalize({ text: ':hearteyesrobot:', entities: [] }).trigger, 'message', 'typed shortcut is not a reaction');
-  for (const reaction of ['alienmonster', '👾', ':alien', 'alien:', '::alien::', 'heart', 'hearteyes', 'hearteyesdog', 'like-tone0', 'like-tone6', '👎', ':hearteyesrobot', 'hearteyesrobot:', '::hearteyesrobot::']) {
+  for (const reaction of ['😍', 'alienmonster', '👾', ':alien', 'alien:', '::alien::', 'heart', 'hearteyes', 'hearteyesdog', 'like-tone0', 'like-tone6', '👎', ':hearteyesrobot', 'hearteyesrobot:', '::hearteyesrobot::']) {
     assert.equal(normalize({ type: 'messageReaction', replyToId: 'bot-answer', reactionsAdded: [{ type: reaction }] }), null);
   }
   for (const [type, action] of [['stopsign', 'stop'], ['🛑', 'stop'], ['2705_whiteheavycheckmark', 'ack'], ['✅', 'ack']]) {

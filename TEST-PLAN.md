@@ -1,5 +1,35 @@
 # ChannelGate — Test Plan
 
+## Microsoft Teams model command acceptance (2026-10-07)
+
+- Automated: `test/teams-model-command.test.js` uses scratch SQLite, fake Teams transport and
+  the real conversation controls to verify retained session engine/model/effort, enabled model
+  choices, Execute/Submit persistence and original-card replacement, session isolation, replay,
+  invalid/incomplete/disabled selections, actor/conversation binding, live runtime policy,
+  personal chat changes, dedicated Codex login, expiry/access revocation, busy refusal, typed
+  argument passthrough, reaction exclusion, delivery fallback and quoted group-card continuity.
+- Verification: 66 focused model/control/card/settings/help tests passed without failures or
+  skips. Static checks, secret scan and security coverage checks passed.
+- [ ] LIVE (`TEAMS-MODEL-01`, Claude and Codex): approved beta Teams QA personal, group and
+  channel fixtures, with both engines enabled. In a personal chat send `/model`; in a channel
+  thread send `@agent /model`; in a group quote the session's original message/bot reply and
+  send `@agent /model`. Pass: current session selection plus an actionable picker in the same
+  conversation/thread. Choose Claude plus a listed Claude model and supported effort, Apply,
+  then send `Reply exactly TEAMS_MODEL_CLAUDE_OK` in that session. Repeat with Codex plus a
+  listed Codex model and supported effort, prompting `Reply exactly TEAMS_MODEL_CODEX_OK`.
+  Pass: confirmation, `/status` and next-turn runtime evidence agree with each selection;
+  conversation defaults and another session stay unchanged. Quote the picker/confirmation in
+  a group and verify `/status` continues the same session. Exercise Execute and legacy Submit
+  clients where available; both must replace the original card with the outcome.
+- [ ] LIVE (`TEAMS-MODEL-02`, Claude and Codex): in the same disposable fixtures, start a long
+  request, then try Apply; pass: busy refusal and unchanged runtime. Stop the request, reopen
+  and retry. Use a non-admin actor with runtime changes restricted, another actor clicking
+  the original owner's card, a card older than 15 minutes, and a dedicated channel Codex
+  login with a forged different engine; pass: no unauthorized change or engine turn.
+- Live client/next-turn acceptance remains unexecuted. The private ChannelGate QA Airtable
+  records remain pending: this run exposes only the shared agent connection; deployment rules
+  require the requesting user's selected personal connection for registry writes.
+
 ## Unavailable skill grants acceptance (2026-10-07)
 
 - Automated: `test/run-grant-isolation.test.js` verifies deduplicated omissions, no empty personal
@@ -32,6 +62,29 @@
   automated fake-runtime evidence is not a live provider pass.
 
 ## Microsoft Teams reaction actions acceptance (2026-10-07)
+
+- Graph robot metadata verification: 93 focused tests passed, zero failures/skips; independent
+  review found no blocking defects and separately passed 31 parser/subscription tests.
+- Graph robot metadata: the live message API reports Heart eyes robot as `reactionType: "😍"`
+  with `displayName: "Heart eyes robot"` and no custom content URL, while Alien is `👽`.
+  The Graph mapper now qualifies this robot variant in history and current-presence checks;
+  native plain 😍, ordinary Heart eyes, missing historical names and custom art remain inactive.
+  Dedicated `graphRobotStartedAt` is saved before cached subscription reuse or message fetch,
+  preserving earlier cutoff values. Tests cover pre-cutoff rejection, removal/readd and approved
+  reactor dispatch in personal/group/channel sessions. Existing robot event hashes stay unchanged.
+- [ ] LIVE (`TEAMS-ROBOT-METADATA-01`, Claude and Codex): approved beta Teams QA group/channel
+  with working Graph event delivery. After the candidate's saved cutoff, post an unmentioned
+  message "Reply exactly ROBOT_METADATA_OK" and add **Heart eyes robot**. Capture the delivered
+  Graph message history and current reaction. Pass: both identify 😍/Heart eyes robot/no custom URL,
+  exactly one response as the reactor in the source session, and no run on removal, ordinary Heart
+  eyes or unapproved actor. Repeat on a bot reply. Retried notifications must not start a second run.
+- Live failure diagnosis: provider reads show fresh Alien on unmentioned content with no replies,
+  while a nearby bot mention receives an answer. Alien's value already matches intake. Restart
+  notices confirm restart initiation; reads cannot prove the deployed notification switch, scoped
+  subscription, webhook arrival, roster mapping or historical metadata. Message history is absent
+  in the available provider response; no unsafe snapshot fallback is inferred from that alone.
+  Deployed event setting and Graph errors are requested. Live activation and required private QA
+  registration remain pending; the requester's selected personal Airtable connection is unavailable.
 
 - Alien verification: 88 focused tests passed, zero failures/skips. Live delivery remains unverified.
 - Alien activation: native and Graph normalizer tests accept `alien`, exact picker shortcut

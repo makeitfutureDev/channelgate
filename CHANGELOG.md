@@ -22,6 +22,13 @@ product overview.
   After changing Engine, Load models refreshes the choices without saving; Apply saves the
   complete selection for that scope.
 
+- Teams `/model` now opens an engine, model and effort picker with an Apply button for the
+  current session, alongside its current selection. Typed changes remain available.
+
+- Teams Graph reaction intake now recognizes Heart eyes robot when Graph encodes it as 😍
+  with the exact provider name and no custom artwork. Ordinary Heart eyes and missing metadata
+  remain inactive; a saved cutoff prevents older reactions replaying after the upgrade.
+
 - Teams can activate a request with 👽 Alien (`:alien:`), its bare ID, Unicode form, or documented
   `1f47d_extraterrestrialalien` ID. Help recommends Alien; robot and Like remain supported.
   A separate saved cutoff prevents older Alien reactions replaying after the upgrade.

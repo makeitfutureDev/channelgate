@@ -70,7 +70,7 @@ export function createTeamsGraphEvents({ auth, notificationUrl, tenantId, store,
   async function prepareReactionAliases(row) {
     const prepared = { ...row };
     let changed = false;
-    for (const field of ['reactionAliasesStartedAt', 'alienReactionStartedAt']) {
+    for (const field of ['reactionAliasesStartedAt', 'alienReactionStartedAt', 'graphRobotStartedAt']) {
       if (Number.isFinite(Date.parse(prepared[field]))) continue;
       prepared[field] = new Date(now()).toISOString();
       changed = true;

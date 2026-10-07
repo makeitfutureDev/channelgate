@@ -2,7 +2,7 @@
 // an opaque, expiring state ID; editing the card payload cannot select another user's workspace.
 import { randomUUID } from 'node:crypto';
 import { getPublicUrl, canChangeChannelRuntime, getDefaultModel } from '../../config/settings.js';
-import { ENGINE_IDS, modelsForEngine, effortsForModel } from '../../engines/registry.js';
+import { modelsForEngine, effortsForModel, modelBelongsToEngine } from '../../engines/registry.js';
 import { teamsWorkspaceContext } from './workspace-access.js';
 import { listVisibleDirectory, normalizeRelativePath, canEditChannelFiles, readEditableFile } from '../../slack/file-explorer.js';
 import { createFileDownloadGrantUrl } from '../../web/file-download.js';
@@ -12,7 +12,9 @@ import { createTeamsFileConsent } from './file-consent.js';
 import { createTeamsInteractionHandler, normalizeTeamsInteraction } from './interactions.js';
 import { handlePlatformApproval } from '../../slack/approvals.js';
 import { acquireKeyedLock } from '../../util/keyed-lock.js';
-import { buildTeamsSettings, createTeamsSettingsContext, handleTeamsSettings } from './settings.js';
+import { buildTeamsSettings, createTeamsSettingsContext, handleTeamsSettings, teamsSettingsUi } from './settings.js';
+import { generalRuntimeScopes } from './settings-general.js';
+import { effectiveMeta } from '../../gateway/run.js';
 import { TEAMS_HELP_TEXT, createTeamsHelpCard } from './help.js';
 
 const card = (title, body = [], actions = []) => ({ type: 'AdaptiveCard', version: '1.4', body: [{ type: 'TextBlock', text: title, weight: 'Bolder', wrap: true }, ...body], actions });
@@ -30,6 +32,28 @@ export function createTeamsControls({ connector, now = Date.now, authorize = tea
     const ctx = createTeamsSettingsContext(state, { connector, authorize });
     await ctx.authorize();
     return buildTeamsSettings(ctx, stateId);
+  }
+  async function model(state, stateId) {
+    const context = await authorize(grant(state), { connector });
+    state.meta = context.meta; state.authorIsAdmin = context.userIsAdmin;
+    const { thread: current, locked } = await generalRuntimeScopes({ meta: state.meta, entry: state.entry, sessionKey: state.sessionKey });
+    const ui = teamsSettingsUi(stateId);
+    const body = [text(`Current engine: ${current.engine}; model: ${current.model || 'engine default'}; effort: ${current.values.effort || 'inherited default'}.`),
+      text('Choose an engine, a model belonging to that engine, and effort, then Apply to this session. Changes apply to the next turn. Use /settings → General for conversation defaults.')];
+    if (!state.message.isDM && !canChangeChannelRuntime(state.authorIsAdmin)) {
+      return card('Session model', [...body, text('Runtime changes in this conversation are restricted to administrators.')]);
+    }
+    const engines = current.engines.map(item => item.value);
+    const models = current.engines.flatMap(engine => modelsForEngine(engine.value).map(item => ({ ...item, label: `${engine.label}: ${item.label || item.value}` })));
+    if (current.model && engines.includes(current.engine) && !models.some(item => item.value === current.model)) models.push({ value: current.model, label: `Current: ${current.model}` });
+    const efforts = [...new Set(engines.flatMap(engine => [
+      ...effortsForModel(engine), ...modelsForEngine(engine).flatMap(item => effortsForModel(engine, item.value)),
+    ]))];
+    if (locked) body.push(text('Engine is locked to this conversation’s Codex login.'));
+    body.push(ui.choice('engine', 'Engine', current.engine, current.engines),
+      ui.choice('model', 'Model', current.values.model || 'default', [{ label: 'Follow compatible conversation model / selected engine default', value: 'default' }, ...models]),
+      ui.choice('effort', 'Effort', current.values.effort || 'default', [{ label: 'Inherited default', value: 'default' }, ...efforts.map(value => ({ label: value, value }))]));
+    return card('Session model', body, [ui.execute('Apply to this session', 'model.save')]);
   }
   async function files(state, stateId, relative = '', page = 0) {
     const context = await authorize(grant(state), { connector });
@@ -51,8 +75,9 @@ export function createTeamsControls({ connector, now = Date.now, authorize = tea
     state = { ...state, deliveryId: destination, inConversation, expires: now() + 15 * 60_000 };
     states.set(id, state);
     try {
-      const posted = await connector.postCard({ conversationId: destination, threadKey: inConversation ? state.message.threadKey : undefined,
-        card: await build(state, id), text: inConversation ? 'Conversation settings' : 'Private conversation controls' });
+      const payload = { card: await build(state, id), text: state.modelCommand ? 'Session model settings' : inConversation ? 'Conversation settings' : 'Private conversation controls' };
+      const posted = inConversation && state.replyCard ? await state.replyCard(payload)
+        : await connector.postCard({ conversationId: destination, threadKey: inConversation ? state.message.threadKey : undefined, ...payload });
       state.messageId = posted?.messageId || '';
     }
     catch (error) { states.delete(id); throw error; }
@@ -68,6 +93,15 @@ export function createTeamsControls({ connector, now = Date.now, authorize = tea
         } catch { /* Keep the full, spaced guide available if native card delivery fails. */ }
       }
       await reply(TEAMS_HELP_TEXT);
+      return true;
+    }
+    if (message.text.trim().toLowerCase() === '/model') {
+      try {
+        const recipient = message.raw?.activity?.recipient?.id;
+        if (recipient && connector.botId && recipient !== connector.botId) throw new Error('This command is addressed to a different bot.');
+        await deliverCard({ ...args, modelCommand: true }, model, true);
+      }
+      catch (error) { await reply(`${error.message} You can change this session with /model <engine> <model|default> and /effort <level|default>.`); }
       return true;
     }
     const match = /^\/(settings|files|secrets|sendfile)(?:\s+(.*))?$/is.exec(message.text.trim());
@@ -118,8 +152,12 @@ export function createTeamsControls({ connector, now = Date.now, authorize = tea
     if (interaction.action === 'files.browse') return response(await files(state, interaction.data.stateId, interaction.data.relative || '', Number(interaction.data.page) || 0));
     if (interaction.action === 'model.save') {
       if (!state.message.isDM && !canChangeChannelRuntime(context.userIsAdmin)) throw new Error('Only administrators may change this conversation runtime.');
+      if (['engine', 'model', 'effort'].some(field => typeof interaction.data[field] !== 'string' || !interaction.data[field] || interaction.data[field].length > 128)) throw new Error('Select an engine, model, and effort before applying.');
       const engine = String(interaction.data.engine || ''), model = interaction.data.model === 'default' ? '' : String(interaction.data.model || ''), effort = interaction.data.effort === 'default' ? '' : String(interaction.data.effort || '');
-      if (!ENGINE_IDS.includes(engine) || (model && !modelsForEngine(engine).some(item => item.value === model)) || (effort && !effortsForModel(engine, model || getDefaultModel(engine)).includes(effort))) throw new Error('Select a compatible engine, model, and effort.');
+      const { thread: current } = await generalRuntimeScopes({ meta: state.meta, entry: state.entry, sessionKey: state.sessionKey });
+      const inheritedModel = effectiveMeta(state.meta).model;
+      const actualModel = model || (modelBelongsToEngine(inheritedModel, engine) ? inheritedModel : '') || getDefaultModel(engine);
+      if (!current.engines.some(item => item.value === engine) || (model && !modelBelongsToEngine(model, engine)) || (effort && !effortsForModel(engine, actualModel).includes(effort))) throw new Error('Select a compatible enabled engine, model, and effort.');
       if (states.get(interaction.data.stateId) !== state) throw new Error('These settings were already submitted. Reopen the controls.');
       states.delete(interaction.data.stateId);
       const replies = [];
@@ -127,7 +165,10 @@ export function createTeamsControls({ connector, now = Date.now, authorize = tea
       await command(`/model ${engine} ${model || 'default'}`);
       // A busy-lane refusal must not be followed by another mutation.
       if (replies.at(-1)?.startsWith('Session engine:')) await command(`/effort ${effort || 'default'}`);
-      return response(card('Session settings', replies.map(text)));
+      const updated = card('Session settings', replies.map(text));
+      if (state.inConversation && state.messageId) await connector.updateCard({ conversationId: state.deliveryId,
+        messageId: state.messageId, card: updated, text: 'Session model settings' });
+      return response(updated);
     }
     const baseUrl = publicUrl(); if (!baseUrl) throw new Error('Set the gateway Public URL before opening browser files.');
     const relative = normalizeRelativePath(interaction.data.relative || '');
