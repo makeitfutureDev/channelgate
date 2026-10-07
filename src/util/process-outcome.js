@@ -192,11 +192,21 @@ export function describeProcessOutcome({
   return { ok: false, kind: "failed", summary: "failed before it completed" };
 }
 
+// Records only that a tool call lacked a result at an observed hard kill. This cannot identify
+// the killer, establish OOM, or authorize replay/diagnosis suppression. Never retain arguments.
+export function midToolKillDetails({ code, signal, pendingToolNames = [] } = {}) {
+  if (normalizedCode(code) !== 137 && String(signal || "").toUpperCase() !== "SIGKILL") return {};
+  const names = [...new Set((Array.isArray(pendingToolNames) ? pendingToolNames : [])
+    .filter(name => typeof name === "string" && /^[a-zA-Z0-9_.:-]{1,120}$/.test(name)))].slice(0, 8);
+  return names.length ? { killedDuringTool: true, pendingToolNames: names } : {};
+}
+
 export function processFailureMessage(label, options = {}) {
   const subject = String(label || "The process").trim() || "The process";
   const outcome = describeProcessOutcome(options);
   const diagnostic = conciseProcessDiagnostic(options.diagnostic, options.maxDiagnosticChars);
-  return `${subject} ${outcome.summary}${diagnostic ? `: ${diagnostic}` : "."}`;
+  const context = midToolKillDetails(options);
+  return `${subject} ${outcome.summary}${diagnostic ? `: ${diagnostic}` : "."}${context.killedDuringTool ? " — a tool call had no recorded result when the engine was killed; cause unknown." : ""}`;
 }
 
 // Preserve bounded, named outcome facts without copying stdout, stderr or arbitrary provider data.
@@ -210,5 +220,6 @@ export function runFailureDiagnostics(error) {
     explicitStop: d.explicitStop === true,
     providerError: d.providerError === true,
     runtime: typeof d.runtime === "string" ? d.runtime.slice(0, 80) : null,
+    ...(d.killedDuringTool === true ? midToolKillDetails({ code: d.exitCode, signal: d.signal, pendingToolNames: d.pendingToolNames }) : {}),
   };
 }

@@ -347,6 +347,7 @@ test("ordinary Codex process exits retain container diagnostics without authoriz
       assert.deepEqual(runFailureDiagnostics(error), {
         engine: "codex", runtime: "container", exitCode, signal: null,
         processEnded: true, explicitStop: false, providerError: false,
+        ...(exitCode === 137 ? { killedDuringTool: true, pendingToolNames: ["command_execution"] } : {}),
       });
       assert.notEqual(error.details.replaySafe, true, "a process exit is not a replay-safe provider failure");
       return true;

@@ -117,7 +117,14 @@ test("a definite `false` from the backend ends the turn, and the kill goes back 
   assert.equal(rt.signals[0].runId, rt.spawns[0].runId, "…addressed by the run's own id");
 
   rt.children[0].emit("close", null, "SIGTERM");
-  await assert.rejects(pending, /produced no output/);
+  await assert.rejects(pending, (error) => {
+    assert.equal(error.details.engine, "claude");
+    assert.equal(error.details.errorCode, "ENGINE_PROCESS_GONE");
+    assert.equal(error.details.watchdogReason, "process-gone");
+    assert.equal(error.details.processEnded, true);
+    assert.equal(error.details.exitCode, null);
+    return true;
+  });
 });
 
 test("a user stop signals the backend instead of the host pid", async () => {

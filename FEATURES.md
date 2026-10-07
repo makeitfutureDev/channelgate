@@ -1,5 +1,43 @@
 # ChannelGate — Features
 
+## Provider selection readiness
+
+- Enabled optional providers must have their own configured credential and endpoint before a
+  runtime selection is saved in `/model`, Slack Settings, admin default/channel/DM saves, model
+  shortcuts or explicit provider directives. Rejection explains the required Settings repair and
+  preserves the existing engine/model/effort pins; it never substitutes another provider account.
+- Provider admission is an optional adapter hook, separate from CLI installation/health. Admin
+  settings validate the complete candidate so enabling/configuring/selecting a provider can be one
+  atomic save. Removing a credential does not rewrite existing pins or defaults; the selected
+  provider still fails closed at execution until repaired.
+
+## Processed Slack attachment retention
+
+- Successful nonempty attachment downloads leave a small delivery receipt under the thread's
+  `uploads/<thread>/.downloaded/` folder. Removing processed originals no longer causes every
+  ordinary thread reply to download them again. Failed downloads stay retryable. A newly attached
+  file or explicit `slack_download_file` request can still download its original. Receipts contain
+  no private URLs, credentials, or attachment content, and use the same no-follow writer.
+
+## Claude Cloud MCP selection admission
+
+- Claude discovery separates CLI connectivity from isolated-runtime admissibility. A connected
+  server with host credentials, a missing definition, or a stale transport is marked unavailable
+  with a safe reason; rejected command targets and credential-bearing URLs never enter the catalog.
+- Slack and Teams Cloud MCP management and the admin editor offer activation only for admitted definitions.
+  New channel, DM, personal, organization and template selections are rechecked against current
+  operator definitions before saving, including stale cached discoveries. Previously stored
+  selections remain removable; unrelated saves preserve them and runtime admission still drops
+  unusable optional connectors with a notice while allowing the turn to continue.
+
+## Drive sync status for unlinked channels
+
+`get_channel_drive_folder` distinguishes the gateway's enabled/key-configured state from an
+individual channel's folder link. An unlinked channel reports sync off and asks for a link;
+only a linked channel receives the next-sweep notice. Missing gateway prerequisites still
+report the disabled switch or missing service-account key. Both Claude and Codex read the same
+control-plane status.
+
 ## Automation health and quiet delivery
 
 - Automations have independent controls for **run visibility** (`visible` or `silent`), **result
@@ -72,6 +110,7 @@
   writing MCP config files, which the engines ignore (`--setting-sources ""`,
   `--strict-mcp-config`, Codex `--ignore-user-config`).
   → TEST-PLAN: Custom MCP connections.
+
 ## Platform activation emoji settings
 
 - Admin Settings → Agent defaults → **Message activation reactions** has independent Slack,
@@ -207,11 +246,14 @@ Admins can add gateway-wide model shortcuts in Settings → Access & security �
   builds these docs automatically from public beta on each website deployment using
   `documentation/scripts/vercel-build.sh` and a temporary checkout outside the website output.
 - The functionality map links all 45 areas of the product inventory to practical guides.
-  The control reference documents all 104 gateway and 10 external skills-library tool definitions
+  The control reference documents all 106 gateway and 10 external skills-library tool definitions
   with inputs, defaults, authority, results, limits and examples. A source-registration check
   requires each tool exactly once; unknown or duplicate reference headings fail the build.
   Documentation CI also runs on tool-source and feature-catalog changes. This verifies inventory
   and control coverage; peer review verifies user-facing claims against current implementation.
+- Automation guides document scoped run history and outcome evidence, quiet result filtering,
+  failure notifications and fixed-thread delivery, including exact creation, update and history
+  arguments. Engine completion is described separately from agent-reported task success.
 - Handbook source and configuration were cross-reviewed against the public feature record,
   canonical operator references and implementation. Microsoft Teams and Google Chat remain
   explicitly Beta; optional VPN provisioning, engine-specific approvals and admin-only host
@@ -2242,6 +2284,7 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
   one owner and refuses a different clicker, and the admin UI reaches them per user record.
 
 ### A channel's own
+
 ## Getting files out of a channel folder
 
 - **Composio file staging (`stage_file_for_composio`).** Composio's file-taking tools
@@ -4365,6 +4408,7 @@ are retired, bullet by bullet; everything else stands.
   header) against `slack-app-manifest.json` and, when a scope is missing, logs it and DMs admins the
   exact "add these + reinstall" list — once per change in the gap, so an upgrade that needs a new
   scope is self-announcing. → TEST-PLAN: Scope self-check.
+
 ## Phase F operational readiness
 
 - **Renamed to ChannelGate** (formerly *Claude Gateway for Slack*): display name, npm package
@@ -4568,3 +4612,24 @@ Development branches integrate into `beta`, with CI on both `beta` and `main`. S
 requires a full test pass, applicable Claude/Codex live acceptance evidence, and explicit user
 confirmation for the exact release candidate. `AGENTS.md` (also read through `CLAUDE.md`) and
 `CONTRIBUTING.md` define the workflow; these are contributor rules, not a technical branch lock.
+
+### Recovered Codex reconnect notices
+
+Codex reconnect progress events no longer fail a turn that subsequently reports `turn.completed` and exits cleanly. Terminal `turn.failed`, other errors, missing completion, nonzero exits and signals still fail; no attempt that ran tools or produced output is replayed.
+
+### Typed Claude watchdog recovery
+
+Cold and warm Claude watchdog failures carry stable `ENGINE_SILENCE_BUDGET` or `ENGINE_PROCESS_GONE` details. Slack recognizes those verdicts independently of message wording and continues the existing session at most once. Explicit Stop, AbortError, external SIGKILL/exit 137, provider errors and incomplete unsafe turns remain ineligible for automatic continuation. Quiet windows still only report liveness; only the absolute silence budget or confirmed process loss ends a turn.
+
+### Observed tool context on engine hard kills
+
+Claude cold/warm and Codex hard-kill failures identify tool calls that had no recorded result at exit. Structured diagnostics retain only bounded tool names and `killedDuringTool`; commands, inputs and results are omitted. The reply explicitly leaves the cause unknown. This observation does not establish that a tool killed the engine, infer OOM, suppress diagnosis or permit automatic replay.
+
+### Composio scripting guide
+
+The bundled `gateway-usage` capability map routes bulk app calls and large saved results to
+`references/composio-scripts.md`. The reference explains current search sessions and complete
+schemas, selected identities/accounts, independent multi-execute batches, persistent remote Python
+workbench scripts, pagination and resumable checkpoints. Local file staging, protected credentials
+and operator overrides retain their existing rules. This is agent guidance, not a local Composio
+sandbox or a new runtime tool.

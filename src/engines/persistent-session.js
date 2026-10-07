@@ -6,10 +6,10 @@
 import { claudeProviderError, createStreamConsumer } from "./stream.js";
 import { buildChildEnv } from "./child-env.js";
 import { appendTail } from "../util/tail.js";
-import { conciseProcessDiagnostic, processFailureMessage } from "../util/process-outcome.js";
+import { conciseProcessDiagnostic, midToolKillDetails, processFailureMessage } from "../util/process-outcome.js";
 import { probeEngineChild, runtimeTargetOr, signalEngineChild, spawnEngineChild } from "./runtime-target.js";
 import { newRunId } from "../runtimes/contract.js";
-import { createStallWatchdog, describeSilence, DEFAULT_SILENCE_WINDOWS } from "./watchdog.js";
+import { createStallWatchdog, watchdogFailureDetails, describeSilence, DEFAULT_SILENCE_WINDOWS } from "./watchdog.js";
 
 const MAX_RETAINED = 64_000; // stderr kept for the death message — tail only, never unbounded
 
@@ -91,7 +91,7 @@ export class PersistentClaudeSession {
         this._die(null);
         return;
       }
-      const error = new Error(processFailureMessage("Claude", { code, signal, diagnostic: this.stderr, maxDiagnosticChars: 500 }));
+      const error = new Error(processFailureMessage("Claude", { code, signal, diagnostic: this.stderr, maxDiagnosticChars: 500, pendingToolNames: this.turn?.stream.pendingToolNames }));
       error.details = {
         exitCode: code,
         signal: signal || null,
@@ -99,6 +99,7 @@ export class PersistentClaudeSession {
         engine: "claude",
         runtime: this.target.backend,
         processEnded: true,
+        ...midToolKillDetails({ code, signal, pendingToolNames: this.turn?.stream.pendingToolNames }),
       };
       this._die(error);
     });
@@ -192,11 +193,11 @@ export class PersistentClaudeSession {
           // _die rejects this turn and evicts the session from the pool; the next message
           // cold-resumes into a fresh warm process instead of queueing forever.
           this._die(
-            new Error(
+            Object.assign(new Error(
               reason === "process-gone"
                 ? "Warm Claude session exited unexpectedly"
                 : `Warm Claude turn produced no output for ${describeSilence(silentMs)} — giving up`,
-            ),
+            ), { details: watchdogFailureDetails({ engine: "claude", reason }) }),
           );
         },
       });

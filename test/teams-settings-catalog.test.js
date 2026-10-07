@@ -213,14 +213,49 @@ test('large variable and template inventories remain bounded with reachable pagi
 
 test('Cloud MCP activation uses live discovered selections, pages them, and rechecks role at write', async () => {
   const bin = tempDir('cg-teams-cloud-bin-');
-  const output = Array.from({ length: 12 }, (_, i) => `catalog-server-${i}: https://mcp.example.com/${i} (HTTP) - Connected`).join('\n');
+  const configDir = tempDir('cg-teams-cloud-config-');
+  const mcpServers = Object.fromEntries(Array.from({ length: 12 }, (_, i) => [
+    `catalog-server-${i}`, { type: 'http', url: `https://mcp.example.com/${i}` },
+  ]));
+  mcpServers['catalog-credentialed'] = {
+    type: 'http', url: 'https://mcp.example.com/credentialed',
+    headers: { Authorization: 'Bearer teams-cloud-secret-fixture' },
+  };
+  await writeFile(path.join(configDir, '.claude.json'), JSON.stringify({ mcpServers }));
+  const output = [
+    ...Array.from({ length: 12 }, (_, i) => `catalog-server-${i}: https://mcp.example.com/${i} (HTTP) - Connected`),
+    'catalog-credentialed: https://mcp.example.com/credentialed (HTTP) - Connected',
+    'catalog-missing: https://mcp.example.com/missing (HTTP) - Connected',
+  ].join('\n');
   await writeFile(path.join(bin, 'claude'), `#!/usr/bin/env node\nprocess.stdout.write(${JSON.stringify(output)});\n`, { mode: 0o700 });
   const originalPath = process.env.PATH;
+  const originalConfigDir = process.env.CLAUDE_CONFIG_DIR;
   const { invalidateEngineMcps } = await import('../src/gateway/mcp-discovery.js');
   invalidateEngineMcps('claude');
   process.env.PATH = `${bin}:${originalPath}`;
+  process.env.CLAUDE_CONFIG_DIR = configDir;
   try {
     const ctx = await context({ admin: true });
+    for (const key of ['catalog-credentialed', 'catalog-missing']) {
+      await assert.rejects(invoke(ctx, 'settings.cloud.toggle', { engine: 'claude', key, activate: true }), /no longer available/);
+      assert.deepEqual((await getChannelMeta(ctx.entry.slug)).allowedMcps, []);
+    }
+    // Discovery is cached; a definition can become unsafe before the user activates its card.
+    await writeFile(path.join(configDir, '.claude.json'), JSON.stringify({ mcpServers: {
+      ...mcpServers, 'catalog-server-3': { ...mcpServers['catalog-server-3'], headers: { Authorization: 'Bearer stale-teams-secret-fixture' } },
+    } }));
+    await assert.rejects(invoke(ctx, 'settings.cloud.toggle', { engine: 'claude', key: 'catalog-server-3', activate: true }), /credential/i);
+    assert.deepEqual((await getChannelMeta(ctx.entry.slug)).allowedMcps, []);
+    await writeFile(path.join(configDir, '.claude.json'), JSON.stringify({ mcpServers }));
+    const unavailableCard = await renderCatalogPage('mcp', ctx, ui);
+    assert.match(JSON.stringify(unavailableCard), /catalog-credentialed.*unavailable|unavailable.*catalog-credentialed/);
+    assert.doesNotMatch(JSON.stringify(unavailableCard), /teams-cloud-secret-fixture/);
+    assert.ok(!unavailableCard.body.some(item => item.actions?.some(action => ['catalog-credentialed', 'catalog-missing'].includes(action.data.key))));
+    await ctx.patch(() => ({ allowedMcps: [{ name: 'catalog-missing', namespace: 'catalog-missing', match: { serverUrl: 'https://mcp.example.com/missing' } }] }));
+    const existingUnavailable = await renderCatalogPage('mcp', ctx, ui);
+    assert.ok(existingUnavailable.body.some(item => item.actions?.some(action => action.data.key === 'catalog-missing' && action.title === 'Deactivate')));
+    await invoke(ctx, 'settings.cloud.toggle', { engine: 'claude', key: 'catalog-missing', activate: false });
+    assert.deepEqual((await getChannelMeta(ctx.entry.slug)).allowedMcps, []);
     await invoke(ctx, 'settings.cloud.toggle', { engine: 'claude', key: 'catalog-server-1', activate: true, selection: { name: 'forged-server' } });
     const selection = (await getChannelMeta(ctx.entry.slug)).allowedMcps[0];
     assert.equal(selection.name, 'catalog-server-1');
@@ -239,6 +274,8 @@ test('Cloud MCP activation uses live discovered selections, pages them, and rech
     assert.deepEqual((await getChannelMeta(ctx.entry.slug)).allowedMcps, []);
   } finally {
     process.env.PATH = originalPath;
+    if (originalConfigDir === undefined) delete process.env.CLAUDE_CONFIG_DIR;
+    else process.env.CLAUDE_CONFIG_DIR = originalConfigDir;
     invalidateEngineMcps('claude');
   }
 });

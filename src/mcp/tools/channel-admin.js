@@ -1,3 +1,4 @@
+import { assertNewMcpSelections } from "../../gateway/mcp-selection.js";
 // Channel-admin tools for the gateway control MCP server: the channel's MCP allowlist, the
 // mode switches (admin/bash/network/auto), working folder, Google Drive sync link, standing
 // instructions + memory, the gateway updater, and the gateway-usage guide. Split out of
@@ -68,7 +69,7 @@ export function register(server, ctx) {
       const meta = await loadMeta();
       const servers = await requireAdapter(activeEngine).discoverMcps({ channelId: activeEngine === "codex" && meta?.codexAuthSource === "channel" ? channelId : "" });
       if (!servers.length) return text("No MCP servers available on the host.");
-      return text(servers.map((s) => `• ${s.name}${s.connected ? "" : " (offline)"}`).join("\n"));
+      return text(servers.map((s) => `• ${s.name}${s.selectable === false ? " (unavailable: " + s.admissionReason + ")" : s.connected ? "" : " (offline)"}`).join("\n"));
     }
   );
 
@@ -97,6 +98,10 @@ export function register(server, ctx) {
       if (!(await requireManage())) return text("Only this channel's managers (or an admin) can change its MCP servers.");
       const sourceMeta = await loadMeta();
       const available = await requireAdapter(activeEngine).discoverMcps({ channelId: activeEngine === "codex" && sourceMeta?.codexAuthSource === "channel" ? channelId : "" });
+      const requested = available.filter(s => names.some(name => s.name.toLowerCase() === String(name).toLowerCase()))
+        .map(s => persistedSelectionForEngine(activeEngine, s)).filter(Boolean);
+      try { await assertNewMcpSelections(activeEngine, requested); }
+      catch (error) { return text(error.message); }
       const field = selectionFieldForEngine(activeEngine);
       const added = [];
       const unknown = [];
@@ -372,10 +377,14 @@ export function register(server, ctx) {
   // key are separate admin-only Settings — the folder link alone does nothing until those are set.
 
   // Advisory one-liner: is the scheduled sync actually armed right now? (folder link aside.)
-  function driveSyncStatusLine() {
+  function driveSyncStatusLine({ linked = true } = {}) {
     const enabled = getDriveSyncEnabled();
     const hasKey = Boolean((getDriveSyncKeyJson() || "").trim() || (getDriveSyncKeyFile() || "").trim());
-    if (enabled && hasKey) return "Drive sync is enabled and a service-account key is configured — this folder will sync on the next sweep.";
+    if (enabled && hasKey) {
+      return linked
+        ? "Drive sync is enabled and a service-account key is configured — this folder will sync on the next sweep."
+        : "Drive sync is enabled and a service-account key is configured. Link a folder to this channel to enable its sync.";
+    }
     const missing = [];
     if (!enabled) missing.push("the global switch is OFF");
     if (!hasKey) missing.push("no service-account key is configured");
@@ -388,7 +397,7 @@ export function register(server, ctx) {
     async () => {
       const meta = await loadMeta();
       const link = (meta?.syncDriveFolder || "").trim();
-      if (!link) return text(`No Google Drive folder is linked to this channel (sync off).\n${driveSyncStatusLine()}`);
+      if (!link) return text(`No Google Drive folder is linked to this channel (sync off).\n${driveSyncStatusLine({ linked: false })}`);
       const id = parseDriveFolderId(link);
       let last = "";
       try {

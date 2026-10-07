@@ -43,6 +43,17 @@ export const DEFAULT_PROBE_TIMEOUT_MS = 20_000;
 // healthy turns whenever a container daemon hiccuped. Only a definite `false` ends a turn.
 const UNKNOWN = Symbol("liveness-unknown");
 
+// A machine-readable watchdog verdict, independent of the user-facing sentence. The runners
+// attach it only for a decision made by this watchdog, never for an unexplained external kill.
+export function watchdogFailureDetails({ engine, reason }) {
+  return {
+    engine,
+    errorCode: reason === "process-gone" ? "ENGINE_PROCESS_GONE" : "ENGINE_SILENCE_BUDGET",
+    watchdogReason: reason,
+    processEnded: true,
+  };
+}
+
 export function createStallWatchdog({
   timeoutMs = DEFAULT_TIMEOUT_MS,
   maxSilenceMs = timeoutMs * DEFAULT_SILENCE_WINDOWS,

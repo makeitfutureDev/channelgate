@@ -1634,19 +1634,26 @@ function catalogWithSavedEntries(box, engine) {
   for (const original of box._mcpOriginals?.[engine] || []) {
     const id = mcpEntryId(original);
     if (!id || !wanted.has(id) || known.has(id)) continue;
-    merged.push({ ...original, connected: false });
+    merged.push({ ...original, connected: false, selectable: false, admissionReason: "is no longer available in the host catalog" });
     known.add(id);
   }
   return merged;
+}
+
+function mcpCheckboxItem(entry, selected) {
+  const value = mcpEntryId(entry);
+  if (entry.selectable === false) return { value,
+    locked: !selected.includes(value),
+    labelHtml: `${escapeHtml(entry.name)} <span class="off-badge">unavailable</span> <span>${escapeHtml(entry.admissionReason || "no admissible transport")}</span>` };
+  return entry.connected ? { value, label: entry.name }
+    : { value, labelHtml: `${escapeHtml(entry.name)} <span class="off-badge">offline</span>` };
 }
 
 function paintMcpBox(box, engine) {
   const selected = mcpBoxState(box)[engine];
   const entries = catalogWithSavedEntries(box, engine);
   box.classList.remove("empty");
-  const items = entries.map((s) => s.connected
-    ? { value: mcpEntryId(s), label: s.name }
-    : { value: mcpEntryId(s), labelHtml: `${escapeHtml(s.name)} <span class="off-badge">offline</span>` });
+  const items = entries.map(entry => mcpCheckboxItem(entry, selected));
   checkboxList(box, items, selected, "value", "label");
 }
 
@@ -1659,9 +1666,7 @@ function paintAllMcpBoxes(box) {
     section.innerHTML = `<h5>${engine === "claude" ? "Claude" : "Codex"}</h5>`;
     const list = document.createElement("div");
     const selected = mcpBoxState(box)[engine];
-    const items = catalogWithSavedEntries(box, engine).map((entry) => entry.connected
-      ? { value: mcpEntryId(entry), label: entry.name }
-      : { value: mcpEntryId(entry), labelHtml: `${escapeHtml(entry.name)} <span class="off-badge">offline</span>` });
+    const items = catalogWithSavedEntries(box, engine).map(entry => mcpCheckboxItem(entry, selected));
     checkboxList(list, items, selected, "value", "label");
     for (const input of list.querySelectorAll('input[type="checkbox"]')) input.dataset.mcpEngine = engine;
     section.appendChild(list);

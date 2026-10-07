@@ -431,9 +431,9 @@ export function pinEgressSecretsStrictDefault({ configured, save = saveSettings,
 // Write-only from the API like every other token here — has*/last4 on listings, the value only
 // through POST /api/secrets/reveal. Keyed by PROVIDER so a second endpoint (a different region, a
 // different account) is a table row rather than a second copy of this accessor.
-export function getQwenConfig(providerId) {
+export function getQwenConfig(providerId, { settingsPatch = {} } = {}) {
   const entry = qwenProvider(providerId);
-  const s = getSettings();
+  const s = { ...getSettings(), ...settingsPatch };
   const stored = (key) => (typeof s[key] === "string" ? s[key].trim() : "");
   return {
     id: entry.id,

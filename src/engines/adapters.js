@@ -274,6 +274,10 @@ const makeQwenAdapter = (entry) => validateEngineAdapter({
   discoverMcps: () => listEngineMcps("claude"),
   discoverModels: () => discoverQwenModels({ providerId: entry.id }),
   credentialState: () => qwenCredentialState(entry.id),
+  async selectionReadiness(options) {
+    const provider = await resolveQwenProvider(entry.id, options);
+    return { ready: provider.configured, reason: provider.error };
+  },
   // `claude --version` answers "is the CLI installed" — true even with no QwenCloud key at all —
   // so the configured provider is reported beside it. Like the other adapters it never flips
   // `ready`: the run path fails closed with the remedy, and the admin rail says "not configured"

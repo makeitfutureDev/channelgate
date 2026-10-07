@@ -304,3 +304,10 @@ test("unsupported effective config read preserves app discovery and unresolved s
   assert.deepEqual(result.map(x => x.id), ["echo", "github"]);
   assert.equal(result[0].definition, undefined);
 });
+
+test("a catalog capability rejected by transport admission cannot become a new Claude selection", () => {
+  assert.equal(discovery.persistedSelectionForEngine("claude", {
+    name: "credentialed", namespace: "mcp__credentialed", match: { serverName: "credentialed" },
+    connected: true, selectable: false,
+  }), null);
+});

@@ -5,7 +5,7 @@ export const controlPages = [
   { slug: 'skills', label: 'Skill management', description: 'All catalog, grant, template, revision, source, and governance controls.' },
   { slug: 'accounts-and-secrets', label: 'Accounts and secrets', description: 'Manage personal connector tokens and protected variables.' },
   { slug: 'conversation-settings', label: 'Conversation and gateway settings', description: 'Modes, folders, Drive sync, VPN state, updates, and operating guides.' },
-  { slug: 'automation', label: 'Automation', description: 'Create, inspect, and delete schedules and reminders.' },
+  { slug: 'automation', label: 'Automation', description: 'Create, update, inspect, and delete schedules; review execution history.' },
   { slug: 'workspace-and-files', label: 'Workspace and file transfer', description: 'Bounded file inspection, Composio staging, and public links.' },
   { slug: 'slack', label: 'Slack reports and history', description: 'Tables, charts, snippets, files, lists, and scoped history reads.' },
   { slug: 'ssh', label: 'SSH access', description: 'Personal public keys, channel admission, and connection instructions.' },

@@ -1,3 +1,5 @@
+import { assertEngineSelectable } from "../engines/selection.js";
+import { assertNewMcpSelections } from "../gateway/mcp-selection.js";
 // Slack Socket Mode gateway. Receives message events across DM / group DM / public & private
 // channels, applies the gating rules (DM → no mention needed; everywhere else → require an
 // explicit @bot mention), authorizes the author against the channel's allowedUsers, then runs
@@ -769,6 +771,7 @@ export async function applyThreadRuntimeSelection({ entry, meta, state, actorId,
   };
   const next = nextRuntimeTriple(current, field, value, inheritedEngine);
   const { patch, actualEngine } = runtimeSettingsPatch(next, { gatewayEngine: inheritedEngine });
+  if (field === "engine" && patch.engine) await assertEngineSelectable(patch.engine);
   if (patch.engine !== current.engine) await setThreadEngine(entry.slug, threadKey, patch.engine);
   if (patch.model !== current.model) await setThreadModel(entry.slug, threadKey, patch.model);
   if (patch.effort !== current.effort) await setThreadEffort(entry.slug, threadKey, patch.effort);
@@ -841,6 +844,8 @@ async function cloudManagerItems(meta, engine) {
       name: String(entry.name || entry.id || key),
       description: String(entry.description || entry.target || entry.kind || ""),
       connected: entry.connected !== false,
+      selectable: entry.selectable !== false && available.includes(entry),
+      admissionReason: entry.admissionReason || (!available.includes(entry) ? "is no longer available in the host catalog" : ""),
       direct: directKeys.has(key),
       inherited: inheritedKeys.has(key),
       active: directKeys.has(key) || inheritedKeys.has(key),
@@ -1544,6 +1549,7 @@ async function connectAndWire(app) {
           const inheritedEngine = inheritedChannelRuntime(meta).engine;
           const next = nextRuntimeTriple({ engine: meta.engine, model: meta.model, effort: meta.effort }, field, value, inheritedEngine);
           const { patch, actualEngine } = runtimeSettingsPatch(next, { gatewayEngine: inheritedEngine });
+          if (field === "engine" && patch.engine) await assertEngineSelectable(patch.engine);
           meta = await patchAuditedChannelSettings(entry, clicker, patch);
           await logEvent("channel_runtime_updated", {
             channel: state.channelId, slug: entry.slug, engine: actualEngine,
@@ -1631,7 +1637,8 @@ async function connectAndWire(app) {
           const available = await requireAdapter(engine).discoverMcps({ channelId: engine === "codex" && meta?.codexAuthSource === "channel" ? meta.channelId : "" });
           selection = available.find((item) => cloudSelectionKey(engine, item) === key);
           selection = persistedSelectionForEngine(engine, selection);
-          if (!selection) throw new Error("That MCP capability is no longer available. Refresh the catalog and try again.");
+          if (!selection) throw new Error("That MCP capability has no admissible transport. Refresh the catalog or repair its host definition.");
+          await assertNewMcpSelections(engine, [selection]);
         }
         meta = await patchAuditedChannelSettings(entry, clicker, (current) => {
           return { [field]: cloudSelectionsAfterToggle(current[field], engine, key, { activate, selection }) };
