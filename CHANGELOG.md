@@ -2661,3 +2661,5 @@ copying cross-channel auto-memory.
   injected into `CLAUDE.md`; visible working folders under `~/Slack Agent/<channel>`.
 - Optional **admin-UI password**; one-command installer; encrypted config **backup/restore**;
   **launchd** service with `npm run update`.
+
+- Fix completed Codex turns being reported as failures after recovered reconnect notices; retain terminal failure and unsafe-replay safeguards.

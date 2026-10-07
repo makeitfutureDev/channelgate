@@ -1141,6 +1141,7 @@ export async function runCodex({
     let usage = null;
     let raw = null;
     let turnError = null;
+    let reconnectError = null;
     let toolUseCount = 0;
     let timedOut = false;
     let liveFailure = null;
@@ -1242,15 +1243,29 @@ export async function runCodex({
           break;
         case "turn.completed":
           completed = true;
+          // Only an explicit successful turn recovers a preceding CLI retry notice. A terminal
+          // failure stays authoritative even if the CLI later emits a completion event.
+          reconnectError = null;
           // Token usage (best-effort across schema variants).
           usage = p.usage || p.turn?.usage || usage;
           raw = p;
           break;
         case "turn.failed":
-        case "error":
           turnError = codexTurnError(p);
           usage = p.usage || p.turn?.usage || usage;
           break;
+        case "error": {
+          const failure = codexTurnError(p);
+          // Codex emits reconnect progress as `error`, even when its retry succeeds. Keep only
+          // that narrow notice separate: an arbitrary provider error is still a terminal verdict.
+          if (failure.details.providerKind === "transient" && /^reconnecting\b/i.test(failure.message)) {
+            reconnectError = failure;
+          } else {
+            turnError = failure;
+          }
+          usage = p.usage || p.turn?.usage || usage;
+          break;
+        }
         default: {
           // A collaboration item is stdout's ONLY sign that children exist: multi-agent v2 sends an
           // anonymous `wait` (no receivers, no `agents_states`), and the spawn call never reaches
@@ -1483,7 +1498,9 @@ export async function runCodex({
           signal: exitSignal || null,
         }));
       }
-      if (turnError) {
+      const terminalError = turnError || reconnectError;
+      if (terminalError) {
+        const turnError = terminalError;
         const replaySafe = REPLAY_SAFE_KINDS.includes(turnError.details.providerKind) && !didWork;
         return reject(commandError(turnError.message, {
           ...failureDetails,
