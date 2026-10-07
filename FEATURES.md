@@ -765,8 +765,10 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
   starts on Variables. General shows both channel defaults and session pins, filters compatible
   models/efforts, labels inheritance, respects dedicated Codex login locks and offers Follow
   channel default. Teams runtime lists have one **Apply to channel** and one **Apply to thread**
-  button. Engine-labelled model choices allow a complete engine/model/effort selection before
-  saving; the compatible triple is saved atomically for that scope. Stale forms refuse to
+  button. Each model list contains only models for that scope's selected engine. After changing
+  Engine, **Load models** refreshes its choices without saving; incompatible draft model/effort
+  values clear to default. Compatible saved full model IDs stay selectable even if discovery
+  omits them. The compatible triple is saved atomically for that scope. Stale forms refuse to
   overwrite newer runtime settings. Other settings keep their explicit controls.
   Runtime edits in this console admit every authorized member, independently of the `/model`
   text-command policy. Access policy and native member selection require managers/admins; Cloud

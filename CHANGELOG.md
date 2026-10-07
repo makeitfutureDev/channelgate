@@ -18,6 +18,10 @@ product overview.
 
 ## Unreleased
 
+- Teams settings now show only models for the selected engine in each channel/session list.
+  After changing Engine, Load models refreshes the choices without saving; Apply saves the
+  complete selection for that scope.
+
 - Teams `/model` now opens an engine, model and effort picker with an Apply button for the
   current session, alongside its current selection. Typed changes remain available.
 

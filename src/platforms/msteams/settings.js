@@ -1,5 +1,6 @@
 // Teams' conversation settings console. The opaque card state owns conversation/session authority;
-// submitted fields are values only and are never saved in the navigation state.
+// submitted fields are values only. Runtime previews retain validated drafts, never authority
+// fields or credentials, until the owner applies a complete scope.
 import { randomUUID } from 'node:crypto';
 import { getChannelMeta, patchChannelMeta, isAdmin, isApproved } from '../../config/store.js';
 import { isAuthorized } from '../../gateway/modes.js';

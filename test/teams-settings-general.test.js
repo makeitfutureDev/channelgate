@@ -5,6 +5,7 @@ ensureTestEnv();
 const { renderGeneral, handleGeneral, generalRuntimeScopes } = await import('../src/platforms/msteams/settings-general.js');
 const { nextRuntimeTriple, runtimeSettingsPatch } = await import('../src/gateway/runtime-settings.js');
 const { saveSettings } = await import('../src/config/settings.js');
+const { modelsForEngine, modelBelongsToEngine } = await import('../src/engines/registry.js');
 const { getThreadEngine, getThreadModel, getThreadEffort, setThreadEngine, setThreadModel, setThreadEffort, setThreadRuntimeOverrides, setThreadClean, getThreadClean, setThreadSudo, getThreadSudo } = await import('../src/gateway/thread-engine.js');
 const { getDb } = await import('../src/db/index.js');
 const { saveSession } = await import('../src/gateway/sessions.js');
@@ -29,7 +30,7 @@ function context(meta = {}, options = {}) {
   return ctx;
 }
 
-test('runtime forms allow cross-engine choices with one Apply at the end of each scope', async () => {
+test('runtime forms show only each scope engine models with one Apply at the end', async () => {
   saveSettings({ engine: 'claude', defaultCodexModel: 'gpt-6-sol', defaultClaudeModel: 'opus', engineEnabled: {} });
   const ctx = context({ engine: 'claude', model: 'opus' });
   await saveSession(ctx.entry.slug, ctx.sessionKey, 'codex-session', 'codex');
@@ -41,9 +42,13 @@ test('runtime forms allow cross-engine choices with one Apply at the end of each
   const channelModels = body.find(row => row.id === 'channel_model').choices;
   const sessionModels = body.find(row => row.id === 'thread_model').choices;
   assert.ok(channelModels.some(item => item.value.startsWith('claude-')));
-  assert.ok(sessionModels.some(item => item.value.startsWith('claude-')));
+  assert.ok(!sessionModels.some(item => item.value.startsWith('claude-')));
   assert.ok(sessionModels.some(item => item.value.startsWith('gpt-')));
-  assert.ok(channelModels.some(item => item.title.startsWith('Codex:')));
+  assert.ok(!channelModels.some(item => item.value.startsWith('gpt-')));
+  for (const [engine, choices] of [['claude', channelModels], ['codex', sessionModels]]) {
+    assert.ok(choices.every(item => item.value === '__default__' || modelBelongsToEngine(item.value, engine)));
+    assert.equal(choices[0].value, '__default__');
+  }
   const applies = body.filter(row => row.type === 'ActionSet').flatMap(row => row.actions).filter(action => action.verb === 'settings.runtime.apply');
   assert.deepEqual(applies.map(item => item.title), ['Apply to channel', 'Apply to thread']);
   assert.equal(body.filter(row => row.type === 'ActionSet').flatMap(row => row.actions).filter(action => action.verb === 'settings.runtime').length, 0);
@@ -51,6 +56,88 @@ test('runtime forms allow cross-engine choices with one Apply at the end of each
     const lastInput = body.findIndex(row => row.id === `${scope}_effort`);
     assert.equal(body[lastInput + 1].actions[0].data.scope, scope);
   }
+});
+
+test('loading engine models stages a scoped choice without writes, then Apply saves it', async () => {
+  const ctx = context({ engine: 'claude', model: 'opus', effort: 'high' });
+  await setThreadEngine(ctx.entry.slug, ctx.sessionKey, 'claude');
+  const before = { ...ctx.meta };
+  await renderGeneral(ctx, ui);
+  await handleGeneral('settings.runtime.models', { scope: 'channel', channel_engine: 'codex', channel_model: 'opus', channel_effort: 'high', thread_engine: 'codex' }, ctx, ui);
+  const { body } = await renderGeneral(ctx, ui);
+  const choice = id => body.find(row => row.id === id);
+  assert.equal(choice('channel_engine').value, 'codex');
+  assert.equal(choice('channel_model').value, '__default__');
+  assert.ok(choice('channel_model').choices.slice(1).every(item => modelBelongsToEngine(item.value, 'codex')));
+  assert.ok(choice('thread_model').choices.slice(1).every(item => modelBelongsToEngine(item.value, 'claude')));
+  assert.deepEqual(ctx.meta, before);
+  assert.equal(await getThreadEngine(ctx.entry.slug, ctx.sessionKey), 'claude');
+  await handleGeneral('settings.runtime.apply', { scope: 'channel', channel_engine: 'codex', channel_model: modelsForEngine('codex')[0].value, channel_effort: 'high' }, ctx, ui);
+  assert.equal(ctx.meta.engine, 'codex');
+  assert.equal(ctx.meta.model, modelsForEngine('codex')[0].value);
+  assert.equal(ctx.state.runtimeDrafts.channel, undefined);
+});
+
+test('thread model preview resolves the default to the retained session engine', async () => {
+  const ctx = context({ engine: 'claude', model: 'opus' });
+  await saveSession(ctx.entry.slug, ctx.sessionKey, 'retained-codex', 'codex');
+  await setThreadEngine(ctx.entry.slug, ctx.sessionKey, 'claude');
+  await renderGeneral(ctx, ui);
+  await handleGeneral('settings.runtime.models', { scope: 'thread', thread_engine: '__default__', thread_model: 'opus', thread_effort: 'max' }, ctx, ui);
+  const { body } = await renderGeneral(ctx, ui);
+  assert.equal(body.find(row => row.id === 'thread_engine').value, '__default__');
+  assert.equal(body.find(row => row.id === 'thread_model').value, '__default__');
+  assert.ok(body.find(row => row.id === 'thread_model').choices.slice(1).every(item => modelBelongsToEngine(item.value, 'codex')));
+  assert.equal(await getThreadEngine(ctx.entry.slug, ctx.sessionKey), 'claude');
+  assert.equal(ctx.meta.engine, 'claude');
+});
+
+test('channel model preview resolves its inherited engine independently of the current engine', async () => {
+  saveSettings({ engine: 'claude', engineEnabled: {} });
+  const ctx = context({ engine: 'codex', model: modelsForEngine('codex')[0].value, effort: 'ultra' });
+  await renderGeneral(ctx, ui);
+  await handleGeneral('settings.runtime.models', { scope: 'channel', channel_engine: '__default__', channel_model: ctx.meta.model, channel_effort: 'ultra' }, ctx, ui);
+  const { body } = await renderGeneral(ctx, ui);
+  assert.equal(body.find(row => row.id === 'channel_engine').value, '__default__');
+  assert.equal(body.find(row => row.id === 'channel_model').value, '__default__');
+  assert.equal(body.find(row => row.id === 'channel_effort').value, '__default__');
+  assert.ok(body.find(row => row.id === 'channel_model').choices.slice(1).every(item => modelBelongsToEngine(item.value, 'claude')));
+  assert.equal(ctx.meta.engine, 'codex'); assert.equal(ctx.meta.effort, 'ultra');
+});
+
+test('model previews reject stale/disabled/locked/unauthorized forms without writes', async () => {
+  const data = { scope: 'channel', channel_engine: 'codex', channel_model: '__default__', channel_effort: '__default__' };
+  const stale = context({ engine: 'claude', model: 'opus' });
+  await renderGeneral(stale, ui); stale.meta.model = 'sonnet';
+  await assert.rejects(handleGeneral('settings.runtime.models', data, stale, ui), /settings changed/);
+  assert.equal(stale.meta.model, 'sonnet');
+  const disabled = context({ engine: 'claude' });
+  await renderGeneral(disabled, ui); saveSettings({ engineEnabled: { codex: false } });
+  try { await assert.rejects(handleGeneral('settings.runtime.models', data, disabled, ui), /no longer enabled/); }
+  finally { saveSettings({ engineEnabled: {} }); }
+  const locked = context({ engine: 'codex', codexAuthSource: 'channel' });
+  const lockedCard = await renderGeneral(locked, ui);
+  assert.ok(!JSON.stringify(lockedCard).includes('settings.runtime.models'));
+  assert.ok(lockedCard.body.filter(row => row.id?.endsWith('_model')).every(row => row.choices.slice(1).every(item => modelBelongsToEngine(item.value, 'codex'))));
+  await assert.rejects(handleGeneral('settings.runtime.models', data, locked, ui), /own Codex login/);
+  const revoked = context({ engine: 'claude' });
+  await renderGeneral(revoked, ui);
+  revoked.authorize = async () => ({ ...revoked, userIsApproved: false });
+  await assert.rejects(handleGeneral('settings.runtime.models', data, revoked, ui), /no longer authorized/);
+  for (const ctx of [stale, disabled, locked, revoked]) assert.equal(ctx.state.runtimeDrafts, undefined);
+});
+
+test('stale model drafts are discarded and compatible full model IDs remain visible', async () => {
+  const ctx = context({ engine: 'claude', model: 'opus' });
+  await renderGeneral(ctx, ui);
+  await handleGeneral('settings.runtime.models', { scope: 'channel', channel_engine: 'codex', channel_model: 'opus', channel_effort: '__default__' }, ctx, ui);
+  ctx.meta.engine = 'claude'; ctx.meta.model = 'sonnet';
+  const { body } = await renderGeneral(ctx, ui);
+  assert.equal(body.find(row => row.id === 'channel_engine').value, 'claude');
+  assert.equal(ctx.state.runtimeDrafts.channel, undefined);
+  const full = context({ engine: 'claude', model: 'claude-sonnet-5-20990101' });
+  const rendered = await renderGeneral(full, ui);
+  assert.ok(rendered.body.find(row => row.id === 'channel_model').choices.some(item => item.value === full.meta.model));
 });
 
 test('one channel Apply saves the full valid triple and ignores other-scope inputs', async () => {
