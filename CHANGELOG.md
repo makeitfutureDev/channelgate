@@ -18,6 +18,10 @@ product overview.
 
 ## Unreleased
 
+- Teams `/help` now uses a native card with separate headings, spaced paragraphs, emoji rows
+  and commands, avoiding the run-on layout caused by Markdown soft line breaks. Card delivery
+  falls back to the complete spaced guide, and quoted group help cards keep their session.
+
 - Teams help identifies Heart eyes robot, Stop sign and Tick button by their emoji names.
   Robot activation now recognizes the documented Teams `hearteyesrobot` and `smilerobot` IDs.
 

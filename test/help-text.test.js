@@ -2,7 +2,8 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 
 import { HELP_TEXT } from "../src/slack/help.js";
-import { TEAMS_HELP_TEXT } from "../src/platforms/msteams/help.js";
+import { TEAMS_HELP_TEXT, createTeamsHelpCard } from "../src/platforms/msteams/help.js";
+import { adaptiveCardAttachment } from '../src/platforms/msteams/cards.js';
 import { ensureTestEnv } from './helpers.js';
 ensureTestEnv();
 const { teamsAdapter } = await import('../src/platforms/msteams.js');
@@ -34,6 +35,30 @@ test("Teams help survives the platform formatter within its message budget", () 
   assert.match(chunks[0].text, /How to use me/);
   assert.match(chunks[0].text, /Commands/);
   assert.match(chunks[0].text, /\/clear/);
+  assert.match(chunks[0].text, /How to use me\*\*\n\nIn a personal chat/);
+  assert.match(chunks[0].text, /\n\n• `\/clear`/);
+});
+
+test('Teams help card separates headings, paragraphs, emoji and commands without losing content', () => {
+  const card = createTeamsHelpCard();
+  assert.equal(adaptiveCardAttachment(card).contentType, 'application/vnd.microsoft.card.adaptive');
+  assert.equal(card.body[0].text, 'How to use me');
+  assert.equal(card.body[0].size, 'Large');
+  const headings = card.body.filter(item => item.type === 'TextBlock').map(item => item.text);
+  assert.ok(headings.includes('Reaction names'));
+  assert.ok(headings.includes('Open files'));
+  assert.equal(headings.at(-1), 'Commands');
+  const rows = card.body.filter(item => item.type === 'RichTextBlock');
+  const plain = item => item.inlines.map(run => run.text).join('');
+  const expected = TEAMS_HELP_TEXT.replace(/`([^`]+)`/g, '$1').replace(/\*\*([^*]+)\*\*/g, '$1');
+  // Compare all words, ignoring only heading bullets/colons: the card may style, never truncate.
+  const words = text => text.replace(/[•:]/g, '').split(/\s+/).filter(Boolean);
+  assert.deepEqual(words(card.body.map(item => item.text || plain(item)).join(' ')), words(expected));
+  assert.equal(rows.filter(item => /^• \/.* — /.test(plain(item))).length, 10);
+  assert.equal(rows.filter(item => /^[🤖🛑✅]/u.test(plain(item))).length, 3);
+  assert.ok(rows.some(item => item.inlines.some(run => run.text === '/help' && run.fontType === 'Monospace')));
+  assert.ok(!JSON.stringify(card).includes('`'));
+  assert.equal(card.actions, undefined);
 });
 
 test("/help explains the gateway's essential user workflows", () => {

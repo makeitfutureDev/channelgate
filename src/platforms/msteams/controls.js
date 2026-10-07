@@ -13,7 +13,7 @@ import { createTeamsInteractionHandler, normalizeTeamsInteraction } from './inte
 import { handlePlatformApproval } from '../../slack/approvals.js';
 import { acquireKeyedLock } from '../../util/keyed-lock.js';
 import { buildTeamsSettings, createTeamsSettingsContext, handleTeamsSettings } from './settings.js';
-import { TEAMS_HELP_TEXT } from './help.js';
+import { TEAMS_HELP_TEXT, createTeamsHelpCard } from './help.js';
 
 const card = (title, body = [], actions = []) => ({ type: 'AdaptiveCard', version: '1.4', body: [{ type: 'TextBlock', text: title, weight: 'Bolder', wrap: true }, ...body], actions });
 const text = value => ({ type: 'TextBlock', text: String(value), wrap: true });
@@ -61,6 +61,12 @@ export function createTeamsControls({ connector, now = Date.now, authorize = tea
     const { message, reply } = args;
     if (message.trigger === 'reaction') return false;
     if (message.text.trim().toLowerCase() === '/help') {
+      if (args.replyCard) {
+        try {
+          await args.replyCard({ card: createTeamsHelpCard(), text: 'Teams help' });
+          return true;
+        } catch { /* Keep the full, spaced guide available if native card delivery fails. */ }
+      }
       await reply(TEAMS_HELP_TEXT);
       return true;
     }
