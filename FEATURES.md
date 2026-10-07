@@ -87,6 +87,25 @@
   transport does not receive reaction events, so this setting alone cannot activate Google Chat
   messages. The UI states that limitation; Workspace Events subscriptions are separate work.
 
+## Perplexity research delegation
+
+- Admins can enable a shared Perplexity subscription login in Settings and import the session
+  token produced by `pwm login`. The login is masked on settings reads; leaving the field blank
+  preserves it, and an explicit clear disconnects it. The account is gateway-wide and research
+  requests consume its subscription quota.
+- Claude and Codex can call the managed `perplexity-research` MCP, including in read-only
+  channels: `perplexity_research` delegates a self-contained public-source question in quick or
+  deep mode and returns an answer with citations; `perplexity_models` discovers model IDs;
+  `perplexity_usage` reports remaining quotas. Deep Research selects its own model. The helper
+  exposes no authentication, upload, workspace, private-connector or library-save tools.
+- The real login stays in gateway settings. Eligible proxy containers receive only a
+  channel-bound relay placeholder in their HOME; the proxy substitutes it only in the exact
+  Perplexity session cookie on `www.perplexity.ai`, with current settings, channel identity and
+  live-work authorization checked on every request. Network-off, Lean, host and legacy bridge
+  runs do not receive this optional MCP. Rotation and clearing take effect at the relay.
+- The image pins the unofficial `perplexity-web-mcp-cli` research client. This integration is
+  opt-in, uses subscription quotas rather than API billing, and keeps the conversation's selected
+  coding engine. Setup and operating limits: [`docs/PERPLEXITY-RESEARCH.md`](docs/PERPLEXITY-RESEARCH.md).
 
 ## Microsoft Teams model command
 

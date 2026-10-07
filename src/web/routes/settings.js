@@ -18,6 +18,7 @@ import {
   getAdminPassword,
   settingsForApi,
   saveSettings,
+  isPerplexitySessionToken,
   normalizePublicUrl,
   applySettingsToEnv,
   resolveSlackConfig,
@@ -204,6 +205,23 @@ export function createSettingsRouter({
         patch.slackAdminUserToken = v;
       }
       if (body.clearSlackAdminUserToken === true) patch.slackAdminUserToken = "";
+      // Subscription research is optional and independent of the main engine. An empty
+      // password box keeps the existing session; only an explicit clear removes it.
+      if (Object.hasOwn(body, "perplexityResearchEnabled")) {
+        if (typeof body.perplexityResearchEnabled !== "boolean") return res.status(400).json({ error: "perplexityResearchEnabled must be a boolean" });
+        patch.perplexityResearchEnabled = body.perplexityResearchEnabled;
+      }
+      if (Object.hasOwn(body, "perplexitySessionToken")) {
+        if (typeof body.perplexitySessionToken !== "string") return res.status(400).json({ error: "perplexitySessionToken must be a string" });
+        if (body.perplexitySessionToken !== "") {
+          if (!isPerplexitySessionToken(body.perplexitySessionToken)) return res.status(400).json({ error: "Paste only the Perplexity session token value: at most 16384 printable ASCII characters, without whitespace, quotes, commas, semicolons or backslashes" });
+          patch.perplexitySessionToken = body.perplexitySessionToken;
+        }
+      }
+      if (Object.hasOwn(body, "clearPerplexitySessionToken")) {
+        if (typeof body.clearPerplexitySessionToken !== "boolean") return res.status(400).json({ error: "clearPerplexitySessionToken must be a boolean" });
+        if (body.clearPerplexitySessionToken) patch.perplexitySessionToken = "";
+      }
       // ── Google Chat ──────────────────────────────────────────────────────────
       // The key is validated BEFORE it is stored: a pasted OAuth-client JSON or a truncated file
       // otherwise fails much later, inside a pull loop, as an opaque 400.

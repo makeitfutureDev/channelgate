@@ -35,6 +35,7 @@ const PERSONAL_REAL = `real-personal-${crypto.randomBytes(16).toString("hex")}`;
 const PERSONAL_PH = mintPlaceholder({ scope: "personal" });
 const RELAY_REAL = `real-relay-${crypto.randomBytes(16).toString("hex")}`;
 const RELAY_TOKEN = shapePlaceholder({ scope: "relay", shape: "anthropic-oauth" });
+const COOKIE_PH = mintPlaceholder({ scope: "relay" });
 const APPROVAL_REAL = `real-approval-${crypto.randomBytes(16).toString("hex")}`;
 const APPROVAL_PH = mintPlaceholder({ scope: "org" });
 const approvalAsks = [];
@@ -56,7 +57,14 @@ function upstreamHandler(name) {
     req.on("end", () => {
       const body = Buffer.concat(chunks);
       seen.push({ server: name, method: req.method, url: req.url, headers: req.headers, body: body.toString() });
-      if (req.url.startsWith("/leak-compressed")) {
+      if (req.url.startsWith("/rotate-cookie")) {
+        res.writeHead(200, { "content-type": "application/json", "set-cookie": [
+          "research-session=new-secret-not-in-scrub-map; Secure; HttpOnly",
+          "research-session.0=new-secret-chunk; Secure; HttpOnly",
+          "theme=dark; Secure",
+        ] });
+        res.end(JSON.stringify({ cookie: req.headers.cookie }));
+      } else if (req.url.startsWith("/leak-compressed")) {
         res.writeHead(200, { "content-type": "text/plain", "content-encoding": "br" });
         res.end(`opaque ${req.headers.authorization}`);
       } else if (req.url.startsWith("/leak")) {
@@ -94,6 +102,7 @@ const deadPort = await (async () => { const s = net.createServer(); const p = aw
 const caStore = loadOrCreateEgressCa({ dir: path.join(tempDir("cg-egress-proxy-"), "egress-ca") });
 
 const grants = new Map([
+  [COOKIE_PH, { placeholder: COOKIE_PH, value: "real-research-session-value", secretName: "PERPLEXITY_SESSION_TOKEN", scope: "relay", owner: null, hosts: ["upstream.test"], headers: ["cookie"], format: ["cookie"], cookies: ["research-session"] }],
   [PH, { placeholder: PH, value: REAL, secretName: "GITHUB_TOKEN", scope: "channel", owner: "C_EGRESS", hosts: ["upstream.test", "plain.test"], headers: ["authorization"], format: "bearer" }],
   [PERSONAL_PH, { placeholder: PERSONAL_PH, value: PERSONAL_REAL, secretName: "MY_TOKEN", scope: "personal", owner: "U_OWNER", hosts: ["upstream.test"], headers: ["x-api-key"], format: "raw" }],
   // A hidden secret with no known destination: approved for upstream.test only (catalog-rules.js).
@@ -219,6 +228,15 @@ test("the upstream sees the real value while the client sent the placeholder", a
   );
   assert.equal(event.ctx, CTX);
   assert.ok(event.bytesDown > 0 && event.ms >= 0);
+});
+
+test("cookie relay scrubs echoes and withholds rotated authentication cookies, including chunks", async () => {
+  const res = await fetchVia({ host: "upstream.test", port: portA, path: "/rotate-cookie", headers: { cookie: `theme=light; research-session=${COOKIE_PH}` } });
+  assert.equal(res.status, 200);
+  assert.equal(lastSeen("upstream").headers.cookie, "theme=light; research-session=real-research-session-value");
+  assert.deepEqual(res.headers["set-cookie"], ["theme=dark; Secure"]);
+  assert.equal(JSON.parse(res.body).cookie, `theme=light; research-session=${COOKIE_PH}`);
+  assert.ok(!JSON.stringify(res).includes("new-secret"));
 });
 
 test("a shaped relay token is swapped whole, and a streamed request body goes through", async () => {

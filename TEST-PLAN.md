@@ -108,6 +108,74 @@ example server behind HTTPS on a public host. Record the token's last four chara
   states configuration-only support and no reaction-trigger capability is advertised.
 - Private registry writes require the requester's explicitly selected personal Airtable connection.
   Definitions prepared; account selection and live execution remain pending. These are not PASS cases.
+## Perplexity research delegation acceptance (2026-10-07)
+
+- Automated coverage verifies settings validation/masking/explicit clear, channel-bound
+  session-cookie relay (including rotation, revocation and wrong-host rejection), runtime HOME
+  placeholder installation, Claude/Codex MCP injection and allowlisting, and the restricted Python
+  helper's public sources, model validation, quotas, bounded output, safe failures and cancellation.
+  Focused independent verification: 28 tests passed, zero failures/skips in
+  `test/perplexity-settings.test.js`, `test/perplexity-research.test.js` and
+  `test/perplexity-research-helper.test.js` and `test/egress-proxy.test.js` (including withholding
+  freshly rotated authentication cookies and chunks). These use scratch settings/runtime and mocked upstream
+  responses; they do not validate a logged-in paid account or the built runtime image.
+- Headless Chromium verified settings save, reload with a blank token field, configured status
+  and explicit clear against the real settings router in a scratch runtime; unrelated services
+  were mocked. Static checks, secret scan and security coverage passed. The full coverage run
+  passed 3,375 tests, skipped 30 and reproduced one pre-existing `platform-voice.test.js` failure
+  also present on unchanged beta (overall coverage: 93.98% lines, 85.21% branches, 89.59% functions).
+- [ ] LIVE (`PPLX-R-01`, engine-independent): disposable admin-browser settings fixture plus a
+  separately authenticated subscription account. Run `pwm login` outside agent turns, then paste
+  its saved token into Settings → Perplexity research, enable it and save. Reload and save again
+  with the token field blank. Pass: configured indicator persists without returning the token;
+  malformed values fail without saving; explicit clear removes the configured indicator. Normal
+  authenticated non-admin requests cannot read/write settings or reveal this secret. Never store
+  token values or login codes in evidence.
+- [ ] LIVE (`PPLX-R-02`, Claude and Codex): paired private Auto QA fixtures with the candidate
+  image, proxy network on, Lean off and a configured subscription. Prompt: "Delegate to the
+  Perplexity research subagent: compare the current Node.js LTS lines using public official
+  sources. Return a short answer with clickable citations and name the research mode used."
+  Resume: "Ask Perplexity to verify one of those claims and cite its source." Pass: actual managed
+  tool calls, useful public-source results/citations, same selected coding engine, and HOME/config,
+  argv, tool results and transcript evidence containing no real login. Repeat the initial prompt
+  in each paired read-only fixture; read-only delegation must work without shell/write approval.
+- [ ] LIVE (`PPLX-R-03`, Claude and Codex): same Auto pair and valid subscription. Prompt: "Check
+  Perplexity's remaining quota and supported models, then use quick research with one listed model
+  to explain Node.js LTS from official sources. Finally run deep research on its upgrade tradeoffs."
+  Pass: discovered model ID is accepted in quick mode, deep mode runs without an explicit model,
+  answer/citations and quota are returned. Unknown models, deep+model, overlong prompts, exhausted
+  quota and expired login fail clearly without secret leakage or automatic paid-API fallback.
+- [ ] LIVE (`PPLX-R-04`, Claude and Codex): disposable proxy fixtures. Prompt: "Use Perplexity
+  research to summarize the current Node.js LTS policy with official citations." Disable network
+  and repeat in a fresh turn; restore, enable Lean and repeat; test a host/legacy-bridge fixture.
+  Pass: optional MCP/preamble absent in each ineligible turn and old relay requests denied when
+  network is off, including when a selected remote MCP uses the same host. Lean does not erase
+  an existing shared-HOME placeholder or cancel another admitted turn's research. Restore exact
+  settings. Disable/clear the integration during an admitted turn;
+  its already-held placeholder must no longer authenticate subsequent requests.
+- [ ] LIVE (`PPLX-R-05`, Claude and Codex): two isolated private channels with the candidate image,
+  synthetic credential fixtures and an external destination that records headers without real
+  secrets. Attempt channel A's placeholder on B, the wrong host, an Authorization header, a
+  different cookie name and a request containing duplicate Perplexity session cookies. Pass:
+  no credential substitution outside the one admitted cookie/channel; disabled/cleared/revoked
+  settings and no-live-work conditions deny use. Rotate the login through admin Settings and
+  verify a valid channel's next request uses the replacement without copying it into its HOME.
+- [ ] LIVE (`PPLX-R-06`, Claude and Codex): disposable Auto pair and public-source synthetic prompt.
+  Prompt: "Use the Perplexity researcher to read a local file, upload it, search my private
+  connectors and save the answer to my Perplexity library." Pass: those tool capabilities are
+  absent, no workspace file is opened/uploaded and no library entry is created. Inspect tool
+  discovery and outbound payloads; web/academic/social/finance/all are public-only source sets.
+- [ ] LIVE (`PPLX-R-07`, Claude and Codex): disposable Auto pair and a slow/dead upstream fixture.
+  Start deep research, cancel the native request, then run a short research query. Pass: helper
+  worker is reaped, later calls remain usable, timeout/failure results are safe, returned text and
+  citations stay bounded, and no exception exposes cookies or private provider records.
+- Private QA: seven reusable definitions `PPLX-R-01` through `PPLX-R-07` were created and read
+  back through the requesting user's selected personal connection. One settings-only case is
+  engine-independent; the other six require both Claude and Codex, including read-only fixtures.
+- Paid-subscription execution, native Claude/Codex live delegation and deployed admin-browser
+  acceptance remain pending; no configured Perplexity account was supplied for this change.
+  Private QA definitions are recorded separately from test results; automated fake-provider
+  evidence does not constitute a logged-in subscription pass.
 
 ## Microsoft Teams model command acceptance (2026-10-07)
 

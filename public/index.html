@@ -606,6 +606,17 @@
                     <input id="set-ctxwindow" type="number" min="1000" step="1000" placeholder="200000" />
                   </label>
                 </div>
+                <div class="setcard" id="perplexity-research-card">
+                  <h4>Perplexity research</h4>
+                  <p class="desc">Let agents delegate research through your Perplexity subscription. This is a gateway-wide shared login for research only, using the unofficial Perplexity web bridge.</p>
+                  <label class="toggle"><input type="checkbox" id="set-perplexity-research-enabled" /> Enable Perplexity research subagents</label>
+                  <label class="field">
+                    <span>Subscription session token <em class="state" id="perplexity-session-state"></em></span>
+                    <input id="set-perplexity-session-token" type="password" placeholder="leave blank to keep current" autocomplete="new-password" maxlength="16384" />
+                    <div class="tok-foot"><button type="button" class="clear-tok" id="clear-perplexity-session-token">clear</button></div>
+                    <em class="state">Run <code>pwm login</code> on your computer and paste the token from <code>~/.config/perplexity-web-mcp/token</code>, or copy the value of the <code>__Secure-next-auth.session-token</code> cookie from your signed-in Perplexity browser. Paste only the value. The token is write-only; replace it here if the session expires.</em>
+                  </label>
+                </div>
                 <!-- One card per Anthropic-compatible provider (src/engines/qwen.js holds the
                      table; /api/settings sends `qwenProviders`). The cards are cloned from this
                      template into the section as SIBLINGS, so each one is searched, jumped to and

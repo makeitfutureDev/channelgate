@@ -207,6 +207,7 @@ function main() {
     "--build-arg", `VSCODE_SERVERS=${(versions.vscodeServers || []).map((v) => `${v.commit}:${v.serverSha256}:${v.cliSha256}`).join(" ")}`,
     "--build-arg", `OPENCV_VERSION=${versions.python?.["opencv-python-headless"]}`,
     "--build-arg", `FASTER_WHISPER_VERSION=${versions.python?.["faster-whisper"]}`,
+    "--build-arg", `PERPLEXITY_VERSION=${versions.python?.["perplexity-web-mcp-cli"]}`,
     "--build-arg", `WHISPER_MODEL=${versions.whisperModel}`,
     "--build-arg", `IMAGE_SPEC_VERSION=${specVersion}`,
     "--build-arg", `IMAGE_BUILD_DIGEST=${expectedImageBuild(repoRoot).digest}`,
