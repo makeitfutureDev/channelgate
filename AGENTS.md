@@ -80,7 +80,7 @@ post/edit the reply in the thread (degraded to the surface's capabilities) → u
   the changed keys), `dead-fields.js` (retired fields stripped on every write).
 - `src/db/` — `index.js` (the one lazy `node:sqlite` connection: WAL, `busy_timeout`,
   `foreign_keys`, migrations on open, the one-time legacy JSON import behind `_meta` flags),
-  `migrations.js` (versioned on `PRAGMA user_version`, currently 31 — append, never edit),
+  `migrations.js` (versioned on `PRAGMA user_version`, currently 32 — append, never edit),
   `import-legacy.js`, `fts.js` (the optional FTS5 `channel_memory_fts` index; without FTS5 memory
   search degrades to a scan).
 - `src/gateway/run.js` — the run orchestrator: engine adapter selection and precedence (per-run
@@ -359,7 +359,7 @@ through the control MCP.
 - Tables: identity and conversations (`users`, `channels`, `channel_meta`, `sessions`,
   `thread_overrides`, `conversation_reply_sessions`, `active_runs`, `stopped_turns`,
   `inbound_events`, `teams_graph_subscriptions`); automation (`schedules`, `acks`,
-  `followup_threads`, `followup_done`, `followup_digest_messages`, `bg_jobs`, `api_jobs`);
+  `followup_threads`, `followup_done`, `followup_digest_messages`, `bg_jobs`, `api_jobs`, `schedule_runs`);
   approvals and questions (`approval_requests`, `approval_link_tokens`, `question_requests`); SSH
   access (`ssh_keys`, `ssh_sessions`); skills (`skills`, `skill_revisions`,
   `skill_revision_files`, `skill_sources`, `skill_templates`, `skill_usage`, `skill_proposals`,

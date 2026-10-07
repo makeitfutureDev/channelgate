@@ -25,6 +25,7 @@ import { mountUserPicker } from "./admin-user-picker.js";
 import { mountSecretEditor, secretEditorMarkup } from "./admin-secrets.js";
 import { customMcpEditorMarkup, mountCustomMcpEditor } from "./admin-custom-mcps.js";
 import { describeEvent, eventLabel, isAdminEvent } from "./admin-events.js";
+import { automationRunMarkup, automationSummaryMarkup, automationStatusLabel, automationStatusTone } from "./admin-schedules.js";
 
 // ── Inline SVG icon ─────────────────────────────────────────────────────────────
 const ICON_FOLDER = `<svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M1.5 4.5a1 1 0 0 1 1-1h3l1.5 1.5h6a1 1 0 0 1 1 1v6a1 1 0 0 1-1 1h-11a1 1 0 0 1-1-1Z"/></svg>`;
@@ -2936,6 +2937,12 @@ function openScheduleEditor(schedule) {
   delivery.value = schedule.delivery || "standard";
   delivery.querySelector('option[value="daily-thread"]').disabled = Boolean(schedule.once);
   delivery.querySelector('option[value="dm-on-match"]').disabled = !schedule.matchPrefix;
+  document.getElementById("schedule-modal-thread").value = schedule.deliveryThread || "";
+  document.getElementById("schedule-modal-visibility").value = schedule.executionVisibility || "visible";
+  document.getElementById("schedule-modal-result-policy").value = schedule.resultPolicy || "always";
+  document.getElementById("schedule-modal-failure-notify").checked = schedule.failureNotify !== false;
+  for (const field of document.querySelectorAll(".schedule-task-control")) field.hidden = schedule.kind === "reminder";
+  syncScheduleDeliveryFields();
   prompt.value = schedule.prompt || "";
   syncScheduleTimingFields();
   error.textContent = "";
@@ -2979,7 +2986,13 @@ async function saveScheduleEditor() {
     // another timezone cannot shift it (or turn a future task into an immediately due one).
     if (schedule.once) body.runAt = new Date(document.getElementById("schedule-modal-run-at").value).toISOString();
     else if (!schedule.intervalDays) body.cron = cronFromScheduleEditor();
-    if (schedule.kind !== "reminder") body.delivery = document.getElementById("schedule-modal-delivery").value;
+    if (schedule.kind !== "reminder") {
+      body.delivery = document.getElementById("schedule-modal-delivery").value;
+      body.deliveryThread = document.getElementById("schedule-modal-thread").value.trim();
+      body.executionVisibility = document.getElementById("schedule-modal-visibility").value;
+      body.resultPolicy = document.getElementById("schedule-modal-result-policy").value;
+      body.failureNotify = document.getElementById("schedule-modal-failure-notify").checked;
+    }
     const result = await api(`/api/schedules/${scheduleEditor.schedule.id}`, {
       method: "PUT",
       body: JSON.stringify(body),
@@ -3027,8 +3040,10 @@ function renderSchedules() {
       const row = document.createElement("div");
       row.className = "sched-row";
       // Last-run: a status dot (ok/warn) + relative-ish text; "never run" when it hasn't fired yet.
-      const runHtml = s.lastRun
-        ? `<span class="sched-run"><span class="dot ${s.lastStatus && !["ok", "found"].includes(s.lastStatus) ? "warn" : "ok"}"></span>last ${escapeHtml(new Date(s.lastRun).toLocaleString())}</span>`
+      const latest = s.runSummary?.lastStartedAt || s.lastRun;
+      const lastStatus = s.runSummary?.lastStatus || s.lastStatus;
+      const runHtml = latest
+        ? `<span class="sched-run" title="${escapeHtml(automationStatusLabel(lastStatus))}"><span class="dot ${["ok", "found"].includes(lastStatus) ? "ok" : automationStatusTone(lastStatus)}"></span>${escapeHtml(automationStatusLabel(lastStatus))} · ${escapeHtml(new Date(latest).toLocaleString())}</span>`
         : `<span class="sched-run"><span class="dot off"></span>never run</span>`;
       row.innerHTML = `
         <label class="toggle inline"><input type="checkbox" class="sched-enabled" ${s.enabled ? "checked" : ""}/></label>
@@ -3038,9 +3053,12 @@ function renderSchedules() {
           ${runHtml}
         </button>
         <span class="sched-saved">saved</span>
+        ${s.executionVisibility === "silent" ? '<span class="sched-badge">silent</span>' : ""}
+        <button type="button" class="ghost sched-history">Runs${s.runSummary?.total ? ` · ${s.runSummary.total}` : ""}</button>
         <button class="sched-del">Delete</button>`;
       const savedFlash = row.querySelector(".sched-saved");
       row.querySelector(".sched-open").addEventListener("click", () => openScheduleEditor(s));
+      row.querySelector(".sched-history").addEventListener("click", () => openScheduleHistory(s));
       row.addEventListener("click", (e) => {
         if (e.target.closest("input, select, button, label")) return;
         openScheduleEditor(s);
@@ -3060,6 +3078,108 @@ function renderSchedules() {
       card.appendChild(row);
     }
     wrap.appendChild(card);
+  }
+}
+
+function syncScheduleDeliveryFields() {
+  document.getElementById("schedule-modal-thread-wrap").hidden = scheduleEditor?.schedule.kind === "reminder"
+    || document.getElementById("schedule-modal-delivery").value !== "thread";
+}
+
+let scheduleHistory = null;
+let scheduleHistoryRequest = 0;
+let scheduleRunRequest = 0;
+let scheduleHistoryTimer = null;
+
+function closeScheduleHistory() {
+  clearInterval(scheduleHistoryTimer);
+  scheduleHistoryTimer = null;
+  document.getElementById("schedule-history-modal").hidden = true;
+  scheduleHistory = null;
+  scheduleHistoryRequest++;
+  scheduleRunRequest++;
+}
+
+function openScheduleHistory(schedule = null) {
+  // Preserve unsaved editor values underneath the history dialog.
+  clearInterval(scheduleHistoryTimer);
+  scheduleHistory = { schedule, runs: [], before: null, loading: false, detailLoading: false, selectedRun: null };
+  scheduleRunRequest++;
+  document.getElementById("schedule-history-title").textContent = schedule ? `${schedule.description || "Automation"} · Run history` : "All automation run history";
+  document.getElementById("schedule-history-summary").innerHTML = "";
+  document.getElementById("schedule-history-list").textContent = "Loading runs…";
+  document.getElementById("schedule-history-detail").hidden = true;
+  document.getElementById("schedule-history-more").hidden = true;
+  document.getElementById("schedule-history-modal").hidden = false;
+  document.getElementById("schedule-history-close").focus();
+  loadScheduleHistory();
+  scheduleHistoryTimer = setInterval(() => {
+    if (!scheduleHistory || scheduleHistory.loading || scheduleHistory.detailLoading) return;
+    loadScheduleHistory(false, true);
+  }, 5000);
+}
+
+async function loadScheduleHistory(older = false, automatic = false) {
+  if (!scheduleHistory) return;
+  const state = scheduleHistory;
+  if (state.loading) return;
+  state.loading = true;
+  const request = ++scheduleHistoryRequest;
+  const errorEl = document.getElementById("schedule-history-error");
+  const refresh = document.getElementById("schedule-history-refresh");
+  const more = document.getElementById("schedule-history-more");
+  errorEl.hidden = true;
+  refresh.disabled = more.disabled = true;
+  try {
+    const path = state.schedule ? `/api/schedules/${encodeURIComponent(state.schedule.id)}/runs` : "/api/schedule-runs";
+    const query = new URLSearchParams({ limit: "30" });
+    if (older && state.before) query.set("before", state.before);
+    const result = await api(`${path}?${query}`);
+    if (request !== scheduleHistoryRequest || scheduleHistory !== state) return;
+    const keepOlder = automatic && state.runs.length > 30;
+    const freshIds = new Set(result.runs.map((run) => run.id));
+    state.runs = older ? [...state.runs, ...result.runs] : keepOlder ? [...result.runs, ...state.runs.filter((run) => !freshIds.has(run.id))] : result.runs;
+    if (!keepOlder) state.before = result.nextBefore;
+    document.getElementById("schedule-history-summary").innerHTML = state.schedule ? automationSummaryMarkup(result.summary) : "";
+    const list = document.getElementById("schedule-history-list");
+    list.innerHTML = state.runs.length ? state.runs.map((run, index) => `<button class="schedule-run-row" type="button" data-run-index="${index}">
+      <span><span class="dot ${automationStatusTone(run.status)}"></span> ${escapeHtml(automationStatusLabel(run.status))}</span>
+      <strong>${escapeHtml(run.description || run.scheduleId)}</strong><span>${escapeHtml(run.channelName || run.channelId)}</span>
+      <time>${escapeHtml(new Date(run.startedAt || run.scheduledAt).toLocaleString())}</time>
+    </button>`).join("") : '<p class="hint">No recorded runs yet.</p>';
+    for (const button of list.querySelectorAll("button")) button.addEventListener("click", () => openScheduleRun(state.runs[Number(button.dataset.runIndex)].id));
+    more.hidden = !state.before;
+    if (state.selectedRun) await openScheduleRun(state.selectedRun, true);
+  } catch (error) {
+    if (request !== scheduleHistoryRequest) return;
+    errorEl.textContent = error.message || "Could not load automation history.";
+    errorEl.hidden = false;
+    if (!state.runs.length) document.getElementById("schedule-history-list").textContent = "History unavailable.";
+  } finally {
+    state.loading = false;
+    if (request === scheduleHistoryRequest) refresh.disabled = more.disabled = false;
+  }
+}
+
+async function openScheduleRun(id, automatic = false) {
+  const state = scheduleHistory;
+  if (!state || (automatic && state.detailLoading)) return;
+  state.selectedRun = id;
+  state.detailLoading = true;
+  const request = ++scheduleRunRequest;
+  const detail = document.getElementById("schedule-history-detail");
+  detail.hidden = false;
+  if (!automatic) detail.textContent = "Loading run details…";
+  try {
+    const { run } = await api(`/api/schedule-runs/${encodeURIComponent(id)}`);
+    if (request !== scheduleRunRequest || state !== scheduleHistory) return;
+    detail.innerHTML = automationRunMarkup(run);
+    if (!automatic) detail.scrollIntoView({ behavior: "smooth", block: "start" });
+  } catch (error) {
+    if (request !== scheduleRunRequest || state !== scheduleHistory) return;
+    detail.textContent = error.message || "Could not load this run.";
+  } finally {
+    if (request === scheduleRunRequest) state.detailLoading = false;
   }
 }
 
@@ -4675,6 +4795,15 @@ document.getElementById("schedule-modal-prompt").addEventListener("input", () =>
   document.getElementById("schedule-modal-error").hidden = true;
 });
 document.getElementById("schedule-search").addEventListener("input", renderSchedules);
+document.getElementById("schedule-modal-delivery").addEventListener("change", syncScheduleDeliveryFields);
+document.getElementById("schedule-history-open").addEventListener("click", () => openScheduleHistory(scheduleEditor?.schedule));
+document.getElementById("schedule-history-all").addEventListener("click", () => openScheduleHistory());
+document.getElementById("schedule-history-close").addEventListener("click", closeScheduleHistory);
+document.getElementById("schedule-history-refresh").addEventListener("click", () => loadScheduleHistory());
+document.getElementById("schedule-history-more").addEventListener("click", () => loadScheduleHistory(true));
+document.getElementById("schedule-history-modal").addEventListener("click", (event) => {
+  if (event.target.id === "schedule-history-modal") closeScheduleHistory();
+});
 
 // Settings → Google Drive sync → "Sync all now": one pass over every linked channel, then poll.
 document.getElementById("drivesync-sync-all").addEventListener("click", async () => {
@@ -4731,6 +4860,7 @@ scheduleModal.addEventListener("click", (e) => {
   if (e.target === scheduleModal) closeScheduleEditor();
 });
 document.addEventListener("keydown", (e) => {
+  if (!document.getElementById("schedule-history-modal").hidden && e.key === "Escape") { closeScheduleHistory(); return; }
   if (!scheduleModal.hidden && e.key === "Escape") closeScheduleEditor();
 });
 

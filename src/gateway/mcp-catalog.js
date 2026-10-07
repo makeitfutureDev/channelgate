@@ -68,6 +68,8 @@ export function gatewayRef() {
 export const GATEWAY_TOOL_NAMES = [
   "create_schedule",
   "list_schedules",
+  "get_schedule_runs",
+  "update_schedule",
   "delete_schedule",
   "run_in_background",
   "run_agent_in_background",

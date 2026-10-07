@@ -209,11 +209,11 @@ export function ctxFromClaims(claims = {}, { engine = "", toolset = "", progress
 // writes that land visibly in the current thread (charts, tables, snippets, lists) stay un-gated.
 // Channel memory is also deliberately un-gated in every workdir: it is a routine, bounded write to
 // MEMORY.md / memory/<topic>.md with its own signed-principal, path, action, and budget checks.
-// Schedules (`create_schedule` / `delete_schedule`) are un-gated too — operator decision
+// Schedules (`create_schedule` / `update_schedule` / `delete_schedule`) are un-gated too — operator decision
 // 2026-08-19: "remind me" / "check every hour" is the most ordinary request a Slack channel gets,
 // and stalling every one of them on a click made the feature unusable. A schedule cannot escalate
 // (it fires with origin "schedule" — A2 — in THIS channel, as its creator, no more often than the
-// configured minimum interval), it posts visibly here when it runs, and list_schedules /
+// configured minimum interval), its visibility is configurable and its runs have durable health logs, and list_schedules /
 // delete_schedule make it inspectable and reversible. Accepted residual risk: injected content can
 // create or drop a schedule inside an already-authorized turn.
 // `update_gateway` has one explicit operator-selected exception: an admin author may start it

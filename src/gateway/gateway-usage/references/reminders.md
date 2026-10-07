@@ -46,6 +46,19 @@ converting or relabelling it.
   ✅. If nobody does within `ack_escalate_minutes` (default 120) a second notice is posted; after
   `ack_dm_minutes` (default 60) more the creator is DM'd and the chain closes. Any ✅ closes it.
 
+## Quiet execution, outcome tracking and existing threads
+- `execution_visibility:"silent"` omits startup announcements. This is independent of destination and notification mentions. Runs still appear in Admin UI → Automations → Runs.
+- `result_policy:"on-result"` omits only an explicit healthy empty check (`no-op`). The scheduler appends outcome-report instructions automatically; do not require users to hand-write them. Failed, blocked and unreported work is never interpreted as an empty success.
+- `failure_notify:false` also hides failure/unreported notices; durable run history still records the problem. Default true keeps actionable failures visible.
+- `delivery:"thread"` sends results into `delivery_thread`, defaulting to the current real thread. The destination stays in THIS conversation. Every fire starts a fresh agent session. Use daily-thread to group each day; with silent execution the first useful report creates the day’s anchor.
+- These controls apply to agent tasks, not reminder messages. Keep existing defaults unless the user asks for silence or another destination.
+- `get_schedule_runs` reads this conversation’s health metrics and bounded logs, including
+  one-time/deleted automations. Supply `schedule_id` for one automation or `run_id` for one attempt.
+  History lasts 90 days and starts with the feature; it does not backfill past runs. Engine
+  execution/delivery are gateway facts; task results and connection checks are agent-reported
+  evidence.
+- `update_schedule` changes existing tasks’ visibility, result filtering, failure notifications and delivery destination. Updates retain the creator and execution permissions; they do not silently recreate a task under another identity.
+
 ## Manage existing schedules
 - `list_schedules` — list this channel's schedules (id, on/off, cron, description, who it
   notifies).
