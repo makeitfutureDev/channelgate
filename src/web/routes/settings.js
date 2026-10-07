@@ -39,6 +39,7 @@ import {
   hasTeamsConfig,
   resolveTeamsConfig,
   validateTeamsFileDriveIds,
+  validateMentionReactions,
   CONTAINER_CLIS,
   CONTAINER_IMAGE_RE,
   CONTAINER_MEMORY_RE,
@@ -272,11 +273,12 @@ export function createSettingsRouter({
       if (typeof body.errorDiagnosisChannel === "string") patch.errorDiagnosisChannel = body.errorDiagnosisChannel.trim();
       // Org-default access policy applied to each channel the bot newly joins.
       if (typeof body.defaultChannelAccess === "string" && CHANNEL_ACCESS_MODES.includes(body.defaultChannelAccess)) patch.defaultChannelAccess = body.defaultChannelAccess;
-      // Emoji reactions that act as an @mention. Accept an array or a comma/space-separated string;
-      // normalize to bare emoji names (strip colons, lowercase). Empty falls back to the default.
-      if (body.mentionReactions !== undefined) {
-        const arr = Array.isArray(body.mentionReactions) ? body.mentionReactions : String(body.mentionReactions).split(/[\s,]+/);
-        patch.mentionReactions = arr.map((s) => String(s).trim().replace(/^:|:$/g, "").toLowerCase()).filter(Boolean);
+      // Validate every supplied platform before the single save: malformed input cannot
+      // partially persist another surface's reaction list or an unrelated setting.
+      for (const [field, platform] of [["mentionReactions", "slack"], ["teamsMentionReactions", "msteams"], ["googleChatMentionReactions", "googlechat"]]) {
+        if (!Object.hasOwn(body, field)) continue;
+        try { patch[field] = validateMentionReactions(body[field], platform); }
+        catch (error) { return res.status(400).json({ error: error.message }); }
       }
       // Trusted bot apps: Slack app/bot IDs allowed to drive runs despite carrying a bot_id.
       if (body.trustedBotApps !== undefined) {

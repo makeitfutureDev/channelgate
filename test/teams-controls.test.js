@@ -6,7 +6,7 @@ import path from 'node:path';
 import { ensureTestEnv } from './helpers.js';
 ensureTestEnv();
 const { createTeamsControls } = await import('../src/platforms/msteams/controls.js');
-const { TEAMS_HELP_TEXT } = await import('../src/platforms/msteams/help.js');
+const { teamsHelpText } = await import('../src/platforms/msteams/help.js');
 const { teamsWorkspaceContext } = await import('../src/platforms/msteams/workspace-access.js');
 const { createIngest } = await import('../src/platforms/ingest.js');
 const { makeInbound } = await import('../src/platforms/inbound.js');
@@ -27,7 +27,7 @@ function fixture(extra = {}) {
 test('Teams /help returns the practical guide without opening controls or changing runtime', async () => {
   const f = fixture();
   assert.equal(await f.controls.onCommand(f.args('  /HELP  ')), true);
-  assert.deepEqual(f.replies, [TEAMS_HELP_TEXT]);
+  assert.deepEqual(f.replies, [teamsHelpText(['hearteyesrobot', 'alien', 'like', 'smilerobot'])]);
   assert.deepEqual(f.sent, []);
   assert.deepEqual(f.commands, []);
   const reaction = f.args('/help'); reaction.message.trigger = 'reaction';
@@ -79,7 +79,7 @@ test('failed native help delivery falls back to the complete spaced guide', asyn
   const f = fixture(); const args = f.args('/help');
   args.replyCard = async () => { throw new Error('Card delivery unavailable'); };
   assert.equal(await f.controls.onCommand(args), true);
-  assert.deepEqual(f.replies, [TEAMS_HELP_TEXT]);
+  assert.deepEqual(f.replies, [teamsHelpText(['hearteyesrobot', 'alien', 'like', 'smilerobot'])]);
   assert.match(f.replies[0], /\n\n• `\/clear`/);
   assert.deepEqual(f.commands, []);
 });

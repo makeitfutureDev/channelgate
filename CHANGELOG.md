@@ -18,6 +18,12 @@ product overview.
 
 ## Unreleased
 
+- Admin settings now offer independent message-activation emoji lists for Slack, Teams and Google
+  Chat. Slack keeps its existing selection; Teams applies its list to native and Graph reactions
+  and shows it in help. Teams configuration changes exclude older queued/history activations.
+  Google Chat's selection is saved, with an explicit note that its current transport does not
+  receive reaction events.
+
 - Teams settings now show only models for the selected engine in each channel/session list.
   After changing Engine, Load models refreshes the choices without saving; Apply saves the
   complete selection for that scope.

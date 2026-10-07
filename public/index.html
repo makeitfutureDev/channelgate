@@ -635,10 +635,24 @@
                   <h4>Slack replies</h4>
                   <p class="desc">Replies use Slack native streaming with native assistant status for thinking and tool progress.</p>
                   <label class="toggle"><input type="checkbox" id="set-show-message-cost" /> Show provider-reported cost / estimated standard API-equivalent value in Slack message footers. The value is still recorded in Activity and Overview when hidden.</label>
+                </div>
+                <div class="setcard">
+                  <h4>Message activation reactions</h4>
+                  <p class="desc">Choose which emoji reactions ask the bot to act on a message. Each platform has its own list; blank restores its default. Stop and acknowledgement reactions stay reserved.</p>
                   <label class="field">
-                    <span>Mention reactions — emoji that act as an @mention (comma-separated names, no colons)</span>
+                    <span>Slack activation emoji — comma-separated names</span>
                     <input id="set-mention-reactions" type="text" placeholder="robot_face" />
-                    <em class="state">React with one of these on a message to have the bot respond to it. Default: <code>robot_face</code>.</em>
+                    <em class="state">Slack names, for example <code>robot_face</code> or <code>:rocket:</code>. Default: <code>robot_face</code>.</em>
+                  </label>
+                  <label class="field">
+                    <span>Microsoft Teams activation emoji — comma-separated names or emoji</span>
+                    <input id="set-teams-mention-reactions" type="text" placeholder="hearteyesrobot, alien, like, smilerobot" />
+                    <em class="state">Teams shortcuts or Unicode emoji, for example <code>alien</code> or 👽. For other named emoji, include their Unicode form too (for example <code>heart, ❤️</code>) so Graph can match them. Channel and group reactions require “Observe edits and robot reactions on all messages” and Teams event delivery.</em>
+                  </label>
+                  <label class="field">
+                    <span>Google Chat activation emoji — comma-separated Unicode emoji</span>
+                    <input id="set-google-chat-mention-reactions" type="text" placeholder="🤖" />
+                    <em class="state">Unicode emoji, for example 🤖 or 🚀. The current Google Chat transport does not receive reaction events, so this list is saved for future support. Mention the bot to start a request.</em>
                   </label>
                 </div>
                 <div class="setcard">

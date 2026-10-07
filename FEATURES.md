@@ -1,5 +1,21 @@
 # ChannelGate — Features
 
+## Platform activation emoji settings
+
+- Admin Settings → Agent defaults → **Message activation reactions** has independent Slack,
+  Microsoft Teams and Google Chat lists. The existing `mentionReactions` key and Slack selection
+  remain compatible; Teams uses `teamsMentionReactions`, Google Chat uses
+  `googleChatMentionReactions`. Empty lists restore each platform's defaults.
+- Teams selection is live for native activities and Graph history intake, including the existing
+  robot, Alien and Like alias families, Unicode/reference-ID matches and qualified robot metadata.
+  Custom selections replace activation defaults; Stop and Tick stay fixed. Saved configuration
+  changes carry a monotonic timestamp, prevent historical/queued activation replay, and preserve
+  existing event identities and reactor authorization. Teams help shows its current activation list.
+- Google Chat's Unicode emoji selection is stored independently. The current interaction-event
+  transport does not receive reaction events, so this setting alone cannot activate Google Chat
+  messages. The UI states that limitation; Workspace Events subscriptions are separate work.
+
+
 ## Microsoft Teams model command
 
 - Bare `/model` opens a native engine/model/effort picker in the source conversation, showing

@@ -153,3 +153,22 @@ test('Graph robot Unicode variant requires exact provider metadata, fresh histor
   message.messageHistory = [];
   assert.deepEqual(await normalizeGraphEvents(message, updated, opts), [], 'a snapshot alone is not addition evidence');
 });
+
+test('configured Graph activation selection replaces defaults while controls remain fixed', async () => {
+  const { teamsActivationFingerprint } = await import('../src/platforms/msteams/reactions.js');
+  const selected = ['1f680_rocket'];
+  const configuredRow = { ...row, activationReactionsFingerprint: teamsActivationFingerprint(selected), activationReactionsStartedAt: row.startedAt };
+  for (const reactionType of ['🚀', '1f680_rocket', '🤖', 'alien', 'like', '🛑', '✅']) {
+    const message = fixture();
+    message.reactions = [{ ...reaction, reactionType }];
+    message.messageHistory[0].reaction = message.reactions[0];
+    const events = await normalizeGraphEvents(message, configuredRow, { ...opts, activationReactions: selected });
+    assert.equal(events.length, ['🤖', 'alien', 'like'].includes(reactionType) ? 0 : 1, reactionType);
+  }
+  const message = fixture(); message.reactions = [{ ...reaction, reactionType: '🚀' }];
+  message.messageHistory[0].reaction = message.reactions[0];
+  assert.deepEqual(await normalizeGraphEvents(message, row, { ...opts, activationReactions: selected }), [], 'missing config version must fail closed');
+  assert.deepEqual(await normalizeGraphEvents(message, { ...configuredRow, activationReactionsStartedAt: '2026-09-09T10:02:00Z' }, { ...opts, activationReactions: selected }), [], 'old history must not activate after config changes');
+  message.messageHistory = [];
+  assert.deepEqual(await normalizeGraphEvents(message, configuredRow, { ...opts, activationReactions: selected }), [], 'snapshot alone must not activate');
+});
