@@ -10,6 +10,8 @@ const { teamsAdapter } = await import('../src/platforms/msteams.js');
 test("Teams /help includes practical workflows and its supported commands", () => {
   for (const expected of [
     '**How to use me**', '`@agent /help`', 'quote the original message', 'react 🤖',
+    '`:robot_face:` — Heart eyes robot', '`:octagonal_sign:` — Stop sign',
+    '`:white_check_mark:` — Tick button', 'reactions currently have no gateway action',
     'local Whisper', 'Only the run author or an administrator', 'requests for the same session queue',
     'allowed drives and Microsoft permissions', '10 MB', 'Public URL', 'personal chat',
     'Stored credential values are never shown', 'Composio', 'list skills', 'remember that …',

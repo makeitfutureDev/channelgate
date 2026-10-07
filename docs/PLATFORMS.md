@@ -247,6 +247,12 @@ Task-module dialogs and broadcast mentions remain unavailable.
   connections, skills, memory, reminders, schedules and background work. In channels and group
   chats, mention the bot with the command; quote the original message or bot reply in a group
   chat to address that session. Help is returned by the gateway before invoking an engine.
+  The reaction legend names Heart eyes robot (`:robot_face:`), Stop sign (`:octagonal_sign:`),
+  and Tick button (`:white_check_mark:`). Robot activation accepts Teams' `hearteyesrobot` and
+  `smilerobot` event IDs. Microsoft calls the green tick **Checkmark button**, ID
+  `2705_whiteheavycheckmark`; Stop sign is `stopsign`. See the
+  [Teams reactions reference](https://learn.microsoft.com/en-us/microsoftteams/platform/agents-in-teams/teams-reactions-reference).
+  Stop/Tick reactions have no gateway action in Teams; stop work with `/stop` or `/cancel`.
 - `/settings` opens a six-page console in the original channel/thread or chat: General,
   Variables, MCPs, Skills, Automations and Resume. It retains the source conversation and session
   even when opened from a channel or group chat. `/secrets` opens its Variables page directly.

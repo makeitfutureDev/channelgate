@@ -8,6 +8,11 @@
   Composio, skills, conversation memory/rules, reminders, schedules and background work.
   Examples use Teams controls and explain their permissions and configuration requirements.
   The authorized native command responds before an engine turn, in the requesting conversation.
+- Reaction labels identify `:robot_face:` as Heart eyes robot, `:octagonal_sign:` as Stop sign,
+  and `:white_check_mark:` as Tick button. Teams reaction intake accepts Microsoft's documented
+  `hearteyesrobot` and `smilerobot` IDs alongside the legacy robot spellings, using the same
+  verified reactor identity, membership and event gates. Stop and Tick reactions do not control
+  Teams work; `/stop` and `/cancel` remain the supported cancellation commands.
 
 ## Claude login for nested commands
 

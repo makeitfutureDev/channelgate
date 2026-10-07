@@ -2,6 +2,20 @@
 
 ## Microsoft Teams help guide acceptance (2026-10-07)
 
+- Automated reaction mapping: `test/platform-teams-events.test.js` and
+  `test/platform-teams-graph-activity.test.js` verify `hearteyesrobot` / `smilerobot` trigger through
+  native and Graph normalization as the reactor, preserving the original target and removed-event
+  suppression. `stopsign`, `2705_whiteheavycheckmark`, plain heart eyes and heart eyes dog do not
+  start a request. Help regression checks all three requested shortcode/name pairs.
+- Verification of the emoji correction: 54 focused tests passed, zero failures/skips;
+  static checks and secret scanning passed. The expanded guide still fits one Teams message.
+- [ ] LIVE (Claude and Codex): in separate approved beta Teams QA group/channel sessions with
+  reaction event delivery enabled, post "Reply exactly ROBOT_MAPPING_OK", then as an approved
+  test actor add **Heart eyes robot** from the Teams picker. Pass: one run under the reactor's
+  gateway identity replies ROBOT_MAPPING_OK in the source session for each engine. Remove the
+  reaction; delayed removed events must not run. Stop sign and Tick button must not start a run.
+  Mirror these cases in the private QA catalog through the requesting user's personal connection;
+  that connection is unavailable in this run and these live cases remain unexecuted.
 - [x] Automated: `node --test test/help-text.test.js test/teams-controls.test.js
   test/platform-controls.test.js test/platform-ingest.test.js` verifies the essential workflows,
   supported command list, Teams formatting/message budget, case-insensitive native dispatch,

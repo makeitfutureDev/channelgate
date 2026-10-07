@@ -166,5 +166,7 @@ async function fetchBytes(url, fetchImpl) {
 }
 
 export function isRobotReaction(value) {
-  return ["🤖", "robot", "robot_face"].includes(String(value || "").replace(/\uFE0F/g, ""));
+  // Teams names these Smile robot and Heart eyes robot in its reaction picker/reference.
+  // Keep the existing Unicode/legacy spellings for older event payloads.
+  return ["🤖", "robot", "robot_face", "smilerobot", "hearteyesrobot"].includes(String(value || "").replace(/\uFE0F/g, ""));
 }
