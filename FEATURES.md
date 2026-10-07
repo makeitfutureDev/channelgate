@@ -692,9 +692,17 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
   another person's active or queued work unless the requester is an administrator.
 - Work in one session queues with a visible position; unrelated sessions remain independent.
   Clear aborts active/queued work, waits for completion, and fences late session saves. Progress
-  updates at most every 30 seconds with elapsed time, last activity, and running subagents;
-  pending progress edits finish before the final answer replaces the placeholder. Interactive
+  shows the resolved model and current app/tool name, including completion/failure, thinking and
+  queue states. Phase changes coalesce at most once every three seconds (slower when the surface's
+  edit budget requires it); 30-second heartbeats show elapsed time, last activity and running
+  subagents. Tool arguments/results and reasoning payloads never appear in status. Pending
+  progress edits finish before the final answer replaces the placeholder. Interactive
   permission escalation is not enabled by these text controls.
+- Teams and Google Chat foreground replies carry the same compact statistics as Slack: configured
+  model (provider model only when none is configured), duration, this turn's input/output tokens,
+  optional cost, context use and container image. The global **Show message cost** setting applies
+  to every surface. Statistics pass through the normal formatting/chunking path and survive a
+  failed placeholder edit through fresh delivery; errors/stops do not invent usage statistics.
 - Native Adaptive Cards provide Approve/Deny/Request changes actions and a **six-page
   Settings console**: General, Variables, MCPs, Skills, Automations and Resume. `/settings` opens
   with just the section menu in the original channel/thread or chat; selecting a section reveals

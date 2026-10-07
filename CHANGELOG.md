@@ -18,6 +18,10 @@ product overview.
 
 ## Unreleased
 
+- Teams and Google Chat now show the model and current app/tool call while a turn runs, and the
+  same model, duration, token, optional cost, context and image footer as Slack on its final reply.
+  Live status updates coalesce within the surface edit budget and never show tool payloads.
+
 - Container turns now prepare a protected Claude login even when Codex, Qwen or Qwen EU is the
   selected engine. Explicit nested `claude -p` commands authenticate through the host's existing
   relay; Qwen's main process retains its own provider settings. No additional interactive login
