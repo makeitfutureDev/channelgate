@@ -528,6 +528,7 @@ test("every registered gateway tool is consciously classified as gated or open (
     "get_license_status", // read-only; exposes the tier/limits and the key's last 4, never the key
     // writes that land visibly in the current thread, or run inside normal confinement
     "slack_post_chart", "slack_post_table", "slack_upload_snippet",
+    "slack_compose_reply", // validates + acknowledges only; the daemon renders the observed call under THIS thread's answer
     "slack_share_file", // one confined channel file into THIS thread, like the explorer's Share button
     "slack_list_create", "slack_list_add_item", "slack_list_update_item", "slack_list_info", "slack_list_items",
     "slack_channel_history", "slack_thread_replies",

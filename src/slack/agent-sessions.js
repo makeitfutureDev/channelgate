@@ -1,4 +1,4 @@
-// Slack Agent Sessions — the lifecycle surface Slack introduced in August 2026 for apps declared
+// Slack's Agent Sessions — the lifecycle surface Slack introduced in August 2026 for apps declared
 // as agents: one session per thread with a status (`processing` shows the standard loading UX and,
 // when the app subscribes to `agent_session_stopped`, Slack's NATIVE Stop button), a title, and
 // the stop event itself. The legacy `assistant.threads.*` methods keep working through Slack's
