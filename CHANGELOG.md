@@ -39,6 +39,9 @@ product overview.
   will sync on the next sweep. It explicitly asks for a folder link before channel sync can start.
 - Refresh the locked MCP SDK, URI and IP parsing dependencies to patched compatible releases;
   production dependency auditing reports zero advisories.
+- Public automation documentation now covers run history, task outcomes, quiet execution and
+  existing-thread delivery, with the exact `get_schedule_runs` and `update_schedule` controls.
+  The documentation build again accounts for every registered control.
 
 - Far fewer approval cards. A gateway tool that changes channel or gateway state is now automatic
   for the admin or channel manager who asked for it (modes, network, folders, MCP servers,

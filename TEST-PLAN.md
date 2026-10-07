@@ -1,5 +1,18 @@
 # ChannelGate — Test Plan
 
+## Open functionality integration validation (2026-10-08)
+
+- Clean-install combined coverage: 3,499 tests; 3,467 passed, zero failed, 32 skipped.
+  Static, secret scan, dedicated security coverage floors, production dependency audit and DCO
+  passed. Patched production lockfile resolves zero advisories.
+- Isolated actual admin router and Chromium checks passed for duplicate-folder warnings and
+  unavailable MCP selections, including removal of legacy picks, healthy activation, persisted
+  payloads and reload. This is regression evidence, not deployed admin-client acceptance.
+- Public documentation build and export regression pass with every control reference present.
+- Applicable live engine/client acceptance remains unchecked below until candidate activation
+  and the necessary authorized isolated fixtures are available. No fault was induced in a
+  production turn; automated fixtures and previously successful user imports remain distinct.
+
 ## Provider selection readiness (2026-10-08)
 
 - [x] Regression: `node --test test/provider-selection-surfaces.test.js
@@ -66,7 +79,7 @@
 ## Runtime dependency advisory refresh (2026-10-08)
 
 - [x] `npm audit --omit=dev --audit-level=high`: patched compatible lockfile resolves zero advisories.
-- [ ] Run the full combined regression/security coverage on a clean install of the patched lockfile,
+- [x] Full combined regression/security coverage passed on a clean install of the patched lockfile,
   including remote MCP HTTP/stdio transports, OAuth metadata, and public-address guards.
 
 ## Custom MCP connections (2026-10-01)
@@ -9356,6 +9369,16 @@ case. Also run a group with an external member to check tenant/channel delivery 
 
 
 ## Automation health, logs and silent execution
+
+- Public documentation regression (engine-independent): from `documentation/`, run `npm ci`,
+  `npm run build`, `npm test`, and `npm audit --omit=dev --audit-level=high`. Require both new
+  automation control headings exactly once and the unchanged source-registration coverage gate
+  to account for 106 gateway plus 10 library controls. Review visibility/result/failure/thread
+  arguments and run-history outcomes against the scheduler, store and control implementations.
+  This docs check does not substitute for the Claude/Codex live automation gates below.
+- Checked: documentation dependency install, build, export regression and high-severity production
+  audit passed. Build verified 151 public routes, the search index and all control registrations;
+  audit reported 10 moderate findings, with no high or critical findings.
 
 - Automated: `node --test test/automation-health.test.js test/schedule-health-admin.test.js
   test/scheduler-restart.test.js test/schedule-daily-thread.test.js

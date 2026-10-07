@@ -227,11 +227,14 @@ Admins can add gateway-wide model shortcuts in Settings â†’ Access & security â†
   builds these docs automatically from public beta on each website deployment using
   `documentation/scripts/vercel-build.sh` and a temporary checkout outside the website output.
 - The functionality map links all 45 areas of the product inventory to practical guides.
-  The control reference documents all 104 gateway and 10 external skills-library tool definitions
+  The control reference documents all 106 gateway and 10 external skills-library tool definitions
   with inputs, defaults, authority, results, limits and examples. A source-registration check
   requires each tool exactly once; unknown or duplicate reference headings fail the build.
   Documentation CI also runs on tool-source and feature-catalog changes. This verifies inventory
   and control coverage; peer review verifies user-facing claims against current implementation.
+- Automation guides document scoped run history and outcome evidence, quiet result filtering,
+  failure notifications and fixed-thread delivery, including exact creation, update and history
+  arguments. Engine completion is described separately from agent-reported task success.
 - Handbook source and configuration were cross-reviewed against the public feature record,
   canonical operator references and implementation. Microsoft Teams and Google Chat remain
   explicitly Beta; optional VPN provisioning, engine-specific approvals and admin-only host
