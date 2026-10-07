@@ -2,6 +2,33 @@
 
 ## Microsoft Teams reaction actions acceptance (2026-10-07)
 
+- Shortcut/Like verification: 79 focused tests passed, zero failures/skips. Independent review
+  identified old-reaction replay when adding aliases; a persisted cutoff fixed it and the updated
+  review found no blocking defects. Static checks and secret scanning passed. Live event delivery
+  and private QA registration remain pending; no live trigger success is claimed.
+
+- Activation shortcut and Like alternative: `test/platform-teams-events.test.js` and
+  `test/platform-teams-graph-activity.test.js` cover `hearteyesrobot`, exact picker shortcut `:hearteyesrobot:`, native `like`, Unicode 👍
+  and valid skin tones,
+  removal suppression and unsupported emoji rejection. `test/teams-reaction-actions.test.js`
+  carries the exact Heart eyes robot shortcut and Like through normalization and shared ingest in
+  personal, group and channel sessions,
+  checks reactor identity/session target, and rejects unapproved reactors before engine dispatch.
+  `test/platform-teams-graph-events.test.js` verifies persisted alias-introduction cutoff initialization
+  before cached subscription reuse and message fetch, preservation on context refresh/renew/restart,
+  and Graph normalizer tests reject older alias additions and missing cutoffs without changing
+  legacy robot/control admission. New aliases cannot replay pre-upgrade history on unrelated edits.
+- [ ] LIVE (Claude and Codex): use approved beta Teams QA personal, group and channel fixtures
+  with reaction event delivery enabled. In a group/channel, post an unmentioned message
+  "Reply exactly LIKE_TRIGGER_OK", then add 👍 **Like** using the Teams reaction picker as an
+  approved actor. Pass: exactly one response LIKE_TRIGGER_OK in that source session under the
+  reactor's identity on each engine; no response to removal and no run for an unapproved actor.
+  Repeat with **Heart eyes robot**, picker shortcut `:hearteyesrobot:`, on a separate fixture.
+  In personal chat, add either activation reaction to an existing bot reply: pass only if that session resumes once.
+  Capture the actual reaction type and delivered event when investigating a failed trigger.
+  A recognized ID alone does not establish event delivery. The failed message link/live fixture
+  remains requested; private QA registration requires the unavailable requester personal connection.
+
 - Automated: `test/teams-reaction-actions.test.js` exercises native reaction → normalization →
   shared ingest → control/ack store. Native and Graph Stop additions cancel active and queued
   requests for personal, group and channel sessions; reject an approved non-author; permit
@@ -26,7 +53,7 @@
   with "Reply QUEUED_EMOJI_DONE". An approved other actor adds Stop sign to the working reply:
   pass only if work continues with an author/admin notice. Author adds Stop sign: pass if active
   work stops, queued work never starts and unrelated sessions continue. Repeat with admin stopper.
-  Heart eyes robot on "Reply exactly EMOJI_ROBOT_OK" must run once as the reactor on each engine.
+  Like on "Reply exactly EMOJI_LIKE_OK" must run once as the reactor on each engine.
 - [ ] LIVE, engine-independent: create a Teams QA reminder with acknowledgment enabled, default
   Tick button and short escalation interval. Add Tick button to the original reminder, then repeat
   on a separate reminder’s second notice. Pass: acknowledgment notice, pending ack removed,
@@ -67,7 +94,7 @@
   static checks and secret scanning passed. The expanded guide still fits one Teams message.
 - [ ] LIVE (Claude and Codex): in separate approved beta Teams QA group/channel sessions with
   reaction event delivery enabled, post "Reply exactly ROBOT_MAPPING_OK", then as an approved
-  test actor add **Heart eyes robot** from the Teams picker. Pass: one run under the reactor's
+  test actor add 👍 **Like** from the Teams picker. Pass: one run under the reactor's
   gateway identity replies ROBOT_MAPPING_OK in the source session for each engine. Remove the
   reaction; delayed removed events must not run. Stop sign and Tick button invoke only their
   authorized session-stop/reminder-acknowledgment controls (see reaction actions acceptance).
@@ -88,7 +115,8 @@
   mention it with `/help`. Pass: each guide appears in its source conversation/thread, reads
   correctly on desktop/mobile, with a distinct title, section dividers, spaced paragraphs,
   separate reaction/command rows and monospace commands. Check the reaction legend shows
-  `hearteyesrobot`, `stopsign` and `2705_whiteheavycheckmark` beside their Teams picker names;
+  `hearteyesrobot` (shown as picker shortcut `:hearteyesrobot:`), `stopsign` and
+  `2705_whiteheavycheckmark` beside their Teams picker names;
   no Slack shortcodes or misleading plain robot icon appear. It includes **How to use me** and the
   complete supported command list, and advertises no Slack-only controls. Quote the group help
   card with a mentioned `/status`; it must address the original session. No agent turn, runtime

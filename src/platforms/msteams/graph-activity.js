@@ -5,7 +5,7 @@ import { activityConversationName } from "./conversation-name.js";
 import { makeInbound } from "../inbound.js";
 import { quotedReplyId, stripMentionTags } from "./activity.js";
 
-import { teamsReactionAction } from "./reactions.js";
+import { teamsReactionAction, teamsReactionRequiresCutover } from "./reactions.js";
 
 const digest = parts => createHash("sha256").update(JSON.stringify(parts)).digest("hex");
 const userId = identity => String(identity?.user?.id || "");
@@ -97,6 +97,10 @@ export async function normalizeGraphEvents(message, row, { botId, resolveMember,
     if (item.transition !== "added") continue;
     const action = teamsReactionAction(item.reaction?.reactionType);
     const stamp = item.modifiedDateTime;
+    if (teamsReactionRequiresCutover(item.reaction?.reactionType)) {
+      const cutover = Date.parse(row.reactionAliasesStartedAt);
+      if (!Number.isFinite(cutover) || !(Date.parse(stamp) > cutover)) continue;
+    }
     const actor = userId(item.reaction?.user);
     // A removed reaction must not start a new run when a delayed notification is fetched.
     if (!(message.reactions || []).some(reaction => teamsReactionAction(reaction.reactionType) === action && userId(reaction.user) === actor)) continue;

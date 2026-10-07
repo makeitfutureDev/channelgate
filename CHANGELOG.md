@@ -18,6 +18,12 @@ product overview.
 
 ## Unreleased
 
+- Teams reaction activation now accepts the exact Heart eyes robot picker shortcut
+  `:hearteyesrobot:` as well as its bare event ID. 👍 Like is an alternative activation reaction. Native `like` and Graph Unicode
+  thumbs-up values, including skin-tone variants, use the existing authorized reaction path.
+  Teams help shows the Heart eyes robot shortcut and Like alternative; legacy robot IDs remain
+  recognized. A persisted cutoff prevents newly recognized aliases from replaying older reactions.
+
 - Teams help now shows Teams reaction IDs and picker names instead of Slack shortcodes.
   Heart eyes robot no longer displays the mismatched plain robot glyph, and the guide explains
   that reaction codes must be selected through the picker rather than sent as text.

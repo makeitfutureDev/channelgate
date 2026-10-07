@@ -65,7 +65,16 @@ export function createTeamsGraphEvents({ auth, notificationUrl, tenantId, store,
     }
     return res.status === 204 ? null : res.json();
   }
+  // Persist before fetching history or reusing a live subscription. Once set, this survives
+  // renewals/restarts; newly recognized aliases must never activate pre-upgrade reactions.
+  async function prepareReactionAliases(row) {
+    if (Number.isFinite(Date.parse(row.reactionAliasesStartedAt))) return row;
+    const prepared = { ...row, reactionAliasesStartedAt: new Date(now()).toISOString() };
+    await store.put(prepared);
+    return prepared;
+  }
   async function maintain(row) {
+    row = await prepareReactionAliases(row);
     const { resource, apiVersion } = baseResource(row.resource);
     const current = now();
     const sameEndpoint = row.notificationUrl === endpoint.href;
@@ -134,11 +143,16 @@ export function createTeamsGraphEvents({ auth, notificationUrl, tenantId, store,
   }
   async function processNotifications(accepted) {
     for (const { event } of accepted) {
-      const row = (await store.list()).find(item => item.subscriptionId && item.subscriptionId === event?.subscriptionId);
-      const path = row && messagePath(event, row);
-      // Uninstall or rotation may revoke an envelope after durable acceptance, before its GET.
-      if (!row || !path || event.tenantId !== tenantId || !sameSecret(event.clientState, row.clientState)
-        || !["created", "updated"].includes(event.changeType)) continue;
+      const row = await serialized(async () => {
+        const current = (await store.list()).find(item => item.subscriptionId && item.subscriptionId === event?.subscriptionId);
+        // Uninstall or rotation may revoke an envelope after durable acceptance, before its GET.
+        if (!current || !messagePath(event, current) || event.tenantId !== tenantId
+          || !sameSecret(event.clientState, current.clientState)
+          || !["created", "updated"].includes(event.changeType)) return null;
+        return prepareReactionAliases(current);
+      });
+      if (!row) continue;
+      const path = messagePath(event, row);
       let message;
       try { message = await request(row.apiVersion || baseResource(row.resource).apiVersion, path); }
       catch (error) { if (error.status === 404) continue; throw error; }

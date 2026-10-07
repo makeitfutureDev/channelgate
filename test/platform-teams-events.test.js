@@ -20,12 +20,14 @@ test('edit event subtype is explicit; real mention entity is required for the me
 });
 
 test('supported reaction additions carry explicit action, reactor identity and target', () => {
-  for (const reaction of ['🤖', 'robot', 'robot_face', '🤖\uFE0F', 'smilerobot', 'hearteyesrobot']) {
+  for (const reaction of ['🤖', 'robot', 'robot_face', '🤖\uFE0F', 'smilerobot', 'hearteyesrobot', ':hearteyesrobot:', ' :HeartEyesRobot: ', 'like', 'LIKE', '👍', '👍\uFE0F', '👍🏻', '👍🏿', 'like-tone1', 'like-tone5']) {
     const value = normalize({ type: 'messageReaction', replyToId: 'bot-answer', text: '', entities: [], reactionsAdded: [{ type: reaction }] });
     assert.equal(value.reactionAction, 'engage'); assert.equal(value.trigger, 'reaction'); assert.equal(value.replyToId, 'bot-answer'); assert.equal(value.userId, '29:author'); assert.equal(value.mentionsBot, false);
   }
   assert.equal(normalize({ type: 'messageReaction', replyToId: 'bot-answer', reactionsRemoved: [{ type: 'robot' }] }), null);
-  for (const reaction of ['like', 'hearteyes', 'hearteyesdog']) {
+  assert.equal(normalize({ type: 'messageReaction', replyToId: 'bot-answer', reactionsRemoved: [{ type: ':hearteyesrobot:' }] }), null);
+  assert.equal(normalize({ text: ':hearteyesrobot:', entities: [] }).trigger, 'message', 'typed shortcut is not a reaction');
+  for (const reaction of ['heart', 'hearteyes', 'hearteyesdog', 'like-tone0', 'like-tone6', '👎', ':hearteyesrobot', 'hearteyesrobot:', '::hearteyesrobot::']) {
     assert.equal(normalize({ type: 'messageReaction', replyToId: 'bot-answer', reactionsAdded: [{ type: reaction }] }), null);
   }
   for (const [type, action] of [['stopsign', 'stop'], ['🛑', 'stop'], ['2705_whiteheavycheckmark', 'ack'], ['✅', 'ack']]) {
@@ -68,6 +70,6 @@ test('signed webhook accepts distinct edits once, authenticates before dispatch 
 test('Graph mode owns edit/reaction events; native new messages remain enabled', async () => {
   const received = []; const observed = [];
   const handle = createTeamsWebhook({ appId, botId, graphEventsEnabled: true, jwks: { get: async () => jwk }, onActivity: async (a) => observed.push(a.type), onMessage: async (m) => received.push(m), log: { error() {}, warn() {} } });
-  for (const body of [base, { ...base, type: 'messageUpdate', channelData: { eventType: 'editMessage' } }, ...['robot', 'stopsign', '2705_whiteheavycheckmark'].map(type => ({ ...base, type: 'messageReaction', replyToId: 'bot-answer', reactionsAdded: [{ type }] }))]) await handle({ body, headers: { authorization: `Bearer ${token()}` } }, response());
-  assert.equal(received.length, 1); assert.equal(received[0].trigger, 'message'); assert.equal(observed.length, 5);
+  for (const body of [base, { ...base, type: 'messageUpdate', channelData: { eventType: 'editMessage' } }, ...['robot', 'like', 'stopsign', '2705_whiteheavycheckmark'].map(type => ({ ...base, type: 'messageReaction', replyToId: 'bot-answer', reactionsAdded: [{ type }] }))]) await handle({ body, headers: { authorization: `Bearer ${token()}` } }, response());
+  assert.equal(received.length, 1); assert.equal(received[0].trigger, 'message'); assert.equal(observed.length, 6);
 });
