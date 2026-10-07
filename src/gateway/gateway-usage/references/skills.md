@@ -63,7 +63,9 @@ applies at once.
   (channel or organization) skill, not a personal one. An admin edits a template with
   `update_skill_template` (`add` / `remove`).
 
-None of these show an approval card (except the admin's `update_skill_template`, below).
+None of these show an approval card. Of the admin verbs, only `add_skill_source`, `add_org_skills`,
+`update_skill_template` when it ADDS and `decide_skill_proposal` when it APPROVES post a (durable,
+never-expiring) card; the rest are automatic for an admin (`references/administration.md`).
 
 ## Authoring
 

@@ -75,14 +75,15 @@ test("set_secret / remove_secret: the scope argument picks the store and the tie
   assert.match(await reply(dev, "remove_secret", { name: "DEV_ADDED" }), /Removed your personal secret `DEV_ADDED`/);
   assert.deepEqual((await scoped.listUserEnv(DEV)).map((v) => v.name), ["MY_TOKEN"]);
   assert.match(await reply(toolsFor(DEV, { trusted: false }), "set_secret", { name: "A", value: "b" }), /No verified user context/);
-  // The approval gate's tier follows the scope: an organization write needs an admin's click.
+  // The gate's authority follows the scope (an organization write needs an admin); the write
+  // itself is automatic for that caller — the value is in their own message (2026-10-07).
   const plane = buildControlPlane({ loadMeta: async () => ({}) });
   for (const name of ["set_secret", "remove_secret"]) {
     assert.equal(gateAuthz(plane.get(name), { scope: "organization" }), "admin");
     assert.equal(gateAuthz(plane.get(name), { scope: "org" }), "admin");
     assert.equal(gateAuthz(plane.get(name), {}), "any");
-    assert.match(plane.get(name).details({ name: "T", scope: "organization" }), /ORGANIZATION-WIDE|organization-wide/);
-    assert.match(plane.get(name).details({ name: "T" }), /YOUR personal/);
+    assert.equal(plane.get(name).details({ name: "T", scope: "organization" }), null, "no card for the caller who holds the authority");
+    assert.equal(plane.get(name).details({ name: "T" }), null);
   }
   assert.equal(plane.has("list_secrets"), false, "a masked listing carries no card");
   assert.equal(secretScopeTier(undefined), "any");
@@ -125,9 +126,18 @@ test("strict is the default when nothing is stored; the boot pin keeps an existi
 
 // Hidden/readable and approved servers (src/gateway/secret-host-approvals.js, 2026-09-27).
 test("set_secret_mode and allow_secret_host: scoped authority, the value untouched, engine APIs refused", async () => {
-  const { secretModeTier } = await import("../src/mcp/gateway-server.js");
+  const { secretModeTier, secretCardTier, buildControlPlane: plane, gateCardTier } = await import("../src/mcp/gateway-server.js");
   assert.deepEqual(["organization", "conversation", "personal", undefined].map((scope) => secretModeTier(scope)), ["admin", "manage", "any", "any"]);
-  assert.equal(secretModeTier("personal", "readable"), "admin", "a bystander can never approve making someone's secret readable");
+  // The card (only for READABLE) is approved by the organization's admin, anyone working in the
+  // conversation, or the personal secret's owner — never a bystander for someone else's.
+  assert.deepEqual(["organization", "conversation", "personal", undefined].map((scope) => secretCardTier(scope)), ["admin", "", "owner", "owner"]);
+  const gates = plane({ loadMeta: async () => ({}) });
+  assert.equal(gates.get("set_secret_mode").details({ name: "T", mode: "hidden" }), null, "hiding is automatic");
+  assert.match(gates.get("set_secret_mode").details({ name: "T", mode: "readable" }), /READABLE/);
+  assert.equal(gateCardTier(gates.get("set_secret_mode"), { scope: "personal", mode: "readable" }), "owner");
+  assert.equal(gateCardTier(gates.get("set_secret_mode"), { scope: "conversation", mode: "readable" }), "");
+  assert.equal(gateCardTier(gates.get("allow_secret_host"), { scope: "organization" }), "admin");
+  assert.equal(gateAuthz(gates.get("allow_secret_host"), { scope: "conversation" }), "any");
   await scoped.patchUserEnv(DEV, { set: { name: "MY_PAY_TOKEN", value: "my-pay-value-1234567" } });
   assert.match(await reply(toolsFor(DEV), "list_secrets", { scope: "personal" }), /`MY_PAY_TOKEN`[^\n]*hidden \(placeholder\); approved servers: none yet/);
   assert.match(await reply(toolsFor(DEV), "set_secret_mode", { name: "MY_PAY_TOKEN", mode: "readable" }), /now readable/);
@@ -135,13 +145,23 @@ test("set_secret_mode and allow_secret_host: scoped authority, the value untouch
   assert.match(await reply(toolsFor(DEV), "set_secret_mode", { name: "MY_PAY_TOKEN", mode: "auto" }), /now hidden \(decided automatically\)/);
   // A member cannot change the organization's, nor this conversation's without managing it.
   assert.match(await reply(toolsFor(DEV), "set_secret_mode", { name: "ORG_TOKEN", mode: "readable", scope: "organization" }), /Only organization admins/);
+  // Approved members manage a channel by default (2026-10-07), so a member changes this
+  // conversation's secret modes; a channel that keeps managers to admins still refuses them.
+  assert.match(await reply(toolsFor(DEV), "set_secret_mode", { name: "CHAN_TOKEN", mode: "readable", scope: "conversation" }), /now readable/);
+  assert.match(await reply(toolsFor(DEV), "set_secret_mode", { name: "CHAN_TOKEN", mode: "hidden", scope: "conversation" }), /now hidden/);
+  await store.patchChannelMeta(SLUG, { manageAccess: "admins" });
   assert.match(await reply(toolsFor(DEV), "set_secret_mode", { name: "CHAN_TOKEN", mode: "readable", scope: "conversation" }), /managers/);
-  // allow_secret_host is admin-only, exact hosts only, never an engine API.
-  assert.match(await reply(toolsFor(DEV), "allow_secret_host", { name: "MY_PAY_TOKEN", host: "api.pay.example" }), /Only organization admins/);
+  await store.patchChannelMeta(SLUG, { manageAccess: "members" });
+  // allow_secret_host: the organization's needs an admin, a personal one its owner, a conversation's
+  // anyone working there; exact hosts only, never an engine API.
+  assert.match(await reply(toolsFor(DEV), "allow_secret_host", { name: "ORG_TOKEN", host: "api.pay.example", scope: "organization" }), /Only organization admins/);
+  assert.match(await reply(toolsFor(DEV), "allow_secret_host", { name: "MY_PAY_TOKEN", host: "api.pay.example" }), /may now be used on api\.pay\.example/);
+  assert.deepEqual((await scoped.getUserEnv(DEV)).MY_PAY_TOKEN.approvedHosts, ["api.pay.example"]);
+  assert.match(await reply(toolsFor(DEV), "allow_secret_host", { name: "CHAN_TOKEN", host: "api.pay.example", scope: "conversation" }), /may now be used on api\.pay\.example/);
   assert.match(await reply(toolsFor(ADMIN), "allow_secret_host", { name: "ORG_TOKEN", host: "api.anthropic.com", scope: "organization" }), /model API/);
   assert.match(await reply(toolsFor(ADMIN), "allow_secret_host", { name: "ORG_TOKEN", host: "*.pay.example", scope: "organization" }), /single host name/);
   assert.match(await reply(toolsFor(ADMIN), "allow_secret_host", { name: "ORG_TOKEN", host: "API.pay.example", scope: "organization" }), /may now be used on api\.pay\.example/);
   assert.deepEqual(scoped.getOrgEnv().ORG_TOKEN.approvedHosts, ["api.pay.example"]);
-  assert.match(await reply(toolsFor(ADMIN), "allow_secret_host", { name: "CHAN_TOKEN", host: "api.pay.example", scope: "conversation" }), /may now be used on api\.pay\.example/);
+  assert.match(await reply(toolsFor(ADMIN), "allow_secret_host", { name: "CHAN_TOKEN", host: "api.other.example", scope: "conversation" }), /may now be used on api\.other\.example/);
   await scoped.patchUserEnv(DEV, { remove: "MY_PAY_TOKEN" });
 });

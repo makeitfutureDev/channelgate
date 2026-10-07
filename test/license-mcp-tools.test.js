@@ -128,28 +128,13 @@ test("a non-admin cannot set or clear the key, and gets the refusal rather than 
   assert.equal(approvals.length, 0, "no approval spam for a caller who could never pass authz");
 });
 
-test("an admin still needs a human Approve click, and a denial changes nothing", async () => {
-  saveSettings({ licenseKey: "cg_live_mcp_key_ABCD9876" });
-  approvals.length = 0;
-  approvalResponse = { allow: false, reason: "not now" };
-  await withGateway({ author: "U_LIC_ADMIN" }, async (client) => {
-    const text = resultText(await client.callTool({ name: "set_license_key", arguments: { key: "cg_live_new_key_1111" } }));
-    assert.match(text, /needs a human Approve click/i);
-    assert.match(text, /Nothing was changed/);
-  });
-  assert.equal(getLicenseKey(), "cg_live_mcp_key_ABCD9876");
-  assert.equal(approvals.length, 1, "the admin's call raised exactly one approval card");
-  assert.equal(approvals[0].body.toolName, "set_license_key");
-  // The card describes the change without ever quoting the key.
-  assert.match(approvals[0].body.toolInput.details, /LICENSE KEY \(value hidden\)/);
-  assert.ok(!JSON.stringify(approvals[0].body).includes("cg_live_new_key_1111"), "the key must not ride the approval payload");
-  assert.equal(approvals[0].body.requiredTier, "admin", "an admin-tier change needs an admin clicker");
-});
-
-test("an approved admin call sets the key and reports the verification outcome", async () => {
+// Operator decision 2026-10-07 (minimum second-approval cards): the key is in the admin's own
+// message, the admin UI sets it with no second step, and the worst unasked outcome (the no-key
+// limits) is undone by setting it again — so an admin's call applies at once, with no card.
+test("an admin's call sets the key at once — no card, and the key never rides any payload or reply", async () => {
   saveSettings({ licenseKey: "" });
   approvals.length = 0;
-  approvalResponse = { allow: true };
+  approvalResponse = { allow: false, reason: "no card may be posted" };
   await withGateway({ author: "U_LIC_ADMIN" }, async (client) => {
     const text = resultText(await client.callTool({ name: "set_license_key", arguments: { key: "cg_live_new_key_2222" } }));
     assert.match(text, /Saved the license key \(…2222\)/);
@@ -166,7 +151,7 @@ test("an approved admin call sets the key and reports the verification outcome",
     assert.match(text, /Removed the license key/);
   });
   assert.equal(getLicenseKey(), "");
-  assert.equal(approvals.length, 1, "clearing is gated too");
+  assert.equal(approvals.length, 0, "neither setting nor clearing posts a card for an admin");
 });
 
 test("an obviously wrong key is refused before anything is saved", async () => {

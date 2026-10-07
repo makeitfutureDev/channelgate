@@ -27,6 +27,8 @@ import { BackgroundJobs, setActiveBackgroundJobs } from "./gateway/background.js
 import { requestApproval, setDurableApprovalExecutor } from "./slack/approvals.js";
 import { executeInstructionApproval, INSTRUCTION_ACTION } from "./gateway/instruction-approvals.js";
 import { executeSecretHostApproval, SECRET_HOST_ACTION, setSecretHostApprovalRequester } from "./gateway/secret-host-approvals.js";
+import { CONTROL_PLANE_ACTION, executeControlPlaneApproval, setControlPlaneInvoker } from "./gateway/control-plane-approvals.js";
+import { createDirectDaemonIpc, createGatewayMcpServer, ctxFromClaims } from "./mcp/gateway-server.js";
 import { startMcpSocketServer, stopMcpSocketServer, mcpSocketStatus } from "./mcp/socket-server.js";
 import { startSshBroker, stopSshBroker } from "./gateway/ssh-broker.js";
 import { bindRunningChannelEgress, egressStatus, startEgressService, stopEgressService } from "./gateway/egress/service.js";
@@ -307,7 +309,20 @@ async function main() {
     ? executeInstructionApproval(record)
     : record.action?.kind === SECRET_HOST_ACTION
       ? executeSecretHostApproval(record)
-      : backgroundJobs.startApproved(record));
+      : record.action?.kind === CONTROL_PLANE_ACTION
+        ? executeControlPlaneApproval(record)
+        : backgroundJobs.startApproved(record));
+  // A saved control-plane call (an admin-tier tool whose card was clicked, possibly after a
+  // restart) runs through the same gateway MCP server a turn uses — in-process, as the original
+  // requester, with the handler's own authz check and the daemon's direct IPC — so the click
+  // applies exactly what the card showed and nothing the engine would have had to re-decide.
+  setControlPlaneInvoker(async ({ tool, args, channelId, slug, authorId, threadKey }) => {
+    const ctx = ctxFromClaims(
+      { channelId, slug, authorId, threadKey, origin: "approval", principalTrusted: true, toolset: "full" },
+      { daemon: createDirectDaemonIpc(daemonHandlers) },
+    );
+    return createGatewayMcpServer(ctx).invokeApproved(tool, args);
+  });
   // A hidden secret presented to a server nobody approved yet asks an admin in the live thread.
   setSecretHostApprovalRequester((request) => requestApproval(slack, request));
   const recoveredApprovals = recoverInterruptedApprovalExecutions();

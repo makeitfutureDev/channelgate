@@ -228,3 +228,48 @@ test("the HTTP run API principal ranks as an admin for its own permission prompt
   assert.equal(auto.allow, true, "an Admin channel auto-approves the admin API principal's prompt like an admin author's");
   assert.equal(client.posted.length, 0, "no card is posted for it");
 });
+
+test("owner tier: only the requester (or an admin) approves; Approve forever is a manager's call, not admin-only (2026-10-07)", async () => {
+  const client = fakeClient();
+  setApprovalClient(client);
+  const pending = requestApproval(null, {
+    channelId: CHANNEL,
+    slug: SLUG,
+    authorId: MEMBER,
+    threadKey: "1.555",
+    toolName: "set_secret_mode",
+    toolInput: { details: "Make YOUR personal secret MY_TOKEN READABLE" },
+    approvalType: "agent",
+    requiredTier: "owner",
+  });
+  await new Promise((r) => setImmediate(r));
+  const id = cardId(client);
+  assert.match(JSON.stringify(client.posted.at(-1).blocks), /Only the requester \(or a gateway admin\) can approve this/);
+  await setUser("U_AL_OTHER", { name: "AL Other", approved: true, isAdmin: false });
+  await click(client, "cg_approve", id, "U_AL_OTHER");
+  assert.equal(client.ephemerals.length, 1, "another member cannot approve an owner-tier card");
+  assert.match(client.ephemerals[0].text, /the requester \(or an admin\)/);
+  await click(client, "cg_approve", id, MEMBER);
+  const decision = await pending;
+  assert.equal(decision.allow, true, "the requester's own click approves an owner-tier card");
+
+  // A permission card: a member who manages the channel may pick "forever"; one who does not may not.
+  const original = await getChannelMeta(SLUG);
+  try {
+    await saveChannelMeta(SLUG, { ...original, autoMode: false, approvedTools: [], manageAccess: "admins" });
+    const client2 = fakeClient();
+    setApprovalClient(client2);
+    const pending2 = requestApproval(null, { channelId: CHANNEL, slug: SLUG, authorId: MEMBER, threadKey: "1.666", toolName: "Bash", toolInput: { command: "ls" } });
+    await new Promise((r) => setImmediate(r));
+    await click(client2, "cg_approve_always", cardId(client2), MEMBER);
+    assert.equal(client2.ephemerals.length, 1);
+    assert.match(client2.ephemerals[0].text, /managers \(or an admin\) can approve a tool forever/);
+    await saveChannelMeta(SLUG, { ...(await getChannelMeta(SLUG)), manageAccess: "members" });
+    await click(client2, "cg_approve_always", cardId(client2), MEMBER);
+    const decision2 = await pending2;
+    assert.equal(decision2.allow, true, "a managing member approves forever");
+    assert.deepEqual((await getChannelMeta(SLUG)).approvedTools, ["Bash"], "persisted for the channel");
+  } finally {
+    await saveChannelMeta(SLUG, original);
+  }
+});

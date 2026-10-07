@@ -327,16 +327,28 @@ export function register(server, ctx) {
     "allow_secret_host",
     {
       description:
-        "ADMIN ONLY. Approve a server for a HIDDEN secret without waiting for its approval card — for work that posted " +
-        "no card (an SSH session or a background job with no chat thread): run it from this conversation's chat. After " +
-        "this the egress proxy swaps the secret's placeholder for the real value on that exact host. A single host " +
-        "name, never a wildcard; model APIs are refused. `scope`: organization, personal (yours) or conversation.",
+        "Approve a server for a HIDDEN secret without waiting for its first-use card — for work that posted no card " +
+        "(an SSH session or a background job with no chat thread): run it from this conversation's chat. The request " +
+        "is saved as a durable card the secret's tier approves (an admin for the organization's, anyone working here " +
+        "for this conversation's, you for your own). After approval the egress proxy swaps the secret's placeholder " +
+        "for the real value on that exact host. A single host name, never a wildcard; model APIs are refused. " +
+        "`scope`: organization (admins), personal (yours) or conversation (anyone working here).",
       inputSchema: { name: z.string(), host: z.string(), scope: z.enum(["personal", "organization", "conversation", "my", "org", "channel"]).optional() },
     },
     async ({ name, host, scope }) => {
-      if (!(await requireAdmin())) return text("Only organization admins can approve where a secret may be sent.");
-      const target = await scopeTarget(scope);
-      if (target.refusal) return text(target.refusal);
+      // Who may ASK follows the secret's scope, like the first-use card's tier
+      // (gateway/secret-host-approvals.js secretHostTier): the organization's needs an admin, a
+      // conversation's anyone working in it, a personal one its owner.
+      const wantedScope = scopeOf(scope, "personal");
+      let target;
+      if (wantedScope === "conversation") {
+        const here = typeof ctx.requireChannelAccess === "function" ? await ctx.requireChannelAccess() : await requireManage();
+        if (!slug || !here) return text("Only someone working in this conversation (or an admin) can approve where its secret may be sent.");
+        target = { scope: "channel", slug };
+      } else {
+        target = await scopeTarget(scope);
+        if (target.refusal) return text(target.refusal);
+      }
       const wanted = String(host || "").trim().toLowerCase().replace(/\.$/, "");
       let modelHosts = engineHostsFor();
       try { modelHosts = (await import("../../gateway/egress/service.js")).modelApiHosts(); } catch { /* the fixed engine list */ }

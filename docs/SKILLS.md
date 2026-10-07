@@ -114,7 +114,7 @@ template too. Preview first to see what a conversation would gain, keep or drop.
 Templates store explicit skill selections; category is catalog metadata used for filtering, not a
 bulk template selector. A template is also what a "team's skills" means — there is no separate
 team scope. Only admins edit a template (the admin UI, or `update_skill_template` from chat, which
-carries a card like the other organization-wide admin verbs); anyone may ask with
+carries a durable card when it ADDS skills and is automatic when it removes them); anyone may ask with
 `propose_skill_change` `kind: template` + `template`, stored in the proposal's `target` column
 (migration 31), and an approved request adds the skill to that template. Personal skills never join
 a template. From chat: `list_skill_templates`, `preview_skill_template` and
@@ -212,11 +212,14 @@ names, so every stored grant still resolves. *Re-import host folders* refreshes 
 Personal and channel changes never post an approval card and never wait for anyone (operator
 decision 2026-09-27); the tool result tells the model to announce the change in its reply, and
 every write is audited (`skill_created`, `skill_updated`, `skill_revoked`, `skill_removed`).
-Admins moderate only the organization tier; the organization-wide admin verbs
-(`decide_skill_proposal`, `update_skill_template`, `add_org_skills` / `remove_org_skills`, sources, governance, exclusion,
-`set_skill_scope`, `publish_skill`) **always** post an Approve/Deny card.
-Auto mode does not bypass it: auto-approval applies to tool permission prompts only, never to
-control-plane changes.
+Admins moderate only the organization tier. Since 2026-10-07 (minimum second-approval cards)
+only the verbs that push content into every conversation post a card — `add_skill_source`,
+`add_org_skills`, `update_skill_template` when it adds, `decide_skill_proposal` when it approves —
+and that card is durable: saved as the exact call, never expiring, applied on the admin's click
+even after a restart. The rest (`remove_org_skills`, template removals, proposal rejections,
+sources' set/sync/remove, governance, exclusion, `set_skill_scope`, `publish_skill`) are
+automatic for the admin (or manager) who asked, audited and announced. Auto mode never decides a
+card: auto-approval applies to tool permission prompts only.
 Accepted residual risk: content injected into an
 authorized turn can write a skill that loads in that channel's (or that author's) later turns;
 it can never reach the organization tier.

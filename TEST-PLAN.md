@@ -4426,7 +4426,9 @@ structural invariants are automated; rendered navigation and feature claims also
 - [ ] **Who can manage** = *Channel members*: an approved member can `/mode read|bash|auto` and toggle bash/auto
       via the control MCP, but `/mode admin`, network, and work-dir are still refused (org-admin-only).
 - [ ] **Who can manage** = *Custom*: only a listed manager (or an admin) can change safe settings; others refused.
-- [ ] Default `manageAccess:"admins"` is unchanged behavior — non-admins cannot manage until opted in.
+- [ ] **Retired 2026-10-07:** the admins-only default. New non-DM channels default **Who can manage**
+      to approved members; a channel whose stored value is `admins` (or a row with no value) still
+      refuses non-admins until opted in (`test/secrets-tool.test.js`, `test/mcp-control-plane-approval.test.js`).
 - [ ] Network toggle is hidden in Read-only/Lean; visible for Worker/Autonomous/Full.
 - [ ] Advanced disclosure holds memory/refuse-org-tokens/work-dir/engine/model/effort; all still save.
 - [ ] Settings → **Reset all channels' access to default**: confirm dialog; resets use→org default + manage→admins,
@@ -5584,14 +5586,23 @@ placeholders and `--network none`).
 - [ ] **Retired 2026-09-03 (Linux + containers only):** the sandbox wording — escalation is the bypass flag inside the channel's container, and auto mode
       stays inside it too. admin-mode escalation needs BOTH: admin author + adminMode channel → sandbox off; a non-admin in
       an admin-mode channel still gets prompted. auto-mode auto-approves but stays sandboxed.
-- [x] Unit (`test/mcp-control-plane-approval.test.js`, the 2026-08 update plan (internal repo) A3): control-plane MCP
-      tools block on a human Approve click — deny (with reason) blocks the change and nothing
-      persists; allow lets it through; an unreachable approval endpoint fails closed; token values
-      never appear in the approval payload; read-only tools and memory writes in both default and
-      custom project workdirs never hit the endpoint; unauthorized callers get the handler refusal
-      with zero approval requests.
-      Explicit update exception: `update_gateway` still prompts in Read/Worker, skips the extra card
-      in Auto/Admin for an admin author on both engine capabilities, and remains admin-only.
+- [x] Unit (`test/mcp-control-plane-approval.test.js`, the 2026-08 update plan (internal repo) A3,
+      revised 2026-10-07 — minimum second-approval cards): a caller without a tool's authority gets
+      the handler refusal with zero approval requests; a caller WITH it applies channel settings,
+      SSH grants for others, connector tokens, gateway update and restart (every mode) and an
+      instruction replacement at once with no card and no approval receipt; a member manages the
+      channel only where `manageAccess` lets members. The surviving cards (`set_channel_admin_mode`,
+      `decide_skill_proposal` approve, `update_skill_template` add, …) are DURABLE: the request
+      carries a `control_plane` action (tool, exact arguments, tier, requester), the tool returns
+      *pending* and changes nothing, a refusal or an unreachable endpoint leaves state untouched
+      ("Couldn't save the approval"), and the saved action is applied by
+      `executeControlPlaneApproval` as the requester — a member's click on an admin card is refused,
+      a requester who lost admin since is refused, a row whose requester differs from its action or
+      whose tool is not control-plane is refused, the admin UI counts as an admin. Rejecting a
+      proposal and removing from a template are automatic; token values never appear in any
+      payload; read-only tools and memory writes never hit the endpoint. `secretCardTier` /
+      `gateCardTier`: a secret's card is `admin` / `""` / `owner` by scope, hiding is automatic,
+      `allow_secret_host` is callable by scope (`test/secrets-tool.test.js`).
       Schedule exception (2026-08-19): `create_schedule`/`delete_schedule` are classified OPEN in the
       drift tripwire — they must never reach the approval endpoint.
 - [x] Unit/manual (2026-08-19): with a deliberately UNREACHABLE approval endpoint (the fail-closed
@@ -5653,7 +5664,7 @@ placeholders and `--network none`).
       base and always lands on `/approve/<token>`.
 - [x] Automated (`test/approval-links.test.js`): the links are delivered to the REQUESTER in an
       ephemeral (never a second shared-thread message, and the card itself carries no link), the
-      offered set is exactly what that person could click — no *Approve forever* for a non-admin,
+      offered set is exactly what that person could click — no *Approve forever* for a non-manager,
       and a `requiredTier: "admin"` card gets *Deny* and nothing else — and every link points at
       that approval's own id.
 - [x] Automated (`test/approval-links.test.js`): `GET /approve/<token>` renders the tool, the
@@ -8053,7 +8064,17 @@ Manual checks for the daemon-level behavior:
       a brand-new thread the bot joins DOES get the one-time replay.
 - [ ] **Approvals:** an approved member in an access:"approved" channel can approve another
       member's tool prompt; a non-admin in an admins-only channel cannot; "Approve forever" is
-      admin-only.
+      for the channel's managers and admins (members by default since 2026-10-07).
+- [ ] Live (engine-independent), minimum second-approval cards (2026-10-07): as an admin in a
+      Worker channel, ask the agent to turn Auto mode on, then network on, then set the license
+      key, then reset the gateway guide. Pass when each applies at once with no card and the reply
+      announces it. Ask it to turn Admin mode on: pass when a durable card appears stating "Only a
+      gateway *admin* can approve this", the reply says the change is pending with no deadline,
+      nothing changes, and a click after a daemon restart applies it and the card reads "Approved
+      and applied". As a non-admin member in a channel whose Who-can-manage is members, ask for
+      Bash on: pass when it applies at once. Ask the agent to make a conversation secret readable:
+      pass when the card can be approved by another member of the channel. Ask it to allow your
+      personal hidden secret on a new host: pass when only you (or an admin) can approve the card.
 - [ ] **Model validation:** saving a bogus model in the admin UI (channel/DM/template) returns
       400; Slack `/model` only exposes validated picker values, and valid values still save.
 - [ ] **Warm watchdog (Claude warm runner; Codex shared-watchdog regression):** in a disposable

@@ -28,6 +28,14 @@ export function approvalActionKey(action = {}) {
     exact.threadKey = "";
     exact.authorId = "";
   }
+  if (action.kind === "control_plane") {
+    // One pending card per exact call (tool + arguments) per requester and thread. Arguments are
+    // serialized with sorted keys so argument order never creates a second authorization.
+    exact.tool = String(action.tool || "");
+    exact.tier = String(action.tier || "");
+    exact.args = JSON.stringify(action.args || {}, (key, value) =>
+      value && typeof value === "object" && !Array.isArray(value) ? Object.fromEntries(Object.keys(value).sort().map((k) => [k, value[k]])) : value);
+  }
   if (action.kind === "channel_instructions") {
     exact.text = String(action.text || "");
     exact.mode = String(action.mode || "");

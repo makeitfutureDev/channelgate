@@ -8,9 +8,12 @@
 // secret's own entry (approvedHosts), so every later run, schedule and SSH session just works.
 //
 // A closed, exact action like the channel-instruction approval: the row holds secret, scope, owner
-// and host, a click (even after a restart) executes it, and only an admin's decision counts —
-// never the run's own author (requiredTier "admin").
-import { isAdminPrincipal } from "../config/store.js";
+// and host, and a click (even after a restart) executes it. Who may click follows the secret's
+// scope (secretHostTier): an admin for the organization's, anyone working in the channel for the
+// conversation's, the owner for a personal one — operator decision 2026-10-07, so a member's work
+// no longer waits on an admin for a credential that is theirs or their channel's.
+import { getChannelEntry, getChannelMeta, isAdminPrincipal, isApproved } from "../config/store.js";
+import { isAuthorized } from "./modes.js";
 import { getSecretEntry, patchSecretEntry } from "../config/scoped-env.js";
 import { listPendingApprovalRequests } from "./approval-requests.js";
 import { engineHostsFor } from "./egress/engine-hosts.js";
@@ -19,6 +22,10 @@ import { isValidRuleHost } from "./egress/catalog-rules.js";
 import { liveTurnIn } from "./egress/liveness.js";
 
 export const SECRET_HOST_ACTION = "secret_host";
+// The approval tier a secret's scope carries (mirrored by gateway-server.js secretCardTier).
+export function secretHostTier(scope) {
+  return scope === "organization" ? "admin" : scope === "personal" ? "owner" : "";
+}
 const SCOPES = new Set(["organization", "channel", "personal"]);
 // One card per secret and server at a time is the approval table's job (a pending row with the same
 // action key is reused). This window also keeps a DENIED request, or an agent looping over new
@@ -106,7 +113,7 @@ export async function requestSecretHostApprovals(refusals, { channelId, slug, ho
       toolName: `Use variable ${action.secretName} on ${host}`,
       toolInput: { details: describe(action) },
       approvalType: "agent",
-      requiredTier: "admin",
+      requiredTier: secretHostTier(refusal.scope),
       approveText: `Allow on ${host}`,
       denyText: "Deny",
       durableAction: action,
@@ -127,9 +134,18 @@ export async function executeSecretHostApproval(record) {
     if (!isValidRuleHost(host) || host.startsWith("*.")) throw new Error("The saved server is not a host name.");
     if (await neverApprovable(host)) throw new Error(`${host} is a model API: a secret is never swapped there.`);
     // The human factor again, at execution time: the admin UI and a decision link re-check their
-    // own authority on their routes; a Slack click must still be an admin's today.
-    if (record.decidedBy !== "admin UI" && record.decidedBy !== "link" && !(await isAdminPrincipal(record.decidedBy))) {
-      throw new Error("Only an admin can approve where a secret may be sent.");
+    // own authority on their routes; a chat click must still hold the secret's tier today.
+    if (record.decidedBy !== "admin UI" && record.decidedBy !== "link") {
+      const clicker = String(record.decidedBy || "");
+      const admin = await isAdminPrincipal(clicker);
+      if (action.scope === "organization" && !admin) throw new Error("Only an admin can approve where an organization secret may be sent.");
+      if (action.scope === "personal" && !admin && clicker !== action.ownerId) throw new Error("Only the owner of a personal secret (or an admin) can approve where it may be sent.");
+      if (action.scope === "channel" && !admin) {
+        const entry = await getChannelEntry(action.channelId);
+        const meta = await getChannelMeta(action.slug);
+        const member = Boolean(entry && meta) && isAuthorized(meta, clicker, Boolean(entry.isDM), { isAdminUser: false, isApprovedUser: await isApproved(clicker) });
+        if (!member) throw new Error("Only someone working in this channel (or an admin) can approve where its secret may be sent.");
+      }
     }
     const entry = await getSecretEntry({ scope: action.scope, slug: action.slug, userId: action.ownerId, name: action.secretName });
     if (!entry) throw new Error(`${action.secretName} no longer exists.`);

@@ -267,7 +267,9 @@ await setUser(ADMIN, { name: "Contact", isAdmin: true, approved: true });
 await setUser(DEV, { name: "Apps", isAdmin: false, approved: true });
 await setUser(OUTSIDER, { name: "Nobody", isAdmin: false, approved: false });
 const entry = await upsertChannelEntry(CHANNEL_ID, { name: "ssh-tools", type: "channel", isDM: false });
-await saveChannelMeta(entry.slug, { ...defaultChannelMeta({ channelId: CHANNEL_ID, name: "ssh-tools", type: "channel", isDM: false }), allowBash: true });
+// Managers kept to admins here on purpose: this file proves the manager gate on grants for OTHER
+// people (new channels default to member-managed since 2026-10-07).
+await saveChannelMeta(entry.slug, { ...defaultChannelMeta({ channelId: CHANNEL_ID, name: "ssh-tools", type: "channel", isDM: false }), allowBash: true, manageAccess: "admins" });
 
 function toolsFor(authorId) {
   const tools = new Map();
@@ -293,11 +295,12 @@ test("tools: registered names, permission list and control-plane gates line up",
     assert.equal(gateAuthz(plane.get(name), { user: "" }), "manage");
     const untrusted = buildControlPlane({ loadMeta: async () => ({}), principalTrusted: false, createdBy: DEV });
     assert.equal(gateAuthz(untrusted.get(name), { user: DEV }), "manage");
-    assert.notEqual(untrusted.get(name).details({ user: DEV }), null);
+    // A grant for someone else is a manager's call and automatic for them (2026-10-07): no card.
+    assert.equal(untrusted.get(name).details({ user: DEV }), null);
+    assert.equal(plane.get(name).details({ user: "<@U1>" }), null);
   }
   assert.equal(plane.has("show_channel_ssh"), false, "reads carry no approval card");
   assert.equal(plane.has("list_my_ssh_keys"), false);
-  assert.match(plane.get("grant_channel_ssh").details({ user: "<@U1>" }), /full shell/);
 });
 
 test("tools: a person registers only their own key; unapproved users and private keys are refused", async () => {

@@ -55,19 +55,28 @@ This section is for engine credentials only. For an ordinary provider CLI's brow
 use `references/cli-device-login.md`: its waiting process must remain alive in the same assistant
 turn until CLI confirmation and identity verification.
 
-## Control-plane tools block on a human Approve click
-Every tool below that CHANGES state (modes, network, workdir, Drive link, MCP allowlist,
-instructions, gateway guide, tokens) posts a Slack Approve/Deny card and
-BLOCKS until someone clicks — the Approve click must come from someone who could authorize the
-change themselves (admin-tier tools need an admin's click, manage-tier a manager's; anyone
-eligible may Deny or Comment) — auto mode and admin mode do not skip it, and a deny or ~4-minute
-timeout refuses the change. A gateway admin can decide the same card from the admin web UI instead
-of clicking in chat; that counts as an admin's decision and is recorded as the *admin UI*. `update_gateway` is the one exception: for an admin author it starts
-without an extra card when the channel is already in Auto or Admin mode; Read/Worker modes still
-prompt. `restart_gateway` skips the extra card only in Admin mode; Auto/Read/Worker still prompt.
-Schedules are NOT in this list: `create_schedule`/`delete_schedule` never ask (see
-`references/reminders.md`). Call a prompting tool once and wait for the result; don't retry a refusal, and tell the user
-what needs approving if they seem unaware. Read-only tools (`list_*`, `get_*`) and in-thread posts
+## Control-plane tools: automatic for whoever holds the authority, a card only where it matters
+Every tool below that CHANGES state is refused outright for a caller without its authority
+(admin-tier tools need an admin, manage-tier one of the channel's managers — approved members by
+default). For a caller WITH it the change is **automatic**: modes, network, working folder, Drive
+link, MCP servers, secrets and their hiding, connector tokens, skill sources' settings, skill
+removals, the guide's reset, gateway updates and restarts all apply at once, are audited, and you
+announce them in your reply. Schedules never ask either (`references/reminders.md`).
+
+Exactly these still post a card, because one unasked call would silently reach OTHER channels or
+leak a secret and no later message could undo it: `set_channel_admin_mode`,
+`update_gateway_guide`, `add_skill_source`, `add_org_skills`, `update_skill_template` when it
+ADDS skills, `decide_skill_proposal` when it APPROVES, `allow_secret_host`, `set_secret_mode` to
+READABLE, and appending to the channel instructions. Every such card is **durable**: the tool
+returns *pending* at once with the exact saved call, the card never expires, it survives gateway
+restarts, and the gateway applies the call when it is clicked — so END YOUR TURN and tell the
+user who must click. Who: a gateway admin for the admin-tier ones; for a secret, its tier (the
+organization's → an admin, this conversation's → anyone working here, your own → you); an
+instruction append → anyone working in the channel. Anyone eligible may Deny or Comment. The card
+says on it who can approve it. A gateway admin can decide any card from the admin web UI instead
+of clicking in chat; that counts as an admin's decision and is recorded as the *admin UI*. Never
+retry a refusal, and never re-call a tool whose card is pending — the same exact call reuses the
+pending card. Read-only tools (`list_*`, `get_*`) and in-thread posts
 (charts, tables, snippets) never prompt.
 
 After a prompting tool receives approval, its result includes a human-approval receipt alongside
@@ -157,11 +166,13 @@ These channel modes do not leave the container. The separate organization-admin-
   unless it looks like a password, connection string, signing key or configuration value: its
   placeholder works in credential headers and query parameters (Authorization, x-api-key, `api_key=`, `token=`…), but only on servers an admin approved for it.
   The first request to a new server answers 403 `secret-refused` "…has not been approved for
-  <host> yet" and posts an admin approval card in this thread: tell the user which secret and
-  server it is, wait for the approval, then retry. `list_secrets` and this attempt's credential note
+  <host> yet" and posts a durable approval card in this thread — approved by an admin for an
+  organization secret, by anyone working here for this conversation's, by its owner for a personal
+  one: tell the user which secret and server it is, END YOUR TURN (the card never expires; the
+  approval takes effect within seconds), and retry on the next message. `list_secrets` and this attempt's credential note
   say which names are protected, hidden (with their approved servers), readable (raw) and withheld.
-  If a hidden secret really needs its real value (it is used outside HTTPS), ask an admin to run
-  `set_secret_mode` readable. A 403 `secret-refused` from the proxy names the secret and the reason
+  If a hidden secret really needs its real value (it is used outside HTTPS), `set_secret_mode`
+  readable posts a durable card the same tier approves. A 403 `secret-refused` from the proxy names the secret and the reason
   (`channel-idle`, `owner-not-live`, `another-author-active`, `another-person-ssh-session`,
   `approval-required`) — report it; never try to route around the proxy.
 
@@ -368,8 +379,8 @@ admin rights or change the permissions required by separate gateway control tool
 - `update_gateway` starts the same locked transaction as Slack `/update`, the Admin UI, and
   `npm run update`. If an update is already active it reports that transaction instead of starting
   another.
-- The caller must still be a gateway admin. In Auto/Admin mode no additional Slack approval card is
-  posted; in Read/Worker mode the exact update action still requires a click.
+- The caller must still be a gateway admin. No approval card is posted in any mode: the update is
+  transactional, verified and rolled back on failure, so it is automatic for an admin author.
 - Before changing Git it checks upstream/clean-tree safety, runtime/config/service prerequisites,
   calculated disk space, current daemon health. The independent host service runs `bash scripts/update.sh`; provider logins and engine responses do not gate installation. A candidate is installed,
   security-audited, fully tested, provisioned, restarted, and accepted only after daemon revision,

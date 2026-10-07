@@ -18,6 +18,18 @@ product overview.
 
 ## Unreleased
 
+- Far fewer approval cards. A gateway tool that changes channel or gateway state is now automatic
+  for the admin or channel manager who asked for it (modes, network, folders, MCP servers,
+  secrets, tokens, skill settings, gateway update and restart, the license key, instruction
+  replacement), and refused outright for anyone else. Only eight cards remain, for changes that
+  would silently reach other channels or leak a secret: Admin mode, the gateway guide, admitting a
+  skill source, granting skills organization-wide, adding to a template, approving a skill
+  proposal, approving a server for a hidden secret, and making a secret readable. Every remaining
+  card is durable: it never expires, survives restarts, and the click applies the exact saved call.
+  A secret's card is approved by its tier (admin for the organization's, anyone working in the
+  conversation for its own, the owner for a personal one). "Approve forever" is a channel manager's
+  call, and new channels let approved members manage their own settings by default.
+
 - **Custom MCP servers.** An admin can add a remote MCP server by URL and Bearer token to a
   conversation (Connections → *Custom MCP servers*, reached as `custom-<name>`) or to one person
   (*Personal MCP servers*, reached as `my-<name>` in that person's runs only). Claude and Codex

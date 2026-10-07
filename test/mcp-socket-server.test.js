@@ -198,20 +198,30 @@ test("tools run against the DAEMON's own handlers — no loopback port, no share
   const calls = [];
   const socketPath = await serverOn(t, {
     background: (body) => { calls.push(["background", body]); return { ok: true, id: "job-7", label: body.label || "job" }; },
-    approval: (body) => { calls.push(["approval", body]); return { allow: true, reason: "Approved by test", decidedBy: AUTHOR }; },
+    approval: (body) => {
+      calls.push(["approval", body]);
+      // A durable card (a saved control-plane call) is answered "pending"; a live card "allow".
+      return body.durableAction ? { allow: false, pending: true, approvalId: "saved-1" } : { allow: true, reason: "Approved by test", decidedBy: AUTHOR };
+    },
     restart: (body) => { calls.push(["restart", body]); return { ok: true, id: "restart-1", waitMs: 60_000 }; },
   });
 
   const cap = capability({ threadKey: "1700000000.000100" });
   const answers = await withBridgeClient(socketPath, { CG_GATEWAY_CAPABILITY: cap }, async (client) => ({
     approval: await client.callTool({ name: "request_approval", arguments: { details: "ship it?" } }),
-    // A control-plane tool: the approval gate ALSO goes through the injected handler, and the
-    // handler's allow:true is what lets the change land.
+    // A control-plane tool that still carries a card: its durable approval ALSO goes through the
+    // injected handler, which saves the exact call and answers pending.
+    adminMode: await client.callTool({ name: "set_channel_admin_mode", arguments: { enabled: true } }),
+    // One that is automatic for an admin: applies with no handler call at all.
     bash: await client.callTool({ name: "set_channel_bash", arguments: { enabled: true } }),
   }));
   const textOf = (r) => r.content?.map((i) => i.text || "").join("\n") || "";
   assert.deepEqual(JSON.parse(textOf(answers.approval)), { approved: true, feedback: "Approved by test", decided_by: AUTHOR });
+  assert.match(textOf(answers.adminMode), /awaiting approval \(request saved-1\)/);
   assert.match(textOf(answers.bash), /Bash \+ file edits ON/);
+  const saved = calls.find(([kind, body]) => kind === "approval" && body.durableAction);
+  assert.equal(saved[1].durableAction.tool, "set_channel_admin_mode");
+  assert.equal(saved[1].requiredTier, "admin");
 
   // ctx.threadKey came from the CLAIMS: no CG_THREAD_KEY existed anywhere in this process tree.
   assert.ok(calls.length >= 2);

@@ -12,7 +12,8 @@ meant yes.
 - `approve_label` / `deny_label` (optional) — custom button text (default "Approve" / "Deny").
 
 The user sees **Approve**, **Deny**, and **Comment** (request-changes) buttons. Anyone allowed to
-run the bot in this channel — the original author or an admin — can decide. A gateway admin can
+run the bot in this channel — the original author, another member, or an admin — can decide
+(*Approve forever* on a tool-permission card is for the channel's managers and admins). A gateway admin can
 also decide the same card from the admin web UI without opening this conversation; you receive that
 exactly like a click, with `decided_by` reading `admin UI`.
 

@@ -88,6 +88,23 @@ async function withGateway(options, fn) {
 
 const resultText = (r) => r.content?.map((i) => i.text || "").join("\n") || "";
 const approvalReceipt = /Human approval was received before this tool executed/;
+const awaitingCard = /awaiting approval \(request .*\)\. The exact change is saved with no deadline/;
+
+// Apply a saved control-plane approval the way the daemon does on a click (server.js): in-process,
+// as the original requester, through the same gateway MCP server a turn uses. The stdio child
+// above only POSTs the exact action to the stub; this is the other half.
+const { executeControlPlaneApproval, setControlPlaneInvoker, CONTROL_PLANE_ACTION } = await import("../src/gateway/control-plane-approvals.js");
+const { createGatewayMcpServer: createInProcessServer, ctxFromClaims: ctxForSaved, createDirectDaemonIpc } = await import("../src/mcp/gateway-server.js");
+setControlPlaneInvoker(async ({ tool, args, channelId, slug, authorId, threadKey }) => {
+  const ctx = ctxForSaved({ channelId, slug, authorId, threadKey, origin: "approval", principalTrusted: true, toolset: "full" }, { daemon: createDirectDaemonIpc({}) });
+  return createInProcessServer(ctx).invokeApproved(tool, args);
+});
+let savedSeq = 0;
+async function applySaved(body, decidedBy) {
+  const action = body.durableAction;
+  assert.equal(action?.kind, CONTROL_PLANE_ACTION, "the request carried a saved control-plane action");
+  return executeControlPlaneApproval({ id: `saved-${++savedSeq}`, status: "executing", channelId: action.channelId, slug: action.slug, authorId: action.authorId, decidedBy, action });
+}
 
 test("both engine contexts save exact instruction updates and return pending without writing", async () => {
   for (const engine of ["claude", "codex"]) {
@@ -117,7 +134,10 @@ test("both engine contexts save exact instruction updates and return pending wit
   }
 });
 
-test("instruction replacement requires an admin requester and admin approver; oversized rules never post", async () => {
+test("instruction replacement is an admin's call and applies at once, quoted in the reply; oversized rules never post", async () => {
+  // Operator decision 2026-10-07: replacing the whole section is channel-scoped and visible, so it
+  // is automatic for an admin — the handler makes the model quote the complete new text in the
+  // thread instead of parking it on a card. Appending stays a durable card anyone here approves.
   approvalRequests.length = 0;
   approvalResponse = { allow: false, pending: true, approvalId: "replacement" };
   await withGateway({ author: "U_CTRL_MEMBER" }, async (client) => {
@@ -125,10 +145,14 @@ test("instruction replacement requires an admin requester and admin approver; ov
     assert.match(resultText(denied), /Only admins can replace/);
   });
   assert.equal(approvalRequests.length, 0);
+  const file = path.join(DEFAULT_WORKDIR, "CLAUDE.md");
   await withGateway({}, async (client) => {
-    await client.callTool({ name: "update_channel_instructions", arguments: { text: "replacement", mode: "replace" } });
-    assert.equal(approvalRequests[0].body.requiredTier, "admin");
-    approvalRequests.length = 0;
+    const replaced = await client.callTool({ name: "update_channel_instructions", arguments: { text: "- Replacement rule for the whole section.", mode: "replace" } });
+    assert.match(resultText(replaced), /Replaced this channel's standing instructions/);
+    assert.match(resultText(replaced), /Quote the complete new instructions in your reply/);
+    assert.doesNotMatch(resultText(replaced), approvalReceipt);
+    assert.equal(approvalRequests.length, 0, "an admin's replacement posts no card");
+    assert.match(readFileSync(file, "utf8"), /Replacement rule for the whole section\./);
     const oversized = await client.callTool({ name: "update_channel_instructions", arguments: { text: "x".repeat(2401) } });
     assert.match(resultText(oversized), /at most 2400/);
   });
@@ -142,39 +166,108 @@ test.before(async () => {
   await saveChannelMeta(SLUG, { channelId: CHANNEL, allowBash: false, adminMode: false });
 });
 
-test("a denied approval blocks the change and carries the human-readable card", async () => {
+test("a surviving card is durable: the exact call is saved, never applied inline, and a refusal leaves state untouched", async () => {
   approvalRequests.length = 0;
   approvalResponse = { allow: false, reason: "Denied by <@U_CTRL_ADMIN>" };
   await withGateway({}, async (client) => {
-    const result = await client.callTool({ name: "set_channel_bash", arguments: { enabled: true } });
-    assert.match(resultText(result), /not approved/i);
-    assert.doesNotMatch(resultText(result), approvalReceipt);
+    const result = await client.callTool({ name: "set_channel_admin_mode", arguments: { enabled: true } });
+    assert.match(resultText(result), /Couldn't save the approval for `set_channel_admin_mode`/);
     assert.match(resultText(result), /Denied by <@U_CTRL_ADMIN>/);
+    assert.doesNotMatch(resultText(result), approvalReceipt);
   });
-  assert.equal((await getChannelMeta(SLUG))?.allowBash, false, "the denied change must not persist");
+  assert.equal((await getChannelMeta(SLUG))?.adminMode, false, "the refused change must not persist");
   assert.equal(approvalRequests.length, 1);
   const req = approvalRequests[0];
   assert.equal(req.secret, "ctrl-test-secret");
   assert.equal(req.body.approvalType, "agent"); // never auto-approved — auto mode can't bypass
-  assert.equal(req.body.toolName, "set_channel_bash");
-  assert.match(req.body.toolInput.details, /shell access/i);
-  // The gate's own authz tier rides the request so the CLICKER must independently hold it —
-  // set_channel_bash is a "manage" tool, so a manager (or admin) click is required to approve.
-  assert.equal(req.body.requiredTier, "manage");
+  assert.equal(req.body.toolName, "set_channel_admin_mode");
+  assert.match(req.body.toolInput.details, /ADMIN MODE/);
+  assert.equal(req.body.requiredTier, "admin");
+  assert.deepEqual({ kind: req.body.durableAction.kind, tool: req.body.durableAction.tool, args: req.body.durableAction.args, tier: req.body.durableAction.tier, authorId: req.body.durableAction.authorId },
+    { kind: CONTROL_PLANE_ACTION, tool: "set_channel_admin_mode", args: { enabled: true }, tier: "admin", authorId: "U_CTRL_ADMIN" });
+
+  // A pending answer parks the call with no deadline and no change.
+  approvalRequests.length = 0;
+  approvalResponse = { allow: false, pending: true, approvalId: "admin-mode-1" };
+  await withGateway({}, async (client) => {
+    const result = await client.callTool({ name: "set_channel_admin_mode", arguments: { enabled: true } });
+    assert.match(resultText(result), awaitingCard);
+    assert.match(resultText(result), /when a gateway admin clicks Approve/);
+    assert.match(resultText(result), /Nothing has changed yet/);
+  });
+  assert.equal((await getChannelMeta(SLUG))?.adminMode, false);
+  assert.equal(approvalRequests.length, 1);
 });
 
-test("an approved click lets the control-plane change through", async () => {
+test("channel settings are automatic for whoever holds their authority — admins, and managers where the channel lets members manage", async () => {
   approvalRequests.length = 0;
-  approvalResponse = { allow: true, reason: "Approved by <@U_CTRL_ADMIN>" };
+  approvalResponse = { allow: false, reason: "no card may be posted" };
+  const original = await getChannelMeta(SLUG);
+  try {
+    await withGateway({}, async (client) => {
+      const result = await client.callTool({ name: "set_channel_bash", arguments: { enabled: true } });
+      assert.match(resultText(result), /Bash \+ file edits ON/i);
+      assert.doesNotMatch(resultText(result), approvalReceipt);
+      assert.match(resultText(await client.callTool({ name: "set_channel_network", arguments: { enabled: true } })), /✅/);
+      assert.match(resultText(await client.callTool({ name: "set_channel_bash", arguments: { enabled: false } })), /✅/);
+      assert.match(resultText(await client.callTool({ name: "set_channel_network", arguments: { enabled: false } })), /✅/);
+    });
+    assert.equal(approvalRequests.length, 0, "an admin's channel settings post no card");
+    // This fixture row predates the members default (no manageAccess stored → admins only).
+    await withGateway({ author: "U_CTRL_MEMBER" }, async (client) => {
+      assert.match(resultText(await client.callTool({ name: "set_channel_bash", arguments: { enabled: true } })), /Only this channel's managers/);
+      assert.match(resultText(await client.callTool({ name: "set_channel_network", arguments: { enabled: true } })), /Only admins/);
+    });
+    assert.equal((await getChannelMeta(SLUG))?.allowBash, false);
+    await saveChannelMeta(SLUG, { ...(await getChannelMeta(SLUG)), manageAccess: "members" });
+    await withGateway({ author: "U_CTRL_MEMBER" }, async (client) => {
+      assert.match(resultText(await client.callTool({ name: "set_channel_bash", arguments: { enabled: true } })), /Bash \+ file edits ON/i);
+      assert.match(resultText(await client.callTool({ name: "set_channel_auto_mode", arguments: { enabled: true } })), /✅/);
+    });
+    assert.equal((await getChannelMeta(SLUG))?.allowBash, true);
+    assert.equal((await getChannelMeta(SLUG))?.autoMode, true);
+    assert.equal(approvalRequests.length, 0, "a manager's channel settings post no card either");
+  } finally {
+    await saveChannelMeta(SLUG, original);
+  }
+});
+
+test("a saved control-plane approval is applied on the click, as the requester, by whoever holds its tier", async () => {
+  approvalRequests.length = 0;
+  approvalResponse = { allow: false, pending: true, approvalId: "admin-mode-2" };
   await withGateway({}, async (client) => {
-    const result = await client.callTool({ name: "set_channel_bash", arguments: { enabled: true } });
-    assert.match(resultText(result), /Bash \+ file edits ON/i);
-    assert.match(resultText(result), approvalReceipt);
+    await client.callTool({ name: "set_channel_admin_mode", arguments: { enabled: true } });
   });
-  assert.equal((await getChannelMeta(SLUG))?.allowBash, true);
-  assert.equal(approvalRequests.length, 1);
-  // restore
-  await saveChannelMeta(SLUG, { ...(await getChannelMeta(SLUG)), allowBash: false });
+  const [req] = approvalRequests;
+  // A member's click does not count for an admin-tier card; neither does a lapsed admin.
+  const bystander = await applySaved(req.body, "U_CTRL_MEMBER");
+  assert.equal(bystander.ok, false);
+  assert.match(bystander.error, /Only a gateway admin can approve this/);
+  assert.equal((await getChannelMeta(SLUG))?.adminMode, false);
+  await setUser("U_CTRL_ADMIN", { name: "Ctrl Admin", approved: true, isAdmin: false });
+  try {
+    const lapsed = await applySaved(req.body, "U_CTRL_ADMIN");
+    assert.equal(lapsed.ok, false);
+    assert.match(lapsed.error, /no longer an admin/);
+  } finally {
+    await setUser("U_CTRL_ADMIN", { name: "Ctrl Admin", approved: true, isAdmin: true });
+  }
+  assert.equal((await getChannelMeta(SLUG))?.adminMode, false);
+  // The admin's click applies exactly the saved call.
+  const applied = await applySaved(req.body, "U_CTRL_ADMIN");
+  assert.equal(applied.ok, true, applied.error);
+  assert.equal(applied.completed, true);
+  assert.match(applied.message, /Admin mode ON/);
+  assert.equal((await getChannelMeta(SLUG))?.adminMode, true);
+  // The admin UI's session is an admin; a tampered row is refused.
+  assert.equal((await applySaved({ ...req.body, durableAction: { ...req.body.durableAction, args: { enabled: false } } }, "admin UI")).ok, true);
+  assert.equal((await getChannelMeta(SLUG))?.adminMode, false);
+  const tampered = await executeControlPlaneApproval({ id: "x", status: "executing", channelId: CHANNEL, slug: SLUG, authorId: "U_CTRL_MEMBER", decidedBy: "U_CTRL_ADMIN", action: { ...req.body.durableAction } });
+  assert.equal(tampered.ok, false);
+  assert.match(tampered.error, /Invalid saved control-plane approval/);
+  const notControlPlane = await executeControlPlaneApproval({ id: "y", status: "executing", channelId: CHANNEL, slug: SLUG, authorId: "U_CTRL_ADMIN", decidedBy: "U_CTRL_ADMIN", action: { ...req.body.durableAction, tool: "list_schedules" } });
+  assert.equal(notControlPlane.ok, false);
+  assert.match(notControlPlane.error, /not a control-plane tool/);
 });
 
 test("memory search and read handlers use the injected MCP text formatter", async () => {
@@ -192,42 +285,43 @@ test("memory search and read handlers use the injected MCP text formatter", asyn
   });
 });
 
-test("token tools are gated and the approval card never carries the token value", async () => {
+test("a member's own connector token is self-service: no card, and the value never leaves the handler", async () => {
   approvalRequests.length = 0;
-  approvalResponse = { allow: false, reason: "denied" };
+  approvalResponse = { allow: false, reason: "no card may be posted" };
   await withGateway({ author: "U_CTRL_MEMBER" }, async (client) => {
     const result = await client.callTool({ name: "set_my_composio_token", arguments: { token: "sk-super-secret-value" } });
-    assert.match(resultText(result), /not approved/i);
+    assert.match(resultText(result), /✅/);
+    assert.doesNotMatch(resultText(result), /sk-super-secret-value/);
     assert.doesNotMatch(resultText(result), approvalReceipt);
+    assert.match(resultText(await client.callTool({ name: "clear_my_composio_token", arguments: {} })), /✅|Removed|removed/);
   });
-  assert.equal(approvalRequests.length, 1);
-  assert.doesNotMatch(JSON.stringify(approvalRequests[0].body), /sk-super-secret-value/);
+  assert.equal(approvalRequests.length, 0);
 });
 
 test("an unreachable approval endpoint fails closed", async () => {
   approvalRequests.length = 0;
   await withGateway({ port: 1 }, async (client) => {
     const result = await client.callTool({ name: "set_channel_admin_mode", arguments: { enabled: true } });
-    assert.match(resultText(result), /not approved/i);
+    assert.match(resultText(result), /Couldn't save the approval/i);
     assert.doesNotMatch(resultText(result), approvalReceipt);
   });
   assert.equal((await getChannelMeta(SLUG))?.adminMode, false);
 });
 
-test("update_gateway skips the extra card in Admin/Auto mode but stays admin-only", async () => {
+test("update_gateway is automatic for an admin in every mode and stays admin-only", async () => {
   const reserved = reserveUpdate({ root: scratch, source: "approval-policy-test" });
   assert.equal(reserved.ok, true);
   try {
-    approvalResponse = { allow: false, reason: "should be requested only in read mode" };
+    approvalResponse = { allow: false, reason: "no card may be posted" };
 
     await saveChannelMeta(SLUG, { ...(await getChannelMeta(SLUG)), adminMode: false, autoMode: false });
     approvalRequests.length = 0;
     await withGateway({ engine: "claude" }, async (client) => {
       const result = await client.callTool({ name: "update_gateway", arguments: {} });
-      assert.match(resultText(result), /not approved/i);
+      assert.match(resultText(result), /already active/i);
       assert.doesNotMatch(resultText(result), approvalReceipt);
     });
-    assert.equal(approvalRequests.length, 1, "read mode keeps the explicit approval gate");
+    assert.equal(approvalRequests.length, 0, "read mode no longer posts a card for an admin");
 
     await saveChannelMeta(SLUG, { ...(await getChannelMeta(SLUG)), adminMode: true, autoMode: false });
     approvalRequests.length = 0;
@@ -276,18 +370,18 @@ test("both engine MCP contexts refuse managed updates for a free license", async
   }
 });
 
-test("restart_gateway requires approval in Auto mode and skips it only in Admin mode", async () => {
+test("restart_gateway is automatic for an admin in every mode and stays admin-only", async () => {
   const original = await getChannelMeta(SLUG);
   restartResponse = { ok: true, id: "restart-test", waitMs: 300_000, pollMs: 30_000 };
   try {
-    approvalResponse = { allow: true, reason: "approved in test" };
-    await saveChannelMeta(SLUG, { ...original, adminMode: false, autoMode: true });
+    approvalResponse = { allow: false, reason: "no card may be posted" };
+    await saveChannelMeta(SLUG, { ...original, adminMode: false, autoMode: false });
     approvalRequests.length = 0;
     await withGateway({}, async (client) => {
       const result = await client.callTool({ name: "restart_gateway", arguments: {} });
       assert.match(resultText(result), /Safe restart queued/i);
     });
-    assert.deepEqual(approvalRequests.map((request) => request.url), ["/internal/approval", "/internal/restart"]);
+    assert.deepEqual(approvalRequests.map((request) => request.url), ["/internal/restart"], "read mode: a safe restart drains work and needs no card");
 
     await saveChannelMeta(SLUG, { ...original, adminMode: true, autoMode: false });
     approvalRequests.length = 0;
@@ -376,10 +470,11 @@ test("both engine contexts enable own SSH without approvals; other-user changes 
       });
       assert.equal(approvalRequests.length, 0, `${engine}: own SSH never contacts the approval service`);
       await withGateway({ engine }, async client => {
-        assert.match(resultText(await client.callTool({ name: "grant_channel_ssh", arguments: { user: "U_CTRL_MEMBER" } })), /needs a human Approve click/);
+        assert.match(resultText(await client.callTool({ name: "grant_channel_ssh", arguments: { user: "U_CTRL_MEMBER" } })), /may now SSH/);
+        assert.deepEqual((await getChannelMeta(SLUG)).sshUsers, ["U_CTRL_MEMBER"]);
+        assert.match(resultText(await client.callTool({ name: "revoke_channel_ssh", arguments: { user: "U_CTRL_MEMBER" } })), /revoked/);
       });
-      assert.equal(approvalRequests.length, 1, `${engine}: granting someone else still asks a manager`);
-      assert.equal(approvalRequests[0].body.requiredTier, "manage");
+      assert.equal(approvalRequests.length, 0, `${engine}: a manager's grant for someone else is automatic (operator decision 2026-10-07)`);
       assert.deepEqual((await getChannelMeta(SLUG)).sshUsers, []);
       approvalRequests.length = 0;
       await saveChannelMeta(SLUG, { ...original, sshUsers: [], access: "admins", allowedUsers: [] });
@@ -591,14 +686,19 @@ test("both engines: a member owns channel and personal skills without approval; 
     });
     assert.equal(approvalRequests.length, 0, `${engine}: nothing a member did with channel/personal skills posted a card`);
 
-    // The admin's decision is the one skill step that still carries a card.
-    approvalResponse = { allow: true };
+    // Approving a proposal is the one skill step that still carries a card: durable, applied on
+    // the admin's click, never inline.
+    approvalResponse = { allow: false, pending: true, approvalId: `decide-${engine}` };
     await withGateway({ engine }, async client => {
       const out = resultText(await client.callTool({ name: "decide_skill_proposal", arguments: { id: deleteRequest, decision: "approve" } }));
-      assert.match(out, /removed from the catalog/);
-      assert.match(out, approvalReceipt);
+      assert.match(out, awaitingCard);
+      assert.doesNotMatch(out, approvalReceipt);
     });
     assert.deepEqual(approvalRequests.map(r => [r.body.toolName, r.body.requiredTier]), [["decide_skill_proposal", "admin"]]);
+    assert.equal(getSkill(adminChannelSkill).deleted, false, "nothing changes until the click");
+    const applied = await applySaved(approvalRequests[0].body, "U_CTRL_ADMIN");
+    assert.equal(applied.ok, true, applied.error);
+    assert.match(applied.message, /removed from the catalog/);
     assert.equal(getSkill(adminChannelSkill).deleted, true);
   }
 });
@@ -624,17 +724,29 @@ test("both engines: a member asks for a template change; only an admin edits a t
     assert.equal(approvalRequests.length, 0, "a member's refusal and request post no card");
     assert.deepEqual(getTemplate(tpl).skills, []);
 
-    approvalResponse = { allow: true };
+    // Approving the proposal and ADDING to a template push content into every following
+    // conversation: both keep a durable admin card. Rejecting and removing are automatic.
+    approvalResponse = { allow: false, pending: true, approvalId: `tpl-${engine}` };
     await withGateway({ engine }, async client => {
-      const approved = resultText(await client.callTool({ name: "decide_skill_proposal", arguments: { id: requestId, decision: "approve" } }));
-      assert.match(approved, /added to the .* template/);
+      const parked = resultText(await client.callTool({ name: "decide_skill_proposal", arguments: { id: requestId, decision: "approve" } }));
+      assert.match(parked, awaitingCard);
+      assert.deepEqual(getTemplate(tpl).skills, []);
+      const applied = await applySaved(approvalRequests[0].body, "U_CTRL_ADMIN");
+      assert.equal(applied.ok, true, applied.error);
+      assert.match(applied.message, /added to the .* template/);
       assert.deepEqual(getTemplate(tpl).skills, [wanted]);
       const edited = resultText(await client.callTool({ name: "update_skill_template", arguments: { template: tpl, remove: [wanted] } }));
       assert.match(edited, /template updated/);
-      assert.match(edited, approvalReceipt);
+      assert.doesNotMatch(edited, approvalReceipt);
+      assert.deepEqual(getTemplate(tpl).skills, []);
+      const parkedAdd = resultText(await client.callTool({ name: "update_skill_template", arguments: { template: tpl, add: [wanted] } }));
+      assert.match(parkedAdd, awaitingCard);
+      assert.deepEqual(getTemplate(tpl).skills, [], "adding waits for the click");
+      const rejectedProposal = resultText(await client.callTool({ name: "decide_skill_proposal", arguments: { id: requestId, decision: "reject" } }));
+      assert.doesNotMatch(rejectedProposal, awaitingCard);
     });
-    assert.deepEqual(getTemplate(tpl).skills, []);
     assert.deepEqual(approvalRequests.map(r => [r.body.toolName, r.body.requiredTier]), [["decide_skill_proposal", "admin"], ["update_skill_template", "admin"]]);
+    assert.match(approvalRequests[1].body.toolInput.details, /Add to the .* skill template/);
   }
 });
 
@@ -644,7 +756,7 @@ test("a durable instruction approval never reports a live handler as approved ev
   const before = existsSync(file) ? readFileSync(file, "utf8") : null;
   await withGateway({}, async client => {
     const result = await client.callTool({ name: "update_channel_instructions", arguments: { text: "- Must stay unapplied." } });
-    assert.match(resultText(result), /Couldn't save the instruction approval/);
+    assert.match(resultText(result), /Couldn't save the approval for `update_channel_instructions`/);
     assert.doesNotMatch(resultText(result), approvalReceipt);
   });
   assert.equal(existsSync(file) ? readFileSync(file, "utf8") : null, before);
@@ -666,13 +778,15 @@ test("the approved-result wrapper preserves mixed content, structured data, meta
     structuredContent: Object.freeze({ changed: false, diagnostic: "fixture failure" }),
     _meta: Object.freeze({ trace: "receipt-test" }),
   });
-  server.registerTool("set_channel_bash", {}, async () => original);
+  // The public-link card is the one gated call still answered inline (the model needs the URL).
+  const { z } = await import("zod");
+  server.registerTool("create_public_file_link", { inputSchema: { path: z.string(), purpose: z.string(), minutes: z.number() } }, async () => original);
   const client = new Client({ name: "receipt-contract", version: "1" }, { capabilities: {} });
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
   try {
     await server.connect(serverTransport);
     await client.connect(clientTransport);
-    const result = await client.callTool({ name: "set_channel_bash", arguments: {} });
+    const result = await client.callTool({ name: "create_public_file_link", arguments: { path: "report.pdf", purpose: "share", minutes: 30 } });
     assert.equal(result.isError, true);
     assert.deepEqual(result.content.slice(0, 2), original.content);
     assert.deepEqual(result.structuredContent, original.structuredContent);
