@@ -783,7 +783,7 @@ export async function runMessage({ channelId, authorId, workspaceId = "", text, 
       return {
         slug: entry.slug, cwd: "", model: "", engine: "codex",
         content: "This channel uses its own Codex login, but Codex is disabled in gateway Settings. Enable Codex or select the default gateway login for this channel.",
-        sessionId: null, isNew: false, usage: {}, costUSD: 0, durationMs: 0,
+        sessionId: null, isNew: false, usage: {}, costUSD: 0, durationMs: 0, engineRefused: true,
       };
     }
     const substitute = getEnabledEngines()[0] || "";

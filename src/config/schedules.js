@@ -18,7 +18,7 @@ export function getSchedules() {
   return getDb().prepare("SELECT data FROM schedules ORDER BY rowid").all().map((r) => fromJson(r.data, {}));
 }
 
-export function addSchedule({ channelId, slug, cron, prompt, description, createdBy, notify, notifyUserId, delivery, runAt, once, intervalDays, matchPrefix, kind, ack, ackEmoji, escalateAfterMin, dmAfterMin, escalationStyle, loop, loopId, threadTs, resumeThread, ticksRemaining, loopReason, loopNoop }) {
+export function addSchedule({ channelId, slug, cron, prompt, description, createdBy, notify, notifyUserId, delivery, executionVisibility, resultPolicy, failureNotify, deliveryThread, runAt, once, intervalDays, matchPrefix, kind, ack, ackEmoji, escalateAfterMin, dmAfterMin, escalationStyle, loop, loopId, threadTs, resumeThread, ticksRemaining, loopReason, loopNoop }) {
   const sched = {
     id: randomUUID().slice(0, 8),
     channelId,
@@ -45,7 +45,11 @@ export function addSchedule({ channelId, slug, cron, prompt, description, create
     // Ordinary tasks announce every run at the top level. Opt-in daily-thread delivery creates one
     // anchor per server-local day and sends every run result beneath it. The anchor state lives in
     // the JSON record so a daemon restart cannot create a second thread for the same day.
-    delivery: kind !== "reminder" && ["daily-thread", "channel", "dm-on-match"].includes(delivery) && (!once || delivery !== "daily-thread") ? delivery : "standard",
+    delivery: kind !== "reminder" && ["daily-thread", "channel", "dm-on-match", "thread"].includes(delivery) && (!once || delivery !== "daily-thread") ? delivery : "standard",
+    executionVisibility: executionVisibility === "silent" ? "silent" : "visible",
+    resultPolicy: resultPolicy === "on-result" ? "on-result" : "always",
+    failureNotify: failureNotify !== false,
+    deliveryThread: typeof deliveryThread === "string" ? deliveryThread : "",
     dailyThreadDate: "",
     dailyThreadTs: "",
     // Thread-loop binding (all falsy/empty for an ordinary schedule). `resumeThread` is what makes
@@ -124,7 +128,7 @@ export function claimScheduleMinute(id, minuteMs, legacyMinuteKey, expected) {
     (sched.cronEligibleSince || sched.createdAt) !== (expected.cronEligibleSince || expected.createdAt))) return null;
   if (!sched.enabled || Number(sched.lastCronFireMs || 0) >= minuteMs || (!sched.lastCronFireMs && sched.lastFireMinute === legacyMinuteKey)) return null;
   const next = { ...sched, lastCronFireMs: minuteMs, lastFireMinute: legacyMinuteKey,
-    ...(sched.kind !== "reminder" ? { executionState: "queued" } : {}) };
+    ...(sched.kind !== "reminder" ? { executionState: "queued", activeRunId: null } : {}) };
   const result = db.prepare("UPDATE schedules SET data = ? WHERE id = ? AND data = ?")
     .run(toJson(next), id, row.data);
   return result.changes ? next : null;

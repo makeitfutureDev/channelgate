@@ -8,7 +8,7 @@
 import { validatePlatformAdapter } from "./contract.js";
 import { validateConnector } from "./connector.js";
 import { mdToMrkdwn, resolveMentions, chunkMrkdwn } from "../slack/format.js";
-import { slackThreadFor } from "../slack/thread-keys.js";
+import { isSlackTs, slackThreadFor } from "../slack/thread-keys.js";
 import { getDirectory, normalizeName } from "../slack/directory.js";
 import { MAX_SLACK_CHARS } from "../slack/util.js";
 
@@ -120,6 +120,7 @@ export const slackAdapter = validatePlatformAdapter({
     return { text, chunks };
   },
   createConnector: (client, options) => createSlackConnector(client, options),
+  validDeliveryThread: (key) => isSlackTs(key),
   normalizeName,
   health: async () => ({ ready: true, detail: "" }),
 });

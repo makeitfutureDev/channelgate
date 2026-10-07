@@ -89,6 +89,10 @@ export const googleChatAdapter = validatePlatformAdapter({
       "the Google Chat transport is not connected (service-account key + Pub/Sub subscription in Settings)",
     );
   },
+  validDeliveryThread: (key, conversationId) => {
+    const space = String(conversationId).replace(/^gchat:/, "");
+    return /^spaces\/[^/]+\/threads\/[^/]+$/.test(String(key)) && String(key).startsWith(`${space}/threads/`);
+  },
   normalizeName,
   // Settings are imported lazily, inside the async health call. A static import would put the whole
   // config + database stack on the other side of a cycle (settings → paths → platform registry →

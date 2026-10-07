@@ -5,6 +5,8 @@ import { getChannelsIndex, getUsers } from "../../config/store.js";
 import { getSchedules, updateSchedule, deleteSchedule } from "../../config/schedules.js";
 import { cronValid, minIntervalMinutes } from "../../util/cron.js";
 import { settingsForApi } from "../../config/settings.js";
+import { listScheduleRuns, getScheduleRun, scheduleRunSummary } from "../../gateway/schedule-runs.js";
+import { validateScheduleOptions } from "../../config/schedule-options.js";
 
 export function createSchedulesRouter() {
   const router = Router();
@@ -18,11 +20,40 @@ export function createSchedulesRouter() {
         ...s,
         channelName: scheduleConversationName(s, index[s.channelId], users),
         cronValid: cronValid(s.cron),
+        runSummary: scheduleRunSummary(s.id, s.channelId),
       }));
       res.json({ schedules });
     } catch (e) {
       next(e);
     }
+  });
+
+  // History is independent of live schedules, so deleted and one-time automations remain auditable.
+  const history = async (req, res, next) => {
+    try {
+      const limit = req.query.limit === undefined ? 30 : Number(req.query.limit);
+      if (!Number.isInteger(limit) || limit < 1 || limit > 100) return res.status(400).json({ error: "limit must be between 1 and 100" });
+      for (const key of ["scheduleId", "channelId", "before"]) {
+        if (req.query[key] !== undefined && typeof req.query[key] !== "string") return res.status(400).json({ error: `invalid ${key}` });
+      }
+      const scheduleId = req.params.id || req.query.scheduleId;
+      const channelId = req.query.channelId;
+      const [index, users] = await Promise.all([getChannelsIndex(), getUsers()]);
+      const runs = listScheduleRuns({ scheduleId, channelId, limit, before: req.query.before }).map((run) => ({
+        ...run, channelName: scheduleConversationName(run, index[run.channelId], users),
+      }));
+      res.json({ runs, summary: scheduleId ? scheduleRunSummary(scheduleId, channelId) : null, nextBefore: runs.length === limit ? runs.at(-1).id : null });
+    } catch (e) { next(e); }
+  };
+  router.get("/schedules/:id/runs", history);
+  router.get("/schedule-runs", history);
+  router.get("/schedule-runs/:id", async (req, res, next) => {
+    try {
+      const run = getScheduleRun(req.params.id);
+      if (!run) return res.status(404).json({ error: "unknown automation run" });
+      const [index, users] = await Promise.all([getChannelsIndex(), getUsers()]);
+      res.json({ run: { ...run, channelName: scheduleConversationName(run, index[run.channelId], users) } });
+    } catch (e) { next(e); }
   });
 
   router.put("/schedules/:id", (req, res, next) => {
@@ -63,10 +94,25 @@ export function createSchedulesRouter() {
       const nextNotify = patch.notify ?? current.notify;
       const nextNotifyUserId = patch.notifyUserId ?? current.notifyUserId;
       if (nextNotify === "user" && !nextNotifyUserId) return res.status(400).json({ error: "choose a person to notify" });
-      if (Object.hasOwn(req.body || {}, "delivery") && !["standard", "daily-thread", "channel", "dm-on-match"].includes(req.body.delivery)) {
+      for (const [key, allowed] of [["executionVisibility", ["visible", "silent"]], ["resultPolicy", ["always", "on-result"]]]) {
+        if (Object.hasOwn(req.body || {}, key)) {
+          if (!allowed.includes(req.body[key])) return res.status(400).json({ error: `invalid ${key}` });
+          patch[key] = req.body[key];
+        }
+      }
+      if (Object.hasOwn(req.body || {}, "failureNotify")) {
+        if (typeof req.body.failureNotify !== "boolean") return res.status(400).json({ error: "failureNotify must be a boolean" });
+        patch.failureNotify = req.body.failureNotify;
+      }
+      if (Object.hasOwn(req.body || {}, "deliveryThread")) {
+        if (typeof req.body.deliveryThread !== "string" || req.body.deliveryThread.length > 500 || /[\r\n\x00]/.test(req.body.deliveryThread)) return res.status(400).json({ error: "enter a valid delivery thread ID" });
+        patch.deliveryThread = req.body.deliveryThread;
+      }
+      if (Object.hasOwn(req.body || {}, "delivery") && !["standard", "daily-thread", "channel", "dm-on-match", "thread"].includes(req.body.delivery)) {
         return res.status(400).json({ error: "invalid delivery setting" });
       }
-      if (["standard", "daily-thread", "channel", "dm-on-match"].includes(req.body?.delivery)) {
+      if (["standard", "daily-thread", "channel", "dm-on-match", "thread"].includes(req.body?.delivery)) {
+        if (req.body.delivery === "thread" && current.kind === "reminder") return res.status(400).json({ error: "existing-thread delivery requires a task schedule" });
         if (req.body.delivery === "daily-thread" && (current.kind === "reminder" || current.once)) {
           return res.status(400).json({ error: "daily-thread delivery requires a recurring task schedule" });
         }
@@ -77,6 +123,8 @@ export function createSchedulesRouter() {
         patch.dailyThreadDate = "";
         patch.dailyThreadTs = "";
       }
+      const optionsError = validateScheduleOptions({ ...current, ...patch });
+      if (optionsError) return res.status(400).json({ error: optionsError });
       const updated = updateSchedule(req.params.id, patch);
       res.json({ ok: true, schedule: updated });
     } catch (e) {
@@ -97,7 +145,7 @@ export function createSchedulesRouter() {
 
 function scheduleConversationName(schedule, entry = {}, users = {}) {
   if (!entry?.isDM) return entry?.name || schedule.slug || schedule.channelId;
-  const candidates = [entry.userId, entry.memberId, schedule.slug?.match(/^dm-(U[A-Z0-9]+)$/i)?.[1], schedule.createdBy];
+  const candidates = [entry.userId, entry.memberId, entry.name?.match(/^dm-(U[A-Z0-9]+)$/i)?.[1], schedule.slug?.match(/^dm-(U[A-Z0-9]+)$/i)?.[1], schedule.createdBy];
   const userId = candidates.find((id) => id && users[id]?.name);
   const name = users[userId]?.name || entry.name;
   return name && !/^dm[-_]/i.test(name) && name !== schedule.channelId ? `DM · ${name}` : "Direct message";

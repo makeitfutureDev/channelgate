@@ -1,5 +1,38 @@
 # ChannelGate — Features
 
+## Automation health and quiet delivery
+
+- Automations have independent controls for **run visibility** (`visible` or `silent`), **result
+  messages** (`always` or `on-result`), **failure notifications**, and **destination** (standard,
+  channel, daily thread, chosen existing thread, or the existing conditional creator DM). Defaults
+  preserve visible runs and all replies. Silent tasks omit startup messages; silent daily threads
+  create their anchor only when there is output to deliver. Multiple daily executions may share a
+  chosen thread while each receives a fresh engine session; `/loop` remains the explicit
+  resumed-session exception. Reminders retain their single-message behavior.
+- Every agent task receives a final structured outcome instruction. The daemon records **engine
+  completion separately from agent-reported task outcomes**: completed work, healthy no-op, blocked,
+  failed, or unreported. Missing, malformed, duplicate, incomplete, or contradictory connection
+  reports cannot count as healthy empty checks. Only an explicit healthy `no-op` is filtered by
+  `on-result`. Failure/unreported messages remain visible unless the owner selects
+  failure-notification suppression. Connection checks are names and available/unavailable/unknown
+  status, explicitly agent-reported rather than independently verified.
+- Admin UI → Automations → **Runs** shows KPIs, run/request/due timestamps, scheduling delay, last
+  activity, duration, observed agent activity, engine/model, tools, token use, cost (unknown stays
+  unknown), connection checks and bounded event logs. The dialog refreshes every five seconds while
+  open. **All run history** includes deleted and one-time tasks. `get_schedule_runs` exposes only
+  the current conversation through the control MCP; `update_schedule` changes delivery policies
+  without modifying the schedule creator or execution privileges.
+- Migration 32 adds a daemon-only SQLite run ledger independent of the schedule row. History covers
+  newly observed attempts, including deduplicated disconnected-transport/concurrency deferrals, and
+  retains 90 days of terminal records. It does not backfill older executions or prove missed fires
+  outside the scheduler’s existing five-minute catch-up window. Logs retain at most 200 safe event
+  kinds/tool names/statuses per run, plus bounded redacted summaries and diagnostics; they omit tool
+  arguments, outputs, reasoning, paths and credential values.
+- Delivery retries reuse the saved completed result and its run record, without rerunning tools.
+  Unknown external effects after interruption pause the task for inspection. Proven replay-safe
+  engine failures preserve recurring eligibility. Task success and message delivery are
+  independently auditable, so a chat outage cannot erase completed work or token spend.
+
 ## Custom MCP connections (Bearer token)
 
 - An admin can add a remote MCP server by **name, HTTPS URL and Bearer token** to a conversation
@@ -455,7 +488,10 @@ revisions on failed sync. Details and compatibility limits: `docs/SKILLS.md`.
   code. Native permission and freeform plan approvals retain their live-call timeout; bearer links
   retain their independent expiry. → TEST-PLAN: Durable instruction approvals.
 
-- **Timezone-safe one-time automation edits:** the Admin editor sends the browser-selected local time as an explicit ISO instant. Saving and reloading preserves the chosen time even when the browser and daemon use different timezones; recurring cron timezone policy is unchanged. → TEST-PLAN: One-time automation editor timezone.
+- **Timezone-safe one-time automation edits:** the Admin editor sends the browser-selected local
+  time as an explicit ISO instant. Saving and reloading preserves the chosen time even when the
+  browser and daemon use different timezones; recurring cron timezone policy is unchanged. →
+  TEST-PLAN: One-time automation editor timezone.
 
 - Release artifact scanning recognizes only exact SHA-256 fingerprints of reviewed public
   toolchain fixtures. PEM exceptions bind the complete key, never a header or first body line;

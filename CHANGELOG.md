@@ -30,6 +30,17 @@ product overview.
   conversation for its own, the owner for a personal one). "Approve forever" is a channel manager's
   call, and new channels let approved members manage their own settings by default.
 
+- Slack and Teams help now cover current settings, variable scopes and secret approvals, custom
+  MCP connections, skill authoring, automation controls, dedicated Codex sign-in and self-service
+  SSH. Slack help uses the current mode names and explains file sharing and finite loops.
+
+- **Automation health and quiet delivery.** Run history now distinguishes an agent finishing from
+  its task succeeding, retains connection checks and safe logs, and shows per-automation health,
+  timing, tokens, cost and delivery failures. Tasks can run silently and send only useful results,
+  keep failure alerts independently configurable, and deliver repeated fresh runs into a chosen
+  thread or a daily thread. Healthy empty checks remain recorded without routine messages. Missing
+  outcome reports remain unreported; deleted/one-time tasks retain their history.
+
 - **Custom MCP servers.** An admin can add a remote MCP server by URL and Bearer token to a
   conversation (Connections → *Custom MCP servers*, reached as `custom-<name>`) or to one person
   (*Personal MCP servers*, reached as `my-<name>` in that person's runs only). Claude and Codex
@@ -205,7 +216,11 @@ product overview.
 - **Codex no longer sends usage metrics to OpenAI.** Claude Code's telemetry was already off, but Codex still sent OpenAI its anonymous usage and health metrics by default. Every Codex process the gateway starts now runs with `analytics.enabled=false`: chat turns, background work, the memory reviewer, SSH and VS Code sessions, and the gateway's own checks.
 - **A channel's database can be read page by page, and counted.** `query_channel_database` used to return at most 100 rows with no way to ask for the next ones. Ordered by a table's primary key, a read now also returns `nextCursor`; passing it back as `after` gets the next page, until it comes back empty. The new `count_rows` returns how many rows match, so an agent can show that nothing was missed. The extractor image has to be rebuilt (`npm run vpn -- build --channel ID`, then VPN off and on); until then the running one keeps working and a paged or counted request says it needs the rebuild.
 - **A connector outage at the provider no longer looks like a gateway bug.** When Composio or a toolbox answered a connection attempt with an error, a container run just lost the connector and the daemon logged only `remote MCP unavailable`. A brief 502/503/504 or network blip is now retried once after a second, so it no longer drops the connector for the whole turn. A lasting failure is logged with the server and the upstream status, for example `remote MCP unavailable (composio-user: upstream HTTP 502)`. The container still sees only the fixed sentence.
-- **Slack Settings has an Automations page, and the tabs are reordered.** The tabs now read General · Variables · MCPs · Skills · Automations · Resume. **Automations** lists the conversation's scheduled tasks, reminders and `/loop` wake-ups with their next run time, and lets anyone allowed to use the agent there pause or resume a recurring schedule and delete any of them. Creating one is still done by asking the agent.
+- **Slack Settings has an Automations page, and the tabs are reordered.** The tabs now read General
+  · Variables · MCPs · Skills · Automations · Resume. **Automations** lists the conversation's
+  scheduled tasks, reminders and `/loop` wake-ups with their next run time, and lets anyone allowed
+  to use the agent there pause or resume a recurring schedule and delete any of them. Creating one
+  is still done by asking the agent.
 - **Every AI reply ends with the same menu: 📂 Files · 🔑 Variables · ⚙️ Settings.** Replies used to show the menu inconsistently. Errors had none, "🛑 Stopped." still showed the removed 💻 Resume button, and API-run, scheduled, background and restart-recovery answers had no menu or lacked Settings. Replies also showed bare icons, while `/menu` spelled out the labels and still offered Resume. Now every answer, error and stop in Slack ends with all three labelled buttons, after a model switch, an API request or anything else. A long answer carries the menu on its last message instead of the first. `/menu` shows the same three buttons. The resume command stays in Settings → Resume Session and `/resume`. A menu under an automated post (no Slack requester) opens for whoever clicks it, with that person's own permissions.
 - **Allowed domains is back as an option** on the add-variable form and the admin page. Filling it in restricts a secret to exactly those domains: no approval cards, and the value is never sent anywhere else. It also now works for tokens sent in headers other than Authorization, such as `x-api-key`. Leave it empty to approve servers on first use instead.
 - **The admin page lists variables in a table:** name, masked value, type (🔒 Secret or 👁 Readable, with the reason on hover), the servers a secret may be sent to, who set it (shown as a person's name, not a Slack id) and when.

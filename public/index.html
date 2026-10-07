@@ -163,6 +163,7 @@
             </div>
           </div>
           <div id="schedules" class="cards">Loading…</div>
+          <button id="schedule-history-all" class="ghost" type="button">View all run history (including deleted automations)</button>
         </section>
 
         <!-- Activity: full width — filterable run history + a quiet all-time totals strip -->
@@ -1123,20 +1124,37 @@
             </div>
             <label id="schedule-once-wrap" class="field"><span>Run once at</span><input id="schedule-modal-run-at" type="datetime-local" /></label>
           </fieldset>
-          <label class="field"><span>Notification</span><select id="schedule-modal-notify"><option value="channel">Notify channel</option><option value="user">Notify person</option><option value="none">Quiet</option></select></label>
+          <label class="field"><span>Mention</span><select id="schedule-modal-notify"><option value="channel">Mention channel</option><option value="user">Mention person</option><option value="none">No mention</option></select></label>
           <label id="schedule-modal-notify-user-wrap" class="field"><span>Person ID</span><input id="schedule-modal-notify-user" type="text" placeholder="U…" /></label>
-          <label id="schedule-modal-delivery-wrap" class="field schedule-wide"><span>Delivery</span><select id="schedule-modal-delivery"><option value="channel">Post directly in channel</option><option value="standard">Start a new thread for every run</option><option value="daily-thread">Reuse one thread per day</option><option value="dm-on-match">DM creator only when result matches</option></select></label>
+          <label id="schedule-modal-delivery-wrap" class="field schedule-wide"><span>Delivery</span><select id="schedule-modal-delivery"><option value="channel">Post directly in channel</option><option value="standard">Start a new thread for every run</option><option value="daily-thread">Reuse one thread per day</option><option value="thread">Reuse a specific existing thread</option><option value="dm-on-match">DM creator only when result matches</option></select></label>
+          <label id="schedule-modal-thread-wrap" class="field schedule-wide" hidden><span>Existing thread ID</span><input id="schedule-modal-thread" type="text" placeholder="Thread ID in this conversation" /><small>Every run uses a fresh agent session and delivers to this thread.</small></label>
+          <label class="field schedule-task-control"><span>Run visibility</span><select id="schedule-modal-visibility"><option value="visible">Show when a run starts</option><option value="silent">Run silently in the background</option></select></label>
+          <label class="field schedule-task-control"><span>Result messages</span><select id="schedule-modal-result-policy"><option value="always">Send every result</option><option value="on-result">Send only when there is a result</option></select><small>Only an explicitly reported no-result outcome is suppressed.</small></label>
+          <label class="toggle schedule-task-control"><input id="schedule-modal-failure-notify" type="checkbox" checked /> <strong>Send failure notifications</strong></label>
         </div>
         <label class="field schedule-prompt-field">
           <span>Prompt</span>
           <textarea id="schedule-modal-prompt" rows="12" spellcheck="false"></textarea>
         </label>
         <p id="schedule-modal-error" class="schedule-modal-error" role="alert" hidden></p>
+        <button id="schedule-history-open" class="ghost" type="button">View health and run logs</button>
         <div class="modal-foot">
           <span style="flex:1"></span>
           <button id="schedule-modal-cancel" class="ghost" type="button">Cancel</button>
           <button id="schedule-modal-save" type="button">Save automation</button>
         </div>
+      </div>
+    </div>
+    <div id="schedule-history-modal" class="modal" hidden>
+      <div class="modal-card schedule-card" role="dialog" aria-modal="true" aria-labelledby="schedule-history-title">
+        <div class="session-head"><h3 id="schedule-history-title">Automation run history</h3><button id="schedule-history-close" class="ghost icon-btn" type="button" aria-label="Close run history">✕</button></div>
+        <p class="hint">Run history is kept for 90 days. Silent runs appear here even when no message is sent.</p>
+        <div id="schedule-history-summary"></div>
+        <p id="schedule-history-error" class="schedule-modal-error" role="alert" hidden></p>
+        <div id="schedule-history-list" class="schedule-history-list" aria-live="polite"></div>
+        <button id="schedule-history-more" class="ghost" type="button" hidden>Load older runs</button>
+        <div id="schedule-history-detail" hidden></div>
+        <div class="modal-foot"><button id="schedule-history-refresh" class="ghost" type="button">Refresh history</button></div>
       </div>
     </div>
 
