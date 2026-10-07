@@ -60,7 +60,7 @@ export { runQueue } from "./message-lifecycle.js";
 
 import path from "node:path";
 import { ATTACHMENT_MAX_BYTES } from "../util/bounded-bytes.js";
-import { attachmentFileName, downloadSlackFiles, formatBytes, isAttachmentOnDisk, shouldAnnounceDownload, uploadsSubFor } from "./download.js";
+import { attachmentFileName, downloadSlackFiles, formatBytes, isAttachmentOnDisk, shouldAnnounceDownload, uploadsSubFor, wasAttachmentDelivered } from "./download.js";
 
 import { buildResumeCommand, footerButtons, footerText } from "./footer.js";
 import { postNoticeWithMenu } from "./deliver.js";
@@ -327,7 +327,8 @@ export { downloadSlackFiles, shouldAnnounceDownload, attachmentFileName };
 // A file carried into a reply from the thread ROOT (attachments.js marks it `carriedFrom:"root"`)
 // is a RETRY of a delivery that never happened — the root turn refused it (an old cap, a Slack
 // hiccup) and the person is asking again in the thread. It is downloaded only when its bytes are
-// not already in the thread folder, and never re-attempted when Slack's declared size is still
+// not already in the thread folder and no successful-delivery receipt survives media cleanup.
+// It is never re-attempted when Slack's declared size is still
 // over the cap: that refusal was already reported at the root, and repeating it on every reply
 // would turn one oversize file into a nag. Files attached to the reply itself always go through.
 export async function filterCarriedRootFiles(files, { root, sub, maxBytes = ATTACHMENT_MAX_BYTES } = {}) {
@@ -336,6 +337,7 @@ export async function filterCarriedRootFiles(files, { root, sub, maxBytes = ATTA
     if (f?.carriedFrom !== "root") { out.push(f); continue; }
     if (f.size && f.size > maxBytes) continue;
     if (await isAttachmentOnDisk(root, sub, f)) continue;
+    if (await wasAttachmentDelivered(root, sub, f)) continue;
     out.push(f);
   }
   return out;

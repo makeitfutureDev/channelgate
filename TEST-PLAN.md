@@ -1,5 +1,16 @@
 # ChannelGate — Test Plan
 
+## Processed Slack attachment retention (2026-10-08)
+
+- [x] Regression: `node --test test/slack-download-file.test.js test/managed-write-symlinks.test.js`.
+  Remove a successfully downloaded original, verify a root-carried followup makes no download,
+  and explicitly restore it. Verify failed delivery stays retryable and no temporary files remain.
+- [ ] Live Claude and Codex: process a small dummy attachment in private QA fixtures, delete the
+  processed original, send an ordinary followup and verify no original reappears; explicitly
+  request the original and verify it returns. Record separate engine evidence in private QA.
+- [ ] Operator storage check: inspect current server utilization before any targeted cleanup.
+  This change prevents future repeated downloads; it does not claim a production storage sweep.
+
 ## Custom MCP connections (2026-10-01)
 
 ### Regression

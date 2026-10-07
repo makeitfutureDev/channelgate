@@ -18,6 +18,9 @@ product overview.
 
 ## Unreleased
 
+- Processed Slack originals stay removed on ordinary thread replies after a successful download.
+  Explicit attachment downloads remain available, and failed downloads can still retry.
+
 - Far fewer approval cards. A gateway tool that changes channel or gateway state is now automatic
   for the admin or channel manager who asked for it (modes, network, folders, MCP servers,
   secrets, tokens, skill settings, gateway update and restart, the license key, instruction
