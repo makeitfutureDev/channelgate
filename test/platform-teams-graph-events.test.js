@@ -263,3 +263,24 @@ test('first notification persists a missing Alien cutoff before fetching history
   assert.equal(f.messages[0][1].alienReactionStartedAt, '2026-09-09T10:01:00.000Z');
   assert.equal(f.messages[0][1].reactionAliasesStartedAt, aliases);
 });
+
+
+test('Graph Unicode robot metadata gets a separate cutoff before cached reuse or message GET', async () => {
+  const f = fixture(); await f.service.ensure(f.row);
+  const stored = f.rows.get(f.row.conversationId);
+  const aliases = stored.reactionAliasesStartedAt, alien = stored.alienReactionStartedAt;
+  delete stored.graphRobotStartedAt;
+  f.advance(60_000); await f.service.renew();
+  const cutoff = f.rows.get(f.row.conversationId).graphRobotStartedAt;
+  assert.equal(cutoff, '2026-09-09T10:01:00.000Z');
+  assert.equal(f.rows.get(f.row.conversationId).reactionAliasesStartedAt, aliases);
+  assert.equal(f.rows.get(f.row.conversationId).alienReactionStartedAt, alien);
+  assert.equal(f.requests.length, 1);
+  f.advance(21 * 60_000); await f.service.ensure(f.row);
+  assert.equal(f.rows.get(f.row.conversationId).graphRobotStartedAt, cutoff);
+  delete f.rows.get(f.row.conversationId).graphRobotStartedAt;
+  f.advance(60_000); await f.handle({ value: [f.notification()] });
+  assert.equal(f.messages[0][1].graphRobotStartedAt, '2026-09-09T10:23:00.000Z');
+  assert.equal(f.messages[0][1].reactionAliasesStartedAt, aliases);
+  assert.equal(f.messages[0][1].alienReactionStartedAt, alien);
+});

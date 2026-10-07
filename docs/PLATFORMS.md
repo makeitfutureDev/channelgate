@@ -256,7 +256,9 @@ Task-module dialogs and broadcast mentions remain unavailable.
   `:alien:`, Unicode 👽 and `1f47d_extraterrestrialalien`, with its own saved introduction cutoff
   to exclude pre-upgrade reactions. Like is an alternative;
   intake recognizes `like`, Unicode 👍 and their skin-tone variants. Legacy `hearteyesrobot` and
-  `smilerobot` event IDs remain recognized. New alias recognition starts at a saved subscription
+  `smilerobot` event IDs remain recognized. Graph's 😍 variant activates only when added history
+  and the current reaction both identify `Heart eyes robot` with no custom content URL.
+  Ordinary Heart eyes, unlabelled history and custom images do not activate. New alias recognition starts at a saved subscription
   cutoff to prevent old reactions replaying on unrelated updates. Microsoft calls the green tick **Checkmark button**, ID
   `2705_whiteheavycheckmark`; Stop sign is `stopsign`. See the
   [Teams reactions reference](https://learn.microsoft.com/en-us/microsoftteams/platform/agents-in-teams/teams-reactions-reference).

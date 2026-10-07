@@ -118,3 +118,38 @@ test('Alien expansion has its own cutoff even on a previously upgraded subscript
     assert.deepEqual(await normalizeGraphEvents(message, upgraded, opts), []);
   }
 });
+
+
+test('Graph robot Unicode variant requires exact provider metadata, fresh history and its own cutoff', async () => {
+  const metadata = { ...reaction, reactionType: '😍', displayName: 'Heart eyes robot', reactionContentUrl: null };
+  const message = fixture();
+  message.reactions = [metadata]; message.messageHistory[0].reaction = metadata;
+  const updated = { ...row, graphRobotStartedAt: '2026-09-09T10:00:00Z' };
+  const [event] = await normalizeGraphEvents(message, updated, opts);
+  assert.equal(event.reactionAction, 'engage'); assert.equal(event.userId, '29:reactor');
+  assert.equal(event.replyToId, 'message1');
+  for (const change of [{ displayName: undefined }, { displayName: 'Heart eyes' },
+    { displayName: 'Heart eyes dog' }, { displayName: 'Heart eyes robot ' },
+    { reactionType: 'custom' }, { reactionContentUrl: 'https://example.org/custom.png' }]) {
+    const other = { ...metadata, ...change };
+    message.reactions = [other]; message.messageHistory[0].reaction = other;
+    assert.deepEqual(await normalizeGraphEvents(message, updated, opts), []);
+  }
+  // Current metadata cannot relabel a history addition or prove when an ambiguous emoji was added.
+  message.reactions = [metadata]; message.messageHistory[0].reaction = { ...metadata, displayName: undefined };
+  assert.deepEqual(await normalizeGraphEvents(message, updated, opts), []);
+  message.messageHistory[0].reaction = metadata; message.reactions = [{ ...metadata, displayName: 'Heart eyes' }];
+  assert.deepEqual(await normalizeGraphEvents(message, updated, opts), []);
+  message.reactions = [metadata];
+  for (const graphRobotStartedAt of [undefined, 'invalid', '2026-09-09T10:01:00Z', '2026-09-09T10:02:00Z']) {
+    assert.deepEqual(await normalizeGraphEvents(message, { ...updated, graphRobotStartedAt }, opts), []);
+  }
+  message.messageHistory.push({ actions: 'reactionRemoved', modifiedDateTime: '2026-09-09T10:02:00Z', reaction: metadata });
+  assert.deepEqual(await normalizeGraphEvents(message, updated, opts), []);
+  message.messageHistory.push({ actions: 'reactionAdded', modifiedDateTime: '2026-09-09T10:03:00Z', reaction: metadata });
+  const [readded] = await normalizeGraphEvents(message, updated, opts);
+  assert.notEqual(readded.raw.eventId, event.raw.eventId);
+  assert.equal(readded.raw.eventId, (await normalizeGraphEvents(message, updated, opts))[0].raw.eventId);
+  message.messageHistory = [];
+  assert.deepEqual(await normalizeGraphEvents(message, updated, opts), [], 'a snapshot alone is not addition evidence');
+});

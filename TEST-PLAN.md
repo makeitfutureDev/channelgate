@@ -33,6 +33,29 @@
 
 ## Microsoft Teams reaction actions acceptance (2026-10-07)
 
+- Graph robot metadata verification: 93 focused tests passed, zero failures/skips; independent
+  review found no blocking defects and separately passed 31 parser/subscription tests.
+- Graph robot metadata: the live message API reports Heart eyes robot as `reactionType: "😍"`
+  with `displayName: "Heart eyes robot"` and no custom content URL, while Alien is `👽`.
+  The Graph mapper now qualifies this robot variant in history and current-presence checks;
+  native plain 😍, ordinary Heart eyes, missing historical names and custom art remain inactive.
+  Dedicated `graphRobotStartedAt` is saved before cached subscription reuse or message fetch,
+  preserving earlier cutoff values. Tests cover pre-cutoff rejection, removal/readd and approved
+  reactor dispatch in personal/group/channel sessions. Existing robot event hashes stay unchanged.
+- [ ] LIVE (`TEAMS-ROBOT-METADATA-01`, Claude and Codex): approved beta Teams QA group/channel
+  with working Graph event delivery. After the candidate's saved cutoff, post an unmentioned
+  message "Reply exactly ROBOT_METADATA_OK" and add **Heart eyes robot**. Capture the delivered
+  Graph message history and current reaction. Pass: both identify 😍/Heart eyes robot/no custom URL,
+  exactly one response as the reactor in the source session, and no run on removal, ordinary Heart
+  eyes or unapproved actor. Repeat on a bot reply. Retried notifications must not start a second run.
+- Live failure diagnosis: provider reads show fresh Alien on unmentioned content with no replies,
+  while a nearby bot mention receives an answer. Alien's value already matches intake. Restart
+  notices confirm restart initiation; reads cannot prove the deployed notification switch, scoped
+  subscription, webhook arrival, roster mapping or historical metadata. Message history is absent
+  in the available provider response; no unsafe snapshot fallback is inferred from that alone.
+  Deployed event setting and Graph errors are requested. Live activation and required private QA
+  registration remain pending; the requester's selected personal Airtable connection is unavailable.
+
 - Alien verification: 88 focused tests passed, zero failures/skips. Live delivery remains unverified.
 - Alien activation: native and Graph normalizer tests accept `alien`, exact picker shortcut
   `:alien:`, Unicode 👽 and `1f47d_extraterrestrialalien`. Shared ingest covers approved/unapproved

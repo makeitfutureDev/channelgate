@@ -5,7 +5,7 @@ import { activityConversationName } from "./conversation-name.js";
 import { makeInbound } from "../inbound.js";
 import { quotedReplyId, stripMentionTags } from "./activity.js";
 
-import { teamsReactionAction, teamsReactionCutoverField } from "./reactions.js";
+import { teamsGraphReactionAction, teamsGraphReactionCutoverField } from "./reactions.js";
 
 const digest = parts => createHash("sha256").update(JSON.stringify(parts)).digest("hex");
 const userId = identity => String(identity?.user?.id || "");
@@ -83,7 +83,7 @@ export async function normalizeGraphEvents(message, row, { botId, resolveMember,
   // replay an earlier addition from the same fetched history (especially an earlier stop).
   const latest = new Map();
   for (const item of message.messageHistory || []) {
-    const action = teamsReactionAction(item.reaction?.reactionType);
+    const action = teamsGraphReactionAction(item.reaction);
     const transition = reactionTransition(item.actions);
     if (!transition || !action) continue;
     const actor = userId(item.reaction?.user);
@@ -95,16 +95,16 @@ export async function normalizeGraphEvents(message, row, { botId, resolveMember,
   }
   for (const item of latest.values()) {
     if (item.transition !== "added") continue;
-    const action = teamsReactionAction(item.reaction?.reactionType);
+    const action = teamsGraphReactionAction(item.reaction);
     const stamp = item.modifiedDateTime;
-    const cutoverField = teamsReactionCutoverField(item.reaction?.reactionType);
+    const cutoverField = teamsGraphReactionCutoverField(item.reaction);
     if (cutoverField) {
       const cutover = Date.parse(row[cutoverField]);
       if (!Number.isFinite(cutover) || !(Date.parse(stamp) > cutover)) continue;
     }
     const actor = userId(item.reaction?.user);
     // A removed reaction must not start a new run when a delayed notification is fetched.
-    if (!(message.reactions || []).some(reaction => teamsReactionAction(reaction.reactionType) === action && userId(reaction.user) === actor)) continue;
+    if (!(message.reactions || []).some(reaction => teamsGraphReactionAction(reaction) === action && userId(reaction.user) === actor)) continue;
     await emit(actor, "reaction", stamp, action);
   }
   return result;
