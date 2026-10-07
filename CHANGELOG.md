@@ -18,6 +18,10 @@ product overview.
 
 ## Unreleased
 
+- Slack and Teams help now cover current settings, variable scopes and secret approvals, custom
+  MCP connections, skill authoring, automation controls, dedicated Codex sign-in and self-service
+  SSH. Slack help uses the current mode names and explains file sharing and finite loops.
+
 - **Custom MCP servers.** An admin can add a remote MCP server by URL and Bearer token to a
   conversation (Connections → *Custom MCP servers*, reached as `custom-<name>`) or to one person
   (*Personal MCP servers*, reached as `my-<name>` in that person's runs only). Claude and Codex
