@@ -1405,6 +1405,10 @@ export async function runMessage({ channelId, authorId, workspaceId = "", text, 
   // The channel folder's shared file is NOT guarded, so a guarded run may never fall back to it.
   if (homeGuarded && needsClaudeSettings && !grantArtifacts.settingsFile) throw new Error("this channel mounts the operator home but no home-guard settings were generated; refusing to run a non-admin turn unguarded");
   const runSettingsFile = grantArtifacts.settingsFile || sharedRunSettingsFile;
+  const skillWarning = grantArtifacts.missingSkills.length
+    ? `⚠️ Some granted skills could not be loaded: ${grantArtifacts.missingSkills.join(", ")}. Continuing with the available skills.\n\n`
+    : "";
+  const runWarning = licenseWarning + skillWarning;
   const grantFingerprint = JSON.stringify({
     allowedMcps: clean ? [] : runGrants.effective.allowedMcps,
     userSkills,
@@ -1757,7 +1761,7 @@ export async function runMessage({ channelId, authorId, workspaceId = "", text, 
     // Claude→Codex-only flag, still emitted so existing consumers keep working.
     const fallbackResult = {
       ...baseMeta, ...cx,
-      content: redactSecretValues(licenseWarning + (note || "") + fbMcpDropNote + fallbackModelNote + (cx.content || ""), outputSecrets),
+      content: redactSecretValues(runWarning + (note || "") + fbMcpDropNote + fallbackModelNote + (cx.content || ""), outputSecrets),
       sessionId: cx.sessionId ?? null,
       engine: fallbackEngine,
       isNew: !prior,
@@ -1845,8 +1849,8 @@ export async function runMessage({ channelId, authorId, workspaceId = "", text, 
     await bringRuntimeUp();
     // Every gateway note below is part of `content` for surfaces with no stream — and ANNOUNCED, so a
     // surface that writes its answer from the live stream delivers it too (see announceAnswerNote).
-    // The license warning leads: it applies to this turn whichever engine answers it.
-    if (licenseWarning) announceAnswerNote(licenseWarning);
+    // License and unavailable-skill warnings apply whichever engine answers this turn.
+    if (runWarning) announceAnswerNote(runWarning);
 
     // If THIS engine was recently limited in THIS channel (or its credential failed gateway-wide),
     // skip it and use the fallback harness for the cooldown window instead of re-probing it.
@@ -2185,7 +2189,7 @@ export async function runMessage({ channelId, authorId, workspaceId = "", text, 
     // `runtimeModel` keeps the CLI-reported truth for context-window math and Codex cost rates.
     return {
       ...redactSecretFields(finalResult, outputSecrets),
-      content: redactSecretValues(licenseWarning + mcpDropNote + (finalResult.content || ""), outputSecrets),
+      content: redactSecretValues(runWarning + mcpDropNote + (finalResult.content || ""), outputSecrets),
       loopWakeup,
       runtimeModel: resolveCurrentModel(finalResult),
       model: model || resolveCurrentModel(finalResult),

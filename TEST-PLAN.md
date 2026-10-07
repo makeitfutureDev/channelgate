@@ -1,5 +1,36 @@
 # ChannelGate — Test Plan
 
+## Unavailable skill grants acceptance (2026-10-07)
+
+- Automated: `test/run-grant-isolation.test.js` verifies deduplicated omissions, no empty personal
+  plugin, valid instructions retained alongside missing dependencies, awaiting-review revisions and
+  removed entries. `test/runtime-integration-run.test.js` verifies successful fresh/resumed Claude
+  and Codex turns, one warning before spawn in streamed delivery and authoritative content,
+  available personal instructions delivered, unchanged stored grants, and both fallback directions.
+  Existing `test/access-grants.test.js` retains direct/dependency cross-owner rejection;
+  `test/fallback-spawn-contract.test.js` retains each fallback engine's confinement/MCP contract.
+- Verification: 55 focused tests passed, zero failures, one existing capability-dependent skip
+  (the effective user can read a chmod(000) directory).
+- [ ] LIVE (`SKL-MISSING-01`, Claude and Codex): paired private Auto QA fixtures; admin test actor
+  saves the approved test actor's original personal grants. Retain a valid disposable personal skill
+  with a synthetic proof marker and `requires: [qa-missing-dependency]`; add unknown
+  `qa-missing-personal` and awaiting-review `qa-staged-personal`. Approved actor asks in a fresh
+  thread: "Reply exactly SKILL_PARTIAL_OK and read the available personal skill to name its
+  synthetic marker", then resumes with "Repeat the synthetic marker". Pass: both turns answer on
+  the selected engine, one warning names the omissions, available marker is readable, unavailable
+  bodies are absent, and stored grants stay unchanged. Repair grants and repeat: warning disappears.
+  A different actor must still be unable to load the private skill or its private dependencies.
+  Restore the original profile. Use synthetic material only.
+- [ ] LIVE (`SKL-MISSING-02`, Claude and Codex): unpinned paired Auto fixtures with fallback enabled;
+  add one disposable unavailable personal grant and inject a deterministic replay-safe usage-limit
+  response before any primary-engine tool/text, leaving the alternate healthy. Prompt:
+  "Reply exactly SKILL_FALLBACK_OK". Pass in each direction: alternate engine answers, exactly one
+  unavailable-skill warning survives streamed/final delivery alongside the fallback note, and
+  confinement/grants stay unchanged. Restore provider fixture and original grants.
+- Private QA: both reusable definitions registered through the requester's selected personal
+  connection. Live deployed execution remains pending host administration and candidate restart;
+  automated fake-runtime evidence is not a live provider pass.
+
 ## Microsoft Teams reaction actions acceptance (2026-10-07)
 
 - Shortcut/Like verification: 79 focused tests passed, zero failures/skips. Independent review

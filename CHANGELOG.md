@@ -18,6 +18,10 @@ product overview.
 
 ## Unreleased
 
+- Missing personal skill grants or dependencies no longer prevent unrelated requests from
+  running. Available skills load normally, and streamed/final replies warn about omissions,
+  including after engine fallback. Ownership and confinement checks remain enforced.
+
 - Teams reaction activation now accepts the exact Heart eyes robot picker shortcut
   `:hearteyesrobot:` as well as its bare event ID. 👍 Like is an alternative activation reaction. Native `like` and Graph Unicode
   thumbs-up values, including skin-tone variants, use the existing authorized reaction path.
