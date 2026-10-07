@@ -29,30 +29,40 @@ Do not use a pipe table for a large/wide export or imitate one with a hand-align
 
 Use this when the rows are the result—not merely a small illustration inside prose—and the reader
 benefits from sorting, filtering, or pagination. Slack renders a separate Block Kit data table with
-a header row, pagination, sorting, and filtering. Cells are raw text or numbers, so prefer the
-streamed Markdown shape when inline code/bold styling inside cells is important.
+a header row, pagination, sorting, and filtering.
 
 `slack_post_table` (gateway, always available; posts as the bot into THIS thread):
 
 - `caption` — a short accessible table title.
-- `headers` — 1–20 column names.
-- `rows` — 1–100 rows; each row must contain exactly one string/number per header. Pass numbers as
-  numbers, not strings, so Slack sorts them numerically. Use `"—"` for deliberately empty values.
+- `headers` — 1–20 column names (plain text; Slack allows no formatting in header cells).
+- `rows` — 1–200 rows; each row must contain exactly one cell per header. A cell is:
+  - a **number** — pass numbers as numbers, not strings, so Slack sorts the column numerically
+    (a column sorts numerically only when every cell in it is a number);
+  - a **string** — plain text, or lightweight Markdown that becomes a formatted cell:
+    `[label](https://…)` and bare `https://` URLs become clickable links, `**bold**`, `` `code` ``,
+    `~~strike~~` style the text, `<@U…>` is a real mention. Use `"—"` for deliberately empty values;
+  - an **object**, when you want to be explicit: `{text, url}` a link, `{text, bold|italic|strike|
+    code: true}` formatting, `{user: "U…"}` a mention, `{button: {label, url}}` a **row button**
+    that opens the URL (*Open task*, *View invoice*, *Inspect run*). Buttons take public https
+    URLs only.
 - `page_size` — optional visible rows per page, 1–100; defaults to up to 10.
 - `row_header_column` — optional zero-based column index that identifies each row for screen
   readers; defaults to the first column.
 - `summary` — optional top-level notification/accessibility text. Keep it to one sentence.
 
-Slack caps the aggregate cell content at 10,000 characters. Do not silently truncate data to fit:
-switch to `slack_upload_snippet`, split only when the user asked for separate tables, or ask which
-slice they want. After the tool succeeds, reply with only a short takeaway; do not paste the table
-again.
+Slack caps the aggregate cell content at 20,000 characters (readable text; link URLs and markup
+do not count). Do not silently truncate data to fit: switch to `slack_upload_snippet`, split only
+when the user asked for separate tables, or ask which slice they want. After the tool succeeds,
+reply with only a short takeaway; do not paste the table again.
+
+To put the table **inside your final answer** (takeaway + table in one message) use
+`slack_compose_reply` with a `table` section instead — see `references/composed-replies.md`.
 
 Example — supplier configuration status:
 
 `slack_post_table` with `caption:"Suppliers in space 6"`,
-`headers:["ID","Name","Tier 1 CZ","Tier 2 B2B","Tier 3 EN","Status"]`, and rows such as
-`[2,"HansGrohe","✅","✅","✅","Fully configured"]`.
+`headers:["ID","Name","Tier 1 CZ","Tier 2 B2B","Tier 3 EN","Status","Record"]`, and rows such as
+`[2,"HansGrohe","✅","✅","✅","Fully configured",{button:{label:"Open",url:"https://erp.example/suppliers/2"}}]`.
 
 ## 3. Big or wide read-only exports → file snippet (`slack_upload_snippet`)
 
@@ -90,8 +100,9 @@ have typed columns and persist independently from the message thread.
 ## Quick rule
 
 - Small table embedded in the answer, about ≤10 rows / ≤5 short columns → **GFM pipe table in the reply**.
-- Standalone read-only dataset users should sort/filter, within 100 rows / 20 columns / 10,000
-  characters → **`slack_post_table`**.
+- Standalone read-only dataset users should sort/filter, within 200 rows / 20 columns / 20,000
+  characters → **`slack_post_table`** (or a `table` section of `slack_compose_reply` when it
+  belongs inside the final answer).
 - Larger or wider read-only export → **`slack_upload_snippet`** (CSV/TSV file).
 - People will edit it over time → **Slack List**.
 - Only a couple of facts → use bullets.

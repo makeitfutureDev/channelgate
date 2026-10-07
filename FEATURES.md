@@ -445,6 +445,14 @@ revisions on failed sync. Details and compatibility limits: `docs/SKILLS.md`.
   replayed after a restart (answer or failure). When an answer overflows into follow-up messages,
   the stats and menu ride the LAST one, never the streamed head. Referenced-file `📄` buttons follow
   the menu. There is no 💻 Resume button on any of them.
+- **Native 👍/👎 answer feedback**: the same footer ends with Slack's `context_actions` block
+  carrying `feedback_buttons` (`cg_reply_feedback`) on every streamed, classic, unattended and
+  fallback answer that carries the stats footer (not on bare notices such as "🛑 Stopped."). Any
+  channel member's verdict counts — it is an opinion, not a privilege: the click is acknowledged,
+  recorded as a `reply_feedback` event (channel, thread, message, clicker, verdict, requester) and
+  a 👎 answers the clicker privately, inviting the correction in the thread. If Slack rejects the
+  block on a terminal write, the footer is retried without it (see the tiered recovery under
+  *Composed replies*). → TEST-PLAN: Answer feedback.
 - Binding: a reply with a Slack requester binds the menu to that person (another member's click
   is refused, as before; admins may still open another user's file button). An automation post
   (schedule, background job, API run, restart recovery) has no Slack requester, so its menu opens
@@ -1252,6 +1260,28 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
   apply the latest manifest to activate the message shortcut. `/files` is no longer registered or
   advertised; a typed legacy request gets a retirement notice without starting an engine.
   → TEST-PLAN: Channel file explorer.
+- **Slack Agent Sessions and the native Stop button** (`src/slack/agent-sessions.js`,
+  `src/slack/agent-interface.js`). Every status write drives the thread's agent session natively
+  (`agents.sessions.setStatus`: `processing` while a turn works, `active` when it ends — asserted
+  once per transition and re-asserted every five minutes so a long turn never hits Slack's
+  one-hour `processing` expiry) and then writes the activity phrase through the legacy
+  `assistant.threads.setStatus` bridge, which is the only surface that accepts a phrase. The app
+  manifest subscribes to `agent_session_stopped` (and `agent_session_title_changed`), which is what
+  makes Slack render its native **Stop** button on the thread while the session is `processing`,
+  in DMs and in channel threads alike. Pressing it stops exactly that thread through the same
+  `stopRunsInChannel` path and authorization gate as a `stop` message or 🛑 reaction (redelivered
+  envelopes are deduplicated, the bot's own events ignored); whether or not a run was found the
+  session is moved off `processing`, because Slack never does that on its own. Per-thread titles
+  use `agents.sessions.rename` (200 chars). A workspace or app without the native surface
+  (`feature_disabled`, `missing_scope`, `unknown_method`,
+  `missing_agent_session_stopped_event_subscription`, …) falls back to the legacy methods for the
+  rest of the process after one warning; a per-thread refusal (`not_authorized`) only skips that
+  thread and never flips the mode; an ordinary channel thread that only the native surface accepts
+  still gets the lifecycle (and the Stop button) while the phrase stays off there. Mid-turn stream
+  rollovers pass `session_status: "processing"` on `chat.stopStream` so a retired message cannot
+  clear the loading state. Both events and `reply_feedback` are logged to the `events` table
+  (`agent_session_stopped`, `agent_session_renamed`). → TEST-PLAN: Slack Agent Sessions & native
+  Stop.
 - Slack Agent app (`agent_view`): native status animation (`assistant.threads.setStatus`) with
   progress-tracking phrases in agent threads. As soon as the spawn runtime resolves, the prominent
   loading indicator identifies its configured model through `loading_messages` (for example,
@@ -1508,11 +1538,13 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
   is set; refuses non-admin authors, mid-run threads, and top-level use; a deleted bot-owned root
   also drops the session like `/clear`), and `/update` (admin-only — git pull + install + restart, detached).
   → TEST-PLAN: In-thread commands.
-- Stop an in-flight run three ways: a plain-text **stop word** (`stop`, `cancel`, `abort`, `halt`,
+- Stop an in-flight run four ways: Slack's **native Stop button** on the thread (the agent session's
+  `processing` state, see *Slack Agent Sessions and the native Stop button*); a plain-text **stop
+  word** (`stop`, `cancel`, `abort`, `halt`,
   `nevermind`, …) — bare in a DM, @mentioning the bot in a channel thread (the mention gate drops an
   un-mentioned channel message before the stop word is ever read); a **stop emoji reaction** (🛑 `octagonal_sign`, ❌ `x`,
   ✋ `raised_hand`, `no_entry`, …) on any message in the thread; or the **`/stop` slash command** —
-  which Slack does **not** allow inside threads, so words/reactions are the in-thread path. All post
+  which Slack does **not** allow inside threads, so the button, words and reactions are the in-thread path. All post
   "🛑 Stopped." with a resume command. Codex's native thread ID is persisted when the CLI
   announces it, before the first turn completes, so an interrupted first turn never offers the
   gateway's provisional UUID as a resume ID. The early notification uses the same clear-generation
@@ -1683,9 +1715,17 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
 - Native Slack **data tables**: `slack_post_table` (gateway control MCP) posts a Block Kit
   `data_table` into the current channel + thread using the workspace bot token and existing
   `chat:write` scope. Standalone read-only datasets render with a native header row, pagination,
-  sorting, and filtering. Supports 1–20 columns and 1–100 data
+  sorting, and filtering. Supports 1–20 columns and 1–200 data
   rows with exact rectangular-shape validation, numeric cells kept as `raw_number` for numeric
-  sorting, an accessible row-header column, and Slack's 10,000-character aggregate cell limit.
+  sorting, an accessible row-header column, and Slack's 20,000-character aggregate cell limit
+  (readable text; markup and link URLs do not count). **Rich cells**: a string carrying lightweight
+  Markdown — `[label](url)`, a bare https URL, `**bold**`, `` `code` ``, `~~strike~~`, `<@U…>` —
+  becomes a `rich_text` cell with real links, styling and mentions; an explicit object cell
+  `{text, url}` / `{text, bold|italic|strike|code}` / `{user}` does the same, and
+  `{button: {label, url}}` becomes an `action_cell` **row button** (unique `cg_table_row_<r>_<c>`
+  action ids, acknowledged by the ack-only handler) that opens a public https URL. Header cells
+  stay plain text (markers stripped) because Slack refuses rich text there; URLs are validated as
+  absolute http(s) and user ids as Slack ids before the call.
   Empty text cells display as an em dash. The top-level message always has supplied or generated
   notification/accessibility fallback text. Channel/thread ids come only from trusted gateway
   context; the tool cannot redirect a table. The injected `gateway-usage` skill distinguishes a
@@ -1729,6 +1769,29 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
   channel/thread ids come only from trusted gateway context. The injected `gateway-usage` skill
   routes chart requests to the tool and tells the AI not to truncate silently or duplicate the chart
   in its prose. Any allowed user. → TEST-PLAN: Native Slack charts.
+- **Composed replies** — `slack_compose_reply` (gateway control MCP, `src/slack/reply-blocks.js`)
+  attaches native Block Kit to the agent's FINAL answer so one message carries the takeaway and
+  its visuals: 1–12 ordered `sections` of type `text` (Markdown → mrkdwn section), `chart` (the
+  same fields and validation as `slack_post_chart`), `table` (the same as `slack_post_table`, rich
+  cells included), `collapsible` (a `container` block, collapsible, collapsed by default — sources,
+  validation detail), `card` (title, subtitle, body, subtext, public hero image, up to three link
+  buttons), `links` (an actions row of up to five link buttons) and `divider`; at most 40 blocks.
+  The MCP handler validates and acknowledges only (it tells the model which section broke which
+  Slack limit); the daemon observes the tool call in the engine's own stream — Claude's
+  `tool_use` block in `engines/stream.js`, Codex's `mcp_tool_call` item in `engines/codex.js`, the
+  same posture as `report_progress` — normalizes it into a `reply_blocks` event, and the Slack
+  progress writer appends the latest snapshot on `chat.stopStream` under the streamed answer text
+  and above the stats footer (a later call replaces the earlier one; no tool row is drawn for it).
+  With an overflowing answer the blocks ride the last follow-up with the footer; the classic
+  fallback carries them on the answer message. **Tiered terminal recovery**: Slack rejects a whole
+  `stopStream` for one bad block, so an `invalid_blocks` answer is retried with progressively
+  fewer — without the composed blocks, then without image previews, then without the feedback
+  controls, then with no blocks — each retry sending blocks only (never the terminal Markdown the
+  SDK already retains), so no visual can ever discard the answer or its stats footer. Buttons take
+  public https URLs only (`cg_reply_link_<n>` ids, ack-only). The `gateway-usage` skill documents
+  it in `references/composed-replies.md` with a row in the capability map and pointers from the
+  chart and table references. Slack only: other surfaces ignore the event. Any allowed user.
+  → TEST-PLAN: Composed replies.
 - Slack **reads & search**:
   - **This channel (bot token, no login):** `slack_channel_history` / `slack_thread_replies` read the
     current channel / a thread via the bot token, **hard-scoped to the current channel id** — safe

@@ -49,3 +49,6 @@ Pie example: `chart_type:"pie"`, `title:"Tickets by status"`,
 - After the tool succeeds, write only a short takeaway in the normal reply. Do not redraw an ASCII
   chart or paste all chart values again unless the user asked for them.
 - The tool is already hard-scoped to the current channel/thread. There is no channel-id argument.
+- To show the chart **inside the final answer** (takeaway + chart + table in one message), pass the
+  same fields as a `chart` section of `slack_compose_reply` instead — see
+  `references/composed-replies.md`.
