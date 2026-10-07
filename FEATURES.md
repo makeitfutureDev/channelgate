@@ -4556,3 +4556,6 @@ Codex reconnect progress events no longer fail a turn that subsequently reports 
 ### Typed Claude watchdog recovery
 
 Cold and warm Claude watchdog failures carry stable `ENGINE_SILENCE_BUDGET` or `ENGINE_PROCESS_GONE` details. Slack recognizes those verdicts independently of message wording and continues the existing session at most once. Explicit Stop, AbortError, external SIGKILL/exit 137, provider errors and incomplete unsafe turns remain ineligible for automatic continuation. Quiet windows still only report liveness; only the absolute silence budget or confirmed process loss ends a turn.
+### Observed tool context on engine hard kills
+
+Claude cold/warm and Codex hard-kill failures identify tool calls that had no recorded result at exit. Structured diagnostics retain only bounded tool names and `killedDuringTool`; commands, inputs and results are omitted. The reply explicitly leaves the cause unknown. This observation does not establish that a tool killed the engine, infer OOM, suppress diagnosis or permit automatic replay.

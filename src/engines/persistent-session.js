@@ -6,7 +6,7 @@
 import { claudeProviderError, createStreamConsumer } from "./stream.js";
 import { buildChildEnv } from "./child-env.js";
 import { appendTail } from "../util/tail.js";
-import { conciseProcessDiagnostic, processFailureMessage } from "../util/process-outcome.js";
+import { conciseProcessDiagnostic, midToolKillDetails, processFailureMessage } from "../util/process-outcome.js";
 import { probeEngineChild, runtimeTargetOr, signalEngineChild, spawnEngineChild } from "./runtime-target.js";
 import { newRunId } from "../runtimes/contract.js";
 import { createStallWatchdog, watchdogFailureDetails, describeSilence, DEFAULT_SILENCE_WINDOWS } from "./watchdog.js";
@@ -91,7 +91,7 @@ export class PersistentClaudeSession {
         this._die(null);
         return;
       }
-      const error = new Error(processFailureMessage("Claude", { code, signal, diagnostic: this.stderr, maxDiagnosticChars: 500 }));
+      const error = new Error(processFailureMessage("Claude", { code, signal, diagnostic: this.stderr, maxDiagnosticChars: 500, pendingToolNames: this.turn?.stream.pendingToolNames }));
       error.details = {
         exitCode: code,
         signal: signal || null,
@@ -99,6 +99,7 @@ export class PersistentClaudeSession {
         engine: "claude",
         runtime: this.target.backend,
         processEnded: true,
+        ...midToolKillDetails({ code, signal, pendingToolNames: this.turn?.stream.pendingToolNames }),
       };
       this._die(error);
     });

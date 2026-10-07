@@ -2664,3 +2664,4 @@ copying cross-channel auto-memory.
 
 - Fix completed Codex turns being reported as failures after recovered reconnect notices; retain terminal failure and unsafe-replay safeguards.
 - Restore bounded Claude watchdog continuation for cold and warm silence-budget failures using typed error details; retain Stop and ambiguous-kill exclusions.
+- Add observed pending-tool context to Claude and Codex hard-kill diagnostics without attributing the cause, suppressing diagnosis or replaying ambiguous work.

@@ -9,7 +9,7 @@ import { buildChildEnv } from "./child-env.js";
 import { MCP_STARTUP_TIMEOUT_SECONDS } from "./mcp-timeouts.js";
 import { safeSpawnEnv } from "../config/channel-env.js";
 import { browserSpawnEnv } from "../gateway/browser-env.js";
-import { conciseProcessDiagnostic, processFailureMessage } from "../util/process-outcome.js";
+import { conciseProcessDiagnostic, midToolKillDetails, processFailureMessage } from "../util/process-outcome.js";
 import { appendTail } from "../util/tail.js";
 import { trackEngineChild } from "./process-registry.js";
 import { containerPaths, dropHostLocationEnv, isIsolatedTarget, probeEngineChild, runtimeTargetOr, signalEngineChild, spawnEngineChild } from "./runtime-target.js";
@@ -401,7 +401,7 @@ export async function runClaude({
         return;
       }
       if (code !== 0 || exitSignal) {
-        reject(commandError(providerError?.message || processFailureMessage("Claude", { code, signal: exitSignal, diagnostic: stderr }), {
+        reject(commandError(providerError?.message || processFailureMessage("Claude", { code, signal: exitSignal, diagnostic: stderr, pendingToolNames: stream.pendingToolNames }), {
           stdout: truncate(stdout),
           stderr: truncate(stderr),
           exitCode: code,
@@ -409,6 +409,7 @@ export async function runClaude({
           engine: engineId,
           runtime: runtime.backend,
           processEnded: true,
+          ...midToolKillDetails({ code, signal: exitSignal, pendingToolNames: stream.pendingToolNames }),
           providerError: Boolean(providerError),
           providerCode: providerError?.code || "",
           providerKind: providerError?.kind || "",
