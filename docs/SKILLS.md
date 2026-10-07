@@ -61,6 +61,12 @@ missing, what is still awaiting review, dependency cycles, near-duplicate trigge
 and an estimate of the **always-on context** (every active skill's name + description rides in
 every prompt; the bodies do not). A soft cap (default 6000 tokens, Settings) flags heavy profiles.
 
+Unavailable grants and dependencies are omitted from the run's instructions rather than blocking
+the whole turn. The reply warns which skills could not load; available skills still work in both
+Claude and Codex, including after failover. Awaiting-review and removed entries do not load their
+bodies. Stored grants remain intact for later restoration. This availability handling does not
+relax ownership or runtime confinement: another author's private grant/dependency still rejects.
+
 The gateway writes the resolved profile into the conversation's folder as real files
 (`.claude/skills/<slug>/…`, marker-managed, write-on-change) and hands the same tree to Claude
 through its plugin and to Codex through the `.agents/skills` link. A project-owned folder of the

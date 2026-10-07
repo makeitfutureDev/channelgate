@@ -1,5 +1,14 @@
 # ChannelGate — Features
 
+## Unavailable skill grants
+
+- An unavailable personal skill or `requires:` dependency no longer blocks the author's entire
+  turn. Available skills still load into the isolated per-run plugin/catalog; missing, awaiting-review
+  and removed entries stay out. A warning names unavailable skills in streamed and final replies,
+  including either cross-engine fallback. Shared-skill omissions use the same warning path.
+  Stored grants remain unchanged so restoring a source can reactivate it. Personal ownership,
+  runtime artifact and confinement errors still reject the run.
+
 ## Microsoft Teams help guide
 
 - Teams `/help` returns a practical **How to use me** guide and its supported command list

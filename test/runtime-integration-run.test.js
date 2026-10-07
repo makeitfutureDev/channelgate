@@ -96,6 +96,63 @@ async function channel(id, name, meta = {}) {
   return { entry, meta: full };
 }
 
+test("missing personal grants and dependencies warn while both engines answer fresh and resumed turns", async (t) => {
+  const { putSkillRevision } = await import("../src/gateway/skills/catalog.js");
+  const { getUser } = await import("../src/config/store.js");
+  const valid = "rt-partial-personal-valid";
+  const missing = "rt-partial-personal-missing";
+  const dependency = "rt-partial-personal-dependency";
+  putSkillRevision({ visibility: "personal", createdBy: "U_RT", files: [{ path: "SKILL.md",
+    content: `---\nname: ${valid}\ndescription: Available private fixture\nrequires: [${dependency}]\n---\nPRIVATE-AVAILABLE-BODY\n` }] });
+  const names = [valid, missing];
+  saveSettings({ memoryReviewEvery: 0, composioMode: "personal", engineFallback: false, codexEnabled: true });
+  await setUser("U_RT", { skills: names });
+  t.after(() => setUser("U_RT", { skills: [] }));
+  for (const engine of ["claude", "codex"]) {
+    const backend = createFakeRuntimeBackend();
+    useBackend(backend);
+    const id = `C_RT_PARTIAL_${engine.toUpperCase()}`;
+    await channel(id, `rt-partial-${engine}`, { engine });
+    for (const text of ["hello with available skills", "continue with available skills"]) {
+      const events = [];
+      const result = await runMessage({ channelId: id, authorId: "U_RT", text, threadKey: "partial.001",
+        origin: "slack_foreground", preferCold: true, onEvent: (event) => events.push({ ...event, spawnsBefore: backend.calls.spawn.length }) });
+      assert.equal(result.engine, engine);
+      assert.match(result.content, /Continuing with the available skills\.[\s\S]*stub.*reply/i);
+      assert.ok(result.content.includes(missing) && result.content.includes(dependency));
+      const notes = events.filter((event) => event.kind === "answer_note" && event.text.includes(missing));
+      assert.equal(notes.length, 1, "one streamed warning accompanies the authoritative answer");
+      assert.equal(notes[0].spawnsBefore, backend.calls.spawn.length - 1, "warning precedes this turn's engine spawn");
+    }
+    assert.equal(backend.calls.spawn.length, 2);
+    if (engine === "claude") assert.ok(backend.calls.spawn.every((call) => call.args.some((arg) => String(arg).includes("user-grants-plugin"))));
+    else assert.ok(backend.calls.spawn.every((call) => call.args.some((arg) => String(arg).includes(valid))));
+  }
+  assert.deepEqual((await getUser("U_RT")).skills, names, "omissions never rewrite stored grants");
+});
+
+test("unavailable personal skill warning survives either cross-engine fallback", async (t) => {
+  const missing = "rt-fallback-personal-missing";
+  saveSettings({ memoryReviewEvery: 0, composioMode: "personal", engineFallback: true, codexEnabled: true });
+  await setUser("U_RT", { skills: [missing] });
+  t.after(() => setUser("U_RT", { skills: [] }));
+  for (const engine of ["claude", "codex"]) {
+    const backend = createFakeRuntimeBackend();
+    useBackend(backend);
+    const id = `C_RT_PARTIAL_FB_${engine.toUpperCase()}`;
+    await channel(id, `rt-partial-fallback-${engine}`, { engine });
+    const events = [];
+    const result = await runMessage({ channelId: id, authorId: "U_RT", text: `${engine.toUpperCase()}_STUB_LIMIT_FAIL_SAFE`,
+      threadKey: "partial-fallback.001", origin: "slack_foreground", preferCold: true, onEvent: (event) => events.push(event) });
+    assert.equal(result.fellBack, true);
+    assert.equal(result.engine, engine === "claude" ? "codex" : "claude");
+    assert.match(result.content, /Continuing with the available skills\.[\s\S]*stub.*reply/i);
+    assert.equal(result.content.split(missing).length - 1, 1);
+    assert.equal(events.filter((event) => event.kind === "answer_note" && event.text.includes(missing)).length, 1);
+    assert.equal(backend.calls.spawn.length, 2);
+  }
+});
+
 test("Claude, Codex and both Qwen engines prepare the nested Claude login before fresh and resumed spawns", async () => {
   saveSettings({ memoryReviewEvery: 0, engineFallback: false, codexEnabled: true,
     engineEnabled: { claude: true, codex: true, qwen: true, "qwen-eu": true },
