@@ -18,6 +18,31 @@ product overview.
 
 ## Unreleased
 
+- Fix completed Codex turns being reported as failures after recovered reconnect notices; retain terminal failure and unsafe-replay safeguards.
+- Restore bounded Claude watchdog continuation for cold and warm silence-budget failures using typed error details; retain Stop and ambiguous-kill exclusions.
+- Add observed pending-tool context to Claude and Codex hard-kill diagnostics without attributing the cause, suppressing diagnosis or replaying ambiguous work.
+
+- Refuse runtime selections for enabled optional providers whose own credential or endpoint is
+  missing, preserving existing pins and reporting the Settings repair. A complete provider
+  configuration and its default selection can be saved together without account fallback.
+- Processed Slack originals stay removed on ordinary thread replies after a successful download.
+  Explicit attachment downloads remain available, and failed downloads can still retry.
+- The bundled gateway guide now explains Composio discovery, independent tool batches and Python
+  workbench scripts for bulk operations, including account selection, remote result files and safe
+  file staging. It applies on every chat surface without overwriting operator guide overrides.
+- Claude Cloud MCP discovery now marks connected servers without an admissible transport as
+  unavailable, suppresses unsafe CLI targets, and rejects new selections against fresh host
+  definitions. Existing invalid picks remain removable and are still dropped safely at run time.
+  Teams Settings applies the same fresh admission check after cached discovery and hides Activate
+  for unavailable definitions while retaining Deactivate for existing grants.
+- An unlinked channel's Drive status reports gateway readiness without claiming that the channel
+  will sync on the next sweep. It explicitly asks for a folder link before channel sync can start.
+- Refresh the locked MCP SDK, URI and IP parsing dependencies to patched compatible releases;
+  production dependency auditing reports zero advisories.
+- Public automation documentation now covers run history, task outcomes, quiet execution and
+  existing-thread delivery, with the exact `get_schedule_runs` and `update_schedule` controls.
+  The documentation build again accounts for every registered control.
+
 - Far fewer approval cards. A gateway tool that changes channel or gateway state is now automatic
   for the admin or channel manager who asked for it (modes, network, folders, MCP servers,
   secrets, tokens, skill settings, gateway update and restart, the license key, instruction
@@ -52,6 +77,10 @@ product overview.
   and shows it in help. Teams configuration changes exclude older queued/history activations.
   Google Chat's selection is saved, with an explicit note that its current transport does not
   receive reaction events.
+- Settings can connect a Perplexity subscription for research delegation from Claude and Codex.
+  Agents receive quick/deep research, model discovery and quota tools with citation results;
+  the real login stays in the gateway and containers receive a protected relay placeholder.
+  The optional unofficial client requires network access and is omitted in Lean mode.
 
 - Teams settings now show only models for the selected engine in each channel/session list.
   After changing Engine, Load models refreshes the choices without saving; Apply saves the
@@ -2661,3 +2690,4 @@ copying cross-channel auto-memory.
   injected into `CLAUDE.md`; visible working folders under `~/Slack Agent/<channel>`.
 - Optional **admin-UI password**; one-command installer; encrypted config **backup/restore**;
   **launchd** service with `npm run update`.
+

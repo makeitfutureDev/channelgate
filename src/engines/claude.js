@@ -9,13 +9,13 @@ import { buildChildEnv } from "./child-env.js";
 import { MCP_STARTUP_TIMEOUT_SECONDS } from "./mcp-timeouts.js";
 import { safeSpawnEnv } from "../config/channel-env.js";
 import { browserSpawnEnv } from "../gateway/browser-env.js";
-import { conciseProcessDiagnostic, processFailureMessage } from "../util/process-outcome.js";
+import { conciseProcessDiagnostic, midToolKillDetails, processFailureMessage } from "../util/process-outcome.js";
 import { appendTail } from "../util/tail.js";
 import { trackEngineChild } from "./process-registry.js";
 import { containerPaths, dropHostLocationEnv, isIsolatedTarget, probeEngineChild, runtimeTargetOr, signalEngineChild, spawnEngineChild } from "./runtime-target.js";
 import { newRunId } from "../runtimes/contract.js";
 import { applyEgressEnv } from "../runtimes/container/egress-env.js";
-import { createStallWatchdog, describeSilence, DEFAULT_SILENCE_WINDOWS } from "./watchdog.js";
+import { createStallWatchdog, watchdogFailureDetails, describeSilence, DEFAULT_SILENCE_WINDOWS } from "./watchdog.js";
 import { QWEN_PROVIDERS } from "./qwen.js";
 
 const MAX_LOG_CHARS = 8_000;
@@ -299,6 +299,7 @@ export async function runClaude({
     // provider backing off after a rate limit all look identical to silence); the run ends only
     // if the process disappears or the absolute silence budget is exhausted.
     let silenceMs = 0;
+    let watchdogReason = "";
     const watchdog = createStallWatchdog({
       timeoutMs,
       maxSilenceMs: maxSilenceMs ?? timeoutMs * DEFAULT_SILENCE_WINDOWS,
@@ -310,7 +311,8 @@ export async function runClaude({
           /* a status callback must never end a live run */
         }
       },
-      onKill: ({ silentMs }) => {
+      onKill: ({ reason, silentMs }) => {
+        watchdogReason = reason;
         timedOut = true;
         silenceMs = silentMs;
         signalEngineChild(child, "SIGTERM");
@@ -389,11 +391,17 @@ export async function runClaude({
         return;
       }
       if (timedOut) {
-        reject(commandError(`Claude produced no output for ${describeSilence(silenceMs || timeoutMs)} — giving up`, { stdout: truncate(stdout), stderr: truncate(stderr), exitCode: null }));
+        const message = watchdogReason === "process-gone"
+          ? "Claude process disappeared before it finished"
+          : `Claude produced no output for ${describeSilence(silenceMs || timeoutMs)} — giving up`;
+        reject(commandError(message, {
+          ...watchdogFailureDetails({ engine: engineId, reason: watchdogReason }),
+          stdout: truncate(stdout), stderr: truncate(stderr), exitCode: null,
+        }));
         return;
       }
       if (code !== 0 || exitSignal) {
-        reject(commandError(providerError?.message || processFailureMessage("Claude", { code, signal: exitSignal, diagnostic: stderr }), {
+        reject(commandError(providerError?.message || processFailureMessage("Claude", { code, signal: exitSignal, diagnostic: stderr, pendingToolNames: stream.pendingToolNames }), {
           stdout: truncate(stdout),
           stderr: truncate(stderr),
           exitCode: code,
@@ -401,6 +409,7 @@ export async function runClaude({
           engine: engineId,
           runtime: runtime.backend,
           processEnded: true,
+          ...midToolKillDetails({ code, signal: exitSignal, pendingToolNames: stream.pendingToolNames }),
           providerError: Boolean(providerError),
           providerCode: providerError?.code || "",
           providerKind: providerError?.kind || "",

@@ -113,3 +113,31 @@ test("filterCarriedRootFiles retries a root attachment only while it is missing 
   assert.equal(download.uploadsSubFor("sched-abc-1788589702"), "__________1788589702"); // every non-digit becomes "_" — the pipeline's long-standing rule
   assert.equal(download.uploadsSubFor(""), "thread");
 });
+
+test("successful root uploads stay delivered after media cleanup, while explicit downloads can fetch them again", async (t) => {
+  const root = await scratch(t);
+  const sub = "1788589702.011849";
+  const file = slackFile();
+  let fetched = 0;
+  const fetchImpl = async () => { fetched++; return new Response("video bytes"); };
+  const [saved] = await download.downloadSlackFiles([file], "fixture-token", { root, sub, fetchImpl });
+  await rm(saved.path);
+  const carried = { ...file, carriedFrom: "root" };
+  assert.deepEqual(await pipeline.filterCarriedRootFiles([carried], { root, sub }), [], "ordinary replies must not undo cleanup");
+  assert.deepEqual(await pipeline.filterCarriedRootFiles([file], { root, sub }), [file], "new explicit attachments still download");
+  const again = await download.downloadChannelFile({ channelId: "C0BE4F6TR3Q", fileId: file.id, root, sub,
+    botToken: "fixture-token", call: async () => ({ ok: true, file }), fetchImpl });
+  assert.equal(again.reused, false);
+  assert.equal(fetched, 2);
+  assert.equal(await readFile(again.path, "utf8"), "video bytes");
+});
+
+test("failed root uploads retain retry behavior after a later reply", async (t) => {
+  const root = await scratch(t);
+  const file = { ...slackFile(), carriedFrom: "root" };
+  const sub = "1788589702.011849";
+  const [failed] = await download.downloadSlackFiles([file], "fixture-token", { root, sub,
+    fetchImpl: async () => new Response("unavailable", { status: 503 }) });
+  assert.equal(failed.skipped, "HTTP 503");
+  assert.deepEqual(await pipeline.filterCarriedRootFiles([file], { root, sub }), [file]);
+});

@@ -53,7 +53,7 @@ an explanation of the feature or setting, verified configuration locations, exam
 permissions/defaults/limits, and related `/docs` links. Add a new topic to the registry and
 verify its route in the final build. Search includes authored handbook articles, the control reference, and retained technical references.
 
-`npm run build` also verifies all 104 gateway and 10 external skills-library tools against
+`npm run build` also verifies all 106 gateway and 10 external skills-library tools against
 their source registrations. Every tool must have exactly one heading in the control reference;
 unknown or duplicate headings fail the build. New tools therefore require documentation in
 the same change. CI runs this gate on tool-source, feature-catalog and documentation changes.

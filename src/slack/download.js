@@ -12,7 +12,7 @@
 // can see anywhere".
 import path from "node:path";
 import { lstat } from "node:fs/promises";
-import { ensureRealDir, writeStreamNoFollow } from "../gateway/safe-fs.js";
+import { ensureRealDir, writeNoFollow, writeStreamNoFollow } from "../gateway/safe-fs.js";
 import { ATTACHMENT_MAX_BYTES, formatBytes, oversizeMessage } from "../util/bounded-bytes.js";
 import { listChannelIds } from "./lists.js";
 import { botApiCall } from "./read.js";
@@ -50,6 +50,24 @@ export function attachmentPath(root, sub, file) {
 export async function isAttachmentOnDisk(root, sub, file) {
   try {
     const info = await lstat(attachmentPath(root, sub, file));
+    return info.isFile() && info.size > 0;
+  } catch {
+    return false;
+  }
+}
+
+// Successful delivery survives cleanup of the original media. This tiny marker has no URL,
+// credential or content. It suppresses inferred root retries only; explicit downloads ignore it.
+export async function wasAttachmentDelivered(root, sub, file) {
+  if (!/^[A-Za-z0-9_.-]+$/.test(String(sub || ""))) return false;
+  try {
+    const uploads = path.join(root, "uploads");
+    const thread = path.join(uploads, sub);
+    const history = path.join(thread, ".downloaded");
+    for (const dir of [uploads, thread, history]) {
+      if (!(await lstat(dir)).isDirectory()) return false;
+    }
+    const info = await lstat(path.join(history, attachmentFileName(file)));
     return info.isFile() && info.size > 0;
   } catch {
     return false;
@@ -112,6 +130,10 @@ export async function downloadSlackFiles(files, botToken, { root, sub, maxBytes 
           }
         },
       });
+      if (bytes > 0) {
+        const history = await ensureRealDir(root, "uploads", sub, ".downloaded");
+        await writeNoFollow(path.join(history, safeName), "delivered\n");
+      }
       saved.push({ name: safeName, path: dest, mimetype: f.mimetype, bytes });
     } catch (e) {
       saved.push({ name: f.name, skipped: e.message });

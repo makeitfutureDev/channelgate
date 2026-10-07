@@ -7,6 +7,7 @@ import { getChannelMeta } from '../../config/store.js';
 import { effectiveMeta } from '../../gateway/run.js';
 import { resolveMakeToolboxUpdate } from '../../gateway/make-toolbox.js';
 import { selectionFieldForEngine, persistedSelectionForEngine } from '../../gateway/mcp-discovery.js';
+import { assertNewMcpSelections } from '../../gateway/mcp-selection.js';
 import { requireAdapter } from '../../engines/registry.js';
 import { listSkills } from '../../gateway/skills/catalog.js';
 import { canSeeSkill, grantSkillsToChannel, revokeSkillsFromChannel } from '../../gateway/skills/authoring.js';
@@ -56,11 +57,15 @@ async function cloudItems(ctx, engine) {
   const inheritedKeys = new Set(org.map(item => keyFor(engine, item)));
   // A channel card must not publish the administrator's ungranted/private connection catalog.
   const available = ctx.isShared ? [] : await requireAdapter(engine).discoverMcps({ channelId: engine === 'codex' && ctx.meta.codexAuthSource === 'channel' ? ctx.channelId : '' });
+  const availableKeys = new Set(available.map(item => keyFor(engine, item)));
   const rows = new Map();
   for (const source of [...available, ...direct, ...org]) {
     const key = keyFor(engine, source);
     if (!key || rows.has(key)) continue;
-    rows.set(key, { key, name: source.name || source.id || key, direct: directKeys.has(key), inherited: inheritedKeys.has(key), source });
+    rows.set(key, { key, name: source.name || source.id || key, direct: directKeys.has(key), inherited: inheritedKeys.has(key), source,
+      selectable: source.selectable !== false && (ctx.isShared || availableKeys.has(key)),
+      admissionReason: source.admissionReason || 'Missing definition',
+    });
   }
   return [...rows.values()].sort((a, b) => Number(b.direct || b.inherited) - Number(a.direct || a.inherited) || a.name.localeCompare(b.name));
 }
@@ -139,8 +144,8 @@ export async function renderCatalogPage(page, ctx, ui) {
   const all = await cloudItems(ctx, engine), slice = pageSlice(all, ctx.state.cloudPage);
   body.push(ui.text(`${engine} — ${all.length} capabilities — page ${slice.page + 1}/${slice.totalPages}`));
   for (const item of slice.items) {
-    body.push(ui.text(`${item.name} · ${item.inherited ? 'Organization (inherited)' : item.direct ? 'Active in channel' : 'Inactive'}`));
-    if (!item.inherited) body.push(ui.buttons([ui.execute(item.direct ? 'Deactivate' : 'Activate', 'settings.cloud.toggle', { engine, key: item.key, activate: !item.direct }, 'none')]));
+    body.push(ui.text(`${item.name} · ${item.inherited ? 'Organization (inherited)' : item.direct ? 'Active in channel' : 'Inactive'}${item.selectable ? '' : ` · unavailable: ${item.admissionReason}`}`));
+    if (!item.inherited && (item.direct || item.selectable)) body.push(ui.buttons([ui.execute(item.direct ? 'Deactivate' : 'Activate', 'settings.cloud.toggle', { engine, key: item.key, activate: !item.direct }, 'none')]));
   }
   actions.push(...pager(ui, page, slice.page, slice.totalPages, { engine }));
   return { body, actions };
@@ -243,8 +248,11 @@ export async function handleCatalogAction(action, data, ctx, _ui) {
       const available = await requireAdapter(engine).discoverMcps({ channelId: engine === 'codex' && current.meta.codexAuthSource === 'channel' ? current.channelId : '' });
       selection = persistedSelectionForEngine(engine, available.find(item => keyFor(engine, item) === key));
       if (!selection) throw new Error('That MCP capability is no longer available.');
+      await assertNewMcpSelections(engine, [selection], current.meta[field] || [], {
+        channelId: current.meta.codexAuthSource === 'channel' ? current.channelId : '',
+      });
     }
-    // Discovery is asynchronous; roles may have changed while it ran.
+    // Discovery and admission are asynchronous; recheck roles before the write.
     const latest = await fresh(ctx);
     if (!latest.userIsAdmin) throw new Error('Only administrators can manage Cloud MCP.');
     await latest.patch((stored, authorized) => {

@@ -462,7 +462,8 @@ test("Slack attachments stream to disk in chunks — the file is complete and ne
   assert.equal(handedOut, chunks.length, "every chunk was pulled through the stream");
   assert.equal(saved.bytes, 2 * 1024 * 1024 + 4);
   assert.equal((await stat(saved.path)).size, 2 * 1024 * 1024 + 4);
-  assert.deepEqual(await readdir(path.dirname(saved.path)), ["F012-clip.mp4"], "no temp file is left behind");
+  assert.deepEqual((await readdir(path.dirname(saved.path))).sort(), [".downloaded", "F012-clip.mp4"], "only the file and delivery history remain");
+  assert.deepEqual(await readdir(path.join(path.dirname(saved.path), ".downloaded")), ["F012-clip.mp4"], "no temp file is left behind");
 });
 
 test("a streamed body that turns out to be Slack's HTML sign-in page is refused before it is committed", async (t) => {

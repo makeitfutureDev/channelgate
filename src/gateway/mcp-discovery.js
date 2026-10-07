@@ -1,3 +1,4 @@
+import { resolveClaudeMcpConfig } from "../engines/claude-mcp.js";
 // Lists the optional MCP/app capabilities available to an engine:
 //   claude → parse `claude mcp list`
 //   codex  → ask `codex app-server` for the ACTIVE runtime MCP inventory
@@ -100,7 +101,7 @@ export function selectionFieldForEngine(engine) {
 }
 
 export function persistedSelectionForEngine(engine, entry) {
-  if (!entry || typeof entry !== "object") return null;
+  if (!entry || typeof entry !== "object" || entry.selectable === false) return null;
   if (engine !== "codex") {
     if (!entry.name || !entry.match || !entry.namespace) return null;
     return { name: entry.name, match: entry.match, namespace: entry.namespace };
@@ -157,6 +158,22 @@ function parseClaude(text) {
     });
   }
   return servers.sort((a, b) => a.name.localeCompare(b.name));
+}
+
+// CLI health is not transport admission: a server connected with the operator's headers or
+// env still cannot run inside an isolated agent. Never expose raw CLI targets for rejected rows.
+export async function catalogFromClaudeList(text, options = {}) {
+  const entries = parseClaude(text);
+  const { servers, rejected } = await resolveClaudeMcpConfig(entries, options);
+  const reasons = new Map(rejected.map(entry => [entry.name, entry.reason]));
+  return entries.map(entry => {
+    const definition = servers[entry.name];
+    if (!definition) return { name: entry.name, namespace: entry.namespace,
+      connected: entry.connected, selectable: false,
+      admissionReason: reasons.get(entry.name) || "has no usable transport definition" };
+    return { ...entry, selectable: true, definition,
+      target: definition.type === "stdio" ? [definition.command, ...(definition.args || [])].join(" ") : definition.url };
+  });
 }
 
 // Turn app-server's status response into the small, secret-free catalog used by the gateway.
@@ -397,7 +414,7 @@ function refresh(engine, channelId = "") {
     let data = cache.get(key)?.data ?? [];
     try {
       if (engine === "codex") data = await listCodexRuntimeMcps({ failClosed: false, channelId });
-      else data = parseClaude(await run("claude", ["mcp", "list"]));
+      else data = await catalogFromClaudeList(await run("claude", ["mcp", "list"]));
     } catch {
       /* keep previous data on failure */
     }

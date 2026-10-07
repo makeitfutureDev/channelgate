@@ -431,9 +431,9 @@ export function pinEgressSecretsStrictDefault({ configured, save = saveSettings,
 // Write-only from the API like every other token here — has*/last4 on listings, the value only
 // through POST /api/secrets/reveal. Keyed by PROVIDER so a second endpoint (a different region, a
 // different account) is a table row rather than a second copy of this accessor.
-export function getQwenConfig(providerId) {
+export function getQwenConfig(providerId, { settingsPatch = {} } = {}) {
   const entry = qwenProvider(providerId);
-  const s = getSettings();
+  const s = { ...getSettings(), ...settingsPatch };
   const stored = (key) => (typeof s[key] === "string" ? s[key].trim() : "");
   return {
     id: entry.id,
@@ -441,6 +441,23 @@ export function getQwenConfig(providerId) {
     // The shipped endpoint is a DEFAULT, not a guarantee: a provider whose endpoint is
     // account-specific ships none, and stays unconfigured until the operator saves theirs.
     baseUrl: stored(entry.settings.baseUrl) || entry.defaultBaseUrl,
+  };
+}
+
+// Perplexity's subscription session is a cookie value, never an API key. Accept only
+// RFC 6265 cookie-octets so it cannot inject a second cookie or a request header.
+export function isPerplexitySessionToken(value) {
+  return typeof value === "string" && value.length > 0 && value.length <= 16384 &&
+    /^[\x21\x23-\x2B\x2D-\x3A\x3C-\x5B\x5D-\x7E]+$/.test(value);
+}
+
+// Settings only: clearing this login must not revive an ambient credential. Invalid
+// hand-edited values fail closed, just as invalid values supplied through the API do.
+export function getPerplexityResearchConfig() {
+  const s = getSettings();
+  return {
+    enabled: s.perplexityResearchEnabled === true,
+    sessionToken: isPerplexitySessionToken(s.perplexitySessionToken) ? s.perplexitySessionToken : "",
   };
 }
 export function hasQwenApiKey(providerId) {
@@ -1037,6 +1054,7 @@ function last4(v) {
 export function settingsForApi() {
   const c = resolveSlackConfig();
   const s = getSettings();
+  const perplexity = getPerplexityResearchConfig();
   return {
     // Echo this back on a PUT to get compare-and-swap semantics: the save is refused (409) if
     // anything wrote settings in between, instead of silently reverting the other writer.
@@ -1114,6 +1132,10 @@ export function settingsForApi() {
     // One entry per Anthropic-compatible provider, so the admin UI renders a card per harness
     // instead of carrying a hard-coded copy of the table.
     qwenProviders: qwenProviderSettings(),
+    perplexityResearch: {
+      enabled: perplexity.enabled,
+      hasSessionToken: Boolean(perplexity.sessionToken),
+    },
     modelChangeAccess: getModelChangeAccess(),
     modelShortcuts: getModelShortcuts(),
     engineEnabled: getEngineEnabledMap(),

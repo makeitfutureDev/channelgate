@@ -274,6 +274,10 @@ const makeQwenAdapter = (entry) => validateEngineAdapter({
   discoverMcps: () => listEngineMcps("claude"),
   discoverModels: () => discoverQwenModels({ providerId: entry.id }),
   credentialState: () => qwenCredentialState(entry.id),
+  async selectionReadiness(options) {
+    const provider = await resolveQwenProvider(entry.id, options);
+    return { ready: provider.configured, reason: provider.error };
+  },
   // `claude --version` answers "is the CLI installed" — true even with no QwenCloud key at all —
   // so the configured provider is reported beside it. Like the other adapters it never flips
   // `ready`: the run path fails closed with the remedy, and the admin rail says "not configured"
@@ -338,6 +342,7 @@ const codex = validateEngineAdapter({
     const catalog = await listEngineMcps("codex", { channelId: target?.meta?.codexAuthSource === "channel" ? target.meta.channelId : "" }).catch(() => []);
     const codexMcpPolicy = codexMcpPolicyFor(catalog, r.allowedMcps || []);
     codexMcpPolicy.servers.push(...(r.pluginMcpServers || []));
+    codexMcpPolicy.servers.push(...(r.managedMcpServers || []));
     // Mirrors the drop resolveOptionalMcpConfig already recorded for the payload: a selected server
     // with no credential-safe definition is disabled for this launch instead of failing the turn.
     // Plugin-provided servers arrive with their definition already proven by run-engine-mcp.js.

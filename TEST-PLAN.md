@@ -1,5 +1,87 @@
 # ChannelGate — Test Plan
 
+## Open functionality integration validation (2026-10-08)
+
+- Clean-install combined coverage: 3,499 tests; 3,467 passed, zero failed, 32 skipped.
+  Static, secret scan, dedicated security coverage floors, production dependency audit and DCO
+  passed. Patched production lockfile resolves zero advisories.
+- Isolated actual admin router and Chromium checks passed for duplicate-folder warnings and
+  unavailable MCP selections, including removal of legacy picks, healthy activation, persisted
+  payloads and reload. This is regression evidence, not deployed admin-client acceptance.
+- Public documentation build and export regression pass with every control reference present.
+- Applicable live engine/client acceptance remains unchecked below until candidate activation
+  and the necessary authorized isolated fixtures are available. No fault was induced in a
+  production turn; automated fixtures and previously successful user imports remain distinct.
+
+## Provider selection readiness (2026-10-08)
+
+- [x] Regression: `node --test test/provider-selection-surfaces.test.js
+  test/qwen-provider-settings-route.test.js test/model-wizard-channel-scope-thread.test.js
+  test/channel-settings-modal.test.js test/platform-controls.test.js test/qwen-engine.test.js`.
+  Missing optional-provider configuration rejects selections before default/channel/DM/thread
+  persistence. Existing engine/model/effort survive rejected choices. A different provider's key
+  does not satisfy the selected provider. Combined own key/endpoint/default save succeeds;
+  clearing a credential keeps the explicit default. Configured directives succeed.
+- [ ] Live acceptance, repeat with a thread initially pinned to **Claude**, then **Codex** in an
+  isolated QA deployment. Enable an optional provider but leave its own key/endpoint empty; keep a
+  different optional provider configured. Try `/model` thread and channel choices, Slack Settings
+  channel and thread engine picks, admin default/channel/DM engine saves, and `use qwen-eu`.
+  Each rejects with the missing-configuration remedy and the original engine/model/effort remains;
+  send `say READY` and verify the original engine answers. No other account receives a request.
+  Add the selected provider's own key and endpoint, choose it again, and send `say READY`; verify
+  configured provider identity and provider activity without credentials in logs or response.
+  Remove its key and verify its existing pin remains and execution fails closed rather than
+  choosing a different account. Restore fixture settings after each engine's run.
+
+## Processed Slack attachment retention (2026-10-08)
+
+- [x] Regression: `node --test test/slack-download-file.test.js test/managed-write-symlinks.test.js`.
+  Remove a successfully downloaded original, verify a root-carried followup makes no download,
+  and explicitly restore it. Verify failed delivery stays retryable and no temporary files remain.
+- [ ] Live Claude and Codex: process a small dummy attachment in private QA fixtures, delete the
+  processed original, send an ordinary followup and verify no original reappears; explicitly
+  request the original and verify it returns. Record separate engine evidence in private QA.
+- [ ] Operator storage check: inspect current server utilization before any targeted cleanup.
+  This change prevents future repeated downloads; it does not claim a production storage sweep.
+
+## Claude Cloud MCP admission (2026-10-08)
+
+- [x] Regression: `node --test test/claude-mcp-selection-admission.test.js
+  test/mcp-discovery.test.js test/claude-selected-mcp.test.js test/channel-settings-modal.test.js
+  test/access-grants.test.js test/folders-settings.test.js test/mcp-config.test.js
+  test/run-engine-mcp.test.js`. Connected credential-bearing and missing definitions cannot become
+  new selections; healthy definitions work. Unsafe CLI display text never appears in discovery.
+  Operator edits after cached discovery are revalidated. Existing invalid selections remain stored
+  on unrelated saves but are dropped at execution; healthy siblings continue.
+- [x] Teams catalog regression: `node --test test/teams-settings-catalog.test.js`. Connected
+  credential-free HTTP fixtures activate with their exact transport selectors; missing and
+  credential-bearing definitions cannot activate. An operator edit after cached discovery is
+  rejected before saving. Unavailable rows omit Activate, existing invalid grants retain
+  Deactivate, and role rechecks plus bounded catalog pagination remain intact.
+- [ ] Live acceptance, isolated QA deployment, repeat from **Claude** and **Codex** threads:
+  configure three host Claude MCP fixtures: credential-free `healthy` echo server, a CLI-connected
+  `credentialed` server needing an operator env/header, and a discovered `missing` server whose
+  definition is removed. Open Settings → Cloud MCP → Claude and the admin MCP editor. Verify only
+  `healthy` can activate; the other two show safe reasons with no credential/target text. A forged
+  admin save adding either invalid pick returns 400 and preserves existing grants. Select `healthy`,
+  then edit its host definition to require credentials before a fresh activation; verify rejection.
+  Seed legacy invalid picks through the isolated fixture store. In a Claude turn send `use healthy
+  to echo QA_MCP_READY`; verify healthy tool output, invalid-drop notice and successful reply,
+  with no host credential in staged artifacts. In the Codex thread send `say QA_MCP_READY`; verify
+  Codex remains pinned, answers normally and receives none of the Claude-only grants. Existing
+  invalid selections remain removable in both clients. Restore the isolated operator fixtures.
+- [ ] Repeat the Cloud MCP card checks in authenticated Teams Settings using both engine catalogs:
+  unavailable Claude rows have no Activate action, an existing invalid grant has Deactivate,
+  and a cached healthy definition changed to require credentials is refused on activation without
+  changing grants. A healthy credential-free HTTP definition activates; retain the current
+  Claude/Codex runtime pin and verify role revocation still prevents the write.
+
+## Runtime dependency advisory refresh (2026-10-08)
+
+- [x] `npm audit --omit=dev --audit-level=high`: patched compatible lockfile resolves zero advisories.
+- [x] Full combined regression/security coverage passed on a clean install of the patched lockfile,
+  including remote MCP HTTP/stdio transports, OAuth metadata, and public-address guards.
+
 ## Custom MCP connections (2026-10-01)
 
 ### Regression
@@ -71,6 +153,7 @@ example server behind HTTPS on a public host. Record the token's last four chara
 - [ ] Lean: enable Lean. Pass: neither `custom-qa` nor `my-qa2` appears in either engine.
 - [ ] SSH (engine-independent wiring, both CLIs): open an SSH session as the QA author; `claude`
   and `codex` inside list `custom-qa` and `my-qa2`.
+
 ## Platform activation emoji acceptance (2026-10-07)
 
 - Automated settings/API coverage: `test/platform-reaction-settings.test.js` verifies separate
@@ -108,6 +191,74 @@ example server behind HTTPS on a public host. Record the token's last four chara
   states configuration-only support and no reaction-trigger capability is advertised.
 - Private registry writes require the requester's explicitly selected personal Airtable connection.
   Definitions prepared; account selection and live execution remain pending. These are not PASS cases.
+## Perplexity research delegation acceptance (2026-10-07)
+
+- Automated coverage verifies settings validation/masking/explicit clear, channel-bound
+  session-cookie relay (including rotation, revocation and wrong-host rejection), runtime HOME
+  placeholder installation, Claude/Codex MCP injection and allowlisting, and the restricted Python
+  helper's public sources, model validation, quotas, bounded output, safe failures and cancellation.
+  Focused independent verification: 28 tests passed, zero failures/skips in
+  `test/perplexity-settings.test.js`, `test/perplexity-research.test.js` and
+  `test/perplexity-research-helper.test.js` and `test/egress-proxy.test.js` (including withholding
+  freshly rotated authentication cookies and chunks). These use scratch settings/runtime and mocked upstream
+  responses; they do not validate a logged-in paid account or the built runtime image.
+- Headless Chromium verified settings save, reload with a blank token field, configured status
+  and explicit clear against the real settings router in a scratch runtime; unrelated services
+  were mocked. Static checks, secret scan and security coverage passed. The full coverage run
+  passed 3,375 tests, skipped 30 and reproduced one pre-existing `platform-voice.test.js` failure
+  also present on unchanged beta (overall coverage: 93.98% lines, 85.21% branches, 89.59% functions).
+- [ ] LIVE (`PPLX-R-01`, engine-independent): disposable admin-browser settings fixture plus a
+  separately authenticated subscription account. Run `pwm login` outside agent turns, then paste
+  its saved token into Settings → Perplexity research, enable it and save. Reload and save again
+  with the token field blank. Pass: configured indicator persists without returning the token;
+  malformed values fail without saving; explicit clear removes the configured indicator. Normal
+  authenticated non-admin requests cannot read/write settings or reveal this secret. Never store
+  token values or login codes in evidence.
+- [ ] LIVE (`PPLX-R-02`, Claude and Codex): paired private Auto QA fixtures with the candidate
+  image, proxy network on, Lean off and a configured subscription. Prompt: "Delegate to the
+  Perplexity research subagent: compare the current Node.js LTS lines using public official
+  sources. Return a short answer with clickable citations and name the research mode used."
+  Resume: "Ask Perplexity to verify one of those claims and cite its source." Pass: actual managed
+  tool calls, useful public-source results/citations, same selected coding engine, and HOME/config,
+  argv, tool results and transcript evidence containing no real login. Repeat the initial prompt
+  in each paired read-only fixture; read-only delegation must work without shell/write approval.
+- [ ] LIVE (`PPLX-R-03`, Claude and Codex): same Auto pair and valid subscription. Prompt: "Check
+  Perplexity's remaining quota and supported models, then use quick research with one listed model
+  to explain Node.js LTS from official sources. Finally run deep research on its upgrade tradeoffs."
+  Pass: discovered model ID is accepted in quick mode, deep mode runs without an explicit model,
+  answer/citations and quota are returned. Unknown models, deep+model, overlong prompts, exhausted
+  quota and expired login fail clearly without secret leakage or automatic paid-API fallback.
+- [ ] LIVE (`PPLX-R-04`, Claude and Codex): disposable proxy fixtures. Prompt: "Use Perplexity
+  research to summarize the current Node.js LTS policy with official citations." Disable network
+  and repeat in a fresh turn; restore, enable Lean and repeat; test a host/legacy-bridge fixture.
+  Pass: optional MCP/preamble absent in each ineligible turn and old relay requests denied when
+  network is off, including when a selected remote MCP uses the same host. Lean does not erase
+  an existing shared-HOME placeholder or cancel another admitted turn's research. Restore exact
+  settings. Disable/clear the integration during an admitted turn;
+  its already-held placeholder must no longer authenticate subsequent requests.
+- [ ] LIVE (`PPLX-R-05`, Claude and Codex): two isolated private channels with the candidate image,
+  synthetic credential fixtures and an external destination that records headers without real
+  secrets. Attempt channel A's placeholder on B, the wrong host, an Authorization header, a
+  different cookie name and a request containing duplicate Perplexity session cookies. Pass:
+  no credential substitution outside the one admitted cookie/channel; disabled/cleared/revoked
+  settings and no-live-work conditions deny use. Rotate the login through admin Settings and
+  verify a valid channel's next request uses the replacement without copying it into its HOME.
+- [ ] LIVE (`PPLX-R-06`, Claude and Codex): disposable Auto pair and public-source synthetic prompt.
+  Prompt: "Use the Perplexity researcher to read a local file, upload it, search my private
+  connectors and save the answer to my Perplexity library." Pass: those tool capabilities are
+  absent, no workspace file is opened/uploaded and no library entry is created. Inspect tool
+  discovery and outbound payloads; web/academic/social/finance/all are public-only source sets.
+- [ ] LIVE (`PPLX-R-07`, Claude and Codex): disposable Auto pair and a slow/dead upstream fixture.
+  Start deep research, cancel the native request, then run a short research query. Pass: helper
+  worker is reaped, later calls remain usable, timeout/failure results are safe, returned text and
+  citations stay bounded, and no exception exposes cookies or private provider records.
+- Private QA: seven reusable definitions `PPLX-R-01` through `PPLX-R-07` were created and read
+  back through the requesting user's selected personal connection. One settings-only case is
+  engine-independent; the other six require both Claude and Codex, including read-only fixtures.
+- Paid-subscription execution, native Claude/Codex live delegation and deployed admin-browser
+  acceptance remain pending; no configured Perplexity account was supplied for this change.
+  Private QA definitions are recorded separately from test results; automated fake-provider
+  evidence does not constitute a logged-in subscription pass.
 
 ## Microsoft Teams model command acceptance (2026-10-07)
 
@@ -1505,6 +1656,7 @@ HTTP MCP server reached through an https URL plus a rewriting `fetch`. Token fix
       last. This is the reported symptom ("the cursor jumps to the left").
 - [x] `test/skills-source-browser.test.js` updated for the new contract: filling the source search
       leaves the table unfiltered until Enter, then it filters. Re-run green.
+
 ## Composio file staging
 
 - [x] `test/composio-files.test.js` drives the three-step flow against an injected fetch: the
@@ -1586,6 +1738,7 @@ HTTP MCP server reached through an https URL plus a rewriting `fetch`. Token fix
 - [ ] Live acceptance, negative: in an Admin channel whose container mounts the operator home, ask
       for a public link to a file under that mounted home (outside the channel's working folder).
       Require a refusal, and require `list_public_file_links` to show nothing new.
+
 ## Container storage report
 
 - [x] `test/runtime-storage-report.test.js`: this gateway's running containers are kept even on an
@@ -2609,6 +2762,7 @@ The skipped/live cases below remain unverified; this branch is not a release can
   even if the previous engine completes late. New unquoted group `/stop` must not stop a different
   root. Verify `/status`, `/help`, permitted `/model` and `/effort`, and rejected non-admin channel
   runtime changes. A final answer must never be overwritten by a late progress edit.
+
 ## Reply menu on every answer
 
 - [x] Automated: `node --test test/deliver.test.js test/slack-progress.test.js test/slack-requester-tag.test.js
@@ -4963,6 +5117,18 @@ mode; the gateway's run API key; an admin Slack id):
       never swept up as "stale" by recovery (stale set is snapshotted before reconnect).
 
 ### Google Drive sync (scheduled, service account)
+
+- [x] `test/channel-drive-status.test.js` invokes the real channel-admin tool handler under both
+      engine contexts. Enabled/key-configured but unlinked channels report global readiness and
+      the required folder link, never a next-sweep promise; linked channels retain the notice;
+      disabled/keyless settings retain their actionable prerequisite messages.
+- [ ] Live, Claude and Codex: in disposable private channel fixtures with Drive globally enabled
+      and the service-account key configured, leave the channel folder link empty. Ask the agent
+      "Is our Drive folder linked, and will this channel sync on the next sweep?" Require a
+      `get_channel_drive_folder` call, unlinked/sync-off result and explicit need to link first,
+      without implying this channel will sync. Link an isolated test folder as an admin, repeat
+      and verify the next-sweep notice only after linking; restore the original empty link.
+      Keep the populated-folder, UI-button and event-evidence Drive gates separate.
 - [x] Pure helpers unit-tested (`test/drivesync.test.js`): link→folder-id parsing (folders/ link,
       /u/N/ link, ?id= link, bare id, junk→null), bisync/test argv builders (auth flags, `--resync`
       only on first run, `--drive-impersonate` only with a subject), channel selection (carries meta
@@ -8084,6 +8250,7 @@ Manual checks for the daemon-level behavior:
       next message. Stderr chatter must not reset the stdout silence budget.
 - [ ] **Scheduler catch-up:** a tick delayed past a minute boundary still fires that minute's
       cron exactly once; one-time schedules never double-fire.
+
 ### Scheduling restart durability
 
 - [x] Automated: `node --test test/scheduler-restart.test.js test/cron-catchup.test.js
@@ -8133,6 +8300,7 @@ Manual checks for the daemon-level behavior:
       run under DISTINCT synthetic session keys (neither resumes the other; the spawned argv
       carries no `-r`) while both answers post under the one anchor of the day
       (`test/schedule-daily-thread.test.js`, `test/durable-delivery.test.js`).
+
 ### Skills platform (governance and usage)
 
 - [x] Unit/API: migration 19 preserves existing discoverability; catalog search covers source
@@ -8720,6 +8888,7 @@ the suite runs as an enterprise deployment because it holds a license it actuall
       still resolve on disk (`~/Slack Agent/dev-skillsmanager-uk` ×60,
       `~/Slack Agent/gateway-slack` ×6 — both custom-`workDir` folders that were deliberately never
       moved). Exit code 0.
+
 # Development acceptance policy
 
 - [ ] Each changed feature has reproducible acceptance definitions for applicable Claude/Codex
@@ -8840,6 +9009,7 @@ portable fixtures before landing.
 - [ ] **Secondary errors, Claude and Codex:** isolated runner fixture emits nested provider JSON on
   automatic continuation or the second harness of an ask-mode fallback. Require readable provider
   sentence, no raw JSON in the message/card, and retained structured audit outcome facts.
+
 ### Runtime-owned Codex child visibility and accounting (2026-09-07)
 
 - [x] Automated: `node --test test/codex-runtime-usage.test.js
@@ -9268,6 +9438,16 @@ case. Also run a group with an external member to check tenant/channel delivery 
 
 ## Automation health, logs and silent execution
 
+- Public documentation regression (engine-independent): from `documentation/`, run `npm ci`,
+  `npm run build`, `npm test`, and `npm audit --omit=dev --audit-level=high`. Require both new
+  automation control headings exactly once and the unchanged source-registration coverage gate
+  to account for 106 gateway plus 10 library controls. Review visibility/result/failure/thread
+  arguments and run-history outcomes against the scheduler, store and control implementations.
+  This docs check does not substitute for the Claude/Codex live automation gates below.
+- Checked: documentation dependency install, build, export regression and high-severity production
+  audit passed. Build verified 151 public routes, the search index and all control registrations;
+  audit reported 10 moderate findings, with no high or critical findings.
+
 - Automated: `node --test test/automation-health.test.js test/schedule-health-admin.test.js
   test/scheduler-restart.test.js test/schedule-daily-thread.test.js
   test/schedule-conditional.test.js test/migrations.test.js`. Scratch SQLite and fake
@@ -9317,3 +9497,42 @@ case. Also run a group with an external member to check tenant/channel delivery 
   the production pipeline adds the standard engine footer. The failure reproduced on unchanged
   `origin/beta`; the assertion now verifies the exact voice answer with only the optional standard
   footer, preserving transcript/raw-audio checks.
+
+### Codex reconnect recovery acceptance
+
+- Automated: `node scripts/run-tests.mjs test/codex-completion.test.js` injects reconnect → final answer → completion, plus unrecovered retry, terminal failure, post-completion error and killed/nonzero exit variants. Require recovered answer/usage and failure evidence without unsafe replay.
+- LIVE Codex special fixture: in a disposable QA conversation use a controlled CLI stream fixture that emits an `error` message `Reconnecting... 1/5 (stream disconnected before completion)`, then a final answer and `turn.completed` with exit zero. Ask “Run the reconnect recovery fixture once and report its marker.” Require one final answer and no failure/diagnosis or duplicate tool execution. Repeat with terminal `turn.failed` after a tool; require one failure and no automatic replay.
+- LIVE Claude control: in a separate disposable Claude QA conversation ask “Write a unique marker file once, then report it.” Require ordinary completion, one marker and unchanged Claude behavior. Live acceptance remains pending.
+
+### Typed watchdog recovery acceptance
+
+- Automated: `node --test test/engine-runtime-seam.test.js test/watchdog-recovery.test.js test/watchdog.test.js test/persistent-session-stdin.test.js test/message-to-reply-e2e.test.js` exercises real cold/warm runner callbacks with a fake runtime for silence-budget and definite process-gone verdicts; verifies backend process-gone reason details, typed classification despite changed prose and explicit-stop/SIGKILL/provider-error guards. All 39 focused tests passed.
+- LIVE Claude special fixture: use a disposable QA channel, with cold and warm variants, a controlled engine that goes silent until `CG_MAX_SILENCE` then answers after resume. Ask “Finish the watchdog recovery fixture and report its marker.” Require one `run_auto_resume`, same session, one completion. Repeat with a fixture silent on both attempts: require one automatic continuation followed by terminal failure. Restore limits afterwards. A separate externally killed fixture and explicit Stop must never auto-resume.
+- LIVE Codex control: in a disposable Codex QA channel run a fixture killed after a tool starts and a fixture exceeding its silence budget. Require incomplete failure evidence and no automatic replay. Live cases are pending; do not induce provider failure in production.
+
+### Hard-kill tool lifecycle acceptance
+
+- Automated: `node --test test/mid-tool-kill.test.js test/process-outcome.test.js test/codex-failover-e2e.test.js test/persistent-session-stdin.test.js test/stream.test.js` tests cold/warm Claude and Codex hard kills both before and after recorded tool results. Require metadata only for pending tools, no argument/result leakage, cause unknown, diagnostic eligibility retained and no automatic continuation/replay.
+- LIVE Claude and Codex: in separate disposable Admin QA channels, use a controlled engine fixture which starts a shell tool and exits 137 before the result. Ask “Run the isolated hard-kill lifecycle fixture once.” Require one failed reply noting the missing tool result and unknown cause, bounded `killedDuringTool`/tool names in `run_error`, no second execution and diagnosis still eligible. Repeat after the fixture records a tool result: require ordinary hard-kill wording and no pending-tool metadata. Claude must cover cold and warm settings. Do not kill an actual gateway or production turn. Live acceptance remains pending.
+
+### Composio scripting guide
+
+- Regression: run `node --test test/composio-guide.test.js test/container-access-guide.test.js`.
+  Independently materialize the default guide for Slack, Teams and Google Chat in scratch folders;
+  require the scripting capability row and new reference on each surface. No live guide update
+  or connector mutation is needed for this check.
+- Checked: eight existing guide tests passed; scratch materialization delivered the exact reference
+  and capability pointer on all three surfaces; the Python example parses successfully.
+- [ ] Live Claude and Codex, separately, in a disposable private channel with a selected personal
+  Composio connection and an owned read-only fixture dataset: ask, “Read only: use my selected
+  connection to count the complete fixture dataset. Use discovered schemas and Python bulk calls
+  if the saved results are large. Explain where the files live; make no external changes.” Require
+  selected-identity search/session/schema evidence, correct account metadata, exhausted pagination,
+  matching fixture count, bounded workbench batches with checked helper errors, and no unresolved
+  slugs/arguments. Small results should stay inline. A returned remote artifact must be described
+  as remote; any requested download must use the helper's returned URL.
+- [ ] Live Claude and Codex file-boundary control in the same fixture: give the engine a harmless
+  local text file and ask how it would attach that file through the selected connection, without
+  uploading or sending it. Require `stage_file_for_composio` with the matching identity, unchanged
+  returned file object, no base64/chunk workaround and no local credentials copied to the remote
+  sandbox. Live execution and corresponding private QA registration remain pending release gates.

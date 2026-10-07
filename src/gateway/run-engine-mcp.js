@@ -6,6 +6,7 @@ import { releaseRemoteMcps } from "../mcp/remote-mcp-registry.js";
 import { requireAdapter } from "../engines/registry.js";
 import { requirePluginRuntime } from "./plugin-runtime.js";
 import { safeCodexMcpDefinition } from "./mcp-discovery.js";
+import { perplexityResearchMcp } from "./perplexity-research.js";
 
 // Capabilities live for six hours; a persistent Claude process idles out after ten minutes, but a
 // continuously active thread can keep it alive much longer. Rotate the warm fingerprint at least
@@ -27,7 +28,8 @@ export async function buildEngineMcpRuntime({ clean = false, engine = "claude", 
   const optional = await requireAdapter(engine).resolveOptionalMcpConfig?.(allowedMcps, { channelId: engine === "codex" && target?.meta?.codexAuthSource === "channel" ? target.meta.channelId : "" }) || {};
   const payload = await buildMcpRuntimePayload({ ...identity, engine, target });
   try {
-    return finishEngineMcpRuntime({ payload, optional, engine, pluginRuntime, fingerprintNow, identity });
+    const managed = requireAdapter(engine).mcpTransport === "none" ? {} : perplexityResearchMcp(target);
+    return finishEngineMcpRuntime({ payload, optional, managed, engine, pluginRuntime, fingerprintNow, identity });
   } catch (error) {
     // A payload the caller never receives must not leave its relay registration behind.
     if (payload.relayJti) releaseRemoteMcps(payload.relayJti);
@@ -35,12 +37,18 @@ export async function buildEngineMcpRuntime({ clean = false, engine = "claude", 
   }
 }
 
-function finishEngineMcpRuntime({ payload, optional, engine, pluginRuntime, fingerprintNow, identity }) {
+function finishEngineMcpRuntime({ payload, optional, managed, engine, pluginRuntime, fingerprintNow, identity }) {
   const optionalServers = optional.servers || {};
   // A built-in remote an isolated run could not be relayed (a non-https override) is reported the
   // same way as an unadmittable selection: dropped, named, never silently absent.
   const rejectedMcps = [...(Array.isArray(optional.rejected) ? optional.rejected : []), ...(payload.rejectedRemotes || [])];
   const parsed = JSON.parse(payload.configJson);
+  const managedServers = [];
+  for (const [name, definition] of Object.entries(managed)) {
+    if (Object.hasOwn(parsed.mcpServers, name)) throw new Error("Managed research MCP conflicts with a built-in identity.");
+    parsed.mcpServers[name] = definition;
+    managedServers.push({ name, enabled: true, toolTimeoutSec: 960, defaultToolsApprovalMode: "approve", definition: { transport: "stdio", ...definition } });
+  }
   for (const [name, definition] of Object.entries(optionalServers)) {
     if (Object.hasOwn(parsed.mcpServers, name)) throw new Error("Selected MCP server conflicts with a built-in identity.");
     parsed.mcpServers[name] = definition;
@@ -91,6 +99,7 @@ function finishEngineMcpRuntime({ payload, optional, engine, pluginRuntime, fing
     // caller holds it and must releaseRemoteMcps() it when the run settles.
     relayJti: payload.relayJti || "",
     pluginServers,
+    managedServers,
     rejectedMcps,
   };
 }

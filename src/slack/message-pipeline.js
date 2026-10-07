@@ -1,3 +1,4 @@
+import { assertEngineSelectable } from "../engines/selection.js";
 // The message pipeline (extracted from slack/app.js — the 2026-08 restructure notes (internal repo) Phase 2.5): gating,
 // authorization, canonical hydration, in-thread slash commands, attachment download, thread
 // context replay, run orchestration and reply delivery for one inbound Slack message.
@@ -60,7 +61,7 @@ export { runQueue } from "./message-lifecycle.js";
 
 import path from "node:path";
 import { ATTACHMENT_MAX_BYTES } from "../util/bounded-bytes.js";
-import { attachmentFileName, downloadSlackFiles, formatBytes, isAttachmentOnDisk, shouldAnnounceDownload, uploadsSubFor } from "./download.js";
+import { attachmentFileName, downloadSlackFiles, formatBytes, isAttachmentOnDisk, shouldAnnounceDownload, uploadsSubFor, wasAttachmentDelivered } from "./download.js";
 
 import { buildResumeCommand, footerButtons, footerText } from "./footer.js";
 import { postNoticeWithMenu } from "./deliver.js";
@@ -227,9 +228,11 @@ export function runDeathRecovery(err) {
   // A hard kill can happen after an external write but before its tool result is saved.
   // Do not infer OOM or replay that ambiguous work automatically.
   if (String(err?.details?.signal || "").toUpperCase() === "SIGKILL" || Number(err?.details?.exitCode) === 137) return null;
+  if (err?.details?.providerError === true) return null;
+  if (err?.details?.engine === "claude" && ["ENGINE_SILENCE_BUDGET", "ENGINE_PROCESS_GONE"].includes(err.details.errorCode)) return "continue";
   if (/session is dead/i.test(m)) return "retry";
   if (err?.details?.engine === "claude" && err.details.processEnded === true && err.details.providerError !== true) return "continue";
-  if (/stalled — no output|claude session ended|claude exited/i.test(m)) return "continue";
+  if (/stalled — no output|(?:warm )?claude(?: turn)? produced no output[^\n]*giving up|claude session ended|claude exited/i.test(m)) return "continue";
   return null;
 }
 
@@ -327,7 +330,8 @@ export { downloadSlackFiles, shouldAnnounceDownload, attachmentFileName };
 // A file carried into a reply from the thread ROOT (attachments.js marks it `carriedFrom:"root"`)
 // is a RETRY of a delivery that never happened — the root turn refused it (an old cap, a Slack
 // hiccup) and the person is asking again in the thread. It is downloaded only when its bytes are
-// not already in the thread folder, and never re-attempted when Slack's declared size is still
+// not already in the thread folder and no successful-delivery receipt survives media cleanup.
+// It is never re-attempted when Slack's declared size is still
 // over the cap: that refusal was already reported at the root, and repeating it on every reply
 // would turn one oversize file into a nag. Files attached to the reply itself always go through.
 export async function filterCarriedRootFiles(files, { root, sub, maxBytes = ATTACHMENT_MAX_BYTES } = {}) {
@@ -336,6 +340,7 @@ export async function filterCarriedRootFiles(files, { root, sub, maxBytes = ATTA
     if (f?.carriedFrom !== "root") { out.push(f); continue; }
     if (f.size && f.size > maxBytes) continue;
     if (await isAttachmentOnDisk(root, sub, f)) continue;
+    if (await wasAttachmentDelivered(root, sub, f)) continue;
     out.push(f);
   }
   return out;
@@ -768,6 +773,7 @@ export async function processMessageEvent(event, client, { botUserId = "", teamI
               await reply("This channel uses its own Codex login, so its engine stays Codex."); return;
             }
           }
+          if (forkTarget) await assertEngineSelectable(forkTarget.engine);
           const childEngine = forkTarget ? forkTarget.engine : sourceEngine;
           const nativeFork = childEngine === sourceEngine;
           const sourceClean = await getThreadClean(entry.slug, threadKey);
@@ -1152,6 +1158,7 @@ export async function processMessageEvent(event, client, { botUserId = "", teamI
         await client.chat.postMessage({ channel: event.channel, thread_ts: threadKey, text: "This channel uses its own Codex login, so its engine stays Codex." });
         return;
       }
+      await assertEngineSelectable(target.engine);
       engineSwitched = (await getThreadEngine(entry.slug, threadKey)) !== target.engine;
       await setThreadEngine(entry.slug, threadKey, target.engine);
       await setThreadModel(entry.slug, threadKey, target.model);
@@ -1172,6 +1179,7 @@ export async function processMessageEvent(event, client, { botUserId = "", teamI
         await client.chat.postMessage({ channel: event.channel, thread_ts: threadKey, text: "This channel uses its own Codex login, so its engine stays Codex." });
         return;
       }
+      await assertEngineSelectable(engineChoice);
       engineSwitched = (await getThreadEngine(entry.slug, threadKey)) !== engineChoice;
       await setThreadEngine(entry.slug, threadKey, engineChoice);
       if (!modelBelongsToEngine(await getThreadModel(entry.slug, threadKey), engineChoice)) await setThreadModel(entry.slug, threadKey, "");
@@ -1200,6 +1208,7 @@ export async function processMessageEvent(event, client, { botUserId = "", teamI
           return;
         }
         if (!engineChoice) {
+          await assertEngineSelectable(eng);
           engineSwitched = (await getThreadEngine(entry.slug, threadKey)) !== eng;
           await setThreadEngine(entry.slug, threadKey, eng);
           // A thread model/effort pinned by the /model wizard is engine-specific — switching the
@@ -1851,6 +1860,10 @@ export async function processMessageEvent(event, client, { botUserId = "", teamI
       runQueue.release(runKey, handle); // clears ONLY this turn's entry; promotes the next queued one
     }
   } catch (outer) {
+    if (outer?.code === "engine_selection_unavailable") {
+      await client.chat.postMessage({ channel: event.channel, thread_ts: event.thread_ts ?? event.ts, text: outer.message });
+      return;
+    }
     console.error("[slack] handler error:", outer);
     if (outer?.code === "workspace_selection_conflict") {
       try {

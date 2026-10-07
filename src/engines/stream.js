@@ -288,7 +288,11 @@ export function createStreamConsumer({ onDelta = null, onEvent = null } = {}) {
     if (emitClaudeTask(p)) return;
     if (p?.type === "assistant") {
       const content = Array.isArray(p?.message?.content) ? p.message.content : (Array.isArray(p?.content) ? p.content : []);
-      for (const block of content) if (block?.type === "tool_use") markToolUse(block.id);
+      for (const block of content) {
+        if (block?.type !== "tool_use") continue;
+        markToolUse(block.id);
+        if (block.id && !toolCalls.has(String(block.id))) toolCalls.set(String(block.id), { name: block.name, target: "" });
+      }
     }
     // With --include-partial-messages Claude emits the executed tool response as a high-level
     // `user` message. Surface only lifecycle metadata; command output, file content, MCP payloads,
@@ -446,6 +450,9 @@ export function createStreamConsumer({ onDelta = null, onEvent = null } = {}) {
     },
     get toolUseCount() {
       return toolUseCount;
+    },
+    get pendingToolNames() {
+      return [...new Set([...toolCalls.values()].map(call => call.name))];
     },
   };
 }

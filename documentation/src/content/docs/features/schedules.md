@@ -29,6 +29,8 @@ One-time schedules disappear after their run. Recurring tasks support cron timin
 
 Open **Automations** in the admin website to edit title, enabled state, timing, prompt, notifications, and delivery. In Slack, **Settings → Automations** shows work belonging to the current conversation; ask the assistant to list or delete a schedule by its ID.
 
+Ask the assistant to change a task's visibility, result filtering, failure notifications or delivery with `update_schedule`. Use `get_schedule_runs` to inspect this conversation's run history, including completed one-time and deleted schedules. Its engine, task and delivery outcomes are separate; quiet delivery does not erase history. See [Automation controls](/docs/controls/automation) for exact arguments and [Automation delivery](/docs/features/automation-delivery) for quiet checks and fixed-thread reports.
+
 The default minimum recurring interval is **60 minutes**, and the default ceiling is **20 enabled schedules per channel**. Administrators can adjust both in gateway settings.
 
 ## Delivery and notifications

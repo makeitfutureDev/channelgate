@@ -1,3 +1,5 @@
+import { assertEngineSelectable } from "../../engines/selection.js";
+import { assertNewMcpSelections } from "../../gateway/mcp-selection.js";
 // Settings + lifecycle admin routes: daemon settings (Slack tokens + options), on-demand
 // secret reveal, gateway self-update, daemon restart/stop, Slack reconnect/disconnect, the
 // filesystem browser, and UI reference data (/skills, /mcp/available). Split from admin.js;
@@ -18,6 +20,7 @@ import {
   getAdminPassword,
   settingsForApi,
   saveSettings,
+  isPerplexitySessionToken,
   normalizePublicUrl,
   applySettingsToEnv,
   resolveSlackConfig,
@@ -26,6 +29,8 @@ import {
   getEngine,
   isEngineEnabled,
   getDmTemplates,
+  getOrgAccessGrants,
+  getChannelTemplate,
   APPROVAL_LINK_MODES,
   AI_TESTING_USER_ID_RE,
   CHANNEL_ACCESS_MODES,
@@ -204,6 +209,23 @@ export function createSettingsRouter({
         patch.slackAdminUserToken = v;
       }
       if (body.clearSlackAdminUserToken === true) patch.slackAdminUserToken = "";
+      // Subscription research is optional and independent of the main engine. An empty
+      // password box keeps the existing session; only an explicit clear removes it.
+      if (Object.hasOwn(body, "perplexityResearchEnabled")) {
+        if (typeof body.perplexityResearchEnabled !== "boolean") return res.status(400).json({ error: "perplexityResearchEnabled must be a boolean" });
+        patch.perplexityResearchEnabled = body.perplexityResearchEnabled;
+      }
+      if (Object.hasOwn(body, "perplexitySessionToken")) {
+        if (typeof body.perplexitySessionToken !== "string") return res.status(400).json({ error: "perplexitySessionToken must be a string" });
+        if (body.perplexitySessionToken !== "") {
+          if (!isPerplexitySessionToken(body.perplexitySessionToken)) return res.status(400).json({ error: "Paste only the Perplexity session token value: at most 16384 printable ASCII characters, without whitespace, quotes, commas, semicolons or backslashes" });
+          patch.perplexitySessionToken = body.perplexitySessionToken;
+        }
+      }
+      if (Object.hasOwn(body, "clearPerplexitySessionToken")) {
+        if (typeof body.clearPerplexitySessionToken !== "boolean") return res.status(400).json({ error: "clearPerplexitySessionToken must be a boolean" });
+        if (body.clearPerplexitySessionToken) patch.perplexitySessionToken = "";
+      }
       // ── Google Chat ──────────────────────────────────────────────────────────
       // The key is validated BEFORE it is stored: a pasted OAuth-client JSON or a truncated file
       // otherwise fails much later, inside a pull loop, as an opaque 400.
@@ -574,6 +596,18 @@ export function createSettingsRouter({
       // Empty = the compiled-in default (src/ee/tiers.js). Staging points it elsewhere.
       if (typeof body.platformUrl === "string") patch.platformUrl = body.platformUrl.trim().replace(/\/+$/, "");
 
+      // Validate against the complete candidate, so key + endpoint + default may be saved
+      // together. An unchanged default stays explicit when its credential is removed.
+      if (patch.engine && patch.engine !== getEngine()) {
+        try { await assertEngineSelectable(patch.engine, { settingsPatch: patch }); }
+        catch (error) { return res.status(400).json({ error: error.message }); }
+      }
+      try {
+        if (patch.accessGrants) await assertNewMcpSelections("claude", patch.accessGrants.allowedMcps, getOrgAccessGrants().allowedMcps);
+        if (patch.channelTemplate) await assertNewMcpSelections("claude", patch.channelTemplate.allowedMcps, getChannelTemplate().allowedMcps);
+        if (patch.dmTemplates) for (const name of ["user", "admin"])
+          await assertNewMcpSelections("claude", patch.dmTemplates[name].allowedMcps, getDmTemplates()[name].allowedMcps);
+      } catch (error) { return res.status(400).json({ error: error.message }); }
       // Compare-and-swap when the client echoed the version it loaded: a save that would otherwise
       // revert somebody else's change (another admin, the skills sync, a license write, the
       // first-boot password upgrade) is refused rather than applied. A client that sends no

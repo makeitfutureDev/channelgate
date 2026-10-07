@@ -124,18 +124,18 @@ export function qwenModelsUrl(baseUrl = QWEN_DEFAULT_BASE_URL) {
 
 // settings.js imports the engine registry, which imports the adapters, which import this file — a
 // static settings import would close that cycle. Same lazy pattern claude-login.js is read with.
-async function qwenSettings(providerId) {
+async function qwenSettings(providerId, options) {
   const { getQwenConfig } = await import("../config/settings.js");
-  return getQwenConfig(providerId);
+  return getQwenConfig(providerId, options);
 }
 
 /**
  * The resolved provider: `{ id, label, apiKey, baseUrl, configured, error }`. `configured` is the
  * only thing callers should branch on; `apiKey` never appears in a log, a reply or a health payload.
  */
-export async function resolveQwenProvider(providerId = QWEN_PROVIDER_IDS[0]) {
+export async function resolveQwenProvider(providerId = QWEN_PROVIDER_IDS[0], options = {}) {
   const entry = qwenProvider(providerId);
-  const { apiKey = "", baseUrl = "" } = (await qwenSettings(entry.id)) || {};
+  const { apiKey = "", baseUrl = "" } = (await qwenSettings(entry.id, options)) || {};
   const url = String(baseUrl || entry.defaultBaseUrl).trim().replace(/\/+$/, "");
   const base = { id: entry.id, label: entry.label, harnessLabel: entry.harnessLabel, apiKey: "", baseUrl: url, configured: false };
   const where = `Settings → ${entry.harnessLabel}`;

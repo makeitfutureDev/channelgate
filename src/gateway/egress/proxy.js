@@ -233,9 +233,18 @@ export function createEgressProxy({
 
   // Scrub every swapped real value out of response header values (Location, WWW-Authenticate, a
   // debug header echoing Authorization …). `rawHeaders` alternates name, value.
-  function scrubRawHeaders(rawHeaders, scrub) {
-    if (!scrub || !scrub.size) return rawHeaders;
-    return rawHeaders.map((item, i) => (i % 2 === 1 ? scrubText(scrub, item) : item));
+  function scrubRawHeaders(rawHeaders, scrub, protectedCookies = []) {
+    const out = [];
+    for (let i = 0; i < rawHeaders.length; i += 2) {
+      const name = rawHeaders[i];
+      const value = rawHeaders[i + 1];
+      if (name.toLowerCase() === "set-cookie") {
+        const cookieName = String(value).split("=", 1)[0].trim();
+        if (protectedCookies.some((cookie) => cookieName === cookie || (cookieName.startsWith(`${cookie}.`) && /^\d+$/.test(cookieName.slice(cookie.length + 1))))) continue;
+      }
+      out.push(name, scrub?.size ? scrubText(scrub, value) : value);
+    }
+    return out;
   }
 
   // Arm the response-header deadline once the request has been fully sent upstream (a long upload
@@ -402,7 +411,7 @@ export function createEgressProxy({
       // binary passes through; so does a body the upstream compressed despite `identity`.
       const scrubbing = swap.swapped.length > 0 && !upRes.headers["content-encoding"] && shouldScrubContentType(contentType);
       // A scrubbed body can change length, so it goes out chunked instead.
-      const outRaw = scrubRawHeaders(stripRawHopByHop(upRes.rawHeaders, scrubbing ? ["content-length"] : []), swap.swapped.length ? swap.scrub : null);
+      const outRaw = scrubRawHeaders(stripRawHopByHop(upRes.rawHeaders, scrubbing ? ["content-length"] : []), swap.swapped.length ? swap.scrub : null, swap.protectedCookies);
       upRes.on("data", (chunk) => { bytesDown += chunk.length; });
       upRes.on("error", () => res.destroy());
       upRes.on("close", () => { if (!upRes.complete) res.destroy(); });
@@ -492,7 +501,7 @@ export function createEgressProxy({
       status = upRes.statusCode;
       upstream = track(upSocket);
       const lines = [`HTTP/1.1 ${status} ${upRes.statusMessage || http.STATUS_CODES[status] || ""}`];
-      const raw = scrubRawHeaders(upRes.rawHeaders, scrubMap);
+      const raw = scrubRawHeaders(upRes.rawHeaders, scrubMap, swap.protectedCookies);
       for (let i = 0; i < raw.length; i += 2) lines.push(`${raw[i]}: ${raw[i + 1]}`);
       socket.write(`${lines.join("\r\n")}\r\n\r\n`);
       if (upHead?.length) { bytesDown += upHead.length; socket.write(upHead); }
@@ -510,7 +519,7 @@ export function createEgressProxy({
       status = upRes.statusCode;
       const contentType = upRes.headers["content-type"];
       const scrubbing = Boolean(scrubMap) && !upRes.headers["content-encoding"] && shouldScrubContentType(contentType);
-      const raw = scrubRawHeaders(stripRawHopByHop(upRes.rawHeaders, ["content-length"]), scrubMap);
+      const raw = scrubRawHeaders(stripRawHopByHop(upRes.rawHeaders, ["content-length"]), scrubMap, swap.protectedCookies);
       const lines = [`HTTP/1.1 ${status} ${upRes.statusMessage || http.STATUS_CODES[status] || ""}`];
       for (let i = 0; i < raw.length; i += 2) lines.push(`${raw[i]}: ${raw[i + 1]}`);
       lines.push("Connection: close");

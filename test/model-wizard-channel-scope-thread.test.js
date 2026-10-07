@@ -161,3 +161,22 @@ test("a thread with no session of its own is never pinned by a channel-scope pic
   assert.equal((await getChannelMeta(entry.slug)).engine, "codex");
   assert.equal(await getThreadEngine(entry.slug, THREAD), "", "nothing to move, so the thread keeps following the channel");
 });
+
+
+test("an unconfigured provider choice preserves thread and channel pins", async () => {
+  saveSettings({ engine: "claude", modelChangeAccess: "admins", engineEnabled: { claude: true, codex: true, "qwen-eu": true }, qwenEuApiKey: "", qwenEuBaseUrl: "" });
+  await setUser(ADMIN, { name: "Admin", approved: true, isAdmin: true });
+  const entry = await channel("C_MW_PROVIDER_MISSING", "mw-provider-missing");
+  await setThreadEngine(entry.slug, THREAD, "codex");
+  await setThreadModel(entry.slug, THREAD, "gpt-6-sol");
+  await setThreadEffort(entry.slug, THREAD, "high");
+  const client = fakeClient();
+  for (const scope of ["c", "t"]) {
+    await click(client, "C_MW_PROVIDER_MISSING", "cg_mw_engine_qwen-eu", JSON.stringify({ s: scope, t: THREAD }));
+    assert.equal((await getChannelMeta(entry.slug)).engine, "claude");
+    assert.equal(await getThreadEngine(entry.slug, THREAD), "codex");
+    assert.equal(await getThreadModel(entry.slug, THREAD), "gpt-6-sol");
+    assert.equal(await getThreadEffort(entry.slug, THREAD), "high");
+    assert.match(client.ephemerals.at(-1).text, /not configured|no API key or endpoint/);
+  }
+});
