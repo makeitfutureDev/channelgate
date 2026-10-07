@@ -485,11 +485,12 @@ export function register(server, ctx) {
         "Use when someone asks to 'always do X', 'remember this rule', or 'add this to the channel " +
         "instructions'. `text` is appended below the existing content as-is (write it as a ready " +
         "instruction, e.g. '- Always reply in German.'). Durable per-channel FACTS still belong in " +
-        "MEMORY.md — this file is for RULES about how to behave. mode:'replace' rewrites the whole " +
-        "channel section (admins only). The exact update is saved for human approval with no " +
-        "deadline; the tool returns pending immediately and the gateway applies it on approval, " +
-        "even after a restart. Deny/Comment cancels it. Use at most 2400 characters without " +
-        "triple-backtick fences so the entire rule fits on the approval card.",
+        "MEMORY.md — this file is for RULES about how to behave. An append is saved for approval by " +
+        "anyone working in this channel, with no deadline: the tool returns pending immediately and " +
+        "the gateway applies it on approval, even after a restart; Deny/Comment cancels it. Use at " +
+        "most 2400 characters without triple-backtick fences so the entire rule fits on the card. " +
+        "mode:'replace' rewrites the whole channel section (admins only) and applies at once — quote " +
+        "the complete new instructions in your reply so the thread shows what changed.",
       inputSchema: {
         text: z.string(),
         mode: z.enum(["append", "replace"]).optional(),
@@ -507,7 +508,8 @@ export function register(server, ctx) {
         const { path: file } = await updateChannelInstructions(slug, meta, { text: t, replace: mode === "replace" });
         return text(
           `✅ ${mode === "replace" ? "Replaced" : "Added to"} this channel's standing instructions (${file}). ` +
-            "Every new session in this channel starts with it from now on."
+            "Every new session in this channel starts with it from now on." +
+            (mode === "replace" ? " Quote the complete new instructions in your reply so everyone in the thread sees what changed." : "")
         );
       } catch (e) {
         return text(`Couldn't update the channel instructions: ${e.message}`);

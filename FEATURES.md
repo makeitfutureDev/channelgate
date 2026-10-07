@@ -1082,7 +1082,7 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
   channels' background work silently no-op. Never an escalation: the
   `--dangerously-skip-permissions`/sandbox-off path stays exclusive to live admin foreground
   turns (A2), untrusted API principals never qualify, non-admin authors keep the normal floor,
-  and control-plane ("agent"-type) approvals still require a human click. The `/mode admin`
+  and the surviving control-plane ("agent"-type) cards still require a human click. The `/mode admin`
   confirmation spells the split out. → TEST-PLAN: Background jobs, Security checks.
 - Deterministic Codex MCP startup: Codex does not block a turn while its MCP servers come up — it
   takes whichever finished before it builds the first request, and a resumed turn reaches that
@@ -1370,7 +1370,7 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
   auto-approved) and, in an Admin channel, `--dangerously-skip-permissions` for a Full run. It also
   gets channel memory (search, read, save and the post-reply memory review), the channel's and
   organization's skills, MCP connections, channel secrets, and the gateway tools, including the
-  admin ones. Control-plane changes still need a human click on their approval card. It gets no
+  admin ones. The surviving control-plane cards still need a human click. It gets no
   personal scope: Composio is the channel's shared `composio-agent` identity only, with no
   `composio-user` and nobody's personal Toolbox token, secrets, skills or SSH keys. The `author` a
   request names is attribution only. An untrusted capability naming a real admin never borrows that
@@ -2089,9 +2089,36 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
   minutes. A schedule can't escalate — it fires with origin `schedule` (never the sandbox-off admin
   path), in the channel it was created in, as its creator, no more often than the configured minimum
   interval — announces itself in-channel when it runs, and stays inspectable and reversible through
-  `list_schedules`/`delete_schedule`. Every other control-plane tool (modes, network, work dir, MCP
-  allowlist, standing instructions, connector tokens, gateway guide, updater) still requires the
-  human click and still fails closed. → TEST-PLAN: Reminders & schedules, Security checks.
+  `list_schedules`/`delete_schedule`. → TEST-PLAN: Reminders & schedules, Security checks.
+- **Minimum second-approval cards (2026-10-07).** The control-plane gate keeps its authority check
+  — a caller without a tool's tier is refused with no card — but no longer asks the person who
+  holds the authority to click a second time for changes that are channel-scoped, visible in the
+  thread and reversible. Automatic now, for the admin or manager who asked: modes (Bash, Auto, VPN),
+  network, working folder set/clear, Drive folder set/clear, MCP servers add/remove, SSH grants for
+  other people, personal and organization secrets set/remove, hiding a secret, connector tokens,
+  skill source set/sync/remove, skill scope, exclusion and governance, organization-wide skill
+  removal, template removal, proposal rejection, the guide's reset, the license key set/clear,
+  gateway update and restart in every mode, and replacing a channel's instructions (admins; the
+  handler makes the model quote the complete new text in its reply). Every one is still audited and
+  announced. Exactly eight cards survive, where one unasked call would silently hand
+  attacker-controlled content or a secret to OTHER channels and no later admin message could undo
+  it: Admin mode on/off, the gateway guide write, admitting a skill source, granting skills
+  organization-wide, ADDING skills to a template, APPROVING a skill proposal, approving a server
+  for a hidden secret (`allow_secret_host` and the proxy's first-use card), and making a secret
+  READABLE. Every surviving card is **durable** (`src/gateway/control-plane-approvals.js`): the
+  exact call — tool, arguments, requester, thread — is saved as a `control_plane` approval row, the
+  tool returns *pending* immediately, the card never expires and survives restarts, and the click
+  re-checks the requester's authority today and the clicker's tier, then applies the call in-process
+  as the requester through the same gateway MCP server a turn uses. An argument that is a secret
+  (a peer gateway's token) is never persisted: it is held in daemon memory under the approval id
+  and the executor names the remedy when a restart lost it. Card tiers: `admin` for the
+  deployment-wide ones; a secret's card follows its scope — the organization's needs an admin, this
+  conversation's anyone working in it, a personal one its owner (the new `owner` tier) — on both
+  `set_secret_mode` and the secret-host cards; an instruction append is anyone's. *Approve
+  forever* on a tool-permission card is now a channel manager's call (or an admin's), not
+  admin-only, and new non-DM channels default **Who can manage** to approved members
+  (`manageAccess:"members"`; rows stored earlier keep their value, a missing field still reads as
+  admins). → TEST-PLAN: Security checks (control-plane gate), Modes & approvals, Channel access model.
 - Both injected Composio MCP identities are pre-approved by default: Claude settings include
   `mcp__composio-user` and `mcp__composio-agent`; each emitted server sets
   `default_tools_approval_mode:"approve"`. Codex mirrors both named approval configurations.
@@ -2505,8 +2532,8 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
   → TEST-PLAN: Channel access model; Admin UI.
 - Interactive permission approvals in Slack: a non-admin run that hits a non-allowlisted tool posts
   buttons in the thread — **Approve once**, **Approve for this thread**, **Approve forever** (persisted
-  to `meta.approvedTools`), **Deny**. Only the run's author, an admin, or an approved user may click;
-  no click within 4 minutes auto-denies. Driven by the `permission_prompt` MCP tool → the daemon's
+  to `meta.approvedTools`; a channel manager's or admin's call since 2026-10-07), **Deny**. Only the
+  run's author, an admin, or an approved user may click; no click within 4 minutes auto-denies. Driven by the `permission_prompt` MCP tool → the daemon's
   internal approval endpoint. → TEST-PLAN: Modes & approvals.
 - Gateway control-MCP identity is authenticated with a daemon-signed, expiring run capability
   bound to the exact author, channel, slug, Slack thread, origin, and engine. The MCP server derives
@@ -3664,9 +3691,9 @@ are retired, bullet by bullet; everything else stands.
   add 2 GiB of required staging space to the 1 GiB base requirement (the extra macOS build staging
   retired 2026-09-03 — Linux only); the 1.5 GiB optional model is never downloaded silently when
   local Whisper is disabled.
-- **Mode-aware MCP update authorization**: `update_gateway` remains admin-only. Its additional
-  control-plane approval card is skipped in Auto/Admin channels and retained in Read/Worker
-  channels; Claude and Codex share the same gateway MCP policy.
+- **MCP update authorization**: `update_gateway` remains admin-only and, since 2026-10-07, posts
+  no approval card in any mode (the transaction is verified and rolled back on failure); Claude and
+  Codex share the same gateway MCP policy.
 - **Candidate validation and automatic rollback**: the updater snapshots the exact revision,
   lockfile, local config, `.env`, and a consistent SQLite copy under mode-0700
   `~/.channelgate/update-backups/<transaction>/`; fast-forwards, runs exact `npm ci --include=dev`, the

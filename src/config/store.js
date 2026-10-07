@@ -202,7 +202,12 @@ export function defaultChannelMeta({ channelId, name, type, isDM, platform }) {
     platform: isPlatformId(platform) ? platform : DEFAULT_PLATFORM,
     access: "approved", // who can USE the channel: "approved" | "admins" | "none" (set from the gateway
     // default at join). Governs who's auto-granted in a channel; allowedUsers is the manual override.
-    manageAccess: "admins", // who can MANAGE the Access page from Slack: "admins" | "members" | "custom".
+    // Who can MANAGE this channel (modes, network, MCP servers, secrets' modes) from chat:
+    // "admins" | "members" | "custom". Approved members by default (operator decision 2026-10-07:
+    // approved users are vetted by the operator, and a channel whose members cannot change their
+    // own settings stalls on an admin for every switch). Rows stored before this default keep the
+    // value they hold; canManage() treats a missing field as "admins".
+    manageAccess: "members",
     managers: [], // when manageAccess="custom": Slack user ids allowed to manage this channel.
     profile: isDM ? undefined : "read", // capability preset: read|worker|auto|full|lean|custom (see modes.js);
     // expands to the flags below on save. undefined/legacy channels derive it from the flags.

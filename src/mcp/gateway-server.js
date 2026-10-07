@@ -38,6 +38,7 @@ import { register as registerSshAccess } from "./tools/ssh-access.js";
 import { sshRequestTarget } from "../gateway/ssh-access.js";
 import { register as registerFileSharing, describeDuration } from "./tools/file-sharing.js";
 import { prepareInstructionApproval } from "../gateway/instruction-approvals.js";
+import { buildControlPlaneAction, describeControlPlaneTier } from "../gateway/control-plane-approvals.js";
 
 export const text = (t) => ({ content: [{ type: "text", text: t }] });
 
@@ -234,15 +235,23 @@ export function secretScopeTier(scope) {
   return s === "organization" || s === "org" ? "admin" : "any";
 }
 
-// set_secret_mode: the organization's secrets need an admin, a conversation's its managers. Making a
-// PERSONAL secret readable hands its raw value to the containers of every conversation its owner
-// works in, and an "any" card could be approved by a bystander a prompt injection recruited — so
-// only an admin's click counts for that; hiding one (or `auto`) stays the owner's own call.
-export function secretModeTier(scope, mode = "") {
+// set_secret_mode: who may CALL it — the organization's secrets need an admin, a conversation's
+// its managers, a personal one its owner.
+export function secretModeTier(scope) {
   const s = String(scope || "personal").trim().toLowerCase();
   if (s === "organization" || s === "org") return "admin";
   if (s === "conversation" || s === "channel") return "manage";
-  return String(mode) === "readable" ? "admin" : "any";
+  return "any";
+}
+// Who may APPROVE the card a secret still posts (making it readable, approving a server for it):
+// an admin for the organization's, anyone working in the channel for the conversation's, the owner
+// for a personal one — the same tiers the proxy's first-use card carries
+// (gateway/secret-host-approvals.js secretHostTier).
+export function secretCardTier(scope) {
+  const s = String(scope || "personal").trim().toLowerCase();
+  if (s === "organization" || s === "org") return "admin";
+  if (s === "conversation" || s === "channel") return "";
+  return "owner";
 }
 function secretModeLabel(scope) {
   const tier = secretModeTier(scope);
@@ -254,113 +263,118 @@ export function gateAuthz(gate, args = {}) {
   return typeof gate?.authz === "function" ? gate.authz(args ?? {}) : gate?.authz;
 }
 
+/** Who must click a gate's card: the gate's own `tier` (string or function of the arguments), else its authz. */
+export function gateCardTier(gate, args = {}) {
+  const own = typeof gate?.tier === "function" ? gate.tier(args ?? {}) : gate?.tier;
+  if (typeof own === "string") return own;
+  const authz = gateAuthz(gate, args);
+  return authz === "any" ? "" : authz;
+}
+
+// What the table says per tool: `authz` is who may CALL it (checked first; a caller without it is
+// refused with no card), `details(args)` is the card text — or null, which means the change is
+// AUTOMATIC for that caller — and `tier` is who must click the card (defaults to the authz).
+//
+// Operator decision 2026-10-07 (minimum second-approval cards). A card survives only where one
+// unasked call would silently hand attacker-controlled content or a secret to OTHER channels and a
+// later admin message could not undo it. Everything that is channel-scoped, visible in the thread
+// and reversible — modes, network, folders, MCP servers, sources' settings, grants' removal, the
+// license key, the guide's reset, updates and restarts — is automatic for the author who holds its
+// authority; it is still refused for anyone else, still audited, and the model still announces it.
+// A surviving card is DURABLE: the exact call is saved and applied on the click, with no deadline.
+const AUTOMATIC = () => null;
+
 export function buildControlPlane({ loadMeta, createdBy, principalTrusted }) {
   const ownSsh = ({ user }) => principalTrusted === true && Boolean(createdBy) && sshRequestTarget(user, createdBy) === createdBy;
   return new Map([
+    // ── Channel settings: automatic for an admin (or the channel's managers), announced in the thread.
+    // Admin mode is the one exception: it turns the engine's own permission prompts off for admin
+    // authors in this channel, which is the posture every other card relies on — so it keeps its card.
     ["set_channel_admin_mode", { authz: "admin", details: ({ enabled }) => `Turn ADMIN MODE (no sandbox, no prompts for admin authors) ${onOff(enabled)} for this channel.` }],
-    ["set_channel_vpn", { authz: "manage", details: ({ enabled }) => `Turn the configured isolated VPN service ${onOff(enabled)} for this channel. This also changes automatic startup.` }],
-    ["set_channel_network", { authz: "admin", details: ({ enabled }) => `Turn network access ${onOff(enabled)} for this channel.` }],
-    ["set_channel_bash", { authz: "manage", details: ({ enabled }) => `Turn shell access (Bash + file edits) ${onOff(enabled)} for this channel.` }],
-    ["set_channel_auto_mode", { authz: "manage", details: ({ enabled }) => `Turn AUTO MODE (tools auto-approved) ${onOff(enabled)} for this channel.` }],
-    ["set_channel_workdir", { authz: "admin", details: ({ path: p }) => `Point this channel's working folder at: ${summarize(p)}` }],
-    ["clear_channel_workdir", { authz: "admin", details: () => "Revert this channel to its default gateway working folder." }],
-    ["set_channel_drive_folder", { authz: "admin", details: ({ link }) => `Link a Google Drive folder for two-way sync: ${summarize(link)}` }],
-    ["clear_channel_drive_folder", { authz: "admin", details: () => "Unlink this channel's Google Drive sync folder (sync off)." }],
-    ["add_channel_mcps", { authz: "manage", details: ({ names }) => `Allow MCP server(s) in this channel: ${summarize((names || []).join(", "))}` }],
-    ["remove_channel_mcps", { authz: "manage", details: ({ names }) => `Remove MCP server(s) from this channel: ${summarize((names || []).join(", "))}` }],
-    // Skills (src/mcp/tools/skills.js). Operator decision 2026-09-27: personal and channel skills
-    // belong to their author / the channel's members and never wait for anyone — create_skill,
-    // update_skill, delete_skill, add_/remove_channel_skills and set_channel_skill_template are
-    // OPEN; their handlers enforce who may change which tier, file an admin proposal for a
-    // non-admin's organization request, and tell the model to announce every change in its reply.
-    // Accepted residual risk: injected content inside an authorized turn can write a skill that
-    // loads in this channel's (or this author's) later turns — never the organization tier, which
-    // stays admin-only. The organization-wide admin tools below keep their card.
-    ["update_skill_template", { authz: "admin", details: ({ template, add = [], remove = [] }) => `Change the "${summarize(template)}" skill template — every conversation following it is affected.${add.length ? ` Add: ${summarize(add.join(", "))}.` : ""}${remove.length ? ` Remove: ${summarize(remove.join(", "))}.` : ""}` }],
-    ["decide_skill_proposal", { authz: "admin", details: ({ id, decision }) => `${decision === "approve" ? "APPROVE" : "Reject"} skill proposal #${Number(id) || "?"}.` }],
-    ["sync_skill_sources", { authz: "admin", details: ({ id }) => `Sync ${id ? `skill source #${Number(id)}` : "every skill source"} into the catalog now.` }],
-    ["publish_skill", { authz: "manage", details: ({ skill }) => `Push skill \`${summarize(skill)}\` to the configured Git repository now.` }],
-    ["set_skill_scope", { authz: "admin", details: ({ skill, scope, channel }) => `Move skill \`${summarize(skill)}\` to ${scope === "channel" ? `the ${channel ? summarize(channel) : "current"} channel's section (that customer only)` : "the shared library (every conversation)"}; its files move in the skills repository.` }],
+    ["set_channel_vpn", { authz: "manage", details: AUTOMATIC }],
+    ["set_channel_network", { authz: "admin", details: AUTOMATIC }],
+    ["set_channel_bash", { authz: "manage", details: AUTOMATIC }],
+    ["set_channel_auto_mode", { authz: "manage", details: AUTOMATIC }],
+    // The folder is contained to the allowlisted root (web/security.js), so it cannot point at
+    // the operator home, the gateway root or another channel; a wrong change is one message away.
+    ["set_channel_workdir", { authz: "admin", details: AUTOMATIC }],
+    ["clear_channel_workdir", { authz: "admin", details: AUTOMATIC }],
+    // With network on the agent can already upload the same files anywhere; a Drive link adds no
+    // reach a card would withhold.
+    ["set_channel_drive_folder", { authz: "admin", details: AUTOMATIC }],
+    ["clear_channel_drive_folder", { authz: "admin", details: AUTOMATIC }],
+    ["add_channel_mcps", { authz: "manage", details: AUTOMATIC }],
+    ["remove_channel_mcps", { authz: "manage", details: AUTOMATIC }],
+    // ── Skills. Personal and channel skills are their author's / the channel members' and never
+    // wait for anyone (create_skill, update_skill, delete_skill, add_/remove_channel_skills,
+    // set_channel_skill_template are OPEN; their handlers enforce the tier). The organization tier
+    // keeps a card ONLY where content enters every conversation: admitting a source, granting a
+    // skill organization-wide directly or through a template, approving a member's proposal.
+    // Reductions, settings and syncs are automatic.
+    ["update_skill_template", { authz: "admin", details: ({ template, add = [], remove = [] }) => add.length
+      ? `Add to the "${summarize(template)}" skill template — every conversation following it gets ${summarize(add.join(", "))}.${remove.length ? ` Also remove: ${summarize(remove.join(", "))}.` : ""}`
+      : null }],
+    ["decide_skill_proposal", { authz: "admin", details: ({ id, decision }) => decision === "approve" ? `APPROVE skill proposal #${Number(id) || "?"} — its change becomes part of the shared catalog.` : null }],
+    ["sync_skill_sources", { authz: "admin", details: AUTOMATIC }],
+    ["publish_skill", { authz: "manage", details: AUTOMATIC }],
+    ["set_skill_scope", { authz: "admin", details: AUTOMATIC }],
     ["add_org_skills", { authz: "admin", details: ({ slugs }) => `Grant skill(s) ORGANIZATION-WIDE (every conversation): ${summarize((slugs || []).join(", "))}` }],
-    ["remove_org_skills", { authz: "admin", details: ({ slugs }) => `Remove organization-wide skill grant(s): ${summarize((slugs || []).join(", "))}` }],
+    ["remove_org_skills", { authz: "admin", details: AUTOMATIC }],
     ["add_skill_source", { authz: "admin", details: ({ kind, url }) => `Add a ${summarize(kind)} skill source and sync it: ${summarize(url)}` }],
-    ["set_skill_source", { authz: "admin", details: ({ id }) => `Change skill source #${Number(id) || "?"} (mode / enabled / pin / label).` }],
-    ["remove_skill_source", { authz: "admin", details: ({ id }) => `REMOVE skill source #${Number(id) || "?"} and tombstone its skills.` }],
-    ["set_skill_excluded", { authz: "admin", details: ({ skill, excluded }) => `${excluded ? "EXCLUDE" : "Include"} skill \`${summarize(skill)}\` in the catalog.` }],
-    ["set_skill_governance", { authz: "admin", details: ({ skill, enabled, discoverable, mandatory }) => `Change skill governance for \`${summarize(skill)}\`: enabled=${enabled ?? "unchanged"}, discoverable=${discoverable ?? "unchanged"}, mandatory=${mandatory ?? "unchanged"}.` }],
+    ["set_skill_source", { authz: "admin", details: AUTOMATIC }],
+    ["remove_skill_source", { authz: "admin", details: AUTOMATIC }],
+    ["set_skill_excluded", { authz: "admin", details: AUTOMATIC }],
+    ["set_skill_governance", { authz: "admin", details: AUTOMATIC }],
     // Publishing bytes: `create_public_file_link` with purpose "share" puts a channel file at an
     // unauthenticated URL for up to 48 hours, which is outward-facing and cannot be taken back
-    // once fetched — so it carries a card naming the file and the duration. The "upload" purpose
-    // returns null (no card): it lives minutes, is spent by the machine the turn is already
-    // talking to, and gating it would stall the very step the user asked for. Staging into
-    // Composio publishes nothing and is not gated at all.
+    // once fetched — so it carries a card naming the file and the duration, answered inline by
+    // anyone working in the channel (the model needs the minted URL in the same turn). The
+    // "upload" purpose returns null (no card): it lives minutes, is spent by the machine the turn
+    // is already talking to, and gating it would stall the very step the user asked for.
     ["create_public_file_link", { authz: "any", details: ({ path: p, purpose, minutes }) => {
       if (purpose !== "share") return null;
       const value = Number(minutes);
       const duration = Number.isFinite(value) && value > 0 ? describeDuration(Math.ceil(value)) : "an unspecified duration (the call will be rejected)";
       return `Publish \`${summarize(p)}\` at a PUBLIC download URL for ${duration}. Anyone holding the link can download the file with no login, from anywhere.`;
     } }],
-    ["update_channel_instructions", { authz: "any", details: ({ mode, text: t }) => `${mode === "replace" ? "REPLACE" : "Append to"} this channel's standing instructions:\n${t}` }],
-    ["update_gateway", {
-      authz: "admin",
-      details: async () => {
-        const meta = (await loadMeta()) || {};
-        return meta.adminMode || meta.autoMode
-          ? null
-          : "Update the gateway daemon (git pull + deps + restart; brief downtime).";
-      },
-    }],
-    ["restart_gateway", {
-      authz: "admin",
-      details: async () => {
-        const meta = (await loadMeta()) || {};
-        return meta.adminMode
-          ? null
-          : "Safely restart the gateway after ongoing work drains (brief downtime).";
-      },
-    }],
+    // Appending a standing rule is a durable card anyone working in the channel approves — rules
+    // shape every member's turns, so a second pair of eyes sees them land. Replacing the whole
+    // section is an admin's call (the handler enforces it) and is automatic: the handler makes
+    // the model quote the complete new text in its reply, so the thread shows what changed.
+    ["update_channel_instructions", { authz: "any", details: ({ mode, text: t }) => mode === "replace" ? null : `Append to this channel's standing instructions:\n${t}` }],
+    ["update_gateway", { authz: "admin", details: AUTOMATIC }],
+    ["restart_gateway", { authz: "admin", details: AUTOMATIC }],
+    // The guide is model-written text that becomes standing instructions in EVERY channel, read by
+    // nobody afterwards: the one tool where a wrong call is both silent and global. Reset is safe.
     ["update_gateway_guide", { authz: "admin", details: ({ file }) => `Overwrite gateway-usage guide file ${file || "SKILL.md"} for EVERY channel.` }],
-    ["reset_gateway_guide", { authz: "admin", details: ({ file }) => `Reset the gateway-usage guide ${file ? `file ${file}` : "(all files)"} to the built-in default.` }],
-    // Connector identity: changing whose account future runs act as. Never echo the token value.
-    ["set_my_composio_token", { authz: "any", details: () => "Set YOUR Composio token (value hidden) — future runs use this account." }],
-    ["clear_my_composio_token", { authz: "any", details: () => "Remove YOUR Composio token." }],
-    ["set_my_toolbox_token", { authz: "any", details: () => "Set YOUR Toolbox token (value hidden)." }],
-    ["clear_my_toolbox_token", { authz: "any", details: () => "Remove YOUR Toolbox token." }],
-    // Environment secret scopes that are not the channel's (config/scoped-env.js). Same reason the
-    // connector tokens above are gated: each one changes WHICH account future runs authenticate as,
-    // and the organization scope does it for every conversation at once. Names only in the card —
-    // a value must never reach the approval UI any more than it reaches a listing.
-    // One tool per verb across the secret scopes: the tier follows the SCOPE argument (an
-    // organization secret is every conversation's, so its card needs an admin's click).
-    ["set_secret", { authz: ({ scope }) => secretScopeTier(scope), details: ({ name, scope }) => secretScopeTier(scope) === "admin"
-      ? `Set the ORGANIZATION-WIDE environment secret ${summarize(name)} (value hidden) — injected into EVERY conversation's runs, for every author admitted there.`
-      : `Set YOUR personal environment secret ${summarize(name)} (value hidden) — injected into every run YOU author, in any conversation.` }],
-    ["remove_secret", { authz: ({ scope }) => secretScopeTier(scope), details: ({ name, scope }) => secretScopeTier(scope) === "admin"
-      ? `Remove the organization-wide environment secret ${summarize(name)} — every conversation stops receiving it.`
-      : `Remove YOUR personal environment secret ${summarize(name)}.` }],
-    // Hidden/readable and approved servers: making a secret readable hands containers its raw value,
-    // and an approved server is where its real value may go — both gated like the secret itself.
-    ["set_secret_mode", { authz: ({ scope, mode }) => secretModeTier(scope, mode), details: ({ name, mode, scope }) =>
-      `Make the ${secretModeLabel(scope)} secret ${summarize(name)} ${mode === "auto" ? "hidden or readable automatically" : mode.toUpperCase()}${mode === "readable" ? " — containers will receive its RAW value" : ""}.` }],
-    ["allow_secret_host", { authz: "admin", details: ({ name, host, scope }) =>
+    ["reset_gateway_guide", { authz: "admin", details: AUTOMATIC }],
+    // Connector identity and environment secrets: the caller's own accounts (or, for the
+    // organization scope, an admin's). The value is in the caller's own message; a card would
+    // only echo its name back. Never a value in a card or a listing.
+    ["set_my_composio_token", { authz: "any", details: AUTOMATIC }],
+    ["clear_my_composio_token", { authz: "any", details: AUTOMATIC }],
+    ["set_my_toolbox_token", { authz: "any", details: AUTOMATIC }],
+    ["clear_my_toolbox_token", { authz: "any", details: AUTOMATIC }],
+    ["set_secret", { authz: ({ scope }) => secretScopeTier(scope), details: AUTOMATIC }],
+    ["remove_secret", { authz: ({ scope }) => secretScopeTier(scope), details: AUTOMATIC }],
+    // Making a secret READABLE puts its raw value in containers where people can read it; once
+    // read it is out. Hiding one again (or `auto`) is automatic. The card is approved by the
+    // organization's admin, anyone working in the conversation, or the personal secret's owner.
+    ["set_secret_mode", { authz: ({ scope }) => secretModeTier(scope), tier: ({ scope }) => secretCardTier(scope), details: ({ name, mode, scope }) => mode === "readable"
+      ? `Make the ${secretModeLabel(scope)} secret ${summarize(name)} READABLE — containers will receive its RAW value.`
+      : null }],
+    // An approved server is where a hidden secret's real value may go: the exfiltration guard
+    // itself. Same tiers as the proxy's first-use card; the handler enforces who may ask per scope.
+    ["allow_secret_host", { authz: ({ scope }) => secretCardTier(scope) === "admin" ? "admin" : "any", tier: ({ scope }) => secretCardTier(scope), details: ({ name, host, scope }) =>
       `Allow the ${secretModeLabel(scope)} secret ${summarize(name)} to be sent to ${summarize(host)} — the egress proxy will swap in its real value on that server.` }],
-    // Operator decision: personal keys and a trusted user's own SSH grant are self-service.
-    // Only changes for OTHER users retain the manager tier and its human approval card.
-    ["grant_channel_ssh", {
-      authz: args => ownSsh(args) ? "any" : "manage",
-      details: ({ user }) => ownSsh({ user }) ? null
-        : `Grant ${summarize(user)} SSH access into THIS channel's container: a full shell as the channel, with its files and CLI logins.`,
-    }],
-    ["revoke_channel_ssh", {
-      authz: args => ownSsh(args) ? "any" : "manage",
-      details: ({ user }) => ownSsh({ user }) ? null
-        : `Revoke ${summarize(user)}'s SSH access into this channel's container.`,
-    }],
-    // The deployment's license key: gateway-wide, persistent, and the thing that decides how many
-    // conversations and messages this install may serve. `get_license_status` is read-only and stays
-    // un-gated. Never echo the key value in the card.
-    ["set_license_key", { authz: "admin", details: () => "Set this deployment's ChannelGate LICENSE KEY (value hidden) — it changes the tier and the usage limits for every conversation." }],
-    ["clear_license_key", { authz: "admin", details: () => "Remove this deployment's ChannelGate license key — every conversation falls back to the no-key limits (1 conversation, 500 AI messages/month)." }],
+    // Personal keys and a trusted user's own SSH grant are self-service; grants for OTHER people
+    // are a manager's call and automatic for them.
+    ["grant_channel_ssh", { authz: args => ownSsh(args) ? "any" : "manage", details: AUTOMATIC }],
+    ["revoke_channel_ssh", { authz: args => ownSsh(args) ? "any" : "manage", details: AUTOMATIC }],
+    // The license key is in the admin's own message, the admin UI sets it with no second step,
+    // and the worst unasked outcome (the no-key limits) is undone by setting it again.
+    ["set_license_key", { authz: "admin", details: AUTOMATIC }],
+    ["clear_license_key", { authz: "admin", details: AUTOMATIC }],
   ]);
 }
 
@@ -405,8 +419,23 @@ export function createGatewayMcpServer(ctx) {
   // Chokepoint: authenticate every tool invocation, then apply the additional human-approval gate
   // to CONTROL_PLANE calls between the handler's authz check and its effect.
   const realRegisterTool = server.registerTool.bind(server);
+  // The handlers behind the gate, for a saved control-plane approval the daemon applies on the
+  // click (gateway/control-plane-approvals.js): the card WAS the human factor, so the executor
+  // runs the handler directly — the handler's own authz check still runs, as the requester.
+  const rawHandlers = new Map();
+  server.invokeApproved = async (name, args) => {
+    const handler = rawHandlers.get(name);
+    if (!handler) throw new Error(`unknown gateway tool "${name}"`);
+    if (!CONTROL_PLANE.has(name)) throw new Error(`"${name}" is not a control-plane tool`);
+    const capability = ctx.verifyCapability();
+    if (!capability.ok) throw new Error(`gateway capability rejected (${capability.reason})`);
+    const result = await handler(args ?? {}, {});
+    const message = (result?.content || []).filter((c) => c?.type === "text").map((c) => c.text).join("\n");
+    return { ok: result?.isError !== true, text: message };
+  };
   server.registerTool = (name, def, handler) => {
     const gate = CONTROL_PLANE.get(name);
+    rawHandlers.set(name, handler);
     return realRegisterTool(name, def, async (args, extra) => {
       // Claude Code parses permission_prompt's reply as an allow/deny decision, so a refusal
       // there must keep that shape — plain text reads as "invalid permission result" to the CLI.
@@ -432,8 +461,9 @@ export function createGatewayMcpServer(ctx) {
         }
         let details = await gate.details(args ?? {});
         if (details !== null) {
-          // The clicker must independently hold the gate's own tier ("any" needs no extra rank):
-          // the human factor for an admin-tier change must come from an admin, never a bystander.
+          // The clicker must independently hold the card's tier ("" needs no extra rank): the
+          // human factor for an admin-tier change must come from an admin, never a bystander.
+          const tier = gateCardTier(gate, args);
           let durableAction = null;
           if (name === "update_channel_instructions") {
             try {
@@ -442,17 +472,21 @@ export function createGatewayMcpServer(ctx) {
             } catch (error) {
               return text(`Couldn't request the instruction update: ${error.message}`);
             }
+          } else if (name !== "create_public_file_link") {
+            // Every other surviving card is durable: the exact call is saved and applied on the
+            // click by the daemon, so no engine waits and no card expires. The public-link card
+            // stays inline because the model needs the minted URL in the same turn.
+            durableAction = buildControlPlaneAction(ctx, { tool: name, args: args ?? {}, tier });
           }
-          const tier = durableAction?.mode === "replace" ? "admin" : authz === "any" ? "" : authz;
           const d = await requireToolApproval(name, details, tier, durableAction);
           if (d.pending) {
-            return text(`⏳ \`${name}\` is awaiting your approval (request ${d.approvalId}). The exact change is saved with no deadline and survives gateway restarts. You can end this turn; the gateway applies it when you click Approve. Deny or Comment cancels it. Nothing has changed yet.`);
+            return text(`⏳ \`${name}\` is awaiting approval (request ${d.approvalId}). The exact change is saved with no deadline and survives gateway restarts. End your turn; the gateway applies it when ${describeControlPlaneTier(tier)} clicks Approve, and posts the outcome on the card. Deny or Comment cancels it. Nothing has changed yet.`);
           }
           // Durable actions are applied only by the daemon's single-use executor. An unexpected
           // transport response must never also run the live handler and duplicate the write.
-          if (durableAction) return text(`Couldn't save the instruction approval: ${d.reason || "the gateway did not return a pending request"}. Nothing was changed.`);
+          if (durableAction) return text(`Couldn't save the approval for \`${name}\`: ${d.reason || "the gateway did not return a pending request"}. Nothing was changed.`);
           if (!d.allow) {
-            return text(`🚫 \`${name}\` changes persistent gateway state, so it needs a human Approve click in Slack — and it was not approved${d.reason ? ` (${d.reason})` : ""}. Nothing was changed.`);
+            return text(`🚫 \`${name}\` needs a human Approve click — and it was not approved${d.reason ? ` (${d.reason})` : ""}. Nothing was changed.`);
           }
           humanApproved = true;
         }

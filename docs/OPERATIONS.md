@@ -438,7 +438,9 @@ hosts* (or `hosts` with `set_secret`) to give containers a placeholder instead.
 **hidden**: containers get a placeholder the proxy swaps in a credential-like header or query parameter (Authorization, x-api-key, `api_key=`, `token=`…), but only
 on servers an admin approved for it. The first time a program sends it to a new server, the proxy
 refuses that request (403, nothing sent) and posts an approval card in the conversation's active
-thread: *Use secret X on api.example.com?* Only an admin's click counts. Approving remembers the
+thread: *Use secret X on api.example.com?* Who may click follows the secret's scope — an admin
+for the organization's, anyone working in the conversation for its own, the owner for a personal
+one (anyone eligible may Deny). The card never expires. Approving remembers the
 server on the secret, for every later run, schedule and SSH session; it takes effect within five
 seconds, so the agent just retries. No card is posted when there is no active thread (an SSH
 session or a background job alone) — approve with `allow_secret_host` instead. The engines' own

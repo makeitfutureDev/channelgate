@@ -10,6 +10,7 @@ import { logEvent } from "../util/logger.js";
 import { getChannelMeta, patchChannelMeta, isAdmin, isAdminPrincipal, isApproved } from "../config/store.js";
 import { effectiveMeta } from "../gateway/run.js";
 import { canManage, isApiPrincipal, isAuthorized } from "../gateway/modes.js";
+import { CONTROL_PLANE_ACTION, splitControlPlaneSecrets, stashControlPlaneSecrets } from "../gateway/control-plane-approvals.js";
 import { toolTarget } from "../engines/stream.js";
 import {
   approvalActionKey,
@@ -126,6 +127,7 @@ function requesterLabel(authorId) {
 function tierNotice(requiredTier = "") {
   if (requiredTier === "admin") return " Only a gateway *admin* can approve this; anyone eligible may Deny or Comment.";
   if (requiredTier === "manage") return " Only a channel *manager* (or a gateway admin) can approve this; anyone eligible may Deny or Comment.";
+  if (requiredTier === "owner") return " Only the requester (or a gateway admin) can approve this; anyone eligible may Deny or Comment.";
   return "";
 }
 
@@ -205,7 +207,7 @@ async function approvalLinkChoices(entry, { durable = false, approveText = "Appr
       choices.push({ action: "approve", scope: "thread", label: "Approve for this thread" });
       // Persisting a forever-approval changes the channel's security posture — admins only, on a
       // link exactly as on the button.
-      if (authority.clickerIsAdmin) choices.push({ action: "approve", scope: "forever", label: "Approve forever (this channel)" });
+      if (authority.canApproveForever) choices.push({ action: "approve", scope: "forever", label: "Approve forever (this channel)" });
     } else {
       choices.push({ action: "approve", scope: "once", label: approveText || "Approve" });
     }
@@ -251,8 +253,16 @@ export async function requestApproval(slack, { channelId, slug, authorId, thread
   const delivery = approvalDeliveryFor(channelId);
   const client = delivery ? { approvalDelivery: delivery } : adapter.capabilities.richCards === "block-kit" ? slack?.getClient?.() || currentClient : null;
   const cardThread = (key) => delivery ? key : slackThreadFor(key);
-  const durable = ["background_shell", INSTRUCTION_ACTION, SECRET_HOST_ACTION].includes(durableAction?.kind);
+  const durable = ["background_shell", INSTRUCTION_ACTION, SECRET_HOST_ACTION, CONTROL_PLANE_ACTION].includes(durableAction?.kind);
   if (durableAction && !durable) return { allow: false, reason: "unsupported durable approval action" };
+  // A saved control-plane call never persists an argument that is a secret (a peer gateway's
+  // token): it is held in daemon memory under the approval id until the click.
+  let heldSecrets = null;
+  if (durableAction?.kind === CONTROL_PLANE_ACTION) {
+    const split = splitControlPlaneSecrets(durableAction);
+    durableAction = split.action;
+    heldSecrets = split.secrets;
+  }
   if (!channelId || !threadKey) return { allow: false, reason: `gateway can't reach ${adapter.label} to ask for approval` };
   const runKey = `${slug}::${threadKey}`;
   // Auto mode → approve without asking; tools "approved forever" here → likewise. Still sandboxed.
@@ -289,6 +299,7 @@ export async function requestApproval(slack, { channelId, slug, authorId, thread
     const actionKey = approvalActionKey(durableAction);
     const existing = findPendingApproval(actionKey);
     if (existing) {
+      stashControlPlaneSecrets(existing.id, heldSecrets); // a repeat after a restart re-arms the held argument
       // A crash between INSERT and postMessage can leave a valid row without a visible card.
       // Re-post the same id on the next identical request. A crash after Slack accepted the post
       // but before msgTs was patched may create two cards; the SQLite CAS still lets only one win.
@@ -356,6 +367,7 @@ export async function requestApproval(slack, { channelId, slug, authorId, thread
         context: { approvalId: id, toolName, slug },
       });
       patchPendingApproval(id, { msgTs: ts });
+      stashControlPlaneSecrets(id, heldSecrets);
     } catch (error) {
       deleteApprovalRequest(id);
       return { allow: false, reason: `couldn't post the approval prompt: ${error.message}` };
@@ -660,13 +672,18 @@ export async function canResolveApproval(entry, clicker) {
   // human factor from someone who could have authorized the action themselves — never from a
   // bystander member or per-channel guest, and never via the author's own click.
   const tier = entry.requiredTier || "";
+  const clickerCanManage = clickerIsAdmin || canManage(m || {}, { authorId: clicker, isAdminUser: clickerIsAdmin, isApprovedUser: clickerIsApproved });
   const meetsTier =
     tier === "admin"
       ? clickerIsAdmin
       : tier === "manage"
-        ? clickerIsAdmin || canManage(m || {}, { authorId: clicker, isAdminUser: clickerIsAdmin, isApprovedUser: clickerIsApproved })
-        : true;
-  return { allowed, clickerIsAdmin, meetsTier, tier };
+        ? clickerCanManage
+        : tier === "owner"
+          ? clickerIsAdmin || (Boolean(clicker) && clicker === entry.authorId)
+          : true;
+  // Persisting a forever-approval changes the channel's posture: a channel manager's call (or an
+  // admin's), never a bystander member's — operator decision 2026-10-07.
+  return { allowed, clickerIsAdmin, clickerCanManage, canApproveForever: clickerCanManage, meetsTier, tier };
 }
 
 export async function handleApprovalClick({ ack, body, action, client }) {
@@ -688,7 +705,7 @@ export async function handleApprovalClick({ ack, body, action, client }) {
   // channel's own access policy authorizes (same isAuthorized check as message gating — approved
   // members in an access:"approved" channel can approve a teammate's prompt, but in an
   // admins-only/"none" channel a non-admin still can't, because they couldn't run the bot there).
-  const { allowed, clickerIsAdmin, meetsTier, tier } = await canResolveApproval(entry, clicker);
+  const { allowed, canApproveForever, meetsTier, tier } = await canResolveApproval(entry, clicker);
   if (!allowed) {
     try {
       await client.chat.postEphemeral({ channel, user: clicker, thread_ts: ts, text: "You're not allowed to approve actions for this run." });
@@ -706,7 +723,7 @@ export async function handleApprovalClick({ ack, body, action, client }) {
         channel,
         user: clicker,
         thread_ts: ts,
-        text: `This approval needs ${tier === "admin" ? "a gateway *admin*" : "a channel *manager*"} to click Approve — you can still Deny or Comment.`,
+        text: `This approval needs ${tier === "admin" ? "a gateway *admin*" : tier === "owner" ? "the requester (or an admin)" : "a channel *manager*"} to click Approve — you can still Deny or Comment.`,
       });
     } catch {
       /* no ephemeral scope — ignore */
@@ -737,10 +754,10 @@ export async function handleApprovalClick({ ack, body, action, client }) {
     });
     return;
   }
-  // Persisting a forever-approval changes the channel's security posture — admins only.
-  if (action.action_id === "cg_approve_always" && !clickerIsAdmin) {
+  // Persisting a forever-approval changes the channel's security posture — managers and admins.
+  if (action.action_id === "cg_approve_always" && !canApproveForever) {
     try {
-      await client.chat.postEphemeral({ channel, user: clicker, thread_ts: ts, text: "Only admins can approve a tool forever — use *Approve once* or *Approve for this thread*." });
+      await client.chat.postEphemeral({ channel, user: clicker, thread_ts: ts, text: "Only this channel's managers (or an admin) can approve a tool forever — use *Approve once* or *Approve for this thread*." });
     } catch {
       /* no ephemeral scope — ignore */
     }
@@ -801,6 +818,6 @@ export async function handlePlatformApproval({ id, conversationId, messageId, ac
   const approved = await isApproved(actorId);
   if (!meta || !isAuthorized(meta, actorId, Boolean(meta.isDM), { isAdminUser: admin, isApprovedUser: approved })) return { ok: false, code: 403, error: "You are not authorized for this conversation" };
   const authority = await canResolveApproval(entry, actorId);
-  if (!authority.allowed || (decision === "approve" && !comment && (!authority.meetsTier || (scope === "forever" && !authority.clickerIsAdmin)))) return { ok: false, code: 403, error: "You cannot approve this action at the requested scope" };
+  if (!authority.allowed || (decision === "approve" && !comment && (!authority.meetsTier || (scope === "forever" && !authority.canApproveForever)))) return { ok: false, code: 403, error: "You cannot approve this action at the requested scope" };
   return applyApprovalDecision({ id, entry, durable, decision, scope, comment, actorId, actorLabel: actorId });
 }

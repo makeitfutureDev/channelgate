@@ -18,6 +18,18 @@ product overview.
 
 ## Unreleased
 
+- Far fewer approval cards. A gateway tool that changes channel or gateway state is now automatic
+  for the admin or channel manager who asked for it (modes, network, folders, MCP servers,
+  secrets, tokens, skill settings, gateway update and restart, the license key, instruction
+  replacement), and refused outright for anyone else. Only eight cards remain, for changes that
+  would silently reach other channels or leak a secret: Admin mode, the gateway guide, admitting a
+  skill source, granting skills organization-wide, adding to a template, approving a skill
+  proposal, approving a server for a hidden secret, and making a secret readable. Every remaining
+  card is durable: it never expires, survives restarts, and the click applies the exact saved call.
+  A secret's card is approved by its tier (admin for the organization's, anyone working in the
+  conversation for its own, the owner for a personal one). "Approve forever" is a channel manager's
+  call, and new channels let approved members manage their own settings by default.
+
 - Slack and Teams help now cover current settings, variable scopes and secret approvals, custom
   MCP connections, skill authoring, automation controls, dedicated Codex sign-in and self-service
   SSH. Slack help uses the current mode names and explains file sharing and finite loops.

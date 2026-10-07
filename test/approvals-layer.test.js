@@ -185,9 +185,10 @@ test("a resolved approval cannot be replayed — a second click reports it expir
 
 // Doc vs gate (live QA, SKL-02): the skills docs claimed the chat verbs "show an Approve/Deny card
 // unless the conversation is in auto mode", but approvals.js applies the auto-mode shortcut only to
-// approvalType "permission" — control-plane verbs always post a card, which is the product contract
-// (Auto never bypasses control-plane approvals). The behaviour is right; the sentence was wrong, and
-// a wrong sentence in a shipped guide is what the agent tells the user.
+// approvalType "permission" — a control-plane card is never decided by Auto. Since 2026-10-07 only
+// the four verbs that push content into every conversation carry that (durable) card; the docs must
+// name them and say Auto never decides it. A wrong sentence in a shipped guide is what the agent
+// tells the user.
 test("no shipped doc claims auto mode skips a control-plane skills approval", () => {
   const files = [
     "../docs/SKILLS.md",
@@ -205,10 +206,14 @@ test("no shipped doc claims auto mode skips a control-plane skills approval", ()
   // Both must state the positive rule, not merely omit the wrong one: the organization-wide admin
   // verbs always carry a card that Auto does not skip, and (operator decision 2026-09-27) personal
   // and channel skill changes carry none at all.
-  assert.match(docs, /\*\*always\*\* post an Approve\/Deny card/i);
-  assert.match(docs, /Auto mode does not bypass it/i);
-  assert.match(guide, /\*\*always\*\* show an Approve\/Deny card/i);
+  for (const text of [docs, guide]) {
+    for (const verb of ["add_skill_source", "add_org_skills", "update_skill_template", "decide_skill_proposal"]) assert.match(text, new RegExp(verb));
+    assert.match(text, /durable/i, "the surviving card is described as durable");
+  }
+  assert.match(docs, /Auto mode never decides a\s+card/i);
+  assert.match(guide, /\*\*always\*\* show a durable Approve\/Deny card/i);
   assert.match(guide, /Auto mode and admin mode do NOT skip it/i);
+  assert.match(guide, /automatic for an admin or manager/i);
   assert.match(docs, /Personal and channel changes never post an approval card/i);
   assert.match(guide, /Personal and channel changes never wait for anyone/i);
 });
@@ -227,4 +232,49 @@ test("the HTTP run API principal ranks as an admin for its own permission prompt
   const auto = await requestApproval(null, { channelId: "C_AL_API_ADMIN", slug, authorId: "api", threadKey: "1700.000900", toolName: "Bash", toolInput: { command: "true" } });
   assert.equal(auto.allow, true, "an Admin channel auto-approves the admin API principal's prompt like an admin author's");
   assert.equal(client.posted.length, 0, "no card is posted for it");
+});
+
+test("owner tier: only the requester (or an admin) approves; Approve forever is a manager's call, not admin-only (2026-10-07)", async () => {
+  const client = fakeClient();
+  setApprovalClient(client);
+  const pending = requestApproval(null, {
+    channelId: CHANNEL,
+    slug: SLUG,
+    authorId: MEMBER,
+    threadKey: "1.555",
+    toolName: "set_secret_mode",
+    toolInput: { details: "Make YOUR personal secret MY_TOKEN READABLE" },
+    approvalType: "agent",
+    requiredTier: "owner",
+  });
+  await new Promise((r) => setImmediate(r));
+  const id = cardId(client);
+  assert.match(JSON.stringify(client.posted.at(-1).blocks), /Only the requester \(or a gateway admin\) can approve this/);
+  await setUser("U_AL_OTHER", { name: "AL Other", approved: true, isAdmin: false });
+  await click(client, "cg_approve", id, "U_AL_OTHER");
+  assert.equal(client.ephemerals.length, 1, "another member cannot approve an owner-tier card");
+  assert.match(client.ephemerals[0].text, /the requester \(or an admin\)/);
+  await click(client, "cg_approve", id, MEMBER);
+  const decision = await pending;
+  assert.equal(decision.allow, true, "the requester's own click approves an owner-tier card");
+
+  // A permission card: a member who manages the channel may pick "forever"; one who does not may not.
+  const original = await getChannelMeta(SLUG);
+  try {
+    await saveChannelMeta(SLUG, { ...original, autoMode: false, approvedTools: [], manageAccess: "admins" });
+    const client2 = fakeClient();
+    setApprovalClient(client2);
+    const pending2 = requestApproval(null, { channelId: CHANNEL, slug: SLUG, authorId: MEMBER, threadKey: "1.666", toolName: "Bash", toolInput: { command: "ls" } });
+    await new Promise((r) => setImmediate(r));
+    await click(client2, "cg_approve_always", cardId(client2), MEMBER);
+    assert.equal(client2.ephemerals.length, 1);
+    assert.match(client2.ephemerals[0].text, /managers \(or an admin\) can approve a tool forever/);
+    await saveChannelMeta(SLUG, { ...(await getChannelMeta(SLUG)), manageAccess: "members" });
+    await click(client2, "cg_approve_always", cardId(client2), MEMBER);
+    const decision2 = await pending2;
+    assert.equal(decision2.allow, true, "a managing member approves forever");
+    assert.deepEqual((await getChannelMeta(SLUG)).approvedTools, ["Bash"], "persisted for the channel");
+  } finally {
+    await saveChannelMeta(SLUG, original);
+  }
 });

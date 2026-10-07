@@ -81,7 +81,8 @@ yet, and `show_channel_ssh` names the installer.
    (or their own id/mention), with no manager or admin approval. Personal key registration and
    removal also need no approval. Grants are per channel, audited as `channel_meta_changed`
    (`sshUsers`), and never admit someone the channel's access policy would refuse. Managers
-   can still grant or revoke access for other people, with a manager approval card.
+   can still grant or revoke access for other people; that is automatic for a manager (since
+   2026-10-07) and refused for anyone else.
    To remove your own access, say "remove my SSH access" (`revoke_channel_ssh`, no `user`).
 3. **Connect**: "show SSH access" in the channel prints the block to paste into `~/.ssh/config`:
 
