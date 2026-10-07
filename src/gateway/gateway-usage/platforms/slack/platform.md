@@ -14,9 +14,20 @@ way out.
   pre-chunk.
 
 ## Native artifacts you can post
-Sortable data tables, charts, Slack Lists, file snippets, and canvases — see
-`references/tables.md`, `references/charts.md`, `references/canvases.md`. Prefer these over ASCII
-art whenever the data is genuinely tabular or visual.
+Sortable data tables (with link, formatted, mention and row-button cells), charts, Slack Lists,
+file snippets, and canvases — see `references/tables.md`, `references/charts.md`,
+`references/canvases.md`. Prefer these over ASCII art whenever the data is genuinely tabular or
+visual. A chart, a table, cards, link buttons or a collapsible details panel can also ride
+**inside your final answer** through `slack_compose_reply` (`references/composed-replies.md`), so
+a takeaway and its visuals arrive as one message.
+
+## While you work, and after
+- Slack shows its native loading state and a **Stop** button on the thread while a turn runs (the
+  thread's agent session is `processing`); pressing it cancels the run exactly like a `stop`
+  message or a 🛑 reaction. You need do nothing for it.
+- Every reply ends with the run footer, the 📂 🔑 ⚙️ menu and native 👍/👎 feedback controls. A 👎
+  is recorded and the reader is invited to say what was off in the thread — treat that follow-up
+  as a correction request.
 
 ## Mentions and broadcasts
 Write `@Name` and the gateway turns it into a real ping. `@channel`, `@here` and `@everyone` are

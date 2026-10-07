@@ -154,6 +154,7 @@ credential or connection is needed, without exposing its value.
 | Post to another channel / DM, schedule a send, react | `references/messages.md`    | chosen Composio account (`mcp__composio-agent__*` / `mcp__composio-user__*`) |
 | Set a reminder or schedule a task (once/recurring) | `references/reminders.md`     | `gateway` → `create_schedule`, `list_schedules`, `delete_schedule` |
 | Show a trend / comparison / composition as a chart | `references/charts.md`        | `gateway` → `slack_post_chart` (native line/bar/area/pie) |
+| Put a chart, table, cards, link buttons or a collapsible details panel INSIDE the final answer | `references/composed-replies.md` | `gateway` → `slack_compose_reply` (Block Kit under the answer text, above the footer) |
 | Include a small explanatory table in this reply | `references/tables.md`           | Write a GFM pipe table in the final reply (native streamed Markdown) |
 | Post a sortable/filterable read-only dataset   | `references/tables.md`            | `gateway` → `slack_post_table` (native data table) |
 | Show a big / wide table (export, "all the rows")| `references/tables.md`            | `gateway` → `slack_upload_snippet` (CSV/TSV → spreadsheet grid) |

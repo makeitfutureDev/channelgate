@@ -63,8 +63,12 @@ test("table validation enforces Slack's rectangular shape and limits", () => {
     /headers\[0\].*required/,
   );
   assert.throws(
-    () => buildTableMessage({ caption: "Too large", headers: ["A"], rows: [["x".repeat(10_001)]] }),
-    /10,000-character limit/,
+    () => buildTableMessage({ caption: "Too large", headers: ["A"], rows: [["x".repeat(20_001)]] }),
+    /20,000-character limit/,
+  );
+  assert.throws(
+    () => buildTableMessage({ caption: "Too many", headers: ["A"], rows: Array.from({ length: 201 }, () => ["x"]) }),
+    /at most 200 items/,
   );
   assert.throws(
     () => buildTableMessage({ caption: "Bad page", headers: ["A"], rows: [["x"]], pageSize: 0 }),
@@ -74,6 +78,94 @@ test("table validation enforces Slack's rectangular shape and limits", () => {
     () => buildTableMessage({ caption: "Bad header", headers: ["A"], rows: [["x"]], rowHeaderColumn: 1 }),
     /integer from 0 to 0/,
   );
+});
+
+test("rich cells: links, formatting, mentions and row buttons become rich_text / action_cell cells", () => {
+  const message = buildTableMessage({
+    caption: "Open tasks",
+    headers: ["**Task**", "Owner", "Link", "Action"],
+    rows: [
+      ["Fix login [spec](https://example.com/spec) — see https://example.com/notes.", { user: "U123ABC" }, { text: "Ticket 42", url: "https://example.com/42" }, { button: { label: "Open", url: "https://example.com/42" } }],
+      [{ text: "Done", strike: true }, "**urgent** `p1` ~~p2~~", { text: "n/a" }, "none"],
+    ],
+  });
+  const table = message.blocks[0];
+  // Header cells are always plain text — Slack rejects rich text there.
+  assert.deepEqual(table.rows[0][0], { type: "raw_text", text: "Task" });
+  const [link, owner, ticket, action] = table.rows[1];
+  assert.equal(link.type, "rich_text");
+  assert.deepEqual(link.elements[0].elements, [
+    { type: "text", text: "Fix login " },
+    { type: "link", url: "https://example.com/spec", text: "spec" },
+    { type: "text", text: " — see " },
+    { type: "link", url: "https://example.com/notes" },
+    { type: "text", text: "." },
+  ]);
+  assert.deepEqual(owner.elements[0].elements, [{ type: "user", user_id: "U123ABC" }]);
+  assert.deepEqual(ticket.elements[0].elements, [{ type: "link", url: "https://example.com/42", text: "Ticket 42" }]);
+  assert.equal(action.type, "action_cell");
+  assert.equal(action.element.type, "button");
+  assert.equal(action.element.action_id, "cg_table_row_0_3");
+  assert.equal(action.element.url, "https://example.com/42");
+  assert.deepEqual(action.fallback, { type: "raw_text", text: "Open" });
+  const [done, styled, plainObject, none] = table.rows[2];
+  assert.deepEqual(done.elements[0].elements, [{ type: "text", text: "Done", style: { strike: true } }]);
+  assert.deepEqual(styled.elements[0].elements, [
+    { type: "text", text: "urgent", style: { bold: true } },
+    { type: "text", text: " " },
+    { type: "text", text: "p1", style: { code: true } },
+    { type: "text", text: " " },
+    { type: "text", text: "p2", style: { strike: true } },
+  ]);
+  assert.deepEqual(plainObject.elements[0].elements, [{ type: "text", text: "n/a" }]);
+  assert.deepEqual(none, { type: "raw_text", text: "none" });
+  // Every row button carries a distinct action_id (Slack refuses duplicates in one block).
+  const ids = table.rows.flat().filter((cell) => cell.type === "action_cell").map((cell) => cell.element.action_id);
+  assert.equal(new Set(ids).size, ids.length);
+});
+
+test("cell Markdown keeps literal data literal: raw mentions, globs, URL parentheses and punctuation", () => {
+  const table = buildTableMessage({
+    caption: "Edge cases",
+    headers: ["A"],
+    rows: [
+      ["ping <@U123ABC> please"],
+      ["see https://en.wikipedia.org/wiki/Foo_(bar), then (https://a.example/c) and https://x.example/z."],
+      ["[w](https://en.wikipedia.org/wiki/Foo_(bar)) and ** not bold ** and **bold**"],
+    ],
+  }).blocks[0];
+  assert.deepEqual(table.rows[1][0], { type: "raw_text", text: "ping <@U123ABC> please" }, "a raw mention in a string is never a ping");
+  assert.deepEqual(table.rows[2][0].elements[0].elements, [
+    { type: "text", text: "see " },
+    { type: "link", url: "https://en.wikipedia.org/wiki/Foo_(bar)" },
+    { type: "text", text: ", then (" },
+    { type: "link", url: "https://a.example/c" },
+    { type: "text", text: ") and " },
+    { type: "link", url: "https://x.example/z" },
+    { type: "text", text: "." },
+  ]);
+  assert.deepEqual(table.rows[3][0].elements[0].elements, [
+    { type: "link", url: "https://en.wikipedia.org/wiki/Foo_(bar)", text: "w" },
+    { type: "text", text: " and ** not bold ** and " },
+    { type: "text", text: "bold", style: { bold: true } },
+  ]);
+  // A cell full of openers costs linear time, and an oversized table is refused before parsing.
+  const started = Date.now();
+  buildTableMessage({ caption: "x", headers: ["A"], rows: [["[".repeat(19_000)]] });
+  assert.ok(Date.now() - started < 1_000);
+  assert.throws(() => buildTableMessage({ caption: "x", headers: ["A"], rows: Array.from({ length: 50 }, () => ["[".repeat(2_000)]) }), /20,000-character limit/);
+});
+
+test("rich cells are validated before the API call", () => {
+  assert.throws(() => buildTableMessage({ caption: "x", headers: ["A"], rows: [[{ url: "ftp://nope" }]] }), /absolute http\(s\) URL/);
+  assert.throws(() => buildTableMessage({ caption: "x", headers: ["A"], rows: [[{ button: { label: "Open" } }]] }), /button\.url.*required/);
+  assert.throws(() => buildTableMessage({ caption: "x", headers: ["A"], rows: [[{ button: { label: "", url: "https://a.b" } }]] }), /button\.label.*required/);
+  assert.throws(() => buildTableMessage({ caption: "x", headers: ["A"], rows: [[{ user: "nobody" }]] }), /Slack user id/);
+  assert.throws(() => buildTableMessage({ caption: "x", headers: ["A"], rows: [[{}]] }), /needs `text`, `url`, `user` or `button`/);
+  assert.throws(() => buildTableMessage({ caption: "x", headers: ["A"], rows: [[null]] }), /text, a finite number, or a cell object/);
+  // Rich text counts its readable characters against the 20,000 cap, not the markup.
+  const message = buildTableMessage({ caption: "x", headers: ["A"], rows: [[`[${"y".repeat(19_990)}](https://example.com)`]] });
+  assert.equal(message.blocks[0].rows[1][0].type, "rich_text");
 });
 
 test("postTable posts only to the trusted channel and thread with bot auth", async () => {
@@ -124,7 +216,7 @@ test("gateway-usage skill routes tables to streamed, native, export, or editable
   assert.match(tables, /native streaming with `markdown_text`[\s\S]*GFM pipe tables/i);
   assert.match(tables, /Do not call a tool for this case/);
   assert.match(tables, /pagination, sorting, and filtering/);
-  assert.match(tables, /100 rows \/ 20 columns \/ 10,000[\s\S]*slack_post_table/);
+  assert.match(tables, /200 rows \/ 20 columns \/ 20,000[\s\S]*slack_post_table/);
   assert.match(tables, /Larger or wider read-only export[\s\S]*slack_upload_snippet/);
   assert.match(tables, /People will edit it over time[\s\S]*Slack List/);
   assert.match(replies, /native streaming API as `markdown_text`/);

@@ -188,11 +188,47 @@ export function footerButtons(result, { channel = "", threadTs = "", authorId = 
   return [...menu, ...reviewFileButtons(result, { channel, threadTs, authorId })];
 }
 
+// Slack's native 👍 / 👎 answer feedback (a `context_actions` block with `feedback_buttons`). The
+// click is recorded as a `reply_feedback` event (slack/app.js) — the value names the verdict, the
+// message it rode identifies the answer. Bound like the menu: `u` is the requester (or "" for an
+// automation post), and the handler accepts any channel member's verdict either way, since a
+// reader's opinion of an answer is not a privilege.
+export const REPLY_FEEDBACK_ACTION_ID = "cg_reply_feedback";
+export function feedbackBlocks({ channel = "", threadTs = "", authorId = "" } = {}) {
+  if (!channel) return [];
+  const bound = JSON.stringify({ c: channel, t: threadTs || "", u: authorId || "" });
+  return [{
+    type: "context_actions",
+    elements: [{
+      type: "feedback_buttons",
+      action_id: REPLY_FEEDBACK_ACTION_ID,
+      positive_button: { text: { type: "plain_text", text: "👍", emoji: true }, accessibility_label: "Good answer", value: `up:${bound}` },
+      negative_button: { text: { type: "plain_text", text: "👎", emoji: true }, accessibility_label: "Bad answer", value: `down:${bound}` },
+    }],
+  }];
+}
+
+// Decode a feedback click's value. Returns null for anything that isn't ours.
+export function parseFeedbackValue(value) {
+  const raw = String(value || "");
+  const separator = raw.indexOf(":");
+  const verdict = separator === -1 ? raw : raw.slice(0, separator);
+  if (verdict !== "up" && verdict !== "down") return null;
+  let bound = {};
+  if (separator !== -1) {
+    try { bound = JSON.parse(raw.slice(separator + 1)) || {}; } catch { bound = {}; }
+  }
+  return { verdict, channel: String(bound.c || ""), threadTs: String(bound.t || ""), authorId: String(bound.u || "") };
+}
+
 // Same run-stats footer as footerText, but as Block Kit — used to append the footer to a
 // streamed reply (chat.stopStream takes `blocks`, not appended text): the compact stats context
-// directly above the actions row holding the menu (and any referenced-file buttons).
-export function footerBlocks(result, context = {}) {
+// directly above the actions row holding the menu (and any referenced-file buttons), then the
+// 👍/👎 feedback controls. `feedback:false` leaves the controls out (the retry tier progress.js
+// uses when Slack rejects the richer block set).
+export function footerBlocks(result, context = {}, { feedback = true } = {}) {
   const buttons = footerButtons(result, context);
   const stats = { type: "context", elements: [{ type: "mrkdwn", text: footerText(result) }] };
-  return buttons.length ? [stats, { type: "actions", elements: buttons }] : [stats];
+  const menu = buttons.length ? [stats, { type: "actions", elements: buttons }] : [stats];
+  return feedback ? [...menu, ...feedbackBlocks(context)] : menu;
 }

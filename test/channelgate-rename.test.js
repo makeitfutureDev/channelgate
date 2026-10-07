@@ -285,7 +285,7 @@ test("the Slack app manifest is valid JSON, renamed, and keeps its scopes and ev
   for (const scope of ["app_mentions:read", "chat:write", "commands", "lists:write", "users:read"]) {
     assert.ok(manifest.oauth_config.scopes.bot.includes(scope), scope);
   }
-  assert.equal(manifest.settings.event_subscriptions.bot_events.length, 11);
+  assert.equal(manifest.settings.event_subscriptions.bot_events.length, 13);
   assert.equal(manifest.settings.socket_mode_enabled, true);
 });
 

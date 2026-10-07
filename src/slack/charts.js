@@ -1,9 +1,14 @@
 // Post native Slack Block Kit data-visualization charts with the workspace BOT token.
 // The caller supplies the channel/thread from trusted gateway context; neither is exposed as an
 // AI-controlled tool argument. Native charts need only the bot's existing `chat:write` scope.
-import { resolveSlackConfig } from "../config/settings.js";
-
+// Settings are read lazily for the same reason as in tables.js: the engine stream readers import
+// this builder through reply-blocks.js, and config/settings.js imports the engine registry.
 const API = "https://slack.com/api";
+
+async function defaultBotToken() {
+  const { resolveSlackConfig } = await import("../config/settings.js");
+  return resolveSlackConfig().botToken || "";
+}
 const CHART_TYPES = new Set(["line", "bar", "area", "pie"]);
 
 function requiredText(value, field, max) {
@@ -80,12 +85,18 @@ function seriesChart(type, series, xLabel, yLabel) {
   return { type, series: normalizedSeries, axis_config: axisConfig };
 }
 
-export function buildChartMessage({ chartType, title, series, segments, xLabel, yLabel, summary } = {}) {
+// The data_visualization block alone (no message wrapper) — shared by the standalone post and
+// composed replies (reply-blocks.js).
+export function buildChartBlock({ chartType, title, series, segments, xLabel, yLabel } = {}) {
   const type = String(chartType || "").trim().toLowerCase();
   if (!CHART_TYPES.has(type)) throw new Error("`chart_type` must be one of: line, bar, area, pie.");
   const cleanTitle = requiredText(title, "title", 50);
   const chart = type === "pie" ? pieChart(segments) : seriesChart(type, series, xLabel, yLabel);
-  const block = { type: "data_visualization", title: cleanTitle, chart };
+  return { block: { type: "data_visualization", title: cleanTitle, chart }, type, title: cleanTitle, chart };
+}
+
+export function buildChartMessage({ chartType, title, series, segments, xLabel, yLabel, summary } = {}) {
+  const { block, type, title: cleanTitle, chart } = buildChartBlock({ chartType, title, series, segments, xLabel, yLabel });
 
   const suppliedSummary = optionalText(summary, "summary", 3000);
   const generatedSummary = type === "pie"
@@ -97,9 +108,10 @@ export function buildChartMessage({ chartType, title, series, segments, xLabel, 
 
 export async function postChart(
   { channelId, threadTs = "", chartType, title, series, segments, xLabel, yLabel, summary } = {},
-  { token = resolveSlackConfig().botToken || "", fetchImpl = fetch } = {},
+  { token = "", fetchImpl = fetch } = {},
 ) {
   if (!channelId) throw new Error("No channel context — can't post a chart here.");
+  if (!token) token = await defaultBotToken();
   if (!token) throw new Error("Slack bot token isn't configured (set it in the admin Settings).");
   const message = buildChartMessage({ chartType, title, series, segments, xLabel, yLabel, summary });
   const body = { channel: channelId, ...message };

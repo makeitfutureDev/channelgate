@@ -66,6 +66,7 @@ import { attachmentFileName, downloadSlackFiles, formatBytes, isAttachmentOnDisk
 import { buildResumeCommand, footerButtons, footerText } from "./footer.js";
 import { postNoticeWithMenu } from "./deliver.js";
 import { setAssistantStatus, startProgress } from "./progress.js";
+import { renameAgentSession } from "./agent-sessions.js";
 import { busyThreadChoiceBlocks, busyThreadChoices, deliverBusyThreadChoiceLinks, steerActiveRun, BUSY_THREAD_CHOICE_KIND } from "./busy-thread-choice.js";
 import { engineSwitchChoices, engineSwitchChoiceBlocks, engineSwitchChoiceText } from "./engine-switch-choice.js";
 
@@ -302,17 +303,16 @@ const CONTINUE_PROMPT =
   "Continue exactly where you left off. First check what was already completed (files on disk, " +
   "your earlier progress) before redoing anything.";
 
-// Name a thread in the Agent messaging experience (assistant.threads.setTitle). In agent_view the
-// app's DM threads are shown as a timeline above the composer, so a meaningful title per thread
-// makes the conversation list scannable. No-ops gracefully outside an agent/assistant thread or
-// without assistant:write (same fallback posture as setAssistantStatus).
+// Name a thread in the Agent messaging experience (agents.sessions.rename, with the legacy
+// assistant.threads.setTitle as the bridge — see slack/agent-sessions.js). In agent_view the app's
+// DM threads are shown as a timeline above the composer, so a meaningful title per thread makes
+// the conversation list scannable. No-ops gracefully outside an agent/assistant thread or without
+// assistant:write (same fallback posture as setAssistantStatus).
 function setAssistantTitle(client, channel, threadTs, title) {
   if (!threadTs || !title) return;
-  client
-    .apiCall("assistant.threads.setTitle", { channel_id: channel, thread_ts: threadTs, title: title.slice(0, 120) })
-    .catch(() => {
-      /* not an agent/assistant thread / missing assistant:write — ignore */
-    });
+  renameAgentSession(client, { channel, threadTs, title }).catch(() => {
+    /* not an agent/assistant thread / missing assistant:write — ignore */
+  });
 }
 
 // Derive a short, human thread title from the user's first message. Collapses whitespace and

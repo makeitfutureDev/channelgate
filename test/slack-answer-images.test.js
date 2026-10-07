@@ -190,7 +190,7 @@ test("an image preview does not displace an unattended run footer and menu", asy
   });
 
   assert.equal(posts.length, 1);
-  assert.deepEqual(posts[0].blocks.map((block) => block.type), ["section", "image", "context", "actions"]);
+  assert.deepEqual(posts[0].blocks.map((block) => block.type), ["section", "image", "context", "actions", "context_actions"]);
   assert.match(posts[0].blocks[2].elements[0].text, /3\/2/);
   assert.doesNotMatch(JSON.stringify(posts[0].blocks), /resume_cmd_modal/);
 });
@@ -234,7 +234,7 @@ test("native answer finalization appends image blocks before the run footer", as
   await progress.finalize({ content: markdown, usage: { input_tokens: 1, output_tokens: 1 } });
 
   assert.equal(stops.length, 1);
-  assert.deepEqual(stops[0].blocks.map((block) => block.type), ["image", "context", "actions"]);
+  assert.deepEqual(stops[0].blocks.map((block) => block.type), ["image", "context", "actions", "context_actions"]);
   assert.equal(stops[0].blocks[0].image_url, "https://img.example/chart.png");
 });
 
@@ -292,8 +292,8 @@ test("a rejected native image preview retries with the healthy footer", async ()
   await progress.finalize({ content: markdown, usage: { input_tokens: 1, output_tokens: 1 } });
 
   assert.equal(stops.length, 2);
-  assert.deepEqual(stops[0].blocks.map((block) => block.type), ["image", "context", "actions"]);
-  assert.deepEqual(stops[1].blocks.map((block) => block.type), ["context", "actions"]);
+  assert.deepEqual(stops[0].blocks.map((block) => block.type), ["image", "context", "actions", "context_actions"]);
+  assert.deepEqual(stops[1].blocks.map((block) => block.type), ["context", "actions", "context_actions"]);
   assert.equal(stops[1].markdown_text, undefined, "the SDK's retained terminal Markdown is not duplicated");
   assert.equal(posts.length, 0, "a rejected preview does not force a duplicate classic answer");
 });

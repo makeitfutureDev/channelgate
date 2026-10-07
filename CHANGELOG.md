@@ -18,6 +18,22 @@ product overview.
 
 ## Unreleased
 
+- Slack's native **Stop** button: the app manifest now subscribes to `agent_session_stopped` (and
+  `agent_session_title_changed`) and every turn drives the thread's Agent Session natively
+  (`agents.sessions.setStatus` / `rename`, legacy `assistant.threads.*` as the bridge fallback), so
+  Slack renders its own Stop control on a running thread; pressing it cancels that thread like a
+  `stop` message. Paste the updated `slack-app-manifest.json` and reinstall the app to enable it.
+  The manifest also registers the `/model` slash command the gateway already handled.
+- Richer native data tables: `slack_post_table` accepts link, formatted, mention and row-button
+  cells (lightweight Markdown in strings or explicit cell objects) and Slack's current limits of
+  200 rows / 20,000 characters.
+- Composed replies: the new `slack_compose_reply` control tool attaches charts, tables, cards,
+  link rows and collapsible details panels to the final streamed answer, so one message carries
+  the takeaway and its visuals; a rejected block set is retried without it so the answer and its
+  footer always land.
+- Native 👍/👎 answer feedback on every reply footer, recorded as `reply_feedback` events; a 👎
+  privately invites the correction in the thread.
+
 - Fix completed Codex turns being reported as failures after recovered reconnect notices; retain terminal failure and unsafe-replay safeguards.
 - Restore bounded Claude watchdog continuation for cold and warm silence-budget failures using typed error details; retain Stop and ambiguous-kill exclusions.
 - Add observed pending-tool context to Claude and Codex hard-kill diagnostics without attributing the cause, suppressing diagnosis or replaying ambiguous work.

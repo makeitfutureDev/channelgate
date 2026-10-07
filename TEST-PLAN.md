@@ -5915,8 +5915,8 @@ none` for its cases and live gates. Kept as history.
       `static_select`) still applies the pick instead of erroring. Admins in channels,
       approved/admin users in DMs; Settings → Access & security can allow every authorized channel
       user instead, for both channel and thread scope, and every wizard click rechecks the policy;
-      the typed `@bot /model` in-thread command is the entry point
-      (no slash command is registered in the Slack app manifest).
+      the typed `@bot /model` in-thread command and the registered top-level `/model` slash
+      command (in the Slack app manifest since the agent-interface update) are the entry points.
 - [ ] Reply footer model follows the configured cascade: with a thread override set the footer
       shows the thread's model; else a set channel/DM model; else the gateway default; only with
       nothing configured anywhere does it show the CLI-reported default. The context % and Codex
@@ -6737,14 +6737,29 @@ none` for its cases and live gates. Kept as history.
 - [ ] `slack_post_table caption:"…" headers:[…] rows:[[...]]` posts a Block Kit `data_table` into
       the CURRENT channel + thread with native headers, pagination, sorting, filtering, and an
       accessible top-level fallback `text`. It needs only the existing bot `chat:write` scope.
-- [ ] Headers accept 1–20 columns and data accepts 1–100 rows; every row must match the header count.
+- [ ] Headers accept 1–20 columns and data accepts 1–200 rows; every row must match the header count.
       String cells become `raw_text`, finite numbers become `raw_number` (with display text) for
       numeric sorting, and empty strings display as an em dash.
+- [x] Automated (`test/slack-tables.test.js`): a string cell carrying `[label](url)`, a bare https
+      URL, `**bold**`, `` `code` ``, `~~strike~~` or `<@U…>` becomes a `rich_text` cell whose
+      elements are real `link` / styled `text` / `user` elements; `{text,url}`, `{text,bold}`,
+      `{user}` object cells do the same; `{button:{label,url}}` becomes an `action_cell` with a URL
+      button, a unique `cg_table_row_<row>_<col>` action id and a plain-text fallback; a header
+      with markers is stripped to plain text; `ftp:` URLs, a button without URL or label, a
+      malformed user id, an empty object and `null` are refused before the call; readable text (not
+      markup) counts against the cap. A raw `<@U…>` in a string stays text (only the `{user}` cell
+      pings), URLs keep balanced parentheses and shed trailing punctuation, `** not bold **` stays
+      literal, a cell of 19,000 `[` parses in linear time and an oversized table is refused before
+      parsing.
+- [ ] Live, both Claude and Codex: ask for a table of three open items with a link in one column
+      and an *Open* row button per row. Expect one native data table whose links are clickable,
+      whose buttons open the URL (no Slack warning triangle after the click — the ack-only handler
+      answered), and whose reply text is a one-line takeaway.
 - [ ] `page_size` accepts integers 1–100 (default up to 10 rows); `row_header_column` is zero-based,
       defaults to the first column, and must name an existing column for screen-reader row identity.
-- [ ] More than 10,000 aggregate cell characters is refused before the API call with guidance to
-      use `slack_upload_snippet`; a supplied `summary` is used verbatim and capped at 3,000 chars,
-      while omission generates a compact caption/row/column fallback.
+- [ ] More than 20,000 aggregate cell characters (or more than 200 rows) is refused before the API
+      call with guidance to use `slack_upload_snippet`; a supplied `summary` is used verbatim and
+      capped at 3,000 chars, while omission generates a compact caption/row/column fallback.
 - [ ] The tool schema exposes no channel/thread argument: both ids come from `CG_CHANNEL_ID` and
       `CG_THREAD_KEY`, so the table cannot be redirected outside the requesting conversation.
 - [ ] The injected `gateway-usage` skill routes small explanatory tables embedded in prose to GFM
@@ -6807,6 +6822,87 @@ Claude and on Codex.
       truncation/invented values, and tells the AI to reply with only a short takeaway after posting.
       Its frontmatter description explicitly includes chart, graph, data visualization, trend, and
       comparison triggers so the skill loads before the agent chooses a visual.
+
+### Composed replies (control MCP, `slack_compose_reply`)
+- [x] Automated (`test/slack-reply-blocks.test.js`): ordered `text` / `chart` / `table` /
+      `collapsible` / `card` / `links` / `divider` sections build `section` / `data_visualization`
+      / `data_table` / collapsible `container` / `card` / `actions` / `divider` blocks with
+      distinct `cg_reply_link_<n>` button ids; an empty list, a pie without segments, a
+      `javascript:` button URL, a ragged table, four card buttons and thirteen sections are
+      refused with the reason; the normalizer accepts a JSON string or object and returns `null`
+      for anything invalid. Card title/subtitle/body are defanged like reply text (`<!channel>`,
+      `<!here>`, `<url|label>` never reach Slack raw); two tables in one reply get distinct row
+      button ids; a URL with a newline is refused. The tool is registered only when the run has a
+      live progress writer (`ctx.progressReport`), and `reply_blocks` events are dropped in clean
+      runs, so a scheduled, background or clean run is never told its blocks will render.
+- [x] Automated (same file): a Codex `mcp_tool_call` item for `slack_compose_reply` becomes the
+      `reply_blocks` event and no tool row (its completion is dropped); a Claude stream-json
+      `tool_use` of `mcp__gateway__slack_compose_reply` becomes the same event and no `tool_use`
+      row; `finalize` appends the LATEST snapshot's blocks between the answer text and the stats
+      footer (`section, divider, context, actions, context_actions`); an `invalid_blocks` answer is
+      retried with one suspect removed at a time — image previews, then the composed blocks, then
+      the feedback controls — each retry sending blocks only and never a duplicate classic answer;
+      the classic fallback carries the composed blocks on the answer message.
+- [ ] Live, both Claude and Codex, in an owned QA fixture: ask "give me Q3 spend: a short takeaway,
+      a bar chart by month, a sortable vendor table with an Open button per row, and a collapsed
+      Sources panel — all in one message". Expect ONE reply message: the streamed takeaway text,
+      then the chart, the table, the collapsed *Sources* container, then the stats footer with the
+      📂 🔑 ⚙️ menu and 👍/👎; no separate chart or table post; the progress card shows no
+      `slack_compose_reply` tool row. Expand *Sources* and click a row button: no warning triangle.
+- [ ] Live: ask for the same with an invalid section (a 400-character card body). Expect the tool
+      to refuse with the limit named, the model to fix it and the answer still to arrive composed.
+- [ ] Live, Codex only, same prompt as the first case through `/model` → Codex: the composed blocks
+      arrive the same way (the stream hook is engine-specific).
+- [ ] Engine-independent: the `gateway-usage` skill carries `references/composed-replies.md`, a
+      capability-map row for it, and pointers from `references/charts.md` and
+      `references/tables.md`.
+
+### Slack Agent Sessions & native Stop
+- [x] Automated (`test/slack-agent-sessions.test.js`): a status write calls
+      `agents.sessions.setStatus processing` once, carries the phrase and loading messages on
+      `assistant.threads.setStatus`, does not repeat the native write for a phrase change, sends
+      `active` on the clear and never repeats a steady `active`; `feature_disabled` /
+      `unknown_method` flip status and rename to the legacy methods for the rest of the process
+      (one native attempt, then none); `not_authorized` on one thread keeps the mode native; a
+      thread neither surface accepts reports `false`; an ordinary channel thread that only the
+      native surface accepts still gets `processing` → `active`; renames go native with a
+      200-character title; the `agent_session_stopped` handler stops only the event's thread for an
+      authorized user, ignores a redelivered `event_id`, moves an authorized press on a stale
+      session to `active` instead of leaving it `processing`, leaves an unauthorized press alone,
+      ignores the bot's own events and malformed payloads; `agent_session_title_changed` is
+      registered. A transient native failure (`internal_error`) while already `processing` is not
+      a refusal and never flips the mode; a status CLEAR is never gated by an earlier refused
+      activity write, so a session can always be moved off `processing`.
+- [x] Automated (`test/channelgate-rename.test.js`, `test/slack-agent-sessions.test.js`): the
+      manifest subscribes to `agent_session_stopped` and `agent_session_title_changed` (13 bot
+      events) and registers `/model`.
+- [ ] Live, both Claude and Codex, after pasting the updated `slack-app-manifest.json` into the app
+      and reinstalling: in an owned QA DM start a turn that sleeps 120 seconds. Expect Slack's own
+      loading state and a **Stop** button on the thread (no pulsing dots only); the activity line
+      still tracks tool/thinking phases. Press Stop: the engine process ends, "🛑 Stopped." is
+      posted with the menu, the loading state clears within a second, and no late answer arrives.
+      Repeat in a channel thread (the button appears there too). Rename the thread from Slack's UI:
+      an `agent_session_renamed` event row appears in Observability.
+- [ ] Live: let a turn run idle past five minutes (a background `sleep 330`). Expect the Stop
+      button to remain visible the whole time (the native `processing` is re-asserted) and to clear
+      on the answer.
+- [ ] Live, on a workspace WITHOUT agent sessions enabled (or with the stop-event subscription
+      removed): one `agents.sessions … unavailable` warning in the daemon log, then the legacy
+      spinner and phrases exactly as before, with no per-turn error noise.
+
+### Answer feedback (👍 / 👎)
+- [x] Automated (`test/slack-agent-sessions.test.js`, `test/slack-progress.test.js`,
+      `test/deliver.test.js`, `test/slack-answer-images.test.js`): every stats footer ends with one
+      `context_actions` block carrying `feedback_buttons` (`cg_reply_feedback`, 👍 / 👎) on the
+      streamed, classic-fallback, unattended and image-bearing answer paths, and `footerBlocks(…,
+      { feedback: false })` leaves it out; a 👎 click is acknowledged, recorded and answered with
+      one ephemeral invitation in the thread, a 👍 is acknowledged and recorded only; the value
+      decodes to the verdict and the message's channel/thread/requester, and anything else is
+      ignored.
+- [ ] Live, both Claude and Codex: on a finished answer press 👎. Expect the button to register,
+      a private "tell me what was off" note in the thread, and a `reply_feedback` event
+      (`verdict: "down"`) in Observability. Press 👍 on another answer: an event, no note. Another
+      channel member's vote is accepted too.
 
 ### Scope self-check (boot)
 - [ ] On boot the log shows `scope check: all N bot scopes granted` when the installed app holds

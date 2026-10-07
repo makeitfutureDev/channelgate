@@ -8,16 +8,21 @@ ensureTestEnv();
 const { setAssistantStatus, startProgress } = await import("../src/slack/app.js");
 const { progressFromCodexEvent } = await import("../src/engines/codex.js");
 
-test("local transcription can use Slack's native compact and prominent status fields", () => {
+test("local transcription can use Slack's native compact and prominent status fields", async () => {
   const calls = [];
   const client = { apiCall: async (method, payload) => calls.push([method, payload]) };
-  setAssistantStatus(client, "C1", "111.222", "is transcribing voice locally…", ["Transcribing voice locally…"]);
-  assert.deepEqual(calls, [["assistant.threads.setStatus", {
-    channel_id: "C1",
-    thread_ts: "111.222",
-    status: "is transcribing voice locally…",
-    loading_messages: ["Transcribing voice locally…"],
-  }]]);
+  await setAssistantStatus(client, "C1", "111.222", "is transcribing voice locally…", ["Transcribing voice locally…"]);
+  // The native session lifecycle is asserted first (that is what shows Slack's Stop button), then
+  // the phrase rides the legacy surface, which is the only one that accepts it.
+  assert.deepEqual(calls, [
+    ["agents.sessions.setStatus", { channel_id: "C1", thread_ts: "111.222", status: "processing" }],
+    ["assistant.threads.setStatus", {
+      channel_id: "C1",
+      thread_ts: "111.222",
+      status: "is transcribing voice locally…",
+      loading_messages: ["Transcribing voice locally…"],
+    }],
+  ]);
 });
 
 test("assistant loading messages are clipped to Slack's 50-character limit", async () => {
@@ -756,7 +761,10 @@ test("completed-run footer carries the fixed labelled menu: Files, Variables, Se
   });
 
   const stop = calls.find((call) => call[0] === "stopStream");
-  assert.deepEqual(stop[1].blocks.map((block) => block.type), ["context", "actions"]);
+  // Stats, the menu, then Slack's native 👍/👎 feedback controls.
+  assert.deepEqual(stop[1].blocks.map((block) => block.type), ["context", "actions", "context_actions"]);
+  assert.equal(stop[1].blocks[2].elements[0].type, "feedback_buttons");
+  assert.equal(stop[1].blocks[2].elements[0].action_id, "cg_reply_feedback");
   const buttons = stop[1].blocks[1].elements;
   // No 💻 control: the resume command lives in Settings → Resume Session, not on every reply.
   assert.deepEqual(buttons.map((button) => button.text.text), ["📂 Files", "🔑 Variables", "⚙️ Settings"]);
@@ -791,7 +799,7 @@ test("completed-run footer adds one direct-preview button per referenced workspa
     durationMs: 1,
     usage: { input_tokens: 1, output_tokens: 1 },
   });
-  const buttons = calls[0].blocks.at(-1).elements;
+  const buttons = calls[0].blocks.find((block) => block.type === "actions").elements;
   assert.deepEqual(buttons.map((button) => button.text.text), ["📂 Files", "🔑 Variables", "⚙️ Settings", "📄 review spec.md"]);
   assert.deepEqual(JSON.parse(buttons[3].value), { o: "open_file", c: "C1", t: "111.222", u: "U1", p: "docs/review spec.md" });
 });
@@ -838,7 +846,8 @@ test("invalid footer blocks finalize the existing stream without duplicating the
   assert.ok(stops[0][1]?.blocks, "the normal footer is attempted first");
   assert.match(stops[0][1].markdown_text, /Completed answer/,
     "a tool-only turn buffers its answer in the first terminal request");
-  assert.equal(stops[1][1]?.blocks, undefined, "the retry drops the rejected footer blocks");
+  assert.deepEqual(stops[1][1]?.blocks?.map((block) => block.type), ["context", "actions"],
+    "the retry drops the rejected feedback controls and keeps the plain stats footer");
   assert.equal(stops[1][1]?.markdown_text, undefined,
     "the retry must not append markdown already retained in ChatStreamer's buffer");
   const recoveredTool = calls.find((call) => call[0] === "progressStop")?.[1]?.chunks
@@ -2670,7 +2679,7 @@ test("a rate-limited stopStream leaves exactly one answer message, with its foot
   assert.ok(posts[0].text.startsWith("The answer that was still streaming when Slack said no."),
     "the surviving message carries the complete authoritative answer");
   assert.equal(posts[0].blocks[0].text.text, posts[0].text, "the answer rides the message as its own block");
-  assert.deepEqual(posts[0].blocks.slice(1).map((block) => block.type), ["context", "actions"],
+  assert.deepEqual(posts[0].blocks.slice(1).map((block) => block.type), ["context", "actions", "context_actions"],
     "the run-stats footer and its controls ride the same message instead of a stats-only one");
   assert.ok(calls.some((call) => call[0] === "stopStream" && call[2] === 1 && call[1]?.chunks?.length),
     "the toolbox card is still sealed");
@@ -2736,7 +2745,8 @@ test("rapid activity phases coalesce into one pending assistant status", async (
   let release;
   const firstWrite = new Promise((resolve) => { release = resolve; });
   const client = {
-    apiCall: async (_method, payload) => {
+    apiCall: async (method, payload) => {
+      if (method !== "assistant.threads.setStatus") return; // the native lifecycle write is not a phase
       statuses.push(payload.status);
       if (statuses.length === 1) await firstWrite; // stuck behind Slack's retry-after
     },
@@ -2744,6 +2754,7 @@ test("rapid activity phases coalesce into one pending assistant status", async (
     chat: { postMessage: async () => {}, update: async () => {} },
   };
   const progress = startProgress("stream", client, "C_STATUS_COALESCE", "111.222", { authorId: "U1", teamId: "T1" });
+  await cardReady(); // the native lifecycle write precedes the phrase inside the same status write
   assert.equal(statuses.length, 1, "the opening phrase is the write in flight");
 
   // Thinking summaries: a pure status phase, so this measures the status queue itself and not the

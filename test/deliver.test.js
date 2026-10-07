@@ -87,7 +87,9 @@ test("deliverResult with footer ends the answer with the run stats and the unbou
   assert.deepEqual(menuLabels(post), ["📂 Files", "🔑 Variables", "⚙️ Settings"]);
   assert.doesNotMatch(JSON.stringify(post.blocks), /resume_cmd_modal/);
   // An unattended post has no Slack requester, so the menu opens for whoever clicks it.
-  for (const button of post.blocks.at(-1).elements) assert.equal(JSON.parse(button.value).u, "");
+  for (const button of post.blocks.find((block) => block.type === "actions").elements) assert.equal(JSON.parse(button.value).u, "");
+  // Slack's native 👍/👎 feedback rides the unattended answer too.
+  assert.equal(post.blocks.at(-1).type, "context_actions");
 });
 
 test("deliverResult without footer still ends the answer with the menu", async () => {
