@@ -8465,3 +8465,8 @@ Live (unexecuted; repeat with Claude and Codex): mention the bot with `/settings
   same thread and a fresh thread; both must report absent. Preserve exact prompts, configured
   engine, safe boolean tool output and thread evidence. Restore fixture state. Local handler
   regressions do not claim live Slack-client or dual-engine acceptance.
+
+### Stable dependency audit prerequisite
+
+The stable API conversation candidate includes the compatible lock refresh from beta
+`6d72d299`; rerun production dependency auditing and the full regression suite before release.

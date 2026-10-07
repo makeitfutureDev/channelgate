@@ -18,6 +18,8 @@ product overview.
 
 ## Unreleased
 
+- Refresh the locked MCP SDK, URI and IP parsing dependencies to patched compatible releases.
+
 - Add optional `conversationKey` to the HTTP run API: keep related external events in one
   persistent Slack thread, preserve agent context through the existing run queue, and expose
   thread timestamps, reuse flags and permalinks. Replace deleted roots safely and report Slack
