@@ -8980,7 +8980,7 @@ located and compared by sha256 only):
 
 ## Teams conversation settings parity
 
-Engine-filtered model lists (2026-10-07): the focused suite below passed 143 tests, zero
+Engine-filtered model lists (2026-10-07): the focused suite below passed 152 tests, zero
 failures/skips; static checks and secret scanning passed. Scratch fixtures verify different channel/session engines, retained-session
 default resolution, draft refresh without writes, incompatible draft clearing, compatible saved
 full IDs, stale/disabled/locked/revoked forms and same-message Execute/Submit refresh.
@@ -8994,7 +8994,7 @@ Automated:
 node --test test/teams-controls.test.js test/teams-settings.test.js \
   test/teams-settings-general.test.js test/teams-settings-catalog.test.js \
   test/channel-settings-modal.test.js test/model-wizard-channel-scope-thread.test.js \
-  test/teams-native-cards.test.js test/platform-teams.test.js
+  test/teams-native-cards.test.js test/platform-teams.test.js test/teams-model-command.test.js
 ```
 
 Scratch SQLite, verified-envelope fixtures and real Teams normalization cover all six pages,
