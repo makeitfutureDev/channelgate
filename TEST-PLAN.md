@@ -1,5 +1,28 @@
 # ChannelGate — Test Plan
 
+## Microsoft Teams help guide acceptance (2026-10-07)
+
+- [x] Automated: `node --test test/help-text.test.js test/teams-controls.test.js
+  test/platform-controls.test.js test/platform-ingest.test.js` verifies the essential workflows,
+  supported command list, Teams formatting/message budget, case-insensitive native dispatch,
+  and delivery to personal, channel and quoted group sessions without invoking an engine.
+  Reaction content cannot dispatch `/help`; unmentioned channel requests are ignored and
+  unapproved users receive the authorization notice instead of help. Scratch gateway stores
+  and fake Teams connectors isolate these checks from the live service.
+- Verification: 41 focused tests passed, zero failures/skips. Static checks and secret scanning
+  passed. The guide formats into one message within the Teams character budget.
+- [ ] LIVE, engine-independent: on the beta Teams QA app, use an approved actor with an open
+  personal chat, one test channel and one group chat. Send `/help` in personal chat;
+  mention the bot with `/help` in a channel thread; quote the bot's reply in group chat and
+  mention it with `/help`. Pass: each guide appears in its source conversation/thread, reads
+  correctly on desktop/mobile, includes **How to use me** and the complete supported command
+  list, and advertises no Slack-only controls. No agent turn, runtime change, file browser or
+  proactive personal settings card is started. Engine selection cannot affect this copy or
+  routing because the native command returns before `runMessage`.
+- [ ] Private QA catalog registration: mirror this engine-independent case with the requesting
+  user's personal Airtable connection. That connection is not exposed in this development run;
+  agent-side credentials must not be substituted. Live Teams delivery remains unexecuted.
+
 ## Nested Claude login acceptance (2026-10-06)
 
 - Automated: `test/nested-claude-login.test.js` checks placeholder-only HOME writes, removal,

@@ -2,6 +2,37 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 
 import { HELP_TEXT } from "../src/slack/help.js";
+import { TEAMS_HELP_TEXT } from "../src/platforms/msteams/help.js";
+import { ensureTestEnv } from './helpers.js';
+ensureTestEnv();
+const { teamsAdapter } = await import('../src/platforms/msteams.js');
+
+test("Teams /help includes practical workflows and its supported commands", () => {
+  for (const expected of [
+    '**How to use me**', '`@agent /help`', 'quote the original message', 'react 🤖',
+    'local Whisper', 'Only the run author or an administrator', 'requests for the same session queue',
+    'allowed drives and Microsoft permissions', '10 MB', 'Public URL', 'personal chat',
+    'Stored credential values are never shown', 'Composio', 'list skills', 'remember that …',
+    'always …', 'gateway-usage', 'channel-memory', 'remind me in 2 hours', 'list schedules',
+    'delete schedule <id>', 'run it in the background', 'Resume',
+    '`/help`', '`/settings`', '`/files [folder]`', '`/secrets`', '`/sendfile <path>`',
+    '`/status`', '`/model [engine] [model|default]`', '`/effort [level|default]`',
+    '`/stop`', '`/cancel`', '`/clear`',
+  ]) assert.ok(TEAMS_HELP_TEXT.includes(expected), `Teams guide missing: ${expected}`);
+
+  // These are Slack-specific controls; Teams has session queues and its own native console.
+  assert.doesNotMatch(TEAMS_HELP_TEXT, /\/(?:menu|sudo|fork|delete|pending|context|compact|mode|next|update|resume)\b/);
+  assert.doesNotMatch(TEAMS_HELP_TEXT, /Slack|Steer Conversation|Generate transcript|react 🛑|📂 button/);
+});
+
+test("Teams help survives the platform formatter within its message budget", () => {
+  const { chunks } = teamsAdapter.formatOutbound(TEAMS_HELP_TEXT);
+  assert.equal(chunks.length, 1);
+  assert.ok(chunks[0].text.length <= teamsAdapter.capabilities.maxMessageChars);
+  assert.match(chunks[0].text, /How to use me/);
+  assert.match(chunks[0].text, /Commands/);
+  assert.match(chunks[0].text, /\/clear/);
+});
 
 test("/help explains the gateway's essential user workflows", () => {
   const essentials = [

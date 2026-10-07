@@ -18,6 +18,9 @@ product overview.
 
 ## Unreleased
 
+- Teams `/help` now includes the practical usage guide for files, settings, skills, memory,
+  schedules and background work, with Teams-specific session controls and command examples.
+
 - Teams and Google Chat now show the model and current app/tool call while a turn runs, and the
   same model, duration, token, optional cost, context and image footer as Slack on its final reply.
   Live status updates coalesce within the surface edit budget and never show tool payloads.
