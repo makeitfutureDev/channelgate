@@ -18,6 +18,10 @@ product overview.
 
 ## Unreleased
 
+- Teams help now shows Teams reaction IDs and picker names instead of Slack shortcodes.
+  Heart eyes robot no longer displays the mismatched plain robot glyph, and the guide explains
+  that reaction codes must be selected through the picker rather than sent as text.
+
 - Teams Stop sign reactions now cancel the selected session’s active and queued requests with
   author/admin checks. Tick button reactions acknowledge tracked reminders, including escalation
   notices. Native and Graph intake recognize their Teams IDs; help describes the supported actions.

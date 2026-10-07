@@ -41,6 +41,11 @@
 
 ## Microsoft Teams help guide acceptance (2026-10-07)
 
+- Teams reaction legend correction: 30 focused help/control/card tests passed, zero failures/skips.
+  The native card and text fallback retain separate reaction rows, Teams picker names and actual
+  reaction IDs, with no Slack shortcodes or plain robot substituted for Heart eyes robot.
+  Live desktop/mobile display and the existing private QA registration remain pending.
+
 - Native layout regression: `test/help-text.test.js`, `test/teams-controls.test.js` and
   `test/teams-native-cards.test.js` verify separate headings/paragraphs, three emoji rows,
   ten command rows with native monospace runs, complete copy without Markdown markers or
@@ -55,7 +60,9 @@
   `test/platform-teams-graph-activity.test.js` verify `hearteyesrobot` / `smilerobot` trigger through
   native and Graph normalization as the reactor, preserving the original target and removed-event
   suppression. Stop and Tick use explicit controls before an engine turn; plain heart eyes and
-  heart eyes dog remain ignored. Help regression checks all three shortcode/name pairs.
+  heart eyes dog remain ignored. Help regression checks all three Teams ID/name pairs, excludes
+  Slack shortcodes and the mismatched plain robot glyph, and explains that typed IDs do not add
+  reactions.
 - Verification of the emoji correction: 54 focused tests passed, zero failures/skips;
   static checks and secret scanning passed. The expanded guide still fits one Teams message.
 - [ ] LIVE (Claude and Codex): in separate approved beta Teams QA group/channel sessions with
@@ -80,7 +87,9 @@
   mention the bot with `/help` in a channel thread; quote the bot's reply in group chat and
   mention it with `/help`. Pass: each guide appears in its source conversation/thread, reads
   correctly on desktop/mobile, with a distinct title, section dividers, spaced paragraphs,
-  separate emoji/command rows and monospace commands. It includes **How to use me** and the
+  separate reaction/command rows and monospace commands. Check the reaction legend shows
+  `hearteyesrobot`, `stopsign` and `2705_whiteheavycheckmark` beside their Teams picker names;
+  no Slack shortcodes or misleading plain robot icon appear. It includes **How to use me** and the
   complete supported command list, and advertises no Slack-only controls. Quote the group help
   card with a mentioned `/status`; it must address the original session. No agent turn, runtime
   change, file browser or proactive personal settings card is started. Engine selection cannot affect this copy or

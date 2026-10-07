@@ -249,9 +249,11 @@ Task-module dialogs and broadcast mentions remain unavailable.
   connections, skills, memory, reminders, schedules and background work. In channels and group
   chats, mention the bot with the command; quote the original message or bot reply in a group
   chat to address that session. Help is returned by the gateway before invoking an engine.
-  The reaction legend names Heart eyes robot (`:robot_face:`), Stop sign (`:octagonal_sign:`),
-  and Tick button (`:white_check_mark:`). Robot activation accepts Teams' `hearteyesrobot` and
-  `smilerobot` event IDs. Microsoft calls the green tick **Checkmark button**, ID
+  The reaction legend uses Teams picker names and IDs: Heart eyes robot (`hearteyesrobot`),
+  Stop sign (`stopsign`), and Tick button / Checkmark button (`2705_whiteheavycheckmark`).
+  Heart eyes robot has no equivalent Unicode glyph, so the guide uses its actual picker name.
+  Typing an ID as a message does not add a reaction. Robot activation accepts Teams' `hearteyesrobot`
+  and `smilerobot` event IDs. Microsoft calls the green tick **Checkmark button**, ID
   `2705_whiteheavycheckmark`; Stop sign is `stopsign`. See the
   [Teams reactions reference](https://learn.microsoft.com/en-us/microsoftteams/platform/agents-in-teams/teams-reactions-reference).
   Stop sign cancels the selected session’s active and queued requests, with author/admin checks.
