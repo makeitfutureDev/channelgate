@@ -9268,6 +9268,16 @@ case. Also run a group with an external member to check tenant/channel delivery 
 
 ## Automation health, logs and silent execution
 
+- Public documentation regression (engine-independent): from `documentation/`, run `npm ci`,
+  `npm run build`, `npm test`, and `npm audit --omit=dev --audit-level=high`. Require both new
+  automation control headings exactly once and the unchanged source-registration coverage gate
+  to account for 106 gateway plus 10 library controls. Review visibility/result/failure/thread
+  arguments and run-history outcomes against the scheduler, store and control implementations.
+  This docs check does not substitute for the Claude/Codex live automation gates below.
+- Checked: documentation dependency install, build, export regression and high-severity production
+  audit passed. Build verified 151 public routes, the search index and all control registrations;
+  audit reported 10 moderate findings, with no high or critical findings.
+
 - Automated: `node --test test/automation-health.test.js test/schedule-health-admin.test.js
   test/scheduler-restart.test.js test/schedule-daily-thread.test.js
   test/schedule-conditional.test.js test/migrations.test.js`. Scratch SQLite and fake

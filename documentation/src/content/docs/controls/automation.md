@@ -1,6 +1,6 @@
 ---
 title: Automation controls
-description: Create, inspect, and delete conversation schedules with exact timing and delivery arguments.
+description: Create, update, inspect, and delete conversation schedules and their execution history.
 ---
 
 Scheduling is available to authorized conversation participants. These tools are inspectable and reversible, and do not add a separate persistent-control approval click. Execution still checks the creator, conversation access, runtime, and license. Schedules are bound to this conversation.
@@ -18,7 +18,11 @@ Scheduling is available to authorized conversation participants. These tools are
 | `description` | Optional | Announcement/title; otherwise prompt |
 | `notify` | Optional | `channel` (default), `user`, `none` |
 | `notify_user` | Optional | User ID; defaults to creator for user notification outside HTTP API runs |
-| `delivery` | Optional | `standard` (default), `daily-thread`, `channel`, `dm-on-match` |
+| `delivery` | Optional | `standard` (default), `daily-thread`, `channel`, `dm-on-match`, `thread` |
+| `delivery_thread` | Conditional | Existing thread ID in this conversation for `thread`; defaults to the current thread when available |
+| `execution_visibility` | Optional | `visible` (default) or `silent`; silent is for agent tasks only |
+| `result_policy` | Optional | `always` (default) or `on-result`; on-result is for agent tasks only |
+| `failure_notify` | Optional | True by default; false suppresses failure messages for agent tasks |
 | `match_prefix` | Conditional | Required nonempty for `dm-on-match` |
 | `kind` | Optional | `task` (default), `reminder` |
 | `ack` | Optional | False by default; applies only to reminders |
@@ -30,6 +34,8 @@ Use **one timing form**. `interval_days` cannot combine with cron, one-time timi
 Recurring cron must meet the configured minimum interval (**60 minutes by default**). The conversation has a default ceiling of **20 enabled schedules**. Daily-thread requires recurring tasks. DM-on-match requires a task, creator, and prefix; routine results and errors remain in status, while the first matching answer is privately delivered and disables the schedule.
 
 A reminder posts its saved text without starting an engine. With acknowledgment enabled, a ✅ closes the escalation chain. A task runs an engine with the current resolved creator/conversation settings.
+
+`silent` suppresses the running announcement, not task execution or useful results. `on-result` suppresses only an explicitly reported healthy `no-op`; failed checks or missing reports are not no-ops. Failure messages remain enabled unless explicitly disabled. Thread delivery requires a valid existing thread ID in this conversation and native platform threading; synthetic engine session keys are refused. A fixed delivery thread does not reuse an ordinary schedule's engine session: each fire still starts fresh. Silent execution, result-only filtering, disabled failure notifications and thread delivery are refused for reminders.
 
 The result returns an ID and next time/notification choice. It is confirmation of creation, not proof of task completion. Quote the gateway's named timezone rather than relabeling it as container UTC.
 
@@ -55,6 +61,45 @@ Example arguments:
 
 ```json
 {}
+```
+
+## get_schedule_runs
+
+**Arguments:** all optional. **Authority:** authorized participant; results are scoped to this conversation.
+
+| Argument | Accepted value/default |
+| --- | --- |
+| `schedule_id` | Filter history to one schedule, including a deleted or completed one-time schedule |
+| `run_id` | Fetch one run in this conversation; takes precedence over list filters |
+| `limit` | Integer 1–100; default 50 |
+| `before` | Run ID cursor; return runs older than this run |
+
+Returns JSON with `summary` and newest-first `runs`, or a single run for `run_id`. For older pages, use the last returned run's ID as `before`. A missing or foreign `run_id` returns an error; an unknown cursor returns an empty list.
+
+History retains completed runs for 90 days, without historical backfill. It includes scheduling delay, execution and delivery status, engine/model, duration, recorded tokens/cost, a bounded summary and connection outcomes. `engineStatus` describes engine completion; `taskStatus` and `outcomeSource` distinguish agent-reported results from gateway facts. A completed engine is not proof that the external task succeeded. Missing or invalid task reports remain `unreported`.
+
+The bounded event trail records lifecycle events, tool names and completion/failure statuses, with a dropped-event count when truncated. It does not retain tool arguments, raw outputs, reasoning or credential payloads. Deleting a schedule preserves its run history within retention.
+
+```json
+{"schedule_id":"schedule-id","limit":20}
+```
+
+## update_schedule
+
+**Required:** `id` (string). **Authority:** authorized participant; only schedules in this conversation can change.
+
+| Optional argument | Accepted value |
+| --- | --- |
+| `execution_visibility` | `visible` or `silent` |
+| `result_policy` | `always` or `on-result` |
+| `failure_notify` | Boolean |
+| `delivery` | `standard`, `daily-thread`, `channel`, `dm-on-match`, `thread` |
+| `delivery_thread` | Existing thread ID in this conversation; current thread is used for `thread` if available and omitted |
+
+Changes only the supplied options. The same task/reminder and thread validation as creation applies. Daily-thread requires a recurring task; switching to DM-on-match requires the schedule's existing creator and match prefix. Timing, prompt, enabled state, recipient and match prefix are not arguments to this control; use the admin Automations editor for those changes. A delivery change keeps execution fresh per fire and does not replay earlier actions.
+
+```json
+{"id":"schedule-id","execution_visibility":"silent","result_policy":"on-result","failure_notify":true}
 ```
 
 ## delete_schedule

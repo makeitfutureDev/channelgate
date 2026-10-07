@@ -18,6 +18,10 @@ product overview.
 
 ## Unreleased
 
+- Public automation documentation now covers run history, task outcomes, quiet execution and
+  existing-thread delivery, with the exact `get_schedule_runs` and `update_schedule` controls.
+  The documentation build again accounts for every registered control.
+
 - Far fewer approval cards. A gateway tool that changes channel or gateway state is now automatic
   for the admin or channel manager who asked for it (modes, network, folders, MCP servers,
   secrets, tokens, skill settings, gateway update and restart, the license key, instruction
