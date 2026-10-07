@@ -9,6 +9,7 @@ import { openConfinedFile } from "../../gateway/confined-file.js";
 import { logEvent } from "../../util/logger.js";
 import { postTable } from "../../slack/tables.js";
 import { postChart } from "../../slack/charts.js";
+import { buildReplyBlocks, composeReplyInputSchema, describeReplyBlocks, chartFieldsSchema, tableFieldsSchema } from "../../slack/reply-blocks.js";
 import { channelHistory, threadReplies } from "../../slack/read.js";
 import { downloadChannelFile, formatBytes, uploadsSubFor } from "../../slack/download.js";
 import { resolveSlackConfig } from "../../config/settings.js";
@@ -267,19 +268,21 @@ export function register(server, ctx) {
       description:
         "Post a native Slack DATA TABLE into THIS thread. Use for a compact read-only result that " +
         "should stay inline and scan cleanly; Slack renders headers, pagination, sorting, and " +
-        "filtering. Pass a `caption`, 1–20 `headers`, and 1–100 `rows`; every row must have exactly " +
-        "one string/number cell per header. Numeric values remain numeric for correct sorting. " +
+        "filtering. Pass a `caption`, 1–20 `headers`, and 1–200 `rows`; every row must have exactly " +
+        "one cell per header. A cell is a string, a number (kept numeric for correct sorting), or an " +
+        "object: `{text, url}` for a clickable link, `{text, bold|italic|strike|code:true}` for " +
+        "formatting, `{user:\"U…\"}` for a mention, `{button:{label, url}}` for a row button that " +
+        "opens a URL. Plain strings may also carry `[label](url)`, bare https URLs, `**bold**`, " +
+        "`code`, `~~strike~~` and `<@U…>` — they render as rich cells. Header cells are plain text. " +
         "`page_size` is 1–100 (default up to 10 visible rows), and `row_header_column` identifies the " +
         "row-label column for screen readers (default 0). All cells together are capped at Slack's " +
-        "10,000-character limit. Use `slack_upload_snippet` instead for a big/wide export, or a Slack " +
+        "20,000-character limit. Use `slack_upload_snippet` instead for a big/wide export, or a Slack " +
         "List for an editable tracker. `summary` is optional notification/accessibility fallback text. " +
-        "After this succeeds, reply with only a short takeaway — don't paste the table again.",
+        "To put the table INSIDE your final answer instead of a separate message, use " +
+        "`slack_compose_reply`. After this succeeds, reply with only a short takeaway — don't paste " +
+        "the table again.",
       inputSchema: {
-        caption: z.string().min(1).max(300),
-        headers: z.array(z.string().min(1).max(200)).min(1).max(20),
-        rows: z.array(z.array(z.union([z.string(), z.number().finite()])).min(1).max(20)).min(1).max(100),
-        page_size: z.number().int().min(1).max(100).optional(),
-        row_header_column: z.number().int().min(0).max(19).optional(),
+        ...tableFieldsSchema,
         summary: z.string().max(3000).optional(),
       },
     },
@@ -320,15 +323,7 @@ export function register(server, ctx) {
         "`chat:write` scope. After this succeeds, reply with only a short takeaway — don't redraw or " +
         "paste the chart data unless the user asked for it.",
       inputSchema: {
-        chart_type: z.enum(["line", "bar", "area", "pie"]),
-        title: z.string().min(1).max(50),
-        series: z.array(z.object({
-          name: z.string().min(1).max(20),
-          data: z.array(z.object({ label: z.string().min(1).max(20), value: z.number() })).min(1).max(20),
-        })).min(1).max(12).optional(),
-        segments: z.array(z.object({ label: z.string().min(1).max(20), value: z.number().positive() })).min(1).max(12).optional(),
-        x_label: z.string().max(50).optional(),
-        y_label: z.string().max(50).optional(),
+        ...chartFieldsSchema,
         summary: z.string().max(3000).optional(),
       },
     },
@@ -349,6 +344,47 @@ export function register(server, ctx) {
         return text(`✅ Posted the native ${chart_type} chart to this thread. Don't also redraw or paste the chart data in the reply.`);
       } catch (e) {
         return text(`Couldn't post the chart: ${e.message}`);
+      }
+    }
+  );
+
+  // ── Composed replies — Block Kit attached to the FINAL answer ──────────────────
+  // The handler validates and acknowledges; the daemon reads the call from the engine stream
+  // (engines/stream.js, engines/codex.js → slack/reply-blocks.js) and progress.js appends the
+  // blocks under the answer text on chat.stopStream. Same ack-only posture as report_progress.
+  server.registerTool(
+    "slack_compose_reply",
+    {
+      description:
+        "Attach native Slack Block Kit to YOUR FINAL ANSWER so one polished message carries the " +
+        "takeaway and its visuals (instead of a separate post per chart/table). Pass 1–12 ordered " +
+        "`sections`: `{type:\"chart\", chart_type, title, series|segments, x_label?, y_label?}` (same " +
+        "rules as slack_post_chart), `{type:\"table\", caption, headers, rows, page_size?, " +
+        "row_header_column?}` (same rules as slack_post_table, incl. link/formatted/button cells), " +
+        "`{type:\"text\", markdown}` (≤3000 chars), `{type:\"collapsible\", title, markdown, " +
+        "collapsed?}` for sources/details/long explanations, `{type:\"card\", title, subtitle?, body?, " +
+        "subtext?, image_url?, buttons?:[{label,url}]≤3}` for a product/result/file card, " +
+        "`{type:\"links\", buttons:[{label,url}]≤5}` for action links, `{type:\"divider\"}`. The blocks " +
+        "render under your streamed answer text and above the run footer, in this order. Call it " +
+        "once with every section (a later call replaces the earlier snapshot), then write the short " +
+        "answer text as usual — don't repeat the chart/table data in prose. The call is refused with " +
+        "the reason when a section breaks a Slack limit; fix and retry.",
+      inputSchema: { sections: composeReplyInputSchema.shape.sections },
+    },
+    async ({ sections }) => {
+      if (!channelId) return text("No channel context — can't compose a reply here.");
+      try {
+        const blocks = buildReplyBlocks(sections);
+        return text(
+          `✅ Staged ${blocks.length} block${blocks.length === 1 ? "" : "s"} (${describeReplyBlocks(sections)}) for the final ` +
+          "answer: they render under your reply text automatically. Now write the short takeaway — " +
+          "don't paste the same chart/table data again.",
+        );
+      } catch (e) {
+        const reason = e?.issues?.length
+          ? e.issues.map((issue) => `${issue.path?.join(".") || "sections"}: ${issue.message}`).join("; ")
+          : String(e?.message || e);
+        return text(`Couldn't compose the reply: ${reason}`);
       }
     }
   );

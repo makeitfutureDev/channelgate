@@ -6,6 +6,7 @@
 // chunks so we can show a useful target ("Read meta.json", "Bash: npm test").
 
 import { isProgressReportTool, normalizeProgressReport } from "./progress-report.js";
+import { isReplyBlocksTool, normalizeReplyBlocks } from "../slack/reply-blocks.js";
 import { isLoopTool, normalizeLoopWakeup } from "./loop-wakeup.js";
 
 const CLAUDE_PROVIDER_ERROR_MAX = 500;
@@ -390,6 +391,13 @@ export function createStreamConsumer({ onDelta = null, onEvent = null } = {}) {
         }
         if (isProgressReportTool(b.name)) {
           const event = normalizeProgressReport(input);
+          if (event) onEvent?.(event);
+          return;
+        }
+        // Composed-reply blocks (slack_compose_reply): observed here, rendered by the Slack
+        // progress writer on the final stopStream — the same posture as a progress report.
+        if (isReplyBlocksTool(b.name)) {
+          const event = normalizeReplyBlocks(input);
           if (event) onEvent?.(event);
           return;
         }

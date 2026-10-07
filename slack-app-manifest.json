@@ -38,6 +38,11 @@
         "command": "/secrets",
         "description": "See and set this channel's environment secrets (values are never shown)",
         "should_escape": false
+      },
+      {
+        "command": "/model",
+        "description": "Pick the harness, model and effort for this channel or just this thread",
+        "should_escape": false
       }
     ],
     "shortcuts": [
@@ -85,6 +90,8 @@
   "settings": {
     "event_subscriptions": {
       "bot_events": [
+        "agent_session_stopped",
+        "agent_session_title_changed",
         "app_context_changed",
         "app_home_opened",
         "app_mention",

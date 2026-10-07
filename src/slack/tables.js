@@ -1,12 +1,28 @@
 // Post native Slack Block Kit data tables with the workspace BOT token. The caller supplies the
 // channel/thread from trusted gateway context; neither is exposed as an AI-controlled tool
 // argument. Data tables render with native headers, pagination, sorting, and filtering.
-import { resolveSlackConfig } from "../config/settings.js";
-
+//
+// Cells come in three shapes. A finite number is a `raw_number` (numeric sorting). A plain string
+// is a `raw_text` — unless it carries lightweight Markdown (a `[label](url)` link, a bare https
+// URL, `**bold**`, `` `code` ``, `~~strike~~`, a `<@U…>` mention), which becomes a `rich_text`
+// cell so links stay clickable and mentions stay real. An object cell is explicit: `{text, url,
+// bold, italic, strike, code, user}` builds a formatted/link/mention cell and `{button: {label,
+// url}}` builds an `action_cell` whose row button opens the URL. Header cells are always plain
+// text (Slack rejects rich text there), so Markdown markers are stripped from them.
+// The engine stream readers (engines/stream.js, engines/codex.js) import the block builder through
+// reply-blocks.js, and config/settings.js imports the engine registry — so the settings read for
+// the default bot token is deferred to the post itself, keeping this module out of that cycle.
 const API = "https://slack.com/api";
-const MAX_COLUMNS = 20;
-const MAX_DATA_ROWS = 100;
-const MAX_CELL_CHARS = 10_000;
+
+async function defaultBotToken() {
+  const { resolveSlackConfig } = await import("../config/settings.js");
+  return resolveSlackConfig().botToken || "";
+}
+export const MAX_COLUMNS = 20;
+export const MAX_DATA_ROWS = 200;
+export const MAX_CELL_CHARS = 20_000;
+const MAX_BUTTON_LABEL = 75;
+export const TABLE_ROW_ACTION_ID = "cg_table_row";
 
 function requiredText(value, field, max) {
   const out = String(value ?? "").trim();
@@ -27,22 +43,135 @@ function boundedArray(value, field, max) {
   return value;
 }
 
-function rawText(value, field) {
-  if (typeof value !== "string") throw new Error(`\`${field}\` must be text or a finite number.`);
-  const clean = value.trim() || "—";
+// Absolute http(s) URL or nothing. Slack rejects anything else in a link/button element.
+function httpUrl(value, field) {
+  const raw = String(value ?? "").trim();
+  if (!raw) return "";
+  let parsed;
+  try { parsed = new URL(raw); } catch { throw new Error(`\`${field}\` must be an absolute http(s) URL.`); }
+  if ((parsed.protocol !== "http:" && parsed.protocol !== "https:") || !parsed.hostname) {
+    throw new Error(`\`${field}\` must be an absolute http(s) URL.`);
+  }
+  if (raw.length > 3000) throw new Error(`\`${field}\` must be 3000 characters or fewer.`);
+  return raw;
+}
+
+// Lightweight Markdown → rich_text elements. Everything outside a recognized span is plain text.
+// A fresh regex per call: a shared global one carries `lastIndex` between test() and matchAll().
+const SPAN_SOURCE = String.raw`\[([^\]\n]+)\]\((https?:\/\/[^\s)]+)\)|<@([UW][A-Z0-9]{2,})>|\*\*([^*\n]+)\*\*|` + "`([^`\\n]+)`" + String.raw`|~~([^~\n]+)~~|(https?:\/\/[^\s<>()]*[^\s<>().,;:!?'"])`;
+const spanRegex = () => new RegExp(SPAN_SOURCE, "g");
+
+export function richTextElements(text) {
+  const source = String(text ?? "");
+  const elements = [];
+  let last = 0;
+  const pushText = (value, style) => {
+    if (!value) return;
+    elements.push(style ? { type: "text", text: value, style } : { type: "text", text: value });
+  };
+  for (const match of source.matchAll(spanRegex())) {
+    pushText(source.slice(last, match.index));
+    const [, linkText, linkUrl, user, bold, code, strike, bareUrl] = match;
+    if (linkUrl) elements.push({ type: "link", url: linkUrl, text: linkText });
+    else if (user) elements.push({ type: "user", user_id: user });
+    else if (bold) pushText(bold, { bold: true });
+    else if (code) pushText(code, { code: true });
+    else if (strike) pushText(strike, { strike: true });
+    else if (bareUrl) elements.push({ type: "link", url: bareUrl });
+    last = match.index + match[0].length;
+  }
+  pushText(source.slice(last));
+  return elements;
+}
+
+export function hasRichSpans(text) {
+  return spanRegex().test(String(text ?? ""));
+}
+
+// The readable text of a cell (what counts against Slack's character limit, and what a header
+// keeps once its markers are stripped).
+function plainText(elements) {
+  return elements.map((element) => {
+    if (element.type === "link") return element.text || element.url;
+    if (element.type === "user") return `@${element.user_id}`;
+    return element.text || "";
+  }).join("");
+}
+
+function richTextCell(elements) {
+  return { type: "rich_text", elements: [{ type: "rich_text_section", elements }] };
+}
+
+function rawText(value) {
+  const clean = String(value ?? "").trim() || "—";
   return { type: "raw_text", text: clean };
 }
 
-function dataCell(value, field) {
-  if (typeof value === "number") {
-    if (!Number.isFinite(value)) throw new Error(`\`${field}\` must be text or a finite number.`);
-    return { type: "raw_number", value, text: String(value) };
+function styledElements({ text, url, user, bold, italic, strike, code }, field) {
+  if (user) {
+    const id = String(user).trim().replace(/^<@|>$/g, "");
+    if (!/^[UW][A-Z0-9]{2,}$/.test(id)) throw new Error(`\`${field}.user\` must be a Slack user id (U…).`);
+    return [{ type: "user", user_id: id }];
   }
-  return rawText(value, field);
+  const label = String(text ?? "").trim();
+  const link = httpUrl(url, `${field}.url`);
+  if (!label && !link) throw new Error(`\`${field}\` needs \`text\`, \`url\`, \`user\` or \`button\`.`);
+  if (link) return [{ type: "link", url: link, ...(label ? { text: label } : {}) }];
+  const style = {};
+  if (bold) style.bold = true;
+  if (italic) style.italic = true;
+  if (strike) style.strike = true;
+  if (code) style.code = true;
+  return Object.keys(style).length ? [{ type: "text", text: label, style }] : richTextElements(label);
 }
 
-function cellChars(cell) {
+function actionCell(button, { field, row, column }) {
+  const label = requiredText(button?.label, `${field}.button.label`, MAX_BUTTON_LABEL);
+  const url = httpUrl(button?.url, `${field}.button.url`);
+  if (!url) throw new Error(`\`${field}.button.url\` is required.`);
+  return {
+    type: "action_cell",
+    element: {
+      type: "button",
+      // Unique per cell: Slack refuses duplicate action_ids inside one block. The stable prefix is
+      // what the ack-only handler in app.js matches.
+      action_id: `${TABLE_ROW_ACTION_ID}_${row}_${column}`,
+      text: { type: "plain_text", text: label, emoji: true },
+      url,
+      value: JSON.stringify({ r: row, c: column }),
+    },
+    fallback: { type: "raw_text", text: label },
+  };
+}
+
+function dataCell(value, field, position) {
+  if (typeof value === "number") {
+    if (!Number.isFinite(value)) throw new Error(`\`${field}\` must be text, a finite number, or a cell object.`);
+    return { type: "raw_number", value, text: String(value) };
+  }
+  if (typeof value === "string") {
+    if (!hasRichSpans(value)) return rawText(value);
+    return richTextCell(richTextElements(value.trim()));
+  }
+  if (value && typeof value === "object" && !Array.isArray(value)) {
+    if (value.button) return actionCell(value.button, { field, ...position });
+    return richTextCell(styledElements(value, field));
+  }
+  throw new Error(`\`${field}\` must be text, a finite number, or a cell object.`);
+}
+
+export function cellChars(cell) {
+  if (!cell) return 0;
+  if (cell.type === "rich_text") return cell.elements.reduce((total, section) => total + plainText(section.elements || []).length, 0);
+  if (cell.type === "action_cell") return String(cell.fallback?.text || "").length;
   return String(cell.text || "").length;
+}
+
+export function cellPlainText(cell) {
+  if (!cell) return "";
+  if (cell.type === "rich_text") return cell.elements.map((section) => plainText(section.elements || [])).join("");
+  if (cell.type === "action_cell") return String(cell.fallback?.text || "");
+  return String(cell.text || "");
 }
 
 function clippedFallback(value) {
@@ -50,17 +179,22 @@ function clippedFallback(value) {
   return text.length <= 3000 ? text : `${text.slice(0, 2999)}…`;
 }
 
-export function buildTableMessage({ caption, headers, rows, pageSize, rowHeaderColumn = 0, summary } = {}) {
+// The data_table block alone (no message wrapper) — shared by the standalone post and composed
+// replies (reply-blocks.js).
+export function buildTableBlock({ caption, headers, rows, pageSize, rowHeaderColumn = 0 } = {}) {
   const cleanCaption = requiredText(caption, "caption", 300);
   const cleanHeaders = boundedArray(headers, "headers", MAX_COLUMNS)
-    .map((header, index) => ({ type: "raw_text", text: requiredText(header, `headers[${index}]`, 200) }));
+    .map((header, index) => {
+      const text = requiredText(header, `headers[${index}]`, 200);
+      return { type: "raw_text", text: hasRichSpans(text) ? plainText(richTextElements(text)) || text : text };
+    });
   const columnCount = cleanHeaders.length;
   const cleanRows = boundedArray(rows, "rows", MAX_DATA_ROWS).map((row, rowIndex) => {
     if (!Array.isArray(row)) throw new Error(`\`rows[${rowIndex}]\` must be an array.`);
     if (row.length !== columnCount) {
       throw new Error(`Every row must contain exactly ${columnCount} cell${columnCount === 1 ? "" : "s"}.`);
     }
-    return row.map((cell, columnIndex) => dataCell(cell, `rows[${rowIndex}][${columnIndex}]`));
+    return row.map((cell, columnIndex) => dataCell(cell, `rows[${rowIndex}][${columnIndex}]`, { row: rowIndex, column: columnIndex }));
   });
 
   const requestedPageSize = pageSize ?? Math.min(10, cleanRows.length);
@@ -74,27 +208,38 @@ export function buildTableMessage({ caption, headers, rows, pageSize, rowHeaderC
   const blockRows = [cleanHeaders, ...cleanRows];
   const charCount = blockRows.flat().reduce((total, cell) => total + cellChars(cell), 0);
   if (charCount > MAX_CELL_CHARS) {
-    throw new Error("Table cells exceed Slack's 10,000-character limit; use `slack_upload_snippet` for a large export.");
+    throw new Error("Table cells exceed Slack's 20,000-character limit; use `slack_upload_snippet` for a large export.");
   }
 
-  const block = {
-    type: "data_table",
+  return {
+    block: {
+      type: "data_table",
+      caption: cleanCaption,
+      page_size: requestedPageSize,
+      row_header_column_index: rowHeaderColumn,
+      rows: blockRows,
+    },
     caption: cleanCaption,
-    page_size: requestedPageSize,
-    row_header_column_index: rowHeaderColumn,
-    rows: blockRows,
+    headers: cleanHeaders.map(({ text }) => text),
+    rowCount: cleanRows.length,
+    columnCount,
   };
+}
+
+export function buildTableMessage({ caption, headers, rows, pageSize, rowHeaderColumn = 0, summary } = {}) {
+  const built = buildTableBlock({ caption, headers, rows, pageSize, rowHeaderColumn });
   const suppliedSummary = optionalText(summary, "summary", 3000);
-  const generatedSummary = `${cleanCaption} — ${cleanRows.length} row${cleanRows.length === 1 ? "" : "s"}, ` +
-    `${columnCount} column${columnCount === 1 ? "" : "s"}: ${cleanHeaders.map(({ text }) => text).join(", ")}.`;
-  return { text: suppliedSummary || clippedFallback(generatedSummary), blocks: [block] };
+  const generatedSummary = `${built.caption} — ${built.rowCount} row${built.rowCount === 1 ? "" : "s"}, ` +
+    `${built.columnCount} column${built.columnCount === 1 ? "" : "s"}: ${built.headers.join(", ")}.`;
+  return { text: suppliedSummary || clippedFallback(generatedSummary), blocks: [built.block] };
 }
 
 export async function postTable(
   { channelId, threadTs = "", caption, headers, rows, pageSize, rowHeaderColumn, summary } = {},
-  { token = resolveSlackConfig().botToken || "", fetchImpl = fetch } = {},
+  { token = "", fetchImpl = fetch } = {},
 ) {
   if (!channelId) throw new Error("No channel context — can't post a table here.");
+  if (!token) token = await defaultBotToken();
   if (!token) throw new Error("Slack bot token isn't configured (set it in the admin Settings).");
   const message = buildTableMessage({ caption, headers, rows, pageSize, rowHeaderColumn, summary });
   const body = { channel: channelId, ...message };

@@ -33,6 +33,7 @@ import { applyEgressEnv } from "../runtimes/container/egress-env.js";
 import { containerPaths, dropHostLocationEnv, isIsolatedTarget, probeEngineChild, runtimeTargetOr, signalEngineChild, spawnEngineChild } from "./runtime-target.js";
 import { newRunId } from "../runtimes/contract.js";
 import { isProgressReportTool, normalizeProgressReport } from "./progress-report.js";
+import { isReplyBlocksTool, normalizeReplyBlocks } from "../slack/reply-blocks.js";
 import { thinkingSummary } from "./stream.js";
 import { createStallWatchdog, describeSilence, DEFAULT_SILENCE_WINDOWS } from "./watchdog.js";
 import { redactLogValue } from "../util/redact.js";
@@ -583,6 +584,11 @@ export function progressFromCodexEvent(p, state = null) {
         if (event) return { event };
         return null;
       }
+      if (isReplyBlocksTool(name)) {
+        const event = normalizeReplyBlocks(item.arguments);
+        if (event) return { event };
+        return null;
+      }
       return { event: { kind: "tool_use", ...(item.id ? { id: String(item.id) } : {}), name } };
     }
     if (normalizedItemType === "commandexecution") {
@@ -599,7 +605,7 @@ export function progressFromCodexEvent(p, state = null) {
   if (completedEvent) {
     if (normalizedItemType === "mcptoolcall") {
       const name = codexMcpToolName(item);
-      if (isProgressReportTool(name)) return null;
+      if (isProgressReportTool(name) || isReplyBlocksTool(name)) return null;
       return {
         event: {
           kind: "tool_result",
