@@ -20,12 +20,14 @@ test('edit event subtype is explicit; real mention entity is required for the me
 });
 
 test('robot additions carry reactor identity and target; other reactions and removals do not run', () => {
-  for (const reaction of ['🤖', 'robot', 'robot_face', '🤖\uFE0F']) {
+  for (const reaction of ['🤖', 'robot', 'robot_face', '🤖\uFE0F', 'smilerobot', 'hearteyesrobot']) {
     const value = normalize({ type: 'messageReaction', replyToId: 'bot-answer', text: '', entities: [], reactionsAdded: [{ type: reaction }] });
     assert.equal(value.trigger, 'reaction'); assert.equal(value.replyToId, 'bot-answer'); assert.equal(value.userId, '29:author'); assert.equal(value.mentionsBot, false);
   }
   assert.equal(normalize({ type: 'messageReaction', replyToId: 'bot-answer', reactionsRemoved: [{ type: 'robot' }] }), null);
-  assert.equal(normalize({ type: 'messageReaction', replyToId: 'bot-answer', reactionsAdded: [{ type: 'like' }] }), null);
+  for (const reaction of ['like', 'stopsign', '2705_whiteheavycheckmark', 'hearteyes', 'hearteyesdog']) {
+    assert.equal(normalize({ type: 'messageReaction', replyToId: 'bot-answer', reactionsAdded: [{ type: reaction }] }), null);
+  }
   assert.equal(normalize({ type: 'messageReaction', reactionsAdded: [{ type: 'robot' }] }), null, 'no target cannot run');
 });
 

@@ -18,6 +18,9 @@ product overview.
 
 ## Unreleased
 
+- Teams help identifies Heart eyes robot, Stop sign and Tick button by their emoji names.
+  Robot activation now recognizes the documented Teams `hearteyesrobot` and `smilerobot` IDs.
+
 - Teams `/help` now includes the practical usage guide for files, settings, skills, memory,
   schedules and background work, with Teams-specific session controls and command examples.
 

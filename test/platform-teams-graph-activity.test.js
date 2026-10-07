@@ -12,6 +12,25 @@ test('robot reaction runs as reactor and anchors the original message', async ()
   assert.equal(event.mentionsBot, false); assert.equal(event.threadKey, '');
   assert.match(event.messageId, /^reaction:/);
 });
+test('documented Teams robot IDs trigger Graph reactions without granting authority to other emoji', async () => {
+  for (const reactionType of ['smilerobot', 'hearteyesrobot']) {
+    const message = fixture();
+    message.reactions = [{ ...reaction, reactionType }];
+    message.messageHistory[0].reaction = message.reactions[0];
+    const [event] = await normalizeGraphEvents(message, row, opts);
+    assert.equal(event.userId, '29:reactor');
+    assert.equal(event.replyToId, 'message1');
+    assert.equal(event.trigger, 'reaction');
+    message.reactions = [];
+    assert.deepEqual(await normalizeGraphEvents(message, row, opts), []);
+  }
+  for (const reactionType of ['stopsign', '2705_whiteheavycheckmark', 'hearteyes', 'hearteyesdog']) {
+    const message = fixture();
+    message.reactions = [{ ...reaction, reactionType }];
+    message.messageHistory[0].reaction = message.reactions[0];
+    assert.deepEqual(await normalizeGraphEvents(message, row, opts), []);
+  }
+});
 test('history dedup key survives later snapshots but remove/readd gets a distinct key', async () => {
   const message = fixture(); const [first] = await normalizeGraphEvents(message, row, opts);
   message.lastModifiedDateTime = '2026-09-09T10:02:00Z';
