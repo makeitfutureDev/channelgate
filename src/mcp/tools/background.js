@@ -24,13 +24,14 @@ export function register(server, ctx) {
         "context so you can pick up where you left off. The command runs with bash in this channel's " +
         "working folder. `label` is a short human name shown in Slack. Use this for builds, long " +
         "transcriptions/ASR, test suites, data jobs — anything over a minute. Requires the channel to be " +
-        "in auto mode (or admin mode with an admin author). Auto mode posts a durable Slack approval with the " +
-        "exact command that a gateway admin must click before the job starts; Admin mode starts directly only for " +
-        "an admin author. For an approval, the tool returns immediately after saving the request; the Run it button " +
-        "remains valid across daemon/engine restarts and directly starts that one exact command once. Shell jobs run " +
-        "outside the engine sandbox, so prefer run_agent_in_background when the work can run as a " +
-        "normal confined agent (no approval needed there). The initial call returns a pending approval id; " +
-        "the Slack card gains the job id after approval. In either case, STOP and end your turn.",
+        "in auto mode (or admin mode with an admin author). In auto mode the job runs inside this channel's " +
+        "container and starts directly, with no approval card — the same confinement and auto-approval your own " +
+        "Bash calls have. Admin mode starts directly only for an admin author. Only a job outside a container " +
+        "(plain bash on the daemon account) posts a durable approval with the exact command that a gateway admin " +
+        "must click; then the tool returns immediately after saving the request, and the Run it button remains " +
+        "valid across daemon/engine restarts and directly starts that one exact command once. " +
+        "run_agent_in_background is the alternative when the work can run as a normal confined agent (every mode). " +
+        "In either case, STOP and end your turn.",
       inputSchema: { command: z.string(), label: z.string().optional() },
     },
     async ({ command, label }) => {

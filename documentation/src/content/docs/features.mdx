@@ -1,0 +1,14 @@
+---
+title: Feature directory
+description: Explore every ChannelGate feature, with dedicated usage guides and configuration links.
+tableOfContents: false
+---
+
+import { CardGrid, LinkCard } from '@astrojs/starlight/components';
+import { featureGroups, featurePages } from '../../data/handbook.mjs';
+
+Learn what each feature does, how to use it, and where to configure it. Use the sidebar to follow a topic, or browse the directory below.
+
+<p className="directory-count">{featurePages.length} feature guides · examples and configuration steps</p>
+
+{featureGroups.map((group) => <section className="feature-directory-group"><h2>{group.label}</h2><p>{group.description}</p><CardGrid>{group.items.map((page) => <LinkCard title={page.label} description={page.description} href={`/docs/features/${page.slug}`} />)}</CardGrid></section>)}

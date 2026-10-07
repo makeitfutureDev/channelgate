@@ -20,10 +20,11 @@ import { buildEngineMcpRuntime } from "./run-engine-mcp.js";
 import { releaseRemoteMcps } from "../mcp/remote-mcp-registry.js";
 import { abortPooled } from "../engines/session-pool.js";
 import { DEFAULT_SILENCE_WINDOWS } from "../engines/watchdog.js";
-import { mintsOwnSessionId, usesMcpConfigFile, engineSupports, requireAdapter, fallbackTargets, engineLabel, engineCredentialState, engineTransientKinds } from "../engines/registry.js";
+import { mintsOwnSessionId, usesMcpConfigFile, engineSupports, requireAdapter, fallbackTargets, engineLabel, engineCredentialState, engineTransientKinds, modelsForEngine } from "../engines/registry.js";
 import { validateRunContext } from "../engines/contract.js";
 import { getEngine, getDefaultModel, getDmTemplate, getEngineFallback, isEngineEnabled, getEnabledEngines, ENGINES, getOrgAccessGrants } from "../config/settings.js";
 import { claudeTokenFingerprint, resolveContainerClaudeToken } from "./claude-token-relay.js";
+import { installNestedClaudeLogin } from "./nested-claude-login.js";
 import { resolveRuntime } from "../runtimes/resolve.js";
 import { newRunId, runtimeSupports } from "../runtimes/contract.js";
 import { getThreadEngine, getThreadClean, getThreadModel, getThreadEffort, getThreadSudo } from "./thread-engine.js";
@@ -138,6 +139,32 @@ export function transientProviderFailure(error, engine = "") {
   const kind = String(details.providerKind || "");
   return engineTransientKinds(ran).includes(kind) ? kind : "";
 }
+
+// A capacity refusal after Codex has used tools cannot replay the original prompt. The CLI has
+// already saved those tool results in its session, so a NEW turn in that same session can continue
+// from them. Keep this narrow: an arbitrary transient error, an absent session id, or a refusal
+// before any work still follows the existing replay-safe retry/failover path.
+export function codexCapacityContinuation(error) {
+  const details = error?.details || {};
+  return details.engine === "codex" && details.providerError === true
+    && details.providerKind === "transient" && details.replaySafe === false
+    && Boolean(details.sessionId) && (Number(details.toolUseCount) > 0 || Boolean(details.partialContent))
+    && /selected model is at capacity/i.test(String(error.message || ""));
+}
+
+function capacityContinuationModel(current, pinned) {
+  if (pinned) return current;
+  const alternatives = modelsForEngine("codex")
+    .map((entry) => String(entry.value || ""))
+    .filter((value) => value && value !== "codex" && value !== current);
+  return alternatives[0] || current;
+}
+
+const CAPACITY_CONTINUATION_PROMPT =
+  "The previous turn in this same session stopped because its selected model was at capacity. " +
+  "Continue the latest user request from the work already recorded in this session. " +
+  "Do not start the request over or repeat completed tool actions. Check the current state before " +
+  "any action that might have side effects, then finish the remaining work and reply to the user.";
 
 // A pause that ends early when the run is cancelled, so a stop button never waits out a retry.
 function sleepUnlessAborted(ms, signal) {
@@ -631,7 +658,7 @@ function assertRuntimeCanStart() {
   }
 }
 
-export async function runMessage({ channelId, authorId, workspaceId = "", text, threadKey, attachments = [], signal = null, onDelta, onEvent, onRuntimeResolved, sessionId: presetSessionId = "", overrides = null, getFallbackContext = null, preferCold = false, progressReport = false, untrustedPrincipal = false, origin = "", fallbackPolicy = "", sudoSourceThreadKey = "" }) {
+export async function runMessage({ channelId, authorId, workspaceId = "", text, threadKey, attachments = [], signal = null, onDelta, onEvent, onRuntimeResolved, onForkSessionResolved, sessionId: presetSessionId = "", forkSourceSessionId = "", overrides = null, getFallbackContext = null, preferCold = false, progressReport = false, untrustedPrincipal = false, origin = "", fallbackPolicy = "", sudoSourceThreadKey = "" }) {
   // Fail closed before anything else: a run with no declared origin is a programming error, not a
   // default-to-interactive.
   if (!RUN_ORIGINS.includes(origin)) throw new Error(`runMessage requires a valid origin (got ${JSON.stringify(origin)}); one of: ${RUN_ORIGINS.join(", ")}`);
@@ -824,7 +851,7 @@ export async function runMessage({ channelId, authorId, workspaceId = "", text, 
   // asks "is this a container?" — it asks the target's declared capabilities.
   //
   // cleanMode is taken from the RUN meta on purpose — it changes the cwd the container mounts.
-  const target = runtimeResolver(entry.slug, overrides ? { ...meta, adminMode: Boolean(meta.adminMode || channelAdminMode) } : meta);
+  const target = runtimeResolver(entry.slug, overrides ? { ...meta, adminMode: Boolean(meta.adminMode || channelAdminMode) } : meta, { isAdminAuthor: trustedAdminAuthor });
   const isolatedRuntime = runtimeSupports(target, "isolated");
   // The engine's own credential inside an isolated runtime: the container has no access to the
   // daemon's Claude state dir, so a setup-token — or a relay of the resolved login's current access
@@ -857,6 +884,8 @@ export async function runMessage({ channelId, authorId, workspaceId = "", text, 
   // fingerprint, so a recreated container is visibly a different environment.
   const runtimeStamp = JSON.stringify({
     backend: target.backend,
+    scope: target.runtimeScope,
+    container: target.container?.name || "",
     fingerprint: target.runtime.fingerprint(target),
     image: target.container?.image || "",
   });
@@ -905,6 +934,22 @@ export async function runMessage({ channelId, authorId, workspaceId = "", text, 
     isNew = true;
   } else {
     ({ sessionId, isNew, engine: sessionEngine, runtime: sessionRuntime } = await resolveSession(entry.slug, threadKey, engine, runtimeStamp));
+    if (!isNew && target.backend === "container" && target.runtimeScope) {
+      let prior = null;
+      try { prior = JSON.parse(sessionRuntime); } catch { /* legacy unclassified state */ }
+      const previousScope = prior?.scope || "admin";
+      if (previousScope !== target.runtimeScope) {
+        abortPooled(`${entry.slug}::${threadKey}`);
+        if (!engineExplicit && sessionEngine && isEngineEnabled(sessionEngine)) engine = sessionEngine;
+        sessionId = await resetSession(entry.slug, threadKey, engine, sessionGen, runtimeStamp);
+        isNew = true;
+        switchedEngine = true; // replay the chat-visible context, never privileged native state
+        forkSourceSessionId = "";
+      }
+    }
+    // A recovering fork may have a provisional row from before the engine announced its child id.
+    // Its first attempt must fork the source, never resume that uncreated provisional id.
+    if (forkSourceSessionId) isNew = true;
     // The stored session was minted by a DIFFERENT engine than the one this turn resolved to.
     // A session id is engine-specific — Claude can't resume a Codex thread_id and vice-versa — so a
     // cross-engine resume is never attempted. Which side wins is decideThreadEngine's call: an
@@ -980,7 +1025,10 @@ export async function runMessage({ channelId, authorId, workspaceId = "", text, 
     let carried = null;
     try {
       carried = await carrySession({
-        engine, sessionId, cwd, storedRuntime: sessionRuntime, target, slug: entry.slug, threadKey,
+        engine, sessionId, cwd, storedRuntime: sessionRuntime, target, slug: entry.slug, threadKey, signal,
+        announce: (text) => {
+          try { onEvent?.({ kind: "notice", scope: "gateway", text }); } catch { /* best-effort progress */ }
+        },
       });
     } finally {
       clearTimeout(carryTimer);
@@ -1365,6 +1413,10 @@ export async function runMessage({ channelId, authorId, workspaceId = "", text, 
   // The channel folder's shared file is NOT guarded, so a guarded run may never fall back to it.
   if (homeGuarded && needsClaudeSettings && !grantArtifacts.settingsFile) throw new Error("this channel mounts the operator home but no home-guard settings were generated; refusing to run a non-admin turn unguarded");
   const runSettingsFile = grantArtifacts.settingsFile || sharedRunSettingsFile;
+  const skillWarning = grantArtifacts.missingSkills.length
+    ? `⚠️ Some granted skills could not be loaded: ${grantArtifacts.missingSkills.join(", ")}. Continuing with the available skills.\n\n`
+    : "";
+  const runWarning = licenseWarning + skillWarning;
   const grantFingerprint = JSON.stringify({
     allowedMcps: clean ? [] : runGrants.effective.allowedMcps,
     userSkills,
@@ -1379,15 +1431,15 @@ export async function runMessage({ channelId, authorId, workspaceId = "", text, 
   // session before completing a turn. saveSession writes synchronously before its promise
   // returns and retains the same /clear-generation guard as the successful-result path.
   const sessionResolved = (key, owner) => (id) => {
-    void saveSession(entry.slug, key, id, owner, sessionGen, runtimeStamp).catch((error) => {
-      console.warn(`[gateway] could not persist announced session: ${error.message}`);
-    });
+    void saveSession(entry.slug, key, id, owner, sessionGen, runtimeStamp)
+      .then(() => { if (forkSourceSessionId) onForkSessionResolved?.(id); })
+      .catch((error) => console.warn(`[gateway] could not persist announced session: ${error.message}`));
   };
   const runOnce = async (sid, fresh, promptOverride = null, modelOverride = model) => {
     assertRuntimeCanStart();
     // The runtime facts belong to THIS attempt, including a model retry or session heal. Keep
     // them per-prompt even in clean mode: they expose no memory, optional skills or connectors.
-    const prompt = (fresh ? memoryPrefix : "") + composioIdentityPrefix + channelCredentialsPrefix
+    const prompt = (fresh && !forkSourceSessionId ? memoryPrefix : "") + composioIdentityPrefix + channelCredentialsPrefix
       + runtimeIdentityPreamble({ engine, model: modelOverride, effort, fresh })
       + runtimeAccessPreamble(target, { clean, allowNetwork: Boolean(meta.allowNetwork) })
       + (promptOverride ?? turnText);
@@ -1400,10 +1452,11 @@ export async function runMessage({ channelId, authorId, workspaceId = "", text, 
       target, claudeOauthToken, artifactDir: target.artifactDir,
       runtime: {
         target, claudeOauthToken, claudeTokenFingerprint: claudeTokenFp, artifactDir: target.artifactDir,
-        preferCold, keepAliveMs: keepAliveMs(), poolKey: `${entry.slug}::${threadKey}`,
+        preferCold: preferCold || Boolean(forkSourceSessionId), keepAliveMs: keepAliveMs(), poolKey: `${entry.slug}::${threadKey}`,
         mcpConfigFile, mcpConfigJson, mcpConfigFingerprint, strictMcp, dangerouslySkip, settingsFile: runSettingsFile,
         model: modelOverride, effort, permissionPromptTool, timeoutMs, maxSilenceMs, signal, onDelta: scopedOnDelta, onEvent: scopedOnEvent,
         onSessionResolved: sessionResolved(threadKey, engine),
+        forkSourceSessionId: fresh ? forkSourceSessionId : "",
         channelEnv, channelEnvFingerprint: channelEnvFp, browserNamespace,
         writable: codexWritable, autoApprove: codexAutoApprove, clean,
         composioUserEndpoint, composioEndpoint, composioUserToken, composioToken, toolboxToken,
@@ -1716,7 +1769,7 @@ export async function runMessage({ channelId, authorId, workspaceId = "", text, 
     // Claude→Codex-only flag, still emitted so existing consumers keep working.
     const fallbackResult = {
       ...baseMeta, ...cx,
-      content: redactSecretValues(licenseWarning + (note || "") + fbMcpDropNote + fallbackModelNote + (cx.content || ""), outputSecrets),
+      content: redactSecretValues(runWarning + (note || "") + fbMcpDropNote + fallbackModelNote + (cx.content || ""), outputSecrets),
       sessionId: cx.sessionId ?? null,
       engine: fallbackEngine,
       isNew: !prior,
@@ -1769,6 +1822,10 @@ export async function runMessage({ channelId, authorId, workspaceId = "", text, 
       // see that settled path before it snapshots a resumed session, or the footer shows the
       // whole session's cumulative tokens/value instead of this message's delta.
       refreshRuntimeReadPaths(grantArtifacts, target);
+      // Every engine may explicitly delegate to Claude. Refresh its protected HOME login before
+      // spawn, including fresh/resumed, background, scheduled and API turns. Missing Claude auth
+      // leaves the main Codex/Qwen turn usable and clears any previous managed child login.
+      await installNestedClaudeLogin(target, { resolveToken: claudeRelayOnce });
       if (warmup?.created || warmup?.started) {
         console.log(`[gateway] ${entry.slug}: ${target.backend} runtime ${warmup.created ? "created" : "started"} in ${Date.now() - warmupStartedAt}ms`);
       }
@@ -1800,8 +1857,8 @@ export async function runMessage({ channelId, authorId, workspaceId = "", text, 
     await bringRuntimeUp();
     // Every gateway note below is part of `content` for surfaces with no stream — and ANNOUNCED, so a
     // surface that writes its answer from the live stream delivers it too (see announceAnswerNote).
-    // The license warning leads: it applies to this turn whichever engine answers it.
-    if (licenseWarning) announceAnswerNote(licenseWarning);
+    // License and unavailable-skill warnings apply whichever engine answers this turn.
+    if (runWarning) announceAnswerNote(runWarning);
 
     // If THIS engine was recently limited in THIS channel (or its credential failed gateway-wide),
     // skip it and use the fallback harness for the cooldown window instead of re-probing it.
@@ -1838,6 +1895,7 @@ export async function runMessage({ channelId, authorId, workspaceId = "", text, 
     let sid = sessionId;
     let fresh = isNew;
     let result;
+    let capacityContinuationNote = "";
     // A FRESH session is created by its id (`claude --session-id <sid>`), and the attempt that just
     // failed already wrote that id's transcript — the CLI refuses to create it twice ("Session ID …
     // is already in use"), so a retried fresh turn runs under a new id (persisted, so a concurrent
@@ -1856,109 +1914,154 @@ export async function runMessage({ channelId, authorId, workspaceId = "", text, 
       // continues the conversation instead of starting amnesiac.
       result = await withTransientRetry(engine, () => runOnce(sid, fresh, initialPromptOverride), { beforeRetry: remintFreshSession });
     } catch (err) {
-      const defaultModel = replaySafeGatewayDefaultModel(err, { engine, model, defaultModel: gatewayDefaultModel });
-      if (defaultModel) {
-        const rejectedModel = model;
-        console.warn(`[gateway] ${engine} rejected model ${rejectedModel} before execution in ${entry.slug} — retrying with gateway default ${defaultModel}`);
-        await logEvent("run_model_fallback", {
-          channel: channelId,
-          author: authorId,
-          slug: entry.slug,
-          threadKey,
-          origin,
-          engine,
-          fromModel: rejectedModel,
-          toModel: defaultModel,
+      if (codexCapacityContinuation(err) && !signal?.aborted) {
+        // This is a new turn in the SAME Codex session, not a replay of the user message. Its
+        // transcript contains the completed tools, so the model can continue from their results.
+        // A user-pinned model stays pinned; otherwise try a different catalog model as the
+        // provider's capacity verdict requests. Bound recovery to one continuation.
+        const continuationId = err.details.sessionId;
+        const continuationModel = capacityContinuationModel(model, modelPinnedByUser);
+        const delayMs = transientRetryDelayMs();
+        const note = continuationModel === model
+          ? `⚠️ _Codex's selected model was at capacity; continuing the same session._\n\n`
+          : `⚠️ _Codex's selected model was at capacity; continuing the same session with ${continuationModel}._\n\n`;
+        console.warn(`[gateway] Codex capacity after partial work in ${entry.slug} — continuing session ${continuationId} with ${continuationModel || "CLI default"}`);
+        await logEvent("run_capacity_continuation", {
+          channel: channelId, author: authorId, slug: entry.slug, threadKey, origin,
+          engine, fromModel: model, toModel: continuationModel,
+          toolUseCount: Number(err.details.toolUseCount) || 0,
         });
-        try { onRuntimeResolved?.({ engine, model: defaultModel, ...runtimeSignal }); } catch { /* non-fatal */ }
-        // Same reason as the cross-engine path above: the answer the reader gets is STREAMED, so
-        // the substitution has to be announced before the retry writes its first token — a prefix
-        // on the finished content is only ever seen by a surface that renders that content.
-        announceAnswerNote(gatewayDefaultModelNote(rejectedModel, defaultModel));
+        const delayLabel = delayMs >= 1000 ? `${Math.round(delayMs / 1000)}s` : `${delayMs}ms`;
+        try { onEvent?.({ kind: "notice", scope: "gateway", text: `Codex model at capacity — continuing the existing session${delayMs ? ` in ${delayLabel}` : ""}` }); } catch { /* status only */ }
+        const yielded = delayMs > 0 && Boolean(releaseRunSlot);
+        if (yielded) parkForRetry();
+        await sleepUnlessAborted(delayMs, signal);
+        if (signal?.aborted) throw err;
+        if (yielded) await resumeFromRetry();
+        try { onRuntimeResolved?.({ engine, model: continuationModel, ...runtimeSignal }); } catch { /* display only */ }
+        announceAnswerNote(note);
         try {
-          // The rejected attempt already consumed a FRESH session's id (see remintFreshSession).
-          await remintFreshSession();
-          result = await withTransientRetry(engine, () => runOnce(sid, fresh, initialPromptOverride, defaultModel), { beforeRetry: remintFreshSession });
-          model = defaultModel;
-          result = {
-            ...result,
-            content: `${gatewayDefaultModelNote(rejectedModel, defaultModel)}${result.content || ""}`,
+          result = await runOnce(continuationId, false, CAPACITY_CONTINUATION_PROMPT, continuationModel);
+        } catch (continuationError) {
+          continuationError.details = {
+            ...(continuationError.details || {}),
+            capacityContinuation: true,
+            priorCapacityError: err.message,
           };
-        } catch (defaultModelError) {
-          if (defaultModelError?.details?.incompleteTurn && !defaultModelError.details.replaySafe) throw defaultModelError;
-          console.warn(`[gateway] gateway-default model ${defaultModel} also failed (${defaultModelError.message}) — preserving the original model error`);
-          err.details = { ...(err.details || {}), defaultModel, defaultModelError: defaultModelError.message };
-          throw err;
+          throw continuationError;
         }
+        sid = continuationId;
+        fresh = false;
+        model = continuationModel;
+        capacityContinuationNote = note;
       } else {
-        // The failover cases: a replay-safe limit/credential failure, or a transient provider
-        // failure that outlived every in-place retry (`transientRetries` proves the budget was
-        // spent). Same rule for both — nothing of the turn ran — so the other harness may answer.
-        const switchKind = replaySafeFallbackKind(err, engine) || (err?.details?.transientRetries ? transientProviderFailure(err, engine) : "");
-        const fallbackKind = fallbackOn ? switchKind : "";
-        // The failure WOULD have been failed over, and wasn't, because the user pinned this
-        // runtime. Say so on the error rather than leaving a bare provider message that looks
-        // like the gateway simply forgot to fail over.
-        if (!fallbackKind && runtimePinned && switchKind) {
-          err.details = { ...(err.details || {}), runtimePinned: true, pinnedEngine: engine, pinnedModel: model || "" };
-        }
-        // Ask mode: hand the decision to the person watching the thread. No cooldown is written —
-        // "try again" must be a real re-probe, not a pre-decided switch.
-        if (askFallback && switchKind) {
-          err.details = { ...(err.details || {}), askFallback: { to: fallbackEngine, kind: switchKind } };
-          throw err;
-        }
-        if (fallbackKind) {
-          const retries = Number(err?.details?.transientRetries) || 0;
-          const transient = fallbackKind !== "authentication" && fallbackKind !== "usage_limit";
-          // An auth failure is a broken CREDENTIAL — shared by every channel on that engine, so its
-          // cooldown is gateway-wide. A usage limit is a quota the daemon can't scope any better
-          // than the channel that hit it. An outage gets the short cooldown.
-          if (fallbackKind === "authentication") await rememberAuthFailure(engine);
-          else engineLimitedUntil.set(limitKey, Date.now() + (transient ? TRANSIENT_COOLDOWN_MS : LIMIT_COOLDOWN_MS));
-          console.warn(`[gateway] replay-safe ${engine} ${fallbackKind} failure in ${entry.slug} — falling back to ${fallbackEngine}`);
+        const defaultModel = replaySafeGatewayDefaultModel(err, { engine, model, defaultModel: gatewayDefaultModel });
+        if (defaultModel) {
+          const rejectedModel = model;
+          console.warn(`[gateway] ${engine} rejected model ${rejectedModel} before execution in ${entry.slug} — retrying with gateway default ${defaultModel}`);
+          await logEvent("run_model_fallback", {
+            channel: channelId,
+            author: authorId,
+            slug: entry.slug,
+            threadKey,
+            origin,
+            engine,
+            fromModel: rejectedModel,
+            toModel: defaultModel,
+          });
+          try { onRuntimeResolved?.({ engine, model: defaultModel, ...runtimeSignal }); } catch { /* non-fatal */ }
+          // Same reason as the cross-engine path above: the answer the reader gets is STREAMED, so
+          // the substitution has to be announced before the retry writes its first token — a prefix
+          // on the finished content is only ever seen by a surface that renders that content.
+          announceAnswerNote(gatewayDefaultModelNote(rejectedModel, defaultModel));
           try {
-            return await runFallbackEngine(
-              fallbackKind === "authentication"
-                ? `⚠️ _${engineLabel(engine)} authentication failed — using ${engineLabel(fallbackEngine)}._\n\n`
-                : transient
-                  ? `⚠️ _${engineLabel(engine)} hit a temporary provider error — retried ${retries}× before giving up — using ${engineLabel(fallbackEngine)}._\n\n`
-                  : `⚠️ _${engineLabel(engine)} hit its usage limit before any tool call — using ${engineLabel(fallbackEngine)}._\n\n`,
-              fallbackKind === "authentication"
-                ? "its authentication failed before any tool call"
-                : transient
-                  ? `its provider stayed unavailable through ${retries} retries, before any tool call`
-                  : "it hit a usage limit before any tool call",
-            );
-          } catch (fallbackError) {
-            if (fallbackError?.details?.incompleteTurn) throw fallbackError;
-            // Both harnesses failed. Keep the original error authoritative (its details drive every
-            // consumer), but say the whole story in one sentence, and — when a person is watching —
-            // hand it back as a choice (try either harness again) instead of a dead end.
-            console.warn(`[gateway] ${fallbackEngine} fallback also failed (${fallbackError.message}) — preserving the original ${engine} provider error`);
-            err.details = {
-              ...(err.details || {}),
-              fallbackError: fallbackError.message,
-              ...(canAsk ? { askFallback: { to: fallbackEngine, kind: fallbackKind, bothFailed: true } } : {}),
+            // The rejected attempt already consumed a FRESH session's id (see remintFreshSession).
+            await remintFreshSession();
+            result = await withTransientRetry(engine, () => runOnce(sid, fresh, initialPromptOverride, defaultModel), { beforeRetry: remintFreshSession });
+            model = defaultModel;
+            result = {
+              ...result,
+              content: `${gatewayDefaultModelNote(rejectedModel, defaultModel)}${result.content || ""}`,
             };
-            err.message = `${err.message} — ${engineLabel(fallbackEngine)} could not answer either: ${fallbackError.message}`;
+          } catch (defaultModelError) {
+            if (defaultModelError?.details?.incompleteTurn && !defaultModelError.details.replaySafe) throw defaultModelError;
+            console.warn(`[gateway] gateway-default model ${defaultModel} also failed (${defaultModelError.message}) — preserving the original model error`);
+            err.details = { ...(err.details || {}), defaultModel, defaultModelError: defaultModelError.message };
             throw err;
           }
-        } else if (!fresh && isSessionNotFound(err)) {
-          console.warn(`[gateway] session ${sid} not resumable in ${entry.slug} — starting a fresh session`);
-          sid = await resetSession(entry.slug, threadKey, engine, sessionGen, runtimeStamp);
-          fresh = true;
-          // Built once: every attempt replays the SAME turn (a re-fetch could come back empty and
-          // silently run the bare text, context-blind).
-          const healed = await healedPrompt();
-          result = await withTransientRetry(engine, () => runOnce(sid, fresh, healed), { beforeRetry: remintFreshSession });
         } else {
-          throw err;
+          // The failover cases: a replay-safe limit/credential failure, or a transient provider
+          // failure that outlived every in-place retry (`transientRetries` proves the budget was
+          // spent). Same rule for both — nothing of the turn ran — so the other harness may answer.
+          const switchKind = replaySafeFallbackKind(err, engine) || (err?.details?.transientRetries ? transientProviderFailure(err, engine) : "");
+          const fallbackKind = fallbackOn ? switchKind : "";
+          // The failure WOULD have been failed over, and wasn't, because the user pinned this
+          // runtime. Say so on the error rather than leaving a bare provider message that looks
+          // like the gateway simply forgot to fail over.
+          if (!fallbackKind && runtimePinned && switchKind) {
+            err.details = { ...(err.details || {}), runtimePinned: true, pinnedEngine: engine, pinnedModel: model || "" };
+          }
+          // Ask mode: hand the decision to the person watching the thread. No cooldown is written —
+          // "try again" must be a real re-probe, not a pre-decided switch.
+          if (askFallback && switchKind) {
+            err.details = { ...(err.details || {}), askFallback: { to: fallbackEngine, kind: switchKind } };
+            throw err;
+          }
+          if (fallbackKind) {
+            const retries = Number(err?.details?.transientRetries) || 0;
+            const transient = fallbackKind !== "authentication" && fallbackKind !== "usage_limit";
+            // An auth failure is a broken CREDENTIAL — shared by every channel on that engine, so its
+            // cooldown is gateway-wide. A usage limit is a quota the daemon can't scope any better
+            // than the channel that hit it. An outage gets the short cooldown.
+            if (fallbackKind === "authentication") await rememberAuthFailure(engine);
+            else engineLimitedUntil.set(limitKey, Date.now() + (transient ? TRANSIENT_COOLDOWN_MS : LIMIT_COOLDOWN_MS));
+            console.warn(`[gateway] replay-safe ${engine} ${fallbackKind} failure in ${entry.slug} — falling back to ${fallbackEngine}`);
+            try {
+              return await runFallbackEngine(
+                fallbackKind === "authentication"
+                  ? `⚠️ _${engineLabel(engine)} authentication failed — using ${engineLabel(fallbackEngine)}._\n\n`
+                  : transient
+                    ? `⚠️ _${engineLabel(engine)} hit a temporary provider error — retried ${retries}× before giving up — using ${engineLabel(fallbackEngine)}._\n\n`
+                    : `⚠️ _${engineLabel(engine)} hit its usage limit before any tool call — using ${engineLabel(fallbackEngine)}._\n\n`,
+                fallbackKind === "authentication"
+                  ? "its authentication failed before any tool call"
+                  : transient
+                    ? `its provider stayed unavailable through ${retries} retries, before any tool call`
+                    : "it hit a usage limit before any tool call",
+              );
+            } catch (fallbackError) {
+              if (fallbackError?.details?.incompleteTurn) throw fallbackError;
+              // Both harnesses failed. Keep the original error authoritative (its details drive every
+              // consumer), but say the whole story in one sentence, and — when a person is watching —
+              // hand it back as a choice (try either harness again) instead of a dead end.
+              console.warn(`[gateway] ${fallbackEngine} fallback also failed (${fallbackError.message}) — preserving the original ${engine} provider error`);
+              err.details = {
+                ...(err.details || {}),
+                fallbackError: fallbackError.message,
+                ...(canAsk ? { askFallback: { to: fallbackEngine, kind: fallbackKind, bothFailed: true } } : {}),
+              };
+              err.message = `${err.message} — ${engineLabel(fallbackEngine)} could not answer either: ${fallbackError.message}`;
+              throw err;
+            }
+          } else if (!fresh && isSessionNotFound(err)) {
+            console.warn(`[gateway] session ${sid} not resumable in ${entry.slug} — starting a fresh session`);
+            sid = await resetSession(entry.slug, threadKey, engine, sessionGen, runtimeStamp);
+            fresh = true;
+            // Built once: every attempt replays the SAME turn (a re-fetch could come back empty and
+            // silently run the bare text, context-blind).
+            const healed = await healedPrompt();
+            result = await withTransientRetry(engine, () => runOnce(sid, fresh, healed), { beforeRetry: remintFreshSession });
+          } else {
+            throw err;
+          }
         }
       }
     }
 
     assertCompletedTurn(result, engine, sid);
+    if (forkSourceSessionId && (!result.sessionId || result.sessionId === forkSourceSessionId)) {
+      throw new Error(`${engineLabel(engine)} did not return a distinct fork session id`);
+    }
 
     // A RESUME that returns an empty result (0 tokens, no output) is a broken session state — most
     // often a turn SIGKILLed mid-write by a stop/restart, leaving a dangling tool_use in the
@@ -1974,6 +2077,13 @@ export async function runMessage({ channelId, authorId, workspaceId = "", text, 
     // the session is healthy, and a newer message is already queued to resume it with this turn's
     // context. Healing it would needlessly evict the warm session and re-run the abandoned message.
     if (!fresh && !result.interrupted && isEmptyResult(result)) {
+      if (capacityContinuationNote) {
+        // The original turn already ran tools. A broken resume must not fall through to the
+        // ordinary fresh-session heal, which would replay the original request from scratch.
+        throw Object.assign(new Error("Codex capacity continuation returned no output; the partial work remains in its session."), {
+          details: { engine, sessionId: sid, incompleteTurn: true, replaySafe: false, capacityContinuation: true },
+        });
+      }
       console.warn(`[gateway] session ${sid} resumed empty in ${entry.slug} — resetting to a fresh session`);
       abortPooled(`${entry.slug}::${threadKey}`);
       sid = await resetSession(entry.slug, threadKey, engine, sessionGen, runtimeStamp);
@@ -1988,8 +2098,9 @@ export async function runMessage({ channelId, authorId, workspaceId = "", text, 
     // persist it over the locally-minted UUID so the next turn's resume actually finds the
     // thread. Stamp the row with THIS run's engine: a literal here silently migrates any other
     // self-minting engine's thread onto that engine on its second turn.
-    if (mintsOwnSessionId(engine) && result.sessionId && result.sessionId !== sid) {
+    if ((mintsOwnSessionId(engine) || forkSourceSessionId) && result.sessionId && result.sessionId !== sid) {
       await saveSession(entry.slug, threadKey, result.sessionId, engine, sessionGen, runtimeStamp);
+      if (forkSourceSessionId) onForkSessionResolved?.(result.sessionId);
     }
 
     // The engine exited 0 but its "answer" is a usage-limit notice that did no work → switch to the
@@ -2050,8 +2161,11 @@ export async function runMessage({ channelId, authorId, workspaceId = "", text, 
     // that judges the engine's OWN output (empty resume, limit-as-answer, answerless) has seen it
     // without this notice in front.
     result = transientRetryNote(engine, result);
+    if (capacityContinuationNote && !result.interrupted) {
+      result = { ...result, content: `${capacityContinuationNote}${result.content || ""}` };
+    }
 
-    const finalSessionId = mintsOwnSessionId(engine) ? result.sessionId ?? sid : sid;
+    const finalSessionId = mintsOwnSessionId(engine) || forkSourceSessionId ? result.sessionId ?? sid : sid;
     // Back-fill the owning engine on a pre-v4/legacy session row (engine ''), so the NEXT harness
     // switch is caught by the clean reset-before-spawn path above instead of a failed cross-engine
     // resume. Only when the row was unlabeled AND we resumed it as-is this turn (a fresh mint/reset
@@ -2083,7 +2197,7 @@ export async function runMessage({ channelId, authorId, workspaceId = "", text, 
     // `runtimeModel` keeps the CLI-reported truth for context-window math and Codex cost rates.
     return {
       ...redactSecretFields(finalResult, outputSecrets),
-      content: redactSecretValues(licenseWarning + mcpDropNote + (finalResult.content || ""), outputSecrets),
+      content: redactSecretValues(runWarning + mcpDropNote + (finalResult.content || ""), outputSecrets),
       loopWakeup,
       runtimeModel: resolveCurrentModel(finalResult),
       model: model || resolveCurrentModel(finalResult),

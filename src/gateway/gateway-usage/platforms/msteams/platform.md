@@ -38,3 +38,37 @@ tag you write yourself is escaped and pings nobody. Full rules: `references/ment
 Files attached in a **1:1 chat** download directly. Files posted in a **channel** live in
 SharePoint/OneDrive and may need a tenant grant the gateway does not have — if a file won't open,
 say so plainly rather than guessing at its contents.
+
+## Conversation settings
+
+`/settings` opens General, Variables, MCPs, Skills, Automations and Resume in the original
+channel/thread or chat. `/secrets` opens Variables. Settings never proactively opens a personal chat.
+Buttons update the same requester-bound card; other members can open their own `/settings`.
+The initial card shows only the section menu; selecting an option displays its settings below.
+Engine/model/effort save together with Apply to channel or Apply to thread. Other settings keep
+their explicit controls; changing tabs discards unsaved drafts. Runtime, channel credentials,
+skills and automation controls are available to authorized users. Access policy requires current
+managers/admins, Cloud MCP and organization variable writes require admins. Stored credential
+values are never shown or prefilled. Shared cards list only channel variables and omit private
+credential metadata, ungranted private connections and administrator session commands. Personal
+and organization variables remain in authenticated settings or explicitly opened personal chats.
+Native rosters and secret inputs have size limits;
+complete oversized edits use the authenticated browser settings.
+
+## Reaction controls
+
+When Teams reaction events are enabled and delivered to the gateway, 👽 **Alien**
+(`alien`, picker shortcut `:alien:` or Unicode 👽) starts a request as the reactor. **Heart eyes robot**
+(`hearteyesrobot`, picker shortcut `:hearteyesrobot:`) also starts a request. 👍 **Like**
+(`like`, or Unicode 👍 with an optional skin tone) is also accepted. Use the reaction picker;
+sending a shortcut as text does not add a reaction. Smile robot IDs remain recognized
+when Teams delivers them. **Stop sign** (`stopsign`)
+requests cancellation of that session’s active and queued work; only the author or an administrator
+can stop it. React to the original message or a bot reply to select the session. **Tick button**
+(`2705_whiteheavycheckmark`) acknowledges a tracked reminder, including its second notice.
+Removing the tick does not reopen that reminder. A tick on an ordinary message has no tracked
+reminder to close. Teams personal follow-up dismissal is not available.
+
+Group/channel reaction delivery requires the configured all-message Graph events and Microsoft
+permissions. In personal chat, delivered Bot Framework reaction activities use the same controls.
+Typed `/stop` and `/cancel` remain available with the normal channel/group mention and quote rules.

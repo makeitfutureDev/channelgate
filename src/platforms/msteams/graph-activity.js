@@ -1,11 +1,22 @@
 // Graph supplies Entra IDs; the Bot Framework roster is the authority for the addressable
 // reactor identity. Never run under the original author's permissions on a reaction.
 import { createHash } from "node:crypto";
+import { activityConversationName } from "./conversation-name.js";
 import { makeInbound } from "../inbound.js";
-import { isRobotReaction, quotedReplyId, stripMentionTags } from "./activity.js";
+import { quotedReplyId, stripMentionTags } from "./activity.js";
+
+import { teamsGraphReactionAction, teamsGraphReactionCutoverField, teamsActivationFingerprint, DEFAULT_TEAMS_ACTIVATION_REACTIONS } from "./reactions.js";
 
 const digest = parts => createHash("sha256").update(JSON.stringify(parts)).digest("hex");
 const userId = identity => String(identity?.user?.id || "");
+// Graph chatMessageActions is a flags enum. A removal (or an unknown combined flag) wins over
+// addition so an ambiguous/latest transition cannot replay an earlier destructive control.
+function reactionTransition(value) {
+  const flags = String(value || "").split(",").map(flag => flag.trim());
+  if (flags.includes("reactionRemoved")) return "removed";
+  if (!flags.includes("reactionAdded")) return "";
+  return flags.every(flag => flag === "reactionAdded") ? "added" : "removed";
+}
 function plainBody(body) {
   let text = stripMentionTags(body?.content);
   if (String(body?.contentType).toLowerCase() === "html") {
@@ -15,7 +26,7 @@ function plainBody(body) {
   return text.trim();
 }
 
-export async function normalizeGraphEvents(message, row, { botId, resolveMember, now = Date.now } = {}) {
+export async function normalizeGraphEvents(message, row, { botId, resolveMember, now = Date.now, activationReactions = DEFAULT_TEAMS_ACTIVATION_REACTIONS, activationVersion } = {}) {
   if (!message?.id || message.deletedDateTime || message.messageType !== "message") return [];
   const started = Date.parse(row.startedAt);
   if (!Number.isFinite(started)) return [];
@@ -37,25 +48,29 @@ export async function normalizeGraphEvents(message, row, { botId, resolveMember,
   const body = plainBody(message.body);
   const result = [];
   const members = new Map();
-  async function emit(actorId, trigger, stamp) {
+  async function emit(actorId, trigger, stamp, reactionAction = "") {
     if (!actorId) return;
     if (!members.has(actorId)) members.set(actorId, await resolveMember(actorId));
     const member = members.get(actorId);
     if (!member?.id || member.id === botId) return;
-    const eventId = digest([row.conversationId, message.id, trigger, actorId, stamp]);
+    // Preserve existing edit/robot dedup identities across the upgrade; only new controls need
+    // the extra intent field to distinguish reactions delivered with the same provider timestamp.
+    const identity = [row.conversationId, message.id, trigger, actorId, stamp];
+    if (reactionAction && reactionAction !== "engage") identity.push(reactionAction);
+    const eventId = digest(identity);
     const reaction = trigger === "reaction";
     result.push(makeInbound({
-      platform: "msteams", conversationId: conversation.id, conversationName: conversation.name,
+      platform: "msteams", conversationId: conversation.id, conversationName: activityConversationName(context),
       kind, threadKey: kind === "channel" ? String(message.replyToId || message.id) : "",
       messageId: reaction ? `reaction:${eventId}` : String(message.id),
       replyToId: reaction ? String(message.id) : quotedReplyId({ text: message.body?.content }),
-      trigger, userId: member.id, userName: member.name, userEmail: member.email,
+      trigger, reactionAction, userId: member.id, userName: member.name, userEmail: member.email,
       text: reaction && ownBot ? "Continue the task from this message." : body || ((message.attachments || []).length ? "Handle the attached message." : ""),
       mentionsBot,
       // Graph attachment retrieval has a separate permission path. Preserve descriptors so the
       // shared attachment sink reports unavailable files instead of silently dropping them.
       attachments: (message.attachments || []).map(file => ({ name: String(file.name || "attachment"), contentType: String(file.contentType || "application/octet-stream"), download: null, ...(file.contentUrl ? { reference: { contentUrl: file.contentUrl } } : {}) })),
-      raw: { eventId, aadObjectId: actorId, tenantId: context.channelData?.tenant?.id || "",
+      raw: { context, eventId, aadObjectId: actorId, tenantId: context.channelData?.tenant?.id || "",
         serviceUrl: context.serviceUrl || "", teamId: context.channelData?.team?.aadGroupId || "" },
     }));
   }
@@ -64,14 +79,44 @@ export async function normalizeGraphEvents(message, row, { botId, resolveMember,
   if (!application && (kind === "dm" || mentionsBot) && edited > since) {
     await emit(userId(message.from), "edit", message.lastEditedDateTime);
   }
+  // Only the newest transition for each reactor/intent can act. A re-added reaction must not
+  // replay an earlier addition from the same fetched history (especially an earlier stop).
+  const latest = new Map();
   for (const item of message.messageHistory || []) {
-    if (item.actions !== "reactionAdded" || !isRobotReaction(item.reaction?.reactionType)) continue;
+    const action = teamsGraphReactionAction(item.reaction, activationReactions);
+    const transition = reactionTransition(item.actions);
+    if (!transition || !action) continue;
+    const actor = userId(item.reaction?.user);
+    const at = Date.parse(item.modifiedDateTime);
+    if (!actor || !(at > since)) continue;
+    const key = JSON.stringify([actor, action]);
+    const previousAt = Date.parse(latest.get(key)?.modifiedDateTime);
+    if (!latest.has(key) || at > previousAt || (at === previousAt && transition === "removed")) latest.set(key, { ...item, transition });
+  }
+  for (const item of latest.values()) {
+    if (item.transition !== "added") continue;
+    const action = teamsGraphReactionAction(item.reaction, activationReactions);
     const stamp = item.modifiedDateTime;
-    if (!(Date.parse(stamp) > since)) continue;
+    if (action === 'engage') {
+      if (activationVersion !== undefined && row.activationReactionsVersion !== activationVersion) continue;
+      const fingerprint = teamsActivationFingerprint(activationReactions);
+      const custom = fingerprint !== teamsActivationFingerprint();
+      // A custom selection requires a persisted cutoff. Legacy default rows retain their
+      // existing identities; prepared production rows always carry the configuration version.
+      if (custom || row.activationReactionsFingerprint !== undefined) {
+        if (row.activationReactionsFingerprint !== fingerprint
+          || !(Date.parse(stamp) > Date.parse(row.activationReactionsStartedAt))) continue;
+      }
+    }
+    const cutoverField = teamsGraphReactionCutoverField(item.reaction);
+    if (cutoverField) {
+      const cutover = Date.parse(row[cutoverField]);
+      if (!Number.isFinite(cutover) || !(Date.parse(stamp) > cutover)) continue;
+    }
     const actor = userId(item.reaction?.user);
     // A removed reaction must not start a new run when a delayed notification is fetched.
-    if (!(message.reactions || []).some(reaction => isRobotReaction(reaction.reactionType) && userId(reaction.user) === actor)) continue;
-    await emit(actor, "reaction", stamp);
+    if (!(message.reactions || []).some(reaction => teamsGraphReactionAction(reaction, activationReactions) === action && userId(reaction.user) === actor)) continue;
+    await emit(actor, "reaction", stamp, action);
   }
   return result;
 }

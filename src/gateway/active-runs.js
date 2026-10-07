@@ -23,6 +23,19 @@ import { runQueue } from "../slack/message-lifecycle.js";
 import { isForceStopping } from "./shutdown.js";
 import { postNotice } from "../platforms/notify.js";
 import { assertQuestionAccess } from "./question-access.js";
+import { getUser } from "../config/store.js";
+
+// A queued/recovered fork outlives the author's original rank check. Only a currently admin
+// author may reopen unclassified native state; a member must have a known project-only source.
+export async function recoveryForkSessionId(rec = {}) {
+  const sourceId = String(rec.forkSourceSessionId || "");
+  if (!sourceId) return "";
+  if ((await getUser(rec.authorId))?.isAdmin === true) return sourceId;
+  const rows = getDb().prepare("SELECT runtime FROM sessions WHERE slug = ? AND session_id = ?").all(rec.slug, sourceId);
+  return rows.some((row) => {
+    try { return JSON.parse(row.runtime)?.scope === "project"; } catch { return false; }
+  }) ? sourceId : "";
+}
 
 
 // In-process change signal for the admin dashboard's SSE feed. The database remains the source of
@@ -487,6 +500,7 @@ export async function recoverRuns(stale, {
         workspaceId: rec.workspaceId || process.env.CG_SLACK_TEAM_ID || "",
         text: rec.text,
         threadKey: rec.threadKey,
+        forkSourceSessionId: await recoveryForkSessionId(rec),
         attachments: Array.isArray(rec.attachments) ? rec.attachments : [],
         origin: "recovery", // replayed after a restart with nobody watching — never escalates
         signal: handle.controller.signal,

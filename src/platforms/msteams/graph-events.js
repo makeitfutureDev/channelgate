@@ -1,5 +1,6 @@
 // Microsoft Graph basic notifications. Credentials and subscription state stay daemon-side.
 import { randomBytes, timingSafeEqual } from "node:crypto";
+import { teamsActivationFingerprint } from "./reactions.js";
 
 const GRAPH = "https://graph.microsoft.com";
 const LIFETIME = 55 * 60_000;
@@ -39,7 +40,7 @@ function sameSecret(a, b) {
   return aa.length === bb.length && timingSafeEqual(aa, bb);
 }
 
-export function createTeamsGraphEvents({ auth, notificationUrl, tenantId, store, onMessage, enqueueNotifications = null, fetchImpl = fetch, now = Date.now, log = () => {}, intervalMs = 60_000 } = {}) {
+export function createTeamsGraphEvents({ auth, notificationUrl, tenantId, store, onMessage, enqueueNotifications = null, fetchImpl = fetch, now = Date.now, log = () => {}, intervalMs = 60_000, getActivationReactions = () => undefined, getActivationVersion = () => '' } = {}) {
   const endpoint = new URL(notificationUrl);
   if (endpoint.protocol !== "https:" || endpoint.username || endpoint.password || endpoint.hash) throw new Error("Teams Graph notifications need a public HTTPS URL");
   if (!tenantId || !auth?.token || !store?.list || !store?.put || !onMessage) throw new Error("Teams Graph event dependencies are incomplete");
@@ -65,7 +66,32 @@ export function createTeamsGraphEvents({ auth, notificationUrl, tenantId, store,
     }
     return res.status === 204 ? null : res.json();
   }
+  // Persist before fetching history or reusing a live subscription. Once set, this survives
+  // renewals/restarts; newly recognized aliases must never activate pre-upgrade reactions.
+  async function prepareReactionAliases(row) {
+    const prepared = { ...row };
+    let changed = false;
+    for (const field of ['reactionAliasesStartedAt', 'alienReactionStartedAt', 'graphRobotStartedAt']) {
+      if (Number.isFinite(Date.parse(prepared[field]))) continue;
+      prepared[field] = new Date(now()).toISOString();
+      changed = true;
+    }
+    const fingerprint = teamsActivationFingerprint(getActivationReactions());
+    const version = getActivationVersion();
+    if (prepared.activationReactionsFingerprint !== fingerprint || prepared.activationReactionsVersion !== version || !Number.isFinite(Date.parse(prepared.activationReactionsStartedAt))) {
+      prepared.activationReactionsFingerprint = fingerprint;
+      prepared.activationReactionsVersion = version;
+      // A saved setting's timestamp admits the first genuine addition after the save.
+      // Using notification-fetch time would discard that first reaction on every change.
+      prepared.activationReactionsStartedAt = new Date(Number.isFinite(Date.parse(version)) ? Date.parse(version) : now()).toISOString();
+      changed = true;
+    }
+    if (!changed) return row;
+    await store.put(prepared);
+    return prepared;
+  }
   async function maintain(row) {
+    row = await prepareReactionAliases(row);
     const { resource, apiVersion } = baseResource(row.resource);
     const current = now();
     const sameEndpoint = row.notificationUrl === endpoint.href;
@@ -132,18 +158,30 @@ export function createTeamsGraphEvents({ auth, notificationUrl, tenantId, store,
       }
     });
   }
+  async function refresh(row) {
+    return serialized(async () => {
+      const current = (await store.list()).find(item => item.conversationId === row.conversationId && item.startedAt === row.startedAt);
+      return current ? prepareReactionAliases(current) : null;
+    });
+  }
   async function processNotifications(accepted) {
     for (const { event } of accepted) {
-      const row = (await store.list()).find(item => item.subscriptionId && item.subscriptionId === event?.subscriptionId);
-      const path = row && messagePath(event, row);
-      // Uninstall or rotation may revoke an envelope after durable acceptance, before its GET.
-      if (!row || !path || event.tenantId !== tenantId || !sameSecret(event.clientState, row.clientState)
-        || !["created", "updated"].includes(event.changeType)) continue;
+      const row = await serialized(async () => {
+        const current = (await store.list()).find(item => item.subscriptionId && item.subscriptionId === event?.subscriptionId);
+        // Uninstall or rotation may revoke an envelope after durable acceptance, before its GET.
+        if (!current || !messagePath(event, current) || event.tenantId !== tenantId
+          || !sameSecret(event.clientState, current.clientState)
+          || !["created", "updated"].includes(event.changeType)) return null;
+        return prepareReactionAliases(current);
+      });
+      if (!row) continue;
+      const path = messagePath(event, row);
       let message;
       try { message = await request(row.apiVersion || baseResource(row.resource).apiVersion, path); }
       catch (error) { if (error.status === 404) continue; throw error; }
       if (message?.id !== event.resourceData.id) throw new Error("Teams Graph response message identity mismatch");
-      await onMessage(message, row);
+      const current = await refresh(row);
+      if (current) await onMessage(message, current);
     }
   }
   async function handle(req, res) {
@@ -178,7 +216,7 @@ export function createTeamsGraphEvents({ auth, notificationUrl, tenantId, store,
     }
   }
   return {
-    ensure, handle, renew, remove, processNotifications,
+    ensure, handle, renew, remove, processNotifications, refresh,
     start() { if (!timer) { timer = setInterval(() => { void renew().catch(() => {}); }, Math.max(10, intervalMs)); timer.unref?.(); void renew().catch(() => {}); } },
     async stop() { if (timer) clearInterval(timer); timer = null; await chain; },
   };

@@ -82,6 +82,15 @@
               <button type="button" data-seg="channels">Channels</button>
               <button type="button" data-seg="dms">DMs</button>
             </div>
+            <div class="conv-source-filter">
+              <label for="conv-source">Source</label>
+              <select id="conv-source">
+                <option value="all">All sources</option>
+                <option value="googlechat">Google Chat</option>
+                <option value="slack">Slack</option>
+                <option value="msteams">Teams</option>
+              </select>
+            </div>
             <div id="channel-list" class="list">Loading…</div>
           </div>
           <div class="detail-pane" id="channel-detail">
@@ -560,6 +569,18 @@
                     <span>Default Codex model</span>
                     <select id="set-default-codex-model"></select>
                   </label>
+                  <div class="ch-codex-login" id="gateway-codex-login">
+                    <strong>Default gateway Codex login</strong>
+                    <p class="desc">Shared by channels that use the gateway login.</p>
+                    <label class="field"><span>Sign-in method</span><select class="ch-codex-login-method"><option value="">Choose a method…</option><option value="device">Sign in with ChatGPT</option><option value="api-key">Use an OpenAI API key</option></select></label>
+                    <div class="ch-codex-login-status state">Checking sign-in…</div>
+                    <div class="ch-codex-device-section" hidden>
+                      <div class="ch-codex-device-code" hidden><a class="ch-codex-device-link" href="https://auth.openai.com/codex/device" target="_blank" rel="noopener noreferrer">Open ChatGPT sign-in</a><span> and enter code </span><button type="button" class="ch-codex-device-value" title="Copy sign-in code" aria-label="Copy sign-in code"></button><span class="ch-codex-copy-state state" role="status"></span></div>
+                      <button type="button" class="ghost ch-codex-device-cancel" hidden>Cancel sign-in</button>
+                    </div>
+                    <div class="row-actions ch-codex-api-section" hidden><input class="ch-codex-api-key" type="password" autocomplete="off" placeholder="OpenAI API key" aria-label="Gateway OpenAI API key"><button type="button" class="btn ch-codex-key-save">Save API key</button></div>
+                    <em class="state ch-codex-api-note" hidden>OpenAI bills API key use separately from a ChatGPT subscription.</em>
+                  </div>
                   <div class="dz-row">
                     <span class="t">Reset all channels to these gateway defaults<small>Clears every channel's engine, model and effort overrides, and optionally the per-thread <code>/model</code> pins that would otherwise survive it. Access, tools, tokens and DM templates stay unchanged. Existing threads keep their current engine session; new threads inherit these defaults. Can't be undone.</small></span>
                     <button type="button" id="reset-channel-runtime" class="dz-btn">Reset all…</button>
@@ -614,10 +635,24 @@
                   <h4>Slack replies</h4>
                   <p class="desc">Replies use Slack native streaming with native assistant status for thinking and tool progress.</p>
                   <label class="toggle"><input type="checkbox" id="set-show-message-cost" /> Show provider-reported cost / estimated standard API-equivalent value in Slack message footers. The value is still recorded in Activity and Overview when hidden.</label>
+                </div>
+                <div class="setcard">
+                  <h4>Message activation reactions</h4>
+                  <p class="desc">Choose which emoji reactions ask the bot to act on a message. Each platform has its own list; blank restores its default. Stop and acknowledgement reactions stay reserved.</p>
                   <label class="field">
-                    <span>Mention reactions — emoji that act as an @mention (comma-separated names, no colons)</span>
+                    <span>Slack activation emoji — comma-separated names</span>
                     <input id="set-mention-reactions" type="text" placeholder="robot_face" />
-                    <em class="state">React with one of these on a message to have the bot respond to it. Default: <code>robot_face</code>.</em>
+                    <em class="state">Slack names, for example <code>robot_face</code> or <code>:rocket:</code>. Default: <code>robot_face</code>.</em>
+                  </label>
+                  <label class="field">
+                    <span>Microsoft Teams activation emoji — comma-separated names or emoji</span>
+                    <input id="set-teams-mention-reactions" type="text" placeholder="hearteyesrobot, alien, like, smilerobot" />
+                    <em class="state">Teams shortcuts or Unicode emoji, for example <code>alien</code> or 👽. For other named emoji, include their Unicode form too (for example <code>heart, ❤️</code>) so Graph can match them. Channel and group reactions require “Observe edits and robot reactions on all messages” and Teams event delivery.</em>
+                  </label>
+                  <label class="field">
+                    <span>Google Chat activation emoji — comma-separated Unicode emoji</span>
+                    <input id="set-google-chat-mention-reactions" type="text" placeholder="🤖" />
+                    <em class="state">Unicode emoji, for example 🤖 or 🚀. The current Google Chat transport does not receive reaction events, so this list is saved for future support. Mention the bot to start a request.</em>
                   </label>
                 </div>
                 <div class="setcard">
@@ -897,6 +932,12 @@
                   </label>
                 </div>
                 <div class="setcard">
+                  <h4>Model shortcuts</h4>
+                  <p class="desc">Mention the bot, then type a colon and a name after Slack's inserted space, for example <code>@agent :astra review this</code>. The selected engine and model are pinned to that thread. Use the same form without a task to switch an existing thread. Names apply gateway-wide; channel runtime permissions still apply.</p>
+                  <div id="model-shortcuts-editor"></div>
+                  <button type="button" class="clear-tok" id="add-model-shortcut" disabled>Add shortcut</button>
+                </div>
+                <div class="setcard">
                   <h4>Container runtime</h4>
                   <p class="desc">Every channel's engine processes run inside <strong>its own long-lived Linux container</strong> — separate HOME, separate CLI logins, its own process namespace, and none of the host's files reachable beyond the channel's own folders. This is the only runtime: the daemon needs <code>podman</code> or <code>docker</code> on this machine plus a built image (<code>npm run build:image</code>). Admin-mode channels run in their container too; the permission bypass applies inside it, never on the host.</p>
                   <label class="field">
@@ -931,7 +972,7 @@
                     <span>CPU limit — e.g. <code>1.5</code> (blank = no limit)</span>
                     <input id="set-container-cpus" type="text" placeholder="blank = no limit" />
                   </label>
-                  <label class="toggle"><input type="checkbox" id="set-container-full-access-home" /> <strong>Admin channels can access the host home.</strong> Gives every Admin channel read-write access to the gateway user’s home directory: other channel folders and memory, repositories, gateway logs, metadata, and credential stores. All admitted members share this access, including non-admins using Worker permissions. This does not grant host root access. Off keeps Admin channels confined to their own channel folder. Changing it recreates those containers at their next turn.</label>
+                  <label class="toggle"><input type="checkbox" id="set-container-full-access-home" /> <strong>Admin channels can access the host home.</strong> Gives current organization admins in Admin channels read-write access to the gateway user’s home directory: other channel folders and memory, repositories, gateway logs, metadata, and credential stores. Other members keep Worker permissions in a separate project container with isolated HOME, temporary files, artifacts and engine histories. This does not grant host root access. Off keeps Admin channels confined to their own channel folder. Changing it reconciles the admin containers at their next turn.</label>
                   <label class="toggle"><input type="checkbox" id="set-container-egress-bridge" /> <strong>Legacy open network (no egress proxy).</strong> Off (the default): every channel container runs with no network of its own and reaches the internet only through the gateway's egress proxy, which enforces each channel's Allow network switch, blocks private and metadata addresses, and swaps placeholder credentials for real secrets only on their declared hosts. On: containers use the open bridge network and receive raw secret values, as before this release. Changing it recreates containers at their next turn.</label>
                   <label class="toggle"><input type="checkbox" id="set-container-egress-strict" /> <strong>Withhold readable variables.</strong> On (the default for new installs): a secret with no egress rule — no built-in rule and no “Used on hosts” — is withheld from proxy-mode containers, and the run is told its name was withheld. To give it to containers, add the hosts it is used on (the secret's “Used on hosts” field, or <code>hosts</code> with <code>set_secret</code>): the container then gets a placeholder the proxy swaps on those hosts only. Off: an unruled secret is injected raw and listed as unprotected.</label>
                   <label class="field">
@@ -1084,7 +1125,7 @@
           </fieldset>
           <label class="field"><span>Notification</span><select id="schedule-modal-notify"><option value="channel">Notify channel</option><option value="user">Notify person</option><option value="none">Quiet</option></select></label>
           <label id="schedule-modal-notify-user-wrap" class="field"><span>Person ID</span><input id="schedule-modal-notify-user" type="text" placeholder="U…" /></label>
-          <label id="schedule-modal-delivery-wrap" class="field schedule-wide"><span>Delivery</span><select id="schedule-modal-delivery"><option value="channel">Post directly in channel</option><option value="standard">Start a new thread for every run</option><option value="daily-thread">Reuse one thread per day</option></select></label>
+          <label id="schedule-modal-delivery-wrap" class="field schedule-wide"><span>Delivery</span><select id="schedule-modal-delivery"><option value="channel">Post directly in channel</option><option value="standard">Start a new thread for every run</option><option value="daily-thread">Reuse one thread per day</option><option value="dm-on-match">DM creator only when result matches</option></select></label>
         </div>
         <label class="field schedule-prompt-field">
           <span>Prompt</span>
@@ -1143,7 +1184,7 @@
     <div><p class="fldlab">Mode</p><div class="cap-cards ch-capcards">
       <button type="button" class="cap-card" data-cap="read"><h5>Read-only</h5><p>Reads files. Changes need approval.</p></button>
       <button type="button" class="cap-card" data-cap="worker"><h5>Worker</h5><p>Runs commands and edits files in this channel’s folder only.</p></button>
-      <button type="button" class="cap-card danger" data-cap="admin"><h5>Admin</h5><p>Full tools for admins. Host-home access can be enabled in Settings.</p></button>
+      <button type="button" class="cap-card danger" data-cap="admin"><h5>Admin</h5><p>Full tools for admins; project access for members. Admin-only host-home access can be enabled in Settings.</p></button>
     </div></div>
     <div class="mode-options"><p class="fldlab">Special modes</p>
       <label class="togglerow"><input type="checkbox" class="ch-auto" /><span class="switch"></span><span class="t"><b>Auto</b><small>Automatically approve tool requests for all members. Enables Worker when Read-only is selected.</small></span></label>
@@ -1278,56 +1319,25 @@
                 <option value="channel">This channel's own login</option>
               </select>
             </label>
-            <em class="state">Choose a login source first; its setup appears below. Slack and Claude currently use the gateway connection in either case.</em>
-          </div>
-          <div class="ch-auth-gateway-panel">
-            <h4>Default gateway setup</h4>
-            <p class="hint">These connections are shared with other channels.</p>
-            <div class="ch-auth-status-grid">
-              <div><strong>Slack</strong><span class="ch-gateway-slack-status state">Checking…</span><button type="button" class="ghost ch-gateway-slack-settings">Open Slack settings</button></div>
-              <div><strong>Claude</strong><span class="ch-gateway-claude-status state">Checking…</span><button type="button" class="ghost ch-gateway-claude-settings">Open Claude settings</button></div>
-              <div><strong>Codex</strong><span class="ch-gateway-codex-status state">Checking…</span></div>
-            </div>
-            <div class="ch-codex-login ch-gateway-codex-login">
-              <span>Sign in to the default gateway Codex login</span>
-              <div class="ch-codex-login-status state">Checking sign-in…</div>
-              <div class="row-actions ch-codex-signin-row">
-                <span>ChatGPT sign-in</span>
-                <button type="button" class="btn ch-codex-device-start">Sign in with ChatGPT</button>
-                <button type="button" class="btn ch-codex-device-cancel" hidden>Cancel sign-in</button>
-              </div>
-              <div class="ch-codex-device-code" hidden>
-                <a class="ch-codex-device-link" href="https://auth.openai.com/codex/device" target="_blank" rel="noopener noreferrer">Open ChatGPT sign-in</a>
-                <span> and enter code </span><strong class="ch-codex-device-value"></strong>
-              </div>
-              <div class="row-actions">
-                <input class="ch-codex-api-key" type="password" autocomplete="off" placeholder="OpenAI API key" aria-label="Default gateway OpenAI API key">
-                <button type="button" class="btn ch-codex-key-save">Use API key</button>
-              </div>
-              <em class="state">This login is shared across channels using the default. OpenAI bills API key use separately from a ChatGPT subscription.</em>
-            </div>
           </div>
           <div class="ch-auth-channel-panel" hidden>
             <h4>This channel's Codex setup</h4>
             <p class="hint">This login is used only by this conversation. Other channels keep their own selection.</p>
-            <p class="hint">The gateway keeps this channel's Codex sign-in in a separate private location. You do not need to copy a token or manage its storage path.</p>
             <div class="field ch-codex-login">
-              <span>Sign in to this channel</span>
+              <label class="field"><span>Sign-in method</span><select class="ch-codex-login-method"><option value="">Choose a method…</option><option value="device">Sign in with ChatGPT</option><option value="api-key">Use an OpenAI API key</option></select></label>
               <div class="ch-codex-login-status state">Checking sign-in…</div>
-              <div class="row-actions ch-codex-signin-row">
-                <span>ChatGPT sign-in</span>
-                <button type="button" class="btn ch-codex-device-start">Sign in with ChatGPT</button>
-                <button type="button" class="btn ch-codex-device-cancel" hidden>Cancel sign-in</button>
+              <div class="ch-codex-device-section" hidden>
+                <div class="ch-codex-device-code" hidden>
+                  <a class="ch-codex-device-link" href="https://auth.openai.com/codex/device" target="_blank" rel="noopener noreferrer">Open ChatGPT sign-in</a>
+                  <span> and enter code </span><button type="button" class="ch-codex-device-value" title="Copy sign-in code" aria-label="Copy sign-in code"></button><span class="ch-codex-copy-state state" role="status"></span>
+                </div>
+                <button type="button" class="ghost ch-codex-device-cancel" hidden>Cancel sign-in</button>
               </div>
-              <div class="ch-codex-device-code" hidden>
-                <a class="ch-codex-device-link" href="https://auth.openai.com/codex/device" target="_blank" rel="noopener noreferrer">Open ChatGPT sign-in</a>
-                <span> and enter code </span><strong class="ch-codex-device-value"></strong>
-              </div>
-              <div class="row-actions">
+              <div class="row-actions ch-codex-api-section" hidden>
                 <input class="ch-codex-api-key" type="password" autocomplete="off" placeholder="OpenAI API key" aria-label="Channel OpenAI API key">
-                <button type="button" class="btn ch-codex-key-save">Use API key</button>
+                <button type="button" class="btn ch-codex-key-save">Save API key</button>
               </div>
-              <em class="state">The key is sent once to the gateway over this admin session. API usage is billed by OpenAI separately from a ChatGPT subscription.</em>
+              <em class="state ch-codex-api-note" hidden>The key is sent once to the gateway over this admin session. API usage is billed by OpenAI separately from a ChatGPT subscription.</em>
             </div>
             <p class="hint">Channel-specific connected apps and secrets are configured in MCP Connections and Environment tokens above.</p>
           </div>

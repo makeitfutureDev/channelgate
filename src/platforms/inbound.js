@@ -31,6 +31,7 @@ export function makeInbound({
   text = "",
   mentionsBot = false,
   trigger = "message",
+  reactionAction = "",
   attachments = [],
   raw = null,
 } = {}) {
@@ -58,6 +59,8 @@ export function makeInbound({
     // Whether the bot was explicitly addressed. Outside a DM this is the gate: no mention, no run.
     mentionsBot: Boolean(mentionsBot),
     trigger: ["message", "edit", "reaction"].includes(trigger) ? trigger : "message",
+    // Explicit reaction intent is separate from the reacted message text.
+    reactionAction: trigger === "reaction" && ["engage", "stop", "ack"].includes(reactionAction) ? reactionAction : "",
     // [{ name, contentType, size, download() -> Promise<Buffer> }] — lazy, because most inbound
     // messages carry none and a download is a network call we should not make until the message has
     // passed authorization.

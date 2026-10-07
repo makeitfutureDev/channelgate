@@ -18,6 +18,8 @@ converting or relabelling it.
   in the gateway's local zone. Examples: `0 9 * * *` = every day 09:00; `0 9 * * 1` = Mondays 09:00;
   `0 * * * *` = hourly. Recurring schedules must fire no more often than the configured minimum
   interval (default 60 min) or the call is rejected.
+- **Fixed interval:** pass `interval_days` (1–365) instead of `cron`. The first run is that many
+  24-hour days after creation; later runs keep the same interval and skip periods missed during downtime.
 
 ## Task vs reminder
 - `kind:"task"` (default) — actually runs a Claude session with your `prompt` at that time (it
@@ -36,6 +38,10 @@ converting or relabelling it.
   level with no thread and no ping — only when explicitly requested; `"daily-thread"` creates
   one top-level “Running” message on the first run of each server-local day and threads every run
   result for that day beneath it. Each run still starts a fresh, context-less agent session.
+- For "check silently and message me only if found," set `delivery:"dm-on-match"` and a distinctive
+  `match_prefix` such as `FOUND:`. Tell the task to start its answer with that exact prefix only
+  when a verified finding exists. This mode posts no routine announcement or result; only matching
+  results are DM'd to the schedule creator, then the schedule stops. Failures remain in schedule status and event logs.
 - Reminder acknowledgement (only when `kind:"reminder"`): `ack:true` requires someone to react
   ✅. If nobody does within `ack_escalate_minutes` (default 120) a second notice is posted; after
   `ack_dm_minutes` (default 60) more the creator is DM'd and the chain closes. Any ✅ closes it.
@@ -48,8 +54,8 @@ converting or relabelling it.
 There's a per-channel cap on enabled schedules (a runaway backstop); if you hit it, delete an old
 one first.
 
-**Not for repeating work in THIS thread.** A schedule always starts a fresh, context-less run and
-announces itself in the channel. To iterate on something here, where each pass builds on the last,
+**Not for repeating work in THIS thread.** A schedule always starts a fresh, context-less run.
+Standard delivery announces it in the channel. To iterate on something here, where each pass builds on the last,
 use a loop instead — `references/loops.md`.
 
 ## Examples

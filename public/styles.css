@@ -233,22 +233,20 @@ code {
 .grid-2 { grid-template-columns: repeat(2, 1fr); }
 .ch-auth-chooser { margin-bottom: 14px; padding: 14px; border: 1px solid var(--line); border-radius: 10px; background: var(--panel-2); }
 .ch-auth-chooser .field { margin-bottom: 6px; }
-.ch-auth-gateway-panel, .ch-auth-channel-panel { margin-bottom: 16px; padding: 16px; border: 1px solid var(--line-soft); border-radius: 10px; }
-.ch-auth-gateway-panel[hidden], .ch-auth-channel-panel[hidden] { display: none; }
+.ch-auth-channel-panel { margin-bottom: 16px; padding: 16px; border: 1px solid var(--line-soft); border-radius: 10px; }
+.ch-auth-channel-panel[hidden] { display: none; }
 .ch-engine-field[hidden] { display: none; }
-.ch-auth-gateway-panel h4, .ch-auth-channel-panel h4 { margin: 0 0 4px; }
-.ch-auth-status-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; margin: 12px 0; }
-.ch-auth-status-grid > div { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; padding: 12px; border: 1px solid var(--line); border-radius: 8px; }
+.ch-auth-channel-panel h4 { margin: 0 0 4px; }
 .ch-auth-channel-panel > .field { margin-bottom: 12px; }
-@media (max-width: 760px) { .ch-auth-status-grid { grid-template-columns: 1fr; } }
 .ch-codex-login { grid-column: 1 / -1; display: flex; flex-direction: column; gap: 9px; padding: 12px; border: 1px solid var(--line); border-radius: 8px; }
-.ch-codex-login .row-actions { display: grid; grid-template-columns: minmax(0, 1fr) 200px; align-items: center; gap: 10px; }
-.ch-codex-login .row-actions > .btn { box-sizing: border-box; width: 100%; white-space: nowrap; }
-.ch-codex-login .ch-codex-api-key { min-width: 0; width: 100%; }
-.ch-codex-login .ch-codex-signin-row > span { color: var(--muted); font-size: 13px; }
-.ch-codex-login .ch-codex-device-cancel:not([hidden]) { grid-column: 2; }
-@media (max-width: 520px) { .ch-codex-login .row-actions { grid-template-columns: 1fr; } .ch-codex-login .ch-codex-device-cancel:not([hidden]) { grid-column: 1; } }
-.ch-codex-login .ch-codex-device-value { font-family: var(--mono); letter-spacing: .08em; }
+.ch-codex-login .row-actions { display: flex; align-items: center; gap: 10px; }
+.ch-codex-login .ch-codex-api-key { min-width: 0; flex: 1; }
+.ch-codex-login .row-actions > .btn { box-sizing: border-box; white-space: nowrap; }
+.ch-codex-login .ch-codex-device-section { display: flex; flex-direction: column; align-items: flex-start; gap: 8px; }
+.ch-codex-login [hidden] { display: none; }
+.ch-codex-login .ch-codex-device-value { font-family: var(--mono); letter-spacing: .08em; padding: 4px 8px; border: 1px solid var(--line); border-radius: 5px; background: var(--surface); color: inherit; cursor: copy; }
+.ch-codex-login .ch-codex-copy-state { margin-left: 8px; }
+@media (max-width: 520px) { .ch-codex-login .row-actions { flex-direction: column; align-items: stretch; } }
 .col h4 { margin: 0 0 8px; font-size: 11px; color: var(--faint); text-transform: uppercase; letter-spacing: .06em; }
 .checks { display: flex; flex-direction: column; gap: 6px; max-height: 260px; overflow: auto; }
 .checks.empty { color: var(--faint); font-size: 12px; font-style: italic; }
@@ -1262,3 +1260,8 @@ button.clear-tok.armed { background: rgba(229, 96, 77, .14); border-color: rgba(
   .sh-chart-svg { height: 215px; }
   .sh-hardware-group > strong { min-height: 0; }
 }
+
+/* Conversation source is independent of the Channels / DMs filter. */
+.conv-source-filter { display: flex; align-items: center; gap: 8px; margin: 8px 12px; }
+.conv-source-filter label { color: var(--muted); font-size: 11px; }
+.conv-source-filter select { min-width: 0; flex: 1; font-size: 12px; padding: 6px 8px; }

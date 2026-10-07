@@ -242,11 +242,11 @@ function destructiveConfirm(title, text, confirm = "Remove") {
 // One scope's three rows. A stored value renders as itself; an empty one renders as the label of
 // whatever it inherits, so "nothing set here" never shows up as a blank the reader has to decode.
 // `options` carries the catalogs the app layer resolved for the engine THIS scope actually runs.
-function runtimeScopeRows(scope, { values = {}, inherited = {}, options = {} } = {}, { editable = true } = {}) {
+function runtimeScopeRows(scope, { values = {}, inherited = {}, options = {} } = {}, { editable = true, codexLocked = false } = {}) {
   const ids = RUNTIME_SELECT_ACTION_IDS[scope];
   const lists = { engine: options.engines || [], model: options.models || [], effort: options.efforts || [] };
   const labels = { engine: "Engine", model: "Model", effort: "Reasoning effort" };
-  return RUNTIME_FIELDS.map((field) => (editable
+  return RUNTIME_FIELDS.filter((field) => !(codexLocked && field === "engine")).map((field) => (editable
     ? selectRow({
       label: labels[field],
       actionId: ids[field],
@@ -272,12 +272,13 @@ function runtimeBlocks(snapshot = {}, state = {}, { canEditRuntime = true, canEn
       button(`${CHANNEL_SETTINGS_OPTION_PREFIX}auto`, `${mode.autoMode ? "☑" : "☐"} Auto`, state, "option", { key: "autoMode", enabled: !mode.autoMode }),
       button(`${CHANNEL_SETTINGS_OPTION_PREFIX}lean`, `${mode.cleanMode ? "☑" : "☐"} Lean`, state, "option", { key: "cleanMode", enabled: !mode.cleanMode }),
     ] },
-    { type: "context", elements: [mrkdwn("Read-only reads files; changes need approval. Worker runs commands and edits files in the channel folder only. Admin gives admins all tools without approval prompts; other members get Worker with the selected Auto/Lean options. Host-home access is a separate web Settings → Container runtime option shared by all admitted members, not host root access. Auto approves tool requests for all members. Lean removes optional skills and connectors.")] },
+    { type: "context", elements: [mrkdwn("Read-only reads files; changes need approval. Worker runs commands and edits files in the channel folder only. Admin gives admins all tools without approval prompts; other members get Worker with the selected Auto/Lean options. Host-home access is a separate web Settings → Container runtime option for current admin authors only. Other members stay in a separate project container. It does not grant host root access. Auto approves tool requests for all members. Lean removes optional skills and connectors.")] },
     { type: "divider" },
     ] : []),
     { type: "header", text: plain("Engine & model") },
+    ...(runtime.channelLogin ? [{ type: "section", text: mrkdwn(`*Channel Codex login:* ${escapeMrkdwn(runtime.channelLoginStatus || "Checking sign-in…")} · *Engine:* Codex`) }] : []),
     { type: "section", text: mrkdwn("*Channel default*") },
-    ...runtimeScopeRows("channel", scopes.channel, { editable: canEditRuntime }),
+    ...runtimeScopeRows("channel", scopes.channel, { editable: canEditRuntime, codexLocked: runtime.channelLogin }),
     { type: "context", elements: [mrkdwn("Applies to every thread here that has no pin of its own. Each change saves immediately and takes effect on the next turn.")] },
     { type: "divider" },
     { type: "section", text: mrkdwn("*This thread*") },
@@ -286,7 +287,7 @@ function runtimeBlocks(snapshot = {}, state = {}, { canEditRuntime = true, canEn
     blocks.push({ type: "context", elements: [mrkdwn("_Open Settings from a reply inside a thread to pin that thread's engine, model or effort._")] });
   } else {
     blocks.push(
-      ...runtimeScopeRows("thread", thread, { editable: canEditRuntime }),
+      ...runtimeScopeRows("thread", thread, { editable: canEditRuntime, codexLocked: runtime.channelLogin }),
       ...(canEditRuntime && thread.pinned
         ? [{ type: "actions", elements: [button(CHANNEL_SETTINGS_THREAD_RESET_ACTION_ID, "Follow channel default", state, "thread_reset", {}, {
           confirm: destructiveConfirm("Clear this thread's pins?", "The thread goes back to the channel's engine, model and effort.", "Clear"),
@@ -534,7 +535,7 @@ function accessControlBlocks(access = {}, afterFlags = []) {
         ...(current[field].length ? { initial_users: current[field] } : {}),
       },
     })),
-    { type: "context", elements: [mrkdwn("Each control saves on its own and applies to this channel's next runs. Named users are checked against live channel membership when they are saved. Admin mode bypasses permissions only for admin authors; others get Worker. Auto and Lean are independent; Lean applies only to non-admins in Admin mode. Auto on Read-only enables Worker. If the operator enabled whole-home access, Full access also exposes the gateway home to this channel. Network is advisory; the container stays on its bridge network.")] },
+    { type: "context", elements: [mrkdwn("Each control saves on its own and applies to this channel's next runs. Named users are checked against live channel membership when they are saved. Admin mode bypasses permissions only for admin authors; others get Worker. Auto and Lean are independent; Lean applies only to non-admins in Admin mode. Auto on Read-only enables Worker. If the operator enabled whole-home access, Full access exposes the gateway home only to current admin authors. Other members keep project-only access in a separate container. Network is advisory; the container stays on its bridge network.")] },
   ];
 }
 

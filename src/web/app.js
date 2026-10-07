@@ -22,6 +22,7 @@ import { createFileDownloadRouter } from "./file-download.js";
 import { createPublicFileRouter } from "./public-files.js";
 import { createApprovalLinkRouter } from "./routes/approve.js";
 import { createFileUploadRouter } from "./file-upload.js";
+import { getSessionMap, getSessionRuntime, getSessionEngine } from "../gateway/sessions.js";
 import { poolStats } from "../engines/session-pool.js";
 import { getEngine, isEngineEnabled } from "../config/settings.js";
 import { resumeCommandFor } from "../engines/registry.js";
@@ -359,10 +360,12 @@ export function createWebApp({
     // the channel's engine, and enter the channel container first when the channel runs in one
     // (src/runtimes/). Resolved from the channel record rather than assumed.
     const meta = (await listChannels()).find((c) => c.slug === slug)?.meta || {};
-    const engine = meta.engine || getEngine();
+    const threadKey = Object.entries(await getSessionMap(slug)).find(([, id]) => id === session)?.[0];
+    const stamp = threadKey ? await getSessionRuntime(slug, threadKey) : null;
+    const engine = (threadKey ? await getSessionEngine(slug, threadKey) : "") || meta.engine || getEngine();
     let target = null;
     try {
-      target = resolveRuntime(slug, meta);
+      target = resolveRuntime(slug, meta, { isAdminAuthor: stamp?.scope !== "project" });
     } catch {
       /* host form below */
     }

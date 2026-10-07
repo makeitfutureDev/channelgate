@@ -5,8 +5,9 @@ import { runInNewContext } from "node:vm";
 
 const source = readFileSync(new URL("../public/app.js", import.meta.url), "utf8");
 const code = source.slice(source.indexOf("const UPDATE_PHASES ="), source.indexOf("// Resolve the initial path"));
-function fixture({ entitlement = false, checked = true, transaction = null, fetchError = false } = {}) {
-  const el = { innerHTML: "", addEventListener() {} };
+function fixture({ entitlement = false, checked = true, transaction = null, fetchError = false, behind = checked ? 76 : 0 } = {}) {
+  const listeners = {};
+  const el = { innerHTML: "", addEventListener: (event, fn) => { listeners[event] = fn; } };
   const timers = [];
   const context = {
     document: { getElementById: () => el },
@@ -14,12 +15,12 @@ function fixture({ entitlement = false, checked = true, transaction = null, fetc
     Date, Number, Math, JSON,
     sessionStorage: { getItem: () => null, removeItem() {}, setItem() {} },
     location: { reload() {} },
-    api: async (url) => url.includes("check") ? { current: "abc", behind: checked ? 76 : 0, checked, automaticUpdates: entitlement } : { update: transaction },
+    api: async (url) => url.includes("check") ? { current: "abc", behind, checked, automaticUpdates: entitlement } : { update: transaction },
     fetch: async () => { if (fetchError) throw new Error("offline"); return { ok: true, json: async () => ({ update: transaction }) }; },
     setTimeout: (fn) => timers.push(fn),
   };
   runInNewContext(code, context);
-  return { el, timers, context };
+  return { el, timers, context, listeners };
 }
 
 test("only Enterprise sees update button; other editions see count and manual guidance", async () => {
@@ -139,4 +140,28 @@ test("sidebar update results, progress and login links stay within the rail", { 
     }
     assert.equal(await page.locator('#update a[href="/login"]').isVisible(), true);
   }
+});
+
+ test("current code offers Enterprise repair and reports a verified restart", async () => {
+  for (const entitlement of [false,true]) {
+    const {el,context}=fixture({entitlement,behind:0});
+    await context.loadUpdateStatus();
+    assert.equal(el.innerHTML.includes("Repair gateway"),entitlement);
+    assert.match(context.updateResultHtml({result:"updated",changed:false}),/repair complete.*restart verified/);
+  }
+});
+
+ test("Repair gateway click starts and monitors the managed update transaction", async () => {
+  const {context,listeners,el,timers}=fixture({entitlement:true,behind:0});
+  await context.loadUpdateStatus();
+  context.confirmDialog=async()=>true;
+  const calls=[];
+  context.api=async (url,options)=>{calls.push([url,options]);return {transaction:{id:"repair",phase:"queued",status:"running"}};};
+  await listeners.click();
+  assert.equal(calls.length,1);
+  assert.equal(calls[0][0],"/api/update/run");
+  assert.equal(calls[0][1].method,"POST");
+  await new Promise(resolve => setImmediate(resolve));
+  assert.match(el.innerHTML,/Updating|checking|status changed/);
+  assert.equal(timers.length,1);
 });

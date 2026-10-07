@@ -12,7 +12,7 @@ import path from "node:path";
 import { allowedFsRoot, resolveWithinRoot, pathWithin, hashPassword, verifyPassword } from "../security.js";
 import { listAvailableSkills } from "../../gateway/folders.js";
 import { workspaceAssignmentsAtPath } from "../../gateway/workspace-assignments.js";
-import { listChannels } from "../../config/store.js";
+import { listChannels, getChannelsIndex } from "../../config/store.js";
 import { requireAdapter, modelBelongsToEngine } from "../../engines/registry.js";
 import {
   getAdminPassword,
@@ -39,6 +39,7 @@ import {
   hasTeamsConfig,
   resolveTeamsConfig,
   validateTeamsFileDriveIds,
+  validateMentionReactions,
   CONTAINER_CLIS,
   CONTAINER_IMAGE_RE,
   CONTAINER_MEMORY_RE,
@@ -51,6 +52,7 @@ import { isSubscriptionName } from "../../platforms/googlechat/pubsub.js";
 import { logEvent } from "../../util/logger.js";
 import { checkForUpdate, startUpdate } from "../../gateway/updater.js";
 import { isValidModel } from "../../slack/util.js";
+import { MODEL_SHORTCUT_NAME_RE, MAX_MODEL_SHORTCUTS } from "../../config/model-shortcuts.js";
 // Organization-wide environment secrets. WRITE-ONLY, exactly like the per-channel ones:
 // listOrgEnv is the only shape that may leave the process (config/scoped-env.js).
 import { listOrgEnv, patchOrgEnv } from "../../config/scoped-env.js";
@@ -271,11 +273,12 @@ export function createSettingsRouter({
       if (typeof body.errorDiagnosisChannel === "string") patch.errorDiagnosisChannel = body.errorDiagnosisChannel.trim();
       // Org-default access policy applied to each channel the bot newly joins.
       if (typeof body.defaultChannelAccess === "string" && CHANNEL_ACCESS_MODES.includes(body.defaultChannelAccess)) patch.defaultChannelAccess = body.defaultChannelAccess;
-      // Emoji reactions that act as an @mention. Accept an array or a comma/space-separated string;
-      // normalize to bare emoji names (strip colons, lowercase). Empty falls back to the default.
-      if (body.mentionReactions !== undefined) {
-        const arr = Array.isArray(body.mentionReactions) ? body.mentionReactions : String(body.mentionReactions).split(/[\s,]+/);
-        patch.mentionReactions = arr.map((s) => String(s).trim().replace(/^:|:$/g, "").toLowerCase()).filter(Boolean);
+      // Validate every supplied platform before the single save: malformed input cannot
+      // partially persist another surface's reaction list or an unrelated setting.
+      for (const [field, platform] of [["mentionReactions", "slack"], ["teamsMentionReactions", "msteams"], ["googleChatMentionReactions", "googlechat"]]) {
+        if (!Object.hasOwn(body, field)) continue;
+        try { patch[field] = validateMentionReactions(body[field], platform); }
+        catch (error) { return res.status(400).json({ error: error.message }); }
       }
       // Trusted bot apps: Slack app/bot IDs allowed to drive runs despite carrying a bot_id.
       if (body.trustedBotApps !== undefined) {
@@ -341,6 +344,20 @@ export function createSettingsRouter({
         patch.engine = body.engine;
       }
       if (typeof body.modelChangeAccess === "string" && MODEL_CHANGE_ACCESS_MODES.includes(body.modelChangeAccess)) patch.modelChangeAccess = body.modelChangeAccess;
+      if (body.modelShortcuts !== undefined) {
+        const entries = body.modelShortcuts && typeof body.modelShortcuts === "object" && !Array.isArray(body.modelShortcuts)
+          ? Object.entries(body.modelShortcuts) : null;
+        if (!entries || entries.length > MAX_MODEL_SHORTCUTS) return res.status(400).json({ error: `modelShortcuts must contain at most ${MAX_MODEL_SHORTCUTS} names` });
+        const shortcuts = {};
+        for (const [rawName, target] of entries) {
+          const name = rawName.toLowerCase();
+          if (!MODEL_SHORTCUT_NAME_RE.test(name) || Object.hasOwn(shortcuts, name)) return res.status(400).json({ error: `invalid or duplicate model shortcut "${rawName}"` });
+          if (!target || !ENGINES.includes(target.engine) || typeof target.model !== "string" || !isValidModel(target.model) || !modelBelongsToEngine(target.model, target.engine))
+            return res.status(400).json({ error: `invalid model target for shortcut "${rawName}"` });
+          shortcuts[name] = { engine: target.engine, model: target.model };
+        }
+        patch.modelShortcuts = shortcuts;
+      }
       // Gateway default model per engine (blank clears → CLI default). Same isValidModel guard as
       // /model and the channel-meta routes — a typo'd id here would break EVERY defaulted run.
       // Keys come from the ADAPTERS, not a literal pair: a harness added later (Qwen) would
@@ -795,7 +812,14 @@ export function createSettingsRouter({
   router.get("/mcp/available", async (req, res, next) => {
     try {
       const engine = ENGINES.includes(req.query.engine) ? req.query.engine : getEngine();
-      res.json({ engine, servers: await requireAdapter(engine).discoverMcps() });
+      let channelId = "";
+      if (engine === "codex" && req.query.channelId) {
+        const id = String(req.query.channelId);
+        const entry = (await getChannelsIndex())[id];
+        if (!entry) return res.status(404).json({ error: "Channel not found" });
+        channelId = id;
+      }
+      res.json({ engine, servers: await requireAdapter(engine).discoverMcps({ channelId }) });
     } catch (e) {
       next(e);
     }

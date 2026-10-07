@@ -18,6 +18,8 @@ fi
 out=""
 previous=""
 resume="no"
+fork="no"
+resume_id=""
 mcp="no"
 cancel="no"
 fail="no"
@@ -25,6 +27,9 @@ two_segments="no"
 subagents="no"
 transient_times=0
 capacity_plain="no"
+capacity_after_tool="no"
+capacity_always="no"
+capacity_empty="no"
 transient_after_tool="no"
 reject_model="no"
 reject_all_models="no"
@@ -44,7 +49,9 @@ network_domain="no"
 for arg in "$@"; do
   if [ "$previous" = "-o" ]; then out="$arg"; fi
   if [ "$previous" = "-m" ]; then model="$arg"; fi
+  if [ "$previous" = "resume" ]; then resume_id="$arg"; fi
   if [ "$arg" = "resume" ]; then resume="yes"; fi
+  if [ "$arg" = "fork" ]; then fork="yes"; fi
   case "$arg" in
     mcp_servers.gateway.command=*) mcp="yes" ;;
     features.network_proxy.enabled=true) network_proxy="yes" ;;
@@ -56,6 +63,9 @@ for arg in "$@"; do
     *CODEX_STUB_TRANSIENT_TWICE*) transient_times=2 ;;
     *CODEX_STUB_TRANSIENT_ALWAYS*) transient_times=999 ;;
     *CODEX_STUB_CAPACITY_PLAIN*) capacity_plain="yes" ;;
+    *CODEX_STUB_CAPACITY_AFTER_TOOL*) capacity_after_tool="yes" ;;
+    *CODEX_STUB_CAPACITY_ALWAYS*) capacity_after_tool="yes"; capacity_always="yes" ;;
+    *CODEX_STUB_CAPACITY_EMPTY*) capacity_after_tool="yes"; capacity_empty="yes" ;;
     *CODEX_STUB_TRANSIENT_AFTER_TOOL*) transient_after_tool="yes" ;;
     *CODEX_STUB_REJECT_MODEL_BODY*) reject_model_body="yes" ;;
     *CODEX_STUB_REJECT_ALL_MODELS_BODY*) reject_all_models_body="yes" ;;
@@ -172,6 +182,25 @@ if [ "$capacity_plain" = "yes" ]; then
   printf '%s\n' '{"type":"turn.failed","error":"Selected model is at capacity. Please try a different model."}'
   exit 1
 fi
+if [ "$capacity_after_tool" = "yes" ]; then
+  printf '%s\n' '{"type":"thread.started","thread_id":"codex-stub-capacity-session"}'
+  printf '%s\n' '{"type":"item.started","item":{"id":"capacity-tool","type":"command_execution","command":"already-ran"}}'
+  count=$(tr -dc 0-9 < .cg-stub-capacity-work 2>/dev/null); count=${count:-0}
+  echo $((count + 1)) > .cg-stub-capacity-work
+  if [ "$capacity_always" = "yes" ]; then echo yes > .cg-stub-capacity-always; fi
+  if [ "$capacity_empty" = "yes" ]; then echo yes > .cg-stub-capacity-empty; fi
+  printf '%s\n' '{"type":"turn.failed","error":"Selected model is at capacity. Please try a different model."}'
+  exit 1
+fi
+if [ "$resume" = "yes" ] && [ -f .cg-stub-capacity-always ]; then
+  printf '%s\n' '{"type":"turn.failed","error":"Selected model is at capacity. Please try a different model."}'
+  exit 1
+fi
+if [ "$resume" = "yes" ] && [ -f .cg-stub-capacity-empty ]; then
+  printf '%s\n' '{"type":"thread.started","thread_id":"codex-stub-capacity-session"}'
+  printf '%s\n' '{"type":"turn.completed","usage":{"input_tokens":0,"output_tokens":0}}'
+  exit 0
+fi
 # The same outage AFTER a tool ran: the turn may have mutated something, so it must NOT be retried.
 if [ "$transient_after_tool" = "yes" ]; then
   printf '%s\n' '{"type":"item.started","item":{"id":"tool-before-transient","type":"command_execution","command":"already-ran"}}'
@@ -211,7 +240,13 @@ if [ "$reject_all_models_body" = "yes" ] || { [ "$reject_model_body" = "yes" ] &
   printf '{"type":"turn.failed","error":{"message":"{\\"type\\":\\"error\\",\\"status\\":400,\\"error\\":{\\"type\\":\\"invalid_request_error\\",\\"message\\":\\"The '\''%s'\'' model is not supported when using Codex with a ChatGPT account.\\"}}"}}\n' "$model"
   exit 1
 fi
-printf '%s\n' '{"type":"thread.started","thread_id":"codex-stub-session"}'
+if [ "$fork" = "yes" ]; then
+  printf '%s\n' '{"type":"thread.started","thread_id":"codex-stub-fork"}'
+elif [ -n "$resume_id" ]; then
+  printf '{"type":"thread.started","thread_id":"%s"}\n' "$resume_id"
+else
+  printf '%s\n' '{"type":"thread.started","thread_id":"codex-stub-session"}'
+fi
 printf '%s\n' '{"type":"item.started","item":{"type":"mcp_tool_call","server":"gateway","tool":"slack_channel_history"}}'
 # The answer as a streamed assistant message, the way a real turn reports it: the Slack message is
 # written from these deltas, so anything the gateway adds to the finished reply afterwards is NOT

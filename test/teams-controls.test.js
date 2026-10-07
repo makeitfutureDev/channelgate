@@ -6,8 +6,13 @@ import path from 'node:path';
 import { ensureTestEnv } from './helpers.js';
 ensureTestEnv();
 const { createTeamsControls } = await import('../src/platforms/msteams/controls.js');
+const { teamsHelpText } = await import('../src/platforms/msteams/help.js');
 const { teamsWorkspaceContext } = await import('../src/platforms/msteams/workspace-access.js');
+const { createIngest } = await import('../src/platforms/ingest.js');
+const { makeInbound } = await import('../src/platforms/inbound.js');
+const { sessionKeyForMessage } = await import('../src/platforms/reply-sessions.js');
 const { upsertChannelEntry, saveChannelMeta, setUser } = await import('../src/config/store.js');
+await setUser('29:owner', { approved: true, isAdmin: true });
 const root = await mkdtemp(path.join(os.tmpdir(), 'teams-controls-'));
 await writeFile(path.join(root, 'hello.txt'), 'hello');
 const message = text => ({ text, trigger: 'message', conversationId: 'teams:19:source@thread.v2', rawConversationId: '19:source@thread.v2', userId: '29:owner', isDM: false });
@@ -19,6 +24,65 @@ function fixture(extra = {}) {
   const args = text => ({ message: message(text), sessionKey: 'group:root', entry: { slug: 'source' }, meta: { engine: 'claude' }, authorIsAdmin: true, reply: async text => replies.push(text), controls: { command: async input => { commands.push(input.message.text); await input.reply(input.message.text.startsWith('/model') ? 'Session engine: claude' : 'Session effort: default'); return true; } } });
   return { controls, args, sent, commands, replies };
 }
+test('Teams /help returns the practical guide without opening controls or changing runtime', async () => {
+  const f = fixture();
+  assert.equal(await f.controls.onCommand(f.args('  /HELP  ')), true);
+  assert.deepEqual(f.replies, [teamsHelpText(['hearteyesrobot', 'alien', 'like', 'smilerobot'])]);
+  assert.deepEqual(f.sent, []);
+  assert.deepEqual(f.commands, []);
+  const reaction = f.args('/help'); reaction.message.trigger = 'reaction';
+  assert.equal(await f.controls.onCommand(reaction), false);
+  assert.equal(f.replies.length, 1);
+});
+test('Teams ingest delivers help in personal, channel and quoted group sessions before any engine runs', async () => {
+  const posted = [];
+  const cards = [];
+  const connector = { platform: 'msteams', api: {
+    sendActivity: async () => assert.fail('/help must not send a file-consent card'),
+  }, postCard: async value => {
+    cards.push(value); return { messageId: `help-card-${cards.length}` };
+  }, post: async value => {
+    posted.push(value); return { messageId: `help-${posted.length}` };
+  } };
+  const native = createTeamsControls({ connector });
+  const ingest = createIngest({ connector, onCommand: native.onCommand,
+    run: async () => assert.fail('/help must not invoke an engine'), log: {} });
+  for (const kind of ['dm', 'channel', 'group']) {
+    const message = makeInbound({ platform: 'msteams', kind, text: '/help',
+      conversationId: `19:help-${kind}`, userId: '29:owner', messageId: `root-${kind}`,
+      mentionsBot: kind !== 'dm', threadKey: kind === 'channel' ? 'help-thread' : '',
+      replyToId: kind === 'group' ? 'quoted-message' : '' });
+    assert.deepEqual(await ingest(message), { command: true });
+    assert.equal(cards.at(-1).conversationId, message.rawConversationId);
+    assert.equal(cards.at(-1).threadKey, message.threadKey);
+    assert.equal(cards.at(-1).card.body[0].text, 'How to use me');
+    assert.match(JSON.stringify(cards.at(-1).card), /\/clear/);
+    if (kind === 'group') {
+      assert.equal(sessionKeyForMessage(makeInbound({ platform: 'msteams', kind: 'group',
+        conversationId: message.rawConversationId, userId: '29:owner', messageId: 'quoted-help',
+        replyToId: `help-card-${cards.length}`, text: '/status', mentionsBot: true })), sessionKeyForMessage(message));
+    }
+  }
+  assert.equal(cards.length, 3);
+  assert.equal(posted.length, 0);
+  assert.deepEqual(await ingest(makeInbound({ platform: 'msteams', kind: 'channel',
+    text: '/help', conversationId: '19:help-unmentioned', userId: '29:owner',
+    messageId: 'unmentioned', mentionsBot: false })), { skipped: 'not-mentioned' });
+  assert.deepEqual(await ingest(makeInbound({ platform: 'msteams', kind: 'dm',
+    text: '/help', conversationId: 'a:help-unapproved', userId: '29:help-unapproved',
+    messageId: 'unapproved' })), { skipped: 'unauthorized' });
+  assert.equal(cards.length, 3);
+  assert.equal(posted.length, 1);
+  assert.doesNotMatch(posted.at(-1).text, /How to use me/);
+});
+test('failed native help delivery falls back to the complete spaced guide', async () => {
+  const f = fixture(); const args = f.args('/help');
+  args.replyCard = async () => { throw new Error('Card delivery unavailable'); };
+  assert.equal(await f.controls.onCommand(args), true);
+  assert.deepEqual(f.replies, [teamsHelpText(['hearteyesrobot', 'alien', 'like', 'smilerobot'])]);
+  assert.match(f.replies[0], /\n\n• `\/clear`/);
+  assert.deepEqual(f.commands, []);
+});
 test('files are sent privately and browser actions preserve original workspace identity', async () => {
   const f = fixture(); await f.controls.onCommand(f.args('/files'));
   assert.equal(f.sent[0].conversationId, 'a:private');
@@ -47,11 +111,11 @@ test('reaction content never opens native commands; failed private delivery does
 });
 test('model form uses existing controls and consumes its state on a successful submit', async () => {
   const f = fixture(); await f.controls.onCommand(f.args('/settings'));
-  const stateId = f.sent[0].card.actions[0].data.stateId;
+  const stateId = f.sent[0].card.body.find(item => item.type === 'ActionSet').actions[0].data.stateId;
   const payload = { stateId, engine: 'claude', model: 'default', effort: 'default' };
-  await f.controls.onInvoke(invoke(payload, 'model.save', '29:owner', '19:source@thread.v2'));
+  await f.controls.onInvoke(invoke(payload, 'model.save', '29:owner', f.args('/settings').message.rawConversationId));
   assert.deepEqual(f.commands, ['/model claude default', '/effort default']);
-  await f.controls.onInvoke(invoke(payload, 'model.save', '29:owner', '19:source@thread.v2')); assert.equal(f.commands.length, 2);
+  await f.controls.onInvoke(invoke(payload, 'model.save', '29:owner', f.args('/settings').message.rawConversationId)); assert.equal(f.commands.length, 2);
 });
 test('approval invocation trusts envelope identity over malicious card data', async () => {
   let received;
@@ -75,18 +139,40 @@ test('legacy Submit explicitly updates its private card', async () => {
   const f = fixture(); await f.controls.onCommand(f.args('/files'));
   const action = f.sent[0].card.actions[0];
   const activity = invoke(action.data); activity.type = 'message'; delete activity.name; activity.value = { ...action.data, cgAction: 'files.browse' };
+  activity.replyToId = 'forged-target'; activity.conversation.id += ';messageid=another-target';
   const result = await f.controls.onInvoke(activity);
   assert.deepEqual(result, { status: 200, body: {} });
   assert.equal(f.sent.length, 2); assert.equal(f.sent[1].messageId, 'card1'); assert.equal(f.sent[1].conversationId, 'a:private');
 });
 
-test('settings stay in the source thread and reject another actor or conversation', async () => {
+test('rejected legacy Submit cannot overwrite or post a private card', async () => {
+  let time = 0; const f = fixture({ now: () => time }); await f.controls.onCommand(f.args('/files'));
+  const action = f.sent[0].card.actions[0];
+  for (const [stateId, actor, conversation] of [
+    ['forged-state', '29:owner', 'a:private'],
+    [action.data.stateId, '29:other', 'a:private'],
+    [action.data.stateId, '29:owner', 'a:other'],
+  ]) {
+    const activity = invoke({}, 'files.browse', actor, conversation);
+    activity.type = 'message'; delete activity.name;
+    activity.value = { cgAction: 'files.browse', stateId }; activity.replyToId = 'forged-target';
+    assert.deepEqual(await f.controls.onInvoke(activity), { status: 200, body: {} });
+    assert.equal(f.sent.length, 1);
+  }
+  time = 16 * 60_000;
+  const expired = invoke(action.data); expired.type = 'message'; delete expired.name;
+  expired.value = { ...action.data, cgAction: 'files.browse' };
+  assert.deepEqual(await f.controls.onInvoke(expired), { status: 200, body: {} });
+  assert.equal(f.sent.length, 1);
+});
+
+test('settings retain their source conversation, thread and actor without opening a DM', async () => {
   const f = fixture(); const args = f.args('/settings'); args.message.threadKey = 'root-message';
   await f.controls.onCommand(args);
   assert.equal(f.sent[0].conversationId, args.message.rawConversationId);
   assert.equal(f.sent[0].threadKey, 'root-message');
   assert.deepEqual(f.replies, []);
-  const data = { ...f.sent[0].card.actions[0].data, engine: 'claude', model: 'default', effort: 'default' };
+  const data = { ...f.sent[0].card.body.find(item => item.type === 'ActionSet').actions[0].data, engine: 'claude', model: 'default', effort: 'default' };
   for (const [actor, conversation] of [['29:other', args.message.rawConversationId], ['29:owner', 'a:private']]) {
     const result = await f.controls.onInvoke(invoke(data, 'model.save', actor, conversation));
     assert.equal(result.body.value.body[0].text, 'Action could not be completed');

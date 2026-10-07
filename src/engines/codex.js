@@ -665,13 +665,13 @@ export function codexSpawnDropsCapabilities({ target = null, cwd = "", dangerous
 }
 
 // Build `codex exec` argv. `outFile` receives the final agent message (authoritative content).
-export function buildCodexArgs({ prompt, sessionId, isNewSession, cwd, dangerouslySkip, writable = false, networkMode = "off", clean = false, autoApprove = false, composioUserEndpoint = null, composioEndpoint = null, composioUserToken = "", composioToken = "", toolboxToken = "", makeToolboxUrl = "", makeToolboxKey = "", customMcps = {}, secretBundlePath = "", codexMcpPolicy = null, gatewayCapability = "", gatewayFsRoot = "", gatewayWorkspaceRoot = "", progressReport = false, model = "", effort = "", personalSkills = null, pluginSkills = null, attachments = [], target = null, outFile, headerHelpers = [] }) {
+export function buildCodexArgs({ prompt, sessionId, isNewSession, forkSourceSessionId = "", cwd, dangerouslySkip, writable = false, networkMode = "off", clean = false, autoApprove = false, composioUserEndpoint = null, composioEndpoint = null, composioUserToken = "", composioToken = "", toolboxToken = "", makeToolboxUrl = "", makeToolboxKey = "", customMcps = {}, secretBundlePath = "", codexMcpPolicy = null, gatewayCapability = "", gatewayFsRoot = "", gatewayWorkspaceRoot = "", progressReport = false, model = "", effort = "", personalSkills = null, pluginSkills = null, attachments = [], target = null, outFile, headerHelpers = [] }) {
   const runtimeTarget = runtimeTargetOr(target, cwd);
   const isolated = isIsolatedTarget(runtimeTarget);
   const helper = (name) => runtimeTarget.runtime.helperCommand(runtimeTarget, name);
   if (!["off", "on"].includes(networkMode)) throw new Error(`Unknown Codex network mode: ${networkMode}`);
-  const resuming = !isNewSession;
-  const base = isNewSession ? ["exec"] : ["exec", "resume", sessionId];
+  const resuming = !isNewSession || Boolean(forkSourceSessionId);
+  const base = forkSourceSessionId ? ["exec", "fork", forkSourceSessionId] : isNewSession ? ["exec"] : ["exec", "resume", sessionId];
   const args = [...base, "--json", "--skip-git-repo-check", "-o", outFile];
   // No anonymous usage metrics to OpenAI from any turn (src/engines/codex-telemetry.js).
   args.push("-c", CODEX_NO_TELEMETRY);
@@ -986,6 +986,7 @@ export async function runCodex({
   browserNamespace = "",
   sessionId,
   isNewSession,
+  forkSourceSessionId = "",
   dangerouslySkip = false,
   writable = false,
   networkMode = "off",
@@ -1101,7 +1102,7 @@ export async function runCodex({
   // pure argv builder. They carry no credential of their own — each one reads its entry out of the
   // 0600 bundle above — but they are still per-run files, created and removed with it.
   const headerHelpers = [];
-  const args = buildCodexArgs({ prompt, sessionId, isNewSession, cwd, dangerouslySkip, writable, networkMode, clean, autoApprove, composioUserEndpoint, composioEndpoint, composioUserToken, composioToken, toolboxToken, makeToolboxUrl, makeToolboxKey, customMcps, secretBundlePath, codexMcpPolicy, gatewayCapability, gatewayFsRoot, gatewayWorkspaceRoot, progressReport, model, effort, codexStateDir, personalSkills, pluginSkills, attachments, target: runtime, outFile, headerHelpers });
+  const args = buildCodexArgs({ prompt, sessionId, isNewSession, forkSourceSessionId, cwd, dangerouslySkip, writable, networkMode, clean, autoApprove, composioUserEndpoint, composioEndpoint, composioUserToken, composioToken, toolboxToken, makeToolboxUrl, makeToolboxKey, customMcps, secretBundlePath, codexMcpPolicy, gatewayCapability, gatewayFsRoot, gatewayWorkspaceRoot, progressReport, model, effort, codexStateDir, personalSkills, pluginSkills, attachments, target: runtime, outFile, headerHelpers });
   for (const spec of headerHelpers) {
     await writeFile(spec.path, headerHelperSource({ ...spec, bundlePath: secretBundlePath }), { mode: 0o700 });
   }

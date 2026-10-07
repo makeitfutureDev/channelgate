@@ -556,6 +556,32 @@ test("an unreadable .claude/agents directory delivers the plugin without agents 
 });
 
 
-test("an unavailable selected personal grant fails visibly instead of an empty catalog", async () => {
-  await assert.rejects(grants({ slug: "missing-personal-fixture", userSkills: ["missing-personal-fixture-unique-0907"] }), /Personal skill grants could not be loaded: missing-personal-fixture-unique-0907/);
+test("unavailable personal grants are reported without blocking artifact creation", async (t) => {
+  const missing = "missing-personal-fixture-unique-0907";
+  const artifacts = await grants({ slug: "missing-personal-fixture", userSkills: [missing], sharedSkills: [missing] });
+  t.after(() => artifacts.cleanup());
+  assert.deepEqual(artifacts.missingSkills, [missing], "shared and personal omissions are deduplicated");
+  assert.deepEqual(artifacts.personalSkillCatalog, []);
+  assert.deepEqual(artifacts.claudePluginDirs, [], "an empty personal plugin is not delivered");
+});
+
+test("available personal instructions survive unavailable revisions and dependencies", async (t) => {
+  const { putSkillRevision, tombstoneSkill } = await import("../src/gateway/skills/catalog.js");
+  const prefix = "partial-personal-artifacts";
+  const valid = `${prefix}-valid`;
+  const missing = `${prefix}-dependency`;
+  const staged = `${prefix}-staged`;
+  const removed = `${prefix}-removed`;
+  const files = (name, extra = "") => [{ path: "SKILL.md", content: `---\nname: ${name}\ndescription: Partial skill fixture\n${extra}---\nAVAILABLE-PERSONAL-BODY\n` }];
+  putSkillRevision({ files: files(valid, `requires: [${missing}]\n`) });
+  putSkillRevision({ files: files(staged), status: "staged" });
+  putSkillRevision({ files: files(removed) });
+  tombstoneSkill(removed);
+  const artifacts = await grants({ slug: prefix, userSkills: [valid, staged, removed] });
+  t.after(() => artifacts.cleanup());
+  assert.deepEqual(new Set(artifacts.missingSkills), new Set([missing, staged, removed]));
+  assert.deepEqual(artifacts.personalSkillCatalog.map((skill) => skill.name), [valid]);
+  assert.match(await readFile(artifacts.personalSkillCatalog[0].path, "utf8"), /AVAILABLE-PERSONAL-BODY/);
+  const plugin = artifacts.claudePluginDirs.find((dir) => dir.includes("user-grants-plugin"));
+  for (const name of [missing, staged, removed]) assert.ok(await absent(path.join(plugin, "skills", name)));
 });

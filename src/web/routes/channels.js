@@ -238,6 +238,7 @@ export function createChannelsRouter({
           return {
             channelId: c.channelId,
             slug: c.slug,
+            platform: c.platform || meta.platform,
             dmUserId: uid,
             userName: users[uid]?.name || uid || c.slug,
             template: meta.template || "user",

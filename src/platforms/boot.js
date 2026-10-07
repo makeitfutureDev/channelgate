@@ -21,7 +21,7 @@ import { startTeams, botIdFor } from "./msteams/transport.js";
 // The connector is built BEFORE the transport starts, on purpose: a Pub/Sub pull can deliver its
 // first event inside start(), and an ingest that does not exist yet would drop that message. Wiring
 // it up front means the very first message is answerable.
-async function startGoogleChatTransport(config, log) {
+async function startGoogleChatTransport(config, log, { onFatal } = {}) {
   const capabilities = requirePlatform("googlechat").capabilities;
   const auth = createGoogleAuth({ serviceAccount: config.serviceAccountJson });
   const api = createChatApi({ auth });
@@ -31,12 +31,14 @@ async function startGoogleChatTransport(config, log) {
     ...config,
     capabilities,
     onMessage: ingest,
+    onFatal,
     log,
     deps: { auth, api, connector },
   });
 }
 
 async function startTeamsTransport(config, log) {
+  const { getMentionReactions, getTeamsMentionReactionsUpdatedAt } = await import('../config/settings.js');
   const capabilities = requirePlatform("msteams").capabilities;
   const auth = createTeamsAuth({ clientId: config.appId, clientSecret: config.appPassword, tenantId: config.tenantId });
   const api = createTeamsApi({ auth });
@@ -45,11 +47,11 @@ async function startTeamsTransport(config, log) {
   });
   const controls = createTeamsControls({ connector });
   const ingest = createIngest({ connector, log, onCommand: controls.onCommand });
-  return startTeams({ ...config, capabilities, onMessage: ingest, onInvoke: controls.onInvoke, onStop: controls.stop, log, deps: { auth, api, connector } });
+  return startTeams({ ...config, capabilities, getActivationReactions: () => getMentionReactions('msteams'), getActivationVersion: getTeamsMentionReactionsUpdatedAt, onMessage: ingest, onInvoke: controls.onInvoke, onStop: controls.stop, log, deps: { auth, api, connector } });
 }
 
 export function createPlatformTransports({ log = console } = {}) {
-  const googlechat = createTransportManager({ platform: "googlechat", log, start: (config) => startGoogleChatTransport(config, log) });
+  const googlechat = createTransportManager({ platform: "googlechat", log, start: (config, lifecycle) => startGoogleChatTransport(config, log, lifecycle) });
   const msteams = createTransportManager({ platform: "msteams", log, start: (config) => startTeamsTransport(config, log) });
   registerTransport("googlechat", googlechat);
   registerTransport("msteams", msteams);

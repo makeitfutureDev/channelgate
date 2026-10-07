@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { createTeamsGraphEvents } from "../src/platforms/msteams/graph-events.js";
+import { normalizeGraphEvents } from "../src/platforms/msteams/graph-activity.js";
 
 function fixture(options = {}) {
   const rows = new Map(), requests = [], messages = [], logs = [];
@@ -10,6 +11,8 @@ function fixture(options = {}) {
     notificationUrl: "https://example.org/api/teams/graph", now: () => time,
     intervalMs: options.intervalMs || 60_000,
     enqueueNotifications: options.enqueueNotifications || null,
+    getActivationReactions: options.getActivationReactions,
+    getActivationVersion: options.getActivationVersion,
     log: (...args) => logs.push(args),
     store: { list: async () => [...rows.values()].map(row => ({ ...row })), put: async row => rows.set(row.conversationId, { ...row }), remove: async id => rows.delete(id) },
     onMessage: async (...args) => { if (options.failCallback) throw new Error("queue unavailable"); messages.push(args); },
@@ -177,4 +180,171 @@ test("Graph acknowledges durable acceptance without waiting for message fetch an
   await f.service.remove(f.row.conversationId);
   await f.service.processNotifications(queued[0]);
   assert.equal(f.requests.length, count + 1); // DELETE only, revoked snapshot never fetched
+});
+
+test('reaction alias cutoff initializes before cached subscription reuse and persists across maintenance', async () => {
+  const f = fixture();
+  const row = await f.service.ensure(f.row);
+  assert.equal(row.reactionAliasesStartedAt, '2026-09-09T10:00:00.000Z');
+  const stored = f.rows.get(f.row.conversationId);
+  delete stored.reactionAliasesStartedAt; // a subscription created by the previous version
+  f.advance(60_000);
+  await f.service.renew(); // live subscription reused without a provider request
+  assert.equal(f.requests.length, 1);
+  const cutoff = f.rows.get(f.row.conversationId).reactionAliasesStartedAt;
+  assert.equal(cutoff, '2026-09-09T10:01:00.000Z');
+  f.advance(21 * 60_000);
+  await f.service.renew();
+  await f.service.ensure(f.row); // context refresh must preserve cutoff
+  assert.equal(f.rows.get(f.row.conversationId).reactionAliasesStartedAt, cutoff);
+  await f.service.stop();
+  f.service.start();
+  await f.service.stop();
+  assert.equal(f.rows.get(f.row.conversationId).reactionAliasesStartedAt, cutoff);
+  const recreated = createTeamsGraphEvents({
+    auth: { token: async () => 'test-token' }, tenantId: 'tenant',
+    notificationUrl: 'https://example.org/api/teams/graph',
+    now: () => Date.parse('2026-09-09T10:23:00Z'),
+    store: { list: async () => [...f.rows.values()].map(item => ({ ...item })),
+      put: async item => f.rows.set(item.conversationId, { ...item }) },
+    onMessage: async () => {}, fetchImpl: async () => assert.fail('fresh subscription should be reused'),
+  });
+  await recreated.ensure(f.row);
+  assert.equal(f.rows.get(f.row.conversationId).reactionAliasesStartedAt, cutoff);
+});
+
+test('queued notification initializes a missing alias cutoff before fetching message history', async () => {
+  const f = fixture();
+  await f.service.ensure(f.row);
+  delete f.rows.get(f.row.conversationId).reactionAliasesStartedAt;
+  f.advance(60_000);
+  const event = f.notification();
+  assert.equal((await f.handle({ value: [event] })).code, 200);
+  assert.equal(f.messages[0][1].reactionAliasesStartedAt, '2026-09-09T10:01:00.000Z');
+  const cutoff = f.rows.get(f.row.conversationId).reactionAliasesStartedAt;
+  f.advance(60_000);
+  await f.service.processNotifications([{ event }]);
+  assert.equal(f.messages[1][1].reactionAliasesStartedAt, cutoff);
+});
+
+
+test('Alien cutoff initializes separately and persists across renewals and service recreation', async () => {
+  const f = fixture();
+  await f.service.ensure(f.row);
+  const stored = f.rows.get(f.row.conversationId);
+  const aliases = stored.reactionAliasesStartedAt;
+  delete stored.alienReactionStartedAt; // subscription from shortcut/Like version
+  f.advance(60_000);
+  await f.service.renew();
+  const cutoff = f.rows.get(f.row.conversationId).alienReactionStartedAt;
+  assert.equal(cutoff, '2026-09-09T10:01:00.000Z');
+  assert.equal(f.rows.get(f.row.conversationId).reactionAliasesStartedAt, aliases);
+  assert.equal(f.requests.length, 1, 'cached subscription stays active');
+  f.advance(21 * 60_000);
+  await f.service.ensure(f.row);
+  assert.equal(f.rows.get(f.row.conversationId).alienReactionStartedAt, cutoff);
+  const recreated = createTeamsGraphEvents({
+    auth: { token: async () => 'test-token' }, tenantId: 'tenant',
+    notificationUrl: 'https://example.org/api/teams/graph',
+    now: () => Date.parse('2026-09-09T10:23:00Z'),
+    store: { list: async () => [...f.rows.values()].map(item => ({ ...item })),
+      put: async item => f.rows.set(item.conversationId, { ...item }) },
+    onMessage: async () => {}, fetchImpl: async () => assert.fail('fresh subscription should be reused'),
+  });
+  await recreated.ensure(f.row);
+  assert.equal(f.rows.get(f.row.conversationId).alienReactionStartedAt, cutoff);
+  assert.equal(f.rows.get(f.row.conversationId).reactionAliasesStartedAt, aliases);
+});
+
+test('first notification persists a missing Alien cutoff before fetching history', async () => {
+  const f = fixture();
+  await f.service.ensure(f.row);
+  const aliases = f.rows.get(f.row.conversationId).reactionAliasesStartedAt;
+  delete f.rows.get(f.row.conversationId).alienReactionStartedAt;
+  f.advance(60_000);
+  await f.handle({ value: [f.notification()] });
+  assert.equal(f.messages[0][1].alienReactionStartedAt, '2026-09-09T10:01:00.000Z');
+  assert.equal(f.messages[0][1].reactionAliasesStartedAt, aliases);
+});
+
+
+test('Graph Unicode robot metadata gets a separate cutoff before cached reuse or message GET', async () => {
+  const f = fixture(); await f.service.ensure(f.row);
+  const stored = f.rows.get(f.row.conversationId);
+  const aliases = stored.reactionAliasesStartedAt, alien = stored.alienReactionStartedAt;
+  delete stored.graphRobotStartedAt;
+  f.advance(60_000); await f.service.renew();
+  const cutoff = f.rows.get(f.row.conversationId).graphRobotStartedAt;
+  assert.equal(cutoff, '2026-09-09T10:01:00.000Z');
+  assert.equal(f.rows.get(f.row.conversationId).reactionAliasesStartedAt, aliases);
+  assert.equal(f.rows.get(f.row.conversationId).alienReactionStartedAt, alien);
+  assert.equal(f.requests.length, 1);
+  f.advance(21 * 60_000); await f.service.ensure(f.row);
+  assert.equal(f.rows.get(f.row.conversationId).graphRobotStartedAt, cutoff);
+  delete f.rows.get(f.row.conversationId).graphRobotStartedAt;
+  f.advance(60_000); await f.handle({ value: [f.notification()] });
+  assert.equal(f.messages[0][1].graphRobotStartedAt, '2026-09-09T10:23:00.000Z');
+  assert.equal(f.messages[0][1].reactionAliasesStartedAt, aliases);
+  assert.equal(f.messages[0][1].alienReactionStartedAt, alien);
+});
+
+
+test("Graph activation cutoff changes only when the effective platform selection changes", async () => {
+  let selection = ['alien', 'like'];
+  const f = fixture({ getActivationReactions: () => selection });
+  await f.service.ensure(f.row);
+  const initial = { ...f.rows.get(f.row.conversationId) };
+  f.advance(60_000);
+  selection = ['👍🏽', ':alien:'];
+  await f.service.ensure(f.row);
+  assert.equal(f.rows.get(f.row.conversationId).activationReactionsStartedAt, initial.activationReactionsStartedAt);
+  selection = ['🚀'];
+  await f.service.ensure(f.row);
+  const changed = f.rows.get(f.row.conversationId);
+  assert.equal(changed.activationReactionsStartedAt, '2026-09-09T10:01:00.000Z');
+  assert.equal(changed.alienReactionStartedAt, initial.alienReactionStartedAt);
+  assert.equal(changed.graphRobotStartedAt, initial.graphRobotStartedAt);
+  assert.equal(f.requests.length, 1, 'changing selection needs no new subscription');
+  f.advance(60_000);
+  selection = ['alien', 'like'];
+  await f.service.processNotifications([{ event: f.notification() }]);
+  assert.equal(f.messages[0][1].activationReactionsStartedAt, '2026-09-09T10:02:00.000Z');
+  assert.equal(f.rows.get(f.row.conversationId).activationReactionsStartedAt, '2026-09-09T10:02:00.000Z');
+});
+
+
+test("Graph A→B→A saves reset cutoff even when no notifications observed the intermediate selection", async () => {
+  let version = '2026-09-09T09:59:00Z';
+  const f = fixture({ getActivationReactions: () => ['🚀'], getActivationVersion: () => version });
+  await f.service.ensure(f.row);
+  const initial = f.rows.get(f.row.conversationId);
+  f.advance(120_000);
+  version = '2026-09-09T10:01:30Z';
+  await f.service.processNotifications([{ event: f.notification() }]);
+  const current = f.rows.get(f.row.conversationId);
+  assert.equal(current.activationReactionsFingerprint, initial.activationReactionsFingerprint);
+  assert.equal(current.activationReactionsVersion, version);
+  assert.equal(current.activationReactionsStartedAt, '2026-09-09T10:01:30.000Z');
+  assert.equal(f.messages[0][1].activationReactionsVersion, version);
+});
+
+test("first reaction after a saved selection survives a later Graph refresh", async () => {
+  let selection = ['alien'], version = '2026-09-09T09:59:00Z';
+  const f = fixture({ getActivationReactions: () => selection, getActivationVersion: () => version });
+  f.row.context.conversation.conversationType = 'groupchat';
+  await f.service.ensure(f.row);
+  selection = ['🚀']; version = '2026-09-09T10:00:30.000Z';
+  f.advance(120_000);
+  const prepared = await f.service.refresh(f.rows.get(f.row.conversationId));
+  const reaction = { reactionType: '🚀', user: { user: { id: 'reactor' } } };
+  const message = { id: '123', messageType: 'message', from: { user: { id: 'author' } },
+    body: { contentType: 'text', content: 'Handle this' }, reactions: [reaction],
+    messageHistory: [{ actions: 'reactionAdded', modifiedDateTime: '2026-09-09T10:00:31Z', reaction }] };
+  const options = { activationReactions: selection, activationVersion: version,
+    now: () => Date.parse('2026-09-09T10:02:00Z'), resolveMember: async id => ({ id: `29:${id}` }) };
+  const [event] = await normalizeGraphEvents(message, prepared, options);
+  assert.equal(event.reactionAction, 'engage');
+  assert.equal(event.userId, '29:reactor');
+  message.messageHistory[0].modifiedDateTime = '2026-09-09T10:00:29Z';
+  assert.deepEqual(await normalizeGraphEvents(message, prepared, options), []);
 });

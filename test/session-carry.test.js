@@ -300,3 +300,33 @@ test("carry: entries pair the engine's relative paths with both state dirs, shar
   // Identical state dirs mean there is no boundary to cross.
   assert.deepEqual(buildCarryEntries({ engine: "codex", cwd: "/w", sessionId: SESSION, fromDir: "/same", toDir: "/same" }), []);
 });
+
+test("carry: cancellation propagates and releases its lease instead of healing", async () => {
+  const h = carryHarness("cancel");
+  const controller = new AbortController();
+  const announce = () => {};
+  h.containerTarget.runtime.copyIn = async (_target, _entries, opts) => {
+    assert.equal(opts.signal, controller.signal);
+    assert.equal(opts.announce, announce);
+    assert.equal(typeof opts.lease.release, "function");
+    controller.abort();
+    throw controller.signal.reason;
+  };
+  await assert.rejects(carrySession({
+    engine: "claude", sessionId: SESSION, cwd: "/w/cancel", storedRuntime: "host",
+    target: h.containerTarget, signal: controller.signal, announce, log: h.log,
+  }), { name: "AbortError" });
+  assert.equal(h.calls.leases[0].released, true);
+  assert.deepEqual(h.logs, []);
+});
+
+test("carry: a stopped turn never acquires a lease or starts copying", async () => {
+  const h = carryHarness("pre-cancel");
+  const controller = new AbortController();
+  controller.abort();
+  await assert.rejects(carrySession({
+    engine: "claude", sessionId: SESSION, cwd: "/w/cancel", target: h.containerTarget,
+    signal: controller.signal, log: h.log,
+  }), { name: "AbortError" });
+  assert.equal(h.calls.leases.length, 0);
+});

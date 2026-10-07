@@ -1,0 +1,17 @@
+---
+title: Complete functionality map
+description: Find guides for every product area, configuration surface, workflow, and gateway control.
+tableOfContents: false
+---
+
+import { functionalityAreas } from '../../data/functionality-coverage.mjs';
+import { featurePages, configurationPages } from '../../data/handbook.mjs';
+import { controlPages } from '../../data/control-reference.mjs';
+
+This map connects **45 functional areas** to their detailed guides. It covers daily chat work, agent execution, reusable skills, connected applications, human controls, automation, administration, and operating a deployment.
+
+Use the [feature directory](/docs/features) to browse by category, [configuration](/docs/configuration) to locate settings, or the [control reference](/docs/controls) for exact tool names and inputs. Individual guides identify Beta, experimental, Enterprise, and operator-provisioned capabilities. A supported integration still needs the appropriate account and permission.
+
+The handbook includes <strong>{featurePages.length} feature guides</strong>, <strong>{configurationPages.length} configuration guides</strong>, and <strong>{controlPages.length} control-reference guides</strong>, alongside installation and the longer technical references.
+
+{functionalityAreas.map((area) => <section className="feature-directory-group"><h2>{area.id}. {area.label}</h2><ul>{area.topics.map((slug) => { const title = featurePages.find((page) => `features/${page.slug}` === slug)?.label || configurationPages.find((page) => `configuration/${page.slug}` === slug)?.label || controlPages.find((page) => `controls/${page.slug}` === slug)?.label || ({ features: 'All features', configuration: 'Configuration', controls: 'Gateway controls', licensing: 'License keys and limits', compatibility: 'Compatibility' })[slug]; return <li><a href={`/docs/${slug}`}>{title}</a></li>; })}</ul></section>)}

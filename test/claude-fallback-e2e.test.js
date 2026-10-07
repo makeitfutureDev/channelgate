@@ -79,7 +79,7 @@ test("a successful fallback written by an older gateway is adopted before retryi
     threadKey: "1900.055", origin: "slack_foreground", preferCold: true,
   });
   assert.equal(result.engine, "codex");
-  assert.match(result.content, /resume=yes/);
+  assert.match(result.content, /resume=no/, "legacy native state is isolated from member runs");
   assert.equal(await getSessionEngine(entry.slug, "1900.055"), "codex");
   assert.equal(await getSession(entry.slug, "1900.055::codex-fallback"), null);
 });

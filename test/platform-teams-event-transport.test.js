@@ -12,7 +12,7 @@ function fixture() {
   let options;
   const inbox = { start() { this.started = true; }, stop() { this.stopped = true; }, accept(item) { accepted.push(item); } };
   const dispatch = { start() { this.started = true; }, stop() { this.stopped = true; }, accept(item) { dispatched.push(item); } };
-  const graph = { start() { this.started = true; }, async stop() { this.stopped = true; }, async ensure(row) { subscriptions.push(row); }, handle() {} };
+  const graph = { start() { this.started = true; }, async stop() { this.stopped = true; }, async ensure(row) { subscriptions.push(row); }, async refresh(row) { return subscriptions.find(current => current.conversationId === row.conversationId) || null; }, handle() {} };
   return { subscriptions, accepted, dispatched, inbox, dispatch, graph, get options() { return options; },
     deps: { auth: { token: async () => "bot-token" }, api: {}, connector: {}, jwks: {}, graphAuth: { token: async () => "graph-token" }, eventStore: { list: () => subscriptions },
       graphInbox: inbox, graphDispatchInbox: dispatch, graphNotificationInbox: { start() {}, stop() {}, accept() {} }, createGraphEvents: opts => { options = opts; return graph; } } };
@@ -172,5 +172,38 @@ test("Graph identical unversioned notifications each enter durable intake for la
   assert.equal(notifications.length, 2);
   assert.notEqual(notifications[0].id, notifications[1].id);
   assert.deepEqual(notifications[0].payload, { accepted: [envelope] });
+  await transport.stop();
+});
+
+test('queued Graph activation rejects legacy metadata and setting revisions but retains controls', async () => {
+  const { teamsActivationFingerprint } = await import('../src/platforms/msteams/reactions.js');
+  const f = fixture(), handlers = new Map(), delivered = [];
+  let selection = ['🚀'], version = '2026-09-09T10:00:00Z';
+  delete f.deps.graphDispatchInbox;
+  f.deps.createInbox = options => {
+    handlers.set(options.namespace, options.handle);
+    return { start() {}, stop() {}, accept() {} };
+  };
+  const transport = await startTeams({ appId: 'app', tenantId: 'tenant', allMessageEvents: true,
+    publicUrl: 'https://gateway.example', getActivationReactions: () => selection, getActivationVersion: () => version,
+    onMessage: async inbound => delivered.push(inbound), deps: f.deps });
+  const row = { conversationId: 'teams:chat', startedAt: 'start',
+    activationReactionsFingerprint: teamsActivationFingerprint(selection), activationReactionsVersion: version,
+    activationReactionsStartedAt: version };
+  f.subscriptions.push(row);
+  const dispatch = handlers.get('msteams-graph-dispatch:app');
+  const payload = { inbound: { reactionAction: 'engage' }, subscription: { ...row } };
+  await dispatch({ ...payload, subscription: { conversationId: row.conversationId, startedAt: row.startedAt } });
+  assert.equal(delivered.length, 0, 'legacy queued activation cannot bypass a selection');
+  await dispatch(payload);
+  assert.equal(delivered.length, 1);
+  selection = ['alien'];
+  await dispatch(payload);
+  assert.equal(delivered.length, 1, 'changed selection rejects old pending activation');
+  selection = ['🚀']; version = '2026-09-09T10:02:00Z';
+  await dispatch(payload);
+  assert.equal(delivered.length, 1, 'A→B→A setting revision rejects old pending activation');
+  await dispatch({ ...payload, inbound: { reactionAction: 'stop' } });
+  assert.equal(delivered.length, 2, 'fixed controls do not depend on activation selection');
   await transport.stop();
 });

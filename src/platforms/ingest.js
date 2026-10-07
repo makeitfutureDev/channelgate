@@ -1,11 +1,14 @@
 // From a normalized inbound message to an answered turn, for platforms that are not Slack.
 // Text controls, per-session serialization and conservative progress edits use the same gateway
 // policy/stores as Slack. Interactive approval escalation remains deliberately unavailable here.
-import { upsertChannelEntry, getChannelMeta, saveChannelMeta, defaultChannelMeta, getUser, setUser, isAdmin, isApproved } from "../config/store.js";
+import { upsertChannelEntry, getChannelMeta, saveChannelMeta, patchChannelMeta, defaultChannelMeta, getUser, setUser, isAdmin, isApproved } from "../config/store.js";
 import { getDefaultChannelAccess, applyChannelTemplate, getDefaultNudges } from "../config/settings.js";
 import { effectiveWorkDir, ensureChannelFolder } from "../gateway/folders.js";
 import { isAuthorized } from "../gateway/modes.js";
 import { runMessage } from "../gateway/run.js";
+import { footerText } from "../gateway/reply-stats.js";
+import { createConversationProgress } from "./conversation-progress.js";
+export { createConversationProgress } from "./conversation-progress.js";
 import { createUsageBank } from "../gateway/usage.js";
 import { logEvent } from "../util/logger.js";
 import { platformOr, platformSupports } from "./registry.js";
@@ -14,6 +17,7 @@ import { sessionKeyForMessage, rememberReplySession } from "./reply-sessions.js"
 import { saveInboundAttachments } from "./attachments.js";
 import path from "node:path";
 import { removeRegularFileWithin } from "../gateway/safe-fs.js";
+import { acknowledgeReaction } from "./reaction-controls.js";
 import { getThreadSudo } from "../gateway/thread-engine.js";
 
 // Conversation kinds as the channel store spells them. The store's vocabulary is Slack's, and it is
@@ -27,9 +31,11 @@ const STORE_TYPE = { dm: "im", group: "mpim", channel: "channel" };
 // Register (or refresh) the conversation and make sure its gated folder exists. The platform is
 // stamped explicitly: reading a missing platform falls back to Slack, and a Google Chat space that
 // silently claimed to be a Slack channel would be handed Slack's reply modes and Slack's guide.
-export async function ensureConversation(message) {
+export async function ensureConversation(message, connector = null) {
+  // Directory failures must not block a turn or replace an already resolved name with an ID.
+  const resolvedName = await connector?.conversationName?.(message).catch(() => "");
   const info = {
-    name: message.conversationName || message.conversationId,
+    name: resolvedName || message.conversationName || undefined,
     type: STORE_TYPE[message.kind] || "channel",
     isDM: message.isDM,
     platform: message.platform,
@@ -37,11 +43,12 @@ export async function ensureConversation(message) {
   const entry = await upsertChannelEntry(message.conversationId, info);
   let meta = await getChannelMeta(entry.slug);
   if (!meta) {
-    meta = applyChannelTemplate(defaultChannelMeta({ channelId: message.conversationId, ...info }));
+    meta = applyChannelTemplate(defaultChannelMeta({ channelId: message.conversationId, ...info, name: entry.name }));
     if (!info.isDM) meta.access = getDefaultChannelAccess();
     if (info.isDM) meta.dmUserId = message.userId;
     await saveChannelMeta(entry.slug, meta);
   }
+  if (meta.name !== entry.name) meta = await patchChannelMeta(entry.slug, () => ({ name: entry.name }));
   await ensureChannelFolder(entry.slug, meta);
   return { entry, meta };
 }
@@ -78,7 +85,7 @@ export function createIngest({ connector, log = console, run = runMessage, onCom
     // operator grants Teams RSC or Chat's space-wide events later.
     if (!message.isDM && !message.mentionsBot && !(message.trigger === "reaction" && platformSupports(adapter.id, "reactionTriggers"))) return { skipped: "not-mentioned" };
 
-    const { entry, meta } = await ensureConversation(message);
+    const { entry, meta } = await ensureConversation(message, connector);
     await ensureUserKnown(message);
 
     const authorIsAdmin = await isAdmin(message.userId);
@@ -95,6 +102,7 @@ export function createIngest({ connector, log = console, run = runMessage, onCom
     }
 
     const sessionKey = sessionKeyForMessage(message);
+    if (message.trigger === "reaction" && message.threadKey) message = { ...message, threadKey: sessionKey };
     if (await getThreadSudo(entry.slug, sessionKey) && !authorIsAdmin) {
       await connector.post({
         conversationId: message.rawConversationId,
@@ -105,13 +113,24 @@ export function createIngest({ connector, log = console, run = runMessage, onCom
       return { skipped: "sudo-admin-only" };
     }
     const rememberReply = (sent) => {
-      if (message.kind === "group" && !message.threadKey && sent?.messageId) {
+      if (message.kind !== "dm" && sent?.messageId) {
         rememberReplySession(message.conversationId, sent.messageId, sessionKey);
       }
     };
 
     const reply = async (text) => deliver(connector, message, null, text, rememberReply);
-    if (onCommand && await onCommand({ message, sessionKey, entry, meta, authorIsAdmin, reply, controls })) return { command: true };
+    // Native command replies share the same source conversation and group quote mapping as text.
+    const replyCard = platformSupports(adapter.id, 'richCards') !== 'none' && typeof connector.postCard === 'function' ? async ({ card, text = '' }) => {
+      const sent = await connector.postCard({ conversationId: message.rawConversationId,
+        threadKey: message.threadKey, card, text });
+      rememberReply(sent);
+      return sent;
+    } : null;
+    if (message.trigger === "reaction" && message.reactionAction === "ack") {
+      await acknowledgeReaction({ message, reply });
+      return { command: true };
+    }
+    if (onCommand && await onCommand({ message, sessionKey, entry, meta, authorIsAdmin, reply, replyCard, controls })) return { command: true };
     if (await controls.command({ message, sessionKey, slug: entry.slug, meta, authorIsAdmin, reply })) return { command: true };
     return controls.execute({ message, sessionKey, queued: reply, work: async (signal) => {
     // These surfaces have no typing indicator the daemon can drive for minutes, and no streaming.
@@ -171,6 +190,7 @@ export function createIngest({ connector, log = console, run = runMessage, onCom
         signal,
         onDelta: progress.activity,
         onEvent: progress.event,
+        onRuntimeResolved: progress.runtime,
         progressReport: false,
         // Not `slack_foreground`: that origin is what permits escalation to dangerous permissions,
         // and it means "a watched, Slack-authenticated turn". These turns are watched and
@@ -194,6 +214,7 @@ export function createIngest({ connector, log = console, run = runMessage, onCom
     if (skipped.length) {
       text += `\n\n_Couldn't read ${skipped.length} attachment(s): ${skipped.join(", ")} — this surface only hands the bot files it uploaded directly._`;
     }
+    text += `\n\n_${footerText(result)}_`;
     await deliver(connector, message, placeholder, text, rememberReply);
     return { result };
     } });
@@ -237,42 +258,4 @@ async function deliver(connector, message, placeholder, text, rememberReply = ()
     formatted: { chunks },
     onPosted: rememberReply,
   });
-}
-
-// Progress contains state only, never model/tool payloads. At most one periodic update per
-// 30 seconds, with in-flight edits drained before the final answer to prevent stale overwrites.
-export function createConversationProgress({ connector, message, placeholder, adapter, log = console, intervalMs = 30000, now = Date.now }) {
-  const started = now();
-  let lastActivity = started;
-  let state = 'Working';
-  let pending = Promise.resolve();
-  let updating = false;
-  let stopped = false;
-  const agents = new Set();
-  const tick = () => {
-    if (stopped || updating) return;
-    const text = `${state} — ${Math.floor((now() - started) / 1000)}s elapsed; last activity ${Math.floor((now() - lastActivity) / 1000)}s ago; ${agents.size} subagent(s) running. Still connected.`;
-    updating = true;
-    pending = Promise.resolve().then(() => placeholder?.messageId && adapter.capabilities.messageEdit
-      ? connector.edit({ conversationId: placeholder.conversationId || message.rawConversationId, messageId: placeholder.messageId, text })
-      : connector.post({ conversationId: message.rawConversationId, threadKey: message.threadKey, text }))
-      .catch((err) => log.warn?.(`[${adapter.id}] progress update failed: ${err?.message || err}`))
-      .finally(() => { updating = false; });
-  };
-  const timer = setInterval(tick, Math.max(30000, intervalMs));
-  timer.unref?.();
-  return {
-    phase(label) { state = label; lastActivity = now(); },
-    activity() { lastActivity = now(); state = 'Working'; },
-    event(event) {
-      if (event?.kind === 'agent_activity') {
-        const key = String(event.id || event.name || 'agent');
-        if (event.status === 'running') agents.add(key); else agents.delete(key);
-      }
-      if (event?.kind === 'run_queued') state = `Waiting for a gateway run slot (position ${Number(event.position) || 1})`;
-      else if (event?.kind === 'notice') state = 'Working; waiting for the engine';
-      else { lastActivity = now(); state = 'Working'; }
-    },
-    async stop() { stopped = true; clearInterval(timer); await pending; },
-  };
 }

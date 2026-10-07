@@ -191,24 +191,26 @@ The container also has its own home volume (`/home/agent`) and its own `/tmp` an
 the image's toolchain and a read-only control socket. A host directory chosen as the working folder
 is visible in full at its identical absolute path; unrelated host directories are normally absent.
 
-**The operator can deliberately widen Full-access channels to the gateway user's whole home.**
-Settings → Container runtime → **Full-access channels see the gateway home**
+**The operator can deliberately widen admin authors' access to the gateway user's whole home.**
+Settings → Container runtime → **Admin channels can access the host home**
 (`containerFullAccessHome`, off by default) adds a read-write bind mount of that home at its
-identical absolute path ONLY when this channel is in Admin/Full-access mode. It includes other
-channels' folders and memory, repositories, gateway configuration, logs, metadata and credential
-stores under that home. The container engine's storage is masked. This does not mount the whole
-host filesystem. The switch is gateway-wide and no MCP tool can flip it; an admin author alone,
-Auto, Lean or a tool permission cannot enable the grant. Changing the switch or channel mode
-changes the required container mounts; readiness checks reconcile them before the next run.
+identical absolute path ONLY for a current organization admin's run in an Admin/Full-access
+channel. It includes other channels' folders and memory, repositories, gateway configuration,
+logs, metadata and credential stores. Container-engine storage stays masked. This does not
+mount the whole host filesystem or provide host root access. The switch is gateway-wide and
+no MCP tool can flip it; Auto, Lean or a claimed role cannot enable the grant.
 
-**The mount belongs to the channel, not the author.** While granted, every admitted author can
-read the mounted home through file tools; only an admin author's turn in Admin mode receives
-write-capable tools. Every other author's turn here runs read-only: the shell and all
-file-writing tools are refused (not offered for approval), and Codex keeps its read-only sandbox. The container remains the filesystem/process boundary. Read the
-**Container access for this run** note in `SKILL.md` for the gateway switch and this resolved
-runtime's operator-home mount. If that note has no resolved target, verify current runtime state
-before asserting access. Diagnose only paths this runtime actually mounts: an absent host path
-does not prove that it was deleted, and a mounted path must not be described as impossible.
+**Non-admin members and guests see only project mounts, including in Admin mode.** They get
+Worker with the channel's Auto/Lean options in a separate project container. It has its own
+HOME, temporary volumes, artifacts and engine histories, so neither the operator home nor
+admin session state is exposed. The project folder and channel memory remain shared. Each
+spawn checks the author's current role, including background work; memory reviews always use
+the project container. A lane change starts fresh engine history. Only admins use the legacy
+container lane, whether or not that run qualifies for the optional home mount.
+
+Read the **Container access for this run** note in `SKILL.md` before asserting visibility.
+If there is no resolved target, verify the current runtime state. An absent host path does
+not prove deletion, and a mounted path must not be described as impossible.
 
 **On non-sudo turns, `$HOME` is this channel's home, not the operator's account home.** `~` is `/home/agent` inside
 the container and belongs to this channel alone: a login you make there (`gh auth login`,
@@ -226,9 +228,12 @@ THIS channel's container, the same box you work in. One key per person, granted 
   channel. Refuse to accept a private key; if one was pasted, say it is now compromised. Never
   repeat key material back; quote the fingerprint the tool returns.
 - `list_my_ssh_keys` / `remove_my_ssh_key` — the requester's own keys only.
-- `grant_channel_ssh` / `revoke_channel_ssh` (managers) — who may SSH into this channel's
-  container. Granting is handing someone a shell as the channel (its files, its CLI logins, Claude
-  and Codex): say so, and never grant on the requester's word alone when they are not a manager.
+- `grant_channel_ssh` / `revoke_channel_ssh` — users already allowed here (including named guests)
+  enable or remove their OWN SSH access immediately: omit `user` or pass their own id/mention.
+  Personal key registration/removal and own grants need no manager or admin approval. Use this
+  for "enable SSH access for me"; never send the requester to an admin for their own grant.
+  Changes for OTHER people require a manager/admin and their approval. Granting gives a full
+  shell as the channel (its files, its CLI logins, Claude and Codex); announce that result.
 - `show_channel_ssh` — whether the host is set up, who is granted, live sessions, and the
   `~/.ssh/config` block to paste (the channel rides in the ProxyCommand; one key reaches several
   channels). Use it for "how do I SSH in", "who has SSH here", "give me the connection info".
@@ -366,9 +371,9 @@ admin rights or change the permissions required by separate gateway control tool
 - The caller must still be a gateway admin. In Auto/Admin mode no additional Slack approval card is
   posted; in Read/Worker mode the exact update action still requires a click.
 - Before changing Git it checks upstream/clean-tree safety, runtime/config/service prerequisites,
-  calculated disk space, current health, and a real isolated Claude turn. A candidate is installed,
+  calculated disk space, current daemon health. The independent host service runs `bash scripts/update.sh`; provider logins and engine responses do not gate installation. A candidate is installed,
   security-audited, fully tested, provisioned, restarted, and accepted only after daemon revision,
-  Slack, and another isolated Claude check pass.
+  runtime availability and Slack reconnect pass. Exact dependencies and provisioning are repaired even when Git is current. Image binaries receive local version-only checks without provider authentication.
 - If a post-change check fails, it restores the previous revision and dependencies, restarts, and
   proves the restored build. The final thread reply distinguishes success, preflight refusal,
   successful rollback, and candidate-plus-rollback failure. Details are in

@@ -34,6 +34,8 @@ const FORBIDDEN_HEADERS = new Set(["host", "connection", "proxy-authorization", 
 // only in the Authorization header on the Anthropic API.
 export const RELAY_SECRET_NAME = "CLAUDE_CODE_OAUTH_TOKEN";
 export const RELAY_RULE = Object.freeze({ hosts: Object.freeze(["api.anthropic.com"]), headers: Object.freeze(["authorization"]), format: Object.freeze(["bearer"]) });
+export const CLAUDE_API_RELAY_NAMES = Object.freeze(["ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN"]);
+const CLAUDE_API_RELAY_RULE = Object.freeze({ hosts: Object.freeze(["api.anthropic.com"]), headers: Object.freeze(["authorization", "x-api-key"]), format: Object.freeze(["bearer", "raw"]) });
 // The relayed Codex login (scope `relay`, the twin): the container's auth.json holds a JWT-SHAPED
 // placeholder (placeholders.js) — the CLI parses its access token as a JWT — and the proxy replaces
 // that WHOLE token with the live access token in the Authorization header on the OpenAI/ChatGPT
@@ -43,7 +45,7 @@ export const CODEX_RELAY_SECRET_NAME = "CODEX_ACCESS_TOKEN";
 export const CODEX_RELAY_RULE = Object.freeze({ hosts: Object.freeze(["api.openai.com", "chatgpt.com", "auth.openai.com"]), headers: Object.freeze(["authorization"]), format: Object.freeze(["jwt"]) });
 export const CODEX_API_RELAY_SECRET_NAME = "CODEX_API_RELAY_KEY";
 export const CODEX_API_RELAY_RULE = Object.freeze({ hosts: Object.freeze(["api.openai.com"]), headers: Object.freeze(["authorization"]), format: Object.freeze(["bearer"]) });
-const RELAY_RULES = Object.freeze({ [RELAY_SECRET_NAME]: RELAY_RULE, [CODEX_RELAY_SECRET_NAME]: CODEX_RELAY_RULE, [CODEX_API_RELAY_SECRET_NAME]: CODEX_API_RELAY_RULE });
+const RELAY_RULES = Object.freeze({ [RELAY_SECRET_NAME]: RELAY_RULE, [CODEX_RELAY_SECRET_NAME]: CODEX_RELAY_RULE, [CODEX_API_RELAY_SECRET_NAME]: CODEX_API_RELAY_RULE, ...Object.fromEntries(CLAUDE_API_RELAY_NAMES.map((name) => [name, CLAUDE_API_RELAY_RULE])) });
 
 // The swap rule of a relay grant, by its secret name, or null for a name no relay uses.
 export function relayRuleFor(secretName) {

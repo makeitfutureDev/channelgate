@@ -96,11 +96,99 @@ async function channel(id, name, meta = {}) {
   return { entry, meta: full };
 }
 
+test("missing personal grants and dependencies warn while both engines answer fresh and resumed turns", async (t) => {
+  const { putSkillRevision } = await import("../src/gateway/skills/catalog.js");
+  const { getUser } = await import("../src/config/store.js");
+  const valid = "rt-partial-personal-valid";
+  const missing = "rt-partial-personal-missing";
+  const dependency = "rt-partial-personal-dependency";
+  putSkillRevision({ visibility: "personal", createdBy: "U_RT", files: [{ path: "SKILL.md",
+    content: `---\nname: ${valid}\ndescription: Available private fixture\nrequires: [${dependency}]\n---\nPRIVATE-AVAILABLE-BODY\n` }] });
+  const names = [valid, missing];
+  saveSettings({ memoryReviewEvery: 0, composioMode: "personal", engineFallback: false, codexEnabled: true });
+  await setUser("U_RT", { skills: names });
+  t.after(() => setUser("U_RT", { skills: [] }));
+  for (const engine of ["claude", "codex"]) {
+    const backend = createFakeRuntimeBackend();
+    useBackend(backend);
+    const id = `C_RT_PARTIAL_${engine.toUpperCase()}`;
+    await channel(id, `rt-partial-${engine}`, { engine });
+    for (const text of ["hello with available skills", "continue with available skills"]) {
+      const events = [];
+      const result = await runMessage({ channelId: id, authorId: "U_RT", text, threadKey: "partial.001",
+        origin: "slack_foreground", preferCold: true, onEvent: (event) => events.push({ ...event, spawnsBefore: backend.calls.spawn.length }) });
+      assert.equal(result.engine, engine);
+      assert.match(result.content, /Continuing with the available skills\.[\s\S]*stub.*reply/i);
+      assert.ok(result.content.includes(missing) && result.content.includes(dependency));
+      const notes = events.filter((event) => event.kind === "answer_note" && event.text.includes(missing));
+      assert.equal(notes.length, 1, "one streamed warning accompanies the authoritative answer");
+      assert.equal(notes[0].spawnsBefore, backend.calls.spawn.length - 1, "warning precedes this turn's engine spawn");
+    }
+    assert.equal(backend.calls.spawn.length, 2);
+    if (engine === "claude") assert.ok(backend.calls.spawn.every((call) => call.args.some((arg) => String(arg).includes("user-grants-plugin"))));
+    else assert.ok(backend.calls.spawn.every((call) => call.args.some((arg) => String(arg).includes(valid))));
+  }
+  assert.deepEqual((await getUser("U_RT")).skills, names, "omissions never rewrite stored grants");
+});
+
+test("unavailable personal skill warning survives either cross-engine fallback", async (t) => {
+  const missing = "rt-fallback-personal-missing";
+  saveSettings({ memoryReviewEvery: 0, composioMode: "personal", engineFallback: true, codexEnabled: true });
+  await setUser("U_RT", { skills: [missing] });
+  t.after(() => setUser("U_RT", { skills: [] }));
+  for (const engine of ["claude", "codex"]) {
+    const backend = createFakeRuntimeBackend();
+    useBackend(backend);
+    const id = `C_RT_PARTIAL_FB_${engine.toUpperCase()}`;
+    await channel(id, `rt-partial-fallback-${engine}`, { engine });
+    const events = [];
+    const result = await runMessage({ channelId: id, authorId: "U_RT", text: `${engine.toUpperCase()}_STUB_LIMIT_FAIL_SAFE`,
+      threadKey: "partial-fallback.001", origin: "slack_foreground", preferCold: true, onEvent: (event) => events.push(event) });
+    assert.equal(result.fellBack, true);
+    assert.equal(result.engine, engine === "claude" ? "codex" : "claude");
+    assert.match(result.content, /Continuing with the available skills\.[\s\S]*stub.*reply/i);
+    assert.equal(result.content.split(missing).length - 1, 1);
+    assert.equal(events.filter((event) => event.kind === "answer_note" && event.text.includes(missing)).length, 1);
+    assert.equal(backend.calls.spawn.length, 2);
+  }
+});
+
+test("Claude, Codex and both Qwen engines prepare the nested Claude login before fresh and resumed spawns", async () => {
+  saveSettings({ memoryReviewEvery: 0, engineFallback: false, codexEnabled: true,
+    engineEnabled: { claude: true, codex: true, qwen: true, "qwen-eu": true },
+    qwenApiKey: "fake-qwen", qwenEuApiKey: "fake-qwen-eu", qwenEuBaseUrl: "https://qwen-eu.invalid/apps/anthropic" });
+  try {
+    for (const engine of ["claude", "codex", "qwen", "qwen-eu"]) {
+      const backend = createFakeRuntimeBackend({ egress: { active: true, mode: "proxy", network: "none" } });
+      const writes = [];
+      backend.writeHomeFile = async (_, file) => writes.push({ ...file, spawnsBefore: backend.calls.spawn.length });
+      useBackend(backend);
+      const id = `C_RT_NESTED_${engine.toUpperCase()}`;
+      await channel(id, `rt-nested-${engine}`, { engine, allowBash: true, allowNetwork: true });
+      for (const text of ["hello", "continue"]) {
+        const result = await runMessage({ channelId: id, authorId: "U_RT", text, threadKey: "nested.001", origin: "slack_foreground", preferCold: true });
+        assert.equal(result.engine, engine);
+      }
+      assert.equal(writes.length, 4, "login and launcher refreshed before each spawn");
+      assert.deepEqual(writes.map((entry) => entry.spawnsBefore), [0, 0, 1, 1]);
+      assert.ok(writes[0].body.includes("cgph_r"));
+      assert.ok(!JSON.stringify(writes).includes(OPERATOR_RELAY_TOKEN));
+      assert.equal(backend.calls.spawn.length, 2);
+      if (engine.startsWith("qwen")) {
+        assert.ok(backend.calls.spawn.every((call) => call.cmd === "/usr/local/bin/claude"));
+        assert.ok(backend.calls.spawn.every((call) => !call.env.CLAUDE_CODE_OAUTH_TOKEN));
+      }
+    }
+  } finally {
+    saveSettings({ engineEnabled: undefined, qwenApiKey: "", qwenEuApiKey: "", qwenEuBaseUrl: "" });
+  }
+});
+
 // Route every turn in a test through `backend`, with the real resolver supplying the paths.
 function useBackend(backend, { record = null } = {}) {
-  setRuntimeResolver((slug, meta) => {
+  setRuntimeResolver((slug, meta, options) => {
     record?.push(meta);
-    return fakeTarget(backend, slug, meta);
+    return fakeTarget(backend, slug, meta, options);
   });
 }
 
@@ -108,6 +196,7 @@ function useBackend(backend, { record = null } = {}) {
 // looks like. The fixture stamps the state directly so this test can isolate host→container carry
 // from the sudo admission path, then plants the transcript where a direct host turn writes it.
 async function hostThread(channelId, threadKey, { entry, meta }) {
+  await setUser("U_RT", { isAdmin: true });
   useBackend(createFakeRuntimeBackend());
   const first = await runMessage({ channelId, authorId: "U_RT", text: "one", threadKey, origin: "slack_foreground", preferCold: true });
   await saveSession(entry.slug, threadKey, first.sessionId, "claude", null, JSON.stringify({ backend: "host", fingerprint: "host", image: "" }));
@@ -326,7 +415,7 @@ test("a thread that last ran on the host has its engine history carried in befor
   assert.deepEqual(carried.map((e) => e.rel), [`projects/${key}/${sessionId}.jsonl`, `projects/${key}/${sessionId}`]);
   // It really arrived in the runtime's state dir, subagent transcripts included (the fake mirrors
   // the container's /home/agent tree under the artifact dir — see fakeContainerPath).
-  const ctrTarget = fakeTarget(backend, entry.slug, meta);
+  const ctrTarget = fakeTarget(backend, entry.slug, meta, { isAdminAuthor: true });
   const ctrProjects = path.join(fakeContainerPath(ctrTarget, ctrTarget.container.claudeConfigDir), "projects", key);
   assert.equal(readFileSync(path.join(ctrProjects, `${sessionId}.jsonl`), "utf8"), "host transcript\n");
   assert.equal(readFileSync(path.join(ctrProjects, sessionId, "sub.jsonl"), "utf8"), "subagent\n");
@@ -422,7 +511,7 @@ test("a per-run API mode narrows tools but never changes what the channel's cont
     // The operator-home grant is the one mount a channel's mode decides; with the gateway switch on
     // it must follow the CHANNEL (Admin), or a single API run rebuilds the container both ways.
     assert.equal(resolved[0].adminMode, true, `${mode}: the runtime target keeps the channel's Admin posture`);
-    assert.equal(operatorHomeGranted({ meta: resolved[0], settings: { fullAccessHome: true } }), true, `${mode}: the mount set is unchanged`);
+    assert.equal(operatorHomeGranted({ runtimeScope: "admin", meta: resolved[0], settings: { fullAccessHome: true } }), true, `${mode}: the mount set is unchanged`);
     assert.equal(backend.calls.spawn.length, 1);
     // The API key is an admin credential: in this Admin channel a Full run escalates exactly like an
     // admin's Slack message, and a narrowed mode does not.

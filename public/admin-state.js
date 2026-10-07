@@ -121,3 +121,25 @@ export function changedSettingKeys(before = {}, after = {}, ignore = []) {
   const keys = new Set([...Object.keys(before || {}), ...Object.keys(after || {})]);
   return [...keys].filter((key) => !skip.has(key) && !settingValuesEqual(before?.[key], after?.[key])).sort();
 }
+
+// Legacy rows have no platform field. Qualified IDs also cover older DM API payloads.
+export function conversationSource(conversation = {}) {
+  const value = conversation.platform || conversation.meta?.platform;
+  if (["slack", "googlechat", "msteams"].includes(value)) return value;
+  if (String(conversation.channelId || "").startsWith("teams:")) return "msteams";
+  if (String(conversation.channelId || "").startsWith("gchat:")) return "googlechat";
+  return "slack";
+}
+
+export function matchesConversationSource(conversation, source = "all") {
+  return source === "all" || conversationSource(conversation) === source;
+}
+
+export function conversationChannelName(conversation = {}) {
+  const name = String(conversation.name || conversation.slug || "");
+  // Older Teams entries may only know the native ID. Keep it in the slug/detail metadata,
+  // with a readable title until the next named activity refreshes the stored display name.
+  const label = conversationSource(conversation) === "msteams" && /^(?:teams:)?19:/.test(name)
+    ? "teams-channel" : name;
+  return label.startsWith("#") ? label : "#" + label;
+}

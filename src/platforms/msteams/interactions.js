@@ -5,6 +5,14 @@ import { isConversationId, validateServiceUrl } from "./api.js";
 const SCOPES = new Set(["thread", "conversation", "channel", "user", "gateway", "once", "always", "forever"]);
 const RESERVED = new Set(["__proto__", "prototype", "constructor", "actorId", "userId", "senderId", "conversationId", "tenantId", "serviceUrl", "aadObjectId"]);
 const plain = value => value && typeof value === "object" && !Array.isArray(value) && [Object.prototype, null].includes(Object.getPrototypeOf(value));
+// Action.Execute errors use an invoke response envelope, not a transport failure. Messages are
+// fixed at the call sites: never return submitted values or internal exception text to a client.
+export function teamsCardErrorResponse(activity, status, code, message) {
+  if (activity?.type === "invoke" && activity.name === "adaptiveCard/action") {
+    return { status: 200, body: { statusCode: status, type: "application/vnd.microsoft.error", value: { code, message } } };
+  }
+  return { status, body: { error: message } };
+}
 export function isTeamsCardInteraction(activity) {
   if (activity?.type === "invoke") return true;
   return activity?.type === "message" && plain(activity.value) && typeof activity.value.cgAction === "string";
@@ -41,10 +49,10 @@ export function createTeamsInteractionHandler({ dispatch, authorize = null } = {
   return async activity => {
     let interaction;
     try { interaction = normalizeTeamsInteraction(activity); }
-    catch { return { status: 400, body: { error: "Invalid card action" } }; }
+    catch { return teamsCardErrorResponse(activity, 400, "BadRequest", "Invalid card action. Reopen the controls before trying again."); }
     // The business dispatcher must check approval ownership and current channel/user permissions.
     try {
-      if (authorize && !await authorize(interaction)) return { status: 403, body: { error: "Not allowed" } };
+      if (authorize && !await authorize(interaction)) return teamsCardErrorResponse(activity, 403, "Forbidden", "Not allowed to use these controls.");
       return await dispatch(interaction);
     } catch {
       return { status: 200, body: { statusCode: 200, type: ADAPTIVE_CARD_TYPE,

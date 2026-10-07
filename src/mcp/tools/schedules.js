@@ -29,7 +29,8 @@ export function register(server, ctx) {
     {
       description:
         "Schedule a task in THIS channel — either RECURRING (cron) or ONE-TIME (run once, then it " +
-        "auto-deletes). For recurring, pass `cron`, a 5-field expression 'minute hour day-of-month " +
+        "auto-deletes). For a fixed interval, pass `interval_days` (1–365; first run after that many days). " +
+        "For recurring cron, pass `cron`, a 5-field expression 'minute hour day-of-month " +
         "month day-of-week' (e.g. '0 9 * * *' = every day 09:00; '0 9 * * 1' = Mondays 09:00). Times are " +
         "the GATEWAY's local zone — never assume UTC: the reply names the zone and the next fire " +
         "time, and that is what you quote to the user. For a one-time reminder/task, pass " +
@@ -44,6 +45,7 @@ export function register(server, ctx) {
         "asked for that person or for silence. `delivery:'channel'` (result posted top-level, no thread) " +
         "and `delivery:'daily-thread'` (one top-level Running message per server-local day, every run " +
         "threaded beneath it; recurring tasks only) are opt-in, only when the user asked for them. " +
+        "`delivery:'dm-on-match'` needs `match_prefix`: no routine messages or failure posts; only a result beginning with that prefix is DM'd to the creator, then the schedule stops. Failures remain visible in schedule status. " +
         "schedules must fire no more often than the configured minimum interval (default 60 min). " +
         "Set `kind:'reminder'` to post a SINGLE reminder message instead of running a Claude session " +
         "(no token cost, no restatement). With `ack:true` the reminder requires a ✅: if nobody reacts " +
@@ -51,20 +53,22 @@ export function register(server, ctx) {
         "(default 60) more the creator is DM'd and the chain closes; a ✅ at any time closes it.",
       inputSchema: {
         cron: z.string().optional(),
+        interval_days: z.number().int().positive().optional(),
         in_minutes: z.number().optional(),
         run_at: z.string().optional(),
         prompt: z.string(),
         description: z.string().optional(),
         notify: z.enum(["channel", "user", "none"]).optional(),
         notify_user: z.string().optional(),
-        delivery: z.enum(["standard", "daily-thread", "channel"]).optional(),
+        delivery: z.enum(["standard", "daily-thread", "channel", "dm-on-match"]).optional(),
+        match_prefix: z.string().optional(),
         kind: z.enum(["task", "reminder"]).optional(),
         ack: z.boolean().optional(),
         ack_escalate_minutes: z.number().optional(),
         ack_dm_minutes: z.number().optional(),
       },
     },
-    async ({ cron, in_minutes, run_at, prompt, description, notify, notify_user, delivery, kind, ack, ack_escalate_minutes, ack_dm_minutes }) => {
+    async ({ cron, interval_days, in_minutes, run_at, prompt, description, notify, notify_user, delivery, match_prefix, kind, ack, ack_escalate_minutes, ack_dm_minutes }) => {
       if (!channelId) return text("No channel context — cannot schedule here.");
       const mode = notify || "channel";
       // The HTTP run API principal is not a person to ping: an API-created user-mode schedule must
@@ -88,6 +92,19 @@ export function register(server, ctx) {
         return text(`This channel already has ${maxPer} enabled schedules (the limit). Delete one first with delete_schedule.`);
       }
 
+      if (delivery === "dm-on-match" && (kind === "reminder" || !createdBy || !String(match_prefix || "").trim())) {
+        return text("dm-on-match requires a task, a requesting user, and a nonempty match_prefix. Only matching results are DM'd; routine checks and errors stay in the schedule status.");
+      }
+      if (interval_days !== undefined) {
+        if (!Number.isInteger(interval_days) || interval_days < 1 || interval_days > 365 || cron || in_minutes || run_at || kind === "reminder" || delivery === "daily-thread") {
+          return text("interval_days requires 1–365 days, a task, and no cron, in_minutes, run_at, or daily-thread delivery.");
+        }
+        const when = new Date(Date.now() + interval_days * 24 * 60 * 60_000);
+        const s = addSchedule({ channelId, slug, prompt, description, createdBy, notify: mode, notifyUserId, delivery,
+          matchPrefix: String(match_prefix || "").trim(), intervalDays: interval_days, runAt: when.toISOString(), ...reminderFields });
+        return text(`✅ Scheduled (id ${s.id}): "${description || prompt}" — every ${interval_days} days, next run ${zonedStamp(when)}${delivery === "dm-on-match" ? `; only results beginning with ${JSON.stringify(s.matchPrefix)} are DM'd to the creator, then checks stop` : `, notifies ${who}`}.${zoneHint()}`);
+      }
+
       // One-time mode: in_minutes or run_at given → fire once, then auto-delete.
       const oneTime = (typeof in_minutes === "number" && in_minutes > 0) || (typeof run_at === "string" && run_at.trim());
       if (oneTime) {
@@ -97,7 +114,7 @@ export function register(server, ctx) {
         else when = new Date(run_at);
         if (!Number.isFinite(when.getTime())) return text(`Couldn't parse the time. Use \`in_minutes\` (e.g. 120) or \`run_at\` ISO like "2026-06-26T15:30".`);
         if (when.getTime() <= Date.now() - 60_000) return text("That time is in the past — pick a future time.");
-        const s = addSchedule({ channelId, slug, prompt, description, createdBy, notify: mode, notifyUserId, delivery, runAt: when.toISOString(), once: true, ...reminderFields });
+        const s = addSchedule({ channelId, slug, prompt, description, createdBy, notify: mode, notifyUserId, delivery, matchPrefix: String(match_prefix || "").trim(), runAt: when.toISOString(), once: true, ...reminderFields });
         const what = reminderFields.kind === "reminder" ? "One-time reminder" : "One-time task";
         // The stamp NAMES the zone and gives the UTC equivalent, so the reply cannot be relabelled
         // by an agent that formats the instant against some other clock (QA ART-002).
@@ -112,7 +129,7 @@ export function register(server, ctx) {
       if (gap !== null && gap < floor) {
         return text(`That cron fires every ~${gap} min, which is more often than the ${floor}-min minimum for gateway schedules. For a short-interval check that stays in THIS thread ("every few minutes until X"), use your harness's own loop pacing (the /loop skill: ScheduleWakeup or CronCreate — the gateway re-arms the thread; see the gateway-usage reference loops.md). Otherwise use a less frequent schedule (e.g. hourly "0 * * * *") or a one-time task.`);
       }
-      const s = addSchedule({ channelId, slug, cron, prompt, description, createdBy, notify: mode, notifyUserId, delivery, ...reminderFields });
+      const s = addSchedule({ channelId, slug, cron, prompt, description, createdBy, notify: mode, notifyUserId, delivery, matchPrefix: String(match_prefix || "").trim(), ...reminderFields });
       const what = reminderFields.kind === "reminder" ? "Reminder" : "Scheduled";
       const next = nextCronRun(cron);
       const nextText = next ? ` · next run ${zonedStamp(next)}` : "";
@@ -128,7 +145,7 @@ export function register(server, ctx) {
       if (!list.length) return text("No schedules in this channel.");
       return text(
         list
-          .map((s) => `• ${s.id} [${s.enabled ? "on" : "off"}] cron \`${s.cron}\` — ${s.description || s.prompt} (notifies ${s.notify === "user" ? `<@${s.notifyUserId}>` : s.notify || "channel"}${s.delivery === "daily-thread" ? ", one thread/day" : s.delivery === "channel" ? ", direct in channel" : ""})`)
+          .map((s) => `• ${s.id} [${s.enabled ? "on" : "off"}] ${s.intervalDays ? `every ${s.intervalDays} days · next ${zonedStamp(new Date(s.runAt))}` : `cron \`${s.cron}\``} — ${s.description || s.prompt} (${s.delivery === "dm-on-match" ? `DM creator only on ${JSON.stringify(s.matchPrefix)}` : `notifies ${s.notify === "user" ? `<@${s.notifyUserId}>` : s.notify || "channel"}${s.delivery === "daily-thread" ? ", one thread/day" : s.delivery === "channel" ? ", direct in channel" : ""}`})`)
           .join("\n") + (zoneHint() ? `\n${zoneHint().trim()}` : "")
       );
     }

@@ -12,7 +12,7 @@ import { runMessage, isEmptyResult } from "../gateway/run.js";
 import { modeLabel, MODES, modeSettingsPatch, canManage, isAuthorized, authorizationDenialReason } from "../gateway/modes.js";
 
 import { postModelWizard } from "./model-wizard.js";
-import { getSessionMap, clearSession, hasThreadSession, getSessionEngine, saveSession } from "../gateway/sessions.js";
+import { getSession, getSessionMap, clearSession, hasThreadSession, getSessionEngine, getSessionRuntime, saveSession } from "../gateway/sessions.js";
 import { planSessionAdoption } from "../gateway/session-adopt.js";
 import { resolveRuntime } from "../runtimes/resolve.js";
 import { setThreadEngine, getThreadEngine, resolveThreadEngine, setThreadClean, getThreadClean, setThreadSudo, getThreadSudo, setThreadModel, getThreadModel, setThreadEffort, getThreadEffort } from "../gateway/thread-engine.js";
@@ -39,7 +39,8 @@ import { noteBotReply, noteUserActivity } from "../gateway/nudges.js";
 import { applyLoopWakeup, stopLoops, stopThreadLoops } from "../gateway/loops.js";
 import { buildPendingReportForUser } from "../gateway/followups.js";
 
-import { resolveSlackConfig, getProgressView, getContextWindow, getTrustedBotApps, getDefaultChannelAccess, applyChannelTemplate, getDefaultNudges, getSlackAdminUserToken, canChangeChannelRuntime, getWhisperEnabled, getEngineFallbackMode } from "../config/settings.js";
+import { resolveSlackConfig, getProgressView, getContextWindow, getTrustedBotApps, getDefaultChannelAccess, applyChannelTemplate, getDefaultNudges, getSlackAdminUserToken, canChangeChannelRuntime, getWhisperEnabled, getEngineFallbackMode, getModelShortcuts, isEngineEnabled } from "../config/settings.js";
+import { parseModelShortcut } from "../config/model-shortcuts.js";
 import { mdToMrkdwn, resolveMentions } from "./format.js";
 import { answerImageBlocks, shareAnswerImageFiles } from "./images.js";
 import { appendSlackTables, extractSlackTables, formatSlackTables } from "./block-content.js";
@@ -73,6 +74,16 @@ import { engineSwitchChoices, engineSwitchChoiceBlocks, engineSwitchChoiceText }
 // queued ones, and a finishing run only ever clears its own entry.
 // Last turn's context usage per thread, for /context.
 const lastCtx = new Map();
+const pendingForkThreads = new Set();
+const pendingForkSources = new Set();
+
+async function slackPermalink(client, channel, ts) {
+  try {
+    const result = await client.chat.getPermalink({ channel, message_ts: ts });
+    if (result?.permalink) return result.permalink;
+  } catch { /* Slack's canonical permalink is optional; its archive URL still works. */ }
+  return `https://slack.com/archives/${channel}/p${String(ts).replace(".", "")}`;
+}
 
 // Terminalize every matching in-flight run synchronously — no Slack calls, no awaits. The shared
 // core of the `stop` command (stopRunsInChannel below, which adds the user-facing messaging) and
@@ -591,7 +602,7 @@ async function ensureUserKnown(client, userId) {
 // harness-switch card (src/slack/engine-switch-choice.js) re-entering with the original event —
 // run it on `engineChoice`, pin the thread there when `engineChoiceSwitch`, and hand the pending
 // row over exactly like a busy-thread choice.
-export async function processMessageEvent(event, client, { botUserId = "", teamId = "", bypassMention = false, dedupeTrigger = false, activeViewContext = null, busyChoice = "", busyTargetRunId = "", busyChoiceId = "", onBusyChoiceAccepted = null, engineChoice = "", engineChoiceSwitch = false, engineChoiceId = "", onEngineChoiceAccepted = null, questionSubmissionId = "", onQuestionSubmissionAccepted = null } = {}) {
+export async function processMessageEvent(event, client, { botUserId = "", teamId = "", bypassMention = false, dedupeTrigger = false, activeViewContext = null, busyChoice = "", busyTargetRunId = "", busyChoiceId = "", onBusyChoiceAccepted = null, engineChoice = "", engineChoiceSwitch = false, engineChoiceId = "", onEngineChoiceAccepted = null, questionSubmissionId = "", onQuestionSubmissionAccepted = null, syntheticFork = null } = {}) {
   try {
     if (isIgnorable(event, botUserId, getTrustedBotApps())) return;
     // A message without a human author (e.g. a trusted-bot post carrying no `user`) can't be
@@ -627,6 +638,14 @@ export async function processMessageEvent(event, client, { botUserId = "", teamI
       return;
     }
     const threadKey = event.thread_ts ?? event.ts;
+    if (!syntheticFork && pendingForkThreads.has(`${entry.slug}::${threadKey}`)) {
+      await client.chat.postMessage({ channel: event.channel, thread_ts: threadKey, text: "This fork is still starting. Please send your next message after its first reply." });
+      return;
+    }
+    if (pendingForkSources.has(`${entry.slug}::${threadKey}`)) {
+      await client.chat.postMessage({ channel: event.channel, thread_ts: threadKey, text: "A fork of this thread is starting. Please send your next message after the new thread appears." });
+      return;
+    }
     // Sudo is a THREAD trust boundary, stronger than the channel's ordinary admission policy.
     // Reject before hydration, attachment reads, queueing, or any process spawn. The stored flag
     // is never authority by itself: the sender's current organization-admin status is rechecked.
@@ -646,7 +665,7 @@ export async function processMessageEvent(event, client, { botUserId = "", teamI
     // A question continuation is an internal event containing the answers authenticated by its
     // Slack interaction handler. It is not a message Slack can hydrate: using the card timestamp
     // would replace the answers with the card's text and could carry unrelated attachments.
-    if (!questionSubmissionId) event = await hydrateSlackMessage(event, client, {
+    if (!questionSubmissionId && !syntheticFork) event = await hydrateSlackMessage(event, client, {
       includeThreadFiles: async (message) => {
         const text = stripMentions(message.text, botUserId);
         const command = parseSlashCommand(text);
@@ -701,7 +720,7 @@ export async function processMessageEvent(event, client, { botUserId = "", teamI
     }
 
     // In-thread control commands (/clear, /model, /effort, /context, /pending, /help, /compact).
-    const sc = files.length === 0 ? parseSlashCommand(prompt) : null;
+    const sc = !syntheticFork && files.length === 0 ? parseSlashCommand(prompt) : null;
     // /compact is a real command only on engines that declare supports.compact — judged against
     // the THREAD's effective engine (override → session-born → channel → gateway default), never
     // the gateway default alone: a Codex thread under a Claude-default gateway must not receive
@@ -715,6 +734,82 @@ export async function processMessageEvent(event, client, { botUserId = "", teamI
       const reply = (t) => client.chat.postMessage({ channel: event.channel, thread_ts: threadKey, text: t });
       if (sc.cmd === "help") {
         await reply(HELP_TEXT);
+      } else if (sc.cmd === "fork") {
+        const forkShortcut = parseModelShortcut(sc.arg);
+        const task = forkShortcut ? forkShortcut.task : sc.arg.trim();
+        if (!task) { await reply("Use `/fork [:model-shortcut] <new message>` inside a thread with a Claude or Codex session."); return; }
+        if (runQueue.isActive(runKey)) { await reply("Wait for this thread's current run to finish before forking it."); return; }
+        pendingForkSources.add(runKey);
+        try {
+          if (await getThreadSudo(entry.slug, threadKey)) { await reply("A sudo thread cannot be forked into an ordinary channel thread."); return; }
+          const sourceId = await getSession(entry.slug, threadKey);
+          const sourceEngine = await getSessionEngine(entry.slug, threadKey);
+          const sourceRuntime = await getSessionRuntime(entry.slug, threadKey);
+          if (!sourceId || !["claude", "codex"].includes(sourceEngine)) { await reply("This thread needs a completed Claude or Codex turn before it can be forked."); return; }
+          if (sourceRuntime?.backend !== "container") { await reply("This session's history is outside the channel container. Run another turn here to carry it into the container before forking."); return; }
+          const sourceScope = sourceRuntime.scope || "admin";
+          if (sourceScope !== (authorIsAdmin ? "admin" : "project")) {
+            await reply("Run a new turn under your own access level before forking this thread."); return;
+          }
+          let forkTarget = null;
+          if (forkShortcut) {
+            const shortcuts = getModelShortcuts();
+            forkTarget = Object.hasOwn(shortcuts, forkShortcut.name) ? shortcuts[forkShortcut.name] : null;
+            if (!forkTarget) {
+              await reply(`Unknown model shortcut \`:${forkShortcut.name}\`. Ask an admin to add it in Settings → Model shortcuts.`); return;
+            }
+            if (!isDM && !canChangeChannelRuntime(authorIsAdmin)) {
+              await reply("Only admins can change the model in this channel."); return;
+            }
+            if (!isEngineEnabled(forkTarget.engine) || !modelBelongsToEngine(forkTarget.model, forkTarget.engine)) {
+              await reply(`Model shortcut \`:${forkShortcut.name}\` needs an enabled engine and valid model. Update it in Settings.`); return;
+            }
+            if (meta.codexAuthSource === "channel" && forkTarget.engine !== "codex") {
+              await reply("This channel uses its own Codex login, so its engine stays Codex."); return;
+            }
+          }
+          const childEngine = forkTarget ? forkTarget.engine : sourceEngine;
+          const nativeFork = childEngine === sourceEngine;
+          const sourceClean = await getThreadClean(entry.slug, threadKey);
+          if (nativeFork) abortPooled(runKey); // settle the source transcript before cloning
+          const sourceUrl = await slackPermalink(client, event.channel, threadKey);
+          let sourceContext = "";
+          if (!nativeFork && !sourceClean) {
+            sourceContext = await fetchThreadContext(client, { channelId: event.channel, threadTs: threadKey, currentTs: event.ts, botUserId });
+            if (!sourceContext) {
+              await reply("I could not read the source thread's messages. Please try the fork again once its Slack history is available."); return;
+            }
+            sourceContext = `You are continuing a conversation in a new Slack thread using ${engineLabel(childEngine)}. Source thread: ${sourceUrl}. The quoted history below comes from that source thread; continue with the user's new request after it.\n\n${sourceContext}`;
+          }
+          const handoffNote = nativeFork ? "" : ` · continuing with ${engineLabel(childEngine)}${sourceClean ? " (clean session; no history replay)" : " from Slack history"}`;
+          const root = await client.chat.postMessage({ channel: event.channel, text: `↪️ Fork of <${sourceUrl}|this thread>${handoffNote}` });
+          if (!root?.ts) throw new Error("Slack did not return a thread timestamp for the fork.");
+          const forkKey = String(root.ts);
+          const pendingKey = `${entry.slug}::${forkKey}`;
+          pendingForkThreads.add(pendingKey);
+          try {
+            await setThreadEngine(entry.slug, forkKey, childEngine);
+            await setThreadModel(entry.slug, forkKey, forkTarget ? forkTarget.model : await getThreadModel(entry.slug, threadKey));
+            // Like ordinary shortcuts, a new model clears the inherited model-specific effort.
+            await setThreadEffort(entry.slug, forkKey, forkTarget ? "" : await getThreadEffort(entry.slug, threadKey));
+            await setThreadClean(entry.slug, forkKey, sourceClean);
+            const request = await client.chat.postMessage({ channel: event.channel, thread_ts: forkKey, text: `*New request from <@${event.user}>:* ${task}` });
+            if (!request?.ts) throw new Error("Slack did not return a message timestamp for the fork request.");
+            const forkUrl = await slackPermalink(client, event.channel, forkKey);
+            await reply(`↪️ Fork started in <${forkUrl}|a new thread>.`);
+            // A fresh engine uses the captured Slack snapshot, so the source may continue now.
+            if (!nativeFork) pendingForkSources.delete(runKey);
+            await processMessageEvent({ ...event, ts: request.ts, thread_ts: forkKey, text: task, files: [] }, client, {
+              botUserId, teamId, bypassMention: true, syntheticFork: {
+                sourceSessionId: nativeFork ? sourceId : "", sourceRunKey: runKey, threadContext: sourceContext,
+              },
+            });
+          } finally {
+            pendingForkThreads.delete(pendingKey);
+          }
+        } finally {
+          pendingForkSources.delete(runKey);
+        }
       } else if (sc.cmd === "menu") {
         await client.chat.postMessage({ channel: event.channel, thread_ts: threadKey, ...buildMenuCard(event.channel, threadKey, event.user) });
       } else if (sc.cmd === "clear") {
@@ -804,8 +899,12 @@ export async function processMessageEvent(event, client, { botUserId = "", teamI
         // reopened by a bare CLI on the host, and its transcript is not in the daemon's engine dirs
         // either. A resolve failure must not swallow either half — both fall back to the host form.
         let runtimeTarget = null;
-        try { runtimeTarget = resolveRuntime(entry.slug, meta); } catch { /* fall back to the host form */ }
+        try { runtimeTarget = resolveRuntime(entry.slug, meta, { isAdminAuthor: authorIsAdmin }); } catch { /* fall back to the host form */ }
         if (!sc.arg) {
+          const storedRuntime = await getSessionRuntime(entry.slug, threadKey);
+          const adminSession = storedRuntime?.scope !== "project";
+          if (adminSession && !authorIsAdmin) { await reply("Run a new turn under your own access level before resuming this thread."); return; }
+          runtimeTarget = resolveRuntime(entry.slug, meta, { isAdminAuthor: adminSession });
           const cmd = buildResumeCommand(workDir, sessionId, threadEngine, runtimeTarget);
           await reply(
             cmd
@@ -836,7 +935,7 @@ export async function processMessageEvent(event, client, { botUserId = "", teamI
         // resolution could hand a Claude session to Codex (or back) and run.js would drop it as a
         // harness switch. Evict any warm process still bound to the OLD session id, and drop the
         // stopped-turn/context remnants of the conversation being replaced.
-        await saveSession(entry.slug, threadKey, plan.sessionId, plan.engine);
+        await saveSession(entry.slug, threadKey, plan.sessionId, plan.engine, undefined, JSON.stringify({ backend: runtimeTarget?.backend || "host", scope: runtimeTarget?.runtimeScope, container: runtimeTarget?.container?.name || "" }));
         await setThreadEngine(entry.slug, threadKey, plan.engine);
         // A model/effort override left over from the other harness is not a valid flag for this
         // one — same rule the engine-switch path applies.
@@ -1027,6 +1126,43 @@ export async function processMessageEvent(event, client, { botUserId = "", teamI
     // stamp), and the session-stamp comparison after the directive blocks (covers switches made
     // out-of-band — the /model wizard, the admin UI, a flipped gateway default).
     let engineSwitched = false;
+    // A colon immediately after the bot mention selects a configured model shortcut. The
+    // setting is read for each message, so admins can repoint names without restarting Slack.
+    // Persist the resolved target on this thread; later edits to the shortcut affect new picks.
+    const shortcut = !syntheticFork ? parseModelShortcut(prompt) : null;
+    // A retry/switch card already selected the runtime. Keep its choice, but remove the
+    // original shortcut prefix before replaying the task to the engine.
+    if (shortcut && engineChoice) prompt = shortcut.task;
+    if (shortcut && !engineChoice) {
+      const shortcuts = getModelShortcuts();
+      const target = Object.hasOwn(shortcuts, shortcut.name) ? shortcuts[shortcut.name] : null;
+      if (!target) {
+        await client.chat.postMessage({ channel: event.channel, thread_ts: threadKey, text: `Unknown model shortcut \`:${shortcut.name}\`. Ask an admin to add it in Settings → Model shortcuts.` });
+        return;
+      }
+      if (!isDM && !canChangeChannelRuntime(authorIsAdmin)) {
+        await client.chat.postMessage({ channel: event.channel, thread_ts: threadKey, text: "Only admins can change the model in this channel." });
+        return;
+      }
+      if (!isEngineEnabled(target.engine) || !modelBelongsToEngine(target.model, target.engine)) {
+        await client.chat.postMessage({ channel: event.channel, thread_ts: threadKey, text: `Model shortcut \`:${shortcut.name}\` needs an enabled engine and valid model. Update it in Settings.` });
+        return;
+      }
+      if (meta.codexAuthSource === "channel" && target.engine !== "codex") {
+        await client.chat.postMessage({ channel: event.channel, thread_ts: threadKey, text: "This channel uses its own Codex login, so its engine stays Codex." });
+        return;
+      }
+      engineSwitched = (await getThreadEngine(entry.slug, threadKey)) !== target.engine;
+      await setThreadEngine(entry.slug, threadKey, target.engine);
+      await setThreadModel(entry.slug, threadKey, target.model);
+      // Effort is model-specific. A prior thread pin must not leak into a new shortcut.
+      await setThreadEffort(entry.slug, threadKey, "");
+      prompt = shortcut.task;
+      if (!prompt && files.length === 0) {
+        await client.chat.postMessage({ channel: event.channel, thread_ts: threadKey, text: `✅ This thread now uses *${engineLabel(target.engine)}* · \`${target.model}\`.` });
+        return;
+      }
+    }
     // A harness-switch card click: the person chose where this message runs. "Switch" pins the
     // thread there (the same per-thread choice the `claude` / `codex` directive makes); "try
     // again" leaves the thread as it is. Any engine directive in the text was already applied
@@ -1046,7 +1182,7 @@ export async function processMessageEvent(event, client, { botUserId = "", teamI
     // switch phrase ("try again with codex", "switch to codex", "use claude") — a switch verb
     // immediately before the engine name, so an incidental mention ("the codex CLI") won't flip it.
     // It sticks until changed; the rest of the message is the task.
-    if (files.length === 0) {
+    if (!syntheticFork && !shortcut && files.length === 0) {
       const trimmed = prompt.trim();
       const anchored = new RegExp(`^(${engineIdAlternation()})\\b[\\s:,.;–—-]*([\\s\\S]*)$`, "i").exec(trimmed);
       // Only a switch INTENT near the START counts (index ≤ 12, allowing a short lead like
@@ -1091,7 +1227,7 @@ export async function processMessageEvent(event, client, { botUserId = "", teamI
     // thread replay: just Claude Code's own baseline + the message. Sticky for the thread (the
     // session is built on the bare context, so resumed turns must stay bare); "/clean off"
     // reverts — the NEXT message then starts a re-provisioned turn in the same thread.
-    {
+    if (!syntheticFork) {
       const cm = /^\/clean\b[\s:,.;–—-]*([\s\S]*)$/i.exec(prompt.trim());
       if (cm) {
         const rest = cm[1].trim();
@@ -1419,10 +1555,10 @@ export async function processMessageEvent(event, client, { botUserId = "", teamI
       // after the queue so a turn queued behind this thread's first run resumes instead of
       // replaying. Runs after the progress indicator starts, so the fetch + name resolution
       // happen behind visible feedback.
-      let threadContext = "";
+      let threadContext = threadClean ? "" : syntheticFork?.threadContext || "";
       // Replay the earlier thread when the bot is first pulled into an existing thread OR when the
       // engine was just switched (the new engine starts a fresh, blind session — give it context).
-      if (!threadClean && event.thread_ts && (!(await hasThreadSession(entry.slug, threadKey)) || engineSwitched)) {
+      if (!syntheticFork && !threadClean && event.thread_ts && (!(await hasThreadSession(entry.slug, threadKey)) || engineSwitched)) {
         threadContext = await fetchThreadContext(client, { channelId: event.channel, threadTs: threadKey, currentTs: contextCurrentTs, botUserId });
       }
       // The requester may lose access while this accepted answer waits behind another turn.
@@ -1468,6 +1604,7 @@ export async function processMessageEvent(event, client, { botUserId = "", teamI
         isDM: Boolean(meta.isDM),
         ...(questionSubmissionId ? { questionSubmissionId } : {}),
         text: textForRun,
+        ...(syntheticFork?.sourceSessionId ? { forkSourceSessionId: syntheticFork.sourceSessionId } : {}),
         attachments: attachmentPaths,
         startedAt: Date.now(),
       };
@@ -1488,6 +1625,12 @@ export async function processMessageEvent(event, client, { botUserId = "", teamI
 
         text: textForRun,
         threadKey,
+        ...(syntheticFork?.sourceSessionId ? { forkSourceSessionId: syntheticFork.sourceSessionId } : {}),
+        onForkSessionResolved: syntheticFork?.sourceSessionId ? () => {
+          recordActiveRun(runId, { ...promotedRun, forkSourceSessionId: "" });
+          pendingForkThreads.delete(`${entry.slug}::${threadKey}`);
+          pendingForkSources.delete(syntheticFork.sourceRunKey);
+        } : undefined,
         attachments: attachmentPaths,
         signal: handle.controller.signal,
         progressReport: true,

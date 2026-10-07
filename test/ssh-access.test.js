@@ -19,7 +19,7 @@ const { POLICY_KEYS, policyDiff } = await import("../src/config/channel-audit.js
 const { defaultChannelMeta, saveChannelMeta, upsertChannelEntry, setUser, getChannelMeta } = await import("../src/config/store.js");
 const { readEvents } = await import("../src/util/logger.js");
 const { register } = await import("../src/mcp/tools/ssh-access.js");
-const { ctxFromClaims, buildControlPlane } = await import("../src/mcp/gateway-server.js");
+const { ctxFromClaims, buildControlPlane, gateAuthz } = await import("../src/mcp/gateway-server.js");
 const { GATEWAY_TOOL_NAMES } = await import("../src/gateway/mcp-catalog.js");
 
 // Throwaway public keys generated for this test file (public halves only; the private halves were discarded).
@@ -110,7 +110,7 @@ test("grants live on channel meta, dedupe, audit as a list, and the home-grant b
   for (const adminMode of [true, false]) {
     for (const fullAccessHome of [true, false, undefined]) {
       const settings = { fullAccessHome };
-      assert.equal(access.sshBlockedByHomeGrant({ adminMode }, settings), operatorHomeGranted({ meta: { adminMode }, settings }), `adminMode=${adminMode} fullAccessHome=${fullAccessHome}`);
+      assert.equal(access.sshBlockedByHomeGrant({ adminMode }, settings), operatorHomeGranted({ runtimeScope: "admin", meta: { adminMode }, settings }), `adminMode=${adminMode} fullAccessHome=${fullAccessHome}`);
     }
   }
   assert.equal(access.parseUserRef("<@U123ABC|tibi>"), "U123ABC");
@@ -281,15 +281,23 @@ test("tools: registered names, permission list and control-plane gates line up",
   const names = [...toolsFor(DEV).keys()];
   assert.deepEqual(names.sort(), ["add_my_ssh_key", "grant_channel_ssh", "list_my_ssh_keys", "remove_my_ssh_key", "revoke_channel_ssh", "show_channel_ssh"]);
   for (const name of names) assert.ok(GATEWAY_TOOL_NAMES.includes(name), `${name} must be on the Claude permission allowlist`);
-  const plane = buildControlPlane({ loadMeta: async () => ({}) });
-  assert.equal(plane.get("add_my_ssh_key").authz, "any");
-  assert.equal(plane.get("remove_my_ssh_key").authz, "any");
-  assert.equal(plane.get("grant_channel_ssh").authz, "manage");
-  assert.equal(plane.get("revoke_channel_ssh").authz, "manage");
+  const plane = buildControlPlane({ loadMeta: async () => ({}), principalTrusted: true, createdBy: DEV });
+  assert.equal(plane.has("add_my_ssh_key"), false);
+  assert.equal(plane.has("remove_my_ssh_key"), false);
+  for (const name of ["grant_channel_ssh", "revoke_channel_ssh"]) {
+    for (const args of [{}, { user: DEV }, { user: `<@${DEV}|apps>` }]) {
+      assert.equal(gateAuthz(plane.get(name), args), "any");
+      assert.equal(plane.get(name).details(args), null);
+    }
+    assert.equal(gateAuthz(plane.get(name), { user: ADMIN }), "manage");
+    assert.equal(gateAuthz(plane.get(name), { user: "" }), "manage");
+    const untrusted = buildControlPlane({ loadMeta: async () => ({}), principalTrusted: false, createdBy: DEV });
+    assert.equal(gateAuthz(untrusted.get(name), { user: DEV }), "manage");
+    assert.notEqual(untrusted.get(name).details({ user: DEV }), null);
+  }
   assert.equal(plane.has("show_channel_ssh"), false, "reads carry no approval card");
   assert.equal(plane.has("list_my_ssh_keys"), false);
   assert.match(plane.get("grant_channel_ssh").details({ user: "<@U1>" }), /full shell/);
-  assert.doesNotMatch(plane.get("add_my_ssh_key").details({ label: "laptop" }), /AAAA/, "never the key material");
 });
 
 test("tools: a person registers only their own key; unapproved users and private keys are refused", async () => {
@@ -299,29 +307,29 @@ test("tools: a person registers only their own key; unapproved users and private
   assert.match(added, /Registered your ED25519 key \*\*SHA256:/);
   assert.match(added, /gateway host now accepts it/, "the endpoint from the earlier test is configured, so the file is exported");
   assert.match(reply(await dev.get("add_my_ssh_key")({ public_key: ED25519 })), /Already registered/);
-  assert.match(reply(await toolsFor(OUTSIDER).get("add_my_ssh_key")({ public_key: ECDSA })), /Only an approved user/);
+  assert.match(reply(await toolsFor(OUTSIDER).get("add_my_ssh_key")({ public_key: ECDSA })), /Only a user allowed in this channel/);
   assert.match(reply(await dev.get("list_my_ssh_keys")({})), /macbook/);
   assert.match(reply(await toolsFor(ADMIN).get("list_my_ssh_keys")({})), /no registered SSH key/);
   const exported = readFileSync(path.join(SSH_DIR, "authorized_keys"), "utf8");
   assert.ok(exported.includes(ED25519.split(" ")[1]));
 });
 
-test("tools: grants need a manager, an approved grantee, and are audited; show hands out the connection block only to the granted", async () => {
+test("tools: own grants are self-service and audited; granting other people needs a manager", async () => {
   const dev = toolsFor(DEV);
   const admin = toolsFor(ADMIN);
-  assert.match(reply(await dev.get("grant_channel_ssh")({ user: `<@${DEV}>` })), /Only this channel's managers/);
+  assert.match(reply(await dev.get("grant_channel_ssh")({ user: ADMIN })), /Only this channel's managers/);
   assert.match(reply(await admin.get("grant_channel_ssh")({ user: `<@${OUTSIDER}|nobody>` })), /not an approved user/);
   assert.match(reply(await admin.get("grant_channel_ssh")({ user: "not a user" })), /user id or @mention/);
   const shownBefore = reply(await dev.get("show_channel_ssh")({}));
   assert.match(shownBefore, /Granted: nobody yet/);
   assert.match(shownBefore, /You are not granted here/);
-  const granted = reply(await admin.get("grant_channel_ssh")({ user: `<@${DEV}|apps>` }));
+  const granted = reply(await dev.get("grant_channel_ssh")({}));
   assert.match(granted, /✅ @Apps may now SSH/);
   assert.doesNotMatch(granted, /not registered a key/);
   assert.deepEqual((await getChannelMeta(entry.slug)).sshUsers, [DEV]);
   const audit = readEvents({ limit: 20 }).find((event) => event.event === "channel_meta_changed" && event.slug === entry.slug && event.keys?.includes("sshUsers"));
   assert.ok(audit, "the grant must leave a channel_meta_changed row naming sshUsers");
-  assert.equal(audit.author, ADMIN);
+  assert.equal(audit.author, DEV);
   assert.match(reply(await admin.get("grant_channel_ssh")({ user: DEV })), /already has SSH access/);
   const shown = reply(await dev.get("show_channel_ssh")({}));
   assert.match(shown, /Gateway endpoint: `channelgate-ssh@gw\.example\.com`/);
@@ -337,10 +345,37 @@ test("tools: grants need a manager, an approved grantee, and are audited; show h
   assert.match(reply(await admin.get("revoke_channel_ssh")({ user: ADMIN })), /revoked here/);
   assert.match(reply(await admin.get("revoke_channel_ssh")({ user: ADMIN })), /has no SSH access here/);
   assert.deepEqual((await getChannelMeta(entry.slug)).sshUsers, [DEV]);
+  assert.match(reply(await dev.get("revoke_channel_ssh")({})), /revoked here/);
+  assert.deepEqual((await getChannelMeta(entry.slug)).sshUsers, []);
+  assert.match(reply(await dev.get("grant_channel_ssh")({ user: `<@${DEV}>` })), /may now SSH/);
   assert.match(reply(await dev.get("remove_my_ssh_key")({ key: "SHA256:nope" })), /No key of yours/);
   assert.match(reply(await dev.get("remove_my_ssh_key")({ key: ED25519_FP })), /✅ Removed/);
   assert.ok(!readFileSync(path.join(SSH_DIR, "authorized_keys"), "utf8").includes(ED25519.split(" ")[1]), "the host file follows a removal at once");
   assert.match(reply(await dev.get("show_channel_ssh")({})), /granted but have no key registered/);
+});
+
+test("tools: named guests can register and self-grant only while admitted; revoked access and API identities cannot self-grant", async () => {
+  const original = await getChannelMeta(entry.slug);
+  try {
+    const outsider = toolsFor(OUTSIDER);
+    assert.match(reply(await outsider.get("grant_channel_ssh")({})), /not allowed in this channel/);
+    await saveChannelMeta(entry.slug, { ...original, allowedUsers: [OUTSIDER] });
+    assert.match(reply(await outsider.get("add_my_ssh_key")({ public_key: ECDSA })), /Registered your ECDSA key/);
+    assert.match(reply(await outsider.get("grant_channel_ssh")({})), /may now SSH/);
+    assert.ok((await getChannelMeta(entry.slug)).sshUsers.includes(OUTSIDER));
+    await saveChannelMeta(entry.slug, { ...(await getChannelMeta(entry.slug)), allowedUsers: [] });
+    assert.match(reply(await outsider.get("grant_channel_ssh")({})), /not allowed in this channel/);
+    const tools = new Map();
+    register({ registerTool: (name, _def, handler) => tools.set(name, handler) }, {
+      ...ctxFromClaims({ channelId: CHANNEL_ID, slug: entry.slug, authorId: DEV, principalTrusted: false }),
+      requireManage: async () => false,
+    });
+    assert.match(reply(await tools.get("grant_channel_ssh")({ user: DEV })), /Only this channel's managers/);
+    assert.match(reply(await tools.get("add_my_ssh_key")({ public_key: ECDSA })), /Only a user allowed/);
+    await access.removeSshKey(OUTSIDER, ECDSA_FP);
+  } finally {
+    await saveChannelMeta(entry.slug, original);
+  }
 });
 
 test("tools: the block on Admin + containerFullAccessHome is spelled out on grant and on show", async () => {

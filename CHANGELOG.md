@@ -24,11 +24,134 @@ product overview.
   both receive them. The gateway connects on the agent's behalf, so the token never enters the
   container. URLs must be HTTPS and public, checked at save and on every connection. Tokens are
   write-only. Servers that need OAuth still go through Composio.
-- ChatGPT sign-in in channel settings now displays the device link and complete code from current
-  Codex CLI output. The sign-in and API key buttons align without wrapping; proxied hosts pass
-  the public TLS CA bundle to the login process.
+- Admin settings now offer independent message-activation emoji lists for Slack, Teams and Google
+  Chat. Slack keeps its existing selection; Teams applies its list to native and Graph reactions
+  and shows it in help. Teams configuration changes exclude older queued/history activations.
+  Google Chat's selection is saved, with an explicit note that its current transport does not
+  receive reaction events.
+
+- Teams settings now show only models for the selected engine in each channel/session list.
+  After changing Engine, Load models refreshes the choices without saving; Apply saves the
+  complete selection for that scope.
+
+- Teams `/model` now opens an engine, model and effort picker with an Apply button for the
+  current session, alongside its current selection. Typed changes remain available.
+
+- Teams Graph reaction intake now recognizes Heart eyes robot when Graph encodes it as 😍
+  with the exact provider name and no custom artwork. Ordinary Heart eyes and missing metadata
+  remain inactive; a saved cutoff prevents older reactions replaying after the upgrade.
+
+- Teams can activate a request with 👽 Alien (`:alien:`), its bare ID, Unicode form, or documented
+  `1f47d_extraterrestrialalien` ID. Help recommends Alien; robot and Like remain supported.
+  A separate saved cutoff prevents older Alien reactions replaying after the upgrade.
+
+- Missing personal skill grants or dependencies no longer prevent unrelated requests from
+  running. Available skills load normally, and streamed/final replies warn about omissions,
+  including after engine fallback. Ownership and confinement checks remain enforced.
+
+- Teams reaction activation now accepts the exact Heart eyes robot picker shortcut
+  `:hearteyesrobot:` as well as its bare event ID. 👍 Like is an alternative activation reaction. Native `like` and Graph Unicode
+  thumbs-up values, including skin-tone variants, use the existing authorized reaction path.
+  Teams help shows the Heart eyes robot shortcut and Like alternative; legacy robot IDs remain
+  recognized. A persisted cutoff prevents newly recognized aliases from replaying older reactions.
+
+- Teams help now shows Teams reaction IDs and picker names instead of Slack shortcodes.
+  Heart eyes robot no longer displays the mismatched plain robot glyph, and the guide explains
+  that reaction codes must be selected through the picker rather than sent as text.
+
+- Teams Stop sign reactions now cancel the selected session’s active and queued requests with
+  author/admin checks. Tick button reactions acknowledge tracked reminders, including escalation
+  notices. Native and Graph intake recognize their Teams IDs; help describes the supported actions.
+
+- Teams `/help` now uses a native card with separate headings, spaced paragraphs, emoji rows
+  and commands, avoiding the run-on layout caused by Markdown soft line breaks. Card delivery
+  falls back to the complete spaced guide, and quoted group help cards keep their session.
+
+- Teams help identifies Heart eyes robot, Stop sign and Tick button by their emoji names.
+  Robot activation now recognizes the documented Teams `hearteyesrobot` and `smilerobot` IDs.
+
+- Teams `/help` now includes the practical usage guide for files, settings, skills, memory,
+  schedules and background work, with Teams-specific session controls and command examples.
+
+- Teams and Google Chat now show the model and current app/tool call while a turn runs, and the
+  same model, duration, token, optional cost, context and image footer as Slack on its final reply.
+  Live status updates coalesce within the surface edit budget and never show tool payloads.
+
+- Container turns now prepare a protected Claude login even when Codex, Qwen or Qwen EU is the
+  selected engine. Explicit nested `claude -p` commands authenticate through the host's existing
+  relay; Qwen's main process retains its own provider settings. No additional interactive login
+  or thread switch is needed when the host already has Claude authentication.
+
+- Teams `/settings` now offers the same six sections as Slack, including channel defaults and
+  session overrides, variables, MCP connections, skills, automations and session resume. The
+  console opens in the original channel/thread or chat, uses explicit Apply buttons and confirms removals without revealing
+  stored credentials. `/secrets` opens Variables directly.
+  Buttons update the same requester-bound card. Shared cards omit personal/organization
+  credential metadata, ungranted private connection catalogs and administrator session commands.
+  `/settings` initially shows only the section menu; selecting an option opens its settings below.
+  General runtime settings now use one Apply to channel or Apply to thread button to save engine,
+  model and effort together. Stale and incompatible forms cannot partially change the runtime.
+
+- Users already allowed in a channel, including named guests, can enable their own SSH access
+  without manager or admin approval. Registering/removing personal keys and revoking one’s
+  own SSH grant are also self-service. Changes for other people remain manager controlled.
+
+- Background shell jobs (`run_in_background`) inside a channel's container now start directly in
+  Auto mode, with no "Run it" card: the container is the boundary and Auto mode already
+  auto-approves every foreground command there, so the former admin-only click only stalled
+  non-admin authors. A job on the daemon account itself (the `/sudo` host lane) still needs an
+  admin's exact-command approval. Every agent-type approval card now says on the card who can
+  approve it ("Only a gateway *admin* can approve this; anyone eligible may Deny or Comment").
+
+- Gateway Settings now lets admins map short names to an engine and model. In Slack, select the bot mention and type `:astra` after Slack's inserted space (`@agent :astra`) to pin that model to a thread, with an optional task after the name. Mappings can be updated as models change.
+
+- Admin channels now keep non-admin members and guests in a separate project container with
+  Worker permissions and the selected Auto/Lean options. Only current organization admins
+  receive the optional host-home mount. HOME, scratch files, artifacts and engine histories
+  are separated, and switching author lanes starts fresh history.
+
+- Conversations can filter by Google Chat, Slack or Teams alongside search and Channels / DMs.
+  Teams channel names now use `#team-channel`, resolving missing names through the bot directory
+  on incoming messages while preserving conversation IDs, work folders and settings.
+
+- Update runs the host Bash entry point, repairs exact dependencies and provisioning even when code
+  is current, checks image executables without provider sign-in, and uses a bounded graceful restart
+  with a longer startup readiness window. Provider authentication no longer blocks gateway repairs.
+
+- Codex now continues a partially completed turn in the same session after a model-capacity
+  refusal. It avoids rerunning completed tool actions and tries another model unless the thread's
+  model was explicitly pinned.
+- Update smoke now binds and marks its disposable channel live for the duration of the probe,
+  allowing the Codex login relay through the egress proxy and releasing it on cleanup.
+- Scheduled checks can run every fixed number of days and DM their creator only when the result
+  begins with a configured match prefix. Routine checks make no Slack posts.
+
+- Add `@agent /fork <new message>` for Claude and Codex sessions in Slack. It starts a separate
+  engine branch in a linked new thread and runs the supplied message there.
+- Allow `@agent /fork :model-shortcut <new message>` to select the fork's model on the source
+  engine, preserving the original thread's settings. Invalid or unauthorized shortcuts are
+  rejected before creating a thread.
+- A `/fork` model shortcut for another engine now creates a linked fresh session and carries
+  the source Slack conversation into it, like switching an existing thread's engine. Same-engine
+  shortcuts retain native session forking; clean threads continue without history replay.
+- Fix a history-transfer deadlock when `/sudo` crosses a container whose mounts need recreation.
+  Transfer preparation now excludes its own lease, reports waits, handles Stop, and times out
+  into transcript recovery instead of hanging indefinitely.
+- Google Chat now reports a fatal Pub/Sub receiver error as a failed connection, stops intake,
+  and gives an actionable Subscriber-role hint for permission errors. Reconnect restores status
+  without allowing an old connection's late error to overwrite it.
+
+## 0.6.1 — 2026-10-06
+
+- Channel Runtime now shows only engine and model controls for the shared login. Dedicated Codex
+  sign-in uses a method dropdown: choosing ChatGPT starts the device flow and clicking its code
+  copies it; the API key field appears only for that method. The shared sign-in moved to Settings.
+  Slack Settings names the dedicated login and its channel defaults. Codex Cloud MCP discovery
+  and launch now use that channel account when selected.
+- ChatGPT sign-in displays the device link and complete code from current Codex CLI output;
+  proxied hosts pass the public TLS CA bundle to the login process.
 - A channel using its own Codex login now stays on Codex across settings, `/model`, and existing
-  threads. The settings page hides the redundant engine picker, aligns the sign-in actions, and
+  threads. The settings page hides the redundant engine picker and
   explains login storage without showing the internal path.
 - **The agent can send any file into the thread.** New gateway tool `slack_share_file` posts a file
   from the channel's working folder — PDF, Word, Excel, PowerPoint, ZIP, images, HTML — into the
@@ -39,8 +162,8 @@ product overview.
 
 - Completed nested background reports stranded by the earlier `invalid_thread_ts` error get one
   bounded recovery attempt from their saved output after restart. Their work is not rerun.
-- Channel Runtime settings now ask for the Codex login source first, show the matching gateway
-  or channel setup, and allow shared gateway Codex sign-in directly in the admin UI.
+- Channel Runtime settings now ask for the Codex login source first. Shared gateway Codex sign-in
+  is available from the admin Settings page.
 - **Nested background agent reports reach their Slack thread.** Delivery now turns an agent's
   synthetic session key into the launching thread timestamp before posting the report and menu.
   Scheduled reports with synthetic keys post at channel level. This prevents `invalid_thread_ts`

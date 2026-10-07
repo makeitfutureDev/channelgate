@@ -72,7 +72,12 @@ export function createPubSubPuller({
     });
     if (!res.ok) {
       const text = await res.text().catch(() => "");
-      const err = new Error(`Pub/Sub ${path} failed (${res.status}): ${text.slice(0, 300)}`);
+      let detail = text.slice(0, 300);
+      try { detail = String(JSON.parse(text).error?.message || detail).slice(0, 300); } catch { /* non-JSON response */ }
+      const remedy = res.status === 403
+        ? ` Check that the configured service account has Pub/Sub Subscriber on ${subscription}, then reconnect Google Chat.`
+        : "";
+      const err = new Error(`Pub/Sub ${path} failed (${res.status}): ${detail}${remedy}`);
       err.status = res.status;
       // 401/403/404 are configuration facts, not weather: a revoked key, a service account without
       // roles/pubsub.subscriber, or a subscription that does not exist. Backing off and retrying

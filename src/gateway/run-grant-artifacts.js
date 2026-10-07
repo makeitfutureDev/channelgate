@@ -313,9 +313,10 @@ export async function createRunGrantArtifacts({
         description: "Private skill grants for one gateway run",
         skillNames: userSkills,
       });
-      if (personal.missing.length) {
-        throw new Error(`Personal skill grants could not be loaded: ${personal.missing.join(", ")}`);
-      }
+      // An unavailable grant or dependency is a profile warning, not a reason to strand every
+      // request by this author. Keep the available instructions isolated and report omissions to
+      // the orchestrator, just as for shared skills. Ownership/confinement checks still throw.
+      missingSkills = [...new Set([...missingSkills, ...personal.missing])];
       if (personal.populated) {
         claudePluginDirs.push(pluginDir);
         claudePluginEphemeral = true;

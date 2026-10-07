@@ -11,13 +11,13 @@
 //   • answer 200 immediately and run the turn afterwards — Bot Service expects a fast ack and
 //     retries anything else, so doing the work inline would deliver the same message repeatedly
 import { createHash } from "node:crypto";
-import { isTeamsCardInteraction } from "./interactions.js";
+import { isTeamsCardInteraction, teamsCardErrorResponse } from "./interactions.js";
 import { verifyTeamsRequest, activityFingerprint, createJwksCache } from "./verify.js";
 import { normalizeActivity } from "./activity.js";
 import { validateServiceUrl } from "./api.js";
 import { createDedupe } from "../googlechat/pubsub.js";
 
-export function createTeamsWebhook({ appId, botId = "", onMessage, jwks = null, log = console, dedupe = null, onActivity = null, graphEventsEnabled = false, onInvoke = null, resolveFile = null } = {}) {
+export function createTeamsWebhook({ appId, botId = "", onMessage, jwks = null, log = console, dedupe = null, onActivity = null, graphEventsEnabled = false, onInvoke = null, resolveFile = null, getActivationReactions = () => undefined } = {}) {
   if (!appId) throw new Error("Teams webhook requires the bot app id");
   if (typeof onMessage !== "function") throw new TypeError("Teams webhook requires an onMessage handler");
   const keys = jwks || createJwksCache();
@@ -49,21 +49,25 @@ export function createTeamsWebhook({ appId, botId = "", onMessage, jwks = null, 
     }
 
     if (isTeamsCardInteraction(activity)) {
-      if (!onInvoke) { res.status(501).json({ error: "Teams card actions are not configured" }); return; }
-      if (!activity.id || !activity.from?.id || !activity.conversation?.id) { res.status(400).json({ error: "Incomplete card interaction" }); return; }
+      const reject = (status, code, message) => {
+        const result = teamsCardErrorResponse(activity, status, code, message);
+        res.status(result.status).json(result.body);
+      };
+      if (!onInvoke) { reject(501, "NotImplemented", "Teams card actions are not configured"); return; }
+      if (!activity.id || !activity.from?.id || !activity.conversation?.id) { reject(400, "BadRequest", "Incomplete card interaction"); return; }
       // Retried invokes must return the same result, including retries arriving during dispatch.
       // Business handlers additionally enforce persisted single-use ownership for mutations.
       const key = createHash("sha256").update(JSON.stringify([activity.id, activity.from.id, activity.conversation.id])).digest("hex");
       for (const [id, entry] of invokes) if (entry.finished && entry.at < Date.now() - 600_000) invokes.delete(id);
       if (!invokes.has(key)) {
-        if (invokes.size >= 500) { res.status(429).json({ error: "Card action capacity reached; retry later" }); return; }
+        if (invokes.size >= 500) { reject(429, "TooManyRequests", "Card action capacity reached; retry later"); return; }
         const entry = { at: Date.now(), finished: false };
         entry.result = Promise.resolve().then(() => onInvoke(activity)).then(result => {
           if (!result || !Number.isInteger(result.status) || result.status < 200 || result.status > 599) throw new Error("Invalid Teams invoke response");
           return result;
         }).catch(() => {
           log.error?.("[msteams] card action failed");
-          return { status: 500, body: { error: "Card action failed" } };
+          return teamsCardErrorResponse(activity, 500, "InternalServerError", "Card action failed. Reopen the controls before trying again.");
         }).finally(() => { entry.finished = true; });
         invokes.set(key, entry);
       }
@@ -80,7 +84,7 @@ export function createTeamsWebhook({ appId, botId = "", onMessage, jwks = null, 
       // Graph is the sole owner of revisions/reactions when enabled; two transports must not
       // dispatch the same action twice. New Bot Framework messages retain their attachment path.
       if (graphEventsEnabled && String(activity.conversation?.conversationType).toLowerCase() !== "personal" && ["messageupdate", "messagereaction"].includes(String(activity.type).toLowerCase())) return;
-      const message = normalizeActivity(activity, { botId, resolveFile });
+      const message = normalizeActivity(activity, { botId, resolveFile, activationReactions: getActivationReactions() });
       if (!message) return; // not a message activity, or our own echo
       await onMessage(message, { serviceUrl });
     } catch (err) {

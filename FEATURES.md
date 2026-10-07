@@ -39,23 +39,171 @@
   writing MCP config files, which the engines ignore (`--setting-sources ""`,
   `--strict-mcp-config`, Codex `--ignore-user-config`).
   → TEST-PLAN: Custom MCP connections.
+## Platform activation emoji settings
+
+- Admin Settings → Agent defaults → **Message activation reactions** has independent Slack,
+  Microsoft Teams and Google Chat lists. The existing `mentionReactions` key and Slack selection
+  remain compatible; Teams uses `teamsMentionReactions`, Google Chat uses
+  `googleChatMentionReactions`. Empty lists restore each platform's defaults.
+- Teams selection is live for native activities and Graph history intake, including the existing
+  robot, Alien and Like alias families, Unicode/reference-ID matches and qualified robot metadata.
+  Custom selections replace activation defaults; Stop and Tick stay fixed. Saved configuration
+  changes carry a monotonic timestamp, prevent historical/queued activation replay, and preserve
+  existing event identities and reactor authorization. Teams help shows its current activation list.
+- Google Chat's Unicode emoji selection is stored independently. The current interaction-event
+  transport does not receive reaction events, so this setting alone cannot activate Google Chat
+  messages. The UI states that limitation; Workspace Events subscriptions are separate work.
+
+
+## Microsoft Teams model command
+
+- Bare `/model` opens a native engine/model/effort picker in the source conversation, showing
+  the current session selection. Choose a compatible combination and **Apply to this session**
+  to change its next turn; `/settings` → General manages conversation defaults. Typed
+  `/model <engine> <model|default>` and `/effort <level|default>` remain available.
+- The picker preserves channel threads and group quote/session continuity, offers enabled
+  engines, respects a dedicated channel Codex login, and rechecks membership and runtime policy
+  on submission. Busy sessions refuse changes; expired, foreign and replayed controls cannot
+  write. Execute and legacy Submit both replace the original card with the outcome.
+
+## Unavailable skill grants
+
+- An unavailable personal skill or `requires:` dependency no longer blocks the author's entire
+  turn. Available skills still load into the isolated per-run plugin/catalog; missing, awaiting-review
+  and removed entries stay out. A warning names unavailable skills in streamed and final replies,
+  including either cross-engine fallback. Shared-skill omissions use the same warning path.
+  Stored grants remain unchanged so restoring a source can reactivate it. Personal ownership,
+  runtime artifact and confinement errors still reject the run.
+
+## Microsoft Teams help guide
+
+- Teams `/help` returns a practical **How to use me** guide and its supported command list
+  in a native Adaptive Card. Separate title/section blocks, spaced paragraphs, individual emoji
+  and command rows, and native monospace command styling keep the guide readable without relying
+  on Markdown soft line breaks. Full paragraph-spaced text is the fallback if card delivery fails.
+  It covers mentions and session continuity, reaction activation, local voice transcription,
+  stop/queue behavior, private workspace files and file consent, settings and variables,
+  Composio, skills, conversation memory/rules, reminders, schedules and background work.
+  Examples use Teams controls and explain their permissions and configuration requirements.
+  The authorized native command responds before an engine turn, in the requesting conversation.
+  Quoting the help card in a group chat continues the same session.
+- Reaction labels show Teams picker names and actual IDs: Alien (`:alien:`), Heart eyes robot (`:hearteyesrobot:`),
+  Stop sign (`stopsign`), and Tick button / Checkmark button (`2705_whiteheavycheckmark`).
+  The guide explains that typing an ID as a message does not add a reaction. Teams intake recognizes
+  both `hearteyesrobot` and the picker shortcut `:hearteyesrobot:` as activation IDs. Like (`like` or
+  Unicode 👍, including skin tones) is an alternative. Alien accepts `alien`, `:alien:`, Unicode 👽
+  and the documented `1f47d_extraterrestrialalien` ID; help recommends Alien. Its separate persisted
+  introduction cutoff excludes Alien history from before this expansion without resetting earlier
+  cutoffs. Graph also accepts the Heart eyes robot variant encoded as 😍 only with the exact
+  provider name `Heart eyes robot` and no custom content URL in both added history and current
+  reactions. Plain Heart eyes and unnamed history stay inactive. Its separate persisted cutoff
+  prevents newly recognized robot metadata replaying older history. Existing robot IDs remain supported alongside
+  `stopsign` and `2705_whiteheavycheckmark`, plus Unicode/legacy aliases. Activation starts a request
+  as the reactor. Stop cancels only the selected session’s active and queued work with the same
+  author/admin checks as `/stop`. Channel replies and group quotes resolve to their stored root.
+  Tick closes a tracked reminder’s acknowledgment chain from its original or escalation message;
+  reaction removal cannot reopen it. A tick on an ordinary message reports no pending reminder.
+  Teams personal follow-up dismissal remains unavailable. All actions pass conversation admission,
+  reactor authorization and the sudo thread gate before any mutation; target text cannot execute
+  a slash command. Graph and native events retain single transport ownership, stable deduplication
+  and fresh/current reaction checks. Newly accepted alias spellings have a persisted subscription
+  cutoff so older reactions cannot activate on later unrelated Graph updates. Group/channel reactions need configured event delivery and
+  Microsoft permissions. The handlers precede engine dispatch for Stop/Tick.
+
+## Claude login for nested commands
+
+- Before each container turn, the gateway refreshes a protected Claude login independently of the
+  selected engine. A Codex, Qwen or Qwen EU turn can explicitly run `claude -p --model <Claude model>`
+  without switching its thread. Fresh, resumed, background-agent, scheduled and API turns use the
+  same setup. The channel HOME retains only a channel-bound egress placeholder; OAuth refresh
+  tokens and real API keys stay on the daemon. Missing authentication clears the managed login
+  without preventing another configured engine from starting.
+- Qwen's main process keeps its own provider endpoint and credential. A nested `claude` launcher
+  clears the inherited provider settings and nested-session guard, then loads the Anthropic relay.
+  SSH/editor launchers preserve the same HOME fallback. API-key installations also use protected
+  relay grants limited to `api.anthropic.com`; rotation, revocation and live-work checks remain
+  enforced by the proxy. Persistent setup requires proxy mode and a bound channel; host and legacy
+  bridge runs retain their existing authentication paths. API keys configured for a custom
+  Anthropic-compatible endpoint are excluded from the nested Anthropic relay. This does not create a provider login
+  when the operator has configured none, or add gateway accounting/MCP context to a bare child CLI.
+
+## Gateway model shortcuts
+
+Admins can add gateway-wide model shortcuts in Settings → Access & security → Model shortcuts. Each name selects an engine and model. In Slack, `@agent :astra task` pins that engine and model to the current thread and runs the task; `@agent :astra` switches the thread without starting an agent turn. Slack's automatically inserted space after the mention is accepted. Changing a mapping affects later shortcut selections, while threads already pinned keep their selected model. Channel runtime-change access and dedicated Codex-login restrictions apply.
+
+## Public documentation website
+
+- `documentation/` builds a static Astro/Starlight documentation section for
+  `channelgate.dev/docs` in the same Vercel website project as the marketing pages and blog.
+  The public handbook source now covers 151 pages: 106 dedicated feature guides in 12 groups,
+  13 configuration guides, 13 control references, four directories/maps, and the existing
+  15 overview, walkthrough, installation,
+  technical-reference and resource pages. Feature guides explain use, setup, examples,
+  permissions and practical limits; configuration guides distinguish gateway, conversation,
+  personal and thread scopes.
+- The welcome page keeps the same persistent sidebar as articles, with a Start here section,
+  grouped feature navigation, configuration guides, technical references and resources. Search,
+  current-page navigation, theme controls and responsive layout use Starlight. A shared handbook
+  registry defines directory cards and sidebar entries together. Native Slack report artifacts,
+  Google Drive workspace sync and durable thread loops have their own guides alongside the
+  workspace, engine, knowledge/integration, access, platform, automation and operations topics.
+- Thirteen published guides are generated at build time from this repository's canonical
+  Markdown files; the other 138 pages are authored in `documentation/src/content/docs/`.
+  Repository-relative links resolve to a published guide or the source file on GitHub's `beta`
+  branch. The export copies only the `/docs` subtree and entry point into an existing static
+  website output, then merges documentation URLs into its sitemap. The existing Vercel project
+  builds these docs automatically from public beta on each website deployment using
+  `documentation/scripts/vercel-build.sh` and a temporary checkout outside the website output.
+- The functionality map links all 45 areas of the product inventory to practical guides.
+  The control reference documents all 104 gateway and 10 external skills-library tool definitions
+  with inputs, defaults, authority, results, limits and examples. A source-registration check
+  requires each tool exactly once; unknown or duplicate reference headings fail the build.
+  Documentation CI also runs on tool-source and feature-catalog changes. This verifies inventory
+  and control coverage; peer review verifies user-facing claims against current implementation.
+- Handbook source and configuration were cross-reviewed against the public feature record,
+  canonical operator references and implementation. Microsoft Teams and Google Chat remain
+  explicitly Beta; optional VPN provisioning, engine-specific approvals and admin-only host
+  access retain their documented restrictions. This documentation change introduces no gateway
+  runtime behavior. The complete-functionality expansion is published at `/docs`; build,
+  browser, export, preview and production evidence is recorded in `TEST-PLAN.md`.
+
+## Conversation sources and Teams names
+
+- Conversations has an independent source filter: All sources, Google Chat, Slack, or Teams.
+  It combines with search and All / Channels / DMs, including legacy Slack records.
+- Teams channel titles use `#team-channel`, taking names from activities or the bot’s
+  team/channel directory. Existing ID-only records refresh on the next Teams message;
+  the UI shows `#teams-channel` while unresolved. IDs, work folders, and settings stay stable.
+  Directory errors preserve a previously resolved name and never block a turn.
+
+## Runtime history transfer and Google Chat failure recovery
+
+- Switching a thread between its container and `/sudo` host carries native history without
+  treating the transfer's own lease as an active occupant that blocks container recreation.
+  Preparation reports waits, responds to Stop, and falls back to transcript recovery after a
+  bounded preparation timeout. An explicit Stop never starts a replacement engine turn.
+- Fatal Google Chat receiver errors stop intake and mark the connection as failed; health and
+  connector availability no longer report a stopped receiver as connected. Pub/Sub permission
+  failures name the Subscriber role and reconnect action. Reconnecting clears the failure, and
+  callbacks from older connections cannot overwrite the replacement connection's state.
 
 ## Channel-specific Codex authentication
 
-- Runtime settings ask which Codex login a channel uses before showing setup. The shared view
-  shows gateway Slack, Claude and Codex status, links to their settings, and direct shared Codex
-  ChatGPT/API-key sign-in. The channel view shows its dedicated Codex login and channel connection
-  locations. The selector changes only Codex authentication; Slack and Claude remain gateway-wide.
+- Runtime settings ask which Codex login a channel uses. The shared choice shows the channel's
+  engine, model and effort controls; gateway Codex sign-in lives under Settings → Agent defaults.
+  The channel choice shows its dedicated Codex login and fixes its engine to Codex. Slack and
+  Claude continue using the gateway connection.
 - Admins can select the gateway Codex login or a dedicated host-side `CODEX_HOME` for a channel
   from Runtime → Codex authentication. The dedicated directory is keyed to the conversation ID
   and does not fall back to another account when no login exists.
-- The channel editor can start ChatGPT device code sign-in or accept an OpenAI API key through a
-  private password field. It polls the sign-in state, lets an admin cancel a pending device flow,
+- A sign-in method dropdown starts ChatGPT device code sign-in as soon as it is selected, or
+  reveals the OpenAI API key field. The code copies when clicked. The editor polls sign-in state,
+  lets an admin cancel a pending device flow,
   and selects the channel login after success. The API returns only the method and device code;
   the key enters the Codex CLI through standard input and never appears in a response or argv.
 - Device code parsing handles the current Codex CLI's terminal coloring and full code length;
   the login process receives the public TLS CA bundle when the host uses a proxy. The browser
-  shows the sign-in link and code as soon as the CLI supplies them, with aligned login actions.
+  shows the sign-in link and code as soon as the CLI supplies them.
 - The operator can sign in to that directory with ChatGPT subscription access or an OpenAI
   Platform API key. In proxy-mode containers, both methods use a channel-bound placeholder:
   ChatGPT access tokens are relayed as JWT-shaped values, while API keys are relayed only to
@@ -66,6 +214,9 @@
   Runtime settings hide the redundant engine picker, and `/model` goes straight from scope to
   Codex model and effort. Older Claude sessions switch to fresh Codex sessions on their next turn.
   The admin UI describes the separate login storage without showing its internal host path.
+- Slack channel Settings shows the channel's own Codex login status, model and effort when the
+  dedicated login is selected. Its engine control disappears. Codex Cloud MCP discovery and
+  selected MCP launch policy use that channel's login; the gateway catalog remains separate.
 
 ## Optional isolated VPN database service
 
@@ -651,18 +802,49 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
   another person's active or queued work unless the requester is an administrator.
 - Work in one session queues with a visible position; unrelated sessions remain independent.
   Clear aborts active/queued work, waits for completion, and fences late session saves. Progress
-  updates at most every 30 seconds with elapsed time, last activity, and running subagents;
-  pending progress edits finish before the final answer replaces the placeholder. Interactive
+  shows the resolved model and current app/tool name, including completion/failure, thinking and
+  queue states. Phase changes coalesce at most once every three seconds (slower when the surface's
+  edit budget requires it); 30-second heartbeats show elapsed time, last activity and running
+  subagents. Tool arguments/results and reasoning payloads never appear in status. Pending
+  progress edits finish before the final answer replaces the placeholder. Interactive
   permission escalation is not enabled by these text controls.
-- Native Adaptive Cards provide Approve/Deny/Request changes actions and an inline session engine/model/effort
-  form. `/settings` opens in the source channel thread, group chat or DM, with submissions restricted
-  to the requesting user and current runtime policy. `/secrets` privately opens the same form with a link
-  to the existing authenticated administration website. This does not introduce a secret input
-  card or expose secret values in Teams. Signed Bot Framework invoke envelopes establish the
-  actor; opaque expiring card state retains the source conversation and session. An optional
-  changes comment refuses the current action even if Approve was clicked. Task-module dialogs
-  and broadcast mentions remain unimplemented. Current approval/channel access is rechecked
-  when deciding, including for the original requester using a private fallback link.
+- Teams and Google Chat foreground replies carry the same compact statistics as Slack: configured
+  model (provider model only when none is configured), duration, this turn's input/output tokens,
+  optional cost, context use and container image. The global **Show message cost** setting applies
+  to every surface. Statistics pass through the normal formatting/chunking path and survive a
+  failed placeholder edit through fresh delivery; errors/stops do not invent usage statistics.
+- Native Adaptive Cards provide Approve/Deny/Request changes actions and a **six-page
+  Settings console**: General, Variables, MCPs, Skills, Automations and Resume. `/settings` opens
+  with just the section menu in the original channel/thread or chat; selecting a section reveals
+  its settings below the menu in the same card, keeping its conversation and session. `/secrets`
+  starts on Variables. General shows both channel defaults and session pins, filters compatible
+  models/efforts, labels inheritance, respects dedicated Codex login locks and offers Follow
+  channel default. Teams runtime lists have one **Apply to channel** and one **Apply to thread**
+  button. Each model list contains only models for that scope's selected engine. After changing
+  Engine, **Load models** refreshes its choices without saving; incompatible draft model/effort
+  values clear to default. Compatible saved full model IDs stay selectable even if discovery
+  omits them. The compatible triple is saved atomically for that scope. Stale forms refuse to
+  overwrite newer runtime settings. Other settings keep their explicit controls.
+  Runtime edits in this console admit every authorized member, independently of the `/model`
+  text-command policy. Access policy and native member selection require managers/admins; Cloud
+  MCP and organization variable changes require admins. Complete roster selectors fall back to
+  the authenticated website above 25 members or the native card budget; stored selections are
+  never silently dropped. VPN uses the existing service, reporting unavailable where that
+  service does not support the Teams identifier.
+  Variable scopes, connection tokens, skill grants/templates and schedules share Slack's stores;
+  catalogs/templates/automations paginate. Inputs never prefill saved secrets, new secret entries
+  are masked, and destructive controls use consumed server-held confirmation tokens. Native
+  secret entry follows the existing 8,000-character/16-KiB submission bounds. Resume reads the
+  current project session and its engine/container terminal command at display time. Shared
+  cards list channel variables only, omit personal/organization credential metadata and private
+  ungranted MCP catalogs, and never publish administrator session commands. Private scopes remain
+  available in authenticated settings or an explicitly opened personal conversation. Accepted
+  tab and Apply actions update the same server-held card message, for Execute and Submit clients.
+  The card remains requester-bound; other members open their own controls. Signed invoke/Submit envelopes establish the
+  actor; opaque expiring state binds the original workspace, user and delivery conversation.
+  Current membership and roles are checked again on every interaction and at sensitive writes.
+  Task-module dialogs and broadcast mentions remain unimplemented. An optional approval changes
+  comment refuses the current action even if Approve was clicked.
 - `/files [folder]` opens a private, paginated workspace browser. Download, upload and eligible
   text-edit links use the existing signed browser grants, filesystem confinement and edit policy,
   with current Teams membership and gateway authorization checked again at use. A failed private
@@ -786,8 +968,10 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
   not a second code path. → TEST-PLAN: Qwen harnesses.
 
 ## Public website
-- The marketing / early-access site (and its lead-routing contract) lives in its own
-  repository — this repository ships product code only.
+- The public `channelgate.dev` website and customer portal are deployed separately on Vercel;
+  their source, lead routing and platform services are outside this repository. This repository
+  ships the self-hosted gateway daemon and its built-in local admin UI. A chat development channel is a
+  gateway conversation with its own workspace and container, not a Vercel deployment.
 - **Public entrypoint:** README leads with a descriptive product heading, team benefits and setup,
   followed by eight feature groups, practical use cases and explicit platform/engine support.
   Searchable product terms and descriptive documentation links cover self-hosted AI agents, Slack,
@@ -1352,6 +1536,12 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
   sessions remain fresh per run — the session key is minted per fire and never derived from the
   reused anchor, so grouping the day's results never joins them into one conversation. Existing
   schedules retain standard per-run announcements. → TEST-PLAN: Scheduling & reminders.
+- Scheduled tasks can use `interval_days` for a fixed 24-hour-day cadence (including exactly
+  14 days), and `delivery:"dm-on-match"` with a required `match_prefix` for quiet monitoring.
+  The scheduler posts no start or routine result; only a result beginning with the prefix is
+  sent as a DM to the creator, then the schedule stops. Failed runs remain in schedule status and events. The next interval
+  advances from the planned due time, skipping missed periods rather than replaying checks.
+  → TEST-PLAN: Scheduling & reminders.
 - Native `/loop` in a thread: Claude Code's own loop skill paces itself with `ScheduleWakeup` /
   `CronCreate`, both of which are session-local (the harness documents its cron store as "gone when
   Claude exits") and therefore inert in a headless turn. The daemon reads the pacing call out of the
@@ -1549,6 +1739,21 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
   overrides that don't belong to the new engine, starts a fresh session (the new engine can't
   resume the old one's conversation), and replays the Slack thread context into it so the new
   engine continues the conversation instead of starting blind.
+- Slack `@agent /fork <new message>` branches a completed Claude or Codex container session using
+  the engine's native fork command. The bot posts a new top-level message linking to the source,
+  posts the new request in that thread, links back from the source, and runs the request in the
+  forked session. The source session keeps its ID and history; the new Slack `thread_ts` maps to
+  the engine's distinct child ID. Engine, model, effort and clean-mode pins carry into the branch.
+  `@agent /fork :model-shortcut <new message>` selects a configured model for the child and
+  clears its inherited effort pin, leaving the source unchanged. It uses the same model-change
+  access policy as ordinary shortcuts. A shortcut for a different engine starts a fresh session
+  in the linked child thread and replays the source's Slack messages through the existing bounded
+  context handoff. It does not transfer the old engine's native transcript/tool state. The fork
+  command and later source messages are excluded; unavailable Slack history is refused before
+  creating the child. Clean threads stay bare without history replay. Dedicated channel Codex
+  logins stay on Codex. Unknown, disabled or invalid targets and missing request text are refused
+  before a child thread is posted.
+  A running or sudo/source-host session is refused until it can be forked safely.
 - Gateway-wide **default model** per engine (Settings → Engine & runtime, validated like `/model`):
   when a thread/channel/DM-template sets no model, the run gets the gateway default as an explicit
   `--model`/`-m` — so the admin's interactive terminal `/model` choice (written to
@@ -1611,6 +1816,15 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
   `availability` / `connection` (an overload, a 5xx, a `server_error` label, a dropped connection —
   never the catch-all `provider` kind or the bare "API Error:" prefix a rejected request also
   carries). The knobs are read per turn, so `.env` / settings values count without a restart.
+  → TEST-PLAN: Engines.
+- **Codex capacity after partial work continues in its existing session.** A plain provider
+  "Selected model is at capacity" verdict after a tool or streamed output starts one new Codex
+  turn against the same session id, with a prompt to inspect completed work and finish the
+  remaining request. It never resends the original prompt, so prior tool actions are not replayed
+  by the gateway. An unpinned model switches to another model in Codex's catalog; a model chosen
+  specifically for the thread stays pinned. The status and final answer identify the continuation,
+  an audit event records the model switch, and a second failure stops rather than looping.
+  Replay-safe capacity failures before any work still use the transient retry/failover path above.
   → TEST-PLAN: Engines.
 - **Bidirectional harness failover** when the engine driving a turn hits its usage/session/plan
   limit or its authentication is unavailable — Claude→Codex and Codex→Claude are the same mechanism,
@@ -2344,31 +2558,34 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
   approved-domain `network_proxy`, which then resets every tunnel (allowed domains included) —
   the boot assessment flags a stale pre-Codex install of the profile and says to re-run
   `--apply`. → TEST-PLAN: Security (Linux userns sandbox).
-- **Retired 2026-09-03 (Linux + containers only):** the rationale only — the job runs inside the channel's container, and both gates stay. Background shell jobs have two independent gates: the channel must be auto-mode (or admin-mode
-  with an admin author), then a gateway admin must click the durable exact-command Slack approval.
-  The second gate is never auto-approved because the command runs outside the engine sandbox.
-  → TEST-PLAN: Security (background gating).
-- **Retired 2026-09-03 (Linux + containers only):** admin channels run in containers too — the admin author's live turn keeps the bypass flag, its
-  work folder is bind-mounted read-write like any other's (a host directory used as the work folder
-  is visible in full, nothing beside it), and nothing else of the host is reachable — unless the
-  operator turns on **Full-access channels see the gateway home** (2026-09-06, Settings → Container
-  runtime, `containerFullAccessHome`, off by default): then every Full-access channel's container
-  also bind-mounts the gateway user's whole home read-write at its identical path (every channel's
-  work folder + memory, every repo, the gateway root incl. logs/metadata/credential stores; only
-  `~/.local/share/containers` masked), Claude's admin-run settings list it in
-  `permissions.additionalDirectories` (derived from the resolved mount), the grant is part of the
-  create-time fingerprint, no MCP tool can flip it, and it is per channel (every admitted author
-  reads; an admin author's turn writes). Because the mount is read-write for the whole container,
-  every run there that is NOT an admin author's — a member's or guest's turn, their background
-  agents — is **home-guarded** (2026-09-27, CTR-30): Claude's per-run settings deny `Bash`, `Write`,
-  `Edit`, `MultiEdit` and `NotebookEdit` outright (deny, not ask: a run's own author may approve
-  their own card), Codex runs in its read-only sandbox with no auto-approved escalation, and
-  plugin command servers are refused. An admin author's live turn (bypass) and the admin unattended
-  tier are unchanged. → TEST-PLAN: Container runtime (operator-home grant). **Admin mode delivers its documented contract** — "full tools, sandbox off": an admin author's
-  live foreground turn in an admin-mode channel runs with the bypass AND `sandbox.enabled: false`
-  (the flag alone never lifts the sandbox), so it can genuinely reach the whole account — while
-  the shared settings keep every other run fully sandboxed, and unattended admin runs stay at the
-  sandboxed auto tier. → TEST-PLAN: Security (Admin sandbox-off).
+- **Background shell jobs are gated by mode AND by where they run (2026-10-06).** The mode gate
+  is unchanged: the channel must be auto-mode (or admin-mode with an admin author). Inside the
+  channel's CONTAINER, an Auto-mode job then starts directly, as the author's own work — Auto
+  already auto-approves every foreground command in that same container and
+  `run_agent_in_background` runs there with no card, so the former admin-tier "Run it" card bought
+  nothing but a stall for non-admin authors (five of five durable cards in the Symphonia channel
+  were container jobs a non-admin could only Deny). Nothing a run can do changes what its container
+  mounts, so the job gains no access a foreground Auto turn did not have. Only an UNISOLATED
+  target — the `/sudo` host lane, or an embedder's own backend — still posts the durable
+  exact-command card, at the admin tier and naming the daemon account; that card is never
+  auto-approved. The `bg_start` audit event records the authority (`approvedBy`: the author for a
+  direct start, the clicker otherwise) and whether the job was isolated. Every agent-type approval
+  card now states its authority tier on the card ("Only a gateway *admin* can approve this; anyone
+  eligible may Deny or Comment"), so a member learns it before clicking rather than from the
+  ephemeral refusal after. → TEST-PLAN: Security (background gating), Automation.
+- **Admin home access is author-specific:** current organization admins in Admin/Full-access
+  channels can receive the optional operator-home mount (`containerFullAccessHome`, off by
+  default). Members and guests use a separate project container with Worker and the selected
+  Auto/Lean options, so they can edit the project without reading the operator home. The daemon
+  checks current roles at each spawn, including background work; memory reviews always use the
+  project lane. Admins retain legacy container/HOME/artifact state. Project authors get a fresh
+  `cgp2-` container, HOME and scratch volumes and a separate `.runtime-project-v2` artifact root;
+  they cannot
+  inherit old admin transcripts, CLI logins or run artifacts. Switching lanes starts fresh
+  engine history without importing admin context. Project files and channel memory remain
+  shared. The existing SSH refusal for home-enabled Admin channels remains in force.
+  The defensive home guard still denies writable tools if an untrusted run somehow receives a
+  home-mounted target. → TEST-PLAN: Container runtime (author-specific home access).
 - Approval-based authorization: admins + approved (MakeItFuture-list) users may talk in any
   channel they're in and in DMs; unknown users denied everywhere (incl. DMs) unless added as a
   per-channel guest. New users are recorded as un-approved pending an admin's approval.
@@ -2378,7 +2595,7 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
   boundary and the optional Admin/Full-access operator-home grant. Each generated guide names the
   resolved runtime's `containerFullAccessHome` setting and operator-home mount, including a gateway
   with the switch on but a Worker channel without the mount. It distinguishes the channel's own
-  `$HOME` from the mounted operator home, channel-wide reads from admin-author bypass tools, and
+  `$HOME` from the mounted operator home, admin-only home access from members' project access, and
   a missing runtime target from a known absent grant. The same facts reach Claude and Codex skill
   discovery, including clean workspaces. Admin guide overrides keep their documented precedence.
   → TEST-PLAN: Container runtime (operator-home guide acceptance).
@@ -2519,8 +2736,11 @@ are retired, bullet by bullet; everything else stands.
 - **Developers SSH into a channel container, not into the host** (`docs/SSH-ACCESS.md`). A person
   registers ONE public key once from chat (`add_my_ssh_key`, bound to the identity that pasted it,
   fingerprinted like `ssh-keygen -lf`, private keys and DSA refused, RSA under 2048 bits refused);
-  a channel manager grants that person SSH on a channel (`grant_channel_ssh` / `revoke_channel_ssh`,
-  audited as the `sshUsers` policy key, never admitting anyone `isAuthorized()` would refuse);
+  anyone already allowed in a channel, including a named guest, enables or removes their own SSH
+  access without manager/admin approval (`grant_channel_ssh` / `revoke_channel_ssh`, omit `user`
+  or pass their own id/mention). Personal key registration/removal are also self-service. Changes
+  for other people retain manager authorization and a manager approval card. Grants are audited
+  as the `sshUsers` policy key and never admit anyone `isAuthorized()` would refuse;
   `show_channel_ssh` prints the `~/.ssh/config` block. The connection goes to a dedicated,
   unprivileged login account on the gateway host whose sshd Match block forces the
   `cg-ssh-attach` wrapper (no pty, no forwarding, no shell; every exported key line is
@@ -3390,6 +3610,7 @@ are retired, bullet by bullet; everything else stands.
   restore, or log rotation. → TEST-PLAN: Update regression path isolation.
 - **Enterprise managed updates and durable progress**: only an entitled Enterprise deployment
   exposes the Update button and accepts managed update requests (Admin UI, Slack, or MCP).
+  The button also offers Repair gateway when code is current.
   Other editions retain the behind count and host-managed `npm run update`. Eligibility follows
   the existing verified-license and outage-grace rules. A separate systemd user service carries
   the updater across daemon cgroup teardown; inherited credentials travel through stdin, not unit
@@ -3402,7 +3623,8 @@ are retired, bullet by bullet; everything else stands.
   active transaction instead of starting an overlapping updater. Before touching Git, the runner
   checks the attached/clean/fast-forward checkout and upstream access, Node/npm, parseable
   settings, an active systemd service (the launchd probe retired 2026-09-03 — Linux only),
-  available disk, current daemon health, and a real isolated Claude turn. Missing Whisper assets
+  available disk and current daemon health. The detached host launcher runs `bash scripts/update.sh`;
+  provider logins, quotas and engine turns never gate installation. Missing Whisper assets
   add 2 GiB of required staging space to the 1 GiB base requirement (the extra macOS build staging
   retired 2026-09-03 — Linux only); the 1.5 GiB optional model is never downloaded silently when
   local Whisper is disabled.
@@ -3413,10 +3635,11 @@ are retired, bullet by bullet; everything else stands.
   lockfile, local config, `.env`, and a consistent SQLite copy under mode-0700
   `~/.channelgate/update-backups/<transaction>/`; fast-forwards, runs exact `npm ci --include=dev`, the
   production advisory gate, all tests, and optional provisioning; then restarts through the exact
-  systemd `MainPID` (the launchd restart retired 2026-09-03 — Linux only). Success requires a new
+  systemd `MainPID` with a bounded active-run drain (SIGUSR2 for Restart=on-failure; SIGTERM for always/on-success). Success requires a new
   daemon instance on the expected revision,
-  container runtime availability, Slack reconnect when it was previously connected, and another real
-  container smoke for every engine that passed baseline. A post-checkout failure resets the old revision, reinstalls its lockfile, restarts,
+  container runtime availability and Slack reconnect when it was previously connected. Readiness allows
+  ten minutes for startup catalog reconciliation. The same full transaction repairs exact dependencies,
+  provisioning and image drift even when Git is current, then restarts. A failed install resets the old revision, reinstalls its lockfile, restarts,
   and proves the restored build with the same checks. Runtime snapshots are operator recovery
   material and are never auto-restored, so writes made while a candidate briefly ran are not
   discarded.
@@ -3427,7 +3650,7 @@ are retired, bullet by bullet; everything else stands.
   `cg.image.version` label, expected version from the CANDIDATE's `containers/versions.json`, never
   a constant the runner imported before the checkout moved). It is the one step that never blocks:
   a failed build reports `run \`npm run build:image\`` and the update continues to the restart,
-  because the image already on disk still runs every container channel. Failed builds remain visible
+  with an explicit warning that new container runs may be blocked until the image is repaired. Failed builds remain visible
   and digest drift triggers a retry even when the checkout revision is unchanged. → TEST-PLAN: Container runtime (v0.8 P1).
 - **Truthful update status and final reporting**: atomic, non-secret phase/result state lives in
   `~/.channelgate/update-state.json`; logs live in `logs/update.log`; `/api/health` exposes the
@@ -4178,7 +4401,7 @@ are retired, bullet by bullet; everything else stands.
   fails any commit range that lacks a well-formed `Signed-off-by` trailer, wired into CI as a
   pull-request job, and `test/dco-check.test.js` covers the pure trailer check.
 
-- **Verified container updates:** update health probes run in a disposable confined container through each configured Claude/Codex runner; missing logins are explicit skips and no probes is a failure. Image source fingerprints detect stale CLI pins even when the image spec or checkout revision is unchanged, allowing Update to retry failed builds. Container status shows desired/built CLI versions and containers awaiting image adoption. Custom image refs require operator rebuilds and failed builds remain visible in update results.
+- **Verified container updates:** image checks run Node, Claude and Codex `--version` in a disposable network-off, read-only container without host mounts or credentials. The engine response probe remains a separate diagnostic, never an update prerequisite. Image source fingerprints detect stale CLI pins even when the image spec or checkout revision is unchanged, allowing Update to retry failed builds. Container status shows desired/built CLI versions and containers awaiting image adoption. Custom image refs require operator rebuilds and failed builds remain visible in update results.
 
 ### Real project skill synchronization and workspace reset
 

@@ -96,8 +96,8 @@ test("resolve: the target carries cwd, durable workDir, clean workspace, the art
   assert.equal(target.cwd, target.workDir);
   assert.match(target.cleanWorkDir, /clean-workspaces[\\/]slack[\\/]rt-core$/);
   // Every target has a mounted artifact dir now: there is no "today's host locations" fallback.
-  assert.equal(target.artifactDir, channelArtifactDir("rt-core", "slack"));
-  assert.match(target.artifactDir, /[\\/]\.runtime[\\/]slack[\\/]rt-core$/);
+  assert.equal(target.artifactDir, channelArtifactDir("rt-core", "slack").replace("/.runtime/", "/.runtime-project-v2/"));
+  assert.match(target.artifactDir, /[\\/]\.runtime-project-v2[\\/]slack[\\/]rt-core$/);
   assert.ok(target.container?.name, "the backend's prepareTarget filled in the container facts");
   assert.equal(target.fingerprint, undefined, "the fingerprint is asked of the backend, never stored on the target");
 

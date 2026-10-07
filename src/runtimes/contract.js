@@ -57,9 +57,10 @@ export const OPTIONAL_METHODS = Object.freeze([
   // authenticate in this runtime?" gate. The local runtime has none: the daemon's own logins are
   // right there.
   "credentialError",
-  // copyIn(target, entries) / copyOut(target, entries) → Promise<{ copied: number }> — move
+  // copyIn(target, entries, opts) / copyOut(target, entries, opts) → Promise<{ copied: number }> — move
   // ENGINE STATE between the daemon's filesystem and this runtime's. `copyIn` writes into the
-  // runtime, `copyOut` reads out of it; both take CarryEntry[] (src/runtimes/copy.js) whose
+  // runtime, `copyOut` reads out of it. opts carries { lease, signal, announce } into preparation.
+  // Both take CarryEntry[] (src/runtimes/copy.js) whose
   // `from`/`to` are absolute on their own side and share the relative tail `rel`. They exist so a
   // thread's engine-native history follows it when its channel changes runtime backend — see
   // src/gateway/session-carry.js. A backend that declares neither simply cannot carry, and the
@@ -78,9 +79,9 @@ export const OPTIONAL_METHODS = Object.freeze([
   // MCP argument; args contain state paths/session counters only. Return minimized usage/identity,
   // never raw transcripts. Called while the run lease holds; no lifecycle reconfiguration.
   "inspectUsage",
-  // writeHomeFile(target, { file, body }) → Promise<void> — place ONE small engine-login file in
+  // writeHomeFile(target, { file, body, mode = 0o600 }) → Promise<void> — place ONE private file in
   // the runtime's persistent HOME (the relayed Codex auth.json, src/gateway/codex-token-relay.js):
-  // written 0600 and RENAMED into place, never through a mount (a mounted destination refuses).
+  // written 0600 (0700 for a launcher) and RENAMED into place, never through a mount.
   // `file` is an absolute in-runtime path under the HOME; `body` is never a real credential.
   "writeHomeFile",
 ]);
@@ -202,11 +203,11 @@ export const HELPER_COMMANDS = Object.freeze([
  *                                  image's /opt/channelgate bundle). Unknown names throw.
  *
  * OPTIONAL (see OPTIONAL_METHODS):
- * copyIn(target, entries)        → Promise<{ copied }> — write engine state from the DAEMON's filesystem
+ * copyIn(target, entries, opts)  → Promise<{ copied }> — write engine state from the DAEMON's filesystem
  *                                  into this runtime. Host: a plain node:fs copy. Container: stage under the
  *                                  bind-mounted artifact dir, then one exec inside that copies each entry
  *                                  into place; the staging dir is removed either way.
- * copyOut(target, entries)       → Promise<{ copied }> — the same in reverse. Overwrite, never delete, and a
+ * copyOut(target, entries, opts) → Promise<{ copied }> — the same in reverse. Overwrite, never delete, and a
  *                                  missing source is 0 copied rather than an error.
  * inspectState(target, request)  → Promise<[{ path, mtimeMs, head }]> — the files inside this runtime that
  *                                  match `request.globs` (carry-style: `*` inside a segment, never across

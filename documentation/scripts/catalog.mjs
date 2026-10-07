@@ -1,0 +1,15 @@
+export const guides = [
+  { source: 'INSTALL.md', slug: 'installation', title: 'Install ChannelGate', description: 'Prepare a Linux host, connect Slack, and run the gateway.' },
+  { source: 'docs/PLATFORMS.md', slug: 'platforms', title: 'Chat platforms', description: 'Slack setup and Microsoft Teams and Google Chat Beta support.' },
+  { source: 'docs/ENGINE-CAPABILITIES.md', slug: 'engines', title: 'Engines and permissions', description: 'Engine capabilities, runtime boundaries, and permissions.' },
+  { source: 'docs/SKILLS.md', slug: 'skills', title: 'Skills and plugins', description: 'Manage skills, plugins, sources, grants, and publishing.' },
+  { source: 'docs/SSH-ACCESS.md', slug: 'ssh-access', title: 'SSH access', description: 'Grant developers SSH access to conversation containers.' },
+  { source: 'docs/OPERATIONS.md', slug: 'operations', title: 'Operations', description: 'Backups, containers, updates, restore, and troubleshooting.' },
+  { source: 'docs/PRIVACY-AND-DATA-FLOW.md', slug: 'privacy', title: 'Privacy and data flow', description: 'Storage, credentials, and external requests in your deployment.' },
+  { source: 'docs/COMPATIBILITY.md', slug: 'compatibility', title: 'Compatibility', description: 'Supported host and engine versions and release gates.' },
+  { source: 'docs/LICENSE-KEYS.md', slug: 'licensing', title: 'License keys and limits', description: 'Organization keys, tiers, usage reporting, and offline operation.' },
+  { source: 'docs/LICENSING-FAQ.md', slug: 'licensing/faq', title: 'Licensing FAQ', description: 'Worked examples for operating and providing ChannelGate.' },
+  { source: 'docs/LICENSING-SUMMARY.md', slug: 'licensing/summary', title: 'Licensing summary', description: 'A plain-language summary of the license terms.' },
+  { source: 'CHANGELOG.md', slug: 'changelog', title: 'Changelog', description: 'Changes between ChannelGate releases.' },
+  { source: 'SUPPORT.md', slug: 'support', title: 'Support', description: 'Find help and report problems.' },
+];

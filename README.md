@@ -67,9 +67,29 @@ prerequisite and run `npm run build:image` before sending the first prompt.
    explicit channel guest grants admit additional users. DMs require approval or admin status.
 5. DM the bot, or invite it to a channel and mention it: `@channelgate summarize the files in this folder`.
 
+For a shared deployment, follow the [first team workflow checklist](./INSTALL.md#set-up-a-first-team-workflow)
+to set access, workspace context, skills and connected accounts before automating a recurring task.
+
 For a service that starts at boot, follow the [systemd installation steps](./INSTALL.md#the-systemd-service-starts-at-boot-restarts-on-failure).
 The service uses its own account and needs credentials configured for that account. For other
 chat surfaces, follow the [Microsoft Teams and Google Chat setup guide](./docs/PLATFORMS.md).
+
+### The website, gateway and development channels
+
+These are separate parts of a ChannelGate setup:
+
+| Part | Where it runs | What it does |
+| --- | --- | --- |
+| **Public website and customer portal** (`channelgate.dev`) | Vercel, with platform services | Product information, account signup and license management. It is deployed separately from this repository. |
+| **Gateway** | The operator's Linux host | Connects to chat, runs agent turns in conversation containers, and serves the built-in admin UI at `127.0.0.1:4747` by default. Operators may expose that UI through their own tunnel or reverse proxy. |
+| **Development channel** | A conversation in a connected chat workspace | Has its own workspace, container, permissions and agent sessions. It is a place to work on code or websites, not a deployment target by itself. |
+
+Vercel can host a website built *using* a ChannelGate development channel; it does not host the
+ChannelGate daemon or that channel's container. A website deployment and a gateway software update
+are separate operations. A Vercel preview is a preview of the website, while `channelgate.dev` is
+its production address; neither is a gateway development channel. See
+[privacy and data flow](./docs/PRIVACY-AND-DATA-FLOW.md) for the specific requests a gateway sends
+to the platform.
 
 ## Full feature list
 
@@ -282,8 +302,9 @@ background and scheduled engine run uses the same runtime boundary.
 
 1. **Containers establish the default boundary.** Each conversation gets its own home and declared
    work/runtime mounts. Other channel workspaces and the operator's home are excluded by default.
-   An explicit, off-by-default Full-access home-sharing option exposes the operator's whole home
-   to admitted authors in those channels; choose shared work folders and this option deliberately.
+   An explicit, off-by-default Admin home-access option exposes the operator's whole home only
+   to current organization admins in Admin channels. Other members use a separate project
+   container with Worker permissions and isolated HOME, scratch files, artifacts and histories.
 2. **Egress goes through a per-channel proxy.** Containers run with no network of their own; the
    daemon's egress proxy is their only way out. It enforces the *Allow network* switch on every
    request (off: engine endpoints and selected connectors only), always refuses private, loopback
@@ -364,6 +385,11 @@ white-label — are described at
 [channelgate.dev/partners](https://channelgate.dev/partners?utm_source=github&utm_medium=readme&utm_campaign=channelgate).
 
 ## Documentation
+
+Read the [public documentation](https://channelgate.dev/docs) for guided setup, operating
+instructions and searchable reference pages. The standalone Astro/Starlight build in
+[`documentation/`](./documentation/README.md) is designed for `/docs` alongside the existing
+website and blog; it generates its reference pages from the Markdown guides below.
 
 | Guide | What it covers |
 | --- | --- |

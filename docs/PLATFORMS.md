@@ -1,8 +1,28 @@
 # Chat platforms
 
+## Message activation emoji settings
+
+Admin Settings → Agent defaults → **Message activation reactions** stores independent values for
+Slack, Microsoft Teams and Google Chat. Comma-separated entries are supported; a blank list resets
+the platform defaults. Slack uses emoji names (such as `robot_face` or `rocket`). Teams accepts
+reaction IDs or pasted Unicode; its robot/Alien/Like/Heart families and single-code-point reference
+IDs are matched across native and Graph forms. For other named Teams IDs, include the pasted
+Unicode emoji as another entry because Graph can return Unicode rather than the picker name.
+
+Teams saves take effect in reaction matching without reconnecting. The separate **Observe edits
+and robot reactions on all messages** option, installed app consent and healthy notification
+subscription are still required for reactions on unmentioned group/channel content. Changing an
+activation list does not change Stop/Tick controls. Old history and pending requests from a prior
+selection do not activate after a change; add a fresh reaction after saving.
+
+Google Chat stores a Unicode-only selection. Its current Pub/Sub interaction transport does not
+receive reaction events, so the field alone does not enable activation. Operational reaction
+intake would require a [Google Workspace Events subscription](https://developers.google.com/workspace/events/guides/events-chat)
+plus authenticated actor/message handling; this change does not create subscriptions or consent.
+
 ChannelGate speaks to three chat surfaces. Slack is GA; Google Chat and Microsoft Teams are in
-**Beta** — their transports are implemented and tested, but have not yet run against a live
-tenant, and their in-chat feature set is deliberately smaller (see *What works where* below).
+**Beta** — their in-chat feature set is deliberately smaller (see *What works where* below).
+Google Chat has been exercised against a live tenant; Teams still needs live tenant acceptance.
 
 Every surface goes through the same seam: a capability descriptor in `src/platforms/<id>.js`, a
 `ChatConnector` that owns the wire format, and one platform-neutral ingest path
@@ -20,20 +40,48 @@ rule — the same posture as Slack's Socket Mode.
 
 ### Setup
 
-1. **Google Cloud project** — enable the *Google Chat API* and the *Cloud Pub/Sub API*.
-2. **Topic + subscription** — create a topic (e.g. `chat-events`) and a **pull** subscription on it
-   (e.g. `chat-events-sub`).
-3. **Service account** — create one, download a JSON key, then:
-   - grant it `roles/pubsub.subscriber` **on the subscription**;
-   - grant Chat's publisher service account `chat-api-push@system.gserviceaccount.com` the role
-     `roles/pubsub.publisher` **on the topic** (this is what lets Google publish to it).
-4. **Chat app configuration** (Google Chat API → Configuration):
-   - app name, avatar, description;
-   - enable *Receive 1:1 messages* and *Join spaces and group conversations*;
-   - **Connection settings → Cloud Pub/Sub**, with the topic from step 2;
-   - subscribe to the message and membership events.
-5. **ChannelGate** — Settings → Connection → *Google Chat*: paste the service-account JSON, enter the
-   subscription as `projects/<project>/subscriptions/<name>`, Save, then **Connect**.
+1. **Google Cloud project:** enable the *Google Chat API* and *Cloud Pub/Sub API* in the same
+   project. Keep its project ID for the resource names below.
+2. **Pub/Sub topic and subscription:** create a topic such as `chat-events`, then attach a
+   **Pull** subscription such as `chat-events-sub`. The resource names have different forms:
+   `projects/<project>/topics/<topic>` and `projects/<project>/subscriptions/<subscription>`.
+3. **ChannelGate service account:** create a service account in the project and download its JSON
+   key. On the **subscription's Permissions** panel, grant that account **Pub/Sub Subscriber**
+   (`roles/pubsub.subscriber`). This is the identity ChannelGate uses to pull events and call the
+   Chat API; keep its JSON key private.
+4. **Chat app** (Google Chat API → Configuration): set its name, avatar, description, and
+   **App status → Live - available to users**. Enable interactive features, including direct
+   messages and, for spaces, *Join spaces and group conversations*. Set **Connection settings →
+   Cloud Pub/Sub** to the full topic name `projects/<project>/topics/<topic>`. Set visibility so
+   the intended testers can find the app, enable error logging, and **Save**.
+5. **Google Chat publisher:** on the **topic's Permissions** panel, grant **Pub/Sub Publisher**
+   (`roles/pubsub.publisher`) to the identity for the Chat app's configuration mode:
+   - **Google Workspace add-on:** copy **Service account email** from the Chat API Configuration
+     page's Cloud Pub/Sub connection settings (it may look like
+     `service-<project-number>@gcp-sa-gsuiteaddons.iam.gserviceaccount.com`). Grant that **exact**
+     address the publisher role on the topic. This is separate from the JSON-key account in step 3.
+     If the add-on checkbox is already selected and disabled, leave it selected; this mode works
+     with ChannelGate.
+   - **Standalone Chat app:** grant `chat-api-push@system.gserviceaccount.com` the publisher role
+     on the topic. Google instructs you to clear *Build this Chat app as a Google Workspace
+     add-on* when configuring a new standalone app. This publisher is **not** the one to use for
+     an add-on.
+6. **ChannelGate:** in Settings → Connection → *Google Chat*, paste the JSON key from step 3,
+   enter `projects/<project>/subscriptions/<subscription>`, **Save**, then **Connect**. A
+   *Connected — pulling …* status confirms the subscription can be polled; it does not establish
+   that Google Chat can publish to the topic.
+7. **Test:** add the Chat app to a space or open a direct message, then send a **new** message
+   mentioning it in a space. Check for an actual ChannelGate reply. The sender must also be an
+   approved user in ChannelGate's **Users** settings; otherwise the app responds that the user
+   is not approved.
+
+If the pull fails with `403`, recheck the step 3 **subscription** grant and reconnect. If it is
+connected but receives no messages, recheck the step 5 **topic** grant for the app's actual mode,
+then verify the Chat app is Live, interactive features are enabled, and its configured topic name
+matches step 2. Google's [Workspace add-on Pub/Sub guide](https://developers.google.com/workspace/add-ons/chat/quickstart-pubsub),
+[standalone Chat app Pub/Sub guide](https://developers.google.com/workspace/chat/quickstart/pub-sub),
+and [Chat troubleshooting guide](https://developers.google.com/workspace/chat/troubleshoot-chat-apps)
+cover these distinct configurations.
 
 The app's own `users/…` id is learned automatically the first time it is added to a space; the
 optional field exists only to short-circuit that.
@@ -214,12 +262,72 @@ personal-chat file consent, then upload/install that app revision with the Teams
 above. Adaptive Cards and their inline forms do not require additional Graph RSC permissions.
 Task-module dialogs and broadcast mentions remain unavailable.
 
-- `/settings` opens a session engine/model/effort form in the source channel thread, group chat or DM.
-  Only the requesting user may submit it, subject to current access policy. `/secrets` privately opens the same card with
-  a link to the existing authenticated admin website. Enter secrets there, never in Teams cards.
+- `/help` provides a practical **How to use me** guide and the supported Teams command list
+  in a native Adaptive Card, with separate headings, spaced paragraphs, individual emoji/command
+  rows and monospace command text. Full spaced text is the fallback if card delivery fails.
+  It explains personal/channel/group session continuity, mentions, voice, files, settings,
+  connections, skills, memory, reminders, schedules and background work. In channels and group
+  chats, mention the bot with the command; quote the original message or bot reply in a group
+  chat to address that session. Help is returned by the gateway before invoking an engine.
+  The reaction legend recommends 👽 Alien (`:alien:`) and also shows Heart eyes robot (`:hearteyesrobot:`),
+  Stop sign (`stopsign`), and Tick button / Checkmark button (`2705_whiteheavycheckmark`).
+  Typing an ID as a message does not add a reaction. Heart eyes robot activates a request as the reactor; bare
+  `hearteyesrobot` and the picker shortcut `:hearteyesrobot:` are accepted. Alien accepts `alien`,
+  `:alien:`, Unicode 👽 and `1f47d_extraterrestrialalien`, with its own saved introduction cutoff
+  to exclude pre-upgrade reactions. Like is an alternative;
+  intake recognizes `like`, Unicode 👍 and their skin-tone variants. Legacy `hearteyesrobot` and
+  `smilerobot` event IDs remain recognized. Graph's 😍 variant activates only when added history
+  and the current reaction both identify `Heart eyes robot` with no custom content URL.
+  Ordinary Heart eyes, unlabelled history and custom images do not activate. New alias recognition starts at a saved subscription
+  cutoff to prevent old reactions replaying on unrelated updates. Microsoft calls the green tick **Checkmark button**, ID
+  `2705_whiteheavycheckmark`; Stop sign is `stopsign`. See the
+  [Teams reactions reference](https://learn.microsoft.com/en-us/microsoftteams/platform/agents-in-teams/teams-reactions-reference).
+  Stop sign cancels the selected session’s active and queued requests, with author/admin checks.
+  Tick button acknowledges a tracked reminder from its original or second-notice message; removing
+  it does not reopen the reminder. A tick on ordinary content reports no pending reminder.
+  Teams personal follow-up dismissal is not available. All actions require authorized reactors and
+  delivered reaction events. Group/channel delivery uses configured Graph events and Microsoft
+  permissions; personal chat accepts delivered Bot Framework reactions. `/stop` and `/cancel`
+  remain available as typed commands.
+- `/model` shows the current session selection and opens an engine, model and effort picker
+  in the same conversation/thread. Choose a compatible combination and Apply to this session;
+  changes affect its next turn. Enabled engines and dedicated Codex login restrictions apply.
+  Runtime policy is rechecked on Apply, and busy sessions refuse changes. Typed
+  `/model <engine> <model|default>` and `/effort <level|default>` remain available.
+- `/settings` opens a six-page console in the original channel/thread or chat: General,
+  Variables, MCPs, Skills, Automations and Resume. It retains the source conversation and session
+  even when opened from a channel or group chat. `/secrets` opens its Variables page directly.
+  No proactive personal chat is opened for settings. Buttons update that same card; other
+  members open their own requester-bound `/settings` card.
+  Initially only the section menu is shown; selecting a section reveals its controls below the
+  menu. Switching sections replaces the controls while keeping the menu visible.
+  General edits channel defaults and current-session engine/model/effort independently, with
+  engine-labelled model choices, inherited labels and Follow channel default. One Apply to channel
+  or Apply to thread button saves that scope's engine/model/effort together after compatibility
+  checks. No intermediate runtime writes are needed; stale forms must be reopened. Other settings
+  keep their explicit controls. Page navigation discards unsaved drafts. Authorized users can edit runtime,
+  variables, connections, channel skills and automations, matching Slack Settings. Access controls
+  require a current manager/admin, organization variable changes and Cloud MCP require admins.
+  Native member selectors defer to the authenticated website when the complete roster exceeds
+  25 members, exceeds the card budget; no hidden
+  selection is silently removed. Former-member selections have an explicit replacement warning. VPN reports the existing service's actual availability;
+  operator provisioning and unsupported Teams service identifiers are not changed by this UI.
+  Variables and tokens are write-only: stored values never prefill a card, new entries use Teams'
+  masked input style, and removal/reset actions require a one-use confirmation. Native entries
+  follow the existing 8,000-character field and 16-KiB submission limits; larger values need the
+  authenticated browser editor. Catalogs, templates and automations paginate. Resume resolves
+  the current session at display time and provides its terminal command. Shared channel cards
+  expose channel variable metadata only and never administrator session commands or ungranted
+  private connection catalogs. Personal/organization variable controls remain in authenticated
+  settings or an explicitly opened personal conversation.
+  The sender name is the installed Teams app/bot identity. If another bot name appears, verify
+  that the installed manifest bot ID, the configured Teams App ID and the Azure bot messaging
+  endpoint all belong to the intended installation; changing card text cannot rename that app.
   Native approvals provide Approve/Deny/Request changes and supported scope choices. An optional
   changes comment refuses the current action, including when Approve was clicked. Card submissions
-  take identity from the verified Microsoft envelope.
+  take identity from the verified Microsoft envelope and repeat membership/role checks. Verified
+  Execute errors use the Teams invoke response envelope; invalid request authentication remains
+  an HTTP rejection. Legacy Submit replacements use only the card's server-stored message target.
 - `/files [folder]` privately browses the current conversation workspace. Open a file to download
   it or edit eligible text; users with file-write access can open the uploader. Browser links are
   short-lived grants and recheck current Teams membership and gateway policy. A group request

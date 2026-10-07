@@ -10,9 +10,11 @@ import { spawn } from "node:child_process";
 import { requireAdapter } from "../engines/registry.js";
 import { processFailureMessage } from "../util/process-outcome.js";
 import { codexNoTelemetryArgs } from "../engines/codex-telemetry.js";
+import { channelCodexHome, codexAuthProcessEnv } from "./channel-codex-auth.js";
 
-const cache = new Map(); // engine -> { ts, data }
-const refreshing = new Map(); // engine -> in-flight refresh promise (dedupe concurrent refreshes)
+const cache = new Map(); // engine + Codex login source -> { ts, data }
+const refreshing = new Map(); // same key -> in-flight refresh promise
+const cacheVersions = new Map(); // invalidation prevents an older in-flight probe repopulating a login
 const TTL_MS = 5 * 60 * 1000; // `claude mcp list` health-checks every server (~10s+) — cache hard
 const CODEX_DISCOVERY_TIMEOUT_MS = 20_000;
 const CODEX_MAX_MESSAGE_BYTES = 16 * 1024 * 1024;
@@ -219,6 +221,7 @@ export function catalogFromCodexStatus(servers = [], configuredServers = {}) {
 // capabilities; the outer stale-while-revalidate cache preserves the previous good catalog.
 export async function listCodexRuntimeMcps({
   spawnImpl = spawn,
+  channelId = "",
   timeoutMs = CODEX_DISCOVERY_TIMEOUT_MS,
   maxMessageBytes = CODEX_MAX_MESSAGE_BYTES,
   failClosed = true,
@@ -237,7 +240,9 @@ export async function listCodexRuntimeMcps({
   };
 
   try {
-    child = spawnImpl("codex", [...codexNoTelemetryArgs(), "app-server"], { stdio: ["pipe", "pipe", "pipe"] });
+    const home = channelId ? channelCodexHome(channelId) : "";
+    const env = home ? codexAuthProcessEnv(home) : undefined;
+    child = spawnImpl("codex", [...codexNoTelemetryArgs(), "app-server"], { stdio: ["pipe", "pipe", "pipe"], ...(env ? { env } : {}) });
     const failed = new Promise((_, reject) => {
       timer = setTimeout(() => reject(new Error("Codex MCP discovery timed out")), Math.max(1, timeoutMs));
       timer.unref?.();
@@ -384,31 +389,41 @@ export function codexMcpPolicyFor(catalog = [], allowed = []) {
 }
 
 // Re-run the engine's `mcp list` and update the cache. Dedupes concurrent refreshes.
-function refresh(engine) {
-  if (refreshing.has(engine)) return refreshing.get(engine);
+function refresh(engine, channelId = "") {
+  const key = engine === "codex" && channelId ? `codex:${channelId}` : engine;
+  if (refreshing.has(key)) return refreshing.get(key);
+  const version = cacheVersions.get(key) || 0;
   const p = (async () => {
-    let data = cache.get(engine)?.data ?? [];
+    let data = cache.get(key)?.data ?? [];
     try {
-      if (engine === "codex") data = await listCodexRuntimeMcps({ failClosed: false });
+      if (engine === "codex") data = await listCodexRuntimeMcps({ failClosed: false, channelId });
       else data = parseClaude(await run("claude", ["mcp", "list"]));
     } catch {
       /* keep previous data on failure */
     }
-    cache.set(engine, { ts: Date.now(), data });
+    if ((cacheVersions.get(key) || 0) === version) cache.set(key, { ts: Date.now(), data });
     return data;
-  })().finally(() => refreshing.delete(engine));
-  refreshing.set(engine, p);
+  })().finally(() => { if (refreshing.get(key) === p) refreshing.delete(key); });
+  refreshing.set(key, p);
   return p;
 }
 
 // `claude mcp list` health-checks every server, so it's slow (~10s+). Serve the cached list
 // immediately and refresh in the background when stale (stale-while-revalidate). Only the very
 // first call (cold cache) waits — and the admin UI loads this off the page's critical path.
-export async function listEngineMcps(engine = "claude") {
-  const hit = cache.get(engine);
+export async function listEngineMcps(engine = "claude", { channelId = "" } = {}) {
+  const key = engine === "codex" && channelId ? `codex:${channelId}` : engine;
+  const hit = cache.get(key);
   if (hit) {
-    if (Date.now() - hit.ts >= TTL_MS) refresh(engine); // background; don't await
+    if (Date.now() - hit.ts >= TTL_MS) refresh(engine, channelId); // background; don't await
     return hit.data;
   }
-  return refresh(engine);
+  return refresh(engine, channelId);
+}
+
+export function invalidateEngineMcps(engine = "codex", { channelId = "" } = {}) {
+  const key = engine === "codex" && channelId ? `codex:${channelId}` : engine;
+  cacheVersions.set(key, (cacheVersions.get(key) || 0) + 1);
+  refreshing.delete(key);
+  cache.delete(key);
 }

@@ -14,6 +14,9 @@ import { QWEN_PROVIDERS, qwenProvider } from "../engines/qwen.js";
 // The default container image ref lives with the image module (a dependency-free leaf) so the
 // transactional updater can name the same image without importing this file's database layer.
 import { CONTAINER_DEFAULT_IMAGE } from "../runtimes/container/image.js";
+import { modelShortcutsFromSettings } from "./model-shortcuts.js";
+// Dependency-free reaction normalization keeps reserved Teams controls out of activation lists.
+import { teamsReactionKey, teamsActivationFingerprint, DEFAULT_TEAMS_ACTIVATION_REACTIONS } from "../platforms/msteams/reactions.js";
 
 // settings.json key → environment variable it feeds.
 const ENV_MAP = {
@@ -92,6 +95,13 @@ export function saveSettings(patch, { expectVersion = "" } = {}) {
     for (const [k, v] of Object.entries(patch)) {
       if (v === undefined) continue;
       next[k] = k === "publicUrl" ? normalizePublicUrl(v) : v;
+    }
+    // Persist every effective Teams activation change, even A → B → A between Graph
+    // refreshes. The comparison and monotonic stamp share the settings write lock.
+    if (Object.hasOwn(patch, "teamsMentionReactions") && patch.teamsMentionReactions !== undefined
+      && teamsActivationFingerprint(mentionReactionsFromSettings(current, "msteams")) !== teamsActivationFingerprint(mentionReactionsFromSettings(next, "msteams"))) {
+      const previous = validTeamsReactionTimestamp(current.teamsMentionReactionsUpdatedAt);
+      next.teamsMentionReactionsUpdatedAt = new Date(Math.max(Date.now(), previous ? Date.parse(previous) + 1 : 0)).toISOString();
     }
     // Bumped LAST, so a patch can never set (or freeze) the version it is being checked against.
     next.settingsRev = Number(currentVersion) + 1;
@@ -306,6 +316,10 @@ export function getDefaultModel(engine) {
   // ternary that would silently hand a third engine Claude's default.
   const v = s[adapterOr(engine).defaultModelKey];
   return typeof v === "string" ? v.trim() : "";
+}
+
+export function getModelShortcuts() {
+  return modelShortcutsFromSettings(getSettings());
 }
 
 // Who may use Slack's /model wizard in a CHANNEL (both channel-wide and thread-scoped picks).
@@ -696,16 +710,83 @@ export function getAssumedModels() {
   return out;
 }
 
-// Emoji reactions that act as an @mention: reacting with one on any message makes the bot
-// respond to that message. Stored as Slack emoji names without colons (e.g. "robot_face").
-// Default: robot_face (🤖). Admins can add others from Settings.
-export function getMentionReactions() {
-  const v = getSettings().mentionReactions;
-  if (Array.isArray(v)) {
-    const clean = v.map((s) => String(s).trim().replace(/^:|:$/g, "").toLowerCase()).filter(Boolean);
-    if (clean.length) return clean;
+// Activation reactions are independent for each chat surface. Keep the existing Slack key
+// so older installations and callers retain their own configuration.
+const MENTION_REACTION_FIELDS = Object.freeze({
+  slack: "mentionReactions", msteams: "teamsMentionReactions", googlechat: "googleChatMentionReactions",
+});
+const DEFAULT_MENTION_REACTIONS = Object.freeze({
+  slack: ["robot_face"], msteams: DEFAULT_TEAMS_ACTIVATION_REACTIONS, googlechat: ["🤖"],
+});
+const CONTROL_REACTIONS = new Set([
+  "🛑", "✅", "stopsign", "stop_sign", "octagonal_sign", "2705_whiteheavycheckmark", "white_check_mark",
+]);
+const SLACK_STOP_REACTIONS = new Set(["x", "no_entry", "no_entry_sign", "raised_hand", "hand", "raised_back_of_hand", "palm_up_hand", "no_good"]);
+const REACTION_GRAPHEMES = new Intl.Segmenter("en", { granularity: "grapheme" });
+const UNICODE_REACTION_RE = /^(?:\p{Extended_Pictographic}|\p{Emoji_Modifier}|\p{Regional_Indicator}|[\u200D\uFE0F\uFE0E\u20E3]|[0-9#*]\uFE0F?\u20E3)+$/u;
+
+function isUnicodeReaction(value) {
+  return UNICODE_REACTION_RE.test(value) && [...REACTION_GRAPHEMES.segment(value)].length === 1
+    && !value.endsWith("\u200D")
+    && (/\p{Extended_Pictographic}/u.test(value) || /^(?:\p{Regional_Indicator}){2}$/u.test(value) || /^[0-9#*]\uFE0F?\u20E3$/u.test(value));
+}
+
+export function validateMentionReactions(value, platform = "slack") {
+  if (!Object.hasOwn(MENTION_REACTION_FIELDS, platform)) throw new Error("Unknown reaction platform");
+  const field = MENTION_REACTION_FIELDS[platform];
+  if (!(Array.isArray(value) || typeof value === "string")) throw new Error(`${field} must be an array of strings or a comma-separated string`);
+  // Bound before splitting so a single oversized input cannot inflate the validation work.
+  if (typeof value === "string" && (value.length > 2020 || /\p{Cc}/u.test(value))) throw new Error(`${field} is too long or contains a control character`);
+  const entries = Array.isArray(value) ? value : value.split(platform === "slack" ? /[\s,]+/ : /,/);
+  if (entries.length > 20 || entries.some((entry) => typeof entry !== "string")) throw new Error(`${field} must contain at most 20 strings`);
+  const clean = [];
+  for (const entry of entries) {
+    if (entry.length > 100 || /[\p{Cc}<>\x26\x60"'\u200B\u200C\u202A-\u202E\u2060-\u206F]/u.test(entry)) throw new Error(`${field} contains an invalid emoji`);
+    let name = entry.trim();
+    if (!name) continue;
+    if (platform !== "googlechat") name = name.toLowerCase().replace(/^:([a-z0-9_+-]+):$/, "$1");
+    const unicode = name.replace(/[\uFE0F\uFE0E]/g, "");
+    if (CONTROL_REACTIONS.has(unicode) || (platform === "slack" && SLACK_STOP_REACTIONS.has(name))
+      || (platform === "msteams" && (teamsReactionKey(name).startsWith("control:") || ["stop", "ack"].includes(name) || /^(?:1f6d1|2705)_[a-z0-9_]+$/.test(name)))) throw new Error(`${field} cannot use a stop or acknowledgement reaction`);
+    const code = /^[a-z0-9_+-]+$/.test(name);
+    if ((platform === "slack" && !code) || (platform === "googlechat" && !isUnicodeReaction(name))
+      || (platform === "msteams" && !code && !isUnicodeReaction(name))) throw new Error(`${field} contains an invalid emoji`);
+    clean.push(name);
   }
-  return ["robot_face"];
+  return [...new Set(clean)];
+}
+
+function mentionReactionsFromSettings(storedSettings, platform = "slack") {
+  const resolved = Object.hasOwn(MENTION_REACTION_FIELDS, platform) ? platform : "slack";
+  // Preserve existing Slack selections verbatim through an upgrade. New API writes are
+  // validated above; its established handler still gives stop/ack controls precedence.
+  if (resolved === "slack") {
+    const stored = storedSettings.mentionReactions;
+    if (Array.isArray(stored)) {
+      const clean = stored.map((entry) => String(entry).trim().replace(/^:|:$/g, "").toLowerCase()).filter(Boolean);
+      if (clean.length) return clean;
+    }
+    return [...DEFAULT_MENTION_REACTIONS.slack];
+  }
+  try {
+    const clean = validateMentionReactions(storedSettings[MENTION_REACTION_FIELDS[resolved]] ?? [], resolved);
+    if (clean.length) return clean;
+  } catch { /* Invalid hand-edited configuration falls back to the safe platform default. */ }
+  return [...DEFAULT_MENTION_REACTIONS[resolved]];
+}
+
+export function getMentionReactions(platform = "slack") {
+  return mentionReactionsFromSettings(getSettings(), platform);
+}
+
+function validTeamsReactionTimestamp(value) {
+  if (typeof value !== "string" || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(value)) return "";
+  const at = Date.parse(value);
+  return Number.isFinite(at) && new Date(at).toISOString() === value ? value : "";
+}
+
+export function getTeamsMentionReactionsUpdatedAt() {
+  return validTeamsReactionTimestamp(getSettings().teamsMentionReactionsUpdatedAt);
 }
 
 // Org-level default access policy applied to each channel when the bot first joins/registers it.
@@ -980,6 +1061,8 @@ export function settingsForApi() {
     aiTestingUsers: getAiTestingUsers(),
     progressView: getProgressView(),
     mentionReactions: getMentionReactions(),
+    teamsMentionReactions: getMentionReactions("msteams"),
+    googleChatMentionReactions: getMentionReactions("googlechat"),
     trustedBotApps: getTrustedBotApps(),
     defaultChannelAccess: getDefaultChannelAccess(),
     hasDefaultComposioToken: Boolean(getDefaultComposioToken()),
@@ -1032,6 +1115,7 @@ export function settingsForApi() {
     // instead of carrying a hard-coded copy of the table.
     qwenProviders: qwenProviderSettings(),
     modelChangeAccess: getModelChangeAccess(),
+    modelShortcuts: getModelShortcuts(),
     engineEnabled: getEngineEnabledMap(),
     engineFallback: getEngineFallback(),
     engineFallbackMode: getEngineFallbackMode(),

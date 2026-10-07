@@ -15,6 +15,7 @@ import { createTeamsApi, DEFAULT_SERVICE_URL, validateServiceUrl, isConversation
 import { createTeamsConnector } from "./connector.js";
 import { createTeamsWebhook } from "./webhook.js";
 import { createJwksCache } from "./verify.js";
+import { teamsActivationFingerprint } from "./reactions.js";
 
 // The bot's own identity in an activity: Bot Framework prefixes the app id with the "28:" channel
 // marker. Mention entities and the bot half of a new 1:1 conversation both use this form.
@@ -26,6 +27,8 @@ export async function startTeams({
   tenantId = "",
   serviceUrl = DEFAULT_SERVICE_URL,
   allMessageEvents = false,
+  getActivationReactions = () => undefined,
+  getActivationVersion = () => '',
   publicUrl = "",
   filesEnabled = false,
   fileDriveIds = [],
@@ -48,7 +51,7 @@ export async function startTeams({
     auth: deps.graphAuth || createTeamsAuth({ clientId: appId, clientSecret: appPassword, tenantId, scope: GRAPH_SCOPE }),
     allowedDriveIds: fileDriveIds,
   }) : null;
-  const connector = deps.connector || createTeamsConnector({ auth, capabilities, api, botId, tenantId, serviceUrl, log });
+  const connector = deps.connector || createTeamsConnector({ auth, capabilities, api, apiForServiceUrl: deps.apiForServiceUrl, botId, tenantId, serviceUrl, log });
   const jwks = deps.jwks || createJwksCache();
   let graph = null;
   let eventStore = null;
@@ -67,6 +70,15 @@ export async function startTeams({
       namespace: `msteams-graph-dispatch:${appId}`,
       handle: async ({ inbound, serviceUrl: sourceUrl, subscription }) => {
         if (!await activeSubscription(subscription)) return;
+        if (inbound.reactionAction === 'engage') {
+          const current = (await eventStore.list()).find(row => row.conversationId === subscription.conversationId);
+          if (subscription.activationReactionsFingerprint === undefined
+            || subscription.activationReactionsFingerprint !== teamsActivationFingerprint(getActivationReactions())
+            || subscription.activationReactionsVersion !== getActivationVersion()
+            || current?.activationReactionsVersion !== subscription.activationReactionsVersion
+            || current?.activationReactionsFingerprint !== subscription.activationReactionsFingerprint
+            || current?.activationReactionsStartedAt !== subscription.activationReactionsStartedAt) return;
+        }
         if (resolveFile) inbound.attachments = (inbound.attachments || []).map(file => ({ ...file, download: file.reference ? resolveFile(file.reference) : null }));
         await onMessage(inbound, { serviceUrl: sourceUrl });
       },
@@ -80,6 +92,9 @@ export async function startTeams({
       namespace: `msteams-graph:${appId}`,
       handle: async ({ message, row }) => {
         if (!await activeSubscription(row)) return;
+        // Settings may have changed while a snapshot waited in the durable queue.
+        row = await graph.refresh(row);
+        if (!row) return;
         const nativeId = row.context.conversation.id;
         const rosterApi = deps.apiForServiceUrl?.(row.context.serviceUrl) || createTeamsApi({ auth, serviceUrl: row.context.serviceUrl });
         let roster;
@@ -87,10 +102,11 @@ export async function startTeams({
           roster ||= await rosterApi.listMembers(nativeId);
           return roster.find(member => member.aadObjectId === aadId) || null;
         };
-        for (const inbound of await normalizer(message, row, { botId, resolveMember })) {
+        for (const inbound of await normalizer(message, row, { botId, resolveMember, activationReactions: getActivationReactions(), activationVersion: getActivationVersion() })) {
           if (!inbound.raw?.eventId) throw new Error("Teams Graph event requires stable identity");
           dispatchInbox.accept({ id: inbound.raw.eventId, conversationId: inbound.raw.eventId,
-            payload: { inbound, serviceUrl: row.context.serviceUrl, subscription: { conversationId: row.conversationId, startedAt: row.startedAt } } });
+            payload: { inbound, serviceUrl: row.context.serviceUrl, subscription: { conversationId: row.conversationId, startedAt: row.startedAt,
+              activationReactionsFingerprint: row.activationReactionsFingerprint, activationReactionsVersion: row.activationReactionsVersion, activationReactionsStartedAt: row.activationReactionsStartedAt } } });
         }
       },
       interrupted: async ({ row }) => {
@@ -109,7 +125,7 @@ export async function startTeams({
     });
     graph = (deps.createGraphEvents || createTeamsGraphEvents)({
       auth: graphAuth, notificationUrl: `${publicUrl.replace(/\/$/, "")}/api/teams/notifications`, tenantId,
-      store: eventStore,
+      store: eventStore, getActivationReactions, getActivationVersion,
       enqueueNotifications: async accepted => {
         for (const envelope of accepted) {
           notificationInbox.accept({ id: randomUUID(), conversationId: envelope.row.conversationId,
@@ -172,12 +188,12 @@ export async function startTeams({
       context: { conversation: { id: nativeId, conversationType: kind, name: activity.conversation?.name || "" },
         serviceUrl: trustedService, recipient: { id: botId },
         channelData: { tenant: { id: tenantId },
-          ...(kind === "channel" ? { team: { aadGroupId: teamGuid, ...(activity.channelData?.team?.id ? { id: activity.channelData.team.id } : {}) }, channel: { id: activity.channelData?.channel?.id || nativeId } } : {}) } },
+          ...(kind === "channel" ? { team: { ...(activity.channelData?.team?.name ? { name: activity.channelData.team.name } : {}), aadGroupId: teamGuid, ...(activity.channelData?.team?.id ? { id: activity.channelData.team.id } : {}) }, channel: { id: activity.channelData?.channel?.id || nativeId, ...(activity.channelData?.channel?.name ? { name: activity.channelData.channel.name } : {}) } } : {}) } },
     };
     // Subscription errors are retried by Graph maintenance and never block a normal bot turn.
     void graph.ensure(row).catch(() => log.warn?.("[msteams] could not register conversation event subscription"));
   }
-  const handler = createTeamsWebhook({ appId, botId, onMessage, onInvoke, resolveFile, onActivity, graphEventsEnabled, jwks, log });
+  const handler = createTeamsWebhook({ appId, botId, onMessage, onInvoke, resolveFile, onActivity, graphEventsEnabled, jwks, log, getActivationReactions });
 
   return {
     platform: "msteams",

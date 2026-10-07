@@ -73,7 +73,7 @@ test('authorized ingest handles controls without invoking engine and preserves g
   assert.equal(calls, 0); assert.match(posts[0].text, /Commands/); assert.match(posts[1].text, /Idle/);
 });
 
-test('progress respects 30s budget and drains pending edit before stop', async (t) => {
+test('progress keeps its 30s heartbeat and drains pending edit before stop', async (t) => {
   t.mock.timers.enable({ apis: ['setInterval', 'Date'], now: 1000 });
   const edits = []; const wait = deferred();
   const progress = createConversationProgress({ connector: { edit: async (v) => { edits.push(v); await wait.promise; } }, message: { rawConversationId: 'wire' }, placeholder: { messageId: 'p' }, adapter: platformOr('msteams') });

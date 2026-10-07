@@ -6,6 +6,8 @@ import { conversationKindForChannel, conversationRouteForPath, pathForConversati
 import {
   accessGrantSkillOptions,
   captureGrantMcpSelection,
+  conversationChannelName,
+  matchesConversationSource,
   changedSettingKeys,
   channelGuestAcceptedIds,
   channelGuestSavePatch,
@@ -58,6 +60,7 @@ const SETTINGS_NON_VALUE_KEYS = ["ok", "stale", "code", "error", "slack", "platf
 // Unified Conversations selection key: "ch:<channelId>" (channel) or "dm:<channelId>" (DM). One
 // key drives both list highlight + detail. (The User/Admin DM templates live under Settings now.)
 let selectedConv = null;
+let convSource = "all";
 let convFilter = "all"; // segmented control: all | channels | dms
 let CONV_COSTS = null; // { byId: {channelId→cost}, bySlug: {slug→cost} }; null until first (soft) fetch
 let convCostsFetched = false;
@@ -180,6 +183,60 @@ function syncModelOptions({ engineSelect, modelSelect, value, engine, blankLabel
   modelSelect.innerHTML = options.map(([v, text]) => `<option value="${escapeHtml(v)}">${escapeHtml(text)}</option>`).join("");
   modelSelect.value = options.some(([v]) => v === current) ? current : "";
 }
+
+function addModelShortcutRow(name = "", target = {}) {
+  const box = document.getElementById("model-shortcuts-editor");
+  const row = document.createElement("div");
+  row.className = "model-shortcut-row";
+  row.style.cssText = "display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:8px 0";
+  row.innerHTML = `<input class="shortcut-name" type="text" maxlength="24" placeholder="astra" aria-label="Shortcut name" style="max-width:120px" />
+    <select class="shortcut-engine" aria-label="Engine"></select>
+    <select class="shortcut-model" aria-label="Model"></select>
+    <button type="button" class="clear-tok shortcut-remove">Remove</button>`;
+  const engineSelect = row.querySelector(".shortcut-engine");
+  const modelSelect = row.querySelector(".shortcut-model");
+  engineSelect.innerHTML = engineOptionsHtml();
+  if (target.engine && ![...engineSelect.options].some((option) => option.value === target.engine)) {
+    const option = document.createElement("option");
+    option.value = target.engine;
+    option.textContent = `${target.engine} (disabled)`;
+    engineSelect.add(option);
+  }
+  engineSelect.value = target.engine || engineSelect.options[0]?.value || "claude";
+  const fillModels = (value = "") => {
+    const engine = engineSelect.value;
+    const manifestModels = ENGINE_MANIFESTS.find((m) => m.id === engine)?.models || [];
+    const options = manifestModels.length ? manifestModels.map((m) => [m.value, m.label || m.value]) : [...(MODEL_OPTIONS[engine] || [])];
+    if (value && !options.some(([id]) => id === value)) options.push([value, value]);
+    modelSelect.innerHTML = options.map(([id, label]) => `<option value="${escapeHtml(id)}">${escapeHtml(label)}</option>`).join("");
+    modelSelect.value = value && options.some(([id]) => id === value) ? value : (options[0]?.[0] || "");
+  };
+  row.querySelector(".shortcut-name").value = name;
+  fillModels(target.model);
+  engineSelect.addEventListener("change", () => fillModels());
+  row.querySelector(".shortcut-remove").addEventListener("click", () => { row.remove(); markSettingsDirty(); });
+  box.append(row);
+}
+
+function paintModelShortcuts(shortcuts) {
+  const box = document.getElementById("model-shortcuts-editor");
+  box.replaceChildren();
+  for (const [name, target] of Object.entries(shortcuts || {})) addModelShortcutRow(name, target);
+  document.getElementById("add-model-shortcut").disabled = false;
+}
+
+function collectModelShortcuts() {
+  const shortcuts = {};
+  for (const row of document.querySelectorAll("#model-shortcuts-editor .model-shortcut-row")) {
+    const name = row.querySelector(".shortcut-name").value.trim().toLowerCase();
+    if (!/^[a-z][a-z0-9_-]{0,23}$/.test(name)) throw new Error(`Invalid model shortcut name: ${name || "(blank)"}`);
+    if (Object.hasOwn(shortcuts, name)) throw new Error(`Duplicate model shortcut: ${name}`);
+    shortcuts[name] = { engine: row.querySelector(".shortcut-engine").value, model: row.querySelector(".shortcut-model").value };
+  }
+  return shortcuts;
+}
+
+document.getElementById("add-model-shortcut").addEventListener("click", () => { addModelShortcutRow(); markSettingsDirty(); });
 
 function checkboxList(container, items, selected, valueKey = "value", labelKey = "label") {
   container.innerHTML = "";
@@ -1426,7 +1483,8 @@ function renderConvList() {
   // Channels — sorted by name; capdot + profile label (+ network) sub-line; 30-day cost if known.
   if (showChannels) {
     const chans = CHANNELS
-      .filter((c) => !f || (c.name || "").toLowerCase().includes(f) || (c.slug || "").toLowerCase().includes(f))
+      .filter((c) => matchesConversationSource(c, convSource))
+      .filter((c) => !f || conversationChannelName(c).toLowerCase().includes(f) || (c.name || "").toLowerCase().includes(f) || (c.slug || "").toLowerCase().includes(f))
       .sort((a, b) => (a.name || a.slug || "").localeCompare(b.name || b.slug || "", undefined, { sensitivity: "base" }));
     const g = document.createElement("div");
     g.className = "list-group";
@@ -1438,13 +1496,14 @@ function renderConvList() {
       e.textContent = CHANNELS.length ? "No channels match." : "No channels yet — invite the bot and send a message.";
       list.appendChild(e);
     } else {
-      for (const c of chans) list.appendChild(convRow("ch:" + c.channelId, capColorOf(c.meta || {}), hashName(c.name || c.slug), capLabelOf(c.meta || {}), costFor(c.channelId, c.slug), c.workDirConflict));
+      for (const c of chans) list.appendChild(convRow("ch:" + c.channelId, capColorOf(c.meta || {}), conversationChannelName(c), capLabelOf(c.meta || {}), costFor(c.channelId, c.slug), c.workDirConflict));
     }
   }
 
   // Direct messages — capdot by the DM's effective capability; sub-line = template name.
   if (showDms) {
     const dmItems = DMS
+      .filter((d) => matchesConversationSource(d, convSource))
       .filter((d) => !f || (d.userName || "").toLowerCase().includes(f) || (d.dmUserId || "").toLowerCase().includes(f) || (d.slug || "").toLowerCase().includes(f))
       .sort((a, b) => (a.userName || a.slug || "").localeCompare(b.userName || b.slug || "", undefined, { sensitivity: "base" }));
     const g = document.createElement("div");
@@ -1545,6 +1604,7 @@ function initializeMcpBox(box, { claude = [], codex = [] } = {}) {
 
 function captureMcpSelection(box) {
   if (box.dataset.engine === "both") {
+    if (box.dataset.mcpLoading) return;
     const state = mcpBoxState(box);
     for (const engine of ["claude", "codex"]) {
       state[engine] = [...box.querySelectorAll(`input[type="checkbox"][data-mcp-engine="${engine}"]:checked`)]
@@ -1565,7 +1625,7 @@ function captureMcpSelection(box) {
 }
 
 function catalogWithSavedEntries(box, engine) {
-  const catalog = AVAILABLE_MCPS[engine] || [];
+  const catalog = AVAILABLE_MCPS[engine === "codex" ? (box.dataset.mcpCodexKey || "codex") : engine] || [];
   const state = mcpBoxState(box);
   const wanted = new Set(state[engine]);
   const merged = [...catalog];
@@ -1608,34 +1668,37 @@ function paintAllMcpBoxes(box) {
   }
 }
 
-async function loadMcpCatalog(engine) {
-  if (Array.isArray(AVAILABLE_MCPS[engine])) return AVAILABLE_MCPS[engine];
-  if (!MCP_CATALOG_LOADS[engine]) {
-    MCP_CATALOG_LOADS[engine] = api(`/api/mcp/available?engine=${encodeURIComponent(engine)}`)
+async function loadMcpCatalog(engine, channelId = "") {
+  const key = engine === "codex" && channelId ? `codex:${channelId}` : engine;
+  if (Array.isArray(AVAILABLE_MCPS[key])) return AVAILABLE_MCPS[key];
+  if (!MCP_CATALOG_LOADS[key]) {
+    MCP_CATALOG_LOADS[key] = api(`/api/mcp/available?engine=${encodeURIComponent(engine)}${channelId && engine === "codex" ? `&channelId=${encodeURIComponent(channelId)}` : ""}`)
       .then((result) => {
-        AVAILABLE_MCPS[engine] = Array.isArray(result.servers) ? result.servers : [];
-        return AVAILABLE_MCPS[engine];
+        AVAILABLE_MCPS[key] = Array.isArray(result.servers) ? result.servers : [];
+        return AVAILABLE_MCPS[key];
       })
       .finally(() => {
-        delete MCP_CATALOG_LOADS[engine];
+        delete MCP_CATALOG_LOADS[key];
       });
   }
-  return MCP_CATALOG_LOADS[engine];
+  return MCP_CATALOG_LOADS[key];
 }
 
-async function renderMcpBoxForEngine(box, engineValue, countEl) {
+async function renderMcpBoxForEngine(box, engineValue, countEl, channelId = "") {
   captureMcpSelection(box);
   box.dataset.engine = "both";
-  const missing = ["claude", "codex"].filter((engine) => !Array.isArray(AVAILABLE_MCPS[engine]));
+  const codexKey = channelId ? `codex:${channelId}` : "codex";
+  box.dataset.mcpCodexKey = codexKey;
+  const missing = ["claude", "codex"].filter((engine) => !Array.isArray(AVAILABLE_MCPS[engine === "codex" ? codexKey : engine]));
   if (missing.length) {
     box.dataset.mcpLoading = "both";
     box.classList.add("empty");
     box.textContent = "loading Claude and Codex MCP lists…";
     updateChecksCount(box, countEl);
     await Promise.all(missing.map(async (engine) => {
-      try { await loadMcpCatalog(engine); } catch { AVAILABLE_MCPS[engine] = []; }
+      try { await loadMcpCatalog(engine, engine === "codex" ? channelId : ""); } catch { AVAILABLE_MCPS[engine === "codex" ? codexKey : engine] = []; }
     }));
-    if (!box.isConnected) return;
+    if (!box.isConnected || box.dataset.mcpCodexKey !== codexKey) return;
   }
   delete box.dataset.mcpLoading;
   paintAllMcpBoxes(box);
@@ -1836,15 +1899,28 @@ async function pollDriveSync(channelId, resultEl, stillOpen) {
 
 // Both the shared gateway and a channel login use the same private Codex sign-in controls.
 // The server returns only a method and the temporary device code; never render raw CLI output.
-function mountCodexLoginBox(box, url, { onComplete = () => {}, onState = () => {} } = {}) {
+function mountCodexLoginBox(box, url, { onComplete = () => {} } = {}) {
   const statusEl = box.querySelector(".ch-codex-login-status");
   const deviceBox = box.querySelector(".ch-codex-device-code");
+  const deviceSection = box.querySelector(".ch-codex-device-section");
+  const apiSection = box.querySelector(".ch-codex-api-section");
+  const apiNote = box.querySelector(".ch-codex-api-note");
+  const methodSelect = box.querySelector(".ch-codex-login-method");
   const apiKeyInput = box.querySelector(".ch-codex-api-key");
   const cancelButton = box.querySelector(".ch-codex-device-cancel");
   let poll = null;
   let observedPending = false;
   let startedHere = false;
+  let latestState = null;
+  const paintMethod = () => {
+    deviceSection.hidden = methodSelect.value !== "device";
+    apiSection.hidden = methodSelect.value !== "api-key";
+    apiNote.hidden = methodSelect.value !== "api-key";
+  };
   const paint = (state) => {
+    latestState = state;
+    if (state.phase === "pending" && methodSelect.value !== "device") methodSelect.value = "device";
+    paintMethod();
     statusEl.textContent = state.phase === "pending" ? (state.code && state.url ? "Enter this code to finish signing in:" : "Requesting a ChatGPT sign-in code…")
       : state.phase === "failed" ? state.error
       : state.authenticated ? `Signed in with ${state.method === "chatgpt" ? "ChatGPT" : "an API key"}`
@@ -1855,7 +1931,6 @@ function mountCodexLoginBox(box, url, { onComplete = () => {}, onState = () => {
       box.querySelector(".ch-codex-device-value").textContent = state.code;
     }
     cancelButton.hidden = state.phase !== "pending";
-    onState(state);
     if (state.phase === "pending") observedPending = true;
     if (state.phase === "complete" && (observedPending || startedHere)) {
       onComplete();
@@ -1873,11 +1948,24 @@ function mountCodexLoginBox(box, url, { onComplete = () => {}, onState = () => {
     }
   };
   void api(url).then(paint).catch((error) => { statusEl.textContent = `Could not check sign-in: ${error.message}`; });
-  box.querySelector(".ch-codex-device-start").addEventListener("click", async () => {
+  methodSelect.addEventListener("change", async () => {
+    paintMethod();
+    if (methodSelect.value === "api-key" && latestState?.phase === "pending") {
+      try { await api(url, { method: "DELETE" }); paint(await api(url)); }
+      catch (error) { statusEl.textContent = error.message; }
+    }
+    if (methodSelect.value !== "device" || latestState?.phase === "pending") return;
     startedHere = true;
     statusEl.textContent = "Starting ChatGPT sign-in…";
     try { paint(await api(url, { method: "POST", body: JSON.stringify({ method: "device" }) })); }
     catch (error) { startedHere = false; statusEl.textContent = error.message; }
+  });
+  box.querySelector(".ch-codex-device-value").addEventListener("click", async () => {
+    const code = box.querySelector(".ch-codex-device-value").textContent;
+    if (!code) return;
+    const result = box.querySelector(".ch-codex-copy-state");
+    try { await navigator.clipboard.writeText(code); result.textContent = "Copied"; }
+    catch { result.textContent = "Could not copy code"; }
   });
   box.querySelector(".ch-codex-key-save").addEventListener("click", async () => {
     const key = apiKeyInput.value;
@@ -1892,6 +1980,7 @@ function mountCodexLoginBox(box, url, { onComplete = () => {}, onState = () => {
     try { await api(url, { method: "DELETE" }); paint(await api(url)); }
     catch (error) { statusEl.textContent = error.message; }
   });
+  paintMethod();
 }
 
 function renderChannelDetail(ch) {
@@ -1900,7 +1989,7 @@ function renderChannelDetail(ch) {
   const meta = ch.meta || { allowedUsers: [], allowedMcps: [], skills: [], adminMode: false };
   const node = document.getElementById("channel-card").content.cloneNode(true);
   const card = node.querySelector(".conv-detail");
-  card.querySelector(".ch-name").textContent = hashName(ch.name || ch.slug);
+  card.querySelector(".ch-name").textContent = conversationChannelName(ch);
   card.querySelector(".ch-type").textContent = ch.type + (ch.isDM ? " · DM" : "");
   card.querySelector(".ch-slug").textContent = ch.slug;
 
@@ -2122,20 +2211,18 @@ function renderChannelDetail(ch) {
   const engineSelect = card.querySelector(".ch-engine");
   engineSelect.value = meta.engine || "";
   const authSource = card.querySelector(".ch-codex-auth-source");
-  const gatewayPanel = card.querySelector(".ch-auth-gateway-panel");
   const channelPanel = card.querySelector(".ch-auth-channel-panel");
   const modelSelect = card.querySelector(".ch-model");
   const effortSelect = card.querySelector(".ch-effort");
   const effortLabel = card.querySelector(".ch-effort-label");
   const paintAuthScope = () => {
     const dedicated = authSource.value === "channel";
-    gatewayPanel.hidden = dedicated;
     channelPanel.hidden = !dedicated;
     card.querySelector(".ch-engine-field").hidden = dedicated;
     if (dedicated) engineSelect.value = "codex";
     syncModelOptions({ engineSelect, modelSelect, value: modelMatchesEngine(modelSelect.value, effectiveEngine(engineSelect.value)) ? modelSelect.value : "", blankLabel: "gateway default (Settings)" });
     syncEffortOptions({ engineSelect, modelSelect, effortSelect, label: effortLabel });
-    renderMcpBoxForEngine(mcpsBox, engineSelect.value, mcpsCount);
+    renderMcpBoxForEngine(mcpsBox, engineSelect.value, mcpsCount, dedicated ? ch.channelId : "");
   };
   authSource.value = meta.codexAuthSource || "gateway";
   authSource.addEventListener("change", paintAuthScope);
@@ -2143,28 +2230,11 @@ function renderChannelDetail(ch) {
     onComplete: () => {
       authSource.value = "channel";
       ch.meta = { ...(ch.meta || {}), codexAuthSource: "channel", engine: "codex" };
+      delete AVAILABLE_MCPS[`codex:${ch.channelId}`];
       paintAuthScope();
     },
   });
-  mountCodexLoginBox(gatewayPanel.querySelector(".ch-codex-login"), "/api/gateway/codex-login", {
-    onState: (state) => {
-      gatewayPanel.querySelector(".ch-gateway-codex-status").textContent = state.authenticated
-        ? `Signed in with ${state.method === "chatgpt" ? "ChatGPT" : "an API key"}` : "No shared Codex login";
-    },
-  });
-  void api("/api/health").then((health) => {
-    if (!card.isConnected) return;
-    gatewayPanel.querySelector(".ch-gateway-slack-status").textContent = health.slack?.connected ? "Connected" : "Disconnected";
-    const claude = health.engines?.claude?.auth;
-    gatewayPanel.querySelector(".ch-gateway-claude-status").textContent = claude?.authenticated
-      ? `Signed in (${claude.method || "gateway"})` : "No usable Claude login";
-  }).catch(() => {
-    gatewayPanel.querySelector(".ch-gateway-slack-status").textContent = "Status unavailable";
-    gatewayPanel.querySelector(".ch-gateway-claude-status").textContent = "Status unavailable";
-  });
-  gatewayPanel.querySelector(".ch-gateway-slack-settings").addEventListener("click", () => { setView("settings"); selectSettingsSection("connection"); });
-  gatewayPanel.querySelector(".ch-gateway-claude-settings").addEventListener("click", () => { setView("settings"); revealSetting("set-container-claude-token"); });
-  renderMcpBoxForEngine(mcpsBox, engineSelect.value, mcpsCount);
+  renderMcpBoxForEngine(mcpsBox, engineSelect.value, mcpsCount, authSource.value === "channel" ? ch.channelId : "");
   syncModelOptions({
     engineSelect,
     modelSelect: card.querySelector(".ch-model"),
@@ -2789,6 +2859,7 @@ function parseScheduleCron(cron) {
 
 function friendlySchedule(schedule) {
   if (schedule.once) return `Once · ${schedule.runAt ? new Date(schedule.runAt).toLocaleString() : "time unavailable"}`;
+  if (schedule.intervalDays) return `Every ${schedule.intervalDays} days · next ${schedule.runAt ? new Date(schedule.runAt).toLocaleString() : "time unavailable"}`;
   const parsed = parseScheduleCron(schedule.cron);
   const at = parsed.time ? ` at ${parsed.time}` : "";
   if (parsed.frequency === "daily") return `Daily${at}`;
@@ -2809,8 +2880,9 @@ function localDateTimeValue(value) {
 
 function syncScheduleTimingFields() {
   const once = Boolean(scheduleEditor?.schedule.once);
+  const interval = Boolean(scheduleEditor?.schedule.intervalDays);
   const frequency = document.getElementById("schedule-frequency").value;
-  document.getElementById("schedule-recurring-fields").hidden = once;
+  document.getElementById("schedule-recurring-fields").hidden = once || interval;
   document.getElementById("schedule-once-wrap").hidden = !once;
   document.getElementById("schedule-day-wrap").hidden = once || frequency !== "weekly";
   document.getElementById("schedule-month-day-wrap").hidden = once || frequency !== "monthly";
@@ -2843,6 +2915,7 @@ function openScheduleEditor(schedule) {
     scheduleDetail("Channel", schedule.channelName || schedule.slug || schedule.channelId),
     scheduleDetail("Type", schedule.kind === "reminder" ? "Reminder" : "Task"),
     scheduleDetail("Status", status),
+    ...(schedule.intervalDays ? [scheduleDetail("Timing", friendlySchedule(schedule))] : []),
   ].join("");
   document.getElementById("schedule-modal-description").value = schedule.description || "";
   document.getElementById("schedule-modal-enabled").checked = Boolean(schedule.enabled);
@@ -2862,6 +2935,7 @@ function openScheduleEditor(schedule) {
   const delivery = document.getElementById("schedule-modal-delivery");
   delivery.value = schedule.delivery || "standard";
   delivery.querySelector('option[value="daily-thread"]').disabled = Boolean(schedule.once);
+  delivery.querySelector('option[value="dm-on-match"]').disabled = !schedule.matchPrefix;
   prompt.value = schedule.prompt || "";
   syncScheduleTimingFields();
   error.textContent = "";
@@ -2904,7 +2978,7 @@ async function saveScheduleEditor() {
     // datetime-local is in the browser's timezone. Send an explicit instant so a daemon in
     // another timezone cannot shift it (or turn a future task into an immediately due one).
     if (schedule.once) body.runAt = new Date(document.getElementById("schedule-modal-run-at").value).toISOString();
-    else body.cron = cronFromScheduleEditor();
+    else if (!schedule.intervalDays) body.cron = cronFromScheduleEditor();
     if (schedule.kind !== "reminder") body.delivery = document.getElementById("schedule-modal-delivery").value;
     const result = await api(`/api/schedules/${scheduleEditor.schedule.id}`, {
       method: "PUT",
@@ -2954,7 +3028,7 @@ function renderSchedules() {
       row.className = "sched-row";
       // Last-run: a status dot (ok/warn) + relative-ish text; "never run" when it hasn't fired yet.
       const runHtml = s.lastRun
-        ? `<span class="sched-run"><span class="dot ${s.lastStatus && s.lastStatus !== "ok" ? "warn" : "ok"}"></span>last ${escapeHtml(new Date(s.lastRun).toLocaleString())}</span>`
+        ? `<span class="sched-run"><span class="dot ${s.lastStatus && !["ok", "found"].includes(s.lastStatus) ? "warn" : "ok"}"></span>last ${escapeHtml(new Date(s.lastRun).toLocaleString())}</span>`
         : `<span class="sched-run"><span class="dot off"></span>never run</span>`;
       row.innerHTML = `
         <label class="toggle inline"><input type="checkbox" class="sched-enabled" ${s.enabled ? "checked" : ""}/></label>
@@ -3584,6 +3658,8 @@ function readSettingsForm() {
     ...(document.getElementById("clear-admin-user").classList.contains("armed") ? { clearSlackAdminUserToken: true } : {}),
     sessionKeepalive: document.getElementById("set-keepalive").value,
     mentionReactions: document.getElementById("set-mention-reactions").value,
+    teamsMentionReactions: document.getElementById("set-teams-mention-reactions").value,
+    googleChatMentionReactions: document.getElementById("set-google-chat-mention-reactions").value,
     trustedBotApps: document.getElementById("set-trusted-apps").value,
     defaultChannelAccess: document.getElementById("set-channel-access").value,
     composioMode: document.getElementById("set-composio-mode").value,
@@ -3622,6 +3698,7 @@ function readSettingsForm() {
     defaultCodexModel: document.getElementById("set-default-codex-model").value,
     ...collectQwenProviders(),
     modelChangeAccess: document.getElementById("set-model-change-access").value,
+    modelShortcuts: collectModelShortcuts(),
     engineEnabled: { ...ENGINE_ENABLED },
     engineFallback: document.getElementById("set-engine-fallback").checked,
     engineFallbackMode: document.getElementById("set-engine-fallback-mode").value,
@@ -3702,6 +3779,8 @@ function paintSettings(s) {
   attachReveal(document.getElementById("set-admin-user"), { has: s.tokens.hasAdminUserToken, last4: s.tokens.adminUserTokenLast4, fetch: revealSecret("settings", "slackAdminUserToken") });
   document.getElementById("set-keepalive").value = s.sessionKeepalive || "";
   document.getElementById("set-mention-reactions").value = (s.mentionReactions || []).join(", ");
+  document.getElementById("set-teams-mention-reactions").value = (s.teamsMentionReactions || []).join(", ");
+  document.getElementById("set-google-chat-mention-reactions").value = (s.googleChatMentionReactions || []).join(", ");
   document.getElementById("set-trusted-apps").value = (s.trustedBotApps || []).join(", ");
   if (s.defaultChannelAccess) document.getElementById("set-channel-access").value = s.defaultChannelAccess;
   document.getElementById("set-composio-mode").value = s.composioMode === "sdk" ? "sdk" : "personal";
@@ -3755,6 +3834,7 @@ function paintSettings(s) {
   syncModelOptions({ modelSelect: document.getElementById("set-default-claude-model"), engine: "claude", value: s.defaultClaudeModel || "", blankLabel: "CLI default" });
   syncModelOptions({ modelSelect: document.getElementById("set-default-codex-model"), engine: "codex", value: s.defaultCodexModel || "", blankLabel: "CLI default" });
   document.getElementById("set-model-change-access").value = s.modelChangeAccess || "admins";
+  paintModelShortcuts(s.modelShortcuts);
   document.getElementById("set-engine-fallback").checked = s.engineFallback !== false;
   document.getElementById("set-engine-fallback-mode").value = s.engineFallbackMode || "auto";
   document.getElementById("set-show-message-cost").checked = s.showMessageCost !== false;
@@ -4163,7 +4243,9 @@ function bindSettings() {
     saved.textContent = "saving…";
     // Only the fields this admin actually changed. Everything else is left to whatever the daemon
     // holds now — the whole point: an unrelated save must not revert another writer.
-    const form = readSettingsForm();
+    let form;
+    try { form = readSettingsForm(); }
+    catch (e) { saved.textContent = "✗ " + e.message; return; }
     const patch = diffSettingsPayload(SETTINGS_BASELINE || {}, form);
     const newPw = form.adminPassword || "";
     // Only (re)connect Slack when a Slack token was actually changed in this save — a normal
@@ -4410,7 +4492,7 @@ function paintContainerRuntimeHealth(state) {
 // treating any replacement daemon as success.
 const UPDATE_PHASES = {
   queued: "queued",
-  preflight: "checking Git, disk, config, service, and container engines",
+  preflight: "checking host Git, disk, config, service, and daemon health",
   snapshotting: "creating a recovery snapshot",
   checkout: "checking out the candidate",
   installing: "installing exact dependencies",
@@ -4419,7 +4501,7 @@ const UPDATE_PHASES = {
   provisioning: "provisioning optional components",
   image: "rebuilding the channel container image",
   restarting: "restarting the gateway",
-  verifying: "checking daemon, Slack, and container engines",
+  verifying: "checking daemon revision, runtime, and Slack reconnect",
   rolling_back: "rolling back to the previous revision",
 };
 
@@ -4435,7 +4517,7 @@ function updateResultHtml(transaction) {
     return `<span class="statuschip"><span class="dot warn"></span>container image needs attention — ${escapeHtml(transaction.imageWarning)}</span>`;
   }
   if (transaction.result === "updated" && transaction.changed === false) {
-    return `<span class="statuschip"><span class="dot ok"></span>already up to date${revision}; checks passed</span>`;
+    return `<span class="statuschip"><span class="dot ok"></span>repair complete${revision}; restart verified</span>`;
   }
   if (transaction.result === "updated") {
     return `<span class="statuschip"><span class="dot ok"></span>update complete${revision}; extended checks passed</span>`;
@@ -4539,6 +4621,10 @@ async function loadUpdateStatus() {
       document.getElementById("update-now").addEventListener("click", runGatewayUpdate);
     } else {
       el.innerHTML = `${cur}<span class="statuschip"><span class="dot ${u.checked ? "ok" : "warn"}"></span>${u.checked ? "up to date" : "update check unavailable — could not reach remote"}</span>`;
+      if (u.checked && u.automaticUpdates === true) {
+        el.innerHTML += `<button id="update-now" class="ghost update-btn">Repair gateway</button>`;
+        document.getElementById("update-now").addEventListener("click", runGatewayUpdate);
+      }
     }
   } catch {
     el.innerHTML = ""; // non-admin / locked-down — just hide the chip
@@ -4547,9 +4633,9 @@ async function loadUpdateStatus() {
 
 async function runGatewayUpdate() {
   const ok = await confirmDialog({
-    title: "Update the gateway now?",
-    body: "It checks the installation, installs and tests the candidate, then restarts and verifies it. This can take several minutes; failures trigger rollback.",
-    confirmLabel: "Update",
+    title: "Update or repair the gateway now?",
+    body: "It checks the host installation, repairs dependencies and the runtime image, then restarts and verifies the gateway. This can take several minutes; failures trigger rollback.",
+    confirmLabel: "Update / Repair",
   });
   if (!ok) return;
   const el = document.getElementById("update");
@@ -4663,6 +4749,10 @@ for (const b of document.querySelectorAll(".nav-item")) {
 document.getElementById("apidoc-gen").addEventListener("click", gotoApiTokenSettings);
 document.getElementById("apidoc-goto-settings").addEventListener("click", (e) => { e.preventDefault(); gotoApiTokenSettings(); });
 document.getElementById("channel-search").addEventListener("input", () => renderConvList());
+document.getElementById("conv-source").addEventListener("change", (event) => {
+  convSource = event.target.value;
+  renderConvList();
+});
 // Segmented filter (All / Channels / DMs) — narrows the one conversation list.
 for (const b of document.querySelectorAll("#conv-seg button")) {
   b.addEventListener("click", () => {
@@ -4882,6 +4972,13 @@ async function init() {
   startActiveRunsStream();
   loadUpdateStatus().catch(() => {}); // version chip + update button — off the critical path
   bindSettings();
+  mountCodexLoginBox(document.getElementById("gateway-codex-login"), "/api/gateway/codex-login", {
+    onComplete: () => {
+      delete AVAILABLE_MCPS.codex;
+      const box = document.querySelector("#channel-detail .ch-mcps");
+      if (box && box.dataset.mcpCodexKey === "codex") void renderMcpBoxForEngine(box, "codex", document.querySelector("#channel-detail .ch-mcps-count"));
+    },
+  });
   const { skills } = await api("/api/skills");
   try {
     SKILL_TEMPLATES = (await api("/api/skills/templates")).templates || [];

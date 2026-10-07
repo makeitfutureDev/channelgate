@@ -114,6 +114,9 @@ test("requiredTier admin: member and author clicks can't approve, an admin's can
   });
   await new Promise((r) => setImmediate(r));
   const id = cardId(client);
+  // The card says up front who can approve it — a member must not learn that from the refusal.
+  const cardText = JSON.stringify(client.posted.at(-1)?.blocks || client.posted.at(-1));
+  assert.match(cardText, /Only a gateway \*admin\* can approve this; anyone eligible may Deny or Comment/);
   await click(client, "cg_approve", id, MEMBER); // author self-click — must not count
   assert.equal(client.ephemerals.length, 1, "non-admin author is told an admin must approve");
   await click(client, "cg_approve", id, ADMIN);

@@ -1,4 +1,6 @@
+import { teamsReactionAction } from "./reactions.js";
 // Bot Framework activity → the gateway's neutral inbound record.
+import { activityConversationName } from "./conversation-name.js";
 import { makeInbound } from "../inbound.js";
 
 // Hosts a Teams attachment may legitimately be fetched from. The download URL arrives inside the
@@ -68,10 +70,14 @@ export function quotedReplyId(activity) {
   return ids.size === 1 ? [...ids][0] : "";
 }
 
-export function normalizeActivity(activity, { botId = "", fetchImpl = fetch, resolveFile = null } = {}) {
+export function normalizeActivity(activity, { botId = "", fetchImpl = fetch, resolveFile = null, activationReactions } = {}) {
   const type = String(activity?.type || "").toLowerCase();
   const edit = type === "messageupdate" && activity.channelData?.eventType === "editMessage";
-  const reaction = type === "messagereaction" && (activity.reactionsAdded || []).some(r => isRobotReaction(r?.type));
+  const actions = type === "messagereaction" ? [...new Set((activity.reactionsAdded || []).map(r => teamsReactionAction(r?.type, activationReactions)).filter(Boolean))] : [];
+  // A mixed control payload must not choose one destructive action arbitrarily.
+  if (actions.length > 1) return null;
+  const reactionAction = actions[0] || "";
+  const reaction = Boolean(reactionAction);
   if (type !== "message" && !edit && !reaction) return null;
   if (reaction && !activity.replyToId) return null;
   const from = activity.from || {};
@@ -89,13 +95,14 @@ export function normalizeActivity(activity, { botId = "", fetchImpl = fetch, res
   return makeInbound({
     platform: "msteams",
     conversationId,
-    conversationName: String(conversation.name || activity.channelData?.team?.name || ""),
+    conversationName: activityConversationName(activity),
     kind,
     // In a channel the user's own message is the root a reply must thread under; a 1:1 or group
     // chat is flat, so nothing is carried and replies land in the chat itself.
     threadKey: threadKey || (kind === "channel" ? String((reaction ? activity.replyToId : activity.id) || "") : ""),
     messageId: String(activity.id || ""),
     trigger: reaction ? "reaction" : edit ? "edit" : "message",
+    reactionAction,
     // Teams SDK quoted replies carry an entity; text markup alone is not a trustworthy
     // reference. Ignore ambiguous multiple quotes and quotes explicitly marked deleted.
     replyToId: reaction ? String(activity.replyToId) : quotedReplyId(activity),
@@ -165,5 +172,7 @@ async function fetchBytes(url, fetchImpl) {
 }
 
 export function isRobotReaction(value) {
-  return ["🤖", "robot", "robot_face"].includes(String(value || "").replace(/\uFE0F/g, ""));
+  // Teams names these Smile robot and Heart eyes robot in its reaction picker/reference.
+  // Keep the existing Unicode/legacy spellings for older event payloads.
+  return teamsReactionAction(value) === "engage";
 }

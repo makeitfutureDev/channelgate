@@ -11,7 +11,16 @@ export function rememberReplySession(conversationId, messageId, threadKey) {
 }
 
 export function sessionKeyForMessage(message) {
-  if (message.threadKey) return message.threadKey;
+  if (message.threadKey) {
+    // Native reaction envelopes can identify a reply, rather than its channel root. Use a known
+    // target mapping first; original inbound messages and every bot reply register their root.
+    const target = message.trigger === "reaction" && message.replyToId ? getDb().prepare(
+      "SELECT thread_key FROM conversation_reply_sessions WHERE conversation_id = ? AND message_id = ?",
+    ).get(message.conversationId, message.replyToId) : null;
+    const key = target?.thread_key || message.threadKey;
+    rememberReplySession(message.conversationId, message.messageId, key);
+    return key;
+  }
   if (message.kind !== "group") return message.conversationId;
   if (!message.messageId) throw new Error("Group chat message has no message id");
   const db = getDb();

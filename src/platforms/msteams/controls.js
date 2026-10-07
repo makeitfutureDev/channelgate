@@ -1,17 +1,21 @@
 // Native Teams controls hold conversation/session authority server-side. Card data carries only
 // an opaque, expiring state ID; editing the card payload cannot select another user's workspace.
 import { randomUUID } from 'node:crypto';
-import { getPublicUrl, canChangeChannelRuntime, getDefaultModel } from '../../config/settings.js';
-import { ENGINE_IDS, modelsForEngine, effortsForModel } from '../../engines/registry.js';
-import { resolveThreadEngine, getThreadModel, getThreadEffort } from '../../gateway/thread-engine.js';
+import { getPublicUrl, canChangeChannelRuntime, getDefaultModel, getMentionReactions } from '../../config/settings.js';
+import { modelsForEngine, effortsForModel, modelBelongsToEngine } from '../../engines/registry.js';
 import { teamsWorkspaceContext } from './workspace-access.js';
 import { listVisibleDirectory, normalizeRelativePath, canEditChannelFiles, readEditableFile } from '../../slack/file-explorer.js';
 import { createFileDownloadGrantUrl } from '../../web/file-download.js';
 import { createFileEditorGrantUrl } from '../../web/file-editor.js';
 import { createFileUploadGrantUrl } from '../../web/file-upload.js';
 import { createTeamsFileConsent } from './file-consent.js';
-import { createTeamsInteractionHandler } from './interactions.js';
+import { createTeamsInteractionHandler, normalizeTeamsInteraction } from './interactions.js';
 import { handlePlatformApproval } from '../../slack/approvals.js';
+import { acquireKeyedLock } from '../../util/keyed-lock.js';
+import { buildTeamsSettings, createTeamsSettingsContext, handleTeamsSettings, teamsSettingsUi } from './settings.js';
+import { generalRuntimeScopes } from './settings-general.js';
+import { effectiveMeta } from '../../gateway/run.js';
+import { teamsHelpText, createTeamsHelpCard } from './help.js';
 
 const card = (title, body = [], actions = []) => ({ type: 'AdaptiveCard', version: '1.4', body: [{ type: 'TextBlock', text: title, weight: 'Bolder', wrap: true }, ...body], actions });
 const text = value => ({ type: 'TextBlock', text: String(value), wrap: true });
@@ -25,16 +29,31 @@ export function createTeamsControls({ connector, now = Date.now, authorize = tea
   const prune = () => { for (const [id, state] of states) if (state.expires < now()) states.delete(id); while (states.size > 500) states.delete(states.keys().next().value); };
   const grant = state => ({ channelId: state.message.conversationId, slug: state.entry.slug, ownerId: state.message.userId, threadTs: state.sessionKey });
   async function settings(state, stateId) {
-    const engine = await resolveThreadEngine(state.entry.slug, state.sessionKey, state.meta);
-    const model = await getThreadModel(state.entry.slug, state.sessionKey) || state.meta.model || getDefaultModel(engine);
-    const effort = await getThreadEffort(state.entry.slug, state.sessionKey) || state.meta.effort || '';
-    const body = [text('These controls apply to this session. Channel settings and secrets open in the authenticated admin website.'),
-      { type: 'Input.ChoiceSet', id: 'engine', label: 'Engine', value: engine, choices: ENGINE_IDS.map(value => ({ title: value, value })) },
-      { type: 'Input.ChoiceSet', id: 'model', label: 'Model (choose an engine-compatible model)', value: model || 'default', choices: [{ title: 'Inherited default', value: 'default' }, ...ENGINE_IDS.flatMap(id => modelsForEngine(id).map(item => ({ title: `${id}: ${item.label || item.value}`, value: item.value })))] },
-      { type: 'Input.ChoiceSet', id: 'effort', label: 'Effort', value: effort || 'default', choices: [{ title: 'Inherited default', value: 'default' }, ...[...new Set(ENGINE_IDS.flatMap(id => modelsForEngine(id).flatMap(item => effortsForModel(id, item.value))))].map(value => ({ title: value, value }))] }];
-    const actions = [execute('Save session settings', 'model.save', stateId)];
-    const base = publicUrl(); if (base) actions.push(link('Channel settings and secrets', `${base}/conversations`));
-    return card('Session settings', body, actions);
+    const ctx = createTeamsSettingsContext(state, { connector, authorize });
+    await ctx.authorize();
+    return buildTeamsSettings(ctx, stateId);
+  }
+  async function model(state, stateId) {
+    const context = await authorize(grant(state), { connector });
+    state.meta = context.meta; state.authorIsAdmin = context.userIsAdmin;
+    const { thread: current, locked } = await generalRuntimeScopes({ meta: state.meta, entry: state.entry, sessionKey: state.sessionKey });
+    const ui = teamsSettingsUi(stateId);
+    const body = [text(`Current engine: ${current.engine}; model: ${current.model || 'engine default'}; effort: ${current.values.effort || 'inherited default'}.`),
+      text('Choose an engine, a model belonging to that engine, and effort, then Apply to this session. Changes apply to the next turn. Use /settings → General for conversation defaults.')];
+    if (!state.message.isDM && !canChangeChannelRuntime(state.authorIsAdmin)) {
+      return card('Session model', [...body, text('Runtime changes in this conversation are restricted to administrators.')]);
+    }
+    const engines = current.engines.map(item => item.value);
+    const models = current.engines.flatMap(engine => modelsForEngine(engine.value).map(item => ({ ...item, label: `${engine.label}: ${item.label || item.value}` })));
+    if (current.model && engines.includes(current.engine) && !models.some(item => item.value === current.model)) models.push({ value: current.model, label: `Current: ${current.model}` });
+    const efforts = [...new Set(engines.flatMap(engine => [
+      ...effortsForModel(engine), ...modelsForEngine(engine).flatMap(item => effortsForModel(engine, item.value)),
+    ]))];
+    if (locked) body.push(text('Engine is locked to this conversation’s Codex login.'));
+    body.push(ui.choice('engine', 'Engine', current.engine, current.engines),
+      ui.choice('model', 'Model', current.values.model || 'default', [{ label: 'Follow compatible conversation model / selected engine default', value: 'default' }, ...models]),
+      ui.choice('effort', 'Effort', current.values.effort || 'default', [{ label: 'Inherited default', value: 'default' }, ...efforts.map(value => ({ label: value, value }))]));
+    return card('Session model', body, [ui.execute('Apply to this session', 'model.save')]);
   }
   async function files(state, stateId, relative = '', page = 0) {
     const context = await authorize(grant(state), { connector });
@@ -53,16 +72,36 @@ export function createTeamsControls({ connector, now = Date.now, authorize = tea
     const destination = inConversation || state.message.isDM ? state.message.rawConversationId : await connector.openDm(state.message.userId);
     if (!destination) throw new Error('Open a personal chat with the bot first; private controls could not be delivered.');
     prune(); const id = randomUUID();
-    state = { ...state, deliveryId: destination, expires: now() + 15 * 60_000 };
+    state = { ...state, deliveryId: destination, inConversation, expires: now() + 15 * 60_000 };
     states.set(id, state);
-    try { await connector.postCard({ conversationId: destination, threadKey: inConversation ? state.message.threadKey : undefined, card: await build(state, id), text: inConversation ? 'Session settings' : 'Private conversation controls' }); }
+    try {
+      const payload = { card: await build(state, id), text: state.modelCommand ? 'Session model settings' : inConversation ? 'Conversation settings' : 'Private conversation controls' };
+      const posted = inConversation && state.replyCard ? await state.replyCard(payload)
+        : await connector.postCard({ conversationId: destination, threadKey: inConversation ? state.message.threadKey : undefined, ...payload });
+      state.messageId = posted?.messageId || '';
+    }
     catch (error) { states.delete(id); throw error; }
   }
   async function onCommand(args) {
     const { message, reply } = args;
     if (message.trigger === 'reaction') return false;
     if (message.text.trim().toLowerCase() === '/help') {
-      await reply('Commands: /settings (native session form), /files [folder], /secrets (authenticated settings), /sendfile <path> (personal file consent), /status, /model, /effort, /stop, /cancel, /clear. In group chats, quote the original message or bot reply and mention the bot to control that session. Voice notes require local Whisper.');
+      if (args.replyCard) {
+        try {
+          await args.replyCard({ card: createTeamsHelpCard(getMentionReactions('msteams')), text: 'Teams help' });
+          return true;
+        } catch { /* Keep the full, spaced guide available if native card delivery fails. */ }
+      }
+      await reply(teamsHelpText(getMentionReactions('msteams')));
+      return true;
+    }
+    if (message.text.trim().toLowerCase() === '/model') {
+      try {
+        const recipient = message.raw?.activity?.recipient?.id;
+        if (recipient && connector.botId && recipient !== connector.botId) throw new Error('This command is addressed to a different bot.');
+        await deliverCard({ ...args, modelCommand: true }, model, true);
+      }
+      catch (error) { await reply(`${error.message} You can change this session with /model <engine> <model|default> and /effort <level|default>.`); }
       return true;
     }
     const match = /^\/(settings|files|secrets|sendfile)(?:\s+(.*))?$/is.exec(message.text.trim());
@@ -74,9 +113,16 @@ export function createTeamsControls({ connector, now = Date.now, authorize = tea
         await reply('Check your personal chat to accept or decline the file.');
         return true;
       }
-      const inConversation = match[1].toLowerCase() === 'settings';
-      await deliverCard(args, (state, id) => match[1].toLowerCase() === 'files' ? files(state, id, match[2] || '') : settings(state, id), inConversation);
-      if (!inConversation && !message.isDM) await reply('I sent the controls to your personal chat.');
+      const command = match[1].toLowerCase();
+      // Settings stay with the conversation/session that opened them. File controls remain private.
+      const inConversation = command !== 'files';
+      const recipient = message.raw?.activity?.recipient?.id;
+      if (inConversation && recipient && connector.botId && recipient !== connector.botId) {
+        throw new Error('This command is addressed to a different bot. Check the Teams app registration and messaging endpoint.');
+      }
+      await deliverCard({ ...args, sharedSettings: inConversation && !message.isDM, tab: command === 'secrets' ? 'secrets' : '' },
+        (state, id) => command === 'files' ? files(state, id, match[2] || '') : settings(state, id), inConversation);
+      if (!message.isDM && !inConversation) await reply('I sent the controls to your personal chat.');
     } catch (error) { await reply(error.message); }
     return true;
   }
@@ -87,13 +133,31 @@ export function createTeamsControls({ connector, now = Date.now, authorize = tea
     }
     prune(); const state = states.get(interaction.data.stateId);
     if (!state || state.message.userId !== interaction.actorId || state.deliveryId !== interaction.nativeConversationId) throw new Error('These controls expired or belong to a different conversation/user. Reopen them.');
+    if (interaction.action.startsWith('settings.')) {
+      const release = await acquireKeyedLock('teams-settings-card', interaction.data.stateId);
+      try {
+        prune();
+        if (states.get(interaction.data.stateId) !== state) throw new Error('These controls expired. Reopen them.');
+        const ctx = createTeamsSettingsContext(state, { connector, authorize });
+        const updated = await handleTeamsSettings(interaction.action, interaction.data, ctx, interaction.data.stateId);
+        // Updating the bot's stored card works for both Execute and Submit clients and avoids
+        // depending on the client's user-specific Execute response replacing a shared message.
+        if (state.inConversation && state.messageId) await connector.updateCard({ conversationId: state.deliveryId,
+          messageId: state.messageId, card: updated, text: 'Conversation settings' });
+        return response(updated);
+      } finally { release(); }
+    }
     const context = await authorize(grant(state), { connector });
     state.meta = context.meta; state.authorIsAdmin = context.userIsAdmin;
     if (interaction.action === 'files.browse') return response(await files(state, interaction.data.stateId, interaction.data.relative || '', Number(interaction.data.page) || 0));
     if (interaction.action === 'model.save') {
       if (!state.message.isDM && !canChangeChannelRuntime(context.userIsAdmin)) throw new Error('Only administrators may change this conversation runtime.');
+      if (['engine', 'model', 'effort'].some(field => typeof interaction.data[field] !== 'string' || !interaction.data[field] || interaction.data[field].length > 128)) throw new Error('Select an engine, model, and effort before applying.');
       const engine = String(interaction.data.engine || ''), model = interaction.data.model === 'default' ? '' : String(interaction.data.model || ''), effort = interaction.data.effort === 'default' ? '' : String(interaction.data.effort || '');
-      if (!ENGINE_IDS.includes(engine) || (model && !modelsForEngine(engine).some(item => item.value === model)) || (effort && !effortsForModel(engine, model || getDefaultModel(engine)).includes(effort))) throw new Error('Select a compatible engine, model, and effort.');
+      const { thread: current } = await generalRuntimeScopes({ meta: state.meta, entry: state.entry, sessionKey: state.sessionKey });
+      const inheritedModel = effectiveMeta(state.meta).model;
+      const actualModel = model || (modelBelongsToEngine(inheritedModel, engine) ? inheritedModel : '') || getDefaultModel(engine);
+      if (!current.engines.some(item => item.value === engine) || (model && !modelBelongsToEngine(model, engine)) || (effort && !effortsForModel(engine, actualModel).includes(effort))) throw new Error('Select a compatible enabled engine, model, and effort.');
       if (states.get(interaction.data.stateId) !== state) throw new Error('These settings were already submitted. Reopen the controls.');
       states.delete(interaction.data.stateId);
       const replies = [];
@@ -101,7 +165,10 @@ export function createTeamsControls({ connector, now = Date.now, authorize = tea
       await command(`/model ${engine} ${model || 'default'}`);
       // A busy-lane refusal must not be followed by another mutation.
       if (replies.at(-1)?.startsWith('Session engine:')) await command(`/effort ${effort || 'default'}`);
-      return response(card('Session settings', replies.map(text)));
+      const updated = card('Session settings', replies.map(text));
+      if (state.inConversation && state.messageId) await connector.updateCard({ conversationId: state.deliveryId,
+        messageId: state.messageId, card: updated, text: 'Session model settings' });
+      return response(updated);
     }
     const baseUrl = publicUrl(); if (!baseUrl) throw new Error('Set the gateway Public URL before opening browser files.');
     const relative = normalizeRelativePath(interaction.data.relative || '');
@@ -120,15 +187,31 @@ export function createTeamsControls({ connector, now = Date.now, authorize = tea
     throw new Error('Unsupported Teams action.');
   } });
   async function onInvoke(activity) {
+    if (activity.recipient?.id && connector.botId && activity.recipient.id !== connector.botId) {
+      return response(card('Bot registration mismatch', [text('Reopen settings with the bot installed in this channel. An administrator must check its Teams app registration and messaging endpoint.')]));
+    }
     if (activity.type === 'invoke' && activity.name === 'fileConsent/invoke') return consent.handle(activity);
+    // Only an existing private card owned by this actor can receive a legacy replacement.
+    // Capture its server-held destination before dispatch, which may consume the state.
+    let privateSubmitState;
+    if (activity.type === 'message') {
+      try {
+        const interaction = normalizeTeamsInteraction(activity);
+        const state = states.get(interaction.data.stateId);
+        if (state && !state.inConversation && state.expires >= now()
+          && state.message.userId === interaction.actorId && state.deliveryId === interaction.nativeConversationId) {
+          privateSubmitState = state;
+        }
+      } catch { /* Invalid submissions have no card-update authority. */ }
+    }
     const result = await dispatchInvoke(activity);
     // Legacy Submit is a message activity: HTTP response cards are ignored by Teams clients.
-    // Deliver the replacement explicitly, only to the already verified interaction conversation.
+    // Shared settings update inside their authorized dispatcher; private cards use stored IDs.
     if (activity.type === 'message' && result.body?.type === 'application/vnd.microsoft.card.adaptive') {
-      const destination = String(activity.conversation.id).split(';messageid=')[0];
-      const update = { conversationId: destination, messageId: activity.replyToId, card: result.body.value, text: 'Conversation controls' };
-      if (update.messageId) await connector.updateCard(update);
-      else await connector.postCard(update);
+      if (privateSubmitState?.messageId && privateSubmitState.expires >= now()) {
+        await connector.updateCard({ conversationId: privateSubmitState.deliveryId,
+          messageId: privateSubmitState.messageId, card: result.body.value, text: 'Conversation controls' });
+      }
       return { status: 200, body: {} };
     }
     return result;

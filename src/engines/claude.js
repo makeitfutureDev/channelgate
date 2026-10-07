@@ -97,6 +97,9 @@ export function buildClaudeEnv({ home = "", configDir = "", extraEnv = {}, brows
     // on every attempt. Gateway-owned and in this last group (DISABLE_TELEMETRY is a reserved
     // name), so a channel secret cannot turn it back on.
     if (env.CG_EGRESS === "proxy") Object.assign(env, CLAUDE_PROXY_TELEMETRY_ENV);
+    // The channel launcher consumes this before exec'ing a gateway-managed main process.
+    // Its children inherit no marker, so bare `claude` can use the independent nested login.
+    if (env.CG_EGRESS === "proxy" && !providerEnv) env.CG_CLAUDE_MAIN = "1";
     return applyProviderEnv(env, providerEnv);
   }
   return applyProviderEnv(buildChildEnv({
@@ -128,6 +131,7 @@ export function buildClaudeArgs({
   prompt,
   sessionId,
   isNewSession,
+  forkSourceSessionId = "",
   mcpConfig, // value for --mcp-config: a PATH to a 0600 file (tokens must never ride on argv)
   strictMcp,
   dangerouslySkip,
@@ -145,7 +149,8 @@ export function buildClaudeArgs({
   // from ~/.claude; they sit outside the org/channel/user access tiers and would defeat clean mode.
   args.push("--setting-sources", "");
 
-  if (isNewSession) args.push("--session-id", sessionId);
+  if (forkSourceSessionId) args.push("-r", forkSourceSessionId, "--fork-session");
+  else if (isNewSession) args.push("--session-id", sessionId);
   else args.push("-r", sessionId);
 
   // Load the gateway lockdown explicitly so a custom (real-project) work dir is never modified.
@@ -220,6 +225,7 @@ export async function runClaude({
   prompt,
   sessionId,
   isNewSession,
+  forkSourceSessionId = "",
   mcpConfig = null,
   strictMcp = true,
   dangerouslySkip = false,
@@ -253,8 +259,9 @@ export async function runClaude({
   signal = null,
   onDelta = null,
   onEvent = null,
+  onSessionResolved = null,
 }) {
-  const args = buildClaudeArgs({ prompt, sessionId, isNewSession, mcpConfig, strictMcp, dangerouslySkip, settingsFile, model, effort, permissionPromptTool, pluginDirs, instructionFile, disallowedTools });
+  const args = buildClaudeArgs({ prompt, sessionId, isNewSession, forkSourceSessionId, mcpConfig, strictMcp, dangerouslySkip, settingsFile, model, effort, permissionPromptTool, pluginDirs, instructionFile, disallowedTools });
   const runtime = runtimeTargetOr(target, cwd);
   // What a provider failure calls itself in the thread. "Claude" is the CLI; the harness may be
   // another provider driving it (src/engines/qwen.js), and the person reading the error has to
@@ -265,7 +272,9 @@ export async function runClaude({
     // Minimal allowlisted env — the sandbox can't hide the child's own environment (see child-env.js).
     // detached → own process group, so kills take the MCP grandchildren too (see util/proc.js).
     const child = trackEngineChild(spawnEngineChild(runtime, {
-      cmd: "claude",
+      // A provider's main process keeps its provider env; bare nested `claude` goes through the
+      // channel launcher, which resets that env to the protected Anthropic login.
+      cmd: providerEnv && isIsolatedTarget(runtime) ? "/usr/local/bin/claude" : "claude",
       args,
       cwd,
       env: buildClaudeEnv({ home, configDir, extraEnv, browserNamespace, target: runtime, oauthToken: claudeOauthToken, providerEnv }),
@@ -338,6 +347,7 @@ export async function runClaude({
       // failure that actually ended the turn.
       providerError = claudeProviderError(p, harnessLabel) || providerError;
       stream.consume(p);
+      if (forkSourceSessionId && p.type === "system" && p.subtype === "init" && p.session_id) onSessionResolved?.(p.session_id);
       if (p.type === "result") result = p;
     };
 

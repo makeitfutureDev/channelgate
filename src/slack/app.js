@@ -23,6 +23,8 @@ import { getSessionMap } from "../gateway/sessions.js";
 import { getThreadEffort, getThreadEngine, getThreadModel, resolveThreadEngine, setThreadEffort, setThreadEngine, setThreadModel } from "../gateway/thread-engine.js";
 
 import { logEvent } from "../util/logger.js";
+import { nextRuntimeTriple, runtimeSettingsPatch } from "../gateway/runtime-settings.js";
+export { nextRuntimeTriple, runtimeSettingsPatch } from "../gateway/runtime-settings.js";
 
 import { clearUpdateMarker, formatUpdateResult, readTerminalUpdateMarker } from "../gateway/updater.js";
 
@@ -38,6 +40,7 @@ import { canSeeSkill, grantSkillsToChannel, revokeSkillsFromChannel } from "../g
 import { listSkills } from "../gateway/skills/catalog.js";
 import { engineLabel, effortBelongsToModel, effortsForModel, modelBelongsToEngine, modelsForEngine, requireAdapter } from "../engines/registry.js";
 import { persistedSelectionForEngine, selectionFieldForEngine } from "../gateway/mcp-discovery.js";
+import { channelCodexLoginStatus } from "../gateway/channel-codex-login.js";
 import { resolveMakeToolboxUpdate } from "../gateway/make-toolbox.js";
 import { channelVpnConfigured, getChannelVpnStatus, setChannelVpnEnabled, unconfiguredChannelVpnStatus } from "../gateway/channel-vpn-control.js";
 import { logChannelPolicyChange } from "../config/channel-audit.js";
@@ -336,7 +339,7 @@ export async function handleMenuResumeAction({ ack, body, action, client }) {
       throw new Error("This menu isn't yours. Open your own with `/menu`.");
     }
     const context = await fileExplorerContext(client, { channelId, userId, verifyMembership: true });
-    const view = await buildMenuResumeView({ ...context, meta: effectiveMeta(context.meta) }, value.t);
+    const view = await buildMenuResumeView({ ...context, meta: effectiveMeta(context.meta), userIsAdmin: await isAdmin(userId) }, value.t);
     await client.views.open({ trigger_id: body.trigger_id, view });
   } catch (error) {
     if (channelId && userId) await client.chat.postEphemeral({ channel: channelId, user: userId, text: error.message || "Couldn't open Resume." });
@@ -587,7 +590,8 @@ export async function channelSettingsContext(client, { channelId, userId, expect
 
 function channelSettingsSnapshot(meta = {}) {
   const effective = effectiveMeta(meta);
-  const effectiveEngine = effective.engine || getEngine();
+  const channelLogin = effective.codexAuthSource === "channel";
+  const effectiveEngine = channelLogin ? "codex" : effective.engine || getEngine();
   const gatewayEngine = getEngine();
   const organization = getOrgAccessGrants();
   const channelTier = { ...effective, skills: channelSkillGrants(effective) };
@@ -598,8 +602,9 @@ function channelSettingsSnapshot(meta = {}) {
     access: meta,
     mode: { adminMode: effective.adminMode, allowBash: effective.allowBash, autoMode: effective.autoMode, cleanMode: effective.cleanMode, allowNetwork: effective.allowNetwork },
     runtime: {
-      configuredEngineId: effective.engine || "",
-      configuredEngine: effective.engine ? engineLabel(effective.engine) : "",
+      channelLogin,
+      configuredEngineId: channelLogin ? "codex" : effective.engine || "",
+      configuredEngine: channelLogin ? "Codex" : effective.engine ? engineLabel(effective.engine) : "",
       effectiveEngineId: effectiveEngine,
       effectiveEngine: engineLabel(effectiveEngine),
       gatewayEngineId: gatewayEngine,
@@ -658,7 +663,7 @@ export function channelSettingsEditOptions(meta, userIsAdmin, { authorId = "", i
 // effectiveMeta with that one field blank, so the dropdown's "inherited" label and the validation
 // that accepts the next pick can never disagree about what an unset field means.
 function inheritedChannelRuntime(meta = {}) {
-  const engine = effectiveMeta({ ...meta, engine: "" }).engine || getEngine();
+  const engine = meta.codexAuthSource === "channel" ? "codex" : effectiveMeta({ ...meta, engine: "" }).engine || getEngine();
   return {
     engine,
     model: effectiveMeta({ ...meta, model: "" }).model || getDefaultModel(engine) || "",
@@ -703,8 +708,9 @@ export async function runtimeScopes(slug, meta, snapshot, threadKey) {
       model: parentModel ? `Inherited default (${parentModel})` : "Engine default",
       effort: parentEffort ? `Inherited default (${parentEffort})` : "Engine default",
     },
-    options: { engines, models: modelsForEngine(channelEngine), efforts: effortChoices(channelEngine, channelModel) },
+    options: { engines: runtime.channelLogin ? [{ label: "Codex", value: "codex" }] : engines, models: modelsForEngine(channelEngine), efforts: effortChoices(channelEngine, channelModel) },
   };
+  if (runtime.channelLogin) channel.inherited.engine = "This channel's Codex login";
   if (!slug || !threadKey) return { channel, thread: null };
   const [engine, model, effort, activeEngine] = await Promise.all([
     getThreadEngine(slug, threadKey),
@@ -719,7 +725,7 @@ export async function runtimeScopes(slug, meta, snapshot, threadKey) {
   return {
     channel,
     thread: {
-      values: { engine, model, effort },
+      values: { engine: runtime.channelLogin ? "" : engine, model, effort },
       pinned: Boolean(engine || model || effort),
       // Named only when it is the reason this thread differs from the channel, so the tab explains
       // a surprising engine instead of repeating what the dropdown already says.
@@ -729,23 +735,9 @@ export async function runtimeScopes(slug, meta, snapshot, threadKey) {
         model: inheritedModel ? `Follow channel (${inheritedModel})` : "Follow channel (engine default)",
         effort: inheritedEffort ? `Follow channel (${inheritedEffort})` : "Follow channel (engine default)",
       },
-      options: { engines, models: modelsForEngine(activeEngine), efforts: effortChoices(activeEngine, model || inheritedModel) },
+      options: { engines: runtime.channelLogin ? [{ label: "Codex", value: "codex" }] : engines, models: modelsForEngine(activeEngine), efforts: effortChoices(activeEngine, model || inheritedModel) },
     },
   };
-}
-
-// Apply ONE dropdown. Engine, model and effort are not independent — a model is a flag for exactly
-// one harness and an effort for exactly one model — so changing a field drops the two below it
-// when the new value invalidates them, the same rule the /model wizard and the in-thread
-// `claude`/`codex` directive apply. `inheritedEngine` is what an empty engine falls back to:
-// the gateway default for the channel scope, the channel's own engine for a thread.
-export function nextRuntimeTriple(current = {}, field, value, inheritedEngine) {
-  const clean = (raw) => (raw === SETTINGS_DEFAULT_VALUE ? "" : String(raw || "").trim());
-  const next = { engine: clean(current.engine), model: clean(current.model), effort: clean(current.effort), [field]: clean(value) };
-  const engine = next.engine || inheritedEngine;
-  if (!modelBelongsToEngine(next.model, engine)) next.model = "";
-  if (!effortBelongsToModel(next.effort, engine, next.model || getDefaultModel(engine))) next.effort = "";
-  return next;
 }
 
 // A thread-scope pick must never silently widen to the channel because the thread id was lost.
@@ -791,22 +783,6 @@ function runtimeNotice(scope, { engine, model, effort }, resolvedEngine) {
   const where = scope === "thread" ? "This thread" : "Channel default";
   const engineText = engine ? engineLabel(engine) : `${engineLabel(resolvedEngine)} (inherited)`;
   return `✅ ${where}: *${engineText}* · \`${model || "inherited model"}\` · \`${effort || "inherited effort"}\`.`;
-}
-
-export function runtimeSettingsPatch(form = {}, {
-  gatewayEngine = getEngine(),
-  enabledEngines = getEnabledEngines(),
-} = {}) {
-  const engine = form.engine === SETTINGS_DEFAULT_VALUE ? "" : String(form.engine || "");
-  const actualEngine = engine || gatewayEngine;
-  if (!enabledEngines.includes(actualEngine)) throw new Error("That engine is no longer enabled.");
-  const model = form.model === SETTINGS_DEFAULT_VALUE ? "" : String(form.model || "");
-  if (model && !modelBelongsToEngine(model, actualEngine)) throw new Error("That model does not belong to the selected engine.");
-  const effort = form.effort === SETTINGS_DEFAULT_VALUE ? "" : String(form.effort || "");
-  if (effort && !effortBelongsToModel(effort, actualEngine, model || getDefaultModel(actualEngine))) {
-    throw new Error("That effort is not supported by the selected model.");
-  }
-  return { patch: { engine, model, effort }, actualEngine };
 }
 
 export function connectionSettingsPatch(current = {}, form = {}) {
@@ -855,7 +831,7 @@ async function cloudManagerItems(meta, engine) {
   const inherited = Array.isArray(getOrgAccessGrants()?.[field]) ? getOrgAccessGrants()[field] : [];
   const directKeys = new Set(direct.map((entry) => cloudSelectionKey(engine, entry)));
   const inheritedKeys = new Set(inherited.map((entry) => cloudSelectionKey(engine, entry)));
-  const available = await requireAdapter(engine).discoverMcps();
+  const available = await requireAdapter(engine).discoverMcps({ channelId: engine === "codex" && meta?.codexAuthSource === "channel" ? meta.channelId : "" });
   const rows = new Map();
   for (const entry of [...available, ...direct, ...inherited]) {
     const key = cloudSelectionKey(engine, entry);
@@ -970,13 +946,19 @@ async function settingsRootView(entry, meta, state, userIsAdmin, { tab = state.t
   const threadTs = state.threadTs || "";
   const [scopes, resume, secretScopes] = await Promise.all([
     runtimeScopes(entry.slug, meta, snapshot, threadTs),
-    resolveResumeSession({ entry, meta: effectiveMeta(meta) }, threadTs)
+    resolveResumeSession({ entry, meta: effectiveMeta(meta), isAdminAuthor: userIsAdmin }, threadTs)
       .catch(() => ({ inThread: Boolean(threadTs), sessionId: "", engine: "", workDir: "", command: "" })),
     // The other two credential scopes, so the Secrets tab shows what a run will ACTUALLY receive.
     // `personal` is the VIEWER's own — state.ownerId is the only person this modal answers to.
     secretScopeLists(meta, state.ownerId).catch(() => ({ organization: [], personal: [], channel: [] })),
   ]);
   snapshot.runtime.scopes = scopes;
+  if (snapshot.runtime.channelLogin) {
+    const login = await channelCodexLoginStatus(meta.channelId);
+    snapshot.runtime.channelLoginStatus = login.authenticated
+      ? `Signed in with ${login.method === "chatgpt" ? "ChatGPT" : "an API key"}`
+      : login.phase === "pending" ? "ChatGPT sign-in in progress" : "No channel login yet";
+  }
   snapshot.resume = resume;
   snapshot.automations = listForChannel(state.channelId);
   snapshot.orgSecrets = secretScopes.organization;
@@ -1553,6 +1535,7 @@ async function connectAndWire(app) {
       const runtimeTarget = runtimeSelectTarget(actionId);
       if (runtimeTarget) {
         const { scope, field } = runtimeTarget;
+        if (field === "engine" && meta.codexAuthSource === "channel") throw new Error("This channel uses its own Codex login, so its engine is Codex.");
         const value = String(action?.selected_option?.value || SETTINGS_DEFAULT_VALUE);
         let notice;
         if (scope === "channel") {
@@ -1645,7 +1628,7 @@ async function connectAndWire(app) {
         const activate = Boolean(command.a);
         let selection = null;
         if (activate) {
-          const available = await requireAdapter(engine).discoverMcps();
+          const available = await requireAdapter(engine).discoverMcps({ channelId: engine === "codex" && meta?.codexAuthSource === "channel" ? meta.channelId : "" });
           selection = available.find((item) => cloudSelectionKey(engine, item) === key);
           selection = persistedSelectionForEngine(engine, selection);
           if (!selection) throw new Error("That MCP capability is no longer available. Refresh the catalog and try again.");

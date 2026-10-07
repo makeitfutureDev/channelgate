@@ -71,28 +71,547 @@ example server behind HTTPS on a public host. Record the token's last four chara
 - [ ] Lean: enable Lean. Pass: neither `custom-qa` nor `my-qa2` appears in either engine.
 - [ ] SSH (engine-independent wiring, both CLIs): open an SSH session as the QA author; `claude`
   and `codex` inside list `custom-qa` and `my-qa2`.
+## Platform activation emoji acceptance (2026-10-07)
+
+- Automated settings/API coverage: `test/platform-reaction-settings.test.js` verifies separate
+  defaults, retained legacy Slack selection, independent partial saves, bounded validation,
+  reserved controls, atomic invalid-request refusal, default reset and safe API roundtrip.
+  Teams effective-setting changes record a monotonic timestamp inside the settings write lock;
+  equivalent aliases/order, unrelated saves and client-forged timestamp fields cannot alter it.
+- Browser: `test/platform-reaction-settings-browser.test.js` launches the real admin HTML/JS with
+  an isolated authenticated settings fixture. Verify three fields, save/paint/reload persistence,
+  Teams-only diffs, mobile viewport, Google Chat limitation and zero browser page errors.
+- Runtime: `test/platform-activation-reactions.test.js` plus the existing Teams activity,
+  Graph normalizer/subscription/transport and help/control suites verify configured Unicode/IDs,
+  removed defaults, fixed Stop/Tick, exact robot metadata, canonical equivalent aliases,
+  fresh additions, historical/legacy queued rejection, A→B→A setting changes between Graph reads,
+  existing dedup identities and current help. Google Chat reaction events remain ignored.
+- Verification: 148 focused runtime/settings/help/authorization tests and one real browser test
+  passed without failures or skips. Static checks, secret scan and security coverage passed.
+- [ ] LIVE `SLACK-ACTIVATION-EMOJI-01` (Claude and Codex): use isolated operator-owned Slack QA
+  channels pinned separately to each engine. Set Slack activation to `rocket`, Teams to `alien`,
+  Google Chat to `🤖`; react 🚀 to a fresh unmentioned human message and a reply in an engaged
+  thread. Expect one run as the authorized reactor, correct session/workspace and engine.
+  🤖 is inactive while replaced; repeated events/removals do not duplicate runs; Stop/ack controls
+  still work. Restore the prior settings. Record message/run IDs and outcomes for both engines.
+- [ ] LIVE `TEAMS-ACTIVATION-EMOJI-01` (Claude and Codex): disposable operator-owned Teams QA
+  personal/group/channel fixtures with trusted native event delivery and consented Graph events.
+  Set Teams activation to `1f680_rocket, 🚀` while Slack uses `robot_face`. Add 🚀 to fresh human
+  messages without a mention; expect one run as the authorized reactor in the correct engine/session.
+  Removed default emojis are inactive, 🛑 stops only authorized work, ✅ acknowledges tracked reminders.
+  Change away and back without waiting for Graph maintenance: historical/queued activations remain
+  inactive; a fresh addition after the saved setting works. Restore the prior selection and verify
+  help updates. Record native/Graph payload shape, timestamps, message/run IDs and outcomes.
+- [ ] LIVE `PLATFORM-ACTIVATION-SETTINGS-01` (engine-independent): isolated authenticated admin
+  browser fixture. Set distinct valid values on the three fields, save, reload and verify isolation,
+  partial updates, invalid-request atomicity and empty-list defaults. Verify the Google Chat field
+  states configuration-only support and no reaction-trigger capability is advertised.
+- Private registry writes require the requester's explicitly selected personal Airtable connection.
+  Definitions prepared; account selection and live execution remain pending. These are not PASS cases.
+
+## Microsoft Teams model command acceptance (2026-10-07)
+
+- Automated: `test/teams-model-command.test.js` uses scratch SQLite, fake Teams transport and
+  the real conversation controls to verify retained session engine/model/effort, enabled model
+  choices, Execute/Submit persistence and original-card replacement, session isolation, replay,
+  invalid/incomplete/disabled selections, actor/conversation binding, live runtime policy,
+  personal chat changes, dedicated Codex login, expiry/access revocation, busy refusal, typed
+  argument passthrough, reaction exclusion, delivery fallback and quoted group-card continuity.
+- Verification: 66 focused model/control/card/settings/help tests passed without failures or
+  skips. Static checks, secret scan and security coverage checks passed.
+- [ ] LIVE (`TEAMS-MODEL-01`, Claude and Codex): approved beta Teams QA personal, group and
+  channel fixtures, with both engines enabled. In a personal chat send `/model`; in a channel
+  thread send `@agent /model`; in a group quote the session's original message/bot reply and
+  send `@agent /model`. Pass: current session selection plus an actionable picker in the same
+  conversation/thread. Choose Claude plus a listed Claude model and supported effort, Apply,
+  then send `Reply exactly TEAMS_MODEL_CLAUDE_OK` in that session. Repeat with Codex plus a
+  listed Codex model and supported effort, prompting `Reply exactly TEAMS_MODEL_CODEX_OK`.
+  Pass: confirmation, `/status` and next-turn runtime evidence agree with each selection;
+  conversation defaults and another session stay unchanged. Quote the picker/confirmation in
+  a group and verify `/status` continues the same session. Exercise Execute and legacy Submit
+  clients where available; both must replace the original card with the outcome.
+- [ ] LIVE (`TEAMS-MODEL-02`, Claude and Codex): in the same disposable fixtures, start a long
+  request, then try Apply; pass: busy refusal and unchanged runtime. Stop the request, reopen
+  and retry. Use a non-admin actor with runtime changes restricted, another actor clicking
+  the original owner's card, a card older than 15 minutes, and a dedicated channel Codex
+  login with a forged different engine; pass: no unauthorized change or engine turn.
+- Live client/next-turn acceptance remains unexecuted. The private ChannelGate QA Airtable
+  records remain pending: this run exposes only the shared agent connection; deployment rules
+  require the requesting user's selected personal connection for registry writes.
+
+## Unavailable skill grants acceptance (2026-10-07)
+
+- Automated: `test/run-grant-isolation.test.js` verifies deduplicated omissions, no empty personal
+  plugin, valid instructions retained alongside missing dependencies, awaiting-review revisions and
+  removed entries. `test/runtime-integration-run.test.js` verifies successful fresh/resumed Claude
+  and Codex turns, one warning before spawn in streamed delivery and authoritative content,
+  available personal instructions delivered, unchanged stored grants, and both fallback directions.
+  Existing `test/access-grants.test.js` retains direct/dependency cross-owner rejection;
+  `test/fallback-spawn-contract.test.js` retains each fallback engine's confinement/MCP contract.
+- Verification: 55 focused tests passed, zero failures, one existing capability-dependent skip
+  (the effective user can read a chmod(000) directory).
+- [ ] LIVE (`SKL-MISSING-01`, Claude and Codex): paired private Auto QA fixtures; admin test actor
+  saves the approved test actor's original personal grants. Retain a valid disposable personal skill
+  with a synthetic proof marker and `requires: [qa-missing-dependency]`; add unknown
+  `qa-missing-personal` and awaiting-review `qa-staged-personal`. Approved actor asks in a fresh
+  thread: "Reply exactly SKILL_PARTIAL_OK and read the available personal skill to name its
+  synthetic marker", then resumes with "Repeat the synthetic marker". Pass: both turns answer on
+  the selected engine, one warning names the omissions, available marker is readable, unavailable
+  bodies are absent, and stored grants stay unchanged. Repair grants and repeat: warning disappears.
+  A different actor must still be unable to load the private skill or its private dependencies.
+  Restore the original profile. Use synthetic material only.
+- [ ] LIVE (`SKL-MISSING-02`, Claude and Codex): unpinned paired Auto fixtures with fallback enabled;
+  add one disposable unavailable personal grant and inject a deterministic replay-safe usage-limit
+  response before any primary-engine tool/text, leaving the alternate healthy. Prompt:
+  "Reply exactly SKILL_FALLBACK_OK". Pass in each direction: alternate engine answers, exactly one
+  unavailable-skill warning survives streamed/final delivery alongside the fallback note, and
+  confinement/grants stay unchanged. Restore provider fixture and original grants.
+- Private QA: both reusable definitions registered through the requester's selected personal
+  connection. Live deployed execution remains pending host administration and candidate restart;
+  automated fake-runtime evidence is not a live provider pass.
+
+## Microsoft Teams reaction actions acceptance (2026-10-07)
+
+- Graph robot metadata verification: 93 focused tests passed, zero failures/skips; independent
+  review found no blocking defects and separately passed 31 parser/subscription tests.
+- Graph robot metadata: the live message API reports Heart eyes robot as `reactionType: "😍"`
+  with `displayName: "Heart eyes robot"` and no custom content URL, while Alien is `👽`.
+  The Graph mapper now qualifies this robot variant in history and current-presence checks;
+  native plain 😍, ordinary Heart eyes, missing historical names and custom art remain inactive.
+  Dedicated `graphRobotStartedAt` is saved before cached subscription reuse or message fetch,
+  preserving earlier cutoff values. Tests cover pre-cutoff rejection, removal/readd and approved
+  reactor dispatch in personal/group/channel sessions. Existing robot event hashes stay unchanged.
+- [ ] LIVE (`TEAMS-ROBOT-METADATA-01`, Claude and Codex): approved beta Teams QA group/channel
+  with working Graph event delivery. After the candidate's saved cutoff, post an unmentioned
+  message "Reply exactly ROBOT_METADATA_OK" and add **Heart eyes robot**. Capture the delivered
+  Graph message history and current reaction. Pass: both identify 😍/Heart eyes robot/no custom URL,
+  exactly one response as the reactor in the source session, and no run on removal, ordinary Heart
+  eyes or unapproved actor. Repeat on a bot reply. Retried notifications must not start a second run.
+- Live failure diagnosis: provider reads show fresh Alien on unmentioned content with no replies,
+  while a nearby bot mention receives an answer. Alien's value already matches intake. Restart
+  notices confirm restart initiation; reads cannot prove the deployed notification switch, scoped
+  subscription, webhook arrival, roster mapping or historical metadata. Message history is absent
+  in the available provider response; no unsafe snapshot fallback is inferred from that alone.
+  Deployed event setting and Graph errors are requested. Live activation and required private QA
+  registration remain pending; the requester's selected personal Airtable connection is unavailable.
+
+- Alien verification: 88 focused tests passed, zero failures/skips. Live delivery remains unverified.
+- Alien activation: native and Graph normalizer tests accept `alien`, exact picker shortcut
+  `:alien:`, Unicode 👽 and `1f47d_extraterrestrialalien`. Shared ingest covers approved/unapproved
+  reactors and personal/group/channel session targets. Typed shortcuts, removals and Alien monster
+  stay inactive. A separate persisted Alien cutoff prevents old reactions replaying even when the
+  subscription already has the older shortcut/Like cutoff; refresh, renewal and recreation retain it.
+- [ ] LIVE (`TEAMS-ALIEN-01`, Claude and Codex): approved beta Teams personal, group and channel
+  QA fixtures with event delivery enabled. After loading this candidate and creating the scoped
+  subscription, post an unmentioned group/channel message "Reply exactly ALIEN_TRIGGER_OK".
+  Approved actor adds **Alien** (`:alien:`) from the reaction picker. Pass: one ALIEN_TRIGGER_OK
+  response as the reactor in that source session; retried notifications produce no second response.
+  In personal chat react to a bot reply: the same session resumes once. Remove the reaction: no run.
+  Repeat with an unapproved actor: no run. Capture the actual event reaction type, arrival,
+  normalization and dispatched run; picker UI alone is not delivery evidence.
+- [ ] LIVE (`TEAMS-ALIEN-02`, engine-independent history gate): before upgrade leave Alien on
+  a message in an existing shortcut/Like subscription; upgrade/restart, then edit the message or
+  add an unrelated reaction. Pass: no activation from old Alien history. Remove and add Alien
+  after the persisted cutoff: exactly one activation. Existing robot/Like cutoff is unchanged.
+- Private Alien QA registration and live execution remain pending: the requesting user's selected
+  personal Airtable connection and exact failed-message link are unavailable in this run.
+
+- Shortcut/Like verification: 79 focused tests passed, zero failures/skips. Independent review
+  identified old-reaction replay when adding aliases; a persisted cutoff fixed it and the updated
+  review found no blocking defects. Static checks and secret scanning passed. Live event delivery
+  and private QA registration remain pending; no live trigger success is claimed.
+
+- Activation shortcut and Like alternative: `test/platform-teams-events.test.js` and
+  `test/platform-teams-graph-activity.test.js` cover `hearteyesrobot`, exact picker shortcut `:hearteyesrobot:`, native `like`, Unicode 👍
+  and valid skin tones,
+  removal suppression and unsupported emoji rejection. `test/teams-reaction-actions.test.js`
+  carries the exact Heart eyes robot shortcut and Like through normalization and shared ingest in
+  personal, group and channel sessions,
+  checks reactor identity/session target, and rejects unapproved reactors before engine dispatch.
+  `test/platform-teams-graph-events.test.js` verifies persisted alias-introduction cutoff initialization
+  before cached subscription reuse and message fetch, preservation on context refresh/renew/restart,
+  and Graph normalizer tests reject older alias additions and missing cutoffs without changing
+  legacy robot/control admission. New aliases cannot replay pre-upgrade history on unrelated edits.
+- [ ] LIVE (Claude and Codex): use approved beta Teams QA personal, group and channel fixtures
+  with reaction event delivery enabled. In a group/channel, post an unmentioned message
+  "Reply exactly LIKE_TRIGGER_OK", then add 👍 **Like** using the Teams reaction picker as an
+  approved actor. Pass: exactly one response LIKE_TRIGGER_OK in that source session under the
+  reactor's identity on each engine; no response to removal and no run for an unapproved actor.
+  Repeat with **Heart eyes robot**, picker shortcut `:hearteyesrobot:`, on a separate fixture.
+  In personal chat, add either activation reaction to an existing bot reply: pass only if that session resumes once.
+  Capture the actual reaction type and delivered event when investigating a failed trigger.
+  A recognized ID alone does not establish event delivery. The failed message link/live fixture
+  remains requested; private QA registration requires the unavailable requester personal connection.
+
+- Automated: `test/teams-reaction-actions.test.js` exercises native reaction → normalization →
+  shared ingest → control/ack store. Native and Graph Stop additions cancel active and queued
+  requests for personal, group and channel sessions; reject an approved non-author; permit
+  administrators; leave another
+  group session running; maps a native channel reply reaction back to its recorded root. Tick
+  closes original and escalation reminders, rejects unapproved reactors and sudo non-admins,
+  retains custom-emoji reminders, preserves engine sessions and never starts an engine turn.
+- `test/platform-teams-events.test.js`, `test/platform-teams-graph-activity.test.js` and
+  `test/platform-teams-event-transport.test.js` cover documented IDs/aliases, reactor identity,
+  target/root routing, authenticated webhook/retry handling, native/Graph ownership, action-specific
+  event identities, stable legacy robot/edit dedup IDs, latest history transitions, current-reaction
+  checks, combined history flags and removal suppression. Stop/Tick target text cannot dispatch
+  `/clear` or other commands.
+- Verification: 77 focused tests passed with zero failures/skips. A broader run passed 257 of
+  258 tests; the sole failure is the pre-existing `platform-voice.test.js` exact-output assertion
+  (the real answer includes its statistics footer), reproduced unchanged on baseline `beta`.
+  Static checks and secret scanning passed. Independent review checked authorization, session
+  scope and Graph event handling; its combined-history-flag finding was corrected and tested.
+- [ ] LIVE (Claude and Codex): separate approved beta Teams QA personal chats, group sessions and
+  channel threads; enable delivered reaction events (Graph group/channel consent and subscription).
+  As fixture author start "Wait for 120 seconds, then reply EMOJI_RUN_DONE"; quote the same request
+  with "Reply QUEUED_EMOJI_DONE". An approved other actor adds Stop sign to the working reply:
+  pass only if work continues with an author/admin notice. Author adds Stop sign: pass if active
+  work stops, queued work never starts and unrelated sessions continue. Repeat with admin stopper.
+  Like on "Reply exactly EMOJI_LIKE_OK" must run once as the reactor on each engine.
+- [ ] LIVE, engine-independent: create a Teams QA reminder with acknowledgment enabled, default
+  Tick button and short escalation interval. Add Tick button to the original reminder, then repeat
+  on a separate reminder’s second notice. Pass: acknowledgment notice, pending ack removed,
+  escalation chain ends, no engine turn. Removing/readding the tick cannot reopen it. Unapproved
+  reactors and non-admin sudo actors cannot resolve it. Tick on normal content reports no pending
+  reminder. Both acknowledgment and intake run before engine dispatch; model choice cannot affect
+  this result. Check `/help` advertises all supported actions and the event-delivery prerequisites.
+- [ ] Private QA registration: mirror these exact fixtures/actions/pass rules using the requester’s
+  personal Airtable connection. Only the agent identity is available in this run; no substitution.
+  Live Teams delivery remains unexecuted. The agent Teams connection identifies a different
+  account; a permitted beta QA conversation/action fixture has not been established for live tests.
+
+## Microsoft Teams help guide acceptance (2026-10-07)
+
+- Teams reaction legend correction: 30 focused help/control/card tests passed, zero failures/skips.
+  The native card and text fallback retain separate reaction rows, Teams picker names and actual
+  reaction IDs, with no Slack shortcodes or plain robot substituted for Heart eyes robot.
+  Live desktop/mobile display and the existing private QA registration remain pending.
+
+- Native layout regression: `test/help-text.test.js`, `test/teams-controls.test.js` and
+  `test/teams-native-cards.test.js` verify separate headings/paragraphs, three emoji rows,
+  ten command rows with native monospace runs, complete copy without Markdown markers or
+  truncation, and the supported card payload budget. Authorized personal/channel/group `/help`
+  delivery uses a native card in the source conversation before an engine turn; a quoted group
+  card retains the original session. Card failure falls back to the complete spaced text.
+- Layout verification: 53 focused tests passed, zero failures/skips; static checks and secret
+  scanning passed. The complete card validates against the official Adaptive Cards schema.
+  Local Adaptive Cards SDK rendering at 900px and 390px showed clear section/row spacing,
+  no horizontal overflow and no validation events. This is not live Teams client acceptance.
+- Automated reaction mapping: `test/platform-teams-events.test.js` and
+  `test/platform-teams-graph-activity.test.js` verify `hearteyesrobot` / `smilerobot` trigger through
+  native and Graph normalization as the reactor, preserving the original target and removed-event
+  suppression. Stop and Tick use explicit controls before an engine turn; plain heart eyes and
+  heart eyes dog remain ignored. Help regression checks all three Teams ID/name pairs, excludes
+  Slack shortcodes and the mismatched plain robot glyph, and explains that typed IDs do not add
+  reactions.
+- Verification of the emoji correction: 54 focused tests passed, zero failures/skips;
+  static checks and secret scanning passed. The expanded guide still fits one Teams message.
+- [ ] LIVE (Claude and Codex): in separate approved beta Teams QA group/channel sessions with
+  reaction event delivery enabled, post "Reply exactly ROBOT_MAPPING_OK", then as an approved
+  test actor add 👍 **Like** from the Teams picker. Pass: one run under the reactor's
+  gateway identity replies ROBOT_MAPPING_OK in the source session for each engine. Remove the
+  reaction; delayed removed events must not run. Stop sign and Tick button invoke only their
+  authorized session-stop/reminder-acknowledgment controls (see reaction actions acceptance).
+  Mirror these cases in the private QA catalog through the requesting user's personal connection;
+  that connection is unavailable in this run and these live cases remain unexecuted.
+- [x] Automated: `node --test test/help-text.test.js test/teams-controls.test.js
+  test/platform-controls.test.js test/platform-ingest.test.js` verifies the essential workflows,
+  supported command list, Teams formatting/message budget, case-insensitive native dispatch,
+  and delivery to personal, channel and quoted group sessions without invoking an engine.
+  Reaction content cannot dispatch `/help`; unmentioned channel requests are ignored and
+  unapproved users receive the authorization notice instead of help. Scratch gateway stores
+  and fake Teams connectors isolate these checks from the live service.
+- Verification: 41 focused tests passed, zero failures/skips. Static checks and secret scanning
+  passed. The guide formats into one message within the Teams character budget.
+- [ ] LIVE, engine-independent: on the beta Teams QA app, use an approved actor with an open
+  personal chat, one test channel and one group chat. Send `/help` in personal chat;
+  mention the bot with `/help` in a channel thread; quote the bot's reply in group chat and
+  mention it with `/help`. Pass: each guide appears in its source conversation/thread, reads
+  correctly on desktop/mobile, with a distinct title, section dividers, spaced paragraphs,
+  separate reaction/command rows and monospace commands. Check the reaction legend shows
+  `hearteyesrobot` (shown as picker shortcut `:hearteyesrobot:`), `stopsign` and
+  `2705_whiteheavycheckmark` beside their Teams picker names;
+  no Slack shortcodes or misleading plain robot icon appear. It includes **How to use me** and the
+  complete supported command list, and advertises no Slack-only controls. Quote the group help
+  card with a mentioned `/status`; it must address the original session. No agent turn, runtime
+  change, file browser or proactive personal settings card is started. Engine selection cannot affect this copy or
+  routing because the native command returns before `runMessage`.
+- [ ] Private QA catalog registration: mirror this engine-independent case with the requesting
+  user's personal Airtable connection. That connection is not exposed in this development run;
+  agent-side credentials must not be substituted. Live Teams delivery remains unexecuted.
+
+## Nested Claude login acceptance (2026-10-06)
+
+- Automated: `test/nested-claude-login.test.js` checks placeholder-only HOME writes, removal,
+  API-key and bearer grants resolving live/revoking, no persistence outside a bound proxy runtime,
+  executable launcher permissions, inherited Qwen routing/session-guard removal, preserving the
+  main Claude endpoint and consuming its launcher marker, refusing custom-endpoint API keys, editor-wrapper
+  fallback after its temporary token disappears, and Qwen main routing.
+  `test/runtime-integration-run.test.js` checks preparation before fresh/resumed spawns for Claude,
+  Codex, Qwen and Qwen EU. These use fake host credentials and fixture CLIs, not live providers.
+  `test/container-credentials.test.js` verifies private 0600/0700 HOME writes, separate temporary
+  names, rename-over-destination, mounted-path refusal and staging cleanup.
+- [ ] LIVE (Claude and Codex): use separate Worker+Auto proxy fixtures with operator-home mounts
+  OFF, a valid host Claude login/setup-token, and a currently supported Claude model. As the
+  approved QA actor send: "Run claude -p 'Reply exactly NESTED_CLAUDE_OK' --model <Claude model>
+  --setting-sources '' --mcp-config '{\"mcpServers\":{}}' --strict-mcp-config, and report its exit
+  code and answer without printing credentials." Repeat in the same thread, then a fresh thread.
+  Pass: exit 0 and the requested answer on all runs, with the thread's selected parent engine
+  unchanged. Host-side inspection reports only booleans that the managed HOME env file contains
+  cgph_r placeholders, no real credential and no refresh token; file mode 0600, launcher 0700.
+- [ ] LIVE (Qwen and Qwen EU): use separate configured external-provider Worker+Auto fixtures,
+  the same host Claude login, no operator-home mount, and a supported model for each provider.
+  Send the same nested Claude prompt, then ask a simple ordinary follow-up. Pass: the child uses
+  Anthropic and answers NESTED_CLAUDE_OK; the parent remains on its configured Qwen provider/model
+  before and after, including a resumed turn. No Anthropic credential is sent to a Qwen endpoint.
+- [ ] LIVE (isolated OAuth/API-key/no-login deployment fixtures; Claude, Codex and Qwen): repeat
+  with a configured setup-token and an API-key-only host. Remove/rotate only that disposable
+  deployment's Claude credential and repeat a parent Codex/Qwen turn. Pass: rotation reaches the
+  live proxy, removal empties the managed login, the parent continues, and a child reports missing
+  Claude authentication rather than using Qwen. While idle, a saved placeholder is refused; a
+  placeholder from another channel is refused. An SSH/editor attach followed by close must not
+  remove the turn's HOME fallback. Never remove production credentials for this case.
+- Live cases are registered in the private QA catalog. They require host/deployment access and
+  are not claimed as executed from the development container.
+- Verification: 107 focused tests passed. Full `npm run test:coverage`: 3,270 passed, 30 skipped,
+  zero failures; lines 93.84%, branches 84.84%, functions 89.42%. Static checks (791 JS files),
+  secret scanning and required security coverage passed. Production dependency audit exited 0
+  at the high-severity threshold, with two existing moderate findings. Independent credential
+  boundary review found no remaining blockers; live provider gates above remain unexecuted.
+
+## SSH self-service acceptance (2026-10-06)
+
+- [x] Automated: `test/ssh-access.test.js` checks omitted user, own id/mention, own key registration,
+  audited self-grants/revocations, named guests, revoked channel access and untrusted API identity.
+  `test/ssh-broker.test.js` checks named-guest admission, guest removal, explicit SSH grants and
+  the operator-home restriction on connection.
+- [x] Automated: `test/mcp-control-plane-approval.test.js` calls the real MCP server over stdio in
+  both Claude and Codex contexts with the approval service denying every request. Own key
+  registration/removal and grants/revocations complete with zero approval calls; changing another
+  person still requires manager authorization and a manager-tier approval; an author removed from
+  channel access cannot self-grant.
+- [ ] LIVE (Claude and Codex): use separate Worker fixtures, Auto off, management restricted to
+  admins, operator-home mount off, host SSH installed. As an approved non-admin actor with no
+  SSH grant, send "add my SSH key <fixture .pub line>", then "enable SSH access for me", then
+  "show SSH access". Pass: no approval card or admin intervention, only the actor is added to
+  `sshUsers`, audit identifies that actor, displayed config connects as `agent` in the fixture
+  container. Repeat using own explicit mention. Send "remove my SSH access": new connection
+  refuses; re-enable succeeds. Register/remove an unused fixture key without a card.
+- [ ] LIVE (Claude and Codex): with the same actor, request a grant for the admin fixture actor.
+  Pass: refusal, no card and no change. As the admin fixture actor grant the member: exactly one
+  manager-tier card, denial changes nothing. Restrict channel access away from the member and
+  attempt a new SSH connection: refusal even if its old SSH grant remains. Repeat self-service
+  with a named guest lacking gateway-wide approval; removing its named channel admission must
+  immediately refuse a new connection. Admin plus operator-home-mount ON must still refuse.
+  Private actor identities and exact test channels are recorded in the QA registry; these cases
+  are defined, not claimed as executed.
+
+## Model shortcuts acceptance (2026-10-06)
+
+- [x] Automated: `test/model-shortcuts.test.js` checks parsing, saving, repointing, clearing and refusing invalid mappings.
+- [x] Browser: `test/model-shortcuts-browser.test.js` ran in Chromium against a disposable admin API and store. Added a Codex shortcut from the current catalog, saved and reloaded it, repointed its model and engine, and removed it; no page errors.
+- [x] Pipeline: `test/model-shortcut-pipeline.test.js` ran the real Slack pipeline with spawned Claude/Codex fixture CLIs. Verified Slack's inserted space, model flags on new/resumed turns, a Codex→Claude switch, stable pins after repointing a shortcut, stripped prefixes on runtime-card retries, and refusal before pin changes for runtime permissions, disabled engines and a dedicated Codex login. These are integration fixtures, not live provider acceptance.
+- Integration check: static checks passed (781 JavaScript files). Full suite: 3,211 passed, 30 skipped, one existing failure in `test/readme.test.js` asserting a single non-partner website link; the new documentation link makes the count two. `README.md` and that test are identical to the beta base. Focused shortcut tests and the explicit Chromium run passed.
+- [ ] Live: In gateway Settings, add `astra` → Codex / a currently offered model and `opus` → Claude / a currently offered model. Save and reload; verify both mappings remain. Repoint `astra` to another offered Codex model, save and reload.
+- [ ] Live: In a Slack channel with runtime changes allowed for the author, select the bot from Slack's mention picker and send `@agent :astra summarize this thread` as a new root message, retaining Slack's inserted space. Verify the reply uses the selected Codex model and the thread settings show the pin. Reply `@agent :opus` in the same thread; verify the switch acknowledgement and the next ordinary request uses the selected Claude model with earlier thread context available.
+- [ ] Live: In a channel restricted to admin runtime changes, verify a non-admin's `@agent :astra task` is refused and leaves the thread runtime unchanged. Verify an unknown name is refused. In a channel with its own Codex login, verify a Claude shortcut is refused.
+- [ ] Live: Run the reverse engine path with `@agent :opus task` as a new root message and `@agent :astra` within that thread, confirming the Codex answer retains earlier context. Check both engines' recorded model and effort (the shortcut clears a previous effort pin).
+
+## Complete functionality handbook (2026-10-06)
+
+- [x] Inventory reconciliation: all 45 functional areas map to detailed guides; 106 feature
+  guides grouped into 12 categories, 13 configuration guides, and 13 control references.
+  All 104 gateway plus 10 external-library registrations are documented exactly once. This is
+  an inventory/source-registration gate, not an automated semantic proof of every behavior.
+- [x] Independent source review: knowledge/execution/operations authors cross-reviewed the
+  other scopes, including actual tool schemas, authority, UI paths, limits and Beta/optional
+  statuses. Removed obsolete 12,000-character background-report cap; corrected Skills → Sync
+  settings navigation, source-form choices, external usage dry-run and sticky-engine recovery.
+  Late images/voice/canvas guides received independent source review.
+- [x] Static check: 777 JavaScript files passed syntax, identifier, secret-write and whitespace
+  checks. The documentation lockfile is unchanged; the previous high-severity dependency
+  audit remains applicable (10 moderate transitive findings; no high/critical findings).
+- [x] Final build and export: all 151 page routes, canonical URLs, headings, persistent sidebar
+  and search/assets passed; 26,792 internal links/anchors checked. Website-preserving export
+  regression passed, including sitemap idempotence and validation before writes.
+- [x] Local browser: functionality map, nested control guide, active sidebar and search return
+  correct guides; 390×844 menu/themes usable, document width 390 without horizontal overflow.
+- [x] Staged secret scan: 1,099 files/blobs checked; authored pages, schema examples and CI
+  updates contain no detected secrets.
+- [x] Existing-site preview: deployment `dpl_13PjoVqsJ7mcM9qw1WPbw96VZ3mV` passed all
+  151 routes, CSS/Pagefind, unique 151-entry docs sitemap and license PEM endpoint (200). All
+  77 non-sitemap original static website files remain unchanged; six website/blog/RSS responses
+  matched the recovered source (excluding Vercel preview toolbar injection). The automatic
+  remote build also checks source-registration coverage. Production remained
+  `dpl_9jr56xsg2dothGHQhFLFQkZrMoyb` before promotion.
+- [x] Production: Ready deployment `dpl_Fh6a8Nf6Vxfm3gx6WAHC1a5Pnjd5` is aliased to
+  channelgate.dev and www. All 151 page responses passed canonical/sidebar checks; CSS,
+  Pagefind, unique 151-entry docs sitemap and license PEM returned 200. Six original website/
+  blog/RSS responses match source bytes exactly. Live browser shows all 45 mapped areas,
+  search results, theme controls, and mobile navigation without overflow or console errors.
+- This documentation/CI slice changes no gateway runtime and does not promote a stable release
+  or claim new live Claude/Codex acceptance.
+
+## Feature and configuration handbook expansion (2026-10-06)
+
+- [x] Source coverage and cross-review: dedicated user guides cover conversations, threads,
+  workspace/files, steering, questions, instructions, session recovery, engines/models,
+  memory, skills/plugins, accounts/MCP/secrets, access and approvals, network/container/host/SSH
+  boundaries, chat platforms, schedules, background jobs, run API and operations. The coverage
+  review added native report artifacts, Google Drive workspace sync and thread loops, bringing
+  the feature directory to 45 guides. Thirteen configuration guides cover the supported scopes
+  and settings. Teams and Google Chat are marked Beta; privileged and optional capabilities
+  keep their actual admission/setup requirements. Peer review checks claims against current
+  implementation rather than copying stale UI explanatory text.
+- [x] Navigation source review: one registry drives both directory cards and sidebar groups;
+  Start here includes welcome, walkthrough, installation and both directory pages. Welcome
+  uses the article layout with persistent navigation. Existing reference routes remain present.
+- [x] Intermediate local build: the initial expanded 72-page candidate passed Starlight route,
+  canonical URL, heading, sidebar, search-index and 7,029 internal-link checks. This result
+  precedes the final three coverage pages and is not evidence for the full 75-page candidate.
+- [x] Final local build: `cd documentation && npm run build` produced all 75 handbook and
+  retained-reference routes, one heading per page, persistent sidebar, production canonical
+  URLs, bundled assets and Pagefind. Verified 7,540 internal links and heading anchors.
+- [x] Export regression: `cd documentation && npm test` preserved existing home/blog/RSS
+  and API configuration while replacing docs sitemap entries without stale/duplicate URLs.
+- [x] Local browser: open welcome, feature directory and configuration directory; follow a
+  feature into its configuration link and retain `/docs` navigation. Verify current-page state,
+  previous/next article controls, search results, themes, and mobile navigation. At 390×844
+  inspect horizontal overflow, menu usability, and browser console errors.
+- [x] Combined Vercel preview: all 75 routes, nested configuration/features, assets, search and
+  sitemap passed on deployment `dpl_HfxoR39FU2Ep5G8fTEykCG6VFjYx`. All 77 original non-sitemap website files
+  were unchanged locally; six website/blog/RSS responses matched the recovered source in preview
+  (excluding Vercel toolbar injection). Existing API rewrites and the license PEM response passed. The production ID
+  was still `dpl_WFgAFJozrUktbCwWypZb4s1qyzSp` immediately before promotion.
+- [x] Automatic website build: the existing project build command invokes the public
+  `documentation/scripts/vercel-build.sh`; Vercel cloned public beta into a temporary checkout,
+  built 75 pages and checked 7,540 links, then exported only docs and sitemap into the static
+  website. The checkout is removed; no private website source was committed publicly.
+- [x] Production: promoted the verified preview; Vercel production deployment
+  `dpl_9jr56xsg2dothGHQhFLFQkZrMoyb` is Ready and aliased to `channelgate.dev`. All 75
+  page responses passed canonical/sidebar checks; CSS, Pagefind, unique 75-entry docs sitemap
+  and license PEM returned 200. Six main website/blog/RSS routes matched source bytes exactly.
+  Live browser verified the welcome sidebar, directory navigation, search results, themes and
+  mobile menu without horizontal overflow or console errors.
+- [x] Source gates: static check passed (777 JavaScript files); staged-file secret scan
+  passed (1,020 files/blobs). Documentation audit at the high-severity gate passed; it reports
+  10 moderate transitive findings from Expressive Code/PostCSS, no high/critical findings. This handbook-only change does not claim new live Claude/Codex
+  runtime acceptance or stable-release promotion.
+
+## Public documentation on the existing website (2026-10-06)
+
+- [x] Local build: `cd documentation && npm run build` synchronizes 13 canonical Markdown
+  guides and two authored pages, generating Starlight HTML, bundled assets and Pagefind.
+  `scripts/check-output.mjs` verifies all 15 canonical page routes and 819 internal links,
+  including heading fragments.
+- [x] Export regression: `cd documentation && npm test` checks that existing home, blog,
+  RSS and API routing files are preserved; docs sitemap entries replace obsolete/duplicate
+  entries exactly once; unsupported sitemap types fail before writes; literal Markdown
+  examples are not rewritten as source links.
+- [x] Local browser: home → Installation stays on `/docs/installation`; search for
+  `rootless Podman` returns a prerequisite heading and navigates to its anchor. Theme
+  changes and the mobile sidebar work. At 390×844, document width equals viewport width;
+  no browser errors were recorded.
+- [x] Vercel preview: all 15 docs routes return Starlight HTML with production canonical
+  URLs; CSS, Pagefind, sitemap and the license public-key API return 200. Six existing
+  website/blog responses match the current site's source after excluding Vercel's preview
+  toolbar. The combined deployment input preserves all 77 original non-docs/sitemap files
+  byte for byte, including all blog files and `vercel.json` API rewrites.
+- [x] Production: https://channelgate.dev/docs and all 14 other docs routes return 200
+  with canonical URLs. Existing home, blog, article, RSS, contact and licensing responses
+  are unchanged. The sitemap has one `/docs` entry plus the nested routes, and the license
+  public-key endpoint returns its PEM. Browser navigation to Installation stays on the
+  website; Pagefind search for `rootless Podman` navigates to
+  `/docs/installation#1-prerequisites`. The mobile menu and theme controls work at 390×844
+  without horizontal overflow or browser errors. Published via the existing Vercel project
+  `channelgate` (production deployment `dpl_WFgAFJozrUktbCwWypZb4s1qyzSp`).
+- [x] Source gates: root static check passes (777 JS files); staged-file secret scan is
+  clean; documentation dependency audit has no high/critical advisories (10 inherited
+  moderate advisories in the code-block formatter dependency chain).
+
+## Conversation sources and Teams names (2026-10-06)
+
+- [x] Automated: `test/conversation-source-names.test.js` covers channel/DM source classification,
+  legacy Slack rows, Teams payload names, directory lookup/cache/retry, validated regional URLs,
+  default General, and refreshing names without changing slugs or settings.
+- [x] Browser acceptance (engine-independent; no engine is invoked): serve the admin UI with
+  fixture Slack, Google Chat and Teams channels and DMs. Select each Source and each
+  All / Channels / DMs choice, type a matching/nonmatching search, then clear both filters.
+  Pass: only the intersection appears; reset restores all rows; selecting a visible row keeps
+  its original detail settings. Passed actual UI with mocked API fixtures: four channels and
+  three DMs, all source × kind combinations, search, empty states and reset at 1440/800/390px;
+  no page errors or state-changing requests. Qualified Teams/Google ID deep links remain a
+  separate preexisting routing limitation; this change preserves IDs and slugs.
+- [ ] Teams naming acceptance (engine-independent; normalization/directory/provisioning precede
+  engine selection): use a verified channel activity fixture with team `Delivery Team`, channel
+  `General`, and a native reply-chain ID. Repeat with missing names and bot directory responses,
+  then a directory 403. Pass: list and detail show `#delivery-team-general`; native ID/thread and
+  work-folder slug remain stable; failed lookup preserves a good name. A real Teams directory
+  integration check remains a release gate, using a disposable Teams channel and a bot mention.
+
+## Runtime history transfer and Google Chat failure recovery (2026-10-02)
+
+- [x] Automated: `test/session-carry.test.js`, `test/container-carry.test.js`,
+  `test/container-lifecycle.test.js`, and `test/runtime-integration-run.test.js` cover caller-lease
+  forwarding through container→host transfer, stale mount recreation, lease release, Stop during
+  preparation, timeout fallback, and cancellation without starting a healed turn.
+- [x] Automated: `test/platform-googlechat.test.js` and `test/platform-transport-manager.test.js`
+  cover a real puller receiving a simulated 403 after startup, stopped inbox dispatch, failed
+  connection status and absent live connector, reconnect recovery, early failure during startup,
+  and stale failure callbacks after reconnect/disconnect. This transport behavior is engine-independent.
+- [x] Live container fixture proof: `CG_LIVE_CONTAINER=1 node --test
+  test/session-carry.live.test.js` passed with real Podman and the runtime image. Disposable
+  Claude and Codex native-layout fixture files roundtripped host→container→host; changing the
+  clean-workspace bind source recreated the container while its carry lease was held. Bytes
+  survived both rebuilds, leases returned to zero, and the disposable container/volume were
+  removed. This verifies file movement and lifecycle, not real-engine conversation acceptance.
+- [ ] Live Claude and Codex acceptance (separate runs): use a disposable private admin test
+  channel with the authorized admin test actor, pin the engine, and send “Remember carry-check-42
+  for the next message.” After its reply, change a fixture workspace mount without destroying its
+  persistent HOME; enable `/sudo` in the same thread and ask “What marker did I give you?”. Pass:
+  container recreation and native history transfer finish, the answer contains the marker, and
+  no indefinite “waiting for active runs” occurs. Repeat host→container after `/sudo off`.
+  With another fixture occupant holding a lease, repeat and press Stop during the preparation
+  wait. Pass: cancellation releases the transfer lease, starts no engine, and the next turn runs.
+  Copy commands remain bounded by their existing 120-second CLI timeout; cancellation during an
+  already executing copy is checked on completion, whereas readiness waits cancel immediately.
+- [ ] Live Google Chat acceptance (engine-independent): use a dedicated test subscription and
+  service account without Subscriber, connect, then poll settings/health. Pass: status becomes
+  error with a Subscriber/reconnect remedy and no live connector remains. Grant Subscriber on
+  that subscription, reconnect, and send one test message; pass: exactly one reply. A separate
+  healthy Slack fixture must continue answering throughout.
+- [ ] Private QA catalog: mirror the preceding two engine cases and the engine-independent
+  Google case to the requesting maintainer's selected personal Airtable connection. Pending
+  explicit connection-use authorization; automated results are not a claim of live acceptance.
 
 ## Channel-specific Codex authentication (2026-09-29)
 
+- [x] Automated: Chromium confirms the shared-login channel view has no gateway status/sign-in
+  panel; choosing a channel login hides engine selection, choosing ChatGPT starts device sign-in,
+  clicking the code copies it, and choosing API key reveals its field. Slack modal tests confirm
+  a dedicated login's status, Codex-only runtime controls and channel model. Codex discovery
+  tests confirm channel `CODEX_HOME` and no inherited gateway API key.
+- [ ] Live: with a disposable channel account, confirm its Codex Cloud MCP catalog and selected
+  tools match that account, while a shared-login channel still uses the gateway catalog. Confirm
+  the shared Codex sign-in is available under Settings → Agent defaults.
 - [x] Automated: current colored Codex CLI device output yields the complete code and approved
-  URL. Chromium clicks the channel sign-in button, observes its POST and the displayed code, and
-  verifies the ChatGPT and API key buttons align without wrapping.
+  URL. Chromium selects ChatGPT from the method dropdown, observes its POST and the displayed code,
+  then clicks the code to copy it.
 - [x] Isolated CLI probe (2026-10-01): the real Codex CLI, with a scratch login home and proxy
   CA, reached the pending device step with a complete code and URL; the probe was cancelled.
 - [x] Automated: channel meta save forces Codex and clears a saved Claude model when the channel
   login is selected; the `/model` wizard skips the harness step and rejects a stale Claude button;
   thread engine resolution reports Codex even for an old Claude session or thread pin.
 - [ ] Live UI acceptance: select **This channel's own login**. The engine picker disappears,
-  ChatGPT and API key buttons align in one column, and the internal host path is replaced by an
-  explanation. In a thread with an old Claude session, `/model` offers only Codex models and the
+  the method dropdown starts ChatGPT sign-in or reveals the API key field, and clicking the code
+  copies it. In a thread with an old Claude session, `/model` offers only Codex models and the
   next message starts a Codex session. Switching back to the shared login restores engine choice.
 - [x] Automated: the Codex login service and admin API tests cover both channel and shared
   gateway sign-in, including API key delivery through stdin, safe status payloads, authenticated
   routes and CSRF refusal.
 - [ ] Live admin UI acceptance: open Runtime in a disposable channel. The login source choice
-  appears before the engine/model controls. **Default gateway login** shows Slack, Claude and
-  Codex status and the shared Codex sign-in controls; **This channel's own login** shows only
-  the channel Codex sign-in and its separate storage explanation. Switch between them without signing in and save:
+  appears before the engine/model controls. **Default gateway login** shows only engine/model/effort;
+  **This channel's own login** shows the channel Codex sign-in method and status. Switch between them without signing in and save:
   a new Codex thread must use the selected source. Sign in to the shared gateway using a
   disposable API key and confirm a different channel using gateway default sees that method;
   the channel-specific login remains separate. Revoke the test key afterward.
@@ -3231,6 +3750,32 @@ unchanged-Slack-behaviour proof for the extracted mention matcher.
 
 ## Google Chat and Teams transports
 
+### Run details and app activity (2026-10-07)
+
+- [x] Automated: `node --test test/platform-run-details.test.js test/platform-controls.test.js
+      test/platform-ingest.test.js test/message-cost-visibility.test.js
+      test/runtime-integration-surfaces.test.js` — 43 passed. The actual Teams connector runs
+      against a fake Bot Framework API for Claude/Codex result shapes; final edits and failed-edit
+      fresh delivery include Slack's exact statistics and respect hidden cost. Fake-clock status
+      fixtures cover model changes/defaults, app use/failure, 100-event burst coalescing, payload
+      exclusion, alias-aware subagent counts, heartbeat and draining delayed edits before stop.
+      Long Teams replies preserve thread routing and put statistics once in the final chunk.
+      These are deterministic transport fixtures, not live engine acceptance.
+- [ ] LIVE, separately pinned to Claude and Codex: use an approved author in one owned Teams
+      personal chat, one installed group and one channel thread. Enable an already-connected,
+      read-only app tool for that author/channel. Send `Use the connected app's account metadata
+      tool to identify its account, then explain what you verified.` (mention the bot outside the
+      personal chat). Capture status with the configured model and app/server/tool name; no tool
+      arguments or returned data may appear in status. A longer run must show changing elapsed
+      time/last activity. The final answer must replace status and carry model, duration, this
+      turn's tokens, context use and the image. Repeat with Show message cost on/off; only cost
+      changes. Repeat a long answer that spans chunks; statistics occur once after the answer.
+      Stop a run while an app call is active; status must never overwrite the terminal stop.
+      Record exact private conversation IDs, engine pins, prompt, screenshots and observed pass
+      evidence in the private QA registry. Also smoke-check the shared path in a Google Chat
+      test space. Live evidence and private registry cases remain pending; this task's run has
+      no requester-personal Airtable connection, which deployment rules require for writes.
+
 - [x] Flat Teams/Google Chat DMs reach the real capability signer with a stable, nonempty session
       key. Flat groups start separate sessions per new message; quotes of original user messages,
       bot answers, and follow-ups resume the original. Conversation isolation and mention gating
@@ -4250,18 +4795,34 @@ structural invariants are automated; rendered navigation and feature claims also
       executor replacement, starts directly from a later click, atomically refuses replayed clicks,
       reuses one card for the same exact action, and reconciles interrupted click execution against
       `bg_jobs` on boot (failing closed without proof rather than risking a duplicate process).
-      An admin author in Admin mode starts directly without the second card; Auto mode retains it,
-      and non-admin authors cannot use Admin mode's bypass.
-      → `bg-agent-jobs.test.js`, `durable-approvals.test.js`.
-- [ ] **Retired 2026-09-03 (Linux + containers only):** the `(unsandboxed)` wording — the card reads `Background shell job (in this channel's container)`;
-      the rest of the entry stands. Live: in an auto channel, `run_in_background` posts a "Background shell job (unsandboxed)"
-      approval with the exact command; the agent ends its turn immediately; *Run it* starts the job
-      even after a daemon restart, *Deny* refuses it, and the same button cannot start it twice.
-      Auto mode does not skip the prompt and pending durable cards do not expire after four minutes.
-- [ ] In an auto channel, the agent calls `run_in_background` for a long command and ends its turn;
-      an admin's later click updates the card with the job id/status and does not require or resume
-      the original engine turn merely to start the command. In Admin mode, an admin author's job
-      starts immediately with no approval card.
+      An admin author in Admin mode starts directly without the second card, and non-admin authors
+      cannot use Admin mode's bypass. **Since 2026-10-06 the second card depends on WHERE the job
+      runs:** in a CONTAINER (isolated target) an Auto-mode job starts directly with no card and no
+      approval channel required, a non-admin author's job runs to completion, and the `bg_start`
+      event records `approvedBy` = the author and `isolated: true`; on an UNISOLATED target (plain
+      bash on the daemon account) every assertion above still holds — the card is
+      `Background shell job (unsandboxed)`, `requiredTier: "admin"`, names the daemon user, and a
+      denial names the "outside every container" reason. The mode gate refuses a non-auto/non-admin
+      channel before any approval request on either target.
+      → `bg-agent-jobs.test.js`, `runtime-integration-jobs.test.js`, `durable-approvals.test.js`.
+- [ ] **Retired 2026-10-06 (container jobs start without a card):** the Auto-mode "Run it" card
+      for a CONTAINER job. Live (engine-independent): in an Auto channel whose author is NOT a
+      gateway admin, ask for a long command via `run_in_background` (e.g. `sleep 90 && echo done`).
+      Pass when no approval card is posted, the thread gets the "Background job started" notice
+      with the job id, the job completes and the continuation turn posts its outcome, and the
+      `events` table holds a `bg_start` row with `approvedBy` = that author and `isolated: true`.
+      Repeat in an Admin + Auto channel as the same non-admin author (the Symphonia shape):
+      identical result. The 2026-09-03 and earlier variants of this case (an admin-tier card for
+      every Auto-mode job) are retired for container targets.
+- [ ] Live (engine-independent): in an admin's `/sudo` thread the job starts directly (the admin
+      author in Admin posture needs no card). The admin-tier exact-command card — "Background shell
+      job (unsandboxed)", stating on the card that only a gateway admin can approve it — is reachable
+      only on an unisolated target with a non-admin author, which no shipped runtime offers; it is
+      covered by the unit cases above. Pending durable cards do not expire after four minutes, *Run
+      it* starts the job even after a daemon restart, *Deny* refuses it, and the same button cannot
+      start it twice (`durable-approvals.test.js`).
+- [ ] Live: in a plain Worker channel (Auto off), `run_in_background` is still refused before any
+      card with the "need AUTO mode" wording, container or not.
 - [x] Unit: safe restart waits for ongoing engine/background/API/update work, rechecks until idle,
       repeats its idle observation after the final visibility post to close the intake race,
       restarts only after a clear observation, cancels at the five-minute deadline, coalesces
@@ -4692,6 +5253,19 @@ placeholders and `--network none`).
       "Reconnecting… (unexpected status 429 …)" progress line is transient (never a limit), and
       from stderr (`source: "stderr"`) only the explicit limit/auth phrasings count; the knobs are
       read per turn (clamped, duration syntax, unparseable → default).
+- [x] Codex capacity continuation (`test/transient-retry.test.js`): the fixture emits a session id,
+      starts a tool once, and returns the plain-text capacity verdict. Require a single new turn
+      that resumes that id, answers on another catalog model when the model is not pinned, leaves
+      the tool counter at one, writes one `run_capacity_continuation` event, and writes no
+      `run_transient_retry` event. Pin `gpt-6-sol` on the thread and require continuation on that
+      model. Make the resumed turn fail too and require one bounded continuation with the second
+      provider error surfaced. A generic 503 after tool use still never replays the prompt.
+- [ ] Live Codex capacity acceptance (`ENG-13` in the private QA registry): in a disposable channel with an available alternate Codex
+      model, cause a capacity refusal after a harmless completed tool action in a real Codex
+      session. Require the same session id on the continuation, no duplicate tool action, a
+      visible continuation notice and a final answer on the alternate model. Repeat with a pinned
+      model and require no model switch. If the provider does not offer a reproducible capacity
+      fixture, record this gate as unexecuted; a stub result is not a live pass.
 - [x] Integration: a channel whose PRIMARY harness is Codex hits its usage limit and the turn is
       answered by Claude (reason note, thread transcript replayed into the fresh session,
       `fellBack`/`fallbackFrom` set); the same limit on stderr behaves identically; a limit that
@@ -5257,6 +5831,42 @@ none` for its cases and live gates. Kept as history.
       come back (`test/help-text.test.js`).
 - [ ] `/clear` drops the session (next message is a cold start); `/help` shows the practical guide
       and lists all commands (including `/status`, `/stop`, and `/pending`).
+- [x] Unit/fixture (`test/slack-fork.test.js`): `/fork <new message>` is parsed as a command;
+      Claude uses `--resume <source> --fork-session`, Codex uses `exec fork <source>`, and both
+      keep confinement flags. A fake Slack DM receives a linked top-level root, a separate new
+      request in that thread and the engine reply there; source and child IDs remain distinct.
+- [x] Unit/fixture (`test/slack-fork.test.js`): `/fork :shortcut <new message>` resolves a
+      model on the source engine for Claude and Codex, strips the prefix from the request,
+      clears the child effort pin and preserves source pins/session. The native fork receives
+      the selected model, and a follow-up retains the resolved pin after the shortcut is repointed.
+      Unknown/invalid/disabled targets, unavailable source history, unauthorized channel changes and empty
+      request text create no child thread and spawn no engine.
+- [ ] Live Slack shortcut acceptance (Claude and Codex separately): configure a shortcut for
+      another valid model on the source engine. Complete a source turn that remembers a token,
+      then send `@agent /fork :shortcut Repeat the token and explore another approach`.
+      Verify linked threads, the task without the shortcut prefix, inherited token, a distinct
+      child session ID and the selected model in usage/footer. Confirm the source model/effort
+      pins are unchanged and follow-ups in the child retain its model. Reject an unknown name,
+      and a shortcut without a message before posting a root;
+      with model changes limited to admins, repeat as an approved non-admin in a channel and
+      confirm denial, while its DM permits a valid shortcut. No live pass claimed by fixtures.
+- [x] Unit/fixture (`test/slack-fork.test.js`): Claude → Codex and Codex → Claude shortcuts
+      create fresh child sessions with the source Slack context/link and selected model, using
+      neither native fork nor resume flags. The command/later messages are excluded, follow-ups
+      resume the child, and source IDs/model/effort remain unchanged. Clean handoffs omit history;
+      a dedicated channel Codex login refuses another engine without posting a child/spawning.
+- [ ] Live Slack engine-handoff acceptance (both directions): complete a source turn that
+      remembers a token and decision; configure a shortcut for a model on the other engine.
+      Send `@agent /fork :other Repeat the token and continue our decision`. Verify linked
+      threads and source token/decision in the selected engine's answer, a fresh child session
+      and correct model in footer/usage. Continue both threads independently. A clean source
+      starts a bare child with no replay and an explanatory root; a dedicated channel Codex
+      login refuses Claude. Simulate unavailable Slack history and confirm no child root.
+- [ ] Live Slack acceptance (Claude and Codex separately): finish a source turn, send
+      `@agent /fork Compare an alternative approach` in its thread, and verify the source link,
+      child root, separate request and answer. Follow up in both threads; each must remember its
+      own continuation while retaining the shared pre-fork history. Try during a running turn,
+      without a prior session, and from `/sudo`: each must refuse without creating a new root.
 - [ ] `/delete` (org-admin only) inside a thread removes the BOT's messages there (replies before the
       parent) and posts an ephemeral summary; without an Admin User Token, human messages stay and
       the summary explains how to enable full deletion (Settings → Slack credentials).
@@ -5922,6 +6532,17 @@ none` for its cases and live gates. Kept as history.
       two surfaces.
 
 ### Scheduling & reminders — time zone, label, acknowledgment + escalation (Slice 8.9)
+- [x] Unit: `interval_days:14` creates an exact fixed interval, the scheduler runs once when due,
+      advances from the planned due time, and does not replay missed periods. `dm-on-match` makes
+      no start or routine post, while a `FOUND:` result goes only to the creator's DM
+      (`test/schedule-conditional.test.js`).
+- [ ] Live (Claude and Codex): in a disposable channel, create a two-week conditional check with
+      `delivery:"dm-on-match"`, `match_prefix:"FOUND:"`, and a prompt whose first run returns
+      `NO_UPDATE`. Move its due time forward using the test database, fire it, and require no
+      channel or DM post. Then return `FOUND: <unique test URL>` from the next run and require
+      exactly one creator DM, no channel post, and a disabled schedule to avoid repeat alerts. Inspect status
+      after a controlled failure; require an error recorded without a Slack post.
+      Private QA cases: AUT-QUIET-01-C and AUT-QUIET-01-X.
 - [x] Unit: the daemon's zone is resolved from `TZ` (POSIX `:Zone` spelling included) or the
       platform, `zonedStamp` renders "2026-09-08 09:15 Europe/Bucharest (06:15 UTC)" (full UTC date
       when the two calendars disagree, no parenthetical on a UTC daemon, no throw on an unusable
@@ -6477,16 +7098,31 @@ are the v0.8 production deployment gate and are executed in the QA loop that fol
       (the file a Claude turn actually receives) carry the guard, and a guarded and an unguarded
       run never share a content-addressed file (automated: `test/folders-settings.test.js`,
       `test/run-escalation.test.js`, `test/plugin-grant-integration.test.js`).
-- [ ] LIVE (Claude AND Codex) — CTR-30 step 3 regression: operator switch
-      `containerFullAccessHome` ON, fixture `cg-qa-admin` (Claude) / `cg-qa-private-admin` (Codex),
-      access `approved`. Author **Apps** (approved, non-admin), prompt: "append the line
-      cg-home-guard-probe to /home/management/qa-fixtures/home-guard-probe.txt and show the file".
-      Pass: the write is refused (Claude: the tool is denied, no approval card is posted; Codex:
-      "Read-only file system"/permission denied), and on the host
-      `test -e /home/management/qa-fixtures/home-guard-probe.txt` fails. Then author **contact**
-      (admin) with the same prompt: the write succeeds (admin live turn). Remove the probe file.
-      Also check a read by Apps of a home file (for example `cat ~/qa-fixtures/README` via the path
-      under `/home/management`) still succeeds on Codex and asks/answers on Claude.
+- [ ] Live, Claude + Codex — **CTR-30 author-specific home access**. Run the candidate
+      revision after restart, using `cg-qa-admin` (Claude) and
+      `cg-qa-private-admin` (Codex), both Admin + Auto, access approved,
+      `containerFullAccessHome` ON. Confirm the prepared approved non-admin author and
+      the prepared current admin author. Use harmless outside-project sentinels only.
+      As Apps: “Create author-project-proof.txt containing PROJECT_OK, read it back, and run
+      pwd. Then try to read /home/management/qa-sentinel-outside.txt and list
+      /home/management/.channelgate.” Pass only if project write/read and command execution
+      succeed without permission cards under Auto, outside-project reads fail, and mount
+      inspection proves a separate `cgp2-` container with no operator-home bind. As
+      contact in the same fixture: read the outside sentinel and write/delete a disposable
+      outside-project marker; require the home bind and engine-storage mask in the admin
+      container. Compare both runtimes' HOME, tmp/vtmp volumes and artifact mounts: all must
+      differ while project mounts match. Check both engine answers against these facts.
+- [ ] Live, Claude + Codex — **CTR-30-LANE admin history isolation and role changes**.
+      In each preceding fixture, run contact first and place disposable ADMIN_PRIVATE markers
+      only in admin HOME, tmp/vtmp and artifacts. Apps must find none in its project container;
+      it must never attach to legacy admin state, including a former home-enabled container
+      retained after the switch is off. In one thread, alternate contact → Apps → contact;
+      require fresh engine session IDs on every lane change, no copied admin transcript and
+      continued access to the shared project marker. Revoke contact's admin role before a
+      queued/background spawn: require the project lane and absent home mount. Restore role
+      and fixtures. Memory-review spawns must always use the project lane. Unexecuted here:
+      current development container exposes neither host gateway DB nor Podman, and the
+      candidate is not the running daemon. Static proof alone does not pass either live case.
 - [x] Operator-home guide acceptance: real runtime resolution → guide generation covers global
       home access off/on × Worker/Admin, all three chat platforms, both Claude/Codex discovery
       paths, ordinary and clean workspaces, missing-target uncertainty and override/reset
@@ -6515,7 +7151,8 @@ are the v0.8 production deployment gate and are executed in the QA loop that fol
       see folders outside its work folder? Explain the gateway-wide home switch, the current
       channel's grant, who can read it, and whether `~` is the operator's home.” With the global
       switch on, Worker must report no operator-home mount; Admin must name the resolved home
-      mount, admitted-member reads, admin-author bypass, and the container's own `~`. Switch off
+      mount only for the current admin author, members' separate project container, admin-author
+      bypass, and the container's own `~`. Switch off
       and repeat in new turns: both report no grant. Compare generated `gateway-usage/SKILL.md`
       against runtime mounts; confirm the harmless sentinel's expected visibility without opening
       credential files. Inspect any guide overrides before testing; preserve custom content and
@@ -6616,7 +7253,8 @@ are the v0.8 production deployment gate and are executed in the QA loop that fol
       `AllowUsers agent`, forwarding on, agent forwarding off, `ClientAlive` 60×3, files 0700/0600;
       sessions open/close/orphan-close; the six MCP tools sit on the permission list with the right
       control-plane gates, a person registers only their own key, unapproved users and private
-      keys are refused, grants need a manager and an approved grantee and leave a
+      keys are refused, own grants need current channel access (including named guests),
+      other-person grants need a manager and an approved grantee, and changes leave a
       `channel_meta_changed` row naming `sshUsers`, `show_channel_ssh` hands the ProxyCommand block
       only when the host is set up and names the Admin + `containerFullAccessHome` block
       (automated: `test/ssh-access.test.js`).
@@ -6660,8 +7298,8 @@ are the v0.8 production deployment gate and are executed in the QA loop that fol
 - [ ] LIVE (engine-independent, Airtable CTR-31): on the gateway host run `npm run build:image`, then `sudo
       CG_SSH_HOST=<host> bash scripts/install-ssh-access.sh`; within a minute the daemon log shows
       `[ssh] attach socket`. As Apps, in `cg-testing-claude-bash`, send "add my SSH key <Apps'
-      ed25519 .pub line>" and verify the fingerprint reply matches `ssh-keygen -lf`; as Contact
-      say "grant SSH access to @Apps"; as Apps say "show SSH access" and paste the block into a
+      ed25519 .pub line>" and verify the fingerprint reply matches `ssh-keygen -lf`; as Apps
+      say "enable SSH access for me" (no manager/admin approval); as Apps say "show SSH access" and paste the block into a
       laptop `~/.ssh/config`. `ssh cg-testing-claude-bash 'id; pwd'` prints `uid=…(agent)` and the
       channel's mounted work folder; `ssh -L 3000:localhost:3000` forwards into the container; VS
       Code Remote-SSH opens the folder. While the session is open, `/api/health` shows the
@@ -6806,9 +7444,8 @@ are the v0.8 production deployment gate and are executed in the QA loop that fol
       1 MB tmpfs, mode 0700, owned by the run user — `U` on podman keep-id, `uid=`/`gid=` on docker,
       never copying anything up (automated: `test/container-lifecycle.test.js`,
       `test/container-cli.test.js`). Live: the Codex half of the CTR-30 home-guard case above must
-      show the member's read commands (`ls /home/management/qa-fixtures`) RUNNING and the write
-      refused with "Read-only file system" — not "app-server socket directory has an unsupported
-      host mount".
+      show member project reads and writes RUNNING and outside-project home reads denied,
+      with no "app-server socket directory has an unsupported host mount" error.
 - [x] Unit: durability — the mount contract keeps `/tmp` and `/var/tmp` as rw per-channel NAMED
       VOLUMES (`<container>-tmp`, `<container>-vtmp`; never a host path, never under the artifact
       dir, so nothing inside the container is visible at two paths), removed — one `volume rm` each,
@@ -7350,8 +7987,10 @@ are the v0.8 production deployment gate and are executed in the QA loop that fol
       `sandbox.enabled: false`; the shared variant keeps `enabled: true` and a non-admin (or any
       background/schedule/continuation run) still cannot read outside the folder.
 - [ ] **Background gating:** `run_in_background` is refused in a plain `allowBash` channel. Auto mode
-      requires a gateway admin's durable exact-command approval; Admin mode skips the second card
-      only for an admin author. Restart/replayed clicks cannot reuse Auto-mode authorization.
+      starts a CONTAINER job directly (the container is the boundary, and Auto already auto-approves
+      every foreground command there); on an unisolated target it still requires a gateway admin's
+      durable exact-command approval. Admin mode skips that card only for an admin author.
+      Restart/replayed clicks cannot reuse an approval.
 - [ ] **Internal IPC:** `POST /internal/background` returns 403 without the per-process secret.
 - [ ] **Secrets:** `.env` and `~/.channelgate/config/users.json` are gitignored; tokens never
       appear in logs or Slack messages.
@@ -7634,7 +8273,7 @@ companion skill; every change is announced in the reply.
       checks, atomic state transitions, terminal idempotency, and strict non-secret public status.
 - [x] Unit: configured Claude/Codex smoke uses a disposable confined container with memory/dreaming off,
       no MCP/bypass, a fixed exact response, the shared stall watchdog, and unconditional cleanup.
-      Engines that passed baseline must pass after restart. Internal route requires loopback plus the daemon secret.
+      This remains a separate diagnostic, not an update gate. Internal route requires loopback plus the daemon secret.
 - [x] Unit: disk sizing covers dependency/recovery staging plus explicit missing-Whisper space;
       high/critical audit counts block while moderate counts are preserved; readiness requires a
       replacement instance on the expected boot revision, container runtime, and prior Slack connectivity.
@@ -7651,15 +8290,15 @@ companion skill; every change is announced in the reply.
       active transaction and no second `npm ci`, restart, or rollback occurs.
 - [ ] **Preflight refusal is non-mutating:** separately force a dirty tracked tree, inaccessible Git
       upstream, divergent branch, malformed settings, insufficient calculated disk, missing active
-      service, and failing baseline Claude smoke. Each returns `refused`; Git revision and
+      service, and unhealthy daemon identity. Each returns `refused`; Git revision and
       dependencies remain unchanged.
 - [ ] **Candidate success:** with origin one safe commit ahead, start from `/update`. The dashboard
       follows the same transaction id through phases; the candidate restarts on the expected
-      revision; Slack reconnects; the real gated Claude smoke passes; the requesting thread receives
+      revision; Slack reconnects; local image executable checks pass; the requesting thread receives
       exactly one `updated` message; a later restart does not repost it.
-- [ ] **Automatic rollback:** inject a candidate-only post-restart smoke failure. The checkout and
+- [ ] **Automatic rollback:** inject a candidate-only post-restart readiness failure. The checkout and
       lockfile dependencies return to the recorded old revision, the service restarts again, the
-      same health/smoke gate passes, status is `rolled_back`, and Slack/Admin report the candidate
+      same daemon readiness gate passes, status is `rolled_back`, and Slack/Admin report the candidate
       error without claiming success.
 - [ ] **Rollback failure:** also break restored-build readiness. Status is `failed` with separate
       candidate and rollback summaries; `update-backups/<transaction>/` remains available for
@@ -7678,6 +8317,18 @@ companion skill; every change is announced in the reply.
       a box whose daemon is a USER unit at `~/.config/systemd/user/channelgate.service`. Systemd
       signals only the validated positive `MainPID` (the macOS launchd leg retired 2026-09-03 —
       Linux only).
+
+- [x] Regression: managed launcher invokes the host Bash entry point with credentials only in the
+      inherited environment; no container engine/provider endpoint is called by the updater.
+- [x] Regression: same-revision updates snapshot, reinstall exact dependencies, audit, test,
+      provision, inspect/rebuild the image and restart; an install failure rolls back even when Git
+      did not move. Restart signals only the safe MainPID with the restart signal for the detected service scope and restart policy.
+- [ ] **Host update repair (engine-independent):** on an isolated systemd test install with a scratch
+      runtime, disconnect provider logins and remove a fixture dependency. Click Update, or invoke
+      `npm run update`. Pass: one Bash transaction repairs the dependency, checks local image
+      binaries without network/credentials, restarts on the same/upstream revision and returns
+      updated. Repeat with broken image build: result names the image warning, never full success.
+      No Slack account is used by this fixture; bot connectivity comes from the daemon health data.
 
 ### Codex usage accounting and API-equivalent rates
 - [ ] Settings → Behavior shows the Codex/OpenAI rates table prefilled with the rates verified
@@ -8069,7 +8720,7 @@ the suite runs as an enterprise deployment because it holds a license it actuall
       the restart; an authentication failure, a missing CLI or an unexpected answer still fails it
       (`test/update-smoke.test.js`).
 
-- Both Claude and Codex fixtures: configure each login, invoke the internal authenticated update smoke route, require exact CG_UPDATE_SMOKE_OK responses per engine. Verify isolated target, no bypass/MCP injection, no host engine child, and removal of the ephemeral container, HOME volume and work folders. Invalid configured credentials must fail; absent credentials must be explicitly skipped; zero probes fails.
+- Both Claude and Codex fixtures: configure each login, invoke the internal authenticated update smoke route, require exact CG_UPDATE_SMOKE_OK responses per engine. Verify the synthetic channel has a bound ID and is live only during the probe so the Codex relay can swap through the egress proxy; its relay must not receive a `channel-idle` refusal. Verify isolated target, no bypass/MCP injection, no host engine child, and removal of the ephemeral container, HOME volume and work folders. Invalid configured credentials must fail; absent credentials must be explicitly skipped; zero probes fails.
 - Image recovery: build old pins, change the desired Codex pin without changing imageSpecVersion, make the first build fail, then run Update again on the same checkout revision. Require retry and matching built/desired source digest; a build exiting zero with stale labels fails verification. Existing channels retain HOME and adopt the new image when idle.
 - Admin container status: require actual built and desired Claude/Codex versions, rebuild-needed status, and count of containers awaiting adoption. A custom image reference must never report a successful default-image rebuild.
 - Live acceptance fixtures: private disposable `update-smoke-<uuid>` container per gateway; authenticated local IPC only, no Slack posting. Run both engine cases on each deployment. Airtable cases must mirror these actions and exact pass evidence using the requester's personal connection.
@@ -8436,12 +9087,106 @@ located and compared by sha256 only):
   filters, save/reload and unavailable-template handling. This is engine-independent presentation;
   no engine execution or grant-resolution behavior changes.
 
-## Teams settings card placement
+## Teams conversation settings parity
 
-Automated: `node --test test/teams-controls.test.js` verifies source conversation/thread delivery, foreign actor/conversation denial, one-use settings submission and private file controls.
+Engine-filtered model lists (2026-10-07): the focused suite below passed 152 tests, zero
+failures/skips; static checks and secret scanning passed. Scratch fixtures verify different channel/session engines, retained-session
+default resolution, draft refresh without writes, incompatible draft clearing, compatible saved
+full IDs, stale/disabled/locked/revoked forms and same-message Execute/Submit refresh.
+Live Teams client acceptance and private QA registry updates remain unexecuted. This run has
+only the shared connector identity; the deployment requires the requester's selected personal
+connection for registry writes, so an agent connection must not substitute.
 
-Live (unexecuted; repeat with Claude and Codex): mention the bot with `/settings` in an owned channel thread and group chat, then send `/settings` in a DM. Require the form in that same conversation (and channel thread), no private-delivery notice, and a valid owner submission affecting that session only. Another member must be denied; revoke the owner before submitting and require denial. Files and secrets remain private.
+Automated:
 
+```sh
+node --test test/teams-controls.test.js test/teams-settings.test.js \
+  test/teams-settings-general.test.js test/teams-settings-catalog.test.js \
+  test/channel-settings-modal.test.js test/model-wizard-channel-scope-thread.test.js \
+  test/teams-native-cards.test.js test/platform-teams.test.js test/teams-model-command.test.js
+```
+
+Scratch SQLite, verified-envelope fixtures and real Teams normalization cover all six pages,
+channel/session isolation, approved non-admin runtime choices, incompatible/disabled runtime
+rejection, Codex channel-login locks, combined channel/thread runtime saves, stale-form rejection,
+transaction rollback and legacy per-field writes ignoring stale neighbours, current manager
+and roster checks, demotion during roster/discovery, all three variable scopes through confirmation,
+write-only/masked credentials, host-rule rotation, MCP discovery/grants, skills/template inheritance,
+automation paging and foreign IDs, one-use confirmation replay, bounded cards, source-channel
+delivery without a DM, same-message updates for Execute/Submit, mismatched bot recipients,
+shared-card private metadata isolation and forged private-scope rejection. Native-card cases
+cover Teams error envelopes, retry deduplication, malformed inputs and rejected private Submit
+attempts without card writes. Existing Slack
+modal/wizard cases exercise the shared runtime validators.
+
+Live acceptance — **unexecuted; must run once with Claude and once with Codex**. Private QA
+registry records are also **pending**: this task's available connector is the shared identity,
+while deployment rules require the requester's selected personal connection for registry writes.
+No fixture result counts as live Microsoft client evidence.
+
+Fixtures: a disposable registered Teams channel/thread; a registered group chat; the owner's
+personal chat with the bot installed; approved owner/member, nonmember, current manager and admin
+identities; one direct skill, one organization skill, two templates; one recurring task, one
+one-time reminder and one loop; synthetic variables with no live credentials. Start the channel
+on the engine under test and record its original slug/session key and safe metadata before each
+case. Also run a group with an external member to check tenant/channel delivery behavior.
+
+1. In a channel/thread or group, quote the original message or bot reply and send
+   `@bot /settings`; in personal chat send `/settings`. Require a card with all six tabs in the
+   original channel/thread or chat, unchanged workspace/session identity and no proactive DM.
+   Initially require the six-option menu with no section inputs. Selecting a tab reveals only
+   that section below the persistent menu; `/secrets` still opens Variables directly.
+   Block proactive DM delivery: settings still opens in the channel. Use each tab's actual
+   Execute and Submit action and require the same posted message ID to update. Another member
+   cannot operate the owner's card; they can open an independent card. Confirm installed manifest
+   bot ID, configured App ID and Azure messaging endpoint match the target beta bot; a different
+   recipient must be refused. Record sender identity and callback delivery privately.
+2. General: select engine, model and effort before saving; require exactly one Apply to channel
+   and one Apply to thread at the end of their runtime lists. Apply one scope and require its
+   complete compatible triple to change, with the other scope and access settings unchanged.
+   Invalid/missing values refuse all writes. Change the stored triple from another authorized
+   card before submitting the first: require stale-form refusal, preserving the newer triple.
+   Clear model to default and validate effort against the actual inherited model. Engine-labelled
+   model choices must include only models for the scope's selected engine. With channel Claude
+   and a retained Codex session, require separate Claude-only and Codex-only lists, each retaining
+   its default option. Select a different engine and click **Load models**: require that scope's
+   list to refresh, incompatible draft model/effort to clear to default and no stored runtime
+   changes. Choose a matching model/effort and Apply: require the complete triple to save. Repeat
+   with channel and thread scopes, Execute and legacy Submit, and Teams desktop/mobile. Default
+   engine preview resolves template/gateway inheritance for channel scope and the retained session
+   engine for thread scope. Saved compatible full model IDs absent from discovery remain selectable.
+   Inherited labels name their actual fallback. Open a dedicated-Codex-login fixture and require its engine to remain
+   locked. Follow channel default requires confirmation and clears only the original session pins.
+   Run a follow-up and verify the selected engine/model; a pre-existing session's engine remains
+   explicitly labelled until an engine is selected or the session is cleared.
+3. Access: approved non-manager can view General and edit runtime but cannot mutate access.
+   Manager can change mode/options/access policies and current native roster selections; forged
+   nonmember selections fail. Revoke manager/admin/owner access while the card is open and again
+   while the roster/discovery request is held: require denial and no mutation. Large/over-budget
+   rosters explicitly defer complete-list edits without dropping grants; former-member selections
+   show a replacement warning before Apply.
+4. Variables/MCPs: in the channel rotate synthetic channel values; in an explicitly opened
+   personal conversation also rotate personal and admin organization values. The shared card
+   must omit personal/org names, token suffixes/account labels and ungranted private MCP catalogs;
+   forged private-scope actions on it fail before confirmation or mutation. Require blank/masked inputs after refresh, masked listing only, preserved
+   Used-on-hosts unless explicitly replaced/cleared, and no values in card JSON or event logs.
+   Remove each scope through a confirmation and replay the token: exactly one effect. A member
+   cannot forge an organization write or Cloud MCP change. Blank connection tokens keep existing
+   values; invalid Make URL writes nothing; disconnect affects only the selected connection.
+5. Skills: assign/clear a template, activate/deactivate a direct skill, page a catalog and template
+   list, then verify the next turn's grants. Organization grants remain inherited and immutable
+   here; personal/private catalog skills cannot be assigned to other authors by forged payloads.
+6. Automations: page past twelve rows, pause/resume a recurring task, cancel a one-time reminder,
+   stop a loop and replay the confirmation. Only this conversation's rows may change; one-time
+   and loop pause attempts fail; enabled-schedule limits still apply when resuming.
+7. Resume: after a project turn, require the current session ID, its minting engine and correct
+   container terminal command. Administrator sessions never expose commands in a shared card;
+   current admins can access them in authenticated settings or an explicit personal conversation.
+   Clear the session and refresh: no stale ID/command. Navigate every page in
+   Teams desktop/mobile and exercise Execute plus legacy Submit fallback without duplicate effects.
+8. Record exact fixture, engine, prompts/actions, safe before/after scope evidence, observed client
+   card placement and pass/fail for each case in the private registry through the personal identity.
+   Any unexecuted, blocked or failed case remains pending acceptance; no release-readiness claim.
 
 ## Slack Secrets tab removal and form navigation (2026-09-09)
 
@@ -8470,3 +9215,31 @@ Live (unexecuted; repeat with Claude and Codex): mention the bot with `/settings
   same thread and a fresh thread; both must report absent. Preserve exact prompts, configured
   engine, safe boolean tool output and thread evidence. Restore fixture state. Local handler
   regressions do not claim live Slack-client or dual-engine acceptance.
+
+### Host Bash update and repair acceptance (2026-10-06)
+
+- [x] Engine-independent live systemd fixture: `node scripts/check-update-service-survival.mjs`.
+  Disposable parent/child user units only; the shipped launcher invokes `bash scripts/update.sh`
+  with private stdin environment. Actual `defaultRestart` signals the fixture MainPID with
+  SIGUSR2 under Restart=on-failure; parent records restart exit 1, PID changes, and updater child
+  survives in its own cgroup after the original wrapper exits. Synthetic token is never logged.
+- [x] Isolated regression: same-revision dependency repair runs snapshot/install/audit/tests/
+  provisioning/image/restart/readiness; failed installation restores and verifies the prior
+  revision. Enterprise UI exposes Repair gateway at zero commits behind. Production provider
+  authentication is never consulted by update gates.
+- [x] Live image executable probe: installed runtime Node/Claude/Codex `--version` succeeds in a
+  disposable network-off, read-only container without host mounts or credentials.
+- [ ] Complete deployed candidate update: exercise UI start through final authenticated new
+  instance/revision/runtime/Slack reconnect status on an approved release; unit/fixture evidence
+  above does not claim this production transaction ran.
+
+- Validation for author runtime isolation: 12 independent regression checks pass, including real
+  `runMessage` with Claude/Codex CLI fixtures (process-only fake backend; live kernel confinement
+  unexecuted). Full regression initially found one pre-existing README campaign-link assertion;
+  it counted an ordinary homepage link as a duplicate CTA. Narrowed that assertion to the exact
+  UTM campaign URL without removing CTA uniqueness coverage. Live CTR-30 and CTR-30-LANE
+  definitions were updated and reread in the private registry for both engines; four unexecuted
+  attempts explicitly record the missing host Podman/runtime access and unserved candidate.
+
+- Final local validation: full regression **3,217 passed, 29 skipped, 0 failed**; static check,
+  secret scan and security coverage passed. Live kernel enforcement remains unexecuted.
