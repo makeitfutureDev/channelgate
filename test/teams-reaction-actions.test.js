@@ -207,3 +207,26 @@ for (const source of ['native', 'graph']) for (const kind of ['personal', 'group
       : kind === 'groupchat' ? 'group:target' : event.conversationId);
   });
 }
+
+
+for (const kind of ['personal', 'groupchat', 'channel']) {
+  test(`Graph Heart eyes robot Unicode metadata activates ${kind} as the approved reactor`, async () => {
+    const conversation = { id: `19:graph-robot-metadata-${kind}@thread.v2`, conversationType: kind };
+    const reaction = { reactionType: '😍', displayName: 'Heart eyes robot', reactionContentUrl: null,
+      user: { user: { id: 'reactor-aad' } } };
+    const [event] = await normalizeGraphEvents({ id: 'target', messageType: 'message',
+      replyToId: kind === 'channel' ? 'channel-root' : null, from: { user: { id: 'other-author-aad' } },
+      body: { content: 'Reply exactly ROBOT_METADATA_OK' }, reactions: [reaction],
+      messageHistory: [{ actions: 'reactionAdded', modifiedDateTime: '2026-10-07T10:01:00Z', reaction }] },
+      { conversationId: `teams:${conversation.id}`, startedAt: '2026-10-07T10:00:00Z',
+        graphRobotStartedAt: '2026-10-07T10:00:00Z', context: { conversation } },
+      { botId, now: () => Date.parse('2026-10-07T11:00:00Z'), resolveMember: async () => ({ id: owner }) });
+    const calls = [], f = fixture(async args => { calls.push(args); return { content: 'ROBOT_METADATA_OK' }; });
+    await f.ingest({ ...event, userId: '29:metadata-unapproved' });
+    assert.equal(calls.length, 0);
+    await f.ingest(event);
+    assert.equal(calls.length, 1); assert.equal(calls[0].authorId, owner);
+    assert.equal(calls[0].text, 'Reply exactly ROBOT_METADATA_OK');
+    assert.equal(calls[0].threadKey, kind === 'channel' ? 'channel-root' : kind === 'groupchat' ? 'group:target' : event.conversationId);
+  });
+}

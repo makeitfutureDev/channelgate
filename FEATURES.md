@@ -28,7 +28,10 @@
   Unicode 👍, including skin tones) is an alternative. Alien accepts `alien`, `:alien:`, Unicode 👽
   and the documented `1f47d_extraterrestrialalien` ID; help recommends Alien. Its separate persisted
   introduction cutoff excludes Alien history from before this expansion without resetting earlier
-  cutoffs. Existing robot IDs remain supported alongside
+  cutoffs. Graph also accepts the Heart eyes robot variant encoded as 😍 only with the exact
+  provider name `Heart eyes robot` and no custom content URL in both added history and current
+  reactions. Plain Heart eyes and unnamed history stay inactive. Its separate persisted cutoff
+  prevents newly recognized robot metadata replaying older history. Existing robot IDs remain supported alongside
   `stopsign` and `2705_whiteheavycheckmark`, plus Unicode/legacy aliases. Activation starts a request
   as the reactor. Stop cancels only the selected session’s active and queued work with the same
   author/admin checks as `/stop`. Channel replies and group quotes resolve to their stored root.
