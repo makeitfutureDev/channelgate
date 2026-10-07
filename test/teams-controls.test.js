@@ -6,7 +6,10 @@ import path from 'node:path';
 import { ensureTestEnv } from './helpers.js';
 ensureTestEnv();
 const { createTeamsControls } = await import('../src/platforms/msteams/controls.js');
+const { TEAMS_HELP_TEXT } = await import('../src/platforms/msteams/help.js');
 const { teamsWorkspaceContext } = await import('../src/platforms/msteams/workspace-access.js');
+const { createIngest } = await import('../src/platforms/ingest.js');
+const { makeInbound } = await import('../src/platforms/inbound.js');
 const { upsertChannelEntry, saveChannelMeta, setUser } = await import('../src/config/store.js');
 await setUser('29:owner', { approved: true, isAdmin: true });
 const root = await mkdtemp(path.join(os.tmpdir(), 'teams-controls-'));
@@ -20,6 +23,47 @@ function fixture(extra = {}) {
   const args = text => ({ message: message(text), sessionKey: 'group:root', entry: { slug: 'source' }, meta: { engine: 'claude' }, authorIsAdmin: true, reply: async text => replies.push(text), controls: { command: async input => { commands.push(input.message.text); await input.reply(input.message.text.startsWith('/model') ? 'Session engine: claude' : 'Session effort: default'); return true; } } });
   return { controls, args, sent, commands, replies };
 }
+test('Teams /help returns the practical guide without opening controls or changing runtime', async () => {
+  const f = fixture();
+  assert.equal(await f.controls.onCommand(f.args('  /HELP  ')), true);
+  assert.deepEqual(f.replies, [TEAMS_HELP_TEXT]);
+  assert.deepEqual(f.sent, []);
+  assert.deepEqual(f.commands, []);
+  const reaction = f.args('/help'); reaction.message.trigger = 'reaction';
+  assert.equal(await f.controls.onCommand(reaction), false);
+  assert.equal(f.replies.length, 1);
+});
+test('Teams ingest delivers help in personal, channel and quoted group sessions before any engine runs', async () => {
+  const posted = [];
+  const connector = { platform: 'msteams', api: {
+    sendActivity: async () => assert.fail('/help must not send a file-consent card'),
+  }, post: async value => {
+    posted.push(value); return { messageId: `help-${posted.length}` };
+  } };
+  const native = createTeamsControls({ connector });
+  const ingest = createIngest({ connector, onCommand: native.onCommand,
+    run: async () => assert.fail('/help must not invoke an engine'), log: {} });
+  for (const kind of ['dm', 'channel', 'group']) {
+    const message = makeInbound({ platform: 'msteams', kind, text: '/help',
+      conversationId: `19:help-${kind}`, userId: '29:owner', messageId: `root-${kind}`,
+      mentionsBot: kind !== 'dm', threadKey: kind === 'channel' ? 'help-thread' : '',
+      replyToId: kind === 'group' ? 'quoted-message' : '' });
+    assert.deepEqual(await ingest(message), { command: true });
+    assert.equal(posted.at(-1).conversationId, message.rawConversationId);
+    assert.equal(posted.at(-1).threadKey, message.threadKey);
+    assert.match(posted.at(-1).text, /How to use me/);
+    assert.match(posted.at(-1).text, /\/clear/);
+  }
+  assert.equal(posted.length, 3);
+  assert.deepEqual(await ingest(makeInbound({ platform: 'msteams', kind: 'channel',
+    text: '/help', conversationId: '19:help-unmentioned', userId: '29:owner',
+    messageId: 'unmentioned', mentionsBot: false })), { skipped: 'not-mentioned' });
+  assert.deepEqual(await ingest(makeInbound({ platform: 'msteams', kind: 'dm',
+    text: '/help', conversationId: 'a:help-unapproved', userId: '29:help-unapproved',
+    messageId: 'unapproved' })), { skipped: 'unauthorized' });
+  assert.equal(posted.length, 4);
+  assert.doesNotMatch(posted.at(-1).text, /How to use me/);
+});
 test('files are sent privately and browser actions preserve original workspace identity', async () => {
   const f = fixture(); await f.controls.onCommand(f.args('/files'));
   assert.equal(f.sent[0].conversationId, 'a:private');

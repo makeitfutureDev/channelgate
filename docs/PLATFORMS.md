@@ -242,6 +242,11 @@ personal-chat file consent, then upload/install that app revision with the Teams
 above. Adaptive Cards and their inline forms do not require additional Graph RSC permissions.
 Task-module dialogs and broadcast mentions remain unavailable.
 
+- `/help` provides a practical **How to use me** guide and the supported Teams command list.
+  It explains personal/channel/group session continuity, mentions, voice, files, settings,
+  connections, skills, memory, reminders, schedules and background work. In channels and group
+  chats, mention the bot with the command; quote the original message or bot reply in a group
+  chat to address that session. Help is returned by the gateway before invoking an engine.
 - `/settings` opens a six-page console in the original channel/thread or chat: General,
   Variables, MCPs, Skills, Automations and Resume. It retains the source conversation and session
   even when opened from a channel or group chat. `/secrets` opens its Variables page directly.

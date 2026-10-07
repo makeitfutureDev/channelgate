@@ -13,6 +13,7 @@ import { createTeamsInteractionHandler, normalizeTeamsInteraction } from './inte
 import { handlePlatformApproval } from '../../slack/approvals.js';
 import { acquireKeyedLock } from '../../util/keyed-lock.js';
 import { buildTeamsSettings, createTeamsSettingsContext, handleTeamsSettings } from './settings.js';
+import { TEAMS_HELP_TEXT } from './help.js';
 
 const card = (title, body = [], actions = []) => ({ type: 'AdaptiveCard', version: '1.4', body: [{ type: 'TextBlock', text: title, weight: 'Bolder', wrap: true }, ...body], actions });
 const text = value => ({ type: 'TextBlock', text: String(value), wrap: true });
@@ -60,7 +61,7 @@ export function createTeamsControls({ connector, now = Date.now, authorize = tea
     const { message, reply } = args;
     if (message.trigger === 'reaction') return false;
     if (message.text.trim().toLowerCase() === '/help') {
-      await reply('Commands: /settings (settings in this conversation), /files [folder], /secrets (channel Variables page), /sendfile <path> (personal file consent), /status, /model, /effort, /stop, /cancel, /clear. In group chats, quote the original message or bot reply and mention the bot to control that session. Voice notes require local Whisper.');
+      await reply(TEAMS_HELP_TEXT);
       return true;
     }
     const match = /^\/(settings|files|secrets|sendfile)(?:\s+(.*))?$/is.exec(message.text.trim());

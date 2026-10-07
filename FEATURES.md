@@ -1,5 +1,14 @@
 # ChannelGate — Features
 
+## Microsoft Teams help guide
+
+- Teams `/help` returns a practical **How to use me** guide and its supported command list.
+  It covers mentions and session continuity, reaction activation, local voice transcription,
+  stop/queue behavior, private workspace files and file consent, settings and variables,
+  Composio, skills, conversation memory/rules, reminders, schedules and background work.
+  Examples use Teams controls and explain their permissions and configuration requirements.
+  The authorized native command responds before an engine turn, in the requesting conversation.
+
 ## Claude login for nested commands
 
 - Before each container turn, the gateway refreshes a protected Claude login independently of the
