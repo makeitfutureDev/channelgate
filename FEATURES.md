@@ -12,8 +12,11 @@
   Examples use Teams controls and explain their permissions and configuration requirements.
   The authorized native command responds before an engine turn, in the requesting conversation.
   Quoting the help card in a group chat continues the same session.
-- Reaction labels identify `:robot_face:` as Heart eyes robot, `:octagonal_sign:` as Stop sign,
-  and `:white_check_mark:` as Tick button. Teams intake recognizes the documented robot IDs,
+- Reaction labels show Teams picker names and actual IDs: Heart eyes robot (`hearteyesrobot`),
+  Stop sign (`stopsign`), and Tick button / Checkmark button (`2705_whiteheavycheckmark`).
+  Heart eyes robot uses its picker name without a misleading plain robot glyph. The guide explains
+  that typing an ID as a message does not add a reaction. Teams intake recognizes the documented
+  robot IDs,
   `stopsign` and `2705_whiteheavycheckmark`, plus Unicode/legacy aliases. Robot starts a request
   as the reactor. Stop cancels only the selected session’s active and queued work with the same
   author/admin checks as `/stop`. Channel replies and group quotes resolve to their stored root.
