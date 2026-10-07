@@ -891,6 +891,7 @@ export function buildCatalogManagerView(items = [], state = {}, {
   for (const [offset, item] of shown.entries()) {
     const activeSource = item.direct ? "active in this channel" : item.inherited ? "inherited" : item.template ? "from template" : item.scoped ? "channel repository" : "inactive";
     const description = item.description ? `\n${escapeMrkdwn(item.description).slice(0, 450)}` : "";
+    const inadmissible = isMcp && item.selectable === false ? ` · ⚠️ unavailable: ${escapeMrkdwn(item.admissionReason || "no admissible transport")}` : "";
     const disconnected = item.connected === false ? " · ⚠️ currently offline" : "";
     const actionId = isMcp
       ? `${CHANNEL_SETTINGS_CLOUD_TOGGLE_PREFIX}${offset}`
@@ -901,12 +902,12 @@ export function buildCatalogManagerView(items = [], state = {}, {
           style: "danger",
           confirm: destructiveConfirm(`Deactivate ${item.name}?`, `It will stop being granted directly to this channel. Inherited/template capabilities remain active.`, "Deactivate"),
         })
-      : item.active
+      : item.active || (isMcp && item.selectable === false)
         ? null
         : button(actionId, "Activate", state, op, { k: item.key, e: engine, a: true }, { style: "primary" });
     blocks.push({
       type: "section",
-      text: mrkdwn(`*${escapeMrkdwn(item.name)}* · ${activeSource}${disconnected}${description}`),
+      text: mrkdwn(`*${escapeMrkdwn(item.name)}* · ${activeSource}${inadmissible}${disconnected}${description}`),
       ...(accessory ? { accessory } : {}),
     });
   }

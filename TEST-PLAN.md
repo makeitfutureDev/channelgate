@@ -29,6 +29,27 @@
   request the original and verify it returns. Record separate engine evidence in private QA.
 - [ ] Operator storage check: inspect current server utilization before any targeted cleanup.
   This change prevents future repeated downloads; it does not claim a production storage sweep.
+## Claude Cloud MCP admission (2026-10-08)
+
+- [x] Regression: `node --test test/claude-mcp-selection-admission.test.js
+  test/mcp-discovery.test.js test/claude-selected-mcp.test.js test/channel-settings-modal.test.js
+  test/access-grants.test.js test/folders-settings.test.js test/mcp-config.test.js
+  test/run-engine-mcp.test.js`. Connected credential-bearing and missing definitions cannot become
+  new selections; healthy definitions work. Unsafe CLI display text never appears in discovery.
+  Operator edits after cached discovery are revalidated. Existing invalid selections remain stored
+  on unrelated saves but are dropped at execution; healthy siblings continue.
+- [ ] Live acceptance, isolated QA deployment, repeat from **Claude** and **Codex** threads:
+  configure three host Claude MCP fixtures: credential-free `healthy` echo server, a CLI-connected
+  `credentialed` server needing an operator env/header, and a discovered `missing` server whose
+  definition is removed. Open Settings → Cloud MCP → Claude and the admin MCP editor. Verify only
+  `healthy` can activate; the other two show safe reasons with no credential/target text. A forged
+  admin save adding either invalid pick returns 400 and preserves existing grants. Select `healthy`,
+  then edit its host definition to require credentials before a fresh activation; verify rejection.
+  Seed legacy invalid picks through the isolated fixture store. In a Claude turn send `use healthy
+  to echo QA_MCP_READY`; verify healthy tool output, invalid-drop notice and successful reply,
+  with no host credential in staged artifacts. In the Codex thread send `say QA_MCP_READY`; verify
+  Codex remains pinned, answers normally and receives none of the Claude-only grants. Existing
+  invalid selections remain removable in both clients. Restore the isolated operator fixtures.
 
 ## Custom MCP connections (2026-10-01)
 

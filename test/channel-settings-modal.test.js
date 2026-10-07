@@ -814,3 +814,17 @@ test("Slack settings reject an unconfigured provider before replacing thread pin
   await assert.rejects(applyThreadRuntimeSelection({ entry, meta: { engine: "claude" }, state: { channelId: "C_PROVIDER", threadTs }, actorId: "U_MANAGER", field: "engine", value: "qwen-eu" }), /not configured/);
   assert.deepEqual([await getThreadEngine(entry.slug, threadTs), await getThreadModel(entry.slug, threadTs), await getThreadEffort(entry.slug, threadTs)], ["codex", "gpt-6-sol", "high"]);
 });
+
+test("Cloud MCP manager marks inadmissible definitions and offers only removal for existing selections", () => {
+  const items = [
+    { key: "missing", name: "missing", selectable: false, admissionReason: "is not defined", active: false },
+    { key: "credentialed", name: "credentialed", selectable: false, admissionReason: "needs host credentials", direct: true, active: true },
+    { key: "healthy", name: "healthy", selectable: true, active: false },
+  ];
+  const view = buildCatalogManagerView(items, state, { kind: "cloud", channelName: "fixture", engine: "claude" });
+  const rows = view.blocks.filter(block => block.type === "section" && /missing|credentialed|healthy/.test(block.text?.text || ""));
+  assert.equal(rows.find(row => row.text.text.includes("*missing*")).accessory, undefined);
+  assert.equal(rows.find(row => row.text.text.includes("*credentialed*")).accessory.text.text, "Deactivate");
+  assert.equal(rows.find(row => row.text.text.includes("*healthy*")).accessory.text.text, "Activate");
+  assert.match(rendered(view), /unavailable:.*is not defined/);
+});

@@ -1,8 +1,9 @@
+import { assertNewMcpSelections } from "../../gateway/mcp-selection.js";
 // User admin routes: the masked user list and per-user save (approval/admin flags, personal
 // preferences, and write-only tokens). Split from admin.js; mounted by createAdminRouter so every
 // URL is unchanged.
 import { Router } from "express";
-import { getUsers, setUser } from "../../config/store.js";
+import { getUsers, getUser, setUser } from "../../config/store.js";
 import { getDefaultNudges, userNudgesEnabled } from "../../config/settings.js";
 import { logEvent } from "../../util/logger.js";
 import { cleanAccessGrants } from "./helpers.js";
@@ -226,6 +227,11 @@ export function createUsersRouter() {
       if (body.accessGrants && typeof body.accessGrants === "object" && !Array.isArray(body.accessGrants))
         Object.assign(patch, cleanAccessGrants(body.accessGrants));
 
+      if (patch.allowedMcps) {
+        const current = await getUser(userId);
+        try { await assertNewMcpSelections("claude", patch.allowedMcps, current?.allowedMcps); }
+        catch (error) { return res.status(400).json({ error: error.message }); }
+      }
       const saved = await setUser(userId, patch);
       // The admin UI's "clear token" is the same revocation as clear_my_composio_token /
       // clear_my_toolbox_token: in-flight container relays for that person's runs stop now.

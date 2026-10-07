@@ -17,6 +17,16 @@
   ordinary thread reply to download them again. Failed downloads stay retryable. A newly attached
   file or explicit `slack_download_file` request can still download its original. Receipts contain
   no private URLs, credentials, or attachment content, and use the same no-follow writer.
+## Claude Cloud MCP selection admission
+
+- Claude discovery separates CLI connectivity from isolated-runtime admissibility. A connected
+  server with host credentials, a missing definition, or a stale transport is marked unavailable
+  with a safe reason; rejected command targets and credential-bearing URLs never enter the catalog.
+- Slack Cloud MCP management and the admin editor offer activation only for admitted definitions.
+  New channel, DM, personal, organization and template selections are rechecked against current
+  operator definitions before saving, including stale cached discoveries. Previously stored
+  selections remain removable; unrelated saves preserve them and runtime admission still drops
+  unusable optional connectors with a notice while allowing the turn to continue.
 
 ## Automation health and quiet delivery
 
