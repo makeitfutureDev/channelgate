@@ -2663,3 +2663,4 @@ copying cross-channel auto-memory.
   **launchd** service with `npm run update`.
 
 - Fix completed Codex turns being reported as failures after recovered reconnect notices; retain terminal failure and unsafe-replay safeguards.
+- Restore bounded Claude watchdog continuation for cold and warm silence-budget failures using typed error details; retain Stop and ambiguous-kill exclusions.

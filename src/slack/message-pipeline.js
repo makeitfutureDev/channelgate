@@ -227,9 +227,11 @@ export function runDeathRecovery(err) {
   // A hard kill can happen after an external write but before its tool result is saved.
   // Do not infer OOM or replay that ambiguous work automatically.
   if (String(err?.details?.signal || "").toUpperCase() === "SIGKILL" || Number(err?.details?.exitCode) === 137) return null;
+  if (err?.details?.providerError === true) return null;
+  if (err?.details?.engine === "claude" && ["ENGINE_SILENCE_BUDGET", "ENGINE_PROCESS_GONE"].includes(err.details.errorCode)) return "continue";
   if (/session is dead/i.test(m)) return "retry";
   if (err?.details?.engine === "claude" && err.details.processEnded === true && err.details.providerError !== true) return "continue";
-  if (/stalled — no output|claude session ended|claude exited/i.test(m)) return "continue";
+  if (/stalled — no output|(?:warm )?claude(?: turn)? produced no output[^\n]*giving up|claude session ended|claude exited/i.test(m)) return "continue";
   return null;
 }
 

@@ -4553,3 +4553,6 @@ confirmation for the exact release candidate. `AGENTS.md` (also read through `CL
 ### Recovered Codex reconnect notices
 
 Codex reconnect progress events no longer fail a turn that subsequently reports `turn.completed` and exits cleanly. Terminal `turn.failed`, other errors, missing completion, nonzero exits and signals still fail; no attempt that ran tools or produced output is replayed.
+### Typed Claude watchdog recovery
+
+Cold and warm Claude watchdog failures carry stable `ENGINE_SILENCE_BUDGET` or `ENGINE_PROCESS_GONE` details. Slack recognizes those verdicts independently of message wording and continues the existing session at most once. Explicit Stop, AbortError, external SIGKILL/exit 137, provider errors and incomplete unsafe turns remain ineligible for automatic continuation. Quiet windows still only report liveness; only the absolute silence budget or confirmed process loss ends a turn.
