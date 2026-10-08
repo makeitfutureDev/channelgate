@@ -904,9 +904,10 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
   failed placeholder edit through fresh delivery; errors/stops do not invent usage statistics.
 - Native Adaptive Cards provide Approve/Deny/Request changes actions and a **six-page
   Settings console**: General, Variables, MCPs, Skills, Automations and Resume. `/settings` opens
-  with just the section menu in the original channel/thread or chat; selecting a section reveals
-  its settings below the menu in the same card, keeping its conversation and session. `/secrets`
-  starts on Variables. General shows both channel defaults and session pins, filters compatible
+  a compact **Open settings** launcher in the original channel/thread or chat. Clicking it opens
+  a large private popup inside Teams; all six sections, navigation, confirmations and saves stay
+  there, retaining the original conversation and session. `/secrets` uses the same popup and
+  starts on Variables. Each opening has isolated drafts and confirmations with a 15-minute expiry. General shows both channel defaults and session pins, filters compatible
   models/efforts, labels inheritance, respects dedicated Codex login locks and offers Follow
   channel default. Teams runtime lists have one **Apply to channel** and one **Apply to thread**
   button. Each model list contains only models for that scope's selected engine. After changing
@@ -924,15 +925,15 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
   catalogs/templates/automations paginate. Inputs never prefill saved secrets, new secret entries
   are masked, and destructive controls use consumed server-held confirmation tokens. Native
   secret entry follows the existing 8,000-character/16-KiB submission bounds. Resume reads the
-  current project session and its engine/container terminal command at display time. Shared
-  cards list channel variables only, omit personal/organization credential metadata and private
-  ungranted MCP catalogs, and never publish administrator session commands. Private scopes remain
-  available in authenticated settings or an explicitly opened personal conversation. Accepted
-  tab and Apply actions update the same server-held card message, for Execute and Submit clients.
-  The card remains requester-bound; other members open their own controls. Signed invoke/Submit envelopes establish the
-  actor; opaque expiring state binds the original workspace, user and delivery conversation.
-  Current membership and roles are checked again on every interaction and at sensitive writes.
-  Task-module dialogs and broadcast mentions remain unimplemented. An optional approval changes
+  current session and its engine/container terminal command at display time, subject to current
+  role and runtime access. Personal/organization metadata and eligible administrator session
+  commands appear only inside the private dialog; its chat launcher never receives form contents.
+  Settings dialogs use `task/fetch`/`task/submit` with task continuation responses and native Submit
+  actions, without a separate website. Signed envelopes establish the actor; opaque expiring state
+  binds the original workspace, user, delivery conversation and tenant when known. Launcher state
+  cannot mutate settings, dialog state cannot be used by inline Execute/Submit, and current roles
+  and membership are checked on every action and sensitive write. Other members open their own
+  controls. Broadcast mentions remain unimplemented. An optional approval changes
   comment refuses the current action even if Approve was clicked.
 - `/files [folder]` opens a private, paginated workspace browser. Download, upload and eligible
   text-edit links use the existing signed browser grants, filesystem confinement and edit policy,

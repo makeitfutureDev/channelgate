@@ -25,23 +25,25 @@ async function fixture({ admin = true, privateChat = true, personal = false } = 
     rawConversationId: channelId.slice(6), userId: owner, isDM: personal, threadKey: 'original-root' },
     entry, meta, sessionKey: 'original-session', authorIsAdmin: admin, reply: async value => replies.push(value) });
   const invoke = (data, action, actor = owner, destination = channelId.slice(6)) => controls.onInvoke({
-    type: 'invoke', name: 'adaptiveCard/action', from: { id: actor }, conversation: { id: destination },
+    type: 'invoke', name: action === 'settings.open' ? 'task/fetch' : 'task/submit', from: { id: actor }, conversation: { id: destination },
     replyToId: 'card1', serviceUrl: 'https://smba.trafficmanager.net/teams/',
-    value: { action: { type: 'Action.Execute', verb: action, data } },
+    value: { data: { ...data, cgAction: action } },
   });
   await controls.onCommand(args('/settings'));
-  const stateId = sent[0]?.card.body.find(item => item.type === 'ActionSet').actions[0].data.stateId;
-  return { controls, connector, sent, replies, args, invoke, entry, owner, channelId, stateId };
+  const launcherId = sent[0].card.actions[0].data.stateId;
+  const menu = value(await invoke({ stateId: launcherId }, 'settings.open'));
+  const stateId = menu.body.find(item => item.type === 'ActionSet').actions[0].data.stateId;
+  return { controls, connector, sent, replies, args, invoke, entry, owner, channelId, stateId, menu, launcherId };
 }
-const value = result => result.body.value;
+const value = result => result.body.task?.type === 'continue' ? result.body.task.value.card.content : result.body.task?.value || result.body.value;
 const input = (card, id) => card.body.find(item => item.id === id);
-test('six settings pages stay in the source conversation and update the same card', async () => {
+test('six settings pages navigate inside a private popup without updating the launcher', async () => {
   const f = await fixture();
   assert.equal(f.sent[0].conversationId, f.channelId.slice(6));
   assert.equal(f.sent[0].threadKey, 'original-root');
   assert.equal(f.sent[0].text, 'Conversation settings');
   assert.deepEqual(f.replies, []);
-  const menu = f.sent[0].card;
+  const menu = f.menu;
   assert.ok(!menu.body.some(item => item.type.startsWith('Input.')));
   assert.deepEqual(menu.actions, []);
   const tabs = menu.body.filter(item => item.type === 'ActionSet').flatMap(item => item.actions);
@@ -49,13 +51,12 @@ test('six settings pages stay in the source conversation and update the same car
   assert.equal(menu.body.at(-1).type, 'ActionSet');
   for (const page of ['general', 'secrets', 'mcp', 'skills', 'automations', 'resume']) {
     const action = tabs.find(item => item.data.page === page);
-    const card = value(await f.invoke(action.data, action.verb));
+    const card = value(await f.invoke(action.data, action.data.cgAction));
     assert.equal(card.body[0].text, 'Channel settings');
     adaptiveCardAttachment(card);
     assert.equal(card.body.filter(item => item.type === 'ActionSet').slice(0, 2).flatMap(item => item.actions).length, 6);
-    assert.equal(f.sent.at(-1).conversationId, f.channelId.slice(6));
-    assert.equal(f.sent.at(-1).messageId, 'card1');
-    assert.deepEqual(f.sent.at(-1).card, card);
+    assert.equal(f.sent.length, 1);
+    assert.equal(f.sent[0].card.actions[0].title, 'Open settings');
     assert.ok(card.body.length > menu.body.length);
     assert.ok(card.body.filter(item => item.type === 'ActionSet').slice(0, 2).flatMap(item => item.actions).some(item => item.title === `• ${action.title}`));
     if (page !== 'general') assert.equal(input(card, 'channel_engine'), undefined);
@@ -69,49 +70,45 @@ test('/secrets opens Variables directly while /settings starts with the menu', a
   const f = await fixture();
   assert.equal(input(f.sent[0].card, 'variableValue'), undefined);
   await f.controls.onCommand(f.args('/secrets'));
-  const secrets = f.sent.at(-1).card;
+  const secrets = value(await f.invoke(f.sent.at(-1).card.actions[0].data, 'settings.open'));
   assert.ok(input(secrets, 'variableValue'));
   assert.ok(secrets.body.filter(item => item.type === 'ActionSet').slice(0, 2).flatMap(item => item.actions).some(item => item.title === '• Variables'));
 });
-test('combined runtime Apply actions save the chosen scope through Execute and Submit', async () => {
+test('dialog runtime Apply actions save only the chosen scope', async () => {
   const f = await fixture({ admin: false });
   const general = value(await f.invoke({ stateId: f.stateId, page: 'general' }, 'settings.page'));
-  const applies = general.body.filter(item => item.type === 'ActionSet').flatMap(item => item.actions).filter(item => item.verb === 'settings.runtime.apply');
+  const applies = general.body.filter(item => item.type === 'ActionSet').flatMap(item => item.actions).filter(item => item.data.cgAction === 'settings.runtime.apply');
   assert.deepEqual(applies.map(item => item.title), ['Apply to channel', 'Apply to thread']);
   const channel = applies[0];
   const saved = value(await f.invoke({ ...channel.data, channel_engine: 'codex', channel_model: modelsForEngine('codex')[0].value,
-    channel_effort: 'high', thread_engine: 'claude' }, channel.verb));
+    channel_effort: 'high', thread_engine: 'claude' }, channel.data.cgAction));
   assert.equal((await getChannelMeta(f.entry.slug)).engine, 'codex');
   assert.equal(await getThreadEngine(f.entry.slug, 'original-session'), '');
-  const thread = saved.body.filter(item => item.type === 'ActionSet').flatMap(item => item.actions).find(item => item.data?.scope === 'thread' && item.verb === 'settings.runtime.apply');
+  const thread = saved.body.filter(item => item.type === 'ActionSet').flatMap(item => item.actions).find(item => item.data?.scope === 'thread' && item.data.cgAction === 'settings.runtime.apply');
   const before = f.sent.length;
-  const result = await f.controls.onInvoke({ type: 'message', from: { id: f.owner }, recipient: { id: '28:bot' },
-    conversation: { id: f.channelId.slice(6) }, replyToId: 'forged-target', serviceUrl: 'https://smba.trafficmanager.net/teams/',
-    value: { ...thread.fallback.data, thread_engine: 'claude', thread_model: modelsForEngine('claude')[0].value, thread_effort: 'high', channel_engine: 'claude' } });
-  assert.deepEqual(result, { status: 200, body: {} });
+  const result = await f.invoke({ ...thread.data, thread_engine: 'claude', thread_model: modelsForEngine('claude')[0].value, thread_effort: 'high', channel_engine: 'claude' }, thread.data.cgAction);
+  assert.equal(result.body.task.type, 'continue');
   assert.equal(await getThreadEngine(f.entry.slug, 'original-session'), 'claude');
   assert.equal((await getChannelMeta(f.entry.slug)).engine, 'codex');
-  assert.equal(f.sent.length, before + 1); assert.equal(f.sent.at(-1).messageId, 'card1');
+  assert.equal(f.sent.length, before);
 });
-test('Load models refreshes the same requester card through Execute and Submit without saving', async () => {
+test('Load models refreshes the popup without saving or updating the chat', async () => {
   const f = await fixture({ admin: false });
   const general = value(await f.invoke({ stateId: f.stateId, page: 'general' }, 'settings.page'));
-  const load = general.body.filter(item => item.type === 'ActionSet').flatMap(item => item.actions).find(item => item.verb === 'settings.runtime.models' && item.data.scope === 'channel');
+  const load = general.body.filter(item => item.type === 'ActionSet').flatMap(item => item.actions).find(item => item.data.cgAction === 'settings.runtime.models' && item.data.scope === 'channel');
   assert.equal(load.title, 'Load models');
   assert.equal(load.associatedInputs, 'auto');
-  assert.equal(load.fallback.associatedInputs, 'auto');
+  assert.equal(load.type, 'Action.Submit');
+  assert.equal(load.fallback, undefined);
   const before = await getChannelMeta(f.entry.slug);
-  const updated = value(await f.invoke({ ...load.data, channel_engine: 'codex', channel_model: '__default__', channel_effort: '__default__' }, load.verb));
+  const updated = value(await f.invoke({ ...load.data, channel_engine: 'codex', channel_model: '__default__', channel_effort: '__default__' }, load.data.cgAction));
   assert.ok(input(updated, 'channel_model').choices.slice(1).every(item => modelBelongsToEngine(item.value, 'codex')));
   assert.equal(input(updated, 'channel_engine').value, 'codex');
   assert.deepEqual(await getChannelMeta(f.entry.slug), before);
   const sent = f.sent.length;
-  await f.controls.onInvoke({ type: 'message', from: { id: f.owner }, recipient: { id: '28:bot' },
-    conversation: { id: f.channelId.slice(6) }, replyToId: 'forged-target', serviceUrl: 'https://smba.trafficmanager.net/teams/',
-    value: { ...load.fallback.data, channel_engine: 'claude', channel_model: '__default__', channel_effort: '__default__' } });
-  assert.equal(f.sent.length, sent + 1);
-  assert.equal(f.sent.at(-1).messageId, 'card1');
-  assert.ok(input(f.sent.at(-1).card, 'channel_model').choices.slice(1).every(item => modelBelongsToEngine(item.value, 'claude')));
+  const reloaded = value(await f.invoke({ ...load.data, channel_engine: 'claude', channel_model: '__default__', channel_effort: '__default__' }, load.data.cgAction));
+  assert.equal(f.sent.length, sent);
+  assert.ok(input(reloaded, 'channel_model').choices.slice(1).every(item => modelBelongsToEngine(item.value, 'claude')));
   assert.deepEqual(await getChannelMeta(f.entry.slug), before);
   assert.equal(await getThreadEngine(f.entry.slug, 'original-session'), '');
 });
@@ -145,26 +142,24 @@ test('settings do not require personal-chat delivery', async () => {
   assert.equal(f.sent[0].conversationId, f.channelId.slice(6));
   assert.deepEqual(f.replies, []);
 });
-test('Submit navigation updates the stored channel card once, ignoring a forged reply target', async () => {
+test('dialog navigation ignores forged reply targets and never updates a chat message', async () => {
   const f = await fixture();
-  const skills = f.sent[0].card.body.filter(item => item.type === 'ActionSet').flatMap(item => item.actions).find(action => action.data.page === 'skills');
-  assert.equal(skills.fallback.associatedInputs, 'none');
+  const skills = f.menu.body.filter(item => item.type === 'ActionSet').flatMap(item => item.actions).find(action => action.data.page === 'skills');
+  assert.equal(skills.associatedInputs, 'none');
   const before = f.sent.length;
-  const result = await f.controls.onInvoke({ type: 'message', from: { id: f.owner },
+  const result = await f.controls.onInvoke({ type: 'invoke', name: 'task/submit', from: { id: f.owner },
     conversation: { id: `${f.channelId.slice(6)};messageid=1760000000000` }, recipient: { id: '28:bot' },
-    replyToId: 'forged-message', serviceUrl: 'https://smba.trafficmanager.net/teams/', value: skills.fallback.data });
-  assert.deepEqual(result, { status: 200, body: {} });
-  assert.equal(f.sent.length, before + 1);
-  assert.equal(f.sent.at(-1).messageId, 'card1');
-  assert.equal(f.sent.at(-1).conversationId, f.channelId.slice(6));
-  assert.ok(f.sent.at(-1).card.body.some(item => item.text === 'Skills'));
+    replyToId: 'forged-message', serviceUrl: 'https://smba.trafficmanager.net/teams/', value: { data: skills.data } });
+  assert.equal(result.body.task.type, 'continue');
+  assert.equal(f.sent.length, before);
+  assert.ok(value(result).body.some(item => item.text === 'Skills'));
 });
-test('shared Resume never publishes an administrator session command', async () => {
+test('private dialog Resume permits an admin command but never publishes it to the channel', async () => {
   const f = await fixture();
   await saveSession(f.entry.slug, 'original-session', 'admin-private-session', 'claude', null, JSON.stringify({ backend: 'container', scope: 'admin' }));
   const card = value(await f.invoke({ stateId: f.stateId, page: 'resume' }, 'settings.page'));
-  assert.equal(input(card, 'resumeCommand'), undefined);
-  assert.doesNotMatch(JSON.stringify(card), /admin-private-session/);
+  assert.match(input(card, 'resumeCommand').value, /admin-private-session/);
+  assert.doesNotMatch(JSON.stringify(f.sent), /admin-private-session/);
 });
 test('a different bot recipient cannot open or operate the settings card', async () => {
   const f = await fixture();
@@ -183,11 +178,11 @@ test('card ownership, delivery conversation and revoked roles are checked for ev
   const f = await fixture();
   for (const [actor, destination] of [['29:other', f.channelId.slice(6)], [f.owner, 'a:foreign']]) {
     const result = value(await f.invoke({ stateId: f.stateId, page: 'mcp' }, 'settings.page', actor, destination));
-    assert.equal(result.body[0].text, 'Action could not be completed');
+    assert.match(result, /^Action could not be completed/);
   }
   await setUser(f.owner, { approved: false, isAdmin: false });
   const rejected = value(await f.invoke({ stateId: f.stateId, scope: 'channel', field: 'engine', channel_engine: 'codex' }, 'settings.runtime'));
-  assert.equal(rejected.body[0].text, 'Action could not be completed');
+  assert.match(rejected, /^Action could not be completed/);
   assert.equal((await getChannelMeta(f.entry.slug)).engine, 'claude');
 });
 test('confirmations are one-use and cannot delete an automation from another conversation', async () => {
@@ -201,9 +196,9 @@ test('confirmations are one-use and cannot delete an automation from another con
   assert.equal(listForChannel(f.channelId).length, 0);
   assert.equal(listForChannel('teams:19:foreign@thread.v2').length, 1);
   const replay = value(await f.invoke({ stateId: f.stateId, token }, 'settings.confirm'));
-  assert.equal(replay.body[0].text, 'Action could not be completed');
+  assert.match(replay, /^Action could not be completed/);
   const other = value(await f.invoke({ stateId: f.stateId, id: foreign.id }, 'settings.automation.toggle'));
-  assert.equal(other.body[0].text, 'Action could not be completed');
+  assert.match(other, /^Action could not be completed/);
 });
 test('role revocation while membership is in flight prevents an access mutation', async () => {
   const f = await fixture();
@@ -212,7 +207,7 @@ test('role revocation while membership is in flight prevents an access mutation'
     return [{ id: f.owner }];
   };
   const result = value(await f.invoke({ stateId: f.stateId, field: 'allowNetwork', access_allowNetwork: 'on' }, 'settings.access'));
-  assert.equal(result.body[0].text, 'Action could not be completed');
+  assert.match(result, /^Action could not be completed/);
   assert.equal((await getChannelMeta(f.entry.slug)).allowNetwork, false);
 });
 test('metadata audit logs contain policy keys and never submitted credential inputs', async () => {
@@ -266,10 +261,10 @@ test('named member grants reject bots and targets removed during write authoriza
   const f = await fixture();
   f.connector.api.listMembers = async () => [{ id: f.owner }, { id: '28:other-bot' }];
   const bot = value(await f.invoke({ stateId: f.stateId, field: 'allowedUsers', access_allowedUsers: '28:other-bot' }, 'settings.access'));
-  assert.equal(bot.body[0].text, 'Action could not be completed');
+  assert.match(bot, /^Action could not be completed/);
   let calls = 0;
   f.connector.api.listMembers = async () => ++calls < 4 ? [{ id: f.owner }, { id: '29:departing' }] : [{ id: f.owner }];
   const left = value(await f.invoke({ stateId: f.stateId, field: 'allowedUsers', access_allowedUsers: '29:departing' }, 'settings.access'));
-  assert.equal(left.body[0].text, 'Action could not be completed');
+  assert.match(left, /^Action could not be completed/);
   assert.deepEqual((await getChannelMeta(f.entry.slug)).allowedUsers, undefined);
 });

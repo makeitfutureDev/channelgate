@@ -53,7 +53,7 @@ export const teamsAdapter = validatePlatformAdapter({
     blockQuotes: false,
     richCards: "adaptive-cards",
     buttons: true,
-    modals: false, // forms are inline Adaptive Cards; task-module dialogs are not wired
+    modals: true, // settings use native Adaptive Card task-module dialogs
     nativeTables: false,
     nativeCharts: false,
     lists: false,

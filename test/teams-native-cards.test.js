@@ -95,6 +95,34 @@ test("signed invoke waits for dispatcher response and retries share a single out
   assert.equal(first.body.value.body[1].text, "Saved");
 });
 
+test('signed dialog callbacks preserve task responses, retry dedupe and safe failure envelopes', async () => {
+  const options = { appId: APP, jwks: { get: async () => jwk }, onMessage: () => assert.fail('Dialogs must not run an engine'), log: { error() {}, warn() {} } };
+  for (const name of ['task/fetch', 'task/submit']) {
+    const body = { ...activity(), name, value: { data: { cgAction: 'settings.open', stateId: 'opaque' } } };
+    const req = { body, headers: { authorization: `Bearer ${token()}` } };
+    let calls = 0;
+    const expected = { task: { type: 'continue', value: { title: 'Settings', card: adaptiveCardAttachment(messageCard({ text: 'Private form' })) } } };
+    const handler = createTeamsWebhook({ ...options, onInvoke: async () => { calls++; return { status: 200, body: expected }; } });
+    const first = response(), second = response();
+    await Promise.all([handler(req, first), handler(req, second)]);
+    assert.equal(calls, 1);
+    assert.equal(first.code, 200);
+    assert.deepEqual(first.body, expected);
+    assert.deepEqual(second.body, expected);
+    for (const onInvoke of [undefined, async () => { throw new Error('private-value-do-not-return'); }]) {
+      const failed = response();
+      await createTeamsWebhook({ ...options, onInvoke })(req, failed);
+      assert.equal(failed.code, 200);
+      assert.equal(failed.body.task.type, 'message');
+      assert.doesNotMatch(JSON.stringify(failed.body), /private-value-do-not-return/);
+    }
+    const forged = response();
+    await handler({ body, headers: { authorization: 'Bearer invalid-signature' } }, forged);
+    assert.equal(forged.code, 401);
+    assert.equal(calls, 1);
+  }
+});
+
 test("signed Execute parsing and authorization errors use the Teams envelope without reflecting inputs", async () => {
   let dispatched = 0;
   const dispatch = createTeamsInteractionHandler({ dispatch: async () => { dispatched++; }, authorize: async () => false });

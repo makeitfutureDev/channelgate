@@ -8,6 +8,9 @@ const plain = value => value && typeof value === "object" && !Array.isArray(valu
 // Action.Execute errors use an invoke response envelope, not a transport failure. Messages are
 // fixed at the call sites: never return submitted values or internal exception text to a client.
 export function teamsCardErrorResponse(activity, status, code, message) {
+  if (activity?.type === "invoke" && ["task/fetch", "task/submit"].includes(activity.name)) {
+    return { status: 200, body: { task: { type: "message", value: message } } };
+  }
   if (activity?.type === "invoke" && activity.name === "adaptiveCard/action") {
     return { status: 200, body: { statusCode: status, type: "application/vnd.microsoft.error", value: { code, message } } };
   }
@@ -21,7 +24,7 @@ export function normalizeTeamsInteraction(activity) {
   const value = activity?.value;
   if (!plain(value)) throw new Error("Card input must be an object");
   const execute = activity.type === "invoke" && activity.name === "adaptiveCard/action";
-  if (activity.type === "invoke" && !execute && !["task/submit", "composeExtension/submitAction"].includes(activity.name)) throw new Error("Unsupported Teams invoke action");
+  if (activity.type === "invoke" && !execute && !["task/fetch", "task/submit", "composeExtension/submitAction"].includes(activity.name)) throw new Error("Unsupported Teams invoke action");
   const supplied = execute ? value.action?.data : value.data && plain(value.data) ? value.data : value;
   if (!plain(supplied) || Buffer.byteLength(JSON.stringify(supplied)) > 16_384) throw new Error("Invalid card form data");
   const verb = execute ? value.action?.verb || supplied.cgAction : supplied.cgAction;
@@ -42,7 +45,7 @@ export function normalizeTeamsInteraction(activity) {
   if (!serviceUrl) throw new Error("Invalid card service URL");
   return { action: verb, data, actorId, aadObjectId: activity.from?.aadObjectId || "", conversationId: `teams:${split.conversationId}`,
     nativeConversationId: split.conversationId, threadKey: split.threadKey, tenantId: activity.channelData?.tenant?.id || activity.conversation?.tenantId || "",
-    serviceUrl, activityId: String(activity.id || ""), responseMessageId: String(activity.replyToId || "") };
+    serviceUrl, invokeName: activity.type === "invoke" ? activity.name : "", activityId: String(activity.id || ""), responseMessageId: String(activity.replyToId || "") };
 }
 export function createTeamsInteractionHandler({ dispatch, authorize = null } = {}) {
   if (typeof dispatch !== "function") throw new TypeError("Teams card interaction dispatch is required");
@@ -55,6 +58,9 @@ export function createTeamsInteractionHandler({ dispatch, authorize = null } = {
       if (authorize && !await authorize(interaction)) return teamsCardErrorResponse(activity, 403, "Forbidden", "Not allowed to use these controls.");
       return await dispatch(interaction);
     } catch {
+      if (["task/fetch", "task/submit"].includes(interaction.invokeName)) {
+        return teamsCardErrorResponse(activity, 400, "BadRequest", "Action could not be completed. Reopen /settings to check your access and try again.");
+      }
       return { status: 200, body: { statusCode: 200, type: ADAPTIVE_CARD_TYPE,
         value: messageCard({ title: "Action could not be completed", text: "Reopen the controls to check the current state before trying again." }) } };
     }

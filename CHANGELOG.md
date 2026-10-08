@@ -18,6 +18,11 @@ product overview.
 
 ## Unreleased
 
+- Teams `/settings` now posts a compact **Open settings** button that opens a private popup
+  inside Teams. All six settings pages, saves and confirmations stay in the popup instead of
+  expanding the chat card. `/secrets` opens its Variables page. Every opening preserves the
+  original conversation/session, rechecks current access and has separate expiring form state.
+
 - Slack's native **Stop** button: the app manifest now subscribes to `agent_session_stopped` (and
   `agent_session_title_changed`) and every turn drives the thread's Agent Session natively
   (`agents.sessions.setStatus` / `rename`, legacy `assistant.threads.*` as the bridge fallback), so

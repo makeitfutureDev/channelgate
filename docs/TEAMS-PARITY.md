@@ -53,8 +53,8 @@ acceptance remain unexecuted. They are not deployed by keeping work on `teams-ms
 | Feature | Implemented behavior | Boundary |
 | --- | --- | --- |
 | Approval cards | Native Approve/Deny/Request changes with optional comment, supported scope choices, Execute and Submit fallback, verified actor identity | A changes comment refuses the current action even with Approve; escalation policy is separate |
-| Conversation settings | `/settings` opens six native pages in the original channel/thread or chat: General, Variables, MCPs, Skills, Automations, Resume; buttons update the same requester-bound card | One Apply per channel/thread runtime triple; stale forms reject overwrites; runtime changes match authorized Slack Settings users; access changes require managers |
-| Settings and secrets | `/secrets` opens the native Variables page; shared cards manage channel variables; private scopes remain in authenticated settings or explicit personal conversations | Stored values never prefill inputs; shared cards hide personal/org credential metadata, administrator session commands and ungranted private MCP catalogs |
+| Conversation settings | `/settings` posts a compact launcher for a private native Teams popup with General, Variables, MCPs, Skills, Automations, Resume; navigation/saves remain in the popup | One Apply per channel/thread runtime triple; stale forms reject overwrites; runtime changes match authorized Slack Settings users; access changes require managers |
+| Settings and secrets | `/secrets` opens Variables in the private popup; conversation/personal scopes and admin organization scopes use current permissions | Stored values never prefill inputs; chat launchers never contain form contents or private metadata |
 | Workspace browser | `/files [folder]` provides private pagination and browser download/upload/text-edit links | Source workspace and current Teams membership are rechecked; no public fallback |
 | Native file sending | `/sendfile <relative-path>` asks for personal-chat Accept/Decline and sends the approved file snapshot | Nonempty files up to 10 MB; ten-minute consent; bounded pending pool; manifest `supportsFiles: true` |
 | Group/channel file reading | Optional Graph resolution of canonical SharePoint paths inside explicitly allowed drives | External selected-site read grants; no `/shares` route or shortlinks; redirects blocked and token isolated |
@@ -109,8 +109,8 @@ independent API compatibility certification.
 ## Capability descriptor accuracy checks
 
 The branch declares native buttons/cards and file sending only alongside their implemented
-handlers. `modals: false` is intentional: forms render inline in Adaptive Cards, not task-module
-dialogs. `broadcast: false` remains intentional: no broad mention entity builder exists.
+handlers. `modals: true` reflects native settings task-module dialogs; other cards can remain
+inline. `broadcast: false` remains intentional: no broad mention entity builder exists.
 Reaction trigger support is separate from general reaction capability, and observing an event
 never substitutes for gateway authorization. Validate capability changes against guide
 materialization and the actual connector, not Microsoft platform possibilities alone.

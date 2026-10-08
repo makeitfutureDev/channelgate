@@ -110,13 +110,11 @@ test('reaction content never opens native commands; failed private delivery does
   assert.match(failed.replies[0], /personal chat/);
 });
 test('model form uses existing controls and consumes its state on a successful submit', async () => {
-  const f = fixture(); await f.controls.onCommand(f.args('/settings'));
-  const stateId = f.sent[0].card.body.find(item => item.type === 'ActionSet').actions[0].data.stateId;
+  const f = fixture(); await f.controls.onCommand(f.args('/model'));
+  const stateId = f.sent[0].card.actions[0].data.stateId;
   const payload = { stateId, engine: 'claude', model: 'default', effort: 'default' };
   const conversation = f.args('/settings').message.rawConversationId;
-  // A settings card holds no /model engine, so Apply needs Load models on this state first.
-  await f.controls.onInvoke(invoke(payload, 'model.save', '29:owner', conversation));
-  assert.deepEqual(f.commands, []);
+  // Refresh the chosen engine before applying the model form.
   await f.controls.onInvoke(invoke({ stateId, engine: 'claude' }, 'model.load', '29:owner', conversation));
   await f.controls.onInvoke(invoke(payload, 'model.save', '29:owner', conversation));
   assert.deepEqual(f.commands, ['/model claude default', '/effort default']);
@@ -177,7 +175,7 @@ test('settings retain their source conversation, thread and actor without openin
   assert.equal(f.sent[0].conversationId, args.message.rawConversationId);
   assert.equal(f.sent[0].threadKey, 'root-message');
   assert.deepEqual(f.replies, []);
-  const data = { ...f.sent[0].card.body.find(item => item.type === 'ActionSet').actions[0].data, engine: 'claude', model: 'default', effort: 'default' };
+  const data = { ...f.sent[0].card.actions[0].data, engine: 'claude', model: 'default', effort: 'default' };
   for (const [actor, conversation] of [['29:other', args.message.rawConversationId], ['29:owner', 'a:private']]) {
     const result = await f.controls.onInvoke(invoke(data, 'model.save', actor, conversation));
     assert.equal(result.body.value.body[0].text, 'Action could not be completed');
