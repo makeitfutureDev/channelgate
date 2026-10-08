@@ -119,10 +119,14 @@ export async function buildTeamsSettings(ctx, stateId) {
         : page ? await renderCatalogPage(page, ctx, ui) : { body: [], actions: [] };
   // Three tabs per row keeps every page visible without exceeding Teams' action-row limit.
   const tabs = TEAMS_SETTINGS_PAGES.map(([id, title]) => ui.execute(id === page ? `• ${title}` : title, 'settings.page', { page: id }, 'none'));
+  // ActionSet alignment belongs to the Teams host. A centered, content-width column
+  // positions the navigation without changing the host's alignment for form actions.
+  const navigationRow = actions => ({ type: 'ColumnSet', horizontalAlignment: 'Center',
+    columns: [{ type: 'Column', width: 'auto', items: [ui.buttons(actions)] }] });
   return { $schema: 'http://adaptivecards.io/schemas/adaptive-card.json', type: 'AdaptiveCard', version: '1.4',
     body: [ui.heading('Channel settings'), ui.text(`Settings for ${ctx.entry.name || 'this conversation'}. Changes apply to the next turn.`),
       ...(ctx.isShared ? [ui.text('These controls belong to the person who opened them. Other members can open their own /settings.')] : []),
-      ui.buttons(tabs.slice(0, 3)), ui.buttons(tabs.slice(3)),
+      navigationRow(tabs.slice(0, 3)), navigationRow(tabs.slice(3)),
       ...(ctx.state.notice ? [ui.text(ctx.state.notice)] : []), ...content.body], actions: content.actions || [] };
 }
 
