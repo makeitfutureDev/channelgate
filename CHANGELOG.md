@@ -18,6 +18,8 @@ product overview.
 
 ## Unreleased
 
+- Center the two rows of section buttons in the Teams settings popup.
+
 - Teams `/settings` now posts a compact **Open settings** button that opens a private popup
   inside Teams. All six settings pages, saves and confirmations stay in the popup instead of
   expanding the chat card. `/secrets` opens its Variables page. Every opening preserves the

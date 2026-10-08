@@ -9327,6 +9327,12 @@ located and compared by sha256 only):
 
 ## Teams conversation settings parity
 
+Navigation centering (2026-10-08): 53 focused settings/dialog/general tests passed. A browser
+check using the Microsoft Adaptive Cards 3.0.6 renderer with right-aligned host actions placed
+both navigation rows within 0.01px of center at 960px and 360px viewport widths, with no overflow.
+The supplied Teams screenshot confirms the popup opens; centering after this follow-up still
+requires live Teams verification. Form action placement and permission behavior are unchanged.
+
 Native settings popup (2026-10-08): the focused regression suite passed 197 tests with no
 failures/skips; static checks and secret scanning passed. `/settings` and `/secrets` now post compact launchers;
 `task/fetch` opens a private Adaptive Card dialog and `task/submit` continues it for every page,
@@ -9381,7 +9387,8 @@ case. Also run a group with an external member to check tenant/channel delivery 
 1. In a channel/thread or group, quote the original message or bot reply and send
    `@bot /settings`; in personal chat send `/settings`. Require only a short **Open settings**
    card in the original conversation, unchanged workspace/session identity and no proactive DM.
-   Click the button: require a large popup inside Teams with the six-section menu. Select every
+   Click the button: require a large popup inside Teams with the six-section menu centered in
+   two rows above the form (desktop and narrow windows). Select every
    section; forms and saves must remain in the popup and the posted launcher must stay unchanged.
    `/secrets` must open the popup on Variables. Close/reopen: separate draft/confirmation state;
    closing without Apply must not save. Block proactive DM delivery: popup still works. Another

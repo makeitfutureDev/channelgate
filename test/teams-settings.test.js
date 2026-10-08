@@ -32,11 +32,12 @@ async function fixture({ admin = true, privateChat = true, personal = false } = 
   await controls.onCommand(args('/settings'));
   const launcherId = sent[0].card.actions[0].data.stateId;
   const menu = value(await invoke({ stateId: launcherId }, 'settings.open'));
-  const stateId = menu.body.find(item => item.type === 'ActionSet').actions[0].data.stateId;
+  const stateId = navigation(menu)[0].data.stateId;
   return { controls, connector, sent, replies, args, invoke, entry, owner, channelId, stateId, menu, launcherId };
 }
 const value = result => result.body.task?.type === 'continue' ? result.body.task.value.card.content : result.body.task?.value || result.body.value;
 const input = (card, id) => card.body.find(item => item.id === id);
+const navigation = card => card.body.filter(item => item.type === 'ColumnSet').flatMap(row => row.columns[0].items[0].actions);
 test('six settings pages navigate inside a private popup without updating the launcher', async () => {
   const f = await fixture();
   assert.equal(f.sent[0].conversationId, f.channelId.slice(6));
@@ -46,19 +47,19 @@ test('six settings pages navigate inside a private popup without updating the la
   const menu = f.menu;
   assert.ok(!menu.body.some(item => item.type.startsWith('Input.')));
   assert.deepEqual(menu.actions, []);
-  const tabs = menu.body.filter(item => item.type === 'ActionSet').flatMap(item => item.actions);
+  const tabs = navigation(menu);
   assert.deepEqual(tabs.map(action => action.title), ['General', 'Variables', 'MCPs', 'Skills', 'Automations', 'Resume']);
-  assert.equal(menu.body.at(-1).type, 'ActionSet');
+  assert.equal(menu.body.at(-1).type, 'ColumnSet');
   for (const page of ['general', 'secrets', 'mcp', 'skills', 'automations', 'resume']) {
     const action = tabs.find(item => item.data.page === page);
     const card = value(await f.invoke(action.data, action.data.cgAction));
     assert.equal(card.body[0].text, 'Channel settings');
     adaptiveCardAttachment(card);
-    assert.equal(card.body.filter(item => item.type === 'ActionSet').slice(0, 2).flatMap(item => item.actions).length, 6);
+    assert.equal(navigation(card).length, 6);
     assert.equal(f.sent.length, 1);
     assert.equal(f.sent[0].card.actions[0].title, 'Open settings');
     assert.ok(card.body.length > menu.body.length);
-    assert.ok(card.body.filter(item => item.type === 'ActionSet').slice(0, 2).flatMap(item => item.actions).some(item => item.title === `• ${action.title}`));
+    assert.ok(navigation(card).some(item => item.title === `• ${action.title}`));
     if (page !== 'general') assert.equal(input(card, 'channel_engine'), undefined);
   }
   const secrets = value(await f.invoke({ stateId: f.stateId, page: 'secrets' }, 'settings.page'));
@@ -72,7 +73,7 @@ test('/secrets opens Variables directly while /settings starts with the menu', a
   await f.controls.onCommand(f.args('/secrets'));
   const secrets = value(await f.invoke(f.sent.at(-1).card.actions[0].data, 'settings.open'));
   assert.ok(input(secrets, 'variableValue'));
-  assert.ok(secrets.body.filter(item => item.type === 'ActionSet').slice(0, 2).flatMap(item => item.actions).some(item => item.title === '• Variables'));
+  assert.ok(navigation(secrets).some(item => item.title === '• Variables'));
 });
 test('dialog runtime Apply actions save only the chosen scope', async () => {
   const f = await fixture({ admin: false });
@@ -144,7 +145,7 @@ test('settings do not require personal-chat delivery', async () => {
 });
 test('dialog navigation ignores forged reply targets and never updates a chat message', async () => {
   const f = await fixture();
-  const skills = f.menu.body.filter(item => item.type === 'ActionSet').flatMap(item => item.actions).find(action => action.data.page === 'skills');
+  const skills = navigation(f.menu).find(action => action.data.page === 'skills');
   assert.equal(skills.associatedInputs, 'none');
   const before = f.sent.length;
   const result = await f.controls.onInvoke({ type: 'invoke', name: 'task/submit', from: { id: f.owner },
