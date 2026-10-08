@@ -10,10 +10,9 @@ const { teamsAdapter } = await import('../src/platforms/msteams.js');
 
 test("Teams /help includes practical workflows and its supported commands", () => {
   for (const expected of [
-    '**How to use me**', '`@agent /help`', 'quote the original message', 'choose 👽 **Alien**', '👽 Alien — `:alien:`',
-    'Heart eyes robot — `:hearteyesrobot:`', '👍 Like (`like`) also starts a request', 'Stop sign — `stopsign`',
-    'Tick button (Checkmark button) — `2705_whiteheavycheckmark`',
-    'typing a code as a message does not add a reaction', 'Tick button acknowledges a tracked reminder', 'Removing a reaction does not reopen',
+    '**How to use me**', '`@agent /help`', 'quote the original message', '👽 Alien',
+    'Heart eyes robot', '👍 Like', 'Smile robot', '🛑 Stop sign', 'Tick button (Checkmark button)',
+    'typing a code as a message does not add a reaction', 'Acknowledge a tracked reminder', 'Removing a reaction does not reopen',
     'local Whisper', 'Only the run author or an administrator', 'requests for the same session queue',
     'allowed drives and Microsoft permissions', '10 MB', 'Public URL', 'personal chat',
     'Stored credential values are never shown', 'Composio', 'list skills', 'remember that …',
@@ -34,32 +33,55 @@ test("Teams help survives the platform formatter within its message budget", () 
   assert.equal(chunks.length, 1);
   assert.ok(chunks[0].text.length <= teamsAdapter.capabilities.maxMessageChars);
   assert.match(chunks[0].text, /How to use me/);
-  assert.match(chunks[0].text, /Commands/);
+  assert.match(chunks[0].text, /All commands/);
   assert.match(chunks[0].text, /\/clear/);
-  assert.match(chunks[0].text, /How to use me\*\*\n\nIn a personal chat/);
-  assert.match(chunks[0].text, /\n\n• `\/clear`/);
+  assert.match(chunks[0].text, /How to use me\*\*\n\nAsk a question/);
+  assert.match(chunks[0].text, /\n\n`\/clear`/);
 });
 
-test('Teams help card separates headings, paragraphs, emoji and commands without losing content', () => {
+// Recursively inspect visible and expandable content without depending on the card layout.
+function cardText(value) {
+  if (Array.isArray(value)) return value.flatMap(cardText);
+  if (!value || typeof value !== 'object') return [];
+  if (value.type === 'RichTextBlock') return [value.inlines.map(run => run.text).join('')];
+  if (value.type === 'TextBlock') return [value.text];
+  if (value.type === 'Action.ToggleVisibility') return [value.title];
+  return Object.values(value).flatMap(cardText);
+}
+
+test('Teams help starts with a compact quick start and keeps the full guide in expandable topics', () => {
   const card = createTeamsHelpCard();
   assert.equal(adaptiveCardAttachment(card).contentType, 'application/vnd.microsoft.card.adaptive');
   assert.equal(card.body[0].text, 'How to use me');
   assert.equal(card.body[0].size, 'Large');
-  const headings = card.body.filter(item => item.type === 'TextBlock').map(item => item.text);
-  assert.ok(headings.includes('Reaction names'));
-  assert.ok(headings.includes('Open files'));
-  assert.equal(headings.at(-1), 'Commands');
-  const rows = card.body.filter(item => item.type === 'RichTextBlock');
-  const plain = item => item.inlines.map(run => run.text).join('');
-  const expected = TEAMS_HELP_TEXT.replace(/`([^`]+)`/g, '$1').replace(/\*\*([^*]+)\*\*/g, '$1');
-  // Compare all words, ignoring only heading bullets/colons: the card may style, never truncate.
-  const words = text => text.replace(/[•:]/g, '').split(/\s+/).filter(Boolean);
-  assert.deepEqual(words(card.body.map(item => item.text || plain(item)).join(' ')), words(expected));
-  assert.equal(rows.filter(item => /^• \/.* — /.test(plain(item))).length, 10);
-  assert.equal(rows.filter(item => /^(?:👽 Alien|Heart eyes robot|🛑 Stop sign|✅ Tick button).* — /.test(plain(item))).length, 4);
-  assert.ok(rows.some(item => item.inlines.some(run => run.text === '/help' && run.fontType === 'Monospace')));
-  assert.ok(!JSON.stringify(card).includes('`'));
-  assert.equal(card.actions, undefined);
+  const visible = cardText(card.body.filter(item => item.isVisible !== false)).join(' ');
+  assert.ok(visible.length < 1200, 'Initial card should stay scannable');
+  for (const command of ['/model', '/settings', '/files', '/stop']) assert.ok(visible.includes(command));
+  assert.ok(visible.includes('quote the original message'));
+  assert.doesNotMatch(visible, /Whisper|Composio|hearteyesrobot|2705_whiteheavycheckmark/);
+
+  const normalize = text => text.replace(/[`*]/g, '').split(/\s+/).filter(Boolean);
+  const expected = TEAMS_HELP_TEXT.replace('**All commands**', 'Explore the guide Select a topic to expand or collapse it. All commands');
+  assert.deepEqual(normalize(cardText(card).join(' ')), normalize(expected));
+  assert.ok(!JSON.stringify(card).includes('`'), 'Commands use native monospace runs');
+});
+
+test('Teams help topic controls toggle existing hidden sections without submitting commands', () => {
+  const card = createTeamsHelpCard();
+  const actions = card.body.flatMap(item => item.actions || []);
+  assert.equal(actions.length, 6);
+  const ids = new Set();
+  for (const action of actions) {
+    assert.equal(action.type, 'Action.ToggleVisibility');
+    assert.equal(action.targetElements.length, 1);
+    const id = action.targetElements[0];
+    assert.ok(!ids.has(id)); ids.add(id);
+    const section = card.body.find(item => item.id === id);
+    assert.equal(section?.type, 'Container');
+    assert.equal(section.isVisible, false);
+    assert.ok(section.items.length > 0);
+  }
+  assert.doesNotMatch(JSON.stringify(card), /Action\.(?:Execute|Submit)|Input\./);
 });
 
 test("/help explains the gateway's essential user workflows", () => {
@@ -124,10 +146,22 @@ test("help does not advertise the removed files command", () => {
 test('Teams help reflects the selected activation emojis in cards and text', async () => {
   const { teamsHelpText } = await import('../src/platforms/msteams/help.js');
   const text = teamsHelpText(['🚀']);
-  assert.match(text, /configured activation emojis: `🚀`/);
+  assert.match(text, /configured activation reactions.*🚀/);
   assert.doesNotMatch(text, /choose 👽|Like .*starts a request/);
   assert.match(text, /Stop sign/);
-  const runs = createTeamsHelpCard(['🚀']).body.flatMap(block => block.inlines || []).map(run => run.text).join(' ');
+  const runs = cardText(createTeamsHelpCard(['🚀'])).join(' ');
   assert.match(runs, /🚀/);
   assert.doesNotMatch(runs, /Alien/);
+});
+
+test('Teams help distinguishes disabled activation from named and custom reactions', async () => {
+  const { teamsHelpText } = await import('../src/platforms/msteams/help.js');
+  const disabled = teamsHelpText([]);
+  assert.match(disabled, /No activation reactions are configured/);
+  assert.doesNotMatch(disabled, /Alien|Heart eyes robot|Smile robot|👍 Like/);
+  assert.match(disabled, /Stop sign/);
+  const selected = teamsHelpText(['alien', 'smilerobot', 'custom-reaction']);
+  assert.match(selected, /👽 Alien, Smile robot, custom-reaction/);
+  assert.doesNotMatch(selected, /Heart eyes robot|👍 Like/);
+  adaptiveCardAttachment(createTeamsHelpCard(['alien', 'smilerobot', 'custom-reaction']));
 });

@@ -18,6 +18,10 @@ product overview.
 
 ## Unreleased
 
+- Make Teams `/help` easier to scan with a quick start, highlighted common commands and six
+  expandable topics. Shorter descriptions and readable reaction names replace the long initial
+  guide; the full text remains available when native card delivery fails.
+
 - Center the two rows of section buttons in the Teams settings popup.
 
 - Teams `/settings` now posts a compact **Open settings** button that opens a private popup
