@@ -80,7 +80,7 @@ test('failed native help delivery falls back to the complete spaced guide', asyn
   args.replyCard = async () => { throw new Error('Card delivery unavailable'); };
   assert.equal(await f.controls.onCommand(args), true);
   assert.deepEqual(f.replies, [teamsHelpText(['hearteyesrobot', 'alien', 'like', 'smilerobot'])]);
-  assert.match(f.replies[0], /\n\n• `\/clear`/);
+  assert.match(f.replies[0], /\n\n`\/clear`/);
   assert.deepEqual(f.commands, []);
 });
 test('files are sent privately and browser actions preserve original workspace identity', async () => {

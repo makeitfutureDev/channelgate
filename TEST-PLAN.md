@@ -384,6 +384,32 @@ example server behind HTTPS on a public host. Record the token's last four chara
 
 ## Microsoft Teams help guide acceptance (2026-10-07)
 
+### Compact guide refresh (2026-10-08)
+
+- Regression: `node --test test/help-text.test.js test/teams-controls.test.js
+  test/teams-native-cards.test.js` — 34 tests pass, no failures/skips. Covers a compact initial
+  view with common commands, all six valid local visibility targets, full card/text content
+  parity, readable configured/custom reactions, empty activation lists, payload/message limits,
+  authorized native delivery in all conversation kinds and complete text fallback.
+- Local rendering: Adaptive Cards JS SDK 3.0.5 at 900px and 390px viewport widths validates
+  without events, opens and closes every topic, and has no horizontal overflow. This verifies
+  local SDK rendering, not the live Teams host. Independent content review found no omissions
+  affecting commands, session scope, permissions or file/voice/reaction prerequisites.
+- [ ] LIVE, engine-independent: in an approved beta Teams personal chat send `/help`; in a
+  channel mention the bot with `/help`; in a group quote an existing bot reply and mention it
+  with `/help`. Pass: compact quick start and four commands appear before six closed topics;
+  each topic expands/collapses on desktop and mobile without a new message or engine run.
+  Check every command remains readable, especially `/model [engine] [model|default]` on mobile.
+  Quote the group help card with `@agent /status`; it must address the original session.
+  Configure only Alien, then no activation reactions: help must show the chosen name, then
+  the disabled explanation, while Stop sign and Tick button remain documented. These controls
+  execute before engine dispatch, so Claude/Codex cannot affect their rendering or behavior.
+- [ ] Private QA registration: mirror this fixture, actions and pass rules through the requester’s
+  personal Airtable connection. That identity is absent in this run; agent-side substitution is
+  prohibited. Live Teams client acceptance and private QA registration remain pending.
+
+### Earlier help verification
+
 - Teams reaction legend correction: 30 focused help/control/card tests passed, zero failures/skips.
   The native card and text fallback retain separate reaction rows, Teams picker names and actual
   reaction IDs, with no Slack shortcodes or plain robot substituted for Heart eyes robot.

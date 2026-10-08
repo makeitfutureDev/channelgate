@@ -152,22 +152,24 @@ control-plane status.
 
 ## Microsoft Teams help guide
 
-- Teams `/help` returns a practical **How to use me** guide and its supported command list
-  in a native Adaptive Card. Separate title/section blocks, spaced paragraphs, individual emoji
-  and command rows, and native monospace command styling keep the guide readable without relying
-  on Markdown soft line breaks. Full paragraph-spaced text is the fallback if card delivery fails.
+- Teams `/help` opens a compact native Adaptive Card: a quick start, four common commands
+  in a highlighted panel, then six expandable topics (all commands, files/voice, settings/access,
+  skills/memory, reminders/background work and reactions). Short labeled paragraphs and native
+  monospace examples keep it scannable. Topic buttons expand/collapse locally without running
+  commands. Card and complete paragraph-spaced text fallback share one content source.
   It covers mentions and session continuity, reaction activation, local voice transcription,
   stop/queue behavior, private workspace files and file consent, settings and variables,
   Composio, skills, conversation memory/rules, reminders, schedules and background work.
   Examples use Teams controls and explain their permissions and configuration requirements.
   The authorized native command responds before an engine turn, in the requesting conversation.
   Quoting the help card in a group chat continues the same session.
-- Reaction labels show Teams picker names and actual IDs: Alien (`:alien:`), Heart eyes robot (`:hearteyesrobot:`),
-  Stop sign (`stopsign`), and Tick button / Checkmark button (`2705_whiteheavycheckmark`).
+- Help reaction labels show the currently configured Teams picker names, preserving custom
+  entries and explaining when activation is disabled. Stop sign and Tick button / Checkmark button
+  remain listed as session controls. Raw internal reaction IDs are omitted from the help copy.
   The guide explains that typing an ID as a message does not add a reaction. Teams intake recognizes
   both `hearteyesrobot` and the picker shortcut `:hearteyesrobot:` as activation IDs. Like (`like` or
   Unicode 👍, including skin tones) is an alternative. Alien accepts `alien`, `:alien:`, Unicode 👽
-  and the documented `1f47d_extraterrestrialalien` ID; help recommends Alien. Its separate persisted
+  and the documented `1f47d_extraterrestrialalien` ID. Its separate persisted
   introduction cutoff excludes Alien history from before this expansion without resetting earlier
   cutoffs. Graph also accepts the Heart eyes robot variant encoded as 😍 only with the exact
   provider name `Heart eyes robot` and no custom content URL in both added history and current
