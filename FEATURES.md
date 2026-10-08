@@ -129,11 +129,12 @@ control-plane status.
 
 ## Microsoft Teams model command
 
-- Bare `/model` opens a native two-step picker in the source conversation, showing the current
-  session selection. Step 1 chooses the engine (**Next**); step 2 lists only that engine's models
-  and effort levels, with **← Back** to change the engine and **Apply to this session** to change
-  its next turn. A conversation on its own Codex login opens directly on step 2. The chosen engine
-  is held server-side with the card, so a page-2 submission cannot switch it; `/settings` → General manages conversation defaults. Typed
+- Bare `/model` opens a native picker in the source conversation laid out like Settings →
+  General: the current session selection, Engine with a **Load models** button, then Model and
+  Effort listing only the loaded engine's choices, and **Apply to this session** to change its
+  next turn. Load models repaints the same card without saving. Apply after changing Engine
+  without Load models loads that engine instead of saving. The loaded engine is held server-side
+  with the card, and Apply must name it. A conversation on its own Codex login shows Codex only; `/settings` → General manages conversation defaults. Typed
   `/model <engine> <model|default>` and `/effort <level|default>` remain available.
 - The picker preserves channel threads and group quote/session continuity, offers enabled
   engines, respects a dedicated channel Codex login, and rechecks membership and runtime policy

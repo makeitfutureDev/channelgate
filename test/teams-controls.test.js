@@ -114,10 +114,10 @@ test('model form uses existing controls and consumes its state on a successful s
   const stateId = f.sent[0].card.body.find(item => item.type === 'ActionSet').actions[0].data.stateId;
   const payload = { stateId, engine: 'claude', model: 'default', effort: 'default' };
   const conversation = f.args('/settings').message.rawConversationId;
-  // Apply needs the engine chosen on page 1 (Next) first; the payload's engine alone is not enough.
+  // A settings card holds no /model engine, so Apply needs Load models on this state first.
   await f.controls.onInvoke(invoke(payload, 'model.save', '29:owner', conversation));
   assert.deepEqual(f.commands, []);
-  await f.controls.onInvoke(invoke({ stateId, engine: 'claude' }, 'model.next', '29:owner', conversation));
+  await f.controls.onInvoke(invoke({ stateId, engine: 'claude' }, 'model.load', '29:owner', conversation));
   await f.controls.onInvoke(invoke(payload, 'model.save', '29:owner', conversation));
   assert.deepEqual(f.commands, ['/model claude default', '/effort default']);
   await f.controls.onInvoke(invoke(payload, 'model.save', '29:owner', f.args('/settings').message.rawConversationId)); assert.equal(f.commands.length, 2);
