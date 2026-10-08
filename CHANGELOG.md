@@ -94,6 +94,10 @@ product overview.
   Google Chat's selection is saved, with an explicit note that its current transport does not
   receive reaction events.
 
+- Teams `/model` is now two steps: choose the engine and press Next, then pick from only that
+  engine's models and effort levels (← Back returns to the engine) and Apply. Previously one card
+  listed every engine's models together.
+
 - Teams settings now show only models for the selected engine in each channel/session list.
   After changing Engine, Load models refreshes the choices without saving; Apply saves the
   complete selection for that scope.

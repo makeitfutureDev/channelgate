@@ -29,69 +29,100 @@ function fixture({ meta = {}, isAdmin = true, isDM = false, now = Date.now } = {
   const controls = createConversationControls();
   const args = { message, sessionKey: 'group:root', entry: { slug }, meta: context.meta,
     authorIsAdmin: isAdmin, reply: async value => replies.push(value), controls };
-  const submit = async (data = {}, { actor = message.userId, conversation = message.rawConversationId, legacy = false } = {}) => {
-    const action = sent[0].card.actions[0];
+  // Acts on the card currently shown (the posted card, or its latest in-place update).
+  const submit = async (data = {}, { actor = message.userId, conversation = message.rawConversationId, legacy = false, verb = 'model.save' } = {}) => {
+    const action = sent.at(-1).card.actions.find(item => item.verb === verb);
+    if (!action) return { status: 200, body: { value: { body: [{ text: 'Action could not be completed' }] } } };
     const activity = { type: legacy ? 'message' : 'invoke', name: 'adaptiveCard/action',
       serviceUrl: 'https://smba.trafficmanager.net/teams/',
       from: { id: actor }, conversation: { id: conversation }, replyToId: 'forged-target',
       value: legacy ? { ...action.data, ...data } : { action: { type: 'Action.Execute', verb: action.verb, data: { ...action.data, ...data } } } };
     return native.onInvoke(activity);
   };
-  return { native, connector, controls, args, context, sent, replies, submit };
+  // Page 1 → page 2: choose the engine and press Next.
+  const next = (engine, options = {}) => submit({ engine }, { ...options, verb: 'model.next' });
+  const apply = async (engine, data, options = {}) => { await next(engine, options); return submit(data, options); };
+  return { native, connector, controls, args, context, sent, replies, submit, next, apply };
 }
 saveSettings({ engine: 'claude', defaultClaudeModel: 'sonnet', defaultCodexModel: 'gpt-6.1-sol', engineEnabled: { opencode: false } });
 
-test('bare /model shows retained session runtime and actionable compatible choices', async () => {
+test('bare /model is two pages: engine first, then only that engine\'s models and efforts', async () => {
   const f = fixture();
   await saveSession(f.args.entry.slug, f.args.sessionKey, 'retained-codex-session', 'codex');
   await setThreadRuntimeOverrides(f.args.entry.slug, f.args.sessionKey, { model: 'gpt-6-sol', effort: 'high' });
   f.args.message.text = '  /MODEL  ';
   assert.equal(await f.native.onCommand(f.args), true);
-  const card = f.sent[0].card;
-  assert.match(card.body[1].text, /Current engine: codex; model: gpt-6-sol; effort: high/);
-  assert.equal(card.body.find(item => item.id === 'engine').value, 'codex');
-  assert.ok(card.body.find(item => item.id === 'model').choices.some(item => item.value === 'gpt-6-sol'));
-  assert.ok(card.body.find(item => item.id === 'model').choices.some(item => item.value.startsWith('claude-')));
-  assert.equal(card.actions[0].verb, 'model.save');
-  assert.equal(card.actions[0].fallback.type, 'Action.Submit');
-  adaptiveCardAttachment(card);
-  assert.equal(await getThreadEngine(f.args.entry.slug, f.args.sessionKey), '');
+  const page1 = f.sent[0].card;
+  assert.match(page1.body[1].text, /Current engine: codex; model: gpt-6-sol; effort: high/);
+  assert.equal(page1.body.find(item => item.id === 'engine').value, 'codex');
+  assert.equal(page1.body.find(item => item.id === 'model'), undefined, 'page 1 offers no model list');
+  assert.deepEqual(page1.actions.map(item => item.verb), ['model.next']);
+  assert.equal(page1.actions[0].fallback.type, 'Action.Submit');
+  adaptiveCardAttachment(page1);
+
+  await f.next('codex');
+  const codex = f.sent.at(-1).card;
+  assert.equal(f.sent.at(-1).messageId, 'card-1', 'Next replaces the same card');
+  const codexModels = codex.body.find(item => item.id === 'model');
+  assert.equal(codexModels.value, 'gpt-6-sol');
+  assert.ok(codexModels.choices.some(item => item.value === 'gpt-6-sol'));
+  assert.ok(!codexModels.choices.some(item => item.value.startsWith('claude-') || item.value.startsWith('qwen')), 'only Codex models');
+  assert.equal(codex.body.find(item => item.id === 'effort').value, 'high');
+  assert.deepEqual(codex.actions.map(item => item.verb), ['model.back', 'model.save']);
+  adaptiveCardAttachment(codex);
+
+  await f.submit({}, { verb: 'model.back' });
+  assert.equal(f.sent.at(-1).card.body.find(item => item.id === 'engine').value, 'codex');
+  await f.next('claude');
+  const claude = f.sent.at(-1).card;
+  const claudeModels = claude.body.find(item => item.id === 'model').choices.slice(1).map(item => item.value);
+  assert.ok(claudeModels.length && claudeModels.every(value => value.startsWith('claude-')), `only Claude models: ${claudeModels}`);
+  assert.equal(claude.body.find(item => item.id === 'model').value, 'default', 'another engine\'s saved model is not preselected');
+  assert.equal(await getThreadEngine(f.args.entry.slug, f.args.sessionKey), '', 'navigation never saves');
 });
 
 for (const legacy of [false, true]) test(`Apply persists session runtime and replaces the source card (${legacy ? 'Submit' : 'Execute'})`, async () => {
   const f = fixture(); await f.native.onCommand(f.args);
-  const data = { engine: 'codex', model: 'gpt-6.1-sol', effort: 'high' };
-  const result = await f.submit(data, { legacy });
+  const data = { model: 'gpt-6.1-sol', effort: 'high' };
+  const result = await f.apply('codex', data, { legacy });
   assert.equal(result.status, 200);
   assert.equal(await getThreadEngine(f.args.entry.slug, f.args.sessionKey), 'codex');
   assert.equal(await getThreadModel(f.args.entry.slug, f.args.sessionKey), data.model);
   assert.equal(await getThreadEffort(f.args.entry.slug, f.args.sessionKey), 'high');
   assert.equal(await getThreadModel(f.args.entry.slug, 'other-session'), '');
   assert.equal(f.context.meta.engine, 'claude');
-  assert.equal(f.sent[1].messageId, 'card-1');
-  assert.equal(f.sent[1].conversationId, f.args.message.rawConversationId);
-  assert.match(JSON.stringify(f.sent[1].card), /Session engine: codex/);
-  await f.submit({ engine: 'claude', model: 'sonnet', effort: 'default' }, { legacy });
-  assert.equal(f.sent.length, 2, 'consumed controls cannot be replayed');
+  assert.equal(f.sent[2].messageId, 'card-1');
+  assert.equal(f.sent[2].conversationId, f.args.message.rawConversationId);
+  assert.match(JSON.stringify(f.sent[2].card), /Session engine: codex/);
+  const page2 = f.sent[1].card.actions.find(item => item.verb === 'model.save');
+  await f.native.onInvoke({ type: 'invoke', name: 'adaptiveCard/action', serviceUrl: 'https://smba.trafficmanager.net/teams/',
+    from: { id: f.args.message.userId }, conversation: { id: f.args.message.rawConversationId },
+    value: { action: { type: 'Action.Execute', verb: page2.verb, data: { ...page2.data, model: 'gpt-6-sol', effort: 'default' } } } });
+  assert.equal(f.sent.length, 3, 'consumed controls cannot be replayed');
   assert.equal(await getThreadEngine(f.args.entry.slug, f.args.sessionKey), 'codex');
 });
 
-test('invalid, incomplete, disabled and foreign submissions never mutate runtime', async () => {
+test('invalid, incomplete, disabled, tampered and foreign submissions never mutate runtime', async () => {
   const f = fixture(); await f.native.onCommand(f.args);
+  const failed = result => assert.equal(result.body.value.body[0].text, 'Action could not be completed');
+  failed(await f.submit({ model: 'gpt-6-sol', effort: 'default' }), 'Apply is not offered before Next');
+  failed(await f.next('opencode'));
+  failed(await f.next('codex', { actor: '29:other' }));
+  await f.next('codex');
   for (const [data, envelope] of [
-    [{ engine: 'codex', model: 'sonnet', effort: 'default' }],
-    [{ engine: 'codex', model: 'gpt-6-sol', effort: 'impossible' }],
-    [{ engine: 'codex', model: 'gpt-6-sol' }],
-    [{ engine: 'opencode', model: 'default', effort: 'default' }],
-    [{ engine: 'codex', model: 'gpt-6-sol', effort: 'default' }, { actor: '29:other' }],
-    [{ engine: 'codex', model: 'gpt-6-sol', effort: 'default' }, { conversation: 'a:other' }],
+    [{ model: 'sonnet', effort: 'default' }],
+    [{ model: 'claude-opus-5-5', effort: 'default' }],
+    [{ model: 'gpt-6-sol', effort: 'impossible' }],
+    [{ model: 'gpt-6-sol' }],
+    [{ model: 'claude-opus-5-5', effort: 'default', engine: 'claude' }],
+    [{ model: 'gpt-6-sol', effort: 'default' }, { actor: '29:other' }],
+    [{ model: 'gpt-6-sol', effort: 'default' }, { conversation: 'a:other' }],
   ]) {
-    const result = await f.submit(data, envelope);
-    assert.equal(result.body.value.body[0].text, 'Action could not be completed');
+    failed(await f.submit(data, envelope));
     assert.equal(await getThreadEngine(f.args.entry.slug, f.args.sessionKey), '');
     assert.equal(await getThreadModel(f.args.entry.slug, f.args.sessionKey), '');
   }
-  assert.equal(f.sent.length, 1);
+  assert.equal(f.sent.length, 2);
 });
 
 test('runtime policy is checked on open and again on Apply; personal chats can switch', async () => {
@@ -99,25 +130,32 @@ test('runtime policy is checked on open and again on Apply; personal chats can s
   assert.match(JSON.stringify(denied.sent[0].card), /restricted to administrators/);
   assert.equal(denied.sent[0].card.actions.length, 0);
   const revoked = fixture(); await revoked.native.onCommand(revoked.args);
+  await revoked.next('codex');
   revoked.context.userIsAdmin = false;
-  assert.match(JSON.stringify((await revoked.submit({ engine: 'codex', model: 'gpt-6-sol', effort: 'high' })).body), /Action could not be completed/);
+  assert.match(JSON.stringify((await revoked.submit({ model: 'gpt-6-sol', effort: 'high' })).body), /Action could not be completed/);
+  assert.match(JSON.stringify((await revoked.submit({}, { verb: 'model.back' })).body), /Action could not be completed/);
   assert.equal(await getThreadEngine(revoked.args.entry.slug, revoked.args.sessionKey), '');
   const dm = fixture({ isAdmin: false, isDM: true }); await dm.native.onCommand(dm.args);
-  await dm.submit({ engine: 'codex', model: 'gpt-6-sol', effort: 'high' });
+  await dm.apply('codex', { model: 'gpt-6-sol', effort: 'high' });
   assert.equal(await getThreadModel(dm.args.entry.slug, dm.args.sessionKey), 'gpt-6-sol');
 });
 
 test('channel login locks engine and expired/revoked access cannot submit', async () => {
   const locked = fixture({ meta: { codexAuthSource: 'channel' } }); await locked.native.onCommand(locked.args);
-  assert.deepEqual(locked.sent[0].card.body.find(row => row.id === 'engine').choices.map(row => row.value), ['codex']);
+  const lockedCard = locked.sent[0].card;
+  assert.equal(lockedCard.body.find(row => row.id === 'engine'), undefined, 'a locked engine skips page 1');
+  assert.ok(lockedCard.body.find(row => row.id === 'model').choices.slice(1).every(row => !row.value.startsWith('claude-')));
+  assert.deepEqual(lockedCard.actions.map(row => row.verb), ['model.save']);
   await locked.submit({ engine: 'claude', model: 'sonnet', effort: 'default' });
+  await locked.next('claude');
   assert.equal(await getThreadEngine(locked.args.entry.slug, locked.args.sessionKey), '');
   let time = 0; const expired = fixture({ now: () => time }); await expired.native.onCommand(expired.args);
   time = 16 * 60_000;
-  assert.match(JSON.stringify((await expired.submit({ engine: 'codex', model: 'default', effort: 'default' })).body), /Action could not be completed/);
+  assert.match(JSON.stringify((await expired.next('codex')).body), /Action could not be completed/);
   const revoked = fixture(); await revoked.native.onCommand(revoked.args);
+  await revoked.next('codex');
   revoked.context.meta = null;
-  await revoked.submit({ engine: 'codex', model: 'default', effort: 'default' });
+  await revoked.submit({ model: 'default', effort: 'default' });
   assert.equal(await getThreadEngine(revoked.args.entry.slug, revoked.args.sessionKey), '');
 });
 
@@ -129,8 +167,8 @@ test('busy session refuses Apply without writing model or effort', async () => {
   const running = f.controls.execute({ message: f.args.message, sessionKey: f.args.sessionKey, queued: async () => {}, work: async () => { start(); await done; } });
   await started;
   try {
-    await f.submit({ engine: 'codex', model: 'gpt-6-sol', effort: 'high' });
-    assert.match(JSON.stringify(f.sent[1].card), /Wait for this session/);
+    await f.apply('codex', { model: 'gpt-6-sol', effort: 'high' });
+    assert.match(JSON.stringify(f.sent[2].card), /Wait for this session/);
     assert.equal(await getThreadModel(f.args.entry.slug, f.args.sessionKey), '');
     assert.equal(await getThreadEffort(f.args.entry.slug, f.args.sessionKey), '');
   } finally { finish(); await running; }

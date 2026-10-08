@@ -289,9 +289,10 @@ Task-module dialogs and broadcast mentions remain unavailable.
   delivered reaction events. Group/channel delivery uses configured Graph events and Microsoft
   permissions; personal chat accepts delivered Bot Framework reactions. `/stop` and `/cancel`
   remain available as typed commands.
-- `/model` shows the current session selection and opens an engine, model and effort picker
-  in the same conversation/thread. Choose a compatible combination and Apply to this session;
-  changes affect its next turn. Enabled engines and dedicated Codex login restrictions apply.
+- `/model` shows the current session selection and opens a two-step picker in the same
+  conversation/thread: choose the engine and press Next, then choose from only that engine's
+  models and effort levels and Apply to this session (← Back returns to the engine). Changes
+  affect its next turn. Enabled engines and dedicated Codex login restrictions apply.
   Runtime policy is rechecked on Apply, and busy sessions refuse changes. Typed
   `/model <engine> <model|default>` and `/effort <level|default>` remain available.
 - `/settings` opens a six-page console in the original channel/thread or chat: General,

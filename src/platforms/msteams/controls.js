@@ -2,7 +2,7 @@
 // an opaque, expiring state ID; editing the card payload cannot select another user's workspace.
 import { randomUUID } from 'node:crypto';
 import { getPublicUrl, canChangeChannelRuntime, getDefaultModel, getMentionReactions } from '../../config/settings.js';
-import { modelsForEngine, effortsForModel, modelBelongsToEngine } from '../../engines/registry.js';
+import { modelsForEngine, effortsForModel, modelBelongsToEngine, engineLabel } from '../../engines/registry.js';
 import { teamsWorkspaceContext } from './workspace-access.js';
 import { listVisibleDirectory, normalizeRelativePath, canEditChannelFiles, readEditableFile } from '../../slack/file-explorer.js';
 import { createFileDownloadGrantUrl } from '../../web/file-download.js';
@@ -33,27 +33,43 @@ export function createTeamsControls({ connector, now = Date.now, authorize = tea
     await ctx.authorize();
     return buildTeamsSettings(ctx, stateId);
   }
-  async function model(state, stateId) {
+  // Teams ChoiceSets send no change events, so one card cannot narrow the model list when the
+  // engine changes. /model is two pages instead: 1. Engine → Next; 2. that engine's models and
+  // efforts → Apply (← Back returns to page 1). The chosen engine is held server-side in the card
+  // state, never read back from the page-2 submission.
+  async function modelRuntime(state) {
     const context = await authorize(grant(state), { connector });
     state.meta = context.meta; state.authorIsAdmin = context.userIsAdmin;
-    const { thread: current, locked } = await generalRuntimeScopes({ meta: state.meta, entry: state.entry, sessionKey: state.sessionKey });
-    const ui = teamsSettingsUi(stateId);
-    const body = [text(`Current engine: ${current.engine}; model: ${current.model || 'engine default'}; effort: ${current.values.effort || 'inherited default'}.`),
-      text('Choose an engine, a model belonging to that engine, and effort, then Apply to this session. Changes apply to the next turn. Use /settings → General for conversation defaults.')];
+    return generalRuntimeScopes({ meta: state.meta, entry: state.entry, sessionKey: state.sessionKey });
+  }
+  const modelSummary = current => text(`Current engine: ${current.engine}; model: ${current.model || 'engine default'}; effort: ${current.values.effort || 'inherited default'}.`);
+  async function model(state, stateId) {
+    const { thread: current, locked } = await modelRuntime(state);
     if (!state.message.isDM && !canChangeChannelRuntime(state.authorIsAdmin)) {
-      return card('Session model', [...body, text('Runtime changes in this conversation are restricted to administrators.')]);
+      return card('Session model', [modelSummary(current), text('Runtime changes in this conversation are restricted to administrators.')]);
     }
-    const engines = current.engines.map(item => item.value);
-    const models = current.engines.flatMap(engine => modelsForEngine(engine.value).map(item => ({ ...item, label: `${engine.label}: ${item.label || item.value}` })));
-    if (current.model && engines.includes(current.engine) && !models.some(item => item.value === current.model)) models.push({ value: current.model, label: `Current: ${current.model}` });
-    const efforts = [...new Set(engines.flatMap(engine => [
-      ...effortsForModel(engine), ...modelsForEngine(engine).flatMap(item => effortsForModel(engine, item.value)),
-    ]))];
-    if (locked) body.push(text('Engine is locked to this conversation’s Codex login.'));
-    body.push(ui.choice('engine', 'Engine', current.engine, current.engines),
-      ui.choice('model', 'Model', current.values.model || 'default', [{ label: 'Follow compatible conversation model / selected engine default', value: 'default' }, ...models]),
-      ui.choice('effort', 'Effort', current.values.effort || 'default', [{ label: 'Inherited default', value: 'default' }, ...efforts.map(value => ({ label: value, value }))]));
-    return card('Session model', body, [ui.execute('Apply to this session', 'model.save')]);
+    // A conversation on its own Codex login has nothing to choose on page 1.
+    if (locked) return modelPage(state, stateId, 'codex', { current, locked });
+    const ui = teamsSettingsUi(stateId);
+    const selected = current.engines.some(item => item.value === (state.pickedEngine || current.engine)) ? state.pickedEngine || current.engine : current.engines[0]?.value;
+    return card('Session model — step 1 of 2', [modelSummary(current),
+      text('Choose the engine, then Next to see only that engine’s models and effort levels. Use /settings → General for conversation defaults.'),
+      ui.choice('engine', 'Engine', selected, current.engines)], [ui.execute('Next', 'model.next')]);
+  }
+  async function modelPage(state, stateId, engine, { current, locked }) {
+    const ui = teamsSettingsUi(stateId);
+    const models = [...modelsForEngine(engine)];
+    const sameEngine = engine === current.engine;
+    const savedModel = sameEngine && current.values.model && modelBelongsToEngine(current.values.model, engine) ? current.values.model : '';
+    if (savedModel && !models.some(item => item.value === savedModel)) models.push({ value: savedModel, label: `Current: ${savedModel}` });
+    const efforts = [...new Set([...effortsForModel(engine), ...models.flatMap(item => effortsForModel(engine, item.value))])];
+    const savedEffort = sameEngine && efforts.includes(current.values.effort) ? current.values.effort : '';
+    const body = [modelSummary(current), text(`Engine: ${engineLabel(engine)}${locked ? ' (locked to this conversation’s Codex login)' : ''}. Choose a model and effort, then Apply to this session. Changes apply to the next turn.`),
+      ui.choice('model', 'Model', savedModel || 'default', [{ label: `${engineLabel(engine)} default`, value: 'default' }, ...models]),
+      ui.choice('effort', 'Effort', savedEffort || 'default', [{ label: 'Inherited default', value: 'default' }, ...efforts.map(value => ({ label: value, value }))])];
+    state.pickedEngine = engine;
+    return card(locked ? 'Session model' : 'Session model — step 2 of 2', body, [
+      ...(locked ? [] : [ui.execute('← Back', 'model.back', {}, 'none')]), ui.execute('Apply to this session', 'model.save', { engine })]);
   }
   async function files(state, stateId, relative = '', page = 0) {
     const context = await authorize(grant(state), { connector });
@@ -150,10 +166,26 @@ export function createTeamsControls({ connector, now = Date.now, authorize = tea
     const context = await authorize(grant(state), { connector });
     state.meta = context.meta; state.authorIsAdmin = context.userIsAdmin;
     if (interaction.action === 'files.browse') return response(await files(state, interaction.data.stateId, interaction.data.relative || '', Number(interaction.data.page) || 0));
+    const repaintModel = async updated => {
+      if (state.inConversation && state.messageId) await connector.updateCard({ conversationId: state.deliveryId,
+        messageId: state.messageId, card: updated, text: 'Session model settings' });
+      return response(updated);
+    };
+    if (interaction.action === 'model.next' || interaction.action === 'model.back') {
+      if (!state.message.isDM && !canChangeChannelRuntime(context.userIsAdmin)) throw new Error('Only administrators may change this conversation runtime.');
+      if (interaction.action === 'model.back') return repaintModel(await model(state, interaction.data.stateId));
+      const engine = interaction.data.engine;
+      if (typeof engine !== 'string' || !engine || engine.length > 64) throw new Error('Choose an engine first.');
+      const scopes = await generalRuntimeScopes({ meta: state.meta, entry: state.entry, sessionKey: state.sessionKey });
+      if (!scopes.thread.engines.some(item => item.value === engine)) throw new Error('Choose an enabled engine.');
+      return repaintModel(await modelPage(state, interaction.data.stateId, engine, { current: scopes.thread, locked: scopes.locked }));
+    }
     if (interaction.action === 'model.save') {
       if (!state.message.isDM && !canChangeChannelRuntime(context.userIsAdmin)) throw new Error('Only administrators may change this conversation runtime.');
-      if (['engine', 'model', 'effort'].some(field => typeof interaction.data[field] !== 'string' || !interaction.data[field] || interaction.data[field].length > 128)) throw new Error('Select an engine, model, and effort before applying.');
-      const engine = String(interaction.data.engine || ''), model = interaction.data.model === 'default' ? '' : String(interaction.data.model || ''), effort = interaction.data.effort === 'default' ? '' : String(interaction.data.effort || '');
+      // The page-2 card names its engine; it must still be the one this card's state holds.
+      if (!state.pickedEngine || interaction.data.engine !== state.pickedEngine) throw new Error('Choose an engine and press Next first.');
+      if (['model', 'effort'].some(field => typeof interaction.data[field] !== 'string' || !interaction.data[field] || interaction.data[field].length > 128)) throw new Error('Select a model and effort before applying.');
+      const engine = state.pickedEngine, model = interaction.data.model === 'default' ? '' : String(interaction.data.model || ''), effort = interaction.data.effort === 'default' ? '' : String(interaction.data.effort || '');
       const { thread: current } = await generalRuntimeScopes({ meta: state.meta, entry: state.entry, sessionKey: state.sessionKey });
       const inheritedModel = effectiveMeta(state.meta).model;
       const actualModel = model || (modelBelongsToEngine(inheritedModel, engine) ? inheritedModel : '') || getDefaultModel(engine);
@@ -165,10 +197,7 @@ export function createTeamsControls({ connector, now = Date.now, authorize = tea
       await command(`/model ${engine} ${model || 'default'}`);
       // A busy-lane refusal must not be followed by another mutation.
       if (replies.at(-1)?.startsWith('Session engine:')) await command(`/effort ${effort || 'default'}`);
-      const updated = card('Session settings', replies.map(text));
-      if (state.inConversation && state.messageId) await connector.updateCard({ conversationId: state.deliveryId,
-        messageId: state.messageId, card: updated, text: 'Session model settings' });
-      return response(updated);
+      return repaintModel(card('Session settings', replies.map(text)));
     }
     const baseUrl = publicUrl(); if (!baseUrl) throw new Error('Set the gateway Public URL before opening browser files.');
     const relative = normalizeRelativePath(interaction.data.relative || '');

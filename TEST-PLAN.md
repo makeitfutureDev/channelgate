@@ -192,6 +192,21 @@ example server behind HTTPS on a public host. Record the token's last four chara
 - Private registry writes require the requester's explicitly selected personal Airtable connection.
   Definitions prepared; account selection and live execution remain pending. These are not PASS cases.
 
+## Microsoft Teams two-step model picker acceptance (2026-10-08)
+
+- Automated: `test/teams-model-command.test.js` verifies page 1 offers only the engine with Next;
+  page 2 lists only the chosen engine's models (Codex: no `claude-`/`qwen` values; Claude: only
+  `claude-` values) and efforts, preselects the saved model/effort only for the same engine,
+  replaces the same card, and ← Back returns to page 1 without saving. Apply before Next, a
+  disabled engine, a foreign actor on Next, another engine's model, a tampered `engine` in the
+  Apply payload and replays never write. A dedicated channel Codex login skips page 1.
+- [ ] LIVE (`TEAMS-MODEL-03`, Claude and Codex): in the approved beta Teams personal chat and a
+  channel thread, send `/model` (`@agent /model` in the channel). Pass: step 1 shows only Engine
+  and Next. Choose Codex → Next; pass: the model list holds only Codex models. ← Back, choose
+  Claude → Next; pass: only Claude models. Apply a listed Claude model, then send
+  `Reply exactly TEAMS_MODEL_CLAUDE_OK`; repeat with Codex and `Reply exactly
+  TEAMS_MODEL_CODEX_OK`. Pass: confirmation, `/status` and the next turn agree with each choice.
+
 ## Microsoft Teams model command acceptance (2026-10-07)
 
 - Automated: `test/teams-model-command.test.js` uses scratch SQLite, fake Teams transport and
