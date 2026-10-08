@@ -9,13 +9,14 @@ import { createFileDownloadGrantUrl } from '../../web/file-download.js';
 import { createFileEditorGrantUrl } from '../../web/file-editor.js';
 import { createFileUploadGrantUrl } from '../../web/file-upload.js';
 import { createTeamsFileConsent } from './file-consent.js';
-import { createTeamsInteractionHandler, normalizeTeamsInteraction } from './interactions.js';
+import { createTeamsInteractionHandler, normalizeTeamsInteraction, teamsCardErrorResponse } from './interactions.js';
 import { handlePlatformApproval } from '../../slack/approvals.js';
 import { acquireKeyedLock } from '../../util/keyed-lock.js';
 import { buildTeamsSettings, createTeamsSettingsContext, handleTeamsSettings, teamsSettingsUi } from './settings.js';
 import { generalRuntimeScopes } from './settings-general.js';
 import { effectiveMeta } from '../../gateway/run.js';
 import { teamsHelpText, createTeamsHelpCard } from './help.js';
+import { settingsLauncher, settingsDialogResponse } from './settings-dialog.js';
 
 const card = (title, body = [], actions = []) => ({ type: 'AdaptiveCard', version: '1.4', body: [{ type: 'TextBlock', text: title, weight: 'Bolder', wrap: true }, ...body], actions });
 const text = value => ({ type: 'TextBlock', text: String(value), wrap: true });
@@ -133,19 +134,40 @@ export function createTeamsControls({ connector, now = Date.now, authorize = tea
       if (inConversation && recipient && connector.botId && recipient !== connector.botId) {
         throw new Error('This command is addressed to a different bot. Check the Teams app registration and messaging endpoint.');
       }
-      await deliverCard({ ...args, sharedSettings: inConversation && !message.isDM, tab: command === 'secrets' ? 'secrets' : '' },
-        (state, id) => command === 'files' ? files(state, id, match[2] || '') : settings(state, id), inConversation);
+      await deliverCard({ ...args, settingsLauncher: inConversation, tab: command === 'secrets' ? 'secrets' : '' },
+        async (state, id) => {
+          if (command === 'files') return files(state, id, match[2] || '');
+          await authorize(grant(state), { connector });
+          return settingsLauncher(id, state.entry.name);
+        }, inConversation);
       if (!message.isDM && !inConversation) await reply('I sent the controls to your personal chat.');
     } catch (error) { await reply(error.message); }
     return true;
   }
   const dispatchInvoke = createTeamsInteractionHandler({ dispatch: async interaction => {
+    const taskInvoke = ['task/fetch', 'task/submit'].includes(interaction.invokeName);
+    if (taskInvoke && !interaction.action.startsWith('settings.')) throw new Error('Unsupported dialog action.');
     if (interaction.action === 'approval.respond') {
       const result = await approval({ ...interaction.data, conversationId: interaction.conversationId, messageId: interaction.responseMessageId, actorId: interaction.actorId });
       return response(card(result.ok ? 'Approval recorded' : 'Approval unavailable', [text(result.outcome || result.error || 'Handled.')]));
     }
     prune(); const state = states.get(interaction.data.stateId);
     if (!state || state.message.userId !== interaction.actorId || state.deliveryId !== interaction.nativeConversationId) throw new Error('These controls expired or belong to a different conversation/user. Reopen them.');
+    const tenantId = state.message.raw?.tenantId;
+    if ((state.settingsLauncher || state.settingsDialog) && tenantId && interaction.tenantId !== tenantId) throw new Error('These controls belong to another tenant.');
+    if (state.settingsLauncher) {
+      if (interaction.invokeName !== 'task/fetch' || interaction.action !== 'settings.open') throw new Error('Open the settings window first.');
+      // Each opening gets separate private drafts/confirmations. The reusable chat launcher
+      // never receives settings contents, even on clients using legacy Submit elsewhere.
+      const id = randomUUID();
+      const dialog = { ...state, settingsLauncher: false, settingsDialog: true, sharedSettings: false,
+        inConversation: false, messageId: '', expires: now() + 15 * 60_000 };
+      const result = settingsDialogResponse(await settings(dialog, id));
+      prune(); states.set(id, dialog);
+      return result;
+    }
+    if (state.settingsDialog && (interaction.invokeName !== 'task/submit' || !interaction.action.startsWith('settings.'))) throw new Error('Use the settings window.');
+    if (taskInvoke && !state.settingsDialog) throw new Error('Invalid settings window.');
     if (interaction.action.startsWith('settings.')) {
       const release = await acquireKeyedLock('teams-settings-card', interaction.data.stateId);
       try {
@@ -153,6 +175,7 @@ export function createTeamsControls({ connector, now = Date.now, authorize = tea
         if (states.get(interaction.data.stateId) !== state) throw new Error('These controls expired. Reopen them.');
         const ctx = createTeamsSettingsContext(state, { connector, authorize });
         const updated = await handleTeamsSettings(interaction.action, interaction.data, ctx, interaction.data.stateId);
+        if (state.settingsDialog) return settingsDialogResponse(updated);
         // Updating the bot's stored card works for both Execute and Submit clients and avoids
         // depending on the client's user-specific Execute response replacing a shared message.
         if (state.inConversation && state.messageId) await connector.updateCard({ conversationId: state.deliveryId,
@@ -221,6 +244,7 @@ export function createTeamsControls({ connector, now = Date.now, authorize = tea
   } });
   async function onInvoke(activity) {
     if (activity.recipient?.id && connector.botId && activity.recipient.id !== connector.botId) {
+      if (['task/fetch', 'task/submit'].includes(activity.name)) return teamsCardErrorResponse(activity, 403, 'Forbidden', 'Reopen settings with the bot installed in this conversation.');
       return response(card('Bot registration mismatch', [text('Reopen settings with the bot installed in this channel. An administrator must check its Teams app registration and messaging endpoint.')]));
     }
     if (activity.type === 'invoke' && activity.name === 'fileConsent/invoke') return consent.handle(activity);

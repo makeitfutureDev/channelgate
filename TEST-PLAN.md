@@ -9327,6 +9327,15 @@ located and compared by sha256 only):
 
 ## Teams conversation settings parity
 
+Native settings popup (2026-10-08): the focused regression suite passed 197 tests with no
+failures/skips; static checks and secret scanning passed. `/settings` and `/secrets` now post compact launchers;
+`task/fetch` opens a private Adaptive Card dialog and `task/submit` continues it for every page,
+preview, save and confirmation. Dialog state is isolated from reusable launcher state and bound
+to the original actor/conversation/tenant. Current live desktop/web/mobile rendering and the
+private QA registry update are **pending**; no personal connector is available for the mandated
+registry write. The automated popup transport/security cases are engine-independent (no engine
+runs); follow-up runtime selection still requires both Claude and Codex in live acceptance below.
+
 Engine-filtered model lists (2026-10-07): the focused suite below passed 152 tests, zero
 failures/skips; static checks and secret scanning passed. Scratch fixtures verify different channel/session engines, retained-session
 default resolution, draft refresh without writes, incompatible draft clearing, compatible saved
@@ -9338,7 +9347,7 @@ connection for registry writes, so an agent connection must not substitute.
 Automated:
 
 ```sh
-node --test test/teams-controls.test.js test/teams-settings.test.js \
+node --test test/teams-settings-dialog.test.js test/teams-controls.test.js test/teams-settings.test.js \
   test/teams-settings-general.test.js test/teams-settings-catalog.test.js \
   test/channel-settings-modal.test.js test/model-wizard-channel-scope-thread.test.js \
   test/teams-native-cards.test.js test/platform-teams.test.js test/teams-model-command.test.js
@@ -9351,8 +9360,8 @@ transaction rollback and legacy per-field writes ignoring stale neighbours, curr
 and roster checks, demotion during roster/discovery, all three variable scopes through confirmation,
 write-only/masked credentials, host-rule rotation, MCP discovery/grants, skills/template inheritance,
 automation paging and foreign IDs, one-use confirmation replay, bounded cards, source-channel
-delivery without a DM, same-message updates for Execute/Submit, mismatched bot recipients,
-shared-card private metadata isolation and forged private-scope rejection. Native-card cases
+launcher delivery without a DM, native task continuation responses, no chat writes from dialogs,
+mismatched bot recipients and private dialog state isolation. Native-card cases
 cover Teams error envelopes, retry deduplication, malformed inputs and rejected private Submit
 attempts without card writes. Existing Slack
 modal/wizard cases exercise the shared runtime validators.
@@ -9370,15 +9379,16 @@ on the engine under test and record its original slug/session key and safe metad
 case. Also run a group with an external member to check tenant/channel delivery behavior.
 
 1. In a channel/thread or group, quote the original message or bot reply and send
-   `@bot /settings`; in personal chat send `/settings`. Require a card with all six tabs in the
-   original channel/thread or chat, unchanged workspace/session identity and no proactive DM.
-   Initially require the six-option menu with no section inputs. Selecting a tab reveals only
-   that section below the persistent menu; `/secrets` still opens Variables directly.
-   Block proactive DM delivery: settings still opens in the channel. Use each tab's actual
-   Execute and Submit action and require the same posted message ID to update. Another member
-   cannot operate the owner's card; they can open an independent card. Confirm installed manifest
-   bot ID, configured App ID and Azure messaging endpoint match the target beta bot; a different
-   recipient must be refused. Record sender identity and callback delivery privately.
+   `@bot /settings`; in personal chat send `/settings`. Require only a short **Open settings**
+   card in the original conversation, unchanged workspace/session identity and no proactive DM.
+   Click the button: require a large popup inside Teams with the six-section menu. Select every
+   section; forms and saves must remain in the popup and the posted launcher must stay unchanged.
+   `/secrets` must open the popup on Variables. Close/reopen: separate draft/confirmation state;
+   closing without Apply must not save. Block proactive DM delivery: popup still works. Another
+   actor, conversation, tenant, bot recipient or expired state must fail without reads/writes.
+   Submit a popup state through inline Execute/message Submit, or mutate through launcher state:
+   refuse without exposing any form in chat. Repeat on Teams desktop, web and mobile; record
+   actual popup dimensions/layout and callbacks. No screenshot/fixture counts as a live pass.
 2. General: select engine, model and effort before saving; require exactly one Apply to channel
    and one Apply to thread at the end of their runtime lists. Apply one scope and require its
    complete compatible triple to change, with the other scope and access settings unchanged.
@@ -9390,7 +9400,7 @@ case. Also run a group with an external member to check tenant/channel delivery 
    its default option. Select a different engine and click **Load models**: require that scope's
    list to refresh, incompatible draft model/effort to clear to default and no stored runtime
    changes. Choose a matching model/effort and Apply: require the complete triple to save. Repeat
-   with channel and thread scopes, Execute and legacy Submit, and Teams desktop/mobile. Default
+   with channel and thread scopes and Teams desktop/mobile dialog Submit actions. Default
    engine preview resolves template/gateway inheritance for channel scope and the retained session
    engine for thread scope. Saved compatible full model IDs absent from discovery remain selectable.
    Inherited labels name their actual fallback. Open a dedicated-Codex-login fixture and require its engine to remain
@@ -9403,11 +9413,11 @@ case. Also run a group with an external member to check tenant/channel delivery 
    while the roster/discovery request is held: require denial and no mutation. Large/over-budget
    rosters explicitly defer complete-list edits without dropping grants; former-member selections
    show a replacement warning before Apply.
-4. Variables/MCPs: in the channel rotate synthetic channel values; in an explicitly opened
-   personal conversation also rotate personal and admin organization values. The shared card
-   must omit personal/org names, token suffixes/account labels and ungranted private MCP catalogs;
-   forged private-scope actions on it fail before confirmation or mutation. Require blank/masked inputs after refresh, masked listing only, preserved
-   Used-on-hosts unless explicitly replaced/cleared, and no values in card JSON or event logs.
+4. Variables/MCPs: inside the popup rotate synthetic channel/personal values and (as an admin)
+   organization values. Require blank/masked inputs after refresh, masked listing only, preserved
+   Used-on-hosts unless explicitly replaced/cleared, and no raw values in card JSON or event logs.
+   Private metadata may appear only inside the authorized owner's popup, never in the launcher
+   or any chat update. Submitting the same opaque state through a chat-card transport must fail.
    Remove each scope through a confirmation and replay the token: exactly one effect. A member
    cannot forge an organization write or Cloud MCP change. Blank connection tokens keep existing
    values; invalid Make URL writes nothing; disconnect affects only the selected connection.
@@ -9418,10 +9428,10 @@ case. Also run a group with an external member to check tenant/channel delivery 
    stop a loop and replay the confirmation. Only this conversation's rows may change; one-time
    and loop pause attempts fail; enabled-schedule limits still apply when resuming.
 7. Resume: after a project turn, require the current session ID, its minting engine and correct
-   container terminal command. Administrator sessions never expose commands in a shared card;
-   current admins can access them in authenticated settings or an explicit personal conversation.
+   container terminal command. Administrator sessions never expose commands in the chat launcher;
+   only current eligible admins can access them inside their private popup.
    Clear the session and refresh: no stale ID/command. Navigate every page in
-   Teams desktop/mobile and exercise Execute plus legacy Submit fallback without duplicate effects.
+   Teams desktop/web/mobile and exercise dialog Submit retries without duplicate effects.
 8. Record exact fixture, engine, prompts/actions, safe before/after scope evidence, observed client
    card placement and pass/fail for each case in the private registry through the personal identity.
    Any unexecuted, blocked or failed case remains pending acceptance; no release-readiness claim.

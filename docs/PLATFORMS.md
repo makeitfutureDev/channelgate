@@ -260,7 +260,7 @@ These additions are available on beta; live acceptance remains required before s
 Update the installed app's reviewed manifest so the bot entry has `supportsFiles: true` for native
 personal-chat file consent, then upload/install that app revision with the Teams CLI as described
 above. Adaptive Cards and their inline forms do not require additional Graph RSC permissions.
-Task-module dialogs and broadcast mentions remain unavailable.
+Native settings dialogs are available; broadcast mentions remain unavailable.
 
 - `/help` provides a practical **How to use me** guide and the supported Teams command list
   in a native Adaptive Card, with separate headings, spaced paragraphs, individual emoji/command
@@ -295,13 +295,15 @@ Task-module dialogs and broadcast mentions remain unavailable.
   affect its next turn. Enabled engines and dedicated Codex login restrictions apply.
   Runtime policy is rechecked on Apply, and busy sessions refuse changes. Typed
   `/model <engine> <model|default>` and `/effort <level|default>` remain available.
-- `/settings` opens a six-page console in the original channel/thread or chat: General,
-  Variables, MCPs, Skills, Automations and Resume. It retains the source conversation and session
-  even when opened from a channel or group chat. `/secrets` opens its Variables page directly.
-  No proactive personal chat is opened for settings. Buttons update that same card; other
-  members open their own requester-bound `/settings` card.
-  Initially only the section menu is shown; selecting a section reveals its controls below the
-  menu. Switching sections replaces the controls while keeping the menu visible.
+- `/settings` posts a compact **Open settings** card in the original channel/thread or chat.
+  Clicking it opens a large native Teams popup containing General, Variables, MCPs, Skills,
+  Automations and Resume. `/secrets` uses the same launcher and opens Variables directly.
+  Each popup retains the source conversation and session, rechecks the requesting user's current
+  access, and keeps forms, navigation and save results out of chat. No proactive personal chat,
+  additional website, TeamsJS page or new Graph permission is required for this card dialog.
+  The launcher and each independently opened popup expire after 15 minutes. Closing with Teams'
+  close control discards unapplied inputs; applied changes remain saved. Other members open their
+  own requester-bound `/settings` launcher.
   General edits channel defaults and current-session engine/model/effort independently, with
   engine-labelled model choices, inherited labels and Follow channel default. One Apply to channel
   or Apply to thread button saves that scope's engine/model/effort together after compatibility
@@ -317,10 +319,12 @@ Task-module dialogs and broadcast mentions remain unavailable.
   masked input style, and removal/reset actions require a one-use confirmation. Native entries
   follow the existing 8,000-character field and 16-KiB submission limits; larger values need the
   authenticated browser editor. Catalogs, templates and automations paginate. Resume resolves
-  the current session at display time and provides its terminal command. Shared channel cards
-  expose channel variable metadata only and never administrator session commands or ungranted
-  private connection catalogs. Personal/organization variable controls remain in authenticated
-  settings or an explicitly opened personal conversation.
+  the current session at display time and provides its terminal command to eligible users inside
+  the popup. Personal/organization variable controls are available there under their existing
+  role rules. The chat launcher contains no credential metadata, connection catalogs or session
+  commands. Dialog actions use authenticated `task/fetch` and `task/submit` callbacks with
+  server-held owner, conversation, tenant (when known), scope and expiry; chat-card submissions
+  cannot operate a dialog state.
   The sender name is the installed Teams app/bot identity. If another bot name appears, verify
   that the installed manifest bot ID, the configured Teams App ID and the Azure bot messaging
   endpoint all belong to the intended installation; changing card text cannot rename that app.
@@ -419,8 +423,8 @@ See `FEATURES.md` → Modes & approvals for the security properties.
 On `teams-ms`, native Teams approval cards call the shared actor-checked decision path. Inline
 cards do not automatically widen the engine permission policy: escalation remains separately
 gated, and its live acceptance must pass before release. Google Chat retains its existing
-surface limitations. Task-module dialogs and Slack's full busy-thread interaction flow are not
-supplied by the Teams card implementation.
+surface limitations. Native settings dialogs are implemented; Slack's full busy-thread
+interaction flow remains unavailable in Teams.
 
 ---
 

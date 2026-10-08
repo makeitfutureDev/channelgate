@@ -41,17 +41,20 @@ say so plainly rather than guessing at its contents.
 
 ## Conversation settings
 
-`/settings` opens General, Variables, MCPs, Skills, Automations and Resume in the original
-channel/thread or chat. `/secrets` opens Variables. Settings never proactively opens a personal chat.
-Buttons update the same requester-bound card; other members can open their own `/settings`.
-The initial card shows only the section menu; selecting an option displays its settings below.
+`/settings` posts a compact **Open settings** button in the original channel/thread or chat.
+Clicking it opens a private popup inside Teams with General, Variables, MCPs, Skills, Automations
+and Resume. `/secrets` opens the same popup on Variables. Settings never proactively opens a
+personal chat. Navigation and saves stay inside the popup; its launcher never contains the form.
+Controls belong to the person who requested them; other members open their own `/settings`.
+Each opening has separate drafts and confirmations and expires after 15 minutes. Close the window
+with Teams' close control; unapplied inputs are not saved.
 Engine/model/effort save together with Apply to channel or Apply to thread. Other settings keep
 their explicit controls; changing tabs discards unsaved drafts. Runtime, channel credentials,
 skills and automation controls are available to authorized users. Access policy requires current
 managers/admins, Cloud MCP and organization variable writes require admins. Stored credential
-values are never shown or prefilled. Shared cards list only channel variables and omit private
-credential metadata, ungranted private connections and administrator session commands. Personal
-and organization variables remain in authenticated settings or explicitly opened personal chats.
+values are never shown or prefilled. Personal and organization variable metadata and eligible
+administrator session commands appear only inside the authorized owner’s popup, never in the
+chat launcher. Current role and membership checks apply to every action.
 Native rosters and secret inputs have size limits;
 complete oversized edits use the authenticated browser settings.
 
