@@ -215,6 +215,9 @@ control-plane status.
   existing removal history wins, and Stop/Tick still require explicit addition history.
   Bot Framework rosters accept both modern `aadObjectId` and legacy `objectId` Entra identifiers
   when resolving the addressable reactor; ordinary conversation/user authorization still applies.
+  The operational audit distinguishes Graph callback receipt, validation, authenticated target
+  acceptance, rejection and retryable failures using bounded metadata. Credentials, validation
+  tokens, message bodies and untrusted resource identifiers are excluded.
 
 ## Claude login for nested commands
 

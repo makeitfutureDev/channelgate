@@ -40,11 +40,17 @@ function sameSecret(a, b) {
   return aa.length === bb.length && timingSafeEqual(aa, bb);
 }
 
-export function createTeamsGraphEvents({ auth, notificationUrl, tenantId, store, onMessage, enqueueNotifications = null, fetchImpl = fetch, now = Date.now, log = () => {}, intervalMs = 60_000, getActivationReactions = () => undefined, getActivationVersion = () => '' } = {}) {
+export function createTeamsGraphEvents({ auth, notificationUrl, tenantId, store, onMessage, enqueueNotifications = null, fetchImpl = fetch, now = Date.now, log = () => {}, observe = () => {}, intervalMs = 60_000, getActivationReactions = () => undefined, getActivationVersion = () => '' } = {}) {
   const endpoint = new URL(notificationUrl);
   if (endpoint.protocol !== "https:" || endpoint.username || endpoint.password || endpoint.hash) throw new Error("Teams Graph notifications need a public HTTPS URL");
   if (!tenantId || !auth?.token || !store?.list || !store?.put || !onMessage) throw new Error("Teams Graph event dependencies are incomplete");
   let timer = null;
+  // Operational evidence must not alter authentication, acknowledgment or retry behavior.
+  // Callers receive only bounded counts, fixed reasons and already authenticated target IDs.
+  function note(event, fields) {
+    try { void Promise.resolve(observe(`teams_graph_callback_${event}`, fields)).catch(() => {}); }
+    catch { /* telemetry is best-effort */ }
+  }
   let chain = Promise.resolve();
   const serialized = action => {
     const next = chain.then(action);
@@ -185,32 +191,54 @@ export function createTeamsGraphEvents({ auth, notificationUrl, tenantId, store,
     }
   }
   async function handle(req, res) {
+    const observations = [];
+    try { await handleCallback(req, res, (event, fields) => observations.push([event, fields])); }
+    finally {
+      // SQLite audit writes are synchronous even through an async observer. Submit the
+      // callback response first, then record bounded diagnostics outside its acknowledgment path.
+      setImmediate(() => { for (const [event, fields] of observations) note(event, fields); });
+    }
+  }
+  async function handleCallback(req, res, record) {
     const validation = req.query?.validationToken;
     if (typeof validation === "string" && validation.length > 0 && validation.length <= 4096) {
+      record('validated', { status: 200 });
       res.status(200).type("text/plain").send(validation);
       return;
     }
     const batch = req.body?.value;
-    if (!Array.isArray(batch) || !batch.length || batch.length > 100) { res.status(400).end(); return; }
+    record('received', { count: Array.isArray(batch) ? Math.min(batch.length, 101) : 0 });
+    if (!Array.isArray(batch) || !batch.length || batch.length > 100) {
+      record('rejected', { status: 400, reason: 'invalid_batch' });
+      res.status(400).end(); return;
+    }
     try {
       const rows = await store.list();
       const accepted = [];
       for (const event of batch) {
         const row = rows.find(item => item.subscriptionId && item.subscriptionId === event?.subscriptionId);
         const path = row && messagePath(event, row);
-        if (!row || !path || event.tenantId !== tenantId || !sameSecret(event.clientState, row.clientState) || !["created", "updated", "deleted"].includes(event.changeType)) {
+        const reason = !row ? 'unknown_subscription' : !path ? 'invalid_resource'
+          : event.tenantId !== tenantId ? 'tenant_mismatch'
+            : !sameSecret(event.clientState, row.clientState) ? 'client_state_mismatch'
+              : !["created", "updated", "deleted"].includes(event.changeType) ? 'unsupported_change' : '';
+        if (reason) {
+          record('rejected', { status: 403, reason });
           res.status(403).end(); return;
         }
         accepted.push({ event, row, path });
       }
       if (enqueueNotifications) {
         await enqueueNotifications(accepted);
+        for (const { event, row } of accepted) record('accepted', { channel: row.conversationId, messageId: event.resourceData.id, changeType: event.changeType, status: 202 });
         res.status(202).end();
         return;
       }
       await processNotifications(accepted);
+      for (const { event, row } of accepted) record('accepted', { channel: row.conversationId, messageId: event.resourceData.id, changeType: event.changeType, status: 200 });
       res.status(200).end();
     } catch (error) {
+      record('failed', { status: 503, providerStatus: Number.isInteger(error.status) && error.status >= 100 && error.status <= 599 ? error.status : null });
       log("Teams Graph notification failed; delivery will be retried", { status: error.status || null });
       res.status(503).end();
     }

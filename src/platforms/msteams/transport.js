@@ -18,6 +18,7 @@ import { activityFingerprint, createJwksCache } from "./verify.js";
 import { teamsActivationFingerprint } from "./reactions.js";
 import { sessionKeyForMessage } from "../reply-sessions.js";
 import { getDb, fromJson } from "../../db/index.js";
+import { logEvent } from "../../util/logger.js";
 
 // The bot's own identity in an activity: Bot Framework prefixes the app id with the "28:" channel
 // marker. Mention entities and the bot half of a new 1:1 conversation both use this form.
@@ -207,7 +208,8 @@ export async function startTeams({
             payload: { accepted: [envelope] } });
         }
       },
-      log: (message, detail) => log.warn?.(`[msteams] ${message}`, detail),
+      observe: deps.observeGraph || logEvent,
+      log: (message, detail) => log.warn?.(`[msteams] ${message} ${JSON.stringify(detail)}`),
       onMessage: async (message, row) => {
         const id = createHash("sha256").update(JSON.stringify([row.conversationId, message.id, message.etag, message.lastModifiedDateTime, message])).digest("hex");
         inbox.accept({ id, conversationId: row.conversationId, payload: { message, row } });

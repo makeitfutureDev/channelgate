@@ -7,6 +7,7 @@ import { createTeamsAuth, GRAPH_SCOPE } from "../src/platforms/msteams/auth.js";
 import { createTeamsEventStore } from "../src/platforms/msteams/event-store.js";
 import { DatabaseSync } from "node:sqlite";
 import { migrations } from "../src/db/migrations.js";
+import { readEvents } from "../src/util/logger.js";
 
 ensureTestEnv();
 
@@ -26,6 +27,16 @@ function fixture() {
 }
 const activity = { type: "message", conversation: { id: "19:chat@thread.v2", conversationType: "groupChat" },
   channelData: { tenant: { id: "tenant" } }, serviceUrl: "https://smba.trafficmanager.net/teams/" };
+
+test('Teams callback diagnostics are wired to the sanitized operational audit', async () => {
+  const f = fixture();
+  const transport = await startTeams({ appId: 'app', tenantId: 'tenant', allMessageEvents: true, publicUrl: 'https://gateway.example/', onMessage: async () => {}, deps: f.deps });
+  await f.options.observe('teams_graph_callback_accepted', { channel: 'teams:diagnostic-fixture', messageId: 'diagnostic-target', status: 202 });
+  const event = readEvents().find(row => row.event === 'teams_graph_callback_accepted' && row.channel === 'teams:diagnostic-fixture');
+  assert.equal(event.messageId, 'diagnostic-target');
+  assert.equal(event.status, 202);
+  await transport.stop();
+});
 
 test("Teams events are opt-in and ordinary transport remains available", async () => {
   const f = fixture();
