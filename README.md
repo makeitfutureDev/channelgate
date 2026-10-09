@@ -216,6 +216,8 @@ catalog, including edge cases and links to regression coverage.
   cancellation, attachments and completion webhooks, including headless execution. The API key is
   an admin credential: a run behaves like an admin's message in its channel, using the channel's
   shared agent accounts rather than anyone's personal ones.
+  An optional [`conversationKey`](docs/HTTP-RUN-API.md) keeps related external events in one
+  persistent Slack thread and agent session, separately from event idempotency.
 
 ### Slack reports and collaboration
 

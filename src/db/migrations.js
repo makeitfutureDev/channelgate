@@ -998,4 +998,21 @@ export const migrations = [
       `);
     },
   },
+  {
+    // External conversations retain their Slack root beyond run-history retention and restarts.
+    version: 33,
+    up(db) {
+      db.exec(`
+        CREATE TABLE api_conversations (
+          channel_id TEXT NOT NULL,
+          conversation_key TEXT NOT NULL,
+          thread_ts TEXT NOT NULL,
+          thread_permalink TEXT,
+          created_ms INTEGER NOT NULL,
+          updated_ms INTEGER NOT NULL,
+          PRIMARY KEY (channel_id, conversation_key)
+        );
+      `);
+    },
+  },
 ];

@@ -5133,6 +5133,66 @@ structural invariants are automated; rendered navigation and feature claims also
 - [ ] Live: start a headless `POST /api/runs` with a webhook, restart the daemon mid-run, and verify
       `/api/runs/:id` reaches `interrupted` and the webhook fires once with that status.
 
+### HTTP run API conversations
+
+Regression: `test/api-conversations.test.js`, `test/api-conversations-driver.test.js`, plus the
+existing API admission/recovery/channel-parity suites and migration tests. All fixtures use a
+scratch SQLite root, fake Slack and a fake container runtime; no real bot token or daemon DB.
+The admission/mapping checks are engine-independent; the real driver checks queue ordering and
+session continuation with fixture engines. Public instructions: `docs/HTTP-RUN-API.md`.
+
+- [x] Automated: simultaneous distinct events with one channel/key create exactly one root and
+  separate jobs; channel ID/name/slug aliases reuse it, while other keys/channels isolate.
+- [x] Automated: fresh-process reuse survives SQLite reopen and old job retention; root deletion
+  updates the binding once, while access errors, throttling and malformed history do not replace it.
+- [x] Automated: event deduplication is separate, including concurrent retries, cross-conversation
+  collisions, failed admission retry, and POST/GET/list thread fields with nullable permalinks.
+- [x] Automated: actual driver serializes shared-thread runs and continues its saved session;
+  legacy no-key channel/headless behavior and scratch migration upgrade still pass.
+
+Live acceptance — run each case separately for **Claude and Codex**, using Worker + Auto Slack
+fixtures `qa-api-conversations-claude` and `qa-api-conversations-codex`, plus a second registered
+channel for isolation, connected bot with history scopes and the gateway run API key. Use an
+approved QA member for Slack continuation, an authorized QA admin for root deletion and restart;
+the API itself always acts as `api` (the supplied `author` is attribution only). Use fresh case
+suffixes and explicit `engine` per request. Capture POST/GET bodies, timestamps/permalinks and
+thread history as evidence. These live cases are **unexecuted**, not an automated pass.
+
+- [ ] **API-CONV-01 — create, reuse and context.** POST `{channel:"<fixture id>",
+  conversationKey:"qa:<engine>:<suffix>", idempotencyKey:"qa:<engine>:<suffix>:1",
+  engine:"<engine>", message:"Remember the code word cobalt. Reply CODE_SAVED."}`. Poll to
+  completed, then submit event `:2` with the same conversation key and
+  `message:"What code word did I give you? Reply with only that word."`.
+  Pass: first `threadReused:false`, second true, same `threadTs`/link, one root, second answer
+  `cobalt`, actual session/resume populated on completed GET. Initial keyed session fields null.
+- [ ] **API-CONV-02 — race and Slack continuation.** Send two events with distinct event keys
+  concurrently under a fresh conversation key, first asking `"List files and reply FIRST_DONE"`,
+  second `"Reply SECOND_DONE after the preceding request"`. Also reply in that root with
+  `@bot Reply SLACK_CONTINUED`, choosing Queue if offered.
+  Pass: exactly one root, distinct jobs, no overlapping engine turns for that thread, queued
+  status/notice when occupied, all answers in that root, normal Slack queue/stop controls work.
+- [ ] **API-CONV-03 — restart and retention.** Complete event `:1`, record root/link, restart
+  the daemon using the approved deployment procedure, then submit `:2` under the same key.
+  Pass: same root and thread context after restart; no replay of interrupted jobs. Automated
+  scratch-process coverage separately proves binding persistence after job-history cleanup.
+- [ ] **API-CONV-04 — delete and failures.** After completed `:1`, delete its root as the
+  authorized QA admin; submit `:2` and `:3` concurrently with distinct event keys.
+  Pass: exactly one new root, both responses identify it, one false/one true reuse flag, mapping
+  updated; later requests reuse it. On a separate disposable channel, remove bot access, then
+  attempt reuse. Pass: 503 and no agent/job/root created; restoring access permits an honest retry.
+- [ ] **API-CONV-05 — isolation and deduplication.** Reuse a key via fixture ID/name/slug,
+  then submit the same conversation key in the second channel with a fresh event key.
+  Pass: aliases share one root, channels have different roots. Retry the first event within
+  15 minutes: 200, original job/fields, no second kickoff or execution. Reassign that event key
+  to the other channel or conversation: 409, no cross-channel thread returned. Without a
+  conversation key, separate events still create separate roots; missing channel with a key is 400.
+
+Validation (2026-10-09): 24 new cases and 43 existing API regressions passed, including actual
+Claude and Codex fixture-session continuation; full coverage suite passed with 3,591 tests,
+32 environment-dependent skips, no failures. Static checks, security
+coverage, secret scan and production dependency audit passed. Live acceptance and deployment QA
+registration remain pending; automated results do not certify these gates.
+
 ### HTTP run API channel parity
 
 An API run is an admin's turn in its channel, as the fixed `api` principal with no personal scope.

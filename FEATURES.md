@@ -1463,6 +1463,16 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
   work; chunk failures disable only the shared toolbox, leaving answer streaming intact. Progress-report
   state is intentionally turn-local rather than crash-persistent. → TEST-PLAN: Slack
   gateway.
+- **Persistent API conversations:** optional `conversationKey` on `POST /api/runs` binds the
+  resolved Slack channel ID plus exact key to a durable thread root in SQLite, independently of
+  job-history retention. Repeated events post their requests and answers as thread replies and
+  resolve the live agent session inside the existing Slack/API queue; simultaneous first events
+  create one root. `threadTs`, `threadReused`, `threadPermalink` and `conversationKey` appear in
+  POST/status/list/webhook responses; unavailable permalinks are null. Deleted roots are replaced
+  under the same creation lock; Slack outages, missing scope or lost channel access return 503
+  without starting a headless run or creating another root. `idempotencyKey` remains separate
+  with its existing 15-minute window; a collision across keyed conversations returns 409.
+  Keyed session/resume fields are null until completion. → TEST-PLAN: HTTP run API conversations.
 - HTTP run API (`POST /api/runs`) for automations: accepts message/file input, optional target
   Slack channel, per-run engine/model/effort/mode overrides, idempotency keys, status polling,
   stop, and completion webhooks. Channel-backed API runs post the full request in Slack and use the
