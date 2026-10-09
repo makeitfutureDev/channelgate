@@ -72,8 +72,9 @@ export function createIngest({ connector, log = console, run = runMessage, onCom
   const bankUsage = createUsageBank();
   const controls = createConversationControls();
 
-  return async function ingest(message) {
+  return async function ingest(message, { serviceUrl = '', queuedNoticeOnly = false, position = 0, isQueued = null } = {}) {
     if (message.platform !== adapter.id) throw new Error(`${adapter.id} ingest received a ${message.platform} message`);
+    if (serviceUrl) connector.rememberServiceUrl?.(message.rawConversationId, serviceUrl);
 
     // Nothing to answer. An empty body with attachments is still a turn (a screenshot with no
     // caption is a real request); an empty body with nothing at all is not.
@@ -119,6 +120,12 @@ export function createIngest({ connector, log = console, run = runMessage, onCom
     };
 
     const reply = async (text) => deliver(connector, message, null, text, rememberReply);
+    // A durable queue notice shares every conversation/author/sudo gate with a turn, but cannot
+    // run an engine or command. Recheck after authorization so cancelled or started work stays quiet.
+    if (queuedNoticeOnly) {
+      if (isQueued?.() && Number.isSafeInteger(position) && position > 0) await reply(`Queued in this session (position ${position}).`);
+      return { skipped: 'queue-notice' };
+    }
     // Native command replies share the same source conversation and group quote mapping as text.
     const replyCard = platformSupports(adapter.id, 'richCards') !== 'none' && typeof connector.postCard === 'function' ? async ({ card, text = '' }) => {
       const sent = await connector.postCard({ conversationId: message.rawConversationId,
@@ -130,8 +137,22 @@ export function createIngest({ connector, log = console, run = runMessage, onCom
       await acknowledgeReaction({ message, reply });
       return { command: true };
     }
-    if (onCommand && await onCommand({ message, sessionKey, entry, meta, authorIsAdmin, reply, replyCard, controls })) return { command: true };
-    if (await controls.command({ message, sessionKey, slug: entry.slug, meta, authorIsAdmin, reply })) return { command: true };
+    const pendingAdmission = async pending => {
+      if (!pending || !pending.text && !pending.attachments?.length) return false;
+      if (!pending.isDM && !pending.mentionsBot && !(pending.trigger === 'reaction' && platformSupports(adapter.id, 'reactionTriggers'))) return false;
+      const pendingAdmin = await isAdmin(pending.userId);
+      const pendingApproved = await isApproved(pending.userId);
+      const currentMeta = await getChannelMeta(entry.slug);
+      if (!currentMeta || !isAuthorized(currentMeta, pending.userId, pending.isDM, { isAdminUser: pendingAdmin, isApprovedUser: pendingApproved })) return false;
+      if (await getThreadSudo(entry.slug, sessionKey) && !pendingAdmin) return false;
+      return true;
+    };
+    const pendingControls = {
+      pendingForSession: connector.pendingForSession ? scope => connector.pendingForSession({ ...scope, isEligible: pendingAdmission }) : null,
+      cancelPendingForSession: connector.cancelPendingForSession ? scope => connector.cancelPendingForSession({ ...scope, isEligible: pendingAdmission }) : null,
+    };
+    if (onCommand && await onCommand({ message, sessionKey, entry, meta, authorIsAdmin, reply, replyCard, controls, ...pendingControls })) return { command: true };
+    if (await controls.command({ message, sessionKey, slug: entry.slug, meta, authorIsAdmin, reply, ...pendingControls })) return { command: true };
     return controls.execute({ message, sessionKey, queued: reply, work: async (signal) => {
     // These surfaces have no typing indicator the daemon can drive for minutes, and no streaming.
     // A placeholder message is the only honest "I'm working on it" available — and it is also the
@@ -142,6 +163,7 @@ export function createIngest({ connector, log = console, run = runMessage, onCom
         conversationId: message.rawConversationId,
         threadKey: message.threadKey,
         text: hasVoiceAttachments(message) ? "_Preparing voice transcription…_" : "_Working on it…_",
+        signal,
       });
       rememberReply(placeholder);
     } catch (err) {

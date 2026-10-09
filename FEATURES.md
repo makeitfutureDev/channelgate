@@ -127,6 +127,29 @@ control-plane status.
   messages. The UI states that limitation; Workspace Events subscriptions are separate work.
 
 
+## Teams text runtime and transport reliability
+
+- Text `/model` respects a conversation's dedicated Codex login, refusing a different engine
+  before changing its session selection. `/status` and `/effort` resolve only models and efforts
+  compatible with the selected engine, including inherited defaults. Text selection saves the
+  runtime triple atomically and refuses work or competing settings changes admitted meanwhile.
+- Verified ordinary Bot Framework events reach durable SQLite intake before HTTP acknowledgement.
+  Queued events resume after reconnect; uncertain running work produces an interruption notice
+  without automatically repeating tool effects. Control and Graph-event intake have separately
+  bounded capacity so Stop remains reachable while ordinary work occupies every dispatch slot.
+  Pending-work checks and cancellation cover durable queued turns after the same mention,
+  author and sudo admission checks as ingestion; native model cards also respect that queue.
+- Bot Framework token, HTTP and response-body reads are bounded to 15 seconds. Foreground
+  placeholder delivery accepts cancellation; timed-out or cancelled sends are never
+  automatically replayed when their delivery outcome is uncertain.
+- Authenticated, allowlisted Bot Framework service URLs persist per bot and conversation.
+  Foreground replies, edits, roster reads and unattended delivery retain the original region
+  after reconnect; private file/card delivery creates its personal chat through the source
+  conversation's service and retains that route too.
+- Deterministic scratch fixtures cover these paths for Claude and Codex configurations. Actual
+  provider turns and native desktop/web/mobile acceptance remain required; fixture results do
+  not establish live Microsoft client acceptance.
+
 ## Microsoft Teams model command
 
 - Bare `/model` opens a native picker in the source conversation laid out like Settings →

@@ -24,7 +24,7 @@ test("one-time editor preserves the browser's chosen instant across daemon timez
   app.use("/api", createAdminRouter({ slack: { snapshot: () => ({ status: "disconnected", connected: false }) } }));
   const publicDir = fileURLToPath(new URL("../public", import.meta.url));
   app.use(express.static(publicDir));
-  app.get("/automations", (_req, res) => res.sendFile(path.join(publicDir, "index.html")));
+  app.get("/automations", (_req, res) => res.sendFile(path.join(publicDir, "index.html"), { dotfiles: "allow" }));
   const server = await new Promise((resolve) => { const s = app.listen(0, "127.0.0.1", () => resolve(s)); });
   t.after(() => new Promise((resolve) => { server.closeAllConnections(); server.close(resolve); }));
   const browser = await chromium.launch({ headless: true, args: ["--no-sandbox"] });

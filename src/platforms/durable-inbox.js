@@ -3,7 +3,7 @@
 import { randomUUID } from "node:crypto";
 import { getDb, toJson, fromJson } from "../db/index.js";
 
-const active = new Set();
+const capacityGroups = new Map();
 const activeConversations = new Set();
 const pumps = new Set();
 const MAX_ACTIVE = 4;
@@ -12,9 +12,13 @@ const RETENTION_MS = 7 * 24 * 60 * 60 * 1000;
 const CLEANUP_INTERVAL_MS = 60_000;
 const CLEANUP_BATCH = 500;
 
-export function createDurableInbox({ namespace, handle, interrupted = async () => {}, log = console, now = Date.now } = {}) {
+export function createDurableInbox({ namespace, handle, interrupted = async () => {}, log = console, now = Date.now, concurrencyGroup = "default", conversationKey = null, queuedNamespace = null } = {}) {
   if (!namespace || typeof handle !== "function") throw new TypeError("Inbox requires a namespace and handler");
   const owner = randomUUID();
+  // Ordinary work shares four slots. Explicit control intake can use a separate bounded group
+  // so /stop and /status still reach their authorization gate while four engines are occupied.
+  if (!capacityGroups.has(concurrencyGroup)) capacityGroups.set(concurrencyGroup, new Set());
+  const active = capacityGroups.get(concurrencyGroup);
   let stopped = true;
   const db = getDb();
   let cleanupTimer = null;
@@ -90,6 +94,30 @@ export function createDurableInbox({ namespace, handle, interrupted = async () =
     start() {
       stopped = false;
       cleanup();
+      // A transport may refine its scheduling key without changing stable event identities.
+      // Re-key pending legacy rows before pumping so they retain FIFO and cancellation scope.
+      if (conversationKey || queuedNamespace) {
+        const pending = db.prepare("SELECT event_id, conversation_id, status, data FROM inbound_events WHERE namespace = ? AND status IN ('queued', 'running', 'interrupted', 'notice_failed')").all(namespace);
+        for (const row of pending) {
+          const payload = fromJson(row.data, {});
+          const conversationId = conversationKey?.(payload);
+          if (conversationId && conversationId !== row.conversation_id) {
+            db.prepare("UPDATE inbound_events SET conversation_id = ? WHERE namespace = ? AND event_id = ?").run(conversationId, namespace, row.event_id);
+          }
+          const target = row.status === 'queued' ? queuedNamespace?.(payload) : null;
+          if (target && target !== namespace) {
+            db.exec("BEGIN IMMEDIATE");
+            try {
+              // Only definitely unstarted work changes lanes. An existing target identity wins
+              // over a duplicate source, including a previously completed control outcome.
+              db.prepare("UPDATE OR IGNORE inbound_events SET namespace = ? WHERE namespace = ? AND event_id = ? AND status = 'queued'").run(target, namespace, row.event_id);
+              db.prepare(`DELETE FROM inbound_events WHERE namespace = ? AND event_id = ? AND status = 'queued'
+                AND EXISTS (SELECT 1 FROM inbound_events WHERE namespace = ? AND event_id = ?)`).run(namespace, row.event_id, target, row.event_id);
+              db.exec("COMMIT");
+            } catch (error) { db.exec("ROLLBACK"); throw error; }
+          }
+        }
+      }
       if (!cleanupTimer) {
         cleanupTimer = setInterval(() => {
           try { cleanup(); } catch (error) { log.error?.(`[inbox] ${namespace} cleanup failed: ${error?.message || error}`); }

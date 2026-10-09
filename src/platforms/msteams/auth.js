@@ -4,6 +4,7 @@
 // than pulled in as `botbuilder` + `@azure/msal-node` and their dependency trees. Cached and
 // single-flighted because a streamed answer edits its message once a second and every one of those
 // edits needs a bearer token.
+import { teamsRequest } from './request.js';
 const LOGIN_HOST = "https://login.microsoftonline.com";
 // The audience every Bot Framework connector call is issued against.
 export const BOT_SCOPE = "https://api.botframework.com/.default";
@@ -17,7 +18,7 @@ const EXPIRY_MARGIN_MS = 60_000;
 // typo or an attempt to redirect our client credentials at an attacker-controlled STS.
 const TENANT_RE = /^[A-Za-z0-9][A-Za-z0-9.-]{0,120}$/;
 
-export function createTeamsAuth({ clientId, clientSecret, tenantId = MULTI_TENANT, scope = BOT_SCOPE, fetchImpl = fetch, now = Date.now } = {}) {
+export function createTeamsAuth({ clientId, clientSecret, tenantId = MULTI_TENANT, scope = BOT_SCOPE, fetchImpl = fetch, now = Date.now, timeoutMs = 15_000 } = {}) {
   if (![BOT_SCOPE, GRAPH_SCOPE].includes(scope)) throw new Error("Unsupported Teams token scope");
   const id = String(clientId || "").trim();
   const secret = String(clientSecret || "");
@@ -28,9 +29,9 @@ export function createTeamsAuth({ clientId, clientSecret, tenantId = MULTI_TENAN
   let cached = null;
   let inFlight = null;
 
-  async function refresh() {
+  async function refresh(signal) {
     const res = await fetchImpl(`${LOGIN_HOST}/${tenant}/oauth2/v2.0/token`, {
-      method: "POST",
+      method: "POST", signal,
       headers: { "content-type": "application/x-www-form-urlencoded" },
       body: new URLSearchParams({
         grant_type: "client_credentials",
@@ -68,7 +69,7 @@ export function createTeamsAuth({ clientId, clientSecret, tenantId = MULTI_TENAN
     tenantId: tenant,
     async token() {
       if (cached && cached.expiresAt > now()) return cached.token;
-      if (!inFlight) inFlight = refresh().finally(() => { inFlight = null; });
+      if (!inFlight) inFlight = teamsRequest(refresh, { timeoutMs }).finally(() => { inFlight = null; });
       return inFlight;
     },
     reset() { cached = null; },

@@ -43,7 +43,7 @@ app.use("/api", createChannelsRouter({
 app.use("/api", createAdminRouter({ slack: { snapshot: () => ({ status: "disconnected", connected: false }), getClient: () => null } }));
 const publicDir = fileURLToPath(new URL("../public", import.meta.url));
 app.use(express.static(publicDir, { dotfiles: "allow" }));
-app.get("/conversations/channel/:channelId", (_req, res) => res.sendFile(path.join(publicDir, "index.html")));
+app.get("/conversations/channel/:channelId", (_req, res) => res.sendFile(path.join(publicDir, "index.html"), { dotfiles: "allow" }));
 const server = await new Promise((resolve) => { const instance = app.listen(0, "127.0.0.1", () => resolve(instance)); });
 const base = `http://127.0.0.1:${server.address().port}`;
 after(() => { server.closeAllConnections(); server.close(); });

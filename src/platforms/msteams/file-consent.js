@@ -70,7 +70,7 @@ export function createTeamsFileConsent({ connector, authorizeWorkspace, fetchImp
       const authorized = await authorizeWorkspace(row.source);
       if (!authorized?.root) throw new Error("Workspace access was not authorized.");
       const file = await snapshot(authorized.root, relative);
-      const destination = message.isDM || message.kind === "dm" ? message.rawConversationId : await connector.openDm(message.userId);
+      const destination = message.isDM || message.kind === "dm" ? message.rawConversationId : await connector.openDm(message.userId, { sourceConversationId: message.rawConversationId });
       if (!isConversationId(destination)) throw new Error("Cannot open your personal Teams chat. Install the app personally and try again.");
       if (!pending.has(id) || row.expiresAt <= now()) throw new Error("File consent preparation expired. Try again.");
       Object.assign(row, file, { conversationId: destination, ready: true });

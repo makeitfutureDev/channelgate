@@ -192,6 +192,85 @@ example server behind HTTPS on a public host. Record the token's last four chara
 - Private registry writes require the requester's explicitly selected personal Airtable connection.
   Definitions prepared; account selection and live execution remain pending. These are not PASS cases.
 
+## Teams text runtime and transport reliability acceptance (2026-10-09)
+
+Automated fixtures use scratch SQLite and stubbed, signed Bot Framework envelopes; they do not
+count as live Teams client or provider acceptance. Run the focused tests first, then every
+Teams-related regression file using an explicit file list (never a bare test glob):
+
+```sh
+node --test test/teams-text-model-lock.test.js test/teams-routing-timeout.test.js \
+  test/teams-durable-intake.test.js test/platform-teams-event-transport.test.js \
+  test/teams-model-command.test.js test/teams-settings-general.test.js \
+  test/platform-controls.test.js test/platform-ingest.test.js test/platform-run-details.test.js
+```
+
+- Text controls: start with enabled Claude and Codex, distinct engine-specific model/effort
+  defaults and a disposable session. Parameterized `/model` selections must persist the requested
+  compatible engine/model, clear incompatible effort, and reject disabled engines without writes.
+  In a dedicated channel Codex-login fixture, `/model claude sonnet` must refuse and preserve the
+  entire saved runtime triple. `/status`, `/effort` and `/model ... default` must name compatible
+  inherited values instead of another engine's model or unsupported effort.
+- Concurrent text selection: admit a different turn or settings save while engine availability
+  checks await. The command must refuse without overwriting that work. Read a single complete
+  runtime triple, never a partially written engine/model/effort combination.
+- Durable intake: verify a signed message is stored before HTTP 200, redelivery is deduplicated,
+  queue saturation/persistence errors receive retryable failure, and restart resumes only queued
+  work. Recovered running work produces a notice instead of another engine/tool execution. Raw
+  attachments must rebuild download handlers rather than persisting executable callbacks.
+- Queue controls: occupy four ordinary dispatch slots and queue two more same-session turns.
+  `/status` reports pending work; owner/admin Stop/Clear and authorized reaction Stop cancel it
+  before any queued provider turn. A quoted group-root nonauthor cannot cancel another actor's
+  work. Unapproved and unmentioned queued messages cannot block the owner's controls. Verify
+  native model Apply refuses a durable pending turn, legacy Graph dispatch queue keys recover,
+  and a Graph Stop notification reaches control intake while all ordinary slots are occupied.
+- Routing: persist a verified EMEA source for one bot/conversation; recreate its connector and
+  verify sends, edits, roster reads and deletion still target that source. Another bot's same
+  conversation ID must retain its own route. Invalid service hosts never replace the saved route.
+  A private card opens its DM through the source service; subsequent DM delivery retains that
+  route after connector recreation. Native `/files` and `/sendfile` pass the source conversation.
+- Timeouts: an unresolved token lookup, HTTP fetch or response-body read must settle at the
+  configured fixture deadline. A stalled token refresh must allow a later fresh lookup. Caller
+  cancellation aborts a pending placeholder send. Timeout/abort does not repeat an uncertain POST;
+  existing HTTP status retry rules still apply.
+
+Live fixtures: one installed personal chat, group and channel with approved owner/member and
+admin actors; separate default-login Claude/Codex conversations; a dedicated channel Codex login;
+an authenticated native Teams desktop, web and mobile client; access to the target gateway's
+runtime settings/revision and permitted reconnect controls. Use synthetic data only, record and
+restore original runtime pins, and verify actual settings rather than inferring them from names.
+
+- [ ] LIVE, once per Claude/Codex configuration and required native client: complete
+  `TEAMS-MODEL-01`, `TEAMS-MODEL-02`, `TEAMS-MODEL-03` and the General/model section of Teams
+  conversation settings acceptance below. Record trusted Execute/Submit callbacks, before/after
+  runtime triples and a real next provider turn; a Graph send acknowledgement is insufficient.
+- [ ] LIVE, dedicated Codex-login fixture: send `/model claude sonnet` (mention the bot outside
+  personal chat), require refusal and unchanged model/effort/engine, then `/status` and
+  `Reply exactly TEAMS_TEXT_CODEX_OK`. Require Codex in the observed runtime and the exact answer.
+  In an unlocked fixture select Claude, then Codex with listed compatible models and supported
+  effort. Each `/status` and next provider turn must agree; restore the original pins afterward.
+- [ ] LIVE routing/reconnect: capture the signed activity's approved source service and native
+  root. Require the foreground reply and permitted roster lookup to use it. Disconnect/reconnect
+  through authorized admin controls, then deliver a harmless background/scheduled result to the
+  same native root. Open private `/files` and send a synthetic file through consent; the new
+  personal chat must keep the source service. Require native installed manifest `supportsFiles`
+  before file-consent acceptance; its absence is a missing fixture, not a successful send.
+- [ ] LIVE cancellation: with a controlled unavailable Bot Framework request or token endpoint,
+  require bounded failure rather than a stranded session. Stop while placeholder delivery is
+  waiting; no engine turn may start afterward. Do not manufacture real provider outages or
+  repeat a send whose delivery is uncertain.
+- [ ] LIVE durable intake, both engines: start four synthetic long turns in distinct approved
+  roots, then submit two prompts in one busy root. Require an authorized queued notice and
+  accurate `/status`; owner Stop must prevent both queued prompts from starting. Repeat with
+  Clear, native reaction Stop and native `/model` Apply; a member who does not own the work must
+  receive refusal. Restart/reconnect using authorized controls with one accepted queued prompt
+  and one running turn: only the queued prompt resumes; the uncertain running turn receives a
+  notice without duplicate provider/tool execution. Capture native activity IDs, signed receipt,
+  durable event status and actual engine starts. Restore synthetic fixtures afterward.
+
+No desktop/web/mobile result or private registry update is inferred from automated fixtures.
+Record blocked fixtures and unexecuted gates explicitly for both engines.
+
 ## Microsoft Teams `/model` Load models acceptance (2026-10-08)
 
 - Automated: `test/teams-model-command.test.js` verifies the card matches Settings → General:

@@ -8,8 +8,8 @@
 //
 // Two rules the handler exists to enforce:
 //   • authenticate BEFORE looking at the body — the endpoint is public
-//   • answer 200 immediately and run the turn afterwards — Bot Service expects a fast ack and
-//     retries anything else, so doing the work inline would deliver the same message repeatedly
+//   • persist verified activity before answering 200, then dispatch asynchronously — Bot Service
+//     retries anything else, and an acknowledged request must survive a daemon restart
 import { createHash } from "node:crypto";
 import { isTeamsCardInteraction, teamsCardErrorResponse } from "./interactions.js";
 import { verifyTeamsRequest, activityFingerprint, createJwksCache } from "./verify.js";
@@ -17,12 +17,26 @@ import { normalizeActivity } from "./activity.js";
 import { validateServiceUrl } from "./api.js";
 import { createDedupe } from "../googlechat/pubsub.js";
 
-export function createTeamsWebhook({ appId, botId = "", onMessage, jwks = null, log = console, dedupe = null, onActivity = null, graphEventsEnabled = false, onInvoke = null, resolveFile = null, getActivationReactions = () => undefined } = {}) {
+// Rebuild lazy attachment callbacks at dispatch, never serialize normalized messages/functions.
+// Durable intake lets handler failures propagate so ambiguous work gets an interruption notice.
+export function createTeamsActivityDispatcher({ botId = "", onMessage, onActivity = null, graphEventsEnabled = false, resolveFile = null, getActivationReactions = () => undefined } = {}) {
+  return async function dispatchTeamsActivity({ activity, serviceUrl }) {
+    if (onActivity) await onActivity(activity);
+    // Graph owns revisions/reactions in non-personal conversations when enabled.
+    if (graphEventsEnabled && String(activity.conversation?.conversationType).toLowerCase() !== "personal"
+      && ["messageupdate", "messagereaction"].includes(String(activity.type).toLowerCase())) return;
+    const message = normalizeActivity(activity, { botId, resolveFile, activationReactions: getActivationReactions() });
+    if (message) await onMessage(message, { serviceUrl });
+  };
+}
+
+export function createTeamsWebhook({ appId, botId = "", onMessage, jwks = null, log = console, dedupe = null, onActivity = null, graphEventsEnabled = false, onInvoke = null, resolveFile = null, getActivationReactions = () => undefined, acceptActivity = null } = {}) {
   if (!appId) throw new Error("Teams webhook requires the bot app id");
   if (typeof onMessage !== "function") throw new TypeError("Teams webhook requires an onMessage handler");
   const keys = jwks || createJwksCache();
   const seen = dedupe || createDedupe(500);
   const invokes = new Map();
+  const dispatch = createTeamsActivityDispatcher({ botId, onMessage, onActivity, graphEventsEnabled, resolveFile, getActivationReactions });
 
   return async function handleTeamsActivity(req, res) {
     const activity = req.body || {};
@@ -76,17 +90,29 @@ export function createTeamsWebhook({ appId, botId = "", onMessage, jwks = null, 
       return;
     }
 
+    if (acceptActivity) {
+      if (!activity.id || !activity.conversation?.id) {
+        res.status(400).json({ error: "incomplete activity" });
+        return;
+      }
+      try {
+        // Only verified raw activity crosses the persistence boundary. Acceptance is fast;
+        // normalization and engine work happen in the durable inbox after the HTTP response.
+        await acceptActivity({ activity, serviceUrl });
+      } catch (error) {
+        log.error?.(`[msteams] durable acceptance failed: ${error?.message || error}`);
+        res.status(503).json({ error: "temporarily unavailable" });
+        return;
+      }
+      res.status(200).json({});
+      return;
+    }
+
     res.status(200).json({});
 
     try {
       if (seen.isDuplicate(activityFingerprint(activity))) return;
-      if (onActivity) await onActivity(activity);
-      // Graph is the sole owner of revisions/reactions when enabled; two transports must not
-      // dispatch the same action twice. New Bot Framework messages retain their attachment path.
-      if (graphEventsEnabled && String(activity.conversation?.conversationType).toLowerCase() !== "personal" && ["messageupdate", "messagereaction"].includes(String(activity.type).toLowerCase())) return;
-      const message = normalizeActivity(activity, { botId, resolveFile, activationReactions: getActivationReactions() });
-      if (!message) return; // not a message activity, or our own echo
-      await onMessage(message, { serviceUrl });
+      await dispatch({ activity, serviceUrl });
     } catch (err) {
       log.error?.(`[msteams] inbound handling failed: ${err?.message || err}`);
     }
