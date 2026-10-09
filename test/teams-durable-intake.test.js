@@ -548,7 +548,11 @@ test("legacy queued Graph Stop recovers into the control lane while four normal 
   t.after(async () => { held.finish(); await original.current.stop(); });
   const nativeId = `19:${randomUUID()}`;
   const active = Array.from({ length: 4 }, (_, i) => mentioned(appId, nativeId, `root-${i}`));
-  for (const body of active) await original.current.handler(request(appId, body), response());
+  // Start the target session last: dispatch order is independent of the native root identity.
+  for (const body of [...active].reverse()) {
+    await original.current.handler(request(appId, body), response());
+    await until(() => held.seen.some(run => run.threadKey === body.conversation.id.split(';messageid=')[1]));
+  }
   await until(() => held.seen.length === 4);
   await original.current.stop();
   const legacyActivity = { ...active[0], id: randomUUID(), type: "messageReaction", replyToId: active[0].id, reactionsAdded: [{ type: "stop_sign" }] };
@@ -575,7 +579,8 @@ test("legacy queued Graph Stop recovers into the control lane while four normal 
   await until(() => uncertainRow()?.status === "done");
   assert.equal(getDb().prepare("SELECT 1 FROM inbound_events WHERE namespace = ? AND event_id = ?")
     .get(`msteams-graph-controls:${appId}`, uncertain.raw.eventId), undefined, "ambiguous running controls must receive an interruption notice, never a new control dispatch");
-  assert.equal(held.seen[0].signal.aborted, true);
+  assert.equal(held.seen.find(run => run.threadKey === "root-0").signal.aborted, true);
+  assert.ok(held.seen.filter(run => run.threadKey !== "root-0").every(run => !run.signal.aborted));
   assert.ok(original.posted.some(payload => /Stop requested/.test(payload.text)));
   assert.ok(active.slice(1).every(body => row(appId, body)?.status === "running"));
   held.finish();

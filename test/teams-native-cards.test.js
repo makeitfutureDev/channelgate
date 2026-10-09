@@ -5,7 +5,9 @@ import { approvalCard, modelSettingsCard, formCard, settingsCard, messageCard, a
 import { normalizeTeamsInteraction, createTeamsInteractionHandler } from "../src/platforms/msteams/interactions.js";
 import { createTeamsWebhook } from "../src/platforms/msteams/webhook.js";
 import { createTeamsApi, DEFAULT_SERVICE_URL } from "../src/platforms/msteams/api.js";
-import { createTeamsConnector } from "../src/platforms/msteams/connector.js";
+import { ensureTestEnv } from "./helpers.js";
+ensureTestEnv();
+const { createTeamsConnector } = await import("../src/platforms/msteams/connector.js");
 
 const APP = "11111111-2222-3333-4444-555555555555";
 const { privateKey, publicKey } = generateKeyPairSync("rsa", { modulusLength: 2048 });
