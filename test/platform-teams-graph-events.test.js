@@ -72,6 +72,25 @@ test("Graph validation token is echoed plain text without authenticating or fetc
   assert.equal(f.requests.length, 0);
 });
 
+test('snapshot activation cutoff is persisted once before subscription reuse and survives renewals', async () => {
+  const f = fixture();
+  const row = await f.service.ensure(f.row);
+  assert.equal(row.reactionSnapshotsStartedAt, '2026-09-09T10:00:00.000Z');
+  f.advance(21 * 60_000);
+  await f.service.renew();
+  assert.equal(f.rows.get(f.row.conversationId).reactionSnapshotsStartedAt, row.reactionSnapshotsStartedAt);
+  const saved = f.rows.get(f.row.conversationId);
+  delete saved.reactionSnapshotsStartedAt;
+  f.rows.set(f.row.conversationId, saved);
+  const count = f.requests.length;
+  const upgraded = await f.service.ensure(f.row);
+  assert.equal(upgraded.reactionSnapshotsStartedAt, '2026-09-09T10:21:00.000Z');
+  assert.equal(f.requests.length, count, 'initialize the cutoff even while reusing a live subscription');
+  f.advance(1000);
+  const refreshed = await f.service.refresh(upgraded);
+  assert.equal(refreshed.reactionSnapshotsStartedAt, upgraded.reactionSnapshotsStartedAt);
+});
+
 test("Graph rejects forged notifications, wrong scopes and URL traversal before GET", async () => {
   const f = fixture();
   await f.service.ensure(f.row);

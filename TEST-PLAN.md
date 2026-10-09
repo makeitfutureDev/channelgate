@@ -156,6 +156,35 @@ example server behind HTTPS on a public host. Record the token's last four chara
 
 ## Platform activation emoji acceptance (2026-10-07)
 
+### Teams history-free activation regression (2026-10-09)
+
+- Automated, engine-independent intake: `test/teams-reaction-snapshots.test.js` reproduces a
+  channel message with a fresh current Alien reaction and no `messageHistory`. Verify one event
+  as the roster-resolved reactor, target/root attribution on an older message, no mutation of
+  provider snapshots, stable identity across retries and later history with a different
+  modification timestamp, and a distinct identity after remove/re-add. Invalid/future/old
+  timestamps, absent upgrade cutoffs, removals/ambiguous history, deleted/other-bot messages,
+  missing/bot roster identities and stale configuration revisions remain inactive. Stop/Tick
+  cannot execute through snapshot fallback. Existing history event IDs remain unchanged.
+- `test/platform-teams-graph-events.test.js` verifies the snapshot-support cutoff is saved before
+  reusing a live subscription and survives maintenance and configuration refresh.
+- `test/platform-teams-event-transport.test.js` verifies legacy roster `objectId` identifies the
+  same addressable member and cannot replace an existing modern `aadObjectId`. Snapshot tests
+  include multiple activation emojis from one reactor and reordered current reactions.
+- [ ] LIVE `TEAMS-SNAPSHOT-ACTIVATION-CLAUDE-01` and `TEAMS-SNAPSHOT-ACTIVATION-CODEX-01`:
+  disposable operator-owned Teams QA channel pinned separately to each engine, observation
+  enabled, app installed with `ChannelMessage.Read.Group`, and a live channel subscription.
+  After the upgraded transport starts, post `Reply exactly SNAPSHOT_ACTIVATION_OK` without a
+  mention and add Alien. Capture the bot-authenticated Graph response; it must have the fresh
+  reaction's provider timestamp and absent/empty history. Pass: one run as the authorized
+  reactor, correct channel/thread/engine and exactly `SNAPSHOT_ACTIVATION_OK`; later updates
+  cannot start another run. Remove and re-add Alien: exactly one new run. Also react on an older
+  human message; new additions still activate. Pre-upgrade reactions remain inactive. Record
+  subscription cutoff, message/reaction/run IDs and outcomes for both engines.
+- Private QA definitions must be mirrored through the requester's selected personal Airtable
+  connection. This run exposes only `composio-agent`; registry writes and live engine acceptance
+  remain pending and are not recorded as PASS.
+
 - Automated settings/API coverage: `test/platform-reaction-settings.test.js` verifies separate
   defaults, retained legacy Slack selection, independent partial saves, bounded validation,
   reserved controls, atomic invalid-request refusal, default reset and safe API roundtrip.

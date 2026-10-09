@@ -155,7 +155,8 @@ export function createTeamsApi({ auth, serviceUrl = DEFAULT_SERVICE_URL, fetchIm
       const list = Array.isArray(res) ? res : (res?.members || []);
       return list
         .filter((m) => m?.id)
-        .map((m) => ({ id: m.id, aadObjectId: m.aadObjectId || "", name: m.name || "", email: m.email || m.userPrincipalName || "" }));
+        // Some live Teams rosters retain the legacy Entra field name objectId.
+        .map((m) => ({ id: m.id, aadObjectId: m.aadObjectId || m.objectId || "", name: m.name || "", email: m.email || m.userPrincipalName || "" }));
     },
   };
 }
