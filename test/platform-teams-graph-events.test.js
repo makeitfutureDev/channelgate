@@ -14,6 +14,7 @@ function fixture(options = {}) {
     getActivationReactions: options.getActivationReactions,
     getActivationVersion: options.getActivationVersion,
     log: (...args) => logs.push(args),
+    observe: options.observe,
     store: { list: async () => [...rows.values()].map(row => ({ ...row })), put: async row => rows.set(row.conversationId, { ...row }), remove: async id => rows.delete(id) },
     onMessage: async (...args) => { if (options.failCallback) throw new Error("queue unavailable"); messages.push(args); },
     fetchImpl: async (url, init) => {
@@ -27,8 +28,9 @@ function fixture(options = {}) {
   const row = { conversationId: "teams:19:chat@thread.v2", resource: "/chats/19:chat@thread.v2/messages", context: { conversation: { id: "19:chat@thread.v2" } } };
   const notification = () => ({ subscriptionId: "sub-1", clientState: rows.get(row.conversationId)?.clientState, tenantId: "tenant", changeType: "updated", resource: "chats('19:chat@thread.v2')/messages('123')", resourceData: { id: "123" } });
   async function handle(body, query) {
-    const response = { code: null, mime: null, body: null, status(code) { this.code = code; return this; }, type(mime) { this.mime = mime; return this; }, send(body) { this.body = body; return this; }, end() { return this; } };
+    const response = { code: null, mime: null, body: null, status(code) { this.code = code; return this; }, type(mime) { this.mime = mime; return this; }, send(body) { this.body = body; options.onResponseEnd?.(); return this; }, end() { options.onResponseEnd?.(); return this; } };
     await service.handle({ body, query }, response);
+    await new Promise(resolve => setImmediate(resolve));
     return response;
   }
   return { service, rows, row, notification, requests, messages, logs, handle, advance: ms => { time += ms; }, fail: status => { fail = status; } };
@@ -70,6 +72,56 @@ test("Graph validation token is echoed plain text without authenticating or fetc
   assert.equal(response.mime, "text/plain");
   assert.equal(response.body, "opaque decoded + token");
   assert.equal(f.requests.length, 0);
+});
+
+test('callback diagnostics distinguish receipt, authenticated acceptance and rejection without provider secrets', async () => {
+  const records = [], f = fixture({ observe: (event, fields) => records.push({ event, fields }), enqueueNotifications: async () => {} });
+  await f.service.ensure(f.row);
+  await f.handle(null, { validationToken: 'private-validation' });
+  assert.deepEqual(records.pop(), { event: 'teams_graph_callback_validated', fields: { status: 200 } });
+  for (const [patch, reason] of [
+    [{ subscriptionId: 'unknown-private-subscription' }, 'unknown_subscription'],
+    [{ resource: 'private-invalid-resource' }, 'invalid_resource'],
+    [{ tenantId: 'private-tenant' }, 'tenant_mismatch'],
+    [{ clientState: 'private-forged-state' }, 'client_state_mismatch'],
+    [{ changeType: 'private-unknown-change' }, 'unsupported_change'],
+  ]) {
+    assert.equal((await f.handle({ value: [{ ...f.notification(), ...patch }] })).code, 403);
+    assert.equal(records.at(-2).event, 'teams_graph_callback_received');
+    assert.deepEqual(records.at(-1).fields, { status: 403, reason });
+  }
+  await f.handle({ value: [] });
+  assert.deepEqual(records.at(-1).fields, { status: 400, reason: 'invalid_batch' });
+  assert.equal((await f.handle({ value: [f.notification()] })).code, 202);
+  assert.deepEqual(records.at(-1), { event: 'teams_graph_callback_accepted', fields: { channel: f.row.conversationId, messageId: '123', changeType: 'updated', status: 202 } });
+  const serialized = JSON.stringify(records);
+  assert.ok(!serialized.includes('private-'));
+  assert.ok(!serialized.includes(f.rows.get(f.row.conversationId).clientState));
+  assert.ok(!serialized.includes('test-token'));
+});
+
+test('diagnostic failures cannot alter callback decisions, and GET errors remain retryable', async () => {
+  for (const observe of [() => { throw new Error('diagnostics failed'); }, () => Promise.reject(new Error('diagnostics failed'))]) {
+    const f = fixture({ observe }); await f.service.ensure(f.row);
+    assert.equal((await f.handle({ value: [f.notification()] })).code, 200);
+    assert.equal((await f.handle({ value: [{ ...f.notification(), clientState: 'wrong' }] })).code, 403);
+  }
+  const records = [], f = fixture({ observe: (event, fields) => records.push({ event, fields }) });
+  await f.service.ensure(f.row); f.fail(429);
+  assert.equal((await f.handle({ value: [f.notification()] })).code, 503);
+  assert.deepEqual(records.at(-1), { event: 'teams_graph_callback_failed', fields: { status: 503, providerStatus: 429 } });
+  assert.ok(!records.some(record => record.event === 'teams_graph_callback_accepted'));
+});
+
+test('callback response is submitted before invoking synchronous audit observers', async () => {
+  const timeline = [], f = fixture({ onResponseEnd: () => timeline.push('response'), observe: () => timeline.push('observe'), enqueueNotifications: async () => {} });
+  await f.service.ensure(f.row);
+  for (const [body, query] of [[null, { validationToken: 'challenge' }], [{ value: [f.notification()] }], [{ value: [] }]]) {
+    timeline.length = 0;
+    await f.handle(body, query);
+    assert.equal(timeline[0], 'response');
+    assert.ok(timeline.includes('observe'));
+  }
 });
 
 test('snapshot activation cutoff is persisted once before subscription reuse and survives renewals', async () => {

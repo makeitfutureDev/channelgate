@@ -449,3 +449,13 @@ use different IDs from Graph chats: personal edits and reactions to bot answers 
 bot event path. Graph subscriptions here cover group chats and channels. Removing Xavier retires
 the corresponding subscription and invalidates its queued event work. Graph file descriptors are
 reported when unavailable; this option does not grant SharePoint file-download permissions.
+
+For Graph delivery troubleshooting, filter the admin Audit feed for `teams_graph_callback_*`.
+`received` proves a notification POST reached the Graph handler; `accepted` records the verified
+conversation/message target only after successful processing or durable acceptance. `rejected`
+records a fixed reason (invalid batch, unknown subscription, invalid resource, tenant/client-state
+mismatch or unsupported change), and `failed` records a retryable 503 and optional numeric provider
+status. Validation challenges have their own `validated` event and do not prove notification
+delivery. Diagnostics exclude tokens, request headers, bodies and unverified identifiers. If no
+receipt exists, correlate provider delivery with ingress/security logs; an empty queue cannot
+distinguish a blocked POST from an absent provider notification.

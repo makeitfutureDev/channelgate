@@ -18,6 +18,10 @@ product overview.
 
 ## Unreleased
 
+- Add Teams Graph callback diagnostics to the operational audit: receipt, validation, authenticated
+  target acceptance and bounded rejection reasons, without logging callback credentials or payloads.
+  Subscription retry warnings retain their numeric provider status in service logs.
+
 - Fix Teams activation reactions being ignored when Microsoft Graph returns current reactions
   without message history. Fresh provider-timestamped additions retain reactor authorization and
   share deduplication with later history; a saved upgrade cutoff excludes older snapshots.

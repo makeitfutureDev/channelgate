@@ -158,6 +158,13 @@ example server behind HTTPS on a public host. Record the token's last four chara
 
 ### Teams history-free activation regression (2026-10-09)
 
+- Engine-independent callback observability: `platform-teams-graph-events.test.js` verifies fixed
+  rejection reasons, credential/payload exclusion, retryable GET failures and unchanged callback
+  decisions when diagnostics throw or reject. Audit observers run after the callback response is
+  submitted. `platform-teams-event-transport.test.js` verifies
+  accepted target metadata reaches the operational audit. Live delivery troubleshooting compares
+  `teams_graph_callback_received`, `_accepted`, `_rejected` and `_failed` with notification inbox
+  rows; absence of intake alone does not prove Microsoft sent no notification.
 - Automated, engine-independent intake: `test/teams-reaction-snapshots.test.js` reproduces a
   channel message with a fresh current Alien reaction and no `messageHistory`. Verify one event
   as the roster-resolved reactor, target/root attribution on an older message, no mutation of
