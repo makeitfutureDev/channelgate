@@ -18,6 +18,10 @@ function publicJob(job) {
     slug: job.slug,
     channelId: job.slackThread ? job.channelId : null,
     slackThread: Boolean(job.slackThread),
+    conversationKey: job.conversationKey || null,
+    threadTs: job.slackThread ? job.threadKey : null,
+    threadReused: Boolean(job.threadReused),
+    threadPermalink: job.threadPermalink || null,
     sessionId: job.sessionId,
     resumeCommand: job.resumeCommand,
     createdAt: job.createdMs ? new Date(job.createdMs).toISOString() : null,
@@ -39,8 +43,8 @@ export function createRunsRouter({ slack } = {}) {
 
   router.post("/", async (req, res, next) => {
     try {
-      const { message, channel, author, file, fileUrl, fileName, webhook, engine, model, effort, mode, idempotencyKey } = req.body ?? {};
-      const started = await startApiRun({ message, channel, author, file, fileUrl, fileName, webhook, engine, model, effort, mode, idempotencyKey, slack });
+      const { message, channel, author, file, fileUrl, fileName, webhook, engine, model, effort, mode, idempotencyKey, conversationKey } = req.body ?? {};
+      const started = await startApiRun({ message, channel, author, file, fileUrl, fileName, webhook, engine, model, effort, mode, idempotencyKey, conversationKey, slack });
       if (!started.ok) return res.status(started.code || 400).json({ ok: false, error: started.error });
       // 200 for an idempotent hit on an existing job (nothing new started), 202 for a fresh run.
       res.status(started.reused ? 200 : 202).json({
@@ -51,6 +55,10 @@ export function createRunsRouter({ slack } = {}) {
         slug: started.slug,
         channelId: started.channelId,
         slackThread: started.slackThread,
+        conversationKey: started.conversationKey,
+        threadTs: started.threadTs,
+        threadReused: started.threadReused,
+        threadPermalink: started.threadPermalink,
         sessionId: started.sessionId,
         resumeCommand: started.resumeCommand,
         reused: Boolean(started.reused),

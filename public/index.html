@@ -243,6 +243,7 @@
                 <tbody>
                   <tr><td><code>message</code></td><td>string</td><td>The prompt. Required unless a file is supplied.</td></tr>
                   <tr><td><code>channel</code></td><td>string</td><td>Optional. Slack channel <em>id</em>, folder <em>slug</em>, or channel <em>name</em>. Omit → headless <code>api</code> folder.</td></tr>
+                  <tr><td><code>conversationKey</code></td><td>string</td><td>Optional external conversation identifier (1–200 chars, no control characters). Requires a registered Slack channel and connected bot. The same channel + key reuses a persistent thread; different events still start separate jobs.</td></tr>
                   <tr><td><code>author</code></td><td>string</td><td>Optional attribution label (≤64 chars). Defaults to <code>api</code>.</td></tr>
                   <tr><td><code>file</code></td><td>object/string</td><td>Inline attachment: <code>{ name, dataBase64 }</code> (or a raw base64 string). ≤25&nbsp;MB.</td></tr>
                   <tr><td><code>fileUrl</code></td><td>string</td><td>http(s) URL the daemon downloads into the run's <code>uploads/</code>. ≤25&nbsp;MB.</td></tr>
@@ -254,13 +255,15 @@
                   <tr><td><code>idempotencyKey</code></td><td>string</td><td>Any unique-per-request string. A repeat POST with the same key within 15&nbsp;min returns the original job instead of starting a second run.</td></tr>
                 </tbody>
               </table>
-              <p class="desc"><strong>Responses:</strong> <code>202</code> a fresh run started · <code>200</code> an idempotent hit (<code>reused:true</code>) · <code>400</code> validation error · <code>429</code> too many runs in flight (max 25). <code>401</code> if the token is missing or wrong.</p>
+              <p class="desc"><strong>Responses:</strong> <code>202</code> a fresh run started · <code>200</code> an idempotent hit (<code>reused:true</code>) · <code>400</code> validation error · <code>409</code> an event key belongs to another keyed conversation · <code>429</code> too many runs in flight (max 25) · <code>503</code> Slack unavailable or thread verification failed for a keyed conversation. <code>401</code> if the token is missing or wrong.</p>
+              <p class="desc">POST, status, list and webhook responses include <code>threadTs</code>, <code>threadReused</code> and <code>threadPermalink</code>. Headless runs return null timestamps/links; link lookup failure also returns null. <code>threadReused</code> means an existing thread was used for this event; <code>reused</code> means the event itself was deduplicated. Keyed runs resolve the agent session after acquiring the thread queue: <code>sessionId</code> and <code>resumeCommand</code> are null until completion. A deleted root is replaced; access errors or throttling fail without creating a duplicate thread.</p>
               <pre class="apidoc-pre"><code>curl -X POST <span class="apidoc-base">https://your-gateway</span>/api/runs \
   -H "X-API-Key: &lt;your token&gt;" \
   -H "Content-Type: application/json" \
   -d '{
     "message": "Summarize the last 24h of #ops and list open action items",
     "channel": "C0123456789",
+    "conversationKey": "mail:thread:conversation-42",
     "idempotencyKey": "make-exec-42",
     "webhook": "https://hook.eu2.make.com/xxxxxxxx"
   }'</code></pre>
@@ -270,15 +273,19 @@
   "jobId": "a1b2c3d4e5f6",
   "status": "running",
   "engine": "claude",
-  "sessionId": "…",
-  "resumeCommand": "cd \"…\" &amp;&amp; claude --resume …",
+  "conversationKey": "mail:thread:conversation-42",
+  "threadTs": "1791540000.000001",
+  "threadReused": false,
+  "threadPermalink": "https://example.slack.com/archives/C0123456789/p1791540000000001",
+  "sessionId": null,
+  "resumeCommand": null,
   "statusUrl": "/api/runs/a1b2c3d4e5f6"
 }</code></pre>
             </div>
 
             <div class="setcard">
               <h4><span class="apidoc-verb get">GET</span> <code>/api/runs/:id</code> — status + result</h4>
-              <p class="desc">Poll the <code>statusUrl</code> from the start response. <code>status</code> is one of <code>running</code>, <code>completed</code>, <code>failed</code>, <code>stopped</code>, <code>interrupted</code>. The answer text is in <code>result</code> once completed.</p>
+              <p class="desc">Poll the <code>statusUrl</code> from the start response. <code>status</code> is one of <code>queued</code>, <code>running</code>, <code>completed</code>, <code>failed</code>, <code>stopped</code>, <code>interrupted</code>. The answer text is in <code>result</code> once completed.</p>
               <pre class="apidoc-pre"><code>{
   "ok": true,
   "jobId": "a1b2c3d4e5f6",
@@ -334,7 +341,7 @@
                   <tr><td><strong>Body</strong></td><td>JSON — <code>message</code> (required), optional <code>channel</code>, <code>webhook</code>, and <code>idempotencyKey</code> set to the Make execution id.</td></tr>
                 </tbody>
               </table>
-              <p class="desc">Point the <code>webhook</code> at a Make custom-webhook trigger so the scenario continues when the run finishes; setting <code>idempotencyKey</code> to <code>{{execution.id}}</code> means a scenario retry never fires the run twice.</p>
+              <p class="desc">Point the <code>webhook</code> at a Make custom-webhook trigger so the scenario continues when the run finishes. Set <code>conversationKey</code> to the external conversation ID to keep its events in one Slack thread, and <code>idempotencyKey</code> to a unique event ID to deduplicate retries within 15 minutes.</p>
             </div>
 
             <div class="setcard">
