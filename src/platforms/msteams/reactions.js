@@ -51,12 +51,16 @@ export function teamsReactionCutoverField(value) {
 
 // Graph can collapse a Teams picker variant onto its standard Unicode value. Never turn
 // ordinary Heart eyes into activation: require the provider's exact robot name and no custom art.
-export function teamsGraphReactionAction(reaction, activationReactions = DEFAULT_TEAMS_ACTIVATION_REACTIONS) {
+export function teamsGraphReactionKey(reaction) {
   const type = String(reaction?.reactionType || '').replace(/\uFE0F/g, '');
   if (type === '😍' && reaction?.displayName === 'Heart eyes robot' && !reaction.reactionContentUrl) {
-    return teamsReactionAction('hearteyesrobot', activationReactions);
+    return 'hearteyesrobot';
   }
-  return teamsReactionAction(reaction?.reactionType, activationReactions);
+  return teamsReactionKey(reaction?.reactionType);
+}
+
+export function teamsGraphReactionAction(reaction, activationReactions = DEFAULT_TEAMS_ACTIVATION_REACTIONS) {
+  return teamsReactionAction(teamsGraphReactionKey(reaction), activationReactions);
 }
 
 export function teamsGraphReactionCutoverField(reaction) {

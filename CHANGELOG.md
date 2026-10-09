@@ -18,6 +18,13 @@ product overview.
 
 ## Unreleased
 
+- Fix Teams activation reactions being ignored when Microsoft Graph returns current reactions
+  without message history. Fresh provider-timestamped additions retain reactor authorization and
+  share deduplication with later history; a saved upgrade cutoff excludes older snapshots.
+  Stop/Tick continue requiring explicit history, and removal history remains authoritative.
+  Resolve the authorized reactor from Teams rosters using either `aadObjectId` or the legacy
+  `objectId` field returned by some tenants.
+
 - Fix Teams text model choices bypassing a dedicated channel Codex login, and resolve inherited
   model/effort defaults against the selected engine. Bound Bot Framework authentication and
   outbound requests, support placeholder cancellation, and preserve authenticated regional

@@ -209,6 +209,12 @@ control-plane status.
   and fresh/current reaction checks. Newly accepted alias spellings have a persisted subscription
   cutoff so older reactions cannot activate on later unrelated Graph updates. Group/channel reactions need configured event delivery and
   Microsoft permissions. The handlers precede engine dispatch for Stop/Tick.
+  When Graph omits reaction history, a current activation reaction's fresh provider creation
+  timestamp can start a request, including on an older message. A persisted upgrade cutoff excludes
+  pre-upgrade snapshot reactions. Snapshot retries and later history share one addition identity;
+  existing removal history wins, and Stop/Tick still require explicit addition history.
+  Bot Framework rosters accept both modern `aadObjectId` and legacy `objectId` Entra identifiers
+  when resolving the addressable reactor; ordinary conversation/user authorization still applies.
 
 ## Claude login for nested commands
 

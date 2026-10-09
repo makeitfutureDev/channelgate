@@ -126,6 +126,20 @@ test("Graph snapshot processing resolves the reactor in its conversation and ded
   await transport.stop();
 });
 
+test('Bot Framework roster resolves legacy objectId without replacing modern aadObjectId', async () => {
+  const api = createTeamsApi({ auth: { token: async () => 'bot-token' }, fetchImpl: async () => ({
+    ok: true, json: async () => [
+      { id: '29:legacy', objectId: 'aad-legacy', name: 'Legacy' },
+      { id: '29:modern', aadObjectId: 'aad-modern', objectId: 'different', name: 'Modern' },
+      { id: '29:unknown', name: 'Unknown' },
+    ],
+  }) });
+  const members = await api.listMembers('19:channel@thread.tacv2');
+  assert.deepEqual(members.map(member => [member.id, member.aadObjectId]), [
+    ['29:legacy', 'aad-legacy'], ['29:modern', 'aad-modern'], ['29:unknown', ''],
+  ]);
+});
+
 test("Graph skips personal chats, resolves missing team GUID, and revokes uninstall", async () => {
   const f = fixture(), removed = [];
   f.graph.remove = async id => removed.push(id);

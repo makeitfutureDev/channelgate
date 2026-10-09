@@ -440,7 +440,11 @@ every row written before multi-platform support keeps resolving with no migratio
 
 Graph event processing intentionally accepts only edits/reaction additions from the preceding
 24 hours (and after subscription activation). This is shorter than the seven-day deduplication
-retention, so later updates cannot replay old message history. Personal Bot Framework conversations
+retention, so later updates cannot replay old message history. If Graph omits `messageHistory`,
+activation may use a present reaction's own `createdDateTime`, never the message's modification
+time. A persisted snapshot-support cutoff excludes reactions added before the upgraded transport
+starts, so remove and re-add the activation emoji for a fresh post-upgrade test. Existing removal
+history prevents fallback, and Stop/Tick still require explicit history. Personal Bot Framework conversations
 use different IDs from Graph chats: personal edits and reactions to bot answers stay on the native
 bot event path. Graph subscriptions here cover group chats and channels. Removing Xavier retires
 the corresponding subscription and invalidates its queued event work. Graph file descriptors are
