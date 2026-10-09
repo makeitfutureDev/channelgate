@@ -18,6 +18,15 @@ product overview.
 
 ## Unreleased
 
+- Fix Teams text model choices bypassing a dedicated channel Codex login, and resolve inherited
+  model/effort defaults against the selected engine. Bound Bot Framework authentication and
+  outbound requests, support placeholder cancellation, and preserve authenticated regional
+  reply routes across reconnects and private file/card delivery.
+- Persist ordinary Teams webhook intake before acknowledgement, recover queued work without
+  replaying uncertain running turns, and keep Stop/status reachable behind occupied dispatch
+  slots. Cancel durable queued turns under the existing author checks and protect text/native
+  model selection against queued work and concurrent runtime changes.
+
 - Make Teams `/help` easier to scan with a quick start, highlighted common commands and six
   expandable topics. Shorter descriptions and readable reaction names replace the long initial
   guide; the full text remains available when native card delivery fails.
@@ -2718,4 +2727,3 @@ copying cross-channel auto-memory.
   injected into `CLAUDE.md`; visible working folders under `~/Slack Agent/<channel>`.
 - Optional **admin-UI password**; one-command installer; encrypted config **backup/restore**;
   **launchd** service with `npm run update`.
-

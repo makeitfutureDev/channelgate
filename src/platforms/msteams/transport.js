@@ -9,13 +9,15 @@ import { createDurableInbox } from "../durable-inbox.js";
 import { createTeamsGraphEvents } from "./graph-events.js";
 import { createTeamsEventStore } from "./event-store.js";
 import { normalizeGraphEvents } from "./graph-activity.js";
-import { splitConversationId } from "./activity.js";
+import { normalizeActivity, splitConversationId } from "./activity.js";
 import { createTeamsAuth, GRAPH_SCOPE } from "./auth.js";
 import { createTeamsApi, DEFAULT_SERVICE_URL, validateServiceUrl, isConversationId } from "./api.js";
 import { createTeamsConnector } from "./connector.js";
-import { createTeamsWebhook } from "./webhook.js";
-import { createJwksCache } from "./verify.js";
+import { createTeamsActivityDispatcher, createTeamsWebhook } from "./webhook.js";
+import { activityFingerprint, createJwksCache } from "./verify.js";
 import { teamsActivationFingerprint } from "./reactions.js";
+import { sessionKeyForMessage } from "../reply-sessions.js";
+import { getDb, fromJson } from "../../db/index.js";
 
 // The bot's own identity in an activity: Bot Framework prefixes the app id with the "28:" channel
 // marker. Mention entities and the bot half of a new 1:1 conversation both use this form.
@@ -58,7 +60,62 @@ export async function startTeams({
   let inbox = null;
   let notificationInbox = null;
   let dispatchInbox = null;
+  let graphControlInbox = null;
+  let noticeInbox = null;
   const graphEventsEnabled = allMessageEvents === true;
+  const queueKey = inbound => JSON.stringify([inbound.conversationId, sessionKeyForMessage(inbound)]);
+  const botNamespace = `msteams-bot:${appId}`;
+  const graphNamespace = `msteams-graph-dispatch:${appId}`;
+  function queuePosition(conversationId) {
+    return getDb().prepare(`SELECT count(*) AS n FROM inbound_events
+      WHERE namespace IN (?, ?) AND conversation_id = ? AND status IN ('queued', 'running')`)
+      .get(botNamespace, graphNamespace, conversationId).n;
+  }
+  function pendingRows(conversationId, sessionKey) {
+    return getDb().prepare(`SELECT namespace, event_id, data FROM inbound_events
+      WHERE namespace IN (?, ?) AND conversation_id = ? AND status = 'queued' ORDER BY rowid`)
+      .all(botNamespace, graphNamespace, JSON.stringify([conversationId, sessionKey]));
+  }
+  const pendingAuthor = row => {
+    const payload = fromJson(row.data, {});
+    return payload.activity?.from?.id || payload.inbound?.userId || "";
+  };
+  const pendingInbound = row => {
+    const payload = fromJson(row.data, {});
+    return payload.inbound || normalizeActivity(payload.activity, { botId, activationReactions: getActivationReactions() });
+  };
+  connector.pendingForSession = async ({ conversationId, sessionKey, isEligible = async () => true }) => {
+    const rows = pendingRows(conversationId, sessionKey);
+    const eligible = [];
+    for (const row of rows) if (await isEligible(pendingInbound(row))) eligible.push(row);
+    return { count: eligible.length, authors: [...new Set(eligible.map(pendingAuthor))] };
+  };
+  connector.cancelPendingForSession = async ({ conversationId, sessionKey, authorId, authorIsAdmin, isEligible = async () => true }) => {
+    const eligibility = new Map();
+    for (const row of pendingRows(conversationId, sessionKey)) {
+      eligibility.set(`${row.namespace}:${row.event_id}`, await isEligible(pendingInbound(row)));
+    }
+    const db = getDb();
+    db.exec("BEGIN IMMEDIATE");
+    try {
+      const rows = pendingRows(conversationId, sessionKey);
+      // Admission lookups happen outside the transaction. If another row appeared during them,
+      // refuse this attempt rather than cancel an author whose current authority is unknown.
+      if (rows.some(row => !eligibility.has(`${row.namespace}:${row.event_id}`))) {
+        db.exec("ROLLBACK");
+        return { allowed: false, changed: true, cancelled: 0 };
+      }
+      if (!authorIsAdmin && rows.some(row => eligibility.get(`${row.namespace}:${row.event_id}`) && pendingAuthor(row) !== authorId)) {
+        db.exec("ROLLBACK");
+        return { allowed: false, cancelled: 0 };
+      }
+      const cancel = db.prepare("UPDATE inbound_events SET status = 'done', data = '{}' WHERE namespace = ? AND event_id = ? AND status = 'queued'");
+      let cancelled = 0;
+      for (const row of rows) cancelled += Number(cancel.run(row.namespace, row.event_id).changes);
+      db.exec("COMMIT");
+      return { allowed: true, cancelled };
+    } catch (error) { db.exec("ROLLBACK"); throw error; }
+  };
   if (graphEventsEnabled) {
     if (!publicUrl || !tenantId) throw new Error("Teams all-message events require Public URL and tenant ID");
     const graphAuth = deps.graphAuth || createTeamsAuth({ clientId: appId, clientSecret: appPassword, tenantId, scope: GRAPH_SCOPE });
@@ -66,8 +123,8 @@ export async function startTeams({
     eventStore = deps.eventStore || createTeamsEventStore({ appId });
     const activeSubscription = async row => (await eventStore.list()).some(current =>
       current.conversationId === row.conversationId && current.startedAt === row.startedAt);
-    dispatchInbox = deps.graphDispatchInbox || (deps.createInbox || createDurableInbox)({
-      namespace: `msteams-graph-dispatch:${appId}`,
+    const graphDispatchOptions = {
+      conversationKey: ({ inbound }) => queueKey(inbound),
       handle: async ({ inbound, serviceUrl: sourceUrl, subscription }) => {
         if (!await activeSubscription(subscription)) return;
         if (inbound.reactionAction === 'engage') {
@@ -82,14 +139,23 @@ export async function startTeams({
         if (resolveFile) inbound.attachments = (inbound.attachments || []).map(file => ({ ...file, download: file.reference ? resolveFile(file.reference) : null }));
         await onMessage(inbound, { serviceUrl: sourceUrl });
       },
-      interrupted: async ({ inbound }) => {
+      interrupted: async ({ inbound, serviceUrl: sourceUrl }) => {
+        if (sourceUrl) connector.rememberServiceUrl?.(inbound.rawConversationId || inbound.conversationId, sourceUrl);
         await connector.post({ conversationId: inbound.conversationId, threadKey: inbound.threadKey,
           text: "A Teams edit or reaction request was interrupted before its outcome could be confirmed. Check the conversation before retrying; it was not run again automatically." });
       },
       log,
+    };
+    dispatchInbox = deps.graphDispatchInbox || (deps.createInbox || createDurableInbox)({
+      ...graphDispatchOptions, namespace: graphNamespace,
+      queuedNamespace: ({ inbound }) => ["stop", "ack"].includes(inbound?.reactionAction) ? `msteams-graph-controls:${appId}` : null,
+    });
+    graphControlInbox = deps.graphControlInbox || (deps.createInbox || createDurableInbox)({
+      ...graphDispatchOptions, namespace: `msteams-graph-controls:${appId}`, concurrencyGroup: "platform-controls",
     });
     inbox = deps.graphInbox || (deps.createInbox || createDurableInbox)({
       namespace: `msteams-graph:${appId}`,
+      concurrencyGroup: "platform-events",
       handle: async ({ message, row }) => {
         if (!await activeSubscription(row)) return;
         // Settings may have changed while a snapshot waited in the durable queue.
@@ -104,9 +170,17 @@ export async function startTeams({
         };
         for (const inbound of await normalizer(message, row, { botId, resolveMember, activationReactions: getActivationReactions(), activationVersion: getActivationVersion() })) {
           if (!inbound.raw?.eventId) throw new Error("Teams Graph event requires stable identity");
-          dispatchInbox.accept({ id: inbound.raw.eventId, conversationId: inbound.raw.eventId,
+          const selectedInbox = ["stop", "ack"].includes(inbound.reactionAction) ? graphControlInbox : dispatchInbox;
+          const conversationId = queueKey(inbound);
+          const position = selectedInbox === dispatchInbox ? queuePosition(conversationId) : 0;
+          const accepted = selectedInbox.accept({ id: inbound.raw.eventId, conversationId,
             payload: { inbound, serviceUrl: row.context.serviceUrl, subscription: { conversationId: row.conversationId, startedAt: row.startedAt,
               activationReactionsFingerprint: row.activationReactionsFingerprint, activationReactionsVersion: row.activationReactionsVersion, activationReactionsStartedAt: row.activationReactionsStartedAt } } });
+          if (position && accepted?.accepted) {
+            try { noticeInbox.accept({ id: `graph:${inbound.raw.eventId}`, conversationId,
+              payload: { inbound, namespace: graphNamespace, eventId: inbound.raw.eventId, serviceUrl: row.context.serviceUrl, position } }); }
+            catch (error) { log.warn?.(`[msteams] queue notice could not be accepted: ${error?.message || error}`); }
+          }
         }
       },
       interrupted: async ({ row }) => {
@@ -117,6 +191,7 @@ export async function startTeams({
     });
     notificationInbox = deps.graphNotificationInbox || (deps.createInbox || createDurableInbox)({
       namespace: `msteams-graph-notifications:${appId}`,
+      concurrencyGroup: "platform-events",
       handle: async ({ accepted }) => graph.processNotifications(accepted),
       // Only reads and durable downstream accepts have happened. Retrying these is safe;
       // snapshot/event identities prevent repeating already accepted engine work.
@@ -139,14 +214,16 @@ export async function startTeams({
       },
     });
     dispatchInbox.start();
+    graphControlInbox.start();
     inbox.start();
     notificationInbox.start();
     graph.start();
   }
   async function onActivity(activity) {
-    if (!graph || !["message", "messageUpdate", "conversationUpdate", "installationUpdate"].includes(activity?.type)) return;
-    const nativeId = splitConversationId(activity.conversation?.id).conversationId;
     const trustedService = validateServiceUrl(activity.serviceUrl);
+    const nativeId = splitConversationId(activity.conversation?.id).conversationId;
+    if (trustedService && isConversationId(nativeId)) connector.rememberServiceUrl?.(nativeId, trustedService);
+    if (!graph || !["message", "messageUpdate", "conversationUpdate", "installationUpdate"].includes(activity?.type)) return;
     const activityTenant = activity.channelData?.tenant?.id || activity.conversation?.tenantId;
     if (!nativeId || !isConversationId(nativeId) || !trustedService || activityTenant !== tenantId) return;
     const removed = activity.type === "installationUpdate" && ["remove", "remove-upgrade"].includes(activity.action)
@@ -193,7 +270,64 @@ export async function startTeams({
     // Subscription errors are retried by Graph maintenance and never block a normal bot turn.
     void graph.ensure(row).catch(() => log.warn?.("[msteams] could not register conversation event subscription"));
   }
-  const handler = createTeamsWebhook({ appId, botId, onMessage, onInvoke, resolveFile, onActivity, graphEventsEnabled, jwks, log, getActivationReactions });
+  const botInboxOptions = {
+    handle: createTeamsActivityDispatcher({ botId, onMessage, resolveFile, onActivity, graphEventsEnabled, getActivationReactions }),
+    interrupted: async ({ activity, serviceUrl: sourceUrl }) => {
+      const message = normalizeActivity(activity, { botId, activationReactions: getActivationReactions() });
+      if (!message) return;
+      // Both a failed handler and a restart may leave unknown external effects. Notify in the
+      // original verified conversation instead of repeating the request automatically.
+      if (sourceUrl) connector.rememberServiceUrl?.(message.rawConversationId, sourceUrl);
+      await connector.post({ conversationId: message.rawConversationId, threadKey: message.threadKey,
+        text: "This Teams request was interrupted before its outcome could be confirmed. External actions may already have happened. Inspect the task before retrying; it was not run again automatically." });
+    },
+    log,
+  };
+  const botInbox = deps.botInbox || (deps.createInbox || createDurableInbox)({
+    ...botInboxOptions, namespace: botNamespace,
+  });
+  const controlInbox = deps.botControlInbox || (deps.createInbox || createDurableInbox)({
+    ...botInboxOptions, namespace: `msteams-bot-controls:${appId}`, concurrencyGroup: "platform-controls",
+  });
+  noticeInbox = deps.botNoticeInbox || (deps.createInbox || createDurableInbox)({
+    namespace: `msteams-bot-queue-notices:${appId}`, concurrencyGroup: "platform-events",
+    handle: async payload => {
+      const isQueued = () => getDb().prepare("SELECT 1 FROM inbound_events WHERE namespace = ? AND event_id = ? AND status = 'queued'")
+        .get(payload.namespace || botNamespace, payload.eventId || activityFingerprint(payload.activity));
+      if (!isQueued()) return;
+      if (payload.inbound) {
+        await onMessage(payload.inbound, { serviceUrl: payload.serviceUrl, queuedNoticeOnly: true, position: payload.position, isQueued });
+        return;
+      }
+      const dispatch = createTeamsActivityDispatcher({ botId, resolveFile, graphEventsEnabled, getActivationReactions,
+        onMessage: (message, context) => onMessage(message, { ...context, queuedNoticeOnly: true, position: payload.position, isQueued }),
+      });
+      await dispatch(payload);
+    },
+    // A queue notice has no engine effects; if interrupted, omit an obsolete position report.
+    log,
+  });
+  const handler = createTeamsWebhook({ appId, botId, onMessage, onInvoke, resolveFile, onActivity, graphEventsEnabled, jwks, log, getActivationReactions,
+    acceptActivity: ({ activity, serviceUrl: sourceUrl }) => {
+      const inbound = normalizeActivity(activity, { botId, activationReactions: getActivationReactions() });
+      const isControl = inbound && (inbound.trigger === "reaction" ? ["stop", "ack"].includes(inbound.reactionAction)
+        : /^\/(help|status|clear|stop|cancel|model|effort|settings|files|secrets|sendfile)(?:\s|$)/i.test(inbound.text));
+      const selectedInbox = isControl ? controlInbox : botInbox;
+      const conversationId = inbound ? queueKey(inbound)
+        : splitConversationId(activity.conversation.id).conversationId;
+      const position = !isControl && inbound ? queuePosition(conversationId) : 0;
+      const accepted = selectedInbox.accept({ id: activityFingerprint(activity), conversationId,
+        payload: { activity, serviceUrl: sourceUrl } });
+      if (position && accepted?.accepted) {
+        try { noticeInbox.accept({ id: activityFingerprint(activity), conversationId, payload: { activity, serviceUrl: sourceUrl, position } }); }
+        catch (error) { log.warn?.(`[msteams] queue notice could not be accepted: ${error?.message || error}`); }
+      }
+      return accepted;
+    },
+  });
+  botInbox.start();
+  controlInbox.start();
+  noticeInbox.start();
 
   return {
     platform: "msteams",
@@ -204,6 +338,6 @@ export async function startTeams({
     onActivity,
     botId,
     detail: `bot ${appId}`,
-    async stop() { onStop?.(); notificationInbox?.stop(); inbox?.stop(); dispatchInbox?.stop(); await graph?.stop(); },
+    async stop() { onStop?.(); botInbox.stop(); controlInbox.stop(); noticeInbox.stop(); notificationInbox?.stop(); inbox?.stop(); dispatchInbox?.stop(); graphControlInbox?.stop(); await graph?.stop(); },
   };
 }

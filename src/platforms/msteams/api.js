@@ -11,6 +11,7 @@
 //   • conversation-id character set — the id lands in a URL path, so anything outside the documented
 //     set is an attempt to escape /v3/conversations/<id>/activities.
 import { setTimeout as delay } from "node:timers/promises";
+import { teamsRequest } from './request.js';
 
 const ALLOWED_SERVICE_HOSTS = new Set([
   "smba.trafficmanager.net",
@@ -43,28 +44,33 @@ export function validateServiceUrl(raw) {
 
 const RETRYABLE = new Set([429, 500, 502, 503, 504]);
 
-export function createTeamsApi({ auth, serviceUrl = DEFAULT_SERVICE_URL, fetchImpl = fetch, sleep = delay, attempts = 3, baseDelayMs = 500 } = {}) {
+export function createTeamsApi({ auth, serviceUrl = DEFAULT_SERVICE_URL, fetchImpl = fetch, sleep = delay, attempts = 3, baseDelayMs = 500, timeoutMs = 15_000 } = {}) {
   if (!auth?.token) throw new TypeError("createTeamsApi requires a Teams auth provider");
   const base = validateServiceUrl(serviceUrl);
   if (!base) throw new Error(`Teams serviceUrl is not a known Bot Framework host: ${serviceUrl}`);
 
-  async function call(path, { method = "POST", body = null } = {}) {
+  async function call(path, { method = "POST", body = null, signal } = {}) {
     let lastErr = null;
     for (let attempt = 1; attempt <= attempts; attempt++) {
-      const token = await auth.token();
-      const res = await fetchImpl(`${base}${path}`, {
-        method,
-        headers: { authorization: `Bearer ${token}`, ...(body ? { "content-type": "application/json" } : {}) },
-        ...(body ? { body: JSON.stringify(body) } : {}),
-      });
-      if (res.ok) return await res.json().catch(() => ({}));
-      const text = await res.text().catch(() => "");
-      const err = new Error(`Teams ${method} ${path} failed (${res.status}): ${text.slice(0, 300)}`);
-      err.status = res.status;
-      if (res.status === 401) auth.reset?.();
-      if (!RETRYABLE.has(res.status) && res.status !== 401) throw err;
+      const response = await teamsRequest(async requestSignal => {
+        const token = await auth.token();
+        requestSignal.throwIfAborted();
+        const res = await fetchImpl(`${base}${path}`, {
+          method, signal: requestSignal,
+          headers: { authorization: `Bearer ${token}`, ...(body ? { "content-type": "application/json" } : {}) },
+          ...(body ? { body: JSON.stringify(body) } : {}),
+        });
+        if (res.ok) return { ok: true, value: await res.json().catch(() => ({})) };
+        return { ok: false, status: res.status, text: await res.text().catch(() => '') };
+      }, { timeoutMs, signal });
+      if (response.ok) return response.value;
+      const { status, text } = response;
+      const err = new Error(`Teams ${method} ${path} failed (${status}): ${text.slice(0, 300)}`);
+      err.status = status;
+      if (status === 401) auth.reset?.();
+      if (!RETRYABLE.has(status) && status !== 401) throw err;
       lastErr = err;
-      if (attempt < attempts) await sleep(baseDelayMs * 2 ** (attempt - 1));
+      if (attempt < attempts) await sleep(baseDelayMs * 2 ** (attempt - 1), undefined, { signal });
     }
     throw lastErr;
   }
@@ -85,7 +91,7 @@ export function createTeamsApi({ auth, serviceUrl = DEFAULT_SERVICE_URL, fetchIm
   return {
     serviceUrl: base,
 
-    async sendActivity(conversationId, { text, entities = [], threadKey = "", attachments = null } = {}) {
+    async sendActivity(conversationId, { text, entities = [], threadKey = "", attachments = null, signal } = {}) {
       const activity = {
         type: "message",
         // Teams renders the narrow Markdown subset only when textFormat says so; without it the
@@ -95,15 +101,15 @@ export function createTeamsApi({ auth, serviceUrl = DEFAULT_SERVICE_URL, fetchIm
         ...(entities?.length ? { entities } : {}),
         ...(attachments?.length ? { attachments } : {}),
       };
-      const res = await call(`v3/conversations/${target(conversationId, threadKey)}/activities`, { body: activity });
+      const res = await call(`v3/conversations/${target(conversationId, threadKey)}/activities`, { body: activity, signal });
       return { messageId: res?.id || "" };
     },
 
-    async updateActivity(conversationId, activityId, { text, entities = [], attachments = null } = {}) {
+    async updateActivity(conversationId, activityId, { text, entities = [], attachments = null, signal } = {}) {
       const id = String(activityId || "");
       if (!isActivityId(id)) throw new Error("Teams activity id contains characters outside the Bot Framework set");
       await call(`v3/conversations/${target(conversationId)}/activities/${encodeURIComponent(id)}`, {
-        method: "PUT",
+        method: "PUT", signal,
         body: { type: "message", textFormat: "markdown", text: String(text ?? ""), ...(entities?.length ? { entities } : {}), ...(attachments?.length ? { attachments } : {}) },
       });
     },

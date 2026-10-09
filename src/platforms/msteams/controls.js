@@ -83,7 +83,7 @@ export function createTeamsControls({ connector, now = Date.now, authorize = tea
     return card('Conversation files (private)', body, actions);
   }
   async function deliverCard(state, build, inConversation = false) {
-    const destination = inConversation || state.message.isDM ? state.message.rawConversationId : await connector.openDm(state.message.userId);
+    const destination = inConversation || state.message.isDM ? state.message.rawConversationId : await connector.openDm(state.message.userId, { sourceConversationId: state.message.rawConversationId });
     if (!destination) throw new Error('Open a personal chat with the bot first; private controls could not be delivered.');
     prune(); const id = randomUUID();
     state = { ...state, deliveryId: destination, inConversation, expires: now() + 15 * 60_000 };

@@ -1,11 +1,14 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { ensureTestEnv } from "./helpers.js";
 import { createTeamsApi } from "../src/platforms/msteams/api.js";
 import { startTeams } from "../src/platforms/msteams/transport.js";
 import { createTeamsAuth, GRAPH_SCOPE } from "../src/platforms/msteams/auth.js";
 import { createTeamsEventStore } from "../src/platforms/msteams/event-store.js";
 import { DatabaseSync } from "node:sqlite";
 import { migrations } from "../src/db/migrations.js";
+
+ensureTestEnv();
 
 function fixture() {
   const subscriptions = [], accepted = [], dispatched = [];
@@ -15,6 +18,10 @@ function fixture() {
   const graph = { start() { this.started = true; }, async stop() { this.stopped = true; }, async ensure(row) { subscriptions.push(row); }, async refresh(row) { return subscriptions.find(current => current.conversationId === row.conversationId) || null; }, handle() {} };
   return { subscriptions, accepted, dispatched, inbox, dispatch, graph, get options() { return options; },
     deps: { auth: { token: async () => "bot-token" }, api: {}, connector: {}, jwks: {}, graphAuth: { token: async () => "graph-token" }, eventStore: { list: () => subscriptions },
+      botInbox: { start() {}, stop() {}, accept() {} },
+      botControlInbox: { start() {}, stop() {}, accept() {} },
+      botNoticeInbox: { start() {}, stop() {}, accept() {} },
+      graphControlInbox: { start() {}, stop() {}, accept() {} },
       graphInbox: inbox, graphDispatchInbox: dispatch, graphNotificationInbox: { start() {}, stop() {}, accept() {} }, createGraphEvents: opts => { options = opts; return graph; } } };
 }
 const activity = { type: "message", conversation: { id: "19:chat@thread.v2", conversationType: "groupChat" },
@@ -112,7 +119,7 @@ test("Graph snapshot processing resolves the reactor in its conversation and ded
   await handlers.get("msteams-graph:app")({ message: { id: "123", etag: "1" }, row });
   await handlers.get("msteams-graph:app")({ message: { id: "123", etag: "2" }, row });
   assert.equal(queued.size, 1);
-  assert.equal([...queued.values()][0].conversationId, "reaction:123:reactor:time");
+  assert.equal([...queued.values()][0].conversationId, JSON.stringify(["teams:chat", "teams:chat"]));
   assert.deepEqual(memberReads[0], [activity.serviceUrl, "19:chat"]);
   await handlers.get("msteams-graph-dispatch:app")([...queued.values()][0].payload);
   assert.equal(delivered[0].senderId, "29:reactor");
