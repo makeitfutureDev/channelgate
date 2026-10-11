@@ -7,7 +7,8 @@
 //  - no channel  → a dedicated auto-provisioned `api` folder; headless (result via status/webhook).
 //  - channel given + Slack connected → runs as a REAL thread in that channel (a kickoff message
 //    starts the thread, its ts is the session key), so the answer posts back and it's continuable
-//    in Slack too. If the kickoff can't post, it falls back to a headless api-keyed thread.
+//    in Slack too. conversationKey binds related events to one durable channel-scoped root.
+//    Without a key, a failed kickoff falls back to a headless api-keyed thread.
 //
 // Either way the run is an ordinary admin's turn in that channel (its mode incl. Admin/Auto, memory,
 // skills, connectors, the gateway tools, its thread's run queue, the post-reply memory review). The
@@ -51,7 +52,10 @@ import { mdToMrkdwn } from "../slack/format.js";
 import { deliverResult, postNoticeWithMenu } from "../slack/deliver.js";
 import { startProgress } from "../slack/progress.js";
 import { PROFILE_FLAGS, API_PRINCIPAL } from "./modes.js";
-import { postNotice } from "../platforms/notify.js";
+import { postNotice, asConnector } from "../platforms/notify.js";
+import { platformOfConversation } from "../platforms/ids.js";
+import { DEFAULT_PLATFORM } from "../platforms/registry.js";
+import { resolveApiConversation, threadPermalink, validateConversationKey } from "./api-conversations.js";
 
 // The synthetic channel used when no target channel is supplied. It shows up in the admin UI like
 // any channel (so its mode/tools/tokens are configurable there) but has no real Slack id, so runs
@@ -149,6 +153,10 @@ function startShape(job, reused = false) {
     slug: job.slug,
     channelId: job.slackThread ? job.channelId : null,
     slackThread: Boolean(job.slackThread),
+    conversationKey: job.conversationKey || null,
+    threadTs: job.slackThread ? job.threadKey : null,
+    threadReused: Boolean(job.threadReused),
+    threadPermalink: job.threadPermalink || null,
     sessionId: job.sessionId,
     resumeCommand: job.resumeCommand,
     reused,
@@ -458,6 +466,10 @@ async function fireWebhook(job) {
     slug: job.slug,
     channelId: job.slackThread ? job.channelId : null,
     costUSD: job.costUSD ?? null,
+    conversationKey: job.conversationKey || null,
+    threadTs: job.slackThread ? job.threadKey : null,
+    threadReused: Boolean(job.threadReused),
+    threadPermalink: job.threadPermalink || null,
     costEstimated: Boolean(job.costEstimated),
     durationMs: job.durationMs ?? null,
     error: job.error || null,
@@ -502,13 +514,32 @@ function countInflight() {
 }
 
 // ── Start a run ────────────────────────────────────────────────────────────────
-// Returns { ok:true, jobId, status, sessionId, resumeCommand, engine, slug, channelId, slackThread }
+// Returns job admission/session facts plus conversationKey/threadTs/threadReused/threadPermalink.
 // or { ok:false, code, error }. The run itself proceeds in the background.
 export async function startApiRun(input = {}) {
   const { message, file, fileUrl, engine: engineIn, model, effort, mode, idempotencyKey } = input;
   const msg = String(message ?? "").trim();
   const hasFile = Boolean((typeof file?.dataBase64 === "string" && file.dataBase64) || (typeof file === "string" && file) || fileUrl);
   if (!msg && !hasFile) return { ok: false, code: 400, error: "Provide a `message` (and/or a file)." };
+  let conversationKey;
+  try {
+    conversationKey = validateConversationKey(input.conversationKey);
+  } catch (error) {
+    return { ok: false, code: 400, error: error.message };
+  }
+  if (conversationKey && !input.channel) return { ok: false, code: 400, error: "conversationKey requires a registered Slack channel." };
+  // Resolve keyed targets before deduplication, so a globally reused event key can never return
+  // a different channel's conversation. Legacy unkeyed idempotency semantics remain unchanged.
+  const conversationEntry = conversationKey ? await resolveChannel(input.channel) : null;
+  if (conversationKey && (!conversationEntry || conversationEntry.channelId === API_CHANNEL_ID || platformOfConversation(conversationEntry.channelId) !== DEFAULT_PLATFORM)) {
+    return { ok: false, code: 400, error: "conversationKey requires a registered Slack channel." };
+  }
+  const dedupedShape = (shape) => {
+    if (conversationKey && shape.ok && (shape.channelId !== conversationEntry.channelId || shape.conversationKey !== conversationKey)) {
+      return { ok: false, code: 409, error: "idempotencyKey already belongs to another conversation. Use a unique key per event." };
+    }
+    return shape;
+  };
 
   // Per-request overrides (win over the channel/DM config for this one run). Validated before the
   // reservation below so a malformed request never consumes an in-flight slot.
@@ -527,10 +558,10 @@ export async function startApiRun(input = {}) {
   const idemKey = idempotencyKey ? String(idempotencyKey).slice(0, 200) : "";
   if (idemKey) {
     const existing = findByIdempotencyKey(idemKey);
-    if (existing) return startShape(existing, true);
+    if (existing) return dedupedShape(startShape(existing, true));
     // A same-key POST is mid-start: share its outcome instead of racing a duplicate run.
     const pending = pendingStarts.get(idemKey);
-    if (pending) return await pending;
+    if (pending) return dedupedShape(await pending);
   }
   // Backpressure: bound concurrently-running API jobs (runMessage's own semaphore bounds spawns).
   if (countInflight() >= MAX_INFLIGHT) return { ok: false, code: 429, error: `Too many API runs in flight (${MAX_INFLIGHT}). Retry shortly.` };
@@ -540,7 +571,7 @@ export async function startApiRun(input = {}) {
 
   let outcome;
   try {
-    outcome = await startClaimedRun(input, { msg, hasFile, idemKey, overrides, engineOv });
+    outcome = await startClaimedRun(input, { msg, hasFile, idemKey, overrides, engineOv, conversationKey, conversationEntry });
   } catch (e) {
     releaseStart(idemKey, settle, { ok: false, code: 500, error: e.message });
     throw e;
@@ -559,7 +590,7 @@ function releaseStart(idemKey, settle, outcome) {
 
 // The claimed half: everything from here down may await freely, because the idempotency key and the
 // in-flight slot are already held by the caller above.
-async function startClaimedRun({ author, channel, file, fileUrl, fileName, webhook, slack, driver = runInBackground, queueMemoryReview = maybeQueueMemoryReview }, { msg, hasFile, idemKey, overrides, engineOv }) {
+async function startClaimedRun({ author, channel, file, fileUrl, fileName, webhook, slack, driver = runInBackground, queueMemoryReview = maybeQueueMemoryReview }, { msg, hasFile, idemKey, overrides, engineOv, conversationKey, conversationEntry }) {
   if (webhook) {
     // Resolved-address check, not just a scheme check: this POST leaves from inside the host, so
     // an internal target would make the run API a proxy into the private network (including the
@@ -576,12 +607,16 @@ async function startClaimedRun({ author, channel, file, fileUrl, fileName, webho
   // Resolve the target folder.
   let entry;
   if (channel) {
-    entry = await resolveChannel(channel);
+    entry = conversationEntry || await resolveChannel(channel);
     if (!entry) return { ok: false, code: 400, error: `Unknown channel "${channel}". Pass a registered Slack channel id, folder slug, or channel name.` };
   } else {
     entry = await ensureApiChannel();
   }
   const slug = entry.slug;
+
+  const client = slack?.snapshot?.().connected ? slack.getClient?.() ?? null : null;
+  const registeredSlack = entry.channelId !== API_CHANNEL_ID && platformOfConversation(entry.channelId) === asConnector(client)?.platform;
+  if (conversationKey && !registeredSlack) return { ok: false, code: 503, error: "Slack must be connected to use conversationKey. Retry when Slack is available." };
 
   const meta = effectiveMeta((await getChannelMeta(slug)) ?? defaultChannelMeta({ channelId: entry.channelId, name: entry.name, type: entry.type, isDM: entry.isDM }));
   await ensureChannelFolder(slug, meta); // idempotent — writes the lockdown + uploads root exists
@@ -599,29 +634,41 @@ async function startClaimedRun({ author, channel, file, fileUrl, fileName, webho
     }
   }
 
-  // Real-channel runs post to Slack as their own thread (so the answer lands there and it stays
-  // continuable in Slack). The kickoff message ts becomes the session key. Falls back to a headless
-  // api-keyed thread if Slack isn't connected or the post fails.
-  const client = slack?.snapshot?.().connected ? slack.getClient?.() ?? null : null;
-  const canSlack = Boolean(channel) && entry.channelId !== API_CHANNEL_ID && client;
+  // Real-channel runs use a Slack root as their session key. Keyed events resolve a durable root;
+  // unkeyed events create their own, with the legacy headless fallback if the kickoff fails.
+  const canSlack = Boolean(channel) && registeredSlack;
   let threadKey = `api:${jobId}`;
   let slackThread = false;
+  let threadReused = false;
+  let permalink = null;
   if (canSlack) {
     try {
       const kickoffText = `🚀 API run started (job \`${jobId}\`)` + (authorId !== API_PRINCIPAL ? ` for <@${authorId}>` : "") + `\n\n*Request:*\n${displayRequest(msg, hasFile)}`;
-      const kickoff = await postNotice(client, { conversationId: entry.channelId, text: kickoffText });
-      if (kickoff?.messageId) {
-        threadKey = kickoff.messageId;
+      if (conversationKey) {
+        const binding = await resolveApiConversation({ client, channelId: entry.channelId, conversationKey, kickoffText });
+        threadKey = binding.threadTs;
+        threadReused = binding.threadReused;
+        permalink = binding.threadPermalink;
         slackThread = true;
+      } else {
+        const kickoff = await postNotice(client, { conversationId: entry.channelId, text: kickoffText });
+        if (kickoff?.messageId) {
+          threadKey = kickoff.messageId;
+          slackThread = true;
+          permalink = await threadPermalink(client, entry.channelId, threadKey);
+        }
       }
     } catch (e) {
       await logEvent("api_slack_kickoff_failed", { id: jobId, slug, error: e.message }).catch(() => {});
+      if (conversationKey) return { ok: false, code: 503, error: "Slack conversation could not be created or verified. Check Slack access and retry; no agent run was started." };
     }
   }
 
-  const presetSessionId = randomUUID();
+  // A keyed conversation resolves its live session ONLY after acquiring the thread queue.
+  // Pre-minting here would overwrite prior history (or a simultaneous event's new session).
+  const presetSessionId = conversationKey ? null : randomUUID();
   const engine = engineOv || (ENGINES.includes(meta.engine) ? meta.engine : "") || getEngine();
-  const resumeCommand = await buildResumeCommand({ slug, cwd, sessionId: presetSessionId, engine });
+  const resumeCommand = presetSessionId ? await buildResumeCommand({ slug, cwd, sessionId: presetSessionId, engine }) : null;
 
   const textForRun = buildTextForRun({ msg, authorId, attachmentPath });
 
@@ -639,6 +686,9 @@ async function startClaimedRun({ author, channel, file, fileUrl, fileName, webho
     resumeCommand,
     cwd,
     slackThread,
+    conversationKey: conversationKey || null,
+    threadReused,
+    threadPermalink: permalink,
     hasAttachment: Boolean(attachmentPath),
     attachmentPath,
     attachments: attachmentPath ? [attachmentPath] : [],
@@ -694,7 +744,7 @@ function threadRunKey(job) {
 }
 
 // What the post-reply memory reviewer reads for an API turn: the request and the answer. A
-// channel-backed thread holds nothing more at this point (the kickoff plus this reply).
+  // Keep this event's request/answer bounded; earlier keyed events remain in the native session.
 function apiTranscript(job, content) {
   return `User (HTTP API run${job.author !== API_PRINCIPAL ? ` on behalf of ${job.author}` : ""}):\n${job.message || "(file only)"}\n\nAssistant:\n${content || ""}`;
 }
@@ -708,10 +758,22 @@ async function runInBackground(job, { textForRun, attachmentPath, client, teamId
   let queued = false;
   let memorySaves = 0;
   try {
-    await runQueue.acquire(runKey, handle);
+    if (runQueue.isActive(runKey)) {
+      job.status = "queued";
+      persist(job);
+    }
+    await runQueue.acquire(runKey, handle, ({ position }) => {
+      if (client) postNotice(client, { conversationId: job.channelId, threadKey: job.threadKey,
+        text: `⏳ API run \`${job.id}\` is queued in this thread (position ${position}).` }).catch(() => {});
+    });
     queued = true;
     // A Slack stop in this thread while we waited (or a stop through the API) wins.
     if (handle.aborted || signal?.aborted) throw Object.assign(new Error("Run stopped before it started"), { name: "AbortError" });
+    if (job.status === "queued") {
+      job.status = "running";
+      job.startedMs = Date.now();
+      persist(job);
+    }
     const dir = client ? await getDirectory(client).catch(() => null) : null;
     if (client) {
       status = startProgress(getProgressView(), client, job.channelId, job.threadKey, {
@@ -738,7 +800,7 @@ async function runInBackground(job, { textForRun, attachmentPath, client, teamId
       text: textForRun,
       threadKey: job.threadKey,
       attachments,
-      sessionId: job.sessionId,
+      sessionId: job.conversationKey ? "" : job.sessionId,
       overrides,
       signal,
       // No personal scope: nobody's personal Composio/Toolbox token, secrets or skills — the

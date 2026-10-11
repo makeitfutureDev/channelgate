@@ -16,6 +16,13 @@ product overview.
 > | Makeitfuture Sustainable Use License 1.1 | 2026-08-20 | never published |
 > | Makeitfuture Sustainable Use License 1.0 | 2026-08-06 | never published |
 
+## Unreleased
+
+- Add optional `conversationKey` to the HTTP run API: keep related external events in one
+  persistent Slack thread, preserve agent context through the existing run queue, and expose
+  thread timestamps, reuse flags and permalinks. Replace deleted roots safely and report Slack
+  access failures without silently starting a separate headless conversation.
+
 ## 0.6.1 — 2026-10-06
 
 - Channel Runtime now shows only engine and model controls for the shared login. Dedicated Codex
