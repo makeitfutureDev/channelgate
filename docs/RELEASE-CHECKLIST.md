@@ -1,3 +1,11 @@
+> 0.6.3 API conversation candidate (2026-10-11): focused backport of `ac523624`,
+> migration 32 schema prerequisite to preserve upgrade ordering, and the compatible dependency
+> lock refresh from `6d72d299`. No unrelated beta runtime changes are included. Package version
+> 0.6.2 has a separate pending update-hotfix candidate; this candidate uses 0.6.3.
+> Applicable live API-CONV-01–05 Claude/Codex acceptance and exact-candidate owner confirmation
+> remain release gates. Atlas deployment is requested; its current updater needs the reviewed
+> modern transaction runner staged separately for this update.
+
 # Release checklist
 
 > 0.6.1 was selected for release by the owner on 2026-10-06 after the exact candidate's

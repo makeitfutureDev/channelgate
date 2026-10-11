@@ -4316,8 +4316,8 @@ thread history as evidence. These live cases are **unexecuted**, not an automate
 Validation (2026-10-09): 24 new cases and 43 existing API regressions passed, including actual
 Claude and Codex fixture-session continuation; full coverage suite passed with 3,591 tests,
 32 environment-dependent skips, no failures. Static checks, security
-coverage, secret scan and production dependency audit passed. Live acceptance and deployment QA
-registration remain pending; automated results do not certify these gates.
+coverage, secret scan and production dependency audit passed. Live acceptance remains pending; deployment QA definitions API-CONV-01–05 are registered
+for both engines (2026-10-11). Automated results do not certify these live gates.
 
 ### HTTP run API channel parity
 

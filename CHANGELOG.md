@@ -18,6 +18,8 @@ product overview.
 
 ## Unreleased
 
+## 0.6.3 — publication pending
+
 - Refresh the locked MCP SDK, URI and IP parsing dependencies to patched compatible releases.
 
 - Add optional `conversationKey` to the HTTP run API: keep related external events in one
