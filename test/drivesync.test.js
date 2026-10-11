@@ -201,7 +201,7 @@ test("only a listing that records no file forces another --resync; any other mis
   writeFileSync(path.join(partial, "x.path2.lst-new"), '-  2 - - t "a"\n');
   assert.equal(priorListingEmpty(partial), false, "a crashed pass's .lst-new leftovers never trigger a resync");
   const source = readFileSync(new URL("../src/gateway/drivesync.js", import.meta.url), "utf8");
-  assert.match(source, /const firstRun = initial \|\| priorListingEmpty\(stateDir\);/);
+  assert.match(source, /const firstRun = initial \|\| resync \|\| priorListingEmpty\(stateDir\);/);
   assert.match(source, /if \(initial\) \{ try \{ rmSync\(stateDir/, "a failed FORCED resync keeps its state");
 });
 
@@ -415,4 +415,30 @@ test("the confined launch mounts the state, filters and key at a random path per
   } finally {
     __resetContainerRuntime();
   }
+});
+
+test("bisync self-recovery: version gate, flags, wedge detection and per-channel container names", async () => {
+  const { parseRcloneVersion, supportsBisyncRecovery, buildBisyncArgs, bisyncNeedsResync, syncContainerPattern, BISYNC_MAX_LOCK } = await import("../src/gateway/drivesync.js");
+  assert.deepEqual(parseRcloneVersion("rclone v1.75.1\n- os/version: ubuntu"), [1, 75]);
+  assert.equal(parseRcloneVersion(""), null);
+  assert.equal(supportsBisyncRecovery([1, 65]), false);
+  assert.equal(supportsBisyncRecovery([1, 66]), true);
+  assert.equal(supportsBisyncRecovery([2, 0]), true);
+  assert.equal(supportsBisyncRecovery(null), false);
+
+  const base = { localPath: "/w", folderId: "F", keyFile: "/k", workDir: "/s" };
+  const plain = buildBisyncArgs(base);
+  assert.ok(!plain.includes("--recover") && !plain.includes("--max-lock"));
+  const recovering = buildBisyncArgs({ ...base, recovery: true });
+  for (const flag of ["--resilient", "--recover"]) assert.ok(recovering.includes(flag), flag);
+  assert.equal(recovering[recovering.indexOf("--max-lock") + 1], BISYNC_MAX_LOCK);
+
+  assert.equal(bisyncNeedsResync("ERROR : Bisync aborted. Must run --resync to recover."), true);
+  assert.equal(bisyncNeedsResync("Bisync critical error: cannot find prior Path1 or Path2 listings"), true);
+  assert.equal(bisyncNeedsResync("googleapi: Error 403"), false);
+
+  const pattern = syncContainerPattern("team-a");
+  assert.equal(pattern.test("cg-drivesync-team-a-0123abcd"), true);
+  assert.equal(pattern.test("cg-drivesync-team-a-b-0123abcd"), false, "another channel whose slug extends this one");
+  assert.equal(pattern.test("cg-drivesync-team-a-0123abc"), false);
 });

@@ -5366,6 +5366,25 @@ mode; the gateway's run API key; an admin Slack id):
       without the loopback IPC secret; the four admin endpoints return 401 without an admin session,
       404 for an unknown channel, and a dormant feature starts nothing.
       `test/mcp-control-plane-approval.test.js` classifies `sync_channel_drive` as open (no card).
+- [x] Self-recovery and wedge handling (`test/drivesync.test.js`, `test/drivesync-manual.test.js`,
+      fake rclone): the recovery flags (`--resilient --recover --max-lock 30m`) are added only for an
+      rclone reporting v1.66+; rclone's "Must run --resync" / "cannot find prior Path1 or Path2
+      listings" marks the status `needsResync` with the plain summary, never triggers an automatic
+      resync, and notifies admins once per channel per day (again after a recovery); an admin
+      **Resync** (`resync: true`) runs `--resync` and clears the state; a pass is skipped while a
+      container of an earlier pass of the same channel runs and removes it once it is older than the
+      grace; the container-name pattern never matches a channel whose slug merely extends this one.
+- [ ] Live (engine-independent — the pass runs in the daemon, not the engine; setup: Drive sync
+      enabled, key saved, a disposable test channel linked to a disposable Drive folder holding one
+      file, Slack connected, rclone ≥ 1.66): (1) start **Sync now**, and while its
+      `cg-drivesync-<slug>-*` container runs, restart the gateway service; after the restart the first
+      sweep logs "an earlier pass is still running" and starts no second container (`podman ps`);
+      the next pass after it finishes succeeds. (2) Make the state wedged: stop the gateway, in
+      `~/.channelgate/drivesync/work/<slug>/` rename both `*.lst` to `*.lst-err`, start it. Pass: the
+      next pass fails with the "needs a one-time Resync" status, every admin receives one Slack DM
+      (none on the following passes that day) and `events` has `drivesync_needs_resync`; clicking
+      **Resync** and confirming ends with "✓ Synced … (first full resync)", a `drivesync_run` row
+      with `resync: true`, and the next scheduled pass succeeds.
 - [ ] Manual (engine-independent — the pass runs in the daemon, not the engine; setup: Drive sync
       enabled, key saved, a test channel linked to a Drive folder shared with the service account
       and holding one file): on the channel's admin page click **Sync now** → "⏳ Syncing…" then

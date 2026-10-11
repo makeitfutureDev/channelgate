@@ -18,6 +18,12 @@ product overview.
 
 ## Unreleased
 
+- Fix Google Drive sync channels getting stuck after an interrupted pass. Passes now use rclone's
+  self-recovery flags (rclone 1.66+), never start beside a pass container left over from before a
+  restart (an orphan is removed after the maximum pass time), and a channel whose sync state rclone
+  can no longer use is reported as needing a resync, with a daily admin DM and a **Resync** button
+  on the channel page instead of failing silently on every sweep.
+
 - Add optional `conversationKey` to the HTTP run API: keep related external events in one
   persistent Slack thread, preserve agent context through the existing run queue, and expose
   thread timestamps, reuse flags and permalinks. Replace deleted roots safely and report Slack

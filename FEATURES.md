@@ -3962,6 +3962,20 @@ are retired, bullet by bullet; everything else stands.
   side gets a file instead of failing every tick with rclone's exit 7. Any other missing listing
   stays an error: after a deliberate delete-everything rclone sets aside NON-empty listings, and a
   resync there would copy the deleted files back.
+  **Interrupted passes recover by themselves, and a wedged sync is never silent.** With rclone
+  1.66 or newer every pass carries `--resilient --recover --max-lock 30m`, so a pass cut off by a
+  restart, the 20-minute timeout or a lost lock resumes from rclone's backup listings instead of
+  leaving only `.lst-err` behind (an older rclone gets the old argv). A pass first looks for a
+  container of an earlier pass of the same channel: a pass container outlives a daemon restart (the
+  restart kills the `podman run` client, not the container), so the next daemon used to start a
+  second bisync beside it and lose the lock race. While that container may still be a live pass the
+  new pass is skipped; once this daemon has watched it for longer than any pass may run (25 min) it
+  is removed (SIGTERM first) and the pass goes ahead (`drivesync_orphan_removed`). A pass that rclone
+  aborts with "Must run --resync" marks the channel **needs resync**: the status says so in plain
+  words, a `drivesync_needs_resync` event is logged, and every admin gets a Slack DM at most once a
+  day per channel until it recovers. The gateway still never resyncs such a channel on its own; the
+  channel page's **Resync** button (`POST /api/channels/:id/sync-now` with `{ "resync": true }`,
+  confirmation required) runs the one-time `--resync`, which merges both sides.
   Manual passes obey the same global switch, key and
   rclone checks as the schedule; a pass already running for a channel is never doubled, and a
   manual sweep never stacks on the scheduled one. Status surfaces show a concise diagnostic, never

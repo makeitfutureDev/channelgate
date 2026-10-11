@@ -573,12 +573,15 @@ export function createChannelsRouter({
 
   // Run this channel's SAVED Drive link's bisync pass now, outside the schedule. Returns at once
   // ({ ok, started, busy, error, status }); the pass keeps running in the daemon — poll sync-status.
+  // `{ resync: true }` is the admin's recovery of a wedged sync: a full --resync that merges both
+  // sides (files deleted on only one side since the last good pass can come back).
   router.post("/channels/:channelId/sync-now", async (req, res, next) => {
     try {
       const entry = (await getChannelsIndex())[req.params.channelId];
       if (!entry) return res.status(404).json({ error: "unknown channel" });
-      const result = await syncChannelNow(entry.slug, { trigger: "admin-ui" });
-      if (result.started) await logEvent("drivesync_manual", { slug: entry.slug, channel: req.params.channelId, scope: "channel", source: "admin-ui" });
+      const resync = req.body?.resync === true;
+      const result = await syncChannelNow(entry.slug, { trigger: "admin-ui", resync });
+      if (result.started) await logEvent("drivesync_manual", { slug: entry.slug, channel: req.params.channelId, scope: "channel", source: "admin-ui", ...(resync ? { resync: true } : {}) });
       res.json(result);
     } catch (e) {
       next(e);
