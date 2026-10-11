@@ -10,10 +10,16 @@ import { ensureTestEnv, tempDir } from "./helpers.js";
 
 ensureTestEnv();
 
-const { syncChannelNow, syncAllNow, driveSyncStatus, driveSyncStatusAll, handleDriveSyncIpc, resolveSyncConfig, __setDriveSyncLauncher, HOST_LAUNCHER } = await import("../src/gateway/drivesync.js");
+const { syncChannelNow, syncAllNow, driveSyncStatus, driveSyncStatusAll, handleDriveSyncIpc, resolveSyncConfig, __setDriveSyncLauncher, __setDriveSyncContainerProbe, __setDriveSyncNotifier, HOST_LAUNCHER, NEEDS_RESYNC_SUMMARY } = await import("../src/gateway/drivesync.js");
 // The fake rclone runs on the host; production launches the pass in a confined container
 // (drivesync.test.js covers that argv).
 __setDriveSyncLauncher(HOST_LAUNCHER);
+// No container runtime is consulted: a test lists the "running" pass containers it wants seen.
+const probe = { running: [], removed: [], list: async () => probe.running.slice(), remove: async (names) => { probe.removed.push(...names); probe.running = []; } };
+__setDriveSyncContainerProbe(probe);
+// Admin notices are recorded, never sent.
+const notices = [];
+__setDriveSyncNotifier(async (text, info) => { notices.push({ text, ...info }); return 1; });
 const { saveSettings } = await import("../src/config/settings.js");
 const { upsertChannelEntry, saveChannelMeta, defaultChannelMeta } = await import("../src/config/store.js");
 
@@ -34,10 +40,12 @@ const bin = path.join(fake, "rclone");
 const calls = path.join(fake, "calls");
 const block = path.join(fake, "block");
 const fail = path.join(fake, "fail");
+const wedged = path.join(fake, "wedged"); // while it exists, every non-resync pass aborts like a wedged bisync
 writeFileSync(bin, `#!/bin/sh
 [ "$1" = version ] && exit 0
 while [ -f "${block}" ]; do sleep 0.05; done
 echo "$*" >> "${calls}"
+if [ -f "${wedged}" ] && ! echo "$*" | grep -q -- "--resync"; then echo "ERROR : Bisync critical error: cannot find prior Path1 or Path2 listings, likely due to critical error on prior run" >&2; echo "ERROR : Bisync aborted. Must run --resync to recover." >&2; exit 7; fi
 if [ -f "${fail}" ]; then echo "ERROR : Failed to bisync: googleapi: Error 403: insufficient permissions" >&2; exit 2; fi
 wd=""; prev=""; for a in "$@"; do [ "$prev" = "--workdir" ] && wd="$a"; prev="$a"; done
 if [ -n "$wd" ]; then for side in path1 path2; do printf '# bisync listing v1\\n-        2 - - 2026-09-25T00:00:00Z "f.txt"\\n' > "$wd/fake.$side.lst"; done; fi
@@ -164,4 +172,88 @@ test("Sync all now sweeps every linked channel once and refuses to stack a secon
   assert.equal(all.channels.length, first.channels);
   assert.ok(all.channels.every((c) => c.last && c.last.ok), "every linked channel recorded a successful pass");
   assert.equal(readCalls().length, first.channels, "one pass per linked channel, no duplicate sweep");
+});
+
+test("a wedged sync says so, DMs the admins once a day, and an admin Resync recovers it", async () => {
+  await saveSettings({ driveSyncEnabled: true, driveSyncKeyJson: SA_JSON, driveSyncRclonePath: bin });
+  const slug = await addChannel("C_DS_WEDGE", "ds-wedge", "https://drive.google.com/drive/folders/FID_WEDGE_123");
+  await syncChannelNow(slug, { waitMs: 5000 }); // the baseline --resync
+  rmSync(calls, { force: true });
+  notices.length = 0;
+  writeFileSync(wedged, "");
+  try {
+    const failed = await syncChannelNow(slug, { waitMs: 5000 });
+    assert.equal(failed.status.last.ok, false);
+    assert.equal(failed.status.last.needsResync, true);
+    assert.equal(failed.status.last.summary, NEEDS_RESYNC_SUMMARY);
+    assert.doesNotMatch(readCalls()[0], /--resync/, "the gateway never resyncs a wedged channel on its own");
+    assert.equal(notices.length, 1);
+    assert.equal(notices[0].slug, slug);
+    assert.match(notices[0].text, /ds-wedge/);
+    assert.match(notices[0].text, /Resync/);
+
+    await syncChannelNow(slug, { waitMs: 5000 }); // still wedged, same day
+    assert.equal(notices.length, 1, "at most one notice a day per channel");
+
+    const resynced = await syncChannelNow(slug, { waitMs: 5000, trigger: "admin-ui", resync: true });
+    assert.equal(resynced.status.last.ok, true);
+    assert.equal(resynced.status.last.needsResync, false);
+    assert.equal(resynced.status.last.firstRun, true);
+    assert.match(readCalls().at(-1), /--resync/);
+  } finally {
+    rmSync(wedged, { force: true });
+  }
+  // Recovered: a later wedge is news again.
+  writeFileSync(wedged, "");
+  try {
+    await syncChannelNow(slug, { waitMs: 5000 });
+    assert.equal(notices.length, 2, "a recovered channel's next wedge notifies again");
+  } finally {
+    rmSync(wedged, { force: true });
+  }
+});
+
+test("a pass never starts beside an earlier pass's container, and an orphan is removed after the grace", async () => {
+  await saveSettings({ driveSyncEnabled: true, driveSyncKeyJson: SA_JSON, driveSyncRclonePath: bin });
+  const slug = await addChannel("C_DS_ORPH", "ds-orph", "https://drive.google.com/drive/folders/FID_ORPH_123");
+  await syncChannelNow(slug, { waitMs: 5000 });
+  rmSync(calls, { force: true });
+  const orphan = `cg-drivesync-${slug}-0a1b2c3d`;
+  probe.running = [orphan];
+  probe.removed = [];
+  probe.graceMs = 60 * 60 * 1000;
+  try {
+    const skipped = await syncChannelNow(slug, { waitMs: 5000 });
+    assert.equal(skipped.done, true);
+    assert.deepEqual(readCalls(), [], "no second bisync beside a running one (it would race for the lock)");
+    assert.deepEqual(probe.removed, [], "a possibly-live pass is left alone");
+
+    probe.graceMs = 0; // the same container, now watched for longer than any pass may run
+    const ran = await syncChannelNow(slug, { waitMs: 5000 });
+    assert.equal(ran.status.last.ok, true);
+    assert.deepEqual(probe.removed, [orphan], "the orphan is removed before the pass");
+    assert.equal(readCalls().length, 1);
+  } finally {
+    probe.running = [];
+    delete probe.graceMs;
+  }
+});
+
+test("an rclone that can recover gets --resilient --recover --max-lock; an older one does not", async () => {
+  const modern = path.join(fake, "rclone-modern");
+  writeFileSync(modern, `#!/bin/sh
+[ "$1" = version ] && { echo "rclone v1.75.1"; exit 0; }
+exec "${bin}" "$@"
+`);
+  chmodSync(modern, 0o755);
+  await saveSettings({ driveSyncEnabled: true, driveSyncKeyJson: SA_JSON, driveSyncRclonePath: modern });
+  const slug = await addChannel("C_DS_RECOV", "ds-recov", "https://drive.google.com/drive/folders/FID_RECOV_123");
+  rmSync(calls, { force: true });
+  await syncChannelNow(slug, { waitMs: 5000 });
+  assert.match(readCalls()[0], /--resilient --recover --max-lock 30m/);
+
+  await saveSettings({ driveSyncRclonePath: bin }); // `version` prints no version: flags withheld
+  rmSync(calls, { force: true });
+  await syncChannelNow(slug, { waitMs: 5000 });
+  assert.doesNotMatch(readCalls()[0], /--recover/);
 });

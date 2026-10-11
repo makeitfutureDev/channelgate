@@ -2177,16 +2177,17 @@ function renderChannelDetail(ch) {
       result.textContent = "✗ " + e.message;
     }
   });
-  card.querySelector(".ch-syncnow").addEventListener("click", async () => {
+  const startDriveSyncPass = async (resync) => {
     const result = card.querySelector(".ch-synctest-result");
     const saved = (meta.syncDriveFolder || "").trim();
     if (!saved) { result.textContent = "Save a Drive folder link first."; return; }
     if (card.querySelector(".ch-syncdrive").value.trim() !== saved) { result.textContent = "Save the changed Drive link first — Sync now uses the saved one."; return; }
-    const button = card.querySelector(".ch-syncnow");
+    if (resync && !confirm("Resync merges the channel folder and the Drive folder from scratch. Use it only when the sync has stopped because its state is damaged.\n\nFiles deleted on only one side since the last good sync can come back. Continue?")) return;
+    const button = card.querySelector(resync ? ".ch-syncresync" : ".ch-syncnow");
     button.disabled = true;
-    result.textContent = "Starting sync…";
+    result.textContent = resync ? "Starting resync…" : "Starting sync…";
     try {
-      const r = await api(`/api/channels/${encodeURIComponent(ch.channelId)}/sync-now`, { method: "POST", body: "{}" });
+      const r = await api(`/api/channels/${encodeURIComponent(ch.channelId)}/sync-now`, { method: "POST", body: JSON.stringify(resync ? { resync: true } : {}) });
       if (!r.ok) { result.textContent = `✗ ${r.error || "sync not started"}`; return; }
       if (r.busy) result.textContent = "A sync pass is already running — waiting for it…";
       await pollDriveSync(ch.channelId, result, () => card.isConnected);
@@ -2195,7 +2196,9 @@ function renderChannelDetail(ch) {
     } finally {
       button.disabled = false;
     }
-  });
+  };
+  card.querySelector(".ch-syncnow").addEventListener("click", () => startDriveSyncPass(false));
+  card.querySelector(".ch-syncresync").addEventListener("click", () => startDriveSyncPass(true));
 
   const approvedBox = card.querySelector(".ch-approved");
   const approved = meta.approvedTools || [];

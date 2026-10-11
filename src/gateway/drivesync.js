@@ -39,11 +39,13 @@ import {
   getDriveSyncConflict,
   getDriveSyncRclonePath,
 } from "../config/settings.js";
-import { listChannels } from "../config/store.js";
+import { listChannels, getUsers } from "../config/store.js";
+import { metaGet, metaSet } from "../db/index.js";
+import { postDirectMessage } from "../platforms/notify.js";
 import { effectiveWorkDir } from "./folders.js";
 import { gatewayRoot, configDir, workspaceRoot } from "../config/paths.js";
 import { getContainerRuntime } from "../config/settings.js";
-import { confinedCommandArgv } from "../runtimes/container/index.js";
+import { confinedCommandArgv, confinedCommandCli } from "../runtimes/container/index.js";
 import { buildChildEnv } from "../engines/child-env.js";
 import { appendTail } from "../util/tail.js";
 import { logEvent } from "../util/logger.js";
@@ -51,6 +53,12 @@ import { conciseProcessDiagnostic, describeProcessOutcome } from "../util/proces
 
 const MAX_TAIL = 8 * 1024; // keep the last ~8KB of rclone output for diagnostics
 const RUN_TIMEOUT_MS = 20 * 60 * 1000; // a single bisync pass may not exceed 20 min
+// A lock older than any live pass is stale; rclone renews a held lock, so a live one never gets here.
+export const BISYNC_MAX_LOCK = "30m";
+// A container of an earlier pass that this daemon has watched for longer than any pass may run is
+// an orphan (its client died with a previous daemon): it is removed and the pass goes ahead.
+const ORPHAN_GRACE_MS = RUN_TIMEOUT_MS + 5 * 60 * 1000;
+const WEDGED_NOTICE_MS = 24 * 60 * 60 * 1000; // remind admins about a wedged channel at most daily
 
 // ── Pure helpers (exported for tests) ──────────────────────────────────────────────────────────
 
@@ -223,9 +231,23 @@ function driveAuthFlags({ folderId, keyFile, subject }) {
   return flags;
 }
 
+// rclone ≥ 1.66 recovers an interrupted bisync by itself (`--recover` keeps backup listings and
+// resumes from them; `--resilient` lets a later pass retry a less-serious error; `--max-lock`
+// expires a lock no live pass holds). Without them, one interrupted pass — a daemon restart, a
+// timeout, two passes racing for the lock — left only `.lst-err` listings and every later pass
+// aborted with "Must run --resync" until someone stepped in.
+export function parseRcloneVersion(text) {
+  const m = String(text || "").match(/rclone v(\d+)\.(\d+)/);
+  return m ? [Number(m[1]), Number(m[2])] : null;
+}
+export function supportsBisyncRecovery(version) {
+  return Boolean(version) && (version[0] > 1 || (version[0] === 1 && version[1] >= 66));
+}
+
 // Full argv (sans the leading "rclone") for one bisync pass. `firstRun` seeds the baseline with
 // --resync (bisync refuses to run the very first time without it); steady-state runs omit it.
-export function buildBisyncArgs({ localPath, folderId, keyFile, subject, workDir, conflict = "newer", firstRun = false, filtersFile = "", extraExcludes = [] }) {
+// `recovery` adds the self-recovery flags (only for an rclone that knows them).
+export function buildBisyncArgs({ localPath, folderId, keyFile, subject, workDir, conflict = "newer", firstRun = false, filtersFile = "", extraExcludes = [], recovery = false }) {
   const args = ["bisync", localPath, ":drive:", ...driveAuthFlags({ folderId, keyFile, subject })];
   args.push("--workdir", workDir); // bisync listing state — kept under the gateway root, not ~/.cache
   if (filtersFile) args.push("--filters-file", filtersFile, "--ignore-case"); // both directions; a change forces --resync
@@ -235,6 +257,7 @@ export function buildBisyncArgs({ localPath, folderId, keyFile, subject, workDir
   args.push("--create-empty-src-dirs");
   args.push("--conflict-resolve", conflict, "--conflict-loser", "num"); // keep both sides on a tie
   if (firstRun) args.push("--resync", "--resync-mode", conflict);
+  if (recovery) args.push("--resilient", "--recover", "--max-lock", BISYNC_MAX_LOCK);
   args.push("-v"); // INFO-level lines into the captured log
   return args;
 }
@@ -265,6 +288,8 @@ const startedAt = new Map(); // slug -> { at, trigger } for the pass currently r
 const lastResult = new Map(); // slug -> { ok, at, trigger, firstRun, tail, summary } for status/debug
 let sweeping = false; // one sweep at a time, scheduled or manual
 const rcloneChecked = new Map(); // binary path -> "is rclone runnable" probe result
+const rcloneVersions = new Map(); // binary path -> [major, minor] once read
+const orphanSeen = new Map(); // slug -> when this daemon first saw an earlier pass's container
 
 function driveSyncDir() {
   return path.join(gatewayRoot(), "drivesync");
@@ -360,6 +385,19 @@ export function rcloneAvailable(bin) {
   return ok;
 }
 
+// The rclone version (cached once read; an unreadable version is retried next pass).
+export function rcloneVersion(bin) {
+  const key = String(bin || "");
+  if (rcloneVersions.has(key)) return rcloneVersions.get(key);
+  let version = null;
+  try {
+    const r = spawnSync(key, ["version"], { env: buildChildEnv(), encoding: "utf8", timeout: 10_000 });
+    if (!r.error && r.status === 0) version = parseRcloneVersion(r.stdout);
+  } catch {}
+  if (version) rcloneVersions.set(key, version);
+  return version;
+}
+
 // Run one rclone invocation, capturing a rolling tail of its output. Resolves (never rejects) with
 // { ok, code, tail }. Cross-platform: a bare argv spawn (no shell), portable timeout + kill.
 function runRclone(bin, args, cwd, { onTimeout = null } = {}) {
@@ -399,6 +437,53 @@ function runRclone(bin, args, cwd, { onTimeout = null } = {}) {
   });
 }
 
+// A pass's container name: `cg-drivesync-<slug>-<8 hex>`. The pattern matches only THIS channel's
+// containers (a slug that is a prefix of another slug's does not match the longer one's).
+function syncContainerBase(slug) {
+  return `cg-drivesync-${String(slug).replace(/[^a-zA-Z0-9_.-]/g, "-").slice(0, 60)}`;
+}
+export function syncContainerPattern(slug) {
+  const base = syncContainerBase(slug).replace(/[.]/g, "\\.");
+  return new RegExp(`^${base}-[0-9a-f]{8}$`);
+}
+
+// A pass's container outlives the daemon: a restart kills the `podman run` client, never the
+// container, and the in-memory in-flight guard dies with the daemon. The next daemon's first sweep
+// then started a second bisync beside the orphan ("prior lock file found"), and the interrupted
+// pass left the channel needing --resync on every tick. So each pass first looks for a container
+// of an earlier pass of the same channel.
+const LIST_TIMEOUT_MS = 15_000;
+function runCli(bin, args) {
+  return new Promise((resolve) => {
+    let out = "";
+    let child;
+    try { child = spawn(bin, args, { env: buildChildEnv(), stdio: ["ignore", "pipe", "ignore"] }); } catch { resolve(null); return; }
+    const timer = setTimeout(() => { try { child.kill("SIGKILL"); } catch {} }, LIST_TIMEOUT_MS);
+    timer.unref?.();
+    child.stdout.setEncoding("utf8");
+    child.stdout.on("data", (chunk) => { out = appendTail(out, chunk, 64 * 1024); });
+    child.on("error", () => { clearTimeout(timer); resolve(null); });
+    child.on("close", (code) => { clearTimeout(timer); resolve(code === 0 ? out : null); });
+  });
+}
+const defaultContainerProbe = {
+  async list(slug) {
+    const bin = await confinedCommandCli(getContainerRuntime());
+    if (!bin) return [];
+    const out = await runCli(bin, ["ps", "--filter", "name=cg-drivesync-", "--format", "{{.Names}}"]);
+    const pattern = syncContainerPattern(slug);
+    return String(out || "").split("\n").map((line) => line.trim()).filter((name) => pattern.test(name));
+  },
+  async remove(names) {
+    const bin = await confinedCommandCli(getContainerRuntime());
+    if (!bin || !names.length) return;
+    // -t 10: SIGTERM first, so rclone can save its listings before it goes.
+    await runCli(bin, ["rm", "-f", "-t", "10", ...names]);
+  },
+};
+let containerProbe = defaultContainerProbe;
+export function __setDriveSyncContainerProbe(probe) { containerProbe = probe || defaultContainerProbe; }
+
 // How a bisync pass is launched. `buildArgs(paths)` makes the rclone argv for the paths the process
 // will see. Default: a one-shot confined container. The state dir, filters and key are mounted at a
 // RANDOM path per pass, so a symlink planted in the channel folder mid-pass cannot aim at them (the
@@ -409,7 +494,7 @@ async function confinedRcloneLaunch({ bin, slug, localPath, stateDir, filtersFil
   if (!rclone) throw new Error(`rclone not found (${bin})`);
   const base = `/cg-sync-${randomBytes(12).toString("hex")}`;
   const inside = { localPath, stateDir: `${base}/state`, filtersFile: `${base}/state/filters.txt`, keyFile: `${base}/key.json` };
-  const name = `cg-drivesync-${String(slug).replace(/[^a-zA-Z0-9_.-]/g, "-").slice(0, 60)}-${randomBytes(4).toString("hex")}`;
+  const name = `${syncContainerBase(slug)}-${randomBytes(4).toString("hex")}`;
   const argv = await confinedCommandArgv({
     binds: [
       { source: localPath },
@@ -433,13 +518,81 @@ export function __setDriveSyncLauncher(fn) { launch = fn || confinedRcloneLaunch
 export const HOST_LAUNCHER = async ({ bin, localPath, stateDir, filtersFile, keyFile, buildArgs }) =>
   ({ argv: [bin, ...buildArgs({ localPath, stateDir, filtersFile, keyFile })], cleanup: () => {} });
 
+// Before a pass: is an earlier pass of this channel still running in its container? While it may
+// still be a live pass, this one is skipped (busy). Once this daemon has watched it for longer than
+// any pass may run, it is an orphan: removed (SIGTERM first), and this pass goes ahead. A probe
+// that cannot list containers never blocks the sync.
+async function clearEarlierPass(slug, channelId) {
+  let running = [];
+  try { running = await containerProbe.list(slug); } catch {}
+  if (!running.length) { orphanSeen.delete(slug); return true; }
+  const now = Date.now();
+  if (!orphanSeen.has(slug)) orphanSeen.set(slug, now);
+  const grace = Number.isFinite(containerProbe.graceMs) ? containerProbe.graceMs : ORPHAN_GRACE_MS; // tests shorten it
+  if (now - orphanSeen.get(slug) < grace) {
+    console.log(`[drivesync] ${slug}: an earlier pass is still running (${running.join(", ")}); skipping this one`);
+    return false;
+  }
+  try { await containerProbe.remove(running); } catch {}
+  orphanSeen.delete(slug);
+  await logEvent("drivesync_orphan_removed", { slug, channel: channelId, containers: running.join(",") });
+  console.error(`[drivesync] ${slug}: removed an orphaned pass container (${running.join(", ")})`);
+  return true;
+}
+
+// rclone's own words for a channel whose bisync state no pass can use any more. The sync then
+// fails every tick until a one-time --resync — which the gateway deliberately never runs on its own
+// (after a delete-everything it would copy every deleted file back), so an admin must choose it.
+export function bisyncNeedsResync(tail) {
+  return /Must run --resync|cannot find prior Path1 or Path2 listings/i.test(String(tail || ""));
+}
+export const NEEDS_RESYNC_SUMMARY = "This channel's sync state is damaged and every pass now stops until an admin runs a one-time Resync (admin UI → the channel → Resync). A resync merges both sides: files deleted on only one side since the last good sync can come back.";
+
+// Tell every admin, at most once a day per channel, that a channel's sync is wedged — a wedged
+// sync otherwise fails quietly on every tick (it did, for weeks). The day mark survives restarts.
+const wedgedMarkKey = (slug) => `drivesync_wedged_notice:${slug}`;
+async function adminUserIds() {
+  const users = await getUsers();
+  return Object.entries(users).filter(([, u]) => u?.isAdmin).map(([userId]) => userId);
+}
+let slackHandle = null;
+async function dmAdminsThroughSlack(text) {
+  const client = slackHandle?.snapshot?.().connected ? slackHandle.getClient?.() ?? null : null;
+  if (!client) return 0;
+  let sent = 0;
+  for (const userId of await adminUserIds()) {
+    try { if (await postDirectMessage(client, { userId, text })) sent += 1; } catch {}
+  }
+  return sent;
+}
+let notifyAdmins = dmAdminsThroughSlack;
+export function __setDriveSyncNotifier(fn) { notifyAdmins = fn || dmAdminsThroughSlack; }
+async function noticeWedged({ slug, channelId, name }) {
+  const last = Date.parse(metaGet(wedgedMarkKey(slug)) || "");
+  if (Number.isFinite(last) && Date.now() - last < WEDGED_NOTICE_MS) return;
+  const label = name || slug;
+  const text = [
+    `⚠️ Google Drive sync for *${label}* has stopped: its sync state is damaged, and every pass now fails until it is reset.`,
+    "Fix: admin UI → Channels → this channel → *Resync*. A resync merges both sides, so files deleted on only one side since the last good sync can come back — check the Drive folder afterwards.",
+  ].join("\n");
+  let sent = 0;
+  try { sent = await notifyAdmins(text, { slug, channelId }); } catch {}
+  // Mark only a delivered notice, so a disconnected Slack is retried on the next pass.
+  if (sent) metaSet(wedgedMarkKey(slug), new Date().toISOString());
+  await logEvent("drivesync_needs_resync", { slug, channel: channelId, notified: sent });
+}
+function clearWedgedNotice(slug) {
+  try { if (metaGet(wedgedMarkKey(slug))) metaSet(wedgedMarkKey(slug), ""); } catch {}
+}
+
 // Sync one channel. Assumes the caller resolved config + eligibility. Serialized per-slug: a pass
 // that is already running (scheduled or manual) is never doubled — the caller gets `busy`.
-async function syncOne({ slug, channelId, folderId, meta }, { bin, keyFile, subject, conflict, trigger = "schedule" }) {
+async function syncOne({ slug, channelId, folderId, meta, name = "" }, { bin, keyFile, subject, conflict, trigger = "schedule", resync = false }) {
   if (inFlight.has(slug)) return { busy: true }; // previous pass still running — skip this one
   inFlight.add(slug);
   startedAt.set(slug, { at: Date.now(), trigger });
   try {
+    if (!(await clearEarlierPass(slug, channelId))) return { busy: true };
     const workDir = effectiveWorkDir(slug, meta || {}); // the channel's real folder (honors a custom workDir)
     const refusal = driveSyncFolderRefusal(workDir, { ownFolder: effectiveWorkDir(slug, {}) });
     if (refusal) {
@@ -455,13 +608,17 @@ async function syncOne({ slug, channelId, folderId, meta }, { bin, keyFile, subj
     const initial = needsResync(stateDir, identity);
     // A changed pair starts from a clean state dir: the old pair's listings describe other paths.
     if (initial && existsSync(resyncSentinel(stateDir))) { try { rmSync(stateDir, { recursive: true, force: true }); } catch {} }
-    const firstRun = initial || priorListingEmpty(stateDir);
+    // `resync` is the admin's explicit recovery of a wedged channel (needsResync): a full --resync
+    // against the existing state, which can bring back files deleted on one side since the last
+    // good pass. It is never chosen automatically.
+    const firstRun = initial || resync || priorListingEmpty(stateDir);
     mkdirSync(localPath, { recursive: true }); // both sides must exist before bisync
     mkdirSync(stateDir, { recursive: true });
     const filtersFile = path.join(stateDir, "filters.txt");
     writeFileSync(filtersFile, filters, { mode: 0o600 });
     const extraExcludes = symlinkExcludes(localPath);
-    const buildArgs = (p) => buildBisyncArgs({ localPath: p.localPath, folderId, keyFile: p.keyFile, subject, workDir: p.stateDir, conflict, firstRun, filtersFile: p.filtersFile, extraExcludes });
+    const recovery = supportsBisyncRecovery(rcloneVersion(bin));
+    const buildArgs = (p) => buildBisyncArgs({ localPath: p.localPath, folderId, keyFile: p.keyFile, subject, workDir: p.stateDir, conflict, firstRun, filtersFile: p.filtersFile, extraExcludes, recovery });
     let res;
     try {
       const { argv, cleanup } = await launch({ bin, slug, localPath, stateDir, filtersFile, keyFile, buildArgs });
@@ -470,20 +627,23 @@ async function syncOne({ slug, channelId, folderId, meta }, { bin, keyFile, subj
       const message = String(error?.message || error);
       res = { ok: false, code: null, signal: "", tail: message, outcome: { kind: "failed", summary: `could not start: ${message}` } };
     }
+    const wedged = !res.ok && bisyncNeedsResync(res.tail);
     lastResult.set(slug, {
       ok: res.ok,
       at: Date.now(),
       trigger,
       firstRun,
+      needsResync: wedged,
       tail: res.tail,
-      summary: res.ok ? "" : (conciseProcessDiagnostic(res.tail, 300) || res.outcome?.summary || "failed before it completed"),
+      summary: res.ok ? "" : wedged ? NEEDS_RESYNC_SUMMARY : (conciseProcessDiagnostic(res.tail, 300) || res.outcome?.summary || "failed before it completed"),
     });
     if (res.ok) {
       // Only a COMPLETED --resync earns the sentinel; until it exists every tick retries the resync.
       if (firstRun) {
         try { writeFileSync(resyncSentinel(stateDir), `${JSON.stringify({ identity, at: new Date().toISOString() })}\n`, { mode: 0o600 }); } catch {}
       }
-      await logEvent("drivesync_run", { slug, channel: channelId, firstRun, trigger });
+      await logEvent("drivesync_run", { slug, channel: channelId, firstRun, trigger, ...(resync ? { resync: true } : {}) });
+      clearWedgedNotice(slug);
     } else {
       // A failed first run must retry --resync next tick against a clean slate, so drop the
       // (now-stale) listing state. No sentinel was written, so the retry stays a first run either
@@ -491,7 +651,8 @@ async function syncOne({ slug, channelId, folderId, meta }, { bin, keyFile, subj
       // Only a genuine first run may be dropped: a failed forced resync keeps the sentinel and the
       // listings that show what happened.
       if (initial) { try { rmSync(stateDir, { recursive: true, force: true }); } catch {} }
-      await logEvent("drivesync_error", { slug, channel: channelId, trigger, code: res.code, signal: res.signal, outcome: res.outcome?.kind, tail: res.tail.slice(-800) });
+      await logEvent("drivesync_error", { slug, channel: channelId, trigger, code: res.code, signal: res.signal, outcome: wedged ? "needs_resync" : res.outcome?.kind, tail: res.tail.slice(-800) });
+      if (wedged) await noticeWedged({ slug, channelId, name });
       const detail = conciseProcessDiagnostic(res.tail, 300);
       console.error(`[drivesync] ${slug} bisync ${res.outcome?.summary || "failed before it completed"}${detail ? `: ${detail}` : ""}`);
     }
@@ -554,7 +715,7 @@ export function driveSyncStatus(slug) {
     running: Boolean(running),
     runningSince: running ? running.at : null,
     runningTrigger: running ? running.trigger : "",
-    last: last ? { ok: last.ok, at: last.at, trigger: last.trigger, firstRun: last.firstRun, summary: last.summary } : null,
+    last: last ? { ok: last.ok, at: last.at, trigger: last.trigger, firstRun: last.firstRun, needsResync: Boolean(last.needsResync), summary: last.summary } : null,
   };
 }
 
@@ -572,7 +733,7 @@ const delay = (ms) => new Promise((resolve) => { setTimeout(resolve, ms).unref?.
 // Start one channel's bisync pass now, outside the schedule. The pass runs in the daemon and
 // outlives the caller; `waitMs` lets a caller (the agent tool) wait a bounded time for the outcome.
 // Returns { ok, started, busy, done, error, status } — never throws.
-export async function syncChannelNow(slug, { waitMs = 0, trigger = "manual" } = {}) {
+export async function syncChannelNow(slug, { waitMs = 0, trigger = "manual", resync = false } = {}) {
   const cfg = resolveSyncConfig();
   if (!cfg.ok) return { ok: false, started: false, error: cfg.error, status: driveSyncStatus(slug) };
   const ch = (await listChannels()).find((c) => c.slug === slug);
@@ -580,7 +741,7 @@ export async function syncChannelNow(slug, { waitMs = 0, trigger = "manual" } = 
   const [target] = selectSyncChannels([ch]);
   if (!target) return { ok: false, started: false, error: "No Google Drive folder is linked to this channel (or the saved link isn't a Drive folder link).", status: driveSyncStatus(slug) };
   if (inFlight.has(slug)) return { ok: true, started: false, busy: true, status: driveSyncStatus(slug) };
-  const pass = syncOne(target, { ...cfg, trigger }).catch((e) => {
+  const pass = syncOne(target, { ...cfg, trigger, resync: Boolean(resync) }).catch((e) => {
     console.error(`[drivesync] ${slug} manual sync error:`, e?.message || e);
     return { ok: false };
   });
@@ -633,7 +794,8 @@ export function driveSyncResultOutput(result = {}) {
 
 // Start the periodic sweep. Interval is read live each tick, so admin changes take effect without a
 // restart. Returns the timer. A single sweep is non-overlapping via the per-slug inFlight guard.
-export function startDriveSync() {
+export function startDriveSync({ slack = null } = {}) {
+  slackHandle = slack;
   mkdirSync(driveSyncDir(), { recursive: true });
   const tick = () => runSweep("schedule"); // don't stack sweeps if one runs long
   // Re-read the interval each fire by scheduling the next tick from within (a fixed setInterval

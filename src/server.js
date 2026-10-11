@@ -410,7 +410,7 @@ async function main() {
   startFollowupDigest({ slack });
 
   // Scheduled two-way Google Drive ↔ channel-folder sync (dormant unless enabled + configured).
-  startDriveSync();
+  startDriveSync({ slack }); // DMs admins when a channel's sync is wedged
 
   // Hourly scan for engine usage the gateway did NOT launch — a terminal/VS Code/desktop session on
   // this host, or one inside a channel container someone SSH'd into. Read-only, deferred past boot,

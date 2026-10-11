@@ -357,6 +357,19 @@ export async function confinedCommandArgv({ binds = [], entrypoint, args = [], s
   return argv;
 }
 
+// The container CLI the one-shot confined commands run under, or "" when none is usable. Lets a
+// daemon-side caller find (and remove) its own one-shot containers by name, e.g. a Drive sync pass
+// that outlived the daemon restart which killed its client.
+export async function confinedCommandCli(settings = null) {
+  const effective = settings || bootSettings || {};
+  try {
+    const caps = await runtime().cli.probe(effective, { image: effective.image });
+    return caps.ok ? caps.bin : "";
+  } catch {
+    return "";
+  }
+}
+
 export function stopContainerRuntime() {
   if (!context) return;
   context.reaper.stopTimer();
