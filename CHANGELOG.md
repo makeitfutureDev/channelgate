@@ -18,7 +18,7 @@ product overview.
 
 ## Unreleased
 
-## 0.6.3 — publication pending
+## 0.6.3 — 2026-10-11
 
 - Refresh the locked MCP SDK, URI and IP parsing dependencies to patched compatible releases.
 

@@ -4319,6 +4319,23 @@ Claude and Codex fixture-session continuation; full coverage suite passed with 3
 coverage, secret scan and production dependency audit passed. Live acceptance remains pending; deployment QA definitions API-CONV-01–05 are registered
 for both engines (2026-10-11). Automated results do not certify these live gates.
 
+Stable backport validation (2026-10-11): full suite on the stable base passed with 3,196
+passing tests, 24 environment-dependent skips and zero failures; coverage 93.82% lines,
+84.72% branches and 89.32% functions. Static, secret scan, security coverage, DCO and production
+advisory checks passed; production dependencies have no advisories. CI passed on Node 22.13
+and 24. Independent review verified the additive migration 31→33 upgrade preserves existing
+schema definitions and matches beta's migration ordering.
+
+Real Slack and native Claude/Codex acceptance used an isolated candidate HTTP/runtime process,
+a candidate-matching image, real operator logins and a signed scratch license fixture. Both engines
+passed create/reuse/context and event deduplication, same-root/session continuation across a fresh
+runtime process, concurrent API queueing, deleted-root replacement, aliases/channel isolation,
+409 event collisions, missing-channel validation and legacy unkeyed roots. Slack thread history
+confirmed expected answers and queue notices. These results do not certify the remaining
+interactive Slack continuation/stop portion of API-CONV-02 or real bot-access removal/restoration
+portion of API-CONV-04; those live checks remain pending. Full serving-daemon restart and its
+other automation recovery paths retain their separate existing release gates.
+
 ### HTTP run API channel parity
 
 An API run is an admin's turn in its channel, as the fixed `api` principal with no personal scope.

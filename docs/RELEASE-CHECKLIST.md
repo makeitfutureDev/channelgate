@@ -2,8 +2,9 @@
 > migration 32 schema prerequisite to preserve upgrade ordering, and the compatible dependency
 > lock refresh from `6d72d299`. No unrelated beta runtime changes are included. Package version
 > 0.6.2 has a separate pending update-hotfix candidate; this candidate uses 0.6.3.
-> Applicable live API-CONV-01–05 Claude/Codex acceptance and exact-candidate owner confirmation
-> remain release gates. Atlas deployment is requested; its current updater needs the reviewed
+> Automated checks and native-engine API acceptance passed; interactive Slack continuation/stop
+> and real bot-access removal/restoration remain pending for both engines. Exact-candidate owner
+> confirmation remains required before promotion. Atlas deployment is requested; its current updater needs the reviewed
 > modern transaction runner staged separately for this update.
 
 # Release checklist
