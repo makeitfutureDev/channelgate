@@ -59,7 +59,7 @@ export function createTeamsInteractionHandler({ dispatch, authorize = null } = {
       return await dispatch(interaction);
     } catch {
       if (["task/fetch", "task/submit"].includes(interaction.invokeName)) {
-        return teamsCardErrorResponse(activity, 400, "BadRequest", "Action could not be completed. Reopen /settings to check your access and try again.");
+        return teamsCardErrorResponse(activity, 400, "BadRequest", "Action could not be completed. Reopen the controls to check your access and try again.");
       }
       return { status: 200, body: { statusCode: 200, type: ADAPTIVE_CARD_TYPE,
         value: messageCard({ title: "Action could not be completed", text: "Reopen the controls to check the current state before trying again." }) } };

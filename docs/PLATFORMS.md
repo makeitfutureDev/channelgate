@@ -333,15 +333,19 @@ Native settings dialogs are available; broadcast mentions remain unavailable.
   take identity from the verified Microsoft envelope and repeat membership/role checks. Verified
   Execute errors use the Teams invoke response envelope; invalid request authentication remains
   an HTTP rejection. Legacy Submit replacements use only the card's server-stored message target.
-- `/files [folder]` privately browses the current conversation workspace. Open a file to download
-  it or edit eligible text; users with file-write access can open the uploader. Browser links are
-  short-lived grants and recheck current Teams membership and gateway policy. A group request
-  keeps the original group workspace even though its controls arrive in a personal chat.
+- `/files [folder]` posts an **Open files** button in the current conversation/thread. It opens
+  a private Teams popup for that workspace; no personal chat is needed. Browse folders and pages,
+  use **Parent folder** or **Root**, and **Refresh** to reload the listing. Open a file to download
+  it or edit eligible text. With write access, select **Upload files** in the destination folder,
+  then **Open uploader** to choose files or a folder in the browser. Return and refresh after
+  uploading. File details and upload links offer **Back to files**. Short-lived grants repeat
+  current Teams membership and gateway policy checks. Launchers/dialogs are requester-bound and
+  expire after 15 minutes; listings and bearer links never replace the shared chat launcher.
 - `/sendfile <workspace-relative-path>` sends a personal-chat file-consent card. Accept uploads
   the prepared snapshot; Decline does not upload. The native limit is a nonempty file of at most
   10 MB, consent expires after ten minutes, and uncertain upload outcomes are not replayed.
   Larger files use the private browser download path. Install/open a personal chat first if
-  Microsoft cannot deliver private controls or file-consent cards.
+  Microsoft cannot deliver file-consent cards.
 - Downloadable audio uses local Whisper only, controlled by the existing Whisper setting. No
   Slack-generated transcript is requested. A failed audio-only request explains the missing
   transcript without invoking an engine; accompanying typed text can continue. Stop cancels

@@ -18,6 +18,11 @@ product overview.
 
 ## Unreleased
 
+- Teams `/files` now opens a private file browser popup from an **Open files** button in the
+  original conversation, without sending controls to a personal chat. Browse folders and pages,
+  choose an upload destination, and return to the listing after opening a file or browser uploader.
+  Parent folder and Refresh controls make navigation and uploaded files easy to find.
+
 - Fix Google Drive sync channels getting stuck after an interrupted pass. Passes now use rclone's
   self-recovery flags (rclone 1.66+), never start beside a pass container left over from before a
   restart (an orphan is removed after the maximum pass time), and a channel whose sync state rclone

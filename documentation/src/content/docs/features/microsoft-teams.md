@@ -23,7 +23,7 @@ Personal chats do not need a mention and keep a continuous session. Channel repl
 
 ## Beta controls and files
 
-The current beta implementation includes native settings and approval cards, plus private workspace browsing through `/files`. Availability depends on the installed gateway and app revision. Personal-chat file consent requires the app manifest's `supportsFiles` setting; prepared files are limited to 10 MB and consent expires after ten minutes.
+The current beta implementation includes native settings and approval cards, plus private workspace browsing through `/files`: select **Open files** in the original conversation to browse folders in a Teams popup. Choose the upload destination there, then open the browser uploader to select local files or a folder. Availability depends on the installed gateway and app revision. Personal-chat file consent requires the app manifest's `supportsFiles` setting; prepared files are limited to 10 MB and consent expires after ten minutes.
 
 Reading group/channel files is opt-in: configure **Read group and channel files from allowed drives**, exact drive IDs, and Microsoft's selected-site application permissions. The checkbox does not grant Microsoft access. Canonical SharePoint links are supported only within the configured drives; sharing shortlinks are unsupported.
 
