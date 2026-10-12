@@ -1,5 +1,13 @@
 # Release checklist
 
+> 0.6.3 candidate `412f7017` was selected for release by an organization administrator on
+> 2026-10-12 after the exact candidate's full automated checks, CI and real Slack/native
+> Claude and Codex API acceptance passed. The administrator explicitly deferred the remaining
+> interactive Slack continuation/stop checks in API-CONV-02 and real bot-access
+> removal/restoration checks in API-CONV-04. These checks remain open in TEST-PLAN.md;
+> the release decision does not mark them as passed. The stable candidate adds persistent
+> HTTP API conversations and the applicable production dependency security fixes.
+
 > 0.6.1 was selected for release by the owner on 2026-10-06 after the exact candidate's
 > automated checks and CI passed. The owner was told that the remaining channel-specific Codex
 > account isolation, Cloud MCP, UI, and failover live cases are unexecuted and requested promotion
