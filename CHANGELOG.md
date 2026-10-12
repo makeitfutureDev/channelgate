@@ -24,11 +24,6 @@ product overview.
   can no longer use is reported as needing a resync, with a daily admin DM and a **Resync** button
   on the channel page instead of failing silently on every sweep.
 
-- Add optional `conversationKey` to the HTTP run API: keep related external events in one
-  persistent Slack thread, preserve agent context through the existing run queue, and expose
-  thread timestamps, reuse flags and permalinks. Replace deleted roots safely and report Slack
-  access failures without silently starting a separate headless conversation.
-
 - Add Teams Graph callback diagnostics to the operational audit: receipt, validation, authenticated
   target acceptance and bounded rejection reasons, without logging callback credentials or payloads.
   Subscription retry warnings retain their numeric provider status in service logs.
@@ -95,8 +90,6 @@ product overview.
   for unavailable definitions while retaining Deactivate for existing grants.
 - An unlinked channel's Drive status reports gateway readiness without claiming that the channel
   will sync on the next sweep. It explicitly asks for a folder link before channel sync can start.
-- Refresh the locked MCP SDK, URI and IP parsing dependencies to patched compatible releases;
-  production dependency auditing reports zero advisories.
 - Public automation documentation now covers run history, task outcomes, quiet execution and
   existing-thread delivery, with the exact `get_schedule_runs` and `update_schedule` controls.
   The documentation build again accounts for every registered control.
@@ -251,6 +244,15 @@ product overview.
 - Google Chat now reports a fatal Pub/Sub receiver error as a failed connection, stops intake,
   and gives an actionable Subscriber-role hint for permission errors. Reconnect restores status
   without allowing an old connection's late error to overwrite it.
+
+## 0.6.3 — 2026-10-11
+
+- Refresh the locked MCP SDK, URI and IP parsing dependencies to patched compatible releases.
+
+- Add optional `conversationKey` to the HTTP run API: keep related external events in one
+  persistent Slack thread, preserve agent context through the existing run queue, and expose
+  thread timestamps, reuse flags and permalinks. Replace deleted roots safely and report Slack
+  access failures without silently starting a separate headless conversation.
 
 ## 0.6.1 — 2026-10-06
 

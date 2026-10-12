@@ -1,3 +1,12 @@
+> 0.6.3 API conversation candidate (2026-10-11): focused backport of `ac523624`,
+> migration 32 schema prerequisite to preserve upgrade ordering, and the compatible dependency
+> lock refresh from `6d72d299`. No unrelated beta runtime changes are included. Package version
+> 0.6.2 has a separate pending update-hotfix candidate; this candidate uses 0.6.3.
+> Automated checks and native-engine API acceptance passed; interactive Slack continuation/stop
+> and real bot-access removal/restoration remain pending for both engines. An organization administrator selected the exact tested candidate on 2026-10-12,
+> explicitly deferring those two checks as recorded below. Stable deployment through an older
+> updater uses the reviewed modern transaction runner staged separately for this update.
+
 # Release checklist
 
 > 0.6.3 candidate `412f7017` was selected for release by an organization administrator on

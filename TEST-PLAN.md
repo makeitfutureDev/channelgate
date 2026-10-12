@@ -5156,7 +5156,8 @@ channel for isolation, connected bot with history scopes and the gateway run API
 approved QA member for Slack continuation, an authorized QA admin for root deletion and restart;
 the API itself always acts as `api` (the supplied `author` is attribution only). Use fresh case
 suffixes and explicit `engine` per request. Capture POST/GET bodies, timestamps/permalinks and
-thread history as evidence. These live cases are **unexecuted**, not an automated pass.
+thread history as evidence. The completed native-engine portions and remaining live checks
+are distinguished in the stable backport validation below; automated results alone are not a live pass.
 
 - [ ] **API-CONV-01 — create, reuse and context.** POST `{channel:"<fixture id>",
   conversationKey:"qa:<engine>:<suffix>", idempotencyKey:"qa:<engine>:<suffix>:1",
@@ -5190,8 +5191,27 @@ thread history as evidence. These live cases are **unexecuted**, not an automate
 Validation (2026-10-09): 24 new cases and 43 existing API regressions passed, including actual
 Claude and Codex fixture-session continuation; full coverage suite passed with 3,591 tests,
 32 environment-dependent skips, no failures. Static checks, security
-coverage, secret scan and production dependency audit passed. Live acceptance and deployment QA
-registration remain pending; automated results do not certify these gates.
+coverage, secret scan and production dependency audit passed. Deployment QA definitions
+API-CONV-01–05 are registered for both engines (2026-10-11). The native-engine acceptance
+results and remaining interactive/access checks are recorded below; automated results alone
+do not certify these live gates.
+
+Stable backport validation (2026-10-11): full suite on the stable base passed with 3,196
+passing tests, 24 environment-dependent skips and zero failures; coverage 93.82% lines,
+84.72% branches and 89.32% functions. Static, secret scan, security coverage, DCO and production
+advisory checks passed; production dependencies have no advisories. CI passed on Node 22.13
+and 24. Independent review verified the additive migration 31→33 upgrade preserves existing
+schema definitions and matches beta's migration ordering.
+
+Real Slack and native Claude/Codex acceptance used an isolated candidate HTTP/runtime process,
+a candidate-matching image, real operator logins and a signed scratch license fixture. Both engines
+passed create/reuse/context and event deduplication, same-root/session continuation across a fresh
+runtime process, concurrent API queueing, deleted-root replacement, aliases/channel isolation,
+409 event collisions, missing-channel validation and legacy unkeyed roots. Slack thread history
+confirmed expected answers and queue notices. These results do not certify the remaining
+interactive Slack continuation/stop portion of API-CONV-02 or real bot-access removal/restoration
+portion of API-CONV-04; those live checks remain pending. Full serving-daemon restart and its
+other automation recovery paths retain their separate existing release gates.
 
 ### HTTP run API channel parity
 
@@ -9820,3 +9840,8 @@ case. Also run a group with an external member to check tenant/channel delivery 
   uploading or sending it. Require `stage_file_for_composio` with the matching identity, unchanged
   returned file object, no base64/chunk workaround and no local credentials copied to the remote
   sandbox. Live execution and corresponding private QA registration remain pending release gates.
+
+### Stable dependency audit prerequisite
+
+The stable API conversation candidate includes the compatible lock refresh from beta
+`6d72d299`; rerun production dependency auditing and the full regression suite before release.
