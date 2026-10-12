@@ -9859,3 +9859,19 @@ The stable API conversation candidate includes the compatible lock refresh from 
       present, configured model/duration/token/context statistics present, optional cost follows
       its setting, and no default or custom container image label. Slack Files/Variables/Settings
       controls remain present. Live transport checks are pending, not recorded as passes.
+
+## Teams reply statistics size and spacing (2026-10-12)
+
+- [x] Automated: `test/platform-run-details.test.js` covers Claude and Codex final placeholder
+      edits and failed-edit fresh posts: answer text has no inline statistics; one native footer
+      carries unchanged statistics in a wrapping Small/subtle TextBlock after an 8-pixel spacer.
+      Long replies attach statistics only to the final chunk in the original thread.
+      `test/teams-native-cards.test.js` checks the real Bot Framework send/update JSON, preserving
+      answer Markdown and mention entities; ordinary messages have no footer attachment.
+- [ ] Live, Claude and Codex: deploy beta in a Teams QA conversation; select each engine in a
+      fresh session and send “Reply with exactly FOOTER-SPACING.” Inspect the final reply in Teams
+      web/desktop and mobile. Pass: the model/duration/tokens/context line is visibly smaller than
+      the answer with a clear gap above it; statistics appear once. Ask for a response longer than
+      8,000 characters and confirm the footer follows only the last chunk. Repeat via a scheduled
+      result. Capture client screenshots and activity IDs. Live transport checks and private QA
+      registration remain pending; this run has no requesting-user personal QA connection.
