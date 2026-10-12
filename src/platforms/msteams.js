@@ -73,8 +73,8 @@ export const teamsAdapter = validatePlatformAdapter({
     proactiveDm: true, // stored conversation references; 1:1 by Entra object id
   },
   guideDrop: ["references/tables.md", "references/charts.md", "references/canvases.md"],
-  formatOutbound(markdown, { directory = null, capabilities = this?.capabilities } = {}) {
-    return formatTeamsOutbound(markdown, { capabilities: capabilities || teamsAdapter.capabilities, directory, normalizeName });
+  formatOutbound(markdown, { directory = null, capabilities = this?.capabilities, requester = null } = {}) {
+    return formatTeamsOutbound(markdown, { capabilities: capabilities || teamsAdapter.capabilities, directory, normalizeName, requester });
   },
   createConnector() {
     return liveConnector("msteams") || createNullConnector(

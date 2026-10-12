@@ -9875,3 +9875,20 @@ The stable API conversation candidate includes the compatible lock refresh from 
       8,000 characters and confirm the footer follows only the last chunk. Repeat via a scheduled
       result. Capture client screenshots and activity IDs. Live transport checks and private QA
       registration remain pending; this run has no requesting-user personal QA connection.
+
+## Teams replies mention their requester (2026-10-12)
+
+- [x] Automated: `test/platform-run-details.test.js` covers Claude and Codex channel/group/DM
+      short and long responses through placeholder edit and failed-edit post delivery with an
+      unavailable roster. Only the final chunk tags the authenticated requester; the matching
+      Bot Framework mention entity carries their sender ID and the statistics footer follows it.
+      DMs and working placeholders have no automatic tag. `test/platforms.test.js` checks escaped
+      display labels, forged model markup, chunk budgets and a same-name answer mention targeting
+      a different user, which must not steal the requester's identity.
+- [ ] Live Claude and Codex: deploy beta; in Teams QA channel and group-chat fixtures select each
+      engine and send “Reply with exactly REQUESTER-TAG.” Pass: final answer, then a clickable
+      mention of its requester, then statistics; the recipient receives Teams' mention notification
+      subject to their client notification settings. Repeat with a response longer than 8,000
+      characters: automatic tag appears only on the final chunk. Send the same prompt in a bot DM:
+      no automatic tag. Capture activity/entity payloads and client screenshots. Live checks and
+      private QA registration remain pending; no requesting-user personal QA connection is exposed.

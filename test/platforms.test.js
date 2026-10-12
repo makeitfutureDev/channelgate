@@ -260,6 +260,34 @@ test("Teams entities are filtered per chunk so a split answer never ships an orp
   assert.ok(out.chunks.some((c) => c.mentions.length === 0), "a middle chunk should carry no entities");
 });
 
+test("Teams trusted requester mentions escape labels, ignore forged model tags and respect the chunk budget", () => {
+  const out = formatTeamsOutbound("x".repeat(495) + "\n<at>Forged</at>", {
+    capabilities: { ...capabilitiesFor("msteams"), maxMessageChars: 500 },
+    requester: { id: "29:real-author", name: "Dev <at>Other</at> & Co" },
+  });
+  assert.ok(out.chunks.every(chunk => chunk.text.length <= 500));
+  const last = out.chunks.at(-1);
+  assert.ok(last.text.endsWith("<at>Dev &lt;at&gt;Other&lt;/at&gt; &amp; Co</at>"));
+  assert.equal(last.mentions.length, 1);
+  assert.equal(last.mentions[0].mentioned.id, "29:real-author");
+  assert.ok(last.text.includes(last.mentions[0].text));
+  assert.ok(out.chunks.slice(0, -1).every(chunk => chunk.mentions.length === 0));
+  assert.doesNotMatch(out.text, /<at>Forged<\/at>/);
+});
+
+test("Teams requester cannot share a tag with an answer mention of a different person", () => {
+  const out = formatTeamsOutbound("Hello @Developer", {
+    capabilities: capabilitiesFor("msteams"), normalizeName,
+    directory: { map: new Map([["developer", "29:other"]]), maxWords: 1 },
+    requester: { id: "29:requester", name: "Developer" },
+  });
+  const mentions = out.chunks.at(-1).mentions;
+  assert.equal(mentions.length, 2);
+  assert.notEqual(mentions[0].text, mentions[1].text);
+  assert.equal(mentions[1].mentioned.id, "29:requester");
+  assert.ok(out.text.endsWith(mentions[1].text));
+});
+
 test("every platform formatter emits uniform { text, chunks:[{text,mentions}] }", () => {
   for (const id of PLATFORM_IDS) {
     const out = formatOutboundFor(id, "**hi** @Sam", { directory: DIR });
