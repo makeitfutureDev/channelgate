@@ -98,7 +98,10 @@ export function createTeamsGraphEvents({ auth, notificationUrl, tenantId, store,
   }
   async function maintain(row) {
     row = await prepareReactionAliases(row);
-    const { resource, apiVersion } = baseResource(row.resource);
+    const { resource, apiVersion, parts } = baseResource(row.resource);
+    // The JSON subscription selector is an identifier, not an HTTP request path. Keep
+    // literal Teams IDs here; message GET paths still percent-encode each path segment.
+    const subscriptionResource = `/${parts.join('/')}`;
     const current = now();
     const sameEndpoint = row.notificationUrl === endpoint.href;
     if (sameEndpoint && row.subscriptionId && Date.parse(row.expiresAt) > current && Number(row.renewedAt || 0) + RENEW_AFTER > current) return row;
@@ -126,8 +129,9 @@ export function createTeamsGraphEvents({ auth, notificationUrl, tenantId, store,
       await store.put(row);
       result = await request(apiVersion, "/subscriptions", "POST", {
         changeType: "created,updated,deleted", notificationUrl: endpoint.href,
-        resource, includeResourceData: false, expirationDateTime: expiresAt, clientState,
+        resource: subscriptionResource, includeResourceData: false, expirationDateTime: expiresAt, clientState,
       });
+      row = { ...row, subscriptionResource };
     }
     if (!safeId(result?.id)) throw new Error("Teams Graph subscription response has no valid id");
     row = { ...row, resource, apiVersion, subscriptionId: result.id, expiresAt: result.expirationDateTime || expiresAt, renewedAt: current };

@@ -459,3 +459,11 @@ status. Validation challenges have their own `validated` event and do not prove 
 delivery. Diagnostics exclude tokens, request headers, bodies and unverified identifiers. If no
 receipt exists, correlate provider delivery with ingress/security logs; an empty queue cannot
 distinguish a blocked POST from an absent provider notification.
+
+The subscription's JSON `resource` selector uses literal Teams identifiers, for example
+`/teams/<team-id>/channels/19:example@thread.tacv2/messages`. Percent encoding belongs to the
+message-fetch HTTP path, not to this selector. `subscriptionResource` records the registered
+form; ordinary renewal cannot change a provider subscription's resource. A deployment with an
+older encoded registration and validation-only audit evidence needs a scoped replacement, not
+another renewal or restart. Preserve the conversation's activation cutoffs and actor checks;
+confirm authenticated change-notification delivery before retiring the prior registration.

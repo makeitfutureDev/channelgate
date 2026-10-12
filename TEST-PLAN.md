@@ -158,6 +158,12 @@ example server behind HTTPS on a public host. Record the token's last four chara
 
 ### Teams history-free activation regression (2026-10-09)
 
+- Subscription selector regression (2026-10-12), engine-independent: Graph subscription JSON
+  retains literal chat/channel IDs containing `:` and `@`, while notification GET paths remain
+  encoded. Recreation of a legacy encoded selector preserves start, alias, snapshot and current
+  activation cutoffs. `platform-teams-graph-events.test.js` covers both scopes and registration
+  metadata. Live provider delivery after a scoped registration replacement is observed separately
+  from live engine activation; the reaction and edited-mention Claude/Codex cases remain required.
 - Engine-independent callback observability: `platform-teams-graph-events.test.js` verifies fixed
   rejection reasons, credential/payload exclusion, retryable GET failures and unchanged callback
   decisions when diagnostics throw or reject. Audit observers run after the callback response is
