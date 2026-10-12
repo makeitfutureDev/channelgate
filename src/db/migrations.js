@@ -979,4 +979,40 @@ export const migrations = [
       db.exec(`ALTER TABLE skill_proposals ADD COLUMN target TEXT NOT NULL DEFAULT '';`);
     },
   },
+  {
+    // Run history outlives its schedule, including one-time and deleted tasks.
+    version: 32,
+    up(db) {
+      db.exec(`
+        CREATE TABLE schedule_runs (
+          id TEXT PRIMARY KEY,
+          schedule_id TEXT NOT NULL,
+          channel_id TEXT NOT NULL,
+          started_ms INTEGER NOT NULL,
+          status TEXT NOT NULL,
+          data TEXT NOT NULL
+        );
+        CREATE INDEX idx_schedule_runs_schedule ON schedule_runs(schedule_id, started_ms);
+        CREATE INDEX idx_schedule_runs_channel ON schedule_runs(channel_id, started_ms);
+        CREATE INDEX idx_schedule_runs_started ON schedule_runs(started_ms);
+      `);
+    },
+  },
+  {
+    // External conversations retain their Slack root beyond run-history retention and restarts.
+    version: 33,
+    up(db) {
+      db.exec(`
+        CREATE TABLE api_conversations (
+          channel_id TEXT NOT NULL,
+          conversation_key TEXT NOT NULL,
+          thread_ts TEXT NOT NULL,
+          thread_permalink TEXT,
+          created_ms INTEGER NOT NULL,
+          updated_ms INTEGER NOT NULL,
+          PRIMARY KEY (channel_id, conversation_key)
+        );
+      `);
+    },
+  },
 ];
