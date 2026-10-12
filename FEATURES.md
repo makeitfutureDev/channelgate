@@ -970,10 +970,16 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
   and membership are checked on every action and sensitive write. Other members open their own
   controls. Broadcast mentions remain unimplemented. An optional approval changes
   comment refuses the current action even if Approve was clicked.
-- `/files [folder]` opens a private, paginated workspace browser. Download, upload and eligible
-  text-edit links use the existing signed browser grants, filesystem confinement and edit policy,
-  with current Teams membership and gateway authorization checked again at use. A failed private
-  delivery never posts the file list or bearer links to a group. `/sendfile <relative-path>`
+- `/files [folder]` posts an **Open files** launcher in the original conversation/thread, without
+  opening a personal chat. It opens a private, paginated Teams popup for the requester's original
+  workspace, with Root, Parent folder, Refresh and paging controls. File links and upload destination
+  selection stay in the popup; the chat launcher never contains listings or bearer links. Each
+  opening has independent state bound to the actor, source conversation and tenant, expires after
+  15 minutes, and accepts only file-dialog submissions. Download, upload and eligible text-edit
+  links use the existing short-lived browser grants, confinement and edit policy, with current
+  Teams membership and gateway authorization checked again at use. Select **Upload files** in the
+  destination folder, then **Open uploader** to choose files or a folder in the browser. Return to
+  the popup and refresh to see uploads. `/sendfile <relative-path>`
   offers a native file-consent card in the requester's personal chat: nonempty files up to 10 MB,
   ten-minute consent expiry, a bounded pending snapshot pool, and explicit Accept/Decline.
   Revocation, expiry, actor mismatch or an uncertain prior upload cannot become another upload.

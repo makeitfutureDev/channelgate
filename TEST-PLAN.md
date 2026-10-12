@@ -9565,6 +9565,58 @@ located and compared by sha256 only):
   filters, save/reload and unavailable-template handling. This is engine-independent presentation;
   no engine execution or grant-resolution behavior changes.
 
+## Teams workspace files popup (2026-10-12)
+
+Validation: 130 Teams/settings/model/file regressions passed with zero failures or skips; static
+checks and secret scanning passed. Independent review found no issues and independently passed
+93 focused regressions. Live client verification and the private registry remain pending below.
+
+Automated cases are engine-independent: `/files` and its dialog callbacks do not invoke an engine.
+
+```sh
+node --test test/teams-files-dialog.test.js test/teams-controls.test.js \
+  test/teams-settings-dialog.test.js test/teams-native-cards.test.js test/file-upload.test.js \
+  test/file-download.test.js test/file-editor.test.js
+```
+
+Scratch SQLite, current rosters and actual workspace files cover source personal/group/channel launchers without proactive DMs, native
+continuations, private listings, parent/root navigation, empty folders, pagination/refresh,
+download/editor return paths, independent dialog folders, actor/conversation/tenant/bot binding,
+expiry and alternate-transport rejection, read-only/revoked policy, traversal and symlink escapes.
+The uploader integration consumes the popup's real grant and uploads bytes into the selected
+nested folder, checking original owner, conversation, workspace and session authority.
+
+Live client acceptance — **unexecuted**. Private QA registry updates — **pending** because this
+run exposes only the shared connector, while `AGENTS.local.md` requires the requester's selected
+personal connection. No automated callback fixture is counted as live Teams evidence.
+
+Fixture: disposable registered Teams channel/thread, group and personal chat; approved requester,
+second approved member and nonmember; Worker workspace containing `docs/nested`, `docs/hello.txt`,
+25 extra files and an escaping symlink; gateway Public URL configured. Start once on Claude and
+once on Codex for workspace continuity after upload; popup-only cases are engine-independent.
+
+1. Mention the bot with `/files docs` in the channel/thread and group; use `/files docs` in personal
+   chat. Require only **Open files** in the original conversation, no personal DM, and no listing
+   or bearer link in chat. Block proactive DM delivery: the popup must still open.
+2. On desktop, web and mobile open the large private popup. Navigate nested/parent/root folders,
+   page through all 25 extra files, refresh, and check empty folders. Open `docs/hello.txt` for
+   download/edit, then **Back to files**: preserve the folder/page. Open two popups from one
+   launcher: navigating one must not change the other's return destination.
+3. Select `docs/nested` → **Upload files** → **Open uploader**. Require destination `/docs/nested`
+   in both popup and browser. Upload a harmless `popup-upload.txt` and a folder tree, return and
+   refresh: verify actual contents/paths, with no listing/link posted in chat. In the same source
+   session ask `Read docs/nested/popup-upload.txt and tell me its contents`; require the engine
+   under test to read that original workspace, without a new conversation or runtime change.
+4. Other actor/conversation/tenant/bot, expired state, path traversal or escaping symlink, inline
+   Execute/message Submit and cross-use of settings/model/approval actions must fail without
+   listing disclosure or writes. Revoke approval/membership after opening: browse and grants fail.
+   Switch to Read-only: browse/download work; upload/edit controls disappear and forged submissions
+   fail. Existing download/upload/editor links must repeat current membership and policy checks.
+
+Pass only when actual client callbacks, workspace bytes and subsequent engine reads match the
+expected evidence. Record the exact private fixture, client, engine, prompt/action and observations
+in the requester-selected private QA registry. Unexecuted or blocked cases remain unchecked.
+
 ## Teams conversation settings parity
 
 Navigation centering (2026-10-08): 53 focused settings/dialog/general tests passed. A browser

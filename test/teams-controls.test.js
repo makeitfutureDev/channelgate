@@ -83,31 +83,20 @@ test('failed native help delivery falls back to the complete spaced guide', asyn
   assert.match(f.replies[0], /\n\n`\/clear`/);
   assert.deepEqual(f.commands, []);
 });
-test('files are sent privately and browser actions preserve original workspace identity', async () => {
+test('files post only a launcher in the original conversation without a DM', async () => {
   const f = fixture(); await f.controls.onCommand(f.args('/files'));
-  assert.equal(f.sent[0].conversationId, 'a:private');
-  const action = f.sent[0].card.body.find(item => item.type === 'ActionSet').actions[0];
-  assert.equal(action.data.relative, 'hello.txt');
-  const result = await f.controls.onInvoke(invoke(action.data, action.verb));
-  assert.equal(result.body.value.body[0].text, 'File');
-  assert.match(result.body.value.actions[0].url, /\/file-download\/open\//);
+  assert.equal(f.sent[0].conversationId, message('').rawConversationId);
+  assert.equal(f.sent[0].card.actions[0].data.cgAction, 'files.open');
+  assert.doesNotMatch(JSON.stringify(f.sent[0].card), /hello.txt|file-download/);
+  assert.deepEqual(f.replies, []);
 });
-test('foreign actor/conversation and expired controls cannot use file grants', async () => {
-  let time = 0; const f = fixture({ now: () => time }); await f.controls.onCommand(f.args('/files'));
-  const data = f.sent[0].card.actions[0].data;
-  for (const [actor, conversation] of [['29:other', 'a:private'], ['29:owner', 'a:other']]) {
-    const result = await f.controls.onInvoke(invoke(data, 'files.browse', actor, conversation));
-    assert.equal(result.body.value.body[0].text, 'Action could not be completed');
-  }
-  time = 16 * 60_000;
-  const result = await f.controls.onInvoke(invoke(data)); assert.equal(result.body.value.body[0].text, 'Action could not be completed');
-});
-test('reaction content never opens native commands; failed private delivery does not expose file list', async () => {
+test('reaction content never opens native commands; failed launcher delivery exposes no file list', async () => {
   const f = fixture(); const args = f.args('/files'); args.message.trigger = 'reaction';
   assert.equal(await f.controls.onCommand(args), false); assert.equal(f.sent.length, 0);
-  const failed = fixture({ connector: { api: { sendActivity: async () => ({}) }, openDm: async () => '' } });
+  const failed = fixture({ connector: { api: { sendActivity: async () => ({}) },
+    postCard: async () => { throw new Error('Card delivery unavailable'); }, openDm: async () => assert.fail('No DM') } });
   assert.equal(await failed.controls.onCommand(failed.args('/files')), true);
-  assert.match(failed.replies[0], /personal chat/);
+  assert.deepEqual(failed.replies, ['Card delivery unavailable']);
 });
 test('model form uses existing controls and consumes its state on a successful submit', async () => {
   const f = fixture(); await f.controls.onCommand(f.args('/model'));
@@ -138,17 +127,17 @@ test('workspace access repeats live approval and roster membership', async () =>
   await setUser(ownerId, { approved: false }); await assert.rejects(teamsWorkspaceContext(grant, { connector }), /no longer allowed/);
 });
 
-test('legacy Submit explicitly updates its private card', async () => {
+test('legacy Submit cannot replace a shared file launcher with a workspace listing', async () => {
   const f = fixture(); await f.controls.onCommand(f.args('/files'));
   const action = f.sent[0].card.actions[0];
-  const activity = invoke(action.data); activity.type = 'message'; delete activity.name; activity.value = { ...action.data, cgAction: 'files.browse' };
+  const activity = invoke(action.data, 'files.open', '29:owner', message('').rawConversationId);
+  activity.type = 'message'; delete activity.name; activity.value = action.data;
   activity.replyToId = 'forged-target'; activity.conversation.id += ';messageid=another-target';
-  const result = await f.controls.onInvoke(activity);
-  assert.deepEqual(result, { status: 200, body: {} });
-  assert.equal(f.sent.length, 2); assert.equal(f.sent[1].messageId, 'card1'); assert.equal(f.sent[1].conversationId, 'a:private');
+  assert.deepEqual(await f.controls.onInvoke(activity), { status: 200, body: {} });
+  assert.equal(f.sent.length, 1);
 });
 
-test('rejected legacy Submit cannot overwrite or post a private card', async () => {
+test('rejected legacy Submit cannot overwrite or post a file launcher', async () => {
   let time = 0; const f = fixture({ now: () => time }); await f.controls.onCommand(f.args('/files'));
   const action = f.sent[0].card.actions[0];
   for (const [stateId, actor, conversation] of [

@@ -58,6 +58,17 @@ chat launcher. Current role and membership checks apply to every action.
 Native rosters and secret inputs have size limits;
 complete oversized edits use the authenticated browser settings.
 
+## Conversation files
+
+`/files [folder]` posts **Open files** in the current conversation/thread and opens a private Teams
+popup for that workspace, without a proactive personal chat. Browse folders/pages and use Root,
+Parent folder or Refresh. Open a file to download or edit eligible text. Users with write access
+select Upload files in the destination folder, then Open uploader to choose files or a folder in
+the browser; return and refresh after uploading. File/upload details offer Back to files.
+The launcher never contains listings or bearer links. Every action repeats access and membership
+checks; each popup is bound to its requester, source conversation and tenant and expires after
+15 minutes. Browser downloads, edits and uploads require the gateway Public URL.
+
 ## Reaction controls
 
 When Teams reaction events are enabled and delivered to the gateway, 👽 **Alien**

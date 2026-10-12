@@ -16,7 +16,7 @@ import { buildTeamsSettings, createTeamsSettingsContext, handleTeamsSettings, te
 import { generalRuntimeScopes } from './settings-general.js';
 import { effectiveMeta } from '../../gateway/run.js';
 import { teamsHelpText, createTeamsHelpCard } from './help.js';
-import { settingsLauncher, settingsDialogResponse } from './settings-dialog.js';
+import { settingsLauncher, filesLauncher, settingsDialogResponse } from './settings-dialog.js';
 
 const card = (title, body = [], actions = []) => ({ type: 'AdaptiveCard', version: '1.4', body: [{ type: 'TextBlock', text: title, weight: 'Bolder', wrap: true }, ...body], actions });
 const text = value => ({ type: 'TextBlock', text: String(value), wrap: true });
@@ -72,15 +72,22 @@ export function createTeamsControls({ connector, now = Date.now, authorize = tea
   async function files(state, stateId, relative = '', page = 0) {
     const context = await authorize(grant(state), { connector });
     const listing = await listVisibleDirectory(context.root, normalizeRelativePath(relative), { page, pageSize: 12 });
+    state.fileFolder = listing.relative;
+    state.filePage = listing.page;
     const body = [text(`Folder: /${listing.relative} — page ${listing.page + 1}/${listing.totalPages}`)];
     for (const file of listing.entries.filter(item => item.accessible !== false)) {
       body.push({ type: 'ActionSet', actions: [execute(`${file.type === 'directory' ? '📁' : '📄'} ${file.name}`.slice(0, 80), file.type === 'directory' ? 'files.browse' : 'files.download', stateId, { relative: file.relative })] });
     }
-    const actions = [execute('Root', 'files.browse', stateId)];
+    const navigation = [execute('Root', 'files.browse', stateId)];
+    if (listing.relative) navigation.push(execute('Parent folder', 'files.browse', stateId, { relative: listing.relative.split('/').slice(0, -1).join('/') }));
+    navigation.push(execute('Refresh', 'files.browse', stateId, { relative: listing.relative, page: listing.page }));
+    const actions = [];
+    body.push({ type: 'ActionSet', actions: navigation });
     if (listing.page) actions.push(execute('Previous', 'files.browse', stateId, { relative: listing.relative, page: listing.page - 1 }));
     if (listing.page + 1 < listing.totalPages) actions.push(execute('Next', 'files.browse', stateId, { relative: listing.relative, page: listing.page + 1 }));
     if (canEditChannelFiles(context.meta, { isAdminUser: context.userIsAdmin })) actions.push(execute('Upload files', 'files.upload', stateId, { relative: listing.relative }));
-    return card('Conversation files (private)', body, actions);
+    if (!listing.entries.some(item => item.accessible !== false)) body.push(text('No visible files or folders on this page.'));
+    return card('Conversation files', body, actions);
   }
   async function deliverCard(state, build, inConversation = false) {
     const destination = inConversation || state.message.isDM ? state.message.rawConversationId : await connector.openDm(state.message.userId, { sourceConversationId: state.message.rawConversationId });
@@ -89,7 +96,7 @@ export function createTeamsControls({ connector, now = Date.now, authorize = tea
     state = { ...state, deliveryId: destination, inConversation, expires: now() + 15 * 60_000 };
     states.set(id, state);
     try {
-      const payload = { card: await build(state, id), text: state.modelCommand ? 'Session model settings' : inConversation ? 'Conversation settings' : 'Private conversation controls' };
+      const payload = { card: await build(state, id), text: state.modelCommand ? 'Session model settings' : state.filesLauncher ? 'Conversation files' : inConversation ? 'Conversation settings' : 'Private conversation controls' };
       const posted = inConversation && state.replyCard ? await state.replyCard(payload)
         : await connector.postCard({ conversationId: destination, threadKey: inConversation ? state.message.threadKey : undefined, ...payload });
       state.messageId = posted?.messageId || '';
@@ -128,25 +135,24 @@ export function createTeamsControls({ connector, now = Date.now, authorize = tea
         return true;
       }
       const command = match[1].toLowerCase();
-      // Settings stay with the conversation/session that opened them. File controls remain private.
-      const inConversation = command !== 'files';
+      // Shared chat contains only a launcher; workspace contents stay in the owner's dialog.
+      const inConversation = true;
       const recipient = message.raw?.activity?.recipient?.id;
       if (inConversation && recipient && connector.botId && recipient !== connector.botId) {
         throw new Error('This command is addressed to a different bot. Check the Teams app registration and messaging endpoint.');
       }
-      await deliverCard({ ...args, settingsLauncher: inConversation, tab: command === 'secrets' ? 'secrets' : '' },
+      await deliverCard({ ...args, settingsLauncher: command !== 'files', filesLauncher: command === 'files',
+        initialFolder: command === 'files' ? normalizeRelativePath(match[2] || '') : '', tab: command === 'secrets' ? 'secrets' : '' },
         async (state, id) => {
-          if (command === 'files') return files(state, id, match[2] || '');
           await authorize(grant(state), { connector });
-          return settingsLauncher(id, state.entry.name);
+          return command === 'files' ? filesLauncher(id, state.entry.name) : settingsLauncher(id, state.entry.name);
         }, inConversation);
-      if (!message.isDM && !inConversation) await reply('I sent the controls to your personal chat.');
     } catch (error) { await reply(error.message); }
     return true;
   }
   const dispatchInvoke = createTeamsInteractionHandler({ dispatch: async interaction => {
     const taskInvoke = ['task/fetch', 'task/submit'].includes(interaction.invokeName);
-    if (taskInvoke && !interaction.action.startsWith('settings.')) throw new Error('Unsupported dialog action.');
+    if (taskInvoke && !interaction.action.startsWith('settings.') && !interaction.action.startsWith('files.')) throw new Error('Unsupported dialog action.');
     if (interaction.action === 'approval.respond') {
       const result = await approval({ ...interaction.data, conversationId: interaction.conversationId, messageId: interaction.responseMessageId, actorId: interaction.actorId });
       return response(card(result.ok ? 'Approval recorded' : 'Approval unavailable', [text(result.outcome || result.error || 'Handled.')]));
@@ -154,20 +160,24 @@ export function createTeamsControls({ connector, now = Date.now, authorize = tea
     prune(); const state = states.get(interaction.data.stateId);
     if (!state || state.message.userId !== interaction.actorId || state.deliveryId !== interaction.nativeConversationId) throw new Error('These controls expired or belong to a different conversation/user. Reopen them.');
     const tenantId = state.message.raw?.tenantId;
-    if ((state.settingsLauncher || state.settingsDialog) && tenantId && interaction.tenantId !== tenantId) throw new Error('These controls belong to another tenant.');
-    if (state.settingsLauncher) {
-      if (interaction.invokeName !== 'task/fetch' || interaction.action !== 'settings.open') throw new Error('Open the settings window first.');
+    if ((state.settingsLauncher || state.settingsDialog || state.filesLauncher || state.filesDialog) && tenantId && interaction.tenantId !== tenantId) throw new Error('These controls belong to another tenant.');
+    if (state.settingsLauncher || state.filesLauncher) {
+      const kind = state.filesLauncher ? 'files' : 'settings';
+      if (interaction.invokeName !== 'task/fetch' || interaction.action !== `${kind}.open`) throw new Error('Open the controls window first.');
       // Each opening gets separate private drafts/confirmations. The reusable chat launcher
-      // never receives settings contents, even on clients using legacy Submit elsewhere.
+      // never receives workspace listings or settings contents.
       const id = randomUUID();
-      const dialog = { ...state, settingsLauncher: false, settingsDialog: true, sharedSettings: false,
+      const dialog = { ...state, settingsLauncher: false, filesLauncher: false, settingsDialog: kind === 'settings', filesDialog: kind === 'files', sharedSettings: false,
         inConversation: false, messageId: '', expires: now() + 15 * 60_000 };
-      const result = settingsDialogResponse(await settings(dialog, id));
+      const result = kind === 'files'
+        ? settingsDialogResponse(await files(dialog, id, state.initialFolder), 'Conversation files')
+        : settingsDialogResponse(await settings(dialog, id));
       prune(); states.set(id, dialog);
       return result;
     }
     if (state.settingsDialog && (interaction.invokeName !== 'task/submit' || !interaction.action.startsWith('settings.'))) throw new Error('Use the settings window.');
-    if (taskInvoke && !state.settingsDialog) throw new Error('Invalid settings window.');
+    if (state.filesDialog && (interaction.invokeName !== 'task/submit' || !['files.browse', 'files.upload', 'files.download'].includes(interaction.action))) throw new Error('Use the files window.');
+    if (taskInvoke && !state.settingsDialog && !state.filesDialog) throw new Error('Invalid controls window.');
     if (interaction.action.startsWith('settings.')) {
       const release = await acquireKeyedLock('teams-settings-card', interaction.data.stateId);
       try {
@@ -185,7 +195,9 @@ export function createTeamsControls({ connector, now = Date.now, authorize = tea
     }
     const context = await authorize(grant(state), { connector });
     state.meta = context.meta; state.authorIsAdmin = context.userIsAdmin;
-    if (interaction.action === 'files.browse') return response(await files(state, interaction.data.stateId, interaction.data.relative || '', Number(interaction.data.page) || 0));
+    const fileResponse = value => state.filesDialog ? settingsDialogResponse(value, 'Conversation files') : response(value);
+    const backToFiles = () => execute('Back to files', 'files.browse', interaction.data.stateId, { relative: state.fileFolder || '', page: state.filePage || 0 });
+    if (interaction.action === 'files.browse') return fileResponse(await files(state, interaction.data.stateId, interaction.data.relative || '', Number(interaction.data.page) || 0));
     const repaintModel = async updated => {
       if (state.inConversation && state.messageId) await connector.updateCard({ conversationId: state.deliveryId,
         messageId: state.messageId, card: updated, text: 'Session model settings' });
@@ -231,14 +243,14 @@ export function createTeamsControls({ connector, now = Date.now, authorize = tea
     const input = { ...grant(state), baseUrl, relative };
     if (interaction.action === 'files.upload') {
       if (!canEditChannelFiles(context.meta, { isAdminUser: context.userIsAdmin })) throw new Error('This conversation is read-only for you.');
-      return response(card('Upload files', [text('Files will be saved into this conversation workspace.')], [link('Open uploader', createFileUploadGrantUrl(input))]));
+      return fileResponse(card('Upload files', [text(`Destination: /${relative}`), text('Open the browser uploader to choose files or a folder. Return here and refresh after uploading.')], [link('Open uploader', createFileUploadGrantUrl(input)), backToFiles()]));
     }
     if (interaction.action === 'files.download') {
       const actions = [link('Download file', createFileDownloadGrantUrl(input))];
       if (canEditChannelFiles(context.meta, { isAdminUser: context.userIsAdmin })) {
         try { const editable = await readEditableFile(context.root, relative); actions.push(link('Edit file', createFileEditorGrantUrl({ ...input, expectedHash: editable.hash }))); } catch { /* binary/protected/large files are download only */ }
       }
-      return response(card('File', [text(relative)], actions));
+      return fileResponse(card('File', [text(relative)], [...actions, backToFiles()]));
     }
     throw new Error('Unsupported Teams action.');
   } });

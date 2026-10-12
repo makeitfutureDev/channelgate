@@ -13,7 +13,7 @@ const QUICK_START = [
 const SHORTCUTS = [
   '`/model` — Choose the engine, model and effort.',
   '`/settings` — Open your settings in a private Teams popup.',
-  '`/files` — Browse this workspace in your personal chat.',
+  '`/files` — Browse this workspace in a private Teams popup.',
   '`/stop` — Stop this session’s active and queued work.',
 ];
 const COMMAND_HINT = 'In channels and groups, mention me before a command: `@agent /help`.';
@@ -52,7 +52,7 @@ function helpTopics(activationReactions = DEFAULT_TEAMS_ACTIVATION_REACTIONS) {
         '**Personal chat:** uploads download directly. **Channels/groups:** files need allowed drives and Microsoft permissions.',
       ] },
       { title: 'Browse & download', rows: [
-        'Open a personal chat with me first, then use `/files [folder]` from the conversation whose workspace you want.',
+        'Use `/files [folder]` from the conversation whose workspace you want, then select Open files. Browse folders in the popup and choose Upload files in the destination folder.',
         '`/sendfile <path>` sends a consent card to your personal chat. Accept or decline there. Nonempty files up to **10 MB** can be sent this way; use browser download for larger files.',
         'Browser downloads, editing and uploads require the gateway Public URL. Editing and uploading also require write access.',
       ] },
