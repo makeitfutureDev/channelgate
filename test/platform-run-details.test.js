@@ -11,6 +11,42 @@ const { createTeamsConnector } = await import("../src/platforms/msteams/connecto
 const { footerText } = await import("../src/slack/footer.js");
 const flush = async () => { for (let i = 0; i < 12; i++) await Promise.resolve(); };
 
+for (const engine of ["claude", "codex"]) {
+  test(`Teams ${engine} tags the authenticated requester once after channel/group answers and skips DMs`, async () => {
+    const userId = `29:requester-${engine}`;
+    await setUser(userId, { approved: true });
+    for (const kind of ["channel", "group", "dm"]) {
+      for (const [failEdit, content] of [[false, "Answer."], [true, "Answer."], [false, "Answer line.\n".repeat(1000)], [true, "Answer line.\n".repeat(1000)]]) {
+        const wire = [];
+        const connector = createTeamsConnector({ capabilities: platformOr("msteams").capabilities, api: {
+          // The authenticated sender is known even when a roster is unavailable.
+          listMembers: async () => { throw new Error("roster unavailable"); },
+          sendActivity: async (id, body) => { wire.push(body); return { messageId: "123" }; },
+          updateActivity: async (id, messageId, body) => { if (failEdit) throw new Error("deleted"); wire.push(body); },
+        }, log: { warn() {} } });
+        const result = { content, engine, model: engine === "claude" ? "opus" : "gpt-6.1-sol" };
+        await createIngest({ connector, run: async () => result })(makeInbound({
+          platform: "msteams", kind, conversationId: `19:requester-${engine}-${kind}-${failEdit}@thread.${kind === "channel" ? "tacv2" : "v2"}`,
+          threadKey: kind === "channel" ? "123456" : "", messageId: "request-message", userId, userName: "Developer", mentionsBot: kind !== "dm", text: "hello",
+        }));
+        const answers = wire.slice(1);
+        const last = answers.at(-1);
+        const mentions = answers.flatMap(body => body.entities || []);
+        assert.ok(content.length < 8000 ? answers.length === 1 : answers.length > 1);
+        assert.ok(answers.every(body => body.text.length <= platformOr("msteams").capabilities.maxMessageChars));
+        assert.equal(mentions.length, kind === "dm" ? 0 : 1);
+        if (kind !== "dm") {
+          assert.ok(last.text.endsWith("\n\n<at>Developer</at>") || last.text === "<at>Developer</at>");
+          assert.deepEqual(last.entities, [{ type: "mention", text: "<at>Developer</at>", mentioned: { id: userId, name: "Developer" } }]);
+          assert.ok(answers.slice(0, -1).every(body => !body.text.includes("<at>Developer</at>")));
+        }
+        assert.equal(last.attachments[0].content.body[1].text, footerText(result));
+        assert.equal(wire[0].entities?.length || 0, 0, "working placeholder has no requester notification");
+      }
+    }
+  });
+}
+
 test("long Teams answers keep statistics once in the final chunk and preserve the reply thread", async () => {
   await setUser("details-long", { approved: true });
   const posted = []; const edited = [];

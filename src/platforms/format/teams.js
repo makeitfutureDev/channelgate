@@ -42,7 +42,7 @@ export function createTeamsMentionResolver(normalizeName, collect) {
   });
 }
 
-export function formatTeamsOutbound(markdown, { capabilities = {}, directory = null, normalizeName = null } = {}) {
+export function formatTeamsOutbound(markdown, { capabilities = {}, directory = null, normalizeName = null, requester = null } = {}) {
   const degraded = degradeMarkdown(markdown, capabilities, {
     bold: (t) => `**${t}**`,
     link: (label, url) => `[${label}](${url})`,
@@ -59,12 +59,33 @@ export function formatTeamsOutbound(markdown, { capabilities = {}, directory = n
     ? createTeamsMentionResolver(normalizeName, collect).resolve(defanged, directory)
     : defanged;
 
-  const text = resolved.trim();
+  let text = resolved.trim();
   // Entities are per-MESSAGE, so each chunk carries only the mentions its own text still contains.
   // A chunk shipped with an entity whose tag was split into the previous message is at best inert
   // and at worst rejected, so the filter is not cosmetic.
   const all = [...seen.values()];
   const chunks = chunkText(text, capabilities.maxMessageChars || MAX_TEAMS_MESSAGE_CHARS)
     .map((c) => ({ text: c, mentions: all.filter((m) => c.includes(m.text)) }));
+  if (requester?.id) {
+    // This identity comes from authenticated intake, never model output or a name-directory
+    // match. Escape the display label before inserting our own trusted control sequence.
+    const name = String(requester.name || requester.id).replace(/[\r\n]+/g, " ").slice(0, 80).trim() || "Requester";
+    const escape = value => value.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+    let tag = `<at>${escape(name)}</at>`;
+    // Teams binds mentions by their text. Two people with the same displayed name need distinct
+    // tags so an existing answer mention cannot steal the requester's notification.
+    for (let suffix = 1; all.some(m => m.text === tag && m.mentioned.id !== requester.id); suffix++) {
+      tag = `<at>${escape(name)} (requester ${suffix})</at>`;
+    }
+    const mention = { type: "mention", text: tag, mentioned: { id: requester.id, name } };
+    const last = chunks.at(-1);
+    if (last && last.text.length + tag.length + 2 <= (capabilities.maxMessageChars || MAX_TEAMS_MESSAGE_CHARS)) {
+      last.text += `\n\n${tag}`;
+      if (!last.mentions.some(m => m.text === tag && m.mentioned.id === requester.id)) last.mentions.push(mention);
+    } else {
+      chunks.push({ text: tag, mentions: [mention] });
+    }
+    text += `${text ? "\n\n" : ""}${tag}`;
+  }
   return { text, chunks };
 }

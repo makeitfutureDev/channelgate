@@ -248,7 +248,13 @@ export function createIngest({ connector, log = console, run = runMessage, onCom
 async function deliver(connector, message, placeholder, text, rememberReply = () => {}, footer = "") {
   const adapter = platformOr(connector.platform);
   const directory = await connector.directory?.(message.rawConversationId).catch(() => null);
-  const formatted = adapter.formatOutbound(text, { directory, capabilities: adapter.capabilities });
+  const formatted = adapter.formatOutbound(text, {
+    directory, capabilities: adapter.capabilities,
+    // A completed foreground reply addresses its authenticated requester. Notices and DMs do
+    // not add a notification tag; the surface formatter owns the native mention representation.
+    requester: footer && !message.isDM && message.userId
+      ? { id: message.userId, name: message.userName || message.userId } : null,
+  });
   const chunks = formatted.chunks.length ? formatted.chunks : [{ text, mentions: [] }];
 
   if (placeholder?.messageId && adapter.capabilities.messageEdit) {

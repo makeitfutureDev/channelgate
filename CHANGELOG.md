@@ -18,6 +18,9 @@ product overview.
 
 ## Unreleased
 
+- Teams channel and group-chat answers now end with a native mention of the requester, matching
+  Slack. Long answers tag them on the final chunk before the statistics footer; DMs skip the tag.
+
 - Make Teams reply statistics smaller and add a gap above them, including replies that replace
   the working placeholder and background/scheduled results.
 
