@@ -18,6 +18,11 @@ product overview.
 
 ## Unreleased
 
+- The `channelgate` skill now answers "what server should we host this on?": a hosting reference
+  gives the recommended configuration (4 dedicated vCPU, 16 GB RAM, 150 GB NVMe, Ubuntu 24.04 LTS,
+  static IPv4) and four recommended EU hosts with estimated monthly prices — Hetzner CCX23 (≈ €25),
+  netcup VPS 2000 G12 (≈ €16), RoLeaf in Romania (≈ €32) and Google Cloud `n4-standard-4` (≈ €139).
+
 - Teams channel and group-chat answers now end with a native mention of the requester, matching
   Slack. Long answers tag them on the final chunk before the statistics footer; DMs skip the tag.
 

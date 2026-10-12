@@ -3996,6 +3996,15 @@ Automated: `test/channel-memory.test.js`, `test/memory-search.test.js`,
       device-login troubleshooting and excludes ordinary work merely performed through the gateway
       (`test/channelgate-skill.test.js`). The same test invokes both memory retrieval registrations
       through their real MCP response adapter, preventing the `text is not defined` regression.
+- [x] Automated: the hosting reference keeps the recommended server configuration, the four
+      recommended providers with their estimated monthly prices, and the dated re-check warning
+      (`test/channelgate-skill.test.js`).
+- [ ] Live, Claude + Codex: ask "what server and hosting should we buy for a ChannelGate
+      deployment in Europe, and what does it cost?". Pass when both engines route to the hosting
+      reference, recommend 4 dedicated vCPU / 16 GB / 150 GB NVMe / Ubuntu 24.04 / static IPv4 with
+      `MAX_CONCURRENT_RUNS=4`, name Hetzner CCX23 first and the netcup, RoLeaf and Google Cloud
+      alternatives with their estimates, say the prices are estimates from 2026-09-22, and reject
+      serverless/container platforms as hosts. Engine-dependent (skill routing).
 - [x] Automated: both the always-on operating guide and the on-demand credential guide require a
       device login to keep one assistant turn and TTY/session alive, send link/code only as
       commentary, poll within 60-second intervals, recover with a new code, respect provider-token
