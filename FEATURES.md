@@ -933,8 +933,8 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
   permission escalation is not enabled by these text controls.
 - Teams and Google Chat foreground replies carry the same compact statistics as Slack: configured
   model (provider model only when none is configured), duration, this turn's input/output tokens,
-  optional cost, context use and container image. The global **Show message cost** setting applies
-  to every surface. Statistics pass through the normal formatting/chunking path and survive a
+  optional cost and context use. Container image references are omitted from reply footers.
+  The global **Show message cost** setting applies to every surface. Statistics pass through the normal formatting/chunking path and survive a
   failed placeholder edit through fresh delivery; errors/stops do not invent usage statistics.
 - Native Adaptive Cards provide Approve/Deny/Request changes actions and a **six-page
   Settings console**: General, Variables, MCPs, Skills, Automations and Resume. `/settings` opens
@@ -3499,9 +3499,8 @@ are retired, bullet by bullet; everything else stands.
   boots on the new schema, every pre-v0.8 row reads as a host row, and unreadable content reads as
   "unknown, therefore host" instead of crashing. `/status` gains a Runtime line (backend, container
   name, image, state, uptime, warm, credential caveats); the live heartbeat row appends
-  ` · container` from the run's DECLARED capability, never from a backend id; the reply footer
-  appends the image ref for a container turn (a rebuilt image is a different toolchain, which
-  changes what an answer meant) and is byte-unchanged on the host; and `/resume` prints the
+  ` · container` from the run's DECLARED capability, never from a backend id. Reply footers omit
+  container image references on every surface; `/resume` prints the
   container form — `podman exec -it -w <cwd> <name> <the engine's own resume command>` — with no
   redundant `cd`, while identical mount paths keep the transcript's recorded cwd valid so session
   adoption works unchanged in both directions. → TEST-PLAN: Container runtime (v0.8 P1).

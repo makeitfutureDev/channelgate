@@ -18,6 +18,8 @@ product overview.
 
 ## Unreleased
 
+- Remove container image references from reply statistics in Slack, Teams and Google Chat.
+
 - Fix Google Drive sync channels getting stuck after an interrupted pass. Passes now use rclone's
   self-recovery flags (rclone 1.66+), never start beside a pass container left over from before a
   restart (an orphan is removed after the maximum pass time), and a channel whose sync state rclone

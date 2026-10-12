@@ -34,9 +34,5 @@ export function footerText(result) {
   if (getShowMessageCost() && usd != null) parts.push(`$${usd.toFixed(2)}`);
   // Context window used: this turn's input/cached tokens vs the model's own window.
   if (inT > 0) parts.push(`${Math.min(100, Math.round((100 * inT) / contextWindowFor(result)))}%`);
-  // Which image answered, when the turn ran behind an OS boundary. It is the one runtime fact that
-  // changes an answer's meaning after the fact (a rebuilt image is a different toolchain), and a
-  // host turn has no image, so the footer stays exactly as short as it always was there.
-  if (result.runtime?.image) parts.push(result.runtime.image);
   return parts.join(" · ");
 }

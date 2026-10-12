@@ -52,7 +52,7 @@ for (const engine of ["claude", "codex"]) {
       assert.ok(answer.includes(footerText(result)), answer);
       assert.match(answer, /Answer\./);
       assert.match(answer, /77s · 920\.2k\/2k/);
-      assert.match(answer, /channelgate\/runtime:latest/);
+      assert.doesNotMatch(answer, /channelgate\/runtime:latest/);
       assert.doesNotMatch(answer, /\$/);
       assert.equal(sent.length, failEdit ? 2 : 1);
     }

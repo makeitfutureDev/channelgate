@@ -75,6 +75,7 @@ test("deliverResult with footer ends the answer with the run stats and the unbou
     content: "done",
     cwd: "/tmp/chan",
     sessionId: "sess-1",
+    runtime: { image: "channelgate/runtime:latest" },
     engine: "claude",
     durationMs: 1234,
     usage: { input_tokens: 10, output_tokens: 5 },
@@ -85,6 +86,7 @@ test("deliverResult with footer ends the answer with the run stats and the unbou
   assert.match(post.blocks[0].text.text, /done/);
   assert.match(JSON.stringify(post.blocks), /1\.2s/);
   assert.deepEqual(menuLabels(post), ["📂 Files", "🔑 Variables", "⚙️ Settings"]);
+  assert.doesNotMatch(JSON.stringify(post), /channelgate\/runtime:latest/);
   assert.doesNotMatch(JSON.stringify(post.blocks), /resume_cmd_modal/);
   // An unattended post has no Slack requester, so the menu opens for whoever clicks it.
   for (const button of post.blocks.find((block) => block.type === "actions").elements) assert.equal(JSON.parse(button.value).u, "");

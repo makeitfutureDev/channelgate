@@ -8039,8 +8039,8 @@ are the v0.8 production deployment gate and are executed in the QA loop that fol
       the stale client pid; one the backend reports gone is finished rather than signalled; a host
       job is unchanged (automated).
 - [x] Unit: the user-facing surfaces — `formatRuntimeLine` is one word on the host and carries
-      container name, image, state and uptime otherwise; the footer appends the image ref only for a
-      container turn; `/resume` keeps the exact host form and uses the backend's exec form for a
+      container name, image, state and uptime otherwise; the footer omits image references for both container and host turns while retaining statistics
+      and Slack controls; `/resume` keeps the exact host form and uses the backend's exec form for a
       container, with no redundant `cd`; the heartbeat suffix is derived from the declared
       capability and a source-level guard forbids a `backend === "container"` comparison in the
       progress layer (automated: `test/runtime-integration-surfaces.test.js`).
@@ -8170,7 +8170,7 @@ are the v0.8 production deployment gate and are executed in the QA loop that fol
       workdir.
 - [ ] Live: **image rebuild retires containers cleanly** — `npm run build:image` after a pin bump;
       running channels keep answering, and each one's next turn recreates its container on the new
-      image (the footer shows the new image ref) without losing its HOME volume.
+      image (verify the Runtime line in `/status`) without losing its HOME volume.
 - [x] Unit (`container-image.test.js`): `needsImageBuild()` is the pure rebuild decision — it builds
       when the candidate bumped `imageSpecVersion`, when a changed path is under `containers/`, or
       when no image is built at all; it does NOT build for an unrelated code change, and never at
@@ -9845,3 +9845,17 @@ case. Also run a group with an external member to check tenant/channel delivery 
 
 The stable API conversation candidate includes the compatible lock refresh from beta
 `6d72d299`; rerun production dependency auditing and the full regression suite before release.
+
+## Reply footers omit container image references (2026-10-12)
+
+- [x] Automated: `test/runtime-integration-surfaces.test.js` checks Claude and Codex footer text
+      and Slack Block Kit with default, fake and custom image references: identical statistics and
+      controls to a host result, no image label. `test/deliver.test.js` verifies unattended Slack
+      delivery. `test/platform-run-details.test.js` verifies both engines through Teams final
+      placeholder edit and failed-edit fresh delivery; image omitted, duration/tokens preserved.
+- [ ] Live, both Claude and Codex: deploy beta; in the Slack Auto fixtures and a Teams QA
+      conversation with a working container image, select each engine in a fresh session. Send
+      “Reply with exactly FOOTER-CHECK.” Capture the final reply and rendered footer. Pass: answer
+      present, configured model/duration/token/context statistics present, optional cost follows
+      its setting, and no default or custom container image label. Slack Files/Variables/Settings
+      controls remain present. Live transport checks are pending, not recorded as passes.

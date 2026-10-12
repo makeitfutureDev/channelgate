@@ -1,6 +1,6 @@
 // What a person SEES of the container runtime, plus the two durable records behind it. A channel
 // that runs behind an OS boundary must say so in the places someone actually looks — /status, the
-// liveness row, the reply footer, /resume — or the boundary becomes invisible state that only
+// liveness row, /resume — or the boundary becomes invisible state that only
 // explains itself when something breaks.
 import path from "node:path";
 import { mkdirSync, writeFileSync } from "node:fs";
@@ -22,7 +22,7 @@ process.env.CG_WORKSPACE_DIR ||= path.join(scratch, "workspace");
 
 const { formatRuntimeLine, formatCapabilityLine, buildStatusReport } = await import("../src/slack/status-controller.js");
 const { NETWORK_ADVISORY_NOTE } = await import("../src/engines/network-policy.js");
-const { buildResumeCommand, footerText } = await import("../src/slack/footer.js");
+const { buildResumeCommand, footerText, footerBlocks } = await import("../src/slack/footer.js");
 const { getDb } = await import("../src/db/index.js");
 const { saveSession, resolveSession, getSessionRuntime, clearSession } = await import("../src/gateway/sessions.js");
 const { upsertChannelEntry, saveChannelMeta } = await import("../src/config/store.js");
@@ -73,14 +73,20 @@ test("a quiet channel's /status still says where its turns run", async () => {
   assert.match(report, new RegExp(`\`cgp2-[^\`]*${entry.slug}[^\`]*\``), "the channel's own container is named");
 });
 
-test("the reply footer names the image for a container turn and is unchanged for a host turn", () => {
-  const usage = { input_tokens: 1000, output_tokens: 20 };
-  const host = footerText({ engine: "claude", model: "opus-4.8", usage, durationMs: 1200, costUSD: 0.01 });
-  assert.doesNotMatch(host, /channelgate\/runtime/);
-
-  const contained = footerText({ engine: "claude", model: "opus-4.8", usage, durationMs: 1200, costUSD: 0.01, runtime: { backend: "container", image: FAKE_IMAGE } });
-  assert.equal(contained, `${host} · ${FAKE_IMAGE}`, "the image is appended, nothing else moves");
-});
+for (const engine of ["claude", "codex"]) {
+  test(`${engine} reply footers omit runtime images and preserve statistics and Slack controls`, () => {
+    const result = { engine, model: engine === "claude" ? "opus-4.8" : "gpt-6.1-sol",
+      usage: { input_tokens: 1000, output_tokens: 20 }, durationMs: 1200, costUSD: 0.01 };
+    const host = footerText(result);
+    for (const image of [FAKE_IMAGE, "channelgate/runtime:latest", "registry.example/custom-runtime:v2"]) {
+      const contained = { ...result, runtime: { backend: "container", image } };
+      assert.equal(footerText(contained), host);
+      const context = { channel: "C_FOOTER", threadTs: "1.2", authorId: "U_FOOTER" };
+      assert.deepEqual(footerBlocks(contained, context), footerBlocks(result, context));
+      assert.doesNotMatch(JSON.stringify(footerBlocks(contained, context)), /runtime:|custom-runtime/);
+    }
+  });
+}
 
 test("/resume prints the command that actually reopens the session where it lives", () => {
   const cwd = "/home/agent/work/acme";
