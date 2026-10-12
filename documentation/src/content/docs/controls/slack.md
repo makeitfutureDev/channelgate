@@ -176,6 +176,23 @@ These tools use the gateway’s Slack bot token and trusted current conversation
 
 **Limits:** Series names and point labels must be unique. All series must use the same category set; the first series determines display order and subsequent series are normalized to it. Pie segment labels must be unique. No external renderer or public image URL is required.
 
+## slack_compose_reply
+
+**Required:** `sections` (1–12 ordered sections). Each section is a chart, table, text block, collapsible panel, card, link buttons, or divider. Chart and table sections follow the limits of `slack_post_chart` and `slack_post_table`.
+
+```json
+{
+  "sections": [
+    { "type": "text", "markdown": "The deployment is ready for review." },
+    { "type": "links", "buttons": [{ "label": "Open deployment", "url": "https://example.com/deployment" }] }
+  ]
+}
+```
+
+**Scope and result:** Stages native Slack Block Kit under the agent's final answer in the current conversation. Call once with the complete section list; a later call replaces the earlier one. The agent then writes a short answer without repeating the staged content.
+
+**Limits:** Available only when the run has a live Slack progress writer. The tool validates Slack section limits and refuses invalid content with a reason. It does not post a separate message.
+
 ## slack_channel_history
 
 **Optional:** `limit` (number; default 30, clamped to 1–100).
