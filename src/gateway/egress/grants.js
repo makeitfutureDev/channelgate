@@ -21,7 +21,8 @@ import { getChannelEntry, getChannelMeta, getChannelsIndex } from "../../config/
 import { platformOr } from "../../platforms/registry.js";
 import { normalizeChannelEnv, resolveChannelEnv, safeSpawnEnv } from "../../config/channel-env.js";
 import { getOrgEnv, getUserEnv, mergeRunEnv, resolveOrgEnv, resolveUserEnv } from "../../config/scoped-env.js";
-import { getContainerRuntime } from "../../config/settings.js";
+import { getContainerRuntime, getPerplexityResearchConfig } from "../../config/settings.js";
+import { PERPLEXITY_RELAY_SECRET_NAME } from "../perplexity-research-contract.js";
 import { resolveContainerClaudeToken } from "../claude-token-relay.js";
 import { renderContainerCodexApiAuth, renderContainerCodexAuth, resolveContainerCodexToken } from "../codex-token-relay.js";
 import { codexLoginCandidatesFor } from "../channel-codex-auth.js";
@@ -188,6 +189,16 @@ export async function resolveGrantMaterial(row, deps = {}) {
   const name = row.secretName;
   if (row.scope === "relay") {
     if (!relayRuleFor(name)) return { value: "", entry: null, exists: false };
+    if (name === PERPLEXITY_RELAY_SECRET_NAME) {
+      const config = (deps.perplexityConfig || getPerplexityResearchConfig)();
+      const value = config.enabled ? String(config.sessionToken || "") : "";
+      // Selected MCP destinations may remain reachable with general network off. Research is
+      // optional public internet use, so its login must stay paused even if another connector
+      // happens to allow www.perplexity.ai. Read the CURRENT channel policy at every swap.
+      const meta = await channelMetaFor(row.channelId, deps);
+      if (meta?.allowNetwork !== true) return { value: "", entry: null, exists: Boolean(value) };
+      return { value, entry: null, exists: Boolean(value) };
+    }
     if (CLAUDE_API_RELAY_NAMES.includes(name)) {
       const env = deps.env || process.env;
       const value = hasCanonicalClaudeApiEndpoint(env) ? String(env[name] || "") : "";
@@ -242,6 +253,7 @@ export async function resolveEgressGrant(core, deps = {}) {
     ...(rule.approval ? { approval: true, neverHosts: engineHostsFor() } : {}),
     ...(rule.credentialFields ? { credentialFields: true, neverHosts: engineHostsFor() } : {}),
     ...(Array.isArray(rule.query) ? { query: [...rule.query] } : {}),
+    ...(Array.isArray(rule.cookies) ? { cookies: [...rule.cookies] } : {}),
     placeholder: row.placeholder,
     value: material.value,
     secretName: row.secretName,

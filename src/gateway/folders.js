@@ -573,6 +573,15 @@ export async function buildSettings(meta, { allowBypass = false, homeGuard = fal
     makeToolboxUrl: meta.makeToolboxUrl,
     composioSdk: getComposioMode() === "sdk",
   });
+  // The managed research process has a fixed, research-only surface. It must be admitted here
+  // as well as in the strict per-run payload, including channels whose shell is read-only.
+  if (!clean) {
+    const { perplexityResearchMcp } = await import("./perplexity-research.js");
+    for (const name of Object.keys(perplexityResearchMcp(target))) {
+      allowMatches.push({ serverName: name });
+      namespaces.push(`mcp__${name}`);
+    }
+  }
 
   // Auto mode (autonomous: permission prompts auto-approved — see requestApproval) gets the same
   // file-writing tools as Allow Bash, so the agent can actually do file work without prompts.

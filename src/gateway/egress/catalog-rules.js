@@ -18,6 +18,7 @@
 // PURE: imports only the CLI catalog, so the config layer can derive "protected: yes/no" for a
 // listing without importing the proxy or the database.
 import { CLI_INTEGRATIONS } from "../../config/cli-catalog.js";
+import { PERPLEXITY_HOST, PERPLEXITY_RELAY_SECRET_NAME, PERPLEXITY_SESSION_COOKIE } from "../perplexity-research-contract.js";
 
 export const SWAP_FORMATS = Object.freeze(["bearer", "raw", "basic-password", "basic-user"]);
 export const DEFAULT_RULE_HEADERS = Object.freeze(["authorization"]);
@@ -45,7 +46,8 @@ export const CODEX_RELAY_SECRET_NAME = "CODEX_ACCESS_TOKEN";
 export const CODEX_RELAY_RULE = Object.freeze({ hosts: Object.freeze(["api.openai.com", "chatgpt.com", "auth.openai.com"]), headers: Object.freeze(["authorization"]), format: Object.freeze(["jwt"]) });
 export const CODEX_API_RELAY_SECRET_NAME = "CODEX_API_RELAY_KEY";
 export const CODEX_API_RELAY_RULE = Object.freeze({ hosts: Object.freeze(["api.openai.com"]), headers: Object.freeze(["authorization"]), format: Object.freeze(["bearer"]) });
-const RELAY_RULES = Object.freeze({ [RELAY_SECRET_NAME]: RELAY_RULE, [CODEX_RELAY_SECRET_NAME]: CODEX_RELAY_RULE, [CODEX_API_RELAY_SECRET_NAME]: CODEX_API_RELAY_RULE, ...Object.fromEntries(CLAUDE_API_RELAY_NAMES.map((name) => [name, CLAUDE_API_RELAY_RULE])) });
+const PERPLEXITY_RELAY_RULE = Object.freeze({ hosts: Object.freeze([PERPLEXITY_HOST]), headers: Object.freeze(["cookie"]), format: Object.freeze(["cookie"]), cookies: Object.freeze([PERPLEXITY_SESSION_COOKIE]) });
+const RELAY_RULES = Object.freeze({ [RELAY_SECRET_NAME]: RELAY_RULE, [CODEX_RELAY_SECRET_NAME]: CODEX_RELAY_RULE, [CODEX_API_RELAY_SECRET_NAME]: CODEX_API_RELAY_RULE, [PERPLEXITY_RELAY_SECRET_NAME]: PERPLEXITY_RELAY_RULE, ...Object.fromEntries(CLAUDE_API_RELAY_NAMES.map((name) => [name, CLAUDE_API_RELAY_RULE])) });
 
 // The swap rule of a relay grant, by its secret name, or null for a name no relay uses.
 export function relayRuleFor(secretName) {

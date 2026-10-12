@@ -136,6 +136,10 @@ product overview.
   and shows it in help. Teams configuration changes exclude older queued/history activations.
   Google Chat's selection is saved, with an explicit note that its current transport does not
   receive reaction events.
+- Settings can connect a Perplexity subscription for research delegation from Claude and Codex.
+  Agents receive quick/deep research, model discovery and quota tools with citation results;
+  the real login stays in the gateway and containers receive a protected relay placeholder.
+  The optional unofficial client requires network access and is omitted in Lean mode.
 
 - Teams `/model` now works like Settings → General: choose the engine and press **Load models**,
   and the Model and Effort lists show only that engine's choices; Apply saves. Previously one card

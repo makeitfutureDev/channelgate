@@ -160,6 +160,11 @@ function createSwapSession({ hostname, resolveGrant, canUse, plainHttp, hostHead
     } else {
       if (!headerAllowed(grant, where.name)) return refuse("header");
       if (where.position === "embedded" || !grantFormats(grant).has(where.position)) return refuse("format");
+      if (where.position === "cookie") {
+        if (!Array.isArray(grant.cookies) || !grant.cookies.includes(where.cookieName)) return refuse("cookie");
+        // A secret must occupy one complete cookie value and may never create another cookie.
+        if (/[^\x21-\x7e]|[;"\\]/.test(grant.value)) return refuse("invalid-value");
+      }
       if (where.position !== "basic-user" && where.position !== "basic-password" && INVALID_HEADER_CHAR.test(grant.value)) return refuse("invalid-value");
       if (where.position === "basic-user" && grant.value.includes(":")) return refuse("invalid-value");
     }
@@ -196,7 +201,12 @@ function createSwapSession({ hostname, resolveGrant, canUse, plainHttp, hostHead
   }
 
   function result() {
-    return { swapped: [...swapped.values()], refused: [...refused.values()], scrub };
+    // A response may rotate a session cookie to a NEW value the exact-value scrub map cannot
+    // recognize. Keep its cookie names so the proxy can withhold those Set-Cookie headers too.
+    const protectedCookies = [...new Set([...swapped.keys()].flatMap((grant) => grant.cookies || []))];
+    return { swapped: [...swapped.values()], refused: [...refused.values()], scrub,
+      ...(protectedCookies.length ? { protectedCookies } : {}),
+    };
   }
 
   return { decide, record, result };
@@ -275,9 +285,36 @@ function swapPlain(name, value, session) {
   return { results: [{ grant: verdict.grant, token: whole || tokens[0].token }], value: `${prefix}${verdict.grant.value}${suffix}` };
 }
 
+// A cookie relay is deliberately narrower than a generic embedded-header replacement: it names
+// exactly which cookie can authenticate, rejects duplicates, and preserves all other bytes.
+function swapCookie(name, value, session) {
+  if (!tokensIn(value).length) return null;
+  const parts = value.split(/(;\s*)/);
+  const names = new Map();
+  for (let i = 0; i < parts.length; i += 2) {
+    const m = /^\s*([^=\s;]+)=/.exec(parts[i]);
+    if (m) names.set(m[1], (names.get(m[1]) || 0) + 1);
+  }
+  const results = [];
+  for (let i = 0; i < parts.length; i += 2) {
+    const tokens = tokensIn(parts[i]);
+    if (!tokens.length) continue;
+    const m = /^(\s*)([^=\s;]+)=(\S+?)(\s*)$/.exec(parts[i]);
+    if (!m || tokens.length !== 1 || m[3] !== tokens[0].token || names.get(m[2]) !== 1) {
+      results.push(...tokens.map((t) => session.decide(t.core, { kind: "header", name, position: "embedded" })));
+      continue;
+    }
+    const verdict = session.decide(tokens[0].core, { kind: "header", name, position: "cookie", cookieName: m[2] });
+    results.push(verdict.grant ? { grant: verdict.grant, token: tokens[0].token } : verdict);
+    if (verdict.grant) parts[i] = `${m[1]}${m[2]}=${verdict.grant.value}${m[4]}`;
+  }
+  return { results, value: parts.join("") };
+}
+
 function swapHeaderValue(name, value, session) {
   if (typeof value !== "string") return value;
-  const attempt = (name === "authorization" && BASIC_RE.test(value) ? swapBasic : swapPlain)(name, value, session);
+  const swap = name === "cookie" ? swapCookie : name === "authorization" && BASIC_RE.test(value) ? swapBasic : swapPlain;
+  const attempt = swap(name, value, session);
   if (!attempt) return value;
   // Never partially swap: one refusal anywhere in this value keeps the original bytes.
   const applied = attempt.results.every((r) => r.grant);
