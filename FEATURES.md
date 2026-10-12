@@ -218,6 +218,9 @@ control-plane status.
   The operational audit distinguishes Graph callback receipt, validation, authenticated target
   acceptance, rejection and retryable failures using bounded metadata. Credentials, validation
   tokens, message bodies and untrusted resource identifiers are excluded.
+  Graph subscription JSON uses literal Teams channel/chat identifiers; HTTP message-fetch paths
+  encode individual path segments. The subscription store records the registered selector without
+  changing activation cutoffs or event identities.
 
 ## Claude login for nested commands
 
