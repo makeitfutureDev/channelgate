@@ -82,6 +82,37 @@
 - [x] Full combined regression/security coverage passed on a clean install of the patched lockfile,
   including remote MCP HTTP/stdio transports, OAuth metadata, and public-address guards.
 
+## Custom MCP servers in Slack Settings (2026-10-12)
+
+### Regression
+- [x] Automated: `node --test test/slack-custom-mcp-settings.test.js`.
+  - The MCPs page lists both scopes masked (last four token characters only).
+  - Conversation add/remove controls appear only with `canManageCustomMcp`; a member sees only
+    their own.
+  - Remove buttons confirm first.
+  - The form is never prefilled, its metadata carries the scope, and it parses only typed values.
+  - Refusals map to the right field.
+  - `channelSettingsEditOptions` follows `manageAccess`; admins always qualify.
+  - The personal save writes the viewer's own record without echoing the token.
+  - Refused: a loopback URL (URL field), a missing token (token field), a non-manager's
+    conversation save (nothing written) and a form owned by someone else.
+  - An admin's conversation save records `<@U…>` as `setBy`. Remove by a non-manager is refused;
+    removal by an admin, and of one's own server, succeeds.
+  - Every `canManageVpn` expectation in `test/channel-settings-modal.test.js` now also expects
+    `canManageCustomMcp`.
+
+### Live gates (engine-independent UI; the run itself is covered by "Custom MCP connections") — UNEXECUTED
+- [ ] As a channel manager, open ⚙️ Settings on a reply → MCPs. Add `qa` with the fixture
+  URL + token under *This conversation*. Pass: the page returns with "✅ Saved `custom-qa`", the
+  row shows the URL and `••••<last4>`, and the admin UI lists the same server. A follow-up
+  Claude turn and a Codex turn list `mcp__custom-qa__…` tools.
+- [ ] As an approved non-manager in the same channel: no conversation Add/Remove controls appear.
+  Under *Yours*, add `qa2`. Pass: only that user's turns see `my-qa2`.
+- [ ] Refusals: `https://127.0.0.1/`, `http://…`, a new name with no token. Each shows the error
+  under its field and writes nothing.
+- [ ] Remove both with the confirm dialog. Pass: the rows disappear and the next turns no longer
+  list the tools.
+
 ## Custom MCP connections (2026-10-01)
 
 ### Regression

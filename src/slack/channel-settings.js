@@ -34,6 +34,17 @@ export const CHANNEL_SETTINGS_CLEAR_COMPOSIO_ACTION_ID = "cg_channel_settings_cl
 export const CHANNEL_SETTINGS_CLEAR_TOOLBOX_ACTION_ID = "cg_channel_settings_clear_toolbox";
 export const CHANNEL_SETTINGS_CLEAR_MAKE_ACTION_ID = "cg_channel_settings_clear_make";
 export const CHANNEL_SETTINGS_CLOUD_MANAGE_ACTION_ID = "cg_channel_settings_cloud_manage";
+// Custom MCP servers (src/gateway/custom-mcps.js) on the MCPs page: one pushed form adds or updates
+// a server in either scope — the conversation's (`custom-<name>`, managers and admins) or the
+// clicker's own (`my-<name>`) — and a Remove button per row. The scope rides in the button value
+// and the form's metadata; the handler re-checks who may write it.
+export const CHANNEL_SETTINGS_CUSTOM_MCP_ADD_ACTION_ID = "cg_channel_settings_custom_mcp_add";
+export const CHANNEL_SETTINGS_CUSTOM_MCP_REMOVE_ACTION_ID = "cg_channel_settings_custom_mcp_remove";
+export const CHANNEL_SETTINGS_CUSTOM_MCP_CALLBACK_ID = "cg_channel_settings_custom_mcp_form";
+export const CUSTOM_MCP_NAME_BLOCK_ID = "cg_custom_mcp_name";
+export const CUSTOM_MCP_URL_BLOCK_ID = "cg_custom_mcp_url";
+export const CUSTOM_MCP_TOKEN_BLOCK_ID = "cg_custom_mcp_token";
+const CUSTOM_MCP_INPUT_ACTION_ID = "value";
 export const CHANNEL_SETTINGS_CLOUD_ENGINE_PREFIX = "cg_channel_settings_cloud_engine_";
 export const CHANNEL_SETTINGS_CLOUD_TOGGLE_PREFIX = "cg_channel_settings_cloud_toggle_";
 export const CHANNEL_SETTINGS_CLOUD_PAGE_PREFIX = "cg_channel_settings_cloud_page_";
@@ -305,7 +316,48 @@ function runtimeBlocks(snapshot = {}, state = {}, { canEditRuntime = true, canEn
   return blocks;
 }
 
-function mcpBlocks(snapshot = {}, state = {}, { canManageCloudMcp = false } = {}) {
+// A custom MCP scope as the page shows it: `c` the conversation's, `p` the viewer's own.
+export function customMcpScope(letter) {
+  return letter === "c" ? "channel" : letter === "p" ? "user" : "";
+}
+
+function customMcpRows(list, state, letter, canEdit) {
+  const rows = (Array.isArray(list) ? list : []).map((entry) => {
+    const section = {
+      type: "section",
+      text: mrkdwn(`${inlineCode(entry.serverName)}  ${escapeMrkdwn(String(entry.url || "").slice(0, 200))}\nBearer ${inlineCode(`••••${entry.tokenLast4 || ""}`)}`),
+    };
+    if (canEdit) {
+      section.accessory = button(CHANNEL_SETTINGS_CUSTOM_MCP_REMOVE_ACTION_ID, "Remove", state, "custom_mcp_remove", { s: letter, n: entry.name }, {
+        style: "danger",
+        confirm: destructiveConfirm(`Remove ${entry.serverName}?`, letter === "c"
+          ? "Runs in this conversation stop receiving this server, including any run in progress. The token can't be recovered."
+          : "Your runs stop receiving this server everywhere, including any run in progress. The token can't be recovered."),
+      });
+    }
+    return section;
+  });
+  return rows.length ? rows : [{ type: "context", elements: [mrkdwn("_none_")] }];
+}
+
+function customMcpBlocks(snapshot = {}, state = {}, { canManageCustomMcp = false } = {}) {
+  const custom = snapshot.customMcps || {};
+  return [
+    { type: "divider" },
+    { type: "header", text: plain("Custom MCP servers") },
+    { type: "context", elements: [mrkdwn("A remote MCP server added by HTTPS URL + Bearer token (servers that need an OAuth sign-in go through Composio). The gateway connects on the agent's behalf, so the token never enters the container. Tokens are write-only.")] },
+    fieldBlock("This conversation", "Every run here receives these as `custom-<name>`."),
+    ...customMcpRows(custom.channel, state, "c", canManageCustomMcp),
+    canManageCustomMcp
+      ? { type: "actions", elements: [button(CHANNEL_SETTINGS_CUSTOM_MCP_ADD_ACTION_ID, "Add or update a conversation server", state, "custom_mcp_add", { s: "c" })] }
+      : { type: "context", elements: [mrkdwn("_Only this channel's managers and admins can change the conversation's servers._")] },
+    fieldBlock("Yours", "Only runs *you* start receive these, as `my-<name>`, in every conversation you talk in."),
+    ...customMcpRows(custom.personal, state, "p", true),
+    { type: "actions", elements: [button(CHANNEL_SETTINGS_CUSTOM_MCP_ADD_ACTION_ID, "Add or update my server", state, "custom_mcp_add", { s: "p" })] },
+  ];
+}
+
+function mcpBlocks(snapshot = {}, state = {}, { canManageCloudMcp = false, canManageCustomMcp = false } = {}) {
   const c = snapshot.connections || {};
   const cloud = snapshot.cloudMcp || {};
   const composio = c.composioMode === "sdk"
@@ -360,6 +412,7 @@ function mcpBlocks(snapshot = {}, state = {}, { canManageCloudMcp = false } = {}
       ],
     },
     ...(remove.length ? [{ type: "actions", elements: remove }] : []),
+    ...customMcpBlocks(snapshot, state, { canManageCustomMcp }),
     ...(canManageCloudMcp ? [
       { type: "divider" },
       { type: "header", text: plain("Cloud MCP") },
@@ -371,7 +424,7 @@ function mcpBlocks(snapshot = {}, state = {}, { canManageCloudMcp = false } = {}
         type: "actions",
         elements: [button(CHANNEL_SETTINGS_CLOUD_MANAGE_ACTION_ID, "Manage Cloud MCP", state, "cloud_manage", {}, { style: "primary" })],
       },
-      { type: "context", elements: [mrkdwn("Gateway, Composio, Toolbox, and Make toolbox are injected separately from the Cloud MCP picker.")] },
+      { type: "context", elements: [mrkdwn("Gateway, Composio, Toolbox, Make toolbox and custom MCP servers are injected separately from the Cloud MCP picker.")] },
     ] : []),
   ];
 }
@@ -710,6 +763,7 @@ export function buildChannelSettingsView(snapshot = {}, state = {}, {
   // may edit this channel's own secrets.
   canEditOrgSecrets = false,
   canManageCloudMcp = false,
+  canManageCustomMcp = false,
   canEditAccess = false,
   canManageVpn = false,
   notice = "",
@@ -720,7 +774,7 @@ export function buildChannelSettingsView(snapshot = {}, state = {}, {
     : active === "automations"
     ? automationsBlocks(snapshot, state)
     : active === "mcp"
-    ? mcpBlocks(snapshot, state, { canManageCloudMcp })
+    ? mcpBlocks(snapshot, state, { canManageCloudMcp, canManageCustomMcp })
     : active === "skills"
       ? skillsBlocks(snapshot, state)
       : active === "secrets"
@@ -733,7 +787,7 @@ export function buildChannelSettingsView(snapshot = {}, state = {}, {
     title: plain("Channel settings"),
     close: plain("Done"),
     blocks: [
-      { type: "context", elements: [mrkdwn(`Settings for *#${escapeMrkdwn(channelName || "this channel")}*. Anyone authorized to use the agent here can edit these settings. Access settings and VPN controls require a channel manager or admin. Cloud MCP is admin-only.`)] },
+      { type: "context", elements: [mrkdwn(`Settings for *#${escapeMrkdwn(channelName || "this channel")}*. Anyone authorized to use the agent here can edit these settings. Access settings, VPN controls and this conversation's custom MCP servers require a channel manager or admin. Cloud MCP is admin-only.`)] },
       ...(notice ? [{ type: "section", text: mrkdwn(notice) }] : []),
       tabRow(state, active),
       { type: "divider" },
@@ -847,6 +901,56 @@ export function buildConnectionsEditorView(connections = {}, state = {}, { chann
       optionalTextInput({ blockId: CONNECTION_MAKE_KEY_BLOCK_ID, actionId: CONNECTION_MAKE_KEY_ACTION_ID, label: "Make MCP token", placeholder: "Leave blank to keep the saved token", hint: "A URL and token are both required before Make MCP is active." }),
     ],
   };
+}
+
+// The pushed form behind "Add or update …" on the MCPs page. Saving an existing name with the token
+// left blank keeps the stored token (a URL change); a new name needs one.
+export function buildCustomMcpEditorView(state = {}, { scope = "user", channelName = "", existing = [] } = {}) {
+  const channel = scope === "channel";
+  const names = (Array.isArray(existing) ? existing : []).map((entry) => entry.name).filter(Boolean);
+  return {
+    type: "modal",
+    callback_id: CHANNEL_SETTINGS_CUSTOM_MCP_CALLBACK_ID,
+    private_metadata: editorMetadata(state, { view: channel ? "custom_mcp_c" : "custom_mcp_p" }),
+    title: plain(channel ? "Conversation MCP server" : "My MCP server"),
+    submit: plain("Save"),
+    close: plain("Cancel"),
+    blocks: [
+      { type: "context", elements: [mrkdwn(channel
+        ? `Every run in *#${escapeMrkdwn(channelName || "this channel")}* receives this server as \`custom-<name>\`.`
+        : "Only runs you start receive this server, as `my-<name>`, in every conversation you talk in.")] },
+      {
+        type: "input",
+        block_id: CUSTOM_MCP_NAME_BLOCK_ID,
+        label: plain("Name"),
+        element: { type: "plain_text_input", action_id: CUSTOM_MCP_INPUT_ACTION_ID, placeholder: plain("e.g. linear"), max_length: 32 },
+        hint: plain(names.length
+          ? `Lowercase letters, digits and dashes. Saved here: ${names.join(", ").slice(0, 120)} — reuse a name to update it.`
+          : "Lowercase letters, digits and dashes."),
+      },
+      {
+        type: "input",
+        block_id: CUSTOM_MCP_URL_BLOCK_ID,
+        label: plain("Server URL"),
+        element: { type: "plain_text_input", action_id: CUSTOM_MCP_INPUT_ACTION_ID, placeholder: plain("https://mcp.example.com/mcp"), max_length: 2048 },
+        hint: plain("HTTPS, on a public address."),
+      },
+      optionalTextInput({
+        blockId: CUSTOM_MCP_TOKEN_BLOCK_ID,
+        actionId: CUSTOM_MCP_INPUT_ACTION_ID,
+        label: "Bearer token",
+        placeholder: "Required for a new server",
+        maxLength: 3000,
+        hint: "Stored write-only and never shown again. Leave blank when updating an existing server to keep its token.",
+      }),
+    ],
+  };
+}
+
+export function readCustomMcpForm(view = {}) {
+  const values = view?.state?.values || {};
+  const text = (blockId) => String(values[blockId]?.[CUSTOM_MCP_INPUT_ACTION_ID]?.value || "").trim();
+  return { name: text(CUSTOM_MCP_NAME_BLOCK_ID), url: text(CUSTOM_MCP_URL_BLOCK_ID), token: text(CUSTOM_MCP_TOKEN_BLOCK_ID) };
 }
 
 export function readConnectionsForm(view = {}) {

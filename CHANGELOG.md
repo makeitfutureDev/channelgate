@@ -18,6 +18,9 @@ product overview.
 
 ## Unreleased
 
+- **Custom MCP servers from Slack.** ⚙️ Settings → MCPs now lists the conversation's custom MCP
+  servers and your own, and lets you add, update or remove them in place. A conversation's servers
+  are editable by its managers and admins; your own are yours to manage. Tokens stay write-only.
 - Teams channel and group-chat answers now end with a native mention of the requester, matching
   Slack. Long answers tag them on the final chunk before the statistics footer; DMs skip the tag.
 

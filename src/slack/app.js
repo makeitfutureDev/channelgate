@@ -72,6 +72,9 @@ import {
   CHANNEL_SETTINGS_AUTOMATION_TOGGLE_ACTION_ID, CHANNEL_SETTINGS_AUTOMATION_DELETE_ACTION_ID, escapeMrkdwn,
   CHANNEL_SETTINGS_CLEAR_MAKE_ACTION_ID, CHANNEL_SETTINGS_CLEAR_TOOLBOX_ACTION_ID,
   CHANNEL_SETTINGS_CLOUD_ENGINE_PREFIX, CHANNEL_SETTINGS_CLOUD_MANAGE_ACTION_ID,
+  CHANNEL_SETTINGS_CUSTOM_MCP_ADD_ACTION_ID, CHANNEL_SETTINGS_CUSTOM_MCP_REMOVE_ACTION_ID, CHANNEL_SETTINGS_CUSTOM_MCP_CALLBACK_ID,
+  CUSTOM_MCP_NAME_BLOCK_ID, CUSTOM_MCP_URL_BLOCK_ID, CUSTOM_MCP_TOKEN_BLOCK_ID,
+  buildCustomMcpEditorView, readCustomMcpForm, customMcpScope,
   CHANNEL_SETTINGS_CLOUD_PAGE_PREFIX, CHANNEL_SETTINGS_CLOUD_TOGGLE_PREFIX,
   CHANNEL_SETTINGS_CONNECTIONS_CALLBACK_ID, CHANNEL_SETTINGS_CONNECTIONS_EDIT_ACTION_ID,
   CHANNEL_SETTINGS_FALLBACK_ACTION_ID, CHANNEL_SETTINGS_THREAD_RESET_ACTION_ID,
@@ -83,6 +86,8 @@ import {
   CONNECTION_COMPOSIO_BLOCK_ID, CONNECTION_MAKE_KEY_BLOCK_ID, CONNECTION_MAKE_URL_BLOCK_ID,
   CONNECTION_TOOLBOX_BLOCK_ID, TEMPLATE_BLOCK_ID,
 } from "./channel-settings.js";
+import { listCustomMcps } from "../gateway/custom-mcps.js";
+import { listUserCustomMcps, removeChannelCustomMcp, removeUserCustomMcp, saveChannelCustomMcp, saveUserCustomMcp } from "../gateway/custom-mcp-store.js";
 import { ACCESS_EDIT_ACTION_ID, ACCESS_CALLBACK_ID, accessFieldTarget, accessSettingsPatch, accessSettingsSnapshot, assertAccessManager, readAccessFieldValue } from "./access-settings.js";
 import { assertValidEnvName, assertValidEnvValue, listChannelEnv, patchChannelEnv } from "../config/channel-env.js";
 import { assertValidSwapRuleFields } from "../gateway/egress/catalog-rules.js";
@@ -591,6 +596,85 @@ export async function channelSettingsContext(client, { channelId, userId, expect
   return ctx;
 }
 
+// A conversation's custom MCP servers reach every run in it: only its managers and admins change
+// them (the same authority as its access settings). A person's own need no check beyond owning the
+// modal, which channelSettingsContext and the owner match already did.
+function assertCustomMcpManager(meta, who) {
+  if (!canManage(meta, who)) throw new Error("Only this channel's managers or an admin can change its custom MCP servers.");
+}
+
+// Which form field a custom MCP refusal belongs under (src/gateway/custom-mcps.js messages).
+export function customMcpErrorBlock(message = "") {
+  const text = String(message);
+  if (/^Token|Bearer token/.test(text)) return CUSTOM_MCP_TOKEN_BLOCK_ID;
+  if (/^URL/.test(text)) return CUSTOM_MCP_URL_BLOCK_ID;
+  return CUSTOM_MCP_NAME_BLOCK_ID;
+}
+
+function inlineMcpName(name) {
+  return `\`${String(name || "").replaceAll("`", "'")}\``;
+}
+
+// One MCPs-page custom MCP button, after channelSettingsContext admitted the clicker: "Add or
+// update" answers the form to push; "Remove" removes and answers the page notice plus fresh meta.
+export async function applyCustomMcpAction({ actionId, command = {}, entry, meta, state, clicker, userIsAdmin = false, userIsApproved = false }) {
+  const scope = customMcpScope(command.s);
+  if (!scope) throw new Error("This custom MCP control expired. Open Settings again.");
+  if (scope === "channel") assertCustomMcpManager(meta, { authorId: clicker, isAdminUser: userIsAdmin, isApprovedUser: userIsApproved });
+  if (actionId === CHANNEL_SETTINGS_CUSTOM_MCP_ADD_ACTION_ID) {
+    return {
+      view: buildCustomMcpEditorView(state, {
+        scope,
+        channelName: entry.name,
+        existing: scope === "channel" ? listCustomMcps(meta.customMcps, "channel") : await listUserCustomMcps(clicker),
+      }),
+    };
+  }
+  const name = String(command.n || "");
+  if (scope === "channel") await removeChannelCustomMcp(entry.slug, name, { actor: `<@${clicker}>` });
+  else await removeUserCustomMcp(clicker, name, { actor: clicker });
+  return {
+    meta: (await getChannelMeta(entry.slug)) || meta,
+    notice: `🗑️ Removed ${inlineMcpName(`${scope === "channel" ? "custom" : "my"}-${name}`)}. Runs stop receiving it, including any in progress.`,
+  };
+}
+
+// The custom MCP form (pushed from the MCPs page). The save resolves DNS for the address check,
+// which is quick, and happens before the ack so a refusal lands under the field it is about.
+export async function handleCustomMcpFormSubmission({ ack, body, view, client }, { context = channelSettingsContext, rootView = settingsRootView } = {}) {
+  const clicker = body?.user?.id;
+  try {
+    const state = parseEditorMetadata(view?.private_metadata);
+    const scope = state.view === "custom_mcp_c" ? "channel" : state.view === "custom_mcp_p" ? "user" : "";
+    if (!clicker || state.ownerId !== clicker || !scope) throw new Error("This form expired. Open Settings again.");
+    const { entry, meta, userIsAdmin, userIsApproved } = await context(client, {
+      channelId: state.channelId, userId: clicker, expectedSlug: state.slug, verifyMembership: true,
+    });
+    if (scope === "channel") assertCustomMcpManager(meta, { authorId: clicker, isAdminUser: userIsAdmin, isApprovedUser: userIsApproved });
+    const form = readCustomMcpForm(view);
+    let servers;
+    try {
+      servers = scope === "channel"
+        ? await saveChannelCustomMcp(entry.slug, form, { actor: `<@${clicker}>` })
+        : await saveUserCustomMcp(clicker, form, { actor: clicker });
+    } catch (error) {
+      await ack({ response_action: "errors", errors: { [customMcpErrorBlock(error.message)]: String(error.message).slice(0, 150) } });
+      return;
+    }
+    const saved = servers.find((entry) => entry.name === String(form.name).trim().toLowerCase());
+    const fresh = (await getChannelMeta(entry.slug)) || meta;
+    await ack({
+      response_action: "update",
+      view: await rootView(entry, fresh, { ...state, tab: "mcp" }, userIsAdmin, {
+        tab: "mcp",
+        notice: `✅ Saved ${inlineMcpName(saved?.serverName || form.name)}. Its tools reach the next run.`,
+      }),
+    });
+  } catch (error) {
+    await ack({ response_action: "errors", errors: { [CUSTOM_MCP_NAME_BLOCK_ID]: String(error.message || "Couldn't save that server.").slice(0, 150) } });
+  }
+}
+
 function channelSettingsSnapshot(meta = {}) {
   const effective = effectiveMeta(meta);
   const channelLogin = effective.codexAuthSource === "channel";
@@ -657,6 +741,9 @@ export function channelSettingsEditOptions(meta, userIsAdmin, { authorId = "", i
     canEditOrgSecrets: Boolean(userIsAdmin),
     canManageCloudMcp: Boolean(userIsAdmin),
     canManageVpn: canManage(meta, { authorId, isAdminUser: userIsAdmin, isApprovedUser }),
+    // The conversation's custom MCP servers reach every run here, so they are a manager's call;
+    // a person's own (`my-<name>`) are always theirs to edit.
+    canManageCustomMcp: canManage(meta, { authorId, isAdminUser: userIsAdmin, isApprovedUser }),
     canEditAccess: !meta.isDM && canManage(meta, { authorId, isAdminUser: userIsAdmin, isApprovedUser }),
   };
 }
@@ -969,6 +1056,11 @@ async function settingsRootView(entry, meta, state, userIsAdmin, { tab = state.t
   snapshot.automations = listForChannel(state.channelId);
   snapshot.orgSecrets = secretScopes.organization;
   snapshot.personalSecrets = secretScopes.personal;
+  // Masked only (name, server name, URL, last4). `personal` is the VIEWER's own, like the secrets.
+  snapshot.customMcps = {
+    channel: listCustomMcps(meta.customMcps, "channel"),
+    personal: await listUserCustomMcps(state.ownerId).catch(() => []),
+  };
   return buildChannelSettingsView({ ...snapshot, vpn: vpn ?? unconfiguredChannelVpnStatus(meta) }, { ...state, tab }, {
     channelName: entry.name,
     tab,
@@ -1460,7 +1552,7 @@ async function connectAndWire(app) {
         ? parseEditorMetadata(body?.view?.private_metadata)
         : parseSettingsMetadata(body?.view?.private_metadata);
       if (!clicker || state.ownerId !== clicker) throw new Error("This channel settings view isn't yours. Open your own from a recent reply.");
-      let { entry, meta, userIsAdmin } = await channelSettingsContext(client, {
+      let { entry, meta, userIsAdmin, userIsApproved } = await channelSettingsContext(client, {
         channelId: state.channelId, userId: clicker, expectedSlug: state.slug, verifyMembership: true,
         cloudMcp: actionId.startsWith("cg_channel_settings_cloud_"),
       });
@@ -1579,6 +1671,16 @@ async function connectAndWire(app) {
           trigger_id: requireTrigger(),
           view: buildConnectionsEditorView(channelSettingsSnapshot(meta).connections, state, { channelName: entry.name }),
         });
+        return;
+      }
+
+      if (actionId === CHANNEL_SETTINGS_CUSTOM_MCP_ADD_ACTION_ID || actionId === CHANNEL_SETTINGS_CUSTOM_MCP_REMOVE_ACTION_ID) {
+        const result = await applyCustomMcpAction({ actionId, command, entry, meta, state, clicker, userIsAdmin, userIsApproved });
+        if (result.view) {
+          await client.views.push({ trigger_id: requireTrigger(), view: result.view });
+          return;
+        }
+        await updateCurrent(await settingsRootView(entry, result.meta, { ...state, tab: "mcp" }, userIsAdmin, { tab: "mcp", notice: result.notice }), { guardHash: false });
         return;
       }
 
@@ -1777,6 +1879,8 @@ async function connectAndWire(app) {
       await ack({ response_action: "errors", errors: { [CONNECTION_COMPOSIO_BLOCK_ID]: String(error.message || "Couldn't update connection credentials.").slice(0, 150) } });
     }
   });
+
+  app.view(CHANNEL_SETTINGS_CUSTOM_MCP_CALLBACK_ID, (args) => handleCustomMcpFormSubmission(args));
 
   app.view(CHANNEL_SETTINGS_TEMPLATE_CALLBACK_ID, async ({ ack, body, view, client }) => {
     const clicker = body?.user?.id;
