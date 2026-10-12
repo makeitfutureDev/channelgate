@@ -23,8 +23,9 @@ test("long Teams answers keep statistics once in the final chunk and preserve th
   const answerChunks = [edited[0], ...posted.slice(1)];
   assert.ok(answerChunks.length > 1);
   assert.ok(answerChunks.every((body) => body.text.length <= platformOr("msteams").capabilities.maxMessageChars));
-  assert.equal(answerChunks.map((body) => body.text).join("").split(footerText(result)).length - 1, 1);
-  assert.ok(answerChunks.at(-1).text.includes(footerText(result)));
+  assert.equal(answerChunks.filter((body) => body.footer).length, 1);
+  assert.equal(answerChunks.at(-1).footer, footerText(result));
+  assert.ok(answerChunks.every((body) => !body.text.includes(footerText(result))));
   assert.ok(posted.every((body) => body.threadKey === "123456"));
 });
 
@@ -48,12 +49,19 @@ for (const engine of ["claude", "codex"]) {
         return result;
       }, log: { warn() {} } });
       await ingest(makeInbound({ platform: "msteams", kind: "dm", conversationId: `19:details-${engine}-${failEdit}@thread.v2`, userId: `details-${engine}`, text: "hello" }));
-      const answer = failEdit ? sent.at(-1).text : edited.at(-1).text;
-      assert.ok(answer.includes(footerText(result)), answer);
-      assert.match(answer, /Answer\./);
-      assert.match(answer, /77s · 920\.2k\/2k/);
-      assert.doesNotMatch(answer, /channelgate\/runtime:latest/);
-      assert.doesNotMatch(answer, /\$/);
+      const answer = failEdit ? sent.at(-1) : edited.at(-1);
+      assert.equal(answer.text, "Answer.");
+      const card = answer.attachments[0].content;
+      assert.equal(answer.attachments[0].contentType, "application/vnd.microsoft.card.adaptive");
+      assert.equal(card.body[0].minHeight, "8px");
+      const stats = card.body[1];
+      assert.equal(stats.text, footerText(result));
+      assert.equal(stats.size, "Small");
+      assert.equal(stats.isSubtle, true);
+      assert.equal(stats.wrap, true);
+      assert.match(stats.text, /77s · 920\.2k\/2k/);
+      assert.doesNotMatch(stats.text, /channelgate\/runtime:latest/);
+      assert.doesNotMatch(stats.text, /\$/);
       assert.equal(sent.length, failEdit ? 2 : 1);
     }
     saveSettings({ showMessageCost: true });

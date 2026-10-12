@@ -1,6 +1,6 @@
 // The Microsoft Teams ChatConnector.
 import { createTeamsConversationNameResolver } from "./conversation-name.js";
-import { adaptiveCardAttachment } from "./cards.js";
+import { adaptiveCardAttachment, replyFooterAttachment } from "./cards.js";
 import { validateConnector } from "../connector.js";
 import { parseConversationId } from "../ids.js";
 import { createTeamsApi, isConversationId } from "./api.js";
@@ -81,7 +81,7 @@ export function createTeamsConnector({ auth, capabilities, api = null, apiForSer
     async post({ conversationId, threadKey, text, mentions = [], footer = "", ephemeralTo = "", buttons = null, signal } = {}) {
       const id = toConversationId(conversationId);
       let body = String(text ?? "");
-      if (footer) body += `\n\n_${footer}_`;
+      const attachments = footer ? [replyFooterAttachment(footer)] : [];
       if (buttons?.length) {
         const labels = buttons.map((b) => b?.text || b?.label).filter(Boolean);
         if (labels.length) body += `\n\n_Reply with one of: ${labels.join(" · ")}_`;
@@ -91,12 +91,12 @@ export function createTeamsConnector({ auth, capabilities, api = null, apiForSer
       if (ephemeralTo && !capabilities?.ephemeral) {
         const dm = await openDm(ephemeralTo, { sourceConversationId: id });
         if (dm) {
-          const res = await teams.sendActivity(dm, { text: body, entities: mentions });
+          const res = await teams.sendActivity(dm, { text: body, entities: mentions, attachments });
           return { messageId: res.messageId, conversationId: dm, threadKey: "", ephemeral: true };
         }
       }
       const thread = threadFor(threadKey) || "";
-      const res = await teams.sendActivity(id, { text: body, entities: mentions, threadKey: thread, signal });
+      const res = await teams.sendActivity(id, { text: body, entities: mentions, attachments, threadKey: thread, signal });
       return { messageId: res.messageId, conversationId: id, threadKey: thread };
     },
 
@@ -119,9 +119,8 @@ export function createTeamsConnector({ auth, capabilities, api = null, apiForSer
     },
 
     async edit({ conversationId, messageId, text, mentions = [], footer = "", signal } = {}) {
-      let body = String(text ?? "");
-      if (footer) body += `\n\n_${footer}_`;
-      await teams.updateActivity(toConversationId(conversationId), messageId, { text: body, entities: mentions, signal });
+      const attachments = footer ? [replyFooterAttachment(footer)] : [];
+      await teams.updateActivity(toConversationId(conversationId), messageId, { text: String(text ?? ""), entities: mentions, attachments, signal });
     },
 
     async remove({ conversationId, messageId } = {}) {

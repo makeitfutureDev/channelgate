@@ -236,8 +236,7 @@ export function createIngest({ connector, log = console, run = runMessage, onCom
     if (skipped.length) {
       text += `\n\n_Couldn't read ${skipped.length} attachment(s): ${skipped.join(", ")} — this surface only hands the bot files it uploaded directly._`;
     }
-    text += `\n\n_${footerText(result)}_`;
-    await deliver(connector, message, placeholder, text, rememberReply);
+    await deliver(connector, message, placeholder, text, rememberReply, footerText(result));
     return { result };
     } });
   };
@@ -246,7 +245,7 @@ export function createIngest({ connector, log = console, run = runMessage, onCom
 // One answer, formatted for the surface, replacing the placeholder where the surface allows it.
 // A long answer is split at the platform's cap; the FIRST chunk edits the placeholder and the rest
 // are posted after it, so the "Working on it…" line never survives next to the real answer.
-async function deliver(connector, message, placeholder, text, rememberReply = () => {}) {
+async function deliver(connector, message, placeholder, text, rememberReply = () => {}, footer = "") {
   const adapter = platformOr(connector.platform);
   const directory = await connector.directory?.(message.rawConversationId).catch(() => null);
   const formatted = adapter.formatOutbound(text, { directory, capabilities: adapter.capabilities });
@@ -259,13 +258,15 @@ async function deliver(connector, message, placeholder, text, rememberReply = ()
         messageId: placeholder.messageId,
         text: chunks[0].text,
         mentions: chunks[0].mentions || [],
+        ...(chunks.length === 1 && footer ? { footer } : {}),
       });
-      for (const chunk of chunks.slice(1)) {
+      for (const [index, chunk] of chunks.slice(1).entries()) {
         rememberReply(await connector.post({
           conversationId: message.rawConversationId,
           threadKey: placeholder.threadKey || message.threadKey,
           text: chunk.text,
           mentions: chunk.mentions || [],
+          ...(index === chunks.length - 2 && footer ? { footer } : {}),
         }));
       }
       return;
@@ -278,6 +279,7 @@ async function deliver(connector, message, placeholder, text, rememberReply = ()
     conversationId: message.rawConversationId,
     threadKey: placeholder?.threadKey || message.threadKey,
     formatted: { chunks },
+    footer,
     onPosted: rememberReply,
   });
 }

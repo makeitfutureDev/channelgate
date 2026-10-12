@@ -18,6 +18,9 @@ product overview.
 
 ## Unreleased
 
+- Make Teams reply statistics smaller and add a gap above them, including replies that replace
+  the working placeholder and background/scheduled results.
+
 - Remove container image references from reply statistics in Slack, Teams and Google Chat.
 
 - Fix Google Drive sync channels getting stuck after an interrupted pass. Passes now use rclone's

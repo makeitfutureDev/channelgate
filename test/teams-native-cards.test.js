@@ -199,6 +199,23 @@ test("connector native card send/update attach AdaptiveCard while ordinary text 
   await connector.post({ conversationId: "teams:19:chat", text: "ordinary" });
   assert.equal(JSON.parse(sent[2].body).text, "ordinary");
   assert.equal(JSON.parse(sent[2].body).attachments, undefined);
+  const entities = [{ type: "mention", text: "<at>Developer</at>", mentioned: { id: "29:developer", name: "Developer" } }];
+  const answer = { conversationId: "teams:19:chat", text: "Hello <at>Developer</at> **answer**", mentions: entities, footer: "gpt-6.1-sol · 10s · 77.1k/174 · 30%" };
+  await connector.post({ ...answer, threadKey: "123" });
+  await connector.edit({ ...answer, messageId: "message" });
+  for (const request of sent.slice(3)) {
+    const body = JSON.parse(request.body);
+    assert.equal(body.text, answer.text);
+    assert.equal(body.textFormat, "markdown");
+    assert.deepEqual(body.entities, entities);
+    assert.equal(body.attachments.length, 1);
+    const footer = body.attachments[0].content.body;
+    assert.equal(footer[0].minHeight, "8px");
+    assert.equal(footer[1].text, answer.footer);
+    assert.equal(footer[1].size, "Small");
+  }
+  assert.match(decodeURIComponent(sent[3].url), /;messageid=123\/activities$/);
+  assert.equal(JSON.parse(sent[2].body).attachments, undefined);
 });
 
 test("card dispatcher failures return a safe visible card without leaking internal errors", async () => {

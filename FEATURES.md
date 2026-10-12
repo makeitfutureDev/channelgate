@@ -934,7 +934,9 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
 - Teams and Google Chat foreground replies carry the same compact statistics as Slack: configured
   model (provider model only when none is configured), duration, this turn's input/output tokens,
   optional cost and context use. Container image references are omitted from reply footers.
-  The global **Show message cost** setting applies to every surface. Statistics pass through the normal formatting/chunking path and survive a
+  Teams statistics use a small, subtle native footer with an 8-pixel spacer above them, attached
+  to the final answer chunk; answer Markdown and mention entities keep their normal rendering.
+  The global **Show message cost** setting applies to every surface. Statistics survive a
   failed placeholder edit through fresh delivery; errors/stops do not invent usage statistics.
 - Native Adaptive Cards provide Approve/Deny/Request changes actions and a **six-page
   Settings console**: General, Variables, MCPs, Skills, Automations and Resume. `/settings` opens
