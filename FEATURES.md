@@ -2526,7 +2526,11 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
   folder/headless MCP recipe. Its description names realistic administration/troubleshooting
   triggers while explicitly excluding ordinary tasks merely performed through ChannelGate.
   The same slice repairs the memory search/read tool registration so both use the gateway's MCP
-  text-response adapter instead of failing with `text is not defined`.
+  text-response adapter instead of failing with `text is not defined`. A hosting reference gives
+  the recommended deployment server (4 dedicated vCPU, 16 GB RAM, 150 GB NVMe, Ubuntu 24.04 LTS,
+  static IPv4, `MAX_CONCURRENT_RUNS=4`), the pilot/busy tiers, and four recommended EU hosts with
+  dated price estimates: Hetzner CCX23 (≈ €25), netcup VPS 2000 G12 (≈ €16), RoLeaf Enterprise in
+  Romania (≈ €32) and Google Cloud `n4-standard-4` (≈ €139).
   → TEST-PLAN: ChannelGate skill package.
 - **Trustworthy release gate** (the macOS leg retired 2026-09-03 — Linux only): every pull request
   runs the complete coverage-gated suite on Ubuntu at the exact Node 22.13 minimum and Node 24, plus dependency-free syntax /
