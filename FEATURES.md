@@ -961,7 +961,7 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
   policy (approved personal chats retain their own runtime choices); stop/clear cannot cancel
   another person's active or queued work unless the requester is an administrator.
 - Work in one session queues with a visible position; unrelated sessions remain independent.
-  Clear aborts active/queued work, waits for completion, and fences late session saves. Progress
+  Clear aborts active/queued work, waits for completion, and fences late session saves. Google Chat progress
   shows the resolved model and current app/tool name, including completion/failure, thinking and
   queue states. Phase changes coalesce at most once every three seconds (slower when the surface's
   edit budget requires it); 30-second heartbeats show elapsed time, last activity and running
@@ -973,6 +973,9 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
   optional cost and context use. Container image references are omitted from reply footers.
   Teams statistics use a small, subtle native footer with an 8-pixel spacer above them, attached
   to the final answer chunk; answer Markdown and mention entities keep their normal rendering.
+  Teams uses a temporary working message without detailed tool/model/heartbeat status. The answer
+  replaces it; if editing fails, successful fresh delivery is followed by removal of the working
+  activity, keeping only the answer, requester mention and statistics. Cleanup failures are logged.
   Completed Teams foreground replies in channels and group chats append a native mention of
   the authenticated requester after the answer and before statistics, matching Slack. The mention
   rides only the last chunk and survives failed placeholder edits. DMs and progress/error/stop

@@ -17,6 +17,10 @@ function toolName(name) {
 // phase changes arrive sooner, bounded by both a conservative floor and the surface edit budget.
 // Stop discards queued status and drains the current write before the final answer can replace it.
 export function createConversationProgress({ connector, message, placeholder, adapter, log = console, intervalMs = 30000, now = Date.now }) {
+  // Teams keeps only its initial working placeholder, replaced by the final answer.
+  // Detailed runtime/tool/heartbeat status must never become a separate reply block.
+  if (adapter.id === "msteams") return { phase() {}, activity() {}, runtime() {}, event() {}, async stop() {} };
+
   const started = now();
   const minGap = Math.max(3000, 1000 / (adapter.capabilities.editsPerSecond || 1));
   let lastActivity = started;

@@ -288,4 +288,10 @@ async function deliver(connector, message, placeholder, text, rememberReply = ()
     footer,
     onPosted: rememberReply,
   });
+  // A failed edit can leave the working activity visible beside a freshly posted answer.
+  // Remove it only after successful delivery, so a post failure never erases the only message.
+  if (adapter.id === "msteams" && placeholder?.messageId && typeof connector.remove === "function") {
+    await connector.remove({ conversationId: placeholder.conversationId || message.rawConversationId,
+      messageId: placeholder.messageId }).catch(err => console.warn(`[msteams] working message cleanup failed: ${err?.message || err}`));
+  }
 }

@@ -18,6 +18,9 @@ product overview.
 
 ## Unreleased
 
+- Simplify Teams replies to the answer, requester tag and small statistics footer. Hide detailed
+  tool/runtime progress and remove the old working message after successful failed-edit fallback.
+
 - Keep Teams action flows in their source conversation: Files and Send file launch native windows
   from thread buttons; personal connection tokens are managed in Settings → MCPs → My connections;
   approval cards no longer send supplemental decision-link DMs. File/settings dialog contents stay
