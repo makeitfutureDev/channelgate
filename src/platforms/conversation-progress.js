@@ -19,7 +19,38 @@ function toolName(name) {
 export function createConversationProgress({ connector, message, placeholder, adapter, log = console, intervalMs = 30000, now = Date.now }) {
   // Teams keeps only its initial working placeholder, replaced by the final answer.
   // Detailed runtime/tool/heartbeat status must never become a separate reply block.
-  if (adapter.id === "msteams") return { phase() {}, activity() {}, runtime() {}, event() {}, async stop() {} };
+  if (adapter.id === "msteams") {
+    let stopped = false;
+    let pending = null;
+    let timer = null;
+    const controller = new AbortController();
+    const typing = () => {
+      if (stopped || pending || typeof connector.typing !== "function") return;
+      pending = Promise.resolve().then(() => {
+        if (!stopped) return connector.typing({ conversationId: message.rawConversationId,
+          threadKey: message.threadKey, signal: controller.signal });
+      }).catch(err => {
+        if (!stopped) {
+          // A client/tenant without typing support still has the visible working placeholder.
+          log.warn?.(`[msteams] typing indicator unavailable: ${err?.message || err}`);
+          stopped = true;
+          if (timer) clearInterval(timer);
+        }
+      }).finally(() => { pending = null; });
+    };
+    if (typeof connector.typing === "function") {
+      typing();
+      // Typing is transient. Refresh without overlap and within the per-thread request budget.
+      timer = setInterval(typing, 4000);
+      timer.unref?.();
+    }
+    return { phase() {}, activity() {}, runtime() {}, event() {}, async stop() {
+      stopped = true;
+      if (timer) clearInterval(timer);
+      controller.abort();
+      await pending;
+    } };
+  }
 
   const started = now();
   const minGap = Math.max(3000, 1000 / (adapter.capabilities.editsPerSecond || 1));

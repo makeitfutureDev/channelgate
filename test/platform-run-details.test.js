@@ -167,7 +167,7 @@ for (const engine of ["claude", "codex"]) {
       args.onEvent({ kind: "tool_result", name: "binbash -lc cat instructions", status: "completed" });
       args.onDelta("answer"); await flush();
       assert.equal(visible.size, 1);
-      assert.equal([...visible.values()][0].text, "_Working on it…_");
+      assert.equal([...visible.values()][0].text, "_⏳ Agent is working…_");
       return result;
     } })(makeInbound({ platform: "msteams", kind: "channel", conversationId: `19:clean-${engine}@thread.tacv2`,
       threadKey: "123456", userId, userName: "Developer", mentionsBot: true, text: "hello" }));
@@ -190,4 +190,30 @@ test("Teams progress never posts detailed status or orphan messages without a pl
   progress.phase("Thinking"); progress.activity();
   t.mock.timers.tick(60000); await flush(); await progress.stop();
   assert.deepEqual(writes, []);
+});
+
+
+test("Teams refreshes native typing without overlap and cancels it before the final reply", async t => {
+  t.mock.timers.enable({ apis: ["setInterval"] });
+  const calls = []; let finish;
+  const progress = createConversationProgress({ adapter: platformOr("msteams"), message: { rawConversationId: "wire", threadKey: "123456" },
+    connector: { typing: async body => { calls.push(body); if (calls.length === 2) await new Promise(resolve => {
+      finish = resolve; body.signal.addEventListener("abort", resolve, { once: true });
+    }); } } });
+  await flush(); assert.equal(calls.length, 1);
+  assert.equal(calls[0].conversationId, "wire"); assert.equal(calls[0].threadKey, "123456");
+  t.mock.timers.tick(4000); await flush(); assert.equal(calls.length, 2);
+  t.mock.timers.tick(12000); await flush(); assert.equal(calls.length, 2, "one request in flight");
+  await progress.stop();
+  assert.equal(calls[1].signal.aborted, true);
+  finish(); t.mock.timers.tick(12000); await flush(); assert.equal(calls.length, 2, "no typing after final delivery");
+});
+
+test("Teams typing failure disables refresh while keeping the ordinary answer path", async t => {
+  t.mock.timers.enable({ apis: ["setInterval"] });
+  let calls = 0; let warnings = 0;
+  const progress = createConversationProgress({ adapter: platformOr("msteams"), message: { rawConversationId: "wire" },
+    connector: { typing: async () => { calls++; throw new Error("unsupported"); } }, log: { warn() { warnings++; } } });
+  await flush(); t.mock.timers.tick(12000); await flush(); await progress.stop();
+  assert.equal(calls, 1); assert.equal(warnings, 1);
 });

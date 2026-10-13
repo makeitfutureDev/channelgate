@@ -162,7 +162,9 @@ export function createIngest({ connector, log = console, run = runMessage, onCom
       placeholder = await connector.post({
         conversationId: message.rawConversationId,
         threadKey: message.threadKey,
-        text: hasVoiceAttachments(message) ? "_Preparing voice transcription…_" : "_Working on it…_",
+        text: adapter.id === "msteams"
+          ? hasVoiceAttachments(message) ? "_⏳ Preparing voice transcription…_" : "_⏳ Agent is working…_"
+          : hasVoiceAttachments(message) ? "_Preparing voice transcription…_" : "_Working on it…_",
         signal,
       });
       rememberReply(placeholder);

@@ -123,6 +123,12 @@ export function createTeamsConnector({ auth, capabilities, api = null, apiForSer
       await teams.updateActivity(toConversationId(conversationId), messageId, { text: String(text ?? ""), entities: mentions, attachments, signal });
     },
 
+    ...(typeof defaultApi.sendTypingActivity === "function" ? {
+      async typing({ conversationId, threadKey, signal } = {}) {
+        await teams.sendTypingActivity(toConversationId(conversationId), { threadKey: threadFor(threadKey) || "", signal });
+      },
+    } : {}),
+
     async remove({ conversationId, messageId } = {}) {
       await teams.deleteActivity(toConversationId(conversationId), messageId);
     },

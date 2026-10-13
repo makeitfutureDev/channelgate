@@ -105,6 +105,12 @@ export function createTeamsApi({ auth, serviceUrl = DEFAULT_SERVICE_URL, fetchIm
       return { messageId: res?.id || "" };
     },
 
+    async sendTypingActivity(conversationId, { threadKey = "", signal } = {}) {
+      await call(`v3/conversations/${target(conversationId, threadKey)}/activities`, {
+        body: { type: "typing" }, signal,
+      });
+    },
+
     async updateActivity(conversationId, activityId, { text, entities = [], attachments = null, signal } = {}) {
       const id = String(activityId || "");
       if (!isActivityId(id)) throw new Error("Teams activity id contains characters outside the Bot Framework set");

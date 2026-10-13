@@ -973,7 +973,10 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
   optional cost and context use. Container image references are omitted from reply footers.
   Teams statistics use a small, subtle native footer with an 8-pixel spacer above them, attached
   to the final answer chunk; answer Markdown and mention entities keep their normal rendering.
-  Teams uses a temporary working message without detailed tool/model/heartbeat status. The answer
+  Teams shows a temporary “⏳ Agent is working…” message and refreshes its native typing indicator
+  every four seconds without overlapping requests. Typing stops and drains before final delivery;
+  unsupported typing disables refresh for that turn while the working message remains visible.
+  Neither display includes detailed tool/model/heartbeat status. The answer
   replaces it; if editing fails, successful fresh delivery is followed by removal of the working
   activity, keeping only the answer, requester mention and statistics. Cleanup failures are logged.
   Completed Teams foreground replies in channels and group chats append a native mention of

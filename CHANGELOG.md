@@ -18,6 +18,9 @@ product overview.
 
 ## Unreleased
 
+- Show a simple “Agent is working…” status in Teams and refresh the native typing indicator while
+  a turn runs. Stop typing before the answer replaces the temporary status.
+
 - Simplify Teams replies to the answer, requester tag and small statistics footer. Hide detailed
   tool/runtime progress and remove the old working message after successful failed-edit fallback.
 
