@@ -2844,8 +2844,8 @@ node --test test/teams-native-cards.test.js test/teams-controls.test.js test/tea
 ```
 
 Native controls use signed RSA/JWKS activity fixtures, source group `teams:19:group@thread.v2`,
-private conversation `a:personal`/`a:private`, actor `29:user`, and a scratch `report.txt` containing
-`snapshot`. Require private delivery, actor/conversation/expiry rejection, current membership and
+personal conversation `a:personal`, actor `29:user`, and a scratch `report.txt` containing
+`snapshot`. Require original-conversation launchers and user-bound dialogs, actor/conversation/expiry rejection, current membership and
 approval checks, compatible runtime values, safe Execute/Submit behavior, scope validation and
 single-outcome replay. File consent must upload the original snapshot only on valid acceptance,
 reject empty/oversized/outside-root files, expire at ten minutes, cap pending snapshots, and never
@@ -2868,26 +2868,54 @@ failed source remains byte-for-byte available for retry.
   Request changes must refuse and preserve the comment. A typed changes comment with Approve
   must also refuse. Repeat Execute and a client using Submit fallback. Replaying a decision
   must not repeat its effect. Revoke the original requester's current approval/channel access
-  before deciding by native card or private fallback link: neither path may retain authority
+  before deciding by native card: the decision must not retain authority
   merely because they created the request. Record actor, anonymized root, scope and result.
-- [ ] UNEXECUTED live settings/secrets gate: `/secrets` and the card's settings link must open the
-  existing authenticated admin website; verify login and existing reveal/re-auth policy still
-  apply. No secret value or new secret-entry form may appear in the Teams chat/card. A failed
-  private delivery must explain failure without publishing private control links to the group.
+- [ ] UNEXECUTED live settings/secrets gate: `/secrets` and the settings launcher open an
+  authenticated-owner Teams dialog in the original conversation. No stored secret value or
+  secret-entry form may appear in shared chat. Failed card delivery must explain failure in
+  that conversation without opening a DM or publishing private control links.
 - [ ] UNEXECUTED live workspace gate, both engines: create owned `fixtures/report.txt` containing
   `ORIGINAL` and `fixtures/note.txt` containing `EDIT_ME`. Invoke `/files fixtures` from the group;
-  its private browser must remain scoped to that group's workspace. Download report and verify
+  its thread-launched files dialog must remain scoped to that group's workspace. Download report and verify
   bytes; upload `new.txt`, then edit note where current write policy permits. A read-only user
   cannot upload/edit. Revoke gateway approval or Teams membership before opening a link and
   require denial; an escaped path/symlink cannot disclose another workspace. Confirm conflicting
   text edits preserve the existing stale-write safeguard.
-- [ ] UNEXECUTED live native-send gate, both engines: `/sendfile fixtures/report.txt` from the
-  group must deliver file consent only in the requester's personal chat. Accept must upload the
+- [ ] UNEXECUTED live native-send gate, both engines: `/sendfile fixtures/report.txt` from an
+  existing bot personal chat must deliver file consent in that same chat. Accept must upload the
   prepared bytes and return a native file attachment. Decline, a different actor, revoked access,
   expiry after ten minutes and duplicate invocation must not upload. Try a zero-byte and an
   over-10-MB file; require refusal and browser-download guidance. Simulate interrupted upload;
   the uncertain outcome must not retry automatically. No group/channel direct native upload is
   claimed by this personal-consent flow.
+
+## Teams actions stay in the original conversation (2026-10-13)
+
+- [x] Automated native controls (engine-independent): `test/teams-controls.test.js` checks
+      original-conversation Files/Send file launchers, private dialog-only grants, download/upload
+      Back navigation, actor/conversation/tenant/expiry/current-access rejection, path traversal,
+      and rejection of model-card Execute/legacy Submit attempts to expose settings or write tokens.
+      `test/teams-settings.test.js` and `test/teams-settings-catalog.test.js` check thread-launched
+      personal token entry, blank preservation, masked/empty fields, owner binding, revocation,
+      confirmation and absence of credentials in shared cards. `test/teams-file-consent.test.js`
+      checks native consent stays in an existing DM and refuses group/channel preparations.
+- [x] Automated approvals (engine-independent): `test/platform-approvals.test.js` checks native
+      transient/durable Teams approvals in the original thread with private links configured to
+      always; no bearer tokens minted or DMs sent. Card failure refuses the action with source
+      retry guidance and leaves no pending request. Slack/Google Chat existing link behavior remains covered.
+- [ ] Live Claude and Codex: deploy beta; in owned Teams channel and quoted-group QA sessions,
+      ask “Reply with exactly THREAD-ACTIONS”, then invoke `/settings`, `/secrets`, `/model`,
+      `/files fixtures` and `/sendfile fixtures/report.txt` from that session. Pass: cards stay in
+      the original conversation/channel thread; windows open there; browse/download/upload/edit
+      work against its workspace with Back navigation; no personal bot chat opens. Use safe
+      disposable personal Composio/Toolbox fixtures in My connections, save/rotate/disconnect and
+      verify own-user metadata and relay revocation without showing credentials in chat. Trigger
+      a harmless approval once and deny once: decisions and notices stay in the source thread,
+      with no supplemental link DM. Revoke current access before action and require refusal.
+      Capture sanitized activity IDs, screenshots and the DM-send/minted-link counters (both zero).
+      Native forms are engine-independent; both engines need foreground session/approval smoke.
+      Live execution and private QA registration remain pending: no requesting-user QA connection
+      is exposed in this run. This supersedes older group-to-personal file-control instructions.
 - [ ] UNEXECUTED live scoped-read gate, both engines: configure `teamsFilesEnabled: true` with
   one owned drive in `teamsFileDriveIds` and externally grant selected-site application read
   access. Send a canonical SharePoint file reference inside that drive, then an unlisted drive

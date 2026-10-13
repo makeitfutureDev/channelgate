@@ -18,6 +18,11 @@ product overview.
 
 ## Unreleased
 
+- Keep Teams action flows in their source conversation: Files and Send file launch native windows
+  from thread buttons; personal connection tokens are managed in Settings → MCPs → My connections;
+  approval cards no longer send supplemental decision-link DMs. File/settings dialog contents stay
+  out of shared chat, and public model cards reject forged settings actions.
+
 - Extend the bundled `channelgate` skill with supported OpenVPN setup and task-specific VPN/SSH
   access instructions, including Secret handling, identity verification, isolation, layered
   checks and cleanup. Customers receive the reference with gateway updates.

@@ -12,7 +12,7 @@ await writeFile(path.join(root, "report.txt"), "snapshot");
 function fixture() {
   let time = 1000, allowed = true;
   const posts = [], uploads = [], auths = [];
-  const source = { message: { userId: "29:user", conversationId: "teams:19:group@thread.v2", rawConversationId: "19:group@thread.v2", kind: "group" }, entry: { slug: "files" }, sessionKey: "group:1", relative: "report.txt" };
+  const source = { message: { userId: "29:user", conversationId: "teams:a:personal", rawConversationId: "a:personal", kind: "dm", isDM: true }, entry: { slug: "files" }, sessionKey: "personal-session", relative: "report.txt" };
   const connector = { openDm: async () => "a:personal", api: { sendActivity: async (conversationId, body) => { posts.push({ conversationId, body }); return { messageId: "card" }; } } };
   const consent = createTeamsFileConsent({ connector, now: () => time,
     authorizeWorkspace: async input => { auths.push(input); if (!allowed) throw new Error("revoked"); return { root }; },
@@ -22,7 +22,7 @@ function fixture() {
     value: { type: "fileUpload", action: "accept", context: { id }, uploadInfo: { uploadUrl: "https://contoso.sharepoint.com/upload", contentUrl: "https://contoso.sharepoint.com/report.txt", uniqueId: "item-id", name: "report.txt" } } });
   return { consent, source, posts, uploads, auths, activity, revoke: () => { allowed = false; }, expire: () => { time += 600001; }, connector };
 }
-test("group file consent opens only author DM and uploads original snapshot after accept", async () => {
+test("personal file consent stays in the source chat and uploads original snapshot after accept", async () => {
   const f = fixture();
   try {
     const sent = await f.consent.send(f.source);
@@ -40,6 +40,16 @@ test("group file consent opens only author DM and uploads original snapshot afte
     assert.equal(f.posts[1].body.attachments[0].contentType, "application/vnd.microsoft.teams.card.file.info");
     assert.equal((await f.consent.handle(f.activity(sent.id))).status, 410);
   } finally { f.consent.stop(); await writeFile(path.join(root, "report.txt"), "snapshot"); }
+});
+test("native file consent never opens a DM for a channel or group request", async () => {
+  const f = fixture();
+  try {
+    for (const kind of ['channel', 'group']) {
+      await assert.rejects(f.consent.send({ ...f.source, message: { ...f.source.message, kind, isDM: false } }), /download window/);
+    }
+    assert.deepEqual(f.posts, []);
+    assert.deepEqual(f.auths, []);
+  } finally { f.consent.stop(); }
 });
 test("forged actors, conversations and upload destinations do not consume real consent", async () => {
   const f = fixture();

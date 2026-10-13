@@ -10,6 +10,14 @@ export function settingsLauncher(stateId, name) {
     data: { msteams: { type: 'task/fetch' }, cgAction: 'settings.open', stateId } }] };
 }
 
+export function filesLauncher(stateId, selectedFile = false) {
+  return { type: 'AdaptiveCard', version: '1.4', body: [
+    { type: 'TextBlock', text: 'Conversation files', weight: 'Bolder', wrap: true },
+    { type: 'TextBlock', text: 'Open files for this conversation inside Teams.', wrap: true },
+  ], actions: [{ type: 'Action.Submit', title: selectedFile ? 'Open file' : 'Open files', associatedInputs: 'none',
+    data: { msteams: { type: 'task/fetch' }, cgAction: 'files.open', stateId } }] };
+}
+
 function dialogActions(value) {
   if (Array.isArray(value)) return value.map(dialogActions);
   if (!value || typeof value !== 'object') return value;
@@ -20,9 +28,9 @@ function dialogActions(value) {
   return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, dialogActions(item)]));
 }
 
-export function settingsDialogResponse(card) {
+export function settingsDialogResponse(card, { title = 'Conversation settings' } = {}) {
   return { status: 200, body: { task: { type: 'continue', value: {
-    title: 'Conversation settings', width: 'large', height: 'large',
+    title, width: 'large', height: 'large',
     card: adaptiveCardAttachment(dialogActions(card)),
   } } } };
 }

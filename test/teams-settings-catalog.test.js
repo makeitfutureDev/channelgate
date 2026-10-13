@@ -9,6 +9,7 @@ const { upsertChannelEntry, defaultChannelMeta, saveChannelMeta, getChannelMeta,
 const { saveSettings } = await import('../src/config/settings.js');
 const { patchOrgEnv, listOrgEnv } = await import('../src/config/scoped-env.js');
 const { patchChannelEnv } = await import('../src/config/channel-env.js');
+const { registerRemoteMcps, hasRemoteMcps, clearRemoteMcps } = await import('../src/mcp/remote-mcp-registry.js');
 const { putSkillRevision, upsertTemplate } = await import('../src/gateway/skills/catalog.js');
 
 const ui = {
@@ -128,6 +129,38 @@ test('connection rotation preserves blank tokens and validates Make URLs atomica
   await invoke(ctx, 'settings.connections.remove', { connection: 'make' });
   stored = await getChannelMeta(ctx.entry.slug);
   assert.equal(stored.makeToolboxUrl, ''); assert.equal(stored.makeToolboxKey, '');
+});
+
+test('personal connection forms bind to the dialog owner, keep blanks, hide values and revoke disconnected relays', async () => {
+  const ctx = await context(), other = await context();
+  const tokens = { personalComposioToken: 'personal-composio-fixture', personalToolboxToken: 'personal-toolbox-fixture' };
+  await invoke(ctx, 'settings.personal.save', { ...tokens, ownerId: other.ownerId, actorId: other.ownerId });
+  assert.equal((await getUser(ctx.ownerId)).composioToken, tokens.personalComposioToken);
+  assert.equal((await getUser(other.ownerId)).composioToken, '');
+  assert.equal((await getChannelMeta(ctx.entry.slug)).composioToken, '');
+  await invoke(ctx, 'settings.personal.save', { personalComposioToken: '', personalToolboxToken: '' });
+  assert.equal((await getUser(ctx.ownerId)).toolboxToken, tokens.personalToolboxToken);
+  const rendered = await renderCatalogPage('mcp', ctx, ui);
+  assert.equal(rendered.body.find(item => item.id === 'personalComposioToken').value, '');
+  assert.equal(rendered.body.find(item => item.id === 'personalToolboxToken').value, '');
+  assert.ok(!JSON.stringify(rendered).includes(tokens.personalComposioToken));
+  assert.ok(!JSON.stringify(rendered).includes(tokens.personalToolboxToken));
+  await assert.rejects(invoke(ctx, 'settings.personal.save', { personalComposioToken: 'short', personalToolboxToken: 'replacement-long-fixture' }), /six characters/);
+  assert.equal((await getUser(ctx.ownerId)).toolboxToken, tokens.personalToolboxToken);
+  const registration = `teams-personal-${ctx.ownerId}`;
+  registerRemoteMcps({ jti: registration, exp: Date.now() + 60_000, servers: { 'composio-user': { url: 'https://example.com/mcp', headers: {} } }, meta: { authorId: ctx.ownerId } });
+  try {
+    assert.equal(hasRemoteMcps(registration), true);
+    await invoke(ctx, 'settings.personal.remove', { connection: 'composio', ownerId: other.ownerId });
+    assert.equal((await getUser(ctx.ownerId)).composioToken, '');
+    assert.equal(hasRemoteMcps(registration), false);
+  } finally { clearRemoteMcps(registration); }
+  ctx.isShared = true;
+  assert.ok(!(await renderCatalogPage('mcp', ctx, ui)).body.some(item => item.id === 'personalToolboxToken'));
+  await assert.rejects(invoke(ctx, 'settings.personal.save', tokens), /authenticated settings/);
+  await assert.rejects(invoke(ctx, 'settings.personal.remove', { connection: 'toolbox' }), /authenticated settings/);
+  ctx.isShared = false; ctx.authorize = async () => { throw new Error('membership revoked'); };
+  await assert.rejects(invoke(ctx, 'settings.personal.remove', { connection: 'toolbox' }), /membership revoked/);
 });
 
 test('cloud mutations reject stale admins and inherited organization grants', async () => {

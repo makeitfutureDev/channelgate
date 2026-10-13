@@ -36,7 +36,7 @@ export function teamsSettingsUi(stateId) {
       value: String(value ?? ''), choices: choices.map(item => ({ title: String(item.title || item.label || item.value).slice(0, 100), value: String(item.value) })) }),
     input: (id, label, value = '') => ({ type: 'Input.Text', id, label, value: String(value), maxLength: 8000,
       // Teams supports client-side masking as an extension to the Adaptive Card input style.
-      ...(['variableValue', 'composioToken', 'toolboxToken', 'makeToolboxKey'].includes(id) ? { style: 'password' } : {}) }),
+      ...(['variableValue', 'composioToken', 'toolboxToken', 'makeToolboxKey', 'personalComposioToken', 'personalToolboxToken'].includes(id) ? { style: 'password' } : {}) }),
   };
 }
 
@@ -136,6 +136,7 @@ function confirmationDetails(action, data, ctx) {
   const name = String(data.name || data.key || '').slice(0, 100);
   if (action === 'settings.variable.remove') return `Remove the ${data.variableScope} variable ${name}?`;
   if (action === 'settings.connections.remove') return `Disconnect the ${data.connection} connection for this conversation?`;
+  if (action === 'settings.personal.remove') return `Disconnect your personal ${data.connection} connection?`;
   if (action === 'settings.thread.reset') return 'Clear this session’s engine, model and effort overrides?';
   if (action === 'settings.automation.delete') {
     const row = listForChannel(ctx.channelId).find(item => item.id === data.id);

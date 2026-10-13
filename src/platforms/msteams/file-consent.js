@@ -59,6 +59,7 @@ export function createTeamsFileConsent({ connector, authorizeWorkspace, fetchImp
     if (stopped) throw new Error("Teams file sending is disconnected.");
     prune();
     if (!message?.userId || !message.conversationId || !entry?.slug || typeof relative !== "string" || !relative.trim()) throw new Error("Choose one file from this conversation's workspace.");
+    if (!message.isDM && message.kind !== "dm") throw new Error("Native file consent is available only in this bot chat. Use /sendfile in the original conversation for a download window.");
     if (pending.size + activeUploads >= MAX_PENDING) throw new Error("Too many pending Teams uploads. Accept or decline an existing request first.");
     const id = randomUUID();
     // Reserve before any asynchronous work, so concurrent preparations share the same memory cap.
@@ -70,8 +71,8 @@ export function createTeamsFileConsent({ connector, authorizeWorkspace, fetchImp
       const authorized = await authorizeWorkspace(row.source);
       if (!authorized?.root) throw new Error("Workspace access was not authorized.");
       const file = await snapshot(authorized.root, relative);
-      const destination = message.isDM || message.kind === "dm" ? message.rawConversationId : await connector.openDm(message.userId, { sourceConversationId: message.rawConversationId });
-      if (!isConversationId(destination)) throw new Error("Cannot open your personal Teams chat. Install the app personally and try again.");
+      const destination = message.rawConversationId;
+      if (!isConversationId(destination)) throw new Error("Invalid source Teams chat.");
       if (!pending.has(id) || row.expiresAt <= now()) throw new Error("File consent preparation expired. Try again.");
       Object.assign(row, file, { conversationId: destination, ready: true });
       const sent = await connector.api.sendActivity(destination, {
@@ -80,7 +81,7 @@ export function createTeamsFileConsent({ connector, authorizeWorkspace, fetchImp
           content: { description: "Send the prepared snapshot of this workspace file to your OneDrive.", sizeInBytes: file.bytes.length,
             acceptContext: { id }, declineContext: { id } } }],
       });
-      return { status: 200, body: { message: "File consent sent to your personal Teams chat." }, conversationId: destination, messageId: sent?.messageId || "", id };
+      return { status: 200, body: { message: "File consent sent to this Teams conversation." }, conversationId: destination, messageId: sent?.messageId || "", id };
     } catch (error) { remove(id); throw error; }
   }
   async function handle(activity) {

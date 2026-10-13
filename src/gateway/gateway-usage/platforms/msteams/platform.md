@@ -58,6 +58,24 @@ chat launcher. Current role and membership checks apply to every action.
 Native rosters and secret inputs have size limits;
 complete oversized edits use the authenticated browser settings.
 
+## Files and approvals in this conversation
+
+`/files [folder]` posts **Open files** in the original channel/thread or group chat. Click it to
+browse, download, edit eligible text, or upload with write access in a Teams window. `/sendfile
+<path>` posts **Open file** for the selected workspace file. No personal bot chat is required;
+file listings and one-time browser grants appear only inside the authorized user's window.
+Downloads, editing and uploads require the gateway Public URL. Back to files returns to browsing.
+In an existing personal bot chat, `/sendfile` still uses native Accept/Decline consent for nonempty
+files up to 10 MB, in that same conversation.
+
+Personal Composio and Toolbox tokens can be saved or disconnected under `/settings` → MCPs →
+**My connections**. Inputs are masked and never prefilled. Do not ask anyone to paste credentials
+into a channel/group message or move to a DM to set them.
+
+Teams approval decisions use the original conversation's native card. Supplemental browser
+decision links are not minted or sent in DMs. A card-delivery failure refuses the action and
+reports retry guidance in the source conversation.
+
 ## Reaction controls
 
 When Teams reaction events are enabled and delivered to the gateway, 👽 **Alien**

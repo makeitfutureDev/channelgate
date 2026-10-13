@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { ensureTestEnv } from './helpers.js';
 ensureTestEnv();
 const { createTeamsControls } = await import('../src/platforms/msteams/controls.js');
-const { upsertChannelEntry, saveChannelMeta, getChannelMeta, patchChannelMeta, setUser } = await import('../src/config/store.js');
+const { upsertChannelEntry, saveChannelMeta, getChannelMeta, patchChannelMeta, setUser, getUser } = await import('../src/config/store.js');
 const { addSchedule, listForChannel } = await import('../src/config/schedules.js');
 const { getThreadEngine, setThreadEngine, getThreadModel } = await import('../src/gateway/thread-engine.js');
 const { saveSession } = await import('../src/gateway/sessions.js');
@@ -146,6 +146,27 @@ test('settings do not require personal-chat delivery', async () => {
   const f = await fixture({ privateChat: false });
   assert.equal(f.sent[0].conversationId, f.channelId.slice(6));
   assert.deepEqual(f.replies, []);
+});
+test('personal connection setup and removal stay inside the thread-launched settings dialog', async () => {
+  const f = await fixture({ admin: false, privateChat: false });
+  const connections = value(await f.invoke({ stateId: f.stateId, page: 'mcp' }, 'settings.page'));
+  assert.equal(input(connections, 'personalComposioToken').value, '');
+  assert.equal(input(connections, 'personalComposioToken').style, 'password');
+  assert.equal(input(connections, 'personalToolboxToken').style, 'password');
+  const saved = value(await f.invoke({ stateId: f.stateId, personalComposioToken: 'own-composio-token-fixture',
+    personalToolboxToken: 'own-toolbox-token-fixture', userId: '29:other' }, 'settings.personal.save'));
+  assert.equal((await getUser(f.owner)).composioToken, 'own-composio-token-fixture');
+  assert.doesNotMatch(JSON.stringify(saved), /own-composio-token-fixture|own-toolbox-token-fixture/);
+  assert.equal(input(saved, 'personalComposioToken').value, '');
+  assert.equal(f.sent.length, 1);
+  const confirm = value(await f.invoke({ stateId: f.stateId, connection: 'composio' }, 'settings.personal.remove'));
+  assert.equal((await getUser(f.owner)).composioToken, 'own-composio-token-fixture');
+  const token = confirm.actions[0].data.token;
+  value(await f.invoke({ stateId: f.stateId, token }, 'settings.confirm'));
+  assert.equal((await getUser(f.owner)).composioToken, '');
+  assert.equal((await getUser(f.owner)).toolboxToken, 'own-toolbox-token-fixture');
+  assert.equal(f.sent.length, 1);
+  assert.doesNotMatch(JSON.stringify(f.sent), /own-composio|own-toolbox|personalComposioToken/);
 });
 test('dialog navigation ignores forged reply targets and never updates a chat message', async () => {
   const f = await fixture();
