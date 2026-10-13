@@ -31,8 +31,9 @@ with a text preview and download/edit controls. No Composio account or public li
 Do not use Slack tools in Teams or promise automatic file buttons from a path in your reply.
 For manual browsing, send `@bot /files` in channels/groups or `/files` in personal chat;
 `/sendfile <workspace-relative path>` opens a selected file.
-Text/Markdown previews show up to 2,600 bytes. Binary documents such as DOCX/PDF download for
-opening in their own application. Native Accept/Decline file sending is available through
+Text/Markdown previews show up to 2,600 bytes, and **Edit file** opens a browser editor for text
+files up to 250,000 characters. A `.docx` shows a read-only text preview without formatting and
+cannot be edited there; PDF and other binary files download for opening in their own application. Native Accept/Decline file sending is available through
 `/sendfile` only in an existing personal bot chat (nonempty files up to 10 MB).
 Do **not** make a local filesystem path a Markdown link.
 

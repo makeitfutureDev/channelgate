@@ -6,7 +6,8 @@ import { modelsForEngine, effortsForModel, modelBelongsToEngine } from '../../en
 import { teamsWorkspaceContext } from './workspace-access.js';
 import { listVisibleDirectory, normalizeRelativePath, canEditChannelFiles, readEditableFile, resolveVisiblePath, PREVIEW_BYTES, formatFileSize } from '../../slack/file-explorer.js';
 import { createFileDownloadGrantUrl } from '../../web/file-download.js';
-import { createFileEditorGrantUrl } from '../../web/file-editor.js';
+import { createFileEditorGrantUrl, BROWSER_EDIT_MAX_CHARS, BROWSER_EDIT_MAX_BYTES } from '../../web/file-editor.js';
+import { docxText, DOCX_MAX_FILE_BYTES } from '../../util/docx-text.js';
 import { createFileUploadGrantUrl } from '../../web/file-upload.js';
 import { createTeamsFileConsent } from './file-consent.js';
 import { createTeamsInteractionHandler, teamsCardErrorResponse, normalizeTeamsInteraction } from './interactions.js';
@@ -90,17 +91,28 @@ export function createTeamsControls({ connector, now = Date.now, authorize = tea
     signal?.throwIfAborted();
     const target = await resolveVisiblePath(context.root, relative, { kind: 'file' });
     const opened = await openConfinedFile(context.root, target.relative);
-    let bytes;
+    const isDocx = /\.docx$/i.test(target.relative);
+    let bytes, documentText = null;
     try {
-      const buffer = Buffer.alloc(Math.min(PREVIEW_BYTES, opened.stat.size));
+      // A .docx is read whole (bounded) so its body text can be extracted; other files only
+      // need the first preview bytes.
+      const whole = isDocx && opened.stat.size <= DOCX_MAX_FILE_BYTES;
+      const buffer = Buffer.alloc(whole ? opened.stat.size : Math.min(PREVIEW_BYTES, opened.stat.size));
       const { bytesRead } = await opened.handle.read(buffer, 0, buffer.length, 0);
       bytes = buffer.subarray(0, bytesRead);
+      if (whole) { try { documentText = docxText(bytes); } catch { /* falls back to download guidance */ } }
     } finally { await opened.handle.close(); }
     signal?.throwIfAborted();
     const body = [text(target.relative), text(formatFileSize(opened.stat.size))];
     const binary = /\.(?:pdf|docx?|xlsx?|pptx?|odt|ods|odp|zip|gz|7z|png|jpe?g|gif|webp|mp[34]|wav)$/i.test(target.relative)
       || bytes.some(byte => byte < 9 || (byte > 13 && byte < 32));
-    if (binary) body.push(text('This file has no text preview. Download it to open it in its application.'));
+    if (documentText !== null) {
+      // Read-only: formatting cannot survive a plain-text round trip, so a .docx never offers Edit.
+      const shown = Buffer.from(documentText || '(No text in this document)').subarray(0, PREVIEW_BYTES).toString('utf8').replace(/\uFFFD$/, '');
+      body.push(text('Text preview — formatting, images and layout are not shown. Download the file to open it in Word.'));
+      body.push({ type: 'RichTextBlock', inlines: [{ type: 'TextRun', text: shown }] });
+      if (Buffer.byteLength(documentText) > PREVIEW_BYTES) body.push(text(`Preview shows the first ${PREVIEW_BYTES.toLocaleString()} bytes of text; downloading returns the complete document.`));
+    } else if (binary) body.push(text('This file has no text preview. Download it to open it in its application.'));
     else {
       body.push({ type: 'RichTextBlock', inlines: [{ type: 'TextRun', text: bytes.toString('utf8') || '(Empty file)', fontType: 'Monospace' }] });
       if (opened.stat.size > bytes.length) body.push(text(`Preview shows the first ${PREVIEW_BYTES.toLocaleString()} bytes; downloading returns the complete file.`));
@@ -110,7 +122,7 @@ export function createTeamsControls({ connector, now = Date.now, authorize = tea
     const actions = baseUrl ? [link('Download file', createFileDownloadGrantUrl(input))] : [];
     if (!baseUrl) body.push(text('Set the gateway Public URL to enable downloads and browser editing.'));
     if (baseUrl && !binary && canEditChannelFiles(context.meta, { isAdminUser: context.userIsAdmin })) {
-      try { const editable = await readEditableFile(context.root, target.relative); actions.push(link('Edit file', createFileEditorGrantUrl({ ...input, expectedHash: editable.hash }))); } catch { /* binary/protected/large files are download only */ }
+      try { const editable = await readEditableFile(context.root, target.relative, { maxChars: BROWSER_EDIT_MAX_CHARS, maxBytes: BROWSER_EDIT_MAX_BYTES, label: 'Browser editing' }); actions.push(link('Edit file', createFileEditorGrantUrl({ ...input, expectedHash: editable.hash }))); } catch { /* binary/protected/large files are download only */ }
     }
     actions.push(execute('Back to files', 'files.browse', stateId, { relative: target.relative.split('/').slice(0, -1).join('/') }));
     return card('File', body, actions);

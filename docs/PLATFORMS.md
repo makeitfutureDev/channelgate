@@ -335,7 +335,8 @@ Native settings dialogs are available; broadcast mentions remain unavailable.
   an HTTP rejection. Legacy Submit replacements use only the card's server-stored message target.
 - `/files [folder]` posts **Open files** in the source conversation/thread; its Teams dialog
   browses that workspace. Open a file for a literal text/Markdown preview (first 2,600 bytes),
-  a complete download, or eligible text editing; DOCX/PDF and other binary files show download
+  a complete download, or eligible browser text editing (up to 250,000 characters); a `.docx`
+  shows a read-only plain-text preview of its body, and PDF and other binary files show download
   guidance. Preview works without a Public URL. Users with file-write
   access can open the uploader. Short-lived browser grants recheck current Teams membership and
   gateway policy. Listings and links stay inside the owner's window. Back to files returns to

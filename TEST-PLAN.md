@@ -10261,3 +10261,21 @@ failures or skips. Static checks, documentation coverage and secret scanning pas
       Open files immediately. Require the private listing to open, and no
       "Teams returned no message identity" reply in the thread. Repeat in a personal chat
       and in a group chat.
+
+## Teams file window: Word text preview and browser-edit limit (2026-10-13)
+
+- [x] `test/docx-text.test.js` (engine-independent, no engine is invoked): paragraphs, tabs,
+      breaks, table cells and XML entities become plain text, and paragraph tab-stop definitions
+      are ignored. Stored and deflated entries are read. Non-ZIP input, a missing
+      `word/document.xml`, an encrypted entry, an oversized declared body, and a deflate bomb that
+      under-declares its size are all refused.
+- [x] `test/teams-controls.test.js` (engine-independent): `/sendfile Readme.docx` shows the
+      document text truncated to 2,600 bytes with the "formatting … not shown" notice, Download,
+      and no Edit file. A malformed `.docx` falls back to download guidance. A 20,000-character
+      Markdown file shows Edit file for a write-capable author and not for a read-only one (the
+      test fails on the prior code).
+- [ ] UNEXECUTED live Teams gate: in a Teams conversation with a real Word document in the
+      workspace, send `@<bot> /files`, open the `.docx`, and require its text with the
+      read-only notice, Download returning the original file, and no Edit file. Open a Markdown
+      file over 3,000 characters as a Worker/Auto (or Admin-in-Admin-mode) author and require
+      Edit file to open the browser editor; save a change and confirm it in the workspace.

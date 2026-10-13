@@ -17,8 +17,12 @@
   and ephemeral. Missing, expired and unknown references get distinct errors and bounded log
   reason codes without payloads or opaque IDs. Settings and approval mutations keep their existing completion semantics.
 - The file window previews up to 2,600 bytes of text/Markdown as literal monospace text, states
-  when the preview is truncated, and downloads the complete original file. Binary documents
-  such as DOCX/PDF show download guidance. Preview and Back to files work without a Public URL;
+  when the preview is truncated, and downloads the complete original file. A Word `.docx` (up to
+  20 MB) shows a read-only plain-text preview of its body — no formatting, images or layout, and
+  no Edit — extracted daemon-side with bounded ZIP inflation; encrypted, malformed or oversized
+  documents and other binaries such as PDF show download guidance. Preview and Back to files work
+  without a Public URL. **Edit file** opens the browser editor (live Markdown preview) for text
+  files up to its own 250,000-character / 1 MB limit, not the 3,000-character in-chat limit;
   eligible text editing and uploads retain their existing write-access checks.
 - Public links still require the configured feature switch, Public URL, explicit duration (at
   most 48 hours) and native human approval. The existing Teams approval delivery fix keeps that
