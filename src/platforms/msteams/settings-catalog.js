@@ -3,7 +3,8 @@
 import { listChannelEnv, patchChannelEnv } from '../../config/channel-env.js';
 import { listOrgEnv, listUserEnv, patchOrgEnv, patchUserEnv } from '../../config/scoped-env.js';
 import { getDefaultComposioToken, getDefaultToolboxToken, getOrgAccessGrants, getComposioMode } from '../../config/settings.js';
-import { getChannelMeta } from '../../config/store.js';
+import { getChannelMeta, getUser, setUser } from '../../config/store.js';
+import { revokeRemoteMcpsForAuthor } from '../../mcp/remote-mcp-registry.js';
 import { effectiveMeta } from '../../gateway/run.js';
 import { resolveMakeToolboxUpdate } from '../../gateway/make-toolbox.js';
 import { selectionFieldForEngine, persistedSelectionForEngine } from '../../gateway/mcp-discovery.js';
@@ -136,6 +137,19 @@ export async function renderCatalogPage(page, ctx, ui) {
   if (meta.toolboxToken) disconnect.push(ui.execute('Disconnect Toolbox', 'settings.connections.remove', { connection: 'toolbox' }, 'none'));
   if (meta.makeToolboxUrl || meta.makeToolboxKey) disconnect.push(ui.execute('Disconnect Make MCP', 'settings.connections.remove', { connection: 'make' }, 'none'));
   if (disconnect.length) body.push(ui.buttons(disconnect));
+  if (!ctx.isShared) {
+    const personal = await getUser(ctx.ownerId);
+    body.push(ui.heading('My connections'),
+      ui.text(`Personal Composio: ${personal?.composioToken ? 'Configured' : 'Not configured'}\nPersonal Toolbox: ${personal?.toolboxToken ? 'Configured' : 'Not configured'}`),
+      ui.text('These tokens apply only to your own requests. Leave a field blank to keep its stored value. In SDK mode, a saved Personal-mode Composio token is inactive.'),
+      ui.input('personalComposioToken', 'New personal Composio token', ''),
+      ui.input('personalToolboxToken', 'New personal Toolbox token', ''),
+      ui.buttons([ui.execute('Save my connections', 'settings.personal.save')]));
+    const remove = [];
+    if (personal?.composioToken) remove.push(ui.execute('Disconnect my Composio', 'settings.personal.remove', { connection: 'composio' }, 'none'));
+    if (personal?.toolboxToken) remove.push(ui.execute('Disconnect my Toolbox', 'settings.personal.remove', { connection: 'toolbox' }, 'none'));
+    if (remove.length) body.push(ui.buttons(remove));
+  }
   body.push(ui.heading('Cloud MCP'));
   if (!ctx.userIsAdmin) { body.push(ui.text('Only administrators can manage Cloud MCP.')); return { body, actions }; }
   if (ctx.isShared) body.push(ui.text('Active channel connections are shown here. Browse additional private connections in authenticated settings.'));
@@ -191,9 +205,29 @@ export async function handleCatalogAction(action, data, ctx, _ui) {
     }
     return true;
   }
-  const known = ['settings.variable.save', 'settings.variable.remove', 'settings.connections.save', 'settings.connections.remove', 'settings.connections.fallback', 'settings.cloud.toggle', 'settings.skills.toggle', 'settings.template'];
+  const known = ['settings.variable.save', 'settings.variable.remove', 'settings.connections.save', 'settings.connections.remove', 'settings.connections.fallback', 'settings.personal.save', 'settings.personal.remove', 'settings.cloud.toggle', 'settings.skills.toggle', 'settings.template'];
   if (!known.includes(action)) return false;
   const current = await fresh(ctx);
+  if (action.startsWith('settings.personal.')) {
+    if (current.isShared || !current.ownerId) throw new Error('Personal connections require your authenticated settings window.');
+    const patch = {};
+    if (action === 'settings.personal.save') {
+      for (const [input, field] of [['personalComposioToken', 'composioToken'], ['personalToolboxToken', 'toolboxToken']]) {
+        const value = str(data[input]);
+        if (value && value.length < 6) throw new Error('Connection tokens must contain at least six characters.');
+        if (value) patch[field] = value;
+      }
+    } else {
+      const field = { composio: 'composioToken', toolbox: 'toolboxToken' }[data.connection];
+      if (!field) throw new Error('Unknown personal connection.');
+      patch[field] = '';
+    }
+    await setUser(current.ownerId, patch);
+    if (action === 'settings.personal.remove') revokeRemoteMcpsForAuthor(current.ownerId);
+    await record(current, 'user_connections_updated', { connections: Object.keys(patch) });
+    ctx.state.tab = 'mcp'; ctx.state.notice = action === 'settings.personal.save' ? 'Your connections saved.' : 'Your connection removed.';
+    return true;
+  }
   if (action === 'settings.variable.save' || action === 'settings.variable.remove') {
     const saving = action.endsWith('.save');
     const scope = data.variableScope;

@@ -333,15 +333,22 @@ Native settings dialogs are available; broadcast mentions remain unavailable.
   take identity from the verified Microsoft envelope and repeat membership/role checks. Verified
   Execute errors use the Teams invoke response envelope; invalid request authentication remains
   an HTTP rejection. Legacy Submit replacements use only the card's server-stored message target.
-- `/files [folder]` privately browses the current conversation workspace. Open a file to download
-  it or edit eligible text; users with file-write access can open the uploader. Browser links are
-  short-lived grants and recheck current Teams membership and gateway policy. A group request
-  keeps the original group workspace even though its controls arrive in a personal chat.
-- `/sendfile <workspace-relative-path>` sends a personal-chat file-consent card. Accept uploads
+- `/files [folder]` posts **Open files** in the source conversation/thread; its Teams dialog
+  browses that workspace. Open a file to download it or edit eligible text; users with file-write
+  access can open the uploader. Short-lived browser grants recheck current Teams membership and
+  gateway policy. Listings and links stay inside the owner's window. Back to files returns to
+  browsing. No personal chat installation or proactive DM is required.
+- `/settings` → MCPs → **My connections** saves or disconnects personal Composio and Toolbox
+  tokens inside the Teams window. Stored values are never prefilled; inputs are masked.
+- Native approvals stay on their source-thread card without supplemental decision-link DMs.
+  If card delivery fails, the action is refused with retry guidance in that same conversation.
+- `/sendfile <workspace-relative-path>` in a channel/group posts **Open file** in that same
+  conversation, opening a Teams dialog with a browser download. In an existing bot DM, it sends
+  native file consent there. Accept uploads
   the prepared snapshot; Decline does not upload. The native limit is a nonempty file of at most
   10 MB, consent expires after ten minutes, and uncertain upload outcomes are not replayed.
-  Larger files use the private browser download path. Install/open a personal chat first if
-  Microsoft cannot deliver private controls or file-consent cards.
+  Larger files use the browser download path. Native file consent cannot open a new personal chat
+  for a group/channel request.
 - Downloadable audio uses local Whisper only, controlled by the existing Whisper setting. No
   Slack-generated transcript is requested. A failed audio-only request explains the missing
   transcript without invoking an engine; accompanying typed text can continue. Stop cancels
@@ -401,7 +408,7 @@ reference: [Microsoft bot file consent](https://learn.microsoft.com/en-us/micros
 | Threads | ✅ | spaces only | channels only |
 | Live progress rendering | ✅ | bounded progress → answer | bounded progress → answer (branch) |
 | Interactive approval buttons | ✅ | ❌ (actions named in text) | native cards (branch) |
-| Approvals by signed link | ✅ (in addition to the buttons) | ✅ (the mechanism) | ✅ (the mechanism) |
+| Approvals by signed link | ✅ (in addition to the buttons) | ✅ (the mechanism) | native thread cards; no supplemental links |
 | Session commands | full Slack controls | portable text subset (branch) | text subset + native settings/files (branch) |
 | Native tables / charts / Lists / canvases | ✅ | ❌ | ❌ |
 | Escalation to full-access in an admin-mode channel | ✅ | ❌ | ❌ |
@@ -410,11 +417,13 @@ The last row is not an oversight. Escalation requires an interactive permission 
 can answer; until a surface has one, a run there uses the channel folder's permission allowlist like
 every other run — which fails closed.
 
-**Approvals reach every surface as links.** Slack's Block Kit buttons are the primary control and
+**Approvals use native controls or private links.** Slack's Block Kit buttons are the primary control and
 are unchanged. Alongside them, each approval card and each busy-thread card is also minted as
 short-lived, single-use, HMAC-signed URLs — one per action the recipient may take — delivered
 **privately to the person who raised the request**: an ephemeral where the platform has one
-(Slack), a 1:1 message where it does not (Teams, Google Chat). Opening a link shows a confirmation
+(Slack), a 1:1 message for Google Chat. Teams uses its original thread's native approval card and
+does not mint or send supplemental links; failed card delivery refuses the action with retry
+guidance there. Opening a link shows a confirmation
 page and decides nothing; the page's Confirm button performs the decision through exactly the code
 a button click runs. The gateway needs a **Public URL** for a link to be reachable from outside the
 host, and the behaviour is Settings → Connection → **Approval links** (`auto` / `always` / `off`).

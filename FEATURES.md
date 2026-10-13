@@ -1002,6 +1002,10 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
   never silently dropped. VPN uses the existing service, reporting unavailable where that
   service does not support the Teams identifier.
   Variable scopes, connection tokens, skill grants/templates and schedules share Slack's stores;
+  MCPs → **My connections** saves/disconnects the owner's personal Composio and Toolbox tokens
+  inside the settings window, without a DM or credential-bearing chat message. Disconnecting a
+  personal connection revokes its live remote-MCP author grants. Public model cards cannot open
+  settings pages or mutate settings; all settings actions require an authorized settings dialog.
   catalogs/templates/automations paginate. Inputs never prefill saved secrets, new secret entries
   are masked, and destructive controls use consumed server-held confirmation tokens. Native
   secret entry follows the existing 8,000-character/16-KiB submission bounds. Resume reads the
@@ -1015,13 +1019,18 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
   and membership are checked on every action and sensitive write. Other members open their own
   controls. Broadcast mentions remain unimplemented. An optional approval changes
   comment refuses the current action even if Approve was clicked.
-- `/files [folder]` opens a private, paginated workspace browser. Download, upload and eligible
-  text-edit links use the existing signed browser grants, filesystem confinement and edit policy,
-  with current Teams membership and gateway authorization checked again at use. A failed private
-  delivery never posts the file list or bearer links to a group. `/sendfile <relative-path>`
-  offers a native file-consent card in the requester's personal chat: nonempty files up to 10 MB,
+- `/files [folder]` posts an **Open files** launcher in the original conversation/thread. Its
+  paginated Teams dialog offers download, upload and eligible text-edit links through the existing
+  browser grants, filesystem confinement and edit policy, with current Teams membership and
+  gateway authorization checked again at use. Listings and bearer links stay inside the owner's
+  dialog; actions never open a separate personal chat. Detail/upload pages return to browsing.
+  `/sendfile <relative-path>` in a channel/group posts **Open file** for the selected file in the
+  same conversation. In an existing bot DM it offers native file consent there: nonempty files up to 10 MB,
   ten-minute consent expiry, a bounded pending snapshot pool, and explicit Accept/Decline.
   Revocation, expiry, actor mismatch or an uncertain prior upload cannot become another upload.
+  Native file consent rejects group/channel requests instead of opening a DM. Teams approvals
+  stay on the original thread's native card, with no supplemental private bearer links. Native
+  card delivery failure refuses the action and posts retry/admin guidance in the source thread.
 - Optional group/channel file reading (`teamsFilesEnabled`, default false) uses at most 32
   explicitly allowed drive IDs (`teamsFileDriveIds`). A canonical SharePoint path is resolved
   inside an allowed drive and its returned identity is checked before downloading. Selected-site
@@ -2780,9 +2789,10 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
   `{ approved, feedback, decided_by }` to the agent so it continues, or addresses the feedback. The
   card shows the full `details` text (not the 60-char tool preview); documented in the
   `gateway-usage` skill (`references/approvals.md`). → TEST-PLAN: Modes & approvals.
-- **Link-based approvals — the same card, as URLs, on every surface.** Native buttons are Slack's
-  primitive; Teams and Google Chat do not have one the gateway drives, and automation cannot click
-  anything at all. Every approval card (permission, control-plane, durable background-shell) and
+- **Link-based approvals alongside native controls.** Slack uses native buttons and supplemental
+  private links; Google Chat uses private links. Teams uses its original-thread native card without
+  supplemental links or action DMs, and refuses the action if that card cannot be delivered.
+  Every eligible approval card (permission, control-plane, durable background-shell) and
   every busy-thread card can therefore ALSO be minted as short-lived, single-use, HMAC-signed links —
   one per action the recipient may actually take (*Approve once* / *Approve for this thread* /
   *Approve forever* / *Deny*, and *Steer* / *Queue* / *Cancel* for a busy thread) — and delivered

@@ -4,19 +4,19 @@ import { randomUUID } from 'node:crypto';
 import { getPublicUrl, canChangeChannelRuntime, getDefaultModel, getMentionReactions } from '../../config/settings.js';
 import { modelsForEngine, effortsForModel, modelBelongsToEngine } from '../../engines/registry.js';
 import { teamsWorkspaceContext } from './workspace-access.js';
-import { listVisibleDirectory, normalizeRelativePath, canEditChannelFiles, readEditableFile } from '../../slack/file-explorer.js';
+import { listVisibleDirectory, normalizeRelativePath, canEditChannelFiles, readEditableFile, resolveVisiblePath } from '../../slack/file-explorer.js';
 import { createFileDownloadGrantUrl } from '../../web/file-download.js';
 import { createFileEditorGrantUrl } from '../../web/file-editor.js';
 import { createFileUploadGrantUrl } from '../../web/file-upload.js';
 import { createTeamsFileConsent } from './file-consent.js';
-import { createTeamsInteractionHandler, normalizeTeamsInteraction, teamsCardErrorResponse } from './interactions.js';
+import { createTeamsInteractionHandler, teamsCardErrorResponse } from './interactions.js';
 import { handlePlatformApproval } from '../../slack/approvals.js';
 import { acquireKeyedLock } from '../../util/keyed-lock.js';
 import { buildTeamsSettings, createTeamsSettingsContext, handleTeamsSettings, teamsSettingsUi } from './settings.js';
 import { generalRuntimeScopes } from './settings-general.js';
 import { effectiveMeta } from '../../gateway/run.js';
 import { teamsHelpText, createTeamsHelpCard } from './help.js';
-import { settingsLauncher, settingsDialogResponse } from './settings-dialog.js';
+import { settingsLauncher, filesLauncher, settingsDialogResponse } from './settings-dialog.js';
 
 const card = (title, body = [], actions = []) => ({ type: 'AdaptiveCard', version: '1.4', body: [{ type: 'TextBlock', text: title, weight: 'Bolder', wrap: true }, ...body], actions });
 const text = value => ({ type: 'TextBlock', text: String(value), wrap: true });
@@ -80,18 +80,29 @@ export function createTeamsControls({ connector, now = Date.now, authorize = tea
     if (listing.page) actions.push(execute('Previous', 'files.browse', stateId, { relative: listing.relative, page: listing.page - 1 }));
     if (listing.page + 1 < listing.totalPages) actions.push(execute('Next', 'files.browse', stateId, { relative: listing.relative, page: listing.page + 1 }));
     if (canEditChannelFiles(context.meta, { isAdminUser: context.userIsAdmin })) actions.push(execute('Upload files', 'files.upload', stateId, { relative: listing.relative }));
-    return card('Conversation files (private)', body, actions);
+    return card('Conversation files', body, actions);
   }
-  async function deliverCard(state, build, inConversation = false) {
-    const destination = inConversation || state.message.isDM ? state.message.rawConversationId : await connector.openDm(state.message.userId, { sourceConversationId: state.message.rawConversationId });
-    if (!destination) throw new Error('Open a personal chat with the bot first; private controls could not be delivered.');
+  async function fileDetails(state, relative, context, stateId) {
+    const baseUrl = publicUrl(); if (!baseUrl) throw new Error('Set the gateway Public URL before opening browser files.');
+    const target = await resolveVisiblePath(context.root, relative, { kind: 'file' });
+    const input = { ...grant(state), baseUrl, relative: target.relative };
+    const actions = [link('Download file', createFileDownloadGrantUrl(input))];
+    if (canEditChannelFiles(context.meta, { isAdminUser: context.userIsAdmin })) {
+      try { const editable = await readEditableFile(context.root, target.relative); actions.push(link('Edit file', createFileEditorGrantUrl({ ...input, expectedHash: editable.hash }))); } catch { /* binary/protected/large files are download only */ }
+    }
+    actions.push(execute('Back to files', 'files.browse', stateId, { relative: target.relative.split('/').slice(0, -1).join('/') }));
+    return card('File', [text(target.relative)], actions);
+  }
+  const filesResponse = value => settingsDialogResponse(value, { title: 'Conversation files' });
+  async function deliverCard(state, build) {
+    const destination = state.message.rawConversationId;
     prune(); const id = randomUUID();
-    state = { ...state, deliveryId: destination, inConversation, expires: now() + 15 * 60_000 };
+    state = { ...state, deliveryId: destination, inConversation: true, expires: now() + 15 * 60_000 };
     states.set(id, state);
     try {
-      const payload = { card: await build(state, id), text: state.modelCommand ? 'Session model settings' : inConversation ? 'Conversation settings' : 'Private conversation controls' };
-      const posted = inConversation && state.replyCard ? await state.replyCard(payload)
-        : await connector.postCard({ conversationId: destination, threadKey: inConversation ? state.message.threadKey : undefined, ...payload });
+      const payload = { card: await build(state, id), text: state.modelCommand ? 'Session model settings' : state.filesLauncher ? 'Conversation files' : 'Conversation settings' };
+      const posted = state.replyCard ? await state.replyCard(payload)
+        : await connector.postCard({ conversationId: destination, threadKey: state.message.threadKey, ...payload });
       state.messageId = posted?.messageId || '';
     }
     catch (error) { states.delete(id); throw error; }
@@ -113,7 +124,7 @@ export function createTeamsControls({ connector, now = Date.now, authorize = tea
       try {
         const recipient = message.raw?.activity?.recipient?.id;
         if (recipient && connector.botId && recipient !== connector.botId) throw new Error('This command is addressed to a different bot.');
-        await deliverCard({ ...args, modelCommand: true }, modelCard, true);
+        await deliverCard({ ...args, modelCommand: true }, modelCard);
       }
       catch (error) { await reply(`${error.message} You can change this session with /model <engine> <model|default> and /effort <level|default>.`); }
       return true;
@@ -121,32 +132,36 @@ export function createTeamsControls({ connector, now = Date.now, authorize = tea
     const match = /^\/(settings|files|secrets|sendfile)(?:\s+(.*))?$/is.exec(message.text.trim());
     if (!match) return false;
     try {
-      if (match[1].toLowerCase() === 'sendfile') {
-        if (!match[2]?.trim()) throw new Error('Use /sendfile followed by a workspace-relative file path.');
-        await consent.send({ ...args, relative: normalizeRelativePath(match[2].trim()) });
-        await reply('Check your personal chat to accept or decline the file.');
-        return true;
-      }
       const command = match[1].toLowerCase();
-      // Settings stay with the conversation/session that opened them. File controls remain private.
-      const inConversation = command !== 'files';
       const recipient = message.raw?.activity?.recipient?.id;
-      if (inConversation && recipient && connector.botId && recipient !== connector.botId) {
+      if (recipient && connector.botId && recipient !== connector.botId) {
         throw new Error('This command is addressed to a different bot. Check the Teams app registration and messaging endpoint.');
       }
-      await deliverCard({ ...args, settingsLauncher: inConversation, tab: command === 'secrets' ? 'secrets' : 'general' },
+      if (command === 'sendfile' && message.isDM) {
+        if (!match[2]?.trim()) throw new Error('Use /sendfile followed by a workspace-relative file path.');
+        await consent.send({ ...args, relative: normalizeRelativePath(match[2].trim()) });
+        await reply('Accept or decline the file in this conversation.');
+        return true;
+      }
+      const fileCommand = ['files', 'sendfile'].includes(command);
+      if (command === 'sendfile' && !match[2]?.trim()) throw new Error('Use /sendfile followed by a workspace-relative file path.');
+      const relative = fileCommand ? normalizeRelativePath(match[2]?.trim() || '') : '';
+      await deliverCard({ ...args, settingsLauncher: !fileCommand, filesLauncher: fileCommand,
+        relative, selectedFile: command === 'sendfile', tab: command === 'secrets' ? 'secrets' : 'general' },
         async (state, id) => {
-          if (command === 'files') return files(state, id, match[2] || '');
-          await authorize(grant(state), { connector });
+          const context = await authorize(grant(state), { connector });
+          if (fileCommand) {
+            if (state.selectedFile) await resolveVisiblePath(context.root, relative, { kind: 'file' });
+            return filesLauncher(id, state.selectedFile);
+          }
           return settingsLauncher(id, state.entry.name);
-        }, inConversation);
-      if (!message.isDM && !inConversation) await reply('I sent the controls to your personal chat.');
+        });
     } catch (error) { await reply(error.message); }
     return true;
   }
   const dispatchInvoke = createTeamsInteractionHandler({ dispatch: async interaction => {
     const taskInvoke = ['task/fetch', 'task/submit'].includes(interaction.invokeName);
-    if (taskInvoke && !interaction.action.startsWith('settings.')) throw new Error('Unsupported dialog action.');
+    if (taskInvoke && !['settings.', 'files.'].some(prefix => interaction.action.startsWith(prefix))) throw new Error('Unsupported dialog action.');
     if (interaction.action === 'approval.respond') {
       const result = await approval({ ...interaction.data, conversationId: interaction.conversationId, messageId: interaction.responseMessageId, actorId: interaction.actorId });
       return response(card(result.ok ? 'Approval recorded' : 'Approval unavailable', [text(result.outcome || result.error || 'Handled.')]));
@@ -154,7 +169,18 @@ export function createTeamsControls({ connector, now = Date.now, authorize = tea
     prune(); const state = states.get(interaction.data.stateId);
     if (!state || state.message.userId !== interaction.actorId || state.deliveryId !== interaction.nativeConversationId) throw new Error('These controls expired or belong to a different conversation/user. Reopen them.');
     const tenantId = state.message.raw?.tenantId;
-    if ((state.settingsLauncher || state.settingsDialog) && tenantId && interaction.tenantId !== tenantId) throw new Error('These controls belong to another tenant.');
+    if ((state.settingsLauncher || state.settingsDialog || state.filesLauncher || state.filesDialog) && tenantId && interaction.tenantId !== tenantId) throw new Error('These controls belong to another tenant.');
+    if (state.filesLauncher) {
+      if (interaction.invokeName !== 'task/fetch' || interaction.action !== 'files.open') throw new Error('Open the files window first.');
+      const context = await authorize(grant(state), { connector });
+      const id = randomUUID();
+      const dialog = { ...state, filesLauncher: false, filesDialog: true, inConversation: false,
+        messageId: '', expires: now() + 15 * 60_000 };
+      const result = filesResponse(state.selectedFile
+        ? await fileDetails(dialog, state.relative, context, id) : await files(dialog, id, state.relative));
+      prune(); states.set(id, dialog);
+      return result;
+    }
     if (state.settingsLauncher) {
       if (interaction.invokeName !== 'task/fetch' || interaction.action !== 'settings.open') throw new Error('Open the settings window first.');
       // Each opening gets separate private drafts/confirmations. The reusable chat launcher
@@ -167,7 +193,10 @@ export function createTeamsControls({ connector, now = Date.now, authorize = tea
       return result;
     }
     if (state.settingsDialog && (interaction.invokeName !== 'task/submit' || !interaction.action.startsWith('settings.'))) throw new Error('Use the settings window.');
-    if (taskInvoke && !state.settingsDialog) throw new Error('Invalid settings window.');
+    if (state.filesDialog && (interaction.invokeName !== 'task/submit' || !interaction.action.startsWith('files.'))) throw new Error('Use the files window.');
+    if (taskInvoke && !state.settingsDialog && !state.filesDialog) throw new Error('Invalid dialog window.');
+    if (interaction.action.startsWith('settings.') && !state.settingsDialog) throw new Error('Open the settings window first.');
+    if (interaction.action.startsWith('files.') && !state.filesDialog) throw new Error('Open the files window first.');
     if (interaction.action.startsWith('settings.')) {
       const release = await acquireKeyedLock('teams-settings-card', interaction.data.stateId);
       try {
@@ -185,7 +214,7 @@ export function createTeamsControls({ connector, now = Date.now, authorize = tea
     }
     const context = await authorize(grant(state), { connector });
     state.meta = context.meta; state.authorIsAdmin = context.userIsAdmin;
-    if (interaction.action === 'files.browse') return response(await files(state, interaction.data.stateId, interaction.data.relative || '', Number(interaction.data.page) || 0));
+    if (interaction.action === 'files.browse') return filesResponse(await files(state, interaction.data.stateId, interaction.data.relative || '', Number(interaction.data.page) || 0));
     const repaintModel = async updated => {
       if (state.inConversation && state.messageId) await connector.updateCard({ conversationId: state.deliveryId,
         messageId: state.messageId, card: updated, text: 'Session model settings' });
@@ -231,14 +260,12 @@ export function createTeamsControls({ connector, now = Date.now, authorize = tea
     const input = { ...grant(state), baseUrl, relative };
     if (interaction.action === 'files.upload') {
       if (!canEditChannelFiles(context.meta, { isAdminUser: context.userIsAdmin })) throw new Error('This conversation is read-only for you.');
-      return response(card('Upload files', [text('Files will be saved into this conversation workspace.')], [link('Open uploader', createFileUploadGrantUrl(input))]));
+      return filesResponse(card('Upload files', [text('Files will be saved into this conversation workspace.')], [
+        link('Open uploader', createFileUploadGrantUrl(input)), execute('Back to files', 'files.browse', interaction.data.stateId, { relative }),
+      ]));
     }
     if (interaction.action === 'files.download') {
-      const actions = [link('Download file', createFileDownloadGrantUrl(input))];
-      if (canEditChannelFiles(context.meta, { isAdminUser: context.userIsAdmin })) {
-        try { const editable = await readEditableFile(context.root, relative); actions.push(link('Edit file', createFileEditorGrantUrl({ ...input, expectedHash: editable.hash }))); } catch { /* binary/protected/large files are download only */ }
-      }
-      return response(card('File', [text(relative)], actions));
+      return filesResponse(await fileDetails(state, relative, context, interaction.data.stateId));
     }
     throw new Error('Unsupported Teams action.');
   } });
@@ -248,27 +275,11 @@ export function createTeamsControls({ connector, now = Date.now, authorize = tea
       return response(card('Bot registration mismatch', [text('Reopen settings with the bot installed in this channel. An administrator must check its Teams app registration and messaging endpoint.')]));
     }
     if (activity.type === 'invoke' && activity.name === 'fileConsent/invoke') return consent.handle(activity);
-    // Only an existing private card owned by this actor can receive a legacy replacement.
-    // Capture its server-held destination before dispatch, which may consume the state.
-    let privateSubmitState;
-    if (activity.type === 'message') {
-      try {
-        const interaction = normalizeTeamsInteraction(activity);
-        const state = states.get(interaction.data.stateId);
-        if (state && !state.inConversation && state.expires >= now()
-          && state.message.userId === interaction.actorId && state.deliveryId === interaction.nativeConversationId) {
-          privateSubmitState = state;
-        }
-      } catch { /* Invalid submissions have no card-update authority. */ }
-    }
     const result = await dispatchInvoke(activity);
     // Legacy Submit is a message activity: HTTP response cards are ignored by Teams clients.
-    // Shared settings update inside their authorized dispatcher; private cards use stored IDs.
+    // Model cards update inside their authorized dispatcher; file/settings dialogs accept only
+    // task invokes and never publish their contents through a legacy message replacement.
     if (activity.type === 'message' && result.body?.type === 'application/vnd.microsoft.card.adaptive') {
-      if (privateSubmitState?.messageId && privateSubmitState.expires >= now()) {
-        await connector.updateCard({ conversationId: privateSubmitState.deliveryId,
-          messageId: privateSubmitState.messageId, card: result.body.value, text: 'Conversation controls' });
-      }
       return { status: 200, body: {} };
     }
     return result;
