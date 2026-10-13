@@ -317,3 +317,26 @@ test('agent file delivery opens the proven source workspace and refuses invalid 
   await assert.rejects(f.controls.shareFile(input), /Access revoked/);
   assert.equal(f.sent.length, 1);
 });
+
+test('failed launcher delivery retires its durable reference', async () => {
+  const { inspectTeamsFileLauncher } = await import('../src/platforms/msteams/file-launchers.js');
+  let reference;
+  const f = fixture({ connector: { api: { sendActivity: async () => ({}) }, botId: '28:delivery-failure', postCard: async payload => {
+    reference = payload.card.actions[0].data.stateId;
+    assert.ok(inspectTeamsFileLauncher(reference, '28:delivery-failure').state, 'persist before delivery');
+    throw new Error('Card delivery failed');
+  } } });
+  await f.controls.onCommand(f.args('/files'));
+  assert.ok(reference);
+  assert.equal(inspectTeamsFileLauncher(reference, '28:delivery-failure').reason, 'unknown');
+  assert.match(f.replies[0], /Card delivery failed/);
+});
+
+test('file launchers evicted from the private-dialog memory cache still open their source workspace', async () => {
+  const f = fixture(); await f.controls.onCommand(f.args('/files'));
+  const launcher = f.sent[0].card.actions[0].data;
+  for (let i = 0; i < 502; i++) await f.controls.onCommand(f.args('/files'));
+  const listing = continued(await f.controls.onInvoke(task(launcher, 'task/fetch')));
+  assert.equal(listing.body[0].text, 'Conversation files');
+  assert.match(JSON.stringify(listing), /hello\.txt/);
+});

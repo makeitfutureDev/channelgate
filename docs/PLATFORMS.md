@@ -341,8 +341,9 @@ Native settings dialogs are available; broadcast mentions remain unavailable.
   gateway policy. Listings and links stay inside the owner's window. Back to files returns to
   browsing. No personal chat installation or proactive DM is required. Read-only file callbacks
   have a 3.5-second response budget, cancel stalled roster requests and reuse a single current
-  membership check per callback. Expired/restarted launchers show a dialog error with fresh
-  `/files` guidance. Settings and approval writes are not abandoned by this file-read deadline.
+  membership check per callback. File launchers persist across restarts and reconnects within
+  their original 15-minute lifetime; private dialog state remains ephemeral. Missing/expired/unknown
+  references show distinct dialog errors with fresh `/files` guidance. Settings and approval writes are not abandoned by this file-read deadline.
 - Agents use `share_file` to deliver **Open file** in the current Teams conversation. No
   Composio connection or public link is needed; the gateway Public URL is required for its
   authenticated browser downloads. Slack-only tools are not exposed to Teams or Google Chat.

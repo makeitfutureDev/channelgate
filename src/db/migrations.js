@@ -1015,4 +1015,20 @@ export const migrations = [
       `);
     },
   },
+  {
+    // Teams chat file launchers outlive transport instances. Only their authority references,
+    // never file contents, browser grants or private dialog state, belong in this ledger.
+    version: 34,
+    up(db) {
+      db.exec(`
+        CREATE TABLE teams_file_launchers (
+          id TEXT PRIMARY KEY,
+          bot_id TEXT NOT NULL,
+          expires_ms INTEGER NOT NULL,
+          data TEXT NOT NULL
+        );
+        CREATE INDEX idx_teams_file_launchers_expiry ON teams_file_launchers(expires_ms);
+      `);
+    },
+  },
 ];

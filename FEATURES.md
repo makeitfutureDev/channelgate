@@ -11,8 +11,11 @@
   requests. Opening and browsing reuse the authorization result within that one request, avoiding
   duplicate network checks; each subsequent click still checks current membership, and cheap
   local policy checks repeat after the network request to catch in-flight revocation. Failed
-  task/fetch requests return a renderable error card, including guidance for expired/restarted
-  launchers. Settings and approval mutations keep their existing completion semantics.
+  task/fetch requests return a renderable error card. File launchers persist their bot/owner/tenant,
+  source workspace/session and selected-file references in SQLite, surviving reconnects, restarts
+  and in-memory eviction within their original 15-minute lifetime. Dialog drafts remain private
+  and ephemeral. Missing, expired and unknown references get distinct errors and bounded log
+  reason codes without payloads or opaque IDs. Settings and approval mutations keep their existing completion semantics.
 - The file window previews up to 2,600 bytes of text/Markdown as literal monospace text, states
   when the preview is truncated, and downloads the complete original file. Binary documents
   such as DOCX/PDF show download guidance. Preview and Back to files work without a Public URL;

@@ -65,8 +65,10 @@ browse, download, edit eligible text, or upload with write access in a Teams win
 <path>` posts **Open file** for the selected workspace file. No personal bot chat is required;
 file listings and one-time browser grants appear only inside the authorized user's window.
 Downloads, editing and uploads require the gateway Public URL. Back to files returns to browsing.
-File controls expire after 15 minutes and lose state on a gateway restart. An expired or slow
-file window reports an error; close it and send a fresh `/files` in the original conversation.
+File launchers expire after 15 minutes but survive gateway restarts and Teams reconnects.
+Already open private file windows lose their state on restart; reopen using an unexpired launcher.
+Buttons created before durable launcher support need a fresh `/files` once. Missing, unknown,
+expired or slow file controls report an error; close it and send a fresh `/files` in the original conversation.
 Report a persistent failure instead of claiming that retrying fixed it.
 In an existing personal bot chat, `/sendfile` still uses native Accept/Decline consent for nonempty
 files up to 10 MB, in that same conversation.
