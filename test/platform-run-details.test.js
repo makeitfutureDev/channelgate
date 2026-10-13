@@ -104,10 +104,10 @@ for (const engine of ["claude", "codex"]) {
   });
 }
 
-test("progress exposes current model and app names, coalesces bursts and drains before the answer", async (t) => {
+test("Google Chat progress exposes current model and app names, coalesces bursts and drains before the answer", async (t) => {
   t.mock.timers.enable({ apis: ["Date", "setTimeout", "setInterval"], now: 1000 });
   const edits = []; let release;
-  const progress = createConversationProgress({ adapter: platformOr("msteams"), message: { rawConversationId: "wire" }, placeholder: { messageId: "123" }, connector: {
+  const progress = createConversationProgress({ adapter: platformOr("googlechat"), message: { rawConversationId: "wire" }, placeholder: { messageId: "123" }, connector: {
     edit: async (body) => { edits.push(body); if (edits.length === 3) await new Promise((r) => { release = r; }); },
   } });
   progress.runtime({ engine: "claude", model: "opus[1m]" }); await flush();
@@ -134,10 +134,10 @@ test("progress exposes current model and app names, coalesces bursts and drains 
   t.mock.timers.tick(60000); await flush(); assert.equal(edits.length, 3, "no status can overwrite the final answer");
 });
 
-test("quiet progress keeps the model, heartbeat and aliased subagent count", async (t) => {
+test("Google Chat quiet progress keeps the model, heartbeat and aliased subagent count", async (t) => {
   t.mock.timers.enable({ apis: ["Date", "setTimeout", "setInterval"], now: 1000 });
   const edits = [];
-  const progress = createConversationProgress({ adapter: platformOr("msteams"), message: { rawConversationId: "wire" }, placeholder: { messageId: "123" }, connector: { edit: async (body) => edits.push(body) } });
+  const progress = createConversationProgress({ adapter: platformOr("googlechat"), message: { rawConversationId: "wire" }, placeholder: { messageId: "123" }, connector: { edit: async (body) => edits.push(body) } });
   progress.runtime({ engine: "codex" }); await flush();
   progress.event({ kind: "agent_activity", id: "a", aliasIds: ["b"], status: "running" });
   progress.event({ kind: "agent_activity", id: "b", status: "running" });
@@ -148,4 +148,46 @@ test("quiet progress keeps the model, heartbeat and aliased subagent count", asy
   t.mock.timers.tick(3000); await flush();
   assert.match(edits.at(-1).text, /0 subagent/);
   await progress.stop();
+});
+
+for (const engine of ["claude", "codex"]) {
+  test(`Teams ${engine} leaves only answer, requester and footer after a failed placeholder edit`, async () => {
+    const userId = `29:clean-${engine}`;
+    await setUser(userId, { approved: true });
+    const visible = new Map(); const calls = []; let sequence = 0;
+    const connector = createTeamsConnector({ capabilities: platformOr("msteams").capabilities, api: {
+      listMembers: async () => [],
+      sendActivity: async (id, body) => { const messageId = String(++sequence); visible.set(messageId, body); calls.push(`post:${messageId}`); return { messageId }; },
+      updateActivity: async () => { throw new Error("edit unavailable"); },
+      deleteActivity: async (id, messageId) => { calls.push(`delete:${messageId}`); visible.delete(messageId); },
+    } });
+    const result = { content: "Answer.", engine, model: engine === "claude" ? "opus" : "gpt-6.1-sol" };
+    await createIngest({ connector, run: async args => {
+      args.onRuntimeResolved({ engine, model: result.model });
+      args.onEvent({ kind: "tool_result", name: "binbash -lc cat instructions", status: "completed" });
+      args.onDelta("answer"); await flush();
+      assert.equal(visible.size, 1);
+      assert.equal([...visible.values()][0].text, "_Working on it…_");
+      return result;
+    } })(makeInbound({ platform: "msteams", kind: "channel", conversationId: `19:clean-${engine}@thread.tacv2`,
+      threadKey: "123456", userId, userName: "Developer", mentionsBot: true, text: "hello" }));
+    assert.deepEqual(calls, ["post:1", "post:2", "delete:1"]);
+    assert.equal(visible.size, 1);
+    const answer = [...visible.values()][0];
+    assert.equal(answer.text, "Answer.\n\n<at>Developer</at>");
+    assert.equal(answer.entities[0].mentioned.id, userId);
+    assert.equal(answer.attachments[0].content.body[1].text, footerText(result));
+  });
+}
+
+test("Teams progress never posts detailed status or orphan messages without a placeholder", async t => {
+  t.mock.timers.enable({ apis: ["setTimeout", "setInterval"] });
+  const writes = [];
+  const progress = createConversationProgress({ adapter: platformOr("msteams"), message: { rawConversationId: "wire" },
+    connector: { post: async body => writes.push(body), edit: async body => writes.push(body) } });
+  progress.runtime({ engine: "codex", model: "gpt-6.1-sol" });
+  progress.event({ kind: "tool_result", name: "binbash -lc cat instructions" });
+  progress.phase("Thinking"); progress.activity();
+  t.mock.timers.tick(60000); await flush(); await progress.stop();
+  assert.deepEqual(writes, []);
 });

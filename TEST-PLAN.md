@@ -10115,3 +10115,21 @@ The stable API conversation candidate includes the compatible lock refresh from 
       characters: automatic tag appears only on the final chunk. Send the same prompt in a bot DM:
       no automatic tag. Capture activity/entity payloads and client screenshots. Live checks and
       private QA registration remain pending; no requesting-user personal QA connection is exposed.
+
+
+## Teams final replies omit detailed status (2026-10-13)
+
+- [x] Automated: `test/platform-run-details.test.js` covers Claude and Codex runtime/tool events,
+      failed placeholder edits and successful fresh delivery using the real Teams connector with
+      an activity-map fixture. Require one surviving activity containing answer, authenticated
+      requester mention and the Small statistics footer; require final post before placeholder
+      deletion. Teams progress without a placeholder must not create orphan status messages.
+      Google Chat keeps model/tool updates, heartbeat timing and draining coverage.
+- [ ] Live Claude and Codex: in the private Teams channel and group-chat QA fixtures select each
+      engine and send “Run pwd, then reply with exactly CLEAN-REPLY.” Require only a temporary
+      working placeholder during execution and answer → clickable requester mention → small
+      model/duration/tokens/context footer after completion, with no Finished/tool/Still connected
+      block. In a disposable fixture reject the final activity PUT and allow POST/DELETE: require
+      the answer remains and the old working activity is removed. Capture activity IDs, request
+      order and desktop/mobile screenshots. Restart, live acceptance and private QA registration
+      remain pending; no requesting-user personal QA connection is exposed in this run.
