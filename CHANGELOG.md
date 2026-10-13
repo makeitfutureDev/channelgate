@@ -18,6 +18,10 @@ product overview.
 
 ## Unreleased
 
+- Teams answers now end with the same reply menu as Slack: 📂 Files, 🔑 Variables, ⚙️ Settings
+  and a 📄 button for each workspace file the answer named. The buttons open the existing private
+  Teams windows, work on older replies and after restarts, and only for the person who asked.
+
 - Teams file window: Word `.docx` files now show a read-only plain-text preview of the document
   body (formatting, images and layout are not shown; Download returns the original). **Edit
   file** now appears for text and Markdown files up to the browser editor's 250,000-character

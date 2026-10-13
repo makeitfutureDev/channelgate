@@ -22,6 +22,8 @@ import { openConfinedFile } from '../../gateway/confined-file.js';
 import { parseConversationId } from '../ids.js';
 import { teamsRequest } from './request.js';
 import { recordTeamsFileLauncher, inspectTeamsFileLauncher, forgetTeamsFileLauncher } from './file-launchers.js';
+import { verifyMenuAction } from './reply-menu.js';
+import { getChannelEntry, getChannelMeta, isAdmin } from '../../config/store.js';
 
 const card = (title, body = [], actions = []) => ({ type: 'AdaptiveCard', version: '1.4', body: [{ type: 'TextBlock', text: title, weight: 'Bolder', wrap: true }, ...body], actions });
 const text = value => ({ type: 'TextBlock', text: String(value), wrap: true });
@@ -128,6 +130,53 @@ export function createTeamsControls({ connector, now = Date.now, authorize = tea
     return card('File', body, actions);
   }
   const filesResponse = value => settingsDialogResponse(value, { title: 'Conversation files' });
+  // Each opening gets its own private dialog state. A launcher (or reply-menu button) never
+  // receives the window's contents, even on clients using legacy Submit elsewhere.
+  async function openFilesDialog(state, signal) {
+    const context = await authorize(grant(state), { connector, signal });
+    signal?.throwIfAborted();
+    const id = randomUUID();
+    const dialog = { ...state, filesLauncher: false, filesDialog: true, inConversation: false,
+      messageId: '', expires: now() + 15 * 60_000 };
+    const result = filesResponse(state.selectedFile
+      ? await fileDetails(dialog, state.relative, context, id, signal) : await files(dialog, id, context, state.relative, 0, signal));
+    signal?.throwIfAborted();
+    prune(); states.set(id, dialog);
+    return result;
+  }
+  async function openSettingsDialog(state) {
+    const id = randomUUID();
+    const dialog = { ...state, settingsLauncher: false, settingsDialog: true, sharedSettings: false,
+      inConversation: false, messageId: '', expires: now() + 15 * 60_000 };
+    const result = settingsDialogResponse(await settings(dialog, id));
+    prune(); states.set(id, dialog);
+    return result;
+  }
+  // Reply-menu buttons hold no server state (reply-menu.js): the sealed fields name the
+  // conversation, session and requester, Teams' own envelope names the clicker and conversation,
+  // and the opened window re-authorizes the clicker exactly like /files, /secrets and /settings.
+  async function openMenu(interaction, signal) {
+    const fetch = { type: 'invoke', name: 'task/fetch' };
+    if (interaction.invokeName !== 'task/fetch') throw new Error('Use the reply menu buttons.');
+    const sealed = verifyMenuAction(interaction.action, interaction.data);
+    if (!sealed || sealed.conversationId !== interaction.nativeConversationId) {
+      return teamsCardErrorResponse(fetch, 403, 'Forbidden', 'This button belongs to a different conversation. Use the buttons under a reply in this conversation.');
+    }
+    if (sealed.authorId && sealed.authorId !== interaction.actorId) {
+      return teamsCardErrorResponse(fetch, 403, 'Forbidden', 'These buttons belong to the person who asked. Send /files, /secrets or /settings here to open your own.');
+    }
+    const conversationId = `teams:${sealed.conversationId}`;
+    const entry = await getChannelEntry(conversationId);
+    const meta = entry ? await getChannelMeta(entry.slug) : null;
+    if (!entry || !meta) throw new Error('This conversation is not set up.');
+    signal?.throwIfAborted();
+    const state = { message: { conversationId, rawConversationId: sealed.conversationId, userId: interaction.actorId,
+      threadKey: interaction.threadKey || '', isDM: Boolean(meta.isDM), raw: { tenantId: interaction.tenantId } },
+      entry, meta, sessionKey: sealed.sessionKey || conversationId, deliveryId: sealed.conversationId,
+      relative: sealed.relative, selectedFile: sealed.kind === 'file' };
+    if (sealed.kind === 'files' || sealed.kind === 'file') return openFilesDialog(state, signal);
+    return openSettingsDialog({ ...state, authorIsAdmin: await isAdmin(interaction.actorId), tab: sealed.kind === 'secrets' ? 'secrets' : 'general' });
+  }
   async function deliverCard(state, build) {
     const destination = state.message.rawConversationId;
     prune(); const id = randomUUID();
@@ -212,11 +261,12 @@ export function createTeamsControls({ connector, now = Date.now, authorize = tea
   const dispatchInvoke = createTeamsInteractionHandler({ dispatch: async (interaction, { signal } = {}) => {
     signal?.throwIfAborted();
     const taskInvoke = ['task/fetch', 'task/submit'].includes(interaction.invokeName);
-    if (taskInvoke && !['settings.', 'files.'].some(prefix => interaction.action.startsWith(prefix))) throw new Error('Unsupported dialog action.');
+    if (taskInvoke && !['settings.', 'files.', 'menu.'].some(prefix => interaction.action.startsWith(prefix))) throw new Error('Unsupported dialog action.');
     if (interaction.action === 'approval.respond') {
       const result = await approval({ ...interaction.data, conversationId: interaction.conversationId, messageId: interaction.responseMessageId, actorId: interaction.actorId });
       return response(card(result.ok ? 'Approval recorded' : 'Approval unavailable', [text(result.outcome || result.error || 'Handled.')]));
     }
+    if (interaction.action.startsWith('menu.')) return openMenu(interaction, signal);
     prune(); let state = states.get(interaction.data.stateId);
     if (!state && interaction.invokeName === 'task/fetch' && interaction.action === 'files.open') {
       const restored = inspectTeamsFileLauncher(interaction.data.stateId, connector.botId, now());
@@ -235,27 +285,11 @@ export function createTeamsControls({ connector, now = Date.now, authorize = tea
     if ((state.settingsLauncher || state.settingsDialog || state.filesLauncher || state.filesDialog) && tenantId && interaction.tenantId !== tenantId) throw new Error('These controls belong to another tenant.');
     if (state.filesLauncher) {
       if (interaction.invokeName !== 'task/fetch' || interaction.action !== 'files.open') throw new Error('Open the files window first.');
-      const context = await authorize(grant(state), { connector, signal });
-      signal?.throwIfAborted();
-      const id = randomUUID();
-      const dialog = { ...state, filesLauncher: false, filesDialog: true, inConversation: false,
-        messageId: '', expires: now() + 15 * 60_000 };
-      const result = filesResponse(state.selectedFile
-        ? await fileDetails(dialog, state.relative, context, id, signal) : await files(dialog, id, context, state.relative, 0, signal));
-      signal?.throwIfAborted();
-      prune(); states.set(id, dialog);
-      return result;
+      return openFilesDialog(state, signal);
     }
     if (state.settingsLauncher) {
       if (interaction.invokeName !== 'task/fetch' || interaction.action !== 'settings.open') throw new Error('Open the settings window first.');
-      // Each opening gets separate private drafts/confirmations. The reusable chat launcher
-      // never receives settings contents, even on clients using legacy Submit elsewhere.
-      const id = randomUUID();
-      const dialog = { ...state, settingsLauncher: false, settingsDialog: true, sharedSettings: false,
-        inConversation: false, messageId: '', expires: now() + 15 * 60_000 };
-      const result = settingsDialogResponse(await settings(dialog, id));
-      prune(); states.set(id, dialog);
-      return result;
+      return openSettingsDialog(state);
     }
     if (state.settingsDialog && (interaction.invokeName !== 'task/submit' || !interaction.action.startsWith('settings.'))) throw new Error('Use the settings window.');
     if (state.filesDialog && (interaction.invokeName !== 'task/submit' || !interaction.action.startsWith('files.'))) throw new Error('Use the files window.');
@@ -343,7 +377,7 @@ export function createTeamsControls({ connector, now = Date.now, authorize = tea
     if (activity.type === 'invoke' && activity.name === 'fileConsent/invoke') return consent.handle(activity);
     let boundedFileRead = false;
     if (activity.type === 'invoke' && ['task/fetch', 'task/submit'].includes(activity.name)) {
-      try { boundedFileRead = ['files.open', 'files.browse', 'files.download'].includes(normalizeTeamsInteraction(activity).action); } catch { /* normal parser returns the safe error */ }
+      try { boundedFileRead = ['files.open', 'files.browse', 'files.download', 'menu.files', 'menu.file'].includes(normalizeTeamsInteraction(activity).action); } catch { /* normal parser returns the safe error */ }
     }
     let result;
     if (boundedFileRead) {

@@ -333,6 +333,12 @@ Native settings dialogs are available; broadcast mentions remain unavailable.
   take identity from the verified Microsoft envelope and repeat membership/role checks. Verified
   Execute errors use the Teams invoke response envelope; invalid request authentication remains
   an HTTP rejection. Legacy Submit replacements use only the card's server-stored message target.
+- Every answer, error and stop carries a reply menu under its stats line — **📂 Files**,
+  **🔑 Variables**, **⚙️ Settings** and up to three **📄 <file>** buttons for workspace files the
+  answer named — opening the same private windows as the commands below. The buttons are
+  HMAC-sealed (conversation, session, requester, path) and hold no server state, so they work on
+  old replies and after restarts; only the requester can use them, in their own conversation,
+  with live access checks on every click.
 - `/files [folder]` posts **Open files** in the source conversation/thread; its Teams dialog
   browses that workspace. Open a file for a literal text/Markdown preview (first 2,600 bytes),
   a complete download, or eligible browser text editing (up to 250,000 characters); a `.docx`
