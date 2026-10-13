@@ -6437,6 +6437,9 @@ none` for its cases and live gates. Kept as history.
 - [x] Chromium (`test/file-session-browser.test.js`, 2026-10-13): real folder selection includes
       `Project/CLAUDE.md` and a nested asset; an unchecked overwrite control keeps originals and
       numbered copies, checking it replaces originals, and standalone `CLAUDE.md` is accepted.
+      Mixed selections continue across protected-name errors and a simulated network failure;
+      retry saves only skipped files without duplicating successes. An oversized first file is
+      skipped and the following small file still uploads. Counts and per-file reasons match.
       Both editor and upload cross-site cookie/CSRF checks pass. This uses local fixture routers;
       native deployed Slack acceptance below remains pending.
 - [ ] Live UPLOAD-CLAUDE-01 (engine-independent browser control plane): Apps opens the folder
@@ -6447,7 +6450,11 @@ none` for its cases and live gates. Kept as history.
       with *Overwrite existing files* checked: require `Project/CLAUDE.md` has uploaded bytes and
       the copy remains intact. Also upload a standalone root `CLAUDE.md`. Require per-file audit
       with the requester and `overwritten` result. Bad CSRF/revoked authorization must still deny
-      replacement. This browser/router operation never invokes an engine; the existing dual-engine
+      replacement. Choose a mixed selection with `before.txt`, protected `AGENTS.md`, and
+      `after.txt`: require two uploads and one skipped path/reason; retry only the skipped file
+      without creating copies of successes. Repeat with an oversized first file and a small
+      following file: require one skip and one upload, and an enabled Upload button before starting.
+      This browser/router operation never invokes an engine; the existing dual-engine
       folder-provisioning gates cover loading those instructions on a subsequent turn.
 - [x] Unit (`test/settings-env-lifecycle.test.js`): a scheme-less Public URL is saved and read as
       an absolute HTTPS URL (including hostname-plus-path input), while explicit HTTP development

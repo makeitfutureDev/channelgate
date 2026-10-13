@@ -1303,6 +1303,10 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
   expiry unchanged. Cross-site POSTs do not receive those cookies; every write still requires its
   session's CSRF header and current channel authorization. These flows
   refuse traversal and protected names except uploaded `CLAUDE.md`, and audit every result.
+  A refused, oversized, or failed file is skipped while the remaining selected files continue.
+  The final summary counts uploads and skips, lists each skipped path with its reason, and keeps
+  only skipped files selected for retry. A selection over the upload limits does not disable the
+  whole batch; successful writes still obey the server's session limits.
   File and folder uploads allow `CLAUDE.md` at the root or nested in a project. An unchecked
   *Overwrite existing files* choice keeps numbered copies; selecting it atomically replaces files
   at their original names. Replacement operates on a symlink itself and never writes its target;

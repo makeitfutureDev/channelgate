@@ -18,6 +18,10 @@ product overview.
 
 ## Unreleased
 
+- Continue browser file and folder uploads after individual failures. Skipped files are listed
+  with their reasons and retained for retry, while successful files are removed from the selection.
+  An oversized file no longer disables uploading the rest of the batch.
+
 - Allow `CLAUDE.md` in browser file and folder uploads. The new *Overwrite existing files*
   checkbox lets the uploader replace files at their original names; leaving it unchecked keeps
   numbered copies. Replacements are atomic and never write through destination symlinks.
