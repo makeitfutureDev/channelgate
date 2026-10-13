@@ -15,6 +15,7 @@ import { downloadChannelFile, formatBytes, uploadsSubFor } from "../../slack/dow
 import { resolveSlackConfig } from "../../config/settings.js";
 import { effectiveWorkDir } from "../../gateway/folders.js";
 import { slackThreadFor } from "../../slack/thread-keys.js";
+import { platformOfConversation } from "../../platforms/ids.js";
 
 // ctx.threadKey is the RUN's session key, not necessarily a Slack thread_ts: a scheduled run uses
 // `sched-<id>-<ts>` and a background agent `<realTs>::agent-<id>`. Passing one straight to Slack
@@ -23,6 +24,9 @@ import { slackThreadFor } from "../../slack/thread-keys.js";
 
 export function register(server, ctx) {
   const { channelId, text, threadKey, slug, loadMeta, createdBy } = ctx;
+  // A Teams/Chat conversation id must never reach a Slack API, even when the gateway
+  // also has a connected Slack bot. The signed context fixes the destination surface.
+  if (platformOfConversation(channelId) !== "slack") return;
   // Injectable only so the tests can observe what reaches Slack; production uses the real upload.
   const uploadFile = ctx.uploadOpenedFile || uploadOpenedFile;
   const currentThreadTs = () => slackThreadFor(threadKey) || "";

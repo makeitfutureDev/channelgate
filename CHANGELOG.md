@@ -18,6 +18,10 @@ product overview.
 
 ## Unreleased
 
+- Add literal text previews to Teams file windows and a `share_file` agent tool that delivers
+  **Open file** in the source conversation. Remove Slack-only tools from Teams and Google Chat
+  sessions, preventing file sharing from calling Slack with a foreign conversation ID.
+
 - Show a simple “Agent is working…” status in Teams and refresh the native typing indicator while
   a turn runs. Stop typing before the answer replaces the temporary status.
 

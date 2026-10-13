@@ -334,10 +334,15 @@ Native settings dialogs are available; broadcast mentions remain unavailable.
   Execute errors use the Teams invoke response envelope; invalid request authentication remains
   an HTTP rejection. Legacy Submit replacements use only the card's server-stored message target.
 - `/files [folder]` posts **Open files** in the source conversation/thread; its Teams dialog
-  browses that workspace. Open a file to download it or edit eligible text; users with file-write
+  browses that workspace. Open a file for a literal text/Markdown preview (first 2,600 bytes),
+  a complete download, or eligible text editing; DOCX/PDF and other binary files show download
+  guidance. Preview works without a Public URL. Users with file-write
   access can open the uploader. Short-lived browser grants recheck current Teams membership and
   gateway policy. Listings and links stay inside the owner's window. Back to files returns to
   browsing. No personal chat installation or proactive DM is required.
+- Agents use `share_file` to deliver **Open file** in the current Teams conversation. No
+  Composio connection or public link is needed; the gateway Public URL is required for its
+  authenticated browser downloads. Slack-only tools are not exposed to Teams or Google Chat.
 - `/settings` → MCPs → **My connections** saves or disconnects personal Composio and Toolbox
   tokens inside the Teams window. Stored values are never prefilled; inputs are masked.
 - Native approvals stay on their source-thread card without supplemental decision-link DMs.

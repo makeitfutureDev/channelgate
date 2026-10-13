@@ -52,7 +52,7 @@ function helpTopics(activationReactions = DEFAULT_TEAMS_ACTIVATION_REACTIONS) {
         '**Personal chat:** uploads download directly. **Channels/groups:** files need allowed drives and Microsoft permissions.',
       ] },
       { title: 'Browse & download', rows: [
-        'Use `/files [folder]` here. Open files launches a Teams window for browsing, downloading, editing and uploading, with no separate chat.',
+        'Use `/files [folder]` here. Open files launches a Teams window for browsing, previewing text, downloading, editing and uploading, with no separate chat. Binary documents download to open in their application.',
         '`/sendfile <path>` opens a download window from the current channel/group. In an existing bot personal chat, it offers native Accept/Decline for nonempty files up to **10 MB**.',
         'Browser downloads, editing and uploads require the gateway Public URL. Editing and uploading also require write access.',
       ] },

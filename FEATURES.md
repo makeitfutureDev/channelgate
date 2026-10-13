@@ -1,5 +1,22 @@
 # ChannelGate — Features
 
+## Teams workspace file previews and delivery
+
+- Teams agents receive `share_file`, which posts **Open file** in the current conversation and
+  opens the requester's private Teams file window. Current gateway access and Teams roster
+  membership are checked before delivery and again when opening/downloading. A gateway Public
+  URL is required for browser downloads; sending a file this way does not publish a public link
+  or upload it to OneDrive. Slack-only tools are omitted from Teams and Google Chat MCP sessions.
+- The file window previews up to 2,600 bytes of text/Markdown as literal monospace text, states
+  when the preview is truncated, and downloads the complete original file. Binary documents
+  such as DOCX/PDF show download guidance. Preview and Back to files work without a Public URL;
+  eligible text editing and uploads retain their existing write-access checks.
+- Public links still require the configured feature switch, Public URL, explicit duration (at
+  most 48 hours) and native human approval. The existing Teams approval delivery fix keeps that
+  card actionable without supplemental private links. Regression fixtures cover minting only
+  after Approve for both engine claims. Live Teams acceptance and private registry records are
+  pending; see TEST-PLAN → Teams workspace file previews and delivery.
+
 ## Routing ongoing requests to their owning scope
 
 - Both engines receive a scope decision before persisting “always”, “from now on”, corrections,

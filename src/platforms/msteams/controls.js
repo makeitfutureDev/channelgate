@@ -4,7 +4,7 @@ import { randomUUID } from 'node:crypto';
 import { getPublicUrl, canChangeChannelRuntime, getDefaultModel, getMentionReactions } from '../../config/settings.js';
 import { modelsForEngine, effortsForModel, modelBelongsToEngine } from '../../engines/registry.js';
 import { teamsWorkspaceContext } from './workspace-access.js';
-import { listVisibleDirectory, normalizeRelativePath, canEditChannelFiles, readEditableFile, resolveVisiblePath } from '../../slack/file-explorer.js';
+import { listVisibleDirectory, normalizeRelativePath, canEditChannelFiles, readEditableFile, resolveVisiblePath, PREVIEW_BYTES, formatFileSize } from '../../slack/file-explorer.js';
 import { createFileDownloadGrantUrl } from '../../web/file-download.js';
 import { createFileEditorGrantUrl } from '../../web/file-editor.js';
 import { createFileUploadGrantUrl } from '../../web/file-upload.js';
@@ -17,6 +17,8 @@ import { generalRuntimeScopes } from './settings-general.js';
 import { effectiveMeta } from '../../gateway/run.js';
 import { teamsHelpText, createTeamsHelpCard } from './help.js';
 import { settingsLauncher, filesLauncher, settingsDialogResponse } from './settings-dialog.js';
+import { openConfinedFile } from '../../gateway/confined-file.js';
+import { parseConversationId } from '../ids.js';
 
 const card = (title, body = [], actions = []) => ({ type: 'AdaptiveCard', version: '1.4', body: [{ type: 'TextBlock', text: title, weight: 'Bolder', wrap: true }, ...body], actions });
 const text = value => ({ type: 'TextBlock', text: String(value), wrap: true });
@@ -83,15 +85,31 @@ export function createTeamsControls({ connector, now = Date.now, authorize = tea
     return card('Conversation files', body, actions);
   }
   async function fileDetails(state, relative, context, stateId) {
-    const baseUrl = publicUrl(); if (!baseUrl) throw new Error('Set the gateway Public URL before opening browser files.');
     const target = await resolveVisiblePath(context.root, relative, { kind: 'file' });
+    const opened = await openConfinedFile(context.root, target.relative);
+    let bytes;
+    try {
+      const buffer = Buffer.alloc(Math.min(PREVIEW_BYTES, opened.stat.size));
+      const { bytesRead } = await opened.handle.read(buffer, 0, buffer.length, 0);
+      bytes = buffer.subarray(0, bytesRead);
+    } finally { await opened.handle.close(); }
+    const body = [text(target.relative), text(formatFileSize(opened.stat.size))];
+    const binary = /\.(?:pdf|docx?|xlsx?|pptx?|odt|ods|odp|zip|gz|7z|png|jpe?g|gif|webp|mp[34]|wav)$/i.test(target.relative)
+      || bytes.some(byte => byte < 9 || (byte > 13 && byte < 32));
+    if (binary) body.push(text('This file has no text preview. Download it to open it in its application.'));
+    else {
+      body.push({ type: 'RichTextBlock', inlines: [{ type: 'TextRun', text: bytes.toString('utf8') || '(Empty file)', fontType: 'Monospace' }] });
+      if (opened.stat.size > bytes.length) body.push(text(`Preview shows the first ${PREVIEW_BYTES.toLocaleString()} bytes; downloading returns the complete file.`));
+    }
+    const baseUrl = publicUrl();
     const input = { ...grant(state), baseUrl, relative: target.relative };
-    const actions = [link('Download file', createFileDownloadGrantUrl(input))];
-    if (canEditChannelFiles(context.meta, { isAdminUser: context.userIsAdmin })) {
+    const actions = baseUrl ? [link('Download file', createFileDownloadGrantUrl(input))] : [];
+    if (!baseUrl) body.push(text('Set the gateway Public URL to enable downloads and browser editing.'));
+    if (baseUrl && !binary && canEditChannelFiles(context.meta, { isAdminUser: context.userIsAdmin })) {
       try { const editable = await readEditableFile(context.root, target.relative); actions.push(link('Edit file', createFileEditorGrantUrl({ ...input, expectedHash: editable.hash }))); } catch { /* binary/protected/large files are download only */ }
     }
     actions.push(execute('Back to files', 'files.browse', stateId, { relative: target.relative.split('/').slice(0, -1).join('/') }));
-    return card('File', [text(target.relative)], actions);
+    return card('File', body, actions);
   }
   const filesResponse = value => settingsDialogResponse(value, { title: 'Conversation files' });
   async function deliverCard(state, build) {
@@ -104,8 +122,20 @@ export function createTeamsControls({ connector, now = Date.now, authorize = tea
       const posted = state.replyCard ? await state.replyCard(payload)
         : await connector.postCard({ conversationId: destination, threadKey: state.message.threadKey, ...payload });
       state.messageId = posted?.messageId || '';
+      if (!state.messageId) throw new Error('Teams returned no message identity for the file/settings controls.');
+      return posted;
     }
     catch (error) { states.delete(id); throw error; }
+  }
+  async function shareFile({ channelId, slug, authorId, threadKey, relative }) {
+    const parsed = parseConversationId(channelId);
+    if (parsed.platform !== 'msteams' || !threadKey) throw new Error('A current Teams conversation is required.');
+    if (!publicUrl()) throw new Error('Set the gateway Public URL to enable file downloads.');
+    const context = await authorize({ channelId, slug, ownerId: authorId }, { connector });
+    const target = await resolveVisiblePath(context.root, relative, { kind: 'file' });
+    const state = { message: { conversationId: channelId, rawConversationId: parsed.id, userId: authorId, threadKey },
+      entry: { slug }, sessionKey: threadKey, relative: target.relative, selectedFile: true, filesLauncher: true };
+    return deliverCard(state, (_state, id) => filesLauncher(id, true));
   }
   async function onCommand(args) {
     const { message, reply } = args;
@@ -255,17 +285,17 @@ export function createTeamsControls({ connector, now = Date.now, authorize = tea
       if (replies.at(-1)?.startsWith('Session engine:')) await command(`/effort ${effort || 'default'}`);
       return repaintModel(card('Session settings', replies.map(text)));
     }
-    const baseUrl = publicUrl(); if (!baseUrl) throw new Error('Set the gateway Public URL before opening browser files.');
     const relative = normalizeRelativePath(interaction.data.relative || '');
+    if (interaction.action === 'files.download') {
+      return filesResponse(await fileDetails(state, relative, context, interaction.data.stateId));
+    }
+    const baseUrl = publicUrl(); if (!baseUrl) throw new Error('Set the gateway Public URL before opening browser files.');
     const input = { ...grant(state), baseUrl, relative };
     if (interaction.action === 'files.upload') {
       if (!canEditChannelFiles(context.meta, { isAdminUser: context.userIsAdmin })) throw new Error('This conversation is read-only for you.');
       return filesResponse(card('Upload files', [text('Files will be saved into this conversation workspace.')], [
         link('Open uploader', createFileUploadGrantUrl(input)), execute('Back to files', 'files.browse', interaction.data.stateId, { relative }),
       ]));
-    }
-    if (interaction.action === 'files.download') {
-      return filesResponse(await fileDetails(state, relative, context, interaction.data.stateId));
     }
     throw new Error('Unsupported Teams action.');
   } });
@@ -284,5 +314,5 @@ export function createTeamsControls({ connector, now = Date.now, authorize = tea
     }
     return result;
   }
-  return { onCommand, onInvoke, stop() { states.clear(); consent.stop(); } };
+  return { onCommand, onInvoke, shareFile, stop() { states.clear(); consent.stop(); } };
 }
