@@ -15,6 +15,17 @@ The gateway can upload files directly with its bot identity, subject to its file
 
 This does not require a personal Slack integration merely to deliver a file back to the current conversation. Delivery capabilities differ on the Beta chat platforms.
 
+## Deliver a file in Teams
+
+Ask the agent to send a workspace file here. It uses `share_file` to post **Open file** in the
+current conversation. Open the button for a private Teams window with a literal text preview,
+complete download and eligible editing. Use `/files [folder]` to browse manually; mention the
+bot before commands in channels/groups. DOCX/PDF files download for opening in their application.
+
+Browser downloads require the gateway Public URL. This route needs no Composio connection or
+public link. Native Accept/Decline uploads through `/sendfile` are supported only in an existing
+personal bot chat; channel/group requests stay in their original conversation.
+
 ## Upload to a connected service
 
 For Drive, email attachments, or another supported service, specify the destination and intended account:
