@@ -134,7 +134,7 @@ export function createTeamsControls({ connector, now = Date.now, authorize = tea
       if (inConversation && recipient && connector.botId && recipient !== connector.botId) {
         throw new Error('This command is addressed to a different bot. Check the Teams app registration and messaging endpoint.');
       }
-      await deliverCard({ ...args, settingsLauncher: inConversation, tab: command === 'secrets' ? 'secrets' : '' },
+      await deliverCard({ ...args, settingsLauncher: inConversation, tab: command === 'secrets' ? 'secrets' : 'general' },
         async (state, id) => {
           if (command === 'files') return files(state, id, match[2] || '');
           await authorize(grant(state), { connector });

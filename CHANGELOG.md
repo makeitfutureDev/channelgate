@@ -84,7 +84,8 @@ product overview.
   expandable topics. Shorter descriptions and readable reaction names replace the long initial
   guide; the full text remains available when native card delivery fails.
 
-- Center the two rows of section buttons in the Teams settings popup.
+- Show all six section buttons in one centered row in the Teams settings popup and open
+  `/settings` on General with its form already displayed.
 
 - Teams `/settings` now posts a compact **Open settings** button that opens a private popup
   inside Teams. All six settings pages, saves and confirmations stay in the popup instead of

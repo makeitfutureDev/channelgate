@@ -985,7 +985,8 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
   a compact **Open settings** launcher in the original channel/thread or chat. Clicking it opens
   a large private popup inside Teams; all six sections, navigation, confirmations and saves stay
   there, retaining the original conversation and session. `/secrets` uses the same popup and
-  starts on Variables. The two rows of section buttons are centered above the form.
+  starts on Variables. All six section buttons appear in one centered row above the form;
+  `/settings` selects General and displays its form immediately, including after reopening.
   Each opening has isolated drafts and confirmations with a 15-minute expiry. General shows both channel defaults and session pins, filters compatible
   models/efforts, labels inheritance, respects dedicated Codex login locks and offers Follow
   channel default. Teams runtime lists have one **Apply to channel** and one **Apply to thread**
