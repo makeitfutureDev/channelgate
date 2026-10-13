@@ -1302,7 +1302,13 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
   cookies support the top-level GET redirect, with HttpOnly, HTTPS Secure, per-session path and
   expiry unchanged. Cross-site POSTs do not receive those cookies; every write still requires its
   session's CSRF header and current channel authorization. These flows
-  refuse protected/traversal names, never overwrite collisions, and audit every result. Read-only
+  refuse traversal and protected names except uploaded `CLAUDE.md`, and audit every result.
+  File and folder uploads allow `CLAUDE.md` at the root or nested in a project. An unchecked
+  *Overwrite existing files* choice keeps numbered copies; selecting it atomically replaces files
+  at their original names. Replacement operates on a symlink itself and never writes its target;
+  directory escapes and protected/internal parent directories remain refused. Gateway-owned
+  folders refresh their managed instruction block on the next turn and keep the uploaded channel
+  instructions outside it. Read-only
   mode hides write controls and Full remains admin-only. With a Public URL configured, every file
   preview also offers *Download*: a requester-bound, 10-minute, single-use URL rechecks channel
   authorization + membership and realpath confinement, then streams the complete file directly

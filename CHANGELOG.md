@@ -18,6 +18,10 @@ product overview.
 
 ## Unreleased
 
+- Allow `CLAUDE.md` in browser file and folder uploads. The new *Overwrite existing files*
+  checkbox lets the uploader replace files at their original names; leaving it unchecked keeps
+  numbered copies. Replacements are atomic and never write through destination symlinks.
+
 - The `channelgate` skill now answers "what server should we host this on?": a hosting reference
   gives the recommended configuration (4 dedicated vCPU, 16 GB RAM, 150 GB NVMe, Ubuntu 24.04 LTS,
   static IPv4) and four recommended EU hosts with estimated monthly prices — Hetzner CCX23 (≈ €25),

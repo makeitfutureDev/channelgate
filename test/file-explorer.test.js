@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import os from "node:os";
 import path from "node:path";
-import { mkdtemp, mkdir, readFile, rename, rm, symlink, truncate, writeFile } from "node:fs/promises";
+import { chmod, mkdtemp, mkdir, readFile, rename, rm, stat, symlink, truncate, writeFile } from "node:fs/promises";
 import { readFileSync } from "node:fs";
 import * as fileExplorer from "../src/slack/file-explorer.js";
 
@@ -647,6 +647,42 @@ test("browser uploads preserve safe folder trees and collision-rename files", as
     () => saveBrowserUploadedFile(root, "../outside", "file.txt", Buffer.from("nope")),
     /invalid|protected|leaves/i,
   );
+});
+
+test("browser uploads allow root and nested CLAUDE.md with explicit atomic replacement", async (t) => {
+  const { root, outside } = await fixture(t);
+  const options = { overwrite: true };
+  const original = path.join(root, "CLAUDE.md");
+  await writeFile(original, "original instructions\n");
+  await chmod(original, 0o600);
+  const copy = await saveBrowserUploadedFile(root, "", "CLAUDE.md", Buffer.from("copy\n"));
+  assert.equal(copy.relative, "CLAUDE (1).md");
+  assert.equal(copy.overwritten, false);
+  assert.equal(await readFile(original, "utf8"), "original instructions\n");
+  const replaced = await saveBrowserUploadedFile(root, "", "CLAUDE.md", Buffer.from("new instructions\n"), options);
+  assert.equal(replaced.relative, "CLAUDE.md");
+  assert.equal(replaced.overwritten, true);
+  assert.equal(replaced.renamed, false);
+  assert.equal(await readFile(original, "utf8"), "new instructions\n");
+  assert.equal((await stat(original)).mode & 0o777, 0o600);
+  const nested = await saveBrowserUploadedFile(root, "", "Project/CLAUDE.md", Buffer.from("nested\n"), options);
+  assert.equal(nested.overwritten, false);
+  assert.equal(await readFile(nested.path, "utf8"), "nested\n");
+
+  await writeFile(path.join(outside, "instructions.md"), "outside instructions\n");
+  await symlink(path.join(outside, "instructions.md"), path.join(root, "linked.txt"));
+  await saveBrowserUploadedFile(root, "", "linked.txt", Buffer.from("safe replacement\n"), options);
+  assert.equal(await readFile(path.join(root, "linked.txt"), "utf8"), "safe replacement\n");
+  assert.equal(await readFile(path.join(outside, "instructions.md"), "utf8"), "outside instructions\n");
+  await symlink(outside, path.join(root, "escape-folder"));
+  await assert.rejects(() => saveBrowserUploadedFile(root, "", "escape-folder/CLAUDE.md", Buffer.from("nope"), options), /leaves|outside/i);
+  await symlink(path.join(root, ".claude"), path.join(root, "internal-folder"));
+  await assert.rejects(() => saveBrowserUploadedFile(root, "", "internal-folder/file.txt", Buffer.from("nope"), options), /protected/i);
+  for (const file of ["AGENTS.md", "MEMORY.md", "token.json", ".claude/settings.json"]) {
+    await assert.rejects(() => saveBrowserUploadedFile(root, "", file, Buffer.from("nope"), options), /protected/i);
+  }
+  await mkdir(path.join(root, "directory.txt"));
+  await assert.rejects(() => saveBrowserUploadedFile(root, "", "directory.txt", Buffer.from("nope"), options), /only files/i);
 });
 
 test("file browser uploads never use Slack file storage", () => {
