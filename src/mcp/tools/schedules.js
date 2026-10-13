@@ -153,9 +153,15 @@ export function register(server, ctx) {
 
   server.registerTool(
     "list_schedules",
-    { description: "List the scheduled tasks in this channel.", inputSchema: {} },
-    async () => {
+    { description: "List the scheduled tasks in this channel. Pass id to read one task's complete prompt and configuration before updating it.", inputSchema: { id: z.string().optional() } },
+    async ({ id } = {}) => {
       const list = listForChannel(channelId);
+      if (id) {
+        const schedule = list.find((s) => s.id === id);
+        if (!schedule) return text("No schedule in this channel.");
+        const keys = ["id", "prompt", "description", "createdBy", "kind", "cron", "runAt", "once", "intervalDays", "enabled", "notify", "notifyUserId", "delivery", "deliveryThread", "executionVisibility", "resultPolicy", "failureNotify", "matchPrefix", "loop"];
+        return text(JSON.stringify(Object.fromEntries(keys.map((key) => [key, schedule[key]]))));
+      }
       if (!list.length) return text("No schedules in this channel.");
       return text(
         list
@@ -176,13 +182,22 @@ export function register(server, ctx) {
   });
 
   server.registerTool("update_schedule", {
-    description: "Change visibility, result-only filtering, error notifications or delivery for an existing task in THIS channel. Existing engine sessions remain fresh per fire. Use get_schedule_runs to inspect health.",
-    inputSchema: { id: z.string(), execution_visibility: z.enum(["visible", "silent"]).optional(), result_policy: z.enum(["always", "on-result"]).optional(), failure_notify: z.boolean().optional(),
+    description: "Update an existing task in THIS channel. To change its instructions, first read list_schedules with id, then pass the complete replacement prompt and expected_prompt (the exact old prompt); preserve unrelated instructions. Prompt/title changes require the creator or a gateway admin and apply to future fires. Never delete/recreate the task to edit its prompt. Visibility, result filtering, error notifications and delivery can also be changed. Sessions remain fresh per fire.",
+    inputSchema: { id: z.string(), prompt: z.string().optional(), expected_prompt: z.string().optional(), description: z.string().optional(), execution_visibility: z.enum(["visible", "silent"]).optional(), result_policy: z.enum(["always", "on-result"]).optional(), failure_notify: z.boolean().optional(),
       delivery: z.enum(["standard", "daily-thread", "channel", "dm-on-match", "thread"]).optional(), delivery_thread: z.string().optional() },
-  }, async ({ id, ...options }) => {
+  }, async ({ id, prompt, expected_prompt, description, ...options }) => {
     const current = listForChannel(channelId).find((s) => s.id === id);
     if (!channelId || !current) return text("No schedule in this channel.");
+    const editingContent = prompt !== undefined || description !== undefined;
+    if (editingContent) {
+      if (!createdBy || (current.createdBy !== createdBy && !(await ctx.requireAdmin?.()))) return text("Only the schedule creator or a gateway admin can change its instructions or title.");
+      if (current.loop) return text("Use the thread loop controls to change a loop; this tool edits ordinary schedules.");
+      if (expected_prompt === undefined) return text("Read list_schedules with id and pass its exact prompt as expected_prompt before editing instructions or title.");
+      if (prompt !== undefined && !prompt.trim()) return text("The task prompt cannot be empty.");
+    }
     const patch = argumentsToOptions(options);
+    if (prompt !== undefined) patch.prompt = prompt;
+    if (description !== undefined) patch.description = description;
     if (patch.delivery === "thread" && !patch.deliveryThread) patch.deliveryThread = ctx.threadKey || "";
     const next = { ...current, ...patch };
     const error = validateTaskOptions(next, current.kind, channelId);
@@ -190,8 +205,9 @@ export function register(server, ctx) {
     if (next.delivery === "daily-thread" && current.once) return text("Daily-thread delivery requires a recurring task.");
     if (next.delivery === "dm-on-match" && (!current.createdBy || !current.matchPrefix)) return text("DM on match requires a creator and match prefix.");
     if (patch.delivery && patch.delivery !== current.delivery) Object.assign(patch, { dailyThreadDate: "", dailyThreadTs: "" });
-    const updated = updateSchedule(id, patch);
-    return text(`Updated ${id}: ${updated.executionVisibility || "visible"}, ${updated.resultPolicy || "always"}, delivery ${updated.delivery}, failure messages ${updated.failureNotify !== false ? "on" : "off"}.`);
+    const updated = updateSchedule(id, patch, editingContent ? { ...current, prompt: expected_prompt } : null);
+    if (!updated) return text("The schedule changed or was deleted. Read list_schedules with id again and retry without dropping other changes.");
+    return text(`Updated ${id}: ${editingContent ? "instructions/title saved for future fires; " : ""}${updated.executionVisibility || "visible"}, ${updated.resultPolicy || "always"}, delivery ${updated.delivery}, failure messages ${updated.failureNotify !== false ? "on" : "off"}.`);
   });
 
   server.registerTool(

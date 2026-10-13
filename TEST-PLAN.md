@@ -1,5 +1,51 @@
 # ChannelGate — Test Plan
 
+## Ongoing request routing (2026-10-13)
+
+Automated: `node --test test/ongoing-request-routing.test.js test/schedule-content-update.test.js
+ test/channel-memory.test.js test/memory-review.test.js test/folders-generator-paths.test.js
+ test/schedule-timezone.test.js test/channelgate-skill.test.js test/composio-guide.test.js
+ test/composio-identity-preamble.test.js test/container-access-guide.test.js`.
+Covers guide materialization on all surfaces, managed instructions including Clean mode, reduced
+reviewer boundaries, schema-validated MCP read/edit calls, stale-prompt and ownership refusal,
+channel containment, preserving run state and unchanged delivery-only edits. These are automated
+contract checks, not live model decision evidence. Validation: 110 focused tests passed (routing,
+MCP scheduling, scheduler delivery/restart, memory and instruction generation); static checks
+and secret scanning passed.
+
+For each case run separate fresh threads with **Claude and Codex**. Use a disposable Worker/Auto
+conversation, an approved test actor for their own data and an admin test actor for cross-owner
+edits. No production mail or real deletions: use a personal test skill `qa-email-routing` whose
+procedure records actions to a local fixture, a disabled daily schedule with prompt “Use
+qa-email-routing for the QA mailbox. Preserve labels. Report briefly.”, and snapshot instructions,
+memory, skill revision, and schedule before/after. Cadence: `0 9 * * *`; notify none. Inspect live
+guide overrides first; preserve custom content. Restore only the exact QA changes afterward.
+
+- [ ] **PERSIST-01 — Skill versus existing schedule.** Prompt: “Whenever using qa-email-routing,
+  also inspect spam; move important items into inbox and the rest to trash.” Pass: patch the
+  existing scoped skill, preserve its fixture-only semantics, verify revision, and explain the
+  destination; no channel instruction or memory copy. Next: “For the existing daily QA email job,
+  add a line reporting how many spam items were reviewed.” Pass: inspect full saved prompt, edit
+  that same ID with expected_prompt, read back, preserve all unrelated text, owner, enabled state,
+  cron, delivery and history. No replacement/duplicate job. Prompt/procedure edits never execute
+  the cleanup themselves unless requested.
+- [ ] **PERSIST-02 — Facts, conversation behavior, one-off work and pending state.** In separate
+  fresh threads: “The QA billing contact is Alex” → declarative memory; “Throughout this channel,
+  reply in German” → channel instruction proposal with pending status until approved; “Check spam
+  this time” → only fixture execution, no persistent write. Run the reviewer after the instruction
+  proposal and the skill update: no duplicate procedural memory entry. Pass requires before/after
+  snapshots and exact tool calls, not the assistant's claim alone. If scope is unclear across two
+  fixture jobs, pass requires a focused question before mutation.
+- [ ] **PERSIST-03 — Content editing boundaries and conflicts.** An approved actor tries to update
+  another actor's task prompt → refused unchanged; an admin may edit while retaining creator.
+  A task ID from another conversation → absent/refused even for an admin. Read a prompt, change it
+  via the admin UI, then submit the old expected_prompt → refused with no partial delivery/title
+  changes. Re-read/reconcile and retry → same ID updated. With skill/schedule editing unavailable,
+  pass requires explaining the limitation/proposal rather than saving a channel rule or memory.
+
+Live cases are defined for both engines; not executed in this implementation turn. Maintainers
+must run applicable gates before stable promotion; no live pass is implied by automated tests.
+
 ## Open functionality integration validation (2026-10-08)
 
 - Clean-install combined coverage: 3,499 tests; 3,467 passed, zero failed, 32 skipped.

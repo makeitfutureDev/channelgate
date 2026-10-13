@@ -106,7 +106,8 @@ const GW_START = "<!-- GATEWAY-INSTRUCTIONS:START -->";
 const GW_END = "<!-- GATEWAY-INSTRUCTIONS:END -->";
 const GW_NOTE = `> ⚙️ Gateway-managed block: do NOT edit between these markers; the gateway rewrites it. Below the
 > end marker: this channel's own standing instructions, never overwritten. To add one when
-> asked, use \`update_channel_instructions\` (or edit this file if writable).`;
+> asked for a channel-wide rule, use \`update_channel_instructions\`; task procedures and automation
+> changes belong in their relevant skill or schedule.`;
 
 // What each mode actually grants, in the agent's own terms — the label alone ("Bash") does not
 // tell a model what it may do.
@@ -192,36 +193,33 @@ export function channelSwitchesNote(meta = {}) {
 const HARD_RULES = `**Hard rules (not optional)** — they apply wherever the named tools exist; details are in the
 \`gateway-usage\` skill:
 - Use \`ask_questions\` for clarification.
+- **Classify every ongoing request before saving.** Use the narrowest scope: durable facts → memory;
+  reusable procedures → the relevant skill; one automation → its existing schedule instructions;
+  channel-wide behavior → channel instructions. Inspect the target and report saved/pending.
+  Never use memory or channel instructions as a fallback. See \`gateway-usage/references/memory-and-rules.md\`.
 - **Two Composio identities.** \`composio-user\` = the REQUESTER's own accounts; \`composio-agent\` = the
   shared agent's own (either may appear with \`_\` for \`-\`). Reads and searches may use either or
   both identities without asking which account unless the user restricts the account or scope.
   Writes require the intended identity and connected account: reuse prior choices, else ask
-  "which account?" before mutating. Independent reads can continue; reads do not select writers.
+  "which account?" before mutating. Reads do not select writers.
 - **Identity is routing, not proof of ownership.** Logical identities do not prove who owns
-  a connected service account; personal and agent connections may reach the same service owner.
-  The agent identity is not necessarily shared across channels: it can be channel-specific or
-  reuse an organization default. Discover account metadata through the selected identity before
-  claiming an owner or cross-channel sharing; do not read business data just to identify an account.
-- **"My X" is the requester's X — never the shared one.** A request phrased for the person asking
-  ("my inbox", "my calendar", their own name) is served ONLY by \`composio-user\`. If \`composio-user\`
-  is absent from this run, or has no connection for that app, SAY THAT and stop — do not read
-  \`composio-agent\` to answer it, not even to check: substitution may expose someone else's data
-  or misattribute an account. Even a matching service owner does not authorize switching identities.
-  The mirror is a rule too: "your X" / "the agent's X" never
+  an account. The agent identity is not necessarily shared across channels. Discover metadata
+  through the selected identity before claiming ownership/sharing; do not read business data to
+  identify an account. Matching owners never authorize switching identities.
+- **"My X" is the requester's X** (also their own name): served ONLY by \`composio-user\`.
+  If that identity/app is absent, say so and stop — do not read
+  \`composio-agent\` to answer it: substitution may expose someone else's data.
+  "Your X" / "the agent's X" never
   touches \`composio-user\`.
 - **An inventory is not a connection.** Ask what is connected with that identity's
   \`COMPOSIO_SEARCH_TOOLS\` (read \`toolkit_connection_statuses[]\`). \`COMPOSIO_MANAGE_CONNECTIONS\` —
   any action, \`list\` included — INITIATES connections and raises authorization requests; use it only
   for a toolkit already known connected, or when the user explicitly asked to connect one.
-- **Only the gateway can report back after this turn.** Your harness's own backgrounding (a
-  background \`Bash\`/shell, background Agent-or-subagent options, \`nohup\`/\`setsid\`, in-turn sleep
-  loops) dies with this turn and can never post a follow-up — never promise "I'll report back" on
-  one. The durable mechanisms are only the gateway tools \`run_in_background\` (shell; auto/admin
-  channels), \`run_agent_in_background\` and \`create_schedule\`; if this conversation's mode allows
-  none of them, say so plainly instead of promising. A bounded "check every N minutes, K times" is
-  one of these too: \`create_schedule\` (or \`run_agent_in_background\` for a self-contained watcher),
-  never an in-turn sleep/poll loop, a \`Monitor\`-style wait, or a harness background task — even when
-  the loop would finish inside this turn.
+- **Only the gateway can report back after this turn.** Harness background shell/subagents,
+  \`nohup\`/\`setsid\`, and sleep loops die with this turn: never promise "I'll report back" from them.
+  Use \`run_in_background\` (shell; auto/admin), \`run_agent_in_background\` or \`create_schedule\`;
+  if unavailable, say so. A bounded "check every N minutes, K times" also uses a schedule/watcher,
+  never an in-turn sleep/poll loop, \`Monitor\` wait or harness background task, even if finite.
 - **Never run or recommend \`podman system prune\`/\`reset\`, \`podman image prune -a\`, \`podman volume prune\`
   or \`docker system prune\`**: they can delete channel homes or the runtime image. Cleanup:
   \`npm run runtime:storage\` (\`-- --apply\` only if an admin asks).`;
@@ -230,7 +228,7 @@ const HARD_RULES = `**Hard rules (not optional)** — they apply wherever the na
 // hard rules, and (outside clean mode) the admin's global instructions. Deliberately nothing about
 // memory or chat formatting here — the memory system ships as the `channel-memory` skill (+
 // update_channel_memory tool) and the operating manual as the `gateway-usage` skill, so CLAUDE.md
-// stays free of that plumbing. Two exceptions earn their place: the switches, which are
+// stays free of that plumbing. Exceptions earn their place: the switches, which are
 // per-conversation FACTS the shared guide has nowhere to put, and the hard rules, which have to
 // hold even for a run that never opens the guide. The hard rules ride clean mode too — a lean
 // channel can still hold Composio identities and can still promise a follow-up it cannot keep.

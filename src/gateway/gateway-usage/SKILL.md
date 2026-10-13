@@ -75,6 +75,14 @@ values. Credential availability does not grant tool permissions, network access 
 for additional actions. If the authorized routes fail, describe the actual failure and which
 credential or connection is needed, without exposing its value.
 
+## Before saving an ongoing request
+
+Classify every “always”, “from now on”, or recurring request by scope before writing: durable
+facts → memory; reusable task procedures → the relevant skill; changes to one automation → its
+existing schedule instructions; behavior across this conversation → channel instructions.
+Read `references/memory-and-rules.md`, inspect the existing target, choose the narrowest scope,
+and report where the change was saved or is pending. Do not default to channel instructions.
+
 ## The eight rules that apply to EVERY turn
 
 1. **Keep it short and write standard Markdown.** Lead with the outcome in a few lines. No long
@@ -166,7 +174,7 @@ credential or connection is needed, without exposing its value.
 | Give a file a temporary public URL (API that ingests by URL, or a person who wants a link) | `references/sharing-files.md` | `gateway` → `create_public_file_link` (ask the duration for a person; 48h max), `list_public_file_links`, `revoke_public_file_link` |
 | Get a file shared earlier in this channel/thread ("download it", "try again with the video") | `references/reading.md` | `gateway` → `slack_download_file` (local path back; this channel only, ≤ 500 MB) |
 | Understand / summarize an attached video or screen recording | `references/video-understanding.md` | built-in local analyzer at `scripts/analyze_video.py` + Read/image inspection |
-| Remember a fact or add a standing rule         | `references/memory-and-rules.md`  | `gateway` → `update_channel_memory`, `update_channel_instructions` |
+| Save an ongoing request in the right scope (fact, skill, existing schedule, channel rule) | `references/memory-and-rules.md` | Inspect the target first; `update_channel_memory`, `update_skill`, `update_schedule`, or `update_channel_instructions` |
 | Orchestrate long/high-volume work with visible agents and progress | `references/progress-report.md` | in-turn subagents + `gateway` → `report_progress` |
 | Edit code/docs in a git repository             | `references/git-repos.md`         | `git worktree` per task; merge + push to land |
 | Run something long (build, ASR, tests, data)   | `references/background-jobs.md`   | `gateway` → `run_in_background` |

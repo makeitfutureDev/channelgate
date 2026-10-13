@@ -5,6 +5,15 @@ its own local **catalog** and materializes into this conversation's folder as re
 discover them natively — the always-on list is each skill's name + description; the body loads
 when a skill fires. No token or network call is involved.
 
+## Ongoing changes to a task procedure
+
+An “always do this when checking email” correction belongs in the existing email skill, within
+its current personal/channel/organization scope. Read its current files and patch only the
+relevant procedure. Use `update_skill` when authorized or `propose_skill_change` when required;
+never broaden a personal workflow to a shared skill or save it as a channel-wide rule to bypass
+permissions. For an existing job, inspect its prompt and ensure it invokes the skill. Report the
+saved revision or pending proposal accurately. See `references/memory-and-rules.md`.
+
 ## Seeing what is active
 
 - `show_channel_skills` — the skills granted here (organization tier + this channel + the
