@@ -1,5 +1,20 @@
 # ChannelGate — Features
 
+## Teams reply menu
+
+- Every Teams answer, error and stop carries the reply menu under its run-stats line, like
+  Slack's footer: **📂 Files**, **🔑 Variables**, **⚙️ Settings**, and one **📄 <file>** button for
+  each workspace file the answer named in inline code (up to three). Each opens the same private
+  Teams window as `/files`, `/secrets`, `/settings` or `/sendfile <path>`.
+- The buttons hold no server-side state, so they keep working on older replies and across
+  restarts. Each carries its conversation, session, requester and file path sealed with an
+  HMAC under a per-deployment key stored in the gateway database. A click is honoured only in the
+  conversation Teams reports for it and only by the requester; another person is told to open
+  their own controls. Every window re-applies the clicker's live workspace authorization, and
+  file paths stay confined to the conversation's folder.
+- Which files get buttons is the same platform-neutral rule Slack uses
+  (`src/gateway/reply-files.js`). Connectors opt in with `replyMenu`; Google Chat is unchanged.
+
 ## Teams workspace file previews and delivery
 
 - Teams agents receive `share_file`, which posts **Open file** in the current conversation and

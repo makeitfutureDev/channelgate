@@ -1,6 +1,7 @@
 // The Microsoft Teams ChatConnector.
 import { createTeamsConversationNameResolver } from "./conversation-name.js";
-import { adaptiveCardAttachment, replyFooterAttachment } from "./cards.js";
+import { adaptiveCardAttachment } from "./cards.js";
+import { replyMenuCard } from "./reply-menu.js";
 import { validateConnector } from "../connector.js";
 import { parseConversationId } from "../ids.js";
 import { createTeamsApi, isConversationId } from "./api.js";
@@ -14,6 +15,11 @@ export function toConversationId(conversationId) {
   const value = String(conversationId || "").trim();
   const { platform, id } = parseConversationId(value);
   return platform === "msteams" ? id : value;
+}
+
+// The run-stats line and the reply menu share one small card under the answer text.
+function footerAttachments(footer, menu) {
+  return footer || menu?.conversationId ? [adaptiveCardAttachment(replyMenuCard({ footer, menu }))] : [];
 }
 
 export function createTeamsConnector({ auth, capabilities, api = null, apiForServiceUrl = null, botId = "", tenantId = "", serviceUrl, log = console } = {}) {
@@ -69,6 +75,8 @@ export function createTeamsConnector({ auth, capabilities, api = null, apiForSer
   return validateConnector({
     platform: "msteams",
     capabilities,
+    // Final answers carry the Files/Variables/Settings menu (reply-menu.js) under their stats line.
+    replyMenu: true,
     ready: () => true,
     api: teams,
     conversationName: createTeamsConversationNameResolver({ auth, apiForServiceUrl }),
@@ -78,10 +86,10 @@ export function createTeamsConnector({ auth, capabilities, api = null, apiForSer
     // and entities MUST travel together: an `<at>` tag whose entity was dropped renders as literal
     // markup and pings nobody, which looks like the bot forgot how to address people.
     rememberServiceUrl: (conversationId, url) => rememberTeamsServiceUrl(botId, toConversationId(conversationId), url),
-    async post({ conversationId, threadKey, text, mentions = [], footer = "", ephemeralTo = "", buttons = null, signal } = {}) {
+    async post({ conversationId, threadKey, text, mentions = [], footer = "", menu = null, ephemeralTo = "", buttons = null, signal } = {}) {
       const id = toConversationId(conversationId);
       let body = String(text ?? "");
-      const attachments = footer ? [replyFooterAttachment(footer)] : [];
+      const attachments = footerAttachments(footer, menu);
       if (buttons?.length) {
         const labels = buttons.map((b) => b?.text || b?.label).filter(Boolean);
         if (labels.length) body += `\n\n_Reply with one of: ${labels.join(" · ")}_`;
@@ -118,8 +126,8 @@ export function createTeamsConnector({ auth, capabilities, api = null, apiForSer
       await teams.updateActivity(toConversationId(conversationId), messageId, { text: String(text), attachments: [adaptiveCardAttachment(card)] });
     },
 
-    async edit({ conversationId, messageId, text, mentions = [], footer = "", signal } = {}) {
-      const attachments = footer ? [replyFooterAttachment(footer)] : [];
+    async edit({ conversationId, messageId, text, mentions = [], footer = "", menu = null, signal } = {}) {
+      const attachments = footerAttachments(footer, menu);
       await teams.updateActivity(toConversationId(conversationId), messageId, { text: String(text ?? ""), entities: mentions, attachments, signal });
     },
 

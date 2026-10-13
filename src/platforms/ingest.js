@@ -7,6 +7,7 @@ import { effectiveWorkDir, ensureChannelFolder } from "../gateway/folders.js";
 import { isAuthorized } from "../gateway/modes.js";
 import { runMessage } from "../gateway/run.js";
 import { footerText } from "../gateway/reply-stats.js";
+import { referencedWorkspaceFiles } from "../gateway/reply-files.js";
 import { createConversationProgress } from "./conversation-progress.js";
 export { createConversationProgress } from "./conversation-progress.js";
 import { createUsageBank } from "../gateway/usage.js";
@@ -120,6 +121,12 @@ export function createIngest({ connector, log = console, run = runMessage, onCom
     };
 
     const reply = async (text) => deliver(connector, message, null, text, rememberReply);
+    // The Files/Variables/Settings menu (plus files the answer named) rides final answers, errors
+    // and stops on surfaces whose connector renders it, bound to this requester like Slack's.
+    const replyMenu = (result = null) => connector.replyMenu ? {
+      conversationId: message.rawConversationId, sessionKey, authorId: message.userId,
+      files: result ? referencedWorkspaceFiles(result.content, result.cwd || effectiveWorkDir(entry.slug, meta)) : [],
+    } : null;
     // A durable queue notice shares every conversation/author/sudo gate with a turn, but cannot
     // run an engine or command. Recheck after authorization so cancelled or started work stays quiet.
     if (queuedNoticeOnly) {
@@ -225,12 +232,12 @@ export function createIngest({ connector, log = console, run = runMessage, onCom
     } catch (err) {
       log.error?.(`[${adapter.id}] run failed in ${entry.slug}: ${err?.message || err}`);
       await progress.stop();
-      await deliver(connector, message, placeholder, signal.aborted ? "Stopped." : `⚠️ ${err?.message || err}`, rememberReply);
+      await deliver(connector, message, placeholder, signal.aborted ? "Stopped." : `⚠️ ${err?.message || err}`, rememberReply, "", replyMenu());
       return { error: err };
     }
 
     await progress.stop();
-    if (signal.aborted) { await deliver(connector, message, placeholder, "Stopped.", rememberReply); return { skipped: "cancelled" }; }
+    if (signal.aborted) { await deliver(connector, message, placeholder, "Stopped.", rememberReply, "", replyMenu()); return { skipped: "cancelled" }; }
     await bankUsage({ channelId: message.conversationId, slug: entry.slug, authorId: message.userId, engine: result.engine, taskKind: "interactive", result });
 
     let text = String(result.content || "").trim() || "_(no output)_";
@@ -238,7 +245,7 @@ export function createIngest({ connector, log = console, run = runMessage, onCom
     if (skipped.length) {
       text += `\n\n_Couldn't read ${skipped.length} attachment(s): ${skipped.join(", ")} — this surface only hands the bot files it uploaded directly._`;
     }
-    await deliver(connector, message, placeholder, text, rememberReply, footerText(result));
+    await deliver(connector, message, placeholder, text, rememberReply, footerText(result), replyMenu(result));
     return { result };
     } });
   };
@@ -247,7 +254,7 @@ export function createIngest({ connector, log = console, run = runMessage, onCom
 // One answer, formatted for the surface, replacing the placeholder where the surface allows it.
 // A long answer is split at the platform's cap; the FIRST chunk edits the placeholder and the rest
 // are posted after it, so the "Working on it…" line never survives next to the real answer.
-async function deliver(connector, message, placeholder, text, rememberReply = () => {}, footer = "") {
+async function deliver(connector, message, placeholder, text, rememberReply = () => {}, footer = "", menu = null) {
   const adapter = platformOr(connector.platform);
   const directory = await connector.directory?.(message.rawConversationId).catch(() => null);
   const formatted = adapter.formatOutbound(text, {
@@ -267,6 +274,7 @@ async function deliver(connector, message, placeholder, text, rememberReply = ()
         text: chunks[0].text,
         mentions: chunks[0].mentions || [],
         ...(chunks.length === 1 && footer ? { footer } : {}),
+        ...(chunks.length === 1 && menu ? { menu } : {}),
       });
       for (const [index, chunk] of chunks.slice(1).entries()) {
         rememberReply(await connector.post({
@@ -275,6 +283,7 @@ async function deliver(connector, message, placeholder, text, rememberReply = ()
           text: chunk.text,
           mentions: chunk.mentions || [],
           ...(index === chunks.length - 2 && footer ? { footer } : {}),
+          ...(index === chunks.length - 2 && menu ? { menu } : {}),
         }));
       }
       return;
@@ -288,6 +297,7 @@ async function deliver(connector, message, placeholder, text, rememberReply = ()
     threadKey: placeholder?.threadKey || message.threadKey,
     formatted: { chunks },
     footer,
+    menu,
     onPosted: rememberReply,
   });
   // A failed edit can leave the working activity visible beside a freshly posted answer.

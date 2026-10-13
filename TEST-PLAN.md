@@ -10279,3 +10279,24 @@ failures or skips. Static checks, documentation coverage and secret scanning pas
       read-only notice, Download returning the original file, and no Edit file. Open a Markdown
       file over 3,000 characters as a Worker/Auto (or Admin-in-Admin-mode) author and require
       Edit file to open the browser editor; save a change and confirm it in the workspace.
+
+## Teams reply menu (2026-10-13)
+
+- [x] `test/teams-reply-menu.test.js` (engine-independent, no engine is invoked): the reply card
+      shows the stats line above Files / Variables / Settings and at most three file buttons. A
+      sealed button refuses any tampered conversation, session, requester, path, kind or seal.
+      Files and file buttons open the private file listing and preview with the requester's
+      workspace grant; Variables and Settings open the settings window on different tabs.
+      Buttons still work after the controls are recreated (restart), are refused for another
+      person, another conversation or a forged path before any workspace access, and never return
+      a window to a legacy Submit. An unbound menu opens with the clicker's own grant. The Teams
+      connector attaches the menu on posts and edits, and ingest supplies a requester-bound menu
+      with the answer's referenced files only to connectors that declare `replyMenu`.
+- [x] `test/review-file-buttons.test.js` still covers the shared file-reference rule after it
+      moved to `src/gateway/reply-files.js`.
+- [ ] UNEXECUTED live Teams gate, for Claude and Codex each: in a Teams channel thread ask
+      "Summarize `AGENTS.md` in two lines" and require Files / Variables / Settings / 📄 AGENTS.md
+      under the answer's stats line. Files must open the listing, 📄 AGENTS.md its preview,
+      Variables the secrets tab and Settings the general tab. Restart the gateway and click the
+      same buttons again; require the same windows. Have a second approved member click them;
+      require the "person who asked" refusal. Repeat once in a personal chat.

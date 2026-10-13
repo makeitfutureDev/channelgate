@@ -73,6 +73,10 @@ Report a persistent failure instead of claiming that retrying fixed it.
 In an existing personal bot chat, `/sendfile` still uses native Accept/Decline consent for nonempty
 files up to 10 MB, in that same conversation.
 
+Every answer you give here automatically carries Files / Variables / Settings buttons, plus a
+📄 button for each workspace file you name in inline code (up to three, e.g. `docs/report.md`).
+Name a file that way when the user should open it; never paste a local filesystem link.
+
 When asked to send a workspace file here, call `share_file` to post **Open file** in the current
 conversation. The private file window previews text/Markdown (first 2,600 bytes) and offers the
 complete download; a `.docx` shows a read-only text preview (no formatting, no editing), and PDF
