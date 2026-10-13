@@ -12,6 +12,7 @@ export function approvalDeliveryFor(conversationId) {
   if (!connector || connector.ready?.() === false) return null;
   const delivery = {
     requiresLinks: false,
+    supportsPrivateLinks: adapter.id !== "msteams",
     capabilities: adapter.capabilities,
     async post({ threadKey, id, title, target, scopes, authorId, approvalType }) {
       const text = `Approval requested: ${title}`;
@@ -19,7 +20,12 @@ export function approvalDeliveryFor(conversationId) {
         try {
           return await connector.postCard({ conversationId, threadKey,
             card: approvalCard({ id, title, details: target, scopes, authorId, approvalType }), text });
-        } catch { /* fall back to a notice plus private decision links */ }
+        } catch { /* Teams stays in the source thread; other surfaces can use private links. */ }
+      }
+      if (adapter.id === "msteams") {
+        const reason = "Approval controls could not be displayed in this thread. No action was approved. Retry the original request here; if it keeps failing, ask an administrator to check Teams card delivery.";
+        await connector.post({ conversationId, threadKey, text: reason });
+        throw new Error(reason);
       }
       delivery.requiresLinks = true;
       // Sensitive decision links are delivered privately, never embedded in this room notice.
@@ -32,6 +38,7 @@ export function approvalDeliveryFor(conversationId) {
       return connector.edit({ conversationId, messageId, text });
     },
     privately({ threadKey, userId, text }) {
+      if (!delivery.supportsPrivateLinks) return Promise.resolve(null);
       return postPrivately(connector, { conversationId, threadKey, userId, text });
     },
   };

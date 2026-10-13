@@ -57,21 +57,81 @@ test("durable Teams approval uses shared CAS and executes once", async () => {
   assert.equal(executions, 1);
   setDurableApprovalExecutor(null);
 });
-test("unavailable native cards never put private approval links in the shared chat", async () => {
+test("Teams native approvals stay in their source thread even when browser links are enabled", async () => {
+  const { saveSettings } = await import("../src/config/settings.js");
+  const { getDb } = await import("../src/db/index.js");
+  saveSettings({ publicUrl: "https://gateway.example.test", approvalLinks: "always", aiTestingUsers: [AUTHOR] });
+  const original = { post: connector.post, openDm: connector.openDm };
+  let privateAttempts = 0;
+  connector.openDm = async () => { privateAttempts++; return "a:private"; };
+  connector.post = async () => { privateAttempts++; return { messageId: "private-link" }; };
+  const linkCount = () => getDb().prepare("SELECT count(*) AS count FROM approval_link_tokens").get().count;
+  const before = linkCount();
+  setDurableApprovalExecutor(async () => ({ ok: true, completed: true, message: "Applied" }));
+  try {
+    for (const durable of [false, true]) {
+      const request = await begin({ threadKey: "123456",
+        ...(durable ? { durableAction: { kind: "background_shell", channelId: CHANNEL, slug: SLUG,
+          authorId: AUTHOR, threadKey: "123456", command: "echo no-dm-fixture" } } : {}) });
+      assert.equal(cards.at(-1).conversationId, CHANNEL);
+      assert.equal(cards.at(-1).threadKey, "123456");
+      assert.equal(cards.at(-1).ephemeralTo, undefined);
+      assert.doesNotMatch(JSON.stringify(cards.at(-1)), /\/approve\//);
+      assert.equal((await handlePlatformApproval(request)).ok, true);
+      await request.pending;
+    }
+    assert.equal(privateAttempts, 0);
+    assert.equal(linkCount(), before, "Teams must not even mint supplemental bearer links");
+  } finally {
+    Object.assign(connector, original); setDurableApprovalExecutor(null);
+    saveSettings({ publicUrl: "", approvalLinks: "auto", aiTestingUsers: [] });
+  }
+});
+test("unavailable Teams cards refuse safely with retry guidance in the original thread and no DM", async () => {
   const { saveSettings } = await import("../src/config/settings.js");
   saveSettings({ publicUrl: "https://gateway.example.test", approvalLinks: "auto" });
   const original = { postCard: connector.postCard, post: connector.post, openDm: connector.openDm };
   const posts = [];
+  let privateAttempts = 0;
   connector.postCard = async () => { throw new Error("Card unavailable"); };
   connector.post = async payload => { posts.push(payload); return { messageId: "fallback-notice", conversationId: payload.conversationId }; };
-  connector.openDm = async () => "";
+  connector.openDm = async () => { privateAttempts++; return "a:private"; };
   try {
-    const outcome = await requestApproval(null, { channelId: CHANNEL, slug: SLUG, authorId: AUTHOR,
-      threadKey: "group:fallback", toolName: "Fallback plan", approvalType: "agent", toolInput: { details: "Exact plan" } });
-    assert.equal(outcome.allow, false);
-    assert.match(outcome.reason, /private decision links could not be delivered/);
-    assert.equal(posts.length, 1);
-    assert.equal(posts[0].conversationId, CHANNEL);
-    assert.equal(posts[0].text.includes("/approve/"), false);
+    for (const durable of [false, true]) {
+      const outcome = await requestApproval(null, { channelId: CHANNEL, slug: SLUG, authorId: AUTHOR,
+        threadKey: "123457", toolName: "Fallback plan", approvalType: "agent", toolInput: { details: "Exact plan" },
+        ...(durable ? { durableAction: { kind: "background_shell", channelId: CHANNEL, slug: SLUG,
+          authorId: AUTHOR, threadKey: "123457", command: "echo failed-card-fixture" } } : {}) });
+      assert.equal(outcome.allow, false);
+      assert.equal(outcome.pending, undefined);
+      assert.match(outcome.reason, /Retry the original request here/);
+      assert.equal(posts.at(-1).conversationId, CHANNEL);
+      assert.equal(posts.at(-1).threadKey, "123457");
+      assert.match(posts.at(-1).text, /No action was approved/);
+      assert.match(posts.at(-1).text, /administrator.*Teams card delivery/);
+      assert.doesNotMatch(posts.at(-1).text, /\/approve\/|private chat/);
+    }
+    assert.equal(posts.length, 2);
+    assert.equal(privateAttempts, 0);
   } finally { Object.assign(connector, original); saveSettings({ publicUrl: "", approvalLinks: "auto" }); }
+});
+test("Google Chat retains private link delivery when native approval controls are absent", async () => {
+  const { approvalDeliveryFor } = await import("../src/platforms/approval-delivery.js");
+  const posts = [];
+  const google = { platform: "googlechat", ready: () => true,
+    post: async payload => { posts.push(payload); return { messageId: String(posts.length) }; },
+    openDm: async userId => { assert.equal(userId, "users/requester"); return "gchat:spaces/private"; },
+  };
+  registerTransport("googlechat", { getConnector: () => google });
+  try {
+    const delivery = approvalDeliveryFor("gchat:spaces/source");
+    assert.equal(delivery.supportsPrivateLinks, true);
+    await delivery.post({ threadKey: "spaces/source/threads/thread", title: "Review plan" });
+    assert.equal(delivery.requiresLinks, true);
+    assert.equal(posts[0].conversationId, "gchat:spaces/source");
+    assert.match(posts[0].text, /private chat/);
+    await delivery.privately({ userId: "users/requester", text: "fixture-private-link" });
+    assert.equal(posts[1].conversationId, "gchat:spaces/private");
+    assert.equal(posts[1].text, "fixture-private-link");
+  } finally { unregisterTransport("googlechat"); }
 });
