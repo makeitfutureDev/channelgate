@@ -293,6 +293,19 @@ test('read-only and no-Public-URL file windows still preview without edit grants
   assert.ok(!read.actions.some(item => item.title === 'Edit file'));
 });
 
+test('a channel-thread card Teams posts without an activity id keeps a working Open files button', async () => {
+  const sent = [];
+  const f = fixture({ connector: { api: { sendActivity: async () => ({ messageId: '' }) }, postCard: async value => { sent.push(value); return { messageId: '' }; } } });
+  assert.equal(await f.controls.onCommand(f.args('/files')), true);
+  assert.deepEqual(f.replies, []);
+  const listing = continued(await f.controls.onInvoke(task(sent[0].card.actions[0].data, 'task/fetch')));
+  assert.match(JSON.stringify(listing), /hello\.txt/);
+  const shared = await f.controls.shareFile({ channelId: 'teams:19:source@thread.v2', slug: 'source', authorId: '29:owner', threadKey: '123456', relative: 'hello.txt' });
+  assert.equal(shared.messageId, '');
+  assert.match(JSON.stringify(continued(await f.controls.onInvoke(task(sent[1].card.actions[0].data, 'task/fetch')))), /hello/);
+  f.controls.stop();
+});
+
 test('agent file delivery opens the proven source workspace and refuses invalid or revoked files', async () => {
   let allowed = true;
   const seen = [];

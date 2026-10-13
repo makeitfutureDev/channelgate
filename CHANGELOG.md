@@ -18,6 +18,11 @@ product overview.
 
 ## Unreleased
 
+- Keep Teams Open files/Open file buttons working when Teams accepts a channel-thread card
+  without returning its activity id. The gateway used to treat that as a failed post, deleting
+  the button's reference while the card stayed visible, so every click showed "This file button
+  is no longer available" and the thread also showed "Teams returned no message identity".
+
 - Preserve Teams Open files/Open file references across gateway restarts and Teams reconnects
   for their original 15-minute lifetime, with current access checks on every opening. Distinguish
   missing references, expired buttons and unknown buttons instead of attributing every lookup
