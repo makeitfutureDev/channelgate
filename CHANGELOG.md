@@ -18,6 +18,9 @@ product overview.
 
 ## Unreleased
 
+- Allow project-local `.claude/` skills and settings in browser folder uploads, including uploads
+  into existing project subfolders. The channel-root `.claude/` policy remains protected.
+
 - Continue browser file and folder uploads after individual failures. Skipped files are listed
   with their reasons and retained for retry, while successful files are removed from the selection.
   An oversized file no longer disables uploading the rest of the batch.

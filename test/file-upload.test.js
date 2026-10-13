@@ -77,7 +77,7 @@ test("browser uploader exchanges a grant, preserves folder paths, and overwrites
   const csrf = /const CSRF="([A-Za-z0-9_-]+)"/.exec(html)?.[1];
   assert.ok(csrf);
   assert.match(html, /id="overwrite" type="checkbox"/);
-  assert.match(html, /CLAUDE.md is allowed/);
+  assert.match(html, /project .claude skills\/settings are allowed/);
 
   const badCsrf = await fetch(`${base}${uploadPath}/api/upload?path=Project%2FCLAUDE.md&overwrite=true`, {
     method: "POST",
@@ -116,7 +116,13 @@ test("browser uploader exchanges a grant, preserves folder paths, and overwrites
   assert.equal(await readFile(path.join(root, "docs/Project/CLAUDE (1).md"), "utf8"), "copy instructions\n");
   assert.equal(audits.at(-1).fields.overwritten, true);
   assert.equal((await upload("Project/CLAUDE.md", "bad", "yes")).status, 400);
-  assert.equal((await upload("Project/.claude/settings.json", "bad", "true")).status, 400);
+  const projectSettings = await upload("#project/.claude/settings.json", '{"permissions":{"allow":["Read"]}}', "true");
+  assert.equal(projectSettings.status, 200);
+  assert.equal((await projectSettings.json()).file, "docs/#project/.claude/settings.json");
+  const projectSkill = await upload("#project/.claude/skills/example/SKILL.md", "# Example skill\n");
+  assert.equal(projectSkill.status, 200);
+  assert.equal(await readFile(path.join(root, "docs/#project/.claude/skills/example/SKILL.md"), "utf8"), "# Example skill\n");
+  assert.equal((await upload("Project/.git/config", "bad", "true")).status, 400);
 
   const traversal = await upload("../outside.txt", "nope");
   assert.equal(traversal.status, 400);
