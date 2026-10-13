@@ -20,6 +20,7 @@ import { settingsLauncher, filesLauncher, settingsDialogResponse } from './setti
 import { openConfinedFile } from '../../gateway/confined-file.js';
 import { parseConversationId } from '../ids.js';
 import { teamsRequest } from './request.js';
+import { recordTeamsFileLauncher, inspectTeamsFileLauncher, forgetTeamsFileLauncher } from './file-launchers.js';
 
 const card = (title, body = [], actions = []) => ({ type: 'AdaptiveCard', version: '1.4', body: [{ type: 'TextBlock', text: title, weight: 'Bolder', wrap: true }, ...body], actions });
 const text = value => ({ type: 'TextBlock', text: String(value), wrap: true });
@@ -122,13 +123,15 @@ export function createTeamsControls({ connector, now = Date.now, authorize = tea
     states.set(id, state);
     try {
       const payload = { card: await build(state, id), text: state.modelCommand ? 'Session model settings' : state.filesLauncher ? 'Conversation files' : 'Conversation settings' };
+      // Persist before sending: an immediately clicked card must already have its reference.
+      if (state.filesLauncher) recordTeamsFileLauncher(id, connector.botId, state, now());
       const posted = state.replyCard ? await state.replyCard(payload)
         : await connector.postCard({ conversationId: destination, threadKey: state.message.threadKey, ...payload });
       state.messageId = posted?.messageId || '';
       if (!state.messageId) throw new Error('Teams returned no message identity for the file/settings controls.');
       return posted;
     }
-    catch (error) { states.delete(id); throw error; }
+    catch (error) { states.delete(id); if (state.filesLauncher) forgetTeamsFileLauncher(id); throw error; }
   }
   async function shareFile({ channelId, slug, authorId, threadKey, relative }) {
     const parsed = parseConversationId(channelId);
@@ -200,9 +203,18 @@ export function createTeamsControls({ connector, now = Date.now, authorize = tea
       const result = await approval({ ...interaction.data, conversationId: interaction.conversationId, messageId: interaction.responseMessageId, actorId: interaction.actorId });
       return response(card(result.ok ? 'Approval recorded' : 'Approval unavailable', [text(result.outcome || result.error || 'Handled.')]));
     }
-    prune(); const state = states.get(interaction.data.stateId);
+    prune(); let state = states.get(interaction.data.stateId);
     if (!state && interaction.invokeName === 'task/fetch' && interaction.action === 'files.open') {
-      return teamsCardErrorResponse({ type: 'invoke', name: 'task/fetch' }, 410, 'Gone', 'This file button expired or the gateway restarted. Close this window, send /files in the original conversation and use the new Open files button.');
+      const restored = inspectTeamsFileLauncher(interaction.data.stateId, connector.botId, now());
+      state = restored.state;
+      if (!state) {
+        // Reasons are fixed constants; never log opaque references, identities or card contents.
+        log.warn?.(`[msteams] file launcher unavailable: ${restored.reason}`);
+        const message = restored.reason === 'expired' ? 'This file button expired after 15 minutes.'
+          : restored.reason === 'missing-reference' ? 'This file button did not include a valid reference.'
+            : 'This file button is no longer available.';
+        return teamsCardErrorResponse({ type: 'invoke', name: 'task/fetch' }, 410, 'Gone', `${message} Close this window, send /files in the original conversation and use the new Open files button.`);
+      }
     }
     if (!state || state.message.userId !== interaction.actorId || state.deliveryId !== interaction.nativeConversationId) throw new Error('These controls expired or belong to a different conversation/user. Reopen them.');
     const tenantId = state.message.raw?.tenantId;

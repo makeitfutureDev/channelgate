@@ -18,6 +18,11 @@ product overview.
 
 ## Unreleased
 
+- Preserve Teams Open files/Open file references across gateway restarts and Teams reconnects
+  for their original 15-minute lifetime, with current access checks on every opening. Distinguish
+  missing references, expired buttons and unknown buttons instead of attributing every lookup
+  failure to a restart. Private file windows still require reopening after a restart.
+
 - Keep Teams file callbacks responsive by removing duplicate membership requests, cancelling
   stalled read-only callbacks within 3.5 seconds, and showing a dialog error for unavailable or
   expired file controls. Settings and approval mutations retain their completion semantics.

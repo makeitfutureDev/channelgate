@@ -23,6 +23,7 @@ function bearer() {
 }
 let sequence = 0;
 async function fixture(t, { timeoutMs = 3500 } = {}) {
+  let time = Date.now();
   const serial = ++sequence, owner = `29:callback-${serial}`, nativeId = `19:callback-${serial}@thread.v2`;
   const channelId = `teams:${nativeId}`;
   const entry = await upsertChannelEntry(channelId, { name: `Callback ${serial}`, platform: 'msteams', type: 'mpim' });
@@ -40,25 +41,28 @@ async function fixture(t, { timeoutMs = 3500 } = {}) {
   const connector = { botId: '28:callback-bot', api, postCard: async payload => {
     posted.push(payload); return { messageId: 'launcher-1' };
   } };
-  const controls = createTeamsControls({ connector, fileInvokeTimeoutMs: timeoutMs, log: { warn: message => warnings.push(message) } });
+  const makeControls = () => createTeamsControls({ connector, now: () => time, fileInvokeTimeoutMs: timeoutMs, log: { warn: message => warnings.push(message) } });
+  let controls = makeControls();
   t.after(() => controls.stop());
-  const launch = async () => {
-    await controls.onCommand({ message: { text: '/files', userId: owner, conversationId: channelId,
+  const launch = async (command = '/files') => {
+    await controls.onCommand({ message: { text: command, userId: owner, conversationId: channelId,
       rawConversationId: nativeId, trigger: 'message', threadKey: '123456', raw: { tenantId: 'fixture-tenant' } },
       entry, meta, sessionKey: '123456', reply: async message => assert.fail(message) });
     return posted.at(-1).card.actions[0].data;
   };
   const webhook = createTeamsWebhook({ appId: APP, jwks: { get: async () => jwk },
-    onMessage: () => assert.fail('A file callback cannot start an engine'), onInvoke: controls.onInvoke,
+    onMessage: () => assert.fail('A file callback cannot start an engine'), onInvoke: activity => controls.onInvoke(activity),
     log: { error: message => warnings.push(message), warn: message => warnings.push(message) } });
-  const callback = async (data, name = 'task/fetch', id = `invoke-${++sequence}`) => {
+  const callback = async (data, name = 'task/fetch', id = `invoke-${++sequence}`, override = {}) => {
     const result = { code: null, body: null, status(code) { this.code = code; return this; }, json(body) { this.body = body; return this; } };
     await webhook({ headers: { authorization: `Bearer ${bearer()}` }, body: { type: 'invoke', name, id,
       from: { id: owner }, recipient: { id: connector.botId }, conversation: { id: nativeId },
-      channelData: { tenant: { id: 'fixture-tenant' } }, serviceUrl: DEFAULT_SERVICE_URL, value: { data } } }, result);
+      channelData: { tenant: { id: 'fixture-tenant' } }, serviceUrl: DEFAULT_SERVICE_URL, value: { data }, ...override } }, result);
     return result;
   };
-  return { controls, launch, callback, posted, rosterCalls, warnings, owner,
+  return { launch, callback, posted, rosterCalls, warnings, owner, nativeId,
+    restart(botId = connector.botId) { controls.stop(); connector.botId = botId; controls = makeControls(); },
+    advance(ms) { time += ms; },
     hold() { let release; held = new Promise(resolve => { release = resolve; }); return () => { held = null; release(); }; },
     removeMember() { roster = []; } };
 }
@@ -112,13 +116,72 @@ test('a stalled roster aborts before the client deadline, renders a safe error a
   assert.equal(f.posted.length, 1, 'a callback never posts private contents to chat');
 });
 
-test('a launcher lost at restart returns a renderable dialog error with no file content', async t => {
+test('the same launcher survives transport recreation and still authorizes each new opening', async t => {
   const f = await fixture(t); const launcher = await f.launch();
-  f.controls.stop();
-  const error = content(await f.callback(launcher));
-  assert.equal(error.body[0].text, 'Action unavailable');
-  assert.match(error.body[1].text, /button expired or the gateway restarted/);
-  assert.doesNotMatch(JSON.stringify(error), /hello\.txt|file-download/);
+  f.restart();
+  f.rosterCalls.length = 0;
+  const listing = content(await f.callback(launcher));
+  assert.equal(listing.body[0].text, 'Conversation files');
+  assert.match(JSON.stringify(listing), /hello\.txt/);
+  assert.equal(f.rosterCalls.length, 1);
+  assert.equal(f.posted.length, 1, 'no replacement card or private content is posted to chat');
+  f.removeMember(); f.restart();
+  const denied = content(await f.callback(launcher));
+  assert.equal(denied.body[0].text, 'Action unavailable');
+  assert.doesNotMatch(JSON.stringify(denied), /hello\.txt|file-download/);
+});
+
+test('restored selected-file launchers preserve their file while private dialog state stays ephemeral', async t => {
+  const f = await fixture(t); const launcher = await f.launch('/sendfile hello.txt');
+  const before = content(await f.callback(launcher));
+  f.restart();
+  const reopened = content(await f.callback(launcher));
+  assert.equal(reopened.body[0].text, 'File');
+  assert.match(JSON.stringify(reopened), /callback preview/);
+  const oldBack = before.actions.find(action => action.title === 'Back to files').data;
+  const stale = await f.callback(oldBack, 'task/submit');
+  assert.equal(stale.body.task.type, 'message');
+  assert.doesNotMatch(JSON.stringify(stale.body), /hello\.txt|file-download/);
+});
+
+test('restored launchers still bind owner, source conversation, tenant and bot registration', async t => {
+  const f = await fixture(t); const launcher = await f.launch(); f.restart();
+  for (const override of [{ from: { id: '29:other' } }, { conversation: { id: 'a:other' } },
+    { channelData: { tenant: { id: 'other-tenant' } } }]) {
+    const denied = content(await f.callback(launcher, 'task/fetch', undefined, override));
+    assert.equal(denied.body[0].text, 'Action unavailable');
+    assert.doesNotMatch(JSON.stringify(denied), /hello\.txt|file-download/);
+  }
+  f.restart('28:other-bot');
+  const denied = content(await f.callback(launcher));
+  assert.equal(denied.body[0].text, 'Action unavailable');
+  assert.equal(f.warnings.at(-1), '[msteams] file launcher unavailable: wrong-bot');
+});
+
+test('restored launchers reject current gateway revocation and retain the original 15-minute expiry', async t => {
+  const f = await fixture(t); const launcher = await f.launch(); f.restart();
+  await setUser(f.owner, { approved: false });
+  const revoked = content(await f.callback(launcher));
+  assert.equal(revoked.body[0].text, 'Action unavailable');
+  assert.doesNotMatch(JSON.stringify(revoked), /hello\.txt|file-download/);
+  await setUser(f.owner, { approved: true });
+  f.advance(16 * 60_000);
+  const expired = content(await f.callback(launcher));
+  assert.match(expired.body[1].text, /expired after 15 minutes/);
+  assert.equal(f.warnings.at(-1), '[msteams] file launcher unavailable: expired');
+});
+
+test('missing and unknown references are distinguished without claiming that the gateway restarted', async t => {
+  const f = await fixture(t);
+  for (const [data, expected, reason] of [
+    [{ cgAction: 'files.open' }, /did not include a valid reference/, 'missing-reference'],
+    [{ cgAction: 'files.open', stateId: '22222222-2222-2222-2222-222222222222' }, /no longer available/, 'unknown'],
+  ]) {
+    const error = content(await f.callback(data));
+    assert.match(error.body[1].text, expected);
+    assert.doesNotMatch(JSON.stringify(error), /restarted|hello\.txt|file-download/);
+    assert.equal(f.warnings.at(-1), `[msteams] file launcher unavailable: ${reason}`);
+  }
 });
 
 test('gateway access revoked while the roster is in flight refuses before displaying files', async t => {

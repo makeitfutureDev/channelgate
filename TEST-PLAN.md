@@ -10204,7 +10204,8 @@ Microsoft callback logs and client acceptance remain unverified.
       gateway access revoked while that request is in flight both refuse file contents. A stalled roster that ignores cancellation returns a renderable
       error within the configured test budget, aborts its real request, exposes no content/token
       and preserves transport retry deduplication. A new click succeeds after the roster recovers.
-      A launcher whose state was cleared at restart returns an error card with `/files` guidance.
+      The initial implementation returned an error card when restart cleared launcher state;
+      the durable launcher regression below supersedes that behavior for newly created launchers.
       Callback tests are engine-independent because no engine is invoked.
 - [x] Updated existing Teams controls, dialog and signed-card regressions validate safe
       task/fetch error cards while task/submit retains message errors. Authentication failures
@@ -10214,10 +10215,38 @@ Microsoft callback logs and client acceptance remain unverified.
       and click Open files immediately. Require a usable private listing, successful navigation
       and original-file download with no chat disclosure. Record callback response timing and
       actual Teams desktop/web/mobile rendering. Revoke membership and require refusal. Open
-      a pre-restart or 16-minute-old launcher: require a visible error card with new `/files`
-      guidance rather than the generic reachability banner. Create a new launcher and require
+      an unexpired pre-restart launcher created with durable support: require the same
+      authorized listing/file. A 16-minute-old launcher must show expiry guidance. Create a new launcher and require
       successful recovery. Test read-only membership denial and source-conversation isolation.
 - [ ] Private dual-engine QA registry records and actual client acceptance remain pending:
       this run has no requester-side personal connector for the required registry writes.
       Synthetic timing tests prove callback behavior, not the root cause of a particular live
       screenshot; no host callback log was available in this container.
+
+
+## Teams durable file launchers (2026-10-13)
+
+265 focused Teams, file, authorization, transport and migration regressions passed without
+failures or skips. Static checks, documentation coverage and secret scanning passed.
+
+- [x] `test/teams-file-launchers.test.js`: a separate Node process restores the original bot,
+      owner, tenant, conversation, session and selected file from the scratch SQLite ledger.
+      No raw activity, secret, dialog draft, file content, callback function or grant URL is stored.
+      Expiry remains fixed at 15 minutes; expired rows are pruned after one day's diagnostic retention.
+- [x] `test/teams-file-dialog-callback.test.js`: the same signed launcher invoke after controls
+      recreation opens Files with one current roster check. Selected-file references survive;
+      already open private dialog state does not. Wrong owner/conversation/tenant/bot, revoked
+      gateway access/membership and expired references still refuse. Missing and unknown references
+      get distinct renderable errors and constant log reason codes without payloads/IDs.
+- [x] `test/teams-controls.test.js`: failed delivery removes its persisted reference; more than
+      500 in-memory states cannot invalidate a still-unexpired file launcher.
+- [ ] Live Claude/Codex in private Teams channel/group/DM fixtures: ask each engine to share a
+      workspace file, also send `/files`, open both launchers, reconnect Teams and restart the
+      daemon before 15 minutes pass. Require both original chat buttons to reopen the correct
+      private listing/file; download belongs to the original workspace/session. Revoke access
+      and require refusal, wait past expiry and require expiry guidance. A private window open
+      during restart must be reopened. Old buttons from before this deployment need a fresh
+      `/files` once because no durable record exists for them. Record desktop/web/mobile behavior.
+- [ ] Private requester-personal QA registry writes and live callback log/client evidence remain
+      pending. This container cannot read host callback logs; these regressions reproduce launcher
+      lifetime defects without establishing the cause of a particular live screenshot.
