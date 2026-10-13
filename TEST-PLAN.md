@@ -10250,3 +10250,14 @@ failures or skips. Static checks, documentation coverage and secret scanning pas
 - [ ] Private requester-personal QA registry writes and live callback log/client evidence remain
       pending. This container cannot read host callback logs; these regressions reproduce launcher
       lifetime defects without establishing the cause of a particular live screenshot.
+
+## Teams file launcher without an activity id (2026-10-13)
+
+- [x] `test/teams-controls.test.js` (engine-independent, no engine is invoked): a connector whose
+      `postCard` succeeds with an empty `messageId` still yields a working `/files` launcher and a
+      working agent `share_file` launcher; no error reply is posted. The test fails on the prior
+      code with the "no longer available" lookup failure.
+- [ ] UNEXECUTED live Teams gate: in a Teams channel thread, send `@<bot> /files` and click
+      Open files immediately. Require the private listing to open, and no
+      "Teams returned no message identity" reply in the thread. Repeat in a personal chat
+      and in a group chat.

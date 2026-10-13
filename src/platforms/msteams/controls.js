@@ -127,8 +127,10 @@ export function createTeamsControls({ connector, now = Date.now, authorize = tea
       if (state.filesLauncher) recordTeamsFileLauncher(id, connector.botId, state, now());
       const posted = state.replyCard ? await state.replyCard(payload)
         : await connector.postCard({ conversationId: destination, threadKey: state.message.threadKey, ...payload });
+      // A 2xx send is delivery. Teams often returns no activity id for channel-thread replies;
+      // the card is visible regardless, so its reference must survive. Only in-place repaints
+      // use the id, and each of those is skipped when it is empty.
       state.messageId = posted?.messageId || '';
-      if (!state.messageId) throw new Error('Teams returned no message identity for the file/settings controls.');
       return posted;
     }
     catch (error) { states.delete(id); if (state.filesLauncher) forgetTeamsFileLauncher(id); throw error; }
