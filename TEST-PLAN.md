@@ -10133,3 +10133,20 @@ The stable API conversation candidate includes the compatible lock refresh from 
       the answer remains and the old working activity is removed. Capture activity IDs, request
       order and desktop/mobile screenshots. Restart, live acceptance and private QA registration
       remain pending; no requesting-user personal QA connection is exposed in this run.
+
+
+## Teams working and native typing indicator (2026-10-13)
+
+- [x] Automated: `test/teams-native-cards.test.js` verifies the real REST typing activity body,
+      source conversation and numeric channel-thread routing; flat-session keys are not sent.
+      `test/platform-run-details.test.js` checks refresh every four seconds, one in-flight request,
+      cancellation/drain before final delivery, no late refresh and one-warning disable on failure.
+      Existing Claude/Codex final-answer tests require the simple working placeholder followed by
+      only answer, requester mention and statistics. Google Chat progress remains unchanged.
+- [ ] Live Claude and Codex: in private Teams channel/group/DM QA fixtures send “Wait 12 seconds,
+      then reply with exactly WORKING-STATUS.” Require the temporary “Agent is working…” line
+      beneath the bot header and the Teams typing indicator where that client renders it; after
+      completion require answer, channel/group requester mention and Small statistics only. Repeat
+      with Stop and with a controlled typing-activity failure: no stuck status or failed answer.
+      Record desktop/mobile screenshots, activity request order and IDs. Live checks and private
+      QA registry records remain pending; no requesting-user personal QA connection is exposed.
