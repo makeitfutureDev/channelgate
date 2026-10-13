@@ -2563,6 +2563,11 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
   static IPv4, `MAX_CONCURRENT_RUNS=4`), the pilot/busy tiers, and four recommended EU hosts with
   dated price estimates: Hetzner CCX23 (≈ €25), netcup VPS 2000 G12 (≈ €16), RoLeaf Enterprise in
   Romania (≈ €32) and Google Cloud `n4-standard-4` (≈ €139).
+  Version 3.2.0 also routes VPN/private-database requests to a bundled reference covering
+  supported isolated OpenVPN setup and the five-step task-specific VPN/SSH procedure: access
+  ownership, Secrets, identity verification, isolated connections, bounded read-only checks,
+  cleanup and operator handoff. This travels with gateway updates; no companion skill or
+  application-code change is needed.
   → TEST-PLAN: ChannelGate skill package.
 - **Trustworthy release gate** (the macOS leg retired 2026-09-03 — Linux only): every pull request
   runs the complete coverage-gated suite on Ubuntu at the exact Node 22.13 minimum and Node 24, plus dependency-free syntax /

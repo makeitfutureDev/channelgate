@@ -25,7 +25,7 @@ test("the ChannelGate skill is a valid, fully routed package", async () => {
   const { data, body } = parseFrontmatter(manifest);
 
   assert.equal(data.name, "channelgate");
-  assert.equal(data.metadata.version, "3.1.0");
+  assert.equal(data.metadata.version, "3.2.0");
   assert.match(data.description, /device-login links/);
   assert.match(data.description, /Do not\s+use for ordinary work/);
   assert.match(data.description, /server sizing and hosting-provider choice/);
@@ -42,6 +42,7 @@ test("the ChannelGate skill is a valid, fully routed package", async () => {
     "references/conversation-operations.md",
     "references/folder-headless.md",
     "references/hosting-sizing.md",
+    "references/vpn-ssh-access.md",
   ]) assert.ok(references.has(required), `${required} is missing`);
 });
 

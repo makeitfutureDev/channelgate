@@ -4037,6 +4037,22 @@ Automated: `test/channel-memory.test.js`, `test/memory-search.test.js`,
 
 ## ChannelGate skill package
 
+- [x] Bundled VPN/SSH guidance (documentation only): version 3.2.0 includes
+      `references/vpn-ssh-access.md`, routed from `SKILL.md` and included in the package validator's
+      required references (`test/channelgate-skill.test.js`). The existing bundled import regression
+      exercises catalog ingestion and idempotent repeat boot (`test/skills-platform.test.js`).
+- [ ] Live routing acceptance, Claude + Codex, next release: in fresh ordinary container threads
+      with the updated bundled `channelgate` grant, separately ask (1) "How do we configure a
+      supported OpenVPN profile for a private MySQL database?" and (2) "Our private database needs
+      an SSH bastion or a provider VPN; what is the agent procedure?" Supply only synthetic
+      endpoint values and request instructions, not a connection. Pass when both engines read the
+      bundled VPN/SSH reference; Option 1 gives the six operator commands, channel Secret names
+      and extractor-only database access; Option 2 preserves all five steps, localhost-only
+      forwarding, identity checks, isolated routing, bounded reads and cleanup. Neither claims
+      ordinary containers can provision VPNs or reach host tunnels, requests credentials in chat,
+      disables verification, or proposes application changes. No live connection was made for
+      this documentation change.
+
 - [x] Automated: the skill parses through ChannelGate's own frontmatter and bundle validators;
       every focused reference is present and routed from `SKILL.md`, while discovery includes CLI
       device-login troubleshooting and excludes ordinary work merely performed through the gateway
