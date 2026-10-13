@@ -9746,6 +9746,20 @@ located and compared by sha256 only):
 
 ## Teams conversation settings parity
 
+Single-row navigation and default General (2026-10-13): 165 focused
+settings/dialog/general/catalog/controls and adjacent platform/runtime tests passed with no
+failures or skips; static checks and secret scanning passed. Microsoft Adaptive Cards 3.0.6
+browser rendering with right-aligned actions and a five-action host limit verified all six tabs
+on one centered row at 960px and 600px without clipping or overflow. At 390px all six actions
+remain clickable on one row without overlap or overflow; labels truncate to fit. A fresh
+`/settings` popup contains General's runtime inputs immediately; the six section actions occupy
+one centered ColumnSet with one action per column, and exactly one section is marked selected.
+Every section remains reachable, `/secrets` still opens Variables, and reopening a reusable
+launcher returns to General. This card/navigation behavior is engine-independent because no
+engine runs when opening or navigating settings. Live Teams rendering and the mandatory private
+QA registry update remain pending; this run has no requester-side personal connector for the
+deployment-required registry write.
+
 Navigation centering (2026-10-08): 53 focused settings/dialog/general tests passed. A browser
 check using the Microsoft Adaptive Cards 3.0.6 renderer with right-aligned host actions placed
 both navigation rows within 0.01px of center at 960px and 360px viewport widths, with no overflow.
@@ -9806,10 +9820,12 @@ case. Also run a group with an external member to check tenant/channel delivery 
 1. In a channel/thread or group, quote the original message or bot reply and send
    `@bot /settings`; in personal chat send `/settings`. Require only a short **Open settings**
    card in the original conversation, unchanged workspace/session identity and no proactive DM.
-   Click the button: require a large popup inside Teams with the six-section menu centered in
-   two rows above the form (desktop and narrow windows). Select every
+   Click the button: require a large popup inside Teams with all six section buttons centered in
+   one horizontal row, General marked selected and its channel/session form already visible
+   without another click (desktop and narrow windows). Select every
    section; forms and saves must remain in the popup and the posted launcher must stay unchanged.
-   `/secrets` must open the popup on Variables. Close/reopen: separate draft/confirmation state;
+   `/secrets` must open the popup on Variables. Navigate to Skills, then close/reopen the
+   `/settings` launcher: General is selected again with separate draft/confirmation state;
    closing without Apply must not save. Block proactive DM delivery: popup still works. Another
    actor, conversation, tenant, bot recipient or expired state must fail without reads/writes.
    Submit a popup state through inline Execute/message Submit, or mutate through launcher state:

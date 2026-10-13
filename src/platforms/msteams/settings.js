@@ -111,22 +111,21 @@ async function resume(ctx, ui) {
 
 export async function buildTeamsSettings(ctx, stateId) {
   const ui = teamsSettingsUi(stateId);
-  const page = validPage(ctx.state.tab) ? ctx.state.tab : '';
+  const page = validPage(ctx.state.tab) ? ctx.state.tab : 'general';
   ctx.state.tab = page;
   const content = page === 'general' ? await renderGeneral(ctx, ui)
     : page === 'automations' ? automations(ctx, ui)
       : page === 'resume' ? await resume(ctx, ui)
-        : page ? await renderCatalogPage(page, ctx, ui) : { body: [], actions: [] };
-  // Three tabs per row keeps every page visible without exceeding Teams' action-row limit.
+        : await renderCatalogPage(page, ctx, ui);
   const tabs = TEAMS_SETTINGS_PAGES.map(([id, title]) => ui.execute(id === page ? `• ${title}` : title, 'settings.page', { page: id }, 'none'));
-  // ActionSet alignment belongs to the Teams host. A centered, content-width column
-  // positions the navigation without changing the host's alignment for form actions.
-  const navigationRow = actions => ({ type: 'ColumnSet', horizontalAlignment: 'Center',
-    columns: [{ type: 'Column', width: 'auto', items: [ui.buttons(actions)] }] });
+  // One action per column keeps all six tabs on one line without relying on the
+  // host's per-ActionSet action limit or alignment. Form actions keep their host layout.
+  const navigation = { type: 'ColumnSet', horizontalAlignment: 'Center',
+    columns: tabs.map(action => ({ type: 'Column', width: 'auto', spacing: 'Small', items: [ui.buttons([action])] })) };
   return { $schema: 'http://adaptivecards.io/schemas/adaptive-card.json', type: 'AdaptiveCard', version: '1.4',
     body: [ui.heading('Channel settings'), ui.text(`Settings for ${ctx.entry.name || 'this conversation'}. Changes apply to the next turn.`),
       ...(ctx.isShared ? [ui.text('These controls belong to the person who opened them. Other members can open their own /settings.')] : []),
-      navigationRow(tabs.slice(0, 3)), navigationRow(tabs.slice(3)),
+      navigation,
       ...(ctx.state.notice ? [ui.text(ctx.state.notice)] : []), ...content.body], actions: content.actions || [] };
 }
 
