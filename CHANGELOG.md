@@ -18,6 +18,10 @@ product overview.
 
 ## Unreleased
 
+- Extend the bundled `channelgate` skill with supported OpenVPN setup and task-specific VPN/SSH
+  access instructions, including Secret handling, identity verification, isolation, layered
+  checks and cleanup. Customers receive the reference with gateway updates.
+
 - Allow project-local `.claude/` skills and settings in browser folder uploads, including uploads
   into existing project subfolders. The channel-root `.claude/` policy remains protected.
 
