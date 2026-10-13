@@ -4,7 +4,7 @@ import express from "express";
 import os from "node:os";
 import path from "node:path";
 import crypto from "node:crypto";
-import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, rm, truncate, writeFile } from "node:fs/promises";
 import { ensureTestEnv } from "./helpers.js";
 import { createFileEditorGrantUrl, createFileEditorRouter, resetFileEditorStateForTests } from "../src/web/file-editor.js";
 import { createFileUploadGrantUrl, createFileUploadRouter, resetFileUploadStateForTests } from "../src/web/file-upload.js";
@@ -99,6 +99,7 @@ for (const kind of ["editor", "upload"]) {
       const folder = path.join(local, "Project");
       await mkdir(path.join(folder, "assets"), { recursive: true });
       await writeFile(path.join(folder, "CLAUDE.md"), "Uploaded instructions\n");
+      await writeFile(path.join(folder, ".DS_Store"), "Protected fixture\n");
       await writeFile(path.join(folder, "assets", "note.txt"), "Nested asset\n");
       await mkdir(path.join(root, "docs", "Project"));
       const destination = path.join(root, "docs", "Project", "CLAUDE.md");
@@ -108,6 +109,7 @@ for (const kind of ["editor", "upload"]) {
       await page.locator("#upload").click();
       await page.waitForFunction(() => globalThis.document.querySelector("#status").textContent.startsWith("Uploaded 2 file(s)."));
       assert.equal(await readFile(destination, "utf8"), "Original instructions\n");
+      assert.match(await page.locator("#failures").textContent(), /Project\/\.DS_Store.*protected/i);
       assert.equal(await readFile(path.join(root, "docs", "Project", "CLAUDE (1).md"), "utf8"), "Uploaded instructions\n");
       await page.locator("#overwrite").check();
       await page.locator("#folder").setInputFiles(folder);
@@ -119,8 +121,42 @@ for (const kind of ["editor", "upload"]) {
       await page.locator("#upload").click();
       await page.waitForFunction(() => globalThis.document.querySelector("#status").textContent.startsWith("Uploaded 1 file(s)."));
       assert.equal(await readFile(path.join(root, "docs", "CLAUDE.md"), "utf8"), "Root instructions\n");
+      let transientFailures = 1;
+      await page.route("**/api/upload?**", async (route) => {
+        if (new URL(route.request().url()).searchParams.get("path") === "retry.txt" && transientFailures-- > 0) await route.abort();
+        else await route.continue();
+      });
+      await page.locator("#overwrite").uncheck();
+      await page.locator("#files").setInputFiles([
+        { name: "before.txt", mimeType: "text/plain", buffer: Buffer.from("Before failure\n") },
+        { name: "AGENTS.md", mimeType: "text/markdown", buffer: Buffer.from("Protected\n") },
+        { name: "retry.txt", mimeType: "text/plain", buffer: Buffer.from("Retry fixture\n") },
+        { name: "after.txt", mimeType: "text/plain", buffer: Buffer.from("After failure\n") },
+      ]);
+      await page.locator("#upload").click();
+      await page.waitForFunction(() => globalThis.document.querySelector("#status").textContent === "Uploaded 2 file(s). Skipped 2 file(s).");
+      assert.match(await page.locator("#failures").textContent(), /AGENTS.md.*protected/i);
+      assert.match(await page.locator("#failures").textContent(), /retry.txt/);
+      assert.equal(await readFile(path.join(root, "docs", "before.txt"), "utf8"), "Before failure\n");
+      assert.equal(await readFile(path.join(root, "docs", "after.txt"), "utf8"), "After failure\n");
+      await page.getByRole("button", { name: "Retry skipped files" }).click();
+      await page.waitForFunction(() => globalThis.document.querySelector("#status").textContent === "Uploaded 1 file(s). Skipped 1 file(s).");
+      assert.equal(await readFile(path.join(root, "docs", "retry.txt"), "utf8"), "Retry fixture\n");
+      await assert.rejects(() => readFile(path.join(root, "docs", "before (1).txt")), { code: "ENOENT" });
+      await assert.rejects(() => readFile(path.join(root, "docs", "after (1).txt")), { code: "ENOENT" });
+      const tooLarge = path.join(local, "oversize.txt");
+      await writeFile(tooLarge, "");
+      await truncate(tooLarge, 25 * 1024 * 1024 + 1);
+      const small = path.join(local, "small.txt");
+      await writeFile(small, "Small fixture\n");
+      await page.locator("#files").setInputFiles([tooLarge, small]);
+      assert.equal(await page.locator("#upload").isEnabled(), true, "an oversized file must not block the rest of the selection");
+      await page.locator("#upload").click();
+      await page.waitForFunction(() => globalThis.document.querySelector("#status").textContent === "Uploaded 1 file(s). Skipped 1 file(s).");
+      assert.match(await page.locator("#failures").textContent(), /oversize.txt.*limit/i);
+      assert.equal(await readFile(path.join(root, "docs", "small.txt"), "utf8"), "Small fixture\n");
     }
-    const expectedAudits = kind === "upload" ? 6 : 1;
+    const expectedAudits = kind === "upload" ? 10 : 1;
     assert.equal(audits.length, expectedAudits);
     // A fresh cross-site top-level POST must NOT receive even a newly minted Lax cookie.
     await page.goto(sourceUrl);
