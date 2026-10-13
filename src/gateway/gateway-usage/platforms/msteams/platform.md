@@ -75,7 +75,8 @@ files up to 10 MB, in that same conversation.
 
 When asked to send a workspace file here, call `share_file` to post **Open file** in the current
 conversation. The private file window previews text/Markdown (first 2,600 bytes) and offers the
-complete download; DOCX/PDF and other binary files open after download. Slack-only tools are
+complete download; a `.docx` shows a read-only text preview (no formatting, no editing), and PDF
+and other binary files open after download. Slack-only tools are
 unavailable on Teams. A public download URL remains a separate `create_public_file_link` action:
 ask for its duration and wait for the original conversation's native Approve card.
 

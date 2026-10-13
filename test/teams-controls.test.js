@@ -6,6 +6,7 @@ import path from 'node:path';
 import { ensureTestEnv } from './helpers.js';
 ensureTestEnv();
 const { createTeamsControls } = await import('../src/platforms/msteams/controls.js');
+const { zip, documentXml } = await import('./fixtures/docx.js');
 const { teamsHelpText } = await import('../src/platforms/msteams/help.js');
 const { teamsWorkspaceContext } = await import('../src/platforms/msteams/workspace-access.js');
 const { createIngest } = await import('../src/platforms/ingest.js');
@@ -279,6 +280,28 @@ test('selected file windows show bounded literal text, complete downloads and bi
   assert.doesNotMatch(JSON.stringify(binary), /ASCII PDF bytes|Edit file/);
   assert.ok(binary.actions.some(item => item.title === 'Download file'));
   assert.doesNotMatch(JSON.stringify(f.sent), /Heading|file-download|file-editor/);
+});
+
+test('Word documents preview their text read-only and long text files keep browser editing', async () => {
+  await writeFile(path.join(root, 'Readme.docx'), zip({ 'word/document.xml': documentXml(['Readme FIRST &amp; setup', 'Step two', 'W'.repeat(3000) + 'DOC-END']) }));
+  await writeFile(path.join(root, 'broken.docx'), 'not a zip package');
+  await writeFile(path.join(root, 'long.md'), '# Long\n' + 'L'.repeat(20_000));
+  const f = fixture();
+  const doc = await openFiles(f, '/sendfile Readme.docx');
+  const docText = doc.body.find(item => item.type === 'RichTextBlock').inlines[0].text;
+  assert.match(docText, /^Readme FIRST & setup\nStep two\nW/);
+  assert.equal(Buffer.byteLength(docText) <= 2600, true);
+  assert.doesNotMatch(JSON.stringify(doc), /DOC-END|Edit file/);
+  assert.match(JSON.stringify(doc), /formatting, images and layout are not shown/);
+  assert.match(JSON.stringify(doc), /complete document/);
+  assert.ok(doc.actions.some(item => item.title === 'Download file'));
+  const broken = await openFiles(f, '/sendfile broken.docx');
+  assert.match(JSON.stringify(broken), /no text preview/);
+  assert.ok(broken.actions.some(item => item.title === 'Download file'));
+  const long = await openFiles(f, '/sendfile long.md');
+  assert.ok(long.actions.some(item => item.title === 'Edit file'), 'files beyond the in-chat limit still get the browser editor');
+  const readonly = fixture({ authorize: async () => ({ root, meta: { allowBash: false }, userIsAdmin: false }) });
+  assert.ok(!(await openFiles(readonly, '/sendfile long.md')).actions.some(item => item.title === 'Edit file'));
 });
 
 test('read-only and no-Public-URL file windows still preview without edit grants', async () => {

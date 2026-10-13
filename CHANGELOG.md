@@ -18,6 +18,11 @@ product overview.
 
 ## Unreleased
 
+- Teams file window: Word `.docx` files now show a read-only plain-text preview of the document
+  body (formatting, images and layout are not shown; Download returns the original). **Edit
+  file** now appears for text and Markdown files up to the browser editor's 250,000-character
+  limit; it was wrongly hidden for any file over 3,000 characters.
+
 - Keep Teams Open files/Open file buttons working when Teams accepts a channel-thread card
   without returning its activity id. The gateway used to treat that as a failed post, deleting
   the button's reference while the card stayed visible, so every click showed "This file button
