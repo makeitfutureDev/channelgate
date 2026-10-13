@@ -1,5 +1,23 @@
 # ChannelGate — Features
 
+## Routing ongoing requests to their owning scope
+
+- Both engines receive a scope decision before persisting “always”, “from now on”, corrections,
+  or recurring requests: facts go to memory, reusable procedures to their existing skill,
+  changes to one automation to its existing schedule, and behavior across tasks to channel
+  instructions. One-off requests need no persistent write. The managed block carries this rule
+  in Clean mode too; the operating guide gives the spam-cleanup example and verification steps.
+- Agents inspect the existing source, preserve personal/shared account scope and unrelated
+  instructions, and report saved versus pending changes. Missing skill/schedule editing access
+  does not justify a fallback to channel instructions or a declarative memory copy. The memory
+  skill and reduced-tool reviewer carry the same boundary.
+- `list_schedules id` returns one conversation-scoped task's complete prompt and configuration.
+  `update_schedule` edits its prompt/title in place for the creator or a gateway admin, requiring
+  the exact old `expected_prompt` and an atomic row comparison. It retains the job's identity,
+  cadence, creator, enabled state, delivery, and history; edits apply to future fires. Thread-loop
+  content uses its own controls. Existing delivery-only edits keep their prior contract.
+- Regression and live Claude/Codex fixtures: TEST-PLAN → Ongoing request routing.
+
 ## Provider selection readiness
 
 - Enabled optional providers must have their own configured credential and endpoint before a

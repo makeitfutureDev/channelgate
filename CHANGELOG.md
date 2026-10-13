@@ -22,6 +22,14 @@ product overview.
   with their reasons and retained for retry, while successful files are removed from the selection.
   An oversized file no longer disables uploading the rest of the batch.
 
+- Route ongoing requests by scope before saving: memory for facts, existing skills for reusable
+  procedures, existing schedules for job instructions, and channel instructions for behavior
+  across tasks. The guide, managed block, tool descriptions and memory reviewer agree. Agents
+  report saved versus pending changes without duplicating procedures into channel rules/memory.
+- Allow schedule creators and gateway admins to read a task's full prompt and edit its prompt or
+  title in place, preserving identity, timing, delivery and history. Stale content edits are
+  refused instead of overwriting another edit; no delete/recreate workaround is needed.
+
 - Allow `CLAUDE.md` in browser file and folder uploads. The new *Overwrite existing files*
   checkbox lets the uploader replace files at their original names; leaving it unchecked keeps
   numbered copies. Replacements are atomic and never write through destination symlinks.

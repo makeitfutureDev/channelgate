@@ -57,7 +57,25 @@ converting or relabelling it.
   History lasts 90 days and starts with the feature; it does not backfill past runs. Engine
   execution/delivery are gateway facts; task results and connection checks are agent-reported
   evidence.
-- `update_schedule` changes existing tasks’ visibility, result filtering, failure notifications and delivery destination. Updates retain the creator and execution permissions; they do not silently recreate a task under another identity.
+- `update_schedule` changes existing tasks’ prompt/title, visibility, result filtering, failure notifications and delivery destination. Updates retain the creator and execution permissions; they do not silently recreate a task under another identity.
+
+## Change an existing task's instructions
+
+When a user changes what an ongoing job should do, update that job instead of creating another
+schedule or adding a channel-wide rule. First call `list_schedules`, identify the intended job,
+then call `list_schedules` with `id` to read its full prompt, creator, account instructions,
+cadence, enabled state and delivery settings. Ask only if the target is still ambiguous.
+
+Call `update_schedule` with the same `id`, the complete revised `prompt`, and `expected_prompt`
+set to the exact prompt you just read. Optional `description` changes the title. Content edits
+require the schedule creator or a gateway admin. Preserve unrelated prompt instructions and
+account scope. The task retains its ID, creator, cadence, enabled state, delivery and history;
+the new prompt applies to future fires. A changed/deleted row is refused; re-read and reconcile.
+Read back with `list_schedules` and `id` before claiming completion. Do not delete/recreate a job
+as an editing workaround. If this run lacks prompt editing, report the limitation.
+
+Reusable procedures belong in the relevant skill; the schedule should invoke that skill rather
+than duplicate its entire procedure. See `references/memory-and-rules.md` and `references/skills.md`.
 
 ## Manage existing schedules
 - `list_schedules` — list this channel's schedules (id, on/off, cron, description, who it

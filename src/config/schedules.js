@@ -81,19 +81,23 @@ export function listForChannel(channelId) {
   return getDb().prepare("SELECT data FROM schedules WHERE channel_id = ? ORDER BY rowid").all(channelId).map((r) => fromJson(r.data, {}));
 }
 
-export function updateSchedule(id, patch) {
+export function updateSchedule(id, patch, expected = null) {
   const row = getDb().prepare("SELECT data FROM schedules WHERE id = ?").get(id);
   if (!row) return null;
   const previous = fromJson(row.data, {});
+  if (expected && Object.entries(expected).some(([key, value]) => JSON.stringify(previous[key]) !== JSON.stringify(value))) return null;
   const next = { ...previous, ...patch };
   // Re-enabling or changing a cron is a new eligibility boundary, never permission to replay
   // minutes that passed while disabled or under a different expression.
   if ((!previous.enabled && next.enabled) || previous.cron !== next.cron) {
     next.cronEligibleSince = new Date().toISOString();
   }
-  getDb()
-    .prepare("UPDATE schedules SET channel_id = ?, enabled = ?, data = ? WHERE id = ?")
-    .run(next.channelId || "", next.enabled ? 1 : 0, toJson(next), id);
+  // Content edits compare the exact row too: another MCP process or scheduler can update it
+  // between the read and write. Refuse a lost race rather than dropping their changes.
+  const statement = getDb().prepare("UPDATE schedules SET channel_id = ?, enabled = ?, data = ? WHERE id = ?" + (expected ? " AND data = ?" : ""));
+  const args = [next.channelId || "", next.enabled ? 1 : 0, toJson(next), id];
+  if (expected) args.push(row.data);
+  if (!statement.run(...args).changes) return null;
   return next;
 }
 

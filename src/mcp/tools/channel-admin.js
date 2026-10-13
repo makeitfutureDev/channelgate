@@ -491,8 +491,11 @@ export function register(server, ctx) {
       description:
         "Add a STANDING rule/instruction to THIS channel's CLAUDE.md — the channel's persistent " +
         "instructions that every future session (both engines, and after /clear) reads at start. " +
-        "Use when someone asks to 'always do X', 'remember this rule', or 'add this to the channel " +
-        "instructions'. `text` is appended below the existing content as-is (write it as a ready " +
+        "Use only for behavior across tasks in this conversation, after classifying the scope. " +
+        "Always/from-now-on wording alone is not enough: reusable task procedures belong in their " +
+        "relevant skill; changes to one automation belong in its existing schedule instructions. " +
+        "Never use this tool as a fallback for missing skill/schedule access. `text` is appended " +
+        "below the existing content as-is (write it as a ready " +
         "instruction, e.g. '- Always reply in German.'). Durable per-channel FACTS still belong in " +
         "MEMORY.md — this file is for RULES about how to behave. An append is saved for approval by " +
         "anyone working in this channel, with no deadline: the tool returns pending immediately and " +
@@ -763,7 +766,9 @@ export function registerMemoryTool(server, ctx) {
         "durable?\n" +
         "SKIP: task progress, completed-work logs, PR/issue numbers, commit SHAs, temporary paths, " +
         "raw data — anything stale within a week. Write declarative facts ('Alex prefers X'), not " +
-        "imperatives. RULES about behavior belong in update_channel_instructions. Never store secrets.",
+        "imperatives. Classify ongoing requests first: task procedures belong in skills, automation " +
+        "changes in existing schedule instructions, and channel-wide behavior in update_channel_instructions. " +
+        "Do not rephrase those instructions as preferences to save them here. Never store secrets.",
       inputSchema: {
         action: z.enum(MEMORY_ACTIONS).optional(),
         text: z.string().optional(),
