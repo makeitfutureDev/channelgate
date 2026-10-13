@@ -17,8 +17,16 @@ function continued(result) {
 }
 function denied(result) {
   assert.equal(result.status, 200);
-  assert.equal(result.body.task.type, 'message');
-  assert.match(result.body.task.value, /Reopen|could not be completed/);
+  if (result.body.task.type === 'continue') {
+    assert.equal(result.body.task.value.title, 'Action unavailable');
+    const card = result.body.task.value.card.content;
+    assert.equal(card.body[0].text, 'Action unavailable');
+    assert.match(card.body[1].text, /Reopen|could not be completed/);
+    assert.equal(actions(card).length, 0);
+  } else {
+    assert.equal(result.body.task.type, 'message');
+    assert.match(result.body.task.value, /Reopen|could not be completed/);
+  }
 }
 async function fixture(t) {
   const suffix = ++sequence, owner = `29:dialog-${suffix}`, tenant = `tenant-${suffix}`;

@@ -339,7 +339,10 @@ Native settings dialogs are available; broadcast mentions remain unavailable.
   guidance. Preview works without a Public URL. Users with file-write
   access can open the uploader. Short-lived browser grants recheck current Teams membership and
   gateway policy. Listings and links stay inside the owner's window. Back to files returns to
-  browsing. No personal chat installation or proactive DM is required.
+  browsing. No personal chat installation or proactive DM is required. Read-only file callbacks
+  have a 3.5-second response budget, cancel stalled roster requests and reuse a single current
+  membership check per callback. Expired/restarted launchers show a dialog error with fresh
+  `/files` guidance. Settings and approval writes are not abandoned by this file-read deadline.
 - Agents use `share_file` to deliver **Open file** in the current Teams conversation. No
   Composio connection or public link is needed; the gateway Public URL is required for its
   authenticated browser downloads. Slack-only tools are not exposed to Teams or Google Chat.

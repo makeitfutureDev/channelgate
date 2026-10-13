@@ -9,7 +9,7 @@ import { createFileDownloadGrantUrl } from '../../web/file-download.js';
 import { createFileEditorGrantUrl } from '../../web/file-editor.js';
 import { createFileUploadGrantUrl } from '../../web/file-upload.js';
 import { createTeamsFileConsent } from './file-consent.js';
-import { createTeamsInteractionHandler, teamsCardErrorResponse } from './interactions.js';
+import { createTeamsInteractionHandler, teamsCardErrorResponse, normalizeTeamsInteraction } from './interactions.js';
 import { handlePlatformApproval } from '../../slack/approvals.js';
 import { acquireKeyedLock } from '../../util/keyed-lock.js';
 import { buildTeamsSettings, createTeamsSettingsContext, handleTeamsSettings, teamsSettingsUi } from './settings.js';
@@ -19,6 +19,7 @@ import { teamsHelpText, createTeamsHelpCard } from './help.js';
 import { settingsLauncher, filesLauncher, settingsDialogResponse } from './settings-dialog.js';
 import { openConfinedFile } from '../../gateway/confined-file.js';
 import { parseConversationId } from '../ids.js';
+import { teamsRequest } from './request.js';
 
 const card = (title, body = [], actions = []) => ({ type: 'AdaptiveCard', version: '1.4', body: [{ type: 'TextBlock', text: title, weight: 'Bolder', wrap: true }, ...body], actions });
 const text = value => ({ type: 'TextBlock', text: String(value), wrap: true });
@@ -26,7 +27,7 @@ const execute = (title, verb, stateId, data = {}) => ({ type: 'Action.Execute', 
 const link = (title, url) => ({ type: 'Action.OpenUrl', title, url });
 const response = value => ({ status: 200, body: { statusCode: 200, type: 'application/vnd.microsoft.card.adaptive', value } });
 
-export function createTeamsControls({ connector, now = Date.now, authorize = teamsWorkspaceContext, approval = handlePlatformApproval, publicUrl = getPublicUrl } = {}) {
+export function createTeamsControls({ connector, now = Date.now, authorize = teamsWorkspaceContext, approval = handlePlatformApproval, publicUrl = getPublicUrl, fileInvokeTimeoutMs = 3500, log = console } = {}) {
   const states = new Map();
   const consent = createTeamsFileConsent({ connector, now, authorizeWorkspace: ({ message, entry }) => authorize({ channelId: message.conversationId, ownerId: message.userId, slug: entry.slug }, { connector }) });
   const prune = () => { for (const [id, state] of states) if (state.expires < now()) states.delete(id); while (states.size > 500) states.delete(states.keys().next().value); };
@@ -71,9 +72,9 @@ export function createTeamsControls({ connector, now = Date.now, authorize = tea
     // The action's engine is the locked card's only engine value; elsewhere the Engine input wins.
     return card('Session model', body, [ui.execute('Apply to this session', 'model.save', { engine })]);
   }
-  async function files(state, stateId, relative = '', page = 0) {
-    const context = await authorize(grant(state), { connector });
+  async function files(state, stateId, context, relative = '', page = 0, signal) {
     const listing = await listVisibleDirectory(context.root, normalizeRelativePath(relative), { page, pageSize: 12 });
+    signal?.throwIfAborted();
     const body = [text(`Folder: /${listing.relative} — page ${listing.page + 1}/${listing.totalPages}`)];
     for (const file of listing.entries.filter(item => item.accessible !== false)) {
       body.push({ type: 'ActionSet', actions: [execute(`${file.type === 'directory' ? '📁' : '📄'} ${file.name}`.slice(0, 80), file.type === 'directory' ? 'files.browse' : 'files.download', stateId, { relative: file.relative })] });
@@ -84,7 +85,8 @@ export function createTeamsControls({ connector, now = Date.now, authorize = tea
     if (canEditChannelFiles(context.meta, { isAdminUser: context.userIsAdmin })) actions.push(execute('Upload files', 'files.upload', stateId, { relative: listing.relative }));
     return card('Conversation files', body, actions);
   }
-  async function fileDetails(state, relative, context, stateId) {
+  async function fileDetails(state, relative, context, stateId, signal) {
+    signal?.throwIfAborted();
     const target = await resolveVisiblePath(context.root, relative, { kind: 'file' });
     const opened = await openConfinedFile(context.root, target.relative);
     let bytes;
@@ -93,6 +95,7 @@ export function createTeamsControls({ connector, now = Date.now, authorize = tea
       const { bytesRead } = await opened.handle.read(buffer, 0, buffer.length, 0);
       bytes = buffer.subarray(0, bytesRead);
     } finally { await opened.handle.close(); }
+    signal?.throwIfAborted();
     const body = [text(target.relative), text(formatFileSize(opened.stat.size))];
     const binary = /\.(?:pdf|docx?|xlsx?|pptx?|odt|ods|odp|zip|gz|7z|png|jpe?g|gif|webp|mp[34]|wav)$/i.test(target.relative)
       || bytes.some(byte => byte < 9 || (byte > 13 && byte < 32));
@@ -189,7 +192,8 @@ export function createTeamsControls({ connector, now = Date.now, authorize = tea
     } catch (error) { await reply(error.message); }
     return true;
   }
-  const dispatchInvoke = createTeamsInteractionHandler({ dispatch: async interaction => {
+  const dispatchInvoke = createTeamsInteractionHandler({ dispatch: async (interaction, { signal } = {}) => {
+    signal?.throwIfAborted();
     const taskInvoke = ['task/fetch', 'task/submit'].includes(interaction.invokeName);
     if (taskInvoke && !['settings.', 'files.'].some(prefix => interaction.action.startsWith(prefix))) throw new Error('Unsupported dialog action.');
     if (interaction.action === 'approval.respond') {
@@ -197,17 +201,22 @@ export function createTeamsControls({ connector, now = Date.now, authorize = tea
       return response(card(result.ok ? 'Approval recorded' : 'Approval unavailable', [text(result.outcome || result.error || 'Handled.')]));
     }
     prune(); const state = states.get(interaction.data.stateId);
+    if (!state && interaction.invokeName === 'task/fetch' && interaction.action === 'files.open') {
+      return teamsCardErrorResponse({ type: 'invoke', name: 'task/fetch' }, 410, 'Gone', 'This file button expired or the gateway restarted. Close this window, send /files in the original conversation and use the new Open files button.');
+    }
     if (!state || state.message.userId !== interaction.actorId || state.deliveryId !== interaction.nativeConversationId) throw new Error('These controls expired or belong to a different conversation/user. Reopen them.');
     const tenantId = state.message.raw?.tenantId;
     if ((state.settingsLauncher || state.settingsDialog || state.filesLauncher || state.filesDialog) && tenantId && interaction.tenantId !== tenantId) throw new Error('These controls belong to another tenant.');
     if (state.filesLauncher) {
       if (interaction.invokeName !== 'task/fetch' || interaction.action !== 'files.open') throw new Error('Open the files window first.');
-      const context = await authorize(grant(state), { connector });
+      const context = await authorize(grant(state), { connector, signal });
+      signal?.throwIfAborted();
       const id = randomUUID();
       const dialog = { ...state, filesLauncher: false, filesDialog: true, inConversation: false,
         messageId: '', expires: now() + 15 * 60_000 };
       const result = filesResponse(state.selectedFile
-        ? await fileDetails(dialog, state.relative, context, id) : await files(dialog, id, state.relative));
+        ? await fileDetails(dialog, state.relative, context, id, signal) : await files(dialog, id, context, state.relative, 0, signal));
+      signal?.throwIfAborted();
       prune(); states.set(id, dialog);
       return result;
     }
@@ -242,9 +251,10 @@ export function createTeamsControls({ connector, now = Date.now, authorize = tea
         return response(updated);
       } finally { release(); }
     }
-    const context = await authorize(grant(state), { connector });
+    const context = await authorize(grant(state), { connector, signal });
+    signal?.throwIfAborted();
     state.meta = context.meta; state.authorIsAdmin = context.userIsAdmin;
-    if (interaction.action === 'files.browse') return filesResponse(await files(state, interaction.data.stateId, interaction.data.relative || '', Number(interaction.data.page) || 0));
+    if (interaction.action === 'files.browse') return filesResponse(await files(state, interaction.data.stateId, context, interaction.data.relative || '', Number(interaction.data.page) || 0, signal));
     const repaintModel = async updated => {
       if (state.inConversation && state.messageId) await connector.updateCard({ conversationId: state.deliveryId,
         messageId: state.messageId, card: updated, text: 'Session model settings' });
@@ -287,7 +297,7 @@ export function createTeamsControls({ connector, now = Date.now, authorize = tea
     }
     const relative = normalizeRelativePath(interaction.data.relative || '');
     if (interaction.action === 'files.download') {
-      return filesResponse(await fileDetails(state, relative, context, interaction.data.stateId));
+      return filesResponse(await fileDetails(state, relative, context, interaction.data.stateId, signal));
     }
     const baseUrl = publicUrl(); if (!baseUrl) throw new Error('Set the gateway Public URL before opening browser files.');
     const input = { ...grant(state), baseUrl, relative };
@@ -305,7 +315,21 @@ export function createTeamsControls({ connector, now = Date.now, authorize = tea
       return response(card('Bot registration mismatch', [text('Reopen settings with the bot installed in this channel. An administrator must check its Teams app registration and messaging endpoint.')]));
     }
     if (activity.type === 'invoke' && activity.name === 'fileConsent/invoke') return consent.handle(activity);
-    const result = await dispatchInvoke(activity);
+    let boundedFileRead = false;
+    if (activity.type === 'invoke' && ['task/fetch', 'task/submit'].includes(activity.name)) {
+      try { boundedFileRead = ['files.open', 'files.browse', 'files.download'].includes(normalizeTeamsInteraction(activity).action); } catch { /* normal parser returns the safe error */ }
+    }
+    let result;
+    if (boundedFileRead) {
+      // Only read-only file dialogs have this deadline. Never abandon settings/approval
+      // mutations while an external write might still be in progress.
+      try {
+        result = await teamsRequest(signal => dispatchInvoke(activity, { signal }), { timeoutMs: fileInvokeTimeoutMs });
+      } catch {
+        log.warn?.('[msteams] read-only file dialog exceeded its response deadline');
+        return teamsCardErrorResponse(activity, 504, 'Timeout', 'Files could not be opened in time. Close this window, send /files in the original conversation and try the new Open files button. No file was changed.');
+      }
+    } else result = await dispatchInvoke(activity);
     // Legacy Submit is a message activity: HTTP response cards are ignored by Teams clients.
     // Model cards update inside their authorized dispatcher; file/settings dialogs accept only
     // task invokes and never publish their contents through a legacy message replacement.

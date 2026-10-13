@@ -156,8 +156,8 @@ export function createTeamsApi({ auth, serviceUrl = DEFAULT_SERVICE_URL, fetchIm
 
     // Roster for mention resolution. In a channel this needs RSC consent; without it Teams answers
     // 403 and the caller keeps its previous (possibly empty) directory.
-    async listMembers(conversationId) {
-      const res = await call(`v3/conversations/${target(conversationId)}/members`, { method: "GET" });
+    async listMembers(conversationId, { signal } = {}) {
+      const res = await call(`v3/conversations/${target(conversationId)}/members`, { method: "GET", signal });
       const list = Array.isArray(res) ? res : (res?.members || []);
       return list
         .filter((m) => m?.id)

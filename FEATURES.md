@@ -7,6 +7,11 @@
   membership are checked before delivery and again when opening/downloading. A gateway Public
   URL is required for browser downloads; sending a file this way does not publish a public link
   or upload it to OneDrive. Slack-only tools are omitted from Teams and Google Chat MCP sessions.
+- Read-only file callbacks share a 3.5-second response budget and cancel stalled membership
+  requests. Opening and browsing reuse the authorization result within that one request, avoiding
+  duplicate network checks; each subsequent click still checks current membership. Failed
+  task/fetch requests return a renderable error card, including guidance for expired/restarted
+  launchers. Settings and approval mutations keep their existing completion semantics.
 - The file window previews up to 2,600 bytes of text/Markdown as literal monospace text, states
   when the preview is truncated, and downloads the complete original file. Binary documents
   such as DOCX/PDF show download guidance. Preview and Back to files work without a Public URL;

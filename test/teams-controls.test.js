@@ -109,10 +109,10 @@ test('foreign actor/conversation and expired controls cannot use file grants', a
   const data = f.sent[0].card.actions[0].data;
   for (const [actor, conversation] of [['29:other', '19:source@thread.v2'], ['29:owner', 'a:other']]) {
     const result = await f.controls.onInvoke(task(data, 'task/fetch', actor, conversation));
-    assert.equal(result.body.task.type, 'message');
+    assert.equal(result.body.task.value.title, 'Action unavailable');
   }
   time = 16 * 60_000;
-  const result = await f.controls.onInvoke(task(data, 'task/fetch')); assert.equal(result.body.task.type, 'message');
+  const result = await f.controls.onInvoke(task(data, 'task/fetch')); assert.equal(result.body.task.value.title, 'Action unavailable');
 });
 test('reaction content never opens native commands; failed thread-card delivery never redirects to a DM', async () => {
   const f = fixture(); const args = f.args('/files'); args.message.trigger = 'reaction';
@@ -243,7 +243,7 @@ test('files dialogs enforce tenant, actor, source, expiry and current access on 
   const runTask = (data, name = 'task/submit', overrides = {}) => f.controls.onInvoke({
     ...task(data, name), channelData: { tenant: { id: 'tenant-original' } }, ...overrides,
   });
-  assert.equal((await runTask(launch, 'task/fetch', { channelData: { tenant: { id: 'tenant-other' } } })).body.task.type, 'message');
+  assert.equal((await runTask(launch, 'task/fetch', { channelData: { tenant: { id: 'tenant-other' } } })).body.task.value.title, 'Action unavailable');
   const listing = continued(await runTask(launch, 'task/fetch'));
   const download = listing.body.find(item => item.type === 'ActionSet').actions[0].data;
   for (const overrides of [

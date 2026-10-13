@@ -115,7 +115,11 @@ test('signed dialog callbacks preserve task responses, retry dedupe and safe fai
       const failed = response();
       await createTeamsWebhook({ ...options, onInvoke })(req, failed);
       assert.equal(failed.code, 200);
-      assert.equal(failed.body.task.type, 'message');
+      if (name === 'task/fetch') {
+        assert.equal(failed.body.task.type, 'continue');
+        assert.equal(failed.body.task.value.card.content.body[0].text, 'Action unavailable');
+        assert.equal(failed.body.task.value.card.contentType, 'application/vnd.microsoft.card.adaptive');
+      } else assert.equal(failed.body.task.type, 'message');
       assert.doesNotMatch(JSON.stringify(failed.body), /private-value-do-not-return/);
     }
     const forged = response();

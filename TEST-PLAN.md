@@ -10191,3 +10191,33 @@ and stub Microsoft delivery; no live Teams client or engine acceptance is claime
       run exposes only the shared connector identity, while AGENTS.local.md requires the
       requester's selected personal connection for registry writes. No shared account substitute
       or fixture-based live pass is permitted. Stable release acceptance remains pending.
+
+## Teams file dialog callback timing and recovery (2026-10-13)
+
+160 focused callback, settings, authorization, transport and file regressions passed without
+failures or skips. Static checks, documentation coverage and secret scanning passed. Live
+Microsoft callback logs and client acceptance remain unverified.
+
+- [x] `test/teams-file-dialog-callback.test.js` exercises a signed Bot Framework invoke through
+      the real webhook, native controls, scratch workspace authorization and roster HTTP client.
+      Fresh opening/browsing makes one membership request per callback; later revocation still
+      refuses file contents. A stalled roster that ignores cancellation returns a renderable
+      error within the configured test budget, aborts its real request, exposes no content/token
+      and preserves transport retry deduplication. A new click succeeds after the roster recovers.
+      A launcher whose state was cleared at restart returns an error card with `/files` guidance.
+      Callback tests are engine-independent because no engine is invoked.
+- [x] Updated existing Teams controls, dialog and signed-card regressions validate safe
+      task/fetch error cards while task/submit retains message errors. Authentication failures
+      still reject at HTTP level; no submitted form values are reflected in errors.
+- [ ] Live Claude and Codex in the private Teams channel/group/DM QA fixtures: select each engine
+      before asking for a file, issue a fresh `/files` command (mentioning the bot outside a DM),
+      and click Open files immediately. Require a usable private listing, successful navigation
+      and original-file download with no chat disclosure. Record callback response timing and
+      actual Teams desktop/web/mobile rendering. Revoke membership and require refusal. Open
+      a pre-restart or 16-minute-old launcher: require a visible error card with new `/files`
+      guidance rather than the generic reachability banner. Create a new launcher and require
+      successful recovery. Test read-only membership denial and source-conversation isolation.
+- [ ] Private dual-engine QA registry records and actual client acceptance remain pending:
+      this run has no requester-side personal connector for the required registry writes.
+      Synthetic timing tests prove callback behavior, not the root cause of a particular live
+      screenshot; no host callback log was available in this container.
