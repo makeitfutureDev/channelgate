@@ -18,6 +18,10 @@ product overview.
 
 ## Unreleased
 
+- Keep Teams file callbacks responsive by removing duplicate membership requests, cancelling
+  stalled read-only callbacks within 3.5 seconds, and showing a dialog error for unavailable or
+  expired file controls. Settings and approval mutations retain their completion semantics.
+
 - Add literal text previews to Teams file windows and a `share_file` agent tool that delivers
   **Open file** in the source conversation. Remove Slack-only tools from Teams and Google Chat
   sessions, preventing file sharing from calling Slack with a foreign conversation ID.
