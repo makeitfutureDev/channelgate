@@ -6,7 +6,7 @@
 // traversal, and verify the resolved target still lives under the root. Names are not filtered.
 import path from "node:path";
 import { spawn } from "node:child_process";
-import { chmod, link, mkdir, open, readFile, readdir, realpath, rename, rm, stat, writeFile } from "node:fs/promises";
+import { chmod, mkdir, open, readFile, readdir, realpath, rename, rm, stat, writeFile } from "node:fs/promises";
 import { createHash, randomUUID } from "node:crypto";
 import { MAX_FILE_UPLOAD_BYTES } from "./upload.js";
 
@@ -48,10 +48,10 @@ export const PREVIEW_BYTES = 2600;
 
 const BOUND_FILE_WRITER = String.raw`
 import path from "node:path";
-import { lstat, open, realpath, rename, rm } from "node:fs/promises";
+import { link, lstat, open, realpath, rename, rm } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 
-const [expectedRoot, name, overwrite, expectedDirectory] = process.argv.slice(1);
+const [expectedRoot, name, overwrite, expectedDirectory, collisionRename] = process.argv.slice(1);
 let handle;
 let failure;
 let temporary;
@@ -78,22 +78,38 @@ try {
     } catch (error) {
       if (error.code !== "ENOENT") throw error;
     }
-    temporary = ".gateway-upload-" + randomUUID();
   }
+  if (overwrite === "true" || collisionRename === "true") temporary = ".gateway-upload-" + randomUUID();
   handle = await open(temporary || name, "wx", mode);
   await handle.writeFile(Buffer.concat(chunks));
   if (preserveMode) await handle.chmod(mode);
   await handle.close();
   handle = null;
-  if (temporary) await rename(temporary, name);
-  process.stdout.write(JSON.stringify({ overwritten }));
+  let savedName = name;
+  if (overwrite === "true") await rename(temporary, name);
+  else if (collisionRename === "true") {
+    let saved = false;
+    for (let number = 0; number < 1000; number++) {
+      savedName = numberedFilename(name, number);
+      try {
+        await link(temporary, savedName);
+        saved = true;
+        break;
+      } catch (error) {
+        if (error.code !== "EEXIST") throw error;
+      }
+    }
+    if (!saved) throw new Error("Too many files with that name already exist in this folder.");
+  }
+  process.stdout.write(JSON.stringify({ overwritten, name: savedName }));
 } catch (error) {
   failure = error;
 } finally {
   await handle?.close().catch(() => {});
+  if (temporary) await rm(temporary, { force: true }).catch(() => {});
 }
 if (failure) {
-  if (temporary || handle) await rm(temporary || name, { force: true }).catch(() => {});
+  if (!temporary && handle) await rm(name, { force: true }).catch(() => {});
   process.stderr.write(JSON.stringify({ code: failure.code || "", message: failure.message || "File creation failed." }));
   process.exit(1);
 }
@@ -542,11 +558,13 @@ export async function createVisibleDirectory(root, relative, requestedName) {
 // is refused without creating or writing the file. This provides portable openat-like containment
 // with documented Node APIs. Explicit upload replacement uses an exclusive temporary file and
 // rename in this same bound directory, replacing a symlink node rather than following its target.
-export function writeNewFileInBoundDirectory(directoryPath, rootReal, name, bytes, { overwrite = false } = {}) {
+export function writeNewFileInBoundDirectory(directoryPath, rootReal, name, bytes, { overwrite = false, collisionRename = false } = {}) {
   return new Promise((resolve, reject) => {
     let child;
     try {
-      child = spawn(process.execPath, ["--input-type=module", "--eval", BOUND_FILE_WRITER, rootReal, name, String(overwrite), directoryPath], {
+      child = spawn(process.execPath, ["--input-type=module", "--eval",
+        BOUND_FILE_WRITER + "\n" + numberedFilename.toString(),
+        rootReal, name, String(overwrite), directoryPath, String(collisionRename)], {
         cwd: directoryPath,
         env: {},
         stdio: ["pipe", "pipe", "pipe"],
@@ -629,6 +647,24 @@ export function normalizeUploadFilename(value, { allowClaudeInstructions = false
   return name;
 }
 
+// Project-local Claude configuration is uploadable. The channel-root .claude directory is
+// gateway policy, so the effective logical AND physical destinations decide whether it is allowed.
+function normalizeBrowserUploadFolder(value) {
+  return value === ".claude" ? value : normalizeNewFolderName(value);
+}
+
+function isProtectedBrowserUploadDirectoryPath(relative) {
+  return normalizeRelativePath(relative).split("/").filter(Boolean).some((part, index) =>
+    part === ".claude" ? index === 0 : isProtectedName(part));
+}
+
+function assertBrowserUploadDirectory(directory) {
+  const physicalRelative = path.relative(directory.rootReal, directory.path).split(path.sep).join("/");
+  if (isProtectedBrowserUploadDirectoryPath(directory.relative) || isProtectedBrowserUploadDirectoryPath(physicalRelative)) {
+    throw new Error("Protected/internal channel folders are read-only. Upload project .claude files inside a project folder.");
+  }
+}
+
 export function normalizeBrowserUploadPath(value) {
   const raw = String(value || "");
   if (!raw || raw.startsWith("/") || raw.includes("\\") || raw.includes("\0")) {
@@ -638,7 +674,7 @@ export function normalizeBrowserUploadPath(value) {
   if (!parts.length || parts.some((part) => !part || part === "." || part === "..")) {
     throw new Error("Upload paths cannot contain empty or traversal segments.");
   }
-  const folders = parts.slice(0, -1).map(normalizeNewFolderName);
+  const folders = parts.slice(0, -1).map(normalizeBrowserUploadFolder);
   return [...folders, normalizeUploadFilename(parts.at(-1), { allowClaudeInstructions: true })].join("/");
 }
 
@@ -653,39 +689,28 @@ function numberedFilename(name, number) {
 }
 
 async function writeUploadedBytes(directory, name, bytes) {
-  const temp = path.join(directory.path, `.gateway-upload-${randomUUID()}`);
-  await writeFile(temp, bytes, { flag: "wx", mode: 0o644 });
-  try {
-    for (let number = 0; number < 1000; number++) {
-      const candidate = numberedFilename(name, number);
-      const destination = path.join(directory.path, candidate);
-      try {
-        await link(temp, destination);
-        const savedRelative = directory.relative ? `${directory.relative}/${candidate}` : candidate;
-        return { relative: savedRelative, path: destination, name: candidate, bytes: bytes.length, renamed: candidate !== name };
-      } catch (error) {
-        if (error?.code !== "EEXIST") throw error;
-      }
-    }
-    throw new Error("Too many files with that name already exist in this folder.");
-  } finally {
-    await rm(temp, { force: true }).catch(() => {});
-  }
+  const result = await writeNewFileInBoundDirectory(directory.path, directory.rootReal, name, bytes, { collisionRename: true });
+  const candidate = result.name;
+  return { relative: directory.relative ? `${directory.relative}/${candidate}` : candidate,
+    path: path.join(directory.path, candidate), name: candidate, bytes: bytes.length, renamed: candidate !== name };
 }
 
 async function resolveOrCreateUploadDirectory(root, baseRelative, folderParts) {
   let directory = await resolveVisiblePath(root, baseRelative, { kind: "directory" });
-  if (isProtectedResolvedPath(directory)) throw new Error("Protected/internal files are read-only in this explorer.");
+  assertBrowserUploadDirectory(directory);
   for (const requested of folderParts) {
-    const name = normalizeNewFolderName(requested);
+    const name = normalizeBrowserUploadFolder(requested);
     const childRelative = directory.relative ? `${directory.relative}/${name}` : name;
+    if (isProtectedBrowserUploadDirectoryPath(childRelative)) {
+      throw new Error("Protected/internal channel folders are read-only. Upload project .claude files inside a project folder.");
+    }
     try {
       await mkdir(path.join(directory.path, name), { mode: 0o755 });
     } catch (error) {
       if (error?.code !== "EEXIST") throw error;
     }
     directory = await resolveVisiblePath(root, childRelative, { kind: "directory" });
-    if (isProtectedResolvedPath(directory)) throw new Error("Protected/internal files are read-only in this explorer.");
+    assertBrowserUploadDirectory(directory);
   }
   return directory;
 }

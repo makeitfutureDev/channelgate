@@ -6479,10 +6479,18 @@ none` for its cases and live gates. Kept as history.
       the root and in a project folder, keep both on default collisions, and explicitly replace
       the original name. Replacement preserves existing permissions and replaces a symlink node
       without touching its target. Invalid overwrite values, directories, escaping parent symlinks,
-      protected parent aliases, `.claude/settings.json`, `AGENTS.md`, and `MEMORY.md` are refused.
+      protected parent aliases, root `.claude/settings.json`, `AGENTS.md`, and `MEMORY.md` are refused.
+- [x] Unit (`test/file-explorer.test.js`, `test/file-upload.test.js`): upload
+      `#project/.claude/settings.json` and `#project/.claude/skills/example/SKILL.md` from the root
+      or an existing project destination; preserve bytes, collision copies and explicit overwrite.
+      Root `.claude` policy is unchanged. Direct root uploads and project aliases to root policy
+      are refused, including nested symlinks and overwrite; escaping symlinks remain refused.
+      Both collision-copy and overwrite writes bind their destination directory before writing,
+      refusing a project-directory swap into the root policy folder.
+      Native New folder retains its separate protected-name rules.
 - [x] Chromium (`test/file-session-browser.test.js`, 2026-10-13): real folder selection includes
-      `Project/CLAUDE.md` and a nested asset; an unchecked overwrite control keeps originals and
-      numbered copies, checking it replaces originals, and standalone `CLAUDE.md` is accepted.
+      `Project/CLAUDE.md`, `.claude/settings.json`, `.claude/skills/example/SKILL.md` and an asset;
+      an unchecked overwrite control keeps originals and numbered copies, checking it replaces originals, and standalone `CLAUDE.md` is accepted.
       Mixed selections continue across protected-name errors and a simulated network failure;
       retry saves only skipped files without duplicating successes. An oversized first file is
       skipped and the following small file still uploads. Counts and per-file reasons match.
@@ -6491,8 +6499,12 @@ none` for its cases and live gates. Kept as history.
 - [ ] Live UPLOAD-CLAUDE-01 (engine-independent browser control plane): Apps opens the folder
       footer button or Browse channel files shortcut in a writable disposable workspace with a Public URL configured. Seed `Project/CLAUDE.md`
       with `original instructions`, then choose a local `Project` folder containing `CLAUDE.md`
-      with `uploaded instructions` and `assets/note.txt`. Upload with overwrite unchecked: require
-      original bytes untouched, `CLAUDE (1).md` with uploaded bytes and the nested asset. Repeat
+      with `uploaded instructions`, `assets/note.txt`, `.claude/settings.json` containing
+      `{"permissions":{"allow":["Read"]}}`, and `.claude/skills/example/SKILL.md` containing
+      `# Project skill`. Upload with overwrite unchecked: require
+      original bytes untouched, `CLAUDE (1).md` with uploaded bytes and every nested asset/settings/
+      skill file preserved. Uploading settings must leave channel-root `.claude/settings.json`
+      byte-identical, including attempts through a symlink alias. Repeat
       with *Overwrite existing files* checked: require `Project/CLAUDE.md` has uploaded bytes and
       the copy remains intact. Also upload a standalone root `CLAUDE.md`. Require per-file audit
       with the requester and `overwritten` result. Bad CSRF/revoked authorization must still deny

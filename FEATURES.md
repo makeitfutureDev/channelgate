@@ -1328,8 +1328,12 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
   File and folder uploads allow `CLAUDE.md` at the root or nested in a project. An unchecked
   *Overwrite existing files* choice keeps numbered copies; selecting it atomically replaces files
   at their original names. Replacement operates on a symlink itself and never writes its target;
-  directory escapes and protected/internal parent directories remain refused. Gateway-owned
-  folders refresh their managed instruction block on the next turn and keep the uploaded channel
+  project-local `.claude/skills/` and `.claude/settings*.json` files are accepted as part of
+  folder uploads, including when uploading into an existing project subfolder. The channel-root
+  `.claude/` policy and aliases pointing to it remain protected; other protected names and
+  directory escapes remain refused. Uploaded project skills stay in the project tree for later
+  personal/channel catalog registration, and uploaded settings do not replace gateway policy.
+  Gateway-owned folders refresh their managed instruction block on the next turn and keep the uploaded channel
   instructions outside it. Read-only
   mode hides write controls and Full remains admin-only. With a Public URL configured, every file
   preview also offers *Download*: a requester-bound, 10-minute, single-use URL rechecks channel

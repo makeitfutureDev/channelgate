@@ -98,6 +98,9 @@ for (const kind of ["editor", "upload"]) {
       t.after(() => rm(local, { recursive: true, force: true }));
       const folder = path.join(local, "Project");
       await mkdir(path.join(folder, "assets"), { recursive: true });
+      await mkdir(path.join(folder, ".claude", "skills", "example"), { recursive: true });
+      await writeFile(path.join(folder, ".claude", "settings.json"), '{"permissions":{"allow":["Read"]}}\n');
+      await writeFile(path.join(folder, ".claude", "skills", "example", "SKILL.md"), "# Project skill\n");
       await writeFile(path.join(folder, "CLAUDE.md"), "Uploaded instructions\n");
       await writeFile(path.join(folder, ".DS_Store"), "Protected fixture\n");
       await writeFile(path.join(folder, "assets", "note.txt"), "Nested asset\n");
@@ -107,14 +110,16 @@ for (const kind of ["editor", "upload"]) {
       assert.equal(await page.locator("#overwrite").isChecked(), false);
       await page.locator("#folder").setInputFiles(folder);
       await page.locator("#upload").click();
-      await page.waitForFunction(() => globalThis.document.querySelector("#status").textContent.startsWith("Uploaded 2 file(s)."));
+      await page.waitForFunction(() => globalThis.document.querySelector("#status").textContent.startsWith("Uploaded 4 file(s)."));
       assert.equal(await readFile(destination, "utf8"), "Original instructions\n");
       assert.match(await page.locator("#failures").textContent(), /Project\/\.DS_Store.*protected/i);
+      assert.equal(await readFile(path.join(root, "docs/Project/.claude/settings.json"), "utf8"), '{"permissions":{"allow":["Read"]}}\n');
+      assert.equal(await readFile(path.join(root, "docs/Project/.claude/skills/example/SKILL.md"), "utf8"), "# Project skill\n");
       assert.equal(await readFile(path.join(root, "docs", "Project", "CLAUDE (1).md"), "utf8"), "Uploaded instructions\n");
       await page.locator("#overwrite").check();
       await page.locator("#folder").setInputFiles(folder);
       await page.locator("#upload").click();
-      await page.waitForFunction(() => globalThis.document.querySelector("#status").textContent.startsWith("Uploaded 2 file(s)."));
+      await page.waitForFunction(() => globalThis.document.querySelector("#status").textContent.startsWith("Uploaded 4 file(s)."));
       assert.equal(await readFile(destination, "utf8"), "Uploaded instructions\n");
       assert.equal(await readFile(path.join(root, "docs", "Project", "assets", "note.txt"), "utf8"), "Nested asset\n");
       await page.locator("#files").setInputFiles({ name: "CLAUDE.md", mimeType: "text/markdown", buffer: Buffer.from("Root instructions\n") });
@@ -156,7 +161,7 @@ for (const kind of ["editor", "upload"]) {
       assert.match(await page.locator("#failures").textContent(), /oversize.txt.*limit/i);
       assert.equal(await readFile(path.join(root, "docs", "small.txt"), "utf8"), "Small fixture\n");
     }
-    const expectedAudits = kind === "upload" ? 10 : 1;
+    const expectedAudits = kind === "upload" ? 14 : 1;
     assert.equal(audits.length, expectedAudits);
     // A fresh cross-site top-level POST must NOT receive even a newly minted Lax cookie.
     await page.goto(sourceUrl);
