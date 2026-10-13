@@ -120,3 +120,16 @@ test('a launcher lost at restart returns a renderable dialog error with no file 
   assert.match(error.body[1].text, /button expired or the gateway restarted/);
   assert.doesNotMatch(JSON.stringify(error), /hello\.txt|file-download/);
 });
+
+test('gateway access revoked while the roster is in flight refuses before displaying files', async t => {
+  const f = await fixture(t); const launcher = await f.launch();
+  const release = f.hold();
+  const pending = f.callback(launcher);
+  await new Promise(resolve => setImmediate(resolve));
+  await setUser(f.owner, { approved: false });
+  release();
+  const error = content(await pending);
+  assert.equal(error.body[0].text, 'Action unavailable');
+  assert.doesNotMatch(JSON.stringify(error), /hello\.txt|file-download/);
+  assert.equal(f.posted.length, 1);
+});

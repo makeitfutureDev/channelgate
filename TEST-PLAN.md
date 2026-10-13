@@ -10194,14 +10194,14 @@ and stub Microsoft delivery; no live Teams client or engine acceptance is claime
 
 ## Teams file dialog callback timing and recovery (2026-10-13)
 
-160 focused callback, settings, authorization, transport and file regressions passed without
+161 focused callback, settings, authorization, transport and file regressions passed without
 failures or skips. Static checks, documentation coverage and secret scanning passed. Live
 Microsoft callback logs and client acceptance remain unverified.
 
 - [x] `test/teams-file-dialog-callback.test.js` exercises a signed Bot Framework invoke through
       the real webhook, native controls, scratch workspace authorization and roster HTTP client.
-      Fresh opening/browsing makes one membership request per callback; later revocation still
-      refuses file contents. A stalled roster that ignores cancellation returns a renderable
+      Fresh opening/browsing makes one membership request per callback; later revocation and
+      gateway access revoked while that request is in flight both refuse file contents. A stalled roster that ignores cancellation returns a renderable
       error within the configured test budget, aborts its real request, exposes no content/token
       and preserves transport retry deduplication. A new click succeeds after the roster recovers.
       A launcher whose state was cleared at restart returns an error card with `/files` guidance.
