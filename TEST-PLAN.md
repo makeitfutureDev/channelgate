@@ -10150,3 +10150,44 @@ The stable API conversation candidate includes the compatible lock refresh from 
       with Stop and with a controlled typing-activity failure: no stuck status or failed answer.
       Record desktop/mobile screenshots, activity request order and IDs. Live checks and private
       QA registry records remain pending; no requesting-user personal QA connection is exposed.
+
+## Teams workspace file previews and delivery (2026-10-13)
+
+Validation: 164 focused regressions passed with zero failures/skips. Static checks, secret
+scanning and the repository security-coverage check passed. MCP/approval tests use scratch state
+and stub Microsoft delivery; no live Teams client or engine acceptance is claimed.
+
+- [x] Automated scratch regression: `test/platform-file-tools.test.js` uses actual MCP clients
+      and servers with Claude/Codex signed-context fixtures. Teams and Google Chat expose no
+      Slack tools; Slack retains its upload tool; Teams `share_file` keeps the original
+      conversation, requester and session and refuses revoked authors. Real native approval
+      handling keeps a share-link card pending without a DM and mints no link before Approve;
+      after the exact authorized card click the result contains the expiring public URL.
+- [x] `test/teams-controls.test.js`: real task/fetch and task/submit fixtures preview literal
+      Markdown, truncate text with full-download guidance, handle empty/binary files, keep file
+      contents and browser grants out of chat, preserve read-only access, preview without a
+      Public URL, route agent delivery through source-thread launchers and reject traversal,
+      outside symlinks and revoked access. Existing cases cover actor, conversation, tenant,
+      expiry and current roster authority. These dialog-only cases are engine-independent.
+- [ ] Live Claude and Codex, separately: use a disposable registered Teams channel/thread,
+      group chat and existing personal bot chat with an approved member and a nonmember.
+      Configure a public HTTPS gateway URL and enable public file links. Seed `sample.md`
+      (3,000 ASCII bytes ending with a unique sentinel), an empty text file and a disposable
+      DOCX/PDF. Ask “Send me sample.md here.” Require a source-conversation **Open file** card,
+      no Slack API error, no unsolicited DM and no public URL. Open it: preview is bounded and
+      literal; Download returns all original bytes including the sentinel. DOCX/PDF show download
+      guidance and open correctly after download. Test `/files` in Teams (with a mention in a
+      channel/group), Back to files, eligible Edit file, and existing Upload files as a writer;
+      read-only members receive previews/downloads without edit/upload controls. A foreign actor,
+      revoked member or expired launcher cannot view or download the file. Repeat on Teams
+      desktop/web/mobile and retain actual rendering, callbacks and download hashes.
+- [ ] Live Claude and Codex: ask “Give me a public download link for sample.md for one hour.”
+      Require a native Approve card in the source conversation, no DM and no immediate
+      “Approval unavailable”. Before approval there must be no published link. Approve once,
+      require a one-hour URL, and fetch the exact bytes in a browser without a gateway login.
+      Deny a second request and require no new link. Revoke the first URL and require HTTP 404.
+      Use explicit-duration prompts and retain original file hashes and card/link audit evidence.
+- [ ] Private ChannelGate QA registry: corresponding dual-engine cases remain pending. This
+      run exposes only the shared connector identity, while AGENTS.local.md requires the
+      requester's selected personal connection for registry writes. No shared account substitute
+      or fixture-based live pass is permitted. Stable release acceptance remains pending.

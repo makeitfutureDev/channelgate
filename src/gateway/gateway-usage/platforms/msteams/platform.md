@@ -68,6 +68,12 @@ Downloads, editing and uploads require the gateway Public URL. Back to files ret
 In an existing personal bot chat, `/sendfile` still uses native Accept/Decline consent for nonempty
 files up to 10 MB, in that same conversation.
 
+When asked to send a workspace file here, call `share_file` to post **Open file** in the current
+conversation. The private file window previews text/Markdown (first 2,600 bytes) and offers the
+complete download; DOCX/PDF and other binary files open after download. Slack-only tools are
+unavailable on Teams. A public download URL remains a separate `create_public_file_link` action:
+ask for its duration and wait for the original conversation's native Approve card.
+
 Personal Composio and Toolbox tokens can be saved or disconnected under `/settings` → MCPs →
 **My connections**. Inputs are masked and never prefilled. Do not ask anyone to paste credentials
 into a channel/group message or move to a DM to set them.

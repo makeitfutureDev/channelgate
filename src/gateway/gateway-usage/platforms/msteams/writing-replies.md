@@ -25,8 +25,16 @@ most restrictive surface the gateway supports — write plainly and the reply wi
 - **Block quotes.** Flattened to plain lines; don't rely on `>` for emphasis.
 
 ## Local files for user review
-Write a file's full absolute path in inline code — for example: Please review
-`/workspace/docs/spec.md`. Do **not** make a local filesystem path a Markdown link.
+When asked to send or attach a file here, use `gateway` → `share_file` with its workspace-relative
+path. It posts **Open file** in this conversation; the requester opens a private Teams window
+with a text preview and download/edit controls. No Composio account or public link is needed.
+Do not use Slack tools in Teams or promise automatic file buttons from a path in your reply.
+For manual browsing, send `@bot /files` in channels/groups or `/files` in personal chat;
+`/sendfile <workspace-relative path>` opens a selected file.
+Text/Markdown previews show up to 2,600 bytes. Binary documents such as DOCX/PDF download for
+opening in their own application. Native Accept/Decline file sending is available through
+`/sendfile` only in an existing personal bot chat (nonempty files up to 10 MB).
+Do **not** make a local filesystem path a Markdown link.
 
 ## Progress and pacing
 The gateway shows progress by editing its message in place, paced to about one edit per second per

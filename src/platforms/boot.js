@@ -46,6 +46,7 @@ async function startTeamsTransport(config, log) {
     auth, capabilities, api, botId: botIdFor(config.appId), tenantId: config.tenantId, log,
   });
   const controls = createTeamsControls({ connector });
+  connector.shareFile = controls.shareFile;
   const ingest = createIngest({ connector, log, onCommand: controls.onCommand });
   return startTeams({ ...config, capabilities, getActivationReactions: () => getMentionReactions('msteams'), getActivationVersion: getTeamsMentionReactionsUpdatedAt, onMessage: ingest, onInvoke: controls.onInvoke, onStop: controls.stop, log, deps: { auth, api, connector } });
 }

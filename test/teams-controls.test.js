@@ -257,3 +257,63 @@ test('files dialogs enforce tenant, actor, source, expiry and current access on 
   assert.equal((await runTask(download)).body.task.type, 'message');
   assert.equal(f.sent.length, 1);
 });
+
+test('selected file windows show bounded literal text, complete downloads and binary guidance', async () => {
+  await writeFile(path.join(root, 'preview.md'), '# Heading\n[link](https://example.test)\n' + 'A'.repeat(2800) + 'END-MARKER');
+  await writeFile(path.join(root, 'empty.txt'), '');
+  await writeFile(path.join(root, 'document.pdf'), '%PDF-1.7 ASCII PDF bytes must not render as a text preview');
+  const f = fixture();
+  const preview = await openFiles(f, '/sendfile preview.md');
+  const literal = preview.body.find(item => item.type === 'RichTextBlock');
+  assert.match(literal.inlines[0].text, /^# Heading\n\[link\]/);
+  assert.equal(literal.inlines[0].fontType, 'Monospace');
+  assert.equal(Buffer.byteLength(literal.inlines[0].text), 2600);
+  assert.doesNotMatch(JSON.stringify(preview), /END-MARKER/);
+  assert.match(JSON.stringify(preview), /complete file/);
+  assert.ok(preview.actions.some(item => item.title === 'Download file'));
+  assert.ok(preview.actions.some(item => item.title === 'Edit file'));
+  const empty = await openFiles(f, '/sendfile empty.txt');
+  assert.match(JSON.stringify(empty), /Empty file/);
+  const binary = await openFiles(f, '/sendfile document.pdf');
+  assert.match(JSON.stringify(binary), /no text preview/);
+  assert.doesNotMatch(JSON.stringify(binary), /ASCII PDF bytes|Edit file/);
+  assert.ok(binary.actions.some(item => item.title === 'Download file'));
+  assert.doesNotMatch(JSON.stringify(f.sent), /Heading|file-download|file-editor/);
+});
+
+test('read-only and no-Public-URL file windows still preview without edit grants', async () => {
+  const f = fixture({ publicUrl: () => '', authorize: async () => ({ root, meta: { allowBash: false }, userIsAdmin: false }) });
+  const preview = await openFiles(f, '/sendfile hello.txt');
+  assert.match(JSON.stringify(preview), /hello|Set the gateway Public URL/);
+  assert.doesNotMatch(JSON.stringify(preview), /file-download|file-editor/);
+  assert.ok(preview.actions.some(item => item.title === 'Back to files'));
+  const readonly = fixture({ authorize: async () => ({ root, meta: { allowBash: false }, userIsAdmin: false }) });
+  const read = await openFiles(readonly, '/sendfile hello.txt');
+  assert.ok(read.actions.some(item => item.title === 'Download file'));
+  assert.ok(!read.actions.some(item => item.title === 'Edit file'));
+});
+
+test('agent file delivery opens the proven source workspace and refuses invalid or revoked files', async () => {
+  let allowed = true;
+  const seen = [];
+  const f = fixture({ authorize: async grant => {
+    seen.push(grant);
+    if (!allowed) throw new Error('Access revoked');
+    return { root, meta: { allowBash: true }, userIsAdmin: true };
+  } });
+  const input = { channelId: 'teams:19:source@thread.v2', slug: 'source', authorId: '29:owner', threadKey: '123456', relative: 'hello.txt' };
+  const posted = await f.controls.shareFile(input);
+  assert.equal(posted.messageId, 'card1');
+  assert.equal(f.sent[0].conversationId, '19:source@thread.v2');
+  assert.equal(f.sent[0].threadKey, input.threadKey);
+  assert.deepEqual(seen[0], { channelId: input.channelId, slug: input.slug, ownerId: input.authorId });
+  assert.doesNotMatch(JSON.stringify(f.sent), /hello\.txt|file-download/);
+  const preview = continued(await f.controls.onInvoke(task(f.sent[0].card.actions[0].data, 'task/fetch')));
+  assert.match(JSON.stringify(preview), /hello/);
+  await assert.rejects(f.controls.shareFile({ ...input, relative: '../outside' }));
+  await symlink(path.join(root, '..', 'outside-not-found'), path.join(root, 'outside-link'));
+  await assert.rejects(f.controls.shareFile({ ...input, relative: 'outside-link' }));
+  allowed = false;
+  await assert.rejects(f.controls.shareFile(input), /Access revoked/);
+  assert.equal(f.sent.length, 1);
+});
