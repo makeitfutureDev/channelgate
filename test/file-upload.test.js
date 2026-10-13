@@ -19,7 +19,7 @@ function listen(app) {
   });
 }
 
-test("browser uploader exchanges a grant, preserves folder paths, and never overwrites collisions", async (t) => {
+test("browser uploader exchanges a grant, preserves folder paths, and overwrites only by explicit choice", async (t) => {
   resetFileUploadStateForTests();
   t.after(resetFileUploadStateForTests);
   const root = await mkdtemp(path.join(os.tmpdir(), "gateway-browser-upload-"));
@@ -27,11 +27,13 @@ test("browser uploader exchanges a grant, preserves folder paths, and never over
   t.after(() => rm(root, { recursive: true, force: true }));
   const audits = [];
   let authorizationChecks = 0;
+  let allowed = true;
 
   const app = express();
   app.use("/file-upload", createFileUploadRouter({
     authorize: async (grant) => {
       authorizationChecks++;
+      if (!allowed) throw new Error("Upload access revoked.");
       assert.equal(grant.channelId, "C123");
       assert.equal(grant.ownerId, "U123");
       assert.equal(grant.relative, "docs");
@@ -74,15 +76,17 @@ test("browser uploader exchanges a grant, preserves folder paths, and never over
   assert.doesNotThrow(() => new Function(browserScript));
   const csrf = /const CSRF="([A-Za-z0-9_-]+)"/.exec(html)?.[1];
   assert.ok(csrf);
+  assert.match(html, /id="overwrite" type="checkbox"/);
+  assert.match(html, /CLAUDE.md is allowed/);
 
-  const badCsrf = await fetch(`${base}${uploadPath}/api/upload?path=Folder%2Fa.txt`, {
+  const badCsrf = await fetch(`${base}${uploadPath}/api/upload?path=Project%2FCLAUDE.md&overwrite=true`, {
     method: "POST",
     headers: { cookie, "content-type": "application/octet-stream", "x-cg-csrf": "wrong" },
     body: "bad",
   });
   assert.equal(badCsrf.status, 403);
 
-  const upload = (relative, body) => fetch(`${base}${uploadPath}/api/upload?path=${encodeURIComponent(relative)}`, {
+  const upload = (relative, body, overwrite = "false") => fetch(`${base}${uploadPath}/api/upload?path=${encodeURIComponent(relative)}&overwrite=${overwrite}`, {
     method: "POST",
     headers: { cookie, "content-type": "application/octet-stream", "x-cg-csrf": csrf },
     body,
@@ -100,8 +104,25 @@ test("browser uploader exchanges a grant, preserves folder paths, and never over
   assert.deepEqual(audits.map((entry) => entry.event), ["channel_file_uploaded_in_browser", "channel_file_uploaded_in_browser"]);
   assert.equal(audits[0].fields.source, "Project/assets/logo.txt");
 
+  const claude = await upload("Project/CLAUDE.md", "first instructions\n");
+  assert.equal(claude.status, 200);
+  assert.equal((await claude.json()).file, "docs/Project/CLAUDE.md");
+  const copy = await upload("Project/CLAUDE.md", "copy instructions\n");
+  assert.equal((await copy.json()).file, "docs/Project/CLAUDE (1).md");
+  const replacement = await upload("Project/CLAUDE.md", "replacement instructions\n", "true");
+  assert.equal(replacement.status, 200);
+  assert.deepEqual(await replacement.json(), { ok: true, file: "docs/Project/CLAUDE.md", bytes: 25, renamed: false, overwritten: true });
+  assert.equal(await readFile(path.join(root, "docs/Project/CLAUDE.md"), "utf8"), "replacement instructions\n");
+  assert.equal(await readFile(path.join(root, "docs/Project/CLAUDE (1).md"), "utf8"), "copy instructions\n");
+  assert.equal(audits.at(-1).fields.overwritten, true);
+  assert.equal((await upload("Project/CLAUDE.md", "bad", "yes")).status, 400);
+  assert.equal((await upload("Project/.claude/settings.json", "bad", "true")).status, 400);
+
   const traversal = await upload("../outside.txt", "nope");
   assert.equal(traversal.status, 400);
+  allowed = false;
+  assert.equal((await upload("Project/CLAUDE.md", "unauthorized", "true")).status, 403);
+  assert.equal(await readFile(path.join(root, "docs/Project/CLAUDE.md"), "utf8"), "replacement instructions\n");
   assert.ok(authorizationChecks >= 4, "authorization must repeat on exchange, page load, and uploads");
 });
 

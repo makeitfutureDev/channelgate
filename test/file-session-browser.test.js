@@ -94,8 +94,34 @@ for (const kind of ["editor", "upload"]) {
       await page.locator("#upload").click();
       assert.equal((await uploaded).status(), 200);
       assert.equal(await readFile(path.join(root, "docs", "uploaded.txt"), "utf8"), "Uploaded fixture\n");
+      const local = await mkdtemp(path.join(os.tmpdir(), "cg-upload-selection-"));
+      t.after(() => rm(local, { recursive: true, force: true }));
+      const folder = path.join(local, "Project");
+      await mkdir(path.join(folder, "assets"), { recursive: true });
+      await writeFile(path.join(folder, "CLAUDE.md"), "Uploaded instructions\n");
+      await writeFile(path.join(folder, "assets", "note.txt"), "Nested asset\n");
+      await mkdir(path.join(root, "docs", "Project"));
+      const destination = path.join(root, "docs", "Project", "CLAUDE.md");
+      await writeFile(destination, "Original instructions\n");
+      assert.equal(await page.locator("#overwrite").isChecked(), false);
+      await page.locator("#folder").setInputFiles(folder);
+      await page.locator("#upload").click();
+      await page.waitForFunction(() => globalThis.document.querySelector("#status").textContent.startsWith("Uploaded 2 file(s)."));
+      assert.equal(await readFile(destination, "utf8"), "Original instructions\n");
+      assert.equal(await readFile(path.join(root, "docs", "Project", "CLAUDE (1).md"), "utf8"), "Uploaded instructions\n");
+      await page.locator("#overwrite").check();
+      await page.locator("#folder").setInputFiles(folder);
+      await page.locator("#upload").click();
+      await page.waitForFunction(() => globalThis.document.querySelector("#status").textContent.startsWith("Uploaded 2 file(s)."));
+      assert.equal(await readFile(destination, "utf8"), "Uploaded instructions\n");
+      assert.equal(await readFile(path.join(root, "docs", "Project", "assets", "note.txt"), "utf8"), "Nested asset\n");
+      await page.locator("#files").setInputFiles({ name: "CLAUDE.md", mimeType: "text/markdown", buffer: Buffer.from("Root instructions\n") });
+      await page.locator("#upload").click();
+      await page.waitForFunction(() => globalThis.document.querySelector("#status").textContent.startsWith("Uploaded 1 file(s)."));
+      assert.equal(await readFile(path.join(root, "docs", "CLAUDE.md"), "utf8"), "Root instructions\n");
     }
-    assert.equal(audits.length, 1);
+    const expectedAudits = kind === "upload" ? 6 : 1;
+    assert.equal(audits.length, expectedAudits);
     // A fresh cross-site top-level POST must NOT receive even a newly minted Lax cookie.
     await page.goto(sourceUrl);
     const csrfResponse = page.waitForResponse((response) => response.request().method() === "POST");
@@ -106,7 +132,7 @@ for (const kind of ["editor", "upload"]) {
     assert.equal((await csrfResponse).status(), 401);
     await page.waitForURL((url) => url.pathname === new URL(`${baseUrl}${endpoint}`).pathname);
     assert.ok(requests.some((r) => r.method === "POST" && r.site === "cross-site" && !r.cookie));
-    assert.equal(audits.length, 1, "cross-site POST must not write");
+    assert.equal(audits.length, expectedAudits, "cross-site POST must not write");
     allowed = false;
     assert.equal((await page.goto(sessionUrl)).status(), 403, "every page load rechecks current authority");
     assert.ok(checks >= 4);

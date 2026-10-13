@@ -6427,7 +6427,28 @@ none` for its cases and live gates. Kept as history.
       session, requires CSRF,
       re-authorizes on exchange/page/every file, enforces 200-file/250 MB session and 25 MB per-file
       limits, recreates safe nested paths, rejects traversal/protected segments, collision-renames
-      without overwriting, and audits `channel_file_uploaded_in_browser` per saved file.
+      by default, permits root/nested `CLAUDE.md`, overwrites only on explicit selection, and audits
+      `channel_file_uploaded_in_browser` per saved file.
+- [x] Unit (`test/file-upload.test.js`, `test/file-explorer.test.js`): upload `CLAUDE.md` at
+      the root and in a project folder, keep both on default collisions, and explicitly replace
+      the original name. Replacement preserves existing permissions and replaces a symlink node
+      without touching its target. Invalid overwrite values, directories, escaping parent symlinks,
+      protected parent aliases, `.claude/settings.json`, `AGENTS.md`, and `MEMORY.md` are refused.
+- [x] Chromium (`test/file-session-browser.test.js`, 2026-10-13): real folder selection includes
+      `Project/CLAUDE.md` and a nested asset; an unchecked overwrite control keeps originals and
+      numbered copies, checking it replaces originals, and standalone `CLAUDE.md` is accepted.
+      Both editor and upload cross-site cookie/CSRF checks pass. This uses local fixture routers;
+      native deployed Slack acceptance below remains pending.
+- [ ] Live UPLOAD-CLAUDE-01 (engine-independent browser control plane): Apps opens the folder
+      footer button or Browse channel files shortcut in a writable disposable workspace with a Public URL configured. Seed `Project/CLAUDE.md`
+      with `original instructions`, then choose a local `Project` folder containing `CLAUDE.md`
+      with `uploaded instructions` and `assets/note.txt`. Upload with overwrite unchecked: require
+      original bytes untouched, `CLAUDE (1).md` with uploaded bytes and the nested asset. Repeat
+      with *Overwrite existing files* checked: require `Project/CLAUDE.md` has uploaded bytes and
+      the copy remains intact. Also upload a standalone root `CLAUDE.md`. Require per-file audit
+      with the requester and `overwritten` result. Bad CSRF/revoked authorization must still deny
+      replacement. This browser/router operation never invokes an engine; the existing dual-engine
+      folder-provisioning gates cover loading those instructions on a subsequent turn.
 - [x] Unit (`test/settings-env-lifecycle.test.js`): a scheme-less Public URL is saved and read as
       an absolute HTTPS URL (including hostname-plus-path input), while explicit HTTP development
       URLs and empty values are preserved; browser upload links therefore cannot disappear solely
@@ -6520,8 +6541,8 @@ none` for its cases and live gates. Kept as history.
 - [ ] With a public URL configured, *Upload files / folder* opens the browser uploader for the
       directory on screen. Choose multiple files and a nested folder; verify no Slack file is
       created, nested paths are preserved, empty folders are explicitly omitted, collisions are
-      numbered, and every file audits
-      `channel_file_uploaded_in_browser`. Reused/expired links, bad CSRF, changed membership/mode,
+      numbered by default or replaced when *Overwrite existing files* is selected, and every file
+      audits `channel_file_uploaded_in_browser`. Reused/expired links, bad CSRF, changed membership/mode,
       traversal/protected paths, >200 files, >25 MB per file, and >250 MB total are refused.
       Read-only hides Upload; Full allows only an admin.
 - [ ] In Worker/Auto mode, *New folder* creates one directory in the folder currently on screen,
