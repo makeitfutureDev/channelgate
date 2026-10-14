@@ -53,6 +53,10 @@ Optional Anthropic-compatible provider harnesses have their own API-key and base
 
 The engine login decides two things ChannelGate does not control: which provider contract covers the prompts, and where inference runs. Work folders, memory, files and conversation history stay on your host, but every turn sends prompt and context to the selected provider, as described in [privacy and data flow](/docs/privacy). The provider facts below come from the providers' own documentation as of October 2026. Check the current terms before relying on them, and treat this section as orientation for your own assessment rather than legal advice.
 
+:::caution[What this page does and does not cover]
+This section lists the login options the providers offer; it is not a recommendation for your situation. The contract for each route, including the data processing addendum, retention, training and residency commitments, is between your organization and the AI provider. Makeitfuture and ChannelGate are not party to it, do not verify the provider's compliance with it, and accept no responsibility for the provider's data handling or for the output and actions of the models. Review the current provider terms with your data protection officer before placing customer data in a conversation, and see the [platform terms](https://channelgate.dev/terms) for the limits of what ChannelGate itself provides.
+:::
+
 ### Internal work without customer data
 
 A personal Claude Pro or Max login, or a personal ChatGPT Plus or Pro sign-in for Codex, runs under consumer terms. Consumer plans carry no data processing agreement under GDPR Article 28, and [Anthropic's consumer terms for the EEA, Switzerland and the UK](https://www.anthropic.com/legal/consumer-terms) limit the service to non-commercial use. OpenAI's consumer plans also come without a DPA. Use such a login for evaluation and for internal material that contains no customer personal data, and switch off the plan's training setting where one exists.
