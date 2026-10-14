@@ -294,7 +294,8 @@ control-plane status.
   When Graph omits reaction history, a current activation reaction's fresh provider creation
   timestamp can start a request, including on an older message. A persisted upgrade cutoff excludes
   pre-upgrade snapshot reactions. Snapshot retries and later history share one addition identity;
-  existing removal history wins, and Stop/Tick still require explicit addition history.
+  existing removal history wins. Stop/Tick use the same fallback under their own persisted cutoff
+  and only while the reaction is at most ten minutes old, so a late fetch cannot stop newer work.
   Bot Framework rosters accept both modern `aadObjectId` and legacy `objectId` Entra identifiers
   when resolving the addressable reactor; ordinary conversation/user authorization still applies.
   The operational audit distinguishes Graph callback receipt, validation, authenticated target

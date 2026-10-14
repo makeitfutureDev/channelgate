@@ -202,6 +202,28 @@ example server behind HTTPS on a public host. Record the token's last four chara
 
 ## Platform activation emoji acceptance (2026-10-07)
 
+### Teams history-free Stop/Tick regression (2026-10-14)
+
+Graph stopped returning `messageHistory` for Teams group/channel messages, and the 2026-10-09
+activation fallback deliberately excluded controls, so 🛑 and ✅ were silently dropped.
+- Automated, engine-independent intake (`test/teams-reaction-snapshots.test.js`): a present 🛑 /
+  `stopsign` / ✅ / `white_check_mark` with no or empty history yields exactly one `stop`/`ack`
+  event as the roster-resolved reactor targeting the reacted message; 👎 yields none. A missing,
+  invalid or later `controlSnapshotsStartedAt` cutoff, a reaction older than ten minutes, an
+  invalid/future creation time, an absent reaction and removal history all yield none. A snapshot
+  control and its later history share one event id; a control predating the cutoff keeps its
+  history identity. `test/platform-teams-graph-events.test.js` verifies the control cutoff is
+  persisted on first use, independently of the activation cutoff, and survives renewals.
+- [ ] LIVE `TEAMS-SNAPSHOT-STOP-CLAUDE-01` and `TEAMS-SNAPSHOT-STOP-CODEX-01`: Teams QA channel
+  with Graph events enabled, pinned separately to each engine. Mention the bot with `Run sleep 120
+  in the shell, then reply STOP_NOT_HONORED`. While it runs, react 🛑 to the request. Pass: the
+  run ends, the thread says `Stop requested for this session’s active and queued work.`, and
+  `STOP_NOT_HONORED` never appears. Removing and re-adding 🛑 on an idle session answers
+  `No active work in this session.` once.
+- [ ] LIVE `TEAMS-SNAPSHOT-TICK-01` (engine-independent: the reminder acknowledgment precedes engine
+  dispatch): create a tracked reminder in the QA channel, wait for its notice, react ✅. Pass: the
+  thread says `✅ Acknowledged — reminder closed.` and no second notice is posted.
+
 ### Teams history-free activation regression (2026-10-09)
 
 - Engine-independent callback observability: `platform-teams-graph-events.test.js` verifies fixed
@@ -217,8 +239,8 @@ example server behind HTTPS on a public host. Record the token's last four chara
   provider snapshots, stable identity across retries and later history with a different
   modification timestamp, and a distinct identity after remove/re-add. Invalid/future/old
   timestamps, absent upgrade cutoffs, removals/ambiguous history, deleted/other-bot messages,
-  missing/bot roster identities and stale configuration revisions remain inactive. Stop/Tick
-  cannot execute through snapshot fallback. Existing history event IDs remain unchanged.
+  missing/bot roster identities and stale configuration revisions remain inactive. Existing
+  history event IDs remain unchanged.
 - `test/platform-teams-graph-events.test.js` verifies the snapshot-support cutoff is saved before
   reusing a live subscription and survives maintenance and configuration refresh.
 - `test/platform-teams-event-transport.test.js` verifies legacy roster `objectId` identifies the

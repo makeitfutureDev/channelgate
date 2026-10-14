@@ -469,7 +469,8 @@ retention, so later updates cannot replay old message history. If Graph omits `m
 activation may use a present reaction's own `createdDateTime`, never the message's modification
 time. A persisted snapshot-support cutoff excludes reactions added before the upgraded transport
 starts, so remove and re-add the activation emoji for a fresh post-upgrade test. Existing removal
-history prevents fallback, and Stop/Tick still require explicit history. Personal Bot Framework conversations
+history prevents fallback. Stop/Tick may use the same fallback under their own persisted cutoff,
+only within ten minutes of the reaction's `createdDateTime`. Personal Bot Framework conversations
 use different IDs from Graph chats: personal edits and reactions to bot answers stay on the native
 bot event path. Graph subscriptions here cover group chats and channels. Removing Xavier retires
 the corresponding subscription and invalidates its queued event work. Graph file descriptors are
