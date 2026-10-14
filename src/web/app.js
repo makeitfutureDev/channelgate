@@ -182,6 +182,21 @@ export function createWebApp({
     }
   });
 
+  // Google Chat inbound. A Chat app whose connection setting is an HTTP endpoint URL POSTs every
+  // interaction event here (the only path that carries card and button clicks). Same posture as the
+  // Teams route: mounted ahead of admin auth and the Host/Origin guard, authenticates every request
+  // itself against Google's signing keys (src/platforms/googlechat/verify.js), reads no cookie.
+  app.post("/api/googlechat/events", async (req, res) => {
+    const handler = transports?.googlechat?.getTransport?.()?.handler;
+    if (!handler) return res.status(503).json({ error: "Google Chat transport is not connected" });
+    try {
+      await handler(req, res);
+    } catch (e) {
+      if (!res.headersSent) res.status(500).json({ error: "google chat handler failed" });
+      console.error("[googlechat] endpoint error:", e?.message || e);
+    }
+  });
+
   // Graph basic notifications authenticate using persisted subscription identity and clientState.
   // No admin cookie is consumed; the handler also handles Graph's endpoint validation challenge.
   app.post("/api/teams/notifications", async (req, res) => {

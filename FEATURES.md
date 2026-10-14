@@ -35,9 +35,40 @@
   ignores the comment field. A refused private-browser save shows a value-free reason and keeps
   the session. Open panel drafts and browser-settings sessions are in memory and need reopening
   after a restart; a restart-interrupted click is reported only to its clicker. Google Chat
-  dialogs and typing events remain unavailable in this connection mode; reaction activation is
-  not advertised.
+  dialogs and typing events remain unavailable; card buttons act only with the HTTP endpoint
+  connection (next section).
 - Automated coverage and pending live Claude/Codex gates: → TEST-PLAN: Google Chat native controls.
+
+## Google Chat HTTP endpoint (working card buttons)
+
+- A Chat app has one connection setting, and Google delivers card and button clicks only to an
+  **HTTP endpoint URL** connection — never to a Pub/Sub topic, and the Workspace Events API has no
+  click event type. With the topic connection every card button ends in Chat's "unable to process
+  your request". ChannelGate therefore serves `POST /api/googlechat/events` on its HTTPS listener,
+  mounted ahead of admin auth and the Host/Origin guard like the Teams webhook: it reads no cookie
+  and authenticates every request itself (`src/platforms/googlechat/verify.js`).
+- Verification fails closed: RS256 by a key in Google's published set (cached a day, one refresh
+  per minute for an unknown `kid`), issuer `accounts.google.com`, audience equal to the configured
+  endpoint URL (`<Public URL>/api/googlechat/events`), `email_verified`, and the sender exactly the
+  configured **Chat app service account** (an add-on's `service-<project-number>@gcp-sa-gsuiteaddons…`)
+  or Google's `chat@system.gserviceaccount.com`; a standalone app with the project-number audience
+  presents a JWT issued by that account, verified against its own key set with the configured
+  **project number** as audience. Anything else answers `401` with no detail (the reason is logged);
+  an endpoint without a Public URL or project number answers `503` naming the remedy; a connected
+  transport is required (`503` otherwise).
+- Accepted events feed the same transport handler the Pub/Sub puller feeds — messages, membership
+  (`addedToSpacePayload`/`removedFromSpacePayload` and the legacy `ADDED_TO_SPACE` types now parse
+  without CloudEvent attributes), app commands and `buttonClickedPayload` clicks — so gating,
+  authorization, dedupe (body hash for clicks, message name for messages), the durable inboxes
+  and the private control cards are unchanged. The endpoint acknowledges with an empty JSON
+  object as soon as the event is durably queued, inside Google's 30-second window; every reply,
+  card edit and private card still goes through the Chat REST API. The Pub/Sub subscription stays
+  connected and keeps delivering Workspace Events reactions.
+- Settings → Google Chat shows the endpoint URL once a Public URL exists and gains **Chat app
+  service account** (validated as a `…gserviceaccount.com` address, lower-cased) and **Google
+  Cloud project number** (numeric). Both are listed back; neither is a secret. The transport's
+  status line reports `endpoint <url>` or `endpoint off (set Public URL)`.
+- Automated coverage and the live gate: → TEST-PLAN: Google Chat HTTP endpoint.
 
 ## Teams reply menu
 

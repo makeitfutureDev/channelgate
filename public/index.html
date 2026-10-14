@@ -463,7 +463,8 @@
                 <div class="setcard">
                   <h4>Google Chat (Beta)</h4>
                   <div id="gchat-status" class="status-banner">Not configured</div>
-                  <p class="desc">A Chat app with a <strong>Cloud Pub/Sub</strong> connection: Google publishes events to your topic and the daemon pulls them, so no inbound endpoint and no tunnel are needed. Grant the service account <code>roles/pubsub.subscriber</code> on the subscription, and set the Chat app's connection to that topic.</p>
+                  <p class="desc">Google publishes the app's events to your Pub/Sub topic and the daemon pulls them (grant the service account <code>roles/pubsub.subscriber</code> on the subscription). For <strong>working card buttons</strong> set the Chat app's connection to the <strong>HTTP endpoint URL</strong> below instead of the topic — Google never delivers button clicks over Pub/Sub — and keep the subscription for reaction events.</p>
+                  <p class="desc">HTTP endpoint URL: <code id="gchat-endpoint">set the Public URL first</code></p>
                   <label class="field">
                     <span>Service-account key (JSON)</span>
                     <textarea id="set-gchat-key" rows="3" placeholder="leave blank to keep current"></textarea>
@@ -477,6 +478,14 @@
                   <label class="field">
                     <span>Reaction events topic <code>projects/&lt;project&gt;/topics/&lt;name&gt;</code> (optional — enables 🤖 / 🛑 / ✅ reactions through Google Workspace Events; needs the admin-approved <code>chat.app.messages.readonly</code> scope)</span>
                     <input id="set-gchat-reaction-topic" type="text" placeholder="projects/my-project/topics/chat-events" />
+                  </label>
+                  <label class="field">
+                    <span>Chat app service account (required for the HTTP endpoint of a Workspace add-on — the <em>Service account email</em> shown under Connection settings on the Chat API Configuration page)</span>
+                    <input id="set-gchat-app-sa" type="text" placeholder="service-123456789012@gcp-sa-gsuiteaddons.iam.gserviceaccount.com" />
+                  </label>
+                  <label class="field">
+                    <span>Google Cloud project number (optional — only for a standalone Chat app whose authentication audience is the project number)</span>
+                    <input id="set-gchat-project-number" type="text" placeholder="123456789012" />
                   </label>
                   <label class="field">
                     <span>Bot user id <code>users/…</code> (optional — learned automatically when the app is added to a space)</span>
@@ -675,7 +684,7 @@
                   <label class="field">
                     <span>Google Chat activation emoji — comma-separated Unicode emoji</span>
                     <input id="set-google-chat-mention-reactions" type="text" placeholder="🤖" />
-                    <em class="state">Unicode emoji, for example 🤖 or 🚀. The current Google Chat transport does not receive reaction events, so this list is saved for future support. Mention the bot to start a request.</em>
+                    <em class="state">Unicode emoji, for example 🤖 or 🚀. Acts once the Google Chat <em>Reaction events topic</em> is set (Workspace Events subscriptions deliver reactions). Mention the bot to start a request otherwise.</em>
                   </label>
                 </div>
                 <div class="setcard">

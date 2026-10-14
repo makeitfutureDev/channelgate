@@ -13,6 +13,8 @@ import { getUsers } from "../../config/store.js";
 import { logEvent } from "../../util/logger.js";
 import { isReactionEventType, parseReactionEvent, googleChatReactionAction, reactionIsFresh, resolveReactor, SUBSCRIPTION_LIFECYCLE_PREFIX } from "./reactions.js";
 import { createWorkspaceEventsClient, createReactionSubscriptions } from "./workspace-events.js";
+import { createGoogleJwks, verifyGoogleChatRequest, GOOGLE_OIDC_CERTS_URL, CHAT_SYSTEM_JWKS_URL } from "./verify.js";
+import { createGoogleChatWebhook } from "./webhook.js";
 
 export async function startGoogleChat({
   serviceAccountJson,
@@ -21,6 +23,13 @@ export async function startGoogleChat({
   // A Pub/Sub topic enables reaction controls: Workspace Events subscriptions publish each space's
   // reaction events there. It must be the topic the pulled `subscription` is attached to.
   reactionTopic = "",
+  // The HTTP endpoint (`<publicUrl>/api/googlechat/events`) is the connection setting that carries
+  // card and button clicks. `appServiceAccount` is the add-on's per-project sender; `projectNumber`
+  // is the audience of a standalone app configured with the "project number" authentication
+  // audience. Empty endpoint + empty project number = the endpoint answers 503 with the remedy.
+  endpointUrl = "",
+  appServiceAccount = "",
+  projectNumber = "",
   getActivationReactions = () => ["🤖"],
   capabilities,
   onMessage,
@@ -312,6 +321,15 @@ export async function startGoogleChat({
     return accepted;
   }
 
+  const endpoint = String(endpointUrl || "").replace(/\/$/, "");
+  const oidcKeys = deps.oidcKeys || createGoogleJwks({ url: GOOGLE_OIDC_CERTS_URL, fetchImpl: deps.fetchImpl });
+  const chatKeys = deps.chatKeys || createGoogleJwks({ url: CHAT_SYSTEM_JWKS_URL, fetchImpl: deps.fetchImpl });
+  const handler = createGoogleChatWebhook({
+    enabled: () => (endpoint || projectNumber) ? true : "Google Chat endpoint is not enabled: set the gateway Public URL and reconnect Google Chat",
+    verify: authorization => verifyGoogleChatRequest({ authorization, endpointUrl: endpoint, projectNumber, appServiceAccount, oidcKeys, chatKeys }),
+    onEvent, log,
+  });
+
   const puller = deps.puller || createPubSubPuller({ auth, subscription, onEvent, log, fetchImpl: deps.fetchImpl,
     onFatal: (err) => {
       subscriptions?.stop();
@@ -335,15 +353,21 @@ export async function startGoogleChat({
     connector,
     puller,
     // Exposed because it IS the transport's behaviour: bot-filtering, dedupe, learning our own user
-    // id, normalization. Tests drive it directly, and the documented HTTP-endpoint mode (the
-    // alternative to a Pub/Sub connection) would feed the identical handler.
+    // id, normalization. Tests drive it directly, and the HTTP endpoint below feeds it the same
+    // event objects Pub/Sub delivers.
     onEvent,
+    // The Express route for `POST /api/googlechat/events` (src/web/app.js) calls this.
+    handler,
+    endpointUrl: endpoint,
     get botUserId() { return selfId; },
     reactionSubscriptions: subscriptions,
     get detail() {
-      if (!subscriptions) return `pulling ${subscription}`;
-      const s = subscriptions.status;
-      return `pulling ${subscription}; reactions ${s.error ? `${s.state}: ${s.error}` : s.state === 'starting' ? 'starting' : `${s.active}/${s.spaces} spaces`}`;
+      const parts = [`pulling ${subscription}`, endpoint ? `endpoint ${endpoint}` : projectNumber ? `endpoint (project ${projectNumber})` : "endpoint off (set Public URL)"];
+      if (subscriptions) {
+        const s = subscriptions.status;
+        parts.push(`reactions ${s.error ? `${s.state}: ${s.error}` : s.state === 'starting' ? 'starting' : `${s.active}/${s.spaces} spaces`}`);
+      }
+      return parts.join("; ");
     },
     async stop() { subscriptions?.stop(); inbox.stop(); controlInbox.stop(); noticeInbox.stop(); onStop?.(); await puller.stop(); },
   };

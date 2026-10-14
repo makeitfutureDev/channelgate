@@ -1,5 +1,47 @@
 # ChannelGate — Test Plan
 
+## Google Chat HTTP endpoint — working card buttons (2026-10-14)
+
+Root cause: a Chat app has one connection setting and Google delivers card/button clicks only to
+an HTTP endpoint URL, never to a Pub/Sub topic; the click handler existed but was unreachable.
+Automated fixtures: `test/googlechat-webhook.test.js` (bearer verification: valid add-on ID token,
+trailing-slash and issuer-form tolerance, Google's shared sender; refusals for missing/malformed
+token, non-RS256, foreign issuer, foreign audience, multi-audience, unverified email, a stranger's
+add-on account, expired, not-yet-valid, unknown kid, bad signature, no configured app account, no
+Public URL; the standalone project-number JWT against the Chat account's key set only; key cache
+single fetch, one refresh per minute, keeps keys on failure, googleapis-only URL; handler 503 with
+remedy / 401 / 400 / 500 / `{}`; membership payloads without CloudEvent attributes; a real Express
+listener → `startGoogleChat` round trip where a signed click reaches `onCard` once across a
+redelivery, a signed message reaches `onMessage`, a stranger's token and a missing token deliver
+nothing, invalid clicks are acknowledged and dropped; the public route through `createWebApp`
+answers 503 unconnected, reaches the handler with no admin cookie and a foreign Host, 500 on a
+throwing handler) and `test/platform-reaction-settings.test.js` (service-account and project-number
+validation, listing, clearing, the derived endpoint URL following the Public URL).
+Validation (this worktree, 2026-10-14): `npm run test:coverage` **3,748 passed, 3 failed, 32
+skipped** of 3,783; the three failures (`test/container-job-log-redaction.test.js:45` and `:54`,
+`test/subagent-completion.test.js:84`) assert exact child stderr and only capture Node's undici
+`EnvHttpProxyAgent` experimental warning, emitted because this container runs behind
+`HTTPS_PROXY`; the same files pass 4/4 with `NODE_NO_WARNINGS=1` and none touch this change.
+The five Google Chat suites pass (45 + 12 + 18 + 13 + 9 cases); `npm run check:static`,
+`npm run secret-scan` and `npm run check:dco -- origin/beta..HEAD` clean;
+`npm run test:security-coverage` passes apart from the same environment case.
+
+- [ ] LIVE `GCHAT-ENDPOINT-01` (engine-independent): operator-owned disposable Google Chat DM and
+  named space, this candidate served with a reachable Public URL, the app's Connection settings
+  switched to the HTTP endpoint URL per `docs/PLATFORMS.md` step 9, the add-on's service account
+  entered, the Pub/Sub subscription still configured. Mention the app, then press **Files**,
+  **Variables** and **Settings** under its answer; browse a folder and open a file preview; open
+  `/settings` and Apply a session model; from a second account press the same buttons. Pass:
+  each click opens or updates the requester-only card with no red "unable to process" line,
+  the second account is told the controls belong to the requester, the daemon log shows one
+  `[googlechat]` intake per click and no `endpoint request rejected`, ordinary messages and
+  `/stop` still answer, and a 🤖 reaction still starts a run through the Pub/Sub subscription.
+- [ ] LIVE `GCHAT-ENDPOINT-02` (engine-independent): with the endpoint armed, `curl -X POST` the
+  endpoint with no token, a garbage token, and a Google ID token minted for another audience
+  (`gcloud auth print-identity-token --audiences=https://other.example`). Pass: every request
+  answers `401 {"error":"unauthorized"}` with the reason only in the daemon log; disconnecting
+  Google Chat answers `503`; clearing the Public URL and reconnecting answers `503` naming it.
+
 ## Google Chat reaction controls via Workspace Events (2026-10-14)
 
 Root cause: Chat apps receive no interaction event for a reaction; Google delivers them only via
