@@ -18,6 +18,8 @@ product overview.
 
 ## Unreleased
 
+- Refresh the channel runtime engine pins to Claude Code 2.1.299 and Codex CLI 0.162.1.
+
 ## 0.6.3 — 2026-10-11
 
 - Refresh the locked MCP SDK, URI and IP parsing dependencies to patched compatible releases.
