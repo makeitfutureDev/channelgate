@@ -743,7 +743,7 @@ export const configurationPages = [
   {
     "slug": "engine-authentication",
     "label": "Engine authentication",
-    "description": "Sign in Claude and Codex, including a dedicated channel login."
+    "description": "Sign in Claude and Codex, including a dedicated channel login, and pick a login that fits European data handling."
   },
   {
     "slug": "model-defaults",
