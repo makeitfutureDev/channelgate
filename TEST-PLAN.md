@@ -1,5 +1,52 @@
 # ChannelGate — Test Plan
 
+## Google Chat native controls (2026-10-14)
+
+Automated fixtures: `test/googlechat-help.test.js`, `test/googlechat-settings.test.js`,
+`test/googlechat-controls.test.js`, `test/googlechat-private-settings.test.js`,
+`test/platform-googlechat.test.js`, and existing Teams settings/approval/file regression suites.
+Exercise Pub/Sub → intake → Cards v2 REST requests, real add-on parameter-only card events,
+registered-command payloads, typed forms, private viewers, runtime Apply, caller/source binding,
+stale panels, revocation during roster reads, path/symlink containment, browser edit limits,
+single-use browser grants, cookie/CSRF/origin checks and no returned secret values.
+Validation: full deterministic suite **3,708 passed, 0 failed, 32 skipped**; static checks passed
+(868 JavaScript files) and secret scan passed. Focused checks included 71 Google Chat/native file
+cases and 95 existing Teams settings/approval/menu cases; the added Google native approval
+integration and unapproved-guest identity cases are included in the full-suite result.
+
+- [ ] LIVE `GCHAT-CONTROLS-01` (engine-independent): approved operator-owned disposable Google
+  Chat DM, group and named threaded space with this candidate loaded and Pub/Sub configured.
+  Send `/help` in DM and mention the bot with `/help` elsewhere; expand/collapse each topic on
+  desktop/mobile. If registered commands are configured, invoke `/help` from the command picker.
+  Pass: concise initial card, readable topics, correct platform instructions, no engine turn.
+- [ ] LIVE `GCHAT-CONTROLS-02` (Claude and Codex separately): same three fixtures, Public URL set,
+  approved actor and a second actor for ownership refusal. Open `/model` and `/settings`, load
+  another enabled engine's models, Apply a channel default and separate session override; ask
+  “Report the configured engine, model and effort for this attempt.” Pass: correct scope on the
+  next turn, current role/policy checks, disabled engines and locked Codex login cannot be bypassed.
+- [ ] LIVE `GCHAT-CONTROLS-03` (Claude and Codex separately): disposable Worker/Auto fixture with
+  `docs/guide.txt`, a 5,500-character text file, a small `.docx`, a PDF and a symlink outside its
+  folder. Prompt “Send docs/guide.txt here and name it in inline code.” Use reply Files and file
+  buttons, preview/download, edit/upload; repeat in Read-only mode and after revoking membership.
+  Pass: requester-only source-space controls, correct file contents, no external path access,
+  eligible larger text editor visible, Word read-only, no writes in Read-only or after revocation.
+- [ ] LIVE `GCHAT-CONTROLS-04` (Claude and Codex separately): approved fixture with a dummy channel
+  variable and dummy personal connection. Open Variables/MCPs → private browser settings; save,
+  rotate and remove fixtures. Pass: typed values never returned/prefilled, scopes correct,
+  organization scope admin-only, reused links/forged CSRF/other browser cookies denied. Open
+  Skills/Automations/Resume and verify current permissions and one-use destructive confirmations.
+- [ ] LIVE `GCHAT-CONTROLS-05` (Claude and Codex separately): run “Execute a 30-second local sleep,
+  then answer READY”; during it send `/status`, queue a second request, and `/stop` as its author.
+  Pass: commands respond during execution, queue/cancellation accurate, transient working line
+  leaves only the final answer with compact menu and requester mention. Request a reversible
+  approval-required fixture action, approve/deny from its source-space card; cross-space/actor
+  replay and unauthorized forever scopes must fail. Restart/reconnect, then use an old reply menu;
+  pass: sealed menu reopens controls while expired draft panels require reopening.
+- [ ] Private QA registration: mirror these fixtures/actions/pass rules in ChannelGate QA using
+  the requester's explicitly selected personal Airtable connection. This run exposes only the
+  agent identity, so registration and live client/engine execution remain pending. No agent-side
+  substitution and no live pass is claimed.
+
 ## Ongoing request routing (2026-10-13)
 
 Automated: `node --test test/ongoing-request-routing.test.js test/schedule-content-update.test.js

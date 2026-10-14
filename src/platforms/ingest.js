@@ -89,6 +89,9 @@ export function createIngest({ connector, log = console, run = runMessage, onCom
 
     const { entry, meta } = await ensureConversation(message, connector);
     await ensureUserKnown(message);
+    // Trusted platform identity metadata also lets managers enroll an unapproved space member
+    // as a scoped guest. Recording it grants no permission to run or use workspace controls.
+    await connector.recordUser?.(message);
 
     const authorIsAdmin = await isAdmin(message.userId);
     const authorApproved = await isApproved(message.userId);
@@ -171,7 +174,7 @@ export function createIngest({ connector, log = console, run = runMessage, onCom
         threadKey: message.threadKey,
         text: adapter.id === "msteams"
           ? hasVoiceAttachments(message) ? "_⏳ Preparing voice transcription…_" : "_⏳ Agent is working…_"
-          : hasVoiceAttachments(message) ? "_Preparing voice transcription…_" : "_Working on it…_",
+          : hasVoiceAttachments(message) ? "_Preparing voice transcription…_" : connector.workingText || "_Working on it…_",
         signal,
       });
       rememberReply(placeholder);

@@ -19,7 +19,7 @@ function toolName(name) {
 export function createConversationProgress({ connector, message, placeholder, adapter, log = console, intervalMs = 30000, now = Date.now }) {
   // Teams keeps only its initial working placeholder, replaced by the final answer.
   // Detailed runtime/tool/heartbeat status must never become a separate reply block.
-  if (adapter.id === "msteams") {
+  if (connector.progressStyle === 'working' || adapter.id === "msteams") {
     let stopped = false;
     let pending = null;
     let timer = null;

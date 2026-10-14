@@ -25,7 +25,7 @@ async function session(channelId, engine, run, options = {}) {
     await run(client);
   } finally { await client.close(); await server.close(); }
 }
-for (const engine of ['claude', 'codex']) test(`${engine}: Teams and Chat never advertise Slack tools; Teams delivers a file through its source controls`, async () => {
+for (const engine of ['claude', 'codex']) test(`${engine}: Teams and Chat advertise native source-scoped file controls without Slack tools`, async () => {
   const channelId = 'teams:19:source@thread.v2';
   await setUser('29:file-owner', { approved: true });
   await upsertChannelEntry(channelId, { slug: 'tool-source', name: 'tool-source', platform: 'msteams' });
@@ -49,18 +49,25 @@ for (const engine of ['claude', 'codex']) test(`${engine}: Teams and Chat never 
       assert.match(refused.content[0].text, /no longer allowed/);
       assert.equal(sent.length, 1);
     });
+    await setUser('29:file-owner', { approved: true });
+    await upsertChannelEntry('gchat:spaces/source', { slug: 'tool-source', name: 'tool-source', platform: 'googlechat' });
+    await saveChannelMeta('tool-source', { channelId: 'gchat:spaces/source', platform: 'googlechat', access: 'approved' });
+    registerTransport('googlechat', { getConnector: () => ({ ready: () => true, shareFile: async args => { sent.push(args); } }) });
     await session('gchat:spaces/source', engine, async client => {
       const names = (await client.listTools()).tools.map(tool => tool.name);
       assert.ok(!names.some(name => name.startsWith('slack_')));
-      assert.ok(!names.includes('share_file'));
+      assert.ok(names.includes('share_file'));
       assert.ok(names.includes('create_public_file_link'));
+      const result = await client.callTool({ name: 'share_file', arguments: { path: 'work/report.docx' } });
+      assert.match(result.content[0].text, /Google Chat.*No public link/);
+      assert.deepEqual(sent.at(-1), { channelId: 'gchat:spaces/source', slug: 'tool-source', authorId: '29:file-owner', threadKey: '123456', relative: 'work/report.docx' });
     });
     await session('C_SOURCE', engine, async client => {
       const names = (await client.listTools()).tools.map(tool => tool.name);
       assert.ok(names.includes('slack_share_file'));
       assert.ok(!names.includes('share_file'));
     });
-  } finally { unregisterTransport('msteams'); }
+  } finally { unregisterTransport('msteams'); unregisterTransport('googlechat'); }
 });
 
 for (const engine of ['claude', 'codex']) test(`${engine}: Teams public-link approval remains active without private links and creates a link only after the native Approve click`, async () => {
