@@ -1,5 +1,15 @@
 # ChannelGate — Test Plan
 
+## Composio staging identity instructions (2026-10-14)
+
+The per-run identity preamble explicitly maps `composio-user` to the staging argument `"user"`
+and `composio-agent` to `"agent"`, matching the existing tool schema and guide. The preamble
+regression checks both mappings in every identity variant and retains the account authorization,
+URL-only handoff and no-base64 rules; existing staging tests verify the selected key.
+Live Claude/Codex Composio-script and file-staging cases still apply. An explanation-only live
+failure is evidence of an incorrect proposed argument, not an executed staging failure. This
+instruction clarification requires a fresh deployed retest before any live pass is claimed.
+
 ## Compatible gateway dependency updates (2026-10-14)
 
 Composio core 0.22.0, Express 5.3.0 and Acorn 8.19.0 are ported to beta without release or
