@@ -18,7 +18,7 @@ product overview.
 
 ## Unreleased
 
-- Refresh the channel runtime engine pins to Claude Code 2.1.299 and Codex CLI 0.162.1.
+- Refresh the channel runtime engine pins to Claude Code 2.1.300 and Codex CLI 0.162.1.
 
 ## 0.6.3 — 2026-10-11
 
