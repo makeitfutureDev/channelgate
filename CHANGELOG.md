@@ -18,6 +18,11 @@ product overview.
 
 ## Unreleased
 
+- Fix Teams 🛑 Stop and ✅ Tick reactions being ignored in group chats and channels. Microsoft Graph
+  now returns those messages without reaction history, and the earlier fallback accepted only
+  activation emojis. A present Stop/Tick created after its own saved cutoff and within the last
+  ten minutes now acts as its reactor; removal history and deduplication still apply.
+
 - Teams answers now end with the same reply menu as Slack: 📂 Files, 🔑 Variables, ⚙️ Settings
   and a 📄 button for each workspace file the answer named. The buttons open the existing private
   Teams windows, work on older replies and after restarts, and only for the person who asked.

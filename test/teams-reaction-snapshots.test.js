@@ -6,7 +6,7 @@ import { teamsActivationFingerprint } from '../src/platforms/msteams/reactions.j
 const start = '2026-10-09T10:00:00.000Z', added = '2026-10-09T10:02:20.912Z';
 const row = {
   conversationId: 'teams:19:channel@thread.tacv2', startedAt: start,
-  reactionSnapshotsStartedAt: start, alienReactionStartedAt: start,
+  reactionSnapshotsStartedAt: start, controlSnapshotsStartedAt: start, alienReactionStartedAt: start,
   reactionAliasesStartedAt: start, graphRobotStartedAt: start,
   activationReactionsStartedAt: start, activationReactionsVersion: '',
   activationReactionsFingerprint: teamsActivationFingerprint(),
@@ -120,11 +120,50 @@ test('history removals, ambiguity and malformed history never fall back to a pre
   }
 });
 
-test('snapshot fallback cannot execute Stop or acknowledge a reminder', async () => {
-  for (const reactionType of ['🛑', '✅', 'stopsign', 'white_check_mark', '👎']) {
-    const message = fixture(); message.reactions[0].reactionType = reactionType;
-    assert.deepEqual(await normalizeGraphEvents(message, row, opts), [], reactionType);
+test('history-free Stop and Tick reactions act as their reactor', async () => {
+  for (const [reactionType, action] of [['🛑', 'stop'], ['stopsign', 'stop'], ['✅', 'ack'], ['white_check_mark', 'ack']]) {
+    for (const history of [undefined, []]) {
+      const message = { ...fixture(), ...(history === undefined ? {} : { messageHistory: history }) };
+      message.reactions[0].reactionType = reactionType;
+      const events = await normalizeGraphEvents(message, row, opts);
+      assert.equal(events.length, 1, reactionType);
+      assert.equal(events[0].reactionAction, action);
+      assert.equal(events[0].userId, '29:reactor');
+      assert.equal(events[0].replyToId, 'target');
+    }
   }
+  const message = fixture(); message.reactions[0].reactionType = '👎';
+  assert.deepEqual(await normalizeGraphEvents(message, row, opts), []);
+});
+
+test('snapshot controls need their own cutoff, a recent addition and a present reaction', async () => {
+  const stop = () => { const message = fixture(); message.reactions[0].reactionType = '🛑'; return message; };
+  for (const cutoff of [undefined, 'invalid', added]) {
+    assert.deepEqual(await normalizeGraphEvents(stop(), { ...row, controlSnapshotsStartedAt: cutoff }, opts), [], String(cutoff));
+  }
+  const at = time => ({ ...opts, now: () => Date.parse(time) });
+  assert.equal((await normalizeGraphEvents(stop(), row, at('2026-10-09T10:12:20Z'))).length, 1);
+  assert.deepEqual(await normalizeGraphEvents(stop(), row, at('2026-10-09T10:12:21Z')), [], 'a late Stop must not end newer work');
+  for (const time of [undefined, '', 'invalid', '2026-10-09T10:06:00Z']) {
+    const message = stop(); message.reactions[0].createdDateTime = time;
+    assert.deepEqual(await normalizeGraphEvents(message, row, opts), [], String(time));
+  }
+  const removed = stop(); removed.reactions = [];
+  assert.deepEqual(await normalizeGraphEvents(removed, row, opts), []);
+  const history = stop();
+  history.messageHistory = [{ actions: 'reactionRemoved', modifiedDateTime: '2026-10-09T10:03:00Z', reaction: history.reactions[0] }];
+  assert.deepEqual(await normalizeGraphEvents(history, row, opts), [], 'removal history stays authoritative');
+});
+
+test('a snapshot control and its later history share one identity', async () => {
+  const message = fixture(); message.reactions[0].reactionType = '🛑';
+  const [first] = await normalizeGraphEvents(message, row, opts);
+  message.messageHistory = [{ actions: 'reactionAdded', modifiedDateTime: '2026-10-09T10:02:37.026Z', reaction: message.reactions[0] }];
+  assert.equal((await normalizeGraphEvents(message, row, opts))[0].raw.eventId, first.raw.eventId);
+  const legacy = { ...row }; delete legacy.controlSnapshotsStartedAt;
+  const [old] = await normalizeGraphEvents(message, legacy, opts);
+  assert.equal(old.reactionAction, 'stop', 'pre-cutoff history controls keep working');
+  assert.notEqual(old.raw.eventId, first.raw.eventId, 'pre-cutoff controls keep their history identity');
 });
 
 test('snapshot fallback retains roster, bot ownership, setting versions and all addition cutoffs', async () => {

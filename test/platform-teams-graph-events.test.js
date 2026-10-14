@@ -143,6 +143,21 @@ test('snapshot activation cutoff is persisted once before subscription reuse and
   assert.equal(refreshed.reactionSnapshotsStartedAt, upgraded.reactionSnapshotsStartedAt);
 });
 
+test('snapshot control cutoff is persisted independently and survives renewals', async () => {
+  const f = fixture();
+  const row = await f.service.ensure(f.row);
+  assert.equal(row.controlSnapshotsStartedAt, '2026-09-09T10:00:00.000Z');
+  f.advance(21 * 60_000);
+  await f.service.renew();
+  const saved = f.rows.get(f.row.conversationId);
+  assert.equal(saved.controlSnapshotsStartedAt, row.controlSnapshotsStartedAt);
+  delete saved.controlSnapshotsStartedAt;
+  f.rows.set(f.row.conversationId, saved);
+  const upgraded = await f.service.ensure(f.row);
+  assert.equal(upgraded.controlSnapshotsStartedAt, '2026-09-09T10:21:00.000Z');
+  assert.equal(upgraded.reactionSnapshotsStartedAt, row.reactionSnapshotsStartedAt, 'an existing activation cutoff is kept');
+});
+
 test("Graph rejects forged notifications, wrong scopes and URL traversal before GET", async () => {
   const f = fixture();
   await f.service.ensure(f.row);

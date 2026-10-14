@@ -8,6 +8,8 @@ import { quotedReplyId, stripMentionTags } from "./activity.js";
 import { teamsGraphReactionAction, teamsGraphReactionKey, teamsGraphReactionCutoverField, teamsActivationFingerprint, DEFAULT_TEAMS_ACTIVATION_REACTIONS } from "./reactions.js";
 
 const digest = parts => createHash("sha256").update(JSON.stringify(parts)).digest("hex");
+// How recent a Stop/Tick must be to act when Graph returns no reaction history.
+const CONTROL_SNAPSHOT_WINDOW_MS = 10 * 60_000;
 const userId = identity => String(identity?.user?.id || "");
 // Graph chatMessageActions is a flags enum. A removal (or an unknown combined flag) wins over
 // addition so an ambiguous/latest transition cannot replay an earlier destructive control.
@@ -42,6 +44,19 @@ export async function normalizeGraphEvents(message, row, { botId, resolveMember,
   function freshSnapshot(reaction) {
     const at = Date.parse(reaction?.createdDateTime);
     return snapshotIdentity(reaction) && at > since && at <= currentTime;
+  }
+  // Stop/Tick snapshots have their own persisted cutoff: control IDs created before it keep
+  // their history identity, so enabling the fallback cannot replay or duplicate an older control.
+  const controlCutoff = Date.parse(row.controlSnapshotsStartedAt);
+  function controlIdentity(reaction) {
+    const at = typeof reaction?.createdDateTime === 'string' ? Date.parse(reaction.createdDateTime) : NaN;
+    return Number.isFinite(controlCutoff) && at > controlCutoff;
+  }
+  // Without history a delayed fetch cannot be told apart from a late one, so a snapshot control
+  // must be recent as well: a Stop delivered long after it was added must not end newer work.
+  function freshControlSnapshot(reaction) {
+    const at = Date.parse(reaction?.createdDateTime);
+    return controlIdentity(reaction) && at > since && at > currentTime - CONTROL_SNAPSHOT_WINDOW_MS && at <= currentTime;
   }
   const context = row.context || {};
   const conversation = context.conversation || {};
@@ -93,12 +108,17 @@ export async function normalizeGraphEvents(message, row, { botId, resolveMember,
   // replay an earlier addition from the same fetched history (especially an earlier stop).
   const latest = new Map();
   const history = message.messageHistory;
-  // Channel Graph responses can omit history while exposing each present reaction's provider
-  // creation time. That proves a fresh activation, never a destructive control. Existing
-  // history (including removals/unknown flags) remains authoritative. No message update time
-  // is substituted for an addition, and the persisted upgrade cutoff excludes older snapshots.
+  // Graph responses can omit history while exposing each present reaction's provider creation
+  // time. A present activation, Stop or Tick created after its persisted cutoff (controls: within
+  // the short control window) is a fresh addition. Existing history (including removals/unknown
+  // flags) remains authoritative, and no message update time is substituted for an addition.
+  const snapshotAddition = reaction => {
+    const action = teamsGraphReactionAction(reaction, activationReactions);
+    if (action === 'engage') return freshSnapshot(reaction);
+    return (action === 'stop' || action === 'ack') && freshControlSnapshot(reaction);
+  };
   const additions = history === undefined || (Array.isArray(history) && !history.length)
-    ? (message.reactions || []).filter(reaction => teamsGraphReactionAction(reaction, activationReactions) === 'engage' && freshSnapshot(reaction))
+    ? (message.reactions || []).filter(snapshotAddition)
       .map(reaction => ({ actions: 'reactionAdded', modifiedDateTime: reaction.createdDateTime, reaction }))
     : Array.isArray(history) ? history : [];
   for (const item of additions) {
@@ -132,8 +152,8 @@ export async function normalizeGraphEvents(message, row, { botId, resolveMember,
     // A removed reaction must not start a new run when a delayed notification is fetched.
     if (!present) continue;
     // New snapshot-capable additions use one provider identity even if history later appears
-    // with a later message-modification timestamp. Legacy history IDs and control IDs stay intact.
-    if (action === 'engage' && snapshotIdentity(present)) {
+    // with a later message-modification timestamp. Legacy history IDs stay intact.
+    if (action === 'engage' ? snapshotIdentity(present) : controlIdentity(present)) {
       if (Date.parse(present.createdDateTime) > Date.parse(stamp)) continue;
       stamp = new Date(Date.parse(present.createdDateTime)).toISOString();
       // Identity must not switch back to modification time as its creation ages out of the
