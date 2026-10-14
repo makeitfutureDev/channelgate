@@ -53,6 +53,13 @@ integration and unapproved-guest identity cases are included in the full-suite r
   `test/googlechat-controls.test.js` sanitized control errors (ENOENT, REST, system errors), quoted
   top-level controls targeting the quoted session only, private restart notice for card clicks;
   `test/googlechat-private-settings.test.js` refused saves keep the session and never reflect values.
+- [x] Help layout (2026-10-14, automated): `test/googlechat-help.test.js` checks emoji headers,
+  Material-icon decorated rows for quick start and every command, bold commands over escaped
+  descriptions, example phrases with a chat icon, and a card-only reply without a text bubble.
+- [ ] LIVE `GCHAT-HELP-LAYOUT-01` (engine-independent): send `/help` in a DM and `@app /help` in a
+  space, in light and dark themes on desktop and mobile. Pass: icons render (no broken glyphs),
+  command rows wrap, headers show their emoji, topics expand/collapse, no "Google Chat help"
+  bubble. If Chat rejects the card, the full text fallback appears instead (record the error).
 - [ ] LIVE `GCHAT-CONTROLS-06` (engine-independent): configure registered slash commands `/help`,
   `/stop`, `/status` and `/model` on the Chat app. In a named space invoke each from the command
   picker WITHOUT a mention, and `/model claude` with an argument. Pass: help card appears, `/stop`

@@ -3,7 +3,10 @@
 ## Google Chat native conversation controls
 
 - Google Chat `/help` now opens a compact Cards v2 guide with expandable topics, matching the
-  Teams quick-start experience. If card delivery fails, the complete text guide is returned.
+  Teams quick-start experience. Sections carry emoji headers; quick-start entries and commands
+  are icon rows (Material icons) with the bold command over its description, and typed example
+  phrases use a chat icon. The card is the whole reply, with no separate text bubble. If card
+  delivery fails, the complete text guide is returned.
 - `/settings`, `/secrets` and `/model` open requester-only panels in their source space/session.
   General, Variables, MCPs, Skills, Automations and Resume reuse the same guarded settings policy
   as Teams. Channel defaults and session overrides have separate model/effort previews and Apply

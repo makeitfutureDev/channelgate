@@ -18,6 +18,8 @@ product overview.
 
 ## Unreleased
 
+- Google Chat `/help` looks tidier: emoji section headers, icon rows with each command in bold
+  above its description, a highlighted mention hint, and no redundant "Google Chat help" bubble.
 - Google Chat gains expandable help, requester-only settings/model and file controls, private
   browser credential entry, native approvals and the Files/Variables/Settings reply menu.
   Control commands remain responsive during agent work. These adapt the Teams improvements to

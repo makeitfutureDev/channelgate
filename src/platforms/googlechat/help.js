@@ -77,15 +77,46 @@ export const GOOGLE_CHAT_HELP_TEXT = [
   ...TOPICS.flatMap(topic => [`**${topic.title}**`, ...topic.rows]),
 ].join('\n\n');
 
-function paragraph(text) {
-  const escaped = text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-  return { textParagraph: { text: escaped.replace(/\*\*([^*]+)\*\*/g, '<b>$1</b>').replace(/`([^`]+)`/g, '<b>$1</b>') } };
+// Card rendering. Each row keeps the exact fallback wording; the card adds Material icons,
+// emoji section headers and a command/description split so the guide scans like a menu.
+const ICONS = {
+  '/help': 'help', '/settings': 'settings', '/secrets': 'key', '/files': 'folder_open', '/sendfile': 'download',
+  '/status': 'monitoring', '/model': 'tune', '/effort': 'speed', '/stop': 'stop_circle', '/clear': 'restart_alt',
+};
+const QUICK_ICONS = ['person', 'groups', 'forum'];
+const HEADERS = {
+  'Get started': '🚀  Get started', 'Useful commands': '⚡  Useful commands', 'All commands': '⌨️  All commands',
+  'Files & voice notes': '📎  Files & voice notes', 'Settings, connections & access': '⚙️  Settings, connections & access',
+  'Skills & memory': '🧠  Skills & memory', 'Reminders & background work': '⏰  Reminders & background work',
+  'Reply controls': '💬  Reply controls',
+};
+const inline = text => text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+  .replace(/\*\*([^*]+)\*\*/g, '<b>$1</b>').replace(/`([^`]+)`/g, '<b>$1</b>');
+const icon = name => ({ materialIcon: { name } });
+function decorated(text, iconName, extra = {}) {
+  return { decoratedText: { ...(iconName ? { startIcon: icon(iconName) } : {}), text, wrapText: true, ...extra } };
 }
+// "`/stop` or `/cancel` — Stop …" → bold commands over their description, with the command's icon.
+function row(text, fallbackIcon = '') {
+  const command = /^((?:`[^`]+`(?: or )?)+) — (.+)$/s.exec(text);
+  if (command) {
+    const names = [...command[1].matchAll(/`([^`]+)`/g)].map(match => match[1]);
+    // Typed example phrases ("`list skills`") read as things to say, not commands.
+    const iconName = ICONS[names[0].split(' ')[0]] || fallbackIcon || (names[0].startsWith('/') ? 'chevron_right' : 'chat_bubble');
+    return decorated(`${names.map(name => `<b>${inline(name)}</b>`).join('  ·  ')}<br>${inline(command[2])}`, iconName);
+  }
+  const labelled = /^\*\*([^*]+)\*\* — (.+)$/s.exec(text);
+  if (labelled) return decorated(`<b>${inline(labelled[1])}</b><br>${inline(labelled[2])}`, fallbackIcon || 'chevron_right');
+  return { textParagraph: { text: inline(text) } };
+}
+const section = (title, widgets, collapsible = false) => ({ header: HEADERS[title] || title, widgets,
+  ...(collapsible ? { collapsible: true, uncollapsibleWidgetsCount: 0 } : {}) });
+
 export function createGoogleChatHelpCard() {
   return { header: { title: TITLE, subtitle: INTRO }, sections: [
-    { header: 'Get started', widgets: QUICK_START.map(paragraph) },
-    { header: 'Useful commands', widgets: [...SHORTCUTS, COMMAND_HINT].map(paragraph) },
-    ...TOPICS.map(topic => ({ header: topic.title, collapsible: true, uncollapsibleWidgetsCount: 0,
-      widgets: topic.rows.map(paragraph) })),
+    section('Get started', QUICK_START.map((text, index) => row(text, QUICK_ICONS[index]))),
+    section('Useful commands', [...SHORTCUTS.map(text => row(text)),
+      decorated(inline(COMMAND_HINT), 'info')]),
+    ...TOPICS.map(topic => section(topic.title, topic.rows.map(text => row(text)), true)),
   ] };
 }

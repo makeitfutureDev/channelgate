@@ -137,7 +137,7 @@ export function createGoogleChatControls({ connector, authorize = googleChatWork
     const name = command[1].toLowerCase();
     if (name === 'model' && command[2]?.trim()) return false;
     if (name === 'help') {
-      try { if (!args.replyCard) throw new Error('Cards unavailable'); await args.replyCard({ card: createGoogleChatHelpCard(), text: 'Google Chat help' }); }
+      try { if (!args.replyCard) throw new Error('Cards unavailable'); await args.replyCard({ card: createGoogleChatHelpCard() }); }
       catch { await args.reply(GOOGLE_CHAT_HELP_TEXT); }
       return true;
     }
