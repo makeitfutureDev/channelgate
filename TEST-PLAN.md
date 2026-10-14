@@ -1,5 +1,31 @@
 # ChannelGate — Test Plan
 
+## Compatible gateway dependency updates (2026-10-14)
+
+Composio core 0.22.0, Express 5.3.0 and Acorn 8.19.0 are ported to beta without release or
+container image changes. The former dependency PR failed because its download assertion required
+quotes around a valid HTTP token filename; Express's content-disposition 2 now omits those quotes.
+`test/public-file-links.test.js` accepts either valid token representation and additionally checks
+real downloads with spaces, escaped quotes and Unicode filenames. `test/composio-sdk.test.js`
+uses the installed SDK with a mocked HTTP boundary to verify create/resume requests, identity,
+connection-management restrictions and non-exposure of the daemon key to callers.
+
+Validation: clean `npm ci --ignore-scripts --no-fund` installs 189 packages with zero reported
+vulnerabilities; `npm audit --omit=dev --audit-level=high`, static checking (874 JS files), secret
+scan and `git diff --check` pass. On Node 22.23.2, the focused public-file-links, file-download,
+file-editor, file-upload, web-security, admin-auth-bind, mcp-socket-server, composio-sdk,
+composio-sdk-bridge, composio-sdk-run, composio-sdk-settings, composio-sessions and
+composio-entitlement suites pass **93/93**, no skips. The two changed suites also pass **20/20**,
+no skips, on Node **22.13.0** and **24.21.0**.
+
+Compatibility limitation: published npm metadata for both the previous Composio core 0.19.0 and
+0.22.0 declares Node >=22.22.3, above the gateway's existing >=22.13 floor. The lower-floor result
+above demonstrates only the exercised installed-SDK paths; it does not claim upstream support
+for every SDK API or resolve that pre-existing metadata mismatch. The gateway floor is unchanged.
+Full combined regression/coverage and CI remain integration checks. Existing live Composio
+Claude/Codex session and public-link acceptance gates still apply; mocked HTTP is not live
+provider acceptance.
+
 ## Google Chat HTTP endpoint — working card buttons (2026-10-14)
 
 Root cause: a Chat app has one connection setting and Google delivers card/button clicks only to

@@ -18,6 +18,11 @@ product overview.
 
 ## Unreleased
 
+- Update the gateway dependencies to Composio SDK 0.22.0, Express 5.3.0 and Acorn 8.19.0.
+  Download filenames retain their names and required escaping; Express now omits optional quotes
+  around simple attachment filenames. Regression checks cover the installed SDK's session
+  creation/resume contract and public downloads with spaces, quotes and Unicode names.
+
 - Google Chat card buttons now work: a Chat app connected through a Pub/Sub topic never receives
   button clicks (Google delivers them only to an HTTP endpoint connection), so Files / Variables /
   Settings and every other card button failed with "unable to process your request". ChannelGate
