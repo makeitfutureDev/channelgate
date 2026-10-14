@@ -31,7 +31,7 @@ test('native Google Chat help starts compact and expands topics entirely in the 
   const card = createGoogleChatHelpCard();
   assert.equal(card.header.title, 'How to use me');
   assert.equal(card.sections.length, 8);
-  assert.deepEqual(card.sections.slice(0, 2).map(s => s.header), ['Get started', 'Useful commands']);
+  assert.deepEqual(card.sections.slice(0, 2).map(s => s.header), ['🚀  Get started', '⚡  Useful commands']);
   assert.equal(card.sections[0].collapsible, undefined);
   const topics = card.sections.slice(2);
   assert.equal(topics.length, 6);
@@ -42,6 +42,26 @@ test('native Google Chat help starts compact and expands topics entirely in the 
   assert.match(JSON.stringify(card), /protected browser page/);
   assert.doesNotMatch(GOOGLE_CHAT_HELP_TEXT, /Teams|Microsoft|Accept\/Decline|reaction picker/);
   assert.match(GOOGLE_CHAT_HELP_TEXT, /Reaction shortcuts are not available/);
+});
+
+test('help card lays commands out as icon rows with bold commands and escaped descriptions', () => {
+  const card = createGoogleChatHelpCard();
+  const widgets = card.sections.flatMap(section => section.widgets);
+  const rows = widgets.filter(widget => widget.decoratedText);
+  assert.ok(rows.length >= 20, 'commands and quick-start entries render as decorated rows');
+  assert.equal(rows.every(widget => widget.decoratedText.wrapText && widget.decoratedText.startIcon?.materialIcon?.name), true);
+  const icon = command => rows.find(widget => widget.decoratedText.text.startsWith(`<b>${command}`))?.decoratedText.startIcon.materialIcon.name;
+  assert.equal(icon('/model'), 'tune');
+  assert.equal(icon('/stop'), 'stop_circle');
+  assert.equal(icon('/settings'), 'settings');
+  assert.match(rows.find(widget => widget.decoratedText.text.startsWith('<b>/stop</b>  ·  <b>/cancel</b>')).decoratedText.text, /<br>Stop this session/);
+  assert.equal(card.sections[0].widgets.map(widget => widget.decoratedText.startIcon.materialIcon.name).join(), 'person,groups,forum');
+  assert.equal(icon('list skills'), 'chat_bubble');
+  // Markdown becomes Chat HTML; literal angle brackets stay escaped text.
+  assert.doesNotMatch(JSON.stringify(card), /\*\*|`/);
+  assert.match(JSON.stringify(card), /&lt;path&gt;/);
+  assert.equal(card.sections.slice(2).map(s => s.header).join('|'),
+    '⌨️  All commands|📎  Files & voice notes|⚙️  Settings, connections & access|🧠  Skills & memory|⏰  Reminders & background work|💬  Reply controls');
 });
 
 test('plain help fallback contains all commands and fits the Google formatter message budget', () => {
@@ -78,6 +98,7 @@ test('Google Chat Pub/Sub help dispatch reaches native REST cards before an engi
       assert.equal(sent.method, 'POST');
       assert.ok(sent.url.includes(`${space.name}/messages`));
       assert.equal(sent.body.cardsV2[0].card.header.title, 'How to use me');
+      assert.equal(sent.body.text, '', 'the card is the whole reply, with no duplicate text bubble');
       if (kind === 'dm') assert.equal(sent.body.thread, undefined);
       else assert.equal(sent.body.thread.name, `${space.name}/threads/T`);
     }
