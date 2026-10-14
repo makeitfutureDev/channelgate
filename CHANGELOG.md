@@ -18,6 +18,18 @@ product overview.
 
 ## Unreleased
 
+- **Slack Settings redesign.** ⚙️ Settings now has seven pages behind one dropdown: Agent,
+  Access, MCP, Variables, Skills, Schedules and You.
+  - **Edit in place:** engine/model/effort and the mode are one row of dropdowns. Tokens, URLs and
+    variables open their fields on the page instead of in a second window, and the footer's Save
+    stores them.
+  - **Variables** have a ⋯ menu: Replace value, Allowed servers, Make readable/secret, Remove.
+  - **Access** lists every member with a Use tick; unticking an approved member removes them from
+    this channel only.
+  - **Composio, Make toolbox, Toolbox and custom MCP servers** each have their own section, on MCP
+    for the channel and on **You** for yourself.
+  - **Skills and Cloud MCP** are one picker each.
+  - The long explainers are gone.
 - **Custom MCP servers from Slack.** ⚙️ Settings → MCPs now lists the conversation's custom MCP
   servers and your own, and lets you add, update or remove them in place. A conversation's servers
   are editable by its managers and admins; your own are yours to manage. Tokens stay write-only.

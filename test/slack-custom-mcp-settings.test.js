@@ -38,27 +38,32 @@ const flat = (view) => JSON.stringify(view);
 const buttons = (view, actionId) => view.blocks.flatMap((block) => [...(block.elements || []), ...(block.accessory ? [block.accessory] : [])])
   .filter((element) => element?.action_id === actionId);
 
-test("the MCPs page lists both scopes masked, with conversation controls only for a manager", () => {
+test("the MCP page lists the conversation's servers and You lists the viewer's, masked and edited in place", () => {
+  const forms = (view) => buttons(view, "cg_channel_settings_form_open").map((b) => settingsCommand(b).f);
   const manager = buildChannelSettingsView({ customMcps: masked }, { ...state, tab: "mcp" }, { tab: "mcp", canManageCustomMcp: true });
-  assert.match(flat(manager), /Custom MCP servers/);
   assert.match(flat(manager), /custom-linear/);
-  assert.match(flat(manager), /my-notes/);
-  assert.match(flat(manager), /••••ABCD/);
-  const managerAdds = buttons(manager, CHANNEL_SETTINGS_CUSTOM_MCP_ADD_ACTION_ID).map((b) => settingsCommand(b).s);
-  assert.deepEqual(managerAdds, ["c", "p"]);
-  const removes = buttons(manager, CHANNEL_SETTINGS_CUSTOM_MCP_REMOVE_ACTION_ID).map((b) => settingsCommand(b));
-  assert.deepEqual(removes.map((c) => [c.s, c.n]), [["c", "linear"], ["p", "notes"]]);
-  assert.ok(removes.length && buttons(manager, CHANNEL_SETTINGS_CUSTOM_MCP_REMOVE_ACTION_ID).every((b) => b.confirm), "removal asks first");
+  assert.match(flat(manager), /••ABCD/);
+  assert.doesNotMatch(flat(manager), /my-notes/, "the viewer's own servers live on You");
+  assert.ok(forms(manager).includes("cm:c:linear") && forms(manager).includes("cm-add:c"));
 
   const member = buildChannelSettingsView({ customMcps: masked }, { ...state, tab: "mcp" }, { tab: "mcp", canManageCustomMcp: false });
-  assert.deepEqual(buttons(member, CHANNEL_SETTINGS_CUSTOM_MCP_ADD_ACTION_ID).map((b) => settingsCommand(b).s), ["p"], "a member edits only their own");
-  assert.deepEqual(buttons(member, CHANNEL_SETTINGS_CUSTOM_MCP_REMOVE_ACTION_ID).map((b) => settingsCommand(b).s), ["p"]);
-  assert.match(flat(member), /Only this channel's managers and admins/);
+  assert.equal(forms(member).some((key) => key.startsWith("cm")), false, "a member cannot edit the conversation's servers");
+  assert.match(flat(member), /Managers change these/);
 
-  const empty = buildChannelSettingsView({}, { ...state, tab: "mcp" }, { tab: "mcp" });
-  assert.match(flat(empty), /_none_/);
+  const you = buildChannelSettingsView({ customMcps: masked }, { ...state, tab: "you" }, { tab: "you", canManageCustomMcp: false });
+  assert.match(flat(you), /my-notes/);
+  assert.match(flat(you), /••WXYZ/);
+  assert.ok(forms(you).includes("cm:p:notes") && forms(you).includes("cm-add:p"), "anyone edits their own");
+
+  // Editing opens the fields in place; the token box is never prefilled and the URL is.
+  const editing = buildChannelSettingsView({ customMcps: masked }, { ...state, tab: "mcp", form: "cm:c:linear" }, { tab: "mcp", canManageCustomMcp: true });
+  assert.equal(editing.submit.text, "Save");
+  const inputs = editing.blocks.filter((block) => block.type === "input");
+  assert.deepEqual(inputs.map((block) => block.label.text), ["Server URL", "Bearer token"]);
+  assert.equal(inputs[0].element.initial_value, "https://mcp.linear.app/mcp");
+  assert.equal(inputs[1].element.initial_value, undefined);
+  assert.ok(buttons(editing, "cg_channel_settings_form_remove")[0].confirm, "Remove asks first");
 });
-
 test("the form is never prefilled, names the scope, and parses only what was typed", () => {
   const view = buildCustomMcpEditorView(state, { scope: "channel", channelName: "slack-cmcp", existing: masked.channel });
   assert.equal(view.callback_id, CHANNEL_SETTINGS_CUSTOM_MCP_CALLBACK_ID);

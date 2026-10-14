@@ -131,3 +131,16 @@ test("denial reasons distinguish channel restrictions from deployment approval",
     assert.doesNotMatch(authorizationDenialReason(meta, true), /restricted to/);
   }
 });
+
+// Settings → Access: an unticked Use box excludes an approved member from ONE channel.
+test("a per-channel exclusion refuses an approved member there, never an admin, and never in a DM", () => {
+  const meta = { access: "approved", excludedUsers: ["U_OUT"] };
+  assert.equal(isAuthorized(meta, "U_OUT", false, { isApprovedUser: true }), false);
+  assert.equal(isAuthorized(meta, "U_IN", false, { isApprovedUser: true }), true);
+  assert.equal(isAuthorized(meta, "U_OUT", false, { isAdminUser: true }), true, "admins cannot be excluded");
+  assert.equal(isAuthorized(meta, "U_OUT", true, { isApprovedUser: true }), true, "a DM has no exclusion list");
+  // The exclusion wins over a stale guest grant for the same person.
+  assert.equal(isAuthorized({ ...meta, allowedUsers: ["U_OUT"] }, "U_OUT", false, {}), false);
+  // A malformed list is ignored rather than trusted.
+  assert.equal(isAuthorized({ access: "approved", excludedUsers: "U_OUT" }, "U_OUT", false, { isApprovedUser: true }), true);
+});

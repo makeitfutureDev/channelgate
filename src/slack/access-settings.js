@@ -66,7 +66,37 @@ export function accessSettingsSnapshot(meta = {}) {
     autoMode: Boolean(meta.autoMode), cleanMode: Boolean(meta.cleanMode), allowNetwork: Boolean(meta.allowNetwork),
     access: meta.access || "approved", manageAccess: meta.manageAccess || "admins",
     allowedUsers: meta.allowedUsers || [], managers: meta.managers || [],
+    excludedUsers: meta.excludedUsers || [],
   };
+}
+
+// One member row on Settings → Access: tick or untick Use / Manage for ONE person, returning the
+// access form the save path validates. "Use" is the effective answer to "can this person talk to
+// the agent here": ticking removes an exclusion and, when the channel's policy would not already
+// admit them, adds a guest grant; unticking removes a guest grant and, when the policy would still
+// admit them (an approved member of an "approved" channel), records an exclusion. Admins are never
+// excluded. "Manage" is the named-managers list. `who` is the member's { isAdminUser,
+// isApprovedUser } from the user store.
+export function memberAccessForm(meta = {}, userId, { use, manage } = {}, who = {}) {
+  const form = accessSettingsSnapshot(meta);
+  const without = (list) => list.filter((id) => id !== userId);
+  if (typeof use === "boolean") {
+    form.allowedUsers = without(form.allowedUsers);
+    form.excludedUsers = without(form.excludedUsers);
+    const policyAdmits = isAuthorized({ ...meta, allowedUsers: [], excludedUsers: [] }, userId, false, who);
+    if (use && !policyAdmits) form.allowedUsers.push(userId);
+    if (!use && policyAdmits && !who.isAdminUser) form.excludedUsers.push(userId);
+  }
+  if (typeof manage === "boolean") {
+    form.managers = without(form.managers);
+    if (manage) form.managers.push(userId);
+  }
+  return form;
+}
+
+// Can this member use the agent here, by the same rule a run is authorized with?
+export function memberCanUse(meta = {}, userId, who = {}) {
+  return isAuthorized(meta, userId, false, who);
 }
 
 export function assertAccessManager(meta, actor) {
@@ -83,7 +113,7 @@ export function accessSettingsPatch(meta, form, actor) {
     if (!choices.some(([, value]) => form[key] === value)) throw new Error(`Invalid ${labels[key]}.`);
   }
   for (const [, key] of flags) if (typeof form[key] !== "boolean") throw new Error("Invalid access option.");
-  for (const key of ["allowedUsers", "managers"]) {
+  for (const key of ["allowedUsers", "managers", "excludedUsers"]) {
     if (!Array.isArray(form[key]) || form[key].length > 100 || form[key].some((id) => typeof id !== "string" || !/^[UW][A-Z0-9]+$/.test(id))) {
       throw new Error("Choose up to 100 valid users per list.");
     }
@@ -92,6 +122,7 @@ export function accessSettingsPatch(meta, form, actor) {
     ...modeSettingsPatch(meta, { mode: form.mode, autoMode: form.autoMode, cleanMode: form.cleanMode }, { canEnableAdmin: true }),
     allowNetwork: form.allowNetwork, access: form.access, manageAccess: form.manageAccess,
     allowedUsers: [...new Set(form.allowedUsers)], managers: [...new Set(form.managers)],
+    excludedUsers: [...new Set(form.excludedUsers)],
   };
   return patch;
 }
