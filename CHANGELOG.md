@@ -18,7 +18,7 @@ product overview.
 
 ## Unreleased
 
-- Update the pinned Claude Code and Codex CLIs to 2.1.299 and 0.162.1.
+- Update the pinned Claude Code and Codex CLIs to 2.1.300 and 0.162.1.
 
 - Google Chat card buttons now work: a Chat app connected through a Pub/Sub topic never receives
   button clicks (Google delivers them only to an HTTP endpoint connection), so Files / Variables /
