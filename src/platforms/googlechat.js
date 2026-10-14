@@ -44,6 +44,9 @@ export const googleChatAdapter = validatePlatformAdapter({
     ephemeral: false,
     deleteMessage: true,
     reactions: true,
+    // Reactions arrive through Google Workspace Events subscriptions (optional reaction topic).
+    // Only the transport produces reaction triggers, and only for the configured emojis.
+    reactionTriggers: true,
     maxMessageChars: MAX_CHAT_MESSAGE_CHARS,
     markdown: "standard",
     // Standard Markdown went GA 2026-08-07 (`markup_syntax`), but tables and headings still do not

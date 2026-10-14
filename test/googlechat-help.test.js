@@ -41,7 +41,7 @@ test('native Google Chat help starts compact and expands topics entirely in the 
   assert.doesNotMatch(JSON.stringify(card), /onClick|textInput|Action\.ToggleVisibility|AdaptiveCard/);
   assert.match(JSON.stringify(card), /protected browser page/);
   assert.doesNotMatch(GOOGLE_CHAT_HELP_TEXT, /Teams|Microsoft|Accept\/Decline|reaction picker/);
-  assert.match(GOOGLE_CHAT_HELP_TEXT, /Reaction shortcuts are not available/);
+  assert.match(GOOGLE_CHAT_HELP_TEXT, /configured start emoji \(🤖 by default\)/);
 });
 
 test('help card lays commands out as icon rows with bold commands and escaped descriptions', () => {
@@ -139,6 +139,6 @@ test('native help REST failure falls back to the complete guide in the same conv
   assert.ok(fallback.length > 1);
   assert.equal(fallback.every(call => !call.body.cardsV2.length && call.body.thread.name === message.threadKey), true);
   assert.match(fallback.map(call => call.body.text).join('\n'), /\/clear/);
-  assert.match(fallback.map(call => call.body.text).join('\n'), /Reaction shortcuts are not available/);
+  assert.match(fallback.map(call => call.body.text).join('\n'), /configured start emoji \(🤖 by default\)/);
   controls.stop();
 });

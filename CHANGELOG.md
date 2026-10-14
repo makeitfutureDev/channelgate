@@ -18,6 +18,14 @@ product overview.
 
 ## Unreleased
 
+- Add Google Chat reaction controls. Chat apps receive no event for a reaction, so ChannelGate now
+  maintains a Google Workspace Events subscription per space (app authentication with the
+  admin-approved `chat.app.messages.readonly` scope, renewed about hourly) when Settings → Google
+  Chat → **Reaction events topic** is set. The configured start emoji (🤖) runs a message as the
+  reactor, 🛑 stops a running or queued turn (author or admin) and ✅ closes a tracked reminder.
+  Reactions are deduplicated, freshness-bounded and withdrawn on removal; messaging is unaffected
+  when reaction events are not configured or not approved.
+
 - Google Chat `/help` looks tidier: emoji section headers, icon rows with each command in bold
   above its description, a highlighted mention hint, and no redundant "Google Chat help" bubble.
 - Google Chat gains expandable help, requester-only settings/model and file controls, private

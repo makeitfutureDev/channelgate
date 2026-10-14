@@ -224,9 +224,28 @@ control-plane status.
   Custom selections replace activation defaults; Stop and Tick stay fixed. Saved configuration
   changes carry a monotonic timestamp, prevent historical/queued activation replay, and preserve
   existing event identities and reactor authorization. Teams help shows its current activation list.
-- Google Chat's Unicode emoji selection is stored independently. The current interaction-event
-  transport does not receive reaction events, so this setting alone cannot activate Google Chat
-  messages. The UI states that limitation; Workspace Events subscriptions are separate work.
+- Google Chat's Unicode emoji selection (default 🤖) acts once reaction events are enabled (below).
+
+## Google Chat reaction controls
+
+- Chat apps receive no interaction event for a reaction. With Settings → Google Chat → **Reaction
+  events topic** set, the transport keeps one Google Workspace Events subscription per space the
+  app belongs to (`google.workspace.chat.reaction.v1.created`/`deleted`, resource data included,
+  app authentication with the admin-approved `chat.app.messages.readonly` scope, on a separate
+  token so an unapproved scope never affects messaging). A stateless reconciler lists the app's
+  subscriptions every 30 minutes and on startup, space joins and lifecycle events: it renews any
+  with under two hours left (four-hour maximum), reactivates suspended ones, recreates expired
+  ones, retires duplicates and those for spaces the app left, and never touches subscriptions on
+  another topic. Status appears in the transport line (`reactions N/M spaces` or the error).
+- Events arrive on the existing pulled subscription. The reactor (`users/…`) maps to exactly one
+  gateway user recorded from that person's delivered messages; the reacted message and its space
+  are fetched to resolve thread and session. Start runs the reacted person's text as the reactor,
+  or continues from the app's own answer; Stop and Tick ride the durable control queue, so Stop
+  interrupts a running turn and cancels queued work for its session (author or admin); Tick
+  closes a tracked reminder. Freshness bounds (Stop 10 min, start 1 h, Tick 24 h), removal
+  tombstones and queued-row withdrawal, event identity from reaction name + provider time, and the
+  durable inbox's deduplication keep any reaction from acting twice or late. Unknown, ambiguous,
+  bot and unapproved reactors never act.
 
 ## Perplexity research delegation
 

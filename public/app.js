@@ -3810,6 +3810,7 @@ function readSettingsForm() {
     ...(document.getElementById("clear-gchat-key").classList.contains("armed") ? { clearGoogleChatServiceAccountJson: true } : {}),
     googleChatSubscription: document.getElementById("set-gchat-sub").value,
     googleChatBotUserId: document.getElementById("set-gchat-bot").value,
+    googleChatReactionTopic: document.getElementById("set-gchat-reaction-topic").value,
     teamsAppId: document.getElementById("set-teams-app").value,
     ...(tokenValue(document.getElementById("set-teams-secret")) ? { teamsAppPassword: tokenValue(document.getElementById("set-teams-secret")) } : {}),
     ...(document.getElementById("clear-teams-secret").classList.contains("armed") ? { clearTeamsAppPassword: true } : {}),
@@ -3941,6 +3942,7 @@ function paintSettings(s) {
     : "not set";
   document.getElementById("set-gchat-sub").value = s.googleChat?.subscription || "";
   document.getElementById("set-gchat-bot").value = s.googleChat?.botUserId || "";
+  document.getElementById("set-gchat-reaction-topic").value = s.googleChat?.reactionTopic || "";
   // No eye toggle on the key: attachReveal drives an <input type=password>, and this is a textarea
   // (a service-account key is multi-line JSON) — the same shape the Drive-sync key field uses. The
   // value is still fetchable through /api/secrets/reveal for an admin who needs it back.

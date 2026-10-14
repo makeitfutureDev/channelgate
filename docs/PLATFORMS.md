@@ -15,10 +15,9 @@ subscription are still required for reactions on unmentioned group/channel conte
 activation list does not change Stop/Tick controls. Old history and pending requests from a prior
 selection do not activate after a change; add a fresh reaction after saving.
 
-Google Chat stores a Unicode-only selection. Its current Pub/Sub interaction transport does not
-receive reaction events, so the field alone does not enable activation. Operational reaction
-intake would require a [Google Workspace Events subscription](https://developers.google.com/workspace/events/guides/events-chat)
-plus authenticated actor/message handling; this change does not create subscriptions or consent.
+Google Chat stores a Unicode-only selection (default 🤖). Chat apps receive no interaction event
+for a reaction, so the selection acts only once **reaction events** are enabled (Google Chat →
+Setup step 8): Google Workspace Events subscriptions then deliver each space's reactions.
 
 ChannelGate speaks to three chat surfaces. Slack is GA; Google Chat and Microsoft Teams are in
 **Beta** — their in-chat feature set is deliberately smaller (see *What works where* below).
@@ -86,6 +85,31 @@ cover these distinct configurations.
 The app's own `users/…` id is learned automatically the first time it is added to a space; the
 optional field exists only to short-circuit that.
 
+8. **Optional — reaction controls (🤖 start, 🛑 stop, ✅ acknowledge).** A Chat app never receives
+   an interaction event for a reaction; Google delivers reactions only through
+   [Google Workspace Events subscriptions](https://developers.google.com/workspace/events/guides/events-chat).
+   ChannelGate creates and maintains one per space the app belongs to, with **app authentication**
+   (generally available since 2026-03-31), so no user has to sign in:
+   1. Enable the **Google Workspace Events API** in the same project.
+   2. Configure app authentication with administrator approval for the scope
+      `https://www.googleapis.com/auth/chat.app.messages.readonly` (Google's
+      [authorization guide](https://developers.google.com/workspace/chat/authenticate-authorize-chat-app):
+      Marketplace SDK app configuration for the ChannelGate service account), then have a Google
+      Workspace administrator **approve** the app. Without that approval the subscriptions fail;
+      messaging is unaffected.
+   3. Workspace Events publishes with the **same publisher identity as step 5** (the add-on's
+      Configuration-page service account, or `chat-api-push@system.gserviceaccount.com` for a
+      standalone app), so the step 5 grant on the topic already covers it. Events then arrive
+      through the subscription ChannelGate already pulls.
+   4. In Settings → Connection → *Google Chat*, enter **Reaction events topic**
+      `projects/<project>/topics/<topic>` (the same topic), **Save** and **Connect**. The status
+      line reads `reactions N/M spaces` once subscriptions are active, or names the error.
+
+   Subscriptions carry the reaction data, which Google caps at four hours, so ChannelGate renews
+   each one about hourly, reactivates suspended ones, recreates expired ones, retires those for
+   spaces the app left, and reconciles on startup, on joining a space and on Google's lifecycle
+   events. Reactions made while the gateway is down for longer than that are not delivered.
+
 ### Notes and limits
 
 - **Attachments in:** files uploaded directly in Chat are downloaded through `media.download`. A file
@@ -107,6 +131,14 @@ optional field exists only to short-circuit that.
   mention the bot before a typed command; configured registered slash-command events also work.
   Credential entry uses private browser forms; no value is shown or prefilled. Pub/Sub supports
   cards but cannot open synchronous dialogs. Stop/status use a separate durable control queue.
+- **Reactions** (with Setup step 8): the configured start emoji on a person's message runs its text
+  as the **reactor**, and on the app's answer continues that task; 🛑 on the request or the working
+  message stops that session's active and queued work, including a turn already running (its
+  author or an admin); ✅ acknowledges a tracked reminder. The reactor's `users/…` id maps to the
+  gateway user whose messages Google has delivered before (unknown or ambiguous ids never act) and
+  then passes the ordinary authorization gate. A Stop older than 10 minutes, a start older than an
+  hour, a Tick older than a day, a removed reaction and a redelivered event never act; reacted text
+  is content, never a command. Reacting on another app's message never starts a run.
 - **Replies:** a temporary working line (edited with a compact elapsed/"Still connected"
   heartbeat, since Chat has no typing indicator) becomes the final answer. In group chats and
   unthreaded spaces, quote the request or a bot reply with a top-level `/stop`, `/status` or
@@ -439,6 +471,7 @@ reference: [Microsoft bot file consent](https://learn.microsoft.com/en-us/micros
 | Interactive approval buttons | ✅ | native Cards v2 | native cards (branch) |
 | Approvals by signed link | ✅ (in addition to the buttons) | native cards; legacy connector fallback | native thread cards; no supplemental links |
 | Session commands | full Slack controls | native help/settings/files + text controls | text subset + native settings/files (branch) |
+| Reaction controls (start / stop / acknowledge) | ✅ | with Workspace Events (setup step 8) | with event delivery |
 | Native tables / charts / Lists / canvases | ✅ | ❌ | ❌ |
 | Escalation to full-access in an admin-mode channel | ✅ | ❌ | ❌ |
 
