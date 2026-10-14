@@ -18,10 +18,22 @@
   opened panel drafts expire after 15 minutes. Google-enforced private viewers keep file and
   credential links visible only to the requester in the original space.
 - Native approval cards remain in the source conversation. Pub/Sub card and text controls use a
-  separate durable lane so stop/status remain responsive while agent turns are running. The
-  working placeholder is replaced by the final answer without detailed tool-status blocks;
-  completed space/group answers mention the requester. Google Chat dialogs and typing events
-  remain unavailable in this connection mode; reaction activation is not advertised.
+  separate durable lane so stop/status remain responsive while agent turns are running.
+  Registered slash commands are rebuilt from Google's SLASH_COMMAND annotation (or the literal
+  message text), because `argumentText` carries only the arguments; a numeric command ID is never
+  mapped to a name. In a group chat or unthreaded space, a top-level `/stop`, `/status` or
+  `/clear` that quotes the request or a bot reply targets that quoted session. The working
+  placeholder is edited in place with a compact heartbeat (phase, run-slot position, elapsed,
+  last activity, subagents, "Still connected") — Chat has no typing indicator — and is replaced
+  by the final answer; if that edit fails the answer is posted and the placeholder removed.
+  Completed space/group answers mention the requester. Approval refusals (not authorized, wrong
+  scope, already handled) and control errors are shown privately to the clicker with the policy
+  reason; REST bodies, system errors and host paths collapse to generic retry guidance. Deny
+  ignores the comment field. A refused private-browser save shows a value-free reason and keeps
+  the session. Open panel drafts and browser-settings sessions are in memory and need reopening
+  after a restart; a restart-interrupted click is reported only to its clicker. Google Chat
+  dialogs and typing events remain unavailable in this connection mode; reaction activation is
+  not advertised.
 - Automated coverage and pending live Claude/Codex gates: → TEST-PLAN: Google Chat native controls.
 
 ## Teams reply menu

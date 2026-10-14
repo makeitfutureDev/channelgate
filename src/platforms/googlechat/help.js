@@ -28,6 +28,7 @@ const TOPICS = [
     '`/stop` or `/cancel` — Stop this session’s active and queued work.',
     '`/clear` — Stop and clear this session. Your next request starts fresh.',
     'Only the run author or an administrator may stop a request. New requests for the same session queue while I work.',
+    'In a threaded space, send `/stop`, `/status` or `/clear` in the request’s thread. In a group chat or a space without threads, quote my reply (or your request) when you send it.',
   ] },
   { title: 'Files & voice notes', rows: [
     'Attach a file or image and tell me what to do with it. Downloadable Chat uploads are saved into this conversation’s workspace.',

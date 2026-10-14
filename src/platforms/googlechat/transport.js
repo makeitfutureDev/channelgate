@@ -4,7 +4,7 @@ import { createDurableInbox } from "../durable-inbox.js";
 import { createGoogleAuth } from "./auth.js";
 import { createChatApi, isSpaceName, isMessageName, isThreadName } from "./api.js";
 import { createPubSubPuller } from "./pubsub.js";
-import { parseChatEvent, normalizeMessage, normalizeCardEvent, createSeenThreads } from "./events.js";
+import { parseChatEvent, normalizeMessage, normalizeCardEvent, createSeenThreads, messageCommandText, GOOGLE_CHAT_CONTROL_COMMAND } from "./events.js";
 import { createGoogleChatConnector } from "./connector.js";
 import { sessionKeyForMessage } from "../reply-sessions.js";
 import { getDb, fromJson } from "../../db/index.js";
@@ -34,8 +34,8 @@ export async function startGoogleChat({
   const seenThreads = createSeenThreads();
   const namespace = `googlechat:${subscription}`;
   const controlNamespace = `googlechat-controls:${subscription}`;
-  const isControl = event => event.type === 'card' || /^\/(help|status|clear|stop|cancel|model|effort|settings|files|secrets|sendfile)(?:\s|$)/i
-    .test(String(event.message?.argumentText ?? event.message?.text ?? '').trim());
+  const isControl = event => event.type === 'card'
+    || GOOGLE_CHAT_CONTROL_COMMAND.test(messageCommandText(event.message, { appCommand: event.appCommand }));
   const inboundFor = ({ event, botId, threadKey }) => {
     const message = normalizeMessage(event, { botUserId: botId, api });
     return threadKey === undefined ? message : { ...message, threadKey };
@@ -57,10 +57,16 @@ export async function startGoogleChat({
       } else await onMessage(inboundFor(payload));
     },
     interrupted: async payload => {
-      const message = payload.event.type === 'card' ? normalizeCardEvent(payload.event) : inboundFor(payload);
+      const card = payload.event.type === 'card';
+      const message = card ? normalizeCardEvent(payload.event) : inboundFor(payload);
       if (!message) return;
-      await connector.post({ conversationId: message.conversationId, threadKey: message.threadKey,
-        text: "This request was interrupted before its outcome could be confirmed. External actions may already have happened. Inspect the task before retrying; it was not run again automatically." });
+      // A button click concerns only its clicker; never announce it to the whole space.
+      const viewer = card ? message.userResourceName : '';
+      await connector.post({ conversationId: message.rawConversationId || message.conversationId, threadKey: message.threadKey,
+        ...(card && /^users\/[A-Za-z0-9_-]+$/.test(viewer) ? { ephemeralTo: viewer } : {}),
+        text: card
+          ? "Your button action was interrupted by a gateway restart before its outcome could be confirmed. Reopen the controls to check the current state before trying again."
+          : "This request was interrupted before its outcome could be confirmed. External actions may already have happened. Inspect the task before retrying; it was not run again automatically." });
     },
     log,
   };

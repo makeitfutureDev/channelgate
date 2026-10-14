@@ -36,7 +36,10 @@ export function validateChatCard(card) {
 export function adaptiveSettingsToChat(card) {
   function action(item) {
     if (item.type === 'Action.OpenUrl') return chatLink(item.title, item.url);
-    return chatAction(item.title, item.data?.cgAction || item.verb, item.data?.stateId, item.data || {});
+    // Adaptive `associatedInputs: none` (Deny) must not carry the card's typed inputs; Chat always
+    // submits every form input, so the action itself records that its inputs are ignored.
+    return chatAction(item.title, item.data?.cgAction || item.verb, item.data?.stateId,
+      { ...(item.data || {}), ...(item.associatedInputs === 'none' ? { cgInputs: 'none' } : {}) });
   }
   function widgets(items) {
     return (items || []).flatMap(item => {
@@ -59,5 +62,13 @@ export function adaptiveSettingsToChat(card) {
       throw new Error('Unsupported Google Chat settings control.');
     });
   }
-  return chatCard(card.body?.[0]?.text || 'Channel settings', [...widgets(card.body), ...(card.actions?.length ? [chatButtons(card.actions.map(action))] : [])]);
+  // The first Bolder TextBlock is the Adaptive title; it becomes the Chat header, not a repeat.
+  const titled = card.body?.[0]?.type === 'TextBlock' && card.body[0].weight === 'Bolder';
+  const body = titled ? card.body.slice(1) : card.body;
+  return chatCard(titled ? card.body[0].text : 'Channel settings', [...widgets(body), ...(card.actions?.length ? [chatButtons(card.actions.map(action))] : [])]);
 }
+
+// A deliberate, value-free explanation a requester may see privately. Anything else (REST
+// failures, parser errors) collapses to the generic retry guidance so no detail leaks.
+export class GoogleChatControlError extends Error {}
+export const controlError = message => new GoogleChatControlError(message);

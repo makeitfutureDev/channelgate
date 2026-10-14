@@ -42,6 +42,27 @@ integration and unapproved-guest identity cases are included in the full-suite r
   approval-required fixture action, approve/deny from its source-space card; cross-space/actor
   replay and unauthorized forever scopes must fail. Restart/reconnect, then use an old reply menu;
   pass: sealed menu reopens controls while expired draft panels require reopening.
+- [x] Audit regressions (2026-10-14, automated): `test/platform-googlechat.test.js` documented
+  slash-command payloads (`text "/model claude opus"`, `argumentText " claude opus"`, SLASH_COMMAND
+  annotation; add-on `appCommandPayload` without annotation; typed `@app /help`) rebuild the
+  command and a slash `/stop` takes the control lane during a blocked turn;
+  `test/platform-approvals.test.js` refusal reason private to the clicker, Deny without comment,
+  repeated click refused, title not repeated; `test/platform-run-details.test.js` working-line
+  heartbeat edits (queue position, elapsed, Still connected) with no new blocks and placeholder
+  removal after a failed final edit (Claude and Codex result fixtures);
+  `test/googlechat-controls.test.js` sanitized control errors (ENOENT, REST, system errors), quoted
+  top-level controls targeting the quoted session only, private restart notice for card clicks;
+  `test/googlechat-private-settings.test.js` refused saves keep the session and never reflect values.
+- [ ] LIVE `GCHAT-CONTROLS-06` (engine-independent): configure registered slash commands `/help`,
+  `/stop`, `/status` and `/model` on the Chat app. In a named space invoke each from the command
+  picker WITHOUT a mention, and `/model claude` with an argument. Pass: help card appears, `/stop`
+  answers during a running turn, `/model claude` changes the runtime and never reaches the engine as
+  the prompt "claude". Record the raw Pub/Sub payload's `text`, `argumentText` and annotations.
+- [ ] LIVE `GCHAT-CONTROLS-07` (Claude and Codex separately): in a group chat run “Execute a
+  90-second local sleep, then answer READY”. Pass: the working line updates at least every ~30 s
+  with elapsed time and "Still connected"; quote the working line with `@app /stop` at top level
+  and the turn stops; a second actor's Approve on a pending approval card gets a private reason and
+  the shared card is unchanged; a 1:1 DM `/files` card is delivered (private viewer accepted in DMs).
 - [ ] Private QA registration: mirror these fixtures/actions/pass rules in ChannelGate QA using
   the requester's explicitly selected personal Airtable connection. This run exposes only the
   agent identity, so registration and live client/engine execution remain pending. No agent-side

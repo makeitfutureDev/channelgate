@@ -645,7 +645,7 @@ test('registered app-command payloads use the actor and literal command without 
   const native = normalizeMessage({ space: SPACE, message: { ...MESSAGE, annotations: [], argumentText: '/settings', slashCommand: { commandId: 23 } } });
   assert.equal(native.mentionsBot, true);
   assert.equal(normalizeMessage({ space: SPACE, message: { ...MESSAGE, annotations: [], argumentText: '/settings' } }).mentionsBot, false);
-  assert.equal(normalizeMessage({ ...event, message: { ...event.message, argumentText: '' } }).text, '', 'the numeric ID never becomes /help');
+  assert.equal(normalizeMessage({ ...event, message: { ...event.message, argumentText: '', text: '' } }).text, '', 'the numeric ID never becomes /help');
   const messageAction = parseChatEvent({ chat: { ...envelope.chat, appCommandPayload: { ...envelope.chat.appCommandPayload,
     appCommandMetadata: { appCommandType: 'MESSAGE_ACTION', appCommandId: '731' },
   } } });
@@ -692,4 +692,47 @@ test('Google queued notices run promptly without invoking queued work twice', as
     assert.deepEqual(work, ['first', 'second']);
   } finally { release(); await new Promise(resolve => setImmediate(resolve)); await transport.stop(); }
   assert.equal(stopped, 1);
+});
+
+// Google's documented slash-command MESSAGE: `argumentText` carries ONLY the arguments; the command
+// is the SLASH_COMMAND annotation's commandName (text "/debug show code", argumentText " show code").
+const slashMessage = (command, args, id = 'slash') => ({ ...MESSAGE, name: `spaces/AAA/messages/${id}`,
+  text: `${command}${args}`, argumentText: args, slashCommand: { commandId: '7' },
+  annotations: [{ type: 'SLASH_COMMAND', length: command.length, slashCommand: { type: 'INVOKE', commandId: '7', commandName: command, bot: { type: 'BOT' } } }] });
+
+test('documented slash-command events rebuild the command from its annotation, not from argumentText', () => {
+  const help = normalizeMessage({ space: SPACE, message: slashMessage('/help', '') });
+  assert.equal(help.text, '/help');
+  assert.equal(help.mentionsBot, true, 'a registered command addresses the app without a mention');
+  const model = normalizeMessage({ space: SPACE, message: slashMessage('/model', ' claude opus') });
+  assert.equal(model.text, '/model claude opus', 'arguments never reach the engine as a bare prompt');
+  // Tolerate a payload whose argumentText already includes the command, without doubling it.
+  assert.equal(normalizeMessage({ space: SPACE, message: { ...slashMessage('/stop', ''), argumentText: '/stop' } }).text, '/stop');
+  // No annotation (add-on appCommandPayload): Google's literal message text is the command.
+  const addOn = parseChatEvent({ chat: { user: { email: 'ana@example.com', name: 'users/1', type: 'HUMAN' }, appCommandPayload: { space: SPACE,
+    appCommandMetadata: { appCommandType: 'SLASH_COMMAND', appCommandId: '9' },
+    message: { ...MESSAGE, text: '/settings', argumentText: '', annotations: [] } } } });
+  assert.equal(normalizeMessage(addOn).text, '/settings');
+  // A typed "@app /help" has no slash metadata: argumentText (mention stripped) stays authoritative.
+  assert.equal(normalizeMessage({ space: SPACE, message: { ...MESSAGE, text: '@Bot /help', argumentText: ' /help' } }).text, '/help');
+  // A non-command registered invocation is never promoted to the mention bypass.
+  const other = normalizeMessage({ space: SPACE, message: { ...slashMessage('/deploy', ' now'), annotations: [{ type: 'SLASH_COMMAND', slashCommand: { commandName: '/deploy' } }] } });
+  assert.equal(other.mentionsBot, false);
+});
+
+test('documented slash-command /stop takes the control lane while a turn occupies the session', async () => {
+  let release;
+  const blocked = new Promise(resolve => { release = resolve; });
+  const received = [];
+  const transport = await startGoogleChat({ subscription: 'projects/cg-test/subscriptions/slash-stop', capabilities: googleChatAdapter.capabilities,
+    onMessage: async message => { received.push(message.text); if (message.text === 'long work') await blocked; },
+    log: {}, deps: { auth: fakeAuth(), api: fakeChatApi(), puller: { start() {}, async stop() {} } } });
+  const thread = { name: 'spaces/AAA/threads/slash' };
+  try {
+    await transport.onEvent({ chat: { messagePayload: { space: SPACE, message: { ...MESSAGE, name: 'spaces/AAA/messages/work', text: '@Bot long work', argumentText: ' long work', thread } } } });
+    await new Promise(resolve => setImmediate(resolve));
+    await transport.onEvent({ chat: { messagePayload: { space: SPACE, message: { ...slashMessage('/stop', '', 'stop'), thread } } } });
+    await new Promise(resolve => setImmediate(resolve));
+    assert.deepEqual(received, ['long work', '/stop']);
+  } finally { release(); await new Promise(resolve => setImmediate(resolve)); await transport.stop(); }
 });

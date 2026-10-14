@@ -177,3 +177,46 @@ test('Google Chat native approval cards dispatch actual add-on parameters withou
     assert.equal(getDb().prepare('SELECT count(*) AS count FROM approval_link_tokens').get().count, before);
   } finally { controls.stop(); unregisterTransport('googlechat'); saveSettings({ publicUrl: '', approvalLinks: 'auto' }); }
 });
+
+test('Google Chat approval refusals tell only the clicker why; Deny ignores the comment; repeat clicks are refused', async () => {
+  const { createGoogleChatControls } = await import('../src/platforms/googlechat/controls.js');
+  const { normalizeCardEvent, parseChatEvent } = await import('../src/platforms/googlechat/events.js');
+  const channelId = 'gchat:spaces/approval-refusal', slug = 'chat-native-approval-refusal', owner = 'refusal-owner@example.com';
+  await setUser(owner, { approved: true });
+  await saveChannelMeta(slug, { channelId, platform: 'googlechat', access: 'approved', autoMode: false });
+  const posted = [], repaints = [];
+  const messageId = 'spaces/approval-refusal/messages/card';
+  const google = { platform: 'googlechat', ready: () => true,
+    postCard: async payload => { posted.push(payload); return { messageId, conversationId: channelId }; },
+    updateCard: async payload => repaints.push(payload),
+    post: async () => assert.fail('Native approval never posts a public fallback'),
+  };
+  registerTransport('googlechat', { getConnector: () => google });
+  const controls = createGoogleChatControls({ connector: google, log: { warn() {} } });
+  try {
+    const pending = requestApproval(null, { channelId, slug, authorId: owner, threadKey: 'spaces/approval-refusal/threads/original', toolName: 'Delete fixture', toolInput: { details: 'Fixture' }, approvalType: 'agent' });
+    await new Promise(resolve => setImmediate(resolve));
+    const card = posted[0].card;
+    assert.equal(card.sections[0].widgets.filter(widget => /Delete fixture|Approval/.test(widget.textParagraph?.text || '') && /<b>/.test(widget.textParagraph?.text || '')).length, 0, 'the title is the header, not a repeated paragraph');
+    const button = label => card.sections.flatMap(section => section.widgets).flatMap(widget => widget.buttonList?.buttons || []).find(item => item.text === label);
+    const click = (label, user, formInputs = {}) => controls.onCard(normalizeCardEvent(parseChatEvent({ chat: { user, buttonClickedPayload: {
+      space: { name: 'spaces/approval-refusal', spaceType: 'SPACE', displayName: 'Approval refusal' },
+      message: { name: messageId, thread: { name: 'spaces/approval-refusal/threads/original' } },
+    } }, commonEventObject: { parameters: Object.fromEntries(button(label).onClick.action.parameters.map(({ key, value }) => [key, value])), formInputs } })));
+    await click('Approve', { email: 'refusal-stranger@example.com', name: 'users/stranger' });
+    const refusal = posted.at(-1);
+    assert.equal(refusal.privateTo, 'users/stranger', 'only the clicker sees the refusal');
+    assert.match(JSON.stringify(refusal.card), /not authorized for this conversation/);
+    assert.equal(repaints.length, 0, 'a refusal never edits the shared card');
+    const comment = 'fixture-comment-must-not-travel';
+    await click('Deny', { email: owner, name: 'users/owner' }, { comment: { stringInputs: { value: [comment] } } });
+    const decision = await pending;
+    assert.equal(decision.allow, false);
+    assert.ok(!JSON.stringify(decision).includes(comment), 'Deny does not submit the changes comment');
+    assert.ok(repaints.length >= 1);
+    const painted = repaints.length;
+    await click('Approve', { email: owner, name: 'users/owner' });
+    assert.match(JSON.stringify(posted.at(-1).card), /expired or already handled/);
+    assert.equal(repaints.length, painted, 'a repeated click changes nothing');
+  } finally { controls.stop(); unregisterTransport('googlechat'); }
+});

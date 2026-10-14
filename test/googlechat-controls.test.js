@@ -144,3 +144,58 @@ test('unapproved intake records only trusted Chat identity so managers can selec
   assert.ok(current.members.some(member => member.id === 'newguest@example.com' && member.selectable));
   assert.ok(current.members.some(member => member.id === 'users/unknown' && !member.selectable));
 });
+
+test('control errors explain policy privately and never leak host paths or Google response bodies', async () => {
+  const f = await fixture({ admin: false, mode: 'read' });
+  await f.command('/sendfile missing.txt');
+  assert.equal(f.posts.at(-1).text, 'That file or folder was not found in this workspace.');
+  assert.ok(!f.posts.some(post => String(post.text || '').includes(root)), 'no host path reaches the room');
+  await f.command('/files');
+  const rootAction = byAction(f.posts.find(post => post.card).card, 'files.browse');
+  await f.click({ onClick: { action: { ...rootAction.onClick.action, function: 'files.upload' } } });
+  assert.equal(f.posts.at(-1).privateTo, f.message.raw.senderName);
+  assert.match(JSON.stringify(f.posts.at(-1).card), /read-only for you/);
+  f.expire(); await f.click(rootAction);
+  assert.match(JSON.stringify(f.posts.at(-1).card), /expired or belong to another requester/);
+  const { googleChatControlMessage } = await import('../src/platforms/googlechat/controls.js');
+  const rest = Object.assign(new Error('Google Chat POST spaces/x/messages failed (400): {"secret":"body"}'), { status: 400 });
+  assert.doesNotMatch(googleChatControlMessage(rest), /secret|400/);
+  assert.doesNotMatch(googleChatControlMessage(Object.assign(new Error(`EACCES: permission denied, open '${root}/x'`), { code: 'EACCES' })), /EACCES|\//);
+  assert.doesNotMatch(googleChatControlMessage(new TypeError('Cannot read properties of undefined')), /undefined/);
+});
+
+test('a top-level quoted /stop reaches the quoted session in unthreaded Google Chat spaces only', async () => {
+  const { sessionKeyForMessage, rememberReplySession } = await import('../src/platforms/reply-sessions.js');
+  const { makeInbound } = await import('../src/platforms/inbound.js');
+  const conversationId = 'spaces/quoted-stop';
+  rememberReplySession(`gchat:${conversationId}`, `${conversationId}/messages/working`, `${conversationId}/threads/turn`);
+  const message = (text, extra = {}) => makeInbound({ platform: 'googlechat', kind: 'group', conversationId, text, userId: 'a@example.com',
+    messageId: `${conversationId}/messages/${Math.random().toString(36).slice(2)}`, threadKey: `${conversationId}/threads/new`,
+    replyToId: `${conversationId}/messages/working`, raw: { message: { threadReply: false } }, ...extra });
+  assert.equal(sessionKeyForMessage(message('/stop')), `${conversationId}/threads/turn`);
+  assert.equal(sessionKeyForMessage(message('/status')), `${conversationId}/threads/turn`);
+  assert.equal(sessionKeyForMessage(message('please continue')), `${conversationId}/threads/new`, 'ordinary work keeps its own thread');
+  assert.equal(sessionKeyForMessage(message('/stop', { raw: { message: { threadReply: true } } })), `${conversationId}/threads/new`, 'an in-thread control stays in its thread');
+  assert.equal(sessionKeyForMessage(message('/stop', { replyToId: `${conversationId}/messages/unknown` })), `${conversationId}/threads/new`);
+});
+
+test('a card click interrupted by restart is reported only to its clicker', async () => {
+  const { startGoogleChat } = await import('../src/platforms/googlechat/transport.js');
+  const { googleChatAdapter } = await import('../src/platforms/googlechat.js');
+  const options = [], posts = [];
+  const connector = { post: async body => { posts.push(body); return {}; } };
+  const transport = await startGoogleChat({ subscription: 'projects/cg-test/subscriptions/interrupted-card', capabilities: googleChatAdapter.capabilities,
+    onMessage: async () => {}, onCard: async () => {}, log: {},
+    deps: { auth: { token: async () => 't' }, api: {}, connector, puller: { start() {}, async stop() {} },
+      createInbox: opts => { options.push(opts); return { start() {}, stop() {}, accept: () => ({ accepted: true }) }; } } });
+  try {
+    const control = options.find(opts => opts.namespace.startsWith('googlechat-controls:'));
+    await control.interrupted({ event: { type: 'card', space: { name: 'spaces/AAA', spaceType: 'SPACE', displayName: 'Ops' },
+      message: { name: 'spaces/AAA/messages/card', thread: { name: 'spaces/AAA/threads/T' } },
+      user: { name: 'users/42', email: 'clicker@example.com' }, action: { function: 'files.browse' } } });
+    assert.equal(posts.length, 1);
+    assert.equal(posts[0].ephemeralTo, 'users/42');
+    assert.equal(posts[0].conversationId, 'spaces/AAA');
+    assert.match(posts[0].text, /button action was interrupted/);
+  } finally { await transport.stop(); }
+});
