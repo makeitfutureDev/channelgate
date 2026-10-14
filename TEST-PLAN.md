@@ -315,6 +315,78 @@ must run applicable gates before stable promotion; no live pass is implied by au
 - [x] Full combined regression/security coverage passed on a clean install of the patched lockfile,
   including remote MCP HTTP/stdio transports, OAuth metadata, and public-address guards.
 
+## Custom MCP servers in Slack Settings (2026-10-14)
+
+### Regression
+- [x] Automated: `node --test test/slack-custom-mcp-settings.test.js`.
+  - The MCPs page lists both scopes masked (last four token characters only).
+  - Conversation add/remove controls appear only with `canManageCustomMcp`; a member sees only
+    their own.
+  - Remove buttons confirm first.
+  - The form is never prefilled, its metadata carries the scope, and it parses only typed values.
+  - Refusals map to the right field.
+  - `channelSettingsEditOptions` follows `manageAccess`; admins always qualify.
+  - The personal save writes the viewer's own record without echoing the token.
+  - Refused: a loopback URL (safe refusal notice), a missing token (token field), a non-manager's
+    conversation save (nothing written) and a form owned by someone else.
+  - An admin's conversation save records `<@U…>` as `setBy`. Remove by a non-manager is refused;
+    removal by an admin, and of one's own server, succeeds.
+  - Repeated pushed-form saves reuse the original Settings parent. Four consecutive updates keep
+    a blank token intact; a failed parent refresh never acknowledges the same submission twice.
+    The regression failed against the initial implementation (it returned `response_action:
+    update` on the pushed form), then passed after using parent navigation.
+  - The real submission context refuses departed members, revoked admission, mismatched channel
+    slugs and revoked manager rights before a mutation.
+  - `channelSettingsEditOptions` includes custom-MCP authority in the settings modal regressions.
+  - Remote DNS/membership checks acknowledge before waiting; role loss during either check is
+    refused before the write. Both timeout paths clear the token draft, offer a new form and
+    remain unable to write after the delayed work eventually finishes.
+  - Native Add consumes its trigger with a safe placeholder before fetching membership, then
+    hydrates the same view. Add and Remove recheck local authority after delayed roster reads;
+    a manager revoked during the wait cannot open a form or remove a server.
+  - Focused validation: 79 tests passed across `slack-custom-mcp-settings`,
+    `channel-settings-modal`, `custom-mcps`, `file-form-stack` and `slack-secret-actions`.
+    These are isolated automated checks, not deployed Slack evidence.
+
+### Live gates — UNEXECUTED
+
+Fixture: one disposable Slack QA channel with a manager and an approved non-manager, a second
+channel for isolation, and a disposable HTTPS Bearer MCP endpoint exposing a harmless `ping`
+tool that returns a recognizable marker. Provision endpoint and tokens outside chat. Configure
+channel management for admins/managers, give both people access, and use separate Claude and
+Codex threads with Lean off. Record deployed commit/image, channel/thread identifiers privately,
+action timestamps, redacted native UI captures and tool/result evidence; never record tokens.
+
+- [ ] `SLACK-CMCP-01` (engine-independent native UI): manager opens a reply's ⚙️ Settings → MCPs,
+  adds `qa` under *This conversation*, then updates the same name's public URL four consecutive
+  times with a blank token. Pass: every save returns to the same MCPs page without a stack-limit
+  error; only `custom-qa` exists, its token suffix stays unchanged, and the admin UI matches.
+  Rotate the token once; pass: only the new suffix is shown and no full token is returned.
+- [ ] `SLACK-CMCP-02` (engine-independent native UI): approved non-manager opens Settings → MCPs.
+  Pass: conversation Add/Remove controls are absent; the user can add and update `qa` under
+  *Yours* as `my-qa`. Another member's Settings must not list this personal server. Revoke the
+  first user's membership with their form open and submit; pass: refusal, no mutation.
+- [ ] `SLACK-CMCP-03` (engine-independent native UI): try `https://127.0.0.1/`, an HTTP URL,
+  invalid name and a new name without a token. Pass: local validation gives an appropriate field
+  error; the asynchronous private-address refusal gives a safe notice and a fresh-form retry,
+  without returning the token draft. No new row or successful-save audit appears. Open a manager's form, revoke management rights, then submit; pass:
+  refusal and unchanged channel list. Delay the fixture address or roster response past 15 seconds;
+  pass: prompt acknowledgement, timeout notice and no late write after the response completes.
+  Cancel a Remove confirmation; the server remains.
+- [ ] `SLACK-CMCP-04-Claude` and `SLACK-CMCP-04-Codex`: for each engine, as the personal owner,
+  prompt "Call ping once on custom-qa and once on my-qa; report their markers without credentials."
+  Pass: both tools return the fixture marker with scope-prefixed server names. As the other
+  approved member, prompt "Call custom-qa ping; check whether my-qa is available without calling
+  another server." Pass: channel tool succeeds and owner's personal server is absent. In the
+  second channel without `custom-qa`, the owner's `my-qa` remains available and `custom-qa` is absent.
+- [ ] `SLACK-CMCP-05-Claude` and `SLACK-CMCP-05-Codex`: pause a fixture turn before another ping,
+  remove the matching conversation and personal servers through confirmed native controls,
+  then continue. Pass: the live relay refuses the removed server on its next request; fresh turns
+  no longer list either tool. Collect native row disappearance plus relay refusal/tool inventory.
+
+These native UI actions and real engine turns are release gates. Mocked Slack transports,
+Chromium rendering of a local fixture and successful code tests do not satisfy them.
+
 ## Custom MCP connections (2026-10-01)
 
 ### Regression
