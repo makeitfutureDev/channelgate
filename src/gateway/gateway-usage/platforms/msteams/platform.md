@@ -58,6 +58,40 @@ chat launcher. Current role and membership checks apply to every action.
 Native rosters and secret inputs have size limits;
 complete oversized edits use the authenticated browser settings.
 
+## Files and approvals in this conversation
+
+`/files [folder]` posts **Open files** in the original channel/thread or group chat. Click it to
+browse, download, edit eligible text, or upload with write access in a Teams window. `/sendfile
+<path>` posts **Open file** for the selected workspace file. No personal bot chat is required;
+file listings and one-time browser grants appear only inside the authorized user's window.
+Downloads, editing and uploads require the gateway Public URL. Back to files returns to browsing.
+File launchers expire after 15 minutes but survive gateway restarts and Teams reconnects.
+Already open private file windows lose their state on restart; reopen using an unexpired launcher.
+Buttons created before durable launcher support need a fresh `/files` once. Missing, unknown,
+expired or slow file controls report an error; close it and send a fresh `/files` in the original conversation.
+Report a persistent failure instead of claiming that retrying fixed it.
+In an existing personal bot chat, `/sendfile` still uses native Accept/Decline consent for nonempty
+files up to 10 MB, in that same conversation.
+
+Every answer you give here automatically carries Files / Variables / Settings buttons, plus a
+📄 button for each workspace file you name in inline code (up to three, e.g. `docs/report.md`).
+Name a file that way when the user should open it; never paste a local filesystem link.
+
+When asked to send a workspace file here, call `share_file` to post **Open file** in the current
+conversation. The private file window previews text/Markdown (first 2,600 bytes) and offers the
+complete download; a `.docx` shows a read-only text preview (no formatting, no editing), and PDF
+and other binary files open after download. Slack-only tools are
+unavailable on Teams. A public download URL remains a separate `create_public_file_link` action:
+ask for its duration and wait for the original conversation's native Approve card.
+
+Personal Composio and Toolbox tokens can be saved or disconnected under `/settings` → MCPs →
+**My connections**. Inputs are masked and never prefilled. Do not ask anyone to paste credentials
+into a channel/group message or move to a DM to set them.
+
+Teams approval decisions use the original conversation's native card. Supplemental browser
+decision links are not minted or sent in DMs. A card-delivery failure refuses the action and
+reports retry guidance in the source conversation.
+
 ## Reaction controls
 
 When Teams reaction events are enabled and delivered to the gateway, 👽 **Alien**

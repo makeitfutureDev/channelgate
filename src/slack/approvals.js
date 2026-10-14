@@ -220,6 +220,9 @@ async function approvalLinkChoices(entry, { durable = false, approveText = "Appr
 // same thread; a DM on a surface with no ephemeral). Best-effort by design: a card that posted is
 // answerable by its buttons, so a failure here must never fail the approval.
 async function deliverApprovalLinks(client, entry, { id, threadKey, durable = false, approveText, denyText } = {}) {
+  // Teams cards are resolved by verified in-thread invokes. Supplemental bearer links must not
+  // move that interaction into a personal chat, even when approval links are enabled globally.
+  if (client?.approvalDelivery?.supportsPrivateLinks === false) return [];
   // A link is minted FOR a person and decides as them; the HTTP run API principal is no person to
   // deliver one to (and could never pass canResolveApproval as a requester). Its card's buttons stay.
   if (isApiPrincipal(entry.authorId)) return [];

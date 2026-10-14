@@ -57,21 +57,166 @@ test("durable Teams approval uses shared CAS and executes once", async () => {
   assert.equal(executions, 1);
   setDurableApprovalExecutor(null);
 });
-test("unavailable native cards never put private approval links in the shared chat", async () => {
+test("Teams native approvals stay in their source thread even when browser links are enabled", async () => {
+  const { saveSettings } = await import("../src/config/settings.js");
+  const { getDb } = await import("../src/db/index.js");
+  saveSettings({ publicUrl: "https://gateway.example.test", approvalLinks: "always", aiTestingUsers: [AUTHOR] });
+  const original = { post: connector.post, openDm: connector.openDm };
+  let privateAttempts = 0;
+  connector.openDm = async () => { privateAttempts++; return "a:private"; };
+  connector.post = async () => { privateAttempts++; return { messageId: "private-link" }; };
+  const linkCount = () => getDb().prepare("SELECT count(*) AS count FROM approval_link_tokens").get().count;
+  const before = linkCount();
+  setDurableApprovalExecutor(async () => ({ ok: true, completed: true, message: "Applied" }));
+  try {
+    for (const durable of [false, true]) {
+      const request = await begin({ threadKey: "123456",
+        ...(durable ? { durableAction: { kind: "background_shell", channelId: CHANNEL, slug: SLUG,
+          authorId: AUTHOR, threadKey: "123456", command: "echo no-dm-fixture" } } : {}) });
+      assert.equal(cards.at(-1).conversationId, CHANNEL);
+      assert.equal(cards.at(-1).threadKey, "123456");
+      assert.equal(cards.at(-1).ephemeralTo, undefined);
+      assert.doesNotMatch(JSON.stringify(cards.at(-1)), /\/approve\//);
+      assert.equal((await handlePlatformApproval(request)).ok, true);
+      await request.pending;
+    }
+    assert.equal(privateAttempts, 0);
+    assert.equal(linkCount(), before, "Teams must not even mint supplemental bearer links");
+  } finally {
+    Object.assign(connector, original); setDurableApprovalExecutor(null);
+    saveSettings({ publicUrl: "", approvalLinks: "auto", aiTestingUsers: [] });
+  }
+});
+test("unavailable Teams cards refuse safely with retry guidance in the original thread and no DM", async () => {
   const { saveSettings } = await import("../src/config/settings.js");
   saveSettings({ publicUrl: "https://gateway.example.test", approvalLinks: "auto" });
   const original = { postCard: connector.postCard, post: connector.post, openDm: connector.openDm };
   const posts = [];
+  let privateAttempts = 0;
   connector.postCard = async () => { throw new Error("Card unavailable"); };
   connector.post = async payload => { posts.push(payload); return { messageId: "fallback-notice", conversationId: payload.conversationId }; };
-  connector.openDm = async () => "";
+  connector.openDm = async () => { privateAttempts++; return "a:private"; };
   try {
-    const outcome = await requestApproval(null, { channelId: CHANNEL, slug: SLUG, authorId: AUTHOR,
-      threadKey: "group:fallback", toolName: "Fallback plan", approvalType: "agent", toolInput: { details: "Exact plan" } });
-    assert.equal(outcome.allow, false);
-    assert.match(outcome.reason, /private decision links could not be delivered/);
-    assert.equal(posts.length, 1);
-    assert.equal(posts[0].conversationId, CHANNEL);
-    assert.equal(posts[0].text.includes("/approve/"), false);
+    for (const durable of [false, true]) {
+      const outcome = await requestApproval(null, { channelId: CHANNEL, slug: SLUG, authorId: AUTHOR,
+        threadKey: "123457", toolName: "Fallback plan", approvalType: "agent", toolInput: { details: "Exact plan" },
+        ...(durable ? { durableAction: { kind: "background_shell", channelId: CHANNEL, slug: SLUG,
+          authorId: AUTHOR, threadKey: "123457", command: "echo failed-card-fixture" } } : {}) });
+      assert.equal(outcome.allow, false);
+      assert.equal(outcome.pending, undefined);
+      assert.match(outcome.reason, /Retry the original request here/);
+      assert.equal(posts.at(-1).conversationId, CHANNEL);
+      assert.equal(posts.at(-1).threadKey, "123457");
+      assert.match(posts.at(-1).text, /No action was approved/);
+      assert.match(posts.at(-1).text, /administrator.*Teams card delivery/);
+      assert.doesNotMatch(posts.at(-1).text, /\/approve\/|private chat/);
+    }
+    assert.equal(posts.length, 2);
+    assert.equal(privateAttempts, 0);
   } finally { Object.assign(connector, original); saveSettings({ publicUrl: "", approvalLinks: "auto" }); }
+});
+test("Google Chat retains private link delivery when native approval controls are absent", async () => {
+  const { approvalDeliveryFor } = await import("../src/platforms/approval-delivery.js");
+  const posts = [];
+  const google = { platform: "googlechat", ready: () => true,
+    post: async payload => { posts.push(payload); return { messageId: String(posts.length) }; },
+    openDm: async userId => { assert.equal(userId, "users/requester"); return "gchat:spaces/private"; },
+  };
+  registerTransport("googlechat", { getConnector: () => google });
+  try {
+    const delivery = approvalDeliveryFor("gchat:spaces/source");
+    assert.equal(delivery.supportsPrivateLinks, true);
+    await delivery.post({ threadKey: "spaces/source/threads/thread", title: "Review plan" });
+    assert.equal(delivery.requiresLinks, true);
+    assert.equal(posts[0].conversationId, "gchat:spaces/source");
+    assert.match(posts[0].text, /private chat/);
+    await delivery.privately({ userId: "users/requester", text: "fixture-private-link" });
+    assert.equal(posts[1].conversationId, "gchat:spaces/private");
+    assert.equal(posts[1].text, "fixture-private-link");
+  } finally { unregisterTransport("googlechat"); }
+});
+
+test('Google Chat native approval cards dispatch actual add-on parameters without supplemental links', async () => {
+  const { createGoogleChatControls } = await import('../src/platforms/googlechat/controls.js');
+  const { normalizeCardEvent, parseChatEvent } = await import('../src/platforms/googlechat/events.js');
+  const { getDb } = await import('../src/db/index.js');
+  const { saveSettings } = await import('../src/config/settings.js');
+  const channelId = 'gchat:spaces/approval-source', slug = 'chat-native-approval', owner = 'owner@example.com';
+  await setUser(owner, { approved: true });
+  await saveChannelMeta(slug, { channelId, platform: 'googlechat', access: 'approved', autoMode: false });
+  saveSettings({ publicUrl: 'https://gateway.example.test', approvalLinks: 'always' });
+  const posted = [], repaints = [];
+  const messageId = 'spaces/approval-source/messages/card';
+  const google = { platform: 'googlechat', ready: () => true,
+    postCard: async payload => { posted.push(payload); return { messageId, conversationId: channelId }; },
+    updateCard: async payload => repaints.push(payload),
+    post: async () => assert.fail('Native approval never creates a public fallback link'),
+    openDm: async () => assert.fail('Native approval never opens another conversation'),
+  };
+  registerTransport('googlechat', { getConnector: () => google });
+  const controls = createGoogleChatControls({ connector: google, log: { warn() {} } });
+  const before = getDb().prepare('SELECT count(*) AS count FROM approval_link_tokens').get().count;
+  try {
+    const pending = requestApproval(null, { channelId, slug, authorId: owner, threadKey: 'spaces/approval-source/threads/original', toolName: 'Review plan', toolInput: { details: 'Reversible fixture action' }, approvalType: 'agent' });
+    await new Promise(resolve => setImmediate(resolve));
+    const widgets = posted[0].card.sections.flatMap(section => section.widgets);
+    const approve = widgets.flatMap(widget => widget.buttonList?.buttons || []).find(button => button.text === 'Approve');
+    const parameters = Object.fromEntries(approve.onClick.action.parameters.map(({ key, value }) => [key, value]));
+    const id = JSON.parse(parameters.id);
+    assert.ok(lookupApproval(id).entry);
+    const makeEvent = user => normalizeCardEvent(parseChatEvent({ chat: { user, buttonClickedPayload: {
+      space: { name: 'spaces/approval-source', spaceType: 'SPACE', displayName: 'Approval test' },
+      message: { name: messageId, thread: { name: 'spaces/approval-source/threads/original' }, sender: { type: 'BOT', name: 'users/bot' } },
+    } }, commonEventObject: { parameters } }));
+    await controls.onCard(makeEvent({ email: 'stranger@example.com', name: 'users/stranger' }));
+    assert.ok(lookupApproval(id).entry, 'unauthorized actor cannot decide');
+    assert.equal(repaints.length, 0);
+    await controls.onCard(makeEvent({ email: owner, name: 'users/owner' }));
+    assert.equal((await pending).allow, true);
+    assert.ok(repaints.some(paint => paint.messageId === messageId));
+    assert.equal(getDb().prepare('SELECT count(*) AS count FROM approval_link_tokens').get().count, before);
+  } finally { controls.stop(); unregisterTransport('googlechat'); saveSettings({ publicUrl: '', approvalLinks: 'auto' }); }
+});
+
+test('Google Chat approval refusals tell only the clicker why; Deny ignores the comment; repeat clicks are refused', async () => {
+  const { createGoogleChatControls } = await import('../src/platforms/googlechat/controls.js');
+  const { normalizeCardEvent, parseChatEvent } = await import('../src/platforms/googlechat/events.js');
+  const channelId = 'gchat:spaces/approval-refusal', slug = 'chat-native-approval-refusal', owner = 'refusal-owner@example.com';
+  await setUser(owner, { approved: true });
+  await saveChannelMeta(slug, { channelId, platform: 'googlechat', access: 'approved', autoMode: false });
+  const posted = [], repaints = [];
+  const messageId = 'spaces/approval-refusal/messages/card';
+  const google = { platform: 'googlechat', ready: () => true,
+    postCard: async payload => { posted.push(payload); return { messageId, conversationId: channelId }; },
+    updateCard: async payload => repaints.push(payload),
+    post: async () => assert.fail('Native approval never posts a public fallback'),
+  };
+  registerTransport('googlechat', { getConnector: () => google });
+  const controls = createGoogleChatControls({ connector: google, log: { warn() {} } });
+  try {
+    const pending = requestApproval(null, { channelId, slug, authorId: owner, threadKey: 'spaces/approval-refusal/threads/original', toolName: 'Delete fixture', toolInput: { details: 'Fixture' }, approvalType: 'agent' });
+    await new Promise(resolve => setImmediate(resolve));
+    const card = posted[0].card;
+    assert.equal(card.sections[0].widgets.filter(widget => /Delete fixture|Approval/.test(widget.textParagraph?.text || '') && /<b>/.test(widget.textParagraph?.text || '')).length, 0, 'the title is the header, not a repeated paragraph');
+    const button = label => card.sections.flatMap(section => section.widgets).flatMap(widget => widget.buttonList?.buttons || []).find(item => item.text === label);
+    const click = (label, user, formInputs = {}) => controls.onCard(normalizeCardEvent(parseChatEvent({ chat: { user, buttonClickedPayload: {
+      space: { name: 'spaces/approval-refusal', spaceType: 'SPACE', displayName: 'Approval refusal' },
+      message: { name: messageId, thread: { name: 'spaces/approval-refusal/threads/original' } },
+    } }, commonEventObject: { parameters: Object.fromEntries(button(label).onClick.action.parameters.map(({ key, value }) => [key, value])), formInputs } })));
+    await click('Approve', { email: 'refusal-stranger@example.com', name: 'users/stranger' });
+    const refusal = posted.at(-1);
+    assert.equal(refusal.privateTo, 'users/stranger', 'only the clicker sees the refusal');
+    assert.match(JSON.stringify(refusal.card), /not authorized for this conversation/);
+    assert.equal(repaints.length, 0, 'a refusal never edits the shared card');
+    const comment = 'fixture-comment-must-not-travel';
+    await click('Deny', { email: owner, name: 'users/owner' }, { comment: { stringInputs: { value: [comment] } } });
+    const decision = await pending;
+    assert.equal(decision.allow, false);
+    assert.ok(!JSON.stringify(decision).includes(comment), 'Deny does not submit the changes comment');
+    assert.ok(repaints.length >= 1);
+    const painted = repaints.length;
+    await click('Approve', { email: owner, name: 'users/owner' });
+    assert.match(JSON.stringify(posted.at(-1).card), /expired or already handled/);
+    assert.equal(repaints.length, painted, 'a repeated click changes nothing');
+  } finally { controls.stop(); unregisterTransport('googlechat'); }
 });

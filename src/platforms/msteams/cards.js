@@ -24,18 +24,6 @@ export function adaptiveCardAttachment(value) {
   if (Buffer.byteLength(JSON.stringify(value), "utf8") > MAX_CARD_BYTES) throw new Error("Adaptive card exceeds the supported preview size");
   return { contentType: ADAPTIVE_CARD_TYPE, content: value };
 }
-// Keep the answer in activity text so its Markdown and mention entities retain their normal
-// rendering. The footer alone needs native font sizing; Markdown cannot make it smaller.
-export function replyFooterAttachment(text) {
-  return adaptiveCardAttachment({
-    $schema: "http://adaptivecards.io/schemas/adaptive-card.json",
-    type: "AdaptiveCard", version: "1.4",
-    body: [
-      { type: "Container", minHeight: "8px", items: [] },
-      { type: "TextBlock", text: String(text), size: "Small", isSubtle: true, wrap: true, spacing: "None" },
-    ],
-  });
-}
 export function messageCard({ title = "ChannelGate", text = "" } = {}) { return card(title, [block(text)]); }
 export function modelSettingsCard({ catalog = [], current = {}, actionData = {} } = {}) {
   const models = choices(catalog);

@@ -8,7 +8,15 @@ const plain = value => value && typeof value === "object" && !Array.isArray(valu
 // Action.Execute errors use an invoke response envelope, not a transport failure. Messages are
 // fixed at the call sites: never return submitted values or internal exception text to a client.
 export function teamsCardErrorResponse(activity, status, code, message) {
-  if (activity?.type === "invoke" && ["task/fetch", "task/submit"].includes(activity.name)) {
+  if (activity?.type === "invoke" && activity.name === "task/fetch") {
+    // Fetch opens a window: return a renderable card even when the controls expired.
+    // A bare error/message response can leave the client showing its generic reachability error.
+    return { status: 200, body: { task: { type: "continue", value: {
+      title: "Action unavailable", width: "medium", height: "small",
+      card: { contentType: ADAPTIVE_CARD_TYPE, content: messageCard({ title: "Action unavailable", text: message }) },
+    } } } };
+  }
+  if (activity?.type === "invoke" && activity.name === "task/submit") {
     return { status: 200, body: { task: { type: "message", value: message } } };
   }
   if (activity?.type === "invoke" && activity.name === "adaptiveCard/action") {
@@ -49,17 +57,17 @@ export function normalizeTeamsInteraction(activity) {
 }
 export function createTeamsInteractionHandler({ dispatch, authorize = null } = {}) {
   if (typeof dispatch !== "function") throw new TypeError("Teams card interaction dispatch is required");
-  return async activity => {
+  return async (activity, options = {}) => {
     let interaction;
     try { interaction = normalizeTeamsInteraction(activity); }
     catch { return teamsCardErrorResponse(activity, 400, "BadRequest", "Invalid card action. Reopen the controls before trying again."); }
     // The business dispatcher must check approval ownership and current channel/user permissions.
     try {
       if (authorize && !await authorize(interaction)) return teamsCardErrorResponse(activity, 403, "Forbidden", "Not allowed to use these controls.");
-      return await dispatch(interaction);
+      return await dispatch(interaction, options);
     } catch {
       if (["task/fetch", "task/submit"].includes(interaction.invokeName)) {
-        return teamsCardErrorResponse(activity, 400, "BadRequest", "Action could not be completed. Reopen /settings to check your access and try again.");
+        return teamsCardErrorResponse(activity, 400, "BadRequest", "Action could not be completed. Reopen the controls in the original conversation to check your access and try again.");
       }
       return { status: 200, body: { statusCode: 200, type: ADAPTIVE_CARD_TYPE,
         value: messageCard({ title: "Action could not be completed", text: "Reopen the controls to check the current state before trying again." }) } };

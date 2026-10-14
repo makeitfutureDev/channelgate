@@ -36,12 +36,12 @@ export function teamsSettingsUi(stateId) {
       value: String(value ?? ''), choices: choices.map(item => ({ title: String(item.title || item.label || item.value).slice(0, 100), value: String(item.value) })) }),
     input: (id, label, value = '') => ({ type: 'Input.Text', id, label, value: String(value), maxLength: 8000,
       // Teams supports client-side masking as an extension to the Adaptive Card input style.
-      ...(['variableValue', 'composioToken', 'toolboxToken', 'makeToolboxKey'].includes(id) ? { style: 'password' } : {}) }),
+      ...(['variableValue', 'composioToken', 'toolboxToken', 'makeToolboxKey', 'personalComposioToken', 'personalToolboxToken'].includes(id) ? { style: 'password' } : {}) }),
   };
 }
 
-export function createTeamsSettingsContext(state, { connector, authorize }) {
-  const context = { state, connector, ownerId: state.message.userId,
+export function createTeamsSettingsContext(state, { connector, authorize, source = 'teams_settings', surfaceLabel = 'Teams', listMembers = null, isHumanMember = null, publicCredentials = false }) {
+  const context = { state, connector, source, surfaceLabel, listMembers, isHumanMember, publicCredentials, ownerId: state.message.userId,
     channelId: state.message.conversationId, sessionKey: state.sessionKey, entry: state.entry, meta: state.meta,
     isShared: state.sharedSettings === true };
   context.authorize = async () => {
@@ -69,7 +69,7 @@ export function createTeamsSettingsContext(state, { connector, authorize }) {
       return typeof updater === 'function' ? updater(current, fresh) : updater;
     });
     await logChannelPolicyChange({ channelId: context.channelId, slug: state.entry.slug,
-      actor: context.ownerId, before, after, source: 'teams_settings' });
+      actor: context.ownerId, before, after, source: context.source });
     context.meta = after; state.meta = after;
     return after;
   };
@@ -111,22 +111,21 @@ async function resume(ctx, ui) {
 
 export async function buildTeamsSettings(ctx, stateId) {
   const ui = teamsSettingsUi(stateId);
-  const page = validPage(ctx.state.tab) ? ctx.state.tab : '';
+  const page = validPage(ctx.state.tab) ? ctx.state.tab : 'general';
   ctx.state.tab = page;
   const content = page === 'general' ? await renderGeneral(ctx, ui)
     : page === 'automations' ? automations(ctx, ui)
       : page === 'resume' ? await resume(ctx, ui)
-        : page ? await renderCatalogPage(page, ctx, ui) : { body: [], actions: [] };
-  // Three tabs per row keeps every page visible without exceeding Teams' action-row limit.
+        : await renderCatalogPage(page, ctx, ui);
   const tabs = TEAMS_SETTINGS_PAGES.map(([id, title]) => ui.execute(id === page ? `• ${title}` : title, 'settings.page', { page: id }, 'none'));
-  // ActionSet alignment belongs to the Teams host. A centered, content-width column
-  // positions the navigation without changing the host's alignment for form actions.
-  const navigationRow = actions => ({ type: 'ColumnSet', horizontalAlignment: 'Center',
-    columns: [{ type: 'Column', width: 'auto', items: [ui.buttons(actions)] }] });
+  // One action per column keeps all six tabs on one line without relying on the
+  // host's per-ActionSet action limit or alignment. Form actions keep their host layout.
+  const navigation = { type: 'ColumnSet', horizontalAlignment: 'Center',
+    columns: tabs.map(action => ({ type: 'Column', width: 'auto', spacing: 'Small', items: [ui.buttons([action])] })) };
   return { $schema: 'http://adaptivecards.io/schemas/adaptive-card.json', type: 'AdaptiveCard', version: '1.4',
     body: [ui.heading('Channel settings'), ui.text(`Settings for ${ctx.entry.name || 'this conversation'}. Changes apply to the next turn.`),
       ...(ctx.isShared ? [ui.text('These controls belong to the person who opened them. Other members can open their own /settings.')] : []),
-      navigationRow(tabs.slice(0, 3)), navigationRow(tabs.slice(3)),
+      navigation,
       ...(ctx.state.notice ? [ui.text(ctx.state.notice)] : []), ...content.body], actions: content.actions || [] };
 }
 
@@ -137,6 +136,7 @@ function confirmationDetails(action, data, ctx) {
   const name = String(data.name || data.key || '').slice(0, 100);
   if (action === 'settings.variable.remove') return `Remove the ${data.variableScope} variable ${name}?`;
   if (action === 'settings.connections.remove') return `Disconnect the ${data.connection} connection for this conversation?`;
+  if (action === 'settings.personal.remove') return `Disconnect your personal ${data.connection} connection?`;
   if (action === 'settings.thread.reset') return 'Clear this session’s engine, model and effort overrides?';
   if (action === 'settings.automation.delete') {
     const row = listForChannel(ctx.channelId).find(item => item.id === data.id);
@@ -184,13 +184,13 @@ export async function handleTeamsSettings(action, data, ctx, stateId) {
     if (!row) throw new Error('This automation is no longer in this conversation.');
     if (action === 'settings.automation.delete') {
       deleteSchedule(row.id, ctx.channelId);
-      await logEvent('schedule_deleted', { channel: ctx.channelId, slug: ctx.entry.slug, schedule: row.id, author: ctx.ownerId, via: 'teams_settings' });
+      await logEvent('schedule_deleted', { channel: ctx.channelId, slug: ctx.entry.slug, schedule: row.id, author: ctx.ownerId, via: ctx.source || 'teams_settings' });
       ctx.state.notice = 'Automation removed.';
     } else if (action === 'settings.automation.toggle') {
       if (typeof data.enabled !== 'boolean' || row.loop || row.once || row.runAt) throw new Error('Only recurring automations can be paused or resumed.');
       if (data.enabled && !row.enabled && countEnabledForChannel(ctx.channelId) >= getScheduleMaxPerChannel()) throw new Error('This conversation has reached its enabled automation limit.');
       updateSchedule(row.id, { enabled: data.enabled });
-      await logEvent('schedule_updated', { channel: ctx.channelId, slug: ctx.entry.slug, schedule: row.id, enabled: data.enabled, author: ctx.ownerId, via: 'teams_settings' });
+      await logEvent('schedule_updated', { channel: ctx.channelId, slug: ctx.entry.slug, schedule: row.id, enabled: data.enabled, author: ctx.ownerId, via: ctx.source || 'teams_settings' });
       ctx.state.notice = data.enabled ? 'Automation resumed.' : 'Automation paused.';
     } else throw new Error('Unknown automation action.');
     ctx.state.tab = 'automations';

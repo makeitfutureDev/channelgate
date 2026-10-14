@@ -26,6 +26,7 @@ ARG PLAYWRIGHT_VERSION
 ARG AGENT_BROWSER_VERSION
 ARG OPENCV_VERSION
 ARG FASTER_WHISPER_VERSION
+ARG PERPLEXITY_VERSION
 ARG WHISPER_MODEL=small
 ARG IMAGE_SPEC_VERSION=0.0.0
 ARG IMAGE_BUILD_DIGEST
@@ -129,6 +130,11 @@ RUN pip3 install --break-system-packages --no-cache-dir \
  && python3 -c "from faster_whisper import WhisperModel; WhisperModel('${WHISPER_MODEL}', device='cpu', compute_type='int8')" \
  && chmod -R a+rX /opt/channelgate/models
 
+# Research-only subscription helper. The general upstream MCP/API and login CLI
+# are not registered with agents; the managed server exposes only public research.
+RUN pip3 install --break-system-packages --no-cache-dir \
+      "perplexity-web-mcp-cli==${PERPLEXITY_VERSION}"
+
 # VS Code servers, shared by every channel. VS Code's remote extensions install a ~620 MB server
 # (plus a 34 MB CLI) per client version into ~/.vscode-server — and /home/agent is the per-channel
 # volume, so every channel someone opened an editor in paid for its own copy (measured: 687 MB of
@@ -167,6 +173,7 @@ COPY --chown=root:root bundle/ /opt/channelgate/
 # The bundle's package.json declares only what those modules import; `type: module` in it is what
 # makes /opt/channelgate/**/*.js (including bin/cg-mcp-bridge.js) load as ES modules.
 RUN chmod 0755 /opt/channelgate/bin/* \
+ && ln -s /opt/channelgate/bin/cg-perplexity-research.py /usr/local/bin/cg-perplexity-research \
  && cd /opt/channelgate && npm install --omit=dev --no-fund --no-audit && npm cache clean --force \
  && printf '%s\n' "${IMAGE_SPEC_VERSION}" > /opt/channelgate/VERSION
 

@@ -25,9 +25,10 @@ test("the ChannelGate skill is a valid, fully routed package", async () => {
   const { data, body } = parseFrontmatter(manifest);
 
   assert.equal(data.name, "channelgate");
-  assert.equal(data.metadata.version, "3.0.1");
+  assert.equal(data.metadata.version, "3.2.0");
   assert.match(data.description, /device-login links/);
-  assert.match(data.description, /Do not use for ordinary work/);
+  assert.match(data.description, /Do not\s+use for ordinary work/);
+  assert.match(data.description, /server sizing and hosting-provider choice/);
 
   const linked = new Set([...body.matchAll(/\]\((references\/[^)#]+\.md)\)/g)].map((match) => match[1]));
   const references = new Set(files.filter((file) => file.path.startsWith("references/")).map((file) => file.path));
@@ -40,6 +41,8 @@ test("the ChannelGate skill is a valid, fully routed package", async () => {
     "references/channel-memory.md",
     "references/conversation-operations.md",
     "references/folder-headless.md",
+    "references/hosting-sizing.md",
+    "references/vpn-ssh-access.md",
   ]) assert.ok(references.has(required), `${required} is missing`);
 });
 
@@ -54,6 +57,17 @@ test("the domain skill states the same conditional home grant as the operating g
   assert.match(architecture, /every admitted author can read/);
   assert.match(architecture, /\$HOME.*~.*\s+remain the channel's own home/);
   assert.doesNotMatch(architecture, /Modes are tool presets, never mount profiles/);
+});
+
+test("the hosting reference keeps the recommended server and the four providers", async () => {
+  const guide = await readFile(path.join(root, "references/hosting-sizing.md"), "utf8");
+
+  for (const fact of [/4 \*\*dedicated\*\* vCPU/, /\| RAM \| 16 GB \|/, /150 GB NVMe/, /Ubuntu 24\.04 LTS/,
+    /Static public IPv4/, /`MAX_CONCURRENT_RUNS=4`/]) assert.match(guide, fact);
+  for (const provider of [/Hetzner Cloud CCX23.*≈ €25/, /netcup VPS 2000 G12.*≈ €16/, /RoLeaf Enterprise.*≈ €32/,
+    /Google Cloud `n4-standard-4`.*≈ \$159/]) assert.match(guide, provider);
+  assert.match(guide, /estimates checked on 2026-09-22/);
+  assert.match(guide, /re-check the provider page/);
 });
 
 test("the memory retrieval tools retain the gateway text response adapter", async () => {

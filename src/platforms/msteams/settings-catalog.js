@@ -3,7 +3,8 @@
 import { listChannelEnv, patchChannelEnv } from '../../config/channel-env.js';
 import { listOrgEnv, listUserEnv, patchOrgEnv, patchUserEnv } from '../../config/scoped-env.js';
 import { getDefaultComposioToken, getDefaultToolboxToken, getOrgAccessGrants, getComposioMode } from '../../config/settings.js';
-import { getChannelMeta } from '../../config/store.js';
+import { getChannelMeta, getUser, setUser } from '../../config/store.js';
+import { revokeRemoteMcpsForAuthor } from '../../mcp/remote-mcp-registry.js';
 import { effectiveMeta } from '../../gateway/run.js';
 import { resolveMakeToolboxUpdate } from '../../gateway/make-toolbox.js';
 import { selectionFieldForEngine, persistedSelectionForEngine } from '../../gateway/mcp-discovery.js';
@@ -86,9 +87,14 @@ export async function renderCatalogPage(page, ctx, ui) {
     for (const row of slice.items) {
       body.push(ui.text(`${label(row.scope)} · ${row.name} · ${row.last4 ? `••••${row.last4}` : 'set'} · ${row.provider}\n${row.protected ? 'Hidden' : 'Readable'}${row.hosts.length ? ` · Used on: ${row.hosts.join(', ').slice(0, 700)}` : ''}${row.setBy ? `\nSet by: ${String(row.setBy).slice(0, 100)}` : ''}${Number.isFinite(Number(row.setAt)) && Number(row.setAt) > 0 && Number(row.setAt) <= 8.64e15 ? ` · ${new Date(Number(row.setAt)).toISOString()}` : ''}`));
       if (row.scope !== 'organization' || ctx.userIsAdmin) body.push(ui.buttons([
-        ui.execute('Update', 'settings.catalog.page', { page: 'secrets', variableScope: row.scope, variableName: row.name }, 'none'),
+        ...(!ctx.publicCredentials ? [ui.execute('Update', 'settings.catalog.page', { page: 'secrets', variableScope: row.scope, variableName: row.name }, 'none')] : []),
         ui.execute('Remove', 'settings.variable.remove', { variableScope: row.scope, name: row.name }, 'none'),
       ]));
+    }
+    if (ctx.publicCredentials) {
+      body.push(ui.text('Add and rotate credentials in your private browser settings. Never submit secrets in a space card.'));
+      actions.push(ui.execute('Open private settings', 'settings.private', { page: 'secrets' }, 'none'), ...pager(ui, page, slice.page, slice.totalPages));
+      return { body, actions };
     }
     const scopes = ctx.isShared ? ['channel'] : SCOPES.filter(value => value !== 'organization' || ctx.userIsAdmin);
     const scope = scopes.includes(ctx.state.variableScope) ? ctx.state.variableScope : 'channel';
@@ -124,18 +130,35 @@ export async function renderCatalogPage(page, ctx, ui) {
   const connectionSummary = ctx.isShared
     ? `Composio (${getComposioMode()}): ${meta.composioToken ? 'Configured' : 'Not configured'}\nToolbox: ${meta.toolboxToken ? 'Configured' : 'Not configured'}\nMake MCP: ${meta.makeToolboxUrl && meta.makeToolboxKey ? 'Configured' : 'Not configured'}`
     : `Composio (${getComposioMode()}): ${configured(meta.composioToken)}${meta.composioTokenLabel ? ` · ${meta.composioTokenLabel}` : ''}\nToolbox: ${configured(meta.toolboxToken)}\nMake MCP: ${configured(meta.makeToolboxUrl && meta.makeToolboxKey)}\nOrganization Composio: ${configured(getDefaultComposioToken())}\nOrganization Toolbox: ${configured(getDefaultToolboxToken())}`;
-  body.push(ui.heading('MCP connections'), ui.text(connectionSummary),
+  body.push(ui.heading('MCP connections'), ui.text(connectionSummary));
+  if (ctx.publicCredentials) {
+    body.push(ui.text('Add and rotate connection credentials in your private browser settings.'),
+      ui.buttons([ui.execute('Open private settings', 'settings.private', { page: 'mcp' }, 'none')]));
+  } else body.push(
     ui.text('Leave token fields blank to keep their stored value.'), ui.input('composioToken', 'New Composio token', ''),
     ui.input('composioTokenLabel', ctx.isShared ? 'New account label (blank keeps existing)' : 'Composio account label', ctx.isShared ? '' : meta.composioTokenLabel || ''), ui.input('toolboxToken', 'New Toolbox token', ''),
     ui.input('makeToolboxUrl', 'Make MCP server URL', meta.makeToolboxUrl || ''), ui.input('makeToolboxKey', 'New Make MCP token', ''),
-    ui.buttons([ui.execute('Save connections', 'settings.connections.save')]),
-    ui.text(`Inherited organization/personal credentials: ${meta.noDefaultTokens ? 'Disabled' : 'Enabled'}`),
+    ui.buttons([ui.execute('Save connections', 'settings.connections.save')]));
+  body.push(ui.text(`Inherited organization/personal credentials: ${meta.noDefaultTokens ? 'Disabled' : 'Enabled'}`),
     ui.buttons([ui.execute(meta.noDefaultTokens ? 'Enable inherited credentials' : 'Disable inherited credentials', 'settings.connections.fallback', { enabled: Boolean(meta.noDefaultTokens) }, 'none')]));
   const disconnect = [];
   if (meta.composioToken) disconnect.push(ui.execute('Disconnect Composio', 'settings.connections.remove', { connection: 'composio' }, 'none'));
   if (meta.toolboxToken) disconnect.push(ui.execute('Disconnect Toolbox', 'settings.connections.remove', { connection: 'toolbox' }, 'none'));
   if (meta.makeToolboxUrl || meta.makeToolboxKey) disconnect.push(ui.execute('Disconnect Make MCP', 'settings.connections.remove', { connection: 'make' }, 'none'));
   if (disconnect.length) body.push(ui.buttons(disconnect));
+  if (!ctx.isShared) {
+    const personal = await getUser(ctx.ownerId);
+    body.push(ui.heading('My connections'),
+      ui.text(`Personal Composio: ${personal?.composioToken ? 'Configured' : 'Not configured'}\nPersonal Toolbox: ${personal?.toolboxToken ? 'Configured' : 'Not configured'}`),
+      ui.text('These tokens apply only to your own requests. Leave a field blank to keep its stored value. In SDK mode, a saved Personal-mode Composio token is inactive.'),
+      ui.input('personalComposioToken', 'New personal Composio token', ''),
+      ui.input('personalToolboxToken', 'New personal Toolbox token', ''),
+      ui.buttons([ui.execute('Save my connections', 'settings.personal.save')]));
+    const remove = [];
+    if (personal?.composioToken) remove.push(ui.execute('Disconnect my Composio', 'settings.personal.remove', { connection: 'composio' }, 'none'));
+    if (personal?.toolboxToken) remove.push(ui.execute('Disconnect my Toolbox', 'settings.personal.remove', { connection: 'toolbox' }, 'none'));
+    if (remove.length) body.push(ui.buttons(remove));
+  }
   body.push(ui.heading('Cloud MCP'));
   if (!ctx.userIsAdmin) { body.push(ui.text('Only administrators can manage Cloud MCP.')); return { body, actions }; }
   if (ctx.isShared) body.push(ui.text('Active channel connections are shown here. Browse additional private connections in authenticated settings.'));
@@ -191,9 +214,32 @@ export async function handleCatalogAction(action, data, ctx, _ui) {
     }
     return true;
   }
-  const known = ['settings.variable.save', 'settings.variable.remove', 'settings.connections.save', 'settings.connections.remove', 'settings.connections.fallback', 'settings.cloud.toggle', 'settings.skills.toggle', 'settings.template'];
+  const known = ['settings.variable.save', 'settings.variable.remove', 'settings.connections.save', 'settings.connections.remove', 'settings.connections.fallback', 'settings.personal.save', 'settings.personal.remove', 'settings.cloud.toggle', 'settings.skills.toggle', 'settings.template'];
   if (!known.includes(action)) return false;
   const current = await fresh(ctx);
+  if (ctx.publicCredentials && ['settings.variable.save', 'settings.connections.save', 'settings.personal.save'].includes(action)) {
+    throw new Error('Submit credentials only through your private browser settings.');
+  }
+  if (action.startsWith('settings.personal.')) {
+    if (current.isShared || !current.ownerId) throw new Error('Personal connections require your authenticated settings window.');
+    const patch = {};
+    if (action === 'settings.personal.save') {
+      for (const [input, field] of [['personalComposioToken', 'composioToken'], ['personalToolboxToken', 'toolboxToken']]) {
+        const value = str(data[input]);
+        if (value && value.length < 6) throw new Error('Connection tokens must contain at least six characters.');
+        if (value) patch[field] = value;
+      }
+    } else {
+      const field = { composio: 'composioToken', toolbox: 'toolboxToken' }[data.connection];
+      if (!field) throw new Error('Unknown personal connection.');
+      patch[field] = '';
+    }
+    await setUser(current.ownerId, patch);
+    if (action === 'settings.personal.remove') revokeRemoteMcpsForAuthor(current.ownerId);
+    await record(current, 'user_connections_updated', { connections: Object.keys(patch) });
+    ctx.state.tab = 'mcp'; ctx.state.notice = action === 'settings.personal.save' ? 'Your connections saved.' : 'Your connection removed.';
+    return true;
+  }
   if (action === 'settings.variable.save' || action === 'settings.variable.remove') {
     const saving = action.endsWith('.save');
     const scope = data.variableScope;

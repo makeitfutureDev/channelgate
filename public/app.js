@@ -3810,6 +3810,9 @@ function readSettingsForm() {
     ...(document.getElementById("clear-gchat-key").classList.contains("armed") ? { clearGoogleChatServiceAccountJson: true } : {}),
     googleChatSubscription: document.getElementById("set-gchat-sub").value,
     googleChatBotUserId: document.getElementById("set-gchat-bot").value,
+    googleChatReactionTopic: document.getElementById("set-gchat-reaction-topic").value,
+    googleChatAppServiceAccount: document.getElementById("set-gchat-app-sa").value,
+    googleChatProjectNumber: document.getElementById("set-gchat-project-number").value,
     teamsAppId: document.getElementById("set-teams-app").value,
     ...(tokenValue(document.getElementById("set-teams-secret")) ? { teamsAppPassword: tokenValue(document.getElementById("set-teams-secret")) } : {}),
     ...(document.getElementById("clear-teams-secret").classList.contains("armed") ? { clearTeamsAppPassword: true } : {}),
@@ -3825,6 +3828,9 @@ function readSettingsForm() {
     defaultClaudeModel: document.getElementById("set-default-claude-model").value,
     defaultCodexModel: document.getElementById("set-default-codex-model").value,
     ...collectQwenProviders(),
+    perplexityResearchEnabled: document.getElementById("set-perplexity-research-enabled").checked,
+    ...(document.getElementById("set-perplexity-session-token").value ? { perplexitySessionToken: document.getElementById("set-perplexity-session-token").value } : {}),
+    ...(document.getElementById("clear-perplexity-session-token").classList.contains("armed") ? { clearPerplexitySessionToken: true } : {}),
     modelChangeAccess: document.getElementById("set-model-change-access").value,
     modelShortcuts: collectModelShortcuts(),
     engineEnabled: { ...ENGINE_ENABLED },
@@ -3885,6 +3891,9 @@ function readSettingsForm() {
 }
 
 function paintSettings(s) {
+  document.getElementById("set-perplexity-research-enabled").checked = s.perplexityResearch?.enabled === true;
+  document.getElementById("set-perplexity-session-token").value = "";
+  document.getElementById("perplexity-session-state").textContent = s.perplexityResearch?.hasSessionToken ? "configured" : "not configured";
   applyEngineManifests(s.engines);
   ENGINE_ENABLED = { ...(s.engineEnabled || {}) };
   // Before the toggles paint: they annotate an opt-in harness whose provider key is still missing.
@@ -3935,6 +3944,10 @@ function paintSettings(s) {
     : "not set";
   document.getElementById("set-gchat-sub").value = s.googleChat?.subscription || "";
   document.getElementById("set-gchat-bot").value = s.googleChat?.botUserId || "";
+  document.getElementById("set-gchat-reaction-topic").value = s.googleChat?.reactionTopic || "";
+  document.getElementById("set-gchat-app-sa").value = s.googleChat?.appServiceAccount || "";
+  document.getElementById("set-gchat-project-number").value = s.googleChat?.projectNumber || "";
+  document.getElementById("gchat-endpoint").textContent = s.googleChat?.eventsEndpoint || "set the Public URL first";
   // No eye toggle on the key: attachReveal drives an <input type=password>, and this is a textarea
   // (a service-account key is multi-line JSON) — the same shape the Drive-sync key field uses. The
   // value is still fetchable through /api/secrets/reveal for an admin who needs it back.
@@ -4231,7 +4244,7 @@ function bindSettings() {
       verifyBtn.disabled = false;
     }
   });
-  for (const id of ["clear-composio-sdk-key", "clear-default-composio", "clear-default-toolbox", "clear-admin-user", "clear-license-key", "clear-gchat-key", "clear-teams-secret", "clear-container-claude-token"]) {
+  for (const id of ["clear-composio-sdk-key", "clear-default-composio", "clear-default-toolbox", "clear-admin-user", "clear-license-key", "clear-gchat-key", "clear-teams-secret", "clear-container-claude-token", "clear-perplexity-session-token"]) {
     const btn = document.getElementById(id);
     // The button lives inside the field's <label>; preventDefault stops the click from
     // bubbling to the label and focusing the token input.
@@ -4401,7 +4414,7 @@ function bindSettings() {
       // Reset only the write-only password box; the token fields are repainted (masked) by the
       // loadSettings() call below, which re-seeds each reveal field with the freshly stored value.
       document.getElementById("set-adminpw").value = "";
-      for (const id of ["clear-composio-sdk-key", "clear-default-composio", "clear-default-toolbox", "clear-admin-user", "clear-license-key", "clear-gchat-key", "clear-teams-secret", "clear-container-claude-token"]) disarmClearTok(document.getElementById(id));
+      for (const id of ["clear-composio-sdk-key", "clear-default-composio", "clear-default-toolbox", "clear-admin-user", "clear-license-key", "clear-gchat-key", "clear-teams-secret", "clear-container-claude-token", "clear-perplexity-session-token"]) disarmClearTok(document.getElementById(id));
       for (const card of QWEN_PROVIDER_CARDS) disarmClearTok(card.clearBtn);
       // A saved key kicks off a fresh verification server-side; repaint so the card shows the new
       // state (and the new last4) instead of the pre-save one.

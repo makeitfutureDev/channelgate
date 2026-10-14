@@ -26,7 +26,7 @@ test("migration versions are append-only, contiguous, and a fresh DB reaches lat
   try {
     runMigrations(db);
     assert.equal(version(db), latest);
-    for (const table of ["users", "active_runs", "api_jobs", "stopped_turns", "composio_sessions", "followup_digest_messages", "approval_requests", "usage_components", "usage_requests", "usage_repair_batches"]) {
+    for (const table of ["users", "active_runs", "api_jobs", "stopped_turns", "composio_sessions", "followup_digest_messages", "approval_requests", "usage_components", "usage_requests", "usage_repair_batches", "teams_file_launchers"]) {
       assert.equal(tableExists(db, table), true, `${table} should exist at schema v${latest}`);
     }
   } finally {

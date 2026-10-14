@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { ensureTestEnv } from './helpers.js';
 ensureTestEnv();
 const { createTeamsControls } = await import('../src/platforms/msteams/controls.js');
-const { upsertChannelEntry, saveChannelMeta, getChannelMeta, patchChannelMeta, setUser } = await import('../src/config/store.js');
+const { upsertChannelEntry, saveChannelMeta, getChannelMeta, patchChannelMeta, setUser, getUser } = await import('../src/config/store.js');
 const { addSchedule, listForChannel } = await import('../src/config/schedules.js');
 const { getThreadEngine, setThreadEngine, getThreadModel } = await import('../src/gateway/thread-engine.js');
 const { saveSession } = await import('../src/gateway/sessions.js');
@@ -37,7 +37,7 @@ async function fixture({ admin = true, privateChat = true, personal = false } = 
 }
 const value = result => result.body.task?.type === 'continue' ? result.body.task.value.card.content : result.body.task?.value || result.body.value;
 const input = (card, id) => card.body.find(item => item.id === id);
-const navigation = card => card.body.filter(item => item.type === 'ColumnSet').flatMap(row => row.columns[0].items[0].actions);
+const navigation = card => card.body.filter(item => item.type === 'ColumnSet').flatMap(row => row.columns.flatMap(column => column.items[0].actions));
 test('six settings pages navigate inside a private popup without updating the launcher', async () => {
   const f = await fixture();
   assert.equal(f.sent[0].conversationId, f.channelId.slice(6));
@@ -45,11 +45,15 @@ test('six settings pages navigate inside a private popup without updating the la
   assert.equal(f.sent[0].text, 'Conversation settings');
   assert.deepEqual(f.replies, []);
   const menu = f.menu;
-  assert.ok(!menu.body.some(item => item.type.startsWith('Input.')));
+  assert.ok(input(menu, 'channel_engine'));
   assert.deepEqual(menu.actions, []);
   const tabs = navigation(menu);
-  assert.deepEqual(tabs.map(action => action.title), ['General', 'Variables', 'MCPs', 'Skills', 'Automations', 'Resume']);
-  assert.equal(menu.body.at(-1).type, 'ColumnSet');
+  assert.deepEqual(tabs.map(action => action.title), ['• General', 'Variables', 'MCPs', 'Skills', 'Automations', 'Resume']);
+  const rows = menu.body.filter(item => item.type === 'ColumnSet');
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].horizontalAlignment, 'Center');
+  assert.equal(rows[0].columns.length, 6);
+  assert.ok(rows[0].columns.every(column => column.items[0].actions.length === 1));
   for (const page of ['general', 'secrets', 'mcp', 'skills', 'automations', 'resume']) {
     const action = tabs.find(item => item.data.page === page);
     const card = value(await f.invoke(action.data, action.data.cgAction));
@@ -58,8 +62,8 @@ test('six settings pages navigate inside a private popup without updating the la
     assert.equal(navigation(card).length, 6);
     assert.equal(f.sent.length, 1);
     assert.equal(f.sent[0].card.actions[0].title, 'Open settings');
-    assert.ok(card.body.length > menu.body.length);
-    assert.ok(navigation(card).some(item => item.title === `• ${action.title}`));
+    assert.ok(navigation(card).some(item => item.title === `• ${action.title.replace(/^• /, '')}`));
+    assert.equal(navigation(card).filter(item => item.title.startsWith('• ')).length, 1);
     if (page !== 'general') assert.equal(input(card, 'channel_engine'), undefined);
   }
   const secrets = value(await f.invoke({ stateId: f.stateId, page: 'secrets' }, 'settings.page'));
@@ -67,7 +71,7 @@ test('six settings pages navigate inside a private popup without updating the la
   assert.equal(input(secrets, 'variableValue').value, '');
   assert.equal(input(secrets, 'variableValue').style, 'password');
 });
-test('/secrets opens Variables directly while /settings starts with the menu', async () => {
+test('/secrets opens Variables directly while /settings starts on General', async () => {
   const f = await fixture();
   assert.equal(input(f.sent[0].card, 'variableValue'), undefined);
   await f.controls.onCommand(f.args('/secrets'));
@@ -142,6 +146,27 @@ test('settings do not require personal-chat delivery', async () => {
   const f = await fixture({ privateChat: false });
   assert.equal(f.sent[0].conversationId, f.channelId.slice(6));
   assert.deepEqual(f.replies, []);
+});
+test('personal connection setup and removal stay inside the thread-launched settings dialog', async () => {
+  const f = await fixture({ admin: false, privateChat: false });
+  const connections = value(await f.invoke({ stateId: f.stateId, page: 'mcp' }, 'settings.page'));
+  assert.equal(input(connections, 'personalComposioToken').value, '');
+  assert.equal(input(connections, 'personalComposioToken').style, 'password');
+  assert.equal(input(connections, 'personalToolboxToken').style, 'password');
+  const saved = value(await f.invoke({ stateId: f.stateId, personalComposioToken: 'own-composio-token-fixture',
+    personalToolboxToken: 'own-toolbox-token-fixture', userId: '29:other' }, 'settings.personal.save'));
+  assert.equal((await getUser(f.owner)).composioToken, 'own-composio-token-fixture');
+  assert.doesNotMatch(JSON.stringify(saved), /own-composio-token-fixture|own-toolbox-token-fixture/);
+  assert.equal(input(saved, 'personalComposioToken').value, '');
+  assert.equal(f.sent.length, 1);
+  const confirm = value(await f.invoke({ stateId: f.stateId, connection: 'composio' }, 'settings.personal.remove'));
+  assert.equal((await getUser(f.owner)).composioToken, 'own-composio-token-fixture');
+  const token = confirm.actions[0].data.token;
+  value(await f.invoke({ stateId: f.stateId, token }, 'settings.confirm'));
+  assert.equal((await getUser(f.owner)).composioToken, '');
+  assert.equal((await getUser(f.owner)).toolboxToken, 'own-toolbox-token-fixture');
+  assert.equal(f.sent.length, 1);
+  assert.doesNotMatch(JSON.stringify(f.sent), /own-composio|own-toolbox|personalComposioToken/);
 });
 test('dialog navigation ignores forged reply targets and never updates a chat message', async () => {
   const f = await fixture();

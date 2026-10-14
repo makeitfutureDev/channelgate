@@ -13,7 +13,7 @@ const QUICK_START = [
 const SHORTCUTS = [
   '`/model` — Choose the engine, model and effort.',
   '`/settings` — Open your settings in a private Teams popup.',
-  '`/files` — Browse this workspace in your personal chat.',
+  '`/files` — Open this workspace from the current conversation.',
   '`/stop` — Stop this session’s active and queued work.',
 ];
 const COMMAND_HINT = 'In channels and groups, mention me before a command: `@agent /help`.';
@@ -34,7 +34,7 @@ function helpTopics(activationReactions = DEFAULT_TEAMS_ACTIVATION_REACTIONS) {
         '`/settings` — Open General, Variables, MCPs, Skills, Automations and Resume.',
         '`/secrets` — Open Variables. Stored credential values are never shown or prefilled.',
         '`/files [folder]` — Browse, download, edit eligible text, or upload files with write access.',
-        '`/sendfile <path>` — Send a workspace-relative file using personal-chat consent.',
+        '`/sendfile <path>` — Open a workspace file for download from this conversation.',
       ] },
       { title: 'Your current session', rows: [
         '`/status` — See the engine, model, effort and active/queued requests.',
@@ -52,8 +52,8 @@ function helpTopics(activationReactions = DEFAULT_TEAMS_ACTIVATION_REACTIONS) {
         '**Personal chat:** uploads download directly. **Channels/groups:** files need allowed drives and Microsoft permissions.',
       ] },
       { title: 'Browse & download', rows: [
-        'Open a personal chat with me first, then use `/files [folder]` from the conversation whose workspace you want.',
-        '`/sendfile <path>` sends a consent card to your personal chat. Accept or decline there. Nonempty files up to **10 MB** can be sent this way; use browser download for larger files.',
+        'Use `/files [folder]` here. Open files launches a Teams window for browsing, previewing text, downloading, editing and uploading, with no separate chat. Binary documents download to open in their application.',
+        '`/sendfile <path>` opens a download window from the current channel/group. In an existing bot personal chat, it offers native Accept/Decline for nonempty files up to **10 MB**.',
         'Browser downloads, editing and uploads require the gateway Public URL. Editing and uploading also require write access.',
       ] },
       { title: 'Send a voice note', rows: [
@@ -69,11 +69,11 @@ function helpTopics(activationReactions = DEFAULT_TEAMS_ACTIVATION_REACTIONS) {
       ] },
       { title: 'Variables & connections', rows: [
         '`/secrets` opens Variables. Conversation values override personal values, then organization values. Organization changes are admin-only; hidden secrets may need admin approval for a new server.',
-        'Open **MCPs** in `/settings` to manage connections. In Composio Personal mode, set your personal token in a personal chat, never a channel/group message. SDK mode creates personal/channel identities automatically from the admin key.',
+        'Open **MCPs** in `/settings` to manage conversation connections and **My connections** for your personal Composio or Toolbox token. Enter tokens only in the window. SDK mode manages its own identities; saved Personal-mode tokens remain inactive there.',
         'Admins can add an HTTPS MCP URL and Bearer token in the admin UI → conversation Connections → Custom MCP servers, or Users → Personal MCP servers. OAuth connections use Composio. Say whose account to use.',
       ] },
       { title: 'Approvals & SSH', rows: [
-        'If native approval controls are unavailable, open the secure browser link and submit your decision. Your authority is checked before it is applied.',
+        'Use the approval card here to Approve, Deny or Request changes. Your current authority is checked. If the card cannot be delivered, retry the original request here; no decision links are sent to a separate chat.',
         'When the host supports SSH, register your `.pub` key, then ask `enable SSH access for me` and `show my SSH connection instructions`.',
         'Users already allowed here can enable or revoke their own SSH access. A manager must grant access for another person. Containers with the operator home mounted cannot be opened through SSH.',
       ] },

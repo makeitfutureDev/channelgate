@@ -64,9 +64,10 @@ export async function generalRuntimeScopes(ctx) {
 }
 
 async function roster(ctx) {
-  if (!ctx.connector?.api?.listMembers) throw new Error('Current Teams membership is unavailable.');
-  const members = await ctx.connector.api.listMembers(toConversationId(ctx.channelId));
-  return members.filter(member => typeof member.id === 'string' && member.id && member.id.length <= 256 && !member.id.includes(',') && !member.id.startsWith('28:') && member.id !== ctx.connector.botId);
+  if (!ctx.listMembers && !ctx.connector?.api?.listMembers) throw new Error('Current conversation membership is unavailable.');
+  const members = ctx.listMembers ? await ctx.listMembers() : await ctx.connector.api.listMembers(toConversationId(ctx.channelId));
+  return members.filter(member => typeof member.id === 'string' && member.id && member.id.length <= 256 && !member.id.includes(',') &&
+    (ctx.isHumanMember ? ctx.isHumanMember(member) : !member.id.startsWith('28:') && member.id !== ctx.connector.botId));
 }
 
 function runtimeRows(scope, snapshot, locked, ui) {
@@ -142,13 +143,13 @@ export async function renderGeneral(ctx, ui) {
           namedRows.push(ui.buttons([ui.execute(`Apply ${labels[field]}`, 'settings.access', { field })]));
         }
         if (Buffer.byteLength(JSON.stringify([...body, ...namedRows])) <= MAX_GENERAL_BODY_BYTES) body.push(...namedRows);
-        else body.push(ui.text('The complete member selectors are too large for this Teams card. Edit guest access and named managers in the authenticated channel settings website. All saved selections remain unchanged.'));
-      } catch { body.push(ui.text('Named users cannot be edited until current Teams membership is available.')); }
+        else body.push(ui.text('The complete member selectors are too large for this conversation card. Edit guest access and named managers in the authenticated channel settings website. All saved selections remain unchanged.'));
+      } catch { body.push(ui.text('Named users cannot be edited until current conversation membership is available.')); }
     }
   } else body.push(ui.text(`Mode: ${channelMode(meta)}${meta.autoMode ? ' · Auto' : ''}${meta.cleanMode ? ' · Lean' : ''}. Only current managers can change channel access settings.`));
   body.push(ui.text(networkLabel(meta, { detail: true })));
   let vpn = unconfiguredChannelVpnStatus(ctx.meta);
-  if (!vpn) { try { vpn = await getChannelVpnStatus(ctx.channelId); } catch { vpn = { state: 'unavailable', message: 'VPN status is unavailable for this Teams conversation.' }; } }
+  if (!vpn) { try { vpn = await getChannelVpnStatus(ctx.channelId); } catch { vpn = { state: 'unavailable', message: 'VPN status is unavailable for this conversation.' }; } }
   body.push(ui.heading('VPN'), ui.text(vpn.message || `VPN: ${vpn.state}`));
   if (vpn.configured && manager && !vpn.busy && vpn.state !== 'unavailable') {
     const enabled = !(vpn.enabled || vpn.running || ['on', 'starting'].includes(vpn.state));
@@ -321,7 +322,7 @@ export async function handleGeneral(action, data, ctx, _ui) {
       } else assertManager(fresh, current);
       // Revalidate against the roster obtained at this write's authorization boundary.
       if (namedFields.includes(field) && Array.isArray(fresh.members) && value.some(id =>
-        id.startsWith('28:') || id === fresh.connector.botId || !fresh.members.some(member => member.id === id))) {
+        !fresh.members.some(member => member.id === id && (fresh.isHumanMember ? fresh.isHumanMember(member) : !member.id.startsWith('28:') && member.id !== fresh.connector.botId)))) {
         throw new Error('Named users must still be current human conversation members.');
       }
       const baseline = effectiveMeta(current);
@@ -335,7 +336,7 @@ export async function handleGeneral(action, data, ctx, _ui) {
   }
   if (action === 'settings.vpn') {
     if (typeof data.enabled !== 'boolean') throw new Error('Invalid VPN setting.');
-    await setChannelVpnEnabled(ctx.channelId, data.enabled, { actor: ctx.ownerId, source: 'teams-settings', authorize: async () => { const fresh = await ctx.authorize(); return managed(fresh.meta, fresh); } });
+    await setChannelVpnEnabled(ctx.channelId, data.enabled, { actor: ctx.ownerId, source: ctx.source || 'teams-settings', authorize: async () => { const fresh = await ctx.authorize(); return managed(fresh.meta, fresh); } });
     ctx.state.notice = 'VPN request completed. Status reflects the current service state.';
     return true;
   }

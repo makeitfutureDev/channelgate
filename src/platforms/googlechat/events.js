@@ -6,6 +6,7 @@
 // installation that hits the one we didn't handle just looks silently deaf — so all three are
 // accepted, and anything unrecognized is ACKed and dropped rather than redelivered forever.
 import { makeInbound } from "../inbound.js";
+import { isSpaceName, isMessageName, isThreadName } from "./api.js";
 
 // A Chat app is added to a space, removed, a message arrives, a card button is clicked. We act on
 // messages; membership tells us our own bot id (which is how mention detection works before the app
@@ -22,19 +23,75 @@ export function parseChatEvent(envelope, attributes = {}) {
       membership: payload.membership || {},
     };
   }
-  // Card clicks arrive on the same topic. We do not render cards yet, so they are ACKed as handled
-  // rather than parsed — dropping them as "unknown" would be indistinguishable from a bug.
-  if (ceType.includes("widget") || ceType.includes("card")) return { type: "card" };
+  // The HTTP endpoint carries no CloudEvent attributes: the add-on payload key, or the legacy
+  // `type`, is the only thing that says what happened. Membership there names the space but not
+  // the app's own member record, so the bot id is learned from a later mention instead.
+  const legacyType = String(envelope?.type || "").toUpperCase();
+  if (chat.addedToSpacePayload || legacyType === "ADDED_TO_SPACE") {
+    const payload = chat.addedToSpacePayload || envelope;
+    return { type: "membership.added", space: payload.space || chat.space || {}, membership: payload.membership || {} };
+  }
+  if (chat.removedFromSpacePayload || legacyType === "REMOVED_FROM_SPACE") {
+    const payload = chat.removedFromSpacePayload || envelope;
+    return { type: "membership.removed", space: payload.space || chat.space || {}, membership: payload.membership || {} };
+  }
+  // Add-on, native Pub/Sub and legacy HTTP events all carry the ACTOR separately from the
+  // bot-authored source message. Never use the message sender or action parameters as identity.
+  if (chat.buttonClickedPayload || chat.action || envelope?.type === "CARD_CLICKED"
+    || ceType.includes("widget") || ceType.includes("card") || ceType.includes("button")) {
+    const payload = chat.buttonClickedPayload || chat;
+    return { type: "card", space: payload.space || chat.space || envelope?.space || {},
+      message: payload.message || chat.message || envelope?.message || {},
+      user: chat.user || envelope?.user || {},
+      action: payload.action || chat.action || envelope?.action || {},
+      commonEventObject: envelope?.commonEventObject || envelope?.common || chat.commonEventObject || {},
+      eventTime: chat.eventTime || envelope?.eventTime || "" };
+  }
 
   const extracted = extractMessage(envelope, chat);
   if (!extracted) return { type: "unknown", ceType };
   return { type: "message", ...extracted };
 }
 
+export function normalizeCardEvent(event) {
+  const { message = {}, space = {}, user = {}, action = {}, commonEventObject = {} } = event;
+  const spaceName = String(space.name || message.space?.name || "");
+  const messageId = String(message.name || "");
+  if (!isSpaceName(spaceName) || !isMessageName(messageId) || !messageId.startsWith(`${spaceName}/messages/`)
+    || user.type === "BOT" || !(user.email || user.name)) return null;
+  const thread = String(message.thread?.name || "");
+  if (thread && (!isThreadName(thread) || !thread.startsWith(`${spaceName}/threads/`))) return null;
+  const submitted = Array.isArray(action.parameters)
+    ? Object.fromEntries(action.parameters.filter(p => typeof p?.key === 'string').map(p => [p.key, String(p.value ?? '')]))
+    : { ...(action.parameters || {}) };
+  const parameters = Object.assign(Object.create(null), submitted, commonEventObject.parameters || {});
+  return { platform: "googlechat", conversationId: `gchat:${spaceName}`, rawConversationId: spaceName,
+    conversationName: String(space.displayName || spaceName),
+    kind: /^(DIRECT_MESSAGE|DM)$/i.test(space.spaceType || space.type || '') ? 'dm' : space.displayName ? 'channel' : 'group',
+    messageId, threadKey: thread, userId: String(user.email || user.name), userResourceName: String(user.name || ''),
+    userName: String(user.displayName || user.email || user.name), userEmail: String(user.email || ''),
+    action: { function: String(action.function || action.actionMethodName || parameters.cgAction || commonEventObject.invokedFunction || ''), parameters },
+    commonEventObject, formInputs: commonEventObject.formInputs || {},
+    raw: { message, space, user, senderName: String(user.name || ''), threadName: thread },
+  };
+}
+
 // Format 1 — Workspace Add-ons wrapper: { chat: { messagePayload: { message, space } } }
 // Format 2 — native Chat API Pub/Sub:   { chat: { message, space } }  (no payload wrapper)
 // Format 3 — legacy/HTTP-shaped event:  { message, space, type: "MESSAGE" }
 function extractMessage(envelope, chat) {
+  const command = chat.appCommandPayload;
+  if (command?.message) {
+    // Quick commands need an operator-specific ID map; message actions contain someone else's
+    // original text. Neither is a new literal slash-command request that we can safely dispatch.
+    const type = command.appCommandMetadata?.appCommandType;
+    if (type && type !== 'SLASH_COMMAND') return null;
+    return {
+      message: { ...command.message, ...(chat.user ? { sender: chat.user } : {}) },
+      space: command.space || chat.space || command.message.space || {},
+      appCommand: true,
+    };
+  }
   const payload = chat.messagePayload;
   if (payload?.message) return { message: payload.message, space: payload.space || payload.message.space || {} };
   if (chat.message) return { message: chat.message, space: chat.space || chat.message.space || {} };
@@ -76,7 +133,27 @@ export function resolveThreadKey({ kind, threadName, seen }) {
   return known ? threadName : "";
 }
 
-export function normalizeMessage({ message, space }, { botUserId = "", seen = null, api = null } = {}) {
+export const GOOGLE_CHAT_CONTROL_COMMAND = /^\/(help|status|clear|stop|cancel|model|effort|settings|files|secrets|sendfile)(?:\s|$)/i;
+
+// A registered slash command arrives with `argumentText` holding ONLY the arguments (Google's own
+// example: text "/debug show code", argumentText " show code"). The command itself is the
+// SLASH_COMMAND annotation's commandName, or failing that the literal message text. Command IDs
+// are operator-chosen, so a number is never mapped to a name. A typed "@app /help" carries no
+// slash-command metadata and keeps the mention-stripped argumentText.
+export function messageCommandText(message, { appCommand = false } = {}) {
+  const argument = String(message?.argumentText ?? message?.text ?? '').trim();
+  const annotation = (message?.annotations || []).find(a => a?.type === 'SLASH_COMMAND')?.slashCommand;
+  if (!appCommand && message?.slashCommand?.commandId == null && !annotation) return argument;
+  const name = String(annotation?.commandName || '').trim();
+  if (/^\/[A-Za-z0-9_-]+$/.test(name)) {
+    const prefixed = argument.toLowerCase() === name.toLowerCase() || argument.toLowerCase().startsWith(`${name.toLowerCase()} `);
+    return prefixed ? argument : `${name} ${argument}`.trim();
+  }
+  const literal = String(message?.text ?? '').trim();
+  return literal.startsWith('/') ? literal : argument;
+}
+
+export function normalizeMessage({ message, space, appCommand = false }, { botUserId = "", seen = null, api = null } = {}) {
   const spaceName = String(space?.name || message?.space?.name || "");
   const spaceType = String(space?.spaceType || space?.type || "").toUpperCase();
   const kind = spaceType === "DIRECT_MESSAGE" || spaceType === "DM"
@@ -84,6 +161,13 @@ export function normalizeMessage({ message, space }, { botUserId = "", seen = nu
     : (space?.displayName ? "channel" : "group");
   const sender = message?.sender || {};
   const threadName = String(message?.thread?.name || "");
+  const quoted = String(message?.quotedMessageMetadata?.name || '');
+  const text = messageCommandText(message, { appCommand });
+  // Command IDs are chosen by the app operator, so we never infer a command name from a number.
+  // Only a registered invocation carrying a supported literal command bypasses the mention gate.
+  const registeredCommand = (appCommand || message?.slashCommand?.commandId != null
+    || (message?.annotations || []).some(a => a?.type === 'SLASH_COMMAND'))
+    && GOOGLE_CHAT_CONTROL_COMMAND.test(text);
 
   return makeInbound({
     platform: "googlechat",
@@ -92,13 +176,14 @@ export function normalizeMessage({ message, space }, { botUserId = "", seen = nu
     kind,
     threadKey: resolveThreadKey({ kind, threadName, seen }),
     messageId: String(message?.name || ""),
+    replyToId: isMessageName(quoted) && quoted.startsWith(`${spaceName}/messages/`) ? quoted : '',
     // The email is the identity an operator recognizes and the one that matches a gateway user
     // record; the users/NNN resource name is kept for the Chat API calls that need it.
     userId: String(sender.email || sender.name || ""),
     userName: String(sender.displayName || sender.email || ""),
     userEmail: String(sender.email || ""),
-    text: String(message?.argumentText ?? message?.text ?? "").trim(),
-    mentionsBot: mentionsBot(message, botUserId),
+    text,
+    mentionsBot: registeredCommand || mentionsBot(message, botUserId),
     attachments: normalizeAttachments(message?.attachment || message?.attachments || [], api),
     raw: { message, space, senderName: String(sender.name || ""), threadName },
   });

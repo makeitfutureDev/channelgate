@@ -17,8 +17,16 @@ function continued(result) {
 }
 function denied(result) {
   assert.equal(result.status, 200);
-  assert.equal(result.body.task.type, 'message');
-  assert.match(result.body.task.value, /Reopen|could not be completed/);
+  if (result.body.task.type === 'continue') {
+    assert.equal(result.body.task.value.title, 'Action unavailable');
+    const card = result.body.task.value.card.content;
+    assert.equal(card.body[0].text, 'Action unavailable');
+    assert.match(card.body[1].text, /Reopen|could not be completed/);
+    assert.equal(actions(card).length, 0);
+  } else {
+    assert.equal(result.body.task.type, 'message');
+    assert.match(result.body.task.value, /Reopen|could not be completed/);
+  }
 }
 async function fixture(t) {
   const suffix = ++sequence, owner = `29:dialog-${suffix}`, tenant = `tenant-${suffix}`;
@@ -70,6 +78,8 @@ test('Teams launcher opens a native dialog and saves without publishing any form
   assert.notEqual(dialog.stateId, launcher.stateId);
   assert.equal(dialog.result.body.task.value.width, 'large');
   assert.equal(dialog.result.body.task.value.height, 'large');
+  assert.ok(nodes(dialog.card).some(item => item.id === 'channel_engine'));
+  assert.ok(actions(dialog.card).some(action => action.title === '• General'));
   const general = continued(await f.submit(dialog.stateId, 'settings.page', { page: 'general' }));
   for (const action of actions(general)) {
     assert.equal(action.type, 'Action.Submit');
@@ -80,6 +90,9 @@ test('Teams launcher opens a native dialog and saves without publishing any form
   assert.equal((await getChannelMeta(f.entry.slug)).allowNetwork, true);
   assert.equal(f.posted.length, 1);
   assert.deepEqual(f.updated, []);
+  const reopened = await f.open(launcher);
+  assert.ok(actions(reopened.card).some(action => action.title === '• General'));
+  assert.ok(nodes(reopened.card).some(item => item.id === 'channel_engine'));
 });
 
 test('Teams dialog launch and submissions reject different actor, conversation, tenant and bot', async t => {

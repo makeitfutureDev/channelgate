@@ -21,6 +21,109 @@ product overview.
 - **Custom MCP servers from Slack.** ⚙️ Settings → MCPs now lists the conversation's custom MCP
   servers and your own, and lets you add, update or remove them in place. A conversation's servers
   are editable by its managers and admins; your own are yours to manage. Tokens stay write-only.
+- Google Chat card buttons now work: a Chat app connected through a Pub/Sub topic never receives
+  button clicks (Google delivers them only to an HTTP endpoint connection), so Files / Variables /
+  Settings and every other card button failed with "unable to process your request". ChannelGate
+  now serves `POST /api/googlechat/events` on its HTTPS listener, verifying each request's Google
+  ID token (issuer, audience = the endpoint URL, verified sender = the configured Chat app service
+  account) before feeding the same transport path Pub/Sub uses, and acknowledges within Google's
+  30-second window. Settings → Google Chat shows the endpoint URL and takes the app's service
+  account (and, for standalone apps, the project number). The Pub/Sub subscription stays in place
+  for Workspace Events reactions. Setup: `docs/PLATFORMS.md`, Google Chat step 9.
+- Add Google Chat reaction controls. Chat apps receive no event for a reaction, so ChannelGate now
+  maintains a Google Workspace Events subscription per space (app authentication with the
+  admin-approved `chat.app.messages.readonly` scope, renewed about hourly) when Settings → Google
+  Chat → **Reaction events topic** is set. The configured start emoji (🤖) runs a message as the
+  reactor, 🛑 stops a running or queued turn (author or admin) and ✅ closes a tracked reminder.
+  Reactions are deduplicated, freshness-bounded and withdrawn on removal; messaging is unaffected
+  when reaction events are not configured or not approved.
+
+- Google Chat `/help` looks tidier: emoji section headers, icon rows with each command in bold
+  above its description, a highlighted mention hint, and no redundant "Google Chat help" bubble.
+- Google Chat gains expandable help, requester-only settings/model and file controls, private
+  browser credential entry, native approvals and the Files/Variables/Settings reply menu.
+  Control commands remain responsive during agent work. These adapt the Teams improvements to
+  Cards v2 and Pub/Sub; live Google Chat acceptance remains pending.
+- Fix Google Chat audit findings: registered slash commands (`/help`, `/stop`, `/model …`) are
+  read from Google's command annotation instead of the arguments-only `argumentText`, so they no
+  longer arrive empty or as a bare prompt; long turns show a ticking "still connected" heartbeat in
+  the working line again; a working line left by a failed edit is removed; approval refusals and
+  control errors tell the clicker why, privately, without host paths or API bodies; Deny no longer
+  submits the comment box; a refused browser-settings save explains the rule and keeps the
+  session; a quoted top-level `/stop`/`/status`/`/clear` reaches the quoted turn in group chats and
+  unthreaded spaces; a restart-interrupted button click is reported only to its clicker.
+
+- Fix Teams 🛑 Stop and ✅ Tick reactions being ignored in group chats and channels. Microsoft Graph
+  now returns those messages without reaction history, and the earlier fallback accepted only
+  activation emojis. A present Stop/Tick created after its own saved cutoff and within the last
+  ten minutes now acts as its reactor; removal history and deduplication still apply.
+
+- Teams answers now end with the same reply menu as Slack: 📂 Files, 🔑 Variables, ⚙️ Settings
+  and a 📄 button for each workspace file the answer named. The buttons open the existing private
+  Teams windows, work on older replies and after restarts, and only for the person who asked.
+
+- Teams file window: Word `.docx` files now show a read-only plain-text preview of the document
+  body (formatting, images and layout are not shown; Download returns the original). **Edit
+  file** now appears for text and Markdown files up to the browser editor's 250,000-character
+  limit; it was wrongly hidden for any file over 3,000 characters.
+
+- Keep Teams Open files/Open file buttons working when Teams accepts a channel-thread card
+  without returning its activity id. The gateway used to treat that as a failed post, deleting
+  the button's reference while the card stayed visible, so every click showed "This file button
+  is no longer available" and the thread also showed "Teams returned no message identity".
+
+- Preserve Teams Open files/Open file references across gateway restarts and Teams reconnects
+  for their original 15-minute lifetime, with current access checks on every opening. Distinguish
+  missing references, expired buttons and unknown buttons instead of attributing every lookup
+  failure to a restart. Private file windows still require reopening after a restart.
+
+- Keep Teams file callbacks responsive by removing duplicate membership requests, cancelling
+  stalled read-only callbacks within 3.5 seconds, and showing a dialog error for unavailable or
+  expired file controls. Settings and approval mutations retain their completion semantics.
+
+- Add literal text previews to Teams file windows and a `share_file` agent tool that delivers
+  **Open file** in the source conversation. Remove Slack-only tools from Teams and Google Chat
+  sessions, preventing file sharing from calling Slack with a foreign conversation ID.
+
+- Show a simple “Agent is working…” status in Teams and refresh the native typing indicator while
+  a turn runs. Stop typing before the answer replaces the temporary status.
+
+- Simplify Teams replies to the answer, requester tag and small statistics footer. Hide detailed
+  tool/runtime progress and remove the old working message after successful failed-edit fallback.
+
+- Keep Teams action flows in their source conversation: Files and Send file launch native windows
+  from thread buttons; personal connection tokens are managed in Settings → MCPs → My connections;
+  approval cards no longer send supplemental decision-link DMs. File/settings dialog contents stay
+  out of shared chat, and public model cards reject forged settings actions.
+
+- Extend the bundled `channelgate` skill with supported OpenVPN setup and task-specific VPN/SSH
+  access instructions, including Secret handling, identity verification, isolation, layered
+  checks and cleanup. Customers receive the reference with gateway updates.
+
+- Allow project-local `.claude/` skills and settings in browser folder uploads, including uploads
+  into existing project subfolders. The channel-root `.claude/` policy remains protected.
+
+- Continue browser file and folder uploads after individual failures. Skipped files are listed
+  with their reasons and retained for retry, while successful files are removed from the selection.
+  An oversized file no longer disables uploading the rest of the batch.
+
+- Route ongoing requests by scope before saving: memory for facts, existing skills for reusable
+  procedures, existing schedules for job instructions, and channel instructions for behavior
+  across tasks. The guide, managed block, tool descriptions and memory reviewer agree. Agents
+  report saved versus pending changes without duplicating procedures into channel rules/memory.
+- Allow schedule creators and gateway admins to read a task's full prompt and edit its prompt or
+  title in place, preserving identity, timing, delivery and history. Stale content edits are
+  refused instead of overwriting another edit; no delete/recreate workaround is needed.
+
+- Allow `CLAUDE.md` in browser file and folder uploads. The new *Overwrite existing files*
+  checkbox lets the uploader replace files at their original names; leaving it unchecked keeps
+  numbered copies. Replacements are atomic and never write through destination symlinks.
+
+- The `channelgate` skill now answers "what server should we host this on?": a hosting reference
+  gives the recommended configuration (4 dedicated vCPU, 16 GB RAM, 150 GB NVMe, Ubuntu 24.04 LTS,
+  static IPv4) and four recommended EU hosts with estimated monthly prices — Hetzner CCX23 (≈ €25),
+  netcup VPS 2000 G12 (≈ €16), RoLeaf in Romania (≈ €32) and Google Cloud `n4-standard-4` (≈ €139).
+
 - Teams channel and group-chat answers now end with a native mention of the requester, matching
   Slack. Long answers tag them on the final chunk before the statistics footer; DMs skip the tag.
 
@@ -59,7 +162,8 @@ product overview.
   expandable topics. Shorter descriptions and readable reaction names replace the long initial
   guide; the full text remains available when native card delivery fails.
 
-- Center the two rows of section buttons in the Teams settings popup.
+- Show all six section buttons in one centered row in the Teams settings popup and open
+  `/settings` on General with its form already displayed.
 
 - Teams `/settings` now posts a compact **Open settings** button that opens a private popup
   inside Teams. All six settings pages, saves and confirmations stay in the popup instead of
@@ -139,6 +243,10 @@ product overview.
   and shows it in help. Teams configuration changes exclude older queued/history activations.
   Google Chat's selection is saved, with an explicit note that its current transport does not
   receive reaction events.
+- Settings can connect a Perplexity subscription for research delegation from Claude and Codex.
+  Agents receive quick/deep research, model discovery and quota tools with citation results;
+  the real login stays in the gateway and containers receive a protected relay placeholder.
+  The optional unofficial client requires network access and is omitted in Lean mode.
 
 - Teams `/model` now works like Settings → General: choose the engine and press **Load models**,
   and the Model and Effort lists show only that engine's choices; Apply saves. Previously one card

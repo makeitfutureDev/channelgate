@@ -49,6 +49,27 @@ Paths are relative to the current conversation’s effective workspace. A signed
 
 **Limits:** At most 500 files, 2 MiB total scanned content, and 100 matching lines. Files above 64 KiB, invalid UTF-8, and binary files are skipped. Matching text is clipped to 500 characters per line. A bounded no-match result is not a proof that every workspace byte was scanned.
 
+## share_file
+
+**Required:** `path` (workspace-relative string).
+
+```json
+{
+  "path": "deliverables/report.docx"
+}
+```
+
+**Scope and result:** Available in Teams sessions only. Posts **Open file** in the current
+conversation for the requester to open a private file window. Current gateway access and Teams
+membership are checked before delivery and again when opening/downloading. Text/Markdown has a
+literal preview of up to 2,600 bytes; the download returns the complete original file.
+
+**Limits:** Requires a connected Teams transport and the gateway Public URL for authenticated
+browser downloads. Binary documents such as DOCX/PDF download for opening in their application.
+This does not upload to OneDrive, create a public link or send a proactive DM. Editing remains
+limited to eligible text and current write access. Slack sessions use `slack_share_file` instead;
+Slack-only tools are unavailable in Teams and Google Chat.
+
 ## stage_file_for_composio
 
 **Required:** `path` (workspace-relative string), `tool` (target Composio tool slug), `identity` (`user` or `agent`, matching the identity that will execute that tool). **Optional:** `filename` (defaults to source name), `mimetype` (detected when absent).

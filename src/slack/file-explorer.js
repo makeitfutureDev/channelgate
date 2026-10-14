@@ -6,7 +6,7 @@
 // traversal, and verify the resolved target still lives under the root. Names are not filtered.
 import path from "node:path";
 import { spawn } from "node:child_process";
-import { chmod, link, mkdir, open, readFile, readdir, realpath, rename, rm, stat, writeFile } from "node:fs/promises";
+import { chmod, mkdir, open, readFile, readdir, realpath, rename, rm, stat, writeFile } from "node:fs/promises";
 import { createHash, randomUUID } from "node:crypto";
 import { MAX_FILE_UPLOAD_BYTES } from "./upload.js";
 
@@ -48,31 +48,68 @@ export const PREVIEW_BYTES = 2600;
 
 const BOUND_FILE_WRITER = String.raw`
 import path from "node:path";
-import { open, realpath, rm } from "node:fs/promises";
+import { link, lstat, open, realpath, rename, rm } from "node:fs/promises";
+import { randomUUID } from "node:crypto";
 
-const [expectedRoot, name] = process.argv.slice(1);
+const [expectedRoot, name, overwrite, expectedDirectory, collisionRename] = process.argv.slice(1);
 let handle;
 let failure;
+let temporary;
+let overwritten = false;
 try {
   const rootReal = await realpath(expectedRoot);
   const cwdReal = await realpath(".");
   const contained = cwdReal === rootReal || cwdReal.startsWith(rootReal + path.sep);
-  if (!contained) {
+  if (!contained || (expectedDirectory && cwdReal !== expectedDirectory)) {
     const error = new Error("The selected directory moved outside this channel's working folder.");
     error.code = "OUTSIDE_ROOT";
     throw error;
   }
   const chunks = [];
   for await (const chunk of process.stdin) chunks.push(chunk);
-  handle = await open(name, "wx", 0o644);
+  let mode = 0o644;
+  let preserveMode = false;
+  if (overwrite === "true") {
+    try {
+      const existing = await lstat(name);
+      if (!existing.isFile() && !existing.isSymbolicLink()) throw new Error("Only files can be overwritten.");
+      overwritten = true;
+      if (existing.isFile()) { mode = existing.mode & 0o777; preserveMode = true; }
+    } catch (error) {
+      if (error.code !== "ENOENT") throw error;
+    }
+  }
+  if (overwrite === "true" || collisionRename === "true") temporary = ".gateway-upload-" + randomUUID();
+  handle = await open(temporary || name, "wx", mode);
   await handle.writeFile(Buffer.concat(chunks));
+  if (preserveMode) await handle.chmod(mode);
+  await handle.close();
+  handle = null;
+  let savedName = name;
+  if (overwrite === "true") await rename(temporary, name);
+  else if (collisionRename === "true") {
+    let saved = false;
+    for (let number = 0; number < 1000; number++) {
+      savedName = numberedFilename(name, number);
+      try {
+        await link(temporary, savedName);
+        saved = true;
+        break;
+      } catch (error) {
+        if (error.code !== "EEXIST") throw error;
+      }
+    }
+    if (!saved) throw new Error("Too many files with that name already exist in this folder.");
+  }
+  process.stdout.write(JSON.stringify({ overwritten, name: savedName }));
 } catch (error) {
   failure = error;
 } finally {
   await handle?.close().catch(() => {});
+  if (temporary) await rm(temporary, { force: true }).catch(() => {});
 }
 if (failure) {
-  if (handle) await rm(name, { force: true }).catch(() => {});
+  if (!temporary && handle) await rm(name, { force: true }).catch(() => {});
   process.stderr.write(JSON.stringify({ code: failure.code || "", message: failure.message || "File creation failed." }));
   process.exit(1);
 }
@@ -519,15 +556,18 @@ export async function createVisibleDirectory(root, relative, requestedName) {
 // before the script starts; replacing the pathname with an escaping symlink afterward cannot move
 // that cwd. The child re-realpaths `.` before opening the basename, so a swap that wins before spawn
 // is refused without creating or writing the file. This provides portable openat-like containment
-// with documented Node APIs.
-export function writeNewFileInBoundDirectory(directoryPath, rootReal, name, bytes) {
+// with documented Node APIs. Explicit upload replacement uses an exclusive temporary file and
+// rename in this same bound directory, replacing a symlink node rather than following its target.
+export function writeNewFileInBoundDirectory(directoryPath, rootReal, name, bytes, { overwrite = false, collisionRename = false } = {}) {
   return new Promise((resolve, reject) => {
     let child;
     try {
-      child = spawn(process.execPath, ["--input-type=module", "--eval", BOUND_FILE_WRITER, rootReal, name], {
+      child = spawn(process.execPath, ["--input-type=module", "--eval",
+        BOUND_FILE_WRITER + "\n" + numberedFilename.toString(),
+        rootReal, name, String(overwrite), directoryPath, String(collisionRename)], {
         cwd: directoryPath,
         env: {},
-        stdio: ["pipe", "ignore", "pipe"],
+        stdio: ["pipe", "pipe", "pipe"],
         windowsHide: true,
       });
     } catch (error) {
@@ -536,12 +576,15 @@ export function writeNewFileInBoundDirectory(directoryPath, rootReal, name, byte
     }
     let settled = false;
     let stderr = "";
+    let stdout = "";
     const finish = (error) => {
       if (settled) return;
       settled = true;
       if (error) reject(error);
-      else resolve();
+      else resolve(JSON.parse(stdout || "{}"));
     };
+    child.stdout.setEncoding("utf8");
+    child.stdout.on("data", (chunk) => { stdout += chunk; });
     child.stderr.setEncoding("utf8");
     child.stderr.on("data", (chunk) => {
       if (stderr.length < 4_096) stderr += chunk.slice(0, 4_096 - stderr.length);
@@ -590,18 +633,36 @@ export async function createVisibleFile(root, relative, requestedName, content =
   return { ...created, name, bytes, text: content, hash: contentHash(bytes) };
 }
 
-export function normalizeUploadFilename(value) {
+export function normalizeUploadFilename(value, { allowClaudeInstructions = false } = {}) {
   let name = path.posix.basename(String(value || "").replaceAll("\\", "/"))
     .replace(/[\u0000-\u001f\u007f]/g, "_")
     .trim();
-  if (!name || isProtectedName(name)) {
+  if (!name || (isProtectedName(name) && !(allowClaudeInstructions && name.toLowerCase() === "claude.md"))) {
     throw new Error("That filename is protected and can't be added to the channel folder.");
   }
   while (Buffer.byteLength(name, "utf8") > 200) name = name.slice(0, -1);
-  if (!name || isProtectedName(name)) {
+  if (!name || (isProtectedName(name) && !(allowClaudeInstructions && name.toLowerCase() === "claude.md"))) {
     throw new Error("That filename is protected and can't be added to the channel folder.");
   }
   return name;
+}
+
+// Project-local Claude configuration is uploadable. The channel-root .claude directory is
+// gateway policy, so the effective logical AND physical destinations decide whether it is allowed.
+function normalizeBrowserUploadFolder(value) {
+  return value === ".claude" ? value : normalizeNewFolderName(value);
+}
+
+function isProtectedBrowserUploadDirectoryPath(relative) {
+  return normalizeRelativePath(relative).split("/").filter(Boolean).some((part, index) =>
+    part === ".claude" ? index === 0 : isProtectedName(part));
+}
+
+function assertBrowserUploadDirectory(directory) {
+  const physicalRelative = path.relative(directory.rootReal, directory.path).split(path.sep).join("/");
+  if (isProtectedBrowserUploadDirectoryPath(directory.relative) || isProtectedBrowserUploadDirectoryPath(physicalRelative)) {
+    throw new Error("Protected/internal channel folders are read-only. Upload project .claude files inside a project folder.");
+  }
 }
 
 export function normalizeBrowserUploadPath(value) {
@@ -613,8 +674,8 @@ export function normalizeBrowserUploadPath(value) {
   if (!parts.length || parts.some((part) => !part || part === "." || part === "..")) {
     throw new Error("Upload paths cannot contain empty or traversal segments.");
   }
-  const folders = parts.slice(0, -1).map(normalizeNewFolderName);
-  return [...folders, normalizeUploadFilename(parts.at(-1))].join("/");
+  const folders = parts.slice(0, -1).map(normalizeBrowserUploadFolder);
+  return [...folders, normalizeUploadFilename(parts.at(-1), { allowClaudeInstructions: true })].join("/");
 }
 
 function numberedFilename(name, number) {
@@ -628,46 +689,36 @@ function numberedFilename(name, number) {
 }
 
 async function writeUploadedBytes(directory, name, bytes) {
-  const temp = path.join(directory.path, `.gateway-upload-${randomUUID()}`);
-  await writeFile(temp, bytes, { flag: "wx", mode: 0o644 });
-  try {
-    for (let number = 0; number < 1000; number++) {
-      const candidate = numberedFilename(name, number);
-      const destination = path.join(directory.path, candidate);
-      try {
-        await link(temp, destination);
-        const savedRelative = directory.relative ? `${directory.relative}/${candidate}` : candidate;
-        return { relative: savedRelative, path: destination, name: candidate, bytes: bytes.length, renamed: candidate !== name };
-      } catch (error) {
-        if (error?.code !== "EEXIST") throw error;
-      }
-    }
-    throw new Error("Too many files with that name already exist in this folder.");
-  } finally {
-    await rm(temp, { force: true }).catch(() => {});
-  }
+  const result = await writeNewFileInBoundDirectory(directory.path, directory.rootReal, name, bytes, { collisionRename: true });
+  const candidate = result.name;
+  return { relative: directory.relative ? `${directory.relative}/${candidate}` : candidate,
+    path: path.join(directory.path, candidate), name: candidate, bytes: bytes.length, renamed: candidate !== name };
 }
 
 async function resolveOrCreateUploadDirectory(root, baseRelative, folderParts) {
   let directory = await resolveVisiblePath(root, baseRelative, { kind: "directory" });
-  if (isProtectedResolvedPath(directory)) throw new Error("Protected/internal files are read-only in this explorer.");
+  assertBrowserUploadDirectory(directory);
   for (const requested of folderParts) {
-    const name = normalizeNewFolderName(requested);
+    const name = normalizeBrowserUploadFolder(requested);
     const childRelative = directory.relative ? `${directory.relative}/${name}` : name;
+    if (isProtectedBrowserUploadDirectoryPath(childRelative)) {
+      throw new Error("Protected/internal channel folders are read-only. Upload project .claude files inside a project folder.");
+    }
     try {
       await mkdir(path.join(directory.path, name), { mode: 0o755 });
     } catch (error) {
       if (error?.code !== "EEXIST") throw error;
     }
     directory = await resolveVisiblePath(root, childRelative, { kind: "directory" });
+    assertBrowserUploadDirectory(directory);
   }
   return directory;
 }
 
 // Browser folder selection supplies each file's webkitRelativePath. Recreate its visible directory
 // chain under the folder that was open in Slack, then use the same collision-safe atomic write as
-// browser uploads. Existing directories may be merged into; existing files are never replaced.
-export async function saveBrowserUploadedFile(root, baseRelative, uploadRelative, content) {
+// browser uploads. Existing files are replaced only with the browser user's explicit choice.
+export async function saveBrowserUploadedFile(root, baseRelative, uploadRelative, content, { overwrite = false } = {}) {
   const clean = normalizeBrowserUploadPath(uploadRelative);
   const bytes = Buffer.isBuffer(content) ? content : Buffer.from(content || []);
   if (bytes.length > MAX_BROWSER_UPLOAD_BYTES) {
@@ -676,7 +727,12 @@ export async function saveBrowserUploadedFile(root, baseRelative, uploadRelative
   const parts = clean.split("/");
   const name = parts.pop();
   const directory = await resolveOrCreateUploadDirectory(root, baseRelative, parts);
-  return { ...(await writeUploadedBytes(directory, name, bytes)), sourceRelative: clean };
+  if (overwrite === true) {
+    const { overwritten } = await writeNewFileInBoundDirectory(directory.path, directory.rootReal, name, bytes, { overwrite: true });
+    return { relative: directory.relative ? `${directory.relative}/${name}` : name,
+      path: path.join(directory.path, name), name, bytes: bytes.length, renamed: false, overwritten, sourceRelative: clean };
+  }
+  return { ...(await writeUploadedBytes(directory, name, bytes)), overwritten: false, sourceRelative: clean };
 }
 
 export async function readFilePreview(root, relative) {

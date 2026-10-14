@@ -20,6 +20,7 @@ import {
   getAdminPassword,
   settingsForApi,
   saveSettings,
+  isPerplexitySessionToken,
   normalizePublicUrl,
   applySettingsToEnv,
   resolveSlackConfig,
@@ -53,6 +54,7 @@ import { platformUiManifest } from "../../platforms/registry.js";
 import { isServiceAccountJson, syncAllNow, driveSyncStatusAll } from "../../gateway/drivesync.js";
 import { parseServiceAccount } from "../../platforms/googlechat/auth.js";
 import { isSubscriptionName } from "../../platforms/googlechat/pubsub.js";
+import { isTopicName } from "../../platforms/googlechat/workspace-events.js";
 import { logEvent } from "../../util/logger.js";
 import { checkForUpdate, startUpdate } from "../../gateway/updater.js";
 import { isValidModel } from "../../slack/util.js";
@@ -208,6 +210,23 @@ export function createSettingsRouter({
         patch.slackAdminUserToken = v;
       }
       if (body.clearSlackAdminUserToken === true) patch.slackAdminUserToken = "";
+      // Subscription research is optional and independent of the main engine. An empty
+      // password box keeps the existing session; only an explicit clear removes it.
+      if (Object.hasOwn(body, "perplexityResearchEnabled")) {
+        if (typeof body.perplexityResearchEnabled !== "boolean") return res.status(400).json({ error: "perplexityResearchEnabled must be a boolean" });
+        patch.perplexityResearchEnabled = body.perplexityResearchEnabled;
+      }
+      if (Object.hasOwn(body, "perplexitySessionToken")) {
+        if (typeof body.perplexitySessionToken !== "string") return res.status(400).json({ error: "perplexitySessionToken must be a string" });
+        if (body.perplexitySessionToken !== "") {
+          if (!isPerplexitySessionToken(body.perplexitySessionToken)) return res.status(400).json({ error: "Paste only the Perplexity session token value: at most 16384 printable ASCII characters, without whitespace, quotes, commas, semicolons or backslashes" });
+          patch.perplexitySessionToken = body.perplexitySessionToken;
+        }
+      }
+      if (Object.hasOwn(body, "clearPerplexitySessionToken")) {
+        if (typeof body.clearPerplexitySessionToken !== "boolean") return res.status(400).json({ error: "clearPerplexitySessionToken must be a boolean" });
+        if (body.clearPerplexitySessionToken) patch.perplexitySessionToken = "";
+      }
       // ── Google Chat ──────────────────────────────────────────────────────────
       // The key is validated BEFORE it is stored: a pasted OAuth-client JSON or a truncated file
       // otherwise fails much later, inside a pull loop, as an opaque 400.
@@ -227,6 +246,25 @@ export function createSettingsRouter({
           return res.status(400).json({ error: 'the subscription must look like "projects/<project>/subscriptions/<name>"' });
         }
         patch.googleChatSubscription = value;
+      }
+      if (typeof body.googleChatReactionTopic === "string") {
+        const value = body.googleChatReactionTopic.trim();
+        if (value && !isTopicName(value)) {
+          return res.status(400).json({ error: 'the reaction events topic must look like "projects/<project>/topics/<name>"' });
+        }
+        patch.googleChatReactionTopic = value;
+      }
+      if (typeof body.googleChatAppServiceAccount === "string") {
+        const value = body.googleChatAppServiceAccount.trim().toLowerCase();
+        if (value && !/^[a-z0-9._%+-]+@[a-z0-9.-]+\.gserviceaccount\.com$/.test(value)) {
+          return res.status(400).json({ error: 'the Chat app service account must be a Google service-account address such as "service-<project-number>@gcp-sa-gsuiteaddons.iam.gserviceaccount.com"' });
+        }
+        patch.googleChatAppServiceAccount = value;
+      }
+      if (typeof body.googleChatProjectNumber === "string") {
+        const value = body.googleChatProjectNumber.trim();
+        if (value && !/^\d{6,20}$/.test(value)) return res.status(400).json({ error: "the Google Cloud project number must be numeric" });
+        patch.googleChatProjectNumber = value;
       }
       if (typeof body.googleChatBotUserId === "string") {
         const value = body.googleChatBotUserId.trim();

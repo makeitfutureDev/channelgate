@@ -49,7 +49,7 @@ export function createNullConnector(platform, capabilities, reason = "not connec
 // Post a full answer, splitting it at the platform's cap. `formatted` is whatever the platform's
 // `formatOutbound` returned ({ text, chunks: [{ text, mentions }] }). Returns the ids of every
 // message posted, so a caller that needs to edit or delete its own output can find it again.
-export async function postFormatted(connector, { conversationId, threadKey, formatted, footer = "", buttons = null, onPosted = () => {} } = {}) {
+export async function postFormatted(connector, { conversationId, threadKey, formatted, footer = "", menu = null, buttons = null, onPosted = () => {} } = {}) {
   const chunks = formatted?.chunks?.length ? formatted.chunks : [{ text: "_(no output)_", mentions: [] }];
   const posted = [];
   for (const [index, chunk] of chunks.entries()) {
@@ -62,6 +62,7 @@ export async function postFormatted(connector, { conversationId, threadKey, form
       // Footer and buttons ride the LAST chunk only — repeating run stats under every part of a
       // split answer is noise, and repeated buttons would fire the same action several times.
       ...(last && footer ? { footer } : {}),
+      ...(last && menu ? { menu } : {}),
       ...(last && buttons ? { buttons } : {}),
     });
     posted.push(sent);

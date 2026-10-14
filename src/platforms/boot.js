@@ -12,6 +12,7 @@ import { createGoogleAuth } from "./googlechat/auth.js";
 import { createChatApi } from "./googlechat/api.js";
 import { createGoogleChatConnector } from "./googlechat/connector.js";
 import { startGoogleChat } from "./googlechat/transport.js";
+import { createGoogleChatControls } from "./googlechat/controls.js";
 import { createTeamsAuth } from "./msteams/auth.js";
 import { createTeamsApi } from "./msteams/api.js";
 import { createTeamsConnector } from "./msteams/connector.js";
@@ -22,15 +23,22 @@ import { startTeams, botIdFor } from "./msteams/transport.js";
 // first event inside start(), and an ingest that does not exist yet would drop that message. Wiring
 // it up front means the very first message is answerable.
 async function startGoogleChatTransport(config, log, { onFatal } = {}) {
+  const { getMentionReactions } = await import('../config/settings.js');
   const capabilities = requirePlatform("googlechat").capabilities;
   const auth = createGoogleAuth({ serviceAccount: config.serviceAccountJson });
   const api = createChatApi({ auth });
   const connector = createGoogleChatConnector({ auth, capabilities, api, botUserId: config.botUserId, log });
-  const ingest = createIngest({ connector, log });
+  const controls = createGoogleChatControls({ connector, log });
+  connector.shareFile = controls.shareFile;
+  connector.recordUser = controls.recordUser;
+  const ingest = createIngest({ connector, log, onCommand: controls.onCommand });
   return startGoogleChat({
     ...config,
     capabilities,
     onMessage: ingest,
+    getActivationReactions: () => getMentionReactions('googlechat'),
+    onCard: controls.onCard,
+    onStop: controls.stop,
     onFatal,
     log,
     deps: { auth, api, connector },
@@ -46,6 +54,7 @@ async function startTeamsTransport(config, log) {
     auth, capabilities, api, botId: botIdFor(config.appId), tenantId: config.tenantId, log,
   });
   const controls = createTeamsControls({ connector });
+  connector.shareFile = controls.shareFile;
   const ingest = createIngest({ connector, log, onCommand: controls.onCommand });
   return startTeams({ ...config, capabilities, getActivationReactions: () => getMentionReactions('msteams'), getActivationVersion: getTeamsMentionReactionsUpdatedAt, onMessage: ingest, onInvoke: controls.onInvoke, onStop: controls.stop, log, deps: { auth, api, connector } });
 }

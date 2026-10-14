@@ -1,5 +1,138 @@
 # ChannelGate — Features
 
+## Google Chat native conversation controls
+
+- Google Chat `/help` now opens a compact Cards v2 guide with expandable topics, matching the
+  Teams quick-start experience. Sections carry emoji headers; quick-start entries and commands
+  are icon rows (Material icons) with the bold command over its description, and typed example
+  phrases use a chat icon. The card is the whole reply, with no separate text bubble. If card
+  delivery fails, the complete text guide is returned.
+- `/settings`, `/secrets` and `/model` open requester-only panels in their source space/session.
+  General, Variables, MCPs, Skills, Automations and Resume reuse the same guarded settings policy
+  as Teams. Channel defaults and session overrides have separate model/effort previews and Apply
+  actions. Credential entry opens a private browser form using one-use grants, HttpOnly cookies,
+  CSRF checks and current space membership; stored values are never displayed or prefilled.
+- `/files [folder]`, `/sendfile <path>` and the agent's `share_file` show private file controls:
+  browse, text/Word text preview, download, and eligible browser editing/uploads. Paths remain
+  confined to the workspace and every click/browser request repeats current authorization.
+  Browser links require the gateway Public URL; files are not uploaded to Drive or published.
+- Final answers, errors and stops carry compact statistics plus **Files**, **Variables**,
+  **Settings**, and up to three referenced-file buttons. The sealed menu survives restarts;
+  opened panel drafts expire after 15 minutes. Google-enforced private viewers keep file and
+  credential links visible only to the requester in the original space.
+- Native approval cards remain in the source conversation. Pub/Sub card and text controls use a
+  separate durable lane so stop/status remain responsive while agent turns are running.
+  Registered slash commands are rebuilt from Google's SLASH_COMMAND annotation (or the literal
+  message text), because `argumentText` carries only the arguments; a numeric command ID is never
+  mapped to a name. In a group chat or unthreaded space, a top-level `/stop`, `/status` or
+  `/clear` that quotes the request or a bot reply targets that quoted session. The working
+  placeholder is edited in place with a compact heartbeat (phase, run-slot position, elapsed,
+  last activity, subagents, "Still connected") — Chat has no typing indicator — and is replaced
+  by the final answer; if that edit fails the answer is posted and the placeholder removed.
+  Completed space/group answers mention the requester. Approval refusals (not authorized, wrong
+  scope, already handled) and control errors are shown privately to the clicker with the policy
+  reason; REST bodies, system errors and host paths collapse to generic retry guidance. Deny
+  ignores the comment field. A refused private-browser save shows a value-free reason and keeps
+  the session. Open panel drafts and browser-settings sessions are in memory and need reopening
+  after a restart; a restart-interrupted click is reported only to its clicker. Google Chat
+  dialogs and typing events remain unavailable; card buttons act only with the HTTP endpoint
+  connection (next section).
+- Automated coverage and pending live Claude/Codex gates: → TEST-PLAN: Google Chat native controls.
+
+## Google Chat HTTP endpoint (working card buttons)
+
+- A Chat app has one connection setting, and Google delivers card and button clicks only to an
+  **HTTP endpoint URL** connection — never to a Pub/Sub topic, and the Workspace Events API has no
+  click event type. With the topic connection every card button ends in Chat's "unable to process
+  your request". ChannelGate therefore serves `POST /api/googlechat/events` on its HTTPS listener,
+  mounted ahead of admin auth and the Host/Origin guard like the Teams webhook: it reads no cookie
+  and authenticates every request itself (`src/platforms/googlechat/verify.js`).
+- Verification fails closed: RS256 by a key in Google's published set (cached a day, one refresh
+  per minute for an unknown `kid`), issuer `accounts.google.com`, audience equal to the configured
+  endpoint URL (`<Public URL>/api/googlechat/events`), `email_verified`, and the sender exactly the
+  configured **Chat app service account** (an add-on's `service-<project-number>@gcp-sa-gsuiteaddons…`)
+  or Google's `chat@system.gserviceaccount.com`; a standalone app with the project-number audience
+  presents a JWT issued by that account, verified against its own key set with the configured
+  **project number** as audience. Anything else answers `401` with no detail (the reason is logged);
+  an endpoint without a Public URL or project number answers `503` naming the remedy; a connected
+  transport is required (`503` otherwise).
+- Accepted events feed the same transport handler the Pub/Sub puller feeds — messages, membership
+  (`addedToSpacePayload`/`removedFromSpacePayload` and the legacy `ADDED_TO_SPACE` types now parse
+  without CloudEvent attributes), app commands and `buttonClickedPayload` clicks — so gating,
+  authorization, dedupe (body hash for clicks, message name for messages), the durable inboxes
+  and the private control cards are unchanged. The endpoint acknowledges with an empty JSON
+  object as soon as the event is durably queued, inside Google's 30-second window; every reply,
+  card edit and private card still goes through the Chat REST API. The Pub/Sub subscription stays
+  connected and keeps delivering Workspace Events reactions.
+- Settings → Google Chat shows the endpoint URL once a Public URL exists and gains **Chat app
+  service account** (validated as a `…gserviceaccount.com` address, lower-cased) and **Google
+  Cloud project number** (numeric). Both are listed back; neither is a secret. The transport's
+  status line reports `endpoint <url>` or `endpoint off (set Public URL)`.
+- Automated coverage and the live gate: → TEST-PLAN: Google Chat HTTP endpoint.
+
+## Teams reply menu
+
+- Every Teams answer, error and stop carries the reply menu under its run-stats line, like
+  Slack's footer: **📂 Files**, **🔑 Variables**, **⚙️ Settings**, and one **📄 <file>** button for
+  each workspace file the answer named in inline code (up to three). Each opens the same private
+  Teams window as `/files`, `/secrets`, `/settings` or `/sendfile <path>`.
+- The buttons hold no server-side state, so they keep working on older replies and across
+  restarts. Each carries its conversation, session, requester and file path sealed with an
+  HMAC under a per-deployment key stored in the gateway database. A click is honoured only in the
+  conversation Teams reports for it and only by the requester; another person is told to open
+  their own controls. Every window re-applies the clicker's live workspace authorization, and
+  file paths stay confined to the conversation's folder.
+- Which files get buttons is the same platform-neutral rule Slack uses
+  (`src/gateway/reply-files.js`). Connectors opt in with `replyMenu`; Google Chat renders Cards v2.
+
+## Teams workspace file previews and delivery
+
+- Teams agents receive `share_file`, which posts **Open file** in the current conversation and
+  opens the requester's private Teams file window. Current gateway access and Teams roster
+  membership are checked before delivery and again when opening/downloading. A gateway Public
+  URL is required for browser downloads; sending a file this way does not publish a public link
+  or upload it to OneDrive. Slack-only tools are omitted from Teams and Google Chat MCP sessions.
+- Read-only file callbacks share a 3.5-second response budget and cancel stalled membership
+  requests. Opening and browsing reuse the authorization result within that one request, avoiding
+  duplicate network checks; each subsequent click still checks current membership, and cheap
+  local policy checks repeat after the network request to catch in-flight revocation. Failed
+  task/fetch requests return a renderable error card. File launchers persist their bot/owner/tenant,
+  source workspace/session and selected-file references in SQLite, surviving reconnects, restarts
+  and in-memory eviction within their original 15-minute lifetime. Dialog drafts remain private
+  and ephemeral. Missing, expired and unknown references get distinct errors and bounded log
+  reason codes without payloads or opaque IDs. Settings and approval mutations keep their existing completion semantics.
+- The file window previews up to 2,600 bytes of text/Markdown as literal monospace text, states
+  when the preview is truncated, and downloads the complete original file. A Word `.docx` (up to
+  20 MB) shows a read-only plain-text preview of its body — no formatting, images or layout, and
+  no Edit — extracted daemon-side with bounded ZIP inflation; encrypted, malformed or oversized
+  documents and other binaries such as PDF show download guidance. Preview and Back to files work
+  without a Public URL. **Edit file** opens the browser editor (live Markdown preview) for text
+  files up to its own 250,000-character / 1 MB limit, not the 3,000-character in-chat limit;
+  eligible text editing and uploads retain their existing write-access checks.
+- Public links still require the configured feature switch, Public URL, explicit duration (at
+  most 48 hours) and native human approval. The existing Teams approval delivery fix keeps that
+  card actionable without supplemental private links. Regression fixtures cover minting only
+  after Approve for both engine claims. Live Teams acceptance and private registry records are
+  pending; see TEST-PLAN → Teams workspace file previews and delivery.
+
+## Routing ongoing requests to their owning scope
+
+- Both engines receive a scope decision before persisting “always”, “from now on”, corrections,
+  or recurring requests: facts go to memory, reusable procedures to their existing skill,
+  changes to one automation to its existing schedule, and behavior across tasks to channel
+  instructions. One-off requests need no persistent write. The managed block carries this rule
+  in Clean mode too; the operating guide gives the spam-cleanup example and verification steps.
+- Agents inspect the existing source, preserve personal/shared account scope and unrelated
+  instructions, and report saved versus pending changes. Missing skill/schedule editing access
+  does not justify a fallback to channel instructions or a declarative memory copy. The memory
+  skill and reduced-tool reviewer carry the same boundary.
+- `list_schedules id` returns one conversation-scoped task's complete prompt and configuration.
+  `update_schedule` edits its prompt/title in place for the creator or a gateway admin, requiring
+  the exact old `expected_prompt` and an atomic row comparison. It retains the job's identity,
+  cadence, creator, enabled state, delivery, and history; edits apply to future fires. Thread-loop
+  content uses its own controls. Existing delivery-only edits keep their prior contract.
+- Regression and live Claude/Codex fixtures: TEST-PLAN → Ongoing request routing.
+
 ## Provider selection readiness
 
 - Enabled optional providers must have their own configured credential and endpoint before a
@@ -134,10 +267,48 @@ control-plane status.
   Custom selections replace activation defaults; Stop and Tick stay fixed. Saved configuration
   changes carry a monotonic timestamp, prevent historical/queued activation replay, and preserve
   existing event identities and reactor authorization. Teams help shows its current activation list.
-- Google Chat's Unicode emoji selection is stored independently. The current interaction-event
-  transport does not receive reaction events, so this setting alone cannot activate Google Chat
-  messages. The UI states that limitation; Workspace Events subscriptions are separate work.
+- Google Chat's Unicode emoji selection (default 🤖) acts once reaction events are enabled (below).
 
+## Google Chat reaction controls
+
+- Chat apps receive no interaction event for a reaction. With Settings → Google Chat → **Reaction
+  events topic** set, the transport keeps one Google Workspace Events subscription per space the
+  app belongs to (`google.workspace.chat.reaction.v1.created`/`deleted`, resource data included,
+  app authentication with the admin-approved `chat.app.messages.readonly` scope, on a separate
+  token so an unapproved scope never affects messaging). A stateless reconciler lists the app's
+  subscriptions every 30 minutes and on startup, space joins and lifecycle events: it renews any
+  with under two hours left (four-hour maximum), reactivates suspended ones, recreates expired
+  ones, retires duplicates and those for spaces the app left, and never touches subscriptions on
+  another topic. Status appears in the transport line (`reactions N/M spaces` or the error).
+- Events arrive on the existing pulled subscription. The reactor (`users/…`) maps to exactly one
+  gateway user recorded from that person's delivered messages; the reacted message and its space
+  are fetched to resolve thread and session. Start runs the reacted person's text as the reactor,
+  or continues from the app's own answer; Stop and Tick ride the durable control queue, so Stop
+  interrupts a running turn and cancels queued work for its session (author or admin); Tick
+  closes a tracked reminder. Freshness bounds (Stop 10 min, start 1 h, Tick 24 h), removal
+  tombstones and queued-row withdrawal, event identity from reaction name + provider time, and the
+  durable inbox's deduplication keep any reaction from acting twice or late. Unknown, ambiguous,
+  bot and unapproved reactors never act.
+
+## Perplexity research delegation
+
+- Admins can enable a shared Perplexity subscription login in Settings and import the session
+  token produced by `pwm login`. The login is masked on settings reads; leaving the field blank
+  preserves it, and an explicit clear disconnects it. The account is gateway-wide and research
+  requests consume its subscription quota.
+- Claude and Codex can call the managed `perplexity-research` MCP, including in read-only
+  channels: `perplexity_research` delegates a self-contained public-source question in quick or
+  deep mode and returns an answer with citations; `perplexity_models` discovers model IDs;
+  `perplexity_usage` reports remaining quotas. Deep Research selects its own model. The helper
+  exposes no authentication, upload, workspace, private-connector or library-save tools.
+- The real login stays in gateway settings. Eligible proxy containers receive only a
+  channel-bound relay placeholder in their HOME; the proxy substitutes it only in the exact
+  Perplexity session cookie on `www.perplexity.ai`, with current settings, channel identity and
+  live-work authorization checked on every request. Network-off, Lean, host and legacy bridge
+  runs do not receive this optional MCP. Rotation and clearing take effect at the relay.
+- The image pins the unofficial `perplexity-web-mcp-cli` research client. This integration is
+  opt-in, uses subscription quotas rather than API billing, and keeps the conversation's selected
+  coding engine. Setup and operating limits: [`docs/PERPLEXITY-RESEARCH.md`](docs/PERPLEXITY-RESEARCH.md).
 
 ## Teams text runtime and transport reliability
 
@@ -224,7 +395,8 @@ control-plane status.
   When Graph omits reaction history, a current activation reaction's fresh provider creation
   timestamp can start a request, including on an older message. A persisted upgrade cutoff excludes
   pre-upgrade snapshot reactions. Snapshot retries and later history share one addition identity;
-  existing removal history wins, and Stop/Tick still require explicit addition history.
+  existing removal history wins. Stop/Tick use the same fallback under their own persisted cutoff
+  and only while the reaction is at most ten minutes old, so a late fetch cannot stop newer work.
   Bot Framework rosters accept both modern `aadObjectId` and legacy `objectId` Entra identifiers
   when resolving the addressable reactor; ordinary conversation/user authorization still applies.
   The operational audit distinguishes Graph callback receipt, validation, authenticated target
@@ -936,7 +1108,7 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
   policy (approved personal chats retain their own runtime choices); stop/clear cannot cancel
   another person's active or queued work unless the requester is an administrator.
 - Work in one session queues with a visible position; unrelated sessions remain independent.
-  Clear aborts active/queued work, waits for completion, and fences late session saves. Progress
+  Clear aborts active/queued work, waits for completion, and fences late session saves. Google Chat progress
   shows the resolved model and current app/tool name, including completion/failure, thinking and
   queue states. Phase changes coalesce at most once every three seconds (slower when the surface's
   edit budget requires it); 30-second heartbeats show elapsed time, last activity and running
@@ -948,6 +1120,12 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
   optional cost and context use. Container image references are omitted from reply footers.
   Teams statistics use a small, subtle native footer with an 8-pixel spacer above them, attached
   to the final answer chunk; answer Markdown and mention entities keep their normal rendering.
+  Teams shows a temporary “⏳ Agent is working…” message and refreshes its native typing indicator
+  every four seconds without overlapping requests. Typing stops and drains before final delivery;
+  unsupported typing disables refresh for that turn while the working message remains visible.
+  Neither display includes detailed tool/model/heartbeat status. The answer
+  replaces it; if editing fails, successful fresh delivery is followed by removal of the working
+  activity, keeping only the answer, requester mention and statistics. Cleanup failures are logged.
   Completed Teams foreground replies in channels and group chats append a native mention of
   the authenticated requester after the answer and before statistics, matching Slack. The mention
   rides only the last chunk and survives failed placeholder edits. DMs and progress/error/stop
@@ -960,7 +1138,8 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
   a compact **Open settings** launcher in the original channel/thread or chat. Clicking it opens
   a large private popup inside Teams; all six sections, navigation, confirmations and saves stay
   there, retaining the original conversation and session. `/secrets` uses the same popup and
-  starts on Variables. The two rows of section buttons are centered above the form.
+  starts on Variables. All six section buttons appear in one centered row above the form;
+  `/settings` selects General and displays its form immediately, including after reopening.
   Each opening has isolated drafts and confirmations with a 15-minute expiry. General shows both channel defaults and session pins, filters compatible
   models/efforts, labels inheritance, respects dedicated Codex login locks and offers Follow
   channel default. Teams runtime lists have one **Apply to channel** and one **Apply to thread**
@@ -976,6 +1155,10 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
   never silently dropped. VPN uses the existing service, reporting unavailable where that
   service does not support the Teams identifier.
   Variable scopes, connection tokens, skill grants/templates and schedules share Slack's stores;
+  MCPs → **My connections** saves/disconnects the owner's personal Composio and Toolbox tokens
+  inside the settings window, without a DM or credential-bearing chat message. Disconnecting a
+  personal connection revokes its live remote-MCP author grants. Public model cards cannot open
+  settings pages or mutate settings; all settings actions require an authorized settings dialog.
   catalogs/templates/automations paginate. Inputs never prefill saved secrets, new secret entries
   are masked, and destructive controls use consumed server-held confirmation tokens. Native
   secret entry follows the existing 8,000-character/16-KiB submission bounds. Resume reads the
@@ -989,13 +1172,18 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
   and membership are checked on every action and sensitive write. Other members open their own
   controls. Broadcast mentions remain unimplemented. An optional approval changes
   comment refuses the current action even if Approve was clicked.
-- `/files [folder]` opens a private, paginated workspace browser. Download, upload and eligible
-  text-edit links use the existing signed browser grants, filesystem confinement and edit policy,
-  with current Teams membership and gateway authorization checked again at use. A failed private
-  delivery never posts the file list or bearer links to a group. `/sendfile <relative-path>`
-  offers a native file-consent card in the requester's personal chat: nonempty files up to 10 MB,
+- `/files [folder]` posts an **Open files** launcher in the original conversation/thread. Its
+  paginated Teams dialog offers download, upload and eligible text-edit links through the existing
+  browser grants, filesystem confinement and edit policy, with current Teams membership and
+  gateway authorization checked again at use. Listings and bearer links stay inside the owner's
+  dialog; actions never open a separate personal chat. Detail/upload pages return to browsing.
+  `/sendfile <relative-path>` in a channel/group posts **Open file** for the selected file in the
+  same conversation. In an existing bot DM it offers native file consent there: nonempty files up to 10 MB,
   ten-minute consent expiry, a bounded pending snapshot pool, and explicit Accept/Decline.
   Revocation, expiry, actor mismatch or an uncertain prior upload cannot become another upload.
+  Native file consent rejects group/channel requests instead of opening a DM. Teams approvals
+  stay on the original thread's native card, with no supplemental private bearer links. Native
+  card delivery failure refuses the action and posts retry/admin guidance in the source thread.
 - Optional group/channel file reading (`teamsFilesEnabled`, default false) uses at most 32
   explicitly allowed drive IDs (`teamsFileDriveIds`). A canonical SharePoint path is resolved
   inside an allowed drive and its returned identity is checked before downloading. Selected-site
@@ -1295,7 +1483,21 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
   cookies support the top-level GET redirect, with HttpOnly, HTTPS Secure, per-session path and
   expiry unchanged. Cross-site POSTs do not receive those cookies; every write still requires its
   session's CSRF header and current channel authorization. These flows
-  refuse protected/traversal names, never overwrite collisions, and audit every result. Read-only
+  refuse traversal and protected names except uploaded `CLAUDE.md`, and audit every result.
+  A refused, oversized, or failed file is skipped while the remaining selected files continue.
+  The final summary counts uploads and skips, lists each skipped path with its reason, and keeps
+  only skipped files selected for retry. A selection over the upload limits does not disable the
+  whole batch; successful writes still obey the server's session limits.
+  File and folder uploads allow `CLAUDE.md` at the root or nested in a project. An unchecked
+  *Overwrite existing files* choice keeps numbered copies; selecting it atomically replaces files
+  at their original names. Replacement operates on a symlink itself and never writes its target;
+  project-local `.claude/skills/` and `.claude/settings*.json` files are accepted as part of
+  folder uploads, including when uploading into an existing project subfolder. The channel-root
+  `.claude/` policy and aliases pointing to it remain protected; other protected names and
+  directory escapes remain refused. Uploaded project skills stay in the project tree for later
+  personal/channel catalog registration, and uploaded settings do not replace gateway policy.
+  Gateway-owned folders refresh their managed instruction block on the next turn and keep the uploaded channel
+  instructions outside it. Read-only
   mode hides write controls and Full remains admin-only. With a Public URL configured, every file
   preview also offers *Download*: a requester-bound, 10-minute, single-use URL rechecks channel
   authorization + membership and realpath confinement, then streams the complete file directly
@@ -2519,7 +2721,16 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
   folder/headless MCP recipe. Its description names realistic administration/troubleshooting
   triggers while explicitly excluding ordinary tasks merely performed through ChannelGate.
   The same slice repairs the memory search/read tool registration so both use the gateway's MCP
-  text-response adapter instead of failing with `text is not defined`.
+  text-response adapter instead of failing with `text is not defined`. A hosting reference gives
+  the recommended deployment server (4 dedicated vCPU, 16 GB RAM, 150 GB NVMe, Ubuntu 24.04 LTS,
+  static IPv4, `MAX_CONCURRENT_RUNS=4`), the pilot/busy tiers, and four recommended EU hosts with
+  dated price estimates: Hetzner CCX23 (≈ €25), netcup VPS 2000 G12 (≈ €16), RoLeaf Enterprise in
+  Romania (≈ €32) and Google Cloud `n4-standard-4` (≈ €139).
+  Version 3.2.0 also routes VPN/private-database requests to a bundled reference covering
+  supported isolated OpenVPN setup and the five-step task-specific VPN/SSH procedure: access
+  ownership, Secrets, identity verification, isolated connections, bounded read-only checks,
+  cleanup and operator handoff. This travels with gateway updates; no companion skill or
+  application-code change is needed.
   → TEST-PLAN: ChannelGate skill package.
 - **Trustworthy release gate** (the macOS leg retired 2026-09-03 — Linux only): every pull request
   runs the complete coverage-gated suite on Ubuntu at the exact Node 22.13 minimum and Node 24, plus dependency-free syntax /
@@ -2731,9 +2942,10 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
   `{ approved, feedback, decided_by }` to the agent so it continues, or addresses the feedback. The
   card shows the full `details` text (not the 60-char tool preview); documented in the
   `gateway-usage` skill (`references/approvals.md`). → TEST-PLAN: Modes & approvals.
-- **Link-based approvals — the same card, as URLs, on every surface.** Native buttons are Slack's
-  primitive; Teams and Google Chat do not have one the gateway drives, and automation cannot click
-  anything at all. Every approval card (permission, control-plane, durable background-shell) and
+- **Link-based approvals alongside native controls.** Slack uses native buttons and supplemental
+  private links; Google Chat uses private links. Teams uses its original-thread native card without
+  supplemental links or action DMs, and refuses the action if that card cannot be delivered.
+  Every eligible approval card (permission, control-plane, durable background-shell) and
   every busy-thread card can therefore ALSO be minted as short-lived, single-use, HMAC-signed links —
   one per action the recipient may actually take (*Approve once* / *Approve for this thread* /
   *Approve forever* / *Deny*, and *Steer* / *Queue* / *Cancel* for a busy thread) — and delivered

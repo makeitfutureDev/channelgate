@@ -44,6 +44,9 @@ export const googleChatAdapter = validatePlatformAdapter({
     ephemeral: false,
     deleteMessage: true,
     reactions: true,
+    // Reactions arrive through Google Workspace Events subscriptions (optional reaction topic).
+    // Only the transport produces reaction triggers, and only for the configured emojis.
+    reactionTriggers: true,
     maxMessageChars: MAX_CHAT_MESSAGE_CHARS,
     markdown: "standard",
     // Standard Markdown went GA 2026-08-07 (`markup_syntax`), but tables and headings still do not
@@ -76,8 +79,8 @@ export const googleChatAdapter = validatePlatformAdapter({
   // Reference files that describe capabilities this surface does not have. Shipping them would
   // teach the agent to reach for tools that are not registered here.
   guideDrop: ["references/tables.md", "references/charts.md", "references/canvases.md"],
-  formatOutbound(markdown, { directory = null, capabilities = this?.capabilities } = {}) {
-    return formatChatOutbound(markdown, { capabilities: capabilities || googleChatAdapter.capabilities, directory, normalizeName });
+  formatOutbound(markdown, { directory = null, capabilities = this?.capabilities, requester = null } = {}) {
+    return formatChatOutbound(markdown, { capabilities: capabilities || googleChatAdapter.capabilities, directory, normalizeName, requester });
   },
   // A LIVE connector when the transport is connected, and one that throws on every write when it is
   // not. Never a silent no-op: the scheduler and the follow-up tracker both treat a returned post as
@@ -92,6 +95,10 @@ export const googleChatAdapter = validatePlatformAdapter({
   validDeliveryThread: (key, conversationId) => {
     const space = String(conversationId).replace(/^gchat:/, "");
     return /^spaces\/[^/]+\/threads\/[^/]+$/.test(String(key)) && String(key).startsWith(`${space}/threads/`);
+  },
+  async workspaceAccess(grant) {
+    const { googleChatWorkspaceContext } = await import('./googlechat/workspace-access.js');
+    return googleChatWorkspaceContext(grant);
   },
   normalizeName,
   // Settings are imported lazily, inside the async health call. A static import would put the whole

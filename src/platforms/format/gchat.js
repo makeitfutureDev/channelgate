@@ -44,7 +44,7 @@ export function createChatMentionResolver(normalizeName) {
 // Google Chat's per-message text cap.
 export const MAX_CHAT_MESSAGE_CHARS = 4_096;
 
-export function formatChatOutbound(markdown, { capabilities = {}, directory = null, normalizeName = null } = {}) {
+export function formatChatOutbound(markdown, { capabilities = {}, directory = null, normalizeName = null, requester = null } = {}) {
   const degraded = degradeMarkdown(markdown, capabilities, {
     bold: (t) => `**${t}**`,
     link: (label, url) => `[${label}](${url})`,
@@ -53,7 +53,12 @@ export function formatChatOutbound(markdown, { capabilities = {}, directory = nu
   const resolved = normalizeName && directory?.map?.size
     ? createChatMentionResolver(normalizeName).resolve(defanged, directory)
     : defanged;
-  const text = resolved.trim();
+  let text = resolved.trim();
+  // The requester comes from authenticated intake. Add the mention after defanging model text.
+  const user = String(requester?.id || '').replace(/^users\//, '');
+  if (/^[A-Za-z0-9_-]+$/.test(user) || /^[A-Za-z0-9.!#$%&'*+/=?^_`{|}~-]+@[A-Za-z0-9.-]+$/.test(user)) {
+    text += `${text ? '\n\n' : ''}<users/${user}>`;
+  }
   // Chat mentions are inline in the text, so every chunk is self-contained and carries no entities.
   return { text, chunks: chunkText(text, capabilities.maxMessageChars || MAX_CHAT_MESSAGE_CHARS).map((c) => ({ text: c, mentions: [] })) };
 }

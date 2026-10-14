@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import os from "node:os";
 import path from "node:path";
-import { mkdtemp, mkdir, readFile, rename, rm, symlink, truncate, writeFile } from "node:fs/promises";
+import { chmod, mkdtemp, mkdir, readFile, rename, rm, stat, symlink, truncate, writeFile } from "node:fs/promises";
 import { readFileSync } from "node:fs";
 import * as fileExplorer from "../src/slack/file-explorer.js";
 
@@ -640,13 +640,87 @@ test("browser uploads preserve safe folder trees and collision-rename files", as
   assert.equal(await readFile(second.path, "utf8"), "second\n");
 
   assert.equal(normalizeBrowserUploadPath("folder/.env"), "folder/.env");
-  for (const uploadPath of ["../outside.txt", "/absolute.txt", "folder//file.txt", "folder\\file.txt", ".claude/file.txt"]) {
+  for (const uploadPath of ["../outside.txt", "/absolute.txt", "folder//file.txt", "folder\\file.txt"]) {
     assert.throws(() => normalizeBrowserUploadPath(uploadPath), /invalid|traversal|protected/i, uploadPath);
   }
   await assert.rejects(
     () => saveBrowserUploadedFile(root, "../outside", "file.txt", Buffer.from("nope")),
     /invalid|protected|leaves/i,
   );
+});
+
+test("browser uploads allow root and nested CLAUDE.md with explicit atomic replacement", async (t) => {
+  const { root, outside } = await fixture(t);
+  const options = { overwrite: true };
+  const original = path.join(root, "CLAUDE.md");
+  await writeFile(original, "original instructions\n");
+  await chmod(original, 0o600);
+  const copy = await saveBrowserUploadedFile(root, "", "CLAUDE.md", Buffer.from("copy\n"));
+  assert.equal(copy.relative, "CLAUDE (1).md");
+  assert.equal(copy.overwritten, false);
+  assert.equal(await readFile(original, "utf8"), "original instructions\n");
+  const replaced = await saveBrowserUploadedFile(root, "", "CLAUDE.md", Buffer.from("new instructions\n"), options);
+  assert.equal(replaced.relative, "CLAUDE.md");
+  assert.equal(replaced.overwritten, true);
+  assert.equal(replaced.renamed, false);
+  assert.equal(await readFile(original, "utf8"), "new instructions\n");
+  assert.equal((await stat(original)).mode & 0o777, 0o600);
+  const nested = await saveBrowserUploadedFile(root, "", "Project/CLAUDE.md", Buffer.from("nested\n"), options);
+  assert.equal(nested.overwritten, false);
+  assert.equal(await readFile(nested.path, "utf8"), "nested\n");
+
+  await writeFile(path.join(outside, "instructions.md"), "outside instructions\n");
+  await symlink(path.join(outside, "instructions.md"), path.join(root, "linked.txt"));
+  await saveBrowserUploadedFile(root, "", "linked.txt", Buffer.from("safe replacement\n"), options);
+  assert.equal(await readFile(path.join(root, "linked.txt"), "utf8"), "safe replacement\n");
+  assert.equal(await readFile(path.join(outside, "instructions.md"), "utf8"), "outside instructions\n");
+  await symlink(outside, path.join(root, "escape-folder"));
+  await assert.rejects(() => saveBrowserUploadedFile(root, "", "escape-folder/CLAUDE.md", Buffer.from("nope"), options), /leaves|outside/i);
+  await symlink(path.join(root, ".claude"), path.join(root, "internal-folder"));
+  await assert.rejects(() => saveBrowserUploadedFile(root, "", "internal-folder/file.txt", Buffer.from("nope"), options), /protected/i);
+  for (const file of ["AGENTS.md", "MEMORY.md", "token.json", ".claude/settings.json"]) {
+    await assert.rejects(() => saveBrowserUploadedFile(root, "", file, Buffer.from("nope"), options), /protected/i);
+  }
+  await mkdir(path.join(root, "directory.txt"));
+  await assert.rejects(() => saveBrowserUploadedFile(root, "", "directory.txt", Buffer.from("nope"), options), /only files/i);
+});
+
+test("project uploads preserve nested .claude skills and settings without replacing channel policy", async (t) => {
+  const { root, outside } = await fixture(t);
+  const settingsPath = path.join(root, ".claude/settings.json");
+  const originalPolicy = await readFile(settingsPath, "utf8");
+  const settings = '{"permissions":{"allow":["Read"]}}\n';
+  const skill = "---\nname: example\ndescription: Project fixture\n---\n# Example\n";
+  const uploaded = await saveBrowserUploadedFile(root, "", "#project/.claude/settings.json", Buffer.from(settings));
+  assert.equal(uploaded.relative, "#project/.claude/settings.json");
+  assert.equal(await readFile(uploaded.path, "utf8"), settings);
+  const nested = await saveBrowserUploadedFile(root, "", "#project/.claude/skills/example/SKILL.md", Buffer.from(skill));
+  assert.equal(await readFile(nested.path, "utf8"), skill);
+  const copy = await saveBrowserUploadedFile(root, "#project", ".claude/settings.json", Buffer.from("copy"));
+  assert.equal(copy.relative, "#project/.claude/settings (1).json");
+  const overwrite = await saveBrowserUploadedFile(root, "#project", ".claude/settings.json", Buffer.from("replacement"), { overwrite: true });
+  assert.equal(overwrite.overwritten, true);
+  assert.equal(await readFile(overwrite.path, "utf8"), "replacement");
+  assert.equal(await readFile(settingsPath, "utf8"), originalPolicy);
+  for (const options of [{}, { overwrite: true }]) {
+    await assert.rejects(() => saveBrowserUploadedFile(root, "", ".claude/settings.json", Buffer.from("blocked"), options), /protected|channel folders/i);
+    await assert.rejects(() => saveBrowserUploadedFile(root, ".claude/skills", "SKILL.md", Buffer.from("blocked"), options), /protected/i);
+  }
+  await symlink(path.join(root, ".claude"), path.join(root, "#project", "root-policy"));
+  await assert.rejects(() => saveBrowserUploadedFile(root, "", "#project/root-policy/settings.json", Buffer.from("blocked")), /protected/i);
+  await symlink(path.join(root, ".claude"), path.join(root, "#project", ".claude", "root-policy"));
+  await assert.rejects(() => saveBrowserUploadedFile(root, "", "#project/.claude/root-policy/settings.json", Buffer.from("blocked"), { overwrite: true }), /protected/i);
+  await symlink(outside, path.join(root, "#project", ".claude", "escape"));
+  await assert.rejects(() => saveBrowserUploadedFile(root, "", "#project/.claude/escape/file.txt", Buffer.from("blocked")), /outside|leaves/i);
+  assert.equal(await readFile(settingsPath, "utf8"), originalPolicy);
+  assert.throws(() => normalizeNewFolderName(".claude"), /protected/i, "native folder creation retains its own policy");
+  const checkedDirectory = path.join(root, "#project", ".claude");
+  await rename(checkedDirectory, path.join(root, "#project", "held-claude"));
+  await symlink(path.join(root, ".claude"), checkedDirectory);
+  for (const options of [{ collisionRename: true }, { overwrite: true }]) {
+    await assert.rejects(() => fileExplorer.writeNewFileInBoundDirectory(checkedDirectory, root, "settings.json", Buffer.from("blocked"), options), /moved|outside|working folder/i);
+  }
+  assert.equal(await readFile(settingsPath, "utf8"), originalPolicy);
 });
 
 test("file browser uploads never use Slack file storage", () => {

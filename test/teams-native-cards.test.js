@@ -115,7 +115,11 @@ test('signed dialog callbacks preserve task responses, retry dedupe and safe fai
       const failed = response();
       await createTeamsWebhook({ ...options, onInvoke })(req, failed);
       assert.equal(failed.code, 200);
-      assert.equal(failed.body.task.type, 'message');
+      if (name === 'task/fetch') {
+        assert.equal(failed.body.task.type, 'continue');
+        assert.equal(failed.body.task.value.card.content.body[0].text, 'Action unavailable');
+        assert.equal(failed.body.task.value.card.contentType, 'application/vnd.microsoft.card.adaptive');
+      } else assert.equal(failed.body.task.type, 'message');
       assert.doesNotMatch(JSON.stringify(failed.body), /private-value-do-not-return/);
     }
     const forged = response();
@@ -224,4 +228,24 @@ test("card dispatcher failures return a safe visible card without leaking intern
   assert.equal(result.status, 200);
   assert.equal(result.body.value.type, "AdaptiveCard");
   assert.ok(!JSON.stringify(result).includes("private-value"));
+});
+
+test('native typing uses the source Teams conversation and channel thread without a message body', async () => {
+  const sent = [];
+  const api = createTeamsApi({ auth: { token: async () => 'test-token' }, fetchImpl: async (url, init) => {
+    sent.push({ url, init, body: JSON.parse(init.body) });
+    return { ok: true, status: 200, json: async () => ({ id: 'typing-id' }) };
+  } });
+  const { teamsAdapter } = await import('../src/platforms/msteams.js');
+  const connector = createTeamsConnector({ api, capabilities: teamsAdapter.capabilities });
+  for (const [conversationId, threadKey] of [['teams:19:typing@thread.tacv2', '123456'], ['teams:19:typing@thread.v2', 'session-key']]) {
+    const controller = new AbortController();
+    await connector.typing({ conversationId, threadKey, signal: controller.signal });
+    const last = sent.at(-1);
+    assert.deepEqual(last.body, { type: 'typing' });
+    assert.ok(last.init.signal instanceof AbortSignal);
+    assert.equal(last.init.signal.aborted, false);
+    const target = decodeURIComponent(last.url.split('/conversations/')[1].split('/activities')[0]);
+    assert.equal(target, conversationId.slice(6) + (threadKey === '123456' ? ';messageid=123456' : ''));
+  }
 });

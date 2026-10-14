@@ -4,7 +4,7 @@ import express from "express";
 import os from "node:os";
 import path from "node:path";
 import crypto from "node:crypto";
-import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, rm, truncate, writeFile } from "node:fs/promises";
 import { ensureTestEnv } from "./helpers.js";
 import { createFileEditorGrantUrl, createFileEditorRouter, resetFileEditorStateForTests } from "../src/web/file-editor.js";
 import { createFileUploadGrantUrl, createFileUploadRouter, resetFileUploadStateForTests } from "../src/web/file-upload.js";
@@ -94,8 +94,75 @@ for (const kind of ["editor", "upload"]) {
       await page.locator("#upload").click();
       assert.equal((await uploaded).status(), 200);
       assert.equal(await readFile(path.join(root, "docs", "uploaded.txt"), "utf8"), "Uploaded fixture\n");
+      const local = await mkdtemp(path.join(os.tmpdir(), "cg-upload-selection-"));
+      t.after(() => rm(local, { recursive: true, force: true }));
+      const folder = path.join(local, "Project");
+      await mkdir(path.join(folder, "assets"), { recursive: true });
+      await mkdir(path.join(folder, ".claude", "skills", "example"), { recursive: true });
+      await writeFile(path.join(folder, ".claude", "settings.json"), '{"permissions":{"allow":["Read"]}}\n');
+      await writeFile(path.join(folder, ".claude", "skills", "example", "SKILL.md"), "# Project skill\n");
+      await writeFile(path.join(folder, "CLAUDE.md"), "Uploaded instructions\n");
+      await writeFile(path.join(folder, ".DS_Store"), "Protected fixture\n");
+      await writeFile(path.join(folder, "assets", "note.txt"), "Nested asset\n");
+      await mkdir(path.join(root, "docs", "Project"));
+      const destination = path.join(root, "docs", "Project", "CLAUDE.md");
+      await writeFile(destination, "Original instructions\n");
+      assert.equal(await page.locator("#overwrite").isChecked(), false);
+      await page.locator("#folder").setInputFiles(folder);
+      await page.locator("#upload").click();
+      await page.waitForFunction(() => globalThis.document.querySelector("#status").textContent.startsWith("Uploaded 4 file(s)."));
+      assert.equal(await readFile(destination, "utf8"), "Original instructions\n");
+      assert.match(await page.locator("#failures").textContent(), /Project\/\.DS_Store.*protected/i);
+      assert.equal(await readFile(path.join(root, "docs/Project/.claude/settings.json"), "utf8"), '{"permissions":{"allow":["Read"]}}\n');
+      assert.equal(await readFile(path.join(root, "docs/Project/.claude/skills/example/SKILL.md"), "utf8"), "# Project skill\n");
+      assert.equal(await readFile(path.join(root, "docs", "Project", "CLAUDE (1).md"), "utf8"), "Uploaded instructions\n");
+      await page.locator("#overwrite").check();
+      await page.locator("#folder").setInputFiles(folder);
+      await page.locator("#upload").click();
+      await page.waitForFunction(() => globalThis.document.querySelector("#status").textContent.startsWith("Uploaded 4 file(s)."));
+      assert.equal(await readFile(destination, "utf8"), "Uploaded instructions\n");
+      assert.equal(await readFile(path.join(root, "docs", "Project", "assets", "note.txt"), "utf8"), "Nested asset\n");
+      await page.locator("#files").setInputFiles({ name: "CLAUDE.md", mimeType: "text/markdown", buffer: Buffer.from("Root instructions\n") });
+      await page.locator("#upload").click();
+      await page.waitForFunction(() => globalThis.document.querySelector("#status").textContent.startsWith("Uploaded 1 file(s)."));
+      assert.equal(await readFile(path.join(root, "docs", "CLAUDE.md"), "utf8"), "Root instructions\n");
+      let transientFailures = 1;
+      await page.route("**/api/upload?**", async (route) => {
+        if (new URL(route.request().url()).searchParams.get("path") === "retry.txt" && transientFailures-- > 0) await route.abort();
+        else await route.continue();
+      });
+      await page.locator("#overwrite").uncheck();
+      await page.locator("#files").setInputFiles([
+        { name: "before.txt", mimeType: "text/plain", buffer: Buffer.from("Before failure\n") },
+        { name: "AGENTS.md", mimeType: "text/markdown", buffer: Buffer.from("Protected\n") },
+        { name: "retry.txt", mimeType: "text/plain", buffer: Buffer.from("Retry fixture\n") },
+        { name: "after.txt", mimeType: "text/plain", buffer: Buffer.from("After failure\n") },
+      ]);
+      await page.locator("#upload").click();
+      await page.waitForFunction(() => globalThis.document.querySelector("#status").textContent === "Uploaded 2 file(s). Skipped 2 file(s).");
+      assert.match(await page.locator("#failures").textContent(), /AGENTS.md.*protected/i);
+      assert.match(await page.locator("#failures").textContent(), /retry.txt/);
+      assert.equal(await readFile(path.join(root, "docs", "before.txt"), "utf8"), "Before failure\n");
+      assert.equal(await readFile(path.join(root, "docs", "after.txt"), "utf8"), "After failure\n");
+      await page.getByRole("button", { name: "Retry skipped files" }).click();
+      await page.waitForFunction(() => globalThis.document.querySelector("#status").textContent === "Uploaded 1 file(s). Skipped 1 file(s).");
+      assert.equal(await readFile(path.join(root, "docs", "retry.txt"), "utf8"), "Retry fixture\n");
+      await assert.rejects(() => readFile(path.join(root, "docs", "before (1).txt")), { code: "ENOENT" });
+      await assert.rejects(() => readFile(path.join(root, "docs", "after (1).txt")), { code: "ENOENT" });
+      const tooLarge = path.join(local, "oversize.txt");
+      await writeFile(tooLarge, "");
+      await truncate(tooLarge, 25 * 1024 * 1024 + 1);
+      const small = path.join(local, "small.txt");
+      await writeFile(small, "Small fixture\n");
+      await page.locator("#files").setInputFiles([tooLarge, small]);
+      assert.equal(await page.locator("#upload").isEnabled(), true, "an oversized file must not block the rest of the selection");
+      await page.locator("#upload").click();
+      await page.waitForFunction(() => globalThis.document.querySelector("#status").textContent === "Uploaded 1 file(s). Skipped 1 file(s).");
+      assert.match(await page.locator("#failures").textContent(), /oversize.txt.*limit/i);
+      assert.equal(await readFile(path.join(root, "docs", "small.txt"), "utf8"), "Small fixture\n");
     }
-    assert.equal(audits.length, 1);
+    const expectedAudits = kind === "upload" ? 14 : 1;
+    assert.equal(audits.length, expectedAudits);
     // A fresh cross-site top-level POST must NOT receive even a newly minted Lax cookie.
     await page.goto(sourceUrl);
     const csrfResponse = page.waitForResponse((response) => response.request().method() === "POST");
@@ -106,7 +173,7 @@ for (const kind of ["editor", "upload"]) {
     assert.equal((await csrfResponse).status(), 401);
     await page.waitForURL((url) => url.pathname === new URL(`${baseUrl}${endpoint}`).pathname);
     assert.ok(requests.some((r) => r.method === "POST" && r.site === "cross-site" && !r.cookie));
-    assert.equal(audits.length, 1, "cross-site POST must not write");
+    assert.equal(audits.length, expectedAudits, "cross-site POST must not write");
     allowed = false;
     assert.equal((await page.goto(sessionUrl)).status(), 403, "every page load rechecks current authority");
     assert.ok(checks >= 4);

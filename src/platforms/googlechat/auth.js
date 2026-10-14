@@ -18,6 +18,12 @@ export const CHAT_SCOPES = [
   "https://www.googleapis.com/auth/chat.bot",
   "https://www.googleapis.com/auth/pubsub",
 ];
+// Reaction events reach a Chat app only through Google Workspace Events subscriptions, which need
+// app authentication with this admin-approved scope (it also lets the app read the reacted public
+// message). Kept on a SEPARATE token: an unapproved scope must never break the messaging transport.
+export const CHAT_REACTION_EVENT_SCOPES = [
+  "https://www.googleapis.com/auth/chat.app.messages.readonly",
+];
 // Refresh this far before the real expiry so a token can't die mid-request.
 const EXPIRY_MARGIN_MS = 60_000;
 

@@ -73,10 +73,10 @@ test('authorized ingest handles controls without invoking engine and preserves g
   assert.equal(calls, 0); assert.match(posts[0].text, /Commands/); assert.match(posts[1].text, /Idle/);
 });
 
-test('progress keeps its 30s heartbeat and drains pending edit before stop', async (t) => {
+test('Google Chat progress keeps its 30s heartbeat and drains pending edit before stop', async (t) => {
   t.mock.timers.enable({ apis: ['setInterval', 'Date'], now: 1000 });
   const edits = []; const wait = deferred();
-  const progress = createConversationProgress({ connector: { edit: async (v) => { edits.push(v); await wait.promise; } }, message: { rawConversationId: 'wire' }, placeholder: { messageId: 'p' }, adapter: platformOr('msteams') });
+  const progress = createConversationProgress({ connector: { edit: async (v) => { edits.push(v); await wait.promise; } }, message: { rawConversationId: 'wire' }, placeholder: { messageId: 'p' }, adapter: platformOr('googlechat') });
   t.mock.timers.tick(29999); await Promise.resolve(); assert.equal(edits.length, 0);
   progress.event({ kind: 'run_queued', position: 2 });
   t.mock.timers.tick(1); await Promise.resolve(); assert.equal(edits.length, 1); assert.match(edits[0].text, /position 2/);

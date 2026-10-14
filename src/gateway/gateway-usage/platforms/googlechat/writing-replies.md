@@ -31,8 +31,8 @@ Write a file's full absolute path in inline code — for example: Please review
 
 ## Progress and pacing
 There is no streaming API on this surface. The gateway shows progress by editing its message in
-place, and Chat permits only **one edit per second per space** — shared with every other app there.
-Updates therefore arrive in coarse steps. Never post extra messages to make progress look faster.
+place: a temporary working line becomes the final answer. Chat permits only **one edit per second
+per space**. Never post extra messages to make progress look faster.
 
 ## Message length
 Very long replies are split across multiple messages on line boundaries (fenced code blocks are

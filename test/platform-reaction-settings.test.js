@@ -132,3 +132,40 @@ test("Unicode activation entries each require one actual emoji grapheme", async 
     assert.deepEqual(settings.validateMentionReactions(valid, "googlechat"), [valid]);
   }
 });
+
+test("Google Chat reaction events topic is validated, listed and clearable; controls stay out of the activation list", async () => {
+  const saved = await put({ googleChatReactionTopic: "  projects/cg-test/topics/chat-events " });
+  assert.equal(saved.status, 200);
+  assert.equal(settings.resolveGoogleChatConfig().reactionTopic, "projects/cg-test/topics/chat-events");
+  assert.equal(saved.body.googleChat.reactionTopic, "projects/cg-test/topics/chat-events");
+  for (const bad of ["projects/cg-test/subscriptions/x", "topics/x", "projects/cg-test/topics/../x"]) {
+    const rejected = await put({ googleChatReactionTopic: bad });
+    assert.equal(rejected.status, 400, bad);
+    assert.equal(settings.resolveGoogleChatConfig().reactionTopic, "projects/cg-test/topics/chat-events");
+  }
+  assert.equal((await put({ googleChatReactionTopic: "" })).status, 200);
+  assert.equal(settings.resolveGoogleChatConfig().reactionTopic, "");
+  for (const control of ["🛑", "✅"]) assert.equal((await put({ googleChatMentionReactions: control })).status, 400, control);
+});
+
+test("Google Chat HTTP endpoint fields are validated, listed and clearable", async () => {
+  const saved = await put({ googleChatAppServiceAccount: " Service-123456789012@gcp-sa-gsuiteaddons.iam.gserviceaccount.com ", googleChatProjectNumber: " 123456789012 " });
+  assert.equal(saved.status, 200);
+  assert.equal(settings.resolveGoogleChatConfig().appServiceAccount, "service-123456789012@gcp-sa-gsuiteaddons.iam.gserviceaccount.com");
+  assert.equal(settings.resolveGoogleChatConfig().projectNumber, "123456789012");
+  assert.equal(saved.body.googleChat.appServiceAccount, "service-123456789012@gcp-sa-gsuiteaddons.iam.gserviceaccount.com");
+  assert.equal(saved.body.googleChat.projectNumber, "123456789012");
+  assert.equal(saved.body.googleChat.eventsEndpoint, settings.getPublicUrl() ? `${settings.getPublicUrl()}/api/googlechat/events` : "");
+  for (const bad of ["someone@gmail.com", "not an email", "service-1@gcp-sa-gsuiteaddons.iam.gserviceaccount.com; drop"]) {
+    assert.equal((await put({ googleChatAppServiceAccount: bad })).status, 400, bad);
+  }
+  for (const bad of ["abc", "12", "123456789012345678901"]) assert.equal((await put({ googleChatProjectNumber: bad })).status, 400, bad);
+  assert.equal(settings.resolveGoogleChatConfig().projectNumber, "123456789012");
+  assert.equal((await put({ googleChatAppServiceAccount: "", googleChatProjectNumber: "" })).status, 200);
+  assert.equal(settings.resolveGoogleChatConfig().appServiceAccount, "");
+  assert.equal(settings.resolveGoogleChatConfig().projectNumber, "");
+  const withUrl = await put({ publicUrl: "https://gw.example.com/" });
+  assert.equal(withUrl.status, 200);
+  assert.equal(withUrl.body.googleChat.eventsEndpoint, "https://gw.example.com/api/googlechat/events");
+  assert.equal(settings.googleChatEventsEndpoint(), "https://gw.example.com/api/googlechat/events");
+});

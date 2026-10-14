@@ -124,8 +124,14 @@ after validating the complete batch and storage has no character ceiling. Concur
 - \`write_topic\` — create/update \`${MEM_DIR}/<topic>.md\` (\`topic\` + \`content\`); keep an index
   pointer line ("… → [[topic]]") so it stays discoverable.
 
-Triggers: a user corrects you · a preference, decision, or durable fact is stated · a stable fact
-about accounts, ids, paths, or conventions surfaces · a gotcha or technique that will matter again.
+Before saving, classify ongoing requests by scope: durable facts → memory; reusable procedures
+→ the relevant skill; changes to one automation → its existing schedule instructions; behavior
+across tasks in this conversation → channel instructions. Inspect the existing target and use
+its update/proposal tool. Never rephrase a skill, schedule, or channel instruction as a preference
+just to store it here. See \`gateway-usage/references/memory-and-rules.md\`.
+
+Triggers for durable facts after this scope decision: a correction · a preference, decision, or
+durable fact · a stable account, id, path, or convention · a gotcha that will matter again.
 
 ## What to save vs skip — the test: will it still matter in a week?
 Save, in priority order: preferences & corrections (they stop people repeating themselves) >

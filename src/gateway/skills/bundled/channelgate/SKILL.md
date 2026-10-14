@@ -2,17 +2,19 @@
 name: "channelgate"
 description: >-
   Configure, secure, explain, or troubleshoot ChannelGate conversations and deployments. Use for
-  channel containers, direct-host `/sudo` threads and work folders, permissions/network access, Claude or Codex runtime and
-  login recovery, per-channel CLI credentials and device-login links, MCP identities, skill
-  grants/templates/sources, channel memory, background work, schedules, attachments, or strict
-  headless MCP configuration. Do not use for ordinary work merely performed through ChannelGate.
+  channel containers, direct-host `/sudo` threads and work folders, permissions/network access,
+  VPN/OpenVPN profiles, SSH tunnels, private databases, Claude or Codex runtime and login recovery,
+  per-channel CLI credentials and device-login links, MCP identities, skill
+  grants/templates/sources, channel memory, background work, schedules, attachments, strict
+  headless MCP configuration, or server sizing and hosting-provider choice for a deployment. Do not
+  use for ordinary work merely performed through ChannelGate.
 metadata:
-  version: 3.0.1
+  version: 3.2.0
   category: claude-code
   complexity: advanced
   tags: channelgate, containers, claude-code, codex, mcp, skills, memory, security
   created: 2026-06-16
-  updated: 2026-09-08
+  updated: 2026-10-13
 ---
 
 # ChannelGate
@@ -27,6 +29,9 @@ Read only the references needed for the request:
 
 - Container boundary, mounts, modes, network truth, authorization, engine selection, or recovery:
   [architecture and security](references/architecture-security.md).
+- VPN/OpenVPN profiles, private networks or databases, SSH bastions/local port forwards,
+  connection verification, cleanup, or operator handoff:
+  [VPN and SSH access](references/vpn-ssh-access.md).
 - `/secrets`, provider tokens, saved CLI sessions, device-login links, Claude/Codex sign-in, or
   VS Code attachment: [credentials and CLI connections](references/credentials-connections.md).
 - MCP identities and allowlists, Composio, the skill catalog, grants, templates, sources,
@@ -37,6 +42,8 @@ Read only the references needed for the request:
   status: [conversation operations](references/conversation-operations.md).
 - Creating a gated folder manually or composing `claude -p` with strict MCP configuration:
   [folder and headless configuration](references/folder-headless.md).
+- Recommended server configuration, sizing tiers, or which hosting provider to use and what it
+  costs: [hosting and server sizing](references/hosting-sizing.md).
 
 For work performed *inside* a conversation, the injected `gateway-usage` skill is the live
 operating manual and has the exact available tool names. For daemon installation, upgrades, and

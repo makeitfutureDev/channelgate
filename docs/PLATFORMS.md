@@ -15,10 +15,9 @@ subscription are still required for reactions on unmentioned group/channel conte
 activation list does not change Stop/Tick controls. Old history and pending requests from a prior
 selection do not activate after a change; add a fresh reaction after saving.
 
-Google Chat stores a Unicode-only selection. Its current Pub/Sub interaction transport does not
-receive reaction events, so the field alone does not enable activation. Operational reaction
-intake would require a [Google Workspace Events subscription](https://developers.google.com/workspace/events/guides/events-chat)
-plus authenticated actor/message handling; this change does not create subscriptions or consent.
+Google Chat stores a Unicode-only selection (default 🤖). Chat apps receive no interaction event
+for a reaction, so the selection acts only once **reaction events** are enabled (Google Chat →
+Setup step 8): Google Workspace Events subscriptions then deliver each space's reactions.
 
 ChannelGate speaks to three chat surfaces. Slack is GA; Google Chat and Microsoft Teams are in
 **Beta** — their in-chat feature set is deliberately smaller (see *What works where* below).
@@ -34,9 +33,17 @@ per-platform, and none of it is relaxed to make a surface work.
 
 ## Google Chat (Beta)
 
-**Transport: Pub/Sub pull.** Google publishes your Chat app's events to a topic you own, and the
-daemon pulls them over an outbound HTTPS connection. No inbound endpoint, no tunnel, no firewall
-rule — the same posture as Slack's Socket Mode.
+**Transport: Pub/Sub pull, plus an optional HTTPS endpoint.** Google publishes your Chat app's
+events to a topic you own, and the daemon pulls them over an outbound HTTPS connection. No inbound
+endpoint, no tunnel, no firewall rule — the same posture as Slack's Socket Mode. A Chat app has
+exactly **one** connection setting, and Google never delivers card or button clicks to a Pub/Sub
+topic: with the topic connection, the Files / Variables / Settings buttons and every other card
+button fail with Chat's "unable to process your request". To make them work, point the app's
+connection at ChannelGate's **HTTP endpoint URL** instead (step 9): Google then POSTs every
+interaction event — messages, membership, commands and clicks — to `<Public URL>/api/googlechat/events`,
+each request signed with a Google ID token that the endpoint verifies before anything else happens.
+The Pub/Sub subscription stays connected either way: it is also where Workspace Events deliver
+reactions (step 8).
 
 ### Setup
 
@@ -86,19 +93,100 @@ cover these distinct configurations.
 The app's own `users/…` id is learned automatically the first time it is added to a space; the
 optional field exists only to short-circuit that.
 
+8. **Optional — reaction controls (🤖 start, 🛑 stop, ✅ acknowledge).** A Chat app never receives
+   an interaction event for a reaction; Google delivers reactions only through
+   [Google Workspace Events subscriptions](https://developers.google.com/workspace/events/guides/events-chat).
+   ChannelGate creates and maintains one per space the app belongs to, with **app authentication**
+   (generally available since 2026-03-31), so no user has to sign in:
+   1. Enable the **Google Workspace Events API** in the same project.
+   2. Configure app authentication with administrator approval for the scope
+      `https://www.googleapis.com/auth/chat.app.messages.readonly` (Google's
+      [authorization guide](https://developers.google.com/workspace/chat/authenticate-authorize-chat-app):
+      Marketplace SDK app configuration for the ChannelGate service account), then have a Google
+      Workspace administrator **approve** the app. Without that approval the subscriptions fail;
+      messaging is unaffected.
+   3. Workspace Events publishes with the **same publisher identity as step 5** (the add-on's
+      Configuration-page service account, or `chat-api-push@system.gserviceaccount.com` for a
+      standalone app), so the step 5 grant on the topic already covers it. Events then arrive
+      through the subscription ChannelGate already pulls.
+   4. In Settings → Connection → *Google Chat*, enter **Reaction events topic**
+      `projects/<project>/topics/<topic>` (the same topic), **Save** and **Connect**. The status
+      line reads `reactions N/M spaces` once subscriptions are active, or names the error.
+
+   Subscriptions carry the reaction data, which Google caps at four hours, so ChannelGate renews
+   each one about hourly, reactivates suspended ones, recreates expired ones, retires those for
+   spaces the app left, and reconciles on startup, on joining a space and on Google's lifecycle
+   events. Reactions made while the gateway is down for longer than that are not delivered.
+
+9. **Optional — working card buttons (HTTP endpoint connection).** Card and button clicks reach a
+   Chat app only through an HTTP endpoint connection
+   ([Google's connection settings](https://developers.google.com/workspace/chat/configure-chat-api);
+   the Workspace Events API has no click event type). ChannelGate serves that endpoint on the same
+   HTTPS listener as the admin UI and the Teams webhook:
+   1. Set the gateway **Public URL** (Settings → Connection). The Google Chat card then shows the
+      endpoint, `<Public URL>/api/googlechat/events`.
+   2. **Workspace add-on apps:** in Settings → Google Chat, enter the **Chat app service account**
+      — the *Service account email* shown under Connection settings on the Chat API Configuration
+      page (`service-<project-number>@gcp-sa-gsuiteaddons.iam.gserviceaccount.com`, the step 5
+      identity). Google signs every endpoint request as that account; ChannelGate accepts no other
+      sender, so the field is required for an add-on. **Standalone apps** sign as
+      `chat@system.gserviceaccount.com`, which is always accepted; if the app's *Authentication
+      Audience* is set to the project number rather than the URL, also enter the **Google Cloud
+      project number**.
+   3. **Save**, then **Connect** (the endpoint is armed at connect time; the status line reads
+      `endpoint https://…/api/googlechat/events`).
+   4. On the Chat API Configuration page set **Connection settings → HTTP endpoint URL** to that
+      exact URL (for a standalone app choose the *HTTP endpoint URL* authentication audience unless
+      you entered the project number) and **Save**. Keep the Pub/Sub subscription and topic:
+      reaction events (step 8) still arrive through them.
+   5. **Test:** mention the app, then press **Files** under its answer. A private "Conversation
+      files" card must open with no red error line. Switching the connection back to the topic
+      restores the previous behaviour; the endpoint keeps answering `401` to anything Google did
+      not sign for this app.
+
+   Every request is verified before it is read: RS256 against Google's published keys, issuer
+   `accounts.google.com`, audience equal to the configured endpoint URL (or the project number for
+   the standalone JWT form), `email_verified`, and the sender exactly as configured. Requests that
+   fail answer `401` with no detail; an endpoint with no Public URL answers `503` naming the remedy.
+   Google waits at most 30 seconds for a synchronous reply, so the endpoint acknowledges with an
+   empty object as soon as the event is durably queued and everything ChannelGate says back goes
+   through the Chat REST API, exactly as for a pulled event. Dialogs are still not used.
+
 ### Notes and limits
 
 - **Attachments in:** files uploaded directly in Chat are downloaded through `media.download`. A file
   shared from the Drive picker needs a user-OAuth Drive scope ChannelGate deliberately does not
   request — those are reported as skipped rather than silently dropped.
-- **Attachments out:** `media.upload` requires user OAuth, so the bot cannot upload files. Answers
-  are text.
+- **Workspace files out:** `/files`, `/sendfile <path>` and agent `share_file` provide private
+  source-space file controls with text/Word previews and browser download/edit/upload links.
+  Browser links require Public URL; this does not upload files to Drive or publish public links.
 - **Threads:** in a space, threads are honoured. In a DM, Google mints a *new* thread for every
   top-level message, so a thread seen for the first time is treated as the main flow (one continuous
   DM session) and a thread you explicitly reply into becomes a real side thread.
 - **Editing:** 1 write/sec per space, shared with every other app in it. Deleting leaves a tombstone,
   so ChannelGate edits rather than deletes.
-- **No ephemeral messages:** a notice meant for one person is sent as a DM to that person instead.
+- **Private controls:** app-authenticated `privateMessageViewer` keeps settings, files and browser
+  credential-entry links visible only to their requester in the original space. Opened drafts
+  expire after 15 minutes; reply menu buttons are sealed and remain usable after restarts.
+- **Commands:** `/help` shows compact expandable Cards v2 with a full-text fallback. `/settings`,
+  `/secrets` and `/model` open settings tabs and separate channel/session runtime scopes. In spaces
+  mention the bot before a typed command; configured registered slash-command events also work.
+  Credential entry uses private browser forms; no value is shown or prefilled. Cards render on
+  both connections, but their **buttons act only with the HTTP endpoint connection** (Setup step
+  9); dialogs are never used. Stop/status use a separate durable control queue.
+- **Reactions** (with Setup step 8): the configured start emoji on a person's message runs its text
+  as the **reactor**, and on the app's answer continues that task; 🛑 on the request or the working
+  message stops that session's active and queued work, including a turn already running (its
+  author or an admin); ✅ acknowledges a tracked reminder. The reactor's `users/…` id maps to the
+  gateway user whose messages Google has delivered before (unknown or ambiguous ids never act) and
+  then passes the ordinary authorization gate. A Stop older than 10 minutes, a start older than an
+  hour, a Tick older than a day, a removed reaction and a redelivered event never act; reacted text
+  is content, never a command. Reacting on another app's message never starts a run.
+- **Replies:** a temporary working line (edited with a compact elapsed/"Still connected"
+  heartbeat, since Chat has no typing indicator) becomes the final answer. In group chats and
+  unthreaded spaces, quote the request or a bot reply with a top-level `/stop`, `/status` or
+  `/clear` to reach that turn; in threaded spaces send them in its thread. Space/group answers mention
+  the requester and have Files/Variables/Settings plus referenced-file buttons below compact stats.
 
 ---
 
@@ -333,15 +421,38 @@ Native settings dialogs are available; broadcast mentions remain unavailable.
   take identity from the verified Microsoft envelope and repeat membership/role checks. Verified
   Execute errors use the Teams invoke response envelope; invalid request authentication remains
   an HTTP rejection. Legacy Submit replacements use only the card's server-stored message target.
-- `/files [folder]` privately browses the current conversation workspace. Open a file to download
-  it or edit eligible text; users with file-write access can open the uploader. Browser links are
-  short-lived grants and recheck current Teams membership and gateway policy. A group request
-  keeps the original group workspace even though its controls arrive in a personal chat.
-- `/sendfile <workspace-relative-path>` sends a personal-chat file-consent card. Accept uploads
+- Every answer, error and stop carries a reply menu under its stats line — **📂 Files**,
+  **🔑 Variables**, **⚙️ Settings** and up to three **📄 <file>** buttons for workspace files the
+  answer named — opening the same private windows as the commands below. The buttons are
+  HMAC-sealed (conversation, session, requester, path) and hold no server state, so they work on
+  old replies and after restarts; only the requester can use them, in their own conversation,
+  with live access checks on every click.
+- `/files [folder]` posts **Open files** in the source conversation/thread; its Teams dialog
+  browses that workspace. Open a file for a literal text/Markdown preview (first 2,600 bytes),
+  a complete download, or eligible browser text editing (up to 250,000 characters); a `.docx`
+  shows a read-only plain-text preview of its body, and PDF and other binary files show download
+  guidance. Preview works without a Public URL. Users with file-write
+  access can open the uploader. Short-lived browser grants recheck current Teams membership and
+  gateway policy. Listings and links stay inside the owner's window. Back to files returns to
+  browsing. No personal chat installation or proactive DM is required. Read-only file callbacks
+  have a 3.5-second response budget, cancel stalled roster requests and reuse a single current
+  membership check per callback. File launchers persist across restarts and reconnects within
+  their original 15-minute lifetime; private dialog state remains ephemeral. Missing/expired/unknown
+  references show distinct dialog errors with fresh `/files` guidance. Settings and approval writes are not abandoned by this file-read deadline.
+- Agents use `share_file` to deliver **Open file** in the current Teams conversation. No
+  Composio connection or public link is needed; the gateway Public URL is required for its
+  authenticated browser downloads. Slack-only tools are not exposed to Teams or Google Chat.
+- `/settings` → MCPs → **My connections** saves or disconnects personal Composio and Toolbox
+  tokens inside the Teams window. Stored values are never prefilled; inputs are masked.
+- Native approvals stay on their source-thread card without supplemental decision-link DMs.
+  If card delivery fails, the action is refused with retry guidance in that same conversation.
+- `/sendfile <workspace-relative-path>` in a channel/group posts **Open file** in that same
+  conversation, opening a Teams dialog with a browser download. In an existing bot DM, it sends
+  native file consent there. Accept uploads
   the prepared snapshot; Decline does not upload. The native limit is a nonempty file of at most
   10 MB, consent expires after ten minutes, and uncertain upload outcomes are not replayed.
-  Larger files use the private browser download path. Install/open a personal chat first if
-  Microsoft cannot deliver private controls or file-consent cards.
+  Larger files use the browser download path. Native file consent cannot open a new personal chat
+  for a group/channel request.
 - Downloadable audio uses local Whisper only, controlled by the existing Whisper setting. No
   Slack-generated transcript is requested. A failed audio-only request explains the missing
   transcript without invoking an engine; accompanying typed text can continue. Stop cancels
@@ -386,8 +497,8 @@ reference: [Microsoft bot file consent](https://learn.microsoft.com/en-us/micros
   four are degraded on the way out by `src/platforms/format/degrade.js`.
 - **Mentions** are structural: the text carries `<at>Name</at>` and the activity must carry a
   matching entity. The formatter emits both together.
-- **No ephemeral messages:** as on Google Chat, a per-person notice becomes a 1:1 chat message —
-  which is how approval links reach the person who raised the request.
+- **Private controls:** settings/files use private Teams windows. Approval controls stay in the
+  source conversation; no supplemental decision links are sent to a separate personal chat.
 
 ---
 
@@ -399,10 +510,11 @@ reference: [Microsoft bot file consent](https://learn.microsoft.com/en-us/micros
 | Channel folder confinement, authorization, MCP allowlist | ✅ | ✅ | ✅ |
 | Attachments in | ✅ | partial | partial |
 | Threads | ✅ | spaces only | channels only |
-| Live progress rendering | ✅ | bounded progress → answer | bounded progress → answer (branch) |
-| Interactive approval buttons | ✅ | ❌ (actions named in text) | native cards (branch) |
-| Approvals by signed link | ✅ (in addition to the buttons) | ✅ (the mechanism) | ✅ (the mechanism) |
-| Session commands | full Slack controls | portable text subset (branch) | text subset + native settings/files (branch) |
+| Live progress rendering | ✅ | working placeholder → answer | working placeholder → answer (branch) |
+| Interactive approval buttons | ✅ | native Cards v2 | native cards (branch) |
+| Approvals by signed link | ✅ (in addition to the buttons) | native cards; legacy connector fallback | native thread cards; no supplemental links |
+| Session commands | full Slack controls | native help/settings/files + text controls | text subset + native settings/files (branch) |
+| Reaction controls (start / stop / acknowledge) | ✅ | with Workspace Events (setup step 8) | with event delivery |
 | Native tables / charts / Lists / canvases | ✅ | ❌ | ❌ |
 | Escalation to full-access in an admin-mode channel | ✅ | ❌ | ❌ |
 
@@ -410,11 +522,13 @@ The last row is not an oversight. Escalation requires an interactive permission 
 can answer; until a surface has one, a run there uses the channel folder's permission allowlist like
 every other run — which fails closed.
 
-**Approvals reach every surface as links.** Slack's Block Kit buttons are the primary control and
+**Approvals use native controls or private links.** Slack's Block Kit buttons are the primary control and
 are unchanged. Alongside them, each approval card and each busy-thread card is also minted as
 short-lived, single-use, HMAC-signed URLs — one per action the recipient may take — delivered
 **privately to the person who raised the request**: an ephemeral where the platform has one
-(Slack), a 1:1 message where it does not (Teams, Google Chat). Opening a link shows a confirmation
+(Slack). Google Chat and Teams use their original conversation's native approval card and
+does not mint or send supplemental links; failed card delivery refuses the action with retry
+guidance there. Opening a link shows a confirmation
 page and decides nothing; the page's Confirm button performs the decision through exactly the code
 a button click runs. The gateway needs a **Public URL** for a link to be reachable from outside the
 host, and the behaviour is Settings → Connection → **Approval links** (`auto` / `always` / `off`).
@@ -422,8 +536,8 @@ See `FEATURES.md` → Modes & approvals for the security properties.
 
 On `teams-ms`, native Teams approval cards call the shared actor-checked decision path. Inline
 cards do not automatically widen the engine permission policy: escalation remains separately
-gated, and its live acceptance must pass before release. Google Chat retains its existing
-surface limitations. Native settings dialogs are implemented; Slack's full busy-thread
+gated, and its live acceptance must pass before release. Google Chat uses requester-only Cards v2
+settings panels; Teams native settings dialogs are implemented. Slack's full busy-thread
 interaction flow remains unavailable in Teams.
 
 ---
@@ -444,7 +558,8 @@ retention, so later updates cannot replay old message history. If Graph omits `m
 activation may use a present reaction's own `createdDateTime`, never the message's modification
 time. A persisted snapshot-support cutoff excludes reactions added before the upgraded transport
 starts, so remove and re-add the activation emoji for a fresh post-upgrade test. Existing removal
-history prevents fallback, and Stop/Tick still require explicit history. Personal Bot Framework conversations
+history prevents fallback. Stop/Tick may use the same fallback under their own persisted cutoff,
+only within ten minutes of the reaction's `createdDateTime`. Personal Bot Framework conversations
 use different IDs from Graph chats: personal edits and reactions to bot answers stay on the native
 bot event path. Graph subscriptions here cover group chats and channels. Removing Xavier retires
 the corresponding subscription and invalidates its queued event work. Graph file descriptors are

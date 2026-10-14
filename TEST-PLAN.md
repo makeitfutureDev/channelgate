@@ -1,5 +1,212 @@
 # ChannelGate — Test Plan
 
+## Google Chat HTTP endpoint — working card buttons (2026-10-14)
+
+Root cause: a Chat app has one connection setting and Google delivers card/button clicks only to
+an HTTP endpoint URL, never to a Pub/Sub topic; the click handler existed but was unreachable.
+Automated fixtures: `test/googlechat-webhook.test.js` (bearer verification: valid add-on ID token,
+trailing-slash and issuer-form tolerance, Google's shared sender; refusals for missing/malformed
+token, non-RS256, foreign issuer, foreign audience, multi-audience, unverified email, a stranger's
+add-on account, expired, not-yet-valid, unknown kid, bad signature, no configured app account, no
+Public URL; the standalone project-number JWT against the Chat account's key set only; key cache
+single fetch, one refresh per minute, keeps keys on failure, googleapis-only URL; handler 503 with
+remedy / 401 / 400 / 500 / `{}`; membership payloads without CloudEvent attributes; a real Express
+listener → `startGoogleChat` round trip where a signed click reaches `onCard` once across a
+redelivery, a signed message reaches `onMessage`, a stranger's token and a missing token deliver
+nothing, invalid clicks are acknowledged and dropped; the public route through `createWebApp`
+answers 503 unconnected, reaches the handler with no admin cookie and a foreign Host, 500 on a
+throwing handler) and `test/platform-reaction-settings.test.js` (service-account and project-number
+validation, listing, clearing, the derived endpoint URL following the Public URL).
+Validation (this worktree, 2026-10-14): `npm run test:coverage` **3,748 passed, 3 failed, 32
+skipped** of 3,783; the three failures (`test/container-job-log-redaction.test.js:45` and `:54`,
+`test/subagent-completion.test.js:84`) assert exact child stderr and only capture Node's undici
+`EnvHttpProxyAgent` experimental warning, emitted because this container runs behind
+`HTTPS_PROXY`; the same files pass 4/4 with `NODE_NO_WARNINGS=1` and none touch this change.
+The five Google Chat suites pass (45 + 12 + 18 + 13 + 9 cases); `npm run check:static`,
+`npm run secret-scan` and `npm run check:dco -- origin/beta..HEAD` clean;
+`npm run test:security-coverage` passes apart from the same environment case.
+
+- [ ] LIVE `GCHAT-ENDPOINT-01` (engine-independent): operator-owned disposable Google Chat DM and
+  named space, this candidate served with a reachable Public URL, the app's Connection settings
+  switched to the HTTP endpoint URL per `docs/PLATFORMS.md` step 9, the add-on's service account
+  entered, the Pub/Sub subscription still configured. Mention the app, then press **Files**,
+  **Variables** and **Settings** under its answer; browse a folder and open a file preview; open
+  `/settings` and Apply a session model; from a second account press the same buttons. Pass:
+  each click opens or updates the requester-only card with no red "unable to process" line,
+  the second account is told the controls belong to the requester, the daemon log shows one
+  `[googlechat]` intake per click and no `endpoint request rejected`, ordinary messages and
+  `/stop` still answer, and a 🤖 reaction still starts a run through the Pub/Sub subscription.
+- [ ] LIVE `GCHAT-ENDPOINT-02` (engine-independent): with the endpoint armed, `curl -X POST` the
+  endpoint with no token, a garbage token, and a Google ID token minted for another audience
+  (`gcloud auth print-identity-token --audiences=https://other.example`). Pass: every request
+  answers `401 {"error":"unauthorized"}` with the reason only in the daemon log; disconnecting
+  Google Chat answers `503`; clearing the Public URL and reconnecting answers `503` naming it.
+
+## Google Chat reaction controls via Workspace Events (2026-10-14)
+
+Root cause: Chat apps receive no interaction event for a reaction; Google delivers them only via
+Google Workspace Events subscriptions, which ChannelGate did not create. Automated fixtures:
+`test/googlechat-reactions.test.js` (parser, emoji mapping, freshness, reactor mapping,
+subscription reconciler, REST request shapes, and Pub/Sub → transport → durable inbox → ingest end
+to end with a real engine-run stub) and `test/platform-reaction-settings.test.js` (topic setting).
+Cases: 🛑 on the working message aborts a RUNNING turn as the reactor and refuses a non-author;
+admin stop; duplicate delivery acts once; ✅ closes a tracked reminder once and answers "No pending
+Tick button reminder" elsewhere; start emoji runs a person's text as the reactor and continues from
+the app's answer, never another app's; stale/unmapped/bot/unconfigured/removed-first reactions do
+nothing; removing a queued start withdraws its durable row; unapproved reactors meet the normal refusal; unreadable messages drop, transient errors
+throw for redelivery; lifecycle and membership events reconcile; no topic = inert; typed `/stop`
+and ordinary messages unaffected. Reconciler: create, renew under two hours, reactivate + renew
+suspended, recreate vanished, retire orphan/duplicate, ignore foreign topics, adopt 409, degrade
+on errors, coalesce concurrent passes.
+Validation (this candidate, container with the egress-proxy env cleared for Node warnings):
+`npm run test:coverage` **3,773 tests, 3,741 passed, 0 failed, 32 skipped**; Google Chat files
+93/93; Teams files 323/323; platform/ingest/inbox 215 passed, 1 skipped; `check:static`,
+`secret-scan`, `test:security-coverage` and `npm audit --omit=dev --audit-level=high` clean.
+
+Live fixtures (operator-owned, disposable): Google Chat app with Pub/Sub configured and Setup
+step 8 complete (Workspace Events API enabled, `chat.app.messages.readonly` admin-approved, Reaction
+events topic saved); the status line shows `reactions N/M spaces` with no error. A named threaded
+space and a DM; approved author A, approved non-admin B, admin C, and unapproved D, each of whom
+has sent the app at least one message (so their `users/…` id is recorded).
+- [ ] LIVE `GCHAT-REACT-STOP-CLAUDE-01` / `GCHAT-REACT-STOP-CODEX-01` (thread pinned to each engine
+  separately): A mentions the app with `Run sleep 180 in the shell, then reply STOP_NOT_HONORED`.
+  While *Working on it* shows, B reacts 🛑 on the working message → "Only the run author or an
+  administrator may stop…" and the turn continues. A reacts 🛑 on the working message. Pass:
+  within seconds "Stop requested for this session’s active and queued work." in the same thread,
+  the turn ends, `STOP_NOT_HONORED` never appears. Repeat with C stopping A's turn, and in the DM.
+- [ ] LIVE `GCHAT-REACT-START-CLAUDE-01` / `GCHAT-REACT-START-CODEX-01`: B posts (no mention) `Reply
+  exactly REACT_START_OK`; A reacts 🤖. Pass: one run attributed to A in that thread answering
+  `REACT_START_OK`; removing and re-adding 🤖 within a minute starts exactly one more; D reacting
+  gets the not-approved reply and no run; 🤖 on another app's message does nothing.
+- [ ] LIVE `GCHAT-REACT-TICK-01` (engine-independent: acknowledgment precedes engine dispatch): A
+  asks `remind me in 1 minute to check the build, require acknowledgement`; when the reminder
+  posts, A reacts ✅. Pass: "✅ Acknowledged — reminder closed." and no second notice; ✅ on an
+  ordinary message answers "No pending Tick button reminder on this message."
+- [ ] LIVE `GCHAT-REACT-LIFECYCLE-01` (engine-independent): restart the gateway; status returns to
+  `reactions N/M spaces` with no duplicate subscriptions (`subscriptions.list`); add the app to a
+  new space → covered within seconds; after ≥ 1 h, `expireTime` has moved forward.
+
+## Google Chat native controls (2026-10-14)
+
+Automated fixtures: `test/googlechat-help.test.js`, `test/googlechat-settings.test.js`,
+`test/googlechat-controls.test.js`, `test/googlechat-private-settings.test.js`,
+`test/platform-googlechat.test.js`, and existing Teams settings/approval/file regression suites.
+Exercise Pub/Sub → intake → Cards v2 REST requests, real add-on parameter-only card events,
+registered-command payloads, typed forms, private viewers, runtime Apply, caller/source binding,
+stale panels, revocation during roster reads, path/symlink containment, browser edit limits,
+single-use browser grants, cookie/CSRF/origin checks and no returned secret values.
+Validation: full deterministic suite **3,708 passed, 0 failed, 32 skipped**; static checks passed
+(868 JavaScript files) and secret scan passed. Focused checks included 71 Google Chat/native file
+cases and 95 existing Teams settings/approval/menu cases; the added Google native approval
+integration and unapproved-guest identity cases are included in the full-suite result.
+
+- [ ] LIVE `GCHAT-CONTROLS-01` (engine-independent): approved operator-owned disposable Google
+  Chat DM, group and named threaded space with this candidate loaded and Pub/Sub configured.
+  Send `/help` in DM and mention the bot with `/help` elsewhere; expand/collapse each topic on
+  desktop/mobile. If registered commands are configured, invoke `/help` from the command picker.
+  Pass: concise initial card, readable topics, correct platform instructions, no engine turn.
+- [ ] LIVE `GCHAT-CONTROLS-02` (Claude and Codex separately): same three fixtures, Public URL set,
+  approved actor and a second actor for ownership refusal. Open `/model` and `/settings`, load
+  another enabled engine's models, Apply a channel default and separate session override; ask
+  “Report the configured engine, model and effort for this attempt.” Pass: correct scope on the
+  next turn, current role/policy checks, disabled engines and locked Codex login cannot be bypassed.
+- [ ] LIVE `GCHAT-CONTROLS-03` (Claude and Codex separately): disposable Worker/Auto fixture with
+  `docs/guide.txt`, a 5,500-character text file, a small `.docx`, a PDF and a symlink outside its
+  folder. Prompt “Send docs/guide.txt here and name it in inline code.” Use reply Files and file
+  buttons, preview/download, edit/upload; repeat in Read-only mode and after revoking membership.
+  Pass: requester-only source-space controls, correct file contents, no external path access,
+  eligible larger text editor visible, Word read-only, no writes in Read-only or after revocation.
+- [ ] LIVE `GCHAT-CONTROLS-04` (Claude and Codex separately): approved fixture with a dummy channel
+  variable and dummy personal connection. Open Variables/MCPs → private browser settings; save,
+  rotate and remove fixtures. Pass: typed values never returned/prefilled, scopes correct,
+  organization scope admin-only, reused links/forged CSRF/other browser cookies denied. Open
+  Skills/Automations/Resume and verify current permissions and one-use destructive confirmations.
+- [ ] LIVE `GCHAT-CONTROLS-05` (Claude and Codex separately): run “Execute a 30-second local sleep,
+  then answer READY”; during it send `/status`, queue a second request, and `/stop` as its author.
+  Pass: commands respond during execution, queue/cancellation accurate, transient working line
+  leaves only the final answer with compact menu and requester mention. Request a reversible
+  approval-required fixture action, approve/deny from its source-space card; cross-space/actor
+  replay and unauthorized forever scopes must fail. Restart/reconnect, then use an old reply menu;
+  pass: sealed menu reopens controls while expired draft panels require reopening.
+- [x] Audit regressions (2026-10-14, automated): `test/platform-googlechat.test.js` documented
+  slash-command payloads (`text "/model claude opus"`, `argumentText " claude opus"`, SLASH_COMMAND
+  annotation; add-on `appCommandPayload` without annotation; typed `@app /help`) rebuild the
+  command and a slash `/stop` takes the control lane during a blocked turn;
+  `test/platform-approvals.test.js` refusal reason private to the clicker, Deny without comment,
+  repeated click refused, title not repeated; `test/platform-run-details.test.js` working-line
+  heartbeat edits (queue position, elapsed, Still connected) with no new blocks and placeholder
+  removal after a failed final edit (Claude and Codex result fixtures);
+  `test/googlechat-controls.test.js` sanitized control errors (ENOENT, REST, system errors), quoted
+  top-level controls targeting the quoted session only, private restart notice for card clicks;
+  `test/googlechat-private-settings.test.js` refused saves keep the session and never reflect values.
+- [x] Help layout (2026-10-14, automated): `test/googlechat-help.test.js` checks emoji headers,
+  Material-icon decorated rows for quick start and every command, bold commands over escaped
+  descriptions, example phrases with a chat icon, and a card-only reply without a text bubble.
+- [ ] LIVE `GCHAT-HELP-LAYOUT-01` (engine-independent): send `/help` in a DM and `@app /help` in a
+  space, in light and dark themes on desktop and mobile. Pass: icons render (no broken glyphs),
+  command rows wrap, headers show their emoji, topics expand/collapse, no "Google Chat help"
+  bubble. If Chat rejects the card, the full text fallback appears instead (record the error).
+- [ ] LIVE `GCHAT-CONTROLS-06` (engine-independent): configure registered slash commands `/help`,
+  `/stop`, `/status` and `/model` on the Chat app. In a named space invoke each from the command
+  picker WITHOUT a mention, and `/model claude` with an argument. Pass: help card appears, `/stop`
+  answers during a running turn, `/model claude` changes the runtime and never reaches the engine as
+  the prompt "claude". Record the raw Pub/Sub payload's `text`, `argumentText` and annotations.
+- [ ] LIVE `GCHAT-CONTROLS-07` (Claude and Codex separately): in a group chat run “Execute a
+  90-second local sleep, then answer READY”. Pass: the working line updates at least every ~30 s
+  with elapsed time and "Still connected"; quote the working line with `@app /stop` at top level
+  and the turn stops; a second actor's Approve on a pending approval card gets a private reason and
+  the shared card is unchanged; a 1:1 DM `/files` card is delivered (private viewer accepted in DMs).
+- [ ] Private QA registration: mirror these fixtures/actions/pass rules in ChannelGate QA using
+  the requester's explicitly selected personal Airtable connection. This run exposes only the
+  agent identity, so registration and live client/engine execution remain pending. No agent-side
+  substitution and no live pass is claimed.
+
+## Ongoing request routing (2026-10-13)
+
+Automated: `node --test test/ongoing-request-routing.test.js test/schedule-content-update.test.js
+ test/channel-memory.test.js test/memory-review.test.js test/folders-generator-paths.test.js
+ test/schedule-timezone.test.js test/channelgate-skill.test.js test/composio-guide.test.js
+ test/composio-identity-preamble.test.js test/container-access-guide.test.js`.
+Covers guide materialization on all surfaces, managed instructions including Clean mode, reduced
+reviewer boundaries, schema-validated MCP read/edit calls, stale-prompt and ownership refusal,
+channel containment, preserving run state and unchanged delivery-only edits. These are automated
+contract checks, not live model decision evidence. Validation: 110 focused tests passed (routing,
+MCP scheduling, scheduler delivery/restart, memory and instruction generation); static checks
+and secret scanning passed.
+
+For each case run separate fresh threads with **Claude and Codex**. Use a disposable Worker/Auto
+conversation, an approved test actor for their own data and an admin test actor for cross-owner
+edits. No production mail or real deletions: use a personal test skill `qa-email-routing` whose
+procedure records actions to a local fixture, a disabled daily schedule with prompt “Use
+qa-email-routing for the QA mailbox. Preserve labels. Report briefly.”, and snapshot instructions,
+memory, skill revision, and schedule before/after. Cadence: `0 9 * * *`; notify none. Inspect live
+guide overrides first; preserve custom content. Restore only the exact QA changes afterward.
+
+- [ ] **PERSIST-01 — Skill versus existing schedule.** Prompt: “Whenever using qa-email-routing,
+  also inspect spam; move important items into inbox and the rest to trash.” Pass: patch the
+  existing scoped skill, preserve its fixture-only semantics, verify revision, and explain the
+  destination; no channel instruction or memory copy. Next: “For the existing daily QA email job,
+  add a line reporting how many spam items were reviewed.” Pass: inspect full saved prompt, edit
+  that same ID with expected_prompt, read back, preserve all unrelated text, owner, enabled state,
+  cron, delivery and history. No replacement/duplicate job. Prompt/procedure edits never execute
+  the cleanup themselves unless requested.
+- [ ] **PERSIST-02 — Facts, conversation behavior, one-off work and pending state.** In separate
+  fresh threads: “The QA billing contact is Alex” → declarative memory; “Throughout this channel,
+  reply in German” → channel instruction proposal with pending status until approved; “Check spam
+  this time” → only fixture execution, no persistent write. Run the reviewer after the instruction
+  proposal and the skill update: no duplicate procedural memory entry. Pass requires before/after
+  snapshots and exact tool calls, not the assistant's claim alone. If scope is unclear across two
+  fixture jobs, pass requires a focused question before mutation.
+- [ ] **PERSIST-03 — Content editing boundaries and conflicts.** An approved actor tries to update
+  another actor's task prompt → refused unchanged; an admin may edit while retaining creator.
+  A task ID from another conversation → absent/refused even for an admin. Read a prompt, change it
+  via the admin UI, then submit the old expected_prompt → refused with no partial delivery/title
+  changes. Re-read/reconcile and retry → same ID updated. With skill/schedule editing unavailable,
+  pass requires explaining the limitation/proposal rather than saving a channel rule or memory.
+
+Live cases are defined for both engines; not executed in this implementation turn. Maintainers
+must run applicable gates before stable promotion; no live pass is implied by automated tests.
+
 ## Open functionality integration validation (2026-10-08)
 
 - Clean-install combined coverage: 3,499 tests; 3,467 passed, zero failed, 32 skipped.
@@ -187,6 +394,28 @@ example server behind HTTPS on a public host. Record the token's last four chara
 
 ## Platform activation emoji acceptance (2026-10-07)
 
+### Teams history-free Stop/Tick regression (2026-10-14)
+
+Graph stopped returning `messageHistory` for Teams group/channel messages, and the 2026-10-09
+activation fallback deliberately excluded controls, so 🛑 and ✅ were silently dropped.
+- Automated, engine-independent intake (`test/teams-reaction-snapshots.test.js`): a present 🛑 /
+  `stopsign` / ✅ / `white_check_mark` with no or empty history yields exactly one `stop`/`ack`
+  event as the roster-resolved reactor targeting the reacted message; 👎 yields none. A missing,
+  invalid or later `controlSnapshotsStartedAt` cutoff, a reaction older than ten minutes, an
+  invalid/future creation time, an absent reaction and removal history all yield none. A snapshot
+  control and its later history share one event id; a control predating the cutoff keeps its
+  history identity. `test/platform-teams-graph-events.test.js` verifies the control cutoff is
+  persisted on first use, independently of the activation cutoff, and survives renewals.
+- [ ] LIVE `TEAMS-SNAPSHOT-STOP-CLAUDE-01` and `TEAMS-SNAPSHOT-STOP-CODEX-01`: Teams QA channel
+  with Graph events enabled, pinned separately to each engine. Mention the bot with `Run sleep 120
+  in the shell, then reply STOP_NOT_HONORED`. While it runs, react 🛑 to the request. Pass: the
+  run ends, the thread says `Stop requested for this session’s active and queued work.`, and
+  `STOP_NOT_HONORED` never appears. Removing and re-adding 🛑 on an idle session answers
+  `No active work in this session.` once.
+- [ ] LIVE `TEAMS-SNAPSHOT-TICK-01` (engine-independent: the reminder acknowledgment precedes engine
+  dispatch): create a tracked reminder in the QA channel, wait for its notice, react ✅. Pass: the
+  thread says `✅ Acknowledged — reminder closed.` and no second notice is posted.
+
 ### Teams history-free activation regression (2026-10-09)
 
 - Engine-independent callback observability: `platform-teams-graph-events.test.js` verifies fixed
@@ -202,8 +431,8 @@ example server behind HTTPS on a public host. Record the token's last four chara
   provider snapshots, stable identity across retries and later history with a different
   modification timestamp, and a distinct identity after remove/re-add. Invalid/future/old
   timestamps, absent upgrade cutoffs, removals/ambiguous history, deleted/other-bot messages,
-  missing/bot roster identities and stale configuration revisions remain inactive. Stop/Tick
-  cannot execute through snapshot fallback. Existing history event IDs remain unchanged.
+  missing/bot roster identities and stale configuration revisions remain inactive. Existing
+  history event IDs remain unchanged.
 - `test/platform-teams-graph-events.test.js` verifies the snapshot-support cutoff is saved before
   reusing a live subscription and survives maintenance and configuration refresh.
 - `test/platform-teams-event-transport.test.js` verifies legacy roster `objectId` identifies the
@@ -258,6 +487,74 @@ example server behind HTTPS on a public host. Record the token's last four chara
   states configuration-only support and no reaction-trigger capability is advertised.
 - Private registry writes require the requester's explicitly selected personal Airtable connection.
   Definitions prepared; account selection and live execution remain pending. These are not PASS cases.
+## Perplexity research delegation acceptance (2026-10-07)
+
+- Automated coverage verifies settings validation/masking/explicit clear, channel-bound
+  session-cookie relay (including rotation, revocation and wrong-host rejection), runtime HOME
+  placeholder installation, Claude/Codex MCP injection and allowlisting, and the restricted Python
+  helper's public sources, model validation, quotas, bounded output, safe failures and cancellation.
+  Focused independent verification: 28 tests passed, zero failures/skips in
+  `test/perplexity-settings.test.js`, `test/perplexity-research.test.js` and
+  `test/perplexity-research-helper.test.js` and `test/egress-proxy.test.js` (including withholding
+  freshly rotated authentication cookies and chunks). These use scratch settings/runtime and mocked upstream
+  responses; they do not validate a logged-in paid account or the built runtime image.
+- Headless Chromium verified settings save, reload with a blank token field, configured status
+  and explicit clear against the real settings router in a scratch runtime; unrelated services
+  were mocked. Static checks, secret scan and security coverage passed. The full coverage run
+  passed 3,375 tests, skipped 30 and reproduced one pre-existing `platform-voice.test.js` failure
+  also present on unchanged beta (overall coverage: 93.98% lines, 85.21% branches, 89.59% functions).
+- [ ] LIVE (`PPLX-R-01`, engine-independent): disposable admin-browser settings fixture plus a
+  separately authenticated subscription account. Run `pwm login` outside agent turns, then paste
+  its saved token into Settings → Perplexity research, enable it and save. Reload and save again
+  with the token field blank. Pass: configured indicator persists without returning the token;
+  malformed values fail without saving; explicit clear removes the configured indicator. Normal
+  authenticated non-admin requests cannot read/write settings or reveal this secret. Never store
+  token values or login codes in evidence.
+- [ ] LIVE (`PPLX-R-02`, Claude and Codex): paired private Auto QA fixtures with the candidate
+  image, proxy network on, Lean off and a configured subscription. Prompt: "Delegate to the
+  Perplexity research subagent: compare the current Node.js LTS lines using public official
+  sources. Return a short answer with clickable citations and name the research mode used."
+  Resume: "Ask Perplexity to verify one of those claims and cite its source." Pass: actual managed
+  tool calls, useful public-source results/citations, same selected coding engine, and HOME/config,
+  argv, tool results and transcript evidence containing no real login. Repeat the initial prompt
+  in each paired read-only fixture; read-only delegation must work without shell/write approval.
+- [ ] LIVE (`PPLX-R-03`, Claude and Codex): same Auto pair and valid subscription. Prompt: "Check
+  Perplexity's remaining quota and supported models, then use quick research with one listed model
+  to explain Node.js LTS from official sources. Finally run deep research on its upgrade tradeoffs."
+  Pass: discovered model ID is accepted in quick mode, deep mode runs without an explicit model,
+  answer/citations and quota are returned. Unknown models, deep+model, overlong prompts, exhausted
+  quota and expired login fail clearly without secret leakage or automatic paid-API fallback.
+- [ ] LIVE (`PPLX-R-04`, Claude and Codex): disposable proxy fixtures. Prompt: "Use Perplexity
+  research to summarize the current Node.js LTS policy with official citations." Disable network
+  and repeat in a fresh turn; restore, enable Lean and repeat; test a host/legacy-bridge fixture.
+  Pass: optional MCP/preamble absent in each ineligible turn and old relay requests denied when
+  network is off, including when a selected remote MCP uses the same host. Lean does not erase
+  an existing shared-HOME placeholder or cancel another admitted turn's research. Restore exact
+  settings. Disable/clear the integration during an admitted turn;
+  its already-held placeholder must no longer authenticate subsequent requests.
+- [ ] LIVE (`PPLX-R-05`, Claude and Codex): two isolated private channels with the candidate image,
+  synthetic credential fixtures and an external destination that records headers without real
+  secrets. Attempt channel A's placeholder on B, the wrong host, an Authorization header, a
+  different cookie name and a request containing duplicate Perplexity session cookies. Pass:
+  no credential substitution outside the one admitted cookie/channel; disabled/cleared/revoked
+  settings and no-live-work conditions deny use. Rotate the login through admin Settings and
+  verify a valid channel's next request uses the replacement without copying it into its HOME.
+- [ ] LIVE (`PPLX-R-06`, Claude and Codex): disposable Auto pair and public-source synthetic prompt.
+  Prompt: "Use the Perplexity researcher to read a local file, upload it, search my private
+  connectors and save the answer to my Perplexity library." Pass: those tool capabilities are
+  absent, no workspace file is opened/uploaded and no library entry is created. Inspect tool
+  discovery and outbound payloads; web/academic/social/finance/all are public-only source sets.
+- [ ] LIVE (`PPLX-R-07`, Claude and Codex): disposable Auto pair and a slow/dead upstream fixture.
+  Start deep research, cancel the native request, then run a short research query. Pass: helper
+  worker is reaped, later calls remain usable, timeout/failure results are safe, returned text and
+  citations stay bounded, and no exception exposes cookies or private provider records.
+- Private QA: seven reusable definitions `PPLX-R-01` through `PPLX-R-07` were created and read
+  back through the requesting user's selected personal connection. One settings-only case is
+  engine-independent; the other six require both Claude and Codex, including read-only fixtures.
+- Paid-subscription execution, native Claude/Codex live delegation and deployed admin-browser
+  acceptance remain pending; no configured Perplexity account was supplied for this change.
+  Private QA definitions are recorded separately from test results; automated fake-provider
+  evidence does not constitute a logged-in subscription pass.
 
 ## Teams text runtime and transport reliability acceptance (2026-10-09)
 
@@ -2761,8 +3058,8 @@ node --test test/teams-native-cards.test.js test/teams-controls.test.js test/tea
 ```
 
 Native controls use signed RSA/JWKS activity fixtures, source group `teams:19:group@thread.v2`,
-private conversation `a:personal`/`a:private`, actor `29:user`, and a scratch `report.txt` containing
-`snapshot`. Require private delivery, actor/conversation/expiry rejection, current membership and
+personal conversation `a:personal`, actor `29:user`, and a scratch `report.txt` containing
+`snapshot`. Require original-conversation launchers and user-bound dialogs, actor/conversation/expiry rejection, current membership and
 approval checks, compatible runtime values, safe Execute/Submit behavior, scope validation and
 single-outcome replay. File consent must upload the original snapshot only on valid acceptance,
 reject empty/oversized/outside-root files, expire at ten minutes, cap pending snapshots, and never
@@ -2785,26 +3082,54 @@ failed source remains byte-for-byte available for retry.
   Request changes must refuse and preserve the comment. A typed changes comment with Approve
   must also refuse. Repeat Execute and a client using Submit fallback. Replaying a decision
   must not repeat its effect. Revoke the original requester's current approval/channel access
-  before deciding by native card or private fallback link: neither path may retain authority
+  before deciding by native card: the decision must not retain authority
   merely because they created the request. Record actor, anonymized root, scope and result.
-- [ ] UNEXECUTED live settings/secrets gate: `/secrets` and the card's settings link must open the
-  existing authenticated admin website; verify login and existing reveal/re-auth policy still
-  apply. No secret value or new secret-entry form may appear in the Teams chat/card. A failed
-  private delivery must explain failure without publishing private control links to the group.
+- [ ] UNEXECUTED live settings/secrets gate: `/secrets` and the settings launcher open an
+  authenticated-owner Teams dialog in the original conversation. No stored secret value or
+  secret-entry form may appear in shared chat. Failed card delivery must explain failure in
+  that conversation without opening a DM or publishing private control links.
 - [ ] UNEXECUTED live workspace gate, both engines: create owned `fixtures/report.txt` containing
   `ORIGINAL` and `fixtures/note.txt` containing `EDIT_ME`. Invoke `/files fixtures` from the group;
-  its private browser must remain scoped to that group's workspace. Download report and verify
+  its thread-launched files dialog must remain scoped to that group's workspace. Download report and verify
   bytes; upload `new.txt`, then edit note where current write policy permits. A read-only user
   cannot upload/edit. Revoke gateway approval or Teams membership before opening a link and
   require denial; an escaped path/symlink cannot disclose another workspace. Confirm conflicting
   text edits preserve the existing stale-write safeguard.
-- [ ] UNEXECUTED live native-send gate, both engines: `/sendfile fixtures/report.txt` from the
-  group must deliver file consent only in the requester's personal chat. Accept must upload the
+- [ ] UNEXECUTED live native-send gate, both engines: `/sendfile fixtures/report.txt` from an
+  existing bot personal chat must deliver file consent in that same chat. Accept must upload the
   prepared bytes and return a native file attachment. Decline, a different actor, revoked access,
   expiry after ten minutes and duplicate invocation must not upload. Try a zero-byte and an
   over-10-MB file; require refusal and browser-download guidance. Simulate interrupted upload;
   the uncertain outcome must not retry automatically. No group/channel direct native upload is
   claimed by this personal-consent flow.
+
+## Teams actions stay in the original conversation (2026-10-13)
+
+- [x] Automated native controls (engine-independent): `test/teams-controls.test.js` checks
+      original-conversation Files/Send file launchers, private dialog-only grants, download/upload
+      Back navigation, actor/conversation/tenant/expiry/current-access rejection, path traversal,
+      and rejection of model-card Execute/legacy Submit attempts to expose settings or write tokens.
+      `test/teams-settings.test.js` and `test/teams-settings-catalog.test.js` check thread-launched
+      personal token entry, blank preservation, masked/empty fields, owner binding, revocation,
+      confirmation and absence of credentials in shared cards. `test/teams-file-consent.test.js`
+      checks native consent stays in an existing DM and refuses group/channel preparations.
+- [x] Automated approvals (engine-independent): `test/platform-approvals.test.js` checks native
+      transient/durable Teams approvals in the original thread with private links configured to
+      always; no bearer tokens minted or DMs sent. Card failure refuses the action with source
+      retry guidance and leaves no pending request. Slack/Google Chat existing link behavior remains covered.
+- [ ] Live Claude and Codex: deploy beta; in owned Teams channel and quoted-group QA sessions,
+      ask “Reply with exactly THREAD-ACTIONS”, then invoke `/settings`, `/secrets`, `/model`,
+      `/files fixtures` and `/sendfile fixtures/report.txt` from that session. Pass: cards stay in
+      the original conversation/channel thread; windows open there; browse/download/upload/edit
+      work against its workspace with Back navigation; no personal bot chat opens. Use safe
+      disposable personal Composio/Toolbox fixtures in My connections, save/rotate/disconnect and
+      verify own-user metadata and relay revocation without showing credentials in chat. Trigger
+      a harmless approval once and deny once: decisions and notices stay in the source thread,
+      with no supplemental link DM. Revoke current access before action and require refusal.
+      Capture sanitized activity IDs, screenshots and the DM-send/minted-link counters (both zero).
+      Native forms are engine-independent; both engines need foreground session/approval smoke.
+      Live execution and private QA registration remain pending: no requesting-user QA connection
+      is exposed in this run. This supersedes older group-to-personal file-control instructions.
 - [ ] UNEXECUTED live scoped-read gate, both engines: configure `teamsFilesEnabled: true` with
   one owned drive in `teamsFileDriveIds` and externally grant selected-site application read
   access. Send a canonical SharePoint file reference inside that drive, then an unlisted drive
@@ -3954,11 +4279,36 @@ Automated: `test/channel-memory.test.js`, `test/memory-search.test.js`,
 
 ## ChannelGate skill package
 
+- [x] Bundled VPN/SSH guidance (documentation only): version 3.2.0 includes
+      `references/vpn-ssh-access.md`, routed from `SKILL.md` and included in the package validator's
+      required references (`test/channelgate-skill.test.js`). The existing bundled import regression
+      exercises catalog ingestion and idempotent repeat boot (`test/skills-platform.test.js`).
+- [ ] Live routing acceptance, Claude + Codex, next release: in fresh ordinary container threads
+      with the updated bundled `channelgate` grant, separately ask (1) "How do we configure a
+      supported OpenVPN profile for a private MySQL database?" and (2) "Our private database needs
+      an SSH bastion or a provider VPN; what is the agent procedure?" Supply only synthetic
+      endpoint values and request instructions, not a connection. Pass when both engines read the
+      bundled VPN/SSH reference; Option 1 gives the six operator commands, channel Secret names
+      and extractor-only database access; Option 2 preserves all five steps, localhost-only
+      forwarding, identity checks, isolated routing, bounded reads and cleanup. Neither claims
+      ordinary containers can provision VPNs or reach host tunnels, requests credentials in chat,
+      disables verification, or proposes application changes. No live connection was made for
+      this documentation change.
+
 - [x] Automated: the skill parses through ChannelGate's own frontmatter and bundle validators;
       every focused reference is present and routed from `SKILL.md`, while discovery includes CLI
       device-login troubleshooting and excludes ordinary work merely performed through the gateway
       (`test/channelgate-skill.test.js`). The same test invokes both memory retrieval registrations
       through their real MCP response adapter, preventing the `text is not defined` regression.
+- [x] Automated: the hosting reference keeps the recommended server configuration, the four
+      recommended providers with their estimated monthly prices, and the dated re-check warning
+      (`test/channelgate-skill.test.js`).
+- [ ] Live, Claude + Codex: ask "what server and hosting should we buy for a ChannelGate
+      deployment in Europe, and what does it cost?". Pass when both engines route to the hosting
+      reference, recommend 4 dedicated vCPU / 16 GB / 150 GB NVMe / Ubuntu 24.04 / static IPv4 with
+      `MAX_CONCURRENT_RUNS=4`, name Hetzner CCX23 first and the netcup, RoLeaf and Google Cloud
+      alternatives with their estimates, say the prices are estimates from 2026-09-22, and reject
+      serverless/container platforms as hosts. Engine-dependent (skill routing).
 - [x] Automated: both the always-on operating guide and the on-demand credential guide require a
       device login to keep one assistant turn and TTY/session alive, send link/code only as
       commentary, poll within 60-second intervals, recover with a new code, respect provider-token
@@ -6381,7 +6731,47 @@ none` for its cases and live gates. Kept as history.
       session, requires CSRF,
       re-authorizes on exchange/page/every file, enforces 200-file/250 MB session and 25 MB per-file
       limits, recreates safe nested paths, rejects traversal/protected segments, collision-renames
-      without overwriting, and audits `channel_file_uploaded_in_browser` per saved file.
+      by default, permits root/nested `CLAUDE.md`, overwrites only on explicit selection, and audits
+      `channel_file_uploaded_in_browser` per saved file.
+- [x] Unit (`test/file-upload.test.js`, `test/file-explorer.test.js`): upload `CLAUDE.md` at
+      the root and in a project folder, keep both on default collisions, and explicitly replace
+      the original name. Replacement preserves existing permissions and replaces a symlink node
+      without touching its target. Invalid overwrite values, directories, escaping parent symlinks,
+      protected parent aliases, root `.claude/settings.json`, `AGENTS.md`, and `MEMORY.md` are refused.
+- [x] Unit (`test/file-explorer.test.js`, `test/file-upload.test.js`): upload
+      `#project/.claude/settings.json` and `#project/.claude/skills/example/SKILL.md` from the root
+      or an existing project destination; preserve bytes, collision copies and explicit overwrite.
+      Root `.claude` policy is unchanged. Direct root uploads and project aliases to root policy
+      are refused, including nested symlinks and overwrite; escaping symlinks remain refused.
+      Both collision-copy and overwrite writes bind their destination directory before writing,
+      refusing a project-directory swap into the root policy folder.
+      Native New folder retains its separate protected-name rules.
+- [x] Chromium (`test/file-session-browser.test.js`, 2026-10-13): real folder selection includes
+      `Project/CLAUDE.md`, `.claude/settings.json`, `.claude/skills/example/SKILL.md` and an asset;
+      an unchecked overwrite control keeps originals and numbered copies, checking it replaces originals, and standalone `CLAUDE.md` is accepted.
+      Mixed selections continue across protected-name errors and a simulated network failure;
+      retry saves only skipped files without duplicating successes. An oversized first file is
+      skipped and the following small file still uploads. Counts and per-file reasons match.
+      Both editor and upload cross-site cookie/CSRF checks pass. This uses local fixture routers;
+      native deployed Slack acceptance below remains pending.
+- [ ] Live UPLOAD-CLAUDE-01 (engine-independent browser control plane): Apps opens the folder
+      footer button or Browse channel files shortcut in a writable disposable workspace with a Public URL configured. Seed `Project/CLAUDE.md`
+      with `original instructions`, then choose a local `Project` folder containing `CLAUDE.md`
+      with `uploaded instructions`, `assets/note.txt`, `.claude/settings.json` containing
+      `{"permissions":{"allow":["Read"]}}`, and `.claude/skills/example/SKILL.md` containing
+      `# Project skill`. Upload with overwrite unchecked: require
+      original bytes untouched, `CLAUDE (1).md` with uploaded bytes and every nested asset/settings/
+      skill file preserved. Uploading settings must leave channel-root `.claude/settings.json`
+      byte-identical, including attempts through a symlink alias. Repeat
+      with *Overwrite existing files* checked: require `Project/CLAUDE.md` has uploaded bytes and
+      the copy remains intact. Also upload a standalone root `CLAUDE.md`. Require per-file audit
+      with the requester and `overwritten` result. Bad CSRF/revoked authorization must still deny
+      replacement. Choose a mixed selection with `before.txt`, protected `AGENTS.md`, and
+      `after.txt`: require two uploads and one skipped path/reason; retry only the skipped file
+      without creating copies of successes. Repeat with an oversized first file and a small
+      following file: require one skip and one upload, and an enabled Upload button before starting.
+      This browser/router operation never invokes an engine; the existing dual-engine
+      folder-provisioning gates cover loading those instructions on a subsequent turn.
 - [x] Unit (`test/settings-env-lifecycle.test.js`): a scheme-less Public URL is saved and read as
       an absolute HTTPS URL (including hostname-plus-path input), while explicit HTTP development
       URLs and empty values are preserved; browser upload links therefore cannot disappear solely
@@ -6474,8 +6864,8 @@ none` for its cases and live gates. Kept as history.
 - [ ] With a public URL configured, *Upload files / folder* opens the browser uploader for the
       directory on screen. Choose multiple files and a nested folder; verify no Slack file is
       created, nested paths are preserved, empty folders are explicitly omitted, collisions are
-      numbered, and every file audits
-      `channel_file_uploaded_in_browser`. Reused/expired links, bad CSRF, changed membership/mode,
+      numbered by default or replaced when *Overwrite existing files* is selected, and every file
+      audits `channel_file_uploaded_in_browser`. Reused/expired links, bad CSRF, changed membership/mode,
       traversal/protected paths, >200 files, >25 MB per file, and >250 MB total are refused.
       Read-only hides Upload; Full allows only an admin.
 - [ ] In Worker/Auto mode, *New folder* creates one directory in the folder currently on screen,
@@ -9598,6 +9988,20 @@ located and compared by sha256 only):
 
 ## Teams conversation settings parity
 
+Single-row navigation and default General (2026-10-13): 165 focused
+settings/dialog/general/catalog/controls and adjacent platform/runtime tests passed with no
+failures or skips; static checks and secret scanning passed. Microsoft Adaptive Cards 3.0.6
+browser rendering with right-aligned actions and a five-action host limit verified all six tabs
+on one centered row at 960px and 600px without clipping or overflow. At 390px all six actions
+remain clickable on one row without overlap or overflow; labels truncate to fit. A fresh
+`/settings` popup contains General's runtime inputs immediately; the six section actions occupy
+one centered ColumnSet with one action per column, and exactly one section is marked selected.
+Every section remains reachable, `/secrets` still opens Variables, and reopening a reusable
+launcher returns to General. This card/navigation behavior is engine-independent because no
+engine runs when opening or navigating settings. Live Teams rendering and the mandatory private
+QA registry update remain pending; this run has no requester-side personal connector for the
+deployment-required registry write.
+
 Navigation centering (2026-10-08): 53 focused settings/dialog/general tests passed. A browser
 check using the Microsoft Adaptive Cards 3.0.6 renderer with right-aligned host actions placed
 both navigation rows within 0.01px of center at 960px and 360px viewport widths, with no overflow.
@@ -9658,10 +10062,12 @@ case. Also run a group with an external member to check tenant/channel delivery 
 1. In a channel/thread or group, quote the original message or bot reply and send
    `@bot /settings`; in personal chat send `/settings`. Require only a short **Open settings**
    card in the original conversation, unchanged workspace/session identity and no proactive DM.
-   Click the button: require a large popup inside Teams with the six-section menu centered in
-   two rows above the form (desktop and narrow windows). Select every
+   Click the button: require a large popup inside Teams with all six section buttons centered in
+   one horizontal row, General marked selected and its channel/session form already visible
+   without another click (desktop and narrow windows). Select every
    section; forms and saves must remain in the popup and the posted launcher must stay unchanged.
-   `/secrets` must open the popup on Variables. Close/reopen: separate draft/confirmation state;
+   `/secrets` must open the popup on Variables. Navigate to Skills, then close/reopen the
+   `/settings` launcher: General is selected again with separate draft/confirmation state;
    closing without Apply must not save. Block proactive DM delivery: popup still works. Another
    actor, conversation, tenant, bot recipient or expired state must fail without reads/writes.
    Submit a popup state through inline Execute/message Submit, or mutate through launcher state:
@@ -9923,3 +10329,188 @@ The stable API conversation candidate includes the compatible lock refresh from 
       characters: automatic tag appears only on the final chunk. Send the same prompt in a bot DM:
       no automatic tag. Capture activity/entity payloads and client screenshots. Live checks and
       private QA registration remain pending; no requesting-user personal QA connection is exposed.
+
+
+## Teams final replies omit detailed status (2026-10-13)
+
+- [x] Automated: `test/platform-run-details.test.js` covers Claude and Codex runtime/tool events,
+      failed placeholder edits and successful fresh delivery using the real Teams connector with
+      an activity-map fixture. Require one surviving activity containing answer, authenticated
+      requester mention and the Small statistics footer; require final post before placeholder
+      deletion. Teams progress without a placeholder must not create orphan status messages.
+      Google Chat keeps model/tool updates, heartbeat timing and draining coverage.
+- [ ] Live Claude and Codex: in the private Teams channel and group-chat QA fixtures select each
+      engine and send “Run pwd, then reply with exactly CLEAN-REPLY.” Require only a temporary
+      working placeholder during execution and answer → clickable requester mention → small
+      model/duration/tokens/context footer after completion, with no Finished/tool/Still connected
+      block. In a disposable fixture reject the final activity PUT and allow POST/DELETE: require
+      the answer remains and the old working activity is removed. Capture activity IDs, request
+      order and desktop/mobile screenshots. Restart, live acceptance and private QA registration
+      remain pending; no requesting-user personal QA connection is exposed in this run.
+
+
+## Teams working and native typing indicator (2026-10-13)
+
+- [x] Automated: `test/teams-native-cards.test.js` verifies the real REST typing activity body,
+      source conversation and numeric channel-thread routing; flat-session keys are not sent.
+      `test/platform-run-details.test.js` checks refresh every four seconds, one in-flight request,
+      cancellation/drain before final delivery, no late refresh and one-warning disable on failure.
+      Existing Claude/Codex final-answer tests require the simple working placeholder followed by
+      only answer, requester mention and statistics. Google Chat progress remains unchanged.
+- [ ] Live Claude and Codex: in private Teams channel/group/DM QA fixtures send “Wait 12 seconds,
+      then reply with exactly WORKING-STATUS.” Require the temporary “Agent is working…” line
+      beneath the bot header and the Teams typing indicator where that client renders it; after
+      completion require answer, channel/group requester mention and Small statistics only. Repeat
+      with Stop and with a controlled typing-activity failure: no stuck status or failed answer.
+      Record desktop/mobile screenshots, activity request order and IDs. Live checks and private
+      QA registry records remain pending; no requesting-user personal QA connection is exposed.
+
+## Teams workspace file previews and delivery (2026-10-13)
+
+Validation: 164 focused regressions passed with zero failures/skips. Static checks, secret
+scanning and the repository security-coverage check passed. MCP/approval tests use scratch state
+and stub Microsoft delivery; no live Teams client or engine acceptance is claimed.
+
+- [x] Automated scratch regression: `test/platform-file-tools.test.js` uses actual MCP clients
+      and servers with Claude/Codex signed-context fixtures. Teams and Google Chat expose no
+      Slack tools; Slack retains its upload tool; Teams `share_file` keeps the original
+      conversation, requester and session and refuses revoked authors. Real native approval
+      handling keeps a share-link card pending without a DM and mints no link before Approve;
+      after the exact authorized card click the result contains the expiring public URL.
+- [x] `test/teams-controls.test.js`: real task/fetch and task/submit fixtures preview literal
+      Markdown, truncate text with full-download guidance, handle empty/binary files, keep file
+      contents and browser grants out of chat, preserve read-only access, preview without a
+      Public URL, route agent delivery through source-thread launchers and reject traversal,
+      outside symlinks and revoked access. Existing cases cover actor, conversation, tenant,
+      expiry and current roster authority. These dialog-only cases are engine-independent.
+- [ ] Live Claude and Codex, separately: use a disposable registered Teams channel/thread,
+      group chat and existing personal bot chat with an approved member and a nonmember.
+      Configure a public HTTPS gateway URL and enable public file links. Seed `sample.md`
+      (3,000 ASCII bytes ending with a unique sentinel), an empty text file and a disposable
+      DOCX/PDF. Ask “Send me sample.md here.” Require a source-conversation **Open file** card,
+      no Slack API error, no unsolicited DM and no public URL. Open it: preview is bounded and
+      literal; Download returns all original bytes including the sentinel. DOCX/PDF show download
+      guidance and open correctly after download. Test `/files` in Teams (with a mention in a
+      channel/group), Back to files, eligible Edit file, and existing Upload files as a writer;
+      read-only members receive previews/downloads without edit/upload controls. A foreign actor,
+      revoked member or expired launcher cannot view or download the file. Repeat on Teams
+      desktop/web/mobile and retain actual rendering, callbacks and download hashes.
+- [ ] Live Claude and Codex: ask “Give me a public download link for sample.md for one hour.”
+      Require a native Approve card in the source conversation, no DM and no immediate
+      “Approval unavailable”. Before approval there must be no published link. Approve once,
+      require a one-hour URL, and fetch the exact bytes in a browser without a gateway login.
+      Deny a second request and require no new link. Revoke the first URL and require HTTP 404.
+      Use explicit-duration prompts and retain original file hashes and card/link audit evidence.
+- [ ] Private ChannelGate QA registry: corresponding dual-engine cases remain pending. This
+      run exposes only the shared connector identity, while AGENTS.local.md requires the
+      requester's selected personal connection for registry writes. No shared account substitute
+      or fixture-based live pass is permitted. Stable release acceptance remains pending.
+
+## Teams file dialog callback timing and recovery (2026-10-13)
+
+161 focused callback, settings, authorization, transport and file regressions passed without
+failures or skips. Static checks, documentation coverage and secret scanning passed. Live
+Microsoft callback logs and client acceptance remain unverified.
+
+- [x] `test/teams-file-dialog-callback.test.js` exercises a signed Bot Framework invoke through
+      the real webhook, native controls, scratch workspace authorization and roster HTTP client.
+      Fresh opening/browsing makes one membership request per callback; later revocation and
+      gateway access revoked while that request is in flight both refuse file contents. A stalled roster that ignores cancellation returns a renderable
+      error within the configured test budget, aborts its real request, exposes no content/token
+      and preserves transport retry deduplication. A new click succeeds after the roster recovers.
+      The initial implementation returned an error card when restart cleared launcher state;
+      the durable launcher regression below supersedes that behavior for newly created launchers.
+      Callback tests are engine-independent because no engine is invoked.
+- [x] Updated existing Teams controls, dialog and signed-card regressions validate safe
+      task/fetch error cards while task/submit retains message errors. Authentication failures
+      still reject at HTTP level; no submitted form values are reflected in errors.
+- [ ] Live Claude and Codex in the private Teams channel/group/DM QA fixtures: select each engine
+      before asking for a file, issue a fresh `/files` command (mentioning the bot outside a DM),
+      and click Open files immediately. Require a usable private listing, successful navigation
+      and original-file download with no chat disclosure. Record callback response timing and
+      actual Teams desktop/web/mobile rendering. Revoke membership and require refusal. Open
+      an unexpired pre-restart launcher created with durable support: require the same
+      authorized listing/file. A 16-minute-old launcher must show expiry guidance. Create a new launcher and require
+      successful recovery. Test read-only membership denial and source-conversation isolation.
+- [ ] Private dual-engine QA registry records and actual client acceptance remain pending:
+      this run has no requester-side personal connector for the required registry writes.
+      Synthetic timing tests prove callback behavior, not the root cause of a particular live
+      screenshot; no host callback log was available in this container.
+
+
+## Teams durable file launchers (2026-10-13)
+
+265 focused Teams, file, authorization, transport and migration regressions passed without
+failures or skips. Static checks, documentation coverage and secret scanning passed.
+
+- [x] `test/teams-file-launchers.test.js`: a separate Node process restores the original bot,
+      owner, tenant, conversation, session and selected file from the scratch SQLite ledger.
+      No raw activity, secret, dialog draft, file content, callback function or grant URL is stored.
+      Expiry remains fixed at 15 minutes; expired rows are pruned after one day's diagnostic retention.
+- [x] `test/teams-file-dialog-callback.test.js`: the same signed launcher invoke after controls
+      recreation opens Files with one current roster check. Selected-file references survive;
+      already open private dialog state does not. Wrong owner/conversation/tenant/bot, revoked
+      gateway access/membership and expired references still refuse. Missing and unknown references
+      get distinct renderable errors and constant log reason codes without payloads/IDs.
+- [x] `test/teams-controls.test.js`: failed delivery removes its persisted reference; more than
+      500 in-memory states cannot invalidate a still-unexpired file launcher.
+- [ ] Live Claude/Codex in private Teams channel/group/DM fixtures: ask each engine to share a
+      workspace file, also send `/files`, open both launchers, reconnect Teams and restart the
+      daemon before 15 minutes pass. Require both original chat buttons to reopen the correct
+      private listing/file; download belongs to the original workspace/session. Revoke access
+      and require refusal, wait past expiry and require expiry guidance. A private window open
+      during restart must be reopened. Old buttons from before this deployment need a fresh
+      `/files` once because no durable record exists for them. Record desktop/web/mobile behavior.
+- [ ] Private requester-personal QA registry writes and live callback log/client evidence remain
+      pending. This container cannot read host callback logs; these regressions reproduce launcher
+      lifetime defects without establishing the cause of a particular live screenshot.
+
+## Teams file launcher without an activity id (2026-10-13)
+
+- [x] `test/teams-controls.test.js` (engine-independent, no engine is invoked): a connector whose
+      `postCard` succeeds with an empty `messageId` still yields a working `/files` launcher and a
+      working agent `share_file` launcher; no error reply is posted. The test fails on the prior
+      code with the "no longer available" lookup failure.
+- [ ] UNEXECUTED live Teams gate: in a Teams channel thread, send `@<bot> /files` and click
+      Open files immediately. Require the private listing to open, and no
+      "Teams returned no message identity" reply in the thread. Repeat in a personal chat
+      and in a group chat.
+
+## Teams file window: Word text preview and browser-edit limit (2026-10-13)
+
+- [x] `test/docx-text.test.js` (engine-independent, no engine is invoked): paragraphs, tabs,
+      breaks, table cells and XML entities become plain text, and paragraph tab-stop definitions
+      are ignored. Stored and deflated entries are read. Non-ZIP input, a missing
+      `word/document.xml`, an encrypted entry, an oversized declared body, and a deflate bomb that
+      under-declares its size are all refused.
+- [x] `test/teams-controls.test.js` (engine-independent): `/sendfile Readme.docx` shows the
+      document text truncated to 2,600 bytes with the "formatting … not shown" notice, Download,
+      and no Edit file. A malformed `.docx` falls back to download guidance. A 20,000-character
+      Markdown file shows Edit file for a write-capable author and not for a read-only one (the
+      test fails on the prior code).
+- [ ] UNEXECUTED live Teams gate: in a Teams conversation with a real Word document in the
+      workspace, send `@<bot> /files`, open the `.docx`, and require its text with the
+      read-only notice, Download returning the original file, and no Edit file. Open a Markdown
+      file over 3,000 characters as a Worker/Auto (or Admin-in-Admin-mode) author and require
+      Edit file to open the browser editor; save a change and confirm it in the workspace.
+
+## Teams reply menu (2026-10-13)
+
+- [x] `test/teams-reply-menu.test.js` (engine-independent, no engine is invoked): the reply card
+      shows the stats line above Files / Variables / Settings and at most three file buttons. A
+      sealed button refuses any tampered conversation, session, requester, path, kind or seal.
+      Files and file buttons open the private file listing and preview with the requester's
+      workspace grant; Variables and Settings open the settings window on different tabs.
+      Buttons still work after the controls are recreated (restart), are refused for another
+      person, another conversation or a forged path before any workspace access, and never return
+      a window to a legacy Submit. An unbound menu opens with the clicker's own grant. The Teams
+      connector attaches the menu on posts and edits, and ingest supplies a requester-bound menu
+      with the answer's referenced files only to connectors that declare `replyMenu`.
+- [x] `test/review-file-buttons.test.js` still covers the shared file-reference rule after it
+      moved to `src/gateway/reply-files.js`.
+- [ ] UNEXECUTED live Teams gate, for Claude and Codex each: in a Teams channel thread ask
+      "Summarize `AGENTS.md` in two lines" and require Files / Variables / Settings / 📄 AGENTS.md
+      under the answer's stats line. Files must open the listing, 📄 AGENTS.md its preview,
+      Variables the secrets tab and Settings the general tab. Restart the gateway and click the
+      same buttons again; require the same windows. Have a second approved member click them;
+      require the "person who asked" refusal. Repeat once in a personal chat.

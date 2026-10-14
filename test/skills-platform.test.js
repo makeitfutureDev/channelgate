@@ -349,6 +349,12 @@ test("bundled starter library imports as bundled skills", async () => {
   const r = await importer.importBundledSkills({ version: "test" });
   assert.ok(r.presentSlugs.includes("skill-authoring"));
   assert.equal(catalog.getSkill("skill-authoring").ownerKind, "bundled");
+  assert.deepEqual(r.errors, []);
+  const channelgate = catalog.getSkill("channelgate");
+  assert.equal(channelgate.ownerKind, "bundled");
+  const bundledFiles = catalog.revisionFiles(catalog.effectiveRevisionFor(channelgate).id);
+  assert.ok(bundledFiles.some((file) => file.path === "references/vpn-ssh-access.md"),
+    "the VPN/SSH reference must enter the catalog through the normal bundled import");
   const again = await importer.importBundledSkills({ version: "test" });
   assert.equal(again.imported.length, 0, "a second boot changes nothing");
 });

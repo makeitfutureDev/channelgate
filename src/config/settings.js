@@ -169,7 +169,23 @@ export function resolveGoogleChatConfig() {
     serviceAccountJson: s.googleChatServiceAccountJson || process.env.GOOGLE_CHAT_SERVICE_ACCOUNT_JSON || "",
     subscription: String(s.googleChatSubscription || process.env.GOOGLE_CHAT_SUBSCRIPTION || "").trim(),
     botUserId: String(s.googleChatBotUserId || process.env.GOOGLE_CHAT_BOT_USER_ID || "").trim(),
+    // Optional. Reaction controls need Google Workspace Events subscriptions publishing to this
+    // topic — the one the subscription above is attached to. Empty = no reaction controls.
+    reactionTopic: String(s.googleChatReactionTopic || process.env.GOOGLE_CHAT_REACTION_TOPIC || "").trim(),
+    // The HTTP endpoint connection (the one that carries card and button clicks). The endpoint URL
+    // derives from the Public URL; the add-on's per-project sender address and the standalone
+    // app's project-number audience are what the endpoint's bearer check pins requests to.
+    appServiceAccount: String(s.googleChatAppServiceAccount || process.env.GOOGLE_CHAT_APP_SERVICE_ACCOUNT || "").trim().toLowerCase(),
+    projectNumber: String(s.googleChatProjectNumber || process.env.GOOGLE_CHAT_PROJECT_NUMBER || "").trim(),
+    endpointUrl: googleChatEventsEndpoint(),
   };
+}
+
+// The URL to enter as the Chat app's "HTTP endpoint URL" connection setting; empty until the
+// gateway has a Public URL. Mounted in src/web/app.js ahead of the admin auth stack.
+export function googleChatEventsEndpoint() {
+  const base = getPublicUrl();
+  return base ? `${base}/api/googlechat/events` : "";
 }
 
 // The service account's own address, parsed out of the stored key. Shown in the admin UI because
@@ -441,6 +457,23 @@ export function getQwenConfig(providerId, { settingsPatch = {} } = {}) {
     // The shipped endpoint is a DEFAULT, not a guarantee: a provider whose endpoint is
     // account-specific ships none, and stays unconfigured until the operator saves theirs.
     baseUrl: stored(entry.settings.baseUrl) || entry.defaultBaseUrl,
+  };
+}
+
+// Perplexity's subscription session is a cookie value, never an API key. Accept only
+// RFC 6265 cookie-octets so it cannot inject a second cookie or a request header.
+export function isPerplexitySessionToken(value) {
+  return typeof value === "string" && value.length > 0 && value.length <= 16384 &&
+    /^[\x21\x23-\x2B\x2D-\x3A\x3C-\x5B\x5D-\x7E]+$/.test(value);
+}
+
+// Settings only: clearing this login must not revive an ambient credential. Invalid
+// hand-edited values fail closed, just as invalid values supplied through the API do.
+export function getPerplexityResearchConfig() {
+  const s = getSettings();
+  return {
+    enabled: s.perplexityResearchEnabled === true,
+    sessionToken: isPerplexitySessionToken(s.perplexitySessionToken) ? s.perplexitySessionToken : "",
   };
 }
 export function hasQwenApiKey(providerId) {
@@ -1037,6 +1070,7 @@ function last4(v) {
 export function settingsForApi() {
   const c = resolveSlackConfig();
   const s = getSettings();
+  const perplexity = getPerplexityResearchConfig();
   return {
     // Echo this back on a PUT to get compare-and-swap semantics: the save is refused (409) if
     // anything wrote settings in between, instead of silently reverting the other writer.
@@ -1092,6 +1126,10 @@ export function settingsForApi() {
       serviceAccountEmail: googleChatServiceAccountEmail(),
       subscription: resolveGoogleChatConfig().subscription,
       botUserId: resolveGoogleChatConfig().botUserId,
+      reactionTopic: resolveGoogleChatConfig().reactionTopic,
+      appServiceAccount: resolveGoogleChatConfig().appServiceAccount,
+      projectNumber: resolveGoogleChatConfig().projectNumber,
+      eventsEndpoint: googleChatEventsEndpoint(),
       configured: hasGoogleChatConfig(),
     },
     teams: {
@@ -1114,6 +1152,10 @@ export function settingsForApi() {
     // One entry per Anthropic-compatible provider, so the admin UI renders a card per harness
     // instead of carrying a hard-coded copy of the table.
     qwenProviders: qwenProviderSettings(),
+    perplexityResearch: {
+      enabled: perplexity.enabled,
+      hasSessionToken: Boolean(perplexity.sessionToken),
+    },
     modelChangeAccess: getModelChangeAccess(),
     modelShortcuts: getModelShortcuts(),
     engineEnabled: getEngineEnabledMap(),
