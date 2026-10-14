@@ -132,3 +132,18 @@ test("Unicode activation entries each require one actual emoji grapheme", async 
     assert.deepEqual(settings.validateMentionReactions(valid, "googlechat"), [valid]);
   }
 });
+
+test("Google Chat reaction events topic is validated, listed and clearable; controls stay out of the activation list", async () => {
+  const saved = await put({ googleChatReactionTopic: "  projects/cg-test/topics/chat-events " });
+  assert.equal(saved.status, 200);
+  assert.equal(settings.resolveGoogleChatConfig().reactionTopic, "projects/cg-test/topics/chat-events");
+  assert.equal(saved.body.googleChat.reactionTopic, "projects/cg-test/topics/chat-events");
+  for (const bad of ["projects/cg-test/subscriptions/x", "topics/x", "projects/cg-test/topics/../x"]) {
+    const rejected = await put({ googleChatReactionTopic: bad });
+    assert.equal(rejected.status, 400, bad);
+    assert.equal(settings.resolveGoogleChatConfig().reactionTopic, "projects/cg-test/topics/chat-events");
+  }
+  assert.equal((await put({ googleChatReactionTopic: "" })).status, 200);
+  assert.equal(settings.resolveGoogleChatConfig().reactionTopic, "");
+  for (const control of ["🛑", "✅"]) assert.equal((await put({ googleChatMentionReactions: control })).status, 400, control);
+});

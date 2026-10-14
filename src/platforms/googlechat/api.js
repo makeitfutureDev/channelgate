@@ -114,6 +114,25 @@ export function createChatApi({ auth, fetchImpl = fetch, sleep = delay, attempts
       return call(requireName(space, isSpaceName, "space"));
     },
 
+    // One message, for a reaction event that names only the message. chat.bot reaches the app's own
+    // messages and the ones addressed to it; the admin-approved chat.app.messages.readonly token
+    // also reaches other public messages in a space the app belongs to.
+    async getMessage(messageName) {
+      return call(requireName(messageName, isMessageName, "message"));
+    },
+
+    // Every space the app is a member of (chat.bot). Reaction subscriptions are per space.
+    async listSpaces({ pageSize = 1000, limit = 5000 } = {}) {
+      const out = [];
+      let pageToken = "";
+      do {
+        const res = await call("spaces", { query: { pageSize, pageToken: pageToken || null } });
+        for (const space of res?.spaces || []) if (isSpaceName(space?.name)) out.push(space);
+        pageToken = res?.nextPageToken || "";
+      } while (pageToken && out.length < limit);
+      return out;
+    },
+
     // The 1:1 space with a user, created on first use. `name` is the user's Chat resource name
     // (users/123…), which is why the inbound normalizer keeps it alongside the email.
     async findDirectMessage(userName) {

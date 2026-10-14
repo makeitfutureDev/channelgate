@@ -54,6 +54,7 @@ import { platformUiManifest } from "../../platforms/registry.js";
 import { isServiceAccountJson, syncAllNow, driveSyncStatusAll } from "../../gateway/drivesync.js";
 import { parseServiceAccount } from "../../platforms/googlechat/auth.js";
 import { isSubscriptionName } from "../../platforms/googlechat/pubsub.js";
+import { isTopicName } from "../../platforms/googlechat/workspace-events.js";
 import { logEvent } from "../../util/logger.js";
 import { checkForUpdate, startUpdate } from "../../gateway/updater.js";
 import { isValidModel } from "../../slack/util.js";
@@ -245,6 +246,13 @@ export function createSettingsRouter({
           return res.status(400).json({ error: 'the subscription must look like "projects/<project>/subscriptions/<name>"' });
         }
         patch.googleChatSubscription = value;
+      }
+      if (typeof body.googleChatReactionTopic === "string") {
+        const value = body.googleChatReactionTopic.trim();
+        if (value && !isTopicName(value)) {
+          return res.status(400).json({ error: 'the reaction events topic must look like "projects/<project>/topics/<name>"' });
+        }
+        patch.googleChatReactionTopic = value;
       }
       if (typeof body.googleChatBotUserId === "string") {
         const value = body.googleChatBotUserId.trim();

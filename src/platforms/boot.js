@@ -23,6 +23,7 @@ import { startTeams, botIdFor } from "./msteams/transport.js";
 // first event inside start(), and an ingest that does not exist yet would drop that message. Wiring
 // it up front means the very first message is answerable.
 async function startGoogleChatTransport(config, log, { onFatal } = {}) {
+  const { getMentionReactions } = await import('../config/settings.js');
   const capabilities = requirePlatform("googlechat").capabilities;
   const auth = createGoogleAuth({ serviceAccount: config.serviceAccountJson });
   const api = createChatApi({ auth });
@@ -35,6 +36,7 @@ async function startGoogleChatTransport(config, log, { onFatal } = {}) {
     ...config,
     capabilities,
     onMessage: ingest,
+    getActivationReactions: () => getMentionReactions('googlechat'),
     onCard: controls.onCard,
     onStop: controls.stop,
     onFatal,

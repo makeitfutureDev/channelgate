@@ -1,5 +1,49 @@
 # ChannelGate — Test Plan
 
+## Google Chat reaction controls via Workspace Events (2026-10-14)
+
+Root cause: Chat apps receive no interaction event for a reaction; Google delivers them only via
+Google Workspace Events subscriptions, which ChannelGate did not create. Automated fixtures:
+`test/googlechat-reactions.test.js` (parser, emoji mapping, freshness, reactor mapping,
+subscription reconciler, REST request shapes, and Pub/Sub → transport → durable inbox → ingest end
+to end with a real engine-run stub) and `test/platform-reaction-settings.test.js` (topic setting).
+Cases: 🛑 on the working message aborts a RUNNING turn as the reactor and refuses a non-author;
+admin stop; duplicate delivery acts once; ✅ closes a tracked reminder once and answers "No pending
+Tick button reminder" elsewhere; start emoji runs a person's text as the reactor and continues from
+the app's answer, never another app's; stale/unmapped/bot/unconfigured/removed-first reactions do
+nothing; removing a queued start withdraws its durable row; unapproved reactors meet the normal refusal; unreadable messages drop, transient errors
+throw for redelivery; lifecycle and membership events reconcile; no topic = inert; typed `/stop`
+and ordinary messages unaffected. Reconciler: create, renew under two hours, reactivate + renew
+suspended, recreate vanished, retire orphan/duplicate, ignore foreign topics, adopt 409, degrade
+on errors, coalesce concurrent passes.
+Validation (this candidate, container with the egress-proxy env cleared for Node warnings):
+`npm run test:coverage` **3,773 tests, 3,741 passed, 0 failed, 32 skipped**; Google Chat files
+93/93; Teams files 323/323; platform/ingest/inbox 215 passed, 1 skipped; `check:static`,
+`secret-scan`, `test:security-coverage` and `npm audit --omit=dev --audit-level=high` clean.
+
+Live fixtures (operator-owned, disposable): Google Chat app with Pub/Sub configured and Setup
+step 8 complete (Workspace Events API enabled, `chat.app.messages.readonly` admin-approved, Reaction
+events topic saved); the status line shows `reactions N/M spaces` with no error. A named threaded
+space and a DM; approved author A, approved non-admin B, admin C, and unapproved D, each of whom
+has sent the app at least one message (so their `users/…` id is recorded).
+- [ ] LIVE `GCHAT-REACT-STOP-CLAUDE-01` / `GCHAT-REACT-STOP-CODEX-01` (thread pinned to each engine
+  separately): A mentions the app with `Run sleep 180 in the shell, then reply STOP_NOT_HONORED`.
+  While *Working on it* shows, B reacts 🛑 on the working message → "Only the run author or an
+  administrator may stop…" and the turn continues. A reacts 🛑 on the working message. Pass:
+  within seconds "Stop requested for this session’s active and queued work." in the same thread,
+  the turn ends, `STOP_NOT_HONORED` never appears. Repeat with C stopping A's turn, and in the DM.
+- [ ] LIVE `GCHAT-REACT-START-CLAUDE-01` / `GCHAT-REACT-START-CODEX-01`: B posts (no mention) `Reply
+  exactly REACT_START_OK`; A reacts 🤖. Pass: one run attributed to A in that thread answering
+  `REACT_START_OK`; removing and re-adding 🤖 within a minute starts exactly one more; D reacting
+  gets the not-approved reply and no run; 🤖 on another app's message does nothing.
+- [ ] LIVE `GCHAT-REACT-TICK-01` (engine-independent: acknowledgment precedes engine dispatch): A
+  asks `remind me in 1 minute to check the build, require acknowledgement`; when the reminder
+  posts, A reacts ✅. Pass: "✅ Acknowledged — reminder closed." and no second notice; ✅ on an
+  ordinary message answers "No pending Tick button reminder on this message."
+- [ ] LIVE `GCHAT-REACT-LIFECYCLE-01` (engine-independent): restart the gateway; status returns to
+  `reactions N/M spaces` with no duplicate subscriptions (`subscriptions.list`); add the app to a
+  new space → covered within seconds; after ≥ 1 h, `expireTime` has moved forward.
+
 ## Google Chat native controls (2026-10-14)
 
 Automated fixtures: `test/googlechat-help.test.js`, `test/googlechat-settings.test.js`,

@@ -67,7 +67,8 @@ const TOPICS = [
   ] },
   { title: 'Reply controls', rows: [
     'The reply menu opens **Files**, **Variables** and **Settings** for this conversation.',
-    'Use `/stop` or `/cancel` to stop work. Reaction shortcuts are not available in Google Chat; mention me with your request.',
+    'Use `/stop` or `/cancel` to stop work.',
+    'Where reaction events are enabled: react with the configured start emoji (🤖 by default) to ask me to act on a message, 🛑 on a request or my working message to stop that session’s work (its author or an admin), and ✅ to acknowledge a tracked reminder.',
   ] },
 ];
 

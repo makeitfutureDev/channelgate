@@ -169,6 +169,9 @@ export function resolveGoogleChatConfig() {
     serviceAccountJson: s.googleChatServiceAccountJson || process.env.GOOGLE_CHAT_SERVICE_ACCOUNT_JSON || "",
     subscription: String(s.googleChatSubscription || process.env.GOOGLE_CHAT_SUBSCRIPTION || "").trim(),
     botUserId: String(s.googleChatBotUserId || process.env.GOOGLE_CHAT_BOT_USER_ID || "").trim(),
+    // Optional. Reaction controls need Google Workspace Events subscriptions publishing to this
+    // topic — the one the subscription above is attached to. Empty = no reaction controls.
+    reactionTopic: String(s.googleChatReactionTopic || process.env.GOOGLE_CHAT_REACTION_TOPIC || "").trim(),
   };
 }
 
@@ -1110,6 +1113,7 @@ export function settingsForApi() {
       serviceAccountEmail: googleChatServiceAccountEmail(),
       subscription: resolveGoogleChatConfig().subscription,
       botUserId: resolveGoogleChatConfig().botUserId,
+      reactionTopic: resolveGoogleChatConfig().reactionTopic,
       configured: hasGoogleChatConfig(),
     },
     teams: {
