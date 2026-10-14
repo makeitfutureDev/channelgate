@@ -210,6 +210,21 @@ control-plane status.
   (admin UI → conversation → Connections → *Custom MCP servers*) or to one person (Users → the
   person → *Personal MCP servers*). Each scope holds at most five. OAuth-only servers are out of
   scope and go through Composio.
+- **In Slack too:** the ⚙️ Settings → **MCPs** page has a *Custom MCP servers* section with two
+  lists, masked like the admin UI (server name, URL and last four token characters):
+  - *This conversation* — rows can be added, updated and removed only by the channel's managers
+    and admins (`canManage`, re-checked on every click and submission).
+  - *Yours* — the viewer's own `my-<name>` servers, which any authorized user manages for
+    themselves.
+  - *Add or update…* pushes a form (name, URL, optional token). It is never prefilled; a blank
+    token keeps the stored one for an existing name. Local field errors appear inline. Remote
+    address/membership checks acknowledge promptly and show progress in the existing Settings
+    page; a refusal offers a fresh form with the token draft cleared. Checks time out after
+    15 seconds and cannot save later; current authority is rechecked before the write.
+    Successful saves reuse that page, so repeated edits do not consume Slack's modal stack.
+  - *Remove* asks for confirmation and takes the server out of live relay grants. Saves and
+    removals go through the same `custom-mcp-store.js` path as the admin UI. Audit rows name the
+    Slack user. The Teams settings dialog does not offer this yet.
 - Runs receive a conversation's servers as `custom-<name>` and the AUTHOR's own as `my-<name>`, in
   Claude and Codex turns (fresh, resumed, cross-engine fallback) and in SSH sessions. The prefixes
   keep them apart from each other, the built-in servers and Cloud MCP selections. Lean injects

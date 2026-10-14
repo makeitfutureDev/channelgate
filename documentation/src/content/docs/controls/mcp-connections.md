@@ -5,6 +5,31 @@ description: Discover and manage engine-specific optional tool servers in a conv
 
 These controls select servers already available through the active engine inventory. Configure server definitions and authentication using the supported native engine configuration and Cloud MCP assignment paths; there is no separate general-purpose MCP catalog editor in the admin UI.
 
+## Custom servers in Slack Settings
+
+Open **⚙️ Settings** on a reply, choose **MCPs**, then find **Custom MCP servers**.
+
+- **This conversation** contains `custom-<name>` servers shared by runs here. Channel managers
+  and administrators can add, update and remove them; authority is checked again when saving.
+- **Yours** contains your personal `my-<name>` servers. Only runs you start receive these,
+  including your runs in other conversations. Other people do not see your personal list.
+
+Choose **Add or update**, enter a name and public HTTPS server URL, then enter the Bearer token
+in the private modal. For an existing name, leave the token blank to keep it or enter a new token
+to replace it. Stored tokens are never prefilled or revealed; the list shows only their last four
+characters. Each scope holds up to five servers. OAuth-only servers use Composio instead.
+
+Saving shows progress while the gateway checks the public address and your current access, then
+returns to the existing MCPs page, including after repeated updates. Local field errors remain
+inline. If a remote check fails or times out, **Try again** opens a fresh form; re-enter the token
+because its draft was cleared. Timed-out checks do not save later. **Remove** asks for
+confirmation and revokes that server's live relay access. New runs receive the saved list; Lean
+runs receive no custom servers. Claude and Codex use the same scoped connections.
+
+Admins can also manage these servers in the admin UI under the conversation's **Connections** or
+the person's **Personal MCP servers**. Custom servers are separate from the engine inventory and
+Cloud MCP selection controls below. Never paste a token into chat or a project MCP settings file.
+
 ## list_available_mcps
 
 Discover the current engine’s host-configured MCP inventory.

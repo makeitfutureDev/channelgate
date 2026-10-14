@@ -121,6 +121,11 @@ product overview.
   static IPv4) and four recommended EU hosts with estimated monthly prices — Hetzner CCX23 (≈ €25),
   netcup VPS 2000 G12 (≈ €16), RoLeaf in Romania (≈ €32) and Google Cloud `n4-standard-4` (≈ €139).
 
+- **Custom MCP servers from Slack.** ⚙️ Settings → MCPs now lists the conversation's custom MCP
+  servers and your own, and lets you add, update or remove them in place. A conversation's servers
+  are editable by its managers and admins; your own are yours to manage. Tokens stay write-only.
+  Repeated edits reuse the Settings window; slow address/access checks acknowledge promptly,
+  time out safely and recheck current authority before saving.
 - Teams channel and group-chat answers now end with a native mention of the requester, matching
   Slack. Long answers tag them on the final chunk before the statistics footer; DMs skip the tag.
 
