@@ -217,3 +217,51 @@ test("Teams typing failure disables refresh while keeping the ordinary answer pa
   await flush(); t.mock.timers.tick(12000); await flush(); await progress.stop();
   assert.equal(calls, 1); assert.equal(warnings, 1);
 });
+
+const { createGoogleChatConnector } = await import("../src/platforms/googlechat/connector.js");
+function googleWire({ failPatch = false } = {}) {
+  const visible = new Map(), calls = []; let sequence = 0;
+  const api = {
+    listMembers: async () => [],
+    createMessage: async (space, body) => { const messageId = `${space}/messages/m${++sequence}`; visible.set(messageId, body); calls.push(`post:${messageId}`); return { messageId, threadName: body.threadName }; },
+    patchMessage: async (messageId, body) => { if (failPatch) throw new Error("edit budget exhausted"); calls.push(`edit:${messageId}`); visible.set(messageId, { ...visible.get(messageId), ...body }); return { messageId }; },
+    deleteMessage: async messageId => { calls.push(`delete:${messageId}`); visible.delete(messageId); },
+  };
+  return { visible, calls, connector: createGoogleChatConnector({ capabilities: platformOr("googlechat").capabilities, api, log: { warn() {} } }) };
+}
+
+for (const engine of ["claude", "codex"]) {
+  test(`Google Chat ${engine} removes the working line when the final edit fails`, async () => {
+    const userId = `clean-${engine}@example.com`;
+    await setUser(userId, { approved: true });
+    const wire = googleWire({ failPatch: true });
+    await createIngest({ connector: wire.connector, log: { error() {} }, run: async () => {
+      assert.match([...wire.visible.values()][0].text, /Agent is working/);
+      return { content: "Answer.", engine, model: engine === "claude" ? "opus" : "gpt-6.1-sol" };
+    } })(makeInbound({ platform: "googlechat", kind: "dm", conversationId: `spaces/clean-${engine}`, messageId: `spaces/clean-${engine}/messages/q`,
+      userId, userName: "Developer", text: "hello" }));
+    assert.equal(wire.visible.size, 1, "only the answer remains");
+    assert.match([...wire.visible.values()][0].text, /Answer\./);
+    assert.ok(wire.calls.at(-1).startsWith("delete:"));
+  });
+}
+
+test("Google Chat working line carries a heartbeat edit without typing support and never posts new blocks", async t => {
+  t.mock.timers.enable({ apis: ["Date", "setTimeout", "setInterval"], now: 1000 });
+  const writes = [];
+  const connector = { progressStyle: "working", post: async body => writes.push(["post", body]), edit: async body => writes.push(["edit", body]) };
+  const progress = createConversationProgress({ adapter: platformOr("googlechat"), message: { rawConversationId: "spaces/beat" }, placeholder: { messageId: "spaces/beat/messages/1" }, connector, log: { warn() {} } });
+  progress.event({ kind: "run_queued", position: 2 }); await flush();
+  assert.match(writes.at(-1)[1].text, /Agent is working — Waiting for a gateway run slot \(position 2\)/);
+  t.mock.timers.tick(30000); await flush();
+  assert.match(writes.at(-1)[1].text, /30s elapsed .*Still connected/);
+  assert.ok(writes.every(([kind]) => kind === "edit"));
+  await progress.stop();
+  const count = writes.length;
+  t.mock.timers.tick(60000); await flush();
+  assert.equal(writes.length, count, "nothing writes after stop");
+  const orphan = []; const none = createConversationProgress({ adapter: platformOr("googlechat"), message: { rawConversationId: "spaces/beat" }, placeholder: null,
+    connector: { progressStyle: "working", post: async body => orphan.push(body), edit: async body => orphan.push(body) } });
+  none.phase("Thinking"); t.mock.timers.tick(60000); await flush(); await none.stop();
+  assert.deepEqual(orphan, [], "no placeholder means no separate status block");
+});

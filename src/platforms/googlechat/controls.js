@@ -14,7 +14,7 @@ import { createConversationSettingsGrantUrl } from '../../web/conversation-setti
 import { rememberReplySession } from '../reply-sessions.js';
 import { googleChatWorkspaceContext } from './workspace-access.js';
 import { isSpaceName, isMessageName, isThreadName } from './api.js';
-import { chatText, chatButtons, chatAction, chatLink, chatCard } from './cards.js';
+import { chatText, chatButtons, chatAction, chatLink, chatCard, controlError, GoogleChatControlError } from './cards.js';
 import { GOOGLE_CHAT_HELP_TEXT, createGoogleChatHelpCard } from './help.js';
 import { buildGoogleChatSettings, handleGoogleChatSettings } from './settings.js';
 import { verifyMenuAction } from './reply-menu.js';
@@ -37,7 +37,9 @@ export function googleChatActionData(event) {
     if (parsed !== null && !['string', 'number', 'boolean'].includes(typeof parsed)) throw new Error('Card values must be scalar.');
     data[key] = parsed;
   }
-  for (const [key, input] of Object.entries(event.formInputs || event.commonEventObject?.formInputs || {})) {
+  const ignoreInputs = data.cgInputs === 'none';
+  delete data.cgInputs;
+  for (const [key, input] of Object.entries(ignoreInputs ? {} : event.formInputs || event.commonEventObject?.formInputs || {})) {
     if (!FORMS.test(key)) continue;
     const values = input?.stringInputs?.value;
     if (!Array.isArray(values) || values.length > 100 || values.some(value => typeof value !== 'string' || value.length > 8000)) throw new Error('Invalid card form.');
@@ -46,12 +48,23 @@ export function googleChatActionData(event) {
   return { action: fn, data };
 }
 
+// Deliberate guidance (ours, the shared file explorer's, the settings policy's) is shown to the
+// requester. System and REST errors carry host paths or Google response bodies: never shown.
+const GENERIC_FAILURE = 'Reopen the controls or retry the original request in this conversation to check your access and try again.';
+export function googleChatControlMessage(error) {
+  if (error instanceof GoogleChatControlError) return error.message;
+  if (error?.code === 'ENOENT') return 'That file or folder was not found in this workspace.';
+  if (!(error instanceof Error) || error.code || error.status || error.constructor !== Error) return GENERIC_FAILURE;
+  const message = String(error.message || '');
+  return message && message.length <= 300 && !/[\r\n]/.test(message) && !/^Google Chat /.test(message) ? message : GENERIC_FAILURE;
+}
+
 export function createGoogleChatControls({ connector, authorize = googleChatWorkspaceContext, publicUrl = getPublicUrl, now = Date.now, log = console } = {}) {
   const states = new Map();
   const prune = () => { for (const [id, state] of states) if (state.expires <= now()) states.delete(id); while (states.size >= 500) states.delete(states.keys().next().value); };
   const grant = state => ({ channelId: state.message.conversationId, slug: state.entry.slug, ownerId: state.message.userId, threadTs: state.sessionKey });
   const ownerResource = state => state.message.raw?.senderName || state.message.userId;
-  const linkBase = () => { const base = publicUrl(); if (!base) throw new Error('Set the gateway Public URL to enable browser downloads and private settings.'); return base; };
+  const linkBase = () => { const base = publicUrl(); if (!base) throw controlError('Set the gateway Public URL to enable browser downloads and private settings.'); return base; };
   async function rememberIdentity(userId, resource) {
     if (!resource || !/^users\/[A-Za-z0-9_-]+$/.test(resource) || !await getUser(userId)) return;
     await setUser(userId, { googleChatUserName: resource });
@@ -129,10 +142,10 @@ export function createGoogleChatControls({ connector, authorize = googleChatWork
       return true;
     }
     try {
-      if (name === 'sendfile' && !command[2]?.trim()) throw new Error('Use /sendfile followed by a workspace-relative file path.');
+      if (name === 'sendfile' && !command[2]?.trim()) throw controlError('Use /sendfile followed by a workspace-relative file path.');
       await open({ ...args, tab: name === 'secrets' ? 'secrets' : 'general', relative: normalizeRelativePath(command[2]?.trim() || '') },
         name === 'sendfile' ? 'file' : name === 'files' ? 'files' : 'settings');
-    } catch (error) { await args.reply(error.message); }
+    } catch (error) { await args.reply(googleChatControlMessage(error)); }
     return true;
   }
   async function onCard(event) {
@@ -145,23 +158,25 @@ export function createGoogleChatControls({ connector, authorize = googleChatWork
       const { action, data } = googleChatActionData(event);
       if (action === 'approval.respond') {
         const result = await handlePlatformApproval({ ...data, conversationId: event.conversationId, messageId: event.messageId, actorId: event.userId });
-        if (result.ok) await connector.updateCard({ conversationId: event.rawConversationId, messageId: event.messageId,
+        // Teams answers the clicker with the shared policy's reason; the card itself stays live for
+        // whoever may still decide it, so a refusal is private and never edits the shared card.
+        if (!result.ok) throw controlError(`Approval unavailable: ${result.error || 'this request cannot be decided here.'}`);
+        await connector.updateCard({ conversationId: event.rawConversationId, messageId: event.messageId,
           card: chatCard('Approval recorded', [chatText(result.outcome || 'Handled.')]), text: 'Approval recorded' });
-        else throw new Error('Approval unavailable.');
         return;
       }
       if (action.startsWith('menu.')) {
         const sealed = verifyMenuAction(action, data);
-        if (!sealed || sealed.conversationId !== event.rawConversationId || sealed.authorId && sealed.authorId !== event.userId) throw new Error('These buttons belong to the original requester and conversation.');
+        if (!sealed || sealed.conversationId !== event.rawConversationId || sealed.authorId && sealed.authorId !== event.userId) throw controlError('These buttons belong to the original requester and conversation.');
         const entry = await getChannelEntry(event.conversationId);
         const meta = entry && await getChannelMeta(entry.slug);
-        if (!entry || !meta) throw new Error('Conversation no longer exists.');
+        if (!entry || !meta) throw controlError('Conversation no longer exists.');
         return await open({ message: { ...event, isDM: Boolean(meta.isDM), raw: { senderName: event.raw?.senderName || event.userResourceName || '' } },
           entry, meta, sessionKey: sealed.sessionKey, tab: sealed.kind === 'secrets' ? 'secrets' : 'general', relative: sealed.relative }, sealed.kind === 'file' ? 'file' : sealed.kind === 'files' ? 'files' : 'settings');
       }
       release = await acquireKeyedLock('googlechat-controls', data.stateId || '');
       prune(); const state = states.get(data.stateId);
-      if (!state || state.message.userId !== event.userId || state.message.conversationId !== event.conversationId || state.messageId !== event.messageId) throw new Error('These controls expired or belong to another requester. Reopen them.');
+      if (!state || state.message.userId !== event.userId || state.message.conversationId !== event.conversationId || state.messageId !== event.messageId) throw controlError('These controls expired or belong to another requester. Reopen them.');
       const context = await authorize(grant(state), { connector });
       state.meta = context.meta;
       let card;
@@ -171,11 +186,11 @@ export function createGoogleChatControls({ connector, authorize = googleChatWork
       } else if (action.startsWith('settings.')) card = await handleGoogleChatSettings(action, data, state, data.stateId, { connector, authorize });
       else if (action === 'files.browse' || action === 'files.preview') {
         state.relative = normalizeRelativePath(data.relative || '');
-        if (data.page != null && (!Number.isSafeInteger(data.page) || data.page < 0)) throw new Error('Invalid file page.');
+        if (data.page != null && (!Number.isSafeInteger(data.page) || data.page < 0)) throw controlError('Invalid file page.');
         state.page = data.page || 0;
         card = action === 'files.preview' ? await preview(state, data.stateId, context) : await files(state, data.stateId, context);
       } else if (action === 'files.upload') {
-        if (!canEditChannelFiles(effectiveMeta(context.meta), { isAdminUser: context.userIsAdmin })) throw new Error('This workspace is read-only for you.');
+        if (!canEditChannelFiles(effectiveMeta(context.meta), { isAdminUser: context.userIsAdmin })) throw controlError('This workspace is read-only for you.');
         const relative = normalizeRelativePath(data.relative || '');
         await resolveVisiblePath(context.root, relative, { kind: 'directory' });
         card = chatCard('Upload files', [chatText('Files will be saved into this conversation workspace.'), chatButtons([
@@ -183,17 +198,17 @@ export function createGoogleChatControls({ connector, authorize = googleChatWork
         ])]);
       } else throw new Error('Unsupported card action.');
       await connector.updateCard({ conversationId: event.rawConversationId, messageId: state.messageId, card, text: 'Conversation controls' });
-    } catch {
+    } catch (error) {
       log.warn?.('[googlechat] card action could not be completed');
       await connector.postCard({ conversationId: event.rawConversationId, threadKey: event.threadKey,
         privateTo: event.userResourceName || event.raw?.senderName || event.userId,
-        card: chatCard('Action unavailable', [chatText('Reopen the controls or retry the original request in this conversation to check your access and try again.')]), text: 'Action unavailable' }).catch(() => {});
+        card: chatCard('Action unavailable', [chatText(googleChatControlMessage(error))]), text: 'Action unavailable' }).catch(() => {});
     } finally { release?.(); }
   }
   async function shareFile({ channelId, slug, authorId, threadKey, relative }) {
-    if (!channelId.startsWith('gchat:') || !threadKey) throw new Error('A current Google Chat conversation is required.');
+    if (!channelId.startsWith('gchat:') || !threadKey) throw controlError('A current Google Chat conversation is required.');
     const entry = await getChannelEntry(channelId), meta = entry && await getChannelMeta(entry.slug);
-    if (!entry || entry.slug !== slug || !meta) throw new Error('Conversation no longer exists.');
+    if (!entry || entry.slug !== slug || !meta) throw controlError('Conversation no longer exists.');
     linkBase();
     const user = await getUser(authorId);
     return open({ message: { conversationId: channelId, rawConversationId: channelId.slice(6), userId: authorId,

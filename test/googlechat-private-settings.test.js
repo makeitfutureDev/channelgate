@@ -74,8 +74,12 @@ test('CSRF, hostile origin, forged authority and personal scopes are checked ser
   assert.equal((await f.post(opened, data)).status, 303);
   assert.equal((await getUser(f.ownerId)).env.BROWSER_PERSONAL_TOKEN.value, data.variableValue);
   assert.equal(await getUser('forged'), null);
-  assert.equal((await f.post(opened, { ...data, variableScope: 'organization', userIsAdmin: 'true' })).status, 403);
+  // A policy refusal keeps the authorized session and explains the rule without echoing values.
+  assert.equal((await f.post(opened, { ...data, variableScope: 'organization', userIsAdmin: 'true' })).status, 303);
   assert.ok(!listOrgEnv().some(row => row.name === data.variableName));
+  const refused = await (await fetch(f.base + opened.route, { headers: { cookie: opened.cookie } })).text();
+  assert.match(refused, /Not saved\. Only administrators can change organization variables\. No value was stored\./);
+  assert.ok(!refused.includes(data.variableValue));
   assert.equal((await f.post(opened, { action: 'settings.personal.save', personalComposioToken: 'connection-test-fixture-secret', ownerId: 'forged' })).status, 303);
   assert.equal((await getUser(f.ownerId)).composioToken, 'connection-test-fixture-secret');
   assert.equal((await f.post(opened, { action: 'settings.connections.save', makeToolboxUrl: 'https://eu1.make.com/mcp/server/browser-fixture', makeToolboxKey: 'make-connection-fixture-secret' })).status, 303);
@@ -97,7 +101,8 @@ test('membership, account identity and organization roles are rechecked througho
   assert.ok(listOrgEnv().some(row => row.name === data.variableName));
   t.after(() => patchOrgEnv({ remove: data.variableName }));
   await setUser(f.ownerId, { isAdmin: false });
-  assert.equal((await f.post(opened, { action: 'settings.variable.remove', variableScope: 'organization', name: data.variableName })).status, 403);
+  assert.equal((await f.post(opened, { action: 'settings.variable.remove', variableScope: 'organization', name: data.variableName })).status, 303);
+  assert.ok(listOrgEnv().some(row => row.name === data.variableName), 'a demoted admin cannot remove organization variables');
   f.revoke();
   assert.equal((await fetch(f.base + opened.route, { headers: { cookie: opened.cookie } })).status, 403);
   assert.equal((await f.post(opened, { ...data, variableScope: 'channel' })).status, 403);
@@ -113,4 +118,17 @@ test('browser grants expire, bind the original origin, and reject workspace iden
   const opened = await f.open();
   f.mismatch();
   assert.equal((await fetch(f.base + opened.route, { headers: { cookie: opened.cookie } })).status, 403);
+});
+
+test('a refused save never reflects a submitted value in its notice', async t => {
+  const f = await fixture(t);
+  const opened = await f.open();
+  const value = 'reflected-fixture-secret-value';
+  // A reserved name is refused by the shared validator; the notice may name the rule, never the value.
+  assert.equal((await f.post(opened, { action: 'settings.variable.save', variableScope: 'channel', variableName: 'LD_PRELOAD', variableValue: value })).status, 303);
+  assert.equal((await f.post(opened, { action: 'settings.personal.save', personalComposioToken: 'abc' })).status, 303);
+  const html = await (await fetch(f.base + opened.route, { headers: { cookie: opened.cookie } })).text();
+  assert.match(html, /Not saved\./);
+  assert.ok(!html.includes(value));
+  assert.equal((await getChannelMeta(f.entry.slug)).env?.LD_PRELOAD, undefined);
 });

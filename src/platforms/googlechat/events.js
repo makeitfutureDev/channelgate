@@ -121,6 +121,26 @@ export function resolveThreadKey({ kind, threadName, seen }) {
   return known ? threadName : "";
 }
 
+export const GOOGLE_CHAT_CONTROL_COMMAND = /^\/(help|status|clear|stop|cancel|model|effort|settings|files|secrets|sendfile)(?:\s|$)/i;
+
+// A registered slash command arrives with `argumentText` holding ONLY the arguments (Google's own
+// example: text "/debug show code", argumentText " show code"). The command itself is the
+// SLASH_COMMAND annotation's commandName, or failing that the literal message text. Command IDs
+// are operator-chosen, so a number is never mapped to a name. A typed "@app /help" carries no
+// slash-command metadata and keeps the mention-stripped argumentText.
+export function messageCommandText(message, { appCommand = false } = {}) {
+  const argument = String(message?.argumentText ?? message?.text ?? '').trim();
+  const annotation = (message?.annotations || []).find(a => a?.type === 'SLASH_COMMAND')?.slashCommand;
+  if (!appCommand && message?.slashCommand?.commandId == null && !annotation) return argument;
+  const name = String(annotation?.commandName || '').trim();
+  if (/^\/[A-Za-z0-9_-]+$/.test(name)) {
+    const prefixed = argument.toLowerCase() === name.toLowerCase() || argument.toLowerCase().startsWith(`${name.toLowerCase()} `);
+    return prefixed ? argument : `${name} ${argument}`.trim();
+  }
+  const literal = String(message?.text ?? '').trim();
+  return literal.startsWith('/') ? literal : argument;
+}
+
 export function normalizeMessage({ message, space, appCommand = false }, { botUserId = "", seen = null, api = null } = {}) {
   const spaceName = String(space?.name || message?.space?.name || "");
   const spaceType = String(space?.spaceType || space?.type || "").toUpperCase();
@@ -130,11 +150,12 @@ export function normalizeMessage({ message, space, appCommand = false }, { botUs
   const sender = message?.sender || {};
   const threadName = String(message?.thread?.name || "");
   const quoted = String(message?.quotedMessageMetadata?.name || '');
-  const text = String(message?.argumentText ?? message?.text ?? '').trim();
+  const text = messageCommandText(message, { appCommand });
   // Command IDs are chosen by the app operator, so we never infer a command name from a number.
   // Only a registered invocation carrying a supported literal command bypasses the mention gate.
-  const registeredCommand = (appCommand || message?.slashCommand?.commandId != null)
-    && /^\/(help|status|clear|stop|cancel|model|effort|settings|files|secrets|sendfile)(?:\s|$)/i.test(text);
+  const registeredCommand = (appCommand || message?.slashCommand?.commandId != null
+    || (message?.annotations || []).some(a => a?.type === 'SLASH_COMMAND'))
+    && GOOGLE_CHAT_CONTROL_COMMAND.test(text);
 
   return makeInbound({
     platform: "googlechat",

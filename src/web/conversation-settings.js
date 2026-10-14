@@ -135,8 +135,9 @@ export function createConversationSettingsRouter({ authorize, connector } = {}) 
     if (!trustedOrigin(req, session.grant) || typeof req.body?.csrf !== 'string' || !timingSafeEqualStr(req.body.csrf, session.csrf)) return unavailable(res, 403);
     const action = req.body?.action;
     if (!ALLOWED_ACTIONS.has(action)) return unavailable(res, 400);
+    let ctx;
+    try { ctx = await contextFor(session); } catch { return unavailable(res, 403); }
     try {
-      const ctx = await contextFor(session);
       // Existing server URLs/labels never become browser defaults. Empty fields preserve them,
       // allowing rotation of one token while a configured Make connection stays intact.
       const data = action === 'settings.connections.save' ? { ...req.body,
@@ -146,7 +147,17 @@ export function createConversationSettingsRouter({ authorize, connector } = {}) 
       await handleCatalogAction(action, data, ctx, {});
       session.notice = 'Saved. Credential values remain hidden.';
       return res.redirect(303, `/conversation-settings/${req.params.id}`);
-    } catch { return unavailable(res, 403); }
+    } catch (error) {
+      // A refused save keeps the still-authorized session. Policy messages name rules, never
+      // values; a message that echoes any submitted field is replaced rather than reflected.
+      const message = String(error?.message || '');
+      const submitted = Object.entries(req.body || {}).filter(([key]) => !['csrf', 'action', 'variableScope', 'variableHostsMode', 'connection'].includes(key))
+        .map(([, value]) => String(value ?? '').trim()).filter(value => value.length >= 3);
+      const safe = message && message.length <= 300 && !/[\r\n]/.test(message) && !error?.code && !error?.status
+        && !submitted.some(value => message.includes(value));
+      session.notice = `Not saved. ${safe ? message : 'Check the name, scope and your permissions, then try again.'} No value was stored.`;
+      return res.redirect(303, `/conversation-settings/${req.params.id}`);
+    }
   });
   // Never send parser diagnostics or reflected request values back to a credential form.
   router.use((_error, _req, res, _next) => unavailable(res, 400));

@@ -22,6 +22,14 @@ product overview.
   browser credential entry, native approvals and the Files/Variables/Settings reply menu.
   Control commands remain responsive during agent work. These adapt the Teams improvements to
   Cards v2 and Pub/Sub; live Google Chat acceptance remains pending.
+- Fix Google Chat audit findings: registered slash commands (`/help`, `/stop`, `/model …`) are
+  read from Google's command annotation instead of the arguments-only `argumentText`, so they no
+  longer arrive empty or as a bare prompt; long turns show a ticking "still connected" heartbeat in
+  the working line again; a working line left by a failed edit is removed; approval refusals and
+  control errors tell the clicker why, privately, without host paths or API bodies; Deny no longer
+  submits the comment box; a refused browser-settings save explains the rule and keeps the
+  session; a quoted top-level `/stop`/`/status`/`/clear` reaches the quoted turn in group chats and
+  unthreaded spaces; a restart-interrupted button click is reported only to its clicker.
 
 - Fix Teams 🛑 Stop and ✅ Tick reactions being ignored in group chats and channels. Microsoft Graph
   now returns those messages without reaction history, and the earlier fallback accepted only

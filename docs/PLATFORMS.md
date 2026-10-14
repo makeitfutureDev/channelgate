@@ -107,7 +107,10 @@ optional field exists only to short-circuit that.
   mention the bot before a typed command; configured registered slash-command events also work.
   Credential entry uses private browser forms; no value is shown or prefilled. Pub/Sub supports
   cards but cannot open synchronous dialogs. Stop/status use a separate durable control queue.
-- **Replies:** a temporary working line becomes the final answer. Space/group answers mention
+- **Replies:** a temporary working line (edited with a compact elapsed/"Still connected"
+  heartbeat, since Chat has no typing indicator) becomes the final answer. In group chats and
+  unthreaded spaces, quote the request or a bot reply with a top-level `/stop`, `/status` or
+  `/clear` to reach that turn; in threaded spaces send them in its thread. Space/group answers mention
   the requester and have Files/Variables/Settings plus referenced-file buttons below compact stats.
 
 ---

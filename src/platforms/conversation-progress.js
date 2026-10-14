@@ -17,9 +17,12 @@ function toolName(name) {
 // phase changes arrive sooner, bounded by both a conservative floor and the surface edit budget.
 // Stop discards queued status and drains the current write before the final answer can replace it.
 export function createConversationProgress({ connector, message, placeholder, adapter, log = console, intervalMs = 30000, now = Date.now }) {
-  // Teams keeps only its initial working placeholder, replaced by the final answer.
-  // Detailed runtime/tool/heartbeat status must never become a separate reply block.
-  if (connector.progressStyle === 'working' || adapter.id === "msteams") {
+  // Teams keeps only its initial working placeholder, replaced by the final answer, and proves
+  // liveness with its typing indicator. Detailed status must never become a separate reply block.
+  // A working-style surface WITHOUT a typing indicator (Google Chat) keeps the same placeholder but
+  // edits a compact heartbeat into it below: a static line would look exactly like a dead run.
+  const working = connector.progressStyle === 'working';
+  if (adapter.id === "msteams" || (working && typeof connector.typing === "function")) {
     let stopped = false;
     let pending = null;
     let timer = null;
@@ -32,7 +35,7 @@ export function createConversationProgress({ connector, message, placeholder, ad
       }).catch(err => {
         if (!stopped) {
           // A client/tenant without typing support still has the visible working placeholder.
-          log.warn?.(`[msteams] typing indicator unavailable: ${err?.message || err}`);
+          log.warn?.(`[${adapter.id}] typing indicator unavailable: ${err?.message || err}`);
           stopped = true;
           if (timer) clearInterval(timer);
         }
@@ -68,6 +71,8 @@ export function createConversationProgress({ connector, message, placeholder, ad
 
   const update = () => {
     if (stopped) return;
+    // A working-style heartbeat only ever edits its own placeholder; it never posts a new block.
+    if (working && !(placeholder?.messageId && adapter.capabilities.messageEdit)) return;
     dirty = true;
     if (updating || scheduled) return;
     const delay = minGap - (now() - lastWrite);
@@ -76,7 +81,10 @@ export function createConversationProgress({ connector, message, placeholder, ad
       scheduled.unref?.();
       return;
     }
-    const text = `${runtime ? `${runtime} · ` : ""}${state} — ${Math.floor((now() - started) / 1000)}s elapsed; last activity ${Math.floor((now() - lastActivity) / 1000)}s ago; ${agents.size} subagent(s) running. Still connected.`;
+    const elapsed = Math.floor((now() - started) / 1000), quiet = Math.floor((now() - lastActivity) / 1000);
+    const text = working
+      ? `⏳ Agent is working — ${state}${runtime ? ` · ${runtime}` : ""} · ${elapsed}s elapsed · last activity ${quiet}s ago${agents.size ? ` · ${agents.size} subagent(s) running` : ""}. Still connected.`
+      : `${runtime ? `${runtime} · ` : ""}${state} — ${elapsed}s elapsed; last activity ${quiet}s ago; ${agents.size} subagent(s) running. Still connected.`;
     const chunk = adapter.formatOutbound(text).chunks[0] || { text };
     dirty = false;
     lastWrite = now();
