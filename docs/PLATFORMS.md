@@ -33,9 +33,17 @@ per-platform, and none of it is relaxed to make a surface work.
 
 ## Google Chat (Beta)
 
-**Transport: Pub/Sub pull.** Google publishes your Chat app's events to a topic you own, and the
-daemon pulls them over an outbound HTTPS connection. No inbound endpoint, no tunnel, no firewall
-rule — the same posture as Slack's Socket Mode.
+**Transport: Pub/Sub pull, plus an optional HTTPS endpoint.** Google publishes your Chat app's
+events to a topic you own, and the daemon pulls them over an outbound HTTPS connection. No inbound
+endpoint, no tunnel, no firewall rule — the same posture as Slack's Socket Mode. A Chat app has
+exactly **one** connection setting, and Google never delivers card or button clicks to a Pub/Sub
+topic: with the topic connection, the Files / Variables / Settings buttons and every other card
+button fail with Chat's "unable to process your request". To make them work, point the app's
+connection at ChannelGate's **HTTP endpoint URL** instead (step 9): Google then POSTs every
+interaction event — messages, membership, commands and clicks — to `<Public URL>/api/googlechat/events`,
+each request signed with a Google ID token that the endpoint verifies before anything else happens.
+The Pub/Sub subscription stays connected either way: it is also where Workspace Events deliver
+reactions (step 8).
 
 ### Setup
 
@@ -110,6 +118,40 @@ optional field exists only to short-circuit that.
    spaces the app left, and reconciles on startup, on joining a space and on Google's lifecycle
    events. Reactions made while the gateway is down for longer than that are not delivered.
 
+9. **Optional — working card buttons (HTTP endpoint connection).** Card and button clicks reach a
+   Chat app only through an HTTP endpoint connection
+   ([Google's connection settings](https://developers.google.com/workspace/chat/configure-chat-api);
+   the Workspace Events API has no click event type). ChannelGate serves that endpoint on the same
+   HTTPS listener as the admin UI and the Teams webhook:
+   1. Set the gateway **Public URL** (Settings → Connection). The Google Chat card then shows the
+      endpoint, `<Public URL>/api/googlechat/events`.
+   2. **Workspace add-on apps:** in Settings → Google Chat, enter the **Chat app service account**
+      — the *Service account email* shown under Connection settings on the Chat API Configuration
+      page (`service-<project-number>@gcp-sa-gsuiteaddons.iam.gserviceaccount.com`, the step 5
+      identity). Google signs every endpoint request as that account; ChannelGate accepts no other
+      sender, so the field is required for an add-on. **Standalone apps** sign as
+      `chat@system.gserviceaccount.com`, which is always accepted; if the app's *Authentication
+      Audience* is set to the project number rather than the URL, also enter the **Google Cloud
+      project number**.
+   3. **Save**, then **Connect** (the endpoint is armed at connect time; the status line reads
+      `endpoint https://…/api/googlechat/events`).
+   4. On the Chat API Configuration page set **Connection settings → HTTP endpoint URL** to that
+      exact URL (for a standalone app choose the *HTTP endpoint URL* authentication audience unless
+      you entered the project number) and **Save**. Keep the Pub/Sub subscription and topic:
+      reaction events (step 8) still arrive through them.
+   5. **Test:** mention the app, then press **Files** under its answer. A private "Conversation
+      files" card must open with no red error line. Switching the connection back to the topic
+      restores the previous behaviour; the endpoint keeps answering `401` to anything Google did
+      not sign for this app.
+
+   Every request is verified before it is read: RS256 against Google's published keys, issuer
+   `accounts.google.com`, audience equal to the configured endpoint URL (or the project number for
+   the standalone JWT form), `email_verified`, and the sender exactly as configured. Requests that
+   fail answer `401` with no detail; an endpoint with no Public URL answers `503` naming the remedy.
+   Google waits at most 30 seconds for a synchronous reply, so the endpoint acknowledges with an
+   empty object as soon as the event is durably queued and everything ChannelGate says back goes
+   through the Chat REST API, exactly as for a pulled event. Dialogs are still not used.
+
 ### Notes and limits
 
 - **Attachments in:** files uploaded directly in Chat are downloaded through `media.download`. A file
@@ -129,8 +171,9 @@ optional field exists only to short-circuit that.
 - **Commands:** `/help` shows compact expandable Cards v2 with a full-text fallback. `/settings`,
   `/secrets` and `/model` open settings tabs and separate channel/session runtime scopes. In spaces
   mention the bot before a typed command; configured registered slash-command events also work.
-  Credential entry uses private browser forms; no value is shown or prefilled. Pub/Sub supports
-  cards but cannot open synchronous dialogs. Stop/status use a separate durable control queue.
+  Credential entry uses private browser forms; no value is shown or prefilled. Cards render on
+  both connections, but their **buttons act only with the HTTP endpoint connection** (Setup step
+  9); dialogs are never used. Stop/status use a separate durable control queue.
 - **Reactions** (with Setup step 8): the configured start emoji on a person's message runs its text
   as the **reactor**, and on the app's answer continues that task; 🛑 on the request or the working
   message stops that session's active and queued work, including a turn already running (its

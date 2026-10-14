@@ -3811,6 +3811,8 @@ function readSettingsForm() {
     googleChatSubscription: document.getElementById("set-gchat-sub").value,
     googleChatBotUserId: document.getElementById("set-gchat-bot").value,
     googleChatReactionTopic: document.getElementById("set-gchat-reaction-topic").value,
+    googleChatAppServiceAccount: document.getElementById("set-gchat-app-sa").value,
+    googleChatProjectNumber: document.getElementById("set-gchat-project-number").value,
     teamsAppId: document.getElementById("set-teams-app").value,
     ...(tokenValue(document.getElementById("set-teams-secret")) ? { teamsAppPassword: tokenValue(document.getElementById("set-teams-secret")) } : {}),
     ...(document.getElementById("clear-teams-secret").classList.contains("armed") ? { clearTeamsAppPassword: true } : {}),
@@ -3943,6 +3945,9 @@ function paintSettings(s) {
   document.getElementById("set-gchat-sub").value = s.googleChat?.subscription || "";
   document.getElementById("set-gchat-bot").value = s.googleChat?.botUserId || "";
   document.getElementById("set-gchat-reaction-topic").value = s.googleChat?.reactionTopic || "";
+  document.getElementById("set-gchat-app-sa").value = s.googleChat?.appServiceAccount || "";
+  document.getElementById("set-gchat-project-number").value = s.googleChat?.projectNumber || "";
+  document.getElementById("gchat-endpoint").textContent = s.googleChat?.eventsEndpoint || "set the Public URL first";
   // No eye toggle on the key: attachReveal drives an <input type=password>, and this is a textarea
   // (a service-account key is multi-line JSON) — the same shape the Drive-sync key field uses. The
   // value is still fetchable through /api/secrets/reveal for an admin who needs it back.

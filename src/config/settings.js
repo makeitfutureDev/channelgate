@@ -172,7 +172,20 @@ export function resolveGoogleChatConfig() {
     // Optional. Reaction controls need Google Workspace Events subscriptions publishing to this
     // topic — the one the subscription above is attached to. Empty = no reaction controls.
     reactionTopic: String(s.googleChatReactionTopic || process.env.GOOGLE_CHAT_REACTION_TOPIC || "").trim(),
+    // The HTTP endpoint connection (the one that carries card and button clicks). The endpoint URL
+    // derives from the Public URL; the add-on's per-project sender address and the standalone
+    // app's project-number audience are what the endpoint's bearer check pins requests to.
+    appServiceAccount: String(s.googleChatAppServiceAccount || process.env.GOOGLE_CHAT_APP_SERVICE_ACCOUNT || "").trim().toLowerCase(),
+    projectNumber: String(s.googleChatProjectNumber || process.env.GOOGLE_CHAT_PROJECT_NUMBER || "").trim(),
+    endpointUrl: googleChatEventsEndpoint(),
   };
+}
+
+// The URL to enter as the Chat app's "HTTP endpoint URL" connection setting; empty until the
+// gateway has a Public URL. Mounted in src/web/app.js ahead of the admin auth stack.
+export function googleChatEventsEndpoint() {
+  const base = getPublicUrl();
+  return base ? `${base}/api/googlechat/events` : "";
 }
 
 // The service account's own address, parsed out of the stored key. Shown in the admin UI because
@@ -1114,6 +1127,9 @@ export function settingsForApi() {
       subscription: resolveGoogleChatConfig().subscription,
       botUserId: resolveGoogleChatConfig().botUserId,
       reactionTopic: resolveGoogleChatConfig().reactionTopic,
+      appServiceAccount: resolveGoogleChatConfig().appServiceAccount,
+      projectNumber: resolveGoogleChatConfig().projectNumber,
+      eventsEndpoint: googleChatEventsEndpoint(),
       configured: hasGoogleChatConfig(),
     },
     teams: {

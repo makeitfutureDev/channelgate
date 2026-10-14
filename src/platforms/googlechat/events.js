@@ -23,6 +23,18 @@ export function parseChatEvent(envelope, attributes = {}) {
       membership: payload.membership || {},
     };
   }
+  // The HTTP endpoint carries no CloudEvent attributes: the add-on payload key, or the legacy
+  // `type`, is the only thing that says what happened. Membership there names the space but not
+  // the app's own member record, so the bot id is learned from a later mention instead.
+  const legacyType = String(envelope?.type || "").toUpperCase();
+  if (chat.addedToSpacePayload || legacyType === "ADDED_TO_SPACE") {
+    const payload = chat.addedToSpacePayload || envelope;
+    return { type: "membership.added", space: payload.space || chat.space || {}, membership: payload.membership || {} };
+  }
+  if (chat.removedFromSpacePayload || legacyType === "REMOVED_FROM_SPACE") {
+    const payload = chat.removedFromSpacePayload || envelope;
+    return { type: "membership.removed", space: payload.space || chat.space || {}, membership: payload.membership || {} };
+  }
   // Add-on, native Pub/Sub and legacy HTTP events all carry the ACTOR separately from the
   // bot-authored source message. Never use the message sender or action parameters as identity.
   if (chat.buttonClickedPayload || chat.action || envelope?.type === "CARD_CLICKED"

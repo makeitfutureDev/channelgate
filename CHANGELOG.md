@@ -18,6 +18,15 @@ product overview.
 
 ## Unreleased
 
+- Google Chat card buttons now work: a Chat app connected through a Pub/Sub topic never receives
+  button clicks (Google delivers them only to an HTTP endpoint connection), so Files / Variables /
+  Settings and every other card button failed with "unable to process your request". ChannelGate
+  now serves `POST /api/googlechat/events` on its HTTPS listener, verifying each request's Google
+  ID token (issuer, audience = the endpoint URL, verified sender = the configured Chat app service
+  account) before feeding the same transport path Pub/Sub uses, and acknowledges within Google's
+  30-second window. Settings → Google Chat shows the endpoint URL and takes the app's service
+  account (and, for standalone apps, the project number). The Pub/Sub subscription stays in place
+  for Workspace Events reactions. Setup: `docs/PLATFORMS.md`, Google Chat step 9.
 - Add Google Chat reaction controls. Chat apps receive no event for a reaction, so ChannelGate now
   maintains a Google Workspace Events subscription per space (app authentication with the
   admin-approved `chat.app.messages.readonly` scope, renewed about hourly) when Settings → Google

@@ -254,6 +254,18 @@ export function createSettingsRouter({
         }
         patch.googleChatReactionTopic = value;
       }
+      if (typeof body.googleChatAppServiceAccount === "string") {
+        const value = body.googleChatAppServiceAccount.trim().toLowerCase();
+        if (value && !/^[a-z0-9._%+-]+@[a-z0-9.-]+\.gserviceaccount\.com$/.test(value)) {
+          return res.status(400).json({ error: 'the Chat app service account must be a Google service-account address such as "service-<project-number>@gcp-sa-gsuiteaddons.iam.gserviceaccount.com"' });
+        }
+        patch.googleChatAppServiceAccount = value;
+      }
+      if (typeof body.googleChatProjectNumber === "string") {
+        const value = body.googleChatProjectNumber.trim();
+        if (value && !/^\d{6,20}$/.test(value)) return res.status(400).json({ error: "the Google Cloud project number must be numeric" });
+        patch.googleChatProjectNumber = value;
+      }
       if (typeof body.googleChatBotUserId === "string") {
         const value = body.googleChatBotUserId.trim();
         if (value && !/^users\/[A-Za-z0-9_-]+$/.test(value)) {
