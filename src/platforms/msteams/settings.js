@@ -40,8 +40,8 @@ export function teamsSettingsUi(stateId) {
   };
 }
 
-export function createTeamsSettingsContext(state, { connector, authorize }) {
-  const context = { state, connector, ownerId: state.message.userId,
+export function createTeamsSettingsContext(state, { connector, authorize, source = 'teams_settings', surfaceLabel = 'Teams', listMembers = null, isHumanMember = null, publicCredentials = false }) {
+  const context = { state, connector, source, surfaceLabel, listMembers, isHumanMember, publicCredentials, ownerId: state.message.userId,
     channelId: state.message.conversationId, sessionKey: state.sessionKey, entry: state.entry, meta: state.meta,
     isShared: state.sharedSettings === true };
   context.authorize = async () => {
@@ -69,7 +69,7 @@ export function createTeamsSettingsContext(state, { connector, authorize }) {
       return typeof updater === 'function' ? updater(current, fresh) : updater;
     });
     await logChannelPolicyChange({ channelId: context.channelId, slug: state.entry.slug,
-      actor: context.ownerId, before, after, source: 'teams_settings' });
+      actor: context.ownerId, before, after, source: context.source });
     context.meta = after; state.meta = after;
     return after;
   };
@@ -184,13 +184,13 @@ export async function handleTeamsSettings(action, data, ctx, stateId) {
     if (!row) throw new Error('This automation is no longer in this conversation.');
     if (action === 'settings.automation.delete') {
       deleteSchedule(row.id, ctx.channelId);
-      await logEvent('schedule_deleted', { channel: ctx.channelId, slug: ctx.entry.slug, schedule: row.id, author: ctx.ownerId, via: 'teams_settings' });
+      await logEvent('schedule_deleted', { channel: ctx.channelId, slug: ctx.entry.slug, schedule: row.id, author: ctx.ownerId, via: ctx.source || 'teams_settings' });
       ctx.state.notice = 'Automation removed.';
     } else if (action === 'settings.automation.toggle') {
       if (typeof data.enabled !== 'boolean' || row.loop || row.once || row.runAt) throw new Error('Only recurring automations can be paused or resumed.');
       if (data.enabled && !row.enabled && countEnabledForChannel(ctx.channelId) >= getScheduleMaxPerChannel()) throw new Error('This conversation has reached its enabled automation limit.');
       updateSchedule(row.id, { enabled: data.enabled });
-      await logEvent('schedule_updated', { channel: ctx.channelId, slug: ctx.entry.slug, schedule: row.id, enabled: data.enabled, author: ctx.ownerId, via: 'teams_settings' });
+      await logEvent('schedule_updated', { channel: ctx.channelId, slug: ctx.entry.slug, schedule: row.id, enabled: data.enabled, author: ctx.ownerId, via: ctx.source || 'teams_settings' });
       ctx.state.notice = data.enabled ? 'Automation resumed.' : 'Automation paused.';
     } else throw new Error('Unknown automation action.');
     ctx.state.tab = 'automations';

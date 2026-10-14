@@ -5,11 +5,12 @@
 // an unvalidated `name` is a path-traversal primitive against our own API client (Hermes learned
 // the same lesson on the Teams side; their conversation-id regex is the direct precedent).
 import { setTimeout as delay } from "node:timers/promises";
+import { MAX_CHAT_MESSAGE_CHARS } from '../format/gchat.js';
 
 const BASE = "https://chat.googleapis.com/v1";
-// Chat caps a message at 4096 characters. The formatter chunks well below this; the cap here is the
+// Keep the API cap equal to the formatter's 4096-character chunks; the cap here is the
 // last line of defence for text the formatter never saw (an edit payload, a raw notice).
-export const MAX_CHAT_TEXT = 4000;
+export const MAX_CHAT_TEXT = MAX_CHAT_MESSAGE_CHARS;
 
 const SPACE_RE = /^spaces\/[A-Za-z0-9_-]+$/;
 const MESSAGE_RE = /^spaces\/[A-Za-z0-9_-]+\/messages\/[A-Za-z0-9_.-]+$/;
@@ -20,6 +21,7 @@ export const isSpaceName = (v) => SPACE_RE.test(String(v || ""));
 export const isMessageName = (v) => MESSAGE_RE.test(String(v || ""));
 export const isThreadName = (v) => THREAD_RE.test(String(v || ""));
 export const isUserName = (v) => USER_RE.test(String(v || ""));
+export const isPrivateViewerName = v => isUserName(v) || /^users\/[^\s/@]+@[^\s/@]+\.[^\s/@]+$/.test(String(v || ''));
 
 function requireName(value, test, what) {
   const name = String(value || "");
@@ -71,13 +73,17 @@ export function createChatApi({ auth, fetchImpl = fetch, sleep = delay, attempts
     // `threadName` present ⇒ we MUST also send messageReplyOption. Without it Chat silently ignores
     // the thread and starts a new one ("Default. Starts a new thread. Using this option ignores any
     // thread ID"), which reads as a bot that cannot follow a conversation.
-    async createMessage(space, { text, threadName = "", cardsV2 = null } = {}) {
+    async createMessage(space, { text, threadName = "", cardsV2 = null, privateMessageViewer = null } = {}) {
       const parent = requireName(space, isSpaceName, "space");
       const body = { text: String(text ?? "").slice(0, MAX_CHAT_TEXT) };
       if (cardsV2) body.cardsV2 = cardsV2;
+      if (privateMessageViewer) body.privateMessageViewer = { name: requireName(
+        typeof privateMessageViewer === 'string' ? privateMessageViewer : privateMessageViewer.name,
+        isPrivateViewerName, 'private viewer') };
       const query = {};
       if (threadName) {
         body.thread = { name: requireName(threadName, isThreadName, "thread") };
+        if (!threadName.startsWith(`${parent}/threads/`)) throw new Error('Google Chat thread belongs to another space');
         // FALLBACK_TO_NEW_THREAD rather than OR_FAIL: a thread can legitimately disappear, and a
         // delivered answer in a new thread beats a dropped one.
         query.messageReplyOption = "REPLY_MESSAGE_FALLBACK_TO_NEW_THREAD";

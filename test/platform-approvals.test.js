@@ -135,3 +135,45 @@ test("Google Chat retains private link delivery when native approval controls ar
     assert.equal(posts[1].text, "fixture-private-link");
   } finally { unregisterTransport("googlechat"); }
 });
+
+test('Google Chat native approval cards dispatch actual add-on parameters without supplemental links', async () => {
+  const { createGoogleChatControls } = await import('../src/platforms/googlechat/controls.js');
+  const { normalizeCardEvent, parseChatEvent } = await import('../src/platforms/googlechat/events.js');
+  const { getDb } = await import('../src/db/index.js');
+  const { saveSettings } = await import('../src/config/settings.js');
+  const channelId = 'gchat:spaces/approval-source', slug = 'chat-native-approval', owner = 'owner@example.com';
+  await setUser(owner, { approved: true });
+  await saveChannelMeta(slug, { channelId, platform: 'googlechat', access: 'approved', autoMode: false });
+  saveSettings({ publicUrl: 'https://gateway.example.test', approvalLinks: 'always' });
+  const posted = [], repaints = [];
+  const messageId = 'spaces/approval-source/messages/card';
+  const google = { platform: 'googlechat', ready: () => true,
+    postCard: async payload => { posted.push(payload); return { messageId, conversationId: channelId }; },
+    updateCard: async payload => repaints.push(payload),
+    post: async () => assert.fail('Native approval never creates a public fallback link'),
+    openDm: async () => assert.fail('Native approval never opens another conversation'),
+  };
+  registerTransport('googlechat', { getConnector: () => google });
+  const controls = createGoogleChatControls({ connector: google, log: { warn() {} } });
+  const before = getDb().prepare('SELECT count(*) AS count FROM approval_link_tokens').get().count;
+  try {
+    const pending = requestApproval(null, { channelId, slug, authorId: owner, threadKey: 'spaces/approval-source/threads/original', toolName: 'Review plan', toolInput: { details: 'Reversible fixture action' }, approvalType: 'agent' });
+    await new Promise(resolve => setImmediate(resolve));
+    const widgets = posted[0].card.sections.flatMap(section => section.widgets);
+    const approve = widgets.flatMap(widget => widget.buttonList?.buttons || []).find(button => button.text === 'Approve');
+    const parameters = Object.fromEntries(approve.onClick.action.parameters.map(({ key, value }) => [key, value]));
+    const id = JSON.parse(parameters.id);
+    assert.ok(lookupApproval(id).entry);
+    const makeEvent = user => normalizeCardEvent(parseChatEvent({ chat: { user, buttonClickedPayload: {
+      space: { name: 'spaces/approval-source', spaceType: 'SPACE', displayName: 'Approval test' },
+      message: { name: messageId, thread: { name: 'spaces/approval-source/threads/original' }, sender: { type: 'BOT', name: 'users/bot' } },
+    } }, commonEventObject: { parameters } }));
+    await controls.onCard(makeEvent({ email: 'stranger@example.com', name: 'users/stranger' }));
+    assert.ok(lookupApproval(id).entry, 'unauthorized actor cannot decide');
+    assert.equal(repaints.length, 0);
+    await controls.onCard(makeEvent({ email: owner, name: 'users/owner' }));
+    assert.equal((await pending).allow, true);
+    assert.ok(repaints.some(paint => paint.messageId === messageId));
+    assert.equal(getDb().prepare('SELECT count(*) AS count FROM approval_link_tokens').get().count, before);
+  } finally { controls.stop(); unregisterTransport('googlechat'); saveSettings({ publicUrl: '', approvalLinks: 'auto' }); }
+});

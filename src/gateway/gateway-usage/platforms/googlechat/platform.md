@@ -14,10 +14,12 @@ knowing what degrades keeps you from writing a reply that arrives looking broken
 - **Inline images do NOT render.** An image becomes a labelled link.
 
 ## Replies and progress
-- There is **no streaming API**. Progress is shown by editing the message in place, and Google Chat
-  allows only **one edit per second per space** — shared with every other app in that space. So
-  progress updates arrive in coarser steps than on other surfaces. Do not compensate by posting
-  extra messages; the gateway handles pacing.
+- There is **no streaming API** or typing endpoint. A transient working message is replaced by
+  the final answer. Google Chat permits **one edit per second per space**; do not add extra
+  progress posts. Completed space/group answers mention their requester.
+- Answers have **Files**, **Variables**, **Settings** and referenced-file buttons. `/help` opens
+  an expandable guide; `/settings`, `/model`, `/secrets` and `/files` open requester-only cards
+  in this conversation. Credential entry uses private browser forms, never a space message.
 - **Threads exist only in threaded spaces.** In a DM or a group chat the conversation is flat and
   every reply is a new top-level message. Don't refer to "this thread" unless you know you are in a
   threaded space.
@@ -28,6 +30,7 @@ tools for them are not registered, so do not offer them. Produce a file (CSV, HT
 working folder and share it instead.
 
 Dialogs (modal forms) are unavailable in this connection mode. Card **buttons** do work.
+Approval decisions use native cards in their source conversation and recheck current authority.
 
 ## Mentions and broadcasts
 Write `@Name` as usual and the gateway resolves it to a real Chat mention. `@all` is the space-wide
@@ -38,3 +41,7 @@ nobody. Full rules: `references/mentions.md`.
 Files uploaded directly into the space download fine. Files that are merely **shared from Drive**
 may not be readable — the app may lack Drive permission. If a file won't open, say so plainly and
 ask for it to be uploaded into the space directly.
+
+To send a workspace file here, use gateway `share_file`: the requester gets private preview and
+download controls. This requires the gateway Public URL for browser downloads, publishes no
+public link and uploads nothing to Drive. `/sendfile <relative path>` opens the same file panel.

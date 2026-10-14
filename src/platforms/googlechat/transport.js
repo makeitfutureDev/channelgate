@@ -2,10 +2,12 @@
 import { createHash } from "node:crypto";
 import { createDurableInbox } from "../durable-inbox.js";
 import { createGoogleAuth } from "./auth.js";
-import { createChatApi } from "./api.js";
+import { createChatApi, isSpaceName, isMessageName, isThreadName } from "./api.js";
 import { createPubSubPuller } from "./pubsub.js";
-import { parseChatEvent, normalizeMessage, createSeenThreads } from "./events.js";
+import { parseChatEvent, normalizeMessage, normalizeCardEvent, createSeenThreads } from "./events.js";
 import { createGoogleChatConnector } from "./connector.js";
+import { sessionKeyForMessage } from "../reply-sessions.js";
+import { getDb, fromJson } from "../../db/index.js";
 
 export async function startGoogleChat({
   serviceAccountJson,
@@ -13,6 +15,8 @@ export async function startGoogleChat({
   botUserId = "",
   capabilities,
   onMessage,
+  onCard = null,
+  onStop = null,
   onBotUserId = null,
   onFatal = null,
   log = console,
@@ -27,17 +31,84 @@ export async function startGoogleChat({
   const api = deps.api || createChatApi({ auth });
   let selfId = String(botUserId || "");
   const connector = deps.connector || createGoogleChatConnector({ auth, capabilities, api, botUserId: selfId, log });
-  const inbox = deps.inbox || createDurableInbox({
-    namespace: `googlechat:${subscription}`,
-    handle: async ({ event, botId }) => onMessage(normalizeMessage(event, { botUserId: botId, seen: seenThreads, api })),
-    interrupted: async ({ event, botId }) => {
-      const message = normalizeMessage(event, { botUserId: botId, seen: seenThreads, api });
+  const seenThreads = createSeenThreads();
+  const namespace = `googlechat:${subscription}`;
+  const controlNamespace = `googlechat-controls:${subscription}`;
+  const isControl = event => event.type === 'card' || /^\/(help|status|clear|stop|cancel|model|effort|settings|files|secrets|sendfile)(?:\s|$)/i
+    .test(String(event.message?.argumentText ?? event.message?.text ?? '').trim());
+  const inboundFor = ({ event, botId, threadKey }) => {
+    const message = normalizeMessage(event, { botUserId: botId, api });
+    return threadKey === undefined ? message : { ...message, threadKey };
+  };
+  const queueKey = payload => {
+    if (payload.event.type === 'card') {
+      const card = normalizeCardEvent(payload.event);
+      return card ? JSON.stringify([card.conversationId, card.threadKey]) : null;
+    }
+    const message = inboundFor(payload);
+    return JSON.stringify([message.conversationId, sessionKeyForMessage(message)]);
+  };
+  const inboxOptions = {
+    conversationKey: queueKey,
+    handle: async payload => {
+      if (payload.event.type === 'card') {
+        const card = normalizeCardEvent(payload.event);
+        if (card) await onCard?.(card);
+      } else await onMessage(inboundFor(payload));
+    },
+    interrupted: async payload => {
+      const message = payload.event.type === 'card' ? normalizeCardEvent(payload.event) : inboundFor(payload);
+      if (!message) return;
       await connector.post({ conversationId: message.conversationId, threadKey: message.threadKey,
         text: "This request was interrupted before its outcome could be confirmed. External actions may already have happened. Inspect the task before retrying; it was not run again automatically." });
     },
     log,
+  };
+  const inbox = deps.inbox || (deps.createInbox || createDurableInbox)({
+    ...inboxOptions, namespace,
+    queuedNamespace: payload => isControl(payload.event) ? controlNamespace : null,
   });
-  const seenThreads = createSeenThreads();
+  const controlInbox = deps.controlInbox || (deps.createInbox || createDurableInbox)({
+    ...inboxOptions, namespace: controlNamespace, concurrencyGroup: "platform-controls",
+  });
+  const noticeInbox = deps.noticeInbox || (deps.createInbox || createDurableInbox)({
+    namespace: `googlechat-queue-notices:${subscription}`, concurrencyGroup: 'platform-events',
+    handle: async ({ payload, eventId, position }) => {
+      const isQueued = () => getDb().prepare("SELECT 1 FROM inbound_events WHERE namespace = ? AND event_id = ? AND status = 'queued'").get(namespace, eventId);
+      if (isQueued()) await onMessage(inboundFor(payload), { queuedNoticeOnly: true, position, isQueued });
+    },
+    // Queue notices have no engine effects; an interrupted, obsolete position can be omitted.
+    log,
+  });
+  const pendingRows = (conversationId, sessionKey) => getDb().prepare(`SELECT event_id, data FROM inbound_events
+    WHERE namespace = ? AND conversation_id = ? AND status = 'queued' ORDER BY rowid`)
+    .all(namespace, JSON.stringify([conversationId, sessionKey]));
+  connector.pendingForSession = async ({ conversationId, sessionKey, isEligible = async () => true }) => {
+    const eligible = [];
+    for (const row of pendingRows(conversationId, sessionKey)) {
+      const message = inboundFor(fromJson(row.data, {}));
+      if (await isEligible(message)) eligible.push(message);
+    }
+    return { count: eligible.length, authors: [...new Set(eligible.map(m => m.userId))] };
+  };
+  connector.cancelPendingForSession = async ({ conversationId, sessionKey, authorId, authorIsAdmin, isEligible = async () => true }) => {
+    const eligibility = new Map();
+    for (const row of pendingRows(conversationId, sessionKey)) eligibility.set(row.event_id, await isEligible(inboundFor(fromJson(row.data, {}))));
+    const db = getDb();
+    db.exec('BEGIN IMMEDIATE');
+    try {
+      const rows = pendingRows(conversationId, sessionKey);
+      if (rows.some(row => !eligibility.has(row.event_id))) { db.exec('ROLLBACK'); return { allowed: false, changed: true, cancelled: 0 }; }
+      if (!authorIsAdmin && rows.some(row => eligibility.get(row.event_id) && inboundFor(fromJson(row.data, {})).userId !== authorId)) {
+        db.exec('ROLLBACK'); return { allowed: false, cancelled: 0 };
+      }
+      const cancel = db.prepare("UPDATE inbound_events SET status = 'done', data = '{}' WHERE namespace = ? AND event_id = ? AND status = 'queued'");
+      let cancelled = 0;
+      for (const row of rows) cancelled += Number(cancel.run(namespace, row.event_id).changes);
+      db.exec('COMMIT');
+      return { allowed: true, cancelled };
+    } catch (error) { db.exec('ROLLBACK'); throw error; }
+  };
 
   async function onEvent(envelope, attributes, metadata = {}) {
     const event = parseChatEvent(envelope, attributes);
@@ -52,25 +123,52 @@ export async function startGoogleChat({
       }
       return;
     }
+    if (event.type === 'card') {
+      const card = normalizeCardEvent(event);
+      if (!card || !onCard) return;
+      const id = String(metadata.messageId || attributes?.['ce-id'] || createHash('sha256').update(JSON.stringify(envelope)).digest('hex'));
+      const payload = { event, botId: selfId };
+      return controlInbox.accept({ id: `card:${id}`, conversationId: queueKey(payload), payload });
+    }
     if (event.type !== "message") return;
 
     const sender = event.message?.sender || {};
     // Never answer a bot — our own replies come back on the same topic, and two apps in one space
     // answering each other is an unbounded loop with a bill attached.
     if (sender.type === "BOT") return;
+    const space = String(event.space?.name || event.message?.space?.name || '');
+    const messageName = String(event.message?.name || '');
+    const threadName = String(event.message?.thread?.name || '');
+    if (!isSpaceName(space) || !isMessageName(messageName) || !messageName.startsWith(`${space}/messages/`)
+      || (threadName && (!isThreadName(threadName) || !threadName.startsWith(`${space}/threads/`)))) return;
     const id = String(event.message?.name || metadata.messageId || createHash("sha256").update(JSON.stringify(envelope)).digest("hex"));
-    const conversationId = String(event.space?.name || event.message?.space?.name || event.message?.name?.split("/messages/")[0] || "");
-    return inbox.accept({ id, conversationId, payload: { event, botId: selfId } });
+    const message = normalizeMessage(event, { botUserId: selfId, seen: seenThreads, api });
+    const payload = { event, botId: selfId, threadKey: message.threadKey };
+    const control = isControl(event);
+    const conversationId = queueKey(payload);
+    const position = control ? 0 : Number(getDb().prepare("SELECT count(*) AS n FROM inbound_events WHERE namespace = ? AND conversation_id = ? AND status IN ('queued', 'running')")
+      .get(namespace, conversationId).n);
+    const accepted = (control ? controlInbox : inbox).accept({ id, conversationId, payload });
+    if (position && accepted?.accepted) {
+      try { noticeInbox.accept({ id, conversationId, payload: { payload, eventId: id, position } }); }
+      catch (error) { log.warn?.(`[googlechat] queue notice could not be accepted: ${error?.message || error}`); }
+    }
+    return accepted;
   }
 
   const puller = deps.puller || createPubSubPuller({ auth, subscription, onEvent, log, fetchImpl: deps.fetchImpl,
     onFatal: (err) => {
       inbox.stop();
+      controlInbox.stop();
+      noticeInbox.stop();
+      onStop?.();
       log.error?.(`[googlechat] transport stopped: ${err?.message || err}`);
       onFatal?.(err);
     } });
   inbox.start();
-  try { puller.start(); } catch (error) { inbox.stop(); throw error; }
+  controlInbox.start();
+  noticeInbox.start();
+  try { puller.start(); } catch (error) { inbox.stop(); controlInbox.stop(); noticeInbox.stop(); onStop?.(); throw error; }
 
   return {
     platform: "googlechat",
@@ -82,6 +180,6 @@ export async function startGoogleChat({
     onEvent,
     get botUserId() { return selfId; },
     detail: `pulling ${subscription}`,
-    async stop() { inbox.stop(); await puller.stop(); },
+    async stop() { inbox.stop(); controlInbox.stop(); noticeInbox.stop(); onStop?.(); await puller.stop(); },
   };
 }

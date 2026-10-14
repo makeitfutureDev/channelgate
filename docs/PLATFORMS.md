@@ -91,14 +91,24 @@ optional field exists only to short-circuit that.
 - **Attachments in:** files uploaded directly in Chat are downloaded through `media.download`. A file
   shared from the Drive picker needs a user-OAuth Drive scope ChannelGate deliberately does not
   request — those are reported as skipped rather than silently dropped.
-- **Attachments out:** `media.upload` requires user OAuth, so the bot cannot upload files. Answers
-  are text.
+- **Workspace files out:** `/files`, `/sendfile <path>` and agent `share_file` provide private
+  source-space file controls with text/Word previews and browser download/edit/upload links.
+  Browser links require Public URL; this does not upload files to Drive or publish public links.
 - **Threads:** in a space, threads are honoured. In a DM, Google mints a *new* thread for every
   top-level message, so a thread seen for the first time is treated as the main flow (one continuous
   DM session) and a thread you explicitly reply into becomes a real side thread.
 - **Editing:** 1 write/sec per space, shared with every other app in it. Deleting leaves a tombstone,
   so ChannelGate edits rather than deletes.
-- **No ephemeral messages:** a notice meant for one person is sent as a DM to that person instead.
+- **Private controls:** app-authenticated `privateMessageViewer` keeps settings, files and browser
+  credential-entry links visible only to their requester in the original space. Opened drafts
+  expire after 15 minutes; reply menu buttons are sealed and remain usable after restarts.
+- **Commands:** `/help` shows compact expandable Cards v2 with a full-text fallback. `/settings`,
+  `/secrets` and `/model` open settings tabs and separate channel/session runtime scopes. In spaces
+  mention the bot before a typed command; configured registered slash-command events also work.
+  Credential entry uses private browser forms; no value is shown or prefilled. Pub/Sub supports
+  cards but cannot open synchronous dialogs. Stop/status use a separate durable control queue.
+- **Replies:** a temporary working line becomes the final answer. Space/group answers mention
+  the requester and have Files/Variables/Settings plus referenced-file buttons below compact stats.
 
 ---
 
@@ -409,8 +419,8 @@ reference: [Microsoft bot file consent](https://learn.microsoft.com/en-us/micros
   four are degraded on the way out by `src/platforms/format/degrade.js`.
 - **Mentions** are structural: the text carries `<at>Name</at>` and the activity must carry a
   matching entity. The formatter emits both together.
-- **No ephemeral messages:** as on Google Chat, a per-person notice becomes a 1:1 chat message —
-  which is how approval links reach the person who raised the request.
+- **Private controls:** settings/files use private Teams windows. Approval controls stay in the
+  source conversation; no supplemental decision links are sent to a separate personal chat.
 
 ---
 
@@ -422,10 +432,10 @@ reference: [Microsoft bot file consent](https://learn.microsoft.com/en-us/micros
 | Channel folder confinement, authorization, MCP allowlist | ✅ | ✅ | ✅ |
 | Attachments in | ✅ | partial | partial |
 | Threads | ✅ | spaces only | channels only |
-| Live progress rendering | ✅ | bounded progress → answer | bounded progress → answer (branch) |
-| Interactive approval buttons | ✅ | ❌ (actions named in text) | native cards (branch) |
-| Approvals by signed link | ✅ (in addition to the buttons) | ✅ (the mechanism) | native thread cards; no supplemental links |
-| Session commands | full Slack controls | portable text subset (branch) | text subset + native settings/files (branch) |
+| Live progress rendering | ✅ | working placeholder → answer | working placeholder → answer (branch) |
+| Interactive approval buttons | ✅ | native Cards v2 | native cards (branch) |
+| Approvals by signed link | ✅ (in addition to the buttons) | native cards; legacy connector fallback | native thread cards; no supplemental links |
+| Session commands | full Slack controls | native help/settings/files + text controls | text subset + native settings/files (branch) |
 | Native tables / charts / Lists / canvases | ✅ | ❌ | ❌ |
 | Escalation to full-access in an admin-mode channel | ✅ | ❌ | ❌ |
 
@@ -437,7 +447,7 @@ every other run — which fails closed.
 are unchanged. Alongside them, each approval card and each busy-thread card is also minted as
 short-lived, single-use, HMAC-signed URLs — one per action the recipient may take — delivered
 **privately to the person who raised the request**: an ephemeral where the platform has one
-(Slack), a 1:1 message for Google Chat. Teams uses its original thread's native approval card and
+(Slack). Google Chat and Teams use their original conversation's native approval card and
 does not mint or send supplemental links; failed card delivery refuses the action with retry
 guidance there. Opening a link shows a confirmation
 page and decides nothing; the page's Confirm button performs the decision through exactly the code
@@ -447,8 +457,8 @@ See `FEATURES.md` → Modes & approvals for the security properties.
 
 On `teams-ms`, native Teams approval cards call the shared actor-checked decision path. Inline
 cards do not automatically widen the engine permission policy: escalation remains separately
-gated, and its live acceptance must pass before release. Google Chat retains its existing
-surface limitations. Native settings dialogs are implemented; Slack's full busy-thread
+gated, and its live acceptance must pass before release. Google Chat uses requester-only Cards v2
+settings panels; Teams native settings dialogs are implemented. Slack's full busy-thread
 interaction flow remains unavailable in Teams.
 
 ---

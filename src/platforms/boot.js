@@ -12,6 +12,7 @@ import { createGoogleAuth } from "./googlechat/auth.js";
 import { createChatApi } from "./googlechat/api.js";
 import { createGoogleChatConnector } from "./googlechat/connector.js";
 import { startGoogleChat } from "./googlechat/transport.js";
+import { createGoogleChatControls } from "./googlechat/controls.js";
 import { createTeamsAuth } from "./msteams/auth.js";
 import { createTeamsApi } from "./msteams/api.js";
 import { createTeamsConnector } from "./msteams/connector.js";
@@ -26,11 +27,16 @@ async function startGoogleChatTransport(config, log, { onFatal } = {}) {
   const auth = createGoogleAuth({ serviceAccount: config.serviceAccountJson });
   const api = createChatApi({ auth });
   const connector = createGoogleChatConnector({ auth, capabilities, api, botUserId: config.botUserId, log });
-  const ingest = createIngest({ connector, log });
+  const controls = createGoogleChatControls({ connector, log });
+  connector.shareFile = controls.shareFile;
+  connector.recordUser = controls.recordUser;
+  const ingest = createIngest({ connector, log, onCommand: controls.onCommand });
   return startGoogleChat({
     ...config,
     capabilities,
     onMessage: ingest,
+    onCard: controls.onCard,
+    onStop: controls.stop,
     onFatal,
     log,
     deps: { auth, api, connector },

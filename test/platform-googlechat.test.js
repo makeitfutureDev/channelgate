@@ -10,7 +10,7 @@ import { ensureTestEnv } from "./helpers.js";
 import { parseServiceAccount, createGoogleAuth } from "../src/platforms/googlechat/auth.js";
 import { createChatApi, isSpaceName, isMessageName } from "../src/platforms/googlechat/api.js";
 import { createPubSubPuller, createDedupe, isSubscriptionName } from "../src/platforms/googlechat/pubsub.js";
-import { parseChatEvent, normalizeMessage, mentionsBot, resolveThreadKey, createSeenThreads } from "../src/platforms/googlechat/events.js";
+import { parseChatEvent, normalizeMessage, normalizeCardEvent, mentionsBot, resolveThreadKey, createSeenThreads } from "../src/platforms/googlechat/events.js";
 import { createGoogleChatConnector, toSpaceName } from "../src/platforms/googlechat/connector.js";
 import { googleChatAdapter } from "../src/platforms/googlechat.js";
 import { createTransportManager } from "../src/platforms/manager.js";
@@ -351,12 +351,14 @@ test("only a real thread resource name is used as a thread; a synthetic key post
   assert.equal(api.calls[0].body.threadName, "");
 });
 
-test("an ephemeral-only notice becomes a DM instead of a public post", async () => {
+test("a private notice stays in its space with a Google-enforced viewer", async () => {
   const api = fakeChatApi();
   const connector = createGoogleChatConnector({ auth: fakeAuth(), capabilities: googleChatAdapter.capabilities, api });
   const posted = await connector.post({ conversationId: "spaces/AAA", text: "just for you", ephemeralTo: "users/9" });
   assert.equal(posted.ephemeral, true);
-  assert.equal(api.calls.at(-1).space, "spaces/DM1");
+  assert.equal(api.calls.at(-1).space, "spaces/AAA");
+  assert.deepEqual(api.calls.at(-1).body.privateMessageViewer, { name: 'users/9' });
+  assert.equal(api.calls.some(call => call.op === 'dm'), false);
 });
 
 test("buttons the surface cannot render are named in text, never dropped in silence", async () => {
@@ -470,4 +472,224 @@ test("a live Google pull permission failure reaches manager health and stops inb
   assert.equal(inboxStopped, true);
   assert.equal(manager.getTransport().puller.running, false);
   await manager.disconnect();
+});
+
+test('Cards v2 create and patch retain controls, private viewer and the original thread', async () => {
+  const calls = [];
+  const api = createChatApi({ auth: fakeAuth(), fetchImpl: async (url, init) => {
+    calls.push({ url: new URL(url), method: init.method, body: JSON.parse(init.body) });
+    return ok({ name: 'spaces/AAA/messages/native', thread: { name: 'spaces/AAA/threads/T' } });
+  } });
+  const connector = createGoogleChatConnector({ api, capabilities: googleChatAdapter.capabilities });
+  const card = { header: { title: 'Private controls' }, sections: [{ widgets: [{ buttonList: { buttons: [
+    { text: 'Apply', onClick: { action: { function: 'runtime.apply', parameters: [{ key: 'stateId', value: 'abc' }] } } },
+  ] } }] }] };
+  const sent = await connector.postCard({ conversationId: 'gchat:spaces/AAA', threadKey: 'spaces/AAA/threads/T', card, privateTo: 'ana@example.com' });
+  assert.equal(sent.conversationId, 'spaces/AAA');
+  assert.equal(sent.ephemeral, true);
+  assert.deepEqual(calls[0].body.privateMessageViewer, { name: 'users/ana@example.com' });
+  assert.deepEqual(calls[0].body.cardsV2[0].card, card);
+  assert.equal(calls[0].body.thread.name, 'spaces/AAA/threads/T');
+  assert.equal(calls[0].url.searchParams.get('messageReplyOption'), 'REPLY_MESSAGE_FALLBACK_TO_NEW_THREAD');
+  await connector.updateCard({ conversationId: 'gchat:spaces/AAA', messageId: sent.messageId, card, text: 'Updated' });
+  assert.equal(calls[1].method, 'PATCH');
+  assert.equal(calls[1].url.searchParams.get('updateMask'), 'text,cardsV2');
+  assert.equal(calls[1].body.thread, undefined);
+  assert.equal(calls[1].body.privateMessageViewer, undefined, 'updates preserve the existing viewer');
+  await assert.rejects(connector.postCard({ conversationId: 'spaces/AAA', threadKey: 'spaces/EVIL/threads/T', card }), /another space/);
+  await assert.rejects(connector.updateCard({ conversationId: 'spaces/AAA', messageId: 'spaces/EVIL/messages/M', card }), /another space/);
+  await assert.rejects(api.createMessage('spaces/AAA', { threadName: 'spaces/EVIL/threads/T' }), /another space/);
+  await assert.rejects(connector.postCard({ conversationId: 'spaces/AAA', card, privateTo: 'users/../bad' }), /private Google Chat/);
+  assert.equal(calls.length, 2);
+});
+
+test('footer and menu controls survive both private delivery and edits', async () => {
+  const api = fakeChatApi();
+  const connector = createGoogleChatConnector({ api, capabilities: googleChatAdapter.capabilities });
+  const menu = { conversationId: 'gchat:spaces/AAA', sessionKey: 'spaces/AAA/threads/T', authorId: 'ana@example.com' };
+  await connector.post({ conversationId: 'spaces/AAA', threadKey: 'spaces/AAA/threads/T', text: 'Answer', footer: '10 tokens', menu, ephemeralTo: 'users/1' });
+  const posted = api.calls[0];
+  assert.equal(posted.space, 'spaces/AAA');
+  assert.match(JSON.stringify(posted.body.cardsV2), /10 tokens|menu.files|menu.secrets|menu.settings/);
+  assert.deepEqual(posted.body.privateMessageViewer, { name: 'users/1' });
+  await connector.edit({ conversationId: 'spaces/AAA', messageId: 'spaces/AAA/messages/9', text: 'Complete', footer: '20 tokens', menu });
+  assert.match(JSON.stringify(api.calls[1].body.cardsV2), /20 tokens/);
+  assert.equal(api.calls[1].body.cardsV2[0].card.sections[0].widgets[1].buttonList.buttons.length, 3);
+});
+
+test('all three card event envelopes identify the clicking user independently of the bot message', () => {
+  const user = { email: 'ana@example.com', name: 'users/1', displayName: 'Ana', type: 'HUMAN' };
+  const message = { ...MESSAGE, sender: { name: 'users/bot', type: 'BOT' } };
+  const action = { actionMethodName: 'model.apply', parameters: [{ key: 'stateId', value: 'state-1' }, { key: 'userId', value: 'forged@example.com' }] };
+  const envelopes = [
+    { chat: { buttonClickedPayload: { message, space: SPACE }, user }, commonEventObject: { invokedFunction: 'model.apply', parameters: { stateId: 'state-1', userId: 'forged@example.com' }, formInputs: { model: { stringInputs: { value: ['default'] } } } } },
+    { chat: { message, space: SPACE, user, action } },
+    { type: 'CARD_CLICKED', message, space: SPACE, user, action },
+  ];
+  for (const envelope of envelopes) {
+    const card = normalizeCardEvent(parseChatEvent(envelope, { 'ce-type': 'google.workspace.chat.widget.v1.clicked' }));
+    assert.equal(card.userId, 'ana@example.com');
+    assert.equal(card.raw.senderName, 'users/1');
+    assert.equal(card.conversationId, 'gchat:spaces/AAA');
+    assert.equal(card.messageId, MESSAGE.name);
+    assert.equal(card.action.function, 'model.apply');
+    assert.equal(card.action.parameters.stateId, 'state-1');
+  }
+  assert.equal(normalizeCardEvent(parseChatEvent({ ...envelopes[2], space: { name: 'spaces/FOREIGN' } })), null);
+  assert.equal(normalizeCardEvent(parseChatEvent({ ...envelopes[2], user: undefined })), null);
+  assert.equal(normalizeCardEvent(parseChatEvent({ ...envelopes[2], message: { ...message, thread: { name: 'spaces/FOREIGN/threads/T' } } })), null);
+});
+
+test('quoted message metadata is scoped to its own space', () => {
+  const normalize = name => normalizeMessage({ space: SPACE, message: { ...MESSAGE, quotedMessageMetadata: { name } } });
+  assert.equal(normalize('spaces/AAA/messages/quoted').replyToId, 'spaces/AAA/messages/quoted');
+  assert.equal(normalize('spaces/FOREIGN/messages/quoted').replyToId, '');
+});
+
+test('stop commands and native buttons dispatch while an engine occupies the same session', async () => {
+  let release;
+  const blocked = new Promise(resolve => { release = resolve; });
+  const received = [];
+  const cards = [];
+  const transport = await startGoogleChat({ subscription: 'projects/cg-test/subscriptions/control-lane',
+    capabilities: googleChatAdapter.capabilities,
+    onMessage: async message => { received.push(message.text); if (message.text === 'work') await blocked; },
+    onCard: async card => cards.push(card),
+    log: {}, deps: { auth: fakeAuth(), api: fakeChatApi(), puller: { start() {}, async stop() {} } },
+  });
+  const envelope = (id, text) => ({ chat: { messagePayload: { space: SPACE, message: { ...MESSAGE, name: `spaces/AAA/messages/${id}`, text, argumentText: text } } } });
+  try {
+    await transport.onEvent(envelope('working', 'work'));
+    await new Promise(resolve => setImmediate(resolve));
+    await transport.onEvent(envelope('stop', '/stop'));
+    const cardEnvelope = { chat: { user: { name: 'users/1', email: 'ana@example.com' }, buttonClickedPayload: {
+      space: SPACE, message: { ...MESSAGE, sender: { type: 'BOT' } },
+    } }, commonEventObject: { invokedFunction: 'settings.open', parameters: { stateId: 'state' } } };
+    await transport.onEvent(cardEnvelope, {}, { messageId: 'button-delivery-1' });
+    await transport.onEvent(cardEnvelope, {}, { messageId: 'button-delivery-1' });
+    await new Promise(resolve => setImmediate(resolve));
+    assert.deepEqual(received, ['work', '/stop']);
+    assert.equal(cards.length, 1);
+    assert.equal(cards[0].userId, 'ana@example.com');
+    await transport.onEvent({ ...cardEnvelope, chat: { ...cardEnvelope.chat, buttonClickedPayload: { ...cardEnvelope.chat.buttonClickedPayload, space: { name: 'spaces/FOREIGN' } } } }, {}, { messageId: 'invalid' });
+    await transport.onEvent({ chat: { messagePayload: { space: SPACE, message: { ...MESSAGE, name: 'spaces/AAA/messages/foreign-thread', thread: { name: 'spaces/FOREIGN/threads/T' } } } } });
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(cards.length, 1);
+    assert.deepEqual(received, ['work', '/stop']);
+  } finally { release(); await new Promise(resolve => setImmediate(resolve)); await transport.stop(); }
+});
+
+test('Google queued cancellation rechecks all authors and stays confined to its session', async () => {
+  let release;
+  const blocked = new Promise(resolve => { release = resolve; });
+  const received = [];
+  const transport = await startGoogleChat({ subscription: 'projects/cg-test/subscriptions/pending-cancellation',
+    capabilities: googleChatAdapter.capabilities, onMessage: async (message, context) => { if (context?.queuedNoticeOnly) return; received.push(message.text); if (message.text === 'first') await blocked; },
+    log: {}, deps: { auth: fakeAuth(), api: fakeChatApi(), puller: { start() {}, async stop() {} } },
+  });
+  const event = (id, text, email = 'ana@example.com', thread = 'spaces/AAA/threads/pending') => ({ chat: { messagePayload: { space: SPACE,
+    message: { ...MESSAGE, name: `spaces/AAA/messages/${id}`, argumentText: text, text, sender: { type: 'HUMAN', email }, thread: { name: thread } },
+  } } });
+  try {
+    await transport.onEvent(event('first', 'first'));
+    await new Promise(resolve => setImmediate(resolve));
+    await transport.onEvent(event('own', 'own'));
+    await transport.onEvent(event('other', 'other', 'bob@example.com'));
+    const scope = { conversationId: 'gchat:spaces/AAA', sessionKey: 'spaces/AAA/threads/pending' };
+    assert.deepEqual(await transport.connector.pendingForSession(scope), { count: 2, authors: ['ana@example.com', 'bob@example.com'] });
+    assert.deepEqual(await transport.connector.pendingForSession({ ...scope, sessionKey: 'spaces/AAA/threads/other' }), { count: 0, authors: [] });
+    assert.deepEqual(await transport.connector.cancelPendingForSession({ ...scope, authorId: 'ana@example.com', authorIsAdmin: false }), { allowed: false, cancelled: 0 });
+    assert.equal((await transport.connector.pendingForSession(scope)).count, 2);
+    assert.deepEqual(await transport.connector.cancelPendingForSession({ ...scope, authorId: 'admin@example.com', authorIsAdmin: true }), { allowed: true, cancelled: 2 });
+    assert.deepEqual(await transport.connector.pendingForSession(scope), { count: 0, authors: [] });
+  } finally { release(); await new Promise(resolve => setImmediate(resolve)); await transport.stop(); }
+  assert.deepEqual(received, ['first'], 'cancelled requests never invoke the engine');
+});
+
+test('Google control commands retain capacity when four engine slots are occupied', async () => {
+  let release;
+  const blocked = new Promise(resolve => { release = resolve; });
+  const received = [];
+  const transport = await startGoogleChat({ subscription: 'projects/cg-test/subscriptions/saturated-controls',
+    capabilities: googleChatAdapter.capabilities,
+    onMessage: async message => { received.push(message.text); if (message.text === 'work') await blocked; },
+    log: {}, deps: { auth: fakeAuth(), api: fakeChatApi(), puller: { start() {}, async stop() {} } },
+  });
+  const event = (id, text, thread) => ({ chat: { messagePayload: { space: SPACE,
+    message: { ...MESSAGE, name: `spaces/AAA/messages/${id}`, argumentText: text, text, thread: { name: `spaces/AAA/threads/${thread}` } },
+  } } });
+  try {
+    for (let i = 0; i < 4; i++) await transport.onEvent(event(`slot-${i}`, 'work', `thread-${i}`));
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(received.length, 4);
+    await transport.onEvent(event('status', '/status', 'thread-0'));
+    await new Promise(resolve => setImmediate(resolve));
+    assert.deepEqual(received, ['work', 'work', 'work', 'work', '/status']);
+  } finally { release(); await new Promise(resolve => setImmediate(resolve)); await transport.stop(); }
+});
+
+test('registered app-command payloads use the actor and literal command without numeric mappings', () => {
+  const user = { email: 'ana@example.com', name: 'users/1', type: 'HUMAN' };
+  const envelope = { chat: { user, space: SPACE, appCommandPayload: { space: SPACE,
+    appCommandMetadata: { appCommandType: 'SLASH_COMMAND', appCommandId: '731' },
+    message: { ...MESSAGE, sender: { email: 'forged@example.com' }, argumentText: '/help', text: '/help', annotations: [] },
+  } } };
+  const event = parseChatEvent(envelope);
+  assert.equal(event.type, 'message');
+  assert.equal(event.appCommand, true);
+  const message = normalizeMessage(event);
+  assert.equal(message.text, '/help');
+  assert.equal(message.userId, 'ana@example.com');
+  assert.equal(message.raw.senderName, 'users/1');
+  assert.equal(message.mentionsBot, true);
+  const native = normalizeMessage({ space: SPACE, message: { ...MESSAGE, annotations: [], argumentText: '/settings', slashCommand: { commandId: 23 } } });
+  assert.equal(native.mentionsBot, true);
+  assert.equal(normalizeMessage({ space: SPACE, message: { ...MESSAGE, annotations: [], argumentText: '/settings' } }).mentionsBot, false);
+  assert.equal(normalizeMessage({ ...event, message: { ...event.message, argumentText: '' } }).text, '', 'the numeric ID never becomes /help');
+  const messageAction = parseChatEvent({ chat: { ...envelope.chat, appCommandPayload: { ...envelope.chat.appCommandPayload,
+    appCommandMetadata: { appCommandType: 'MESSAGE_ACTION', appCommandId: '731' },
+  } } });
+  assert.equal(messageAction.type, 'unknown', 'original message text is not a slash-command invocation');
+});
+
+test('documented add-on button envelope routes through common parameters without an action field', () => {
+  const event = parseChatEvent({ chat: { user: { name: 'users/1', email: 'ana@example.com' },
+    buttonClickedPayload: { space: SPACE, message: MESSAGE },
+  }, commonEventObject: { parameters: { cgAction: 'settings.page', stateId: 'state', page: '"general"' } } });
+  const card = normalizeCardEvent(event);
+  assert.equal(card.action.function, 'settings.page');
+  assert.equal(card.action.parameters.cgAction, 'settings.page');
+  assert.equal(card.userId, 'ana@example.com');
+});
+
+test('Google queued notices run promptly without invoking queued work twice', async () => {
+  let release;
+  const blocked = new Promise(resolve => { release = resolve; });
+  const work = [], notices = [];
+  let stopped = 0;
+  const transport = await startGoogleChat({ subscription: 'projects/cg-test/subscriptions/queue-notices',
+    capabilities: googleChatAdapter.capabilities, onStop: () => stopped++,
+    onMessage: async (message, context = {}) => {
+      if (context.queuedNoticeOnly) { if (context.isQueued()) notices.push({ text: message.text, position: context.position }); return; }
+      work.push(message.text);
+      if (message.text === 'first') await blocked;
+    },
+    log: {}, deps: { auth: fakeAuth(), api: fakeChatApi(), puller: { start() {}, async stop() {} } },
+  });
+  const event = (id, text) => ({ chat: { messagePayload: { space: SPACE, message: { ...MESSAGE,
+    name: `spaces/AAA/messages/${id}`, text, argumentText: text, thread: { name: 'spaces/AAA/threads/notices' },
+  } } } });
+  try {
+    await transport.onEvent(event('first', 'first'));
+    await new Promise(resolve => setImmediate(resolve));
+    await transport.onEvent(event('second', 'second'));
+    await transport.onEvent(event('second', 'second'));
+    await new Promise(resolve => setImmediate(resolve));
+    assert.deepEqual(work, ['first']);
+    assert.deepEqual(notices, [{ text: 'second', position: 1 }]);
+    release();
+    await new Promise(resolve => setImmediate(resolve));
+    assert.deepEqual(work, ['first', 'second']);
+  } finally { release(); await new Promise(resolve => setImmediate(resolve)); await transport.stop(); }
+  assert.equal(stopped, 1);
 });

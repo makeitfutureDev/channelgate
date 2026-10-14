@@ -1,5 +1,29 @@
 # ChannelGate — Features
 
+## Google Chat native conversation controls
+
+- Google Chat `/help` now opens a compact Cards v2 guide with expandable topics, matching the
+  Teams quick-start experience. If card delivery fails, the complete text guide is returned.
+- `/settings`, `/secrets` and `/model` open requester-only panels in their source space/session.
+  General, Variables, MCPs, Skills, Automations and Resume reuse the same guarded settings policy
+  as Teams. Channel defaults and session overrides have separate model/effort previews and Apply
+  actions. Credential entry opens a private browser form using one-use grants, HttpOnly cookies,
+  CSRF checks and current space membership; stored values are never displayed or prefilled.
+- `/files [folder]`, `/sendfile <path>` and the agent's `share_file` show private file controls:
+  browse, text/Word text preview, download, and eligible browser editing/uploads. Paths remain
+  confined to the workspace and every click/browser request repeats current authorization.
+  Browser links require the gateway Public URL; files are not uploaded to Drive or published.
+- Final answers, errors and stops carry compact statistics plus **Files**, **Variables**,
+  **Settings**, and up to three referenced-file buttons. The sealed menu survives restarts;
+  opened panel drafts expire after 15 minutes. Google-enforced private viewers keep file and
+  credential links visible only to the requester in the original space.
+- Native approval cards remain in the source conversation. Pub/Sub card and text controls use a
+  separate durable lane so stop/status remain responsive while agent turns are running. The
+  working placeholder is replaced by the final answer without detailed tool-status blocks;
+  completed space/group answers mention the requester. Google Chat dialogs and typing events
+  remain unavailable in this connection mode; reaction activation is not advertised.
+- Automated coverage and pending live Claude/Codex gates: → TEST-PLAN: Google Chat native controls.
+
 ## Teams reply menu
 
 - Every Teams answer, error and stop carries the reply menu under its run-stats line, like
@@ -13,7 +37,7 @@
   their own controls. Every window re-applies the clicker's live workspace authorization, and
   file paths stay confined to the conversation's folder.
 - Which files get buttons is the same platform-neutral rule Slack uses
-  (`src/gateway/reply-files.js`). Connectors opt in with `replyMenu`; Google Chat is unchanged.
+  (`src/gateway/reply-files.js`). Connectors opt in with `replyMenu`; Google Chat renders Cards v2.
 
 ## Teams workspace file previews and delivery
 

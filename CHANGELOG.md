@@ -18,6 +18,11 @@ product overview.
 
 ## Unreleased
 
+- Google Chat gains expandable help, requester-only settings/model and file controls, private
+  browser credential entry, native approvals and the Files/Variables/Settings reply menu.
+  Control commands remain responsive during agent work. These adapt the Teams improvements to
+  Cards v2 and Pub/Sub; live Google Chat acceptance remains pending.
+
 - Fix Teams 🛑 Stop and ✅ Tick reactions being ignored in group chats and channels. Microsoft Graph
   now returns those messages without reaction history, and the earlier fallback accepted only
   activation emojis. A present Stop/Tick created after its own saved cutoff and within the last

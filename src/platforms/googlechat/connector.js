@@ -1,11 +1,29 @@
 // The Google Chat ChatConnector: the only place that knows how bytes reach a Chat space.
 import { validateConnector } from "../connector.js";
 import { parseConversationId } from "../ids.js";
-import { createChatApi, isSpaceName, isThreadName, isUserName } from "./api.js";
+import { createChatApi, isSpaceName, isThreadName, isUserName, isMessageName, isPrivateViewerName } from "./api.js";
+import { replyMenuCard } from "./reply-menu.js";
+import { validateChatCard } from "./cards.js";
 import { buildNameDirectory } from "../format/mentions.js";
 import { normalizeName } from "../../slack/directory.js";
 
 const DIRECTORY_TTL_MS = 15 * 60 * 1000;
+const cardsFor = card => card ? [{ cardId: 'channelgate', card: validateChatCard(card) }] : [];
+const footerCards = (footer, menu) => footer || menu?.conversationId ? cardsFor(replyMenuCard({ footer, menu })) : [];
+function privateViewer(user) {
+  if (!user) return null;
+  const name = String(user).startsWith('users/') ? String(user) : `users/${user}`;
+  if (!isPrivateViewerName(name)) throw new Error('Cannot address a private Google Chat message to this user');
+  return { name };
+}
+function scopedThread(space, threadKey) {
+  if (!isThreadName(threadKey)) return '';
+  if (!threadKey.startsWith(`${space}/threads/`)) throw new Error('Google Chat thread belongs to another space');
+  return String(threadKey);
+}
+function scopedMessage(space, messageId) {
+  if (!isMessageName(messageId) || !messageId.startsWith(`${space}/messages/`)) throw new Error('Google Chat message belongs to another space');
+}
 
 // Stored conversation ids are qualified (`gchat:spaces/AAA`); the API needs the bare resource name.
 // Accepting both here is what lets a caller pass whatever it happens to be holding without every
@@ -63,40 +81,47 @@ export function createGoogleChatConnector({ auth, capabilities, api = null, botU
   return validateConnector({
     platform: "googlechat",
     capabilities,
+    replyMenu: true,
+    progressStyle: 'working',
+    workingText: '_⏳ Agent is working…_',
     ready: () => true,
-    api: chat, // escape hatch for Chat-only surfaces (Cards v2) once they exist
+    api: chat, // Chat-only surfaces use the same validated REST client.
     botUserId,
 
-    async post({ conversationId, threadKey, text, footer = "", ephemeralTo = "", buttons = null } = {}) {
+    async post({ conversationId, threadKey, text, footer = "", menu = null, ephemeralTo = "", buttons = null } = {}) {
       const space = toSpaceName(conversationId);
       let body = String(text ?? "");
-      if (footer) body += `\n\n_${footer}_`;
-      // Chat has no ephemeral message outside a slash-command response, so a control notice meant
-      // for one person becomes a DM to that person rather than a public post. Falling back to the
-      // space is deliberate: these are approval prompts and run notices, and losing one entirely is
-      // worse than showing it to the room.
-      if (ephemeralTo && !capabilities?.ephemeral) {
-        const dm = await openDm(ephemeralTo).catch(() => "");
-        if (dm) {
-          const res = await chat.createMessage(dm, { text: body });
-          return { messageId: res.messageId, conversationId: dm, threadKey: "", ephemeral: true };
-        }
-      }
-      // Buttons need Cards v2, which the connector does not render yet. An approval prompt that
-      // silently loses its controls looks like a hung run, so the actions are named in text.
+      const cardsV2 = footerCards(footer, menu);
+      // Generic unnamed actions have no verified dispatch target. Native controls use postCard.
       if (buttons?.length) {
         const labels = buttons.map((b) => b?.text || b?.label).filter(Boolean);
         if (labels.length) body += `\n\n_Reply with one of: ${labels.join(" · ")}_`;
       }
-      const thread = threadFor(threadKey);
-      const res = await chat.createMessage(space, { text: body, threadName: thread || "" });
-      return { messageId: res.messageId, conversationId: space, threadKey: res.threadName || thread || "" };
+      const thread = scopedThread(space, threadKey);
+      const res = await chat.createMessage(space, { text: body, threadName: thread, cardsV2,
+        privateMessageViewer: privateViewer(ephemeralTo) });
+      return { messageId: res.messageId, conversationId: space, threadKey: res.threadName || thread,
+        ...(ephemeralTo ? { ephemeral: true } : {}) };
     },
 
-    async edit({ messageId, text, footer = "" } = {}) {
-      let body = String(text ?? "");
-      if (footer) body += `\n\n_${footer}_`;
-      await chat.patchMessage(messageId, { text: body });
+    async postCard({ conversationId, threadKey, card, text = '', privateTo = '', ephemeralTo = '' } = {}) {
+      const space = toSpaceName(conversationId);
+      const thread = scopedThread(space, threadKey);
+      const viewer = privateTo || ephemeralTo;
+      const res = await chat.createMessage(space, { text: String(text), threadName: thread,
+        cardsV2: cardsFor(card), privateMessageViewer: privateViewer(viewer) });
+      return { messageId: res.messageId, conversationId: space, threadKey: res.threadName || thread,
+        ...(viewer ? { ephemeral: true } : {}) };
+    },
+
+    async updateCard({ conversationId, messageId, card, text = '' } = {}) {
+      scopedMessage(toSpaceName(conversationId), messageId);
+      await chat.patchMessage(messageId, { text: String(text), cardsV2: cardsFor(card) });
+    },
+
+    async edit({ conversationId, messageId, text, footer = "", menu = null } = {}) {
+      if (conversationId) scopedMessage(toSpaceName(conversationId), messageId);
+      await chat.patchMessage(messageId, { text: String(text ?? ''), cardsV2: footerCards(footer, menu) });
     },
 
     // Chat marks a deleted message with a "Message deleted by its author" tombstone, so the daemon
