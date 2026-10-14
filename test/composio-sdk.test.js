@@ -1,5 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { Composio } from "@composio/core";
 import { ensureTestEnv, clearTestLicense, testLicenseEnv } from "./helpers.js";
 
 ensureTestEnv();
@@ -30,6 +31,44 @@ function fakeClient({ create, use } = {}) {
     },
   };
 }
+
+test("installed SDK creates and resumes gateway sessions with the correct identity and no key exposure", async (t) => {
+  const calls = [];
+  t.mock.method(globalThis, "fetch", async (input, init) => {
+    const request = new Request(input, init);
+    if (request.url === "https://registry.npmjs.org/@composio/core/latest") {
+      assert.equal(request.headers.get("x-api-key"), null);
+      return Response.json({ version: "0.22.0" });
+    }
+    assert.equal(new URL(request.url).origin, "https://backend.composio.dev");
+    const body = request.method === "POST" ? await request.json() : null;
+    calls.push({ url: request.url, method: request.method, body, key: request.headers.get("x-api-key") });
+    return Response.json({
+      session_id: "trs_sdk_contract",
+      mcp: { type: "http", url: "https://backend.composio.dev/tool_router/v3/trs_sdk_contract/mcp" },
+      config: { user_id: body?.user_id || "test-user", manage_connections: { enable: false } },
+    });
+  });
+  const apiKey = "ak_sdk_contract_fixture";
+  const client = new Composio({ apiKey, userApiKey: null, orgApiKey: null, allowTracking: false });
+  const options = {
+    workspaceId: "TSDKCONTRACT", kind: "user", id: "UCONTRACT", threadKey: "installed-sdk",
+    accessKind: "owner", manageConnections: false, client,
+  };
+  const created = await resolveSdkSession(options);
+  const resumed = await resolveSdkSession(options);
+  assert.deepEqual(resumed, created);
+  assert.equal(created.url, "https://backend.composio.dev/tool_router/v3/trs_sdk_contract/mcp");
+  assert.equal(created.source, "sdk-user");
+  assert.equal(JSON.stringify(created).includes(apiKey), false);
+  assert.equal(calls.length, 2);
+  assert.equal(calls[0].method, "POST");
+  assert.equal(calls[0].body.user_id, composioIdentity(options));
+  assert.equal(calls[0].body.manage_connections.enable, false);
+  assert.equal(calls[1].method, "GET");
+  assert.ok(calls[1].url.endsWith("/tool_router/session/trs_sdk_contract"));
+  assert.ok(calls.every((call) => call.key === apiKey));
+});
 
 test("personal and shared sessions use stable identities with explicit management rights", async () => {
   const calls = [];

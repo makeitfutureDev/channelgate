@@ -186,7 +186,8 @@ test("a live token streams the file once, audits the fetch and spends one downlo
   assert.equal(res.headers.get("cache-control"), "no-store, max-age=0");
   assert.equal(res.headers.get("x-content-type-options"), "nosniff");
   assert.equal(res.headers.get("x-robots-tag"), "noindex, nofollow");
-  assert.match(res.headers.get("content-disposition"), /attachment; filename="PROPOSAL\.pdf"/);
+  // HTTP token filenames may be quoted or bare (content-disposition 2 uses the latter).
+  assert.match(res.headers.get("content-disposition"), /^attachment; filename=(?:"PROPOSAL\.pdf"|PROPOSAL\.pdf)$/);
   assert.equal(await res.text(), "%PDF-1.7 proposal\n");
 
   assert.equal(audits.length, 1);
@@ -198,6 +199,23 @@ test("a live token streams the file once, audits the fetch and spends one downlo
   assert.ok(!JSON.stringify(audits[0]).includes(link.token));
 
   assert.equal(getDb().prepare("SELECT downloads FROM public_file_links WHERE id = ?").get(link.id).downloads, 1);
+});
+
+test("download filenames retain required quoting and Unicode encoding", async (t) => {
+  const root = await scratchRoot(t);
+  const { base } = await serve(t, root);
+  for (const [filename, expected] of [
+    ["Quarterly report.pdf", 'attachment; filename="Quarterly report.pdf"'],
+    ["report \"final\".pdf", 'attachment; filename="report \\"final\\".pdf"'],
+    ["report-\u20ac.pdf", "attachment; filename=\"report-?.pdf\"; filename*=UTF-8''report-%E2%82%AC.pdf"],
+  ]) {
+    await writeFile(path.join(root, "work", filename), "%PDF-1.7 proposal\n");
+    const link = mint({ relative: `work/${filename}`, filename });
+    const res = await fetch(`${base}/f/${link.token}`);
+    assert.equal(res.status, 200);
+    assert.equal(res.headers.get("content-disposition"), expected);
+    assert.equal(await res.text(), "%PDF-1.7 proposal\n");
+  }
 });
 
 test("a HEAD probe verifies the file without spending a download", async (t) => {
