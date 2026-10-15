@@ -245,8 +245,12 @@ export function setChannelEnvVar(env, { name, value, provider = "local", ref = "
 
 // Pure: the NEW env map with one entry's approval metadata changed and its value untouched.
 // `addApprovedHost` records a server an admin approved; `exposure` is "hidden", "readable" or
-// "auto" (clears the choice). Throws on an unknown name or a malformed host.
-export function patchEnvEntry(env, name, { addApprovedHost = "", exposure = undefined, scopeWhere = "this channel" } = {}) {
+// "auto" (clears the choice). `hosts` REPLACES where the secret may be sent (Settings → Variables →
+// Allowed servers): a non-empty list becomes the entry's own declared destinations and makes it a
+// secret again (a "readable" choice would otherwise win over any list); an empty list clears both
+// the declared and the admin-approved servers, so a known name falls back to its built-in rule
+// and any other hidden secret asks an admin per server. Throws on an unknown name or a malformed host.
+export function patchEnvEntry(env, name, { addApprovedHost = "", exposure = undefined, hosts = undefined, scopeWhere = "this channel" } = {}) {
   const current = normalizeChannelEnv(env);
   const key = normalizeEnvName(name);
   if (!Object.hasOwn(current, key)) throw new Error(`"${key}" is not set on ${scopeWhere}.`);
@@ -257,6 +261,16 @@ export function patchEnvEntry(env, name, { addApprovedHost = "", exposure = unde
     const hosts = approvedHostsOf({ approvedHosts: [...(entry.approvedHosts || []), host] });
     if (!hosts.includes(host)) throw new Error(`${key} already has the maximum of ${MAX_APPROVED_HOSTS} approved servers.`);
     entry.approvedHosts = hosts;
+  }
+  if (hosts !== undefined && hosts !== null) {
+    const list = assertValidSwapRuleFields({ hosts }).hosts || [];
+    delete entry.approvedHosts;
+    if (list.length) {
+      entry.hosts = list;
+      if (entry.exposure === "readable") delete entry.exposure;
+    } else {
+      delete entry.hosts;
+    }
   }
   if (exposure !== undefined) {
     if (exposure === "auto" || exposure === "" || exposure === null) delete entry.exposure;

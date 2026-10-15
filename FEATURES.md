@@ -204,27 +204,81 @@ control-plane status.
   engine failures preserve recurring eligibility. Task success and message delivery are
   independently auditable, so a chat outage cannot erase completed work or token spend.
 
+## Slack Settings redesign (2026-10)
+
+- **Seven pages behind one dropdown.** The first line is the conversation name with a page
+  dropdown: **Agent · Access · MCP · Variables · Skills · Schedules · You**. A DM has no Access
+  page. Slack lays out a modal's button rows as an equal-width two-column grid, so seven tab buttons
+  would take four rows. Old page ids (`general`, `runtime`, `network`, `resume`, `secrets`,
+  `automations`) still land on the page that now owns their controls.
+- **Agent:** one row of engine · model · effort dropdowns per scope. When Settings is opened from a
+  thread, *This thread* comes first, with *Use channel default* while it is pinned; then *Channel
+  default*. The mode is a dropdown in the same style, with Auto-approve · Lean · Internet ticks
+  beneath it. Managers and admins edit them; everyone else reads one line. Below that: one VPN line,
+  and this thread's resume command when there is a session.
+- **Access:** *Who can use it* and *Who can manage it*, then every human member of the
+  conversation. Each member has a **Use** tick, plus a **Manage** tick when the channel names its
+  managers; admins show as "always".
+  - Ticking someone the policy would refuse grants them guest access (`allowedUsers`).
+  - Unticking an approved member records a per-channel exclusion (`excludedUsers`). The run gate
+    (`isAuthorized`) honors it on every surface; admins are never excluded. The exclusion list is
+    audited with the other list fields.
+  - Members come 25 to a page with ‹ Previous / Next › and an "N–M of total" line (Slack caps a
+    window at 100 blocks, one block per member). *Find a member…* is Slack's own people picker:
+    picking someone shows just their row, with *Show all* to go back; someone outside the channel
+    is named as not a member. The page and the searched person survive each tick's repaint.
+- **MCP:** Composio, Make toolbox, Toolbox, Custom MCP and (admins) Cloud MCP each have their own
+  section.
+  - Edit or Connect opens the fields in place, with the URL or label prefilled and the token box
+    always empty. Remove (with a confirmation) sits inside the open form.
+  - The Toolbox row shows the gateway's Toolbox server URL; the token is per scope.
+  - *Fall back to organization tokens* is one tick.
+  - Cloud MCP is one multi-select per engine. A cold catalog says it is loading instead of
+    blocking the page.
+- **Variables:** *Channel* and *Organization* sections. Organization variables are admin-only;
+  personal ones are under You. Each variable is one line (name, last four characters, where it may
+  go) with a ⋯ menu:
+  - **Replace value** — the same name gets a new value; its type and allowed servers are kept.
+  - **Allowed servers** — opens with the current list. A non-empty list becomes the variable's
+    declared servers and makes it secret again; an empty list clears declared and admin-approved
+    servers, so the built-in servers or per-server approval apply.
+  - **Make readable** — asks in place, because programs then see the real value.
+    **Make secret** applies at once. A password-like variable stays readable and says why.
+  - **Remove** — asks in place.
+
+  Slack's overflow menu can carry only one confirmation for all its options, which is why the two
+  irreversible choices confirm on the page instead.
+- **Skills:** the template dropdown and one picker for the channel's own skills, with a line for
+  what the template and the organization add. This replaces the four overlapping lists and the
+  pushed manager.
+- **Schedules:** one line per schedule (▶/⏸, when, last result) with a ⋯ menu (Pause/Resume,
+  Delete — which asks in place). A one-time reminder or a loop has one Cancel/Stop button that
+  confirms.
+- **You:** the viewer's own Composio account, Toolbox token, custom MCP servers, variables and
+  skills, edited the same way. They apply only to runs the viewer starts, in every conversation.
+- **Inline forms.** Slack allows input fields only in a modal with a submit button. While a form is
+  open the footer reads **Save** / **Close**; saving is the view submission, so a refusal appears
+  under its own field. Each form's field ids are keyed by the form, so Slack never carries a typed
+  value from one form into another. The open form and any pending confirmation ride in the view's
+  metadata; changing page clears both.
+- **Explainers removed:** the permission paragraph, per-field footnotes and the long Access note.
+  What remains is the 🔒 line shown where the viewer cannot edit something.
+  → TEST-PLAN: Slack Settings redesign.
+
 ## Custom MCP connections (Bearer token)
 
 - An admin can add a remote MCP server by **name, HTTPS URL and Bearer token** to a conversation
   (admin UI → conversation → Connections → *Custom MCP servers*) or to one person (Users → the
   person → *Personal MCP servers*). Each scope holds at most five. OAuth-only servers are out of
   scope and go through Composio.
-- **In Slack too:** the ⚙️ Settings → **MCPs** page has a *Custom MCP servers* section with two
-  lists, masked like the admin UI (server name, URL and last four token characters):
-  - *This conversation* — rows can be added, updated and removed only by the channel's managers
-    and admins (`canManage`, re-checked on every click and submission).
-  - *Yours* — the viewer's own `my-<name>` servers, which any authorized user manages for
-    themselves.
-  - *Add or update…* pushes a form (name, URL, optional token). It is never prefilled; a blank
-    token keeps the stored one for an existing name. Local field errors appear inline. Remote
-    address/membership checks acknowledge promptly and show progress in the existing Settings
-    page; a refusal offers a fresh form with the token draft cleared. Checks time out after
-    15 seconds and cannot save later; current authority is rechecked before the write.
-    Successful saves reuse that page, so repeated edits do not consume Slack's modal stack.
-  - *Remove* asks for confirmation and takes the server out of live relay grants. Saves and
-    removals go through the same `custom-mcp-store.js` path as the admin UI. Audit rows name the
-    Slack user. The Teams settings dialog does not offer this yet.
+- **In Slack too:** ⚙️ Settings → **MCP** lists the conversation's servers; **You** lists the
+  viewer's own. Both are masked like the admin UI (server name, URL and last four token characters)
+  and edited in place. The conversation's servers can be changed only by the channel's managers and
+  admins (`canManage`, re-checked on every click and submission); anyone edits their own. Saves and
+  removals go through the same `custom-mcp-store.js` path as the admin UI. Audit rows name the
+  Slack user. Address and membership checks acknowledge Slack at once, time out after 15 seconds
+  without saving, and re-check the editor's current authority before the write. The Teams settings
+  dialog does not offer this yet. → Slack Settings redesign.
 - Runs receive a conversation's servers as `custom-<name>` and the AUTHOR's own as `my-<name>`, in
   Claude and Codex turns (fresh, resumed, cross-engine fallback) and in SSH sessions. The prefixes
   keep them apart from each other, the built-in servers and Cloud MCP selections. Lean injects
@@ -928,8 +982,9 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
   grants on unrelated saves. Filters never alter selections or mark a conversation dirty. The channel-level
   Grant Tier switch is gone.
 - **Slack settings for authorized users:** replies requested by anyone allowed to use the agent add a
-  requester-bound **⚙️ Settings** footer button. Its Block Kit console mirrors the web
-  setup concepts across six pages — **General Settings**, **Variables**, **MCP**, **Skills**,
+  requester-bound **⚙️ Settings** footer button. *(The page layout below was replaced on
+  2026-10-15 — see **Slack Settings redesign**; the authorization rules here still hold.)* Its
+  Block Kit console mirrors the web setup concepts across six pages — **General Settings**, **Variables**, **MCP**, **Skills**,
   **Automations**, **Resume Session** — shown as one row of tabs (*General · Variables · MCPs ·
   Skills · Automations · Resume*) at the top, the open page highlighted; Slack wraps the row on a
   narrow modal. Legacy page ids

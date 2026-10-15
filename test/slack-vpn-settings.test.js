@@ -9,7 +9,7 @@ const store = await import("../src/config/store.js");
 const state = { channelId: "CVPNSETTINGS", slug: "vpn-settings", ownerId: "UVPNMANAGER", tab: "network" };
 const off = { configured: true, enabled: false, state: "off", message: "VPN is off.", missingSecrets: [], busy: false, allowNetwork: true };
 const buttons = (view) => view.blocks.flatMap((b) => b.elements || []).filter((el) => el.type === "button");
-const render = (vpn, canManageVpn = true, actorState = state) => buildChannelSettingsView({ mode: { allowNetwork: true }, vpn }, actorState, { tab: "network", canManageVpn });
+const render = (vpn, canManageVpn = true, actorState = state) => buildChannelSettingsView({ mode: { allowNetwork: true }, vpn }, actorState, { tab: "agent", canManageVpn });
 const actionFor = (vpn, actorState = state) => buttons(render(vpn, true, actorState)).find((b) => b.action_id === TOGGLE);
 
 // The VPN row now shares General Settings with the engine, mode and access controls, so every
@@ -40,7 +40,8 @@ test("Network shows honest state, missing credentials and scoped manager control
     const vpn = { ...off, state: status, enabled: ["starting", "on", "failed"].includes(status), configured: status !== "unconfigured" };
     const view = render(vpn);
     assert.match(JSON.stringify(view), new RegExp(label));
-    assert.ok(buttons(view).some((b) => b.action_id === REFRESH));
+    // An unprovisioned VPN is one line with nothing to press; every other state can be refreshed.
+    assert.equal(buttons(view).some((b) => b.action_id === REFRESH), status !== "unconfigured");
     assert.equal(buttons(view).some((b) => b.action_id === TOGGLE), !["unconfigured", "unavailable"].includes(status));
     if (status === "starting") assert.equal(parseActionValue(actionFor(vpn).value).enabled, false);
     assert.equal(buttons(render(vpn, false)).some((b) => b.action_id === TOGGLE), false);

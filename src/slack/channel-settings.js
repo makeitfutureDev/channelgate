@@ -5,7 +5,6 @@ import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 import { ACCESS_FIELD_PREFIX, ACCESS_FLAGS, ACCESS_LABELS, ACCESS_SELECTS, ACCESS_USER_LISTS, accessSettingsSnapshot } from "./access-settings.js";
 import { channelMode, modeLabel } from "../gateway/modes.js";
 import { MIN_MASKABLE_LENGTH } from "../config/channel-env.js";
-import { buildSecretsView } from "./secret-explorer.js";
 import { nextCronRun } from "../util/cron.js";
 import { daemonTimeZone, zonedStamp } from "../util/timezone.js";
 
@@ -65,13 +64,33 @@ export const CHANNEL_SETTINGS_VPN_REFRESH_ACTION_ID = "cg_channel_settings_vpn_r
 // THIS channel's rows by the handler, so a stale or forged id can never touch another channel's.
 export const CHANNEL_SETTINGS_AUTOMATION_TOGGLE_ACTION_ID = "cg_channel_settings_automation_toggle";
 export const CHANNEL_SETTINGS_AUTOMATION_DELETE_ACTION_ID = "cg_channel_settings_automation_delete";
+// The redesigned pages' controls (2026-10): inline forms, the variable and schedule ⋯ menus, the
+// in-place confirmations, the Access member ticks, and the in-place pickers.
+export const CHANNEL_SETTINGS_ROOT_CALLBACK_ID = "cg_channel_settings_modal";
+export const CHANNEL_SETTINGS_FORM_OPEN_ACTION_ID = "cg_channel_settings_form_open";
+export const CHANNEL_SETTINGS_FORM_CANCEL_ACTION_ID = "cg_channel_settings_form_cancel";
+export const CHANNEL_SETTINGS_FORM_REMOVE_ACTION_ID = "cg_channel_settings_form_remove";
+export const CHANNEL_SETTINGS_VAR_MENU_ACTION_ID = "cg_channel_settings_var_menu";
+export const CHANNEL_SETTINGS_SCHEDULE_MENU_ACTION_ID = "cg_channel_settings_schedule_menu";
+export const CHANNEL_SETTINGS_CONFIRM_ACTION_ID = "cg_channel_settings_confirm";
+export const CHANNEL_SETTINGS_CONFIRM_CANCEL_ACTION_ID = "cg_channel_settings_confirm_cancel";
+export const CHANNEL_SETTINGS_MEMBER_ACTION_ID = "cg_channel_settings_member";
+export const ACCESS_MEMBER_BLOCK_PREFIX = "cg_member_";
+export const CHANNEL_SETTINGS_MEMBER_PAGE_ACTION_ID = "cg_channel_settings_member_page";
+export const CHANNEL_SETTINGS_MEMBER_FIND_ACTION_ID = "cg_channel_settings_member_find";
+export const CHANNEL_SETTINGS_FALLBACK_TOGGLE_ACTION_ID = "cg_channel_settings_fallback_toggle";
+export const CHANNEL_SETTINGS_CLOUD_SELECT_PREFIX = "cg_channel_settings_cloud_select_";
+export const CHANNEL_SETTINGS_SKILLS_SELECT_ACTION_ID = "cg_channel_settings_skills_select";
+export const CHANNEL_SETTINGS_MY_SKILLS_SELECT_ACTION_ID = "cg_channel_settings_my_skills_select";
+export const CHANNEL_SETTINGS_DM_MODE_ACTION_ID = "cg_channel_settings_dm_mode";
+export const CHANNEL_SETTINGS_DM_FLAGS_ACTION_ID = "cg_channel_settings_dm_flags";
 export const CHANNEL_SETTINGS_ACTION_PATTERN = /^cg_channel_settings(?:$|_)/;
-// The pages the modal offers, in the order the tab row shows them. "general" absorbed the former
-// runtime, access and network tabs (see generalBlocks); LEGACY_TABS keeps a Settings view opened
-// before that merge — its buttons still carry the old ids — landing on the page that now owns
-// those controls instead of silently falling back to the first one.
-export const CHANNEL_SETTINGS_TABS = Object.freeze(["general", "secrets", "mcp", "skills", "automations", "resume"]);
-const LEGACY_TABS = Object.freeze({ runtime: "general", access: "general", network: "general" });
+// The pages the modal offers, in the order the page dropdown lists them (2026-10 redesign): what
+// the agent is (Agent), who uses it (Access), what it reaches (MCP, Variables, Skills), what runs
+// unattended (Schedules), and everything personal to the viewer (You). LEGACY_TABS lands a view
+// or button from before the redesign on the page that now owns its controls.
+export const CHANNEL_SETTINGS_TABS = Object.freeze(["agent", "access", "mcp", "variables", "skills", "schedules", "you"]);
+const LEGACY_TABS = Object.freeze({ general: "agent", runtime: "agent", network: "agent", resume: "agent", secrets: "variables", automations: "schedules" });
 export const SETTINGS_DEFAULT_VALUE = "__default__";
 export const SETTINGS_NONE_VALUE = "__none__";
 export const SETTINGS_PAGE_SIZE = 12;
@@ -170,6 +189,12 @@ export function settingsMetadata(state = {}) {
     t: state.threadTs || "",
     u: state.ownerId,
     p: normalizeTab(state.tab),
+    // The inline form open on the page (`f`) and the in-place confirmation waiting (`x`).
+    ...(state.form ? { f: String(state.form).slice(0, 200) } : {}),
+    ...(state.confirm ? { x: String(state.confirm).slice(0, 200) } : {}),
+    // The Access page's member page (`m`) and the member a search jumped to (`y`).
+    ...(state.memberPage ? { m: Math.max(0, Number(state.memberPage) || 0) } : {}),
+    ...(state.memberFocus ? { y: String(state.memberFocus).slice(0, 32) } : {}),
   });
 }
 
@@ -187,6 +212,10 @@ export function parseSettingsMetadata(raw) {
     threadTs: String(value.t || ""),
     ownerId: String(value.u),
     tab: normalizeTab(value.p),
+    form: typeof value.f === "string" ? value.f : "",
+    confirm: typeof value.x === "string" ? value.x : "",
+    memberPage: Math.max(0, Number(value.m) || 0),
+    memberFocus: typeof value.y === "string" && /^[UW][A-Z0-9]+$/.test(value.y) ? value.y : "",
   };
 }
 
@@ -250,237 +279,17 @@ function destructiveConfirm(title, text, confirm = "Remove") {
   };
 }
 
-// One scope's three rows. A stored value renders as itself; an empty one renders as the label of
-// whatever it inherits, so "nothing set here" never shows up as a blank the reader has to decode.
-// `options` carries the catalogs the app layer resolved for the engine THIS scope actually runs.
-function runtimeScopeRows(scope, { values = {}, inherited = {}, options = {} } = {}, { editable = true, codexLocked = false } = {}) {
-  const ids = RUNTIME_SELECT_ACTION_IDS[scope];
-  const lists = { engine: options.engines || [], model: options.models || [], effort: options.efforts || [] };
-  const labels = { engine: "Engine", model: "Model", effort: "Reasoning effort" };
-  return RUNTIME_FIELDS.filter((field) => !(codexLocked && field === "engine")).map((field) => (editable
-    ? selectRow({
-      label: labels[field],
-      actionId: ids[field],
-      options: [{ label: inherited[field] || "Inherited default", value: SETTINGS_DEFAULT_VALUE }, ...lists[field]],
-      initialValue: values[field] || SETTINGS_DEFAULT_VALUE,
-    })
-    : fieldBlock(labels[field], values[field] ? inlineCode(values[field]) : `_${escapeMrkdwn(inherited[field] || "inherited default")}_`)));
-}
 
-function runtimeBlocks(snapshot = {}, state = {}, { canEditRuntime = true, canEnableAdmin = false } = {}) {
-  const runtime = snapshot.runtime || {};
-  const scopes = runtime.scopes || {};
-  const thread = scopes.thread || null;
-  const mode = snapshot.mode || {};
-  const selected = channelMode(mode);
-  const blocks = [
-    ...(snapshot.isDM ? [fieldBlock("Mode", modeLabel(mode)),
-    { type: "actions", elements: [
-      ...["read", "worker", ...(canEnableAdmin ? ["admin"] : [])].map((value) =>
-        button(`${CHANNEL_SETTINGS_MODE_PREFIX}${value}`, { read: "Read-only", worker: "Worker", admin: "Admin" }[value], state, "mode", { mode: value }, { style: selected === value ? "primary" : undefined })),
-    ] },
-    { type: "actions", elements: [
-      button(`${CHANNEL_SETTINGS_OPTION_PREFIX}auto`, `${mode.autoMode ? "☑" : "☐"} Auto`, state, "option", { key: "autoMode", enabled: !mode.autoMode }),
-      button(`${CHANNEL_SETTINGS_OPTION_PREFIX}lean`, `${mode.cleanMode ? "☑" : "☐"} Lean`, state, "option", { key: "cleanMode", enabled: !mode.cleanMode }),
-    ] },
-    { type: "context", elements: [mrkdwn("Read-only reads files; changes need approval. Worker runs commands and edits files in the channel folder only. Admin gives admins all tools without approval prompts; other members get Worker with the selected Auto/Lean options. Host-home access is a separate web Settings → Container runtime option for current admin authors only. Other members stay in a separate project container. It does not grant host root access. Auto approves tool requests for all members. Lean removes optional skills and connectors.")] },
-    { type: "divider" },
-    ] : []),
-    { type: "header", text: plain("Engine & model") },
-    ...(runtime.channelLogin ? [{ type: "section", text: mrkdwn(`*Channel Codex login:* ${escapeMrkdwn(runtime.channelLoginStatus || "Checking sign-in…")} · *Engine:* Codex`) }] : []),
-    { type: "section", text: mrkdwn("*Channel default*") },
-    ...runtimeScopeRows("channel", scopes.channel, { editable: canEditRuntime, codexLocked: runtime.channelLogin }),
-    { type: "context", elements: [mrkdwn("Applies to every thread here that has no pin of its own. Each change saves immediately and takes effect on the next turn.")] },
-    { type: "divider" },
-    { type: "section", text: mrkdwn("*This thread*") },
-  ];
-  if (!thread) {
-    blocks.push({ type: "context", elements: [mrkdwn("_Open Settings from a reply inside a thread to pin that thread's engine, model or effort._")] });
-  } else {
-    blocks.push(
-      ...runtimeScopeRows("thread", thread, { editable: canEditRuntime, codexLocked: runtime.channelLogin }),
-      ...(canEditRuntime && thread.pinned
-        ? [{ type: "actions", elements: [button(CHANNEL_SETTINGS_THREAD_RESET_ACTION_ID, "Follow channel default", state, "thread_reset", {}, {
-          confirm: destructiveConfirm("Clear this thread's pins?", "The thread goes back to the channel's engine, model and effort.", "Clear"),
-        })] }]
-        : []),
-      { type: "context", elements: [mrkdwn("A pin here beats the channel default for this thread only, and stops cross-engine failover from answering on the other harness.")] },
-      ...(thread.sessionEngineLabel
-        ? [{ type: "context", elements: [mrkdwn(`_This thread's live session was started by *${escapeMrkdwn(thread.sessionEngineLabel)}*, so it keeps running there until you pin an engine above or clear the session with \`/clear\`._`)] }]
-        : []),
-    );
-  }
-  if (!canEditRuntime) {
-    blocks.push({ type: "context", elements: [mrkdwn("_Your gateway's runtime-change policy limits this control to administrators._")] });
-  }
-  return blocks;
-}
 
 // A custom MCP scope as the page shows it: `c` the conversation's, `p` the viewer's own.
 export function customMcpScope(letter) {
   return letter === "c" ? "channel" : letter === "p" ? "user" : "";
 }
 
-function customMcpRows(list, state, letter, canEdit) {
-  const rows = (Array.isArray(list) ? list : []).map((entry) => {
-    const section = {
-      type: "section",
-      text: mrkdwn(`${inlineCode(entry.serverName)}  ${escapeMrkdwn(String(entry.url || "").slice(0, 200))}\nBearer ${inlineCode(`••••${entry.tokenLast4 || ""}`)}`),
-    };
-    if (canEdit) {
-      section.accessory = button(CHANNEL_SETTINGS_CUSTOM_MCP_REMOVE_ACTION_ID, "Remove", state, "custom_mcp_remove", { s: letter, n: entry.name }, {
-        style: "danger",
-        confirm: destructiveConfirm(`Remove ${entry.serverName}?`, letter === "c"
-          ? "Runs in this conversation stop receiving this server, including any run in progress. The token can't be recovered."
-          : "Your runs stop receiving this server everywhere, including any run in progress. The token can't be recovered."),
-      });
-    }
-    return section;
-  });
-  return rows.length ? rows : [{ type: "context", elements: [mrkdwn("_none_")] }];
-}
 
-function customMcpBlocks(snapshot = {}, state = {}, { canManageCustomMcp = false } = {}) {
-  const custom = snapshot.customMcps || {};
-  return [
-    { type: "divider" },
-    { type: "header", text: plain("Custom MCP servers") },
-    { type: "context", elements: [mrkdwn("A remote MCP server added by HTTPS URL + Bearer token (servers that need an OAuth sign-in go through Composio). The gateway connects on the agent's behalf, so the token never enters the container. Tokens are write-only.")] },
-    fieldBlock("This conversation", "Every run here receives these as `custom-<name>`."),
-    ...customMcpRows(custom.channel, state, "c", canManageCustomMcp),
-    canManageCustomMcp
-      ? { type: "actions", elements: [button(CHANNEL_SETTINGS_CUSTOM_MCP_ADD_ACTION_ID, "Add or update a conversation server", state, "custom_mcp_add", { s: "c" })] }
-      : { type: "context", elements: [mrkdwn("_Only this channel's managers and admins can change the conversation's servers._")] },
-    fieldBlock("Yours", "Only runs *you* start receive these, as `my-<name>`, in every conversation you talk in."),
-    ...customMcpRows(custom.personal, state, "p", true),
-    { type: "actions", elements: [button(CHANNEL_SETTINGS_CUSTOM_MCP_ADD_ACTION_ID, "Add or update my server", state, "custom_mcp_add", { s: "p" })] },
-  ];
-}
 
-function mcpBlocks(snapshot = {}, state = {}, { canManageCloudMcp = false, canManageCustomMcp = false } = {}) {
-  const c = snapshot.connections || {};
-  const cloud = snapshot.cloudMcp || {};
-  const composio = c.composioMode === "sdk"
-    ? `${inlineCode("SDK")} · ${c.composioSdkReady ? "organization identity is ready" : "organization API key or entitlement is missing"}`
-    : `${credentialLabel(c.composioChannel)}${c.composioChannel?.configured
-      ? " · channel credential wins"
-      : c.noDefaultTokens
-        ? " · organization fallback refused here"
-        : c.composioOrg?.configured
-          ? " · using organization default"
-          : " · no shared fallback"}`;
-  const toolbox = c.toolboxChannel?.configured
-    ? `${credentialLabel(c.toolboxChannel)} · channel credential wins`
-    : c.noDefaultTokens
-      ? "not configured here · organization fallback refused"
-      : c.toolboxOrg?.configured
-        ? "not configured here · falls back per-user, then organization default"
-        : "not configured here · may fall back to each user's credential";
-  const make = c.makeToolboxUrl
-    ? `${inlineCode(c.makeToolboxUrl)} · key ${credentialLabel(c.makeToolboxKey)}`
-    : "not configured";
-  const remove = [];
-  if (c.composioChannel?.configured) {
-    remove.push(button(CHANNEL_SETTINGS_CLEAR_COMPOSIO_ACTION_ID, "Remove Composio token", state, "clear_composio", {}, {
-      style: "danger",
-      confirm: destructiveConfirm("Remove Composio token?", "The channel will fall back to the organization credential unless fallbacks are disabled."),
-    }));
-  }
-  if (c.toolboxChannel?.configured) {
-    remove.push(button(CHANNEL_SETTINGS_CLEAR_TOOLBOX_ACTION_ID, "Remove Toolbox token", state, "clear_toolbox", {}, {
-      style: "danger",
-      confirm: destructiveConfirm("Remove Toolbox token?", "The channel will fall back to a personal or organization credential unless fallbacks are disabled."),
-    }));
-  }
-  if (c.makeToolboxUrl || c.makeToolboxKey?.configured) {
-    remove.push(button(CHANNEL_SETTINGS_CLEAR_MAKE_ACTION_ID, "Disconnect Make MCP", state, "clear_make", {}, {
-      style: "danger",
-      confirm: destructiveConfirm("Disconnect Make MCP?", "The saved Make MCP URL and token will both be removed."),
-    }));
-  }
-  return [
-    { type: "header", text: plain("MCP connections") },
-    fieldBlock(`Composio shared · ${c.composioMode === "sdk" ? "SDK mode" : "Personal mode"}`, composio),
-    ...(c.composioTokenLabel ? [fieldBlock("Composio channel label", inlineCode(c.composioTokenLabel))] : []),
-    fieldBlock("Toolbox", toolbox),
-    fieldBlock("Make MCP toolbox", make),
-    {
-      type: "actions",
-      elements: [
-        button(CHANNEL_SETTINGS_CONNECTIONS_EDIT_ACTION_ID, "Update connection tokens", state, "connections_edit", {}, { style: "primary" }),
-        button(CHANNEL_SETTINGS_FALLBACK_ACTION_ID, c.noDefaultTokens ? "Enable inherited credentials" : "Disable inherited credentials", state, "fallback", { enabled: c.noDefaultTokens }),
-      ],
-    },
-    ...(remove.length ? [{ type: "actions", elements: remove }] : []),
-    ...customMcpBlocks(snapshot, state, { canManageCustomMcp }),
-    ...(canManageCloudMcp ? [
-      { type: "divider" },
-      { type: "header", text: plain("Cloud MCP") },
-      fieldBlock("Claude · configured for this channel", listLabel(cloud.claude?.channel)),
-      fieldBlock("Claude · inherited from organization", listLabel(cloud.claude?.organization)),
-      fieldBlock("Codex · configured for this channel", listLabel(cloud.codex?.channel)),
-      fieldBlock("Codex · inherited from organization", listLabel(cloud.codex?.organization)),
-      {
-        type: "actions",
-        elements: [button(CHANNEL_SETTINGS_CLOUD_MANAGE_ACTION_ID, "Manage Cloud MCP", state, "cloud_manage", {}, { style: "primary" })],
-      },
-      { type: "context", elements: [mrkdwn("Gateway, Composio, Toolbox, Make toolbox and custom MCP servers are injected separately from the Cloud MCP picker.")] },
-    ] : []),
-  ];
-}
 
-function skillsBlocks(snapshot = {}, state = {}) {
-  const skills = snapshot.skills || {};
-  // One value out of a known list → a dropdown that saves on change, not a button that opens a
-  // second modal to show the same dropdown. With no templates defined there is nothing to pick,
-  // so the row stays a plain read-out that says where templates come from.
-  const templates = Array.isArray(skills.templates) ? skills.templates : [];
-  return [
-    ...(templates.length
-      ? [selectRow({
-        label: "Skill Template",
-        actionId: CHANNEL_SETTINGS_TEMPLATE_SELECT_ACTION_ID,
-        options: [
-          { label: "No template", value: SETTINGS_NONE_VALUE, description: "Keep only channel and organization grants" },
-          ...templates.map((entry) => ({ label: entry.name || entry.slug, value: entry.slug, description: entry.description || "" })),
-        ],
-        initialValue: skills.templateSlug || SETTINGS_NONE_VALUE,
-      })]
-      : [fieldBlock("Skill Template", skills.template ? inlineCode(skills.template) : "_none_")]),
-    { type: "context", elements: [mrkdwn(templates.length
-      ? "A reusable set of skills for this channel. Changing it saves immediately and applies to the next turn."
-      : "A reusable set of skills for this channel. Admins create templates in the admin UI → Skills.")] },
-    fieldBlock("Channel Skills", listLabel(skills.additional)),
-    { type: "context", elements: [mrkdwn("Added directly to this channel. Use Manage Channel Skills below to add or remove them.")] },
-    fieldBlock("Channel Skills Including Template", listLabel(skills.channel)),
-    { type: "context", elements: [mrkdwn("Channel Skills plus the selected template. This summary updates automatically when either changes.")] },
-    fieldBlock("Org Skills", listLabel(skills.organization)),
-    { type: "context", elements: [mrkdwn("Inherited from the organization. Only admins can add or remove Org Skills in the admin UI → Skills. They cannot be removed for just this channel.")] },
-    fieldBlock("All Shared Skills", listLabel(skills.effective)),
-    { type: "context", elements: [mrkdwn("Org Skills plus Channel Skills Including Template, with duplicates listed once. This summary updates automatically when you configure the groups above.")] },
-    {
-      type: "actions",
-      elements: [
-        button(CHANNEL_SETTINGS_SKILLS_MANAGE_ACTION_ID, "Manage Channel Skills", state, "skills_manage", {}, { style: "primary" }),
-      ],
-    },
-    { type: "context", elements: [mrkdwn("Personal skill grants are user-specific, so they are not channel settings and are not included here.")] },
-  ];
-}
 
-function secretsBlocks(snapshot = {}, state = {}, { canEditSecrets = false, canEditOrgSecrets = false } = {}) {
-  // The same masked rows and mutation controls as /secrets, directly in the Settings tab — all
-  // three scopes, so the tab answers "what will this run actually receive?" and not just "what did
-  // this conversation set?". snapshot.secrets stays the channel list for older callers.
-  return buildSecretsView({
-    organization: Array.isArray(snapshot.orgSecrets) ? snapshot.orgSecrets : [],
-    personal: Array.isArray(snapshot.personalSecrets) ? snapshot.personalSecrets : [],
-    channel: Array.isArray(snapshot.secrets) ? snapshot.secrets : [],
-  }, state, {
-    mayEdit: canEditSecrets,
-    canEditOrg: canEditOrgSecrets,
-  }).blocks;
-}
 
 // Bind privileged VPN actions to the view's channel, slug and owner. A restart intentionally
 // expires old VPN controls; the user can reopen Settings to obtain a fresh binding.
@@ -540,114 +349,9 @@ function vpnRows(snapshot, state, { canManageVpn }) {
   ];
 }
 
-// Whoever cannot see the Access controls cannot see the network checkbox either, so they get the
-// policy as a one-line read-out. A manager reads it off the checkbox itself.
-function networkReadoutRow(snapshot) {
-  return { type: "section", text: mrkdwn(`*Network* — ${snapshot.mode?.allowNetwork ? "Allowed" : "Off"}`) };
-}
 
-// The channel's access policy as live controls rather than a summary plus a button into a pushed
-// form. Every row saves on its own the moment it is changed — the same in-place rule the engine
-// and model rows follow — because reaching mode, guests or managers used to cost opening a second
-// modal, filling a whole form and submitting it, for what is usually one deliberate change. The
-// controls cannot be `input` blocks (Slack rejects those in a modal with no submit button), so
-// each one is a section accessory or an actions row that dispatches on change.
-function accessControlBlocks(access = {}, afterFlags = []) {
-  const current = accessSettingsSnapshot(access);
-  const flagOptions = ACCESS_FLAGS.map((flag) => option(flag.label, flag.key));
-  const chosen = flagOptions.filter((entry) => current[entry.value]);
-  return [
-    ...Object.entries(ACCESS_SELECTS).map(([field, choices]) => selectRow({
-      label: ACCESS_LABELS[field],
-      actionId: `${ACCESS_FIELD_PREFIX}${field}`,
-      options: choices.map((choice) => ({ ...choice })),
-      initialValue: current[field],
-    })),
-    { type: "section", text: mrkdwn("*Special modes & network*") },
-    {
-      type: "actions",
-      block_id: `${ACCESS_FIELD_PREFIX}flags_row`,
-      elements: [{
-        type: "checkboxes",
-        action_id: `${ACCESS_FIELD_PREFIX}flags`,
-        options: flagOptions,
-        // Slack rejects an empty initial_options array, so an all-off channel simply omits it.
-        ...(chosen.length ? { initial_options: chosen } : {}),
-      }],
-    },
-    ...afterFlags,
-    ...ACCESS_USER_LISTS.map(({ field, label }) => ({
-      type: "section",
-      block_id: `${ACCESS_FIELD_PREFIX}${field}_row`,
-      text: mrkdwn(`*${label}*`),
-      accessory: {
-        type: "multi_users_select",
-        action_id: `${ACCESS_FIELD_PREFIX}${field}`,
-        placeholder: plain("Current channel members"),
-        max_selected_items: 100,
-        ...(current[field].length ? { initial_users: current[field] } : {}),
-      },
-    })),
-    { type: "context", elements: [mrkdwn("Each control saves on its own and applies to this channel's next runs. Named users are checked against live channel membership when they are saved. Admin mode bypasses permissions only for admin authors; others get Worker. Auto and Lean are independent; Lean applies only to non-admins in Admin mode. Auto on Read-only enables Worker. If the operator enabled whole-home access, Full access exposes the gateway home only to current admin authors. Other members keep project-only access in a separate container. Network is advisory; the container stays on its bridge network.")] },
-  ];
-}
 
-// Everything that decides HOW this conversation runs, on one page: its mode and Auto/Lean
-// switches, the engine/model scopes, who may use and manage it, and its network/VPN posture.
-// These were three tabs (Engine & model, Access, Network) until the tab row outgrew what a Slack
-// modal renders comfortably — and they belong together anyway, because "what is this channel
-// allowed to do?" is not answerable from any one of them alone. Each section keeps the
-// authorization it had as a tab: the access controls render only for a manager, and the VPN
-// controls are still gated by canManageVpn inside vpnRows.
-function generalBlocks(snapshot = {}, state = {}, { canEditRuntime = true, canEnableAdmin = false, canEditAccess = false, canManageVpn = false } = {}) {
-  const vpn = vpnRows(snapshot, state, { canManageVpn });
-  return [
-    ...runtimeBlocks(snapshot, state, { canEditRuntime, canEnableAdmin }),
-    // A DM has no access policy to show: its only member is the person reading the page, and its
-    // mode switches are already above. Everywhere else the section is present for everyone, and
-    // only its contents depend on whether this reader may manage the channel.
-    ...(snapshot.isDM ? [] : [
-      { type: "divider" },
-      { type: "header", text: plain("Access") },
-      ...(canEditAccess
-        ? accessControlBlocks(snapshot.access || {}, vpn)
-        : [
-          { type: "context", elements: [mrkdwn("_Who may use and manage this channel is shown to admins and channel managers only._")] },
-          networkReadoutRow(snapshot),
-          ...vpn,
-        ]),
-    ]),
-    // A DM never renders the Access section, so its network posture has nowhere else to live.
-    ...(snapshot.isDM ? [{ type: "divider" }, networkReadoutRow(snapshot), ...vpn] : []),
-  ];
-}
 
-// The terminal command that reopens this thread's engine session, resolved by the app layer
-// (slack/resume-session.js) at render time. It replaced the 💻 control that used to ride under
-// every reply: the command is only wanted occasionally, and Settings is already the per-thread
-// place to look. Pins are per THREAD, so this tab — like the runtime tab's "This thread" scope —
-// only has something to show when Settings was opened from a reply inside a thread.
-function resumeBlocks(snapshot = {}) {
-  const resume = snapshot.resume || {};
-  if (!resume.inThread) {
-    return [{ type: "context", elements: [mrkdwn("_Open Settings from a reply inside a thread to get that thread's resume command._")] }];
-  }
-  if (!resume.command) {
-    return [
-      { type: "section", text: mrkdwn("No session in this thread yet — send a message first, then open this tab again.") },
-      { type: "context", elements: [mrkdwn("To continue a session you started elsewhere, post `/resume <command or session id>` in this thread.")] },
-    ];
-  }
-  return [
-    { type: "section", text: mrkdwn("Run this on the gateway machine to open this thread's session in your terminal:") },
-    // Escaped like every other value in this modal: a work-folder path is channel-configurable,
-    // and Slack parses control sequences inside a code block too.
-    { type: "section", text: mrkdwn("```" + escapeMrkdwn(resume.command) + "```") },
-    { type: "context", elements: [mrkdwn("Paste the same line back as `/resume <command>` in this channel to continue that session from a Slack thread.")] },
-    ...(resume.sessionId ? [fieldBlock("Session id", inlineCode(resume.sessionId))] : []),
-    ...(resume.workDir ? [fieldBlock("Folder", inlineCode(resume.workDir))] : []),
-  ];
-}
 
 // This channel's schedules, one-time reminders and /loop wake-ups — the rows the agent's own
 // create_schedule and the harness's loop calls write — so what will fire here unattended is visible
@@ -672,89 +376,617 @@ function automationKind(sched = {}) {
   return "Task";
 }
 
-function automationRow(sched, state, options) {
-  const title = String(sched.loop ? sched.loopReason || sched.prompt || "Loop" : sched.description || sched.prompt || sched.id).replace(/\s+/g, " ").trim();
-  const status = sched.enabled ? "On" : "Paused";
-  const details = [
-    automationKind(sched),
-    status,
-    automationWhen(sched, options),
-    ...(sched.loop && Number.isFinite(sched.ticksRemaining) ? [`${sched.ticksRemaining} ticks left`] : []),
-    ...(sched.createdBy ? [`by <@${escapeMrkdwn(sched.createdBy)}>`] : []),
-    ...(sched.lastStatus ? [`last: ${escapeMrkdwn(String(sched.lastStatus).slice(0, 80))}`] : []),
-  ];
-  const recurring = !sched.loop && !sched.once && !sched.runAt;
-  const remove = sched.loop ? "Stop loop" : recurring ? "Delete" : "Cancel";
-  return [
-    { type: "section", text: mrkdwn(`*${escapeMrkdwn(title.slice(0, 150))}*\n${details.join(" · ")}`) },
-    {
-      type: "actions",
-      block_id: `cg_automation_${String(sched.id).slice(0, 40)}`,
-      elements: [
-        ...(recurring ? [button(CHANNEL_SETTINGS_AUTOMATION_TOGGLE_ACTION_ID, sched.enabled ? "Pause" : "Resume", state, "automation_toggle",
-          { id: sched.id, enabled: !sched.enabled }, sched.enabled ? {} : { style: "primary" })] : []),
-        button(CHANNEL_SETTINGS_AUTOMATION_DELETE_ACTION_ID, remove, state, "automation_delete", { id: sched.id }, {
-          style: "danger",
-          confirm: destructiveConfirm(`${remove}?`, `This removes *${escapeMrkdwn(title.slice(0, 80))}* from this channel. It will not run again.`, remove),
-        }),
-      ],
-    },
-  ];
-}
 
-function automationsBlocks(snapshot = {}, state = {}, options = {}) {
-  const list = Array.isArray(snapshot.automations) ? snapshot.automations : [];
-  const intro = { type: "context", elements: [mrkdwn("Scheduled tasks, reminders and `/loop` wake-ups that run in this channel. To add one, ask the agent — e.g. _every weekday at 9:00 summarize new issues_.")] };
-  if (!list.length) return [intro, { type: "section", text: mrkdwn("_No automations in this channel yet._") }];
-  const tz = daemonTimeZone();
-  const shown = list.slice(0, AUTOMATION_LIST_LIMIT);
-  return [
-    intro,
-    ...shown.flatMap((sched) => automationRow(sched, state, { ...options, tz })),
-    ...(list.length > shown.length ? [{ type: "context", elements: [mrkdwn(`${list.length - shown.length} more not shown — the admin UI's Schedules page lists them all.`)] }] : []),
-  ];
-}
 
 const TAB_LABELS = Object.freeze({
-  general: "General Settings",
-  secrets: "Variables",
+  agent: "Agent",
+  access: "Access",
   mcp: "MCP",
+  variables: "Variables",
   skills: "Skills",
-  automations: "Automations",
-  resume: "Resume Session",
+  schedules: "Schedules",
+  you: "You",
 });
 
-// The short names the tab row shows; TAB_LABELS stays the page's full name.
-const TAB_BUTTON_LABELS = Object.freeze({
-  general: "General",
-  secrets: "Variables",
-  mcp: "MCPs",
-  skills: "Skills",
-  automations: "Automations",
-  resume: "Resume",
-});
+// The pages a viewer is offered. A DM has one member — the viewer — so it has no Access page.
+export function settingsPages({ isDM = false } = {}) {
+  return CHANNEL_SETTINGS_TABS.filter((tab) => !(isDM && tab === "access"));
+}
 
-// Pages are a row of tab buttons, the current one highlighted. A dropdown replaced an earlier row
-// that wrapped onto a second line as pages were added; Slack wraps a long row on its own, and a
-// tab is one click where the dropdown was two. Each button carries the same `tab`
-// command the dropdown did, so a Settings view opened before this shipped still switches pages
-// through the very same handler.
-function tabRow(state, active) {
+// Page navigation is ONE line: the conversation on the left, the page dropdown on the right.
+// Slack lays out the buttons of an `actions` block in a modal as an equal-width two-column grid,
+// so a row of seven tab buttons would be four rows tall — the dropdown costs a second click and
+// saves a third of the first screen. The option values are the same `tab` command the old tab
+// buttons carried, so both route through one handler.
+function pageNav(state, active, { isDM = false } = {}) {
+  const options = settingsPages({ isDM }).map((tab) => option(TAB_LABELS[tab], actionValue("tab", { p: tab })));
   return {
-    type: "actions",
+    type: "section",
     block_id: "cg_channel_settings_tabs",
-    elements: CHANNEL_SETTINGS_TABS.map((tab) => ({
-      type: "button",
-      action_id: `${CHANNEL_SETTINGS_TAB_PREFIX}${tab}`,
-      text: plain(TAB_BUTTON_LABELS[tab] || TAB_LABELS[tab]),
-      value: actionValue("tab", { c: state.channelId, u: state.ownerId, p: tab }),
-      ...(tab === active ? { style: "primary" } : {}),
-    })),
+    text: mrkdwn(isDM ? "*Direct message*" : `<#${escapeMrkdwn(state.channelId)}>`),
+    accessory: {
+      type: "static_select",
+      action_id: CHANNEL_SETTINGS_TAB_SELECT_ACTION_ID,
+      options,
+      initial_option: options.find((entry) => parseActionValue(entry.value).p === active) || options[0],
+    },
   };
 }
 
+// ── Inline forms ─────────────────────────────────────────────────────────────────────────────
+// Editing a token, a URL or a variable opens its fields IN PLACE on the page instead of pushing a
+// second modal. Slack only lets a modal carry input blocks when it has a submit button, so while a
+// form is open the modal's footer button becomes "Save" and saving is a view submission — which
+// is also what lets a refusal land under the field it is about. The open form rides in the view's
+// metadata (`f`); its input block ids are keyed by the form, so a value typed into one form can
+// never be carried into another by Slack's state retention.
+export const SETTINGS_FIELD_ACTION_ID = "v";
+export function settingsFieldBlockId(form, field) {
+  return `cgf_${field}_${createHmac("sha256", "cg-settings-form").update(String(form)).digest("hex").slice(0, 8)}`;
+}
+
+// Which scope a form or row key names: c = this conversation, o = organization, p = the viewer.
+export const FORM_SCOPES = Object.freeze({ c: "channel", o: "organization", p: "personal" });
+
+// The form a key opens, or null for an unknown key. `snapshot` supplies the prefilled values (a URL,
+// a label, the current allowed servers) — never a token or a variable's value.
+export function settingsFormSpec(key, snapshot = {}) {
+  const [kind, scope = "", ...rest] = String(key || "").split(":");
+  const name = rest.join(":");
+  const c = snapshot.connections || {};
+  const my = snapshot.my || {};
+  const token = (label, existing) => ({ name: "token", label, optional: Boolean(existing), placeholder: existing ? "Leave blank to keep the saved one" : "Stored write-only" });
+  if (kind === "composio" && (scope === "c" || scope === "p")) {
+    const saved = scope === "c" ? c.composioChannel?.configured : my.composio?.configured;
+    return {
+      key, title: scope === "c" ? "Shared Composio account" : "Your Composio account", removable: Boolean(saved),
+      fields: [
+        { name: "label", label: "Whose account", optional: true, placeholder: "e.g. Team account", initial: scope === "c" ? c.composioTokenLabel : my.composioLabel },
+        token("Composio key", saved),
+      ],
+    };
+  }
+  if (kind === "make" && scope === "c") {
+    return {
+      key, title: "Make toolbox", removable: Boolean(c.makeToolboxUrl || c.makeToolboxKey?.configured),
+      fields: [
+        { name: "url", label: "Server URL", placeholder: "https://eu1.make.com/mcp/server/…", initial: c.makeToolboxUrl, maxLength: 500 },
+        token("Key", c.makeToolboxKey?.configured),
+      ],
+    };
+  }
+  if (kind === "toolbox" && (scope === "c" || scope === "p")) {
+    const saved = scope === "c" ? c.toolboxChannel?.configured : my.toolbox?.configured;
+    return { key, title: scope === "c" ? "Toolbox token for this channel" : "Your Toolbox token", removable: Boolean(saved), fields: [{ name: "token", label: "Token", placeholder: "Bearer token, stored write-only" }] };
+  }
+  if (kind === "cm-add" && (scope === "c" || scope === "p")) {
+    return {
+      key, title: "New custom MCP server", removable: false,
+      fields: [
+        { name: "name", label: "Name", placeholder: "e.g. linear", maxLength: 32, hint: `Tools appear as ${scope === "c" ? "custom" : "my"}-<name>` },
+        { name: "url", label: "Server URL", placeholder: "https://mcp.example.com/mcp", maxLength: 2048 },
+        { name: "token", label: "Bearer token", placeholder: "Stored write-only" },
+      ],
+    };
+  }
+  if (kind === "cm" && (scope === "c" || scope === "p") && name) {
+    const list = scope === "c" ? snapshot.customMcps?.channel : snapshot.customMcps?.personal;
+    const entry = (Array.isArray(list) ? list : []).find((item) => item.name === name);
+    if (!entry) return null;
+    return {
+      key, title: entry.serverName, removable: true,
+      fields: [
+        { name: "url", label: "Server URL", initial: entry.url, maxLength: 2048 },
+        token("Bearer token", true),
+      ],
+    };
+  }
+  if (kind === "var-add" && FORM_SCOPES[scope]) {
+    return {
+      key, title: "New variable", removable: false,
+      fields: [
+        { name: "name", label: "Name", placeholder: "SUPABASE_ACCESS_TOKEN", maxLength: 64 },
+        { name: "value", label: "Value", placeholder: "Stored write-only, never shown again", maxLength: 3000 },
+        { name: "secret", label: "Secret", type: "checkbox", optional: true, initial: true, option: "Programs see a stand-in; the real value only goes to allowed servers" },
+        { name: "hosts", label: "Allowed servers", optional: true, placeholder: "Optional — api.example.com, *.example.com", maxLength: 500 },
+      ],
+    };
+  }
+  if ((kind === "var-val" || kind === "var-hosts") && FORM_SCOPES[scope] && name) {
+    const entry = variableEntry(snapshot, FORM_SCOPES[scope], name);
+    if (!entry) return null;
+    return kind === "var-val"
+      ? { key, title: `New value for ${name}`, removable: false, fields: [{ name: "value", label: "Value", placeholder: "Stored write-only", maxLength: 3000 }] }
+      : {
+        key, title: `Allowed servers for ${name}`, removable: false,
+        fields: [{ name: "hosts", label: "Servers", optional: true, initial: (entry.hosts || []).join(", "), placeholder: "api.example.com, *.example.com", maxLength: 500, hint: "Empty = an admin approves each new server" }],
+      };
+  }
+  return null;
+}
+
+export function variableEntry(snapshot = {}, scope, name) {
+  const list = scope === "organization" ? snapshot.orgSecrets : scope === "personal" ? snapshot.personalSecrets : snapshot.secrets;
+  return (Array.isArray(list) ? list : []).find((entry) => entry.name === name) || null;
+}
+
+// The values a submitted form carries, by field name, read from the root view's state.
+export function readSettingsForm(view = {}, key) {
+  const values = view?.state?.values || {};
+  const out = {};
+  for (const field of ["label", "token", "url", "name", "value", "hosts", "secret"]) {
+    const entry = values[settingsFieldBlockId(key, field)]?.[SETTINGS_FIELD_ACTION_ID];
+    if (!entry) continue;
+    out[field] = field === "secret"
+      ? (entry.selected_options || []).some((choice) => choice?.value === "secret")
+      : String(entry.value || "").trim();
+  }
+  return out;
+}
+
+// `state.formError` ({ field, error }) is a refusal from the save that ran after Slack was answered
+// (DNS, membership, a duplicate name): it is shown under its field, and `state.formDraft` refills
+// the non-secret fields — a token is always typed again.
+function formBlocks(spec, state) {
+  const blocks = [{ type: "context", elements: [mrkdwn(`*${escapeMrkdwn(spec.title)}*`)] }];
+  const draft = state.formDraft || {};
+  const error = state.formError?.error ? state.formError : null;
+  for (const raw of spec.fields) {
+    const field = Object.hasOwn(draft, raw.name) && raw.name !== "token" && raw.name !== "value" ? { ...raw, initial: draft[raw.name] } : raw;
+    const blockId = settingsFieldBlockId(spec.key, field.name);
+    if (field.type === "checkbox") {
+      const choice = option(field.label, "secret", field.option || "");
+      blocks.push({
+        type: "input", block_id: blockId, optional: true, label: plain(field.label),
+        element: { type: "checkboxes", action_id: SETTINGS_FIELD_ACTION_ID, options: [choice], ...(field.initial ? { initial_options: [choice] } : {}) },
+      });
+      continue;
+    }
+    blocks.push({
+      type: "input", block_id: blockId, optional: Boolean(field.optional), label: plain(field.label),
+      element: {
+        type: "plain_text_input", action_id: SETTINGS_FIELD_ACTION_ID, max_length: field.maxLength || 3000,
+        ...(field.placeholder ? { placeholder: plain(field.placeholder) } : {}),
+        ...(field.initial ? { initial_value: String(field.initial) } : {}),
+      },
+      ...(field.hint ? { hint: plain(field.hint) } : {}),
+    });
+    if (error && error.field === field.name) blocks.push(context(`⚠️ ${escapeMrkdwn(error.error)}`));
+  }
+  if (error && !spec.fields.some((field) => field.name === error.field)) blocks.push(context(`⚠️ ${escapeMrkdwn(error.error)}`));
+  blocks.push({
+    type: "actions",
+    elements: [
+      button(CHANNEL_SETTINGS_FORM_CANCEL_ACTION_ID, "Cancel", state, "form_cancel"),
+      ...(spec.removable ? [button(CHANNEL_SETTINGS_FORM_REMOVE_ACTION_ID, "Remove", state, "form_remove", { f: spec.key }, {
+        style: "danger",
+        confirm: destructiveConfirm(`Remove ${spec.title}?`, "Runs stop using it, including any run in progress. A token can't be recovered."),
+      })] : []),
+    ],
+  });
+  return blocks;
+}
+
+// A row that opens a form: its text, and an Edit (or Connect) button — or, while that form is
+// open, the form itself under the text.
+function editableRow(text, formKey, state, { editable = true, connected = true, label } = {}) {
+  if (state.form === formKey) return [{ type: "section", text: mrkdwn(text) }];
+  return [{
+    type: "section",
+    text: mrkdwn(text),
+    ...(editable ? { accessory: button(CHANNEL_SETTINGS_FORM_OPEN_ACTION_ID, label || (connected ? "Edit" : "Connect"), state, "form_open", { f: formKey }) } : {}),
+  }];
+}
+
+function withForm(blocks, formKey, snapshot, state) {
+  if (state.form !== formKey) return blocks;
+  const spec = settingsFormSpec(formKey, snapshot);
+  return spec ? [...blocks, ...formBlocks(spec, state)] : blocks;
+}
+
+function confirmBlocks(state, text, confirmLabel) {
+  return [
+    { type: "section", text: mrkdwn(text) },
+    { type: "actions", elements: [
+      button(CHANNEL_SETTINGS_CONFIRM_ACTION_ID, confirmLabel, state, "confirm", { x: state.confirm }, { style: "danger" }),
+      button(CHANNEL_SETTINGS_CONFIRM_CANCEL_ACTION_ID, "Cancel", state, "confirm_cancel"),
+    ] },
+  ];
+}
+
+const header = (text) => ({ type: "header", text: plain(text) });
+const context = (text) => ({ type: "context", elements: [mrkdwn(text)] });
+const masked = (value = {}) => (value.configured ? (value.last4 ? inlineCode(`••${value.last4}`) : "`••••`") : "");
+
+// ── Agent ────────────────────────────────────────────────────────────────────────────────────
+// Engine, model and effort as one row of dropdowns per scope (an actions block), the thread's
+// first when Settings was opened from one; then the mode and its options in the same style.
+function runtimeRow(scope, data = {}, state, { editable = true, codexLocked = false, reset = false } = {}) {
+  const ids = RUNTIME_SELECT_ACTION_IDS[scope];
+  const values = data.values || {};
+  const inherited = data.inherited || {};
+  const lists = { engine: data.options?.engines || [], model: data.options?.models || [], effort: data.options?.efforts || [] };
+  const fields = RUNTIME_FIELDS.filter((field) => !(codexLocked && field === "engine"));
+  if (!editable) {
+    return [context(fields.map((field) => values[field] || inherited[field] || "default").map((value) => escapeMrkdwn(value)).join(" · "))];
+  }
+  const elements = fields.map((field) => {
+    const options = [{ label: inherited[field] ? `${inherited[field]} (default)` : "Default", value: SETTINGS_DEFAULT_VALUE }, ...lists[field]];
+    const known = options.some((entry) => entry.value === values[field]);
+    const list = (known || !values[field] ? options : [...options, { label: String(values[field]), value: values[field] }]).slice(0, 100).map((entry) => option(entry.label, entry.value));
+    return {
+      type: "static_select",
+      action_id: ids[field],
+      placeholder: plain(field),
+      options: list,
+      initial_option: selected(list, values[field] || SETTINGS_DEFAULT_VALUE),
+    };
+  });
+  if (reset) elements.push(button(CHANNEL_SETTINGS_THREAD_RESET_ACTION_ID, "Use channel default", state, "thread_reset"));
+  return [{ type: "actions", block_id: `cg_runtime_${scope}`, elements }];
+}
+
+const MODE_LABELS = Object.freeze({ read: "Read-only", worker: "Worker", admin: "Admin" });
+const FLAG_LABELS = Object.freeze({ autoMode: "Auto-approve", cleanMode: "Lean", allowNetwork: "Internet" });
+
+function modeRows(snapshot, state, { canEditAccess = false, canEnableAdmin = false } = {}) {
+  const mode = snapshot.mode || {};
+  const current = channelMode(mode);
+  const dm = Boolean(snapshot.isDM);
+  const flags = dm ? ["autoMode", "cleanMode"] : ["autoMode", "cleanMode", "allowNetwork"];
+  if (!dm && !canEditAccess) {
+    const on = flags.filter((flag) => mode[flag]).map((flag) => FLAG_LABELS[flag]);
+    return [context(`*Mode* · ${MODE_LABELS[current] || modeLabel(mode)}${on.length ? ` · ${on.join(" · ")}` : ""}`), context("🔒 Managers and admins change the mode.")];
+  }
+  const modes = ["read", "worker", ...(dm ? (canEnableAdmin || current === "admin" ? ["admin"] : []) : ["admin"])];
+  const modeOptions = modes.map((value) => option(MODE_LABELS[value], value));
+  const flagOptions = flags.map((flag) => option(FLAG_LABELS[flag], flag));
+  const chosen = flagOptions.filter((entry) => mode[entry.value]);
+  return [
+    context("*Mode*"),
+    { type: "actions", block_id: "cg_mode_row", elements: [{
+      type: "static_select",
+      action_id: dm ? CHANNEL_SETTINGS_DM_MODE_ACTION_ID : `${ACCESS_FIELD_PREFIX}mode`,
+      options: modeOptions,
+      initial_option: selected(modeOptions, current),
+    }] },
+    { type: "actions", block_id: "cg_mode_flags", elements: [{
+      type: "checkboxes",
+      action_id: dm ? CHANNEL_SETTINGS_DM_FLAGS_ACTION_ID : `${ACCESS_FIELD_PREFIX}flags`,
+      options: flagOptions,
+      ...(chosen.length ? { initial_options: chosen } : {}),
+    }] },
+  ];
+}
+
+function agentPage(snapshot, state, opts) {
+  const runtime = snapshot.runtime || {};
+  const scopes = runtime.scopes || {};
+  const thread = scopes.thread || null;
+  const editable = opts.canEditRuntime !== false;
+  const locked = Boolean(runtime.channelLogin);
+  const vpn = snapshot.vpn;
+  const resume = snapshot.resume || {};
+  return [
+    ...(locked ? [context(`*Codex* · this channel's own login · ${escapeMrkdwn(runtime.channelLoginStatus || "checking…")}`)] : []),
+    ...(thread ? [
+      context(`*This thread*${thread.pinned ? " · 📌 pinned" : ""}`),
+      ...runtimeRow("thread", thread, state, { editable, codexLocked: locked, reset: editable && thread.pinned }),
+      ...(thread.sessionEngineLabel ? [context(`_Its session runs on ${escapeMrkdwn(thread.sessionEngineLabel)} until you pin an engine._`)] : []),
+    ] : []),
+    context("*Channel default*"),
+    ...runtimeRow("channel", scopes.channel, state, { editable, codexLocked: locked }),
+    ...(editable ? [] : [context("🔒 The gateway's policy limits engine changes to admins.")]),
+    { type: "divider" },
+    ...modeRows(snapshot, state, opts),
+    // No service provisioned: one line, no controls. A provisioned one (or one still being read —
+    // `vpn` absent until the hydration pass fills it in) gets its state and controls.
+    ...(vpn && vpn.configured === false ? [context("VPN · Not configured")] : vpnRows(snapshot, state, { canManageVpn: opts.canManageVpn })),
+    ...(resume.inThread && resume.command ? [
+      { type: "divider" },
+      { type: "section", text: mrkdwn(`*Resume in a terminal*\n\`\`\`${escapeMrkdwn(resume.command)}\`\`\``) },
+    ] : []),
+  ];
+}
+
+// ── Access ───────────────────────────────────────────────────────────────────────────────────
+// Who may use and manage the conversation, then every human member with a Use tick (and a
+// Manage tick when the channel names its managers). Each member is one section with a checkboxes
+// accessory, so a tick saves on its own. Slack caps a view at 100 blocks, so members are shown a
+// page at a time, and a people search (Slack's own users_select) jumps straight to one person.
+export const ACCESS_MEMBER_PAGE_SIZE = 25;
+
+function memberRow(member, { canEditAccess, named }) {
+  const role = member.isAdmin ? "admin" : member.guest ? "guest here" : member.approved ? "approved" : "not approved";
+  const text = `<@${escapeMrkdwn(member.id)}>  _${role}_`;
+  if (member.isAdmin) return { type: "section", text: mrkdwn(`${text} · always`) };
+  if (!canEditAccess) return { type: "section", text: mrkdwn(`${text} · ${member.use ? "✅ can use" : "—"}${named && member.manage ? " · manages" : ""}`) };
+  const options = [option("Use", "use"), ...(named ? [option("Manage", "manage")] : [])];
+  const initial = options.filter((entry) => (entry.value === "use" ? member.use : member.manage));
+  return {
+    type: "section",
+    block_id: `${ACCESS_MEMBER_BLOCK_PREFIX}${member.id}`,
+    text: mrkdwn(text),
+    accessory: { type: "checkboxes", action_id: CHANNEL_SETTINGS_MEMBER_ACTION_ID, options, ...(initial.length ? { initial_options: initial } : {}) },
+  };
+}
+
+// The page of members to show, clamped to the list, and the page count.
+export function memberPage(members = [], page = 0) {
+  const pages = Math.max(1, Math.ceil(members.length / ACCESS_MEMBER_PAGE_SIZE));
+  const current = Math.min(Math.max(0, Number(page) || 0), pages - 1);
+  return { pages, current, shown: members.slice(current * ACCESS_MEMBER_PAGE_SIZE, (current + 1) * ACCESS_MEMBER_PAGE_SIZE) };
+}
+
+function accessPage(snapshot, state, { canEditAccess = false } = {}) {
+  const access = accessSettingsSnapshot(snapshot.access || {});
+  const members = Array.isArray(snapshot.members) ? snapshot.members : null;
+  const named = access.manageAccess === "custom";
+  const label = (field) => ACCESS_SELECTS[field].find((entry) => entry.value === access[field])?.label || access[field];
+  const rows = [];
+  if (canEditAccess) {
+    rows.push(
+      selectRow({ label: "Who can use it", actionId: `${ACCESS_FIELD_PREFIX}access`, options: ACCESS_SELECTS.access.map((entry) => ({ ...entry })), initialValue: access.access }),
+      selectRow({ label: "Who can manage it", actionId: `${ACCESS_FIELD_PREFIX}manageAccess`, options: ACCESS_SELECTS.manageAccess.map((entry) => ({ ...entry })), initialValue: access.manageAccess }),
+    );
+  } else {
+    rows.push(context("🔒 Only managers and admins change access."), fieldBlock("Who can use it", escapeMrkdwn(label("access"))), fieldBlock("Who can manage it", escapeMrkdwn(label("manageAccess"))));
+  }
+  if (!members) {
+    rows.push(context("_The member list is unavailable right now — Slack didn't return it. Reopen Settings to try again._"));
+    return rows;
+  }
+  rows.push(header(`Members · ${members.length}`));
+  // Search: Slack's own people picker, so it searches by name as you type, avatars included.
+  rows.push({ type: "actions", block_id: "cg_member_find", elements: [
+    {
+      type: "users_select", action_id: CHANNEL_SETTINGS_MEMBER_FIND_ACTION_ID, placeholder: plain("Find a member…"),
+      ...(state.memberFocus ? { initial_user: state.memberFocus } : {}),
+    },
+    ...(state.memberFocus ? [button(CHANNEL_SETTINGS_MEMBER_PAGE_ACTION_ID, "Show all", state, "member_page", { m: state.memberPage || 0 })] : []),
+  ] });
+  if (state.memberFocus) {
+    const found = members.find((member) => member.id === state.memberFocus);
+    rows.push(found ? memberRow(found, { canEditAccess, named }) : context(`<@${escapeMrkdwn(state.memberFocus)}> isn't a member of this channel. Invite them first, then tick Use.`));
+    return rows;
+  }
+  const { pages, current, shown } = memberPage(members, state.memberPage);
+  for (const member of shown) rows.push(memberRow(member, { canEditAccess, named }));
+  if (pages > 1) {
+    const first = current * ACCESS_MEMBER_PAGE_SIZE + 1;
+    rows.push(context(`${first}–${first + shown.length - 1} of ${members.length}`));
+    rows.push({ type: "actions", block_id: "cg_member_pager", elements: [
+      ...(current > 0 ? [button(CHANNEL_SETTINGS_MEMBER_PAGE_ACTION_ID, "‹ Previous", state, "member_page", { m: current - 1 })] : []),
+      ...(current < pages - 1 ? [button(`${CHANNEL_SETTINGS_MEMBER_PAGE_ACTION_ID}_next`, "Next ›", state, "member_page", { m: current + 1 })] : []),
+    ] });
+  }
+  return rows;
+}
+
+// ── MCP ──────────────────────────────────────────────────────────────────────────────────────
+function connectionRows(snapshot, state, scope, opts) {
+  const c = snapshot.connections || {};
+  const my = snapshot.my || {};
+  const blocks = [];
+  // Composio
+  blocks.push(header("Composio"));
+  if (c.composioMode === "sdk") {
+    blocks.push(context(scope === "c"
+      ? `SDK mode · ${c.composioSdkReady ? "the organization identity is ready" : "the organization key or entitlement is missing"}`
+      : "SDK mode · your session is created automatically"));
+  } else {
+    const saved = scope === "c" ? c.composioChannel : my.composio;
+    const labelText = scope === "c" ? c.composioTokenLabel : my.composioLabel;
+    const status = saved?.configured ? `${masked(saved)}${labelText ? ` · ${escapeMrkdwn(labelText)}` : ""}` : scope === "c" && !c.noDefaultTokens && c.composioOrg?.configured ? "_uses the organization account_" : "_not connected_";
+    const form = `composio:${scope}`;
+    blocks.push(...withForm(editableRow(`*${scope === "c" ? "Shared account" : "Your account"}* ${inlineCode(scope === "c" ? "composio-agent" : "composio-user")}\n${status}`, form, state, { connected: Boolean(saved?.configured) }), form, snapshot, state));
+  }
+  // Make toolbox (a conversation's only)
+  if (scope === "c") {
+    blocks.push(header("Make toolbox"));
+    const status = c.makeToolboxUrl ? `${escapeMrkdwn(String(c.makeToolboxUrl).replace(/^https:\/\//, ""))} ${masked(c.makeToolboxKey)}` : "_not connected_";
+    blocks.push(...withForm(editableRow(`${inlineCode("make-toolbox")}\n${status}`, "make:c", state, { connected: Boolean(c.makeToolboxUrl) }), "make:c", snapshot, state));
+  }
+  // Toolbox — one server for the whole gateway (Settings → Integrations), a token per scope.
+  blocks.push(header("Toolbox"));
+  const toolbox = scope === "c" ? c.toolboxChannel : my.toolbox;
+  const toolboxStatus = toolbox?.configured
+    ? `${masked(toolbox)} · ${scope === "c" ? "this channel's token" : "your token"}`
+    : scope === "c" ? (c.noDefaultTokens ? "_not set · organization token refused here_" : c.toolboxOrg?.configured ? "_each person's own token, else the organization's_" : "_each person's own token_") : "_not set_";
+  const server = c.toolboxUrl ? ` · ${escapeMrkdwn(String(c.toolboxUrl).replace(/^https:\/\//, ""))}` : "";
+  blocks.push(...withForm(editableRow(`${inlineCode("makeitfuture-toolbox")}${server}\n${toolboxStatus}`, `toolbox:${scope}`, state, { connected: Boolean(toolbox?.configured) }), `toolbox:${scope}`, snapshot, state));
+  if (scope === "c") {
+    const fallback = option("Fall back to organization tokens", "fallback");
+    blocks.push({ type: "actions", block_id: "cg_connections_fallback", elements: [{
+      type: "checkboxes", action_id: CHANNEL_SETTINGS_FALLBACK_TOGGLE_ACTION_ID, options: [fallback], ...(c.noDefaultTokens ? {} : { initial_options: [fallback] }),
+    }] });
+  }
+  // Custom MCP
+  blocks.push(header("Custom MCP"));
+  const list = (scope === "c" ? snapshot.customMcps?.channel : snapshot.customMcps?.personal) || [];
+  const editable = scope === "p" || Boolean(opts.canManageCustomMcp);
+  for (const entry of list) {
+    const form = `cm:${scope}:${entry.name}`;
+    const row = editableRow(`${inlineCode(entry.serverName)} ${escapeMrkdwn(String(entry.url || "").replace(/^https:\/\//, "").slice(0, 200))} ${inlineCode(`••${entry.tokenLast4 || ""}`)}`, form, state, { editable });
+    blocks.push(...withForm(row, form, snapshot, state));
+  }
+  const addKey = `cm-add:${scope}`;
+  if (state.form === addKey) blocks.push(...withForm([], addKey, snapshot, state));
+  else if (editable) blocks.push({ type: "actions", elements: [button(CHANNEL_SETTINGS_FORM_OPEN_ACTION_ID, "+ Add custom MCP", state, "form_open", { f: addKey })] });
+  else blocks.push(context(list.length ? "🔒 Managers change these. Add your own under *You*." : "_None._ Managers add them here; add your own under *You*."));
+  return blocks;
+}
+
+function cloudRows(snapshot) {
+  const cloud = snapshot.cloudMcp || {};
+  const blocks = [header("Cloud MCP")];
+  for (const engine of ["claude", "codex"]) {
+    const data = cloud[engine] || {};
+    blocks.push(context(`*${engine === "claude" ? "Claude" : "Codex"}*`));
+    if (!data.ready) {
+      blocks.push(context("_Loading the catalog… switch pages to refresh._"));
+      continue;
+    }
+    const options = (data.options || []).slice(0, 100).map((entry) => option(entry.label, entry.key));
+    if (!options.length) {
+      blocks.push(context("_No servers configured on the host._"));
+      continue;
+    }
+    const initial = options.filter((entry) => (data.selected || []).includes(entry.value));
+    blocks.push({ type: "actions", block_id: `cg_cloud_${engine}`, elements: [{
+      type: "multi_static_select", action_id: `${CHANNEL_SETTINGS_CLOUD_SELECT_PREFIX}${engine}`, placeholder: plain("Add a server…"), options,
+      ...(initial.length ? { initial_options: initial } : {}),
+    }] });
+    if (data.inherited?.length) blocks.push(context(`Always on from the organization: ${data.inherited.map(inlineCode).join(" ")}`));
+  }
+  return blocks;
+}
+
+function mcpPage(snapshot, state, opts) {
+  return [
+    ...connectionRows(snapshot, state, "c", opts),
+    ...(opts.canManageCloudMcp ? cloudRows(snapshot) : []),
+  ];
+}
+
+// ── Variables ────────────────────────────────────────────────────────────────────────────────
+// One line per variable with a ⋯ menu: Replace value · Allowed servers · Make readable/secret ·
+// Remove. The two that cannot be undone (Remove, and Make readable, which hands programs the
+// real value) ask in place first; an overflow menu can only carry one confirmation for all of its
+// options, which would make every choice ask.
+export function variableWhere(entry = {}) {
+  const hosts = entry.hosts || [];
+  const list = hosts.length ? `${escapeMrkdwn(hosts[0])}${hosts.length > 1 ? ` +${hosts.length - 1}` : ""}` : "";
+  if (entry.protected && entry.approval) return list ? `🔒 approved for ${list}` : "🔒 secret · an admin approves each server";
+  if (entry.protected) return `🔒 ${list}`;
+  return entry.exposureChoice === "hidden" ? "👁 readable · kept readable: add allowed servers to hide it" : "👁 readable";
+}
+
+function variableRows(snapshot, state, letter, { editable = false } = {}) {
+  const scope = FORM_SCOPES[letter];
+  const list = (scope === "organization" ? snapshot.orgSecrets : scope === "personal" ? snapshot.personalSecrets : snapshot.secrets) || [];
+  const blocks = [];
+  for (const entry of list) {
+    const text = `*${escapeMrkdwn(entry.name)}* ${entry.last4 ? inlineCode(`••${entry.last4}`) : "`••••`"}\n${variableWhere(entry)}`;
+    const valForm = `var-val:${letter}:${entry.name}`;
+    const hostForm = `var-hosts:${letter}:${entry.name}`;
+    const open = state.form === valForm || state.form === hostForm;
+    const row = { type: "section", text: mrkdwn(text) };
+    if (editable && !open) {
+      const act = (a, label) => option(label, JSON.stringify({ o: "var", s: letter, n: entry.name, a }));
+      row.accessory = {
+        type: "overflow", action_id: CHANNEL_SETTINGS_VAR_MENU_ACTION_ID,
+        options: [
+          act("value", "Replace value"),
+          act("hosts", "Allowed servers"),
+          entry.protected ? act("readable", "Make readable") : act("secret", "Make secret"),
+          act("remove", "Remove"),
+        ],
+      };
+    }
+    blocks.push(row);
+    if (state.form === valForm) blocks.push(...withForm([], valForm, snapshot, state));
+    if (state.form === hostForm) blocks.push(...withForm([], hostForm, snapshot, state));
+    if (state.confirm === `var-rm:${letter}:${entry.name}`) {
+      blocks.push(...confirmBlocks(state, `Remove *${escapeMrkdwn(entry.name)}*? Runs stop receiving it; the value can't be recovered.`, "Remove"));
+    }
+    if (state.confirm === `var-read:${letter}:${entry.name}`) {
+      blocks.push(...confirmBlocks(state, `Make *${escapeMrkdwn(entry.name)}* readable? Programs here will see the real value. Use this for passwords, database URLs and signing keys.`, "Make readable"));
+    }
+  }
+  if (!list.length) blocks.push(context("_None._"));
+  const addKey = `var-add:${letter}`;
+  if (state.form === addKey) blocks.push(...withForm([], addKey, snapshot, state));
+  else if (editable) blocks.push({ type: "actions", elements: [button(CHANNEL_SETTINGS_FORM_OPEN_ACTION_ID, "+ Add variable", state, "form_open", { f: addKey })] });
+  return blocks;
+}
+
+function variablesPage(snapshot, state, opts) {
+  return [
+    header(`Channel · ${(snapshot.secrets || []).length}`),
+    ...variableRows(snapshot, state, "c", { editable: Boolean(opts.canEditSecrets) }),
+    header(`Organization · ${(snapshot.orgSecrets || []).length}`),
+    ...variableRows(snapshot, state, "o", { editable: Boolean(opts.canEditOrgSecrets) }),
+    ...(opts.canEditOrgSecrets ? [] : [context("🔒 Admins manage organization variables.")]),
+    context("Your personal variables are under *You*."),
+  ];
+}
+
+// ── Skills ───────────────────────────────────────────────────────────────────────────────────
+function skillPicker(actionId, data = {}, placeholder) {
+  const options = (data.options || []).slice(0, 100).map((entry) => option(entry.label || entry.key, entry.key, entry.description || ""));
+  const initial = options.filter((entry) => (data.selected || []).includes(entry.value));
+  if (!options.length) return [context("_No skills available in the catalog._")];
+  return [{ type: "actions", block_id: `${actionId}_row`, elements: [{
+    type: "multi_static_select", action_id: actionId, placeholder: plain(placeholder), options,
+    ...(initial.length ? { initial_options: initial } : {}),
+  }] }, ...((data.options || []).length > 100 ? [context(`Showing 100 of ${data.options.length} skills; the admin UI lists them all.`)] : [])];
+}
+
+function skillsPage(snapshot, state) {
+  const skills = snapshot.skills || {};
+  const templates = Array.isArray(skills.templates) ? skills.templates : [];
+  const direct = new Set((skills.additional || []).map((value) => String(value).toLowerCase()));
+  const fromTemplate = (skills.channel || []).filter((value) => !direct.has(String(value).toLowerCase()));
+  const org = skills.organization || [];
+  const short = (list) => `${list.slice(0, 6).map(inlineCode).join(" ")}${list.length > 6 ? ` +${list.length - 6} more` : ""}`;
+  return [
+    templates.length
+      ? selectRow({
+        label: "Template", actionId: CHANNEL_SETTINGS_TEMPLATE_SELECT_ACTION_ID,
+        options: [{ label: "None", value: SETTINGS_NONE_VALUE }, ...templates.map((entry) => ({ label: entry.name || entry.slug, value: entry.slug }))],
+        initialValue: skills.templateSlug || SETTINGS_NONE_VALUE,
+      })
+      : fieldBlock("Template", "_none defined_"),
+    context(`*Channel skills* · ${direct.size}`),
+    ...skillPicker(CHANNEL_SETTINGS_SKILLS_SELECT_ACTION_ID, snapshot.skillPicker, "Add a skill…"),
+    ...(fromTemplate.length ? [context(`From the *${escapeMrkdwn(skills.template || "template")}* template: ${short(fromTemplate)}`)] : []),
+    ...(org.length ? [context(`Always on from the organization (${org.length}): ${short(org)}`)] : []),
+  ];
+}
+
+// ── Schedules ────────────────────────────────────────────────────────────────────────────────
+function scheduleRows(snapshot, state) {
+  const list = Array.isArray(snapshot.automations) ? snapshot.automations : [];
+  if (!list.length) return [context("_No schedules here._ Ask the agent, e.g. “every weekday at 9 summarize new issues”.")];
+  const tz = daemonTimeZone();
+  const blocks = [];
+  for (const sched of list.slice(0, AUTOMATION_LIST_LIMIT)) {
+    const title = String(sched.loop ? sched.loopReason || sched.prompt || "Loop" : sched.description || sched.prompt || sched.id).replace(/\s+/g, " ").trim();
+    const recurring = !sched.loop && !sched.once && !sched.runAt;
+    const last = sched.lastStatus ? ` · ${String(sched.lastStatus).startsWith("ok") ? "✅" : "⚠️"} last: ${escapeMrkdwn(String(sched.lastStatus).slice(0, 80))}` : "";
+    const text = `*${sched.enabled ? "▶" : "⏸"} ${escapeMrkdwn(title.slice(0, 120))}*\n${automationKind(sched)} · ${automationWhen(sched, { tz })}${sched.enabled ? "" : " · paused"}${last}`;
+    const remove = sched.loop ? "Stop loop" : recurring ? "Delete" : "Cancel";
+    const accessory = recurring
+      ? { type: "overflow", action_id: CHANNEL_SETTINGS_SCHEDULE_MENU_ACTION_ID, options: [
+        option(sched.enabled ? "Pause" : "Resume", JSON.stringify({ o: "sched", id: String(sched.id), a: "toggle", e: !sched.enabled })),
+        option(remove, JSON.stringify({ o: "sched", id: String(sched.id), a: "delete" })),
+      ] }
+      : button(CHANNEL_SETTINGS_AUTOMATION_DELETE_ACTION_ID, remove, state, "automation_delete", { id: sched.id }, {
+        style: "danger", confirm: destructiveConfirm(`${remove}?`, `*${escapeMrkdwn(title.slice(0, 80))}* will not run again.`, remove),
+      });
+    blocks.push({ type: "section", text: mrkdwn(text), accessory });
+    if (state.confirm === `sched-rm:${sched.id}`) blocks.push(...confirmBlocks(state, `Delete *${escapeMrkdwn(title.slice(0, 80))}*? It will not run again.`, "Delete"));
+  }
+  if (list.length > AUTOMATION_LIST_LIMIT) blocks.push(context(`${list.length - AUTOMATION_LIST_LIMIT} more — the admin UI lists them all.`));
+  return blocks;
+}
+
+// ── You ──────────────────────────────────────────────────────────────────────────────────────
+function youPage(snapshot, state, opts) {
+  return [
+    context("Only *your* runs use these, in every conversation."),
+    ...connectionRows(snapshot, state, "p", opts),
+    header(`Variables · ${(snapshot.personalSecrets || []).length}`),
+    ...variableRows(snapshot, state, "p", { editable: true }),
+    header("Skills"),
+    ...skillPicker(CHANNEL_SETTINGS_MY_SKILLS_SELECT_ACTION_ID, snapshot.mySkillPicker, "Add a skill for your runs…"),
+  ];
+}
+
+const MAX_VIEW_BLOCKS = 100;
+
 export function buildChannelSettingsView(snapshot = {}, state = {}, {
-  channelName = "",
   tab = state.tab,
   canEditRuntime = true,
   canEnableAdmin = false,
@@ -768,31 +1000,29 @@ export function buildChannelSettingsView(snapshot = {}, state = {}, {
   canManageVpn = false,
   notice = "",
 } = {}) {
-  const active = normalizeTab(tab);
-  const content = active === "resume"
-    ? resumeBlocks(snapshot)
-    : active === "automations"
-    ? automationsBlocks(snapshot, state)
-    : active === "mcp"
-    ? mcpBlocks(snapshot, state, { canManageCloudMcp, canManageCustomMcp })
-    : active === "skills"
-      ? skillsBlocks(snapshot, state)
-      : active === "secrets"
-        ? secretsBlocks(snapshot, state, { canEditSecrets, canEditOrgSecrets })
-        : generalBlocks(snapshot, state, { canEditRuntime, canEnableAdmin, canEditAccess, canManageVpn });
+  const pages = settingsPages({ isDM: snapshot.isDM });
+  const wanted = normalizeTab(tab);
+  const active = pages.includes(wanted) ? wanted : pages[0];
+  const opts = { canEditRuntime, canEnableAdmin, canEditSecrets, canEditOrgSecrets, canManageCloudMcp, canManageCustomMcp, canEditAccess, canManageVpn };
+  const content = {
+    agent: agentPage, access: accessPage, mcp: mcpPage, variables: variablesPage,
+    skills: skillsPage, schedules: scheduleRows, you: youPage,
+  }[active](snapshot, state, opts);
+  let blocks = [
+    pageNav(state, active, { isDM: snapshot.isDM }),
+    ...(notice ? [{ type: "section", text: mrkdwn(notice) }] : []),
+    { type: "divider" },
+    ...content,
+  ];
+  if (blocks.length > MAX_VIEW_BLOCKS) blocks = [...blocks.slice(0, MAX_VIEW_BLOCKS - 1), context("_This page has more than Slack can show; the admin UI lists everything._")];
+  const hasForm = blocks.some((block) => block.type === "input");
   return {
     type: "modal",
-    callback_id: "cg_channel_settings_modal",
+    callback_id: CHANNEL_SETTINGS_ROOT_CALLBACK_ID,
     private_metadata: settingsMetadata({ ...state, tab: active }),
-    title: plain("Channel settings"),
-    close: plain("Done"),
-    blocks: [
-      { type: "context", elements: [mrkdwn(`Settings for *#${escapeMrkdwn(channelName || "this channel")}*. Anyone authorized to use the agent here can edit these settings. Access settings, VPN controls and this conversation's custom MCP servers require a channel manager or admin. Cloud MCP is admin-only.`)] },
-      ...(notice ? [{ type: "section", text: mrkdwn(notice) }] : []),
-      tabRow(state, active),
-      { type: "divider" },
-      ...content,
-    ],
+    title: plain("Settings"),
+    ...(hasForm ? { submit: plain("Save"), close: plain("Close") } : { close: plain("Done") }),
+    blocks,
   };
 }
 

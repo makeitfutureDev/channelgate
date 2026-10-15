@@ -102,8 +102,8 @@ export async function getSecretEntry({ scope, slug = "", userId = "", name } = {
 // Change ONE secret's approval metadata (an approved server, the hidden/readable choice) in the
 // scope that owns it, without touching its value. scope: "organization" | "channel" (slug) |
 // "personal" (userId). → the entry's new listing row. Callers authorize; this only writes.
-export async function patchSecretEntry({ scope, slug = "", userId = "", name, addApprovedHost = "", exposure = undefined } = {}) {
-  const fields = { addApprovedHost, exposure };
+export async function patchSecretEntry({ scope, slug = "", userId = "", name, addApprovedHost = "", exposure = undefined, hosts = undefined } = {}) {
+  const fields = { addApprovedHost, exposure, hosts };
   if (scope === "organization") {
     const next = patchEnvEntry(getOrgEnv(), name, { ...fields, scopeWhere: "the organization" });
     saveSettings({ orgEnv: next });

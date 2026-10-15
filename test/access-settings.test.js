@@ -13,7 +13,13 @@ const base = { access: "approved", manageAccess: "members", ...PROFILE_FLAGS.wor
 const form = { ...accessSettingsSnapshot(base), mode: "admin", autoMode: true, cleanMode: true, allowNetwork: true };
 const state = { channelId: "CACCESS", slug: "access-test", ownerId: "UMANAGER" };
 
-test("only admins and current managers see the Access section of General Settings", () => {
+test("only admins and current managers edit access: mode on Agent, policy and member ticks on Access", () => {
+  const members = [
+    { id: "UADMIN", isAdmin: true, approved: true, use: true, manage: false },
+    { id: "UMANAGER", approved: true, use: true, manage: false },
+    { id: "UGUEST", guest: true, use: true, manage: false },
+    { id: "USTRANGER", use: false, manage: false },
+  ];
   for (const [meta, admin, user, expected] of [
     [{ ...base, manageAccess: "admins" }, false, actor, false],
     [base, false, actor, true],
@@ -25,31 +31,60 @@ test("only admins and current managers see the Access section of General Setting
   ]) {
     const options = channelSettingsEditOptions(meta, admin, user);
     assert.equal(options.canEditAccess, expected);
-    // A Settings view opened before the merge carries "access" in its metadata; it must land on
-    // the page that now owns those controls rather than on an empty first page.
-    const view = buildChannelSettingsView({ access: meta, isDM: Boolean(meta.isDM) }, state, { ...options, tab: "access" });
-    assert.equal(JSON.parse(view.private_metadata).p, "general");
-    // Every access control is on the page itself, and only for a manager: the three selects, the
-    // Auto/Lean/Network checkboxes and the two member pickers.
-    const controls = [
+    const controls = (view) => [
       ...view.blocks.map((block) => block.accessory).filter(Boolean),
       ...view.blocks.flatMap((block) => block.elements || []),
     ].filter((element) => String(element.action_id || "").startsWith(ACCESS_FIELD_PREFIX));
-    assert.equal(controls.length, expected ? 6 : 0);
-    if (expected) {
-      assert.deepEqual(controls.map((element) => element.type).sort(),
-        ["checkboxes", "multi_users_select", "multi_users_select", "static_select", "static_select", "static_select"]);
-      // No pushed editor any more — the page is the editor.
-      assert.equal(JSON.stringify(view).includes("cg_channel_settings_access_edit"), false);
+    // Agent: the mode dropdown and the Auto/Lean/Internet checkboxes, editable only by a manager.
+    const agent = buildChannelSettingsView({ access: meta, mode: meta, isDM: Boolean(meta.isDM) }, state, { ...options, tab: "agent" });
+    assert.deepEqual(controls(agent).map((element) => element.type).sort(), expected ? ["checkboxes", "static_select"] : []);
+    if (!expected && !meta.isDM) assert.match(JSON.stringify(agent), /Managers and admins change the mode/);
+    // Access: the two policy dropdowns and one Use tick per non-admin member (admins are always in).
+    const view = buildChannelSettingsView({ access: meta, mode: meta, isDM: Boolean(meta.isDM), members }, state, { ...options, tab: "access" });
+    if (meta.isDM) {
+      assert.equal(JSON.parse(view.private_metadata).p, "agent", "a DM has no Access page");
+      continue;
     }
-    // The access controls are manager-only; the page around them is not. A DM has no access
-    // policy at all, so it gets neither the controls nor the line explaining their absence.
-    const headers = view.blocks.filter((block) => block.type === "header").map((block) => block.text.text);
-    assert.equal(headers.includes("Access"), !meta.isDM);
-    assert.equal(JSON.stringify(view).includes("Who may use and manage this channel is shown"), !expected && !meta.isDM);
-    const pages = view.blocks.find((block) => block.block_id === "cg_channel_settings_tabs").elements;
-    assert.ok(pages.some((page) => JSON.parse(page.value).p === "secrets"));
+    assert.equal(JSON.parse(view.private_metadata).p, "access");
+    assert.deepEqual(controls(view).map((element) => element.type).sort(), expected ? ["static_select", "static_select"] : []);
+    const ticks = view.blocks.filter((block) => block.accessory?.type === "checkboxes");
+    assert.equal(ticks.length, expected ? 3 : 0);
+    if (expected) {
+      assert.deepEqual(ticks.map((block) => block.block_id), ["cg_member_UMANAGER", "cg_member_UGUEST", "cg_member_USTRANGER"]);
+      assert.deepEqual(ticks.map((block) => (block.accessory.initial_options || []).map((entry) => entry.value)), [["use"], ["use"], []]);
+      // A Manage tick appears only when the channel names its managers.
+      assert.equal(ticks[0].accessory.options.some((entry) => entry.value === "manage"), meta.manageAccess === "custom");
+    } else {
+      assert.match(JSON.stringify(view), /Only managers and admins change access/);
+    }
+    assert.equal(JSON.stringify(view).includes("cg_channel_settings_access_edit"), false, "no pushed editor");
   }
+});
+
+test("a member's Use tick grants a guest or excludes an approved member; admins are never excluded", async () => {
+  const { memberAccessForm, memberCanUse } = await import("../src/slack/access-settings.js");
+  const approved = { isApprovedUser: true };
+  // Ticking someone the policy would refuse makes them a guest; unticking removes the grant.
+  let form = memberAccessForm(base, "USTRANGER", { use: true }, {});
+  assert.deepEqual(form.allowedUsers, ["USTRANGER"]);
+  assert.deepEqual(form.excludedUsers, []);
+  assert.equal(memberCanUse({ ...base, ...form }, "USTRANGER", {}), true);
+  form = memberAccessForm({ ...base, allowedUsers: ["USTRANGER"] }, "USTRANGER", { use: false }, {});
+  assert.deepEqual(form.allowedUsers, []);
+  // Unticking an approved member of an "approved" channel records an exclusion, which the run gate honors.
+  form = memberAccessForm(base, "UMEMBER", { use: false }, approved);
+  assert.deepEqual(form.excludedUsers, ["UMEMBER"]);
+  assert.equal(memberCanUse({ ...base, ...form }, "UMEMBER", approved), false);
+  form = memberAccessForm({ ...base, excludedUsers: ["UMEMBER"] }, "UMEMBER", { use: true }, approved);
+  assert.deepEqual(form.excludedUsers, []);
+  assert.deepEqual(form.allowedUsers, [], "an approved member needs no guest grant");
+  // An admin cannot be excluded, even when the list says so.
+  assert.deepEqual(memberAccessForm(base, "UADMIN", { use: false }, { isAdminUser: true }).excludedUsers, []);
+  assert.equal(memberCanUse({ ...base, excludedUsers: ["UADMIN"] }, "UADMIN", { isAdminUser: true }), true);
+  // Manage edits the named managers list only.
+  assert.deepEqual(memberAccessForm({ ...base, manageAccess: "custom" }, "UMEMBER", { manage: true }, approved).managers, ["UMEMBER"]);
+  // The exclusion list is validated like the other lists.
+  assert.throws(() => accessSettingsPatch(base, { ...accessSettingsSnapshot(base), excludedUsers: ["not-a-user"] }, { ...actor, isAdminUser: true }), /valid users/);
 });
 
 test("each inline access control contributes only its own field, and unknown ones contribute nothing", () => {
@@ -225,4 +260,37 @@ test("channel Runtime tab has no duplicate mode controls and Auto promotes Read-
   assert.equal(promoted.profile, "worker");
   assert.equal(promoted.allowBash, true);
   assert.equal(promoted.adminMode, false);
+});
+
+test("a large channel's members come a page at a time, with a people search that jumps to one person", async () => {
+  const { memberPage, ACCESS_MEMBER_PAGE_SIZE, parseSettingsMetadata, settingsCommand } = await import("../src/slack/channel-settings.js");
+  const members = Array.from({ length: 60 }, (_, i) => ({ id: `U${String(i).padStart(3, "0")}`, approved: true, use: true }));
+  const options = channelSettingsEditOptions(base, true, actor);
+  const view = (extra = {}) => buildChannelSettingsView({ access: base, mode: base, members }, { ...state, ...extra }, { ...options, tab: "access" });
+  const ticks = (v) => v.blocks.filter((block) => block.accessory?.type === "checkboxes").map((block) => block.block_id.slice("cg_member_".length));
+  const buttons = (v) => v.blocks.filter((block) => block.block_id === "cg_member_pager").flatMap((block) => block.elements).map((el) => [el.text.text, settingsCommand(el).m]);
+
+  assert.equal(ACCESS_MEMBER_PAGE_SIZE, 25);
+  assert.deepEqual(ticks(view()), members.slice(0, 25).map((m) => m.id));
+  assert.deepEqual(buttons(view()), [["Next ›", 1]]);
+  assert.match(JSON.stringify(view()), /1–25 of 60/);
+  assert.deepEqual(ticks(view({ memberPage: 1 })), members.slice(25, 50).map((m) => m.id));
+  assert.deepEqual(buttons(view({ memberPage: 1 })), [["‹ Previous", 0], ["Next ›", 2]]);
+  assert.deepEqual(ticks(view({ memberPage: 2 })), members.slice(50).map((m) => m.id));
+  assert.deepEqual(buttons(view({ memberPage: 2 })), [["‹ Previous", 1]]);
+  assert.equal(memberPage(members, 99).current, 2, "an out-of-range page clamps to the last");
+  assert.equal(JSON.parse(view({ memberPage: 2 }).private_metadata).m, 2, "the page survives a repaint");
+
+  // Search: Slack's people picker; picking someone shows just their row (and a way back).
+  const search = view().blocks.find((block) => block.block_id === "cg_member_find").elements[0];
+  assert.equal(search.type, "users_select");
+  const focused = view({ memberFocus: "U042" });
+  assert.deepEqual(ticks(focused), ["U042"]);
+  assert.equal(focused.blocks.find((block) => block.block_id === "cg_member_find").elements[0].initial_user, "U042");
+  assert.ok(focused.blocks.find((block) => block.block_id === "cg_member_find").elements.some((el) => el.text?.text === "Show all"));
+  assert.equal(parseSettingsMetadata(focused.private_metadata).memberFocus, "U042");
+  assert.match(JSON.stringify(view({ memberFocus: "UNOTHERE" })), /isn't a member of this channel/);
+  // A small channel needs no pager.
+  const small = buildChannelSettingsView({ access: base, mode: base, members: members.slice(0, 5) }, state, { ...options, tab: "access" });
+  assert.equal(small.blocks.some((block) => block.block_id === "cg_member_pager"), false);
 });

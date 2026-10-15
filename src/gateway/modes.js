@@ -158,6 +158,9 @@ export function channelProfile(meta = {}) {
 export { API_PRINCIPAL, isApiPrincipal } from "../config/api-principal.js";
 
 export function isAuthorized(meta, authorId, isDM, { isAdminUser = false, isApprovedUser = false } = {}) {
+  // A per-channel exclusion (meta.excludedUsers, the unticked "Use" box on Settings → Access) takes
+  // an approved member out of THIS channel. Admins cannot be excluded, and a DM has no list.
+  if (!isDM && !isAdminUser && Array.isArray(meta.excludedUsers) && meta.excludedUsers.includes(authorId)) return false;
   if (!isDM && Array.isArray(meta.allowedUsers) && meta.allowedUsers.includes(authorId)) return true;
   if (isDM) return isAdminUser || isApprovedUser;
   const access = meta.access || "approved";

@@ -9,7 +9,7 @@ import { createFileFormNavigation } from "./file-form-navigation.js";
 import pkg from "@slack/bolt";
 const { App, LogLevel } = pkg;
 
-import { upsertChannelEntry, getChannelEntry, getChannelMeta, saveChannelMeta, patchChannelMeta, defaultChannelMeta, getUsers, getUser, isAdmin, isApproved, listChannels, getComposioToken, getToolboxToken } from "../config/store.js";
+import { upsertChannelEntry, getChannelEntry, getChannelMeta, saveChannelMeta, patchChannelMeta, defaultChannelMeta, getUsers, getUser, setUser, isAdmin, isApproved, listChannels, getComposioToken, getToolboxToken } from "../config/store.js";
 import { ensureChannelFolder, effectiveWorkDir } from "../gateway/folders.js";
 import { effectiveMeta } from "../gateway/run.js";
 import { modeLabel, isAuthorized, canManage, modeSettingsPatch } from "../gateway/modes.js";
@@ -38,7 +38,10 @@ import { resolveSlackConfig, getContextWindow, getEngine, getDefaultModel, getEn
 import { listForChannel, deleteSchedule, updateSchedule, countEnabledForChannel } from "../config/schedules.js";
 import { resolveAccessGrants } from "../gateway/access-grants.js";
 import { assignTemplateToChannel, channelScopedSkills, channelSkillGrants, channelSkillsOff, listTemplateSummaries, templateOfMeta } from "../gateway/skills/templates.js";
-import { canSeeSkill, grantSkillsToChannel, revokeSkillsFromChannel } from "../gateway/skills/authoring.js";
+import { canSeeSkill, grantSkillsToChannel, grantSkillsToUser, revokeSkillsFromChannel, revokeSkillsFromUser } from "../gateway/skills/authoring.js";
+import { sanitizeSkillGrantNames } from "../gateway/access-grants.js";
+import { toolboxUrl } from "../gateway/mcp-catalog.js";
+import { revokeRemoteMcpsForAuthor } from "../mcp/remote-mcp-registry.js";
 import { listSkills } from "../gateway/skills/catalog.js";
 import { engineLabel, effortBelongsToModel, effortsForModel, modelBelongsToEngine, modelsForEngine, requireAdapter } from "../engines/registry.js";
 import { persistedSelectionForEngine, selectionFieldForEngine } from "../gateway/mcp-discovery.js";
@@ -49,7 +52,7 @@ import { logChannelPolicyChange } from "../config/channel-audit.js";
 
 import { createTtlSet } from "./util.js";
 import { refreshDirectory } from "./directory.js";
-import { handleMemberLeftChannel, listConversationMemberIds, filterConversationHumanMemberIds, withChannelMembershipLock } from "./members.js";
+import { handleMemberLeftChannel, listConversationMemberIds, listConversationMemberRoster, filterConversationHumanMemberIds, withChannelMembershipLock } from "./members.js";
 import { checkBotScopes, formatScopeWarning, shouldNotify } from "./scope-check.js";
 import { buildFileEditView, buildFilePreviewView, buildFilesLoadingView, buildFilesView, buildNewFileView, buildNewFolderView, canEditChannelFiles, createVisibleDirectory, createVisibleFile, FILES_ACTION_PATTERN, FILES_NEW_FILE_CONTENT_BLOCK_ID, FILES_NEW_FILE_CONTENT_INPUT_ACTION_ID, FILES_NEW_FILE_NAME_BLOCK_ID, FILES_NEW_FILE_NAME_INPUT_ACTION_ID, FILES_NEW_FOLDER_BLOCK_ID, FILES_NEW_FOLDER_INPUT_ACTION_ID, FILES_SHORTCUT_ID, normalizeNewFileName, normalizeNewFolderName, normalizeRelativePath, parseActionValue as parseFileActionValue, parseExplorerMetadata, resolveVisiblePath, writeEditableFile } from "./file-explorer.js";
 import {
@@ -75,6 +78,12 @@ import {
   CHANNEL_SETTINGS_CUSTOM_MCP_ADD_ACTION_ID, CHANNEL_SETTINGS_CUSTOM_MCP_REMOVE_ACTION_ID, CHANNEL_SETTINGS_CUSTOM_MCP_CALLBACK_ID,
   CUSTOM_MCP_NAME_BLOCK_ID, CUSTOM_MCP_URL_BLOCK_ID, CUSTOM_MCP_TOKEN_BLOCK_ID,
   buildCustomMcpEditorView, buildCustomMcpStatusView, readCustomMcpForm, customMcpScope,
+  CHANNEL_SETTINGS_ROOT_CALLBACK_ID, CHANNEL_SETTINGS_FORM_OPEN_ACTION_ID, CHANNEL_SETTINGS_FORM_CANCEL_ACTION_ID,
+  CHANNEL_SETTINGS_FORM_REMOVE_ACTION_ID, CHANNEL_SETTINGS_VAR_MENU_ACTION_ID, CHANNEL_SETTINGS_SCHEDULE_MENU_ACTION_ID,
+  CHANNEL_SETTINGS_CONFIRM_ACTION_ID, CHANNEL_SETTINGS_CONFIRM_CANCEL_ACTION_ID, CHANNEL_SETTINGS_MEMBER_ACTION_ID,
+  ACCESS_MEMBER_BLOCK_PREFIX, CHANNEL_SETTINGS_MEMBER_PAGE_ACTION_ID, CHANNEL_SETTINGS_MEMBER_FIND_ACTION_ID, CHANNEL_SETTINGS_FALLBACK_TOGGLE_ACTION_ID, CHANNEL_SETTINGS_CLOUD_SELECT_PREFIX,
+  CHANNEL_SETTINGS_SKILLS_SELECT_ACTION_ID, CHANNEL_SETTINGS_MY_SKILLS_SELECT_ACTION_ID, CHANNEL_SETTINGS_DM_MODE_ACTION_ID,
+  CHANNEL_SETTINGS_DM_FLAGS_ACTION_ID, readSettingsForm, settingsFieldBlockId,
   CHANNEL_SETTINGS_CLOUD_PAGE_PREFIX, CHANNEL_SETTINGS_CLOUD_TOGGLE_PREFIX,
   CHANNEL_SETTINGS_CONNECTIONS_CALLBACK_ID, CHANNEL_SETTINGS_CONNECTIONS_EDIT_ACTION_ID,
   CHANNEL_SETTINGS_FALLBACK_ACTION_ID, CHANNEL_SETTINGS_THREAD_RESET_ACTION_ID,
@@ -86,13 +95,13 @@ import {
   CONNECTION_COMPOSIO_BLOCK_ID, CONNECTION_MAKE_KEY_BLOCK_ID, CONNECTION_MAKE_URL_BLOCK_ID,
   CONNECTION_TOOLBOX_BLOCK_ID, TEMPLATE_BLOCK_ID,
 } from "./channel-settings.js";
-import { listCustomMcps, patchCustomMcps } from "../gateway/custom-mcps.js";
+import { listCustomMcps, normalizeCustomMcpName, normalizeCustomMcpToken, normalizeCustomMcpUrl, patchCustomMcps } from "../gateway/custom-mcps.js";
 import { listUserCustomMcps, removeChannelCustomMcp, removeUserCustomMcp, saveChannelCustomMcp, saveUserCustomMcp } from "../gateway/custom-mcp-store.js";
-import { ACCESS_EDIT_ACTION_ID, ACCESS_CALLBACK_ID, accessFieldTarget, accessSettingsPatch, accessSettingsSnapshot, assertAccessManager, readAccessFieldValue } from "./access-settings.js";
+import { ACCESS_EDIT_ACTION_ID, ACCESS_CALLBACK_ID, accessFieldTarget, accessSettingsPatch, accessSettingsSnapshot, assertAccessManager, memberAccessForm, memberCanUse, readAccessFieldValue } from "./access-settings.js";
 import { assertValidEnvName, assertValidEnvValue, listChannelEnv, patchChannelEnv } from "../config/channel-env.js";
 import { assertValidSwapRuleFields } from "../gateway/egress/catalog-rules.js";
 // The two scopes that are not the channel's (config/scoped-env.js).
-import { listOrgEnv, listUserEnv, patchOrgEnv, patchUserEnv } from "../config/scoped-env.js";
+import { listOrgEnv, listUserEnv, patchOrgEnv, patchSecretEntry, patchUserEnv } from "../config/scoped-env.js";
 import { cliEnvKeys, cliIntegrationIds } from "../config/cli-catalog.js";
 
 import { uploadLocalFile } from "./upload.js";
@@ -490,7 +499,7 @@ export async function handleSecretsAction({ ack, body, action, client }, { conte
           ? `🗑️ Removed *${name}*. Runs you author no longer receive it.`
           : `🗑️ Removed *${name}*. New runs in this channel no longer receive it.`;
       const nextView = state.returnTo === "settings"
-        ? await rootView(entry, meta, { ...state, tab: "secrets" }, userIsAdmin, { notice })
+        ? await rootView(entry, meta, { ...state, tab: "variables" }, userIsAdmin, { notice })
         : buildSecretsView(await secretScopeLists(meta, clicker), state, { channelName: entry.name, mayEdit, canEditOrg: userIsAdmin, notice });
       await updateFileExplorerView(client, body, nextView);
     }
@@ -560,7 +569,7 @@ export async function handleSecretFormSubmission({ ack, body, view, client }, { 
         : "It reaches the next run in this channel.";
     const notice = `✅ ${existed ? "Updated" : "Added"} *${name}*. ${reach}`;
     const nextView = state.returnTo === "settings"
-      ? await rootView(entry, meta, { ...state, tab: "secrets" }, userIsAdmin, { notice })
+      ? await rootView(entry, meta, { ...state, tab: "variables" }, userIsAdmin, { notice })
       : buildSecretsView(await secretScopeLists(meta, clicker), { ...state, editName: "" }, { channelName: entry.name, mayEdit, canEditOrg: userIsAdmin, notice });
     // Pop the temporary form and refresh its existing parent, preserving Settings navigation
     // and Slack's three-view stack budget across repeated saves.
@@ -744,6 +753,388 @@ export async function handleCustomMcpFormSubmission({ ack, body, view, client },
   }
 }
 
+// ── Settings redesign (2026-10): the snapshot extras each page needs, the inline forms' save and
+// remove paths, and the per-row menus. Everything below runs only after channelSettingsContext
+// admitted the clicker, who must also own the modal; each mutation then asserts its own scope's
+// authority, because the pages mix scopes with different rules on one screen.
+let settingsClient = null;
+
+const withTimeout = (promise, ms, fallback) => Promise.race([promise, new Promise((resolve) => setTimeout(() => resolve(fallback), ms).unref?.())]);
+
+// Every human member of the conversation with what the Access page ticks: whether the run gate
+// would admit them here (Use) and whether they are a named manager (Manage).
+async function accessMembers(meta, channelId) {
+  if (!settingsClient || meta.isDM) return null;
+  try {
+    const [roster, users] = await Promise.all([
+      listConversationMemberRoster(settingsClient, channelId, { teamId: process.env.CG_SLACK_TEAM_ID || "" }),
+      getUsers(),
+    ]);
+    const managers = new Set(meta.managers || []);
+    const guests = new Set(meta.allowedUsers || []);
+    return roster.map((member) => {
+      const record = users[member.id] || {};
+      const who = { isAdminUser: Boolean(record.isAdmin), isApprovedUser: Boolean(record.approved) };
+      return {
+        id: member.id, name: member.name || member.id,
+        isAdmin: who.isAdminUser, approved: who.isApprovedUser, guest: guests.has(member.id),
+        use: memberCanUse(meta, member.id, who), manage: managers.has(member.id),
+      };
+    }).sort((a, b) => Number(b.isAdmin) - Number(a.isAdmin) || Number(b.use) - Number(a.use) || a.name.localeCompare(b.name));
+  } catch {
+    return null;
+  }
+}
+
+// The Cloud MCP pickers: each engine's live catalog as options, this channel's own selection as
+// the picked ones, and what the organization adds on top. The catalog probe is slow on a cold
+// cache, so a page render waits at most `waitMs` and otherwise says it is loading.
+async function cloudPickerData(meta, waitMs) {
+  const out = {};
+  const inherited = getOrgAccessGrants();
+  for (const engine of ["claude", "codex"]) {
+    const items = await withTimeout(cloudManagerItems(meta, engine).catch(() => null), waitMs, null);
+    if (!items) { out[engine] = { ready: false }; continue; }
+    out[engine] = {
+      ready: true,
+      options: items.filter((item) => item.selectable || item.direct).map((item) => ({ key: item.key, label: item.name })),
+      selected: items.filter((item) => item.direct).map((item) => item.key),
+      inherited: (inherited[selectionFieldForEngine(engine)] || []).map((item) => item?.name || item?.id).filter(Boolean),
+    };
+  }
+  return out;
+}
+
+// The channel's own skill grants as a picker: every catalog skill this viewer may grant here that
+// the organization does not already give every conversation.
+function channelSkillPicker(meta, { userId, userIsAdmin }) {
+  const rows = skillManagerItems(meta, { userId, userIsAdmin }).filter((row) => row.direct || !row.inherited);
+  return {
+    options: rows.map((row) => ({ key: row.key, label: row.key, description: row.description })),
+    selected: rows.filter((row) => row.direct).map((row) => row.key),
+  };
+}
+
+// The viewer's own skill grants: every catalog skill they can see, their personal ones included.
+async function mySkillPicker(userId, userIsAdmin) {
+  const mine = new Set(sanitizeSkillGrantNames((await getUser(userId))?.skills || []).map((slug) => slug.toLowerCase()));
+  const rows = listSkills({ viewer: userIsAdmin ? "*" : userId })
+    .filter((skill) => canSeeSkill(skill, { userId, isAdmin: userIsAdmin, active: mine.has(skill.slug.toLowerCase()) }) && (skill.visibility !== "personal" || skill.createdBy === userId));
+  return {
+    options: rows.map((skill) => ({ key: skill.slug, label: skill.slug, description: skill.description || "" })),
+    selected: rows.filter((skill) => mine.has(skill.slug.toLowerCase())).map((skill) => skill.slug),
+  };
+}
+
+// Who may open or save a form, by its key's kind and scope letter (c = this conversation,
+// o = organization, p = the viewer's own).
+function assertSettingsFormAllowed(key, { meta, clicker, userIsAdmin, userIsApproved }) {
+  const [kind, scope] = String(key || "").split(":");
+  if (!["c", "o", "p"].includes(scope)) throw new Error("This form expired. Open Settings again.");
+  if (scope === "o" && !userIsAdmin) throw new Error("Only admins change organization variables.");
+  if (scope === "c" && (kind === "cm" || kind === "cm-add")) assertCustomMcpManager(meta, { authorId: clicker, isAdminUser: userIsAdmin, isApprovedUser: userIsApproved });
+  if (scope === "o" && !kind.startsWith("var")) throw new Error("This form expired. Open Settings again.");
+  return { kind, scope };
+}
+
+const SECRET_SCOPE_BY_LETTER = Object.freeze({ c: "channel", o: "organization", p: "personal" });
+
+// One variable write in the scope that owns it; the audit row carries the name only.
+async function writeVariable(letter, { slug, clicker }, { set = null, remove = "" }) {
+  const scope = SECRET_SCOPE_BY_LETTER[letter];
+  if (scope === "organization") {
+    patchOrgEnv({ ...(set ? { set } : { remove }), actor: `<@${clicker}>` });
+    await logEvent(set ? "org_env_set" : "org_env_removed", { name: set?.name || remove, actor: clicker });
+  } else if (scope === "personal") {
+    await patchUserEnv(clicker, { ...(set ? { set } : { remove }) });
+    await logEvent(set ? "user_env_set" : "user_env_removed", { user: clicker, name: set?.name || remove, actor: clicker });
+  } else {
+    await patchChannelMeta(slug, (existing) => ({ env: patchChannelEnv(existing?.env, { ...(set ? { set } : { remove }), actor: `<@${clicker}>` }) }));
+    await logEvent(set ? "channel_env_set" : "channel_env_removed", { slug, name: set?.name || remove, actor: clicker });
+  }
+}
+
+async function variableRow(letter, { slug, clicker }, name) {
+  const scope = SECRET_SCOPE_BY_LETTER[letter];
+  const list = scope === "organization" ? listOrgEnv() : scope === "personal" ? await listUserEnv(clicker) : listChannelEnv(await getChannelMeta(slug));
+  return list.find((entry) => entry.name === name) || null;
+}
+
+const FIELD_ERROR_PATTERNS = [[/^Token|Bearer token|token is required|Key|key/i, "token"], [/^URL|url/i, "url"], [/^Name|name/i, "name"]];
+function fieldForError(message, fields, fallback) {
+  for (const [pattern, field] of FIELD_ERROR_PATTERNS) if (fields.includes(field) && pattern.test(message)) return field;
+  return fallback;
+}
+
+// The checks a form can fail without asking anyone: field syntax only. Run before Slack is
+// answered, so these refusals still land under their field with Slack's own error styling.
+export function localSettingsFormProblem(key, values = {}) {
+  const [kind] = String(key || "").split(":");
+  const refuse = (field, error) => ({ field, error: String(error).slice(0, 150) });
+  if (values.token && values.token.length < 6) return refuse("token", "That doesn't look like a valid token.");
+  try {
+    if (kind === "var-add") {
+      try { assertValidEnvName(values.name); } catch (error) { return refuse("name", error.message); }
+      try { assertValidEnvValue(values.value); } catch (error) { return refuse("value", error.message); }
+      if (values.hosts) assertValidSwapRuleFields({ hosts: values.hosts });
+    }
+    if (kind === "var-val") assertValidEnvValue(values.value);
+    if (kind === "var-hosts" && values.hosts) assertValidSwapRuleFields({ hosts: values.hosts });
+    if (kind === "cm-add") {
+      try { normalizeCustomMcpName(values.name); } catch (error) { return refuse("name", error.message); }
+    }
+    if ((kind === "cm-add" || kind === "cm") && values.url) {
+      try { normalizeCustomMcpUrl(values.url); } catch (error) { return refuse("url", error.message); }
+    }
+    if (kind === "cm-add" && values.token) normalizeCustomMcpToken(values.token);
+  } catch (error) {
+    return refuse(kind === "var-val" ? "value" : kind.startsWith("var") ? "hosts" : "token", error.message);
+  }
+  return null;
+}
+
+export const SETTINGS_FORM_TIMEOUT_MS = 15_000;
+
+// The root view's submission: save the open inline form and return to the page. Slack expects an
+// answer within three seconds, and a save can need a Slack membership lookup and a DNS check, so:
+// field syntax and the editor's local authority are checked first (refusals land under their
+// field); then Slack is answered with the page saying "Saving…"; then membership, the write and
+// its DNS check run under a 15-second budget that can never save late, with the editor's current
+// authority re-checked after the slow parts and right before the write. The outcome repaints the
+// same view — a remote refusal reopens the form with the error under its field and the token box
+// cleared. A submission with no form open just closes the modal.
+export async function handleSettingsFormSubmission({ ack, body, view, client }, {
+  context = channelSettingsContext, rootView = settingsRootView, save = saveSettingsForm, timeoutMs = SETTINGS_FORM_TIMEOUT_MS,
+} = {}) {
+  const clicker = body?.user?.id;
+  const firstField = (view?.blocks || []).find((block) => block.type === "input")?.block_id;
+  const refuseOnForm = (message) => ack(firstField ? { response_action: "errors", errors: { [firstField]: String(message).slice(0, 150) } } : undefined).catch(() => {});
+  let state;
+  try {
+    state = parseSettingsMetadata(view?.private_metadata);
+    if (!clicker || state.ownerId !== clicker) throw new Error("This settings view isn't yours. Open your own from a recent reply.");
+  } catch (error) {
+    await refuseOnForm(error.message);
+    return;
+  }
+  if (!state.form) {
+    await ack();
+    return;
+  }
+  const values = readSettingsForm(view, state.form);
+  const request = { channelId: state.channelId, userId: clicker, expectedSlug: state.slug };
+  let local;
+  try {
+    local = await context(client, { ...request, verifyMembership: false });
+    assertSettingsFormAllowed(state.form, { ...local, clicker });
+    const problem = localSettingsFormProblem(state.form, values);
+    if (problem) {
+      await ack({ response_action: "errors", errors: { [settingsFieldBlockId(state.form, problem.field)]: problem.error } });
+      return;
+    }
+  } catch (error) {
+    await refuseOnForm(error.message || "Couldn't save.");
+    return;
+  }
+  await ack({ response_action: "update", view: await rootView(local.entry, local.meta, { ...state, form: "", confirm: "" }, local.userIsAdmin, { notice: "⏳ Saving…", quick: true }) });
+
+  // Only the non-secret fields survive into a reopened form; a token is always typed again.
+  const draft = Object.fromEntries(Object.entries(values).filter(([field]) => ["label", "url", "name", "hosts"].includes(field)));
+  let expired = false;
+  let timer;
+  const timedOut = () => new Error("The access or address check timed out. Nothing was saved; try again.");
+  const authorize = async () => {
+    if (expired) throw timedOut();
+    await context(client, { ...request, verifyMembership: true });
+    if (expired) throw timedOut();
+    const fresh = await context(client, { ...request, verifyMembership: false });
+    assertSettingsFormAllowed(state.form, { ...fresh, clicker });
+    if (expired) throw timedOut();
+    return fresh;
+  };
+  let fresh = local;
+  let saved = false;
+  try {
+    const work = (async () => {
+      fresh = await authorize();
+      return save(state.form, values, { ...fresh, clicker, authorize });
+    })();
+    const result = await Promise.race([work, new Promise((_, reject) => { timer = setTimeout(() => { expired = true; reject(timedOut()); }, timeoutMs); })]);
+    clearTimeout(timer);
+    const meta = (await getChannelMeta(fresh.entry.slug)) || fresh.meta;
+    if (result.error) {
+      await client.views.update({ view_id: view.id, view: await rootView(fresh.entry, meta, { ...state, formError: result, formDraft: draft }, fresh.userIsAdmin, {}) });
+      return;
+    }
+    saved = true;
+    await client.views.update({ view_id: view.id, view: await rootView(fresh.entry, meta, { ...state, form: "", confirm: "" }, fresh.userIsAdmin, { notice: result.notice }) });
+  } catch (error) {
+    clearTimeout(timer);
+    const meta = (await getChannelMeta(local.entry.slug).catch(() => null)) || local.meta;
+    const notice = saved
+      ? "✅ Saved, but Settings couldn't refresh. Reopen it to check."
+      : `⚠️ ${String(error.message || "Couldn't save.").slice(0, 200)} Nothing was saved.`;
+    await client.views.update({ view_id: view.id, view: await rootView(local.entry, meta, { ...state, form: "", confirm: "" }, local.userIsAdmin, { notice }) }).catch(() => {});
+  }
+}
+
+// Save the inline form `key`. → { notice } on success, { field, error } on a refusal.
+export async function saveSettingsForm(key, values, ctx) {
+  const { entry, meta, clicker } = ctx;
+  const { kind, scope } = assertSettingsFormAllowed(key, ctx);
+  const name = String(key).split(":").slice(2).join(":");
+  const refuse = (field, error) => ({ field, error: String(error).slice(0, 150) });
+  const token = values.token || "";
+  if (token && token.length < 6) return refuse("token", "That doesn't look like a valid token.");
+  if (kind === "composio" || kind === "toolbox") {
+    if (scope === "c") {
+      const form = kind === "composio" ? { composioToken: token, composioTokenLabel: values.label ?? undefined } : { toolboxToken: token };
+      if (!token && (kind === "toolbox" || !meta.composioToken)) return refuse("token", "Enter the token.");
+      const resolved = connectionSettingsPatch(meta, form);
+      if (Object.keys(resolved.errors).length) return refuse("token", Object.values(resolved.errors)[0]);
+      await patchAuditedChannelSettings(entry, clicker, resolved.patch);
+      await logEvent("channel_connections_updated", { channel: meta.channelId, slug: entry.slug, connections: resolved.changed, author: clicker });
+      return { notice: `✅ Saved the channel's ${kind === "composio" ? "Composio account" : "Toolbox token"}.` };
+    }
+    const user = (await getUser(clicker)) || {};
+    const field = kind === "composio" ? "composioToken" : "toolboxToken";
+    if (!token && !(kind === "composio" && user.composioToken)) return refuse("token", "Enter the token.");
+    await setUser(clicker, { ...(token ? { [field]: token } : {}), ...(kind === "composio" && values.label !== undefined ? { composioTokenLabel: values.label } : {}) });
+    await logEvent("user_connection_updated", { user: clicker, connection: kind });
+    return { notice: `✅ Saved your ${kind === "composio" ? "Composio account" : "Toolbox token"}.` };
+  }
+  if (kind === "make") {
+    if (!values.url) return refuse("url", "Enter the Make MCP server URL.");
+    if (!token && !meta.makeToolboxKey) return refuse("token", "Enter the key.");
+    const resolved = connectionSettingsPatch(meta, { makeToolboxUrl: values.url, makeToolboxKey: token });
+    if (Object.keys(resolved.errors).length) {
+      const [block, error] = Object.entries(resolved.errors)[0];
+      return refuse(block === CONNECTION_MAKE_URL_BLOCK_ID ? "url" : "token", error);
+    }
+    await patchAuditedChannelSettings(entry, clicker, resolved.patch);
+    await logEvent("channel_connections_updated", { channel: meta.channelId, slug: entry.slug, connections: resolved.changed, author: clicker });
+    return { notice: "✅ Saved the Make toolbox." };
+  }
+  if (kind === "cm-add" || kind === "cm") {
+    const input = { name: kind === "cm" ? name : values.name, url: values.url, token };
+    try {
+      // `authorize` re-checks the editor's current authority after the DNS check, right before the write.
+      const options = { actor: scope === "c" ? `<@${clicker}>` : clicker, ...(ctx.authorize ? { authorize: ctx.authorize } : {}) };
+      const servers = scope === "c"
+        ? await saveChannelCustomMcp(entry.slug, input, options)
+        : await saveUserCustomMcp(clicker, input, options);
+      const saved = servers.find((item) => item.name === String(input.name).trim().toLowerCase());
+      return { notice: `✅ Saved ${inlineMcpName(saved?.serverName || input.name)}. Its tools reach the next run.` };
+    } catch (error) {
+      return refuse(fieldForError(error.message, kind === "cm" ? ["url", "token"] : ["name", "url", "token"], kind === "cm" ? "url" : "name"), error.message);
+    }
+  }
+  if (kind === "var-add") {
+    let varName;
+    try { varName = assertValidEnvName(values.name); } catch (error) { return refuse("name", error.message); }
+    try { assertValidEnvValue(values.value); } catch (error) { return refuse("value", error.message); }
+    let hosts;
+    try { if (values.hosts) hosts = assertValidSwapRuleFields({ hosts: values.hosts }).hosts; } catch (error) { return refuse("hosts", error.message); }
+    if (await variableRow(scope, { slug: entry.slug, clicker }, varName)) return refuse("name", `${varName} already exists — use its ⋯ menu → Replace value.`);
+    const exposure = hosts?.length || values.secret !== false ? "hidden" : "readable";
+    try {
+      await writeVariable(scope, { slug: entry.slug, clicker }, { set: { name: varName, value: values.value, exposure, ...(hosts?.length ? { hosts } : {}) } });
+    } catch (error) { return refuse("name", error.message); }
+    return { notice: `✅ Added *${varName}*.` };
+  }
+  if (kind === "var-val") {
+    try { assertValidEnvValue(values.value); } catch (error) { return refuse("value", error.message); }
+    if (!(await variableRow(scope, { slug: entry.slug, clicker }, name))) return refuse("value", `${name} no longer exists.`);
+    // No hosts and no exposure: a replaced value keeps its type and allowed servers.
+    await writeVariable(scope, { slug: entry.slug, clicker }, { set: { name, value: values.value } });
+    return { notice: `✅ Replaced *${name}*. Same type and allowed servers; the old value stops working now.` };
+  }
+  if (kind === "var-hosts") {
+    let row;
+    try {
+      row = await patchSecretEntry({ scope: SECRET_SCOPE_BY_LETTER[scope], slug: entry.slug, userId: clicker, name, hosts: values.hosts || "" });
+    } catch (error) { return refuse("hosts", error.message); }
+    await logEvent("secret_hosts_changed", { scope: SECRET_SCOPE_BY_LETTER[scope], slug: entry.slug, name, actor: clicker, count: row?.hosts?.length || 0 });
+    return { notice: values.hosts ? `🔒 *${name}* is sent only to ${(row?.hosts || []).join(", ")}.` : `🔒 *${name}* has no allowed servers of its own any more${row?.protected && !row?.approval ? ` — its built-in servers apply: ${(row.hosts || []).join(", ")}` : row?.protected ? "; an admin approves each new server" : ""}.` };
+  }
+  throw new Error("This form expired. Open Settings again.");
+}
+
+// The Remove button inside a connection's form.
+export async function removeSettingsForm(key, ctx) {
+  const { entry, meta, clicker } = ctx;
+  const { kind, scope } = assertSettingsFormAllowed(key, ctx);
+  const name = String(key).split(":").slice(2).join(":");
+  if (scope === "c" && ["composio", "toolbox", "make"].includes(kind)) {
+    const patch = kind === "composio" ? { composioToken: "" } : kind === "toolbox" ? { toolboxToken: "" } : { makeToolboxUrl: "", makeToolboxKey: "" };
+    await patchAuditedChannelSettings(entry, clicker, patch);
+    const connection = { composio: "Composio token", toolbox: "Toolbox token", make: "Make MCP connection" }[kind];
+    await logEvent("channel_connection_removed", { channel: meta.channelId, slug: entry.slug, connection, author: clicker });
+    return `🗑️ Removed the channel's ${connection}.`;
+  }
+  if (scope === "p" && ["composio", "toolbox"].includes(kind)) {
+    await setUser(clicker, kind === "composio" ? { composioToken: "" } : { toolboxToken: "" });
+    revokeRemoteMcpsForAuthor(clicker);
+    await logEvent("user_connection_removed", { user: clicker, connection: kind });
+    return `🗑️ Removed your ${kind === "composio" ? "Composio account" : "Toolbox token"}.`;
+  }
+  if (kind === "cm") {
+    if (scope === "c") await removeChannelCustomMcp(entry.slug, name, { actor: `<@${clicker}>` });
+    else await removeUserCustomMcp(clicker, name, { actor: clicker });
+    return `🗑️ Removed ${inlineMcpName(`${scope === "c" ? "custom" : "my"}-${name}`)}. Runs stop receiving it, including any in progress.`;
+  }
+  throw new Error("This form expired. Open Settings again.");
+}
+
+// A variable's ⋯ menu choice. Replace value / Allowed servers open their form; Make secret applies
+// at once; Make readable and Remove ask in place first. → { form } | { confirm } | { notice }.
+export async function applyVariableMenu(choice = {}, ctx) {
+  const letter = String(choice.s || "");
+  const name = String(choice.n || "");
+  assertSettingsFormAllowed(`var:${letter}`, ctx);
+  if (!(await variableRow(letter, { slug: ctx.entry.slug, clicker: ctx.clicker }, name))) throw new Error(`${name || "That variable"} no longer exists. Reopen Settings.`);
+  if (choice.a === "value") return { form: `var-val:${letter}:${name}` };
+  if (choice.a === "hosts") return { form: `var-hosts:${letter}:${name}` };
+  if (choice.a === "readable") return { confirm: `var-read:${letter}:${name}` };
+  if (choice.a === "remove") return { confirm: `var-rm:${letter}:${name}` };
+  if (choice.a === "secret") {
+    const row = await patchSecretEntry({ scope: SECRET_SCOPE_BY_LETTER[letter], slug: ctx.entry.slug, userId: ctx.clicker, name, exposure: "hidden" });
+    await logEvent("secret_mode_set", { scope: SECRET_SCOPE_BY_LETTER[letter], slug: ctx.entry.slug, name, exposure: "hidden", actor: ctx.clicker });
+    return { notice: row?.protected ? `🔒 *${name}* is secret again.` : `*${name}* stays readable: it ${row?.exposureReason?.replace(/^auto: it |^kept readable although hidden was chosen: it /, "") || "is used outside HTTPS"}. Add allowed servers to hide it.` };
+  }
+  throw new Error("Unknown variable action.");
+}
+
+// An in-place confirmation's Confirm button.
+export async function applySettingsConfirm(key, ctx) {
+  const [kind, letter, ...rest] = String(key || "").split(":");
+  if (kind === "sched-rm") {
+    return applyAutomationAction({ channelId: ctx.meta.channelId, slug: ctx.entry.slug, actorId: ctx.clicker, actionId: CHANNEL_SETTINGS_AUTOMATION_DELETE_ACTION_ID, command: { id: [letter, ...rest].join(":") } });
+  }
+  const name = rest.join(":");
+  assertSettingsFormAllowed(`var:${letter}`, ctx);
+  if (kind === "var-rm") {
+    await writeVariable(letter, { slug: ctx.entry.slug, clicker: ctx.clicker }, { remove: name });
+    return `🗑️ Removed *${name}*. Runs stop receiving it.`;
+  }
+  if (kind === "var-read") {
+    await patchSecretEntry({ scope: SECRET_SCOPE_BY_LETTER[letter], slug: ctx.entry.slug, userId: ctx.clicker, name, exposure: "readable" });
+    await logEvent("secret_mode_set", { scope: SECRET_SCOPE_BY_LETTER[letter], slug: ctx.entry.slug, name, exposure: "readable", actor: ctx.clicker });
+    return `👁 *${name}* is readable: programs here see the real value.`;
+  }
+  throw new Error("This confirmation expired. Open Settings again.");
+}
+
+// Picked set → added and removed, case-insensitively, against the current one.
+function pickerDiff(current = [], picked = []) {
+  const now = new Set(current.map((value) => String(value).toLowerCase()));
+  const next = new Set(picked.map((value) => String(value).toLowerCase()));
+  return {
+    added: picked.filter((value) => !now.has(String(value).toLowerCase())),
+    removed: current.filter((value) => !next.has(String(value).toLowerCase())),
+  };
+}
+
 function channelSettingsSnapshot(meta = {}) {
   const effective = effectiveMeta(meta);
   const channelLogin = effective.codexAuthSource === "channel";
@@ -779,6 +1170,7 @@ function channelSettingsSnapshot(meta = {}) {
       toolboxOrg: maskedCredential(getDefaultToolboxToken()),
       makeToolboxUrl: String(meta.makeToolboxUrl || ""),
       makeToolboxKey: maskedCredential(meta.makeToolboxKey),
+      toolboxUrl: toolboxUrl(),
       noDefaultTokens: Boolean(effective.noDefaultTokens),
     },
     cloudMcp: {
@@ -1103,7 +1495,7 @@ export async function saveAccessSettings(client, state, userId, form) {
 // The VPN row is the one fact a subprocess owns: a conversation with no provisioned service is
 // answered here and now, and only a provisioned one is left saying "Checking status…" for the
 // hydration pass to fill in.
-async function settingsRootView(entry, meta, state, userIsAdmin, { tab = state.tab, notice = "", vpn } = {}) {
+async function settingsRootView(entry, meta, state, userIsAdmin, { tab = state.tab, notice = "", vpn, quick = false } = {}) {
   const snapshot = channelSettingsSnapshot(meta);
   const threadTs = state.threadTs || "";
   const [scopes, resume, secretScopes] = await Promise.all([
@@ -1130,6 +1522,20 @@ async function settingsRootView(entry, meta, state, userIsAdmin, { tab = state.t
     channel: listCustomMcps(meta.customMcps, "channel"),
     personal: await listUserCustomMcps(state.ownerId).catch(() => []),
   };
+  // The viewer's own connection tokens, masked, for the You page.
+  const viewer = (await getUser(state.ownerId).catch(() => null)) || {};
+  snapshot.my = {
+    composio: maskedCredential(viewer.composioToken),
+    composioLabel: String(viewer.composioTokenLabel || ""),
+    toolbox: maskedCredential(viewer.toolboxToken),
+  };
+  // What only one page needs is resolved only for that page: the member roster costs Slack API
+  // calls, the Cloud MCP catalog a slow probe on a cold cache.
+  const page = normalizeSettingsTab(tab);
+  if (page === "access") snapshot.members = await accessMembers(meta, state.channelId);
+  if (page === "mcp" && userIsAdmin) snapshot.cloudMcp = await cloudPickerData(meta, quick ? 600 : 2500);
+  if (page === "skills") snapshot.skillPicker = channelSkillPicker(meta, { userId: state.ownerId, userIsAdmin });
+  if (page === "you") snapshot.mySkillPicker = await mySkillPicker(state.ownerId, userIsAdmin);
   return buildChannelSettingsView({ ...snapshot, vpn: vpn ?? unconfiguredChannelVpnStatus(meta) }, { ...state, tab }, {
     channelName: entry.name,
     tab,
@@ -1186,7 +1592,7 @@ export async function hydrateChannelVpnSettings(client, view, state, {
     const vpn = await status(state.channelId);
     const { entry, meta, userIsAdmin } = await context(client, state, state.ownerId);
     await client.views.update({ view_id: view.id, ...(view.hash ? { hash: view.hash } : {}),
-      view: await rootView(entry, meta, { ...state, tab: "general" }, userIsAdmin, { vpn }),
+      view: await rootView(entry, meta, { ...state, tab: "agent" }, userIsAdmin, { vpn }),
     });
   } catch (error) {
     // Hash conflicts mean the user already moved on; do not replace that newer view.
@@ -1219,7 +1625,7 @@ export async function handleChannelVpnSettingsAction({ ack, body, action, client
       : await status(state.channelId);
     const { entry, meta, userIsAdmin } = await context(client, state, userId);
     await client.views.update({ view_id: body.view.id, ...(body.view.hash ? { hash: body.view.hash } : {}),
-      view: await rootView(entry, meta, { ...state, tab: "general" }, userIsAdmin, { vpn }),
+      view: await rootView(entry, meta, { ...state, tab: "agent" }, userIsAdmin, { vpn }),
     });
   } catch (error) {
     if (body?.view?.id && error?.data?.error !== "hash_conflict") await client.views.update({
@@ -1229,7 +1635,7 @@ export async function handleChannelVpnSettingsAction({ ack, body, action, client
   }
 }
 
-async function openChannelSettings(client, triggerId, { channelId, userId, threadTs = "", tab = "general" } = {}) {
+async function openChannelSettings(client, triggerId, { channelId, userId, threadTs = "", tab = "agent" } = {}) {
   const { entry, meta, userIsAdmin } = await channelSettingsContext(client, {
     channelId,
     userId,
@@ -1242,7 +1648,7 @@ async function openChannelSettings(client, triggerId, { channelId, userId, threa
   });
   // Only a provisioned service needs the status helper; every other conversation already rendered
   // its final "Not configured" row, so opening Settings costs no subprocess and no second update.
-  if (tab === "general" && channelVpnConfigured(meta) && opened.view?.id) await hydrateChannelVpnSettings(client, opened.view, state);
+  if (tab === "agent" && channelVpnConfigured(meta) && opened.view?.id) await hydrateChannelVpnSettings(client, opened.view, state);
   await logEvent("channel_settings_opened", { channel: channelId, author: userId, slug: entry.slug });
 }
 
@@ -1330,6 +1736,7 @@ export async function startSlack({ botToken, appToken, signingSecret } = {}) {
     logLevel: LogLevel.INFO,
   });
 
+  settingsClient = app.client;
   // Swallow async Bolt/socket errors into a log line instead of an unhandled rejection.
   app.error(async (err) => {
     console.error("[slack] app error:", err?.message || err);
@@ -1625,7 +2032,7 @@ async function connectAndWire(app) {
         ? parseEditorMetadata(body?.view?.private_metadata)
         : parseSettingsMetadata(body?.view?.private_metadata);
       if (!clicker || state.ownerId !== clicker) throw new Error("This channel settings view isn't yours. Open your own from a recent reply.");
-      let { entry, meta, userIsAdmin } = await channelSettingsContext(client, {
+      let { entry, meta, userIsAdmin, userIsApproved } = await channelSettingsContext(client, {
         channelId: state.channelId, userId: clicker, expectedSlug: state.slug, verifyMembership: true,
         cloudMcp: actionId.startsWith("cg_channel_settings_cloud_"),
       });
@@ -1644,18 +2051,159 @@ async function connectAndWire(app) {
       };
 
       if (command.o === "tab") {
-        const tab = String(command.p || "general");
-        const updated = await updateCurrent(await settingsRootView(entry, meta, { ...state, tab }, userIsAdmin));
-        if (normalizeSettingsTab(tab) === "general" && channelVpnConfigured(meta) && updated.view?.id) {
+        const tab = String(command.p || "agent");
+        // A page change closes any open form or pending confirmation.
+        const updated = await updateCurrent(await settingsRootView(entry, meta, { ...state, tab, form: "", confirm: "", memberPage: 0, memberFocus: "" }, userIsAdmin), { guardHash: false });
+        if (normalizeSettingsTab(tab) === "agent" && channelVpnConfigured(meta) && updated.view?.id) {
           await hydrateChannelVpnSettings(client, updated.view, { ...state, tab });
         }
+        return;
+      }
+
+      // ── Redesigned pages (2026-10) ──────────────────────────────────────────────────────────
+      const ctx = { entry, meta, clicker, userIsAdmin, userIsApproved };
+      const repaint = async (next = {}, { notice = "" } = {}) => updateCurrent(
+        await settingsRootView(entry, next.meta || meta, { ...state, ...next.state }, userIsAdmin, { notice }),
+        { guardHash: false },
+      );
+
+      if (actionId === CHANNEL_SETTINGS_FORM_OPEN_ACTION_ID) {
+        assertSettingsFormAllowed(command.f, ctx);
+        await repaint({ state: { form: String(command.f), confirm: "" } });
+        return;
+      }
+      if (actionId === CHANNEL_SETTINGS_FORM_CANCEL_ACTION_ID || actionId === CHANNEL_SETTINGS_CONFIRM_CANCEL_ACTION_ID) {
+        await repaint({ state: { form: "", confirm: "" } });
+        return;
+      }
+      if (actionId === CHANNEL_SETTINGS_FORM_REMOVE_ACTION_ID) {
+        const notice = await removeSettingsForm(String(command.f || ""), ctx);
+        await repaint({ meta: await getChannelMeta(entry.slug), state: { form: "", confirm: "" } }, { notice });
+        return;
+      }
+      if (actionId === CHANNEL_SETTINGS_VAR_MENU_ACTION_ID) {
+        const result = await applyVariableMenu(parseChannelSettingsActionValue(action?.selected_option?.value), ctx);
+        await repaint({ meta: await getChannelMeta(entry.slug), state: { form: result.form || "", confirm: result.confirm || "" } }, { notice: result.notice || "" });
+        return;
+      }
+      if (actionId === CHANNEL_SETTINGS_CONFIRM_ACTION_ID) {
+        if (!state.confirm || command.x !== state.confirm) throw new Error("This confirmation expired. Open Settings again.");
+        const notice = await applySettingsConfirm(state.confirm, ctx);
+        await repaint({ meta: await getChannelMeta(entry.slug), state: { form: "", confirm: "" } }, { notice });
+        return;
+      }
+      if (actionId === CHANNEL_SETTINGS_SCHEDULE_MENU_ACTION_ID) {
+        const choice = parseChannelSettingsActionValue(action?.selected_option?.value);
+        if (choice.a === "delete") {
+          await repaint({ state: { confirm: `sched-rm:${String(choice.id || "")}`, form: "" } });
+          return;
+        }
+        const notice = await applyAutomationAction({ channelId: state.channelId, slug: entry.slug, actorId: clicker, actionId: CHANNEL_SETTINGS_AUTOMATION_TOGGLE_ACTION_ID, command: { id: choice.id, enabled: Boolean(choice.e) } });
+        await repaint({}, { notice });
+        return;
+      }
+      // Access page navigation: a page of members, or the one member a search picked.
+      if (actionId === CHANNEL_SETTINGS_MEMBER_PAGE_ACTION_ID || actionId === `${CHANNEL_SETTINGS_MEMBER_PAGE_ACTION_ID}_next`) {
+        await repaint({ state: { tab: "access", memberPage: Math.max(0, Number(command.m) || 0), memberFocus: "" } });
+        return;
+      }
+      if (actionId === CHANNEL_SETTINGS_MEMBER_FIND_ACTION_ID) {
+        const picked = String(action?.selected_user || "");
+        await repaint({ state: { tab: "access", memberFocus: /^[UW][A-Z0-9]+$/.test(picked) ? picked : "" } });
+        return;
+      }
+      if (actionId === CHANNEL_SETTINGS_MEMBER_ACTION_ID) {
+        const memberId = String(action?.block_id || "").slice(ACCESS_MEMBER_BLOCK_PREFIX.length);
+        if (!/^[UW][A-Z0-9]+$/.test(memberId)) throw new Error("This member row expired. Open Settings again.");
+        const picked = new Set((action?.selected_options || []).map((entry) => entry.value));
+        const [memberIsAdmin, memberIsApproved] = await Promise.all([isAdmin(memberId), isApproved(memberId)]);
+        const named = (meta.manageAccess || "admins") === "custom";
+        const form = memberAccessForm(meta, memberId, { use: picked.has("use"), ...(named ? { manage: picked.has("manage") } : {}) }, { isAdminUser: memberIsAdmin, isApprovedUser: memberIsApproved });
+        const saved = await saveAccessSettings(client, state, clicker, form);
+        await updateCurrent(await settingsRootView(saved.entry, saved.saved, { ...state, tab: "access" }, saved.userIsAdmin, {
+          notice: `✅ <@${memberId}> ${picked.has("use") ? "can use the agent here" : "can't use the agent here"}${named ? (picked.has("manage") ? " and manages it" : "") : ""}.`,
+        }), { guardHash: false });
+        return;
+      }
+      if (actionId === CHANNEL_SETTINGS_FALLBACK_TOGGLE_ACTION_ID) {
+        const enabled = (action?.selected_options || []).some((entry) => entry.value === "fallback");
+        meta = await patchAuditedChannelSettings(entry, clicker, { noDefaultTokens: !enabled });
+        await repaint({ meta }, { notice: enabled ? "✅ Organization tokens are used when this channel has none." : "✅ This channel no longer falls back to organization tokens." });
+        return;
+      }
+      if (actionId.startsWith(CHANNEL_SETTINGS_CLOUD_SELECT_PREFIX)) {
+        // Admin-only: channelSettingsContext enforced it for every cg_channel_settings_cloud_ id.
+        const engine = actionId.slice(CHANNEL_SETTINGS_CLOUD_SELECT_PREFIX.length) === "codex" ? "codex" : "claude";
+        const field = selectionFieldForEngine(engine);
+        const items = await cloudManagerItems(meta, engine);
+        const picked = (action?.selected_options || []).map((entry) => String(entry.value));
+        const { added, removed } = pickerDiff(items.filter((item) => item.direct).map((item) => item.key), picked);
+        let next = Array.isArray(meta[field]) ? meta[field] : [];
+        for (const key of removed) next = cloudSelectionsAfterToggle(next, engine, key, { activate: false });
+        for (const key of added) {
+          const item = items.find((row) => row.key === key);
+          const selection = item?.selectable ? persistedSelectionForEngine(engine, item.source) : null;
+          if (!selection) throw new Error(`${item?.name || key} can't be enabled: ${item?.admissionReason || "it is no longer in the host catalog"}.`);
+          next = cloudSelectionsAfterToggle(next, engine, key, { activate: true, selection });
+        }
+        meta = await patchAuditedChannelSettings(entry, clicker, { [field]: next });
+        await ensureChannelFolder(entry.slug, effectiveMeta(meta));
+        await logEvent("channel_cloud_mcp_updated", { channel: state.channelId, slug: entry.slug, engine, added, removed, author: clicker });
+        await repaint({ meta }, { notice: `✅ Cloud MCP for ${engine === "codex" ? "Codex" : "Claude"} saved.` });
+        return;
+      }
+      if (actionId === CHANNEL_SETTINGS_SKILLS_SELECT_ACTION_ID) {
+        const picked = (action?.selected_options || []).map((entry) => String(entry.value));
+        const { added, removed } = pickerDiff(meta.skills || [], picked);
+        if (added.length) {
+          const visible = new Map(listSkills({ viewer: userIsAdmin ? "*" : clicker }).map((skill) => [skill.slug.toLowerCase(), skill]));
+          const active = new Set(channelSkillGrants(meta).map((item) => item.toLowerCase()));
+          for (const slug of added) {
+            const skill = visible.get(slug.toLowerCase());
+            if (!skill || skill.visibility === "personal" || !canSeeSkill(skill, { userId: clicker, isAdmin: userIsAdmin, active: active.has(slug.toLowerCase()) })) throw new Error(`${slug} is no longer available to this channel.`);
+          }
+          await grantSkillsToChannel(entry.slug, added);
+        }
+        if (removed.length) await revokeSkillsFromChannel(entry.slug, removed, { deactivate: true });
+        meta = await getChannelMeta(entry.slug);
+        await ensureChannelFolder(entry.slug, effectiveMeta(meta));
+        if (added.length) await logEvent("skill_granted", { channel: state.channelId, slug: entry.slug, skills: added, author: clicker });
+        if (removed.length) await logEvent("skill_revoked", { channel: state.channelId, slug: entry.slug, skills: removed, author: clicker });
+        await repaint({ meta }, { notice: [added.length ? `✅ Added ${added.map(inlineMcpName).join(", ")}` : "", removed.length ? `🗑️ Removed ${removed.map(inlineMcpName).join(", ")}` : ""].filter(Boolean).join(" · ") || "No change." });
+        return;
+      }
+      if (actionId === CHANNEL_SETTINGS_MY_SKILLS_SELECT_ACTION_ID) {
+        const picked = (action?.selected_options || []).map((entry) => String(entry.value));
+        const mine = sanitizeSkillGrantNames((await getUser(clicker))?.skills || []);
+        const { added, removed } = pickerDiff(mine, picked);
+        const allowed = new Set((await mySkillPicker(clicker, userIsAdmin)).options.map((option) => option.key.toLowerCase()));
+        const refused = added.find((slug) => !allowed.has(slug.toLowerCase()));
+        if (refused) throw new Error(`${refused} is not available to you.`);
+        if (added.length) await grantSkillsToUser(clicker, added);
+        if (removed.length) await revokeSkillsFromUser(clicker, removed);
+        await logEvent("user_skills_updated", { user: clicker, added, removed });
+        await repaint({}, { notice: "✅ Your skills are saved. They apply to the next run you start." });
+        return;
+      }
+      if (actionId === CHANNEL_SETTINGS_DM_MODE_ACTION_ID || actionId === CHANNEL_SETTINGS_DM_FLAGS_ACTION_ID) {
+        if (!meta.isDM) throw new Error("This control belongs to a direct message. Reopen Settings.");
+        const change = actionId === CHANNEL_SETTINGS_DM_MODE_ACTION_ID
+          ? { mode: String(action?.selected_option?.value || "") }
+          : Object.fromEntries(["autoMode", "cleanMode"].map((key) => [key, (action?.selected_options || []).some((entry) => entry.value === key)]));
+        if (change.mode !== undefined && !["read", "worker", "admin"].includes(change.mode)) throw new Error("Unknown mode.");
+        meta = await patchAuditedChannelSettings(entry, clicker, (current) => {
+          const baseline = effectiveMeta(current);
+          const patch = modeSettingsPatch(baseline, change, { isAdminUser: userIsAdmin });
+          return current.isDM && ["user", "admin"].includes(current.template) ? { ...baseline, ...patch, template: "custom" } : patch;
+        });
+        await repaint({ meta }, { notice: "✅ Saved. Applies to the next turn." });
         return;
       }
 
       if (actionId === ACCESS_EDIT_ACTION_ID) {
         // Compatibility with a Settings view opened before the access controls moved onto the
         // page: repaint it, and the controls are simply there.
-        await updateCurrent(await settingsRootView(entry, meta, { ...state, tab: "general" }, userIsAdmin, { tab: "general" }));
+        await updateCurrent(await settingsRootView(entry, meta, { ...state, tab: "agent" }, userIsAdmin, { tab: "agent" }));
         return;
       }
 
@@ -1668,9 +2216,11 @@ async function connectAndWire(app) {
       if (accessField) {
         const form = { ...accessSettingsSnapshot(meta), ...readAccessFieldValue(accessField, action) };
         const saved = await saveAccessSettings(client, state, clicker, form);
-        await updateCurrent(await settingsRootView(saved.entry, saved.saved, { ...state, tab: "general" }, saved.userIsAdmin, {
-          tab: "general",
-          notice: "✅ Access settings saved. They apply to this channel's next run.",
+        // Mode and its options live on Agent; who may use and manage the channel on Access.
+        const page = ["mode", "flags"].includes(accessField) ? "agent" : normalizeSettingsTab(state.tab) === "access" ? "access" : "agent";
+        await updateCurrent(await settingsRootView(saved.entry, saved.saved, { ...state, tab: page }, saved.userIsAdmin, {
+          tab: page,
+          notice: "✅ Saved.",
         }), { guardHash: false });
         return;
       }
@@ -1699,7 +2249,7 @@ async function connectAndWire(app) {
 
       if (actionId === CHANNEL_SETTINGS_RUNTIME_EDIT_ACTION_ID) {
         // Compatibility with Settings views opened before the inline engine/model dropdowns shipped.
-        await updateCurrent(await settingsRootView(entry, meta, { ...state, tab: "general" }, userIsAdmin, { tab: "general" }));
+        await updateCurrent(await settingsRootView(entry, meta, { ...state, tab: "agent" }, userIsAdmin, { tab: "agent" }));
         return;
       }
 
@@ -1725,15 +2275,15 @@ async function connectAndWire(app) {
         } else {
           notice = await applyThreadRuntimeSelection({ entry, meta, state, actorId: clicker, field, value });
         }
-        await updateCurrent(await settingsRootView(entry, meta, { ...state, tab: "general" }, userIsAdmin, { tab: "general", notice }), { guardHash: false });
+        await updateCurrent(await settingsRootView(entry, meta, { ...state, tab: "agent" }, userIsAdmin, { tab: "agent", notice }), { guardHash: false });
         return;
       }
 
       if (actionId === CHANNEL_SETTINGS_THREAD_RESET_ACTION_ID) {
         await clearThreadRuntime(entry.slug, requireThread(state));
         await logEvent("thread_runtime_updated", { channel: state.channelId, slug: entry.slug, thread: state.threadTs, cleared: true, author: clicker });
-        await updateCurrent(await settingsRootView(entry, meta, { ...state, tab: "general" }, userIsAdmin, {
-          tab: "general",
+        await updateCurrent(await settingsRootView(entry, meta, { ...state, tab: "agent" }, userIsAdmin, {
+          tab: "agent",
           notice: "🗑️ Cleared this thread's pins. It follows the channel default again.",
         }), { guardHash: false });
         return;
@@ -1879,13 +2429,13 @@ async function connectAndWire(app) {
 
       if (actionId === CHANNEL_SETTINGS_AUTOMATION_TOGGLE_ACTION_ID || actionId === CHANNEL_SETTINGS_AUTOMATION_DELETE_ACTION_ID) {
         const notice = await applyAutomationAction({ channelId: state.channelId, slug: entry.slug, actorId: clicker, actionId, command });
-        await updateCurrent(await settingsRootView(entry, meta, { ...state, tab: "automations" }, userIsAdmin, { tab: "automations", notice }), { guardHash: false });
+        await updateCurrent(await settingsRootView(entry, meta, { ...state, tab: "schedules" }, userIsAdmin, { tab: "schedules", notice }), { guardHash: false });
         return;
       }
 
       if (actionId === CHANNEL_SETTINGS_SECRETS_MANAGE_ACTION_ID) {
         // Compatibility with Settings views opened before the inline Secrets controls shipped.
-        await updateCurrent(await settingsRootView(entry, meta, { ...state, tab: "secrets" }, userIsAdmin));
+        await updateCurrent(await settingsRootView(entry, meta, { ...state, tab: "variables" }, userIsAdmin));
         return;
       }
 
@@ -1944,6 +2494,9 @@ async function connectAndWire(app) {
   });
 
   app.view(CHANNEL_SETTINGS_CUSTOM_MCP_CALLBACK_ID, (args) => handleCustomMcpFormSubmission(args));
+  // The root Settings view's footer is "Save" only while an inline form is open (Slack allows input
+  // blocks only in a modal that can submit); saving it is this submission.
+  app.view(CHANNEL_SETTINGS_ROOT_CALLBACK_ID, (args) => handleSettingsFormSubmission(args));
 
   app.view(CHANNEL_SETTINGS_TEMPLATE_CALLBACK_ID, async ({ ack, body, view, client }) => {
     const clicker = body?.user?.id;

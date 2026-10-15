@@ -1,5 +1,87 @@
 # ChannelGate — Test Plan
 
+## Slack Settings redesign (2026-10-15)
+
+### Regression
+- [x] Automated: `node --test test/slack-settings-redesign.test.js test/channel-settings-modal.test.js test/access-settings.test.js test/slack-secret-actions.test.js test/slack-custom-mcp-settings.test.js test/slack-vpn-settings.test.js`.
+  - **Variables ⋯ menu, end to end on the store:**
+    - Add with Secret ticked → hidden.
+    - Allowed servers prefills the current list, replaces it, and refuses a malformed host under
+      its field.
+    - Replace value keeps the type and the servers.
+    - Make readable confirms in place, then exposes the value; Make secret restores the declared
+      servers. A password-like name stays readable and says why.
+    - Emptying the servers falls back to per-server approval.
+    - A duplicate add is refused, pointing at Replace value.
+    - Remove confirms in place.
+    - Organization variables are admin-only; personal ones never land on the channel.
+  - **Connections:**
+    - Composio first save needs a token; a label-only save keeps it; Remove clears it.
+    - Make refuses a non-Make URL under URL.
+    - The personal Toolbox token saves and removes.
+    - A conversation custom MCP needs a manager; an edit keeps the token when blank and refuses a
+      private URL under URL; personal servers need no manager.
+  - **Forms:**
+    - An open form makes the footer Save/Close.
+    - Field ids are keyed by the form.
+    - The submission saves and closes the form, or puts the refusal under its field.
+    - Another person's modal is refused without writing; a submission with no form open closes
+      the modal.
+    - Field syntax and the editor's local authority are checked before Slack is answered.
+      Everything slow (membership, DNS) runs after a "⏳ Saving…" answer, under a 15-second budget
+      an expired save cannot pass. Authority is re-checked after those checks; a manager demoted
+      meanwhile writes nothing. A refusal only the save can find reopens the form with the error
+      under its field, the non-secret fields refilled and the token or value box empty.
+    - `beta`'s hardened pushed-form handlers (pre-redesign views) stay covered with explicit
+      legacy buttons in `test/slack-custom-mcp-settings.test.js`.
+  - **Access:**
+    - Mode and options are on Agent; the policy dropdowns and per-member Use/Manage ticks are on
+      Access, for managers only.
+    - Ticking grants guest access; unticking an approved member records an exclusion that
+      `isAuthorized` honors. Admins are never excluded.
+    - `excludedUsers` is validated like the other lists.
+    - Members come 25 to a page with Previous/Next that clamp at both ends. The search is a
+      `users_select` that shows one member's row, says when the person is not in the channel, and
+      survives a repaint.
+  - **Layout:**
+    - One page dropdown is the first line (DMs have no Access page); legacy page ids land on their
+      new owners.
+    - Runtime rows are actions blocks, with the thread row first.
+    - The VPN shows as one plain line when unprovisioned; "Checking status…" means it is still
+      being read.
+    - The resume command is escaped.
+    - Schedules use ⋯ menus with an in-place delete confirmation; a one-time reminder or loop gets
+      one confirming button.
+    - The skill and Cloud MCP pickers preselect the channel's own entries; a cold catalog shows
+      "loading".
+  - **Block Kit validity:** every page × three roles × three confirmation states, every inline
+    form, and a DM. Checked: ≤100 blocks, unique block ids, unique action ids per block, text and
+    option-value lengths, 2–5 overflow options, ≤10 checkboxes, ≤100 select options, every
+    `initial_option(s)` one of its options, and input blocks only with a submit button.
+
+### Live gates (engine-independent UI; a turn afterwards in Claude AND Codex) — UNEXECUTED
+Fixture: a disposable channel; one admin, one approved non-manager member, one unapproved member.
+- [ ] **Navigation:** open ⚙️ Settings from a reply in a thread. Pass: the first line is the
+  channel name with a page dropdown listing seven pages; Agent opens first, with *This thread*
+  above *Channel default*. Switching pages clears any open form.
+- [ ] **Agent:** pick a thread model, then the mode and the Auto-approve tick. Pass: each saves on
+  pick ("✅ Saved."). The next Claude turn and the next Codex turn use them. A non-manager sees
+  the mode as one read-only line.
+- [ ] **Access:** untick the approved member's Use. Pass: their next message is refused with the
+  channel restriction, and re-ticking restores it. Tick the unapproved member: they can talk here
+  as a guest. Admins show "always". In a channel with more than 25 members, page through with
+  Next/Previous, then use *Find a member…* to jump to one person and tick them.
+- [ ] **MCP:** Edit Composio (the label is prefilled and the token box empty) and Save; Connect
+  the Make toolbox with a bad URL. Pass: the error appears under URL and nothing is saved. Add a
+  custom MCP as a manager; the member sees no Edit on it.
+- [ ] **Variables:** on a test variable run all four ⋯ actions. Pass:
+  - Replace keeps the type and servers.
+  - Allowed servers lists the current servers and saves the new ones; `list_secrets` agrees.
+  - Make readable asks first.
+  - Remove asks first, and the next turn no longer sees the variable.
+- [ ] **Skills / Schedules / You:** add and remove a skill in the picker, and pause/resume a
+  schedule from ⋯. On You, add a personal variable and a `my-` server. Pass: only your turns see
+  them.
 ## Composio staging identity instructions (2026-10-14)
 
 The per-run identity preamble explicitly maps `composio-user` to the staging argument `"user"`

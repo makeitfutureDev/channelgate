@@ -138,6 +138,9 @@ const allButtons = (view) => view.blocks.flatMap((block) => block.elements || []
 const tabRow = (view) => view.blocks.find((block) => block.block_id === "cg_channel_settings_tabs");
 // Every count below is about the controls that save something; the tab row is navigation.
 const selects = (view) => view.blocks.filter((block) => block.accessory?.type === "static_select");
+// Every interactive element on a page, whether it is a section accessory or sits in an actions row.
+const elements = (view) => view.blocks.flatMap((block) => [...(block.accessory ? [block.accessory] : []), ...(block.elements || [])]);
+const byActionId = (view, id) => elements(view).find((element) => element.action_id === id);
 const rendered = (view) => JSON.stringify(view);
 
 test("Settings footer button is requester-bound, or unbound on an author-less post", () => {
@@ -163,152 +166,136 @@ test("every reply footer carries the same fixed menu: Files, Variables, Settings
   }
 });
 
-test("Channel Settings pages are one row of tabs with the open page highlighted", () => {
+test("Settings pages are one dropdown on the first line, with the open page selected", () => {
   const view = buildChannelSettingsView(snapshot, state, { channelName: "project-alpha", tab: "mcp", canManageCloudMcp: true, canEditAccess: true });
-  const row = tabRow(view);
-  assert.equal(row.type, "actions", "tabs, not a dropdown (Tiberiu, QA-0925)");
-  assert.equal(view.blocks.indexOf(row) < view.blocks.findIndex((block) => block.type === "header" || block.type === "section" && block !== row && /MCP connections/.test(JSON.stringify(block))), true, "above the page content");
-  assert.deepEqual(row.elements.map((button) => parseActionValue(button.value).p), [...CHANNEL_SETTINGS_TABS]);
-  assert.deepEqual(row.elements.map((button) => button.text.text), ["General", "Variables", "MCPs", "Skills", "Automations", "Resume"],
-    "Tiberiu's order (2026-09-28): General, Variables, MCPs, Skills, Automations, Resume");
-  assert.deepEqual(row.elements.map((button) => button.action_id), CHANNEL_SETTINGS_TABS.map((tab) => `cg_channel_settings_tab_${tab}`));
-  // Exactly the open page is highlighted, and every tab is bound to this view's owner.
-  assert.deepEqual(row.elements.filter((button) => button.style === "primary").map((button) => parseActionValue(button.value).p), ["mcp"]);
-  for (const button of row.elements) {
-    assert.deepEqual({ ...parseActionValue(button.value), p: undefined }, { o: "tab", c: state.channelId, u: state.ownerId, p: undefined });
-  }
-  assert.equal(view.blocks.some((block) => block.accessory?.action_id === CHANNEL_SETTINGS_TAB_SELECT_ACTION_ID), false, "no page dropdown");
-  assert.match(rendered(view), /MCP connections/);
-  assert.match(rendered(view), /Cloud MCP/);
-  assert.match(rendered(view), /github/);
-
-  const metadata = parseSettingsMetadata(view.private_metadata);
-  assert.deepEqual(metadata, { ...state, tab: "mcp" });
+  const nav = tabRow(view);
+  assert.equal(view.blocks.indexOf(nav), 0, "navigation is the first line");
+  // Slack lays out a modal's button rows as a two-column grid, so seven tab buttons would be four
+  // rows tall; one dropdown beside the conversation name is one line.
+  assert.equal(nav.accessory.type, "static_select");
+  assert.equal(nav.accessory.action_id, CHANNEL_SETTINGS_TAB_SELECT_ACTION_ID);
+  assert.match(nav.text.text, /<#C_SETTINGS>/);
+  assert.deepEqual(nav.accessory.options.map((entry) => parseActionValue(entry.value).p), [...CHANNEL_SETTINGS_TABS]);
+  assert.deepEqual(nav.accessory.options.map((entry) => entry.text.text), ["Agent", "Access", "MCP", "Variables", "Skills", "Schedules", "You"]);
+  assert.equal(parseActionValue(nav.accessory.initial_option.value).p, "mcp");
+  assert.equal(view.close.text, "Done");
+  assert.equal(view.submit, undefined, "no form open, no submit");
+  assert.doesNotMatch(rendered(view), /changes apply to the next turn/i);
+  assert.deepEqual(parseSettingsMetadata(view.private_metadata), { ...state, tab: "mcp", form: "", confirm: "", memberPage: 0, memberFocus: "" });
+  // A DM has one member, so it has no Access page.
+  const dm = tabRow(buildChannelSettingsView({ ...snapshot, isDM: true }, state, { tab: "access" }));
+  assert.equal(dm.accessory.options.some((entry) => parseActionValue(entry.value).p === "access"), false);
+  assert.equal(parseActionValue(dm.accessory.initial_option.value).p, "agent");
 });
 
 test("a settings control's command is read from a button value or from the picked option", () => {
-  const tab = tabRow(buildChannelSettingsView(snapshot, state, { tab: "general" })).elements[2];
-  assert.deepEqual(settingsCommand({ value: tab.value }), { o: "tab", c: state.channelId, u: state.ownerId, p: "mcp" });
-  // A Settings view opened before tabs came back still carries the dropdown: its picked option
-  // switches pages through the same command.
-  assert.deepEqual(settingsCommand({ selected_option: { value: tab.value } }), { o: "tab", c: state.channelId, u: state.ownerId, p: "mcp" });
-  assert.deepEqual(settingsCommand({ value: actionValue("tab", { p: "skills" }) }), { o: "tab", p: "skills" });
+  const option = tabRow(buildChannelSettingsView(snapshot, state, { tab: "agent" })).accessory.options[2];
+  assert.deepEqual(settingsCommand({ selected_option: { value: option.value } }), { o: "tab", p: "mcp" });
+  // A tab button from a view opened before the dropdown came back routes through the same command.
+  assert.deepEqual(settingsCommand({ value: actionValue("tab", { c: state.channelId, u: state.ownerId, p: "skills" }) }), { o: "tab", c: state.channelId, u: state.ownerId, p: "skills" });
   // A runtime dropdown's bare model id is not a command, and neither is a missing control.
   assert.deepEqual(settingsCommand({ selected_option: { value: "claude-opus-4-8" } }), {});
   assert.deepEqual(settingsCommand({}), {});
   assert.deepEqual(settingsCommand(undefined), {});
 });
 
-test("General Settings holds the engine, access and network sections that used to be three tabs", () => {
-  const view = buildChannelSettingsView(snapshot, state, { tab: "general", canEditRuntime: true, canEditAccess: true, canManageVpn: true });
-  // The VPN is not a section of its own any more: it is one row under the network switch it
-  // belongs to, so the page keeps two headers.
-  assert.deepEqual(view.blocks.filter((block) => block.type === "header").map((block) => block.text.text),
-    ["Engine & model", "Access"]);
+test("Agent holds this thread's and the channel's runtime rows, the mode and the VPN line", () => {
+  const view = buildChannelSettingsView(snapshot, state, { tab: "agent", canEditRuntime: true, canEditAccess: true, canManageVpn: true });
   const text = rendered(view);
-  assert.match(text, /claude-opus-4-8/);
-  // The access policy is edited on the page itself, not behind a button into a pushed form.
-  assert.match(text, /cg_channel_settings_access_field_mode/);
-  assert.match(text, /cg_channel_settings_access_field_allowedUsers/);
-  assert.doesNotMatch(text, /cg_channel_settings_access_edit/);
-  // The VPN row sits immediately after the Auto/Lean/Network checkboxes, and a manager reads the
-  // network policy off that checkbox instead of a second read-out repeating it.
-  const flags = view.blocks.findIndex((block) => block.block_id === "cg_channel_settings_access_field_flags_row");
-  assert.match(view.blocks[flags + 1].text.text, /^\*VPN\* — /);
-  assert.doesNotMatch(text, /Network use/);
-  // Every legacy page id still lands here, so a Settings view opened before the merge keeps working.
-  for (const legacy of ["runtime", "access", "network", "nonsense"]) {
-    assert.equal(parseSettingsMetadata(buildChannelSettingsView(snapshot, state, { tab: legacy }).private_metadata).tab, "general");
+  assert.match(text, /\*This thread\* · 📌 pinned/);
+  assert.match(text, /\*Channel default\*/);
+  // The thread row comes first: opened from a thread, that is what is usually changed.
+  const threadRow = view.blocks.findIndex((block) => block.block_id === "cg_runtime_thread");
+  const channelRow = view.blocks.findIndex((block) => block.block_id === "cg_runtime_channel");
+  assert.ok(threadRow > 0 && threadRow < channelRow);
+  assert.equal(byActionId(view, "cg_channel_settings_access_field_mode").type, "static_select", "mode is a dropdown in the same style");
+  assert.equal(byActionId(view, "cg_channel_settings_access_field_flags").type, "checkboxes");
+  assert.deepEqual(byActionId(view, "cg_channel_settings_access_field_flags").options.map((entry) => entry.text.text), ["Auto-approve", "Lean", "Internet"]);
+  // `vpn` absent = a provisioned service still being read; an unprovisioned one is one plain line.
+  assert.match(text, /VPN\* — Checking status/);
+  assert.match(rendered(buildChannelSettingsView({ ...snapshot, vpn: { configured: false, state: "unconfigured" } }, state, { tab: "agent" })), /VPN · Not configured/);
+  assert.doesNotMatch(text, /cg_channel_settings_access_field_allowedUsers/, "people live on Access now");
+  // Every legacy page id lands on the page that owns its controls now.
+  for (const [legacy, page] of [["general", "agent"], ["runtime", "agent"], ["network", "agent"], ["resume", "agent"], ["secrets", "variables"], ["automations", "schedules"], ["nonsense", "agent"]]) {
+    assert.equal(parseSettingsMetadata(buildChannelSettingsView(snapshot, state, { tab: legacy }).private_metadata).tab, page, legacy);
   }
 });
 
-test("each Settings tab renders its channel setup snapshot", () => {
-  const runtime = buildChannelSettingsView(snapshot, state, { tab: "runtime", canEditRuntime: true });
-  assert.match(rendered(runtime), /claude-opus-4-8/);
-  assert.equal(selects(runtime).length, 6);
-  const skills = buildChannelSettingsView(snapshot, state, { tab: "skills" });
+test("each Settings page renders its part of the channel setup", () => {
+  const skills = buildChannelSettingsView({ ...snapshot, skillPicker: { options: [{ key: "pdf", label: "pdf" }, { key: "eli5", label: "eli5" }], selected: ["pdf"] } }, state, { tab: "skills" });
   assert.match(rendered(skills), /Development/);
-  assert.ok(allButtons(skills).some((button) => button.action_id === CHANNEL_SETTINGS_SKILLS_MANAGE_ACTION_ID));
-  for (const heading of ["Channel Skills Including Template", "All Shared Skills"]) {
-    const index = skills.blocks.findIndex((block) => block.text?.text.startsWith(`*${heading}*\n`));
-    assert.ok(index >= 0, `${heading} is shown`);
-    assert.match(rendered(skills.blocks[index + 1]), /updates automatically/i, `${heading} explains its automatic summary`);
-  }
-  const secretsView = buildChannelSettingsView(snapshot, state, { tab: "secrets", canEditSecrets: true });
+  const picker = byActionId(skills, "cg_channel_settings_skills_select");
+  assert.equal(picker.type, "multi_static_select");
+  assert.deepEqual(picker.initial_options.map((entry) => entry.value), ["pdf"]);
+  assert.match(rendered(skills), /Always on from the organization \(1\)/);
+  assert.doesNotMatch(rendered(skills), /All Shared Skills|Manage Channel Skills/, "no duplicate lists, no pushed manager");
+
+  const secretsView = buildChannelSettingsView({ ...snapshot, secrets: [{ name: "SUPABASE_ACCESS_TOKEN", last4: "beef", protected: true, hosts: ["api.supabase.com"] }] }, state, { tab: "variables", canEditSecrets: true });
   const secrets = rendered(secretsView);
   assert.match(secrets, /SUPABASE_ACCESS_TOKEN/);
-  assert.match(secrets, /••••beef/);
+  assert.match(secrets, /••beef/);
+  assert.match(secrets, /🔒 api.supabase.com/);
   assert.doesNotMatch(secrets, /actual-secret-value/);
-  assert.ok(allButtons(secretsView).some((button) => button.action_id === "cg_channel_secrets_add"));
-  // Row ids carry a scope letter (o/p/c) so three lists in one view can each have an index 0.
-  assert.ok(secretsView.blocks.some((block) => block.accessory?.action_id === "cg_channel_secrets_remove_c0"));
-  // All three scopes are on the tab, so it answers "what will a run here actually receive?".
-  for (const heading of [/Organization/, /Yours/, /This conversation/]) assert.match(secrets, heading);
-  // The personal scope is always the viewer's own to change; the organization's is admin-only.
-  assert.ok(allButtons(secretsView).some((button) => button.action_id === "cg_channel_secrets_add_personal"));
-  assert.ok(!allButtons(secretsView).some((button) => button.action_id === "cg_channel_secrets_add_organization"));
-  const orgAdminView = buildChannelSettingsView(snapshot, state, { tab: "secrets", canEditSecrets: true, canEditOrgSecrets: true });
-  assert.ok(allButtons(orgAdminView).some((button) => button.action_id === "cg_channel_secrets_add_organization"));
-  assert.doesNotMatch(secrets, /Add, update, or remove secrets/);
+  const menu = byActionId(secretsView, "cg_channel_settings_var_menu");
+  assert.equal(menu.type, "overflow");
+  assert.deepEqual(menu.options.map((entry) => entry.text.text), ["Replace value", "Allowed servers", "Make readable", "Remove"]);
+  for (const heading of ["Channel · 1", "Organization · 0"]) assert.ok(secretsView.blocks.some((block) => block.type === "header" && block.text.text === heading), heading);
+  // Organization variables are admin-only to add; personal ones moved to You.
+  assert.equal(elements(secretsView).filter((element) => element.action_id === "cg_channel_settings_form_open").map((element) => parseActionValue(element.value).f).join(","), "var-add:c");
+  const orgAdmin = buildChannelSettingsView(snapshot, state, { tab: "variables", canEditSecrets: true, canEditOrgSecrets: true });
+  assert.ok(elements(orgAdmin).some((element) => parseActionValue(element.value).f === "var-add:o"));
+  assert.match(secrets, /Your personal variables are under \*You\*/);
+
   const mcp = buildChannelSettingsView(snapshot, state, { tab: "mcp" });
-  assert.ok(allButtons(mcp).some((button) => button.action_id === CHANNEL_SETTINGS_CONNECTIONS_EDIT_ACTION_ID));
+  const forms = elements(mcp).filter((element) => element.action_id === "cg_channel_settings_form_open").map((element) => parseActionValue(element.value).f);
+  assert.deepEqual(forms, ["composio:c", "make:c", "toolbox:c"], "Composio, Make toolbox and Toolbox each edit in place");
+  for (const heading of ["Composio", "Make toolbox", "Toolbox", "Custom MCP"]) assert.ok(mcp.blocks.some((block) => block.type === "header" && block.text.text === heading), heading);
 });
 
-test("Resume Session tab shows this thread's copyable command, and says why when there is none", () => {
-  const view = buildChannelSettingsView(snapshot, state, { tab: "resume" });
+test("Agent shows this thread's resume command, escaped, and nothing outside a thread or session", () => {
+  const view = buildChannelSettingsView(snapshot, state, { tab: "agent" });
   const text = rendered(view);
   // The command is escaped like every other value in this modal, so a channel-configurable work
   // folder can never smuggle Slack control markup into the card.
+  assert.match(text, /Resume in a terminal/);
   assert.match(text, /```cd .*settings-channel.* &amp;&amp; claude --resume 994f6108-b405-4bbe-b96d-1641051df2fa```/);
-  assert.match(text, /\/resume <command>/);
-  assert.match(text, /994f6108-b405-4bbe-b96d-1641051df2fa/);
-  assert.equal(parseSettingsMetadata(view.private_metadata).tab, "resume");
-  assert.ok(tabRow(view).elements.some((button) => parseActionValue(button.value).p === "resume" && button.style === "primary"), "its tab is the highlighted one");
-
-  const noSession = rendered(buildChannelSettingsView({ ...snapshot, resume: { inThread: true, command: "" } }, state, { tab: "resume" }));
-  assert.match(noSession, /No session in this thread yet/);
-  assert.doesNotMatch(noSession, /--resume/);
-
-  const outsideThread = rendered(buildChannelSettingsView({ ...snapshot, resume: { inThread: false, command: "" } }, state, { tab: "resume" }));
-  assert.match(outsideThread, /inside a thread/);
+  assert.doesNotMatch(rendered(buildChannelSettingsView({ ...snapshot, resume: { inThread: true, command: "" } }, state, { tab: "agent" })), /Resume in a terminal/);
+  assert.doesNotMatch(rendered(buildChannelSettingsView({ ...snapshot, resume: { inThread: false, command: "" } }, state, { tab: "agent" })), /Resume in a terminal/);
 });
 
-test("runtime tab edits the channel default and the thread pin in place, with no submit button", () => {
-  const view = buildChannelSettingsView(snapshot, state, { tab: "runtime", canEditRuntime: true });
-  // Slack rejects `input` blocks in a modal without a submit; every control has to dispatch itself.
+test("Agent edits the channel default and the thread pin in place, one row of dropdowns per scope", () => {
+  const view = buildChannelSettingsView(snapshot, state, { tab: "agent", canEditRuntime: true });
   assert.equal(view.submit, undefined);
   assert.equal(view.blocks.some((block) => block.type === "input"), false);
-
-  const byAction = Object.fromEntries(selects(view).map((block) => [block.accessory.action_id, block.accessory]));
-  assert.deepEqual(Object.keys(byAction).sort(), [
-    CHANNEL_SETTINGS_RUNTIME_ENGINE_ACTION_ID, CHANNEL_SETTINGS_RUNTIME_MODEL_ACTION_ID, RUNTIME_EFFORT_ACTION_ID,
-    CHANNEL_SETTINGS_THREAD_EFFORT_ACTION_ID, CHANNEL_SETTINGS_THREAD_ENGINE_ACTION_ID, CHANNEL_SETTINGS_THREAD_MODEL_ACTION_ID,
-  ].sort());
-
-  // Stored values preselect themselves; an unset field preselects the label of what it inherits.
+  const row = (scope) => view.blocks.find((block) => block.block_id === `cg_runtime_${scope}`).elements;
+  assert.deepEqual(row("channel").map((element) => element.action_id), [CHANNEL_SETTINGS_RUNTIME_ENGINE_ACTION_ID, CHANNEL_SETTINGS_RUNTIME_MODEL_ACTION_ID, RUNTIME_EFFORT_ACTION_ID]);
+  assert.deepEqual(row("thread").map((element) => element.action_id), [CHANNEL_SETTINGS_THREAD_ENGINE_ACTION_ID, CHANNEL_SETTINGS_THREAD_MODEL_ACTION_ID, CHANNEL_SETTINGS_THREAD_EFFORT_ACTION_ID, CHANNEL_SETTINGS_THREAD_RESET_ACTION_ID]);
+  const byAction = Object.fromEntries([...row("channel"), ...row("thread")].map((element) => [element.action_id, element]));
+  // Stored values preselect themselves; an unset field preselects what it inherits.
   assert.equal(byAction[CHANNEL_SETTINGS_RUNTIME_MODEL_ACTION_ID].initial_option.value, "claude-opus-4-8");
   assert.equal(byAction[CHANNEL_SETTINGS_RUNTIME_ENGINE_ACTION_ID].initial_option.value, SETTINGS_DEFAULT_VALUE);
-  assert.equal(byAction[CHANNEL_SETTINGS_RUNTIME_ENGINE_ACTION_ID].initial_option.text.text, "Inherited default (Claude)");
+  assert.equal(byAction[CHANNEL_SETTINGS_RUNTIME_ENGINE_ACTION_ID].initial_option.text.text, "Inherited default (Claude) (default)");
   assert.equal(byAction[CHANNEL_SETTINGS_THREAD_ENGINE_ACTION_ID].initial_option.value, "codex");
-  assert.equal(byAction[CHANNEL_SETTINGS_THREAD_MODEL_ACTION_ID].initial_option.text.text, "Follow channel (gpt-5.6-sol)");
   // The thread's model catalog follows the harness the THREAD runs, not the channel's.
   assert.deepEqual(byAction[CHANNEL_SETTINGS_THREAD_MODEL_ACTION_ID].options.map((item) => item.value), [SETTINGS_DEFAULT_VALUE, "gpt-5.6-sol"]);
-  assert.ok(allButtons(view).some((button) => button.action_id === CHANNEL_SETTINGS_THREAD_RESET_ACTION_ID));
-
   for (const [actionId, expected] of [
     [CHANNEL_SETTINGS_RUNTIME_ENGINE_ACTION_ID, { scope: "channel", field: "engine" }],
     [RUNTIME_EFFORT_ACTION_ID, { scope: "channel", field: "effort" }],
     [CHANNEL_SETTINGS_THREAD_MODEL_ACTION_ID, { scope: "thread", field: "model" }],
   ]) assert.deepEqual(runtimeSelectTarget(actionId), expected);
   assert.equal(runtimeSelectTarget(CHANNEL_SETTINGS_CONNECTIONS_EDIT_ACTION_ID), null);
+  // A member under a runtime-change policy reads the values instead.
+  const locked = buildChannelSettingsView(snapshot, state, { tab: "agent", canEditRuntime: false });
+  assert.equal(locked.blocks.some((block) => String(block.block_id || "").startsWith("cg_runtime_")), false);
+  assert.match(rendered(locked), /limits engine changes to admins/);
 });
 
-test("runtime tab hides the thread scope until Settings is opened from a thread", () => {
+test("Agent shows only the channel row until Settings is opened from a thread", () => {
   const withoutThread = { ...snapshot, runtime: { ...snapshot.runtime, scopes: { ...snapshot.runtime.scopes, thread: null } } };
-  const view = buildChannelSettingsView(withoutThread, state, { tab: "runtime", canEditRuntime: true });
-  assert.equal(selects(view).length, 3);
-  assert.match(rendered(view), /Open Settings from a reply inside a thread/);
-  assert.equal(allButtons(view).some((button) => button.action_id === CHANNEL_SETTINGS_THREAD_RESET_ACTION_ID), false);
+  const view = buildChannelSettingsView(withoutThread, state, { tab: "agent", canEditRuntime: true });
+  assert.equal(view.blocks.some((block) => block.block_id === "cg_runtime_thread"), false);
+  assert.doesNotMatch(rendered(view), /This thread/);
+  assert.equal(elements(view).some((element) => element.action_id === CHANNEL_SETTINGS_THREAD_RESET_ACTION_ID), false);
 });
 
 test("a stored value outside the engine catalog stays visible instead of silently reading as the default", () => {
@@ -316,8 +303,7 @@ test("a stored value outside the engine catalog stays visible instead of silentl
     ...snapshot.runtime.scopes,
     channel: { ...snapshot.runtime.scopes.channel, values: { engine: "", model: "claude-opus-4-1-retired", effort: "" } },
   } } };
-  const model = selects(buildChannelSettingsView(retired, state, { tab: "runtime", canEditRuntime: true }))
-    .find((block) => block.accessory.action_id === CHANNEL_SETTINGS_RUNTIME_MODEL_ACTION_ID).accessory;
+  const model = byActionId(buildChannelSettingsView(retired, state, { tab: "agent", canEditRuntime: true }), CHANNEL_SETTINGS_RUNTIME_MODEL_ACTION_ID);
   assert.equal(model.initial_option.value, "claude-opus-4-1-retired");
   assert.equal(model.initial_option.text.text, "claude-opus-4-1-retired");
 });
@@ -404,19 +390,17 @@ test("catalog managers paginate and only allow direct grants to be deactivated",
 
 test("the skill template is picked in place, with no second modal to open", () => {
   const view = buildChannelSettingsView(snapshot, state, { tab: "skills" });
-  const picker = selects(view).map((block) => block.accessory).find((element) => element.action_id === CHANNEL_SETTINGS_TEMPLATE_SELECT_ACTION_ID);
+  const picker = byActionId(view, CHANNEL_SETTINGS_TEMPLATE_SELECT_ACTION_ID);
   assert.ok(picker, "the Skills page carries the template dropdown itself");
   assert.equal(picker.initial_option.value, "development");
   assert.deepEqual(picker.options.map((o) => o.value), [SETTINGS_NONE_VALUE, "development", "support"]);
-  // The button that used to push the editor is gone; only the list managers remain buttons.
-  assert.equal(allButtons(view).some((button) => button.action_id === CHANNEL_SETTINGS_TEMPLATE_EDIT_ACTION_ID), false);
-  assert.match(rendered(view), /Changing it saves immediately/);
+  assert.equal(elements(view).some((element) => element.action_id === CHANNEL_SETTINGS_TEMPLATE_EDIT_ACTION_ID), false);
 });
 
-test("with no templates defined the Skills page explains where they come from", () => {
+test("with no templates defined the Skills page says so", () => {
   const view = buildChannelSettingsView({ ...snapshot, skills: { ...snapshot.skills, template: "", templateSlug: "", templates: [] } }, state, { tab: "skills" });
-  assert.equal(selects(view).some((block) => block.accessory.action_id === CHANNEL_SETTINGS_TEMPLATE_SELECT_ACTION_ID), false);
-  assert.match(rendered(view), /Admins create templates in the admin UI/);
+  assert.equal(elements(view).some((element) => element.action_id === CHANNEL_SETTINGS_TEMPLATE_SELECT_ACTION_ID), false);
+  assert.match(rendered(view), /none defined/);
 });
 
 test("template editor supports clearing and selecting a live template", () => {
@@ -500,9 +484,9 @@ test("the Resume Session tab renders the live session resolved from the store", 
   assert.equal(resume.sessionId, "resume-session-id");
   assert.equal(resume.engine, "codex");
   assert.match(resume.command, /resume-session-id/);
-  const view = rendered(buildChannelSettingsView({ ...snapshot, resume }, state, { tab: "resume" }));
+  const view = rendered(buildChannelSettingsView({ ...snapshot, resume }, state, { tab: "agent" }));
   assert.match(view, /resume-session-id/);
-  assert.match(view, /Run this on the gateway machine/);
+  assert.match(view, /Resume in a terminal/);
 
   // A cleared session leaves no command behind, and no thread means nothing to resume at all.
   await clearSession(entry.slug, "1700000000.000100");
@@ -602,24 +586,31 @@ test("Settings and secrets admit authorized members and guests, but Cloud MCP re
 });
 
 
-test("DM Settings has three base modes for admins and independent Auto/Lean controls", () => {
+test("DM Settings has a mode dropdown (Admin only for admins) and independent Auto/Lean ticks", () => {
   const data = { ...snapshot, isDM: true, mode: { adminMode: true, autoMode: true, cleanMode: true } };
-  const admin = buildChannelSettingsView(data, state, { tab: "runtime", canEnableAdmin: true });
-  const buttons = allButtons(admin);
-  assert.deepEqual(buttons.filter((b) => b.action_id.startsWith("cg_channel_settings_mode_")).map((b) => b.text.text), ["Read-only", "Worker", "Admin"]);
-  assert.equal(buttons.find((b) => b.text.text === "Admin").style, "primary");
-  for (const label of ["☑ Auto", "☑ Lean"]) assert.ok(buttons.some((b) => b.text.text === label));
-  const member = buildChannelSettingsView(data, state, { tab: "runtime", canEnableAdmin: false });
-  assert.equal(allButtons(member).some((b) => b.action_id === "cg_channel_settings_mode_admin"), false);
+  const admin = buildChannelSettingsView(data, state, { tab: "agent", canEnableAdmin: true });
+  const mode = byActionId(admin, "cg_channel_settings_dm_mode");
+  assert.deepEqual(mode.options.map((entry) => entry.text.text), ["Read-only", "Worker", "Admin"]);
+  assert.equal(mode.initial_option.value, "admin");
+  const flags = byActionId(admin, "cg_channel_settings_dm_flags");
+  assert.deepEqual(flags.options.map((entry) => entry.value), ["autoMode", "cleanMode"]);
+  assert.deepEqual(flags.initial_options.map((entry) => entry.value), ["autoMode", "cleanMode"]);
+  const member = buildChannelSettingsView({ ...data, mode: { autoMode: true } }, state, { tab: "agent", canEnableAdmin: false });
+  assert.equal(byActionId(member, "cg_channel_settings_dm_mode").options.some((entry) => entry.value === "admin"), false);
 });
 
 test("non-admin Settings hides Cloud MCP while keeping connection editing", () => {
   const view = buildChannelSettingsView(snapshot, state, { tab: "mcp", ...channelSettingsEditOptions({}, false) });
-  assert.ok(allButtons(view).some((button) => button.action_id === CHANNEL_SETTINGS_CONNECTIONS_EDIT_ACTION_ID));
-  assert.equal(allButtons(view).some((button) => button.action_id.startsWith("cg_channel_settings_cloud_")), false);
-  assert.doesNotMatch(rendered(view), /github|figma/);
-  const adminView = buildChannelSettingsView(snapshot, state, { tab: "mcp", ...channelSettingsEditOptions({}, true) });
-  assert.ok(allButtons(adminView).some((button) => button.action_id === "cg_channel_settings_cloud_manage"));
+  assert.ok(elements(view).some((element) => element.action_id === "cg_channel_settings_form_open"));
+  assert.equal(elements(view).some((element) => String(element.action_id).startsWith("cg_channel_settings_cloud_")), false);
+  assert.equal(view.blocks.some((block) => block.type === "header" && block.text.text === "Cloud MCP"), false);
+  const cloudMcp = { claude: { ready: true, options: [{ key: "github", label: "github" }], selected: ["github"], inherited: ["drive"] }, codex: { ready: false } };
+  const adminView = buildChannelSettingsView({ ...snapshot, cloudMcp }, state, { tab: "mcp", ...channelSettingsEditOptions({}, true) });
+  const claude = byActionId(adminView, "cg_channel_settings_cloud_select_claude");
+  assert.equal(claude.type, "multi_static_select");
+  assert.deepEqual(claude.initial_options.map((entry) => entry.value), ["github"]);
+  assert.match(rendered(adminView), /Always on from the organization: `drive`/);
+  assert.match(rendered(adminView), /Loading the catalog/, "a cold catalog says so instead of blocking the page");
 });
 
 test("the runtime tab's thread scope reports the pins in force and the catalogs they imply", async () => {
@@ -666,9 +657,9 @@ test("dedicated Codex login shows channel status and only Codex model controls i
   const meta = { channelId: "C_OWN_CODEX", codexAuthSource: "channel", engine: "codex", model: "gpt-5.6-sol", effort: "low" };
   const data = { ...snapshot, runtime: { ...snapshot.runtime, channelLogin: true, channelLoginStatus: "Signed in with ChatGPT", configuredEngineId: "codex", configuredModel: meta.model, configuredEffort: meta.effort, effectiveEngineId: "codex" } };
   const scopes = await runtimeScopes("own-codex-channel", meta, data, state.threadTs);
-  const view = buildChannelSettingsView({ ...data, runtime: { ...data.runtime, scopes } }, state, { tab: "general", canEditRuntime: true });
-  assert.match(rendered(view), /Channel Codex login.*Signed in with ChatGPT/);
-  assert.equal(selects(view).some((item) => item.accessory.action_id === CHANNEL_SETTINGS_RUNTIME_ENGINE_ACTION_ID || item.accessory.action_id === CHANNEL_SETTINGS_THREAD_ENGINE_ACTION_ID), false);
+  const view = buildChannelSettingsView({ ...data, runtime: { ...data.runtime, scopes } }, state, { tab: "agent", canEditRuntime: true });
+  assert.match(rendered(view), /this channel's own login · Signed in with ChatGPT/);
+  assert.equal(elements(view).some((element) => element.action_id === CHANNEL_SETTINGS_RUNTIME_ENGINE_ACTION_ID || element.action_id === CHANNEL_SETTINGS_THREAD_ENGINE_ACTION_ID), false);
   assert.equal(scopes.channel.values.model, "gpt-5.6-sol");
   assert.equal(scopes.channel.options.models.some((item) => item.value === "gpt-5.6-sol"), true);
 });
@@ -742,34 +733,34 @@ test("a thread pick is validated against the harness the dropdown offered, not t
   );
 });
 
-test("the Automations page lists this channel's schedules with the controls each kind allows", () => {
-  const empty = rendered(buildChannelSettingsView({ ...snapshot, automations: [] }, state, { tab: "automations" }));
-  assert.match(empty, /No automations in this channel yet/);
+test("the Schedules page lists this channel's schedules with the controls each kind allows", () => {
+  const empty = rendered(buildChannelSettingsView({ ...snapshot, automations: [] }, state, { tab: "schedules" }));
+  assert.match(empty, /No schedules here/);
   const automations = [
     { id: "rec1", cron: "0 9 * * 1-5", description: "Daily <standup>", enabled: true, kind: "task", createdBy: "U1", lastStatus: "ok" },
     { id: "rec2", cron: "0 18 * * *", prompt: "Evening digest", enabled: false, kind: "task" },
     { id: "once1", once: true, runAt: "2026-10-01T07:30:00.000Z", description: "Ping Ana", enabled: true, kind: "reminder", ack: true },
     { id: "loop1", loop: true, cron: "*/5 * * * *", loopReason: "watch CI", enabled: true, ticksRemaining: 7, threadTs: "1.2" },
   ];
-  const view = buildChannelSettingsView({ ...snapshot, automations }, state, { tab: "automations" });
+  const view = buildChannelSettingsView({ ...snapshot, automations }, state, { tab: "schedules" });
   const text = rendered(view);
   assert.match(text, /Daily &lt;standup&gt;/, "titles are escaped");
   assert.match(text, /next 20/, "an enabled recurring row names its next run");
-  assert.match(text, /Paused/);
+  assert.match(text, /paused/);
   assert.match(text, /Reminder · needs ✅/);
-  assert.match(text, /7 ticks left/);
-  const controls = (id) => view.blocks.find((block) => block.block_id === `cg_automation_${id}`).elements
-    .map((el) => ({ label: el.text.text, action: el.action_id, command: parseActionValue(el.value) }));
-  assert.deepEqual(controls("rec1").map((c) => c.label), ["Pause", "Delete"]);
-  assert.deepEqual(controls("rec2").map((c) => c.label), ["Resume", "Delete"]);
-  assert.deepEqual(controls("once1").map((c) => c.label), ["Cancel"], "a one-time row is cancelled, never resumed");
-  assert.deepEqual(controls("loop1").map((c) => c.label), ["Stop loop"]);
-  const [pause, remove] = controls("rec1");
-  assert.equal(pause.action, CHANNEL_SETTINGS_AUTOMATION_TOGGLE_ACTION_ID);
-  assert.deepEqual(pause.command, { o: "automation_toggle", c: state.channelId, u: state.ownerId, id: "rec1", enabled: false });
-  assert.equal(remove.action, CHANNEL_SETTINGS_AUTOMATION_DELETE_ACTION_ID);
+  const row = (title) => view.blocks.find((block) => block.type === "section" && block.text.text.includes(title)).accessory;
+  const menu = (title) => row(title).options.map((entry) => ({ label: entry.text.text, ...JSON.parse(entry.value) }));
+  assert.deepEqual(menu("standup").map((entry) => entry.label), ["Pause", "Delete"]);
+  assert.deepEqual(menu("standup")[0], { label: "Pause", o: "sched", id: "rec1", a: "toggle", e: false });
+  assert.deepEqual(menu("Evening digest").map((entry) => entry.label), ["Resume", "Delete"]);
+  assert.equal(row("Ping Ana").text.text, "Cancel", "a one-time row is cancelled, never resumed");
+  assert.equal(row("Ping Ana").action_id, CHANNEL_SETTINGS_AUTOMATION_DELETE_ACTION_ID);
+  assert.ok(row("Ping Ana").confirm, "cancelling asks first");
+  assert.equal(row("watch CI").text.text, "Stop loop");
   for (const id of [CHANNEL_SETTINGS_AUTOMATION_TOGGLE_ACTION_ID, CHANNEL_SETTINGS_AUTOMATION_DELETE_ACTION_ID]) assert.match(id, CHANNEL_SETTINGS_ACTION_PATTERN);
-  assert.ok(view.blocks.find((block) => block.block_id === "cg_automation_rec1").elements[1].confirm, "delete asks first");
+  // Delete from a menu asks in place on the next paint.
+  const confirming = buildChannelSettingsView({ ...snapshot, automations }, { ...state, confirm: "sched-rm:rec1" }, { tab: "schedules" });
+  assert.match(rendered(confirming), /Delete \*Daily &lt;standup&gt;\*\? It will not run again/);
 });
 
 test("Automations controls act only on this channel's rows and respect the enabled-schedule ceiling", async () => {

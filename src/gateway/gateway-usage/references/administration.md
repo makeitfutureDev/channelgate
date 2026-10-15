@@ -91,9 +91,9 @@ gateway applies them; explicitly exempt tools do not receive a human-approval re
 - `list_channel_mcps` — what's allowed here now.
 - `add_channel_mcps` / `remove_channel_mcps` — allow/stop MCP servers here (by name).
 - **Custom MCP servers** (a remote server by URL + Bearer token) are added by a person, never by
-  you. In Slack: a reply's ⚙️ Settings → **MCPs** → *Custom MCP servers*. Channel managers and
-  admins edit *This conversation* (every run here gets them as `custom-<name>`); anyone edits
-  *Yours* (only their own runs get them, as `my-<name>`). Admins can also use the admin UI → the
+  you. In Slack: a reply's ⚙️ Settings → **MCP** → *Custom MCP* (channel managers and admins;
+  every run here gets them as `custom-<name>`), or ⚙️ Settings → **You** (anyone, for their own
+  runs only, as `my-<name>`). Admins can also use the admin UI → the
   conversation → Connections, or Users → the person. HTTPS and public addresses only; OAuth-only servers go
   through Composio instead. Never ask for the token in chat, and never write an MCP definition
   into a settings or `.mcp.json` file — the engine ignores them.
