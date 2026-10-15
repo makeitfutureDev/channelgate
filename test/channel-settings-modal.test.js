@@ -181,7 +181,7 @@ test("Settings pages are one dropdown on the first line, with the open page sele
   assert.equal(view.close.text, "Done");
   assert.equal(view.submit, undefined, "no form open, no submit");
   assert.doesNotMatch(rendered(view), /changes apply to the next turn/i);
-  assert.deepEqual(parseSettingsMetadata(view.private_metadata), { ...state, tab: "mcp", form: "", confirm: "" });
+  assert.deepEqual(parseSettingsMetadata(view.private_metadata), { ...state, tab: "mcp", form: "", confirm: "", memberPage: 0, memberFocus: "" });
   // A DM has one member, so it has no Access page.
   const dm = tabRow(buildChannelSettingsView({ ...snapshot, isDM: true }, state, { tab: "access" }));
   assert.equal(dm.accessory.options.some((entry) => parseActionValue(entry.value).p === "access"), false);

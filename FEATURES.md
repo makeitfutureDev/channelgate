@@ -223,7 +223,10 @@ control-plane status.
   - Unticking an approved member records a per-channel exclusion (`excludedUsers`). The run gate
     (`isAuthorized`) honors it on every surface; admins are never excluded. The exclusion list is
     audited with the other list fields.
-  - The list shows up to 40 members; for larger channels the admin UI covers the rest.
+  - Members come 25 to a page with ‹ Previous / Next › and an "N–M of total" line (Slack caps a
+    window at 100 blocks, one block per member). *Find a member…* is Slack's own people picker:
+    picking someone shows just their row, with *Show all* to go back; someone outside the channel
+    is named as not a member. The page and the searched person survive each tick's repaint.
 - **MCP:** Composio, Make toolbox, Toolbox, Custom MCP and (admins) Cloud MCP each have their own
   section.
   - Edit or Connect opens the fields in place, with the URL or label prefilled and the token box

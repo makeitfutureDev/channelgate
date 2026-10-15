@@ -33,6 +33,9 @@
     - Ticking grants guest access; unticking an approved member records an exclusion that
       `isAuthorized` honors. Admins are never excluded.
     - `excludedUsers` is validated like the other lists.
+    - Members come 25 to a page with Previous/Next that clamp at both ends. The search is a
+      `users_select` that shows one member's row, says when the person is not in the channel, and
+      survives a repaint.
   - **Layout:**
     - One page dropdown is the first line (DMs have no Access page); legacy page ids land on their
       new owners.
@@ -59,7 +62,8 @@ Fixture: a disposable channel; one admin, one approved non-manager member, one u
   the mode as one read-only line.
 - [ ] **Access:** untick the approved member's Use. Pass: their next message is refused with the
   channel restriction, and re-ticking restores it. Tick the unapproved member: they can talk here
-  as a guest. Admins show "always".
+  as a guest. Admins show "always". In a channel with more than 25 members, page through with
+  Next/Previous, then use *Find a member…* to jump to one person and tick them.
 - [ ] **MCP:** Edit Composio (the label is prefilled and the token box empty) and Save; Connect
   the Make toolbox with a bad URL. Pass: the error appears under URL and nothing is saved. Add a
   custom MCP as a manager; the member sees no Edit on it.

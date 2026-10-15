@@ -81,7 +81,7 @@ import {
   CHANNEL_SETTINGS_ROOT_CALLBACK_ID, CHANNEL_SETTINGS_FORM_OPEN_ACTION_ID, CHANNEL_SETTINGS_FORM_CANCEL_ACTION_ID,
   CHANNEL_SETTINGS_FORM_REMOVE_ACTION_ID, CHANNEL_SETTINGS_VAR_MENU_ACTION_ID, CHANNEL_SETTINGS_SCHEDULE_MENU_ACTION_ID,
   CHANNEL_SETTINGS_CONFIRM_ACTION_ID, CHANNEL_SETTINGS_CONFIRM_CANCEL_ACTION_ID, CHANNEL_SETTINGS_MEMBER_ACTION_ID,
-  ACCESS_MEMBER_BLOCK_PREFIX, CHANNEL_SETTINGS_FALLBACK_TOGGLE_ACTION_ID, CHANNEL_SETTINGS_CLOUD_SELECT_PREFIX,
+  ACCESS_MEMBER_BLOCK_PREFIX, CHANNEL_SETTINGS_MEMBER_PAGE_ACTION_ID, CHANNEL_SETTINGS_MEMBER_FIND_ACTION_ID, CHANNEL_SETTINGS_FALLBACK_TOGGLE_ACTION_ID, CHANNEL_SETTINGS_CLOUD_SELECT_PREFIX,
   CHANNEL_SETTINGS_SKILLS_SELECT_ACTION_ID, CHANNEL_SETTINGS_MY_SKILLS_SELECT_ACTION_ID, CHANNEL_SETTINGS_DM_MODE_ACTION_ID,
   CHANNEL_SETTINGS_DM_FLAGS_ACTION_ID, readSettingsForm, settingsFieldBlockId,
   CHANNEL_SETTINGS_CLOUD_PAGE_PREFIX, CHANNEL_SETTINGS_CLOUD_TOGGLE_PREFIX,
@@ -1901,7 +1901,7 @@ async function connectAndWire(app) {
       if (command.o === "tab") {
         const tab = String(command.p || "agent");
         // A page change closes any open form or pending confirmation.
-        const updated = await updateCurrent(await settingsRootView(entry, meta, { ...state, tab, form: "", confirm: "" }, userIsAdmin), { guardHash: false });
+        const updated = await updateCurrent(await settingsRootView(entry, meta, { ...state, tab, form: "", confirm: "", memberPage: 0, memberFocus: "" }, userIsAdmin), { guardHash: false });
         if (normalizeSettingsTab(tab) === "agent" && channelVpnConfigured(meta) && updated.view?.id) {
           await hydrateChannelVpnSettings(client, updated.view, { ...state, tab });
         }
@@ -1948,6 +1948,16 @@ async function connectAndWire(app) {
         }
         const notice = await applyAutomationAction({ channelId: state.channelId, slug: entry.slug, actorId: clicker, actionId: CHANNEL_SETTINGS_AUTOMATION_TOGGLE_ACTION_ID, command: { id: choice.id, enabled: Boolean(choice.e) } });
         await repaint({}, { notice });
+        return;
+      }
+      // Access page navigation: a page of members, or the one member a search picked.
+      if (actionId === CHANNEL_SETTINGS_MEMBER_PAGE_ACTION_ID || actionId === `${CHANNEL_SETTINGS_MEMBER_PAGE_ACTION_ID}_next`) {
+        await repaint({ state: { tab: "access", memberPage: Math.max(0, Number(command.m) || 0), memberFocus: "" } });
+        return;
+      }
+      if (actionId === CHANNEL_SETTINGS_MEMBER_FIND_ACTION_ID) {
+        const picked = String(action?.selected_user || "");
+        await repaint({ state: { tab: "access", memberFocus: /^[UW][A-Z0-9]+$/.test(picked) ? picked : "" } });
         return;
       }
       if (actionId === CHANNEL_SETTINGS_MEMBER_ACTION_ID) {

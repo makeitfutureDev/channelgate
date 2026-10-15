@@ -261,3 +261,36 @@ test("channel Runtime tab has no duplicate mode controls and Auto promotes Read-
   assert.equal(promoted.allowBash, true);
   assert.equal(promoted.adminMode, false);
 });
+
+test("a large channel's members come a page at a time, with a people search that jumps to one person", async () => {
+  const { memberPage, ACCESS_MEMBER_PAGE_SIZE, parseSettingsMetadata, settingsCommand } = await import("../src/slack/channel-settings.js");
+  const members = Array.from({ length: 60 }, (_, i) => ({ id: `U${String(i).padStart(3, "0")}`, approved: true, use: true }));
+  const options = channelSettingsEditOptions(base, true, actor);
+  const view = (extra = {}) => buildChannelSettingsView({ access: base, mode: base, members }, { ...state, ...extra }, { ...options, tab: "access" });
+  const ticks = (v) => v.blocks.filter((block) => block.accessory?.type === "checkboxes").map((block) => block.block_id.slice("cg_member_".length));
+  const buttons = (v) => v.blocks.filter((block) => block.block_id === "cg_member_pager").flatMap((block) => block.elements).map((el) => [el.text.text, settingsCommand(el).m]);
+
+  assert.equal(ACCESS_MEMBER_PAGE_SIZE, 25);
+  assert.deepEqual(ticks(view()), members.slice(0, 25).map((m) => m.id));
+  assert.deepEqual(buttons(view()), [["Next ›", 1]]);
+  assert.match(JSON.stringify(view()), /1–25 of 60/);
+  assert.deepEqual(ticks(view({ memberPage: 1 })), members.slice(25, 50).map((m) => m.id));
+  assert.deepEqual(buttons(view({ memberPage: 1 })), [["‹ Previous", 0], ["Next ›", 2]]);
+  assert.deepEqual(ticks(view({ memberPage: 2 })), members.slice(50).map((m) => m.id));
+  assert.deepEqual(buttons(view({ memberPage: 2 })), [["‹ Previous", 1]]);
+  assert.equal(memberPage(members, 99).current, 2, "an out-of-range page clamps to the last");
+  assert.equal(JSON.parse(view({ memberPage: 2 }).private_metadata).m, 2, "the page survives a repaint");
+
+  // Search: Slack's people picker; picking someone shows just their row (and a way back).
+  const search = view().blocks.find((block) => block.block_id === "cg_member_find").elements[0];
+  assert.equal(search.type, "users_select");
+  const focused = view({ memberFocus: "U042" });
+  assert.deepEqual(ticks(focused), ["U042"]);
+  assert.equal(focused.blocks.find((block) => block.block_id === "cg_member_find").elements[0].initial_user, "U042");
+  assert.ok(focused.blocks.find((block) => block.block_id === "cg_member_find").elements.some((el) => el.text?.text === "Show all"));
+  assert.equal(parseSettingsMetadata(focused.private_metadata).memberFocus, "U042");
+  assert.match(JSON.stringify(view({ memberFocus: "UNOTHERE" })), /isn't a member of this channel/);
+  // A small channel needs no pager.
+  const small = buildChannelSettingsView({ access: base, mode: base, members: members.slice(0, 5) }, state, { ...options, tab: "access" });
+  assert.equal(small.blocks.some((block) => block.block_id === "cg_member_pager"), false);
+});

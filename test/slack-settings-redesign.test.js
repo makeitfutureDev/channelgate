@@ -262,7 +262,7 @@ test("every page, in every role and with every inline form open, is valid Block 
   const formPage = (key) => (key.startsWith("var") ? (key.includes(":p") ? "you" : "variables") : key.includes(":p") ? "you" : "mcp");
   for (const options of roles) {
     for (const tab of ["agent", "access", "mcp", "variables", "skills", "schedules", "you"]) {
-      for (const extra of [{}, { confirm: `var-rm:c:${long}` }, { confirm: "sched-rm:rec1" }]) {
+      for (const extra of [{}, { confirm: `var-rm:c:${long}` }, { confirm: "sched-rm:rec1" }, { memberPage: 2 }, { memberFocus: "U5" }, { memberFocus: "UNOTHERE" }]) {
         const view = buildChannelSettingsView(snapshot, { ...state, ...extra }, { ...options, tab, notice: "✅ Saved." });
         assert.deepEqual(blockKitProblems(view), [], `${tab} ${JSON.stringify(options)} ${JSON.stringify(extra)}`);
       }
