@@ -286,7 +286,8 @@ test("every page, in every role and with every inline form open, is valid Block 
     } },
     mode: { autoMode: true, allowNetwork: true },
     access: { access: "approved", manageAccess: "custom", managers: ["U2"] },
-    members: Array.from({ length: 60 }, (_, i) => ({ id: `U${i}`, approved: i % 2 === 0, use: i % 3 === 0, manage: i === 2, isAdmin: i === 0 })),
+    people: Array.from({ length: 70 }, (_, i) => ({ id: `U${i}`, approved: i % 2 === 0, guest: i % 2 === 1, excluded: i % 5 === 0, use: i % 3 === 0, manage: i === 2, isAdmin: i === 0 })),
+    focusMember: { id: "U5", approved: true, use: true, manage: false, inChannel: true },
     vpn: { configured: false, state: "unconfigured" },
     resume: { inThread: true, command: "codex resume 019a7c2e" },
     connections: { composioMode: "personal", composioChannel: masked("t5zq"), composioTokenLabel: "Team", toolboxChannel: { configured: false }, toolboxOrg: masked("aaaa"), makeToolboxUrl: "https://eu1.make.com/mcp/server/x", makeToolboxKey: masked("mkey"), toolboxUrl: "https://toolbox.example/mcp" },
@@ -314,7 +315,7 @@ test("every page, in every role and with every inline form open, is valid Block 
   const formPage = (key) => (key.startsWith("var") ? (key.includes(":p") ? "you" : "variables") : key.includes(":p") ? "you" : "mcp");
   for (const options of roles) {
     for (const tab of ["agent", "access", "mcp", "variables", "skills", "schedules", "you"]) {
-      for (const extra of [{}, { confirm: `var-rm:c:${long}` }, { confirm: "sched-rm:rec1" }, { memberPage: 2 }, { memberFocus: "U5" }, { memberFocus: "UNOTHERE" }]) {
+      for (const extra of [{}, { confirm: `var-rm:c:${long}` }, { confirm: "sched-rm:rec1" }, { memberFocus: "U5" }, { memberFocus: "UNOTHERE" }]) {
         const view = buildChannelSettingsView(snapshot, { ...state, ...extra }, { ...options, tab, notice: "✅ Saved." });
         assert.deepEqual(blockKitProblems(view), [], `${tab} ${JSON.stringify(options)} ${JSON.stringify(extra)}`);
       }

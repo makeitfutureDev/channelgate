@@ -216,17 +216,19 @@ control-plane status.
   default*. The mode is a dropdown in the same style, with Auto-approve · Lean · Internet ticks
   beneath it. Managers and admins edit them; everyone else reads one line. Below that: one VPN line,
   and this thread's resume command when there is a session.
-- **Access:** *Who can use it* and *Who can manage it*, then every human member of the
-  conversation. Each member has a **Use** tick, plus a **Manage** tick when the channel names its
-  managers; admins show as "always".
+- **Access:** *Who can use it* and *Who can manage it*, then **People**: only the people with a
+  setting of their own here (guests, excluded members, named managers), plus *Find a person…*, which
+  is Slack's own people search. Picking someone shows just their row, with *Show list* to go back;
+  someone outside the channel is named as such. Everyone the policy admits needs no row, so the page
+  stays short in any size of channel and draws without a Slack API call. Each person has a **Use**
+  tick, plus a **Manage** tick when the channel names its managers; admins show as "always".
   - Ticking someone the policy would refuse grants them guest access (`allowedUsers`).
   - Unticking an approved member records a per-channel exclusion (`excludedUsers`). The run gate
     (`isAuthorized`) honors it on every surface; admins are never excluded. The exclusion list is
     audited with the other list fields.
-  - Members come 25 to a page with ‹ Previous / Next › and an "N–M of total" line (Slack caps a
-    window at 100 blocks, one block per member). *Find a member…* is Slack's own people picker:
-    picking someone shows just their row, with *Show all* to go back; someone outside the channel
-    is named as not a member. The page and the searched person survive each tick's repaint.
+  - The searched person survives each tick's repaint. Unticking a guest, or re-ticking an excluded
+    member, removes their exception, so they leave the list. A list over 60 people is cut there,
+    with a line pointing to the search (Slack caps a window at 100 blocks).
 - **MCP:** Composio, Make toolbox, Toolbox, Custom MCP and (admins) Cloud MCP each have their own
   section.
   - Edit or Connect opens the fields in place, with the URL or label prefilled and the token box
