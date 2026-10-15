@@ -1,5 +1,29 @@
 # Sending Slack messages
 
+## Joining or inviting the agent — human approval required
+
+Before adding the gateway bot or a connected agent account to ANY other channel (public or
+private), use the structured Composio membership action and wait for its gateway approval card.
+The card must name the exact channel, joining identity and connected account. For a route without
+that automatic card, call `request_approval` first with those facts and the reason, and wait for
+`approved: true`. Deny, comment, timeout or missing approval means do nothing.
+Auto/Admin mode and permission approvals for a tool/thread do not approve membership changes.
+Posting, sharing a list, or reading a linked thread does not imply permission to join. Channel
+creation also changes membership and requires approval. Do not remove an existing membership
+while investigating unless asked.
+
+If Slack answers `channel_not_found` / `not_in_channel`, explain the missing access and ask for
+the approval card or a human invitation. Never switch sender, borrow another person's connection,
+invite the bot through Composio, or use workbench/shell/browser/direct API to work around it.
+Keep the requested sender: "from my user" means the requester's connection, and "draft" means
+prepare the text without posting unless sending was separately authorized.
+
+Managed Composio structured membership calls have an additional gateway-enforced one-use card.
+Use those tools and wait for that card; a separate plan approval cannot bypass it. Both identities
+and all runtime types use this check. Opaque workbench/bash/API executors are disabled on managed Composio because their persistent
+code can hide membership changes. Use structured actions for reads and writes. Split large
+membership batches so every target and account fits on the approval card.
+
 ## Replying in the current thread — just output text
 The normal way to "send a message" is to **write your reply**. Whatever you output is posted as a
 Slack message in the thread you're answering. You do not need a tool for this. Format it per

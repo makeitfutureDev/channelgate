@@ -7,7 +7,8 @@ ensureTestEnv();
 process.env.CG_APPROVAL_SECRET = "mcp-config-signing-secret";
 const { buildMcpConfig: buildRawMcpConfig } = await import("../src/gateway/mcp.js");
 const { verifyGatewayCapability } = await import("../src/gateway/mcp-capability.js");
-const { workspaceRoot } = await import("../src/config/paths.js");
+const { lookupRemoteMcp, clearRemoteMcps } = await import("../src/mcp/remote-mcp-registry.js");
+const { workspaceRoot, runtimeSocketFile } = await import("../src/config/paths.js");
 const { allowedFsRoot } = await import("../src/web/security.js");
 const { createFakeRuntime } = await import("./fixtures/fake-runtime-backend.js");
 const { localRuntimeTarget } = await import("../src/engines/runtime-target.js");
@@ -29,12 +30,20 @@ test("Claude MCP config exposes personal and agent Composio with separate creden
     composioToken: "ck_shared_secret",
   }));
 
-  assert.equal(config.mcpServers["composio-user"].type, "http");
-  assert.equal(config.mcpServers["composio-user"].headers["x-consumer-api-key"], "ck_user_secret");
+  const user = config.mcpServers["composio-user"];
+  const shared = config.mcpServers["composio-agent"];
+  const claims = verifyGatewayCapability(user.env.CG_GATEWAY_CAPABILITY, { secret: process.env.CG_APPROVAL_SECRET }).claims;
+  assert.match(user.args[0], /socket-bridge\.js$/);
+  assert.equal(user.args[1], "composio-user");
+  assert.equal(user.env.CG_MCP_SOCKET, runtimeSocketFile());
+  assert.equal(user.env.CG_MCP_SERVICE, "remote-mcp");
+  assert.equal(lookupRemoteMcp(claims.jti, "composio-user").headers["x-consumer-api-key"], "ck_user_secret");
+  assert.equal(lookupRemoteMcp(claims.jti, "composio-agent").headers["x-consumer-api-key"], "ck_shared_secret");
+  assert.doesNotMatch(JSON.stringify(config), /ck_user_secret|ck_shared_secret/);
+  clearRemoteMcps(claims.jti);
   assert.equal(config.mcpServers["composio-user"].default_tools_approval_mode, "approve");
 
-  assert.equal(config.mcpServers["composio-agent"].type, "http");
-  assert.equal(config.mcpServers["composio-agent"].headers["x-consumer-api-key"], "ck_shared_secret");
+  assert.equal(shared.args[1], "composio-agent");
   assert.equal(config.mcpServers["composio-agent"].default_tools_approval_mode, "approve");
   // The bare legacy name is gone: nothing may still be reachable as `mcp__composio__*`.
   assert.equal(config.mcpServers.composio, undefined);
@@ -68,9 +77,10 @@ test("Claude MCP config bridges SDK sessions without exposing the organization k
   for (const name of ["composio-user", "composio-agent"]) {
     const server = config.mcpServers[name];
     assert.equal(server.command, process.execPath);
-    assert.match(server.args[0], /composio-sdk-bridge\.js$/);
+    assert.match(server.args[0], /socket-bridge\.js$/);
     assert.match(server.args[1], /^https:\/\/app\.composio\.dev\//);
-    assert.equal(server.env.CHANNELGATE_DIR, process.env.CHANNELGATE_DIR);
+    assert.equal(server.env.CG_MCP_SERVICE, "composio-sdk");
+    assert.equal(server.env.CG_MCP_SOCKET, runtimeSocketFile());
     assert.equal(server.default_tools_approval_mode, "approve");
   }
   assert.doesNotMatch(JSON.stringify(config), /sdk-super-secret|x-api-key/i);
@@ -179,12 +189,12 @@ test("the daemon's own local target (or none) produces the checkout-script confi
   assert.doesNotMatch(none, /cg-mcp-bridge/, "the socket bridge is the image's, never a local child's");
 });
 
-test("SDK-mode Composio rides the same socket bridge in a container, and the plain script when there is no target", async () => {
+test("SDK-mode Composio rides the approval socket bridge on container and host runtimes", async () => {
   const endpoint = { mode: "sdk", url: "https://backend.composio.dev/api/v3/tool_router/session-1/mcp" };
   const host = JSON.parse(await buildMcpConfig({ composioUserEndpoint: endpoint }));
   assert.equal(host.mcpServers["composio-user"].command, process.execPath);
-  assert.match(host.mcpServers["composio-user"].args[0], /composio-sdk-bridge\.js$/);
-  assert.ok(host.mcpServers["composio-user"].env.CHANNELGATE_DIR);
+  assert.match(host.mcpServers["composio-user"].args[0], /socket-bridge\.js$/);
+  assert.equal(host.mcpServers["composio-user"].env.CG_MCP_SOCKET, runtimeSocketFile());
 
   const fake = createFakeRuntime();
   const isolated = JSON.parse(await buildMcpConfig({ composioUserEndpoint: endpoint, target: fake.target() }));
@@ -308,22 +318,24 @@ test("one malformed header drops only that server (announced), never the whole c
   }
 });
 
-test("a host target keeps today's direct http entries, byte for byte, and registers nothing", async () => {
+test("a host target relays Composio for approvals and preserves direct toolbox entries", async () => {
   const { remoteMcpRegistryStats } = await import("../src/mcp/remote-mcp-registry.js");
   const { toolboxUrl } = await import("../src/gateway/mcp-catalog.js");
   const opts = { composioUserToken: "ck_user", toolboxToken: "tb-1", composioToken: "ck_shared", makeToolboxUrl: "https://eu1.make.com/mcp/server/x", makeToolboxKey: "mk" };
   const before = remoteMcpRegistryStats().registrations;
   const host = JSON.parse(await buildMcpConfig(opts));
   const local = JSON.parse(await buildMcpConfig({ ...opts, target: localRuntimeTarget("/work") }));
-  assert.equal(remoteMcpRegistryStats().registrations, before, "a host run never touches the relay registry");
+  assert.equal(remoteMcpRegistryStats().registrations, before + 2, "each host run registers its Composio connections");
   for (const config of [host, local]) {
-    assert.equal(JSON.stringify(config.mcpServers["composio-user"]), JSON.stringify({ type: "http", url: "https://connect.composio.dev/mcp", headers: { "x-consumer-api-key": "ck_user" }, default_tools_approval_mode: "approve" }));
-    assert.equal(JSON.stringify(config.mcpServers["composio-agent"]), JSON.stringify({ type: "http", url: "https://connect.composio.dev/mcp", headers: { "x-consumer-api-key": "ck_shared" }, default_tools_approval_mode: "approve" }));
+    assert.equal(config.mcpServers["composio-user"].env.CG_MCP_SERVICE, "remote-mcp");
+    assert.equal(config.mcpServers["composio-agent"].env.CG_MCP_SERVICE, "remote-mcp");
     assert.equal(JSON.stringify(config.mcpServers["makeitfuture-toolbox"]), JSON.stringify({ type: "http", url: toolboxUrl(), headers: { Authorization: "Bearer tb-1" } }));
     assert.equal(JSON.stringify(config.mcpServers["make-toolbox"]), JSON.stringify({ type: "http", url: "https://eu1.make.com/mcp/server/x", headers: { Authorization: "Bearer mk" } }));
     assert.deepEqual(Object.keys(config.mcpServers), ["gateway", "composio-user", "composio-agent", "makeitfuture-toolbox", "make-toolbox"]);
     const claims = verifyGatewayCapability(config.mcpServers.gateway.env.CG_GATEWAY_CAPABILITY, { secret: process.env.CG_APPROVAL_SECRET }).claims;
-    assert.equal(claims.remoteMcps, undefined, "a host capability carries no relay claim");
+    assert.deepEqual(claims.remoteMcps, ["composio-user", "composio-agent"]);
+    assert.equal(lookupRemoteMcp(claims.jti, "make-toolbox"), null);
+    clearRemoteMcps(claims.jti);
   }
 });
 

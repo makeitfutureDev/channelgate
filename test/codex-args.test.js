@@ -352,30 +352,19 @@ test("Codex runs relay personal and shared Composio MCPs through the daemon outs
   assert.ok(!cleanArgs.some((arg) => arg.startsWith("mcp_servers.composio-agent.")));
 });
 
-// A sudo-host turn keeps today's shape: Codex dials both identities itself over its native
-// streamable-HTTP transport. The old `mcp-remote` stdio bridge cost ~2.4s to answer tools/list and
-// lost the race against a resumed turn's much shorter MCP startup window.
-test("sudo-host Codex dials Composio itself, with the credential from a per-run headers helper", () => {
+test("sudo-host Codex routes Composio through the approval socket without headers helpers", () => {
   const host = hostBackend.prepareTarget({ slug: "sudo", cwd: "/work", workDir: "/work", cleanWorkDir: "", meta: { sudoMode: true }, settings: {} });
-  const userToken = "ck_user_secret";
-  const sharedToken = "ck_shared_secret";
-  const bundle = "/tmp/run/codex-secrets.json";
   const headerHelpers = [];
-  const args = argsFor({ target: host, cwd: "/work", outFile: "/tmp/out.txt", composioUserToken: userToken, composioToken: sharedToken, secretBundlePath: bundle, headerHelpers });
+  const args = argsFor({ target: host, cwd: "/work", composioUserToken: "ck_user_secret", composioToken: "ck_shared_secret", secretBundlePath: "/tmp/run/codex-secrets.json", headerHelpers });
   const joined = args.join("\n");
-  assert.ok(args.includes(`mcp_servers.composio-user.url="https://connect.composio.dev/mcp"`));
-  assert.ok(args.includes(`mcp_servers.composio-agent.url="https://connect.composio.dev/mcp"`));
-  assert.doesNotMatch(joined, /remote-secret-bridge\.js|mcp-remote/, "no stdio bridge stands between Codex and a remote MCP");
-  assert.ok(!args.some((arg) => /^mcp_servers\.composio-(user|agent)\.command=/.test(arg)), "an http server has no command");
-  assert.ok(args.includes(`mcp_servers.composio-user.http_headers_helper=${JSON.stringify(headerHelperPath(bundle, "composio-user"))}`));
-  assert.ok(args.includes(`mcp_servers.composio-agent.http_headers_helper=${JSON.stringify(headerHelperPath(bundle, "composio-agent"))}`));
-  assert.ok(args.includes(`mcp_servers.composio-user.default_tools_approval_mode="approve"`));
-  assert.ok(!args.some((arg) => arg.startsWith("mcp_servers.composio-user.env.CG_MCP_SERVICE=")), "the relay is a container-only path");
-  assert.doesNotMatch(joined, new RegExp(`${userToken}|${sharedToken}`));
-  assert.deepEqual(headerHelpers.map((spec) => [spec.secretName, spec.headerName, spec.prefix]), [
-    ["composioUserToken", "x-consumer-api-key", ""],
-    ["composioToken", "x-consumer-api-key", ""],
-  ]);
+  for (const name of ["composio-user", "composio-agent"]) {
+    assert.ok(args.some((arg) => arg.startsWith(`mcp_servers.${name}.command=`)));
+    assert.ok(args.includes(`mcp_servers.${name}.env.CG_MCP_SERVICE="remote-mcp"`));
+    assert.ok(args.some((arg) => arg.startsWith(`mcp_servers.${name}.env.CG_MCP_SOCKET=`)));
+  }
+  assert.match(joined, /socket-bridge\.js/);
+  assert.doesNotMatch(joined, /ck_user_secret|ck_shared_secret|http_headers_helper|connect\.composio\.dev/);
+  assert.deepEqual(headerHelpers, []);
 });
 
 // WB-10. `codex exec resume` honours `-c mcp_servers.*` exactly like a fresh `exec`, so the two
@@ -468,19 +457,20 @@ test("Codex in a container reaches Composio SDK sessions through the socket's co
   assert.ok(!bare.some((arg) => arg.startsWith("mcp_servers.composio-user.")), "no bundle → no SDK entry");
 });
 
-test("Codex on a sudo host launches the SDK bridge directly with the gateway root", () => {
+test("Codex on a sudo host reaches SDK through the approval socket", () => {
   const host = hostBackend.prepareTarget({ slug: "sudo", cwd: "/work", workDir: "/work", cleanWorkDir: "", meta: { sudoMode: true }, settings: {} });
   const args = argsFor({
     target: host,
     cwd: "/work",
+    secretBundlePath: "/tmp/run/codex-secrets.json",
     composioUserEndpoint: { mode: "sdk", url: "https://app.composio.dev/tool_router/v3/trs_user/mcp" },
   });
   const joined = args.join("\n");
   assert.match(joined, /mcp_servers\.composio-user\.command=/);
-  assert.match(joined, /composio-sdk-bridge\.js/);
+  assert.match(joined, /socket-bridge\.js/);
   assert.match(joined, /trs_user/);
-  assert.ok(args.some((arg) => arg.startsWith("mcp_servers.composio-user.env.CHANNELGATE_DIR=")));
-  assert.ok(!args.some((arg) => arg.startsWith("mcp_servers.composio-user.env.CG_MCP_SERVICE=")));
+  assert.ok(args.some((arg) => arg.startsWith("mcp_servers.composio-user.env.CG_MCP_SOCKET=")));
+  assert.ok(args.includes(`mcp_servers.composio-user.env.CG_MCP_SERVICE="composio-sdk"`));
   assert.doesNotMatch(joined, /sdk-super-secret|x-api-key/i);
 });
 

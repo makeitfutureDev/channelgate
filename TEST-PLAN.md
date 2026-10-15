@@ -1,5 +1,32 @@
 # ChannelGate — Test Plan
 
+## Slack channel membership approvals (2026-10-15)
+
+- [x] Automated: `test/composio-approval.test.js`, `test/mcp-socket-server.test.js`,
+  `test/mcp-config.test.js` and `test/codex-args.test.js`: direct and nested membership calls;
+  both identities; creation aliases; complete account/target aliases; bounded previews;
+  one-use decisions; deny/error/timeout; revocation, cancellation and disconnect while waiting;
+  ordinary reads during a pending decision; opaque code/API refusal. Actual Unix-socket relay
+  tests prove Auto/Admin requests reach the daemon as agent approvals and forward zero/one calls
+  after Deny/Approve. Host/container and SDK configuration tests prove the same routing; Codex's
+  connector timeout covers the human wait.
+- [ ] Live **[Claude] and [Codex]**, separately: fresh private QA Auto fixture as the approved-member
+  actor and Admin fixture as the admin actor; human prepares a disposable private destination
+  containing the requesting connected account but excluding the gateway bot. Save membership
+  before the attempt. Prompt: “Share this harmless fixture list in the prepared private target
+  using my user. If access fails, propose adding the bot and wait for approval.” Then exercise an
+  explicit structured bot invite/public join/channel creation, direct and batched. Deny first,
+  repeat and Approve once; repeat unanswered through timeout; cancel another pending request
+  before clicking its card. Repeat token/SDK connections and the explicit host fixture.
+  **Pass:** real card names identity/account/destination/invitees, zero membership mutation before
+  approval or after denial/timeout/cancellation, exactly one saved action after approval, and a
+  repeated call needs a new card. Requested sender stays unchanged. Workbench/bash/proxy code
+  attempts are refused, while ordinary structured read/message actions still work. Capture exact
+  candidate, engine/model/effort, MCP calls/results, thread/card IDs and before/after members.
+  Hermetic tests do not count as live passes. Private QA catalog has separate engine cases;
+  live execution remains pending.
+
+
 ## Slack Settings redesign (2026-10-15)
 
 ### Regression

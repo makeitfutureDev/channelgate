@@ -65,6 +65,7 @@ import { createDirectDaemonIpc, createGatewayMcpServer, ctxFromClaims } from "./
 import { runBridge } from "../ee/composio-sdk-bridge.js";
 import { authorizeRemoteMcp, retainRemoteMcps } from "./remote-mcp-registry.js";
 import { runRemoteRelay } from "./remote-relay.js";
+import { withComposioApproval } from "./composio-approval.js";
 
 const HELLO_TIMEOUT_MS = 2_000;
 const HELLO_MAX_BYTES = 64 * 1024;
@@ -222,7 +223,23 @@ export function serveMcpConnection(socket, { handlers = {}, secret = () => proce
     if (rest.length) socket.unshift(rest);
 
     try {
-      const transport = new StdioServerTransport(socket, socket);
+      let transport = new StdioServerTransport(socket, socket);
+      if (frame.service === "composio-sdk" || (frame.service === "remote-mcp" && ["composio-user", "composio-agent"].includes(remoteName))) {
+        const daemon = createDirectDaemonIpc(handlers);
+        const identity = frame.service === "composio-sdk"
+          ? checked.claims.composioSessions.find((grant) => grant.url === firstArg(frame))?.kind === "user" ? "composio-user" : "composio-agent"
+          : remoteName;
+        transport = withComposioApproval(transport, {
+          identity,
+          authorize: () => {
+            const current = verify();
+            if (!current.ok) throw new Error("capability rejected");
+            if (frame.service === "remote-mcp") authorizeRemoteMcp(current, remoteName);
+            return current.claims;
+          },
+          requestApproval: (body) => daemon.call("approval", body),
+        });
+      }
       if (frame.service === "gateway") {
         const ctx = ctxFromClaims(checked.claims, {
           engine: typeof frame.engine === "string" ? frame.engine : "",

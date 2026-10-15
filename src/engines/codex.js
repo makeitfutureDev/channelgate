@@ -12,15 +12,16 @@
 //   - MCP injected with `-c mcp_servers.*` overrides — identical on a fresh run and on a resume,
 //     because `exec resume` reads them the same way. Header-bearing remote MCPs (Composio, the
 //     toolboxes): in a CONTAINER they are relayed by the daemon over the control socket (the
-//     `remote-mcp` service), so the container holds no credential at all; on a sudo-host turn they
-//     use Codex's native streamable-HTTP transport with a per-run `http_headers_helper` script
-//     (see addSecretRemote).
+//     `remote-mcp` service), so the container holds no credential at all. Composio also uses
+//     that relay on host turns for mandatory membership approvals; other host remotes use native
+//     HTTP with a per-run `http_headers_helper` (see addSecretRemote).
 //   - JSONL events (`--json`): thread.started carries the session id; the authoritative final
 //     message is read from the `-o` file. Token usage comes from turn.completed; no dollar cost.
 //   - timeoutMs is an inactivity watchdog, not a wall-clock runtime cap: a busy Codex turn may run
 //     as long as it keeps producing JSONL/progress output.
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { randomUUID } from "node:crypto";
 import { composioUrl, toolboxUrl } from "../gateway/mcp-catalog.js";
 import { argvSafePrompt } from "./contract.js";
@@ -41,7 +42,7 @@ import { conciseProcessDiagnostic, midToolKillDetails, embeddedJsonObject, plain
 import { acquireKeyedLock } from "../util/keyed-lock.js";
 import { createCodexUsageReader, subtractCodexTokenUsage } from "./codex-usage.js";
 import { MCP_STARTUP_TIMEOUT_SECONDS } from "./mcp-timeouts.js";
-import { gatewayRoot, runTmpDir } from "../config/paths.js";
+import { gatewayRoot, runTmpDir, runtimeSocketFile } from "../config/paths.js";
 import { readCodexAuthState, describeCodexAuth } from "./codex-auth.js";
 import { channelCodexHome } from "../gateway/channel-codex-auth.js";
 import { remoteMcpServerProblem } from "../mcp/remote-mcp-registry.js";
@@ -64,7 +65,7 @@ const NOTE_INTERVAL_MS = 15_000; // floor between stderr diagnostics shown to th
 // helper THROUGH the secret bridge rather than launching it itself: "gateway-mcp" must be node +
 // a script path the bridge will accept (it validates a .js suffix), not a bare wrapper executable.
 // There is no "mcp-remote" helper any more (retired in container-secrets P4): remote MCPs are
-// relayed by the daemon in a container and dialled by Codex itself on the host (see addSecretRemote).
+// relayed in a container; Composio is also relayed on host turns (see addSecretRemote).
 function helperScriptArgv(helper) {
   return helper.args?.length ? [...helper.args] : [helper.command];
 }
@@ -806,24 +807,18 @@ export function buildCodexArgs({ prompt, sessionId, isNewSession, forkSourceSess
   // carry (a non-https override, a malformed header) is skipped here exactly as mcp.js drops and
   // reports it.
   //
-  // HOST (a sudo-host turn): reached over Codex's OWN streamable-HTTP transport, and the header
-  // value is produced by a per-run helper script (`http_headers_helper`) that reads the 0600 bundle
-  // — so the credential is still absent from Codex's argv and environment. It used to be bridged to
-  // stdio through `mcp-remote` instead,
-  // which cost ~2.4s to answer `tools/list` (two Node bootstraps, mcp-remote's OAuth discovery
-  // round trip, then a duplicated initialize). Codex does not BLOCK a turn on MCP startup — it
-  // takes whichever servers finished by the time it builds the first request, and
-  // `startup_timeout_sec` only caps the handshake, it does not extend that wait. A fresh `exec`
-  // assembles more context first (~2-5s of room); `exec resume` reaches the request in ~2s, so the
-  // bridged servers made the cold window and missed every warm one: the second turn of a Codex
-  // thread saw `gateway` and no `composio-user`/`composio-agent` at all. The native transport
-  // answers in ~1.2s, inside both.
+  // Composio always uses this daemon boundary, including host turns, so tool approval cannot
+  // bypass its mandatory membership card. Other remotes keep native HTTP on host runtimes.
+  const connectorScript = () => isolated ? helperScriptArgv(helper("gateway-mcp"))
+    : [fileURLToPath(new URL("../mcp/socket-bridge.js", import.meta.url))];
   const addRelayedRemote = (name) => {
     const bridge = helper("secret-env-bridge");
     args.push("-c", `mcp_servers.${name}.command=${JSON.stringify(bridge.command)}`);
-    args.push("-c", `mcp_servers.${name}.args=${JSON.stringify([...(bridge.args || []), secretBundlePath, "gatewayCapability", "CG_GATEWAY_CAPABILITY", ...helperScriptArgv(helper("gateway-mcp")), name])}`);
+    args.push("-c", `mcp_servers.${name}.args=${JSON.stringify([...(bridge.args || []), secretBundlePath, "gatewayCapability", "CG_GATEWAY_CAPABILITY", ...connectorScript(), name])}`);
     args.push("-c", `mcp_servers.${name}.env.CG_MCP_SERVICE="remote-mcp"`);
+    if (!isolated) args.push("-c", `mcp_servers.${name}.env.CG_MCP_SOCKET=${tomlString(runtimeSocketFile())}`);
     args.push("-c", `mcp_servers.${name}.env.CG_ENGINE="codex"`);
+    if (["composio-user", "composio-agent"].includes(name)) args.push("-c", `mcp_servers.${name}.tool_timeout_sec=1200`);
     args.push("-c", `mcp_servers.${name}.default_tools_approval_mode="approve"`);
     args.push("-c", `mcp_servers.${name}.startup_timeout_sec=${MCP_STARTUP_TIMEOUT_SECONDS}`);
   };
@@ -832,7 +827,7 @@ export function buildCodexArgs({ prompt, sessionId, isNewSession, forkSourceSess
   // skipped here too, instead of starting as an entry the socket will refuse.
   const addSecretRemote = (name, url, secretName, headerName, prefix = "", relayHeaders = {}) => {
     if (clean || !secretBundlePath || !secretName || !url) return;
-    if (isolated) {
+    if (isolated || ["composio-user", "composio-agent"].includes(name)) {
       if (!remoteMcpServerProblem({ url, headers: relayHeaders })) addRelayedRemote(name);
       return;
     }
@@ -848,8 +843,8 @@ export function buildCodexArgs({ prompt, sessionId, isNewSession, forkSourceSess
 
   const addComposio = (name, endpoint, legacyToken, secretName) => {
     if (clean) return;
-    if (endpoint?.mode === "sdk" && endpoint.url && isolated) {
-      // Composio SDK mode (Enterprise) in a container is the daemon socket's `composio-sdk`
+    if (endpoint?.mode === "sdk" && endpoint.url) {
+      // Composio SDK mode (Enterprise) uses the daemon socket's `composio-sdk`
       // service: the same secret-env-bridge → socket-bridge chain the relayed remotes use, so the
       // signed capability (whose `composioSessions` claim grants this session URL) comes out of
       // the 0600 bundle, CG_MCP_SERVICE selects the service, and the session URL is the bridge's
@@ -858,18 +853,11 @@ export function buildCodexArgs({ prompt, sessionId, isNewSession, forkSourceSess
       if (!secretBundlePath) return;
       const bridge = helper("secret-env-bridge");
       args.push("-c", `mcp_servers.${name}.command=${JSON.stringify(bridge.command)}`);
-      args.push("-c", `mcp_servers.${name}.args=${JSON.stringify([...(bridge.args || []), secretBundlePath, "gatewayCapability", "CG_GATEWAY_CAPABILITY", ...helperScriptArgv(helper("gateway-mcp")), endpoint.url])}`);
+      args.push("-c", `mcp_servers.${name}.args=${JSON.stringify([...(bridge.args || []), secretBundlePath, "gatewayCapability", "CG_GATEWAY_CAPABILITY", ...connectorScript(), endpoint.url])}`);
       args.push("-c", `mcp_servers.${name}.env.CG_MCP_SERVICE="composio-sdk"`);
+      args.push("-c", `mcp_servers.${name}.tool_timeout_sec=1200`);
+      if (!isolated) args.push("-c", `mcp_servers.${name}.env.CG_MCP_SOCKET=${tomlString(runtimeSocketFile())}`);
       args.push("-c", `mcp_servers.${name}.env.CG_ENGINE="codex"`);
-      args.push("-c", `mcp_servers.${name}.default_tools_approval_mode="approve"`);
-      args.push("-c", `mcp_servers.${name}.startup_timeout_sec=${MCP_STARTUP_TIMEOUT_SECONDS}`);
-      return;
-    }
-    if (endpoint?.mode === "sdk" && endpoint.url) {
-      const sdk = helper("composio-sdk-bridge");
-      args.push("-c", `mcp_servers.${name}.command=${JSON.stringify(sdk.command)}`);
-      args.push("-c", `mcp_servers.${name}.args=${JSON.stringify([...(sdk.args || []), endpoint.url])}`);
-      if (!isolated) args.push("-c", `mcp_servers.${name}.env.CHANNELGATE_DIR=${tomlString(gatewayRoot())}`);
       args.push("-c", `mcp_servers.${name}.default_tools_approval_mode="approve"`);
       args.push("-c", `mcp_servers.${name}.startup_timeout_sec=${MCP_STARTUP_TIMEOUT_SECONDS}`);
       return;

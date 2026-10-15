@@ -563,3 +563,32 @@ test("clear_my_composio_token / clear_my_toolbox_token drop every relay grant mi
     clearRemoteMcps(`theirs-${tool}`);
   }
 });
+
+test("Composio membership calls on the real socket require an exact agent approval even in Auto/Admin", async (t) => {
+  const remote = fakeRemote();
+  const cards = [];
+  let allow = false;
+  const socketPath = await serverOn(t, { approval: async (body) => { cards.push(body); return { allow }; } }, { connectRemote: remote.connectRemote });
+  const jti = "relay-jti-membership-gate";
+  const cap = capability({ remoteMcps: ["composio-user"], jti });
+  registerRemoteMcps({ jti, exp: Date.now() + 60_000, servers: { "composio-user": RELAYED["composio-user"] } });
+  t.after(() => clearRemoteMcps(jti));
+  await saveChannelMeta(SLUG, { channelId: CHANNEL, platform: "slack", autoMode: true, adminMode: true });
+  t.after(() => saveChannelMeta(SLUG, { channelId: CHANNEL, platform: "slack", allowBash: false, adminMode: false }));
+  await withBridgeClient(socketPath, { CG_GATEWAY_CAPABILITY: cap, CG_MCP_SERVICE: "remote-mcp" }, async (client) => {
+    const action = { name: "COMPOSIO_MULTI_EXECUTE_TOOL", arguments: { tools: [{ tool_slug: "SLACK_INVITE_USERS_TO_A_SLACK_CHANNEL", account: "requester", arguments: { channel: "C_DESTINATION", users: "U_BOT" } }] } };
+    assert.equal((await client.callTool(action)).isError, true);
+    assert.equal(remote.calls.length, 0, "denial never reaches Slack");
+    allow = true;
+    assert.equal((await client.callTool(action)).isError, undefined);
+    assert.deepEqual(remote.calls, [action], "approved exact call forwards once");
+    assert.equal(cards.length, 2, "no remembered grant from a previous request");
+    for (const card of cards) {
+      assert.equal(card.approvalType, "agent");
+      assert.equal(card.authorId, AUTHOR);
+      assert.equal(card.channelId, CHANNEL);
+      assert.match(card.toolInput.details, /C_DESTINATION/);
+      assert.match(card.toolInput.details, /U_BOT/);
+    }
+  }, ["composio-user"]);
+});

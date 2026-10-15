@@ -18,6 +18,11 @@ product overview.
 
 ## Unreleased
 
+- Require a human approval card before managed Composio joins, invites or creates Slack channels,
+  including in Auto/Admin mode and through batched actions, both identities and host runtimes.
+  Refuse opaque connector code/API executors that could bypass membership approval; use
+  structured actions instead. A request to share or post does not authorize adding the bot.
+
 - **Slack Settings redesign.** ⚙️ Settings now has seven pages behind one dropdown: Agent,
   Access, MCP, Variables, Skills, Schedules and You.
   - **Edit in place:** engine/model/effort and the mode are one row of dropdowns. Tokens, URLs and

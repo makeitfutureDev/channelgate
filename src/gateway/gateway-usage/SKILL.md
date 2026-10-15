@@ -85,6 +85,16 @@ and report where the change was saved or is pending. Do not default to channel i
 
 ## The eight rules that apply to EVERY turn
 
+**Joining another channel always needs a human approval card.** Never invite the gateway bot,
+join as a connected agent account, or create a channel as a workaround for missing access until
+the structured membership tool receives a human click on its gateway approval card, or
+`request_approval` returns explicit approval for a route without that automatic card. Show the
+channel, who will join, the connected account used, and why. A request to post/share/read elsewhere
+does not authorize joining, even in Auto/Admin mode. Never use another person's Slack connection,
+workbench, shell, browser or direct API to bypass this requirement. A refusal such as
+`channel_not_found` or `not_in_channel` is an access boundary: request approval or ask a human to
+invite the bot. See `references/messages.md`.
+
 1. **Keep it short and write standard Markdown.** Lead with the outcome in a few lines. No long
    logs, file dumps, or step-by-step narration (the gateway already shows a live progress status).
    Standard Markdown bold, links, lists and code render on every surface; HTML never does, and

@@ -19,8 +19,9 @@
 // CHANNELGATE_DIR / CG_FS_ROOT / CG_WORKSPACE_DIR / PATH (host paths that do not exist inside it).
 // The local runtime (daemon-internal turns) or no target at all produces the plain stdio form.
 //
-// RELAYED REMOTES (container-secrets P1): the four header-bearing remote servers — composio-user
-// and composio-agent in token/endpoint mode, makeitfuture-toolbox, make-toolbox — are plain
+// RELAYED REMOTES: composio-user
+// and composio-agent in token/endpoint mode always use the daemon socket so membership changes
+// cannot skip human approval. Other header-bearing remotes (the toolboxes) are plain
 // `{type:"http", url, headers}` entries on a host target (the engine dials them itself, credential
 // in the file). On an ISOLATED target that file lives in the artifact dir every process in the
 // container can read, so there they become the SAME socket-bridge entry the SDK mode uses, with
@@ -33,7 +34,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import { composioUrl, toolboxUrl } from "./mcp-catalog.js";
-import { gatewayRoot } from "../config/paths.js";
+import { gatewayRoot, runtimeSocketFile } from "../config/paths.js";
 import { requireAdapter } from "../engines/registry.js";
 import { runtimeSupports } from "../runtimes/contract.js";
 import { requireComposioSdkEntitlement } from "../ee/composio-entitlement.js";
@@ -42,44 +43,21 @@ import { registerRemoteMcps, remoteMcpServerProblem } from "../mcp/remote-mcp-re
 import { customMcpRemotes } from "./custom-mcps.js";
 
 const GATEWAY_PATH = fileURLToPath(new URL("../mcp/gateway-server.js", import.meta.url));
-const COMPOSIO_SDK_BRIDGE_PATH = fileURLToPath(new URL("../ee/composio-sdk-bridge.js", import.meta.url));
+const SOCKET_BRIDGE_PATH = fileURLToPath(new URL("../mcp/socket-bridge.js", import.meta.url));
 
-function composioServer(endpoint, legacyToken, { socketBridge = null, gatewayCapability = "" } = {}) {
-  if (endpoint?.mode === "sdk" && endpoint.url) {
-    requireComposioSdkEntitlement();
-    // SDK mode reads the ORGANIZATION Composio key from gateway settings — a settings file and a
-    // database a container deliberately cannot see. So inside a container it rides the daemon
-    // socket as well, selected by CG_MCP_SERVICE, and the command is the SAME stdio↔socket bridge
-    // the gateway entry uses (the "gateway-mcp" helper), not the image's copy of
-    // composio-sdk-bridge.js — that script would come up keyless and fail on the container side.
-    if (socketBridge) {
-      return {
-        command: socketBridge.command,
-        args: [...(socketBridge.args || []), endpoint.url],
-        env: { CG_MCP_SERVICE: "composio-sdk", CG_GATEWAY_CAPABILITY: gatewayCapability },
-        default_tools_approval_mode: "approve",
-      };
-    }
-    return {
-      command: process.execPath,
-      args: [COMPOSIO_SDK_BRIDGE_PATH, endpoint.url],
-      env: { CHANNELGATE_DIR: gatewayRoot(), CG_GATEWAY_CAPABILITY: gatewayCapability },
-      default_tools_approval_mode: "approve",
-    };
-  }
-  const remote = composioHttpTarget(endpoint, legacyToken);
-  if (!remote) return null;
+function composioServer(endpoint, { socketBridge, gatewayCapability, socketEnv }) {
+  if (endpoint?.mode !== "sdk" || !endpoint.url) return null;
+  requireComposioSdkEntitlement();
   return {
-    type: "http",
-    url: remote.url,
-    headers: remote.headers,
+    command: socketBridge.command,
+    args: [...(socketBridge.args || []), endpoint.url],
+    env: { ...socketEnv, CG_MCP_SERVICE: "composio-sdk", CG_GATEWAY_CAPABILITY: gatewayCapability },
     default_tools_approval_mode: "approve",
   };
 }
 
 // The header-bearing form of a Composio identity (an explicit endpoint, or the legacy token against
-// the hosted URL), or null for SDK mode / no credential. One answer for both the host http entry
-// above and the relay registration an isolated target gets instead.
+// the hosted URL), or null for SDK mode / no credential. Composio is relayed on every runtime.
 function composioHttpTarget(endpoint, legacyToken) {
   if (endpoint?.mode === "sdk" && endpoint.url) return null;
   if (endpoint?.url) return { url: endpoint.url, headers: endpoint.headers || {} };
@@ -157,12 +135,14 @@ export async function buildMcpRuntimePayload({ composioUserEndpoint = null, comp
   // Fail closed on an unknown capability key; a target that is absent or host-backed is today's path.
   const isolated = target && runtimeSupports(target, "isolated") ? target : null;
   const gatewayHelper = isolated ? isolated.runtime.helperCommand(isolated, "gateway-mcp") : null;
+  // Managed Composio always traverses the daemon's membership-approval boundary, including /sudo.
+  const connectorHelper = gatewayHelper || { command: process.execPath, args: [SOCKET_BRIDGE_PATH] };
+  const connectorSocketEnv = isolated ? {} : { CG_MCP_SOCKET: runtimeSocketFile() };
   // Same predicate the prompt's identity line is built from — one answer to "which identities does
   // this run have?", never two that can drift apart.
   const identities = composioIdentitiesForRun({ principalTrusted, composioUserEndpoint, composioUserToken, composioEndpoint, composioToken });
-  // The header-bearing remotes this run gets, in the order their entries appear below. Host: plain
-  // http entries. Isolated: relayed through the daemon, so their names go into the signed claim and
-  // their URL + headers into the daemon's registry — never into the JSON.
+  // Composio is always relayed. Other remotes are relayed on isolated targets only. Relayed
+  // names go into the signed claim and their URL + headers into the daemon registry.
   const httpRemotes = {};
   const userRemote = identities.user ? composioHttpTarget(composioUserEndpoint, composioUserToken) : null;
   if (userRemote) httpRemotes["composio-user"] = userRemote;
@@ -180,18 +160,17 @@ export async function buildMcpRuntimePayload({ composioUserEndpoint = null, comp
   // and carries bounded, single-line text headers; a remote that fails that (a plain-http
   // COMPOSIO_MCP_URL / TOOLBOX_MCP_URL override, a malformed endpoint header) cannot be relayed,
   // and handing its credential to the container instead is exactly what this path exists to stop.
-  // So THAT server alone is dropped from the isolated run and REPORTED through the same
+  // So THAT server alone is dropped from the relayed run and REPORTED through the same
   // rejected-MCP note an unadmittable catalog selection gets; the rest of the turn is unaffected.
   const rejectedRemotes = [];
-  if (isolated) {
-    for (const name of Object.keys(httpRemotes)) {
-      const problem = remoteMcpServerProblem(httpRemotes[name]);
-      if (!problem) continue;
-      delete httpRemotes[name];
-      rejectedRemotes.push({ name, reason: problem });
-    }
+  for (const name of Object.keys(httpRemotes)) {
+    if (!isolated && !["composio-user", "composio-agent"].includes(name)) continue;
+    const problem = remoteMcpServerProblem(httpRemotes[name]);
+    if (!problem) continue;
+    delete httpRemotes[name];
+    rejectedRemotes.push({ name, reason: problem });
   }
-  const relayedMcps = isolated ? Object.keys(httpRemotes) : [];
+  const relayedMcps = Object.keys(httpRemotes).filter((name) => isolated || ["composio-user", "composio-agent"].includes(name));
   const jti = randomUUID();
   const gatewayCapability = mintGatewayCapability({
     secret: process.env.CG_APPROVAL_SECRET || "",
@@ -224,17 +203,17 @@ export async function buildMcpRuntimePayload({ composioUserEndpoint = null, comp
     registerRemoteMcps({
       jti,
       exp: mintedCapabilityClaims(gatewayCapability).exp,
-      servers: httpRemotes,
+      servers: Object.fromEntries(relayedMcps.map((name) => [name, httpRemotes[name]])),
       meta: { channelId, slug, authorId, origin },
     });
     for (const name of relayedMcps) relayDigest[name] = relayDigestOf(httpRemotes[name]);
   }
-  // An isolated run's entry for a relayed remote: the gateway's own socket bridge, selecting the
+  // A relayed remote's entry: the gateway's own socket bridge, selecting the
   // remote-mcp service and naming the server. The capability is the only authority it carries.
   const relayServer = (name) => ({
-    command: gatewayHelper.command,
-    args: [...(gatewayHelper.args || []), name],
-    env: { CG_MCP_SERVICE: "remote-mcp", CG_GATEWAY_CAPABILITY: gatewayCapability },
+    command: connectorHelper.command,
+    args: [...(connectorHelper.args || []), name],
+    env: { ...connectorSocketEnv, CG_MCP_SERVICE: "remote-mcp", CG_GATEWAY_CAPABILITY: gatewayCapability },
     default_tools_approval_mode: "approve",
   });
   const servers = {
@@ -275,14 +254,14 @@ export async function buildMcpRuntimePayload({ composioUserEndpoint = null, comp
       },
     },
   };
-  const composioOpts = { socketBridge: gatewayHelper, gatewayCapability };
-  for (const [name, endpoint, legacyToken, present] of [
-    ["composio-user", composioUserEndpoint, composioUserToken, identities.user],
-    ["composio-agent", composioEndpoint, composioToken, identities.agent],
+  const composioOpts = { socketBridge: connectorHelper, gatewayCapability, socketEnv: connectorSocketEnv };
+  for (const [name, endpoint, present] of [
+    ["composio-user", composioUserEndpoint, identities.user],
+    ["composio-agent", composioEndpoint, identities.agent],
   ]) {
     if (!present) continue;
     if (rejectedRemotes.some((rejected) => rejected.name === name)) continue;
-    const entry = isolated && httpRemotes[name] ? relayServer(name) : composioServer(endpoint, legacyToken, composioOpts);
+    const entry = httpRemotes[name] ? relayServer(name) : composioServer(endpoint, composioOpts);
     if (entry) servers[name] = entry;
   }
   for (const name of ["makeitfuture-toolbox", "make-toolbox", ...Object.keys(customMcpRemotes(customMcps))]) {

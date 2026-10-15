@@ -1,5 +1,20 @@
 # ChannelGate — Features
 
+## Slack channel membership approvals
+
+- Managed Composio Slack join, invitation and channel-creation actions require a one-use human
+  approval card, including direct actions and nested execution batches through either identity.
+  Auto/Admin mode and remembered tool permissions cannot supply this decision. The card names the
+  connection, account selectors, destinations and invitees; oversized previews fail closed.
+- Container and host runtime connections, including SDK sessions, traverse the same daemon check.
+  Denial, timeout, unavailable approval, cancellation, disconnect or expired/revoked authority
+  prevents forwarding. Ordinary structured reads and writes continue.
+- Opaque Composio workbench/bash/proxy/API executors are refused because arbitrary persistent
+  code can hide a membership change. Use structured connector actions instead. This enforcement
+  covers managed Composio; independently supplied credentials, custom MCPs and browser sessions
+  remain outside that boundary. The always-loaded guide forbids bypass through any route and
+  treats sharing/posting requests as separate from permission to join or change the sender.
+
 ## Google Chat native conversation controls
 
 - Google Chat `/help` now opens a compact Cards v2 guide with expandable topics, matching the
