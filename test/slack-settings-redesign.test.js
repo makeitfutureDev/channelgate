@@ -262,6 +262,10 @@ function blockKitProblems(view) {
     if (block.type === "context" && block.elements.length > 10) problems.push(`${where} more than 10 context elements`);
     const elements = [...(block.accessory ? [block.accessory] : []), ...(block.type === "actions" ? block.elements : []), ...(block.type === "input" ? [block.element] : [])];
     if (block.type === "actions" && block.elements.length > 25) problems.push(`${where} more than 25 elements`);
+    // The deployed Slack modal rejected this placement with `unsupported element: multiselect`,
+    // despite current docs also listing actions blocks. Guard that observed compatibility case;
+    // section accessories support the same immediate block_actions callbacks.
+    if (block.type === "actions" && block.elements.some((element) => element.type.startsWith("multi_"))) problems.push(`${where} unsupported multiselect placement`);
     const actionIds = new Set();
     for (const element of elements) {
       if (element.action_id) {
@@ -276,7 +280,7 @@ function blockKitProblems(view) {
   return problems;
 }
 
-test("every page, in every role and with every inline form open, is valid Block Kit", () => {
+test("every page, in every role and with every inline form open, passes Block Kit and deployed modal compatibility checks", () => {
   const masked = (last4) => ({ configured: true, last4 });
   const long = "X".repeat(64);
   const snapshot = {

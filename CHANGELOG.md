@@ -18,6 +18,9 @@ product overview.
 
 ## Unreleased
 
+- Fix Slack Settings rejecting the MCP, Skills and You pages with `invalid_arguments` when
+  their multi-select pickers contain options.
+
 - Require a human approval card before managed Composio joins, invites or creates Slack channels,
   including in Auto/Admin mode and through batched actions, both identities and host runtimes.
   Refuse opaque connector code/API executors that could bypass membership approval; use

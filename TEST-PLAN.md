@@ -1,5 +1,16 @@
 # ChannelGate — Test Plan
 
+## Slack Settings picker rendering (2026-10-15)
+
+- [x] Regression: the existing all-page/all-role/inline-form Block Kit validation includes a
+  compatibility guard for the deployed modal's live `unsupported element: multiselect`
+  rejection of actions-block placement (current Slack docs also list actions as supported).
+  Cloud MCP, channel skills and personal skills
+  use section accessories, retaining action IDs, block IDs, options and initial selections.
+- [ ] Native retest on the deployed fix: open MCP, Skills and You with populated catalogs;
+  verify each page renders, selection saves and the same modal repaints. Resume the existing
+  Settings navigation/template live cases. Automated rendering checks alone do not close them.
+
 ## Slack channel membership approvals (2026-10-15)
 
 - [x] Automated: `test/composio-approval.test.js`, `test/mcp-socket-server.test.js`,

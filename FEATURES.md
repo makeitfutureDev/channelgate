@@ -1,5 +1,8 @@
 # ChannelGate — Features
 
+- Slack Settings renders populated Cloud MCP and skill pickers on the MCP, Skills and You pages
+  without a native Slack `invalid_arguments` error; selection still saves immediately.
+
 ## Slack channel membership approvals
 
 - Managed Composio Slack join, invitation and channel-creation actions require a one-use human

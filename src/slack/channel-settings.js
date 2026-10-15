@@ -818,10 +818,10 @@ function cloudRows(snapshot) {
       continue;
     }
     const initial = options.filter((entry) => (data.selected || []).includes(entry.value));
-    blocks.push({ type: "actions", block_id: `cg_cloud_${engine}`, elements: [{
+    blocks.push({ type: "section", block_id: `cg_cloud_${engine}`, text: mrkdwn("Select servers"), accessory: {
       type: "multi_static_select", action_id: `${CHANNEL_SETTINGS_CLOUD_SELECT_PREFIX}${engine}`, placeholder: plain("Add a server…"), options,
       ...(initial.length ? { initial_options: initial } : {}),
-    }] });
+    } });
     if (data.inherited?.length) blocks.push(context(`Always on from the organization: ${data.inherited.map(inlineCode).join(" ")}`));
   }
   return blocks;
@@ -902,10 +902,10 @@ function skillPicker(actionId, data = {}, placeholder) {
   const options = (data.options || []).slice(0, 100).map((entry) => option(entry.label || entry.key, entry.key, entry.description || ""));
   const initial = options.filter((entry) => (data.selected || []).includes(entry.value));
   if (!options.length) return [context("_No skills available in the catalog._")];
-  return [{ type: "actions", block_id: `${actionId}_row`, elements: [{
+  return [{ type: "section", block_id: `${actionId}_row`, text: mrkdwn("Select skills"), accessory: {
     type: "multi_static_select", action_id: actionId, placeholder: plain(placeholder), options,
     ...(initial.length ? { initial_options: initial } : {}),
-  }] }, ...((data.options || []).length > 100 ? [context(`Showing 100 of ${data.options.length} skills; the admin UI lists them all.`)] : [])];
+  } }, ...((data.options || []).length > 100 ? [context(`Showing 100 of ${data.options.length} skills; the admin UI lists them all.`)] : [])];
 }
 
 function skillsPage(snapshot, state) {
