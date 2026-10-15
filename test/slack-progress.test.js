@@ -15,7 +15,7 @@ test("local transcription can use Slack's native compact and prominent status fi
   // The native session lifecycle is asserted first (that is what shows Slack's Stop button), then
   // the phrase rides the legacy surface, which is the only one that accepts it.
   assert.deepEqual(calls, [
-    ["agents.sessions.setStatus", { channel_id: "C1", thread_ts: "111.222", status: "processing" }],
+    ["agents.sessions.setStatus", { channel_id: "C1", thread_ts: "111.222", status: "processing", username: "AI agent" }],
     ["assistant.threads.setStatus", {
       channel_id: "C1",
       thread_ts: "111.222",
@@ -590,11 +590,11 @@ test("assistant status writes are serialized so the terminal clear is last", asy
   let inFlight = 0;
   let maxInFlight = 0;
   const client = {
-    apiCall: (_method, payload) => new Promise((resolve) => {
+    apiCall: (method, payload) => new Promise((resolve) => {
       inFlight += 1;
       maxInFlight = Math.max(maxInFlight, inFlight);
       pending.push(() => {
-        applied.push(payload.status);
+        applied.push({ method, ...payload });
         inFlight -= 1;
         resolve();
       });
@@ -609,6 +609,7 @@ test("assistant status writes are serialized so the terminal clear is last", asy
   });
   progress.onRuntimeResolved({ engine: "claude", model: "claude-opus-4-8" });
   progress.onEvent({ kind: "tool_use", name: "Read", target: "progress.js" });
+  progress.onRuntimeResolved({ engine: "codex", model: "gpt-6.1-sol" });
   let stopped = false;
   const stopPromise = progress.stop().then(() => { stopped = true; });
 
@@ -621,7 +622,11 @@ test("assistant status writes are serialized so the terminal clear is last", asy
   await stopPromise;
 
   assert.equal(maxInFlight, 1, "status requests must not race or apply out of order");
-  assert.equal(applied.at(-1), "", "no stale activity update may land after the terminal clear");
+  assert.equal(applied.at(-1).status, "", "no stale activity update may land after the terminal clear");
+  const native = applied.filter((p) => p.method === "agents.sessions.setStatus");
+  assert.deepEqual(native.map((p) => [p.status, p.username]), [
+    ["processing", "AI agent"], ["active", "GPT-6.1 Sol"],
+  ], "a coalesced terminal clear carries the latest model and cannot be followed by stale processing");
 });
 
 test("an assistant-thread status line carries thinking summaries and the loading line mirrors the activity", async () => {
@@ -729,6 +734,33 @@ test("stream progress updates its model label when the runtime falls back to Cod
   assert.ok(statuses.includes("is gathering information… · gpt-5.4"));
   assert.ok(loadingMessages.includes("Sonnet 4.6 · Gathering information…"));
   assert.ok(loadingMessages.includes("gpt-5.4 · Gathering information…"));
+  const native = calls.filter(([method]) => method === "agents.sessions.setStatus").map(([, payload]) => payload);
+  assert.ok(native.some((p) => p.status === "processing" && p.username === "Sonnet 4.6"));
+  assert.ok(native.some((p) => p.status === "processing" && p.username === "GPT-5.4"));
+  assert.equal(native.at(-1).status, "active");
+  assert.equal(native.at(-1).username, "GPT-5.4");
+});
+
+test("a reused session starts with an honest generic name, then an engine default if no model is reported", async () => {
+  const calls = [];
+  const client = {
+    apiCall: async (method, payload) => calls.push([method, payload]),
+    chatStream: () => ({ append: async () => {}, stop: async () => {} }),
+    chat: { postMessage: async () => {} },
+  };
+  const options = { authorId: "U1", teamId: "T1" };
+  const first = startProgress("stream", client, "C_REUSE_NAME", "1", options);
+  first.onRuntimeResolved({ engine: "claude", model: "opus[1m]" });
+  await cardReady();
+  await first.stop();
+  const second = startProgress("stream", client, "C_REUSE_NAME", "1", options);
+  await cardReady();
+  second.onRuntimeResolved({ engine: "codex" });
+  await cardReady();
+  await second.stop();
+  const names = calls.filter(([method]) => method === "agents.sessions.setStatus").map(([, p]) => [p.status, p.username]);
+  assert.deepEqual(names, [["processing", "AI agent"], ["processing", "Opus 1M"], ["active", "Opus 1M"],
+    ["processing", "AI agent"], ["processing", "Codex CLI default"], ["active", "Codex CLI default"]]);
 });
 
 test("completed-run footer carries the fixed labelled menu: Files, Variables, Settings", async () => {

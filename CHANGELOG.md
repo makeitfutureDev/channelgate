@@ -18,6 +18,10 @@ product overview.
 
 ## Unreleased
 
+- Show the active model in Slack's native Stop control using a per-session display name.
+  Existing apps need `chat:write.customize` and reinstallation; missing customization permission
+  preserves the native Stop button with its usual name.
+
 - Fix Slack Settings rejecting the MCP, Skills and You pages with `invalid_arguments` when
   their multi-select pickers contain options.
 

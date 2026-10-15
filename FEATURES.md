@@ -1607,8 +1607,15 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
   (`agents.sessions.setStatus`: `processing` while a turn works, `active` when it ends — asserted
   once per transition and re-asserted every five minutes so a long turn never hits Slack's
   one-hour `processing` expiry) and then writes the activity phrase through the legacy
-  `assistant.threads.setStatus` bridge, which is the only surface that accepts a phrase. The app
-  manifest subscribes to `agent_session_stopped` (and `agent_session_title_changed`), which is what
+  `assistant.threads.setStatus` bridge, which is the only surface that accepts a phrase. The
+  session's display name follows the resolved model, so Slack's control reads **Stop Opus 1M**
+  or **Stop GPT-6.1 Sol** instead of the app name. Runtime changes update it immediately;
+  separate threads retain separate names. Before resolution it says **AI agent**, or the engine's
+  **CLI default** when no model is reported. This uses the per-session `username` override and
+  requires `chat:write.customize` (add the scope and reinstall existing apps). A rejected override
+  retries the same native lifecycle without customization, preserving Stop; a missing scope is
+  retried after one minute without requiring a daemon restart. The global bot name is unchanged.
+  The app manifest subscribes to `agent_session_stopped` (and `agent_session_title_changed`), which is what
   makes Slack render its native **Stop** button on the thread while the session is `processing`,
   in DMs and in channel threads alike. Pressing it stops exactly that thread through the same
   `stopRunsInChannel` path and authorization gate as a `stop` message or 🛑 reaction (redelivered
