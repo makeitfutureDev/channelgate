@@ -30,9 +30,14 @@ product overview.
     for the channel and on **You** for yourself.
   - **Skills and Cloud MCP** are one picker each.
   - The long explainers are gone.
-- **Custom MCP servers from Slack.** ⚙️ Settings → MCPs now lists the conversation's custom MCP
-  servers and your own, and lets you add, update or remove them in place. A conversation's servers
-  are editable by its managers and admins; your own are yours to manage. Tokens stay write-only.
+- Clarify Composio file-staging identity arguments in every engine's per-run instructions:
+  use `"user"` for `composio-user` and `"agent"` for `composio-agent`.
+- Update the pinned Claude Code and Codex CLIs to 2.1.300 and 0.162.1.
+- Update the gateway dependencies to Composio SDK 0.22.0, Express 5.3.0 and Acorn 8.19.0.
+  Download filenames retain their names and required escaping; Express now omits optional quotes
+  around simple attachment filenames. Regression checks cover the installed SDK's session
+  creation/resume contract and public downloads with spaces, quotes and Unicode names.
+
 - Google Chat card buttons now work: a Chat app connected through a Pub/Sub topic never receives
   button clicks (Google delivers them only to an HTTP endpoint connection), so Files / Variables /
   Settings and every other card button failed with "unable to process your request". ChannelGate
@@ -136,6 +141,11 @@ product overview.
   static IPv4) and four recommended EU hosts with estimated monthly prices — Hetzner CCX23 (≈ €25),
   netcup VPS 2000 G12 (≈ €16), RoLeaf in Romania (≈ €32) and Google Cloud `n4-standard-4` (≈ €139).
 
+- **Custom MCP servers from Slack.** ⚙️ Settings → MCPs now lists the conversation's custom MCP
+  servers and your own, and lets you add, update or remove them in place. A conversation's servers
+  are editable by its managers and admins; your own are yours to manage. Tokens stay write-only.
+  Repeated edits reuse the Settings window; slow address/access checks acknowledge promptly,
+  time out safely and recheck current authority before saving.
 - Teams channel and group-chat answers now end with a native mention of the requester, matching
   Slack. Long answers tag them on the final chunk before the statistics footer; DMs skip the tag.
 

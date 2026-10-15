@@ -63,7 +63,9 @@ test("every identity variant routes a file handoff through the gateway's staging
   // through the Composio workbench. The rule has to ride the per-run line every engine reads.
   for (const ids of [{ user: true, agent: true }, { user: true }, { agent: true }]) {
     const line = composioIdentityPreamble(ids);
-    assert.match(line, /`gateway` → `stage_file_for_composio` with `identity` set to the identity that will run that tool/);
+    assert.match(line, /`gateway` → `stage_file_for_composio` with `identity: "user"` for tools run through `composio-user`/);
+    assert.match(line, /`identity: "agent"` for `composio-agent`; these are the only accepted identity values/);
+    assert.doesNotMatch(line, /identity: "composio-(?:user|agent)"/);
     assert.match(line, /only ingests by URL takes a `create_public_file_link` upload link instead/);
     assert.match(line, /Never push a file's bytes as base64 or chunks through the workbench or another Composio tool to get around staging/);
     assert.equal(line.trim().split("\n").length, 1, "still one line");

@@ -77,7 +77,7 @@ import {
   CHANNEL_SETTINGS_CLOUD_ENGINE_PREFIX, CHANNEL_SETTINGS_CLOUD_MANAGE_ACTION_ID,
   CHANNEL_SETTINGS_CUSTOM_MCP_ADD_ACTION_ID, CHANNEL_SETTINGS_CUSTOM_MCP_REMOVE_ACTION_ID, CHANNEL_SETTINGS_CUSTOM_MCP_CALLBACK_ID,
   CUSTOM_MCP_NAME_BLOCK_ID, CUSTOM_MCP_URL_BLOCK_ID, CUSTOM_MCP_TOKEN_BLOCK_ID,
-  buildCustomMcpEditorView, readCustomMcpForm, customMcpScope,
+  buildCustomMcpEditorView, buildCustomMcpStatusView, readCustomMcpForm, customMcpScope,
   CHANNEL_SETTINGS_ROOT_CALLBACK_ID, CHANNEL_SETTINGS_FORM_OPEN_ACTION_ID, CHANNEL_SETTINGS_FORM_CANCEL_ACTION_ID,
   CHANNEL_SETTINGS_FORM_REMOVE_ACTION_ID, CHANNEL_SETTINGS_VAR_MENU_ACTION_ID, CHANNEL_SETTINGS_SCHEDULE_MENU_ACTION_ID,
   CHANNEL_SETTINGS_CONFIRM_ACTION_ID, CHANNEL_SETTINGS_CONFIRM_CANCEL_ACTION_ID, CHANNEL_SETTINGS_MEMBER_ACTION_ID,
@@ -95,7 +95,7 @@ import {
   CONNECTION_COMPOSIO_BLOCK_ID, CONNECTION_MAKE_KEY_BLOCK_ID, CONNECTION_MAKE_URL_BLOCK_ID,
   CONNECTION_TOOLBOX_BLOCK_ID, TEMPLATE_BLOCK_ID,
 } from "./channel-settings.js";
-import { listCustomMcps } from "../gateway/custom-mcps.js";
+import { listCustomMcps, normalizeCustomMcpName, normalizeCustomMcpToken, normalizeCustomMcpUrl, patchCustomMcps } from "../gateway/custom-mcps.js";
 import { listUserCustomMcps, removeChannelCustomMcp, removeUserCustomMcp, saveChannelCustomMcp, saveUserCustomMcp } from "../gateway/custom-mcp-store.js";
 import { ACCESS_EDIT_ACTION_ID, ACCESS_CALLBACK_ID, accessFieldTarget, accessSettingsPatch, accessSettingsSnapshot, assertAccessManager, memberAccessForm, memberCanUse, readAccessFieldValue } from "./access-settings.js";
 import { assertValidEnvName, assertValidEnvValue, listChannelEnv, patchChannelEnv } from "../config/channel-env.js";
@@ -628,7 +628,7 @@ function inlineMcpName(name) {
 // update" answers the form to push; "Remove" removes and answers the page notice plus fresh meta.
 export async function applyCustomMcpAction({ actionId, command = {}, entry, meta, state, clicker, userIsAdmin = false, userIsApproved = false }) {
   const scope = customMcpScope(command.s);
-  if (!scope) throw new Error("This custom MCP control expired. Open Settings again.");
+  if (!scope || ![CHANNEL_SETTINGS_CUSTOM_MCP_ADD_ACTION_ID, CHANNEL_SETTINGS_CUSTOM_MCP_REMOVE_ACTION_ID].includes(actionId)) throw new Error("This custom MCP control expired. Open Settings again.");
   if (scope === "channel") assertCustomMcpManager(meta, { authorId: clicker, isAdminUser: userIsAdmin, isApprovedUser: userIsApproved });
   if (actionId === CHANNEL_SETTINGS_CUSTOM_MCP_ADD_ACTION_ID) {
     return {
@@ -648,39 +648,108 @@ export async function applyCustomMcpAction({ actionId, command = {}, entry, meta
   };
 }
 
-// The custom MCP form (pushed from the MCPs page). The save resolves DNS for the address check,
-// which is quick, and happens before the ack so a refusal lands under the field it is about.
-export async function handleCustomMcpFormSubmission({ ack, body, view, client }, { context = channelSettingsContext, rootView = settingsRootView } = {}) {
+// Consume Add's short-lived trigger before calling Slack for current membership. Only a safe,
+// owner-bound placeholder is pushed until both membership and fresh local authority admit it.
+export async function handleCustomMcpSettingsAction({ ack, body, action, client }, {
+  context = channelSettingsContext, rootView = settingsRootView,
+} = {}) {
+  await ack();
   const clicker = body?.user?.id;
+  const actionId = action?.action_id;
+  const command = settingsCommand(action);
+  let target = body?.view;
   try {
-    const state = parseEditorMetadata(view?.private_metadata);
-    const scope = state.view === "custom_mcp_c" ? "channel" : state.view === "custom_mcp_p" ? "user" : "";
-    if (!clicker || state.ownerId !== clicker || !scope) throw new Error("This form expired. Open Settings again.");
-    const { entry, meta, userIsAdmin, userIsApproved } = await context(client, {
-      channelId: state.channelId, userId: clicker, expectedSlug: state.slug, verifyMembership: true,
-    });
-    if (scope === "channel") assertCustomMcpManager(meta, { authorId: clicker, isAdminUser: userIsAdmin, isApprovedUser: userIsApproved });
-    const form = readCustomMcpForm(view);
-    let servers;
-    try {
-      servers = scope === "channel"
-        ? await saveChannelCustomMcp(entry.slug, form, { actor: `<@${clicker}>` })
-        : await saveUserCustomMcp(clicker, form, { actor: clicker });
-    } catch (error) {
-      await ack({ response_action: "errors", errors: { [customMcpErrorBlock(error.message)]: String(error.message).slice(0, 150) } });
-      return;
+    const state = parseSettingsMetadata(body?.view?.private_metadata);
+    if (!clicker || state.ownerId !== clicker) throw new Error("This channel settings view isn't yours. Open your own from a recent reply.");
+    if (![CHANNEL_SETTINGS_CUSTOM_MCP_ADD_ACTION_ID, CHANNEL_SETTINGS_CUSTOM_MCP_REMOVE_ACTION_ID].includes(actionId)) throw new Error("This custom MCP control expired. Open Settings again.");
+    const scope = customMcpScope(command.s);
+    if (!scope) throw new Error("This custom MCP control expired. Open Settings again.");
+    const request = { channelId: state.channelId, userId: clicker, expectedSlug: state.slug };
+    if (actionId === CHANNEL_SETTINGS_CUSTOM_MCP_ADD_ACTION_ID) {
+      const local = await context(client, request);
+      if (scope === "channel") assertCustomMcpManager(local.meta, { authorId: clicker, isAdminUser: local.userIsAdmin, isApprovedUser: local.userIsApproved });
+      if (!body?.trigger_id) throw new Error("Slack didn't provide a trigger for this editor. Reopen Settings and try again.");
+      const opened = await client.views.push({ trigger_id: body.trigger_id, view: buildCustomMcpStatusView(state, { scope }) });
+      if (!opened?.view?.id) throw new Error("Slack did not return the editor identity. Reopen Settings and try again.");
+      target = opened.view;
     }
-    const saved = servers.find((entry) => entry.name === String(form.name).trim().toLowerCase());
-    const fresh = (await getChannelMeta(entry.slug)) || meta;
-    await ack({
-      response_action: "update",
-      view: await rootView(entry, fresh, { ...state, tab: "mcp" }, userIsAdmin, {
-        tab: "mcp",
-        notice: `✅ Saved ${inlineMcpName(saved?.serverName || form.name)}. Its tools reach the next run.`,
-      }),
+    await context(client, { ...request, verifyMembership: true });
+    const fresh = await context(client, { ...request, verifyMembership: false });
+    const result = await applyCustomMcpAction({ actionId, command, ...fresh, state, clicker });
+    await client.views.update({
+      view_id: target.id,
+      ...(result.view && target.hash ? { hash: target.hash } : {}),
+      view: result.view || await rootView(fresh.entry, result.meta, { ...state, tab: "mcp" }, fresh.userIsAdmin, { tab: "mcp", notice: result.notice }),
     });
   } catch (error) {
-    await ack({ response_action: "errors", errors: { [CUSTOM_MCP_NAME_BLOCK_ID]: String(error.message || "Couldn't save that server.").slice(0, 150) } });
+    if (target?.id) await client.views.update({ view_id: target.id, view: buildChannelSettingsErrorView(error.message || "Couldn't update this server. Reopen Settings to check it.") });
+  }
+}
+
+// Validate local fields inline, then pop the secret-bearing form before remote membership/DNS
+// work. The existing parent receives progress/result/error, never another retained stack layer.
+export async function handleCustomMcpFormSubmission({ ack, body, view, client }, {
+  context = channelSettingsContext, rootView = settingsRootView, lookup, timeoutMs = 15_000,
+} = {}) {
+  const navigation = createFileFormNavigation({ ack, client, view });
+  const clicker = body?.user?.id;
+  let state, scope, saved = false, timer;
+  try {
+    state = parseEditorMetadata(view?.private_metadata);
+    scope = state.view === "custom_mcp_c" ? "channel" : state.view === "custom_mcp_p" ? "user" : "";
+    if (!clicker || state.ownerId !== clicker || !scope) throw new Error("This form expired. Open Settings again.");
+    const request = { channelId: state.channelId, userId: clicker, expectedSlug: state.slug };
+    const admit = ({ meta, userIsAdmin, userIsApproved }) => {
+      if (scope === "channel") assertCustomMcpManager(meta, { authorId: clicker, isAdminUser: userIsAdmin, isApprovedUser: userIsApproved });
+    };
+    // No remote roster lookup yet: this checks current local admission, scope and field syntax.
+    let current = await context(client, { ...request, verifyMembership: false });
+    admit(current);
+    const form = readCustomMcpForm(view);
+    patchCustomMcps(scope === "channel" ? current.meta.customMcps : (await getUser(clicker))?.customMcps, { set: form });
+
+    await navigation.show(buildCustomMcpStatusView(state, { scope }));
+    let expired = false;
+    const timeoutError = () => new Error("The access or address check timed out. No server was saved; try again.");
+    const assertTimely = () => { if (expired) throw timeoutError(); };
+    const authorize = async () => {
+      assertTimely();
+      // DNS and roster calls can be slow. Re-read local authority after BOTH have finished so a
+      // removed manager or revoked user cannot use an already-open form to commit a late write.
+      await context(client, { ...request, verifyMembership: true });
+      assertTimely();
+      current = await context(client, { ...request, verifyMembership: false });
+      admit(current);
+      assertTimely();
+    };
+    const options = { actor: scope === "channel" ? `<@${clicker}>` : clicker, lookup, authorize };
+    const operation = scope === "channel"
+      ? saveChannelCustomMcp(current.entry.slug, form, options)
+      : saveUserCustomMcp(clicker, form, options);
+    const servers = await Promise.race([operation, new Promise((_, reject) => {
+      timer = setTimeout(() => { expired = true; reject(timeoutError()); }, timeoutMs);
+    })]);
+    clearTimeout(timer);
+    saved = true;
+    const server = servers.find((entry) => entry.name === String(form.name).trim().toLowerCase());
+    const fresh = (await getChannelMeta(current.entry.slug)) || current.meta;
+    await navigation.show(await rootView(current.entry, fresh, { ...state, tab: "mcp" }, current.userIsAdmin, {
+      tab: "mcp",
+      notice: `✅ Saved ${inlineMcpName(server?.serverName || form.name)}. Its tools reach the next run.`,
+    }));
+  } catch (error) {
+    const message = String(error.message || "Couldn't save that server.").slice(0, 300);
+    if (navigation.acknowledged) {
+      await navigation.show(buildCustomMcpStatusView(state, {
+        scope, retry: !saved,
+        message: saved ? "The server was saved, but Settings could not refresh. Reopen Settings to check it."
+          : `${message} Reopen the form to retry; the token draft has been cleared.`,
+      }));
+      return;
+    }
+    await ack({ response_action: "errors", errors: { [customMcpErrorBlock(message)]: message.slice(0, 150) } });
+  } finally {
+    clearTimeout(timer);
   }
 }
 
@@ -797,38 +866,115 @@ function fieldForError(message, fields, fallback) {
   return fallback;
 }
 
-// The root view's submission: save the open inline form and return to the page, or put the
-// refusal under the field it concerns. A submission with no form open just closes the modal.
-export async function handleSettingsFormSubmission({ ack, body, view, client }, { context = channelSettingsContext, rootView = settingsRootView } = {}) {
+// The checks a form can fail without asking anyone: field syntax only. Run before Slack is
+// answered, so these refusals still land under their field with Slack's own error styling.
+export function localSettingsFormProblem(key, values = {}) {
+  const [kind] = String(key || "").split(":");
+  const refuse = (field, error) => ({ field, error: String(error).slice(0, 150) });
+  if (values.token && values.token.length < 6) return refuse("token", "That doesn't look like a valid token.");
+  try {
+    if (kind === "var-add") {
+      try { assertValidEnvName(values.name); } catch (error) { return refuse("name", error.message); }
+      try { assertValidEnvValue(values.value); } catch (error) { return refuse("value", error.message); }
+      if (values.hosts) assertValidSwapRuleFields({ hosts: values.hosts });
+    }
+    if (kind === "var-val") assertValidEnvValue(values.value);
+    if (kind === "var-hosts" && values.hosts) assertValidSwapRuleFields({ hosts: values.hosts });
+    if (kind === "cm-add") {
+      try { normalizeCustomMcpName(values.name); } catch (error) { return refuse("name", error.message); }
+    }
+    if ((kind === "cm-add" || kind === "cm") && values.url) {
+      try { normalizeCustomMcpUrl(values.url); } catch (error) { return refuse("url", error.message); }
+    }
+    if (kind === "cm-add" && values.token) normalizeCustomMcpToken(values.token);
+  } catch (error) {
+    return refuse(kind === "var-val" ? "value" : kind.startsWith("var") ? "hosts" : "token", error.message);
+  }
+  return null;
+}
+
+export const SETTINGS_FORM_TIMEOUT_MS = 15_000;
+
+// The root view's submission: save the open inline form and return to the page. Slack expects an
+// answer within three seconds, and a save can need a Slack membership lookup and a DNS check, so:
+// field syntax and the editor's local authority are checked first (refusals land under their
+// field); then Slack is answered with the page saying "Saving…"; then membership, the write and
+// its DNS check run under a 15-second budget that can never save late, with the editor's current
+// authority re-checked after the slow parts and right before the write. The outcome repaints the
+// same view — a remote refusal reopens the form with the error under its field and the token box
+// cleared. A submission with no form open just closes the modal.
+export async function handleSettingsFormSubmission({ ack, body, view, client }, {
+  context = channelSettingsContext, rootView = settingsRootView, save = saveSettingsForm, timeoutMs = SETTINGS_FORM_TIMEOUT_MS,
+} = {}) {
   const clicker = body?.user?.id;
+  const firstField = (view?.blocks || []).find((block) => block.type === "input")?.block_id;
+  const refuseOnForm = (message) => ack(firstField ? { response_action: "errors", errors: { [firstField]: String(message).slice(0, 150) } } : undefined).catch(() => {});
   let state;
   try {
     state = parseSettingsMetadata(view?.private_metadata);
     if (!clicker || state.ownerId !== clicker) throw new Error("This settings view isn't yours. Open your own from a recent reply.");
   } catch (error) {
-    // Put the refusal under the form's first field so it is visible; nothing is written.
-    const firstField = (view?.blocks || []).find((block) => block.type === "input")?.block_id;
-    await ack(firstField ? { response_action: "errors", errors: { [firstField]: String(error.message).slice(0, 150) } } : undefined).catch(() => {});
+    await refuseOnForm(error.message);
     return;
   }
   if (!state.form) {
     await ack();
     return;
   }
+  const values = readSettingsForm(view, state.form);
+  const request = { channelId: state.channelId, userId: clicker, expectedSlug: state.slug };
+  let local;
   try {
-    const { entry, meta, userIsAdmin, userIsApproved } = await context(client, {
-      channelId: state.channelId, userId: clicker, expectedSlug: state.slug, verifyMembership: true,
-    });
-    const result = await saveSettingsForm(state.form, readSettingsForm(view, state.form), { entry, meta, clicker, userIsAdmin, userIsApproved });
-    if (result.error) {
-      await ack({ response_action: "errors", errors: { [settingsFieldBlockId(state.form, result.field)]: result.error } });
+    local = await context(client, { ...request, verifyMembership: false });
+    assertSettingsFormAllowed(state.form, { ...local, clicker });
+    const problem = localSettingsFormProblem(state.form, values);
+    if (problem) {
+      await ack({ response_action: "errors", errors: { [settingsFieldBlockId(state.form, problem.field)]: problem.error } });
       return;
     }
-    const fresh = (await getChannelMeta(entry.slug)) || meta;
-    await ack({ response_action: "update", view: await rootView(entry, fresh, { ...state, form: "", confirm: "" }, userIsAdmin, { notice: result.notice, quick: true }) });
   } catch (error) {
-    const firstField = (view?.blocks || []).find((block) => block.type === "input")?.block_id;
-    await ack({ response_action: "errors", errors: firstField ? { [firstField]: String(error.message || "Couldn't save.").slice(0, 150) } : {} });
+    await refuseOnForm(error.message || "Couldn't save.");
+    return;
+  }
+  await ack({ response_action: "update", view: await rootView(local.entry, local.meta, { ...state, form: "", confirm: "" }, local.userIsAdmin, { notice: "⏳ Saving…", quick: true }) });
+
+  // Only the non-secret fields survive into a reopened form; a token is always typed again.
+  const draft = Object.fromEntries(Object.entries(values).filter(([field]) => ["label", "url", "name", "hosts"].includes(field)));
+  let expired = false;
+  let timer;
+  const timedOut = () => new Error("The access or address check timed out. Nothing was saved; try again.");
+  const authorize = async () => {
+    if (expired) throw timedOut();
+    await context(client, { ...request, verifyMembership: true });
+    if (expired) throw timedOut();
+    const fresh = await context(client, { ...request, verifyMembership: false });
+    assertSettingsFormAllowed(state.form, { ...fresh, clicker });
+    if (expired) throw timedOut();
+    return fresh;
+  };
+  let fresh = local;
+  let saved = false;
+  try {
+    const work = (async () => {
+      fresh = await authorize();
+      return save(state.form, values, { ...fresh, clicker, authorize });
+    })();
+    const result = await Promise.race([work, new Promise((_, reject) => { timer = setTimeout(() => { expired = true; reject(timedOut()); }, timeoutMs); })]);
+    clearTimeout(timer);
+    const meta = (await getChannelMeta(fresh.entry.slug)) || fresh.meta;
+    if (result.error) {
+      await client.views.update({ view_id: view.id, view: await rootView(fresh.entry, meta, { ...state, formError: result, formDraft: draft }, fresh.userIsAdmin, {}) });
+      return;
+    }
+    saved = true;
+    await client.views.update({ view_id: view.id, view: await rootView(fresh.entry, meta, { ...state, form: "", confirm: "" }, fresh.userIsAdmin, { notice: result.notice }) });
+  } catch (error) {
+    clearTimeout(timer);
+    const meta = (await getChannelMeta(local.entry.slug).catch(() => null)) || local.meta;
+    const notice = saved
+      ? "✅ Saved, but Settings couldn't refresh. Reopen it to check."
+      : `⚠️ ${String(error.message || "Couldn't save.").slice(0, 200)} Nothing was saved.`;
+    await client.views.update({ view_id: view.id, view: await rootView(local.entry, meta, { ...state, form: "", confirm: "" }, local.userIsAdmin, { notice }) }).catch(() => {});
   }
 }
 
@@ -872,9 +1018,11 @@ export async function saveSettingsForm(key, values, ctx) {
   if (kind === "cm-add" || kind === "cm") {
     const input = { name: kind === "cm" ? name : values.name, url: values.url, token };
     try {
+      // `authorize` re-checks the editor's current authority after the DNS check, right before the write.
+      const options = { actor: scope === "c" ? `<@${clicker}>` : clicker, ...(ctx.authorize ? { authorize: ctx.authorize } : {}) };
       const servers = scope === "c"
-        ? await saveChannelCustomMcp(entry.slug, input, { actor: `<@${clicker}>` })
-        : await saveUserCustomMcp(clicker, input, { actor: clicker });
+        ? await saveChannelCustomMcp(entry.slug, input, options)
+        : await saveUserCustomMcp(clicker, input, options);
       const saved = servers.find((item) => item.name === String(input.name).trim().toLowerCase());
       return { notice: `✅ Saved ${inlineMcpName(saved?.serverName || input.name)}. Its tools reach the next run.` };
     } catch (error) {
@@ -1856,6 +2004,10 @@ async function connectAndWire(app) {
       await handleChannelVpnSettingsAction({ ack, body, action, client });
       return;
     }
+    if ([CHANNEL_SETTINGS_CUSTOM_MCP_ADD_ACTION_ID, CHANNEL_SETTINGS_CUSTOM_MCP_REMOVE_ACTION_ID].includes(action?.action_id)) {
+      await handleCustomMcpSettingsAction({ ack, body, action, client });
+      return;
+    }
     await ack();
     const clicker = body?.user?.id;
     const command = settingsCommand(action);
@@ -2142,16 +2294,6 @@ async function connectAndWire(app) {
           trigger_id: requireTrigger(),
           view: buildConnectionsEditorView(channelSettingsSnapshot(meta).connections, state, { channelName: entry.name }),
         });
-        return;
-      }
-
-      if (actionId === CHANNEL_SETTINGS_CUSTOM_MCP_ADD_ACTION_ID || actionId === CHANNEL_SETTINGS_CUSTOM_MCP_REMOVE_ACTION_ID) {
-        const result = await applyCustomMcpAction({ actionId, command, entry, meta, state, clicker, userIsAdmin, userIsApproved });
-        if (result.view) {
-          await client.views.push({ trigger_id: requireTrigger(), view: result.view });
-          return;
-        }
-        await updateCurrent(await settingsRootView(entry, result.meta, { ...state, tab: "mcp" }, userIsAdmin, { tab: "mcp", notice: result.notice }), { guardHash: false });
         return;
       }
 

@@ -20,8 +20,10 @@ function hostOf(url) {
 }
 
 /** Add or update one of a channel's custom MCP servers. Returns the masked list. */
-export async function saveChannelCustomMcp(slug, { name, url, token } = {}, { actor = "", lookup } = {}) {
+export async function saveChannelCustomMcp(slug, { name, url, token } = {}, { actor = "", lookup, authorize } = {}) {
   const checkedUrl = await assertPublicCustomMcpUrl(url, lookup ? { lookup } : {});
+  // Interactive surfaces may need to re-check access after the asynchronous DNS check.
+  if (authorize) await authorize();
   const saved = await patchChannelMeta(slug, (existing) => ({
     customMcps: patchCustomMcps(existing?.customMcps, { set: { name, url: checkedUrl, token }, actor }),
   }));
@@ -48,9 +50,11 @@ export async function listUserCustomMcps(userId) {
 }
 
 /** Add or update one of a person's own custom MCP servers. Returns the masked list. */
-export async function saveUserCustomMcp(userId, { name, url, token } = {}, { actor = "", lookup } = {}) {
+export async function saveUserCustomMcp(userId, { name, url, token } = {}, { actor = "", lookup, authorize } = {}) {
   if (!userId) throw new Error("No user to change.");
   const checkedUrl = await assertPublicCustomMcpUrl(url, lookup ? { lookup } : {});
+  // Interactive surfaces may need to re-check access after the asynchronous DNS check.
+  if (authorize) await authorize();
   const next = patchCustomMcps((await getUser(userId))?.customMcps, { set: { name, url: checkedUrl, token }, actor: actor || userId });
   const saved = await setUser(userId, { customMcps: next });
   const stored = normalizeCustomMcpName(name);

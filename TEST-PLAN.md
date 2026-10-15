@@ -27,6 +27,13 @@
     - The submission saves and closes the form, or puts the refusal under its field.
     - Another person's modal is refused without writing; a submission with no form open closes
       the modal.
+    - Field syntax and the editor's local authority are checked before Slack is answered.
+      Everything slow (membership, DNS) runs after a "⏳ Saving…" answer, under a 15-second budget
+      an expired save cannot pass. Authority is re-checked after those checks; a manager demoted
+      meanwhile writes nothing. A refusal only the save can find reopens the form with the error
+      under its field, the non-secret fields refilled and the token or value box empty.
+    - `beta`'s hardened pushed-form handlers (pre-redesign views) stay covered with explicit
+      legacy buttons in `test/slack-custom-mcp-settings.test.js`.
   - **Access:**
     - Mode and options are on Agent; the policy dropdowns and per-member Use/Manage ticks are on
       Access, for managers only.
@@ -75,6 +82,41 @@ Fixture: a disposable channel; one admin, one approved non-manager member, one u
 - [ ] **Skills / Schedules / You:** add and remove a skill in the picker, and pause/resume a
   schedule from ⋯. On You, add a personal variable and a `my-` server. Pass: only your turns see
   them.
+## Composio staging identity instructions (2026-10-14)
+
+The per-run identity preamble explicitly maps `composio-user` to the staging argument `"user"`
+and `composio-agent` to `"agent"`, matching the existing tool schema and guide. The preamble
+regression checks both mappings in every identity variant and retains the account authorization,
+URL-only handoff and no-base64 rules; existing staging tests verify the selected key.
+Live Claude/Codex Composio-script and file-staging cases still apply. An explanation-only live
+failure is evidence of an incorrect proposed argument, not an executed staging failure. This
+instruction clarification requires a fresh deployed retest before any live pass is claimed.
+
+## Compatible gateway dependency updates (2026-10-14)
+
+Composio core 0.22.0, Express 5.3.0 and Acorn 8.19.0 are ported to beta without release or
+container image changes. The former dependency PR failed because its download assertion required
+quotes around a valid HTTP token filename; Express's content-disposition 2 now omits those quotes.
+`test/public-file-links.test.js` accepts either valid token representation and additionally checks
+real downloads with spaces, escaped quotes and Unicode filenames. `test/composio-sdk.test.js`
+uses the installed SDK with a mocked HTTP boundary to verify create/resume requests, identity,
+connection-management restrictions and non-exposure of the daemon key to callers.
+
+Validation: clean `npm ci --ignore-scripts --no-fund` installs 189 packages with zero reported
+vulnerabilities; `npm audit --omit=dev --audit-level=high`, static checking (874 JS files), secret
+scan and `git diff --check` pass. On Node 22.23.2, the focused public-file-links, file-download,
+file-editor, file-upload, web-security, admin-auth-bind, mcp-socket-server, composio-sdk,
+composio-sdk-bridge, composio-sdk-run, composio-sdk-settings, composio-sessions and
+composio-entitlement suites pass **93/93**, no skips. The two changed suites also pass **20/20**,
+no skips, on Node **22.13.0** and **24.21.0**.
+
+Compatibility limitation: published npm metadata for both the previous Composio core 0.19.0 and
+0.22.0 declares Node >=22.22.3, above the gateway's existing >=22.13 floor. The lower-floor result
+above demonstrates only the exercised installed-SDK paths; it does not claim upstream support
+for every SDK API or resolve that pre-existing metadata mismatch. The gateway floor is unchanged.
+Full combined regression/coverage and CI remain integration checks. Existing live Composio
+Claude/Codex session and public-link acceptance gates still apply; mocked HTTP is not live
+provider acceptance.
 
 ## Google Chat HTTP endpoint — working card buttons (2026-10-14)
 
@@ -365,7 +407,7 @@ must run applicable gates before stable promotion; no live pass is implied by au
 - [x] Full combined regression/security coverage passed on a clean install of the patched lockfile,
   including remote MCP HTTP/stdio transports, OAuth metadata, and public-address guards.
 
-## Custom MCP servers in Slack Settings (2026-10-12)
+## Custom MCP servers in Slack Settings (2026-10-14)
 
 ### Regression
 - [x] Automated: `node --test test/slack-custom-mcp-settings.test.js`.
@@ -377,24 +419,65 @@ must run applicable gates before stable promotion; no live pass is implied by au
   - Refusals map to the right field.
   - `channelSettingsEditOptions` follows `manageAccess`; admins always qualify.
   - The personal save writes the viewer's own record without echoing the token.
-  - Refused: a loopback URL (URL field), a missing token (token field), a non-manager's
+  - Refused: a loopback URL (safe refusal notice), a missing token (token field), a non-manager's
     conversation save (nothing written) and a form owned by someone else.
   - An admin's conversation save records `<@U…>` as `setBy`. Remove by a non-manager is refused;
     removal by an admin, and of one's own server, succeeds.
-  - Every `canManageVpn` expectation in `test/channel-settings-modal.test.js` now also expects
-    `canManageCustomMcp`.
+  - Repeated pushed-form saves reuse the original Settings parent. Four consecutive updates keep
+    a blank token intact; a failed parent refresh never acknowledges the same submission twice.
+    The regression failed against the initial implementation (it returned `response_action:
+    update` on the pushed form), then passed after using parent navigation.
+  - The real submission context refuses departed members, revoked admission, mismatched channel
+    slugs and revoked manager rights before a mutation.
+  - `channelSettingsEditOptions` includes custom-MCP authority in the settings modal regressions.
+  - Remote DNS/membership checks acknowledge before waiting; role loss during either check is
+    refused before the write. Both timeout paths clear the token draft, offer a new form and
+    remain unable to write after the delayed work eventually finishes.
+  - Native Add consumes its trigger with a safe placeholder before fetching membership, then
+    hydrates the same view. Add and Remove recheck local authority after delayed roster reads;
+    a manager revoked during the wait cannot open a form or remove a server.
+  - Focused validation: 79 tests passed across `slack-custom-mcp-settings`,
+    `channel-settings-modal`, `custom-mcps`, `file-form-stack` and `slack-secret-actions`.
+    These are isolated automated checks, not deployed Slack evidence.
 
-### Live gates (engine-independent UI; the run itself is covered by "Custom MCP connections") — UNEXECUTED
-- [ ] As a channel manager, open ⚙️ Settings on a reply → MCPs. Add `qa` with the fixture
-  URL + token under *This conversation*. Pass: the page returns with "✅ Saved `custom-qa`", the
-  row shows the URL and `••••<last4>`, and the admin UI lists the same server. A follow-up
-  Claude turn and a Codex turn list `mcp__custom-qa__…` tools.
-- [ ] As an approved non-manager in the same channel: no conversation Add/Remove controls appear.
-  Under *Yours*, add `qa2`. Pass: only that user's turns see `my-qa2`.
-- [ ] Refusals: `https://127.0.0.1/`, `http://…`, a new name with no token. Each shows the error
-  under its field and writes nothing.
-- [ ] Remove both with the confirm dialog. Pass: the rows disappear and the next turns no longer
-  list the tools.
+### Live gates — UNEXECUTED
+
+Fixture: one disposable Slack QA channel with a manager and an approved non-manager, a second
+channel for isolation, and a disposable HTTPS Bearer MCP endpoint exposing a harmless `ping`
+tool that returns a recognizable marker. Provision endpoint and tokens outside chat. Configure
+channel management for admins/managers, give both people access, and use separate Claude and
+Codex threads with Lean off. Record deployed commit/image, channel/thread identifiers privately,
+action timestamps, redacted native UI captures and tool/result evidence; never record tokens.
+
+- [ ] `SLACK-CMCP-01` (engine-independent native UI): manager opens a reply's ⚙️ Settings → MCPs,
+  adds `qa` under *This conversation*, then updates the same name's public URL four consecutive
+  times with a blank token. Pass: every save returns to the same MCPs page without a stack-limit
+  error; only `custom-qa` exists, its token suffix stays unchanged, and the admin UI matches.
+  Rotate the token once; pass: only the new suffix is shown and no full token is returned.
+- [ ] `SLACK-CMCP-02` (engine-independent native UI): approved non-manager opens Settings → MCPs.
+  Pass: conversation Add/Remove controls are absent; the user can add and update `qa` under
+  *Yours* as `my-qa`. Another member's Settings must not list this personal server. Revoke the
+  first user's membership with their form open and submit; pass: refusal, no mutation.
+- [ ] `SLACK-CMCP-03` (engine-independent native UI): try `https://127.0.0.1/`, an HTTP URL,
+  invalid name and a new name without a token. Pass: local validation gives an appropriate field
+  error; the asynchronous private-address refusal gives a safe notice and a fresh-form retry,
+  without returning the token draft. No new row or successful-save audit appears. Open a manager's form, revoke management rights, then submit; pass:
+  refusal and unchanged channel list. Delay the fixture address or roster response past 15 seconds;
+  pass: prompt acknowledgement, timeout notice and no late write after the response completes.
+  Cancel a Remove confirmation; the server remains.
+- [ ] `SLACK-CMCP-04-Claude` and `SLACK-CMCP-04-Codex`: for each engine, as the personal owner,
+  prompt "Call ping once on custom-qa and once on my-qa; report their markers without credentials."
+  Pass: both tools return the fixture marker with scope-prefixed server names. As the other
+  approved member, prompt "Call custom-qa ping; check whether my-qa is available without calling
+  another server." Pass: channel tool succeeds and owner's personal server is absent. In the
+  second channel without `custom-qa`, the owner's `my-qa` remains available and `custom-qa` is absent.
+- [ ] `SLACK-CMCP-05-Claude` and `SLACK-CMCP-05-Codex`: pause a fixture turn before another ping,
+  remove the matching conversation and personal servers through confirmed native controls,
+  then continue. Pass: the live relay refuses the removed server on its next request; fresh turns
+  no longer list either tool. Collect native row disappearance plus relay refusal/tool inventory.
+
+These native UI actions and real engine turns are release gates. Mocked Slack transports,
+Chromium rendering of a local fixture and successful code tests do not satisfy them.
 
 ## Custom MCP connections (2026-10-01)
 
@@ -10590,3 +10673,29 @@ failures or skips. Static checks, documentation coverage and secret scanning pas
       Variables the secrets tab and Settings the general tab. Restart the gateway and click the
       same buttons again; require the same windows. Have a second approved member click them;
       require the "person who asked" refusal. Repeat once in a personal chat.
+
+## Microsoft 365 access documentation (2026-10-14)
+
+Documentation-only, engine-independent: no gateway runtime or Microsoft grants change.
+
+- Build and export: from `documentation/`, run `npm ci`, `npm run build` and `npm test`.
+  Pass: `/docs/features/microsoft-365-access` has its canonical URL, one page heading,
+  sidebar entry, valid internal links and Pagefind index; existing website export fixtures pass.
+- Source review: compare the guide with `docs/PLATFORMS.md`, Teams auth/events/file resolver,
+  connected-account routing, privacy and engine authentication. Pass: chat/team RSC read
+  scope is distinct from activation, Outlook is separate, application mail access is not
+  described as user-scoped, selected file grants and drive allowlist are distinct, and no
+  unverified tenant grants, automatic EU processing or blanket GDPR guarantee are claimed.
+- Browser: open the page, follow the Teams related-guide link and use search for
+  "Microsoft 365 access". Check desktop and a 390px mobile viewport. Pass: content is
+  reachable, readable, searchable and fits the viewport without horizontal page overflow.
+- Publication: verify the preview and production page in the existing website project,
+  preserving the deployed website/blog and API routing. Pass: the page and assets load,
+  search includes the article, and existing home/blog/API responses remain available.
+- Results: documentation build passed (152 checked routes, 27,176 internal links, Pagefind),
+  export regression passed, and independent source/navigation review passed. Browser checks
+  passed for one page heading, canonical URL, desktop layout, 390px viewport without page
+  overflow, and search results containing the article and its Outlook/file headings.
+  Static checks passed (874 JavaScript files), and the secret scan passed (1,204 files/blobs).
+  Vercel preview/production remain unexecuted: egress refused the deployment credential
+  for `api.vercel.com` pending the administrator's secret-host approval card.

@@ -31,6 +31,7 @@ Tables, headings, and inline images are simplified for Teams. `/sudo` host threa
 
 ## Related guides
 
+- [Microsoft 365 access and permissions](/docs/features/microsoft-365-access)
 - [Chat platform reference](/docs/platforms)
 - [Files and editor](/docs/features/files-and-editor)
 - [Approvals](/docs/features/approvals)

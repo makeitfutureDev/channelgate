@@ -59,13 +59,16 @@ test("Settings → Variables replaces a value in place, repeatedly, on the same 
     const form = buildChannelSettingsView({ secrets: listChannelEnv(await store.getChannelMeta(f.entry.slug)) }, { ...f.state, tab: "variables", form: "var-val:c:KEEP_ME" }, { tab: "variables", canEditSecrets: true });
     assert.equal(form.submit.text, "Save");
     const value = `dummy-updated-value-${i}333`;
-    await handleSettingsFormSubmission({ ...f, body: { user: { id: ownerId } }, view: { ...form, state: { values: { [settingsFieldBlockId("var-val:c:KEEP_ME", "value")]: { v: { value } } } } } }, { context, rootView });
+    await handleSettingsFormSubmission({ ...f, body: { user: { id: ownerId } }, view: { ...form, id: "V_SETTINGS", state: { values: { [settingsFieldBlockId("var-val:c:KEEP_ME", "value")]: { v: { value } } } } } }, { context, rootView });
     const ack = f.acknowledgements.at(-1);
     assert.equal(ack.response_action, "update", "the same modal is updated; nothing is pushed");
-    assert.equal(ack.view.callback_id, "cg_channel_settings_modal");
-    assert.equal(JSON.parse(ack.view.private_metadata).f, undefined, "the form closed");
+    assert.equal(ack.view.notice, "⏳ Saving…");
+    const done = f.updates.at(-1);
+    assert.equal(done.view_id, "V_SETTINGS");
+    assert.equal(done.view.callback_id, "cg_channel_settings_modal");
+    assert.equal(JSON.parse(done.view.private_metadata).f, undefined, "the form closed");
     assert.equal((await store.getChannelMeta(f.entry.slug)).env.KEEP_ME.value, value);
-    assert.doesNotMatch(JSON.stringify(ack.view), /dummy-updated-value/);
+    assert.doesNotMatch(JSON.stringify([ack.view, done.view]), /dummy-updated-value/);
   }
   assert.equal(f.pushes.length, 0);
 });

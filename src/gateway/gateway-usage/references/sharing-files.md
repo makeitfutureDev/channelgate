@@ -41,7 +41,9 @@ Then run the Composio tool and pass that object through **unchanged** as its fil
 
 Two things that will bite you if you skip them:
 
-- **`identity` must match the identity you then execute with.** A file staged with
+- **`identity` accepts only `"user"` or `"agent"`.** Use `"user"` for `composio-user` and
+  `"agent"` for `composio-agent`; the server names are not accepted argument values.
+  The value must match the identity you then execute with. A file staged with
   `composio-user`'s key is invisible to `composio-agent`, and vice versa. Decide whose account is
   doing the upload first (the rules are in the skill's "Tool identities" section — an upload is a
   write, so the account must be settled, not guessed), then stage on that one.

@@ -327,6 +327,11 @@ export const featureGroups = [
     "description": "Set admission, tool policy, credential protection, and execution boundaries.",
     "items": [
       {
+        "slug": "microsoft-365-access",
+        "label": "Microsoft 365 access and permissions",
+        "description": "Understand Teams resource consent, separate Outlook authorisation, file grants, and sensitive-data processing."
+      },
+      {
         "slug": "permissions",
         "label": "Modes and permissions",
         "description": "Read-only, Worker, Admin, Auto, and Lean settings."
@@ -743,7 +748,7 @@ export const configurationPages = [
   {
     "slug": "engine-authentication",
     "label": "Engine authentication",
-    "description": "Sign in Claude and Codex, including a dedicated channel login."
+    "description": "Sign in Claude and Codex, including a dedicated channel login, and pick a login that fits European data handling."
   },
   {
     "slug": "model-defaults",

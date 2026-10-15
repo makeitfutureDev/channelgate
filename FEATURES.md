@@ -276,7 +276,9 @@ control-plane status.
   and edited in place. The conversation's servers can be changed only by the channel's managers and
   admins (`canManage`, re-checked on every click and submission); anyone edits their own. Saves and
   removals go through the same `custom-mcp-store.js` path as the admin UI. Audit rows name the
-  Slack user. The Teams settings dialog does not offer this yet. → Slack Settings redesign.
+  Slack user. Address and membership checks acknowledge Slack at once, time out after 15 seconds
+  without saving, and re-check the editor's current authority before the write. The Teams settings
+  dialog does not offer this yet. → Slack Settings redesign.
 - Runs receive a conversation's servers as `custom-<name>` and the AUTHOR's own as `my-<name>`, in
   Claude and Codex turns (fresh, resumed, cross-engine fallback) and in SSH sessions. The prefixes
   keep them apart from each other, the built-in servers and Cloud MCP selections. Lean injects
@@ -483,7 +485,7 @@ Admins can add gateway-wide model shortcuts in Settings → Access & security �
 
 - `documentation/` builds a static Astro/Starlight documentation section for
   `channelgate.dev/docs` in the same Vercel website project as the marketing pages and blog.
-  The public handbook source now covers 151 pages: 106 dedicated feature guides in 12 groups,
+  The public handbook source now covers 152 pages: 107 dedicated feature guides in 12 groups,
   13 configuration guides, 13 control references, four directories/maps, and the existing
   15 overview, walkthrough, installation,
   technical-reference and resource pages. Feature guides explain use, setup, examples,
@@ -496,7 +498,7 @@ Admins can add gateway-wide model shortcuts in Settings → Access & security �
   Google Drive workspace sync and durable thread loops have their own guides alongside the
   workspace, engine, knowledge/integration, access, platform, automation and operations topics.
 - Thirteen published guides are generated at build time from this repository's canonical
-  Markdown files; the other 138 pages are authored in `documentation/src/content/docs/`.
+  Markdown files; the other 139 pages are authored in `documentation/src/content/docs/`.
   Repository-relative links resolve to a published guide or the source file on GitHub's `beta`
   branch. The export copies only the `/docs` subtree and entry point into an existing static
   website output, then merges documentation URLs into its sitemap. The existing Vercel project
@@ -517,6 +519,10 @@ Admins can add gateway-wide model shortcuts in Settings → Access & security �
   access retain their documented restrictions. This documentation change introduces no gateway
   runtime behavior. The complete-functionality expansion is published at `/docs`; build,
   browser, export, preview and production evidence is recorded in `TEST-PLAN.md`.
+- The Microsoft 365 access guide explains Teams chat/team resource consent, separate Outlook
+  authorisation, selected file grants and the drive allowlist, Microsoft access versus agent
+  activation, and sensitive-data processing. It links from security navigation and the Teams
+  guide and explicitly requires verification of actual tenant grants.
 
 ## Conversation sources and Teams names
 
@@ -2673,7 +2679,8 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
   (`user` → `composio-user`, `agent` → `composio-agent`) and the key resolved for THAT identity is
   the one spent, through the same precedence the MCP config uses; a named identity with no key is
   reported rather than silently replaced by the other one. Every run that has a Composio identity
-  is also told this handoff rule in its per-run identity line (not only in the gateway-usage guide),
+  is also told this handoff rule and the exact `"user"`/`"agent"` argument mapping in its per-run
+  identity line (not only in the gateway-usage guide),
   so an engine that never opens the guide's sharing page still stages instead of relaying base64.
   The key never enters the container, never reaches the model, and never appears in an error
   message. Nothing is published.

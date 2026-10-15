@@ -524,9 +524,15 @@ export function readSettingsForm(view = {}, key) {
   return out;
 }
 
+// `state.formError` ({ field, error }) is a refusal from the save that ran after Slack was answered
+// (DNS, membership, a duplicate name): it is shown under its field, and `state.formDraft` refills
+// the non-secret fields — a token is always typed again.
 function formBlocks(spec, state) {
   const blocks = [{ type: "context", elements: [mrkdwn(`*${escapeMrkdwn(spec.title)}*`)] }];
-  for (const field of spec.fields) {
+  const draft = state.formDraft || {};
+  const error = state.formError?.error ? state.formError : null;
+  for (const raw of spec.fields) {
+    const field = Object.hasOwn(draft, raw.name) && raw.name !== "token" && raw.name !== "value" ? { ...raw, initial: draft[raw.name] } : raw;
     const blockId = settingsFieldBlockId(spec.key, field.name);
     if (field.type === "checkbox") {
       const choice = option(field.label, "secret", field.option || "");
@@ -545,7 +551,9 @@ function formBlocks(spec, state) {
       },
       ...(field.hint ? { hint: plain(field.hint) } : {}),
     });
+    if (error && error.field === field.name) blocks.push(context(`⚠️ ${escapeMrkdwn(error.error)}`));
   }
+  if (error && !spec.fields.some((field) => field.name === error.field)) blocks.push(context(`⚠️ ${escapeMrkdwn(error.error)}`));
   blocks.push({
     type: "actions",
     elements: [
@@ -1165,6 +1173,22 @@ export function buildCustomMcpEditorView(state = {}, { scope = "user", channelNa
         maxLength: 3000,
         hint: "Stored write-only and never shown again. Leave blank when updating an existing server to keep its token.",
       }),
+    ],
+  };
+}
+
+// A submitted secret-bearing form is popped before remote validation. This safe status view
+// occupies its existing parent; retry opens a fresh blank form rather than replaying a token.
+export function buildCustomMcpStatusView(state, { scope, message, retry = false } = {}) {
+  return {
+    type: "modal",
+    callback_id: "cg_channel_settings_modal",
+    private_metadata: settingsMetadata({ ...state, tab: "mcp" }),
+    title: plain("Channel settings"),
+    close: plain("Done"),
+    blocks: [
+      { type: "section", text: mrkdwn(escapeMrkdwn(message || "Checking access and the server address…")) },
+      ...(retry ? [{ type: "actions", elements: [button(CHANNEL_SETTINGS_CUSTOM_MCP_ADD_ACTION_ID, "Try again", state, "custom_mcp_add", { s: scope === "channel" ? "c" : "p" })] }] : []),
     ],
   };
 }

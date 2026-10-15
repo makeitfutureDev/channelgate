@@ -148,23 +148,75 @@ test("an open form turns the footer into Save, and the submission saves it or pu
   });
   assert.deepEqual(readSettingsForm({ state: { values: values("A_B", "c") } }, "var-add:p"), { name: "A_B", value: "c", secret: true });
   const context = async () => ({ entry, meta: await meta(), userIsAdmin: false, userIsApproved: true });
-  const rootView = async (_entry, _meta, nextState, _admin, { notice }) => ({ type: "modal", notice, form: nextState.form });
+  const rootView = async (_entry, _meta, nextState, _admin, { notice } = {}) => ({ type: "modal", notice, form: nextState.form, formError: nextState.formError, formDraft: nextState.formDraft });
+  const submit = async (clicker, submitted, options = {}) => {
+    const acks = [];
+    const updates = [];
+    const client = { views: { update: async (args) => { updates.push(args); } } };
+    await handleSettingsFormSubmission({ ack: async (a) => { acks.push(a); }, body: { user: { id: clicker } }, view: { id: "V_ROOT", blocks: view.blocks, private_metadata: view.private_metadata, state: { values: submitted } }, client }, { context, rootView, ...options });
+    return { acks, updates };
+  };
 
-  let acked;
-  await handleSettingsFormSubmission({ ack: async (a) => { acked = a; }, body: { user: { id: "U_MEMBER" } }, view: { private_metadata: view.private_metadata, state: { values: values("1BAD", "value-123456") } } }, { context, rootView });
-  assert.equal(acked.response_action, "errors");
-  assert.ok(acked.errors[nameBlock], "the refusal sits under Name");
+  // A field-syntax refusal is answered at once, under its field, with Slack's own error styling.
+  let r = await submit("U_MEMBER", values("1BAD", "value-123456"));
+  assert.equal(r.acks[0].response_action, "errors");
+  assert.ok(r.acks[0].errors[nameBlock], "the refusal sits under Name");
+  assert.equal(r.updates.length, 0);
 
-  await handleSettingsFormSubmission({ ack: async (a) => { acked = a; }, body: { user: { id: "U_MEMBER" } }, view: { private_metadata: view.private_metadata, state: { values: values("FROM_FORM", "form-value-123456") } } }, { context, rootView });
-  assert.equal(acked.response_action, "update");
-  assert.match(acked.view.notice, /FROM_FORM/);
-  assert.equal(acked.view.form, "", "the form closes after saving");
+  // A valid save answers Slack first ("Saving…"), then repaints the same view with the result.
+  r = await submit("U_MEMBER", values("FROM_FORM", "form-value-123456"));
+  assert.equal(r.acks[0].response_action, "update");
+  assert.equal(r.acks[0].view.notice, "⏳ Saving…");
+  assert.equal(r.acks[0].view.form, "", "nothing can be submitted twice while it saves");
+  assert.equal(r.updates.at(-1).view_id, "V_ROOT");
+  assert.match(r.updates.at(-1).view.notice, /FROM_FORM/);
   assert.ok((await listUserEnv("U_MEMBER")).some((row) => row.name === "FROM_FORM"));
 
-  // Someone else's modal is refused without writing; a submission with no form just closes.
-  await handleSettingsFormSubmission({ ack: async (a) => { acked = a; }, body: { user: { id: "U_OTHER" } }, view: { blocks: view.blocks, private_metadata: view.private_metadata, state: { values: values("NOPE", "nope-value-123456") } } }, { context, rootView });
-  assert.equal(acked.response_action, "errors");
-  assert.match(Object.values(acked.errors)[0], /isn't yours/, "the refusal is visible under the first field");
+  // A refusal only the save can find (here a duplicate) reopens the form, error under its field,
+  // non-secret fields refilled and the value box empty.
+  r = await submit("U_MEMBER", values("FROM_FORM", "another-value-123456"));
+  const reopened = r.updates.at(-1).view;
+  assert.equal(reopened.form, "var-add:p");
+  assert.equal(reopened.formError.field, "name");
+  assert.match(reopened.formError.error, /Replace value/);
+  assert.deepEqual(reopened.formDraft, { name: "FROM_FORM" }, "the value is never carried back");
+  const rendered = buildChannelSettingsView({ personalSecrets: [] }, { ...state, formError: reopened.formError, formDraft: reopened.formDraft }, { tab: "you" });
+  assert.equal(rendered.blocks.find((block) => block.block_id === nameBlock).element.initial_value, "FROM_FORM");
+  assert.match(JSON.stringify(rendered), /⚠️ FROM_FORM already exists/);
+  assert.equal(rendered.blocks.find((block) => block.block_id === settingsFieldBlockId("var-add:p", "value")).element.initial_value, undefined);
+
+  // The slow part is bounded: a save that outlasts the budget is reported and can never land.
+  let late = false;
+  r = await submit("U_MEMBER", values("SLOW_ONE", "slow-value-123456"), {
+    timeoutMs: 30,
+    save: async (key, submitted, ctx) => {
+      await new Promise((resolve) => setTimeout(resolve, 80));
+      try { await ctx.authorize(); late = true; } catch { /* expired: refused */ }
+      return { notice: "should not be shown" };
+    },
+  });
+  await new Promise((resolve) => setTimeout(resolve, 120));
+  assert.match(r.updates.at(-1).view.notice, /timed out\. Nothing was saved/);
+  assert.equal(late, false, "an expired save cannot pass its authority check");
+
+  // Authority is re-checked after the slow checks: a manager demoted meanwhile writes nothing.
+  let calls = 0;
+  const demoting = async () => ({ entry, meta: await meta(), userIsAdmin: calls++ === 0, userIsApproved: true });
+  const channelForm = buildChannelSettingsView({ customMcps: { channel: [] } }, { ...state, tab: "mcp", form: "cm-add:c" }, { tab: "mcp", canManageCustomMcp: true });
+  const cmValues = {
+    [settingsFieldBlockId("cm-add:c", "name")]: { v: { value: "late" } },
+    [settingsFieldBlockId("cm-add:c", "url")]: { v: { value: "https://93.184.215.14/mcp" } },
+    [settingsFieldBlockId("cm-add:c", "token")]: { v: { value: "late-token-123456" } },
+  };
+  const updates = [];
+  await handleSettingsFormSubmission({ ack: async () => {}, body: { user: { id: "U_MEMBER" } }, view: { id: "V_ROOT", blocks: channelForm.blocks, private_metadata: channelForm.private_metadata, state: { values: cmValues } }, client: { views: { update: async (args) => { updates.push(args); } } } }, { context: demoting, rootView });
+  assert.match(updates.at(-1).view.notice, /managers or an admin/);
+  assert.equal(((await meta()).customMcps || []).some((entry) => entry.name === "late"), false);
+
+  // Someone else's modal is refused without writing; a submission with no form open just closes.
+  r = await submit("U_OTHER", values("NOPE", "nope-value-123456"));
+  assert.equal(r.acks[0].response_action, "errors");
+  assert.match(Object.values(r.acks[0].errors)[0], /isn't yours/, "the refusal is visible under the first field");
   assert.equal((await listUserEnv("U_MEMBER")).some((row) => row.name === "NOPE"), false);
   let closed = false;
   await handleSettingsFormSubmission({ ack: async (a) => { closed = a === undefined; }, body: { user: { id: "U_MEMBER" } }, view: { private_metadata: JSON.stringify({ c: "C_REDESIGN", s: entry.slug, u: "U_MEMBER", p: "you" }) } }, { context, rootView });
