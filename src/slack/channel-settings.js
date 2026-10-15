@@ -76,7 +76,7 @@ export const CHANNEL_SETTINGS_CONFIRM_ACTION_ID = "cg_channel_settings_confirm";
 export const CHANNEL_SETTINGS_CONFIRM_CANCEL_ACTION_ID = "cg_channel_settings_confirm_cancel";
 export const CHANNEL_SETTINGS_MEMBER_ACTION_ID = "cg_channel_settings_member";
 export const ACCESS_MEMBER_BLOCK_PREFIX = "cg_member_";
-export const CHANNEL_SETTINGS_MEMBER_PAGE_ACTION_ID = "cg_channel_settings_member_page";
+export const CHANNEL_SETTINGS_MEMBER_CLEAR_ACTION_ID = "cg_channel_settings_member_clear";
 export const CHANNEL_SETTINGS_MEMBER_FIND_ACTION_ID = "cg_channel_settings_member_find";
 export const CHANNEL_SETTINGS_FALLBACK_TOGGLE_ACTION_ID = "cg_channel_settings_fallback_toggle";
 export const CHANNEL_SETTINGS_CLOUD_SELECT_PREFIX = "cg_channel_settings_cloud_select_";
@@ -192,8 +192,7 @@ export function settingsMetadata(state = {}) {
     // The inline form open on the page (`f`) and the in-place confirmation waiting (`x`).
     ...(state.form ? { f: String(state.form).slice(0, 200) } : {}),
     ...(state.confirm ? { x: String(state.confirm).slice(0, 200) } : {}),
-    // The Access page's member page (`m`) and the member a search jumped to (`y`).
-    ...(state.memberPage ? { m: Math.max(0, Number(state.memberPage) || 0) } : {}),
+    // The person the Access page's search picked (`y`).
     ...(state.memberFocus ? { y: String(state.memberFocus).slice(0, 32) } : {}),
   });
 }
@@ -214,7 +213,6 @@ export function parseSettingsMetadata(raw) {
     tab: normalizeTab(value.p),
     form: typeof value.f === "string" ? value.f : "",
     confirm: typeof value.x === "string" ? value.x : "",
-    memberPage: Math.max(0, Number(value.m) || 0),
     memberFocus: typeof value.y === "string" && /^[UW][A-Z0-9]+$/.test(value.y) ? value.y : "",
   };
 }
@@ -690,14 +688,15 @@ function agentPage(snapshot, state, opts) {
 }
 
 // ── Access ───────────────────────────────────────────────────────────────────────────────────
-// Who may use and manage the conversation, then every human member with a Use tick (and a
-// Manage tick when the channel names its managers). Each member is one section with a checkboxes
-// accessory, so a tick saves on its own. Slack caps a view at 100 blocks, so members are shown a
-// page at a time, and a people search (Slack's own users_select) jumps straight to one person.
-export const ACCESS_MEMBER_PAGE_SIZE = 25;
+// Who may use and manage the conversation, then the PEOPLE with a setting of their own here —
+// guests, excluded members, named managers — and a people search (Slack's own users_select) to
+// reach anyone else. Everyone the policy admits needs no row, so the list stays short in any size
+// of channel and costs no Slack API call to draw. Each person is one section with a checkboxes
+// accessory (Use, plus Manage when the channel names its managers), so a tick saves on its own.
+export const ACCESS_PEOPLE_LIMIT = 60;
 
 function memberRow(member, { canEditAccess, named }) {
-  const role = member.isAdmin ? "admin" : member.guest ? "guest here" : member.approved ? "approved" : "not approved";
+  const role = member.isAdmin ? "admin" : member.excluded ? "excluded here" : member.guest ? "guest here" : member.approved ? "approved" : "not approved";
   const text = `<@${escapeMrkdwn(member.id)}>  _${role}_`;
   if (member.isAdmin) return { type: "section", text: mrkdwn(`${text} · always`) };
   if (!canEditAccess) return { type: "section", text: mrkdwn(`${text} · ${member.use ? "✅ can use" : "—"}${named && member.manage ? " · manages" : ""}`) };
@@ -711,16 +710,8 @@ function memberRow(member, { canEditAccess, named }) {
   };
 }
 
-// The page of members to show, clamped to the list, and the page count.
-export function memberPage(members = [], page = 0) {
-  const pages = Math.max(1, Math.ceil(members.length / ACCESS_MEMBER_PAGE_SIZE));
-  const current = Math.min(Math.max(0, Number(page) || 0), pages - 1);
-  return { pages, current, shown: members.slice(current * ACCESS_MEMBER_PAGE_SIZE, (current + 1) * ACCESS_MEMBER_PAGE_SIZE) };
-}
-
 function accessPage(snapshot, state, { canEditAccess = false } = {}) {
   const access = accessSettingsSnapshot(snapshot.access || {});
-  const members = Array.isArray(snapshot.members) ? snapshot.members : null;
   const named = access.manageAccess === "custom";
   const label = (field) => ACCESS_SELECTS[field].find((entry) => entry.value === access[field])?.label || access[field];
   const rows = [];
@@ -732,34 +723,28 @@ function accessPage(snapshot, state, { canEditAccess = false } = {}) {
   } else {
     rows.push(context("🔒 Only managers and admins change access."), fieldBlock("Who can use it", escapeMrkdwn(label("access"))), fieldBlock("Who can manage it", escapeMrkdwn(label("manageAccess"))));
   }
-  if (!members) {
-    rows.push(context("_The member list is unavailable right now — Slack didn't return it. Reopen Settings to try again._"));
-    return rows;
-  }
-  rows.push(header(`Members · ${members.length}`));
-  // Search: Slack's own people picker, so it searches by name as you type, avatars included.
+  rows.push(header("People"));
   rows.push({ type: "actions", block_id: "cg_member_find", elements: [
     {
-      type: "users_select", action_id: CHANNEL_SETTINGS_MEMBER_FIND_ACTION_ID, placeholder: plain("Find a member…"),
+      type: "users_select", action_id: CHANNEL_SETTINGS_MEMBER_FIND_ACTION_ID, placeholder: plain("Find a person…"),
       ...(state.memberFocus ? { initial_user: state.memberFocus } : {}),
     },
-    ...(state.memberFocus ? [button(CHANNEL_SETTINGS_MEMBER_PAGE_ACTION_ID, "Show all", state, "member_page", { m: state.memberPage || 0 })] : []),
+    ...(state.memberFocus ? [button(CHANNEL_SETTINGS_MEMBER_CLEAR_ACTION_ID, "Show list", state, "member_clear")] : []),
   ] });
   if (state.memberFocus) {
-    const found = members.find((member) => member.id === state.memberFocus);
-    rows.push(found ? memberRow(found, { canEditAccess, named }) : context(`<@${escapeMrkdwn(state.memberFocus)}> isn't a member of this channel. Invite them first, then tick Use.`));
+    const focus = snapshot.focusMember;
+    if (!focus || focus.id !== state.memberFocus) rows.push(context("_Couldn't look that person up. Try again._"));
+    else if (focus.inChannel === false) rows.push(context(`<@${escapeMrkdwn(focus.id)}> isn't in this channel. Invite them first, then tick Use.`));
+    else rows.push(memberRow(focus, { canEditAccess, named }));
     return rows;
   }
-  const { pages, current, shown } = memberPage(members, state.memberPage);
-  for (const member of shown) rows.push(memberRow(member, { canEditAccess, named }));
-  if (pages > 1) {
-    const first = current * ACCESS_MEMBER_PAGE_SIZE + 1;
-    rows.push(context(`${first}–${first + shown.length - 1} of ${members.length}`));
-    rows.push({ type: "actions", block_id: "cg_member_pager", elements: [
-      ...(current > 0 ? [button(CHANNEL_SETTINGS_MEMBER_PAGE_ACTION_ID, "‹ Previous", state, "member_page", { m: current - 1 })] : []),
-      ...(current < pages - 1 ? [button(`${CHANNEL_SETTINGS_MEMBER_PAGE_ACTION_ID}_next`, "Next ›", state, "member_page", { m: current + 1 })] : []),
-    ] });
+  const people = Array.isArray(snapshot.people) ? snapshot.people : [];
+  if (!people.length) {
+    rows.push(context("_No one has a setting of their own here._"));
+    return rows;
   }
+  for (const person of people.slice(0, ACCESS_PEOPLE_LIMIT)) rows.push(memberRow(person, { canEditAccess, named }));
+  if (people.length > ACCESS_PEOPLE_LIMIT) rows.push(context(`${people.length - ACCESS_PEOPLE_LIMIT} more — search for a person to change them.`));
   return rows;
 }
 

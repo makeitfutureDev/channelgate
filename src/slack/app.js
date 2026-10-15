@@ -52,7 +52,7 @@ import { logChannelPolicyChange } from "../config/channel-audit.js";
 
 import { createTtlSet } from "./util.js";
 import { refreshDirectory } from "./directory.js";
-import { handleMemberLeftChannel, listConversationMemberIds, listConversationMemberRoster, filterConversationHumanMemberIds, withChannelMembershipLock } from "./members.js";
+import { handleMemberLeftChannel, listConversationMemberIds, filterConversationHumanMemberIds, withChannelMembershipLock } from "./members.js";
 import { checkBotScopes, formatScopeWarning, shouldNotify } from "./scope-check.js";
 import { buildFileEditView, buildFilePreviewView, buildFilesLoadingView, buildFilesView, buildNewFileView, buildNewFolderView, canEditChannelFiles, createVisibleDirectory, createVisibleFile, FILES_ACTION_PATTERN, FILES_NEW_FILE_CONTENT_BLOCK_ID, FILES_NEW_FILE_CONTENT_INPUT_ACTION_ID, FILES_NEW_FILE_NAME_BLOCK_ID, FILES_NEW_FILE_NAME_INPUT_ACTION_ID, FILES_NEW_FOLDER_BLOCK_ID, FILES_NEW_FOLDER_INPUT_ACTION_ID, FILES_SHORTCUT_ID, normalizeNewFileName, normalizeNewFolderName, normalizeRelativePath, parseActionValue as parseFileActionValue, parseExplorerMetadata, resolveVisiblePath, writeEditableFile } from "./file-explorer.js";
 import {
@@ -81,7 +81,7 @@ import {
   CHANNEL_SETTINGS_ROOT_CALLBACK_ID, CHANNEL_SETTINGS_FORM_OPEN_ACTION_ID, CHANNEL_SETTINGS_FORM_CANCEL_ACTION_ID,
   CHANNEL_SETTINGS_FORM_REMOVE_ACTION_ID, CHANNEL_SETTINGS_VAR_MENU_ACTION_ID, CHANNEL_SETTINGS_SCHEDULE_MENU_ACTION_ID,
   CHANNEL_SETTINGS_CONFIRM_ACTION_ID, CHANNEL_SETTINGS_CONFIRM_CANCEL_ACTION_ID, CHANNEL_SETTINGS_MEMBER_ACTION_ID,
-  ACCESS_MEMBER_BLOCK_PREFIX, CHANNEL_SETTINGS_MEMBER_PAGE_ACTION_ID, CHANNEL_SETTINGS_MEMBER_FIND_ACTION_ID, CHANNEL_SETTINGS_FALLBACK_TOGGLE_ACTION_ID, CHANNEL_SETTINGS_CLOUD_SELECT_PREFIX,
+  ACCESS_MEMBER_BLOCK_PREFIX, CHANNEL_SETTINGS_MEMBER_CLEAR_ACTION_ID, CHANNEL_SETTINGS_MEMBER_FIND_ACTION_ID, CHANNEL_SETTINGS_FALLBACK_TOGGLE_ACTION_ID, CHANNEL_SETTINGS_CLOUD_SELECT_PREFIX,
   CHANNEL_SETTINGS_SKILLS_SELECT_ACTION_ID, CHANNEL_SETTINGS_MY_SKILLS_SELECT_ACTION_ID, CHANNEL_SETTINGS_DM_MODE_ACTION_ID,
   CHANNEL_SETTINGS_DM_FLAGS_ACTION_ID, readSettingsForm, settingsFieldBlockId,
   CHANNEL_SETTINGS_CLOUD_PAGE_PREFIX, CHANNEL_SETTINGS_CLOUD_TOGGLE_PREFIX,
@@ -761,29 +761,37 @@ let settingsClient = null;
 
 const withTimeout = (promise, ms, fallback) => Promise.race([promise, new Promise((resolve) => setTimeout(() => resolve(fallback), ms).unref?.())]);
 
-// Every human member of the conversation with what the Access page ticks: whether the run gate
-// would admit them here (Use) and whether they are a named manager (Manage).
-async function accessMembers(meta, channelId) {
-  if (!settingsClient || meta.isDM) return null;
-  try {
-    const [roster, users] = await Promise.all([
-      listConversationMemberRoster(settingsClient, channelId, { teamId: process.env.CG_SLACK_TEAM_ID || "" }),
-      getUsers(),
-    ]);
-    const managers = new Set(meta.managers || []);
-    const guests = new Set(meta.allowedUsers || []);
-    return roster.map((member) => {
-      const record = users[member.id] || {};
-      const who = { isAdminUser: Boolean(record.isAdmin), isApprovedUser: Boolean(record.approved) };
-      return {
-        id: member.id, name: member.name || member.id,
-        isAdmin: who.isAdminUser, approved: who.isApprovedUser, guest: guests.has(member.id),
-        use: memberCanUse(meta, member.id, who), manage: managers.has(member.id),
-      };
-    }).sort((a, b) => Number(b.isAdmin) - Number(a.isAdmin) || Number(b.use) - Number(a.use) || a.name.localeCompare(b.name));
-  } catch {
-    return null;
+// The Access page's people: everyone with a setting of their own in this channel — a guest
+// grant, an exclusion, a named manager — read from the channel record and the user store alone,
+// so drawing the page costs no Slack API call whatever the channel's size. `focusId` (the person a
+// search picked) adds that one row, with whether they are in the channel (one membership read).
+export async function accessPeople(meta, channelId, focusId = "") {
+  if (meta.isDM) return { people: [], focus: null };
+  const users = await getUsers();
+  const guests = new Set(meta.allowedUsers || []);
+  const excluded = new Set(meta.excludedUsers || []);
+  const managers = new Set(meta.managers || []);
+  const row = (id) => {
+    const record = users[id] || {};
+    const who = { isAdminUser: Boolean(record.isAdmin), isApprovedUser: Boolean(record.approved) };
+    return {
+      id, name: record.name || id,
+      isAdmin: who.isAdminUser, approved: who.isApprovedUser,
+      guest: guests.has(id), excluded: excluded.has(id) && !who.isAdminUser,
+      use: memberCanUse(meta, id, who), manage: managers.has(id),
+    };
+  };
+  const people = [...new Set([...guests, ...excluded, ...managers])].map(row)
+    .sort((a, b) => Number(b.excluded) - Number(a.excluded) || Number(b.guest) - Number(a.guest) || a.name.localeCompare(b.name));
+  let focus = null;
+  if (focusId) {
+    let inChannel = null;
+    if (settingsClient) {
+      try { inChannel = (await filterConversationHumanMemberIds(settingsClient, channelId, [focusId])).includes(focusId); } catch { inChannel = null; }
+    }
+    focus = { ...row(focusId), inChannel };
   }
+  return { people, focus };
 }
 
 // The Cloud MCP pickers: each engine's live catalog as options, this channel's own selection as
@@ -1532,7 +1540,11 @@ async function settingsRootView(entry, meta, state, userIsAdmin, { tab = state.t
   // What only one page needs is resolved only for that page: the member roster costs Slack API
   // calls, the Cloud MCP catalog a slow probe on a cold cache.
   const page = normalizeSettingsTab(tab);
-  if (page === "access") snapshot.members = await accessMembers(meta, state.channelId);
+  if (page === "access") {
+    const { people, focus } = await accessPeople(meta, state.channelId, state.memberFocus || "");
+    snapshot.people = people;
+    snapshot.focusMember = focus;
+  }
   if (page === "mcp" && userIsAdmin) snapshot.cloudMcp = await cloudPickerData(meta, quick ? 600 : 2500);
   if (page === "skills") snapshot.skillPicker = channelSkillPicker(meta, { userId: state.ownerId, userIsAdmin });
   if (page === "you") snapshot.mySkillPicker = await mySkillPicker(state.ownerId, userIsAdmin);
@@ -2053,7 +2065,7 @@ async function connectAndWire(app) {
       if (command.o === "tab") {
         const tab = String(command.p || "agent");
         // A page change closes any open form or pending confirmation.
-        const updated = await updateCurrent(await settingsRootView(entry, meta, { ...state, tab, form: "", confirm: "", memberPage: 0, memberFocus: "" }, userIsAdmin), { guardHash: false });
+        const updated = await updateCurrent(await settingsRootView(entry, meta, { ...state, tab, form: "", confirm: "", memberFocus: "" }, userIsAdmin), { guardHash: false });
         if (normalizeSettingsTab(tab) === "agent" && channelVpnConfigured(meta) && updated.view?.id) {
           await hydrateChannelVpnSettings(client, updated.view, { ...state, tab });
         }
@@ -2103,8 +2115,8 @@ async function connectAndWire(app) {
         return;
       }
       // Access page navigation: a page of members, or the one member a search picked.
-      if (actionId === CHANNEL_SETTINGS_MEMBER_PAGE_ACTION_ID || actionId === `${CHANNEL_SETTINGS_MEMBER_PAGE_ACTION_ID}_next`) {
-        await repaint({ state: { tab: "access", memberPage: Math.max(0, Number(command.m) || 0), memberFocus: "" } });
+      if (actionId === CHANNEL_SETTINGS_MEMBER_CLEAR_ACTION_ID) {
+        await repaint({ state: { tab: "access", memberFocus: "" } });
         return;
       }
       if (actionId === CHANNEL_SETTINGS_MEMBER_FIND_ACTION_ID) {

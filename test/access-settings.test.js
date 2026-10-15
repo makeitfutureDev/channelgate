@@ -40,7 +40,7 @@ test("only admins and current managers edit access: mode on Agent, policy and me
     assert.deepEqual(controls(agent).map((element) => element.type).sort(), expected ? ["checkboxes", "static_select"] : []);
     if (!expected && !meta.isDM) assert.match(JSON.stringify(agent), /Managers and admins change the mode/);
     // Access: the two policy dropdowns and one Use tick per non-admin member (admins are always in).
-    const view = buildChannelSettingsView({ access: meta, mode: meta, isDM: Boolean(meta.isDM), members }, state, { ...options, tab: "access" });
+    const view = buildChannelSettingsView({ access: meta, mode: meta, isDM: Boolean(meta.isDM), people: members }, state, { ...options, tab: "access" });
     if (meta.isDM) {
       assert.equal(JSON.parse(view.private_metadata).p, "agent", "a DM has no Access page");
       continue;
@@ -262,35 +262,60 @@ test("channel Runtime tab has no duplicate mode controls and Auto promotes Read-
   assert.equal(promoted.adminMode, false);
 });
 
-test("a large channel's members come a page at a time, with a people search that jumps to one person", async () => {
-  const { memberPage, ACCESS_MEMBER_PAGE_SIZE, parseSettingsMetadata, settingsCommand } = await import("../src/slack/channel-settings.js");
-  const members = Array.from({ length: 60 }, (_, i) => ({ id: `U${String(i).padStart(3, "0")}`, approved: true, use: true }));
+test("Access lists only the people with a setting of their own, and a people search reaches anyone", async () => {
+  const { parseSettingsMetadata, ACCESS_PEOPLE_LIMIT } = await import("../src/slack/channel-settings.js");
   const options = channelSettingsEditOptions(base, true, actor);
-  const view = (extra = {}) => buildChannelSettingsView({ access: base, mode: base, members }, { ...state, ...extra }, { ...options, tab: "access" });
+  const people = [
+    { id: "UEXCLUDED", approved: true, excluded: true, use: false },
+    { id: "UGUEST", guest: true, use: true },
+  ];
+  const view = (snapshot = {}, extra = {}) => buildChannelSettingsView({ access: base, mode: base, people, ...snapshot }, { ...state, ...extra }, { ...options, tab: "access" });
   const ticks = (v) => v.blocks.filter((block) => block.accessory?.type === "checkboxes").map((block) => block.block_id.slice("cg_member_".length));
-  const buttons = (v) => v.blocks.filter((block) => block.block_id === "cg_member_pager").flatMap((block) => block.elements).map((el) => [el.text.text, settingsCommand(el).m]);
+  const text = (v) => JSON.stringify(v);
 
-  assert.equal(ACCESS_MEMBER_PAGE_SIZE, 25);
-  assert.deepEqual(ticks(view()), members.slice(0, 25).map((m) => m.id));
-  assert.deepEqual(buttons(view()), [["Next ›", 1]]);
-  assert.match(JSON.stringify(view()), /1–25 of 60/);
-  assert.deepEqual(ticks(view({ memberPage: 1 })), members.slice(25, 50).map((m) => m.id));
-  assert.deepEqual(buttons(view({ memberPage: 1 })), [["‹ Previous", 0], ["Next ›", 2]]);
-  assert.deepEqual(ticks(view({ memberPage: 2 })), members.slice(50).map((m) => m.id));
-  assert.deepEqual(buttons(view({ memberPage: 2 })), [["‹ Previous", 1]]);
-  assert.equal(memberPage(members, 99).current, 2, "an out-of-range page clamps to the last");
-  assert.equal(JSON.parse(view({ memberPage: 2 }).private_metadata).m, 2, "the page survives a repaint");
+  // The default list is the exceptions only, labelled; no pager anywhere.
+  assert.deepEqual(ticks(view()), ["UEXCLUDED", "UGUEST"]);
+  assert.match(text(view()), /excluded here/);
+  assert.match(text(view()), /guest here/);
+  assert.doesNotMatch(text(view()), /Previous|Next ›/);
+  assert.match(text(view({ people: [] })), /No one has a setting of their own here/);
 
-  // Search: Slack's people picker; picking someone shows just their row (and a way back).
-  const search = view().blocks.find((block) => block.block_id === "cg_member_find").elements[0];
-  assert.equal(search.type, "users_select");
-  const focused = view({ memberFocus: "U042" });
-  assert.deepEqual(ticks(focused), ["U042"]);
-  assert.equal(focused.blocks.find((block) => block.block_id === "cg_member_find").elements[0].initial_user, "U042");
-  assert.ok(focused.blocks.find((block) => block.block_id === "cg_member_find").elements.some((el) => el.text?.text === "Show all"));
-  assert.equal(parseSettingsMetadata(focused.private_metadata).memberFocus, "U042");
-  assert.match(JSON.stringify(view({ memberFocus: "UNOTHERE" })), /isn't a member of this channel/);
-  // A small channel needs no pager.
-  const small = buildChannelSettingsView({ access: base, mode: base, members: members.slice(0, 5) }, state, { ...options, tab: "access" });
-  assert.equal(small.blocks.some((block) => block.block_id === "cg_member_pager"), false);
+  // Search is Slack's own people picker; picking someone shows just their row.
+  const find = (v) => v.blocks.find((block) => block.block_id === "cg_member_find").elements;
+  assert.equal(find(view())[0].type, "users_select");
+  const focused = view({ focusMember: { id: "UANYONE", approved: true, use: true, inChannel: true } }, { memberFocus: "UANYONE" });
+  assert.deepEqual(ticks(focused), ["UANYONE"]);
+  assert.equal(find(focused)[0].initial_user, "UANYONE");
+  assert.ok(find(focused).some((el) => el.text?.text === "Show list"));
+  assert.equal(parseSettingsMetadata(focused.private_metadata).memberFocus, "UANYONE");
+  assert.match(text(view({ focusMember: { id: "UOUT", inChannel: false } }, { memberFocus: "UOUT" })), /isn't in this channel/);
+  assert.match(text(view({ focusMember: null }, { memberFocus: "ULOST" })), /Couldn't look that person up/);
+
+  // A very long exceptions list is bounded, and says how to reach the rest.
+  const many = Array.from({ length: ACCESS_PEOPLE_LIMIT + 5 }, (_, i) => ({ id: `UG${i}`, guest: true, use: true }));
+  const long = view({ people: many });
+  assert.equal(ticks(long).length, ACCESS_PEOPLE_LIMIT);
+  assert.match(text(long), /5 more — search for a person/);
+  assert.ok(long.blocks.length <= 100);
+});
+
+
+test("the Access people list comes from the channel record and the user store, with no Slack call", async () => {
+  const { accessPeople } = await import("../src/slack/app.js");
+  await store.setUser("UPEOPLE_ADMIN", { approved: true, isAdmin: true, name: "Admin" });
+  await store.setUser("UPEOPLE_MEMBER", { approved: true, name: "Member" });
+  const meta = { ...base, manageAccess: "custom", allowedUsers: ["UPEOPLE_GUEST"], excludedUsers: ["UPEOPLE_MEMBER", "UPEOPLE_ADMIN"], managers: ["UPEOPLE_MEMBER"] };
+  const { people, focus } = await accessPeople(meta, "CPEOPLE", "UPEOPLE_SEARCHED");
+  const byId = Object.fromEntries(people.map((person) => [person.id, person]));
+  assert.deepEqual(Object.keys(byId).sort(), ["UPEOPLE_ADMIN", "UPEOPLE_GUEST", "UPEOPLE_MEMBER"]);
+  assert.equal(byId.UPEOPLE_MEMBER.excluded, true);
+  assert.equal(byId.UPEOPLE_MEMBER.use, false);
+  assert.equal(byId.UPEOPLE_MEMBER.manage, true);
+  assert.equal(byId.UPEOPLE_GUEST.guest, true);
+  assert.equal(byId.UPEOPLE_GUEST.use, true);
+  assert.equal(byId.UPEOPLE_ADMIN.excluded, false, "an admin is never shown as excluded");
+  assert.equal(byId.UPEOPLE_ADMIN.use, true);
+  assert.equal(focus.id, "UPEOPLE_SEARCHED");
+  assert.equal(focus.inChannel, null, "membership unknown without a Slack client — saving still validates it");
+  assert.deepEqual(await accessPeople({ isDM: true }, "D1"), { people: [], focus: null });
 });
