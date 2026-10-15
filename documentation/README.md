@@ -41,7 +41,7 @@ The website keeps its existing Vercel configuration, including its API rewrites.
 
 The handbook groups practical guides by chat work, files/reports, engines, memory, skills,
 connections, security, developer tools, platforms, automation, administration, and operations.
-The expanded catalog is **151 pages**: **106 feature guides**, **13 configuration guides**,
+The expanded catalog is **152 pages**: **107 feature guides**, **13 configuration guides**,
 **13 control references**, four directories/maps, and 15 retained overview, walkthrough,
 technical-reference and resource pages. `src/data/handbook.mjs` supplies feature/configuration
 navigation; `control-reference.mjs` supplies control navigation. `functionality-coverage.mjs`

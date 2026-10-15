@@ -416,7 +416,7 @@ Admins can add gateway-wide model shortcuts in Settings â†’ Access & security â†
 
 - `documentation/` builds a static Astro/Starlight documentation section for
   `channelgate.dev/docs` in the same Vercel website project as the marketing pages and blog.
-  The public handbook source now covers 151 pages: 106 dedicated feature guides in 12 groups,
+  The public handbook source now covers 152 pages: 107 dedicated feature guides in 12 groups,
   13 configuration guides, 13 control references, four directories/maps, and the existing
   15 overview, walkthrough, installation,
   technical-reference and resource pages. Feature guides explain use, setup, examples,
@@ -429,7 +429,7 @@ Admins can add gateway-wide model shortcuts in Settings â†’ Access & security â†
   Google Drive workspace sync and durable thread loops have their own guides alongside the
   workspace, engine, knowledge/integration, access, platform, automation and operations topics.
 - Thirteen published guides are generated at build time from this repository's canonical
-  Markdown files; the other 138 pages are authored in `documentation/src/content/docs/`.
+  Markdown files; the other 139 pages are authored in `documentation/src/content/docs/`.
   Repository-relative links resolve to a published guide or the source file on GitHub's `beta`
   branch. The export copies only the `/docs` subtree and entry point into an existing static
   website output, then merges documentation URLs into its sitemap. The existing Vercel project
@@ -450,6 +450,10 @@ Admins can add gateway-wide model shortcuts in Settings â†’ Access & security â†
   access retain their documented restrictions. This documentation change introduces no gateway
   runtime behavior. The complete-functionality expansion is published at `/docs`; build,
   browser, export, preview and production evidence is recorded in `TEST-PLAN.md`.
+- The Microsoft 365 access guide explains Teams chat/team resource consent, separate Outlook
+  authorisation, selected file grants and the drive allowlist, Microsoft access versus agent
+  activation, and sensitive-data processing. It links from security navigation and the Teams
+  guide and explicitly requires verification of actual tenant grants.
 
 ## Conversation sources and Teams names
 

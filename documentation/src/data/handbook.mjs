@@ -327,6 +327,11 @@ export const featureGroups = [
     "description": "Set admission, tool policy, credential protection, and execution boundaries.",
     "items": [
       {
+        "slug": "microsoft-365-access",
+        "label": "Microsoft 365 access and permissions",
+        "description": "Understand Teams resource consent, separate Outlook authorisation, file grants, and sensitive-data processing."
+      },
+      {
         "slug": "permissions",
         "label": "Modes and permissions",
         "description": "Read-only, Worker, Admin, Auto, and Lean settings."
