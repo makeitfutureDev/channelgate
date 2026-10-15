@@ -10699,5 +10699,15 @@ Documentation-only, engine-independent: no gateway runtime or Microsoft grants c
   passed for one page heading, canonical URL, desktop layout, 390px viewport without page
   overflow, and search results containing the article and its Outlook/file headings.
   Static checks passed (874 JavaScript files), and the secret scan passed (1,204 files/blobs).
-  Vercel preview/production remain unexecuted: egress refused the deployment credential
-  for `api.vercel.com` pending the administrator's secret-host approval card.
+  Publication verified on 2026-10-15 after the administrator approved Vercel API access.
+  Preview `dpl_EF8G2WxDYEsL5iYRQGdoo5VZS7zL` passed 11 route/asset checks, including the
+  article, Teams backlink, directory, search assets, sitemap and license public-key rewrite.
+  The current production deployment `dpl_HSy4DAREhmv3VmM36cJCSV4RPtvT` already included
+  the article through its automatic documentation build; no production replacement was
+  needed. The public article's main text exactly matches the checked build. Article,
+  Teams backlink, search JavaScript and unique sitemap entry return 200. Six existing
+  home/blog/RSS/contact/license responses remain byte-identical to the live baseline.
+  Production mobile browser: one heading and canonical URL, viewport/document both 390px;
+  live search returns the article and its Outlook/file headings, with no browser errors.
+  Rebuilt source: 152 checked routes and 27,179 internal links; website-preserving export
+  passed with 86 baseline source files unchanged, plus the updated docs entry/sitemap.
