@@ -19,6 +19,57 @@ beforeEach(() => resetAgentSessionsMode());
 
 const slackError = (code) => Object.assign(new Error(`An API error occurred: ${code}`), { data: { error: code } });
 
+test("native model names update immediately, stay per session, and do not repeat for tool phases", async () => {
+  const calls = [];
+  const client = { apiCall: async (method, payload) => calls.push([method, payload]) };
+  await setAgentSessionStatus(client, { channel: "C_NAMES", threadTs: "1", phrase: "thinking", username: "Opus 1M" });
+  await setAgentSessionStatus(client, { channel: "C_NAMES", threadTs: "1", phrase: "using a tool", username: "Opus 1M" });
+  await setAgentSessionStatus(client, { channel: "C_NAMES", threadTs: "2", phrase: "thinking", username: "GPT-6.1 Sol" });
+  await setAgentSessionStatus(client, { channel: "C_NAMES", threadTs: "1", phrase: "thinking", username: "GPT-6.1 Sol" });
+  await setAgentSessionStatus(client, { channel: "C_NAMES", threadTs: "1", username: "GPT-6.1 Sol" });
+  assert.deepEqual(calls.filter(([method]) => method === "agents.sessions.setStatus").map(([, p]) => [p.thread_ts, p.status, p.username]), [
+    ["1", "processing", "Opus 1M"], ["2", "processing", "GPT-6.1 Sol"],
+    ["1", "processing", "GPT-6.1 Sol"], ["1", "active", "GPT-6.1 Sol"],
+  ]);
+});
+
+test("missing customize scope retries bare native status and recovers after reinstall without restart", async (t) => {
+  let now = Date.now();
+  t.mock.method(Date, "now", () => now);
+  let missing = true;
+  const calls = [];
+  const client = { apiCall: async (method, payload) => {
+    calls.push([method, payload]);
+    if (method === "agents.sessions.setStatus" && payload.username && missing) throw slackError("missing_scope");
+  } };
+  assert.equal(await setAgentSessionStatus(client, { channel: "C_SCOPE", threadTs: "1", phrase: "thinking", username: "Opus" }), true);
+  await setAgentSessionStatus(client, { channel: "C_SCOPE", threadTs: "1", phrase: "tool", username: "Opus" });
+  assert.equal(agentSessionsMode().status, "native");
+  assert.equal(nativeSessionStatus("C_SCOPE", "1"), "processing");
+  assert.deepEqual(calls.filter(([m]) => m === "agents.sessions.setStatus").map(([, p]) => p.username), ["Opus", undefined]);
+  missing = false;
+  now += 60_001;
+  await setAgentSessionStatus(client, { channel: "C_SCOPE", threadTs: "1", phrase: "tool", username: "Opus" });
+  await setAgentSessionStatus(client, { channel: "C_SCOPE", threadTs: "1", username: "Opus" });
+  assert.deepEqual(calls.filter(([m]) => m === "agents.sessions.setStatus").map(([, p]) => [p.status, p.username]), [
+    ["processing", "Opus"], ["processing", undefined], ["processing", "Opus"], ["active", "Opus"],
+  ]);
+});
+
+test("a refused display name does not disable Stop or poison another model", async () => {
+  const calls = [];
+  const client = { apiCall: async (method, payload) => {
+    calls.push([method, payload]);
+    if (method === "agents.sessions.setStatus" && payload.username === "Bad name") throw slackError("invalid_arguments");
+  } };
+  await setAgentSessionStatus(client, { channel: "C_BAD", threadTs: "1", phrase: "thinking", username: "Bad name" });
+  await setAgentSessionStatus(client, { channel: "C_BAD", threadTs: "1", phrase: "tool", username: "Bad name" });
+  assert.equal(nativeSessionStatus("C_BAD", "1"), "processing");
+  assert.equal(agentSessionsMode().status, "native");
+  await setAgentSessionStatus(client, { channel: "C_BAD", threadTs: "1", phrase: "thinking", username: "Opus" });
+  assert.deepEqual(calls.filter(([m]) => m === "agents.sessions.setStatus").map(([, p]) => p.username), ["Bad name", undefined, "Opus"]);
+});
+
 test("a status write asserts the native lifecycle once per transition and carries the phrase on the legacy surface", async () => {
   const calls = [];
   const client = { apiCall: async (method, payload) => { calls.push([method, payload]); } };
@@ -248,5 +299,6 @@ test("the manifest subscribes to the agent session events and registers /model",
   assert.ok(events.includes("agent_session_title_changed"));
   assert.ok(manifest.oauth_config.scopes.bot.includes("assistant:write"));
   assert.ok(manifest.oauth_config.scopes.bot.includes("chat:write"));
+  assert.ok(manifest.oauth_config.scopes.bot.includes("chat:write.customize"));
   assert.ok(manifest.features.slash_commands.some((command) => command.command === "/model"));
 });

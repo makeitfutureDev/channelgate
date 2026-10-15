@@ -7,7 +7,7 @@ import { createTtlSet, isSlackInvalidBlocksError, postChunkedReply, MAX_SLACK_CH
 import { footerText, footerButtons, footerBlocks } from "./footer.js";
 import { answerImageBlocks, shareAnswerImageFiles } from "./images.js";
 import { setAgentSessionStatus, nativeSessionStatus, SESSION_STATUS } from "./agent-sessions.js";
-import { modelLabel } from "../gateway/model-info.js";
+import { modelLabel, modelDisplayLabel } from "../gateway/model-info.js";
 import { engineLabel } from "../engines/registry.js";
 import { describeSilence } from "../engines/watchdog.js";
 
@@ -50,7 +50,7 @@ function normalizeLoadingMessage(message) {
 // A non-empty `status` means the turn is working (the agent session goes `processing`, which is
 // what shows Slack's native Stop button); "" clears it (`active`). The phrase and the loading
 // messages only reach the legacy surface — see agent-sessions.js for the two surfaces.
-export function setAssistantStatus(client, channel, threadTs, status, loadingMessages = []) {
+export function setAssistantStatus(client, channel, threadTs, status, loadingMessages = [], { username = status ? "AI agent" : "" } = {}) {
   if (!threadTs) return Promise.resolve(false);
   const key = `${channel}:${threadTs}`;
   // A CLEAR is never gated: a thread that refused an activity write may still hold a native
@@ -60,7 +60,7 @@ export function setAssistantStatus(client, channel, threadTs, status, loadingMes
   const normalizedLoadingMessages = loadingMessages
     .slice(0, SLACK_LOADING_MESSAGE_MAX_COUNT)
     .map(normalizeLoadingMessage);
-  return setAgentSessionStatus(client, { channel, threadTs, phrase: status, loadingMessages: normalizedLoadingMessages })
+  return setAgentSessionStatus(client, { channel, threadTs, phrase: status, loadingMessages: normalizedLoadingMessages, username })
     .then((accepted) => {
       // Not an assistant thread / not a member / unusable thread_ts — fall back to the placeholder
       // edit, and stop asking for this thread.
@@ -156,6 +156,7 @@ function activeMarkdownFence(text) {
 function startStatusAnimation(client, channel, threadTs) {
   let activity = "is gathering information…";
   let runtime = "";
+  let nativeName = "AI agent";
   let rendered = "";
   let closed = false;
   let disabled = false;
@@ -184,16 +185,16 @@ function startStatusAnimation(client, channel, threadTs) {
   // and therefore the answer, waiting at the end of that backlog. There is now at most ONE write
   // in flight and ONE pending write, and the pending slot always holds the LATEST status: a
   // phrase superseded before it ever reached Slack is dropped instead of being sent late.
-  const write = async (status, loadingMessages) => {
+  const write = async (status, loadingMessages, username) => {
     if (disabled && status) return;
-    const accepted = await setAssistantStatus(client, channel, threadTs, status, loadingMessages);
+    const accepted = await setAssistantStatus(client, channel, threadTs, status, loadingMessages, { username });
     if (!accepted && status) disabled = true;
   };
   const pump = () => {
     if (inFlight || !pending) return;
     const next = pending;
     pending = null;
-    inFlight = write(next.status, next.loadingMessages)
+    inFlight = write(next.status, next.loadingMessages, next.username)
       .catch(() => {})
       .then(() => {
         inFlight = null;
@@ -207,7 +208,7 @@ function startStatusAnimation(client, channel, threadTs) {
     if (pending) pending.done(); // superseded before it was ever sent
     let done;
     const written = new Promise((resolve) => { done = resolve; });
-    pending = { status, loadingMessages, done };
+    pending = { status, loadingMessages, username: nativeName, done };
     pump();
     return written;
   };
@@ -293,6 +294,7 @@ function startStatusAnimation(client, channel, threadTs) {
       runtime = model
         ? modelLabel({ engine, model })
         : `${engineLabel(engine) || engine} CLI default`;
+      nativeName = model ? modelDisplayLabel(model, engine) : runtime;
       render();
     },
     afterMessageActivity,
@@ -311,7 +313,7 @@ function startStatusAnimation(client, channel, threadTs) {
       if (pending) pending.done();
       let done;
       terminalClear = new Promise((resolve) => { done = resolve; });
-      pending = { status: "", loadingMessages: [], done };
+      pending = { status: "", loadingMessages: [], username: nativeName, done };
       pump();
       return terminalClear;
     },

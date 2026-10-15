@@ -27,6 +27,10 @@ const NATIVE_REASSERT_MS = 5 * 60_000;
 // refused this thread. Bounded by time so a long-lived daemon cannot grow it without limit.
 const THREAD_TTL_MS = 2 * 60 * 60_000;
 const threads = new Map();
+// A missing identity scope must never disable the native lifecycle/Stop button. Retry identity
+// customization later, so an app reinstall can take effect without restarting the daemon.
+const CUSTOMIZE_RETRY_MS = 60_000;
+let customization = new WeakMap();
 function threadState(key) {
   const now = Date.now();
   let state = threads.get(key);
@@ -89,6 +93,7 @@ export function resetAgentSessionsMode() {
   modes.status = "native";
   modes.rename = "native";
   threads.clear();
+  customization = new WeakMap();
 }
 
 function errorCode(error) {
@@ -108,20 +113,45 @@ function noteFallback(surface, error) {
 // means the session is `processing`, an empty one `active`. `loadingMessages` are the prominent
 // loading copy (already normalized by the caller). Resolves true when Slack accepted the write on
 // at least one surface, false when this thread can carry no status at all.
-export async function setAgentSessionStatus(client, { channel, threadTs, phrase = "", loadingMessages = [], status = "" } = {}) {
+export async function setAgentSessionStatus(client, { channel, threadTs, phrase = "", loadingMessages = [], status = "", username = "" } = {}) {
   if (!threadTs) return false;
   const state = threadState(`${channel}:${threadTs}`);
   const nativeStatus = status || (phrase ? SESSION_STATUS.processing : SESSION_STATUS.active);
   let nativeAccepted = false;
   if (modes.status === "native" && !state.nativeOff) {
     const now = Date.now();
+    const name = [...String(username || "").replace(/[\x00-\x1f\x7f]/g, " ").replace(/\s+/g, " ").trim()].slice(0, 200).join("");
+    const identity = customization.get(client);
+    const customize = name && now >= (identity?.retryAfter || 0) && state.refusedUsername !== name;
+    const nameChanged = customize && state.username !== name;
     // Asserted on every transition; a steady `processing` is re-asserted on a slow cadence so a
     // long turn never hits the hour expiry, and a steady `active` is never repeated.
-    const due = state.native !== nativeStatus
+    const due = state.native !== nativeStatus || nameChanged
       || (nativeStatus === SESSION_STATUS.processing && now - state.nativeAt >= NATIVE_REASSERT_MS);
     if (due) {
       try {
-        await client.apiCall("agents.sessions.setStatus", { channel_id: channel, thread_ts: threadTs, status: nativeStatus });
+        const payload = { channel_id: channel, thread_ts: threadTs, status: nativeStatus };
+        if (customize) {
+          try {
+            await client.apiCall("agents.sessions.setStatus", { ...payload, username: name });
+            state.username = name;
+            state.refusedUsername = "";
+            customization.delete(client);
+          } catch (error) {
+            const code = errorCode(error);
+            if (!["missing_scope", "invalid_arguments", "invalid_arg_name"].includes(code)) throw error;
+            if (code === "missing_scope") {
+              customization.set(client, { retryAfter: now + CUSTOMIZE_RETRY_MS, warned: true });
+              if (!identity?.warned) console.warn("[slack] native model names need chat:write.customize; add the scope and reinstall the app. Native Stop remains enabled.");
+            } else {
+              // A bad label belongs to this session, not every other model or thread.
+              state.refusedUsername = name;
+            }
+            await client.apiCall("agents.sessions.setStatus", payload);
+          }
+        } else {
+          await client.apiCall("agents.sessions.setStatus", payload);
+        }
         state.native = nativeStatus;
         state.nativeAt = now;
         nativeAccepted = true;

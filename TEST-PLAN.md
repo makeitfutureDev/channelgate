@@ -7737,6 +7737,19 @@ Claude and on Codex.
       `references/tables.md`.
 
 ### Slack Agent Sessions & native Stop
+- [x] Automated: resolved model names reach the native session username, update immediately on
+      runtime changes, remain separate across threads, and survive the terminal clear. Ordinary
+      tool phases do not repeat native writes. Reused threads reset to AI agent before model
+      resolution; an unreported model says CLI default. Missing customization scope retries the
+      bare native lifecycle and retries customization after a minute; an invalid name does not
+      disable native Stop or other model names.
+- [ ] Live, Claude and Codex, with `chat:write.customize` installed: run an owned sleeping turn.
+      Native Stop shows the resolved model name. Change the next turn's model and verify the new
+      label; observe an authorized unpinned failover and simultaneous threads without stale or
+      cross-thread names. Native Stop still cancels, clears status, and prevents late answers.
+      An isolated missing-customize fixture retains native Stop and model information in progress.
+      Verify an unreported CLI default does not invent a concrete model. Actual native rendering
+      is required; API payload inspection alone does not pass this gate.
 - [x] Automated (`test/slack-agent-sessions.test.js`): a status write calls
       `agents.sessions.setStatus processing` once, carries the phrase and loading messages on
       `assistant.threads.setStatus`, does not repeat the native write for a phrase change, sends
