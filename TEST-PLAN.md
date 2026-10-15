@@ -10591,3 +10591,29 @@ failures or skips. Static checks, documentation coverage and secret scanning pas
       Variables the secrets tab and Settings the general tab. Restart the gateway and click the
       same buttons again; require the same windows. Have a second approved member click them;
       require the "person who asked" refusal. Repeat once in a personal chat.
+
+## Microsoft 365 access documentation (2026-10-14)
+
+Documentation-only, engine-independent: no gateway runtime or Microsoft grants change.
+
+- Build and export: from `documentation/`, run `npm ci`, `npm run build` and `npm test`.
+  Pass: `/docs/features/microsoft-365-access` has its canonical URL, one page heading,
+  sidebar entry, valid internal links and Pagefind index; existing website export fixtures pass.
+- Source review: compare the guide with `docs/PLATFORMS.md`, Teams auth/events/file resolver,
+  connected-account routing, privacy and engine authentication. Pass: chat/team RSC read
+  scope is distinct from activation, Outlook is separate, application mail access is not
+  described as user-scoped, selected file grants and drive allowlist are distinct, and no
+  unverified tenant grants, automatic EU processing or blanket GDPR guarantee are claimed.
+- Browser: open the page, follow the Teams related-guide link and use search for
+  "Microsoft 365 access". Check desktop and a 390px mobile viewport. Pass: content is
+  reachable, readable, searchable and fits the viewport without horizontal page overflow.
+- Publication: verify the preview and production page in the existing website project,
+  preserving the deployed website/blog and API routing. Pass: the page and assets load,
+  search includes the article, and existing home/blog/API responses remain available.
+- Results: documentation build passed (152 checked routes, 27,176 internal links, Pagefind),
+  export regression passed, and independent source/navigation review passed. Browser checks
+  passed for one page heading, canonical URL, desktop layout, 390px viewport without page
+  overflow, and search results containing the article and its Outlook/file headings.
+  Static checks passed (874 JavaScript files), and the secret scan passed (1,204 files/blobs).
+  Vercel preview/production remain unexecuted: egress refused the deployment credential
+  for `api.vercel.com` pending the administrator's secret-host approval card.

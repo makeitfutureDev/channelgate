@@ -20,7 +20,7 @@ product overview.
 
 - Clarify Composio file-staging identity arguments in every engine's per-run instructions:
   use `"user"` for `composio-user` and `"agent"` for `composio-agent`.
-- Update the pinned Claude Code and Codex CLIs to 2.1.299 and 0.162.1.
+- Update the pinned Claude Code and Codex CLIs to 2.1.300 and 0.162.1.
 - Update the gateway dependencies to Composio SDK 0.22.0, Express 5.3.0 and Acorn 8.19.0.
   Download filenames retain their names and required escaping; Express now omits optional quotes
   around simple attachment filenames. Regression checks cover the installed SDK's session
