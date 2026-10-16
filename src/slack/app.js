@@ -1,4 +1,5 @@
 import { assertEngineSelectable } from "../engines/selection.js";
+import { randomUUID } from "node:crypto";
 import { assertNewMcpSelections } from "../gateway/mcp-selection.js";
 // Slack Socket Mode gateway. Receives message events across DM / group DM / public & private
 // channels, applies the gating rules (DM → no mention needed; everywhere else → require an
@@ -929,7 +930,7 @@ export async function handleSettingsFormSubmission({ ack, body, view, client }, 
     await ack();
     return;
   }
-  const values = readSettingsForm(view, state.form);
+  const values = readSettingsForm(view, state.form, state.formSecretId);
   const request = { channelId: state.channelId, userId: clicker, expectedSlug: state.slug };
   let local;
   try {
@@ -937,7 +938,7 @@ export async function handleSettingsFormSubmission({ ack, body, view, client }, 
     assertSettingsFormAllowed(state.form, { ...local, clicker });
     const problem = localSettingsFormProblem(state.form, values);
     if (problem) {
-      await ack({ response_action: "errors", errors: { [settingsFieldBlockId(state.form, problem.field)]: problem.error } });
+      await ack({ response_action: "errors", errors: { [settingsFieldBlockId(state.form, problem.field, state.formSecretId)]: problem.error } });
       return;
     }
   } catch (error) {
@@ -971,7 +972,7 @@ export async function handleSettingsFormSubmission({ ack, body, view, client }, 
     clearTimeout(timer);
     const meta = (await getChannelMeta(fresh.entry.slug)) || fresh.meta;
     if (result.error) {
-      await client.views.update({ view_id: view.id, view: await rootView(fresh.entry, meta, { ...state, formError: result, formDraft: draft }, fresh.userIsAdmin, {}) });
+      await client.views.update({ view_id: view.id, view: await rootView(fresh.entry, meta, { ...state, formSecretId: randomUUID(), formError: result, formDraft: draft }, fresh.userIsAdmin, {}) });
       return;
     }
     saved = true;

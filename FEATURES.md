@@ -280,7 +280,9 @@ control-plane status.
   open the footer reads **Save** / **Close**; saving is the view submission, so a refusal appears
   under its own field. Each form's field ids are keyed by the form, so Slack never carries a typed
   value from one form into another. The open form and any pending confirmation ride in the view's
-  metadata; changing page clears both.
+  metadata; changing page clears both. After an asynchronous save refusal, the reopened form uses
+  a fresh identity for its token or variable-value input so Slack clears the typed secret, while
+  non-secret fields remain filled. A blank token on an existing connection still keeps the saved one.
 - **Explainers removed:** the permission paragraph, per-field footnotes and the long Access note.
   What remains is the 🔒 line shown where the viewer cannot edit something.
   → TEST-PLAN: Slack Settings redesign.
