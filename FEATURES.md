@@ -1625,6 +1625,8 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
   engine output, warmup notices and status heartbeats cannot restart processing while the runner
   unwinds; cold-engine steering uses the same cancellation boundary. A stop during directory or
   thread-context preflight does not start a replacement indicator or runner.
+  Repeated cancellation cleanup calls share one bounded completion, keeping a steered successor
+  behind its predecessor's pending status clear for the existing cleanup grace.
   Per-thread titles use `agents.sessions.rename` (200 chars). A workspace or app without the native surface
   (`feature_disabled`, `missing_scope`, `unknown_method`,
   `missing_agent_session_stopped_event_subscription`, …) falls back to the legacy methods for the

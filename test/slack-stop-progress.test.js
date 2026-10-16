@@ -166,3 +166,72 @@ for (const engine of ["claude", "codex"]) for (const action of ["stop", "steer"]
       "neither the late failure nor an answer is delivered after cancellation");
   });
 }
+
+for (const engine of ["claude", "codex"]) {
+  test(`${engine} steered successor waits for the predecessor's deferred status cleanup`, { timeout: 10_000 }, async () => {
+    const user = `U_STEER_CLEANUP_${engine}`, channel = `D_STEER_CLEANUP_${engine}`;
+    const slug = `dm-${user.toLowerCase()}`, thread = "9100.401";
+    await setUser(user, { approved: true });
+    saveSettings({ engine, memoryReviewEvery: 0, composioMode: "personal", engineFallback: false });
+    const ready = deferred(), exited = deferred(), oldWrite = deferred(), successorReady = deferred();
+    const backend = createFakeRuntimeBackend(), spawn = backend.spawn;
+    let spawns = 0;
+    const fixture = `
+      process.on("SIGTERM", () => process.exit(0));
+      console.log(JSON.stringify(process.argv[1] === "claude"
+        ? { type: "stream_event", event: { type: "content_block_delta", index: 0, delta: { type: "text_delta", text: "READY" } } }
+        : { type: "item.completed", item: { id: "ready", type: "agent_message", text: "READY" } }));
+      setInterval(() => {}, 1000);
+    `;
+    backend.spawn = (target, spec) => {
+      const predecessor = ++spawns === 1;
+      const child = spawn(target, { ...spec, cmd: process.execPath, args: ["-e", fixture, engine] });
+      child.stdout.once("data", () => (predecessor ? ready : successorReady).resolve());
+      if (predecessor) child.once("exit", () => exited.resolve());
+      return child;
+    };
+    await useFakeRuntime(backend);
+    const client = fakeSlack(user), accepted = [];
+    let held = false;
+    client.apiCall = async (method, args) => {
+      client.calls.push({ method, args });
+      if (method === "agents.sessions.setStatus") {
+        if (!held && args.status === "processing") { held = true; await oldWrite.promise; }
+        accepted.push(args.status);
+      }
+      return { ok: true };
+    };
+    const options = { botUserId: "U_BOT", teamId: `T_STEER_CLEANUP_${engine}` };
+    const first = processMessageEvent({ type: "message", channel, channel_type: "im", user,
+      text: "first cleanup fixture", ts: thread }, client, options);
+    let second;
+    try {
+      await ready.promise;
+      assert.equal(held, true);
+      second = processMessageEvent({ type: "message", channel, channel_type: "im", user,
+        text: "steered cleanup successor", thread_ts: thread, ts: "9100.402" }, client, { ...options, busyChoice: "steer" });
+      await exited.promise;
+      // The child has already exited; only the old Slack write remains. This delay is shorter
+      // than the existing one-second stop grace, so it must not promote the queued successor.
+      const settledEarly = await Promise.race([first.then(() => true), delay(100).then(() => false)]);
+      assert.equal(settledEarly, false, "the second stop() must await the original cleanup, not just its stream chain");
+      assert.equal(spawns, 1);
+      assert.equal(runQueue.count(`${slug}::${thread}`), 2);
+      oldWrite.resolve();
+      await first;
+      await successorReady.promise;
+      assert.equal(spawns, 2);
+      assert.equal(accepted.at(-1), "processing", "the old clear lands before the successor starts processing");
+      assert.ok(accepted.indexOf("active") < accepted.lastIndexOf("processing"));
+    } finally {
+      oldWrite.resolve();
+      await first;
+      if (second) {
+        await successorReady.promise;
+        await stopRunsInChannel(client, channel, slug, user, thread);
+        await second;
+      }
+      await useFakeRuntime(null);
+    }
+  });
+}

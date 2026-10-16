@@ -8,6 +8,9 @@
   after SIGTERM: neither processing nor the late answer reaches Slack. Directory-preflight Stop
   creates no later indicator or runner. Existing queue, thread-context preflight and Stop-card
   suites retain their durable cancellation, successor ownership and single-notice checks.
+  A held native status write plus a fast-exiting cold engine keeps the actual steered successor
+  queued until the predecessor's shared bounded cleanup completes; its late clear cannot erase
+  the successor's processing status within that existing grace window.
 - [ ] Live **Claude and Codex**, separately, in owned DM and channel fixtures: select each engine
   through the native picker, ask “Run sleep 120, then answer STOP_NOT_HONORED”, and press the real
   native Stop before completion. Record exact root, loaded revision, resolved engine/model,
