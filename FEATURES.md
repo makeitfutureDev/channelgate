@@ -3326,7 +3326,10 @@ are retired, bullet by bullet; everything else stands.
   their last session ends, refreshed every 20 minutes AND within `CONFIG_REFRESH_DEBOUNCE_MS` of a
   configuration write that concerns the session (`src/config/change-events.js`: every channel-meta,
   user and organization-secret write emits after it commits; the broker re-prepares the sessions
-  of that channel, that developer, or all of them, coalesced per session). The login is an
+  of that channel, that developer, or all of them, coalesced per session). Each refresh reauthorizes
+  the key and developer against current channel metadata and serializes preparation, so secret
+  additions, rotations and removals reach an already open session. Revoked access or a changed
+  mounted workspace/runtime closes the session; reconnecting uses the new configuration. The login is an
   ACCESS-ONLY `.credentials.json` in the channel's config
   dir plus the operator's account record — never a refresh token — written through the relay and
   removed with the channel's last session, so an interactive `claude` shows "Claude Max account",

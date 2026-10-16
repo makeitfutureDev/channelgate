@@ -18,6 +18,10 @@ product overview.
 
 ## Unreleased
 
+- Fix open SSH sessions retaining stale channel secrets after additions, rotations or removals.
+  Refreshes now recheck the developer’s access and close sessions when access is revoked or
+  their mounted workspace/runtime changes.
+
 - Show the active model in Slack's native Stop control using a per-session display name.
   Existing apps need `chat:write.customize` and reinstallation; missing customization permission
   preserves the native Stop button with its usual name.
