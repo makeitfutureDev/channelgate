@@ -1715,7 +1715,14 @@ function selectedMcpEntries(box, engine) {
   captureMcpSelection(box);
   const selected = mcpBoxState(box)[engine];
   const available = catalogWithSavedEntries(box, engine);
-  return selected.map((id) => available.find((entry) => mcpEntryId(entry) === id)).filter(Boolean);
+  return selected.map((id) => {
+    const entry = available.find((candidate) => mcpEntryId(candidate) === id);
+    // Unavailable catalog rows redact transport references. Round-trip an existing grant
+    // verbatim rather than serializing that display-only stub and silently dropping it.
+    // New selections still use the catalog and every save is revalidated by the backend.
+    const original = box._mcpOriginals?.[engine]?.find((candidate) => mcpEntryId(candidate) === id);
+    return entry?.selectable === false && original ? original : entry;
+  }).filter(Boolean);
 }
 
 function wireGrantTierNavigation(select, currentTier) {
@@ -2407,6 +2414,9 @@ function renderChannelDetail(ch) {
       // The server response is the validated, committed record. Reconcile the cached channel from
       // that whole record so a later SPA re-render cannot resurrect stale MCP/skill selections.
       ch.meta = reconcileChannelMeta(ch.meta, result.meta);
+      initializeMcpBox(mcpsBox, { claude: ch.meta.allowedMcps || [], codex: ch.meta.allowedCodexMcps || [] });
+      if (!mcpsBox.dataset.mcpLoading) paintAllMcpBoxes(mcpsBox);
+      updateChecksCount(mcpsBox, mcpsCount);
       void refreshVpn();
       skillsPicker?.update({ selected: ch.meta.skills || [] });
       const acceptedGuests = channelGuestAcceptedIds(

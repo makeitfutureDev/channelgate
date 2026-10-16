@@ -18,6 +18,9 @@ product overview.
 
 ## Unreleased
 
+- Preserve existing unavailable Cloud MCP selections when saving unrelated admin settings.
+  Removing a selection refreshes the channel picker and prevents later saves from restoring it.
+
 - Show enabled optional providers in the admin channel Runtime picker and preserve their saved
   engine/model selection when changing unrelated channel settings.
 
