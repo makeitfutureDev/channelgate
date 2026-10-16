@@ -51,7 +51,19 @@ test("missing resolved facts stay unknown instead of inferring a mode or host is
   assert.match(note, /database visibility are unknown/);
   assert.match(note, /Clean mode for this attempt is unknown/);
   assert.match(note, /Network policy for this attempt is unknown/);
+  assert.match(note, /Admin permission bypass for THIS attempt: \*\*unknown\*\*/);
   assert.doesNotMatch(note, /runtime directory: \*\*(not )?mounted\*\*/);
+});
+
+test("permission facts use the supplied launch decision, never channel mode or mounted home", () => {
+  const home = target([bind(path.dirname(gatewayRoot()), undefined, "operator-home")]);
+  home.meta = { adminMode: true, autoMode: true };
+  for (const dangerouslySkip of [false, true]) {
+    const note = runtimeAccessPreamble(home, { dangerouslySkip });
+    assert.match(note, new RegExp(`Admin permission bypass for THIS attempt: \\*\\*${dangerouslySkip ? "enabled" : "disabled"}\\*\\*`));
+    assert.match(note, /danger-full-access.*approval_policy.*never.*do not establish.*admin bypass/);
+  }
+  assert.match(runtimeAccessPreamble(home), /Admin permission bypass for THIS attempt: \*\*unknown\*\*/);
 });
 
 test("a sudo-host target states that the container boundary is absent", () => {

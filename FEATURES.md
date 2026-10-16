@@ -913,6 +913,10 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
   configured model/effort and fresh/resumed session state, including clean mode, model retries,
   session recovery and cross-engine fallback. The assistant is told to distinguish configured
   aliases from provider-reported identity and leave unexposed harness defaults unknown.
+  The access preamble also states the launch's resolved admin permission bypass decision,
+  including resumed, background and fallback attempts. It distinguishes this decision from
+  channel Admin mode, writable tools and Codex's internal sandbox/approval settings; callers
+  without a resolved decision report unknown. The restricted memory reviewer states disabled.
   → TEST-PLAN: Per-attempt runtime identity.
 
 - **Disposable Linux lifecycle evidence:** the manually dispatchable Linux lifecycle workflow

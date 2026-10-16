@@ -18,6 +18,10 @@ product overview.
 
 ## Unreleased
 
+- Supply each attempt's resolved admin permission bypass decision to the assistant, so it can
+  distinguish its actual launch permissions from the channel's Admin label and writable tools.
+  Permission policies and container boundaries are unchanged.
+
 - Preserve existing unavailable Cloud MCP selections when saving unrelated admin settings.
   Removing a selection refreshes the channel picker and prevents later saves from restoring it.
 

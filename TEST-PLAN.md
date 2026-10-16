@@ -4065,6 +4065,23 @@ pass. Many checks are manual (require a real Slack workspace + an authenticated 
 
 ## Per-attempt runtime identity
 
+- [x] Resolved permission facts: `test/runtime-identity-preamble.test.js` compares delivered
+  preambles with actual fixture CLI bypass flags for Claude and Codex members/admins in Admin
+  mode, resumed turns, an admin background agent, a Clean member, guarded home mounts and
+  cross-engine fallback. Existing model retry/healing cases check the same agreement.
+  `test/runtime-access-facts.test.js` keeps an absent decision unknown regardless of channel
+  flags or mounted home; `test/memory-review.test.js` requires the reviewer's explicit false
+  decision in both its launch options and prompt. These tests prove delivery, not live answers.
+- [ ] Live permission-report retest, Claude and Codex separately (existing Slack Access runtime
+  acceptance): reserve an owned Admin-mode fixture with Auto/Lean/network off, preserve the
+  operator's whole-home setting, and use an approved member plus an organization admin. Ask
+  each to create a distinct proof file containing `access proof` and report whether permission
+  bypass is active in this attempt. Require member **disabled** and admin **enabled** in the
+  answers, matching exact-root `run_config.dangerouslySkip`, delivered per-attempt facts and
+  actual launch flags. A writable container or Codex `danger-full-access`/`approval_policy=never`
+  does not establish admin bypass. Repeat on a resumed member turn; retain the original failed
+  answer and append retest evidence. Keep all existing Access native-save, admission, Lean,
+  network, selector and restoration gates; remove proof files and restore owned settings.
 - [x] `test/runtime-identity-preamble.test.js` inspects actual stub process argv through the
   container-shaped fake runtime: fresh/resumed Claude and Codex turns with a changed thread
   model, clean runs with unexposed defaults, rejected-model replacement, cross-engine fallback

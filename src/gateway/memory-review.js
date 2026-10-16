@@ -34,6 +34,7 @@ import { recordUsage } from "./usage.js";
 import { logEvent } from "../util/logger.js";
 import { postNotice } from "../platforms/notify.js";
 import { allowedFsRoot } from "../web/security.js";
+import { permissionBypassNote } from "./runtime-access.js";
 
 export const REVIEW_ORIGIN = "memory_review";
 export const REVIEW_TOOLSET = "memory-review";
@@ -148,7 +149,9 @@ export async function runMemoryReview({
   const snapshot = await readMemorySnapshot(cwd, meta);
   const transcript = String((await fetchTranscript?.()) || "").trim();
   if (!transcript) return { skipped: "no-transcript", saved: 0 };
-  const prompt = buildMemoryReviewPrompt({ snapshot, transcript, channelName: meta.name || slug });
+  const dangerouslySkip = false; // The reduced-tool reviewer never receives the admin bypass.
+  const prompt = permissionBypassNote(dangerouslySkip)
+    + buildMemoryReviewPrompt({ snapshot, transcript, channelName: meta.name || slug });
   const model = getMemoryReviewModel();
 
   const target = resolveTarget(slug, meta);
@@ -205,6 +208,7 @@ export async function runMemoryReview({
     const result = await run({
       cwd,
       prompt,
+      dangerouslySkip,
       sessionId: randomUUID(),
       isNewSession: true,
       mcpConfig: mcpConfigFile,
