@@ -63,7 +63,7 @@
 ## Slack Settings redesign (2026-10-15)
 
 ### Regression
-- [x] Automated: `node --test test/slack-settings-redesign.test.js test/channel-settings-modal.test.js test/access-settings.test.js test/slack-secret-actions.test.js test/slack-custom-mcp-settings.test.js test/slack-vpn-settings.test.js`.
+- [x] Automated: `node --test test/slack-settings-redesign.test.js test/slack-settings-secret-reset.test.js test/channel-settings-modal.test.js test/access-settings.test.js test/slack-secret-actions.test.js test/slack-custom-mcp-settings.test.js test/slack-vpn-settings.test.js`.
   - **Variables ⋯ menu, end to end on the store:**
     - Add with Secret ticked → hidden.
     - Allowed servers prefills the current list, replaces it, and refuses a malformed host under
@@ -92,6 +92,10 @@
       an expired save cannot pass. Authority is re-checked after those checks; a manager demoted
       meanwhile writes nothing. A refusal only the save can find reopens the form with the error
       under its field, the non-secret fields refilled and the token or value box empty.
+    - Model Slack's retention of input by block/action identity: repeated asynchronous custom MCP
+      refusals clear the token in both scopes without clearing name/URL. Retried submissions read
+      only the new token field, local errors target it, and blank edits keep the stored token even
+      if stale input state is supplied. Duplicate variable refusals also clear the value field.
     - `beta`'s hardened pushed-form handlers (pre-redesign views) stay covered with explicit
       legacy buttons in `test/slack-custom-mcp-settings.test.js`.
   - **Access:**
@@ -136,6 +140,10 @@ Fixture: a disposable channel; one admin, one approved non-manager member, one u
 - [ ] **MCP:** Edit Composio (the label is prefilled and the token box empty) and Save; Connect
   the Make toolbox with a bad URL. Pass: the error appears under URL and nothing is saved. Add a
   custom MCP as a manager; the member sees no Edit on it.
+- [ ] **Async refusal:** submit a custom MCP whose hostname resolves to a denied address. On
+  the reopened native form, the token box is empty while name/URL remain. Repeat the refusal,
+  then correct the address and retype the token; saving succeeds. Repeat in personal scope and
+  verify that leaving an existing connection's token blank keeps its saved token.
 - [ ] **Variables:** on a test variable run all four ⋯ actions. Pass:
   - Replace keeps the type and servers.
   - Allowed servers lists the current servers and saves the new ones; `list_secrets` agrees.

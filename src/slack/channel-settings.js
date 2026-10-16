@@ -191,6 +191,7 @@ export function settingsMetadata(state = {}) {
     p: normalizeTab(state.tab),
     // The inline form open on the page (`f`) and the in-place confirmation waiting (`x`).
     ...(state.form ? { f: String(state.form).slice(0, 200) } : {}),
+    ...(state.form && state.formSecretId ? { fs: String(state.formSecretId).slice(0, 36) } : {}),
     ...(state.confirm ? { x: String(state.confirm).slice(0, 200) } : {}),
     // The person the Access page's search picked (`y`).
     ...(state.memberFocus ? { y: String(state.memberFocus).slice(0, 32) } : {}),
@@ -212,6 +213,7 @@ export function parseSettingsMetadata(raw) {
     ownerId: String(value.u),
     tab: normalizeTab(value.p),
     form: typeof value.f === "string" ? value.f : "",
+    ...(typeof value.fs === "string" && /^[0-9a-f-]{36}$/.test(value.fs) ? { formSecretId: value.fs } : {}),
     confirm: typeof value.x === "string" ? value.x : "",
     memberFocus: typeof value.y === "string" && /^[UW][A-Z0-9]+$/.test(value.y) ? value.y : "",
   };
@@ -419,8 +421,11 @@ function pageNav(state, active, { isDM = false } = {}) {
 // metadata (`f`); its input block ids are keyed by the form, so a value typed into one form can
 // never be carried into another by Slack's state retention.
 export const SETTINGS_FIELD_ACTION_ID = "v";
-export function settingsFieldBlockId(form, field) {
-  return `cgf_${field}_${createHmac("sha256", "cg-settings-form").update(String(form)).digest("hex").slice(0, 8)}`;
+export function settingsFieldBlockId(form, field, secretId = "") {
+  // Slack preserves typed values when both input identities survive views.update. A refused
+  // async save rotates only write-only inputs; labels, URLs and other draft fields stay put.
+  const key = secretId && (field === "token" || field === "value") ? `${form}:${secretId}` : String(form);
+  return `cgf_${field}_${createHmac("sha256", "cg-settings-form").update(key).digest("hex").slice(0, 8)}`;
 }
 
 // Which scope a form or row key names: c = this conversation, o = organization, p = the viewer.
@@ -509,11 +514,11 @@ export function variableEntry(snapshot = {}, scope, name) {
 }
 
 // The values a submitted form carries, by field name, read from the root view's state.
-export function readSettingsForm(view = {}, key) {
+export function readSettingsForm(view = {}, key, secretId = "") {
   const values = view?.state?.values || {};
   const out = {};
   for (const field of ["label", "token", "url", "name", "value", "hosts", "secret"]) {
-    const entry = values[settingsFieldBlockId(key, field)]?.[SETTINGS_FIELD_ACTION_ID];
+    const entry = values[settingsFieldBlockId(key, field, secretId)]?.[SETTINGS_FIELD_ACTION_ID];
     if (!entry) continue;
     out[field] = field === "secret"
       ? (entry.selected_options || []).some((choice) => choice?.value === "secret")
@@ -531,7 +536,7 @@ function formBlocks(spec, state) {
   const error = state.formError?.error ? state.formError : null;
   for (const raw of spec.fields) {
     const field = Object.hasOwn(draft, raw.name) && raw.name !== "token" && raw.name !== "value" ? { ...raw, initial: draft[raw.name] } : raw;
-    const blockId = settingsFieldBlockId(spec.key, field.name);
+    const blockId = settingsFieldBlockId(spec.key, field.name, state.formSecretId);
     if (field.type === "checkbox") {
       const choice = option(field.label, "secret", field.option || "");
       blocks.push({

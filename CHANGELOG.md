@@ -18,6 +18,10 @@ product overview.
 
 ## Unreleased
 
+- Clear typed tokens when Slack Settings reopens a form after an asynchronous save refusal,
+  including a custom MCP address rejected by DNS validation. Non-secret fields remain filled;
+  leaving an existing connection's token blank still keeps its saved token.
+
 - Keep cancelled Slack turns from restoring the loading indicator while their engine shuts down.
   Stop and cold-engine steering close progress immediately and ignore late output; cancellation
   during preflight cannot start a new indicator.
