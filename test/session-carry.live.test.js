@@ -24,7 +24,11 @@ test("live: Claude and Codex fixture history roundtrips through a container rebu
   };
   const runtime = __setContainerRuntime({ log() {} });
   const slug = `cg-carry-fixtures-${randomUUID().slice(0, 8)}`;
-  const target = resolveRuntime(slug, { platform: "slack", channelId: "C-CARRY-FIXTURE" }, { settings });
+  const meta = { platform: "slack", channelId: "C-CARRY-FIXTURE" };
+  // Host histories are private to verified admins. The default project target must refuse them;
+  // the roundtrip below exercises the separately resolved, authorized admin runtime.
+  const projectTarget = resolveRuntime(slug, meta, { settings });
+  const target = resolveRuntime(slug, meta, { settings, isAdminAuthor: true });
   const host = { ...target, backend: "host", container: null };
   let mayHaveContainer = false;
   try {
@@ -47,6 +51,10 @@ test("live: Claude and Codex fixture history roundtrips through a container rebu
       const body = `${JSON.stringify({ fixture: true, engine, sessionId })}\n`;
       mkdirSync(path.dirname(fixture), { recursive: true });
       writeFileSync(fixture, body);
+      assert.equal(await carrySession({
+        engine, sessionId, cwd: target.cwd, storedRuntime: { backend: "host" }, target: projectTarget,
+        resolveFor: () => host, log() {},
+      }), null, `${engine}: project authors must not import host histories`);
       assert.deepEqual(await carrySession({
         engine, sessionId, cwd: target.cwd, storedRuntime: { backend: "host" }, target,
         resolveFor: () => host, log() {},
