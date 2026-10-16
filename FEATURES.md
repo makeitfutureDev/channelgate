@@ -153,6 +153,8 @@
 
 ## Provider selection readiness
 
+- The admin channel Runtime picker lists enabled engine adapters, including optional providers,
+  and retains their saved engine/model selection when an unrelated channel setting is saved.
 - Enabled optional providers must have their own configured credential and endpoint before a
   runtime selection is saved in `/model`, Slack Settings, admin default/channel/DM saves, model
   shortcuts or explicit provider directives. Rejection explains the required Settings repair and
