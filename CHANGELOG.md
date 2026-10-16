@@ -18,6 +18,9 @@ product overview.
 
 ## Unreleased
 
+- Show enabled optional providers in the admin channel Runtime picker and preserve their saved
+  engine/model selection when changing unrelated channel settings.
+
 - Clear typed tokens when Slack Settings reopens a form after an asynchronous save refusal,
   including a custom MCP address rejected by DNS validation. Non-secret fields remain filled;
   leaving an existing connection's token blank still keeps its saved token.

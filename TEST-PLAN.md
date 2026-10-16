@@ -410,6 +410,12 @@ must run applicable gates before stable promotion; no live pass is implied by au
 
 ## Provider selection readiness (2026-10-08)
 
+- [x] Browser regression: `CG_BROWSER_MODULE=<playwright-module> node --test
+  test/channel-engine-picker-browser.test.js` exercises the real channel editor and admin API.
+  Both configured optional providers appear alongside Default/Claude/Codex; disabled adapters
+  are omitted. Existing engine/model pins survive unrelated saves and reloads, and another
+  enabled provider can be selected and saved. This is isolated regression evidence; the live
+  provider/client acceptance below remains separate.
 - [x] Regression: `node --test test/provider-selection-surfaces.test.js
   test/qwen-provider-settings-route.test.js test/model-wizard-channel-scope-thread.test.js
   test/channel-settings-modal.test.js test/platform-controls.test.js test/qwen-engine.test.js`.

@@ -2218,6 +2218,7 @@ function renderChannelDetail(ch) {
     approvedBox.textContent = "";
   }
   const engineSelect = card.querySelector(".ch-engine");
+  engineSelect.innerHTML = engineOptionsHtml({ includeDefault: true });
   engineSelect.value = meta.engine || "";
   const authSource = card.querySelector(".ch-codex-auth-source");
   const channelPanel = card.querySelector(".ch-auth-channel-panel");
