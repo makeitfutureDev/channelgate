@@ -273,6 +273,81 @@ test("a configuration write that concerns a live session re-prepares it at once;
   assert.equal(prepared.length, base + 3, "an ended session is never re-prepared");
 });
 
+test("an open session receives current channel secrets and user authority after actual writes", async () => {
+  const state = await broker.startSshBroker({ dir: SSH_DIR, log: silent, retryMs: 0, deps, authorizeOptions });
+  const prepareSession = state.deps.prepareSession;
+  const original = await getChannelMeta(entry.slug);
+  const observed = [];
+  state.deps.prepareSession = async (session) => {
+    observed.push({ value: session.meta.env?.QA_REFRESH?.value, admin: session.user.admin });
+    return prepareSession(session);
+  };
+  const waitFor = async (predicate) => {
+    const deadline = Date.now() + 2000;
+    while (!predicate()) {
+      assert.ok(Date.now() < deadline, "session did not observe the current configuration");
+      await settle();
+    }
+  };
+  let socket;
+  try {
+    ({ socket } = await attach({ v: 1, key: ED25519, channel: entry.slug, client: "secret-refresh" }));
+    assert.equal(observed.at(-1).value, undefined);
+    for (const value of ["added", "rotated", undefined]) {
+      const before = observed.length;
+      await saveChannelMeta(entry.slug, { ...original, env: value ? { QA_REFRESH: { provider: "local", value, exposure: "readable" } } : {} });
+      await waitFor(() => observed.length > before);
+      assert.equal(observed.at(-1).value, value, "add, rotation and removal reach the same attached session");
+      assert.equal(broker.liveSshSessions({ slug: entry.slug }).length, 1);
+    }
+    const before = observed.length;
+    await setUser(DEV, { name: "Apps", approved: true, isAdmin: true });
+    await waitFor(() => observed.length > before);
+    assert.equal(observed.at(-1).admin, true, "the refreshed user rank is current too");
+    await saveChannelMeta(entry.slug, { ...original, sshUsers: [] });
+    await waitFor(() => broker.liveSshSessions({ slug: entry.slug }).length === 0);
+    assert.equal(children.at(-1).signalCode, "SIGTERM", "revoked access closes the existing session");
+  } finally {
+    socket?.destroy();
+    await settle();
+    state.deps.prepareSession = prepareSession;
+    await saveChannelMeta(entry.slug, original);
+    await setUser(DEV, { name: "Apps", approved: true, isAdmin: false });
+  }
+});
+
+test("refresh refuses revoked user authority or a changed mounted work folder", async () => {
+  const state = await broker.startSshBroker({ dir: SSH_DIR, log: silent, retryMs: 0, deps, authorizeOptions });
+  const original = await getChannelMeta(entry.slug);
+  const resolve = state.deps.resolveTarget;
+  state.deps.resolveTarget = (slug, meta) => ({ ...resolve(slug, meta), workDir: meta.workDir || `/work/${slug}` });
+  try {
+    for (const change of ["user", "workDir"]) {
+      const { socket, line } = await attach({ v: 1, key: ED25519, channel: entry.slug, client: change });
+      assert.equal(line.ok, true);
+      const child = children.at(-1), before = prepared.length;
+      if (change === "user") await setUser(DEV, { name: "Apps", approved: false, isAdmin: false });
+      else await saveChannelMeta(entry.slug, { ...original, workDir: "/work/another-project" });
+      const deadline = Date.now() + 2000;
+      while (broker.liveSshSessions({ slug: entry.slug }).length) {
+        assert.ok(Date.now() < deadline, "the old session remained authorized");
+        await settle();
+      }
+      await settle();
+      assert.equal(child.signalCode, "SIGTERM");
+      assert.equal(prepared.length, before, "no refreshed credentials are staged into the old runtime");
+      assert.equal(reaper.leaseCount(`cg-${entry.slug}`), 0);
+      socket.destroy();
+      await setUser(DEV, { name: "Apps", approved: true, isAdmin: false });
+      await saveChannelMeta(entry.slug, original);
+    }
+  } finally {
+    state.deps.resolveTarget = resolve;
+    await setUser(DEV, { name: "Apps", approved: true, isAdmin: false });
+    await saveChannelMeta(entry.slug, original);
+  }
+});
+
 test("refusals name the remedy and leave no lease, no session and no exec behind", async () => {
   const before = children.length;
   const cases = [

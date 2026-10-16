@@ -8445,6 +8445,10 @@ are the v0.8 production deployment gate and are executed in the QA loop that fol
       change that concerns it — its channel, its developer, or the organization's secrets — one
       refresh per burst, never for another channel's or developer's change, never for an ended
       session (automated: `test/change-events.test.js`, `test/ssh-broker.test.js`).
+- [x] Unit: an attached session reads fresh metadata after actual secret add, rotate and remove
+      writes, and current developer authority after a user write. Revoking the SSH grant or
+      approved status closes the session and releases its lease; a changed mounted work folder
+      closes it before preparing credentials for the new target (automated: `test/ssh-broker.test.js`).
 - [x] Unit: one tool per verb for secrets — `list_secrets` lists the three scopes in one call
       (names, masked tails, authors; never a value; the organization's tails only for admins; a
       person only their own personal scope; an unverified principal no personal scope; `scope`

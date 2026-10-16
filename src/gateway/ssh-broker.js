@@ -137,6 +137,17 @@ function writeLine(socket, payload) {
   }
 }
 
+// A refresh may change credentials and tool policy, but cannot move an attached shell to a
+// different container or mount set. Compare the unresolved plans on both sides: ensureUp fills
+// in image/auth details on the original target after this snapshot is taken.
+function sessionTargetKey(target) {
+  return JSON.stringify([
+    target?.backend, target?.runtimeScope, target?.workDir, target?.cleanWorkDir, target?.artifactDir,
+    target?.container?.name, target?.container?.network,
+    target?.container?.mounts, target?.container?.credentialMode,
+  ]);
+}
+
 // One brokered session, from an already-parsed header to the last byte.
 async function runSession(socket, header, leftover, state) {
   const { deps, log } = state;
@@ -167,6 +178,7 @@ async function runSession(socket, header, leftover, state) {
     socket.end();
     return;
   }
+  const targetKey = sessionTargetKey(target);
   // The lease comes FIRST — before ensureUp, like run.js — so the reaper cannot stop the container
   // between "it is up" and "sshd is inside".
   const lease = target.runtime.acquireLease(target, { kind: "ssh", id });
@@ -219,16 +231,46 @@ async function runSession(socket, header, leftover, state) {
     let prepared = { mcpServers: [], secrets: [], rejectedMcps: [], problems: [], toolset: "" };
     count(1);
     counted = true;
-    const refresh = async () => {
-      try {
-        prepared = await deps.prepareSession({ target, entry, meta, user, cliBin, log });
-        claude = prepared.claude || { relayed: true, source: "", reason: "" };
-      } catch (error) {
-        claude = { relayed: false, reason: String(error?.message || error) };
-        log.warn?.(`[ssh] Claude relay for ${entry.slug}: ${claude.reason}`);
-      }
+    let refreshQueue = Promise.resolve();
+    const refresh = () => {
+      // Re-read at execution time, including after a queued refresh. A configuration event is
+      // only a wake-up; neither the attach-time metadata nor the original user rank is authority.
+      const next = refreshQueue.then(async () => {
+        if (done) return false;
+        let current, currentTarget;
+        try {
+          current = await deps.authorize({ ...header, channel: entry.channelId });
+          if (!current.ok || current.key.id !== key.id || current.user.id !== user.id
+              || current.entry.slug !== entry.slug || current.entry.channelId !== entry.channelId) {
+            await finish("SSH access is no longer authorized");
+            return false;
+          }
+          currentTarget = deps.resolveTarget(current.entry.slug, current.meta);
+          if (sessionTargetKey(currentTarget) !== targetKey) {
+            await finish("the channel runtime changed — reconnect to use its current configuration");
+            return false;
+          }
+        } catch {
+          await finish("SSH authorization could not be refreshed");
+          return false;
+        }
+        if (done) return false;
+        try {
+          prepared = await deps.prepareSession({
+            target: { ...target, meta: current.meta, settings: currentTarget.settings },
+            entry: current.entry, meta: current.meta, user: current.user, cliBin, log,
+          });
+          claude = prepared.claude || { relayed: true, source: "", reason: "" };
+        } catch (error) {
+          claude = { relayed: false, reason: String(error?.message || error) };
+          log.warn?.(`[ssh] Claude relay for ${entry.slug}: ${claude.reason}`);
+        }
+        return !done;
+      });
+      refreshQueue = next.catch(() => {});
+      return next;
     };
-    await refresh();
+    if (!(await refresh())) return;
     session.refresh = refresh;
     child = deps.spawnExec(target, cliBin);
     touchSshKey(key.id);
