@@ -697,6 +697,7 @@ function startStreamingProgress(client, { channel, threadTs, isDM, authorId, tea
   let failed = false;
   let stopped = false;
   let terminal = null; // "finalize" or "stop" once the run starts closing
+  let stopCompletion = null; // all cancellation callers share the original cleanup and grace
   // Streaming failures used to be swallowed whole, which made field problems (e.g. Slack's
   // undocumented limit on how long a message may stay in the streaming state) undiagnosable from
   // the logs. One warn per failure site per turn — never the payload, only the error code.
@@ -1365,7 +1366,8 @@ function startStreamingProgress(client, { channel, threadTs, isDM, authorId, tea
     },
     // Abort/error path: close the stream so the partial message finalizes cleanly (or clear the
     // shimmer if it never started). The caller posts its own error/stop notice.
-    stop: async () => {
+    stop: () => {
+      if (stopCompletion) return stopCompletion;
       const bounded = async (work) => {
         let timer;
         try {
@@ -1373,8 +1375,7 @@ function startStreamingProgress(client, { channel, threadTs, isDM, authorId, tea
         } finally { clearTimeout(timer); }
       };
       if (terminal) {
-        await bounded(chain);
-        return;
+        return bounded(chain);
       }
       terminal = "stop";
       stopped = true;
@@ -1398,7 +1399,12 @@ function startStreamingProgress(client, { channel, threadTs, isDM, authorId, tea
           }
         }
       })().catch((error) => reportStreamFailure("abort cleanup", error));
-      await bounded(cleanup);
+      // An abort listener may start this before the runner's catch/finally calls stop again.
+      // Every caller must await the same clear/stream cleanup, not only the stream chain: an
+      // early queue release could let this turn's pending clear erase its successor's status.
+      // Sharing the bounded promise also keeps retries from starting a fresh grace period.
+      stopCompletion = bounded(cleanup);
+      return stopCompletion;
     },
   };
 }

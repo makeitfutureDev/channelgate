@@ -1,5 +1,27 @@
 # ChannelGate — Test Plan
 
+## Slack cancellation progress ordering (2026-10-16)
+
+- [x] Regression: `test/slack-stop-progress.test.js` holds actual pipeline runtime preparation
+  open after Stop/cold-engine Steer for Claude and Codex. Late warmup notices cannot reassert
+  `processing`; native status clears before unwind. Real stub children emit late answer deltas
+  after SIGTERM: neither processing nor the late answer reaches Slack. Directory-preflight Stop
+  creates no later indicator or runner. Existing queue, thread-context preflight and Stop-card
+  suites retain their durable cancellation, successor ownership and single-notice checks.
+  A held native status write plus a fast-exiting cold engine keeps the actual steered successor
+  queued until the predecessor's shared bounded cleanup completes; its late clear cannot erase
+  the successor's processing status within that existing grace window.
+- [ ] Live **Claude and Codex**, separately, in owned DM and channel fixtures: select each engine
+  through the native picker, ask “Run sleep 120, then answer STOP_NOT_HONORED”, and press the real
+  native Stop before completion. Record exact root, loaded revision, resolved engine/model,
+  click time, native control/loading disappearance interval and process-tree termination; wait
+  beyond the original sleep deadline to exclude a late answer. Rename the thread and retain its
+  native rename event. Capture only safe session/thread/status fields from browser WebSocket
+  events to distinguish status receipt from DOM repaint. **Pass:** one Stopped notice, no surviving
+  owned process or late answer, no post-clear processing reassertion, and loading clears within
+  the existing one-second gate. An interval crossing one second is inconclusive; passing source
+  tests does not establish Slack client timing. Restore test pins and fixture settings.
+
 ## Slack Settings picker rendering (2026-10-15)
 
 - [x] Regression: the existing all-page/all-role/inline-form Block Kit validation includes a
