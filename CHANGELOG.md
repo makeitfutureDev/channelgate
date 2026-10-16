@@ -18,6 +18,10 @@ product overview.
 
 ## Unreleased
 
+- Keep cancelled Slack turns from restoring the loading indicator while their engine shuts down.
+  Stop and cold-engine steering close progress immediately and ignore late output; cancellation
+  during preflight cannot start a new indicator.
+
 - Fix open SSH sessions retaining stale channel secrets after additions, rotations or removals.
   Refreshes now recheck the developer’s access and close sessions when access is revoked or
   their mounted workspace/runtime changes.

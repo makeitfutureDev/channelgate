@@ -1620,8 +1620,12 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
   in DMs and in channel threads alike. Pressing it stops exactly that thread through the same
   `stopRunsInChannel` path and authorization gate as a `stop` message or 🛑 reaction (redelivered
   envelopes are deduplicated, the bot's own events ignored); whether or not a run was found the
-  session is moved off `processing`, because Slack never does that on its own. Per-thread titles
-  use `agents.sessions.rename` (200 chars). A workspace or app without the native surface
+  session is moved off `processing`, because Slack never does that on its own.
+  Stop also closes that turn's progress producer immediately when its abort signal fires. Late
+  engine output, warmup notices and status heartbeats cannot restart processing while the runner
+  unwinds; cold-engine steering uses the same cancellation boundary. A stop during directory or
+  thread-context preflight does not start a replacement indicator or runner.
+  Per-thread titles use `agents.sessions.rename` (200 chars). A workspace or app without the native surface
   (`feature_disabled`, `missing_scope`, `unknown_method`,
   `missing_agent_session_stopped_event_subscription`, …) falls back to the legacy methods for the
   rest of the process after one warning; a per-thread refusal (`not_authorized`) only skips that

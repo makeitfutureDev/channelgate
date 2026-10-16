@@ -87,7 +87,8 @@ async function slackPermalink(client, channel, ts) {
   return `https://slack.com/archives/${channel}/p${String(ts).replace(".", "")}`;
 }
 
-// Terminalize every matching in-flight run synchronously — no Slack calls, no awaits. The shared
+// Terminalize every matching in-flight run synchronously — no awaits, including progress cleanup
+// started by abort listeners. The shared
 // core of the `stop` command (stopRunsInChannel below, which adds the user-facing messaging) and
 // `/clear` (which must kill the thread's live run through this exact path BEFORE dropping its
 // session: the abort marks handle.aborted, which suppresses the late answer post, the
@@ -1542,6 +1543,7 @@ export async function processMessageEvent(event, client, { botUserId = "", teamI
     // From here EVERYTHING runs inside the try so the finally always releases this turn's queue
     // slot — a throw anywhere (even starting the progress indicator) must not jam the thread.
     let status = null;
+    let stopProgressOnAbort = null;
     let terminal = false;
     const markTerminal = () => {
       terminal = true;
@@ -1551,6 +1553,12 @@ export async function processMessageEvent(event, client, { botUserId = "", teamI
     // spent the moment the run resolves, on every branch below, and exactly once.
     const bankUsage = createUsageBank();
     try {
+      // Directory lookup above may have yielded after queue ownership. A stopped/steered owner
+      // must not create a new processing session while its successor is waiting for this slot.
+      if (handle.controller.signal.aborted || isForceStopping()) {
+        if (handle.controller.signal.aborted) markTerminal();
+        return;
+      }
       // Progress indicator per the configured mode (shimmer / activity log / both / native stream).
       status = startProgress(getProgressView(), client, event.channel, threadKey, {
         isDM: meta.isDM,
@@ -1558,6 +1566,12 @@ export async function processMessageEvent(event, client, { botUserId = "", teamI
         teamId,
         dir,
       });
+      // Close the producer at cancellation, not after the runner finally settles. Its stop()
+      // seals callbacks/timers synchronously before awaiting Slack cleanup, so late engine output
+      // or runtime notices cannot reassert processing after the Stop handler clears the session.
+      stopProgressOnAbort = () => { void status.stop().catch(() => {}); };
+      handle.controller.signal.addEventListener("abort", stopProgressOnAbort, { once: true });
+      if (handle.controller.signal.aborted) stopProgressOnAbort();
       // First time the bot is EVER pulled into an existing thread → replay its earlier messages
       // for context. Gated on the persistent has-ever-had-a-session marker (not "no current
       // session"), so /clear doesn't re-inject the whole history on the next reply; checked
@@ -1587,8 +1601,8 @@ export async function processMessageEvent(event, client, { botUserId = "", teamI
       // preflight. Recheck at the last asynchronous boundary before enriching the durable row;
       // otherwise an explicit stop can clear the row and this owner can resurrect it immediately
       // afterwards. No await exists between this gate and recordActiveRun below.
-      if (handle.aborted || isForceStopping()) {
-        if (handle.aborted) markTerminal();
+      if (handle.controller.signal.aborted || isForceStopping()) {
+        if (handle.controller.signal.aborted) markTerminal();
         await status.stop();
         return;
       }
@@ -1643,12 +1657,16 @@ export async function processMessageEvent(event, client, { botUserId = "", teamI
         attachments: attachmentPaths,
         signal: handle.controller.signal,
         progressReport: true,
-        onDelta: status.onDelta,
+        onDelta: (delta) => {
+          if (!handle.controller.signal.aborted) return status.onDelta(delta);
+        },
         onEvent: (ev) => {
+          if (handle.controller.signal.aborted) return;
           if (ev?.kind === "tool_use" && isMemorySaveTool(ev.name)) memorySavesInTurn += 1;
           return status.onEvent(ev);
         },
         onRuntimeResolved: (runtime) => {
+          if (handle.controller.signal.aborted) return;
           updateActiveRunRuntime(runId, runtime);
           status.onRuntimeResolved?.(runtime);
         },
@@ -1853,6 +1871,7 @@ export async function processMessageEvent(event, client, { botUserId = "", teamI
         }
       }
     } finally {
+      if (stopProgressOnAbort) handle.controller.signal.removeEventListener("abort", stopProgressOnAbort);
       // Per-turn terminal state wins over the global shutdown phase: a delivered answer, reported
       // error, steering completion, or explicit stop must never replay merely because force-stop
       // flipped before this finally ran. Only genuinely interrupted work remains recoverable.
