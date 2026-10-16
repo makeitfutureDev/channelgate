@@ -82,10 +82,23 @@ export function containerAccessNote(target) {
   return `**Container access for this run:** gateway setting \`containerFullAccessHome\` is **${setting}**. ${access} The operator-home mount is available ONLY to a trusted admin author's run in an Admin/Full-access channel while that gateway switch is on; with the switch off, Admin adds no home mount. The container remains the filesystem/process boundary. \`$HOME\` and \`~\` still refer to the channel's own home volume, not the operator's home. See the \`gateway-usage\` skill's \`references/administration.md\` for the boundary and the optional grant.`;
 }
 
-export function runtimeAccessPreamble(target, { clean, allowNetwork } = {}) {
+// The launcher supplies its resolved decision. Channel mode, writable tools and mounted home
+// cannot establish the current author's bypass, and a caller that omits it must stay unknown.
+export function permissionBypassNote(dangerouslySkip) {
+  const state = typeof dangerouslySkip === "boolean" ? (dangerouslySkip ? "enabled" : "disabled") : "unknown";
+  return `Admin permission bypass for THIS attempt: **${state}**. `
+    + (state === "unknown"
+      ? "The resolved launch decision was not supplied; do not infer it from the channel's Admin mode. "
+      : "This is the gateway's resolved admin-only bypass decision for this launch; use it when asked whether permission bypass is active. ")
+    + "Worker file writes, a writable container, Codex danger-full-access and approval_policy=never do not establish gateway admin bypass. "
+    + "Permission bypass and filesystem mount reach are separate facts.\n";
+}
+
+export function runtimeAccessPreamble(target, { clean, allowNetwork, dangerouslySkip } = {}) {
   return "[Gateway container access for THIS attempt]\n"
     + "These current access facts supersede earlier turns and generic claims about host isolation. "
     + "Answer access questions from this resolved runtime, even when the conversation previously said otherwise.\n"
+    + permissionBypassNote(dangerouslySkip)
     + containerAccessNote(target) + "\n"
     + gatewayStoreAccessNote(target) + "\n"
     + "Respect the user's requested scope when checking access. For requests limited to existence, metadata or permission checks, use resolved mount facts and non-mutating metadata checks only. Do not read file contents or create, modify, or delete probe files, even temporarily. If metadata cannot establish write access, report it as unverified; do not upgrade an access-check request into a write test.\n"

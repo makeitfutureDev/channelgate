@@ -154,7 +154,9 @@ test("a review marks the channel live WITHOUT an owner, and releases it after", 
   await review.runMemoryReview({
     channelId: "C_MEM_REVIEW_LIVE", slug: entry.slug, threadKey: "7000.009", authorId: "U_MEM_REVIEW", meta, resolveTarget,
     fetchTranscript: async () => "Alex: hi\nRobin: hello",
-    run: async () => {
+    run: async (options) => {
+      assert.equal(options.dangerouslySkip, false);
+      assert.match(options.prompt, /Admin permission bypass for THIS attempt: \*\*disabled\*\*/);
       during = liveSnapshot().filter((e) => e.channelId === "C_MEM_REVIEW_LIVE");
       return { content: "NOTHING_TO_SAVE", durationMs: 1, costUSD: 0, usage: {} };
     },

@@ -59,8 +59,70 @@ function metadata(call) {
   assert.match(prompt, /For requests limited to existence, metadata or permission checks, use resolved mount facts and non-mutating metadata checks only/);
   assert.match(prompt, /Do not read file contents or create, modify, or delete probe files, even temporarily/);
   assert.match(prompt, /If metadata cannot establish write access, report it as unverified/);
+  assertBypassMatchesLaunch(call);
   return JSON.parse(match[1]);
 }
+
+function assertBypassMatchesLaunch(call) {
+  const prompt = call.args.find((arg) => String(arg).includes("[Gateway runtime for THIS attempt:"));
+  const bypass = call.args.some((arg) => ["--dangerously-skip-permissions", "--dangerously-bypass-approvals-and-sandbox"].includes(arg));
+  assert.match(prompt, new RegExp(`Admin permission bypass for THIS attempt: \\*\\*${bypass ? "enabled" : "disabled"}\\*\\*`));
+  return bypass;
+}
+
+for (const engine of ["claude", "codex"]) {
+  test(`${engine}: a guarded home mount does not make a member's bypass fact true`, async (t) => {
+    const context = await fixture(`PERMISSION_GUARD_${engine}`, engine, engine === "claude" ? "sonnet" : "gpt-5.6-sol", { adminMode: true });
+    const previousPrepare = backend.prepareTarget;
+    backend.prepareTarget = (base) => {
+      const target = previousPrepare(base);
+      // Exercise the retained home guard for a widened target; normal member targets have no
+      // operator-home mount. This fake backend executes only fixture CLIs, never a container.
+      target.container.mounts = [...target.container.mounts, { type: "bind", kind: "operator-home", source: os.homedir(), target: os.homedir() }];
+      return target;
+    };
+    t.after(() => { backend.prepareTarget = previousPrepare; });
+    const start = backend.calls.spawn.length;
+    await runMessage({ ...context, text: "Does the guarded mount grant admin bypass?" });
+    const [call] = attempts(start);
+    assert.equal(assertBypassMatchesLaunch(call), false);
+    if (engine === "codex") assert.equal(call.args[call.args.indexOf("--sandbox") + 1], "read-only");
+  });
+
+  test(`${engine}: permission facts follow actual author and origin across fresh, resumed and Clean attempts`, async () => {
+    const context = await fixture(`PERMISSION_FACTS_${engine}`, engine, engine === "claude" ? "sonnet" : "gpt-5.6-sol", { adminMode: true, autoMode: false });
+    saveSettings({ containerFullAccessHome: true });
+    const start = backend.calls.spawn.length;
+    await runMessage({ ...context, text: "Does Admin mode give this member permission bypass?" });
+    await runMessage({ ...context, text: "Does a successful write change the bypass fact?" });
+    await setUser(context.authorId, { name: "Permission admin", approved: true, isAdmin: true });
+    await runMessage({ ...context, text: "Report the actual admin bypass for this attempt." });
+    await runMessage({ ...context, origin: "background_agent", text: "Report the actual bypass for this unattended attempt." });
+    await setUser(context.authorId, { name: "Permission member", approved: true, isAdmin: false });
+    await patchChannelMeta(context.entry.slug, { cleanMode: true });
+    await runMessage({ ...context, text: "Report bypass in this member's Clean attempt." });
+    const calls = attempts(start);
+    assert.equal(calls.length, 5);
+    assert.deepEqual(calls.map(assertBypassMatchesLaunch), [false, false, true, false, false]);
+    assert.equal(metadata(calls[1]).session, "resumed");
+    const memberPrompt = calls[0].args.find((arg) => String(arg).includes("[Gateway runtime for THIS attempt:"));
+    assert.match(memberPrompt, /resolved runtime has no operator-home mount/);
+    const adminPrompt = calls[2].args.find((arg) => String(arg).includes("[Gateway runtime for THIS attempt:"));
+    assert.match(adminPrompt, /resolved runtime includes the operator-home mount/);
+  });
+}
+
+test("admin bypass facts reach the actual fallback engine as well as the primary", async () => {
+  const context = await fixture("PERMISSION_FALLBACK", "claude", "sonnet", { adminMode: true });
+  await setUser(context.authorId, { name: "Fallback admin", approved: true, isAdmin: true });
+  const start = backend.calls.spawn.length;
+  await runMessage({ ...context, text: "CLAUDE_STUB_LIMIT_FAIL_SAFE" });
+  const calls = attempts(start);
+  assert.equal(calls.length, 2);
+  assert.deepEqual(calls.map(assertBypassMatchesLaunch), [true, true]);
+  assert.equal(metadata(calls[0]).engine, "claude");
+  assert.equal(metadata(calls[1]).engine, "codex");
+});
 
 for (const engine of ["claude", "codex"]) {
   test(`${engine}: network policy changes reach fresh and resumed prompts without exposing Clean credentials`, async () => {

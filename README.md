@@ -131,6 +131,8 @@ catalog, including edge cases and links to regression coverage.
   removes the container boundary for that thread, so use it only for trusted host operations.
 - **Read-only, Worker and Admin modes:** choose the base permission level. Auto review and Lean
   context are separate options; permission bypass requires both an admin author and Admin mode.
+  Each attempt tells the assistant whether its actual launch has admin permission bypass;
+  the channel's Admin label and writable container tools do not establish that permission.
 - **Approval controls:** interactive approvals and automatic review apply according to mode;
   tool permissions remain separate from the container's filesystem boundary.
 - **User and guest access:** select approved-member access, admins only or locked access,
