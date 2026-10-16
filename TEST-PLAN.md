@@ -447,6 +447,13 @@ must run applicable gates before stable promotion; no live pass is implied by au
 
 ## Claude Cloud MCP admission (2026-10-08)
 
+- [x] Browser regression: with `CG_BROWSER_MODULE` pointing to Playwright, run
+  `node --test test/mcp-legacy-selection-browser.test.js`. The actual admin form/router preserves
+  an existing credentialed MCP's exact saved reference when discovery returns a redacted unavailable
+  row and an unrelated setting is saved, with both Claude and Codex channel pins. Removal refreshes
+  the current picker, disables re-addition and survives another save; a forged new invalid selection
+  still returns 400 without changing grants. The test fails before the fix on the missing `match`
+  in the native form payload. This isolated browser regression does not complete the live gates below.
 - [x] Regression: `node --test test/claude-mcp-selection-admission.test.js
   test/mcp-discovery.test.js test/claude-selected-mcp.test.js test/channel-settings-modal.test.js
   test/access-grants.test.js test/folders-settings.test.js test/mcp-config.test.js

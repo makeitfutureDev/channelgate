@@ -182,6 +182,10 @@
   operator definitions before saving, including stale cached discoveries. Previously stored
   selections remain removable; unrelated saves preserve them and runtime admission still drops
   unusable optional connectors with a notice while allowing the turn to continue.
+- The shared admin MCP picker round-trips the exact saved reference for an unavailable selection,
+  even when discovery redacts its transport metadata. Channel saves refresh the picker from the
+  committed record, so removing an unavailable grant disables re-addition and later unrelated saves
+  cannot restore it. New selections still require current backend admission.
 
 ## Drive sync status for unlinked channels
 
