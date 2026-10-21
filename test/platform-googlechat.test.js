@@ -736,3 +736,26 @@ test('documented slash-command /stop takes the control lane while a turn occupie
     assert.deepEqual(received, ['long work', '/stop']);
   } finally { release(); await new Promise(resolve => setImmediate(resolve)); await transport.stop(); }
 });
+
+test('clicks and ignored events are logged by path and shape, never dropped silently', async () => {
+  const lines = [];
+  const log = { info: line => lines.push(line), warn: line => lines.push(line) };
+  const cards = [];
+  const transport = await startGoogleChat({ subscription: 'projects/cg-test/subscriptions/click-logging',
+    capabilities: googleChatAdapter.capabilities, onMessage: async () => {}, onCard: async card => cards.push(card),
+    log, deps: { auth: fakeAuth(), api: fakeChatApi(), puller: { start() {}, async stop() {} } },
+  });
+  try {
+    const click = { chat: { user: { name: 'users/1', email: 'ana@example.com' }, buttonClickedPayload: { space: SPACE, message: { ...MESSAGE, sender: { type: 'BOT' } } } },
+      commonEventObject: { parameters: { cgAction: 'settings.page', stateId: 'state' } } };
+    await transport.onEvent(click, {}, { messageId: 'logged-click' });
+    await transport.onEvent({ ...click, chat: { ...click.chat, buttonClickedPayload: { ...click.chat.buttonClickedPayload, space: { name: 'spaces/FOREIGN' } } } }, {}, { messageId: 'bad-click', source: 'http' });
+    await transport.onEvent({ chat: { somethingNew: { text: 'private words' } } }, { 'ce-type': 'google.workspace.chat.unknown.v1' });
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(cards.length, 1);
+    assert.ok(lines.includes('[googlechat] card click received via pubsub: settings.page'));
+    assert.ok(lines.some(line => /^\[googlechat\] card click dropped \(unrecognized shape\) via http: .*chat=\[user,buttonClickedPayload\]/.test(line)));
+    assert.ok(lines.some(line => /^\[googlechat\] event ignored \(unknown\) via pubsub: ce-type=google\.workspace\.chat\.unknown\.v1 .*chat=\[somethingNew\]/.test(line)));
+    assert.ok(!lines.some(line => /private words|ana@example/.test(line)));
+  } finally { await transport.stop(); }
+});

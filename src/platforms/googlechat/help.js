@@ -18,6 +18,7 @@ const TOPICS = [
   { title: 'All commands', rows: [
     '`/help` — Show this guide.',
     '`/settings` — Open General, Variables, MCPs, Skills, Automations and Resume.',
+    '`/settings <option> <value>` — Change mode, Auto, Lean, network, access, VPN or the engine/model/effort by typing it. `/settings help` lists the options.',
     '`/secrets` — Open Variables. Enter credential values only in the protected browser page; stored values are never shown or prefilled.',
     '`/files [folder]` — Browse, download, edit eligible text, or upload files with write access.',
     '`/sendfile <path>` — Open a workspace file for download.',

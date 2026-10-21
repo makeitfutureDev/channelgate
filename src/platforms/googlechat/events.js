@@ -222,3 +222,11 @@ export function createSeenThreads(limit = 2000) {
     get size() { return seen.size; },
   };
 }
+
+// A value-free description of an event for diagnostics: the CloudEvent type, the legacy `type`,
+// and the KEY names at the top level and under `chat`. Message text, names and ids never appear.
+export function eventShape(envelope, attributes = {}) {
+  const keys = value => value && typeof value === 'object' && !Array.isArray(value) ? Object.keys(value).slice(0, 20).join(',') : '';
+  const word = value => /^[A-Za-z0-9_.:-]{1,80}$/.test(String(value || '')) ? String(value) : '';
+  return `ce-type=${word(attributes?.['ce-type']) || '-'} type=${word(envelope?.type) || '-'} keys=[${keys(envelope)}] chat=[${keys(envelope?.chat)}]`;
+}

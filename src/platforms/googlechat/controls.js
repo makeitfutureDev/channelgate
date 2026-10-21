@@ -16,7 +16,9 @@ import { googleChatWorkspaceContext } from './workspace-access.js';
 import { isSpaceName, isMessageName, isThreadName } from './api.js';
 import { chatText, chatButtons, chatAction, chatLink, chatCard, controlError, GoogleChatControlError } from './cards.js';
 import { GOOGLE_CHAT_HELP_TEXT, createGoogleChatHelpCard } from './help.js';
-import { buildGoogleChatSettings, handleGoogleChatSettings } from './settings.js';
+import { buildGoogleChatSettings, handleGoogleChatSettings, createGoogleChatSettingsContext } from './settings.js';
+import { parseSettingsCommand, GOOGLE_CHAT_SETTINGS_USAGE } from './settings-commands.js';
+import { handleGeneral } from '../msteams/settings-general.js';
 import { verifyMenuAction } from './reply-menu.js';
 import { handlePlatformApproval } from '../../slack/approvals.js';
 
@@ -120,8 +122,10 @@ export function createGoogleChatControls({ connector, authorize = googleChatWork
     await rememberIdentity(state.message.userId, state.message.raw?.senderName);
     const context = await authorize(grant(state), { connector });
     state.meta = context.meta;
-    const card = kind === 'file' ? await preview(state, id, context) : kind === 'files' ? await files(state, id, context)
+    let card = kind === 'file' ? await preview(state, id, context) : kind === 'files' ? await files(state, id, context)
       : await buildGoogleChatSettings(state, id, { connector, authorize });
+    // Typed commands work even where Chat cannot deliver this card's clicks (a Pub/Sub connection).
+    if (kind === 'settings') card = chatCard(card.header.title, [chatText(GOOGLE_CHAT_SETTINGS_USAGE), ...card.sections.flatMap(section => section.widgets)]);
     states.set(id, state);
     try {
       const sent = await connector.postCard({ conversationId: state.message.rawConversationId, threadKey: state.message.threadKey,
@@ -131,6 +135,16 @@ export function createGoogleChatControls({ connector, authorize = googleChatWork
       return sent;
     } catch (error) { states.delete(id); throw error; }
   }
+  async function applySettingsCommand(args, text) {
+    const parsed = parseSettingsCommand(text);
+    if (parsed.error) return parsed.error;
+    const state = { ...args, kind: 'settings' };
+    await rememberIdentity(state.message.userId, state.message.raw?.senderName);
+    const context = createGoogleChatSettingsContext(state, { connector, authorize });
+    await context.authorize();
+    if (!await handleGeneral(parsed.action, parsed.data, context)) throw controlError('Unsupported settings command.');
+    return state.notice || 'Setting saved.';
+  }
   async function onCommand(args) {
     const command = /^\/(help|settings|model|files|sendfile|secrets)(?:\s+(.*))?$/is.exec(args.message.text.trim());
     if (!command || args.message.trigger === 'reaction') return false;
@@ -139,6 +153,11 @@ export function createGoogleChatControls({ connector, authorize = googleChatWork
     if (name === 'help') {
       try { if (!args.replyCard) throw new Error('Cards unavailable'); await args.replyCard({ card: createGoogleChatHelpCard() }); }
       catch { await args.reply(GOOGLE_CHAT_HELP_TEXT); }
+      return true;
+    }
+    if (name === 'settings' && command[2]?.trim()) {
+      try { await args.reply(await applySettingsCommand(args, command[2])); }
+      catch (error) { await args.reply(googleChatControlMessage(error)); }
       return true;
     }
     try {

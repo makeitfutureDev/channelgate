@@ -4,7 +4,7 @@ import { createDurableInbox } from "../durable-inbox.js";
 import { createGoogleAuth, CHAT_REACTION_EVENT_SCOPES } from "./auth.js";
 import { createChatApi, isSpaceName, isMessageName, isThreadName } from "./api.js";
 import { createPubSubPuller } from "./pubsub.js";
-import { parseChatEvent, normalizeMessage, normalizeCardEvent, createSeenThreads, messageCommandText, resolveThreadKey, GOOGLE_CHAT_CONTROL_COMMAND } from "./events.js";
+import { parseChatEvent, normalizeMessage, normalizeCardEvent, eventShape, createSeenThreads, messageCommandText, resolveThreadKey, GOOGLE_CHAT_CONTROL_COMMAND } from "./events.js";
 import { createGoogleChatConnector } from "./connector.js";
 import { sessionKeyForMessage } from "../reply-sessions.js";
 import { makeInbound } from "../inbound.js";
@@ -290,12 +290,21 @@ export async function startGoogleChat({
     if (event.type === "membership.removed") { subscriptions?.reconcile(); return; }
     if (event.type === 'card') {
       const card = normalizeCardEvent(event);
-      if (!card || !onCard) return;
+      // Clicks are the event class most likely to arrive in an unexpected shape or over an
+      // unexpected connection; say which path carried each one, and never drop one silently.
+      if (!card || !onCard) {
+        log.warn?.(`[googlechat] card click dropped (${card ? 'no handler' : 'unrecognized shape'}) via ${metadata.source || 'pubsub'}: ${eventShape(envelope, attributes)}`);
+        return;
+      }
+      log.info?.(`[googlechat] card click received via ${metadata.source || 'pubsub'}: ${card.action.function || 'no action'}`);
       const id = String(metadata.messageId || attributes?.['ce-id'] || createHash('sha256').update(JSON.stringify(envelope)).digest('hex'));
       const payload = { event, botId: selfId };
       return controlInbox.accept({ id: `card:${id}`, conversationId: queueKey(payload), payload });
     }
-    if (event.type !== "message") return;
+    if (event.type !== "message") {
+      log.info?.(`[googlechat] event ignored (${event.type}) via ${metadata.source || 'pubsub'}: ${eventShape(envelope, attributes)}`);
+      return;
+    }
 
     const sender = event.message?.sender || {};
     // Never answer a bot — our own replies come back on the same topic, and two apps in one space

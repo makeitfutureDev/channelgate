@@ -286,6 +286,33 @@ Full combined regression/coverage and CI remain integration checks. Existing liv
 Claude/Codex session and public-link acceptance gates still apply; mocked HTTP is not live
 provider acceptance.
 
+## Google Chat typed settings commands and click logging (2026-10-21)
+
+Context: on a Pub/Sub-connected Chat app no card click reached the gateway (the HTTP endpoint
+received none; the daemon logged nothing), and the connection setting cannot be changed by the
+requester. Typed commands give the same General settings without clicks; the logging shows
+whether clicks arrive on either path.
+Automated fixtures: `test/googlechat-settings-commands.test.js` (parser maps every option onto the
+guarded card action and rejects unknown/malformed input with the usage; network, Auto and thread
+effort change through the shared policy and reply with its notice; a non-manager's network change
+is refused and nothing is written; a typed change posts no card; the `/settings` card leads with
+the command list; `eventShape` carries keys/types only) and `test/platform-googlechat.test.js`
+(an accepted Pub/Sub click logs `card click received via pubsub: settings.page`; a foreign-space
+click logs `card click dropped … via http`; an unknown CloudEvent logs `event ignored`; no line
+contains message text or an email).
+Validation (this worktree, 2026-10-21): `npm run test:coverage` **3,946 tests, 3,916 passed, 0 failed,
+30 skipped**, coverage floors met; `npm run check:static` and `npm run secret-scan` clean.
+
+- [ ] LIVE `GCHAT-SETTINGS-CMD-01` (Claude and Codex independent; engine-independent): the
+  Pub/Sub-connected Google Chat app, this candidate served. In a named space as a manager send
+  `@app /settings network off`, `@app /settings auto on`, `@app /settings effort high`, then
+  `@app /settings`. Pass: each reply names the saved change, the reopened card shows the new
+  values, and a non-manager's `@app /settings network on` is refused with nothing changed.
+- [ ] LIVE `GCHAT-CLICK-LOG-01` (engine-independent): click a tab on the `/settings` card, then
+  `grep '\[googlechat\] \(card click\|event ignored\)' ~/.channelgate/logs/systemd.log`. Pass:
+  either a `card click received via …` line (clicks do arrive: record the path) or none at all
+  (clicks are not delivered on this connection); no line contains message text or an address.
+
 ## Google Chat add-on card actions name the endpoint URL (2026-10-21)
 
 Root cause: with the HTTP endpoint connected, the `/settings` card rendered but every button
