@@ -18,6 +18,9 @@ product overview.
 
 ## Unreleased
 
+- Update Claude Code to 2.1.306 and offer Sonnet 5.5 in the model picker, with its
+  native 1M context window and verified external-usage cache rates. Existing saved models remain valid.
+
 - Find specialist channel agents with a live directory of purposes, examples and shared skills.
   Managers can describe/hide their channel's agent. Metadata refreshes at startup and nightly;
   recommendations respect the requester and reply audience and never transfer work automatically.
