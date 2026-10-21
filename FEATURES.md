@@ -12,6 +12,8 @@
 - Built-in reconciliation refreshes channel metadata at startup and nightly at 03:00 in the host
   local timezone without an engine turn or user schedule. Metadata caches narrow keyword searches;
   returned recommendations still verify live metadata/membership and fresh gateway access.
+  The daemon registers its existing Slack lifecycle manager in the live connector registry;
+  disconnects fail closed and reconnects resolve the current client without retaining old readers.
 - Visibility protects the reply's audience as well as its requester. DMs, group DMs, hidden,
   archived and Lean agents are excluded. Private destinations cannot appear in public/shared
   sources; other results require the whole current source roster to belong to the destination.

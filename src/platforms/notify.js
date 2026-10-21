@@ -79,8 +79,11 @@ export async function postDirectMessage(target, { userId, text, blocks = null } 
 // Chat/Teams result, and a Slack client must never receive a namespaced foreign conversation id.
 export function automationTarget(slackManager, conversationId) {
   const platform = platformOfConversation(conversationId);
+  // Keep native Slack delivery (menus, images, trusted prefixes and permalink APIs) on its
+  // WebClient path even when Slack also registers a live connector for directory reads.
+  const client = slackManager?.snapshot?.().connected ? slackManager.getClient?.() : null;
+  if (asConnector(client)?.platform === platform) return client;
   const live = liveConnector(platform);
   if (live && live.ready?.() !== false) return live;
-  const client = slackManager?.snapshot?.().connected ? slackManager.getClient?.() : null;
-  return asConnector(client)?.platform === platform ? client : null;
+  return null;
 }

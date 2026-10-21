@@ -2,6 +2,14 @@
 
 ## Channel agent directory (2026-10-21)
 
+- [x] Production boot integration: `test/agent-directory-slack-boot.test.js` uses the real Slack
+  manager and `createPlatformTransports({ slack })` with a scratch store and simulated provider.
+  Search uses its default verifier (no directory/connector override), returns the current channel
+  and eligible specialist after connect, fails closed after disconnect despite cached metadata,
+  and uses the replacement client after reconnect. Native automation retains the raw Slack
+  WebClient for menus, images, prefixes and permalink APIs. Live acceptance must exercise the
+  actual daemon boot registration, not just an injected membership provider.
+
 - [x] Regression: `test/agent-directory.test.js`, `test/agent-directory-refresh.test.js` and
   `test/agent-directory-tools.test.js` exercise live shared grant/template/dependency resolution,
   source and destination authorization, personal dependency suppression, audience proof,

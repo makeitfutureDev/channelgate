@@ -18,6 +18,10 @@ product overview.
 
 ## Unreleased
 
+- Fix the agent directory returning an empty list on a connected Slack deployment: register
+  the live Slack client for discovery and follow disconnect/reconnect. Preserve native Slack
+  automation delivery, including image uploads, menus and reminder permalinks.
+
 - Find specialist channel agents with a live directory of purposes, examples and shared skills.
   Managers can describe/hide their channel's agent. Metadata refreshes at startup and nightly;
   recommendations respect the requester and reply audience and never transfer work automatically.
