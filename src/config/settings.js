@@ -675,7 +675,7 @@ export function getCodexModelRates() {
 // launch (../gateway/external-usage.js), where the only record is a transcript's token counts.
 // Verified against platform.claude.com/docs/en/about-claude/pricing on 2026-09-23. `cacheWrite5m` /
 // `cacheWrite1h` are the two cache-write TTLs and `cacheRead` the hit rate; the multipliers differ
-// per family (Fable 5.1 reads at 0.025x, Opus 5.5 at 0.05x, everything else at 0.1x), which is why
+// per family (Fable 5.1 reads at 0.025x, Opus/Sonnet 5.5 at 0.05x, others at 0.1x), which is why
 // the rate is stored outright instead of derived. The 1M context window carries no premium on
 // 4.6-and-later models, so there is no long-context multiplier here.
 export const DEFAULT_CLAUDE_RATES = {
@@ -690,6 +690,8 @@ export const DEFAULT_CLAUDE_RATES = {
   "claude-opus-4-6": { input: 5, cacheWrite5m: 6.25, cacheWrite1h: 10, cacheRead: 0.5, output: 25 },
   "claude-opus-4-5": { input: 5, cacheWrite5m: 6.25, cacheWrite1h: 10, cacheRead: 0.5, output: 25 },
   "claude-opus-4-1": { input: 15, cacheWrite5m: 18.75, cacheWrite1h: 30, cacheRead: 1.5, output: 75 },
+  // Sonnet 5.5: platform.claude.com/docs/en/about-claude/pricing, verified 2026-10-21.
+  "claude-sonnet-5-5": { input: 2, cacheWrite5m: 2.5, cacheWrite1h: 4, cacheRead: 0.1, output: 10 },
   "claude-sonnet-5": { input: 2, cacheWrite5m: 2.5, cacheWrite1h: 4, cacheRead: 0.2, output: 10 },
   "claude-sonnet-4-6": { input: 3, cacheWrite5m: 3.75, cacheWrite1h: 6, cacheRead: 0.3, output: 15 },
   "claude-sonnet-4-5": { input: 3, cacheWrite5m: 3.75, cacheWrite1h: 6, cacheRead: 0.3, output: 15 },

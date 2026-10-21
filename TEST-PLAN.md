@@ -5008,10 +5008,20 @@ exercise the `qwen-eu` adapter itself, in a scratch runtime root (no production 
       is what exposes a new model, and `~/.codex/models_cache.json` carries `client_version` so a
       mixed-version probe cannot leave a stale catalog behind.
 - [x] Automated: Claude's picker and browser fallback show only the exact Opus 5.5, Fable 5.1,
-      Sonnet 5, and Haiku 4.5 IDs; a previously saved same-engine alias remains selected in
+      Sonnet 5.5, and Haiku 4.5 IDs; a previously saved same-engine alias remains selected in
       Slack, and the Admin UI consumes the registry's model/effort manifests and keeps a valid
       saved same-engine custom ID available (`test/model-options.test.js`,
       `test/model-wizard-buttons.test.js`).
+- [x] Automated: Sonnet 5.5 retains a native 1M context window without runtime metadata;
+      external transcripts use $2 input, $10 output, $2.50/$4 cache writes and $0.10 cache reads
+      per million tokens, while saved Sonnet 5 remains selectable and priced independently
+      (`test/model-info.test.js`, `test/model-options.test.js`, `test/external-usage.test.js`).
+- [ ] Live Claude/Codex: in private admin fixtures, open `/model` from a thread on each engine,
+      select Claude → Sonnet 5.5 → medium, and ask "Reply with exactly SONNET55_OK".
+      Pass: picker submits `claude-sonnet-5-5`, next Claude turn reports that provider model,
+      replies with the sentinel and shows a 1M window. Reopen a thread saved to Sonnet 5;
+      pass: it remains selected until explicitly changed. Verify the Admin UI model selector
+      offers Sonnet 5.5 and retains a preexisting Sonnet 5 value.
 - [x] Automated: the `/model` wizard's **This channel** scope applies to the thread it was clicked
       in. Same-harness: the thread's stale engine/model/effort overrides are cleared and the next
       turn resolves the channel's new model/effort. Cross-harness: the thread's Claude session gets

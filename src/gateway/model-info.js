@@ -133,7 +133,7 @@ export function contextWindowFor(result = {}) {
   // for a 1M run and would otherwise understate the window fivefold.
   if (/\[1m\]/i.test(raw) || /\[1m\]/i.test(String(result.model || ""))) return 1_000_000;
   // These current models have 1M by default; their explicit IDs need no [1m] suffix.
-  if (/^claude-(?:opus-5-5|fable-5-1|sonnet-5)$/i.test(raw)) return 1_000_000;
+  if (/^claude-(?:opus-5-5|fable-5-1|sonnet-5(?:-5)?)$/i.test(raw)) return 1_000_000;
   const runtimeWindow = modelUsageContextWindow(result.raw, raw);
   if (runtimeWindow) return runtimeWindow;
   const requestWindow = Array.isArray(result.usageRequests)

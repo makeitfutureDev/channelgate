@@ -71,7 +71,7 @@ test("a configured 1M model keeps its window even though the CLI reports the pla
 });
 
 test("current versioned Claude IDs retain their default 1M window", () => {
-  for (const model of ["claude-opus-5-5", "claude-fable-5-1", "claude-sonnet-5"]) {
+  for (const model of ["claude-opus-5-5", "claude-fable-5-1", "claude-sonnet-5", "claude-sonnet-5-5"]) {
     assert.equal(contextWindowFor({ engine: "claude", model, raw: { model } }), 1_000_000);
   }
   assert.equal(contextWindowFor({ engine: "claude", model: "claude-haiku-4-5", raw: { model: "claude-haiku-4-5" } }), 200_000);
