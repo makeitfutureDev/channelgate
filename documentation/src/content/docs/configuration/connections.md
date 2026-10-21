@@ -38,6 +38,21 @@ For a shared task, name the account: “Create this task using the team's connec
 
 SDK mode is an **Enterprise / Beta** option configured with a separate SDK API key. It uses managed Composio sessions rather than independently supplied Personal-mode tokens. Switching the mode retains the stored tokens but makes those tokens inactive while SDK mode is selected. Review the resulting session identities instead of assuming the previous shared account remains selected.
 
+## See connected apps and accounts
+
+Open a person in **Users** to see their personal Composio apps and account metadata. Open a
+conversation's **MCP Connections** tab to see its shared apps and accounts, including whether
+the connection comes from that conversation or the organization default. Rows show account
+labels, available account identities, status, default selection and account type when Composio
+provides them. Use **Refresh connections** after changing an account in Composio; save any key
+changes in ChannelGate first.
+
+Personal mode shows the app list Composio publishes for the saved key and the accounts reported
+for each app. Inactive or unpublished apps may be absent; incomplete and unavailable results are
+identified on the page. SDK mode lists every account page for the exact stable identity.
+Viewing either list does not connect apps or start an authorization flow. These lists are part
+of the authenticated admin UI; they do not create a separate end-user web login.
+
 ## Save effects and limitations
 
 Connections are assembled for each run, so saved token and selection changes apply to subsequent messages without restarting the daemon. Lean mode can suppress optional connectors. A server's appearance in a picker does not prove its login works; test the actual intended identity.

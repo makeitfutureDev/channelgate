@@ -18,6 +18,9 @@ product overview.
 
 ## Unreleased
 
+- Show connected Composio apps and accounts on admin user pages and channel Connections pages,
+  with account statuses, shared connection source, refresh controls and explicit provider limitations.
+
 - Supply each attempt's resolved admin permission bypass decision to the assistant, so it can
   distinguish its actual launch permissions from the channel's Admin label and writable tools.
   Permission policies and container boundaries are unchanged.

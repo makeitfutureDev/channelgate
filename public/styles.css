@@ -1279,3 +1279,10 @@ button.clear-tok.armed { background: rgba(229, 96, 77, .14); border-color: rgba(
 .conv-source-filter { display: flex; align-items: center; gap: 8px; margin: 8px 12px; }
 .conv-source-filter label { color: var(--muted); font-size: 11px; }
 .conv-source-filter select { min-width: 0; flex: 1; font-size: 12px; padding: 6px 8px; }
+/* Provider metadata is untrusted text; long aliases and ids must fit narrow user drawers. */
+.composio-table-wrap { overflow-x: auto; margin-top: 10px; }
+.composio-table { width: 100%; min-width: 340px; border-collapse: collapse; font-size: 12px; }
+.composio-table th, .composio-table td { text-align: left; vertical-align: top; padding: 8px; border-bottom: 1px solid var(--line); overflow-wrap: anywhere; }
+.composio-table th, .composio-table td:first-child, .composio-table td:last-child { white-space: nowrap; }
+.composio-table small { color: var(--muted); }
+.ud-composio-inventory .card-foot, .ch-composio-inventory .card-foot { flex-wrap: wrap; gap: 8px; }
