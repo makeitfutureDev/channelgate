@@ -50,6 +50,8 @@ import { channelCodexLoginStatus } from "../gateway/channel-codex-login.js";
 import { resolveMakeToolboxUpdate } from "../gateway/make-toolbox.js";
 import { channelVpnConfigured, getChannelVpnStatus, setChannelVpnEnabled, unconfiguredChannelVpnStatus } from "../gateway/channel-vpn-control.js";
 import { logChannelPolicyChange } from "../config/channel-audit.js";
+import { settingsComposioCache } from "./composio-inventory-cache.js";
+import { COMPOSIO_INVENTORY_ACTION_ID } from "./composio-inventory-view.js";
 
 import { createTtlSet } from "./util.js";
 import { refreshDirectory } from "./directory.js";
@@ -976,7 +978,9 @@ export async function handleSettingsFormSubmission({ ack, body, view, client }, 
       return;
     }
     saved = true;
-    await client.views.update({ view_id: view.id, view: await rootView(fresh.entry, meta, { ...state, form: "", confirm: "" }, fresh.userIsAdmin, { notice: result.notice }) });
+    const nextState = { ...state, form: "", confirm: "", composioPage: 0 };
+    const updated = await client.views.update({ view_id: view.id, view: await rootView(fresh.entry, meta, nextState, fresh.userIsAdmin, { notice: result.notice }) });
+    await hydrateComposioSettings(client, updated?.view, nextState);
   } catch (error) {
     clearTimeout(timer);
     const meta = (await getChannelMeta(local.entry.slug).catch(() => null)) || local.meta;
@@ -1541,6 +1545,10 @@ async function settingsRootView(entry, meta, state, userIsAdmin, { tab = state.t
   // What only one page needs is resolved only for that page: the member roster costs Slack API
   // calls, the Cloud MCP catalog a slow probe on a cold cache.
   const page = normalizeSettingsTab(tab);
+  const inventoryInput = page === "you" || page === "mcp"
+    ? await settingsComposioRequest(entry, meta, { ...state, tab: page }) : null;
+  const inventoryIdentity = inventoryInput ? settingsComposioCache.key(inventoryInput) : "";
+  if (inventoryInput) snapshot.composioInventory = settingsComposioCache.peek(inventoryInput);
   if (page === "access") {
     const { people, focus } = await accessPeople(meta, state.channelId, state.memberFocus || "");
     snapshot.people = people;
@@ -1549,12 +1557,98 @@ async function settingsRootView(entry, meta, state, userIsAdmin, { tab = state.t
   if (page === "mcp" && userIsAdmin) snapshot.cloudMcp = await cloudPickerData(meta, quick ? 600 : 2500);
   if (page === "skills") snapshot.skillPicker = channelSkillPicker(meta, { userId: state.ownerId, userIsAdmin });
   if (page === "you") snapshot.mySkillPicker = await mySkillPicker(state.ownerId, userIsAdmin);
+  const editOptions = channelSettingsEditOptions(meta, userIsAdmin, { authorId: state.ownerId, isApprovedUser: await isApproved(state.ownerId) });
+  // A cached list is private too. Recheck local authority after other async page work and omit
+  // it if the credential/scope changed during rendering. Membership was checked by the caller.
+  if (inventoryInput && settingsClient) {
+    const fresh = await channelSettingsContext(settingsClient, { channelId: state.channelId,
+      userId: state.ownerId, expectedSlug: entry.slug });
+    const current = await settingsComposioRequest(fresh.entry, fresh.meta, { ...state, tab: page });
+    if (settingsComposioCache.key(current) !== inventoryIdentity) snapshot.composioInventory = undefined;
+  }
   return buildChannelSettingsView({ ...snapshot, vpn: vpn ?? unconfiguredChannelVpnStatus(meta) }, { ...state, tab }, {
     channelName: entry.name,
     tab,
     notice,
-    ...channelSettingsEditOptions(meta, userIsAdmin, { authorId: state.ownerId, isApprovedUser: await isApproved(state.ownerId) }),
+    ...editOptions,
   });
+}
+
+// Scope comes only from the admitted modal and its owner, never a browser-supplied account id.
+export async function settingsComposioRequest(entry, meta, state, { user = getUser } = {}) {
+  if (state.tab === "you") return { kind: "user", id: state.ownerId, record: (await user(state.ownerId)) || {} };
+  if (state.tab !== "mcp") throw new Error("Open You or MCP to view Composio connections.");
+  return { kind: "channel", id: state.channelId,
+    record: { ...entry, ...meta, isDM: Boolean(entry?.isDM || meta?.isDM || entry?.type === "im" || meta?.type === "im") } };
+}
+
+export async function channelComposioSettingsContext(client, state, userId) {
+  if (!userId || state.ownerId !== userId) throw new Error("This settings view isn't yours. Open your own from a recent reply.");
+  if (!["you", "mcp"].includes(state.tab)) throw new Error("Open You or MCP to view Composio connections.");
+  const args = { channelId: state.channelId, userId, expectedSlug: state.slug };
+  await channelSettingsContext(client, { ...args, verifyMembership: true });
+  return channelSettingsContext(client, args);
+}
+
+// The native page opens immediately. Account discovery runs afterward, guarded by the exact
+// view hash so a slow response cannot replace a newer page, form, or selection.
+export async function hydrateComposioSettings(client, view, state, {
+  context = channelComposioSettingsContext, request = settingsComposioRequest,
+  cache = settingsComposioCache, rootView = settingsRootView,
+} = {}) {
+  if (!view?.id || !["you", "mcp"].includes(state.tab) || state.form) return;
+  try {
+    const first = await context(client, state, state.ownerId);
+    const input = await request(first.entry, first.meta, state);
+    if (cache.peek(input)) return;
+    const identity = cache.key(input);
+    await cache.load(input);
+    const fresh = await context(client, state, state.ownerId);
+    if (cache.key(await request(fresh.entry, fresh.meta, state)) !== identity) return;
+    const rendered = await rootView(fresh.entry, fresh.meta, state, fresh.userIsAdmin);
+    const final = await context(client, state, state.ownerId);
+    if (cache.key(await request(final.entry, final.meta, state)) !== identity) return;
+    await client.views.update({ view_id: view.id, ...(view.hash ? { hash: view.hash } : {}), view: rendered });
+  } catch (error) {
+    if (error?.data?.error === "hash_conflict") return;
+    await client.views.update({ view_id: view.id, ...(view.hash ? { hash: view.hash } : {}),
+      view: buildChannelSettingsErrorView("Couldn't load connections, or access changed. Reopen Settings and try again."),
+    }).catch(() => {});
+  }
+}
+
+export async function handleComposioSettingsAction({ ack, body, action, client }, {
+  context = channelComposioSettingsContext, request = settingsComposioRequest,
+  cache = settingsComposioCache, rootView = settingsRootView, hydrate = hydrateComposioSettings,
+} = {}) {
+  await ack();
+  try {
+    if (body?.view?.callback_id !== "cg_channel_settings_modal" || action?.action_id !== COMPOSIO_INVENTORY_ACTION_ID) throw new Error("Expired settings control.");
+    const state = parseSettingsMetadata(body.view.private_metadata);
+    const command = settingsCommand(action);
+    if (state.form) return; // An inventory click must never replace an open credential form.
+    if (state.ownerId !== body?.user?.id || command.c !== state.channelId || command.s !== state.slug || command.u !== state.ownerId
+      || !["you", "mcp"].includes(state.tab) || !["composio_refresh", "composio_page"].includes(command.o)) throw new Error("Expired settings control.");
+    const current = await context(client, state, body.user.id);
+    const input = await request(current.entry, current.meta, state);
+    if (command.o === "composio_refresh") cache.invalidate(input);
+    const page = command.o === "composio_refresh" ? 0 : command.page;
+    if (!Number.isSafeInteger(page) || page < 0 || page > 10_000) throw new Error("Expired settings page.");
+    const next = { ...state, composioPage: page };
+    const identity = cache.key(input);
+    const rendered = await rootView(current.entry, current.meta, next, current.userIsAdmin);
+    const fresh = await context(client, next, body.user.id);
+    if (cache.key(await request(fresh.entry, fresh.meta, next)) !== identity) return;
+    const updated = await client.views.update({ view_id: body.view.id, ...(body.view.hash ? { hash: body.view.hash } : {}),
+      view: rendered,
+    });
+    await hydrate(client, updated?.view, next, { context, request, cache, rootView });
+  } catch (error) {
+    if (body?.view?.id && error?.data?.error !== "hash_conflict") await client.views.update({
+      view_id: body.view.id, ...(body.view.hash ? { hash: body.view.hash } : {}),
+      view: buildChannelSettingsErrorView("Couldn't refresh connections, or this settings view expired. Reopen Settings and try again."),
+    }).catch(() => {});
+  }
 }
 
 // One Automations-page control, applied by the caller only after channelSettingsContext admitted
@@ -1662,6 +1756,7 @@ async function openChannelSettings(client, triggerId, { channelId, userId, threa
   // Only a provisioned service needs the status helper; every other conversation already rendered
   // its final "Not configured" row, so opening Settings costs no subprocess and no second update.
   if (tab === "agent" && channelVpnConfigured(meta) && opened.view?.id) await hydrateChannelVpnSettings(client, opened.view, state);
+  await hydrateComposioSettings(client, opened.view, state);
   await logEvent("channel_settings_opened", { channel: channelId, author: userId, slug: entry.slug });
 }
 
@@ -2013,6 +2108,10 @@ async function connectAndWire(app) {
   });
 
   const handleChannelSettingsAction = async ({ ack, body, action, client }) => {
+    if (action?.action_id === COMPOSIO_INVENTORY_ACTION_ID) {
+      await handleComposioSettingsAction({ ack, body, action, client });
+      return;
+    }
     if ([CHANNEL_SETTINGS_VPN_TOGGLE_ACTION_ID, CHANNEL_SETTINGS_VPN_REFRESH_ACTION_ID].includes(action?.action_id)) {
       await handleChannelVpnSettingsAction({ ack, body, action, client });
       return;
@@ -2066,19 +2165,22 @@ async function connectAndWire(app) {
       if (command.o === "tab") {
         const tab = String(command.p || "agent");
         // A page change closes any open form or pending confirmation.
-        const updated = await updateCurrent(await settingsRootView(entry, meta, { ...state, tab, form: "", confirm: "", memberFocus: "" }, userIsAdmin), { guardHash: false });
+        const updated = await updateCurrent(await settingsRootView(entry, meta, { ...state, tab, form: "", confirm: "", memberFocus: "", composioPage: 0 }, userIsAdmin), { guardHash: false });
         if (normalizeSettingsTab(tab) === "agent" && channelVpnConfigured(meta) && updated.view?.id) {
           await hydrateChannelVpnSettings(client, updated.view, { ...state, tab });
         }
+        await hydrateComposioSettings(client, updated?.view, { ...state, tab: normalizeSettingsTab(tab), form: "", composioPage: 0 });
         return;
       }
 
       // ── Redesigned pages (2026-10) ──────────────────────────────────────────────────────────
       const ctx = { entry, meta, clicker, userIsAdmin, userIsApproved };
-      const repaint = async (next = {}, { notice = "" } = {}) => updateCurrent(
-        await settingsRootView(entry, next.meta || meta, { ...state, ...next.state }, userIsAdmin, { notice }),
-        { guardHash: false },
-      );
+      const repaint = async (next = {}, { notice = "" } = {}) => {
+        const nextState = { ...state, ...next.state };
+        const updated = await updateCurrent(await settingsRootView(entry, next.meta || meta, nextState, userIsAdmin, { notice }), { guardHash: false });
+        await hydrateComposioSettings(client, updated?.view, nextState);
+        return updated;
+      };
 
       if (actionId === CHANNEL_SETTINGS_FORM_OPEN_ACTION_ID) {
         assertSettingsFormAllowed(command.f, ctx);

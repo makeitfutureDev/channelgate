@@ -22,6 +22,8 @@ product overview.
   Managers can describe/hide their channel's agent. Metadata refreshes at startup and nightly;
   recommendations respect the requester and reply audience and never transfer work automatically.
 
+- Show connected Composio apps and accounts directly in Slack Settings → You and the channel MCP
+  page, with automatic loading, refresh and account pagination.
 - Show connected Composio apps and accounts on admin user pages and channel Connections pages,
   with account statuses, shared connection source, refresh controls and explicit provider limitations.
 

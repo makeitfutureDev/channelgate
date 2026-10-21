@@ -40,6 +40,11 @@ SDK mode is an **Enterprise / Beta** option configured with a separate SDK API k
 
 ## See connected apps and accounts
 
+In Slack, open the reply's **⚙️ Settings → You** page to see your personal Composio apps and
+accounts below your Composio credential. The **MCP** page shows the conversation's shared
+connections. Lists load automatically after the modal opens; use **Refresh** to reload and
+**Previous accounts / Next accounts** for longer lists. No admin website is needed.
+
 Open a person in **Users** to see their personal Composio apps and account metadata. Open a
 conversation's **MCP Connections** tab to see its shared apps and accounts, including whether
 the connection comes from that conversation or the organization default. Rows show account

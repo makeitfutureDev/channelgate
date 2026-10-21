@@ -7,6 +7,7 @@ import { channelMode, modeLabel } from "../gateway/modes.js";
 import { MIN_MASKABLE_LENGTH } from "../config/channel-env.js";
 import { nextCronRun } from "../util/cron.js";
 import { daemonTimeZone, zonedStamp } from "../util/timezone.js";
+import { composioInventoryBlocks } from "./composio-inventory-view.js";
 
 export const CHANNEL_SETTINGS_MODE_PREFIX = "cg_channel_settings_mode_";
 export const CHANNEL_SETTINGS_OPTION_PREFIX = "cg_channel_settings_option_";
@@ -195,6 +196,7 @@ export function settingsMetadata(state = {}) {
     ...(state.confirm ? { x: String(state.confirm).slice(0, 200) } : {}),
     // The person the Access page's search picked (`y`).
     ...(state.memberFocus ? { y: String(state.memberFocus).slice(0, 32) } : {}),
+    ...(Number.isSafeInteger(state.composioPage) && state.composioPage > 0 ? { cp: Math.min(state.composioPage, 10_000) } : {}),
   });
 }
 
@@ -216,6 +218,7 @@ export function parseSettingsMetadata(raw) {
     ...(typeof value.fs === "string" && /^[0-9a-f-]{36}$/.test(value.fs) ? { formSecretId: value.fs } : {}),
     confirm: typeof value.x === "string" ? value.x : "",
     memberFocus: typeof value.y === "string" && /^[UW][A-Z0-9]+$/.test(value.y) ? value.y : "",
+    ...(Number.isSafeInteger(value.cp) && value.cp > 0 ? { composioPage: Math.min(value.cp, 10_000) } : {}),
   };
 }
 
@@ -771,6 +774,10 @@ function connectionRows(snapshot, state, scope, opts) {
     const form = `composio:${scope}`;
     blocks.push(...withForm(editableRow(`*${scope === "c" ? "Shared account" : "Your account"}* ${inlineCode(scope === "c" ? "composio-agent" : "composio-user")}\n${status}`, form, state, { connected: Boolean(saved?.configured) }), form, snapshot, state));
   }
+  if (!state.form) blocks.push(...composioInventoryBlocks(snapshot.composioInventory, {
+    page: state.composioPage || 0,
+    command: (operation, extra = {}) => actionValue(operation, { c: state.channelId, s: state.slug, u: state.ownerId, ...extra }),
+  }));
   // Make toolbox (a conversation's only)
   if (scope === "c") {
     blocks.push(header("Make toolbox"));
