@@ -115,6 +115,19 @@
   **project number** as audience. Anything else answers `401` with no detail (the reason is logged);
   an endpoint without a Public URL or project number answers `503` naming the remedy; a connected
   transport is required (`503` otherwise).
+- **Typed settings commands.** `/settings <option> <value>` changes General settings without a card
+  click: `mode read|worker|admin`, `auto|lean|network on|off`, `access approved|admins|none`,
+  `managers admins|members|custom`, `vpn on|off`, and `[thread|channel] engine|model|effort
+  <value|default>` (thread by default). Each maps onto the same `settings.access` /
+  `settings.vpn` / `settings.runtime` action the card buttons call (`settings-commands.js`), so
+  authorization, manager checks, mode policy and audit are unchanged; the reply is the policy's
+  own outcome. Named guests/managers, credentials and destructive actions stay on cards or the
+  private browser form. The `/settings` card leads with this command list. This is what works
+  on a Pub/Sub-connected app, where Chat delivers no card clicks to the gateway.
+- **Click and ignored-event logging.** Every card click logs `card click received via
+  pubsub|http: <action>`; a click whose shape is not recognized logs `card click dropped`, and any
+  other unhandled event logs `event ignored`, each with a value-free shape (CloudEvent type,
+  legacy type and key names only — never text, names or ids; `eventShape` in `events.js`).
 - An add-on Chat app dispatches a click to the URL in the button's `action.function`, so the
   connector rewrites every card action's function to the endpoint URL as it posts or edits a card
   (`routeCardActions`, following the live Public URL); the action name rides the `cgAction`

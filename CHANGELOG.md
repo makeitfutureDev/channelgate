@@ -18,6 +18,12 @@ product overview.
 
 ## Unreleased
 
+- Change Google Chat settings by typing `/settings <option> <value>` (mode, Auto, Lean, network,
+  access, managers, VPN, and the thread or channel engine/model/effort). Typed changes use the same
+  permission checks as the card buttons and work on a Pub/Sub-connected app, which cannot receive
+  button clicks. The `/settings` card now lists the commands, and the daemon log records every card
+  click it receives and every Google Chat event it ignores, by delivery path and key names only.
+
 - Fix Google Chat card buttons (Settings Apply, tabs, Files) answering "unable to process your
   request" on a Workspace add-on Chat app: every card action now names the HTTP endpoint URL,
   which is how an add-on dispatches a click; the action's own name still travels as a parameter.
