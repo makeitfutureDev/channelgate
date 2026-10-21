@@ -66,6 +66,8 @@ export function gatewayRef() {
 }
 
 export const GATEWAY_TOOL_NAMES = [
+  "search_agents",
+  "set_channel_agent_profile",
   "create_schedule",
   "list_schedules",
   "get_schedule_runs",

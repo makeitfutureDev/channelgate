@@ -1,5 +1,39 @@
 # ChannelGate — Test Plan
 
+## Channel agent directory (2026-10-21)
+
+- [x] Regression: `test/agent-directory.test.js`, `test/agent-directory-refresh.test.js` and
+  `test/agent-directory-tools.test.js` exercise live shared grant/template/dependency resolution,
+  source and destination authorization, personal dependency suppression, audience proof,
+  membership pagination/failure, profile bounds and scoped writes, both engine MCP contexts,
+  loopback-secret host IPC, reduced toolsets, nightly timers and cancellation. Cached metadata
+  narrows keyword work but never authorizes disclosure. Dedicated security coverage guards this
+  cross-channel boundary.
+- [ ] Live **Claude and Codex**, separately, in owned Read fixtures, with an owned specialist
+  destination whose complete roster includes the private source's roster: set a presentation
+  purpose/shared slide skill, then ask “Can you help me create a presentation? Is there an
+  existing specialist agent?” and “List the agents and their skills.” **Pass:** `search_agents`
+  returns the expected purpose, current shared skills and HTTPS channel link, the answer
+  recommends it, pagination works, and no message/invitation/delegation/file transfer occurs.
+  Record exact source/target IDs, revision, engine/model, tool result and thread evidence.
+- [ ] Live **Claude and Codex** privacy fixture: include a personal skill/dependency, hidden/Lean
+  channel, DM/group DM and a private specialist the requester belongs to but another source
+  reader does not. Repeat from a public/shared source, revoke shared grants/use/membership, and
+  interrupt the membership provider. **Pass:** no forbidden names/links/descriptions/hit counts;
+  personal skills never contribute; subsequent lookups respect changes; admin rank and cached
+  metadata cannot bypass audience proof. Unsupported platforms return no stale disclosure.
+- [ ] Live **Claude and Codex** manager fixture: describe this agent and set example tasks;
+  hide/unhide it; clear examples; retry as a non-manager. **Pass:** only this channel changes,
+  omitted fields and unrelated grants/access persist, changes are announced, non-managers are
+  refused and the audit stores changed keys without descriptive content. Restore fixture state.
+- [ ] Isolated daemon fixture, **engine-independent**: prove startup and host-local 03:00 refresh,
+  local-calendar/DST rearming, overlap deduplication, stop cancellation, rename/removal updates,
+  bounded cache/no memberships and disconnected-provider behavior. **Pass:** no engine session
+  or user schedule is created, and cached descriptors never become access authority. Platform
+  names/purposes used for keyword preselection may wait for the next nightly metadata refresh;
+  current curated profiles and shared skill changes are searched immediately.
+
+
 ## Composio connection inventory (2026-10-21)
 
 - [x] Regression: `node --test test/composio-inventory.test.js test/composio-inventory-ui.test.js

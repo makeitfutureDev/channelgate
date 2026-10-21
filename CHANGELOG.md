@@ -18,6 +18,10 @@ product overview.
 
 ## Unreleased
 
+- Find specialist channel agents with a live directory of purposes, examples and shared skills.
+  Managers can describe/hide their channel's agent. Metadata refreshes at startup and nightly;
+  recommendations respect the requester and reply audience and never transfer work automatically.
+
 - Show connected Composio apps and accounts on admin user pages and channel Connections pages,
   with account statuses, shared connection source, refresh controls and explicit provider limitations.
 

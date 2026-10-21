@@ -508,7 +508,7 @@ test("every registered gateway tool is consciously classified as gated or open (
     "set_secret_mode", "allow_secret_host",
     "set_license_key", "clear_license_key", // gateway-wide licensing state (src/ee/)
     // SSH grants for OTHER people retain the manager approval; own changes return null details.
-    "grant_channel_ssh", "revoke_channel_ssh",
+    "grant_channel_ssh", "revoke_channel_ssh", "set_channel_agent_profile",
     // skills platform: the ORGANIZATION tier (admin decisions, org grants, sources, governance,
     // moving a skill in or out of the shared library) and Git publishing keep their card
     "decide_skill_proposal", "sync_skill_sources",
@@ -523,7 +523,7 @@ test("every registered gateway tool is consciously classified as gated or open (
     // read-only
     "get_channel_vpn_status", "query_channel_database", "list_available_mcps", "list_channel_mcps", "list_schedules", "get_schedule_runs", "update_schedule", "list_folders",
     "get_channel_workdir", "get_channel_drive_folder", "get_gateway_guide",
-    "workspace_list", "workspace_read", "workspace_search",
+    "workspace_list", "workspace_read", "workspace_search", "search_agents",
     "search_channel_memory", "read_channel_memory", // channel-scoped read-only retrieval
     "get_license_status", // read-only; exposes the tier/limits and the key's last 4, never the key
     // writes that land visibly in the current thread, or run inside normal confinement

@@ -23,6 +23,8 @@ import { getBindHost, hashPassword } from "./web/security.js";
 import { createSlackManager } from "./slack/manager.js";
 import { createPlatformTransports, connectConfiguredPlatforms } from "./platforms/boot.js";
 import { startScheduler } from "./gateway/scheduler.js";
+import { searchAgentDirectory } from "./gateway/agent-directory.js";
+import { startAgentDirectoryRefresh } from "./gateway/agent-directory-refresh.js";
 import { BackgroundJobs, setActiveBackgroundJobs } from "./gateway/background.js";
 import { requestApproval, setDurableApprovalExecutor } from "./slack/approvals.js";
 import { executeInstructionApproval, INSTRUCTION_ACTION } from "./gateway/instruction-approvals.js";
@@ -138,8 +140,11 @@ async function containerRuntimeHealth() {
 // The Claude login expiry watch (src/gateway/login-watch.js). Held at module scope so shutdown can
 // stop its timers alongside the other runtime services.
 let claudeLoginWatch = null;
+let agentDirectoryRefresh = null;
 
 async function stopRuntimeServices(reason) {
+  agentDirectoryRefresh?.stop();
+  agentDirectoryRefresh = null;
   try {
     claudeLoginWatch?.stop();
   } catch {
@@ -342,6 +347,7 @@ async function main() {
     approval: (body) => requestApproval(slack, body),
     restart: (body) => restartCoordinator.request(body),
     drivesync: (body) => handleDriveSyncIpc(body),
+    "agent-directory": (body) => searchAgentDirectory(body),
   });
   const app = createWebApp({ slack, transports, backgroundJobs, restartCoordinator, containerRuntimeStatus: containerRuntimeHealth });
   const server = app.listen(PORT, HOST);
@@ -394,6 +400,7 @@ async function main() {
 
   // Cron scheduler: fires saved per-channel jobs (posts results to the channel via Slack).
   startScheduler({ slack });
+  agentDirectoryRefresh = startAgentDirectoryRefresh();
 
   // Git skill sources: periodic sync (settings: skillsSyncIntervalMinutes; 0 = off).
   startSkillsSync({ log: (m) => console.log(m) });

@@ -1,5 +1,23 @@
 # ChannelGate — Features
 
+## Channel agent directory
+
+- `search_agents` finds registered specialist channel agents by purpose, examples and effective
+  shared skills, with channel links and bounded pagination. Current organization, template,
+  channel-section and explicit channel grants/dependencies resolve at lookup; personal skills
+  never contribute. Managers describe or hide their own agent with `set_channel_agent_profile`.
+- The always-injected `gateway-usage` guide checks the directory when a specialist may help and
+  recommends a channel without sending messages, delegating or transferring files. Organization
+  skills can supply company terminology; no company directory is hardcoded in the product skill.
+- Built-in reconciliation refreshes channel metadata at startup and nightly at 03:00 in the host
+  local timezone without an engine turn or user schedule. Metadata caches narrow keyword searches;
+  returned recommendations still verify live metadata/membership and fresh gateway access.
+- Visibility protects the reply's audience as well as its requester. DMs, group DMs, hidden,
+  archived and Lean agents are excluded. Private destinations cannot appear in public/shared
+  sources; other results require the whole current source roster to belong to the destination.
+  A one-to-one bot DM uses its requester's access. Admin status never substitutes for membership.
+  Slack supplies the membership interface; unsupported/disconnected platforms fail closed.
+
 ## Composio connection visibility
 
 - Admin UI user pages list that person's personal Composio applications and accounts. Channel

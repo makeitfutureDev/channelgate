@@ -20,6 +20,13 @@ export function validateConnector(connector) {
   for (const method of REQUIRED_METHODS) {
     if (typeof connector[method] !== "function") throw new TypeError(`ChatConnector ${connector.platform} missing ${method}()`);
   }
+  // Optional read-only discovery provider. Capability and live provider are both necessary;
+  // disconnected/null connectors deliberately have no provider, even on a capable platform.
+  if (connector.agentDirectory) {
+    for (const method of ["describeConversation", "conversationMembers"]) {
+      if (typeof connector.agentDirectory[method] !== "function") throw new TypeError(`ChatConnector ${connector.platform} agentDirectory missing ${method}()`);
+    }
+  }
   return connector;
 }
 

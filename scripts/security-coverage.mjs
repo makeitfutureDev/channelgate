@@ -11,6 +11,11 @@ const help = spawnSync(process.execPath, ["--help"], { encoding: "utf8" }).stdou
 const branchFlag = help.includes("--test-coverage-branches") ? "--test-coverage-branches" : "--test-coverage-branch";
 const areas = [
   {
+    name: "agent-directory", floor: [98, 83, 95],
+    include: ["src/gateway/agent-directory.js", "src/gateway/agent-directory-refresh.js", "src/slack/agent-directory.js", "src/mcp/tools/agent-directory.js"],
+    tests: ["test/agent-directory.test.js", "test/agent-directory-refresh.test.js", "test/agent-directory-tools.test.js"],
+  },
+  {
     name: "plugin-packages", floor: [95, 85, 90],
     include: ["src/gateway/plugin-runtime.js", "src/gateway/skills/plugin-package.js"],
     tests: ["test/plugin-runtime.test.js", "test/plugin-grant-integration.test.js", "test/skills-plugin-import.test.js"],
