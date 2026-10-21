@@ -7,6 +7,28 @@ These controls are capability-bound to the current conversation, except the expl
 
 Persistent control changes require the current authorized human decision through the gateway approval path. Auto approval of engine tools does not approve these control-plane changes. The managed updater has an explicit Auto/Admin exception; restart has an Admin exception, described below. Read-only tools do not require that extra sign-off.
 
+## set_channel_agent_profile
+
+Describe or hide the current channel's specialist agent without changing its skills or access.
+
+| Argument | Required | Meaning and default |
+| --- | --- | --- |
+| `description` | No | Purpose, up to 600 characters. Empty clears the curated purpose. |
+| `examples` | No | Up to six example tasks, each up to 160 characters. Empty array clears them. |
+| `hidden` | No | Hide/unhide this agent in discovery. |
+
+**Authority:** Authenticated current-channel manager or admin with current gateway access.
+Channel-scoped and reversible; no second approval card. API/untrusted principals are refused.
+At least one field is required semantically; omitted fields remain unchanged.
+
+**Result:** Saved profile, immediately available to subsequent directory lookups. Without a
+curated purpose, platform purpose/topic supplies it. Announce the saved change in the reply.
+The audit records actor, channel and changed keys without descriptive content.
+
+**Restrictions:** Always this conversation; model arguments cannot target another channel.
+Publishing a purpose never widens private channel visibility. See
+[search_agents](/docs/controls/knowledge-and-instructions/#search_agents).
+
 ## set_channel_admin_mode
 
 **Required:** `enabled` (boolean). **Optional:** none. **Authority:** gateway admin, with control approval.

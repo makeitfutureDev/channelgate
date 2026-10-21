@@ -35,6 +35,18 @@ Catalog revisions preserve the exact package files and support history and rollb
 
 Lean removes optional skill grants. Related: [skill sources](/docs/configuration/skill-sources), [plugins](/docs/features/plugins), and the [complete skills reference](/docs/skills).
 
+## Find an existing specialist agent
+
+Ask “Which agent can help me create a presentation?” or “List the agents and their skills.” The
+gateway guide checks `search_agents` and recommends a relevant channel with its purpose, link and
+active shared skills. It continues helping here if preferred; discovery does not send your request
+elsewhere. Managers can describe or hide their own channel with `set_channel_agent_profile`.
+
+The directory protects everyone reading the reply as well as the requester. Private specialists
+are not advertised to public/shared channels, and personal skills stay private. Metadata refreshes
+nightly at 03:00 host-local time; skill grants resolve at lookup. See the
+[directory control reference](/docs/controls/knowledge-and-instructions/#search_agents).
+
 ## Explore the skills handbook
 
 - [Discovery and inspection](/docs/features/skill-discovery)

@@ -3,7 +3,37 @@ title: Memory and instruction controls
 description: Search, read, and update channel knowledge and request standing rules.
 ---
 
-Memory stores declarative facts for later retrieval. Instructions govern behavior. These four controls use the current conversation only; the run capability does not expose another channel’s knowledge.
+Memory stores declarative facts for later retrieval. Instructions govern behavior. Memory and
+instruction controls use the current conversation only. Agent discovery returns a separately
+authorized directory projection; it never reads another conversation's memory or history.
+
+## search_agents
+
+Find an existing specialist channel agent by purpose, example tasks or active shared skills.
+
+| Argument | Required | Meaning and default |
+| --- | --- | --- |
+| `query` | No | Up to 500 characters; empty lists eligible agents. |
+| `limit` | No | Integer 1–50; default 20. |
+| `offset` | No | Integer 0–10000; default 0. Use the previous page's `nextOffset`. |
+
+**Authority and scope:** Authenticated conversation member with current gateway access. Live
+platform checks protect the requester and reply audience; API/untrusted principals are refused.
+Slack currently supplies the metadata/membership provider. Unsupported or offline providers fail
+closed. DMs/group DMs never appear as agents; personal skills never contribute. Private targets
+cannot appear in public/shared sources. Other results require the complete current source roster
+to belong to the target; a real one-to-one bot DM uses the requester's membership.
+
+**Result:** `agents`, `returned`, `hasMore` and `nextOffset`. Entries include the channel link,
+purpose, examples, current shared skill summaries and platform verification time. Summaries
+prioritize query matches; `skillsTotal` and `skillsTruncated` identify shortened skill lists.
+Pages are bounded to 64 KiB. Continue with the same query and returned offset.
+
+**Restrictions:** No messages, invitations, delegated runs or file transfers. Cached metadata
+narrows search but never authorizes a result. Channel metadata reconciles on startup and nightly
+at 03:00 host-local time without an engine turn; platform-purpose keyword updates may wait for
+that refresh. Curated profiles and shared skill changes participate immediately. See
+[set_channel_agent_profile](/docs/controls/conversation-settings/#set_channel_agent_profile).
 
 ## search_channel_memory
 
