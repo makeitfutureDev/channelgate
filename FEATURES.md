@@ -20,6 +20,12 @@
 
 ## Composio connection visibility
 
+- Slack Settings → **You** shows the viewer's personal connected Composio applications and
+  accounts directly below their Composio credential. The channel's **MCP** page shows the shared
+  connections and whether they use the channel or organization identity. Both lists load after
+  the native modal opens, offer Refresh, and page through all reported accounts in compact rows.
+  Credential forms remain undisturbed; late loads cannot overwrite newer navigation. Each read
+  rechecks viewer ownership, current channel access and the resolved credential scope.
 - Admin UI user pages list that person's personal Composio applications and accounts. Channel
   Connections pages list the shared identity and identify channel credentials versus organization
   defaults; personal accounts remain on user pages. Each row shows the app, account alias/available

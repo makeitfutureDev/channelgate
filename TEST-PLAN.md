@@ -33,6 +33,28 @@
   names/purposes used for keyword preselection may wait for the next nightly metadata refresh;
   current curated profiles and shared skill changes are searched immediately.
 
+## Slack Settings Composio account visibility (2026-10-21)
+
+- [x] Regression: `node --test test/slack-composio-inventory-view.test.js
+  test/slack-composio-inventory-controller.test.js test/slack-composio-inventory-cache.test.js
+  test/channel-settings-modal.test.js test/slack-settings-redesign.test.js`. Account fixtures
+  contain two Gmail aliases, another app, more than six accounts, and hostile provider labels.
+  Controller fixtures hold discovery open, revoke access, rotate credentials and navigate before
+  completion. Cache tests cover viewer/scope separation, key rotation, expiry and single-flight.
+- [ ] Native Slack acceptance, **engine-independent**: use an approved member and an admin in an
+  isolated channel fixture with a personal key and a distinct shared key. Engines do not
+  execute Settings reads; the same footer/modal works for both. Open reply ⚙️ Settings → You.
+  **Pass:** personal apps/accounts appear beneath Composio, with account labels, statuses, total
+  counts, Refresh and Previous/Next controls. Page through every fixture account; switching to
+  MCP shows only the channel/shared inventory and its source. A DM suppresses shared inventory.
+  No separate admin website or account authorizations are required. Repeat on mobile.
+- [ ] Slow/failure acceptance, **engine-independent**: hold a provider lookup, switch to another
+  Settings page or open an inline credential form, then resolve it. **Pass:** neither page nor
+  typed form is replaced. Expire a key/fail one app lookup; unavailable/partial is distinct from
+  no connections and Refresh recovers. Remove the viewer's channel access or rotate their key
+  during lookup; old account data cannot be painted afterward. Cross-owner and forged-scope
+  buttons are refused. Saving/replacing/removing a key reloads the matching list; the Personal
+  provider-completeness caveat remains visible. Restore fixture grants and keys.
 
 ## Composio connection inventory (2026-10-21)
 

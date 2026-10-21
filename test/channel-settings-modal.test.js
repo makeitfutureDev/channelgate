@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { ensureTestEnv } from "./helpers.js";
+import { COMPOSIO_INVENTORY_ACTION_ID } from "../src/slack/composio-inventory-view.js";
 
 ensureTestEnv();
 
@@ -819,4 +820,23 @@ test("Cloud MCP manager marks inadmissible definitions and offers only removal f
   assert.equal(rows.find(row => row.text.text.includes("*credentialed*")).accessory.text.text, "Deactivate");
   assert.equal(rows.find(row => row.text.text.includes("*healthy*")).accessory.text.text, "Activate");
   assert.match(rendered(view), /unavailable:.*is not defined/);
+});
+
+test("native You and MCP pages show the scoped account list beneath Composio and preserve inline forms", () => {
+  const inventory = { mode: "personal", source: "user", state: "ready", accounts: [
+    { app: "gmail", id: "ca-viewer", alias: "Work", account: "viewer@example.test", status: "ACTIVE" },
+  ] };
+  const you = buildChannelSettingsView({ ...snapshot, composioInventory: inventory }, { ...state, tab: "you" });
+  const at = (view, text) => view.blocks.findIndex((block) => block.text?.text?.includes(text));
+  assert.ok(at(you, "gmail — Work") > at(you, "Composio"));
+  assert.ok(at(you, "gmail — Work") < at(you, "Toolbox"));
+  assert.match(rendered(you), /Personal connections|viewer@example.test/);
+  const refresh = elements(you).find((element) => element.action_id === COMPOSIO_INVENTORY_ACTION_ID);
+  assert.equal(parseActionValue(refresh.value).u, state.ownerId);
+  const mcp = buildChannelSettingsView({ ...snapshot, composioInventory: { ...inventory, source: "org" } }, { ...state, tab: "mcp" });
+  assert.match(rendered(mcp), /Organization connections/);
+  const editing = buildChannelSettingsView({ ...snapshot, composioInventory: inventory }, { ...state, tab: "you", form: "composio:p" });
+  assert.equal(editing.submit.text, "Save");
+  assert.equal(elements(editing).some((element) => element.action_id === COMPOSIO_INVENTORY_ACTION_ID), false);
+  assert.doesNotMatch(rendered(editing), /viewer@example.test/);
 });
