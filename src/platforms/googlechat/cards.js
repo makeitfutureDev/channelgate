@@ -31,6 +31,23 @@ export function validateChatCard(card) {
   return card;
 }
 
+// A Chat app built as a Workspace add-on dispatches a click to the URL in `action.function`; a short
+// name there makes Chat answer "unable to process your request" before the gateway sees the click.
+// Every action already carries its name as the `cgAction` parameter, so routing only swaps the
+// function for the endpoint URL. A standalone Chat app echoes the function back, so it is safe there.
+export function routeCardActions(card, endpoint) {
+  if (!endpoint) return card;
+  const walk = value => {
+    if (Array.isArray(value)) return value.map(walk);
+    if (!value || typeof value !== 'object') return value;
+    const out = {};
+    for (const [key, item] of Object.entries(value)) out[key] = walk(item);
+    if (out.onClick?.action && typeof out.onClick.action === 'object') out.onClick = { ...out.onClick, action: { ...out.onClick.action, function: endpoint } };
+    return out;
+  };
+  return walk(card);
+}
+
 // Shared settings policy renders its small, declarative Adaptive Card UI. Converting that UI
 // keeps authorization and runtime transactions in one place while using Chat-native controls.
 export function adaptiveSettingsToChat(card) {

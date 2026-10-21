@@ -286,6 +286,24 @@ Full combined regression/coverage and CI remain integration checks. Existing liv
 Claude/Codex session and public-link acceptance gates still apply; mocked HTTP is not live
 provider acceptance.
 
+## Google Chat add-on card actions name the endpoint URL (2026-10-21)
+
+Root cause: with the HTTP endpoint connected, the `/settings` card rendered but every button
+(Apply, tabs) still showed "Xavier is unable to process your request". A Workspace add-on Chat app
+dispatches a click to the URL in `onClick.action.function`; ChannelGate put a short name there
+(`settings.page`), so Google could not dispatch it.
+Automated fixtures: `test/googlechat-card-routing.test.js` (postCard and updateCard route every
+action to the configured endpoint URL, keep `cgAction`, leave `openLink` untouched, follow a
+cleared endpoint; an add-on click with `invokedFunction` = the URL resolves to the `cgAction`
+name through `normalizeCardEvent` and `googleChatActionData`). All Google Chat and platform
+suites pass; `npm run check:static` clean.
+
+- [ ] LIVE `GCHAT-ADDON-ACTIONS-01` (engine-independent): the `GCHAT-ENDPOINT-01` fixtures on this
+  candidate. In a named space send `@app /settings`, press a tab, then Apply Auto; press
+  **Files**/**Variables**/**Settings** under an answer. Pass: each click updates or opens the
+  requester-only card with no red "unable to process" line, Apply persists after reopening
+  `/settings`, and the daemon log shows no `endpoint request rejected`.
+
 ## Google Chat HTTP endpoint — working card buttons (2026-10-14)
 
 Root cause: a Chat app has one connection setting and Google delivers card/button clicks only to

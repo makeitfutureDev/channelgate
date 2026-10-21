@@ -115,6 +115,11 @@
   **project number** as audience. Anything else answers `401` with no detail (the reason is logged);
   an endpoint without a Public URL or project number answers `503` naming the remedy; a connected
   transport is required (`503` otherwise).
+- An add-on Chat app dispatches a click to the URL in the button's `action.function`, so the
+  connector rewrites every card action's function to the endpoint URL as it posts or edits a card
+  (`routeCardActions`, following the live Public URL); the action name rides the `cgAction`
+  parameter, which the click parser prefers. A short name there made Chat answer "unable to
+  process your request" before the click reached the gateway.
 - Accepted events feed the same transport handler the Pub/Sub puller feeds — messages, membership
   (`addedToSpacePayload`/`removedFromSpacePayload` and the legacy `ADDED_TO_SPACE` types now parse
   without CloudEvent attributes), app commands and `buttonClickedPayload` clicks — so gating,

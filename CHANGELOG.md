@@ -18,6 +18,10 @@ product overview.
 
 ## Unreleased
 
+- Fix Google Chat card buttons (Settings Apply, tabs, Files) answering "unable to process your
+  request" on a Workspace add-on Chat app: every card action now names the HTTP endpoint URL,
+  which is how an add-on dispatches a click; the action's own name still travels as a parameter.
+
 - Fix the agent directory returning an empty list on a connected Slack deployment: register
   the live Slack client for discovery and follow disconnect/reconnect. Preserve native Slack
   automation delivery, including image uploads, menus and reminder permalinks.
