@@ -64,7 +64,7 @@ const claude = validateEngineAdapter({
   efforts: ["low", "medium", "high", "xhigh"], models: [
     { label: "Opus 5.5", value: "claude-opus-5-5", description: "Current Opus model for most coding and knowledge work." },
     { label: "Fable 5.1", value: "claude-fable-5-1", description: "Current Fable model for demanding long-running work." },
-    { label: "Sonnet 5", value: "claude-sonnet-5", description: "Current Sonnet model for everyday work." },
+    { label: "Sonnet 5.5", value: "claude-sonnet-5-5", description: "Current Sonnet model for everyday work." },
     { label: "Haiku 4.5", value: "claude-haiku-4-5", description: "Current Haiku model for fast, low-cost work." },
   ], mintsOwnSessionId: false,
   // Provider-failure kinds (stream.js claudeProviderError) the orchestrator may replay IN PLACE on

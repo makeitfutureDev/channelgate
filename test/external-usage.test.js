@@ -442,3 +442,12 @@ test("a pass reads all history by default and reports how it attributed what it 
   assert.ok(Array.isArray(summary.errors));
   assert.ok(summary.scopes.some((s) => s.scope === "host"));
 });
+
+// Sonnet 5.5 halves the cache-read rate; old Sonnet transcripts keep their own price.
+test("Sonnet 5.5 external usage prices both cache TTLs without repricing Sonnet 5", async () => {
+  const { getClaudeModelRates } = await import("../src/config/settings.js");
+  const rates = getClaudeModelRates();
+  const usage = { input_tokens: 1e6, cached_input_tokens: 1e6, cache_write_5m_tokens: 1e6, cache_write_1h_tokens: 1e6, output_tokens: 1e6 };
+  assert.equal(priceClaudeTokens(usage, "claude-sonnet-5-5", rates), 18.6);
+  assert.equal(priceClaudeTokens(usage, "claude-sonnet-5", rates), 18.7);
+});

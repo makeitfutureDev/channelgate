@@ -1179,7 +1179,8 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
   change. Discovery is bounded and cached for six hours; a failed refresh retains the last good
   snapshot, or the bundled fallback on a cold start.
 - **Claude's model choices state exact versions:** the picker offers Opus 5.5, Fable 5.1,
-  Sonnet 5, and Haiku 4.5 under their full model IDs. It omits duplicate aliases and special
+  Sonnet 5.5, and Haiku 4.5 under their full model IDs. Sonnet 5.5 uses its native 1M
+  context window and verified cache-aware pricing for external transcript usage. It omits duplicate aliases and special
   modes from the normal choices. Previously saved Claude aliases and full IDs remain valid;
   the Slack picker shows the current saved value, and the Admin UI round-trips it. The curated
   list is reviewed when Anthropic releases a new model. Provider CLI/package upgrades are

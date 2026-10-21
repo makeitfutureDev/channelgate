@@ -11,8 +11,9 @@ test("Slack offers a short Claude list with exact versioned IDs", () => {
   const claudeValues = modelOptionsForEngine("claude").map(({ value }) => value);
   const codexValues = modelOptionsForEngine("codex").map(({ value }) => value);
 
-  assert.deepEqual(claudeValues, ["__default__", "claude-opus-5-5", "claude-fable-5-1", "claude-sonnet-5", "claude-haiku-4-5"]);
+  assert.deepEqual(claudeValues, ["__default__", "claude-opus-5-5", "claude-fable-5-1", "claude-sonnet-5-5", "claude-haiku-4-5"]);
   assert.ok(!codexValues.some((value) => /fable/i.test(value)));
+  assert.equal(modelOptionsForEngine("claude", "claude-sonnet-5").at(-1).value, "claude-sonnet-5");
   assert.equal(modelOptionsForEngine("claude", "fable").at(-1).label, "Current: fable");
   assert.equal(modelOptionsForEngine("claude", "claude-opus-5-5").length, claudeValues.length);
 });
@@ -28,6 +29,7 @@ test("admin UI consumes server model manifests and keeps exact versions as its o
   assert.match(source, /current && modelMatchesEngine\(current, eng\).*options\.push\(\[current, current\]\)/);
   assert.match(claudeList, /\["claude-opus-5-5", "Opus 5\.5"\]/);
   assert.match(claudeList, /\["claude-fable-5-1", "Fable 5\.1"\]/);
+  assert.match(claudeList, /\["claude-sonnet-5-5", "Sonnet 5\.5"\]/);
   assert.doesNotMatch(claudeList, /\["(?:best|fable|opusplan)",/);
   assert.doesNotMatch(codexList, /fable/i);
 });
