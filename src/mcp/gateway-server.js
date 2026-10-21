@@ -34,6 +34,7 @@ import { register as registerLicense } from "./tools/license.js";
 import { register as registerChannelDatabase } from "./tools/channel-database.js";
 import { register as registerWorkspaceRead } from "./tools/workspace-read.js";
 import { register as registerSkills } from "./tools/skills.js";
+import { register as registerAgentDirectory } from "./tools/agent-directory.js";
 import { register as registerQuestions } from "./tools/questions.js";
 import { register as registerSshAccess } from "./tools/ssh-access.js";
 import { sshRequestTarget } from "../gateway/ssh-access.js";
@@ -48,7 +49,7 @@ export const text = (t) => ({ content: [{ type: "text", text: t }] });
 // a safe restart, start/inspect a channel's Google Drive sync pass (the pass must run in the daemon
 // so it shares the per-channel in-flight guard and outlives the turn). `kind` is also the /internal/<kind> route name, so the two transports stay in
 // lockstep. A tool never learns which one it is using.
-export const DAEMON_IPC_KINDS = Object.freeze(["background", "approval", "restart", "drivesync"]);
+export const DAEMON_IPC_KINDS = Object.freeze(["background", "approval", "restart", "drivesync", "agent-directory"]);
 
 // Daemon-IPC credentials for the CHILD-PROCESS transport (the /internal/* endpoints). The Claude
 // path forwards CG_APPROVAL_SECRET/CG_PORT via the --mcp-config env; the Codex path can't — its
@@ -296,6 +297,7 @@ export function buildControlPlane({ loadMeta, createdBy, principalTrusted }) {
     ["set_channel_network", { authz: "admin", details: AUTOMATIC }],
     ["set_channel_bash", { authz: "manage", details: AUTOMATIC }],
     ["set_channel_auto_mode", { authz: "manage", details: AUTOMATIC }],
+    ["set_channel_agent_profile", { authz: "manage", details: AUTOMATIC }],
     // The folder is contained to the allowlisted root (web/security.js), so it cannot point at
     // the operator home, the gateway root or another channel; a wrong change is one message away.
     ["set_channel_workdir", { authz: "admin", details: AUTOMATIC }],
@@ -519,6 +521,7 @@ export function createGatewayMcpServer(ctx) {
     registerTeamsNative(server, ctx);
     registerLicense(server, ctx);
     registerSkills(server, ctx);
+    registerAgentDirectory(server, ctx);
     registerQuestions(server, ctx);
     registerSshAccess(server, ctx);
     registerFileSharing(server, ctx);

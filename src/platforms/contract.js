@@ -83,6 +83,8 @@ export const CAPABILITY_SPEC = Object.freeze({
   // ── Proactive (scheduler, follow-ups, nudges, background continuations) ────
   proactivePost: { default: false },
   proactiveDm: { default: false },
+  // Live metadata and complete membership proof for audience-scoped specialist discovery.
+  agentDirectory: { default: false },
 });
 
 const CAPABILITY_KEYS = Object.freeze(Object.keys(CAPABILITY_SPEC));

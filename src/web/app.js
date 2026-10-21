@@ -38,6 +38,7 @@ import { runningRevision, startUpdate } from "../gateway/updater.js";
 import { publicUpdateState, readUpdateStatus } from "../gateway/update-state.js";
 import { renderShell } from "./assets.js";
 import { handleDriveSyncIpc } from "../gateway/drivesync.js";
+import { searchAgentDirectory } from "../gateway/agent-directory.js";
 
 const escapeHtml = (s) =>
   String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -132,6 +133,17 @@ export function createWebApp({
       res.json(await handleDriveSyncIpc(req.body || {}));
     } catch (e) {
       res.json({ ok: false, error: e.message });
+    }
+  });
+
+  // Live connector reads for host stdio tools. Socket-backed tools use the same daemon service.
+  app.post("/internal/agent-directory", async (req, res) => {
+    if (internalForbidden(req)) return res.status(403).json({ ok: false, error: "forbidden" });
+    try {
+      const { query, limit, offset, createdBy, channelId } = req.body || {};
+      res.json(await searchAgentDirectory({ query, limit, offset, createdBy, channelId }));
+    } catch {
+      res.status(503).json({ ok: false, error: "Agent discovery is unavailable." });
     }
   });
 

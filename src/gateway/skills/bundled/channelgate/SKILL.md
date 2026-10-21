@@ -9,12 +9,12 @@ description: >-
   headless MCP configuration, or server sizing and hosting-provider choice for a deployment. Do not
   use for ordinary work merely performed through ChannelGate.
 metadata:
-  version: 3.2.0
+  version: 3.3.0
   category: claude-code
   complexity: advanced
   tags: channelgate, containers, claude-code, codex, mcp, skills, memory, security
   created: 2026-06-16
-  updated: 2026-10-13
+  updated: 2026-10-21
 ---
 
 # ChannelGate
@@ -36,6 +36,9 @@ Read only the references needed for the request:
   VS Code attachment: [credentials and CLI connections](references/credentials-connections.md).
 - MCP identities and allowlists, Composio, the skill catalog, grants, templates, sources,
   authoring, or Claude/Codex discovery: [MCP and skills](references/mcp-skills.md).
+- Finding an existing specialist channel agent: use the injected `gateway-usage` guide's
+  `references/agent-directory.md` and `search_agents`. The live directory owns channel links,
+  purposes and active shared skills; organization skills supply company-specific terminology.
 - Persistent facts, standing rules, compact catalog recall, search/read, writes, or the background
   reviewer: [channel memory](references/channel-memory.md).
 - Background agents/jobs, schedules, attachments, chat-platform behavior, progress, or operational

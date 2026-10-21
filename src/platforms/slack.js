@@ -11,6 +11,7 @@ import { mdToMrkdwn, resolveMentions, chunkMrkdwn } from "../slack/format.js";
 import { isSlackTs, slackThreadFor } from "../slack/thread-keys.js";
 import { getDirectory, normalizeName } from "../slack/directory.js";
 import { MAX_SLACK_CHARS } from "../slack/util.js";
+import { createSlackAgentDirectory } from "../slack/agent-directory.js";
 
 export function createSlackConnector(client, { capabilities } = {}) {
   if (!client?.chat?.postMessage) throw new TypeError("createSlackConnector requires a Slack WebClient");
@@ -19,6 +20,7 @@ export function createSlackConnector(client, { capabilities } = {}) {
     capabilities,
     ready: () => true,
     client, // escape hatch for the Slack-only surfaces (Block Kit modals, Lists, native charts)
+    agentDirectory: createSlackAgentDirectory(client),
 
     // One message. `threadKey` is a SESSION key, not necessarily a Slack ts — slackThreadFor is the
     // single rule that turns it into a legal thread_ts (or null = post top-level), shared with the
@@ -109,6 +111,7 @@ export const slackAdapter = validatePlatformAdapter({
     broadcast: true,
     proactivePost: true,
     proactiveDm: true,
+    agentDirectory: true,
   },
   formatOutbound(markdown, { directory = null, capabilities = this?.capabilities } = {}) {
     // Slack keeps its existing pipeline byte-for-byte: mdToMrkdwn escapes model-authored control
