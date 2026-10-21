@@ -675,7 +675,7 @@ export function getCodexModelRates() {
 // launch (../gateway/external-usage.js), where the only record is a transcript's token counts.
 // Verified against platform.claude.com/docs/en/about-claude/pricing on 2026-09-23. `cacheWrite5m` /
 // `cacheWrite1h` are the two cache-write TTLs and `cacheRead` the hit rate; the multipliers differ
-// per family (Fable 5.1 reads at 0.025x, Opus 5.5 at 0.05x, everything else at 0.1x), which is why
+// per family (Fable 5.1 reads at 0.025x, Opus/Sonnet 5.5 at 0.05x, others at 0.1x), which is why
 // the rate is stored outright instead of derived. The 1M context window carries no premium on
 // 4.6-and-later models, so there is no long-context multiplier here.
 export const DEFAULT_CLAUDE_RATES = {
