@@ -59,7 +59,18 @@ async function startTeamsTransport(config, log) {
   return startTeams({ ...config, capabilities, getActivationReactions: () => getMentionReactions('msteams'), getActivationVersion: getTeamsMentionReactionsUpdatedAt, onMessage: ingest, onInvoke: controls.onInvoke, onStop: controls.stop, log, deps: { auth, api, connector } });
 }
 
-export function createPlatformTransports({ log = console } = {}) {
+export function createPlatformTransports({ slack, log = console } = {}) {
+  // Slack retains its existing lifecycle manager, but also supplies the live connector seam
+  // used by read-only agent discovery. Resolve the CURRENT client on every access so a
+  // disconnect or credential rotation can never retain an old metadata/membership reader.
+  if (slack) registerTransport("slack", {
+    snapshot: () => slack.snapshot(),
+    getConnector: () => {
+      const client = slack.snapshot().connected ? slack.getClient() : null;
+      const adapter = requirePlatform("slack");
+      return client ? adapter.createConnector(client, { capabilities: adapter.capabilities }) : null;
+    },
+  });
   const googlechat = createTransportManager({ platform: "googlechat", log, start: (config, lifecycle) => startGoogleChatTransport(config, log, lifecycle) });
   const msteams = createTransportManager({ platform: "msteams", log, start: (config) => startTeamsTransport(config, log) });
   registerTransport("googlechat", googlechat);

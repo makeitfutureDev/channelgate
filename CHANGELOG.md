@@ -18,6 +18,10 @@ product overview.
 
 ## Unreleased
 
+- Fix the agent directory returning an empty list on a connected Slack deployment: register
+  the live Slack client for discovery and follow disconnect/reconnect. Preserve native Slack
+  automation delivery, including image uploads, menus and reminder permalinks.
+
 - Update Claude Code to 2.1.306 and offer Sonnet 5.5 in the model picker, with its
   native 1M context window and verified external-usage cache rates. Existing saved models remain valid.
 

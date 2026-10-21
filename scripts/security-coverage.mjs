@@ -13,7 +13,7 @@ const areas = [
   {
     name: "agent-directory", floor: [98, 83, 95],
     include: ["src/gateway/agent-directory.js", "src/gateway/agent-directory-refresh.js", "src/slack/agent-directory.js", "src/mcp/tools/agent-directory.js"],
-    tests: ["test/agent-directory.test.js", "test/agent-directory-refresh.test.js", "test/agent-directory-tools.test.js"],
+    tests: ["test/agent-directory.test.js", "test/agent-directory-refresh.test.js", "test/agent-directory-tools.test.js", "test/agent-directory-slack-boot.test.js"],
   },
   {
     name: "plugin-packages", floor: [95, 85, 90],

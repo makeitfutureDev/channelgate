@@ -77,7 +77,7 @@ process.env.MCP_TOOL_TIMEOUT ||= "300000";
 const slack = createSlackManager();
 // Google Chat + Teams. Created at module scope alongside Slack so the managers exist (and are
 // registered as the platforms' live-connector source) before anything can ask for a connector.
-const transports = createPlatformTransports();
+const transports = createPlatformTransports({ slack });
 
 // A long-running gateway must survive a bad integration (e.g. an invalid Slack token producing
 // an async error). Log and keep running rather than exiting on these.
