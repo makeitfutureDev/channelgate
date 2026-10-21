@@ -1289,6 +1289,8 @@
 
         <!-- ── CONNECTIONS ────────────────────────────────────────────────── -->
         <div class="subpane" data-pane="connections">
+          <div class="setcard ch-composio-inventory"></div>
+          <p class="hint">Shared accounts for this conversation. Each person's personal accounts are listed on their user page. Save key changes before refreshing. Lean mode can omit connections during a run.</p>
           <div class="tok-fields">
             <label class="field">
               <span>Shared Composio token (<code>composio</code>; personal <code>composio-user</code> stays available)</span>
@@ -1507,6 +1509,8 @@
           <input class="ud-composio" type="password" placeholder="Composio token (x-consumer-api-key)" />
           <em class="state ud-composio-state"></em>
         </div>
+        <div class="ud-row ud-composio-inventory"></div>
+        <p class="hint">This person's personal accounts. Shared accounts are listed on each channel's Connections page. Save key changes before refreshing.</p>
         <div class="ud-row">
           <label class="fldlab">Toolbox token</label>
           <input class="ud-toolboxtoken-label tok-label" type="text" placeholder="owner — whose account? (label, optional)" autocomplete="off" />

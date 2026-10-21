@@ -24,6 +24,7 @@ import { mountSkillAssignmentPicker } from "./skill-assignment-picker.js";
 import { mountUserPicker } from "./admin-user-picker.js";
 import { mountSecretEditor, secretEditorMarkup } from "./admin-secrets.js";
 import { customMcpEditorMarkup, mountCustomMcpEditor } from "./admin-custom-mcps.js";
+import { mountComposioInventory } from "./admin-composio.js";
 import { describeEvent, eventLabel, isAdminEvent } from "./admin-events.js";
 import { automationRunMarkup, automationSummaryMarkup, automationStatusLabel, automationStatusTone } from "./admin-schedules.js";
 
@@ -2369,6 +2370,7 @@ function renderChannelDetail(ch) {
     const composioLabel = card.querySelector(".ch-composio-label").value;
     const toolboxLabel = card.querySelector(".ch-toolboxtoken-label").value;
     const makeToolboxKey = tokenValue(makeToolboxKeyInput);
+    const previousNoDefaultTokens = Boolean(ch.meta?.noDefaultTokens);
     try {
       const result = await api(`/api/channels/${encodeURIComponent(ch.channelId)}/meta`, {
         method: "PUT",
@@ -2414,6 +2416,7 @@ function renderChannelDetail(ch) {
       // The server response is the validated, committed record. Reconcile the cached channel from
       // that whole record so a later SPA re-render cannot resurrect stale MCP/skill selections.
       ch.meta = reconcileChannelMeta(ch.meta, result.meta);
+      if (composioTok || previousNoDefaultTokens !== Boolean(ch.meta.noDefaultTokens)) void loadComposioConnections(true);
       initializeMcpBox(mcpsBox, { claude: ch.meta.allowedMcps || [], codex: ch.meta.allowedCodexMcps || [] });
       if (!mcpsBox.dataset.mcpLoading) paintAllMcpBoxes(mcpsBox);
       updateChecksCount(mcpsBox, mcpsCount);
@@ -2552,6 +2555,7 @@ function renderChannelDetail(ch) {
 
   // Page tabs are view toggles; all Access/MCP Connections/Cloud MCP/Environment/Skills/Runtime controls stay in the DOM so the one savebar
   // persists them. Instructions & Memory lazy-load on first open and keep their own Save.
+  const loadComposioConnections = mountComposioInventory(card.querySelector(".ch-composio-inventory"), `/api/channels/${encodeURIComponent(ch.channelId)}/composio-connections`, { autoLoad: false });
   const subtabs = card.querySelectorAll(".subtab");
   const subpanes = card.querySelectorAll(".subpane");
   for (const tab of subtabs) {
@@ -2560,6 +2564,7 @@ function renderChannelDetail(ch) {
       for (const p of subpanes) p.classList.toggle("active", p.dataset.pane === tab.dataset.pane);
       if (tab.dataset.pane === "memory") loadMemory();
       if (tab.dataset.pane === "instructions") loadInstructions();
+      if (tab.dataset.pane === "connections") void loadComposioConnections();
     });
   }
 
@@ -3307,6 +3312,7 @@ function openUserDrawer(id) {
   attachReveal(drawer.querySelector(".ud-toolboxtoken"), { has: u.hasToolboxToken, last4: u.toolboxTokenLast4, fetch: revealSecret("user", "toolboxToken", id) });
   drawer.querySelector(".ud-composio-label").value = u.composioTokenLabel || "";
   drawer.querySelector(".ud-toolboxtoken-label").value = u.toolboxTokenLabel || "";
+  mountComposioInventory(drawer.querySelector(".ud-composio-inventory"), `/api/users/${encodeURIComponent(id)}/composio-connections`);
 
   drawer.querySelector(".ud-close").addEventListener("click", closeUserDrawer);
 

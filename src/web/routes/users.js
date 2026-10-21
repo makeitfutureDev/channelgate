@@ -14,6 +14,7 @@ import { listUserEnv, patchUserEnv } from "../../config/scoped-env.js";
 import { listEnvVars, normalizeEnvName, swapRuleFieldsFrom } from "../../config/channel-env.js";
 import { listCustomMcps } from "../../gateway/custom-mcps.js";
 import { listUserCustomMcps, removeUserCustomMcp, saveUserCustomMcp } from "../../gateway/custom-mcp-store.js";
+import { loadComposioInventory } from "../../gateway/composio-inventory.js";
 
 // The user listing is built field by field, never `...u`. That is the property that matters here:
 // a stored user record can carry secrets this file has never heard of — a personal token from an
@@ -78,8 +79,18 @@ export function filterUsersForSearch(users, query) {
   }));
 }
 
-export function createUsersRouter() {
+export function createUsersRouter({ composioInventory = loadComposioInventory } = {}) {
   const router = Router();
+
+  // Admin-authenticated metadata only. A person's inventory never falls back to shared keys.
+  router.get("/users/:userId/composio-connections", async (req, res, next) => {
+    res.set("Cache-Control", "no-store");
+    try {
+      const record = await getUser(req.params.userId);
+      if (!record) return res.status(404).json({ error: "unknown user" });
+      res.json(await composioInventory({ kind: "user", id: req.params.userId, record }));
+    } catch (error) { next(error); }
+  });
 
   // ── Users ─────────────────────────────────────────────────────────────────
   router.get("/users", async (req, res, next) => {

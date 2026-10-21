@@ -72,6 +72,7 @@ import { assertValidEgressRawHosts } from "../../gateway/egress/catalog-rules.js
 import { getChannelVpnStatus, setChannelVpnEnabled } from "../../gateway/channel-vpn-control.js";
 import { clearThreadRuntimeOverrides } from "../../gateway/thread-engine.js";
 import { isAuthenticated } from "../auth.js";
+import { loadComposioInventory } from "../../gateway/composio-inventory.js";
 
 const WEB_ADMIN_ACTOR = "admin UI";
 
@@ -116,6 +117,7 @@ export function createChannelsRouter({
   testMakeToolbox = listMakeToolboxTools,
   getVpnStatus = getChannelVpnStatus,
   setVpnEnabled = setChannelVpnEnabled,
+  composioInventory = loadComposioInventory,
 } = {}) {
   const router = Router();
 
@@ -124,6 +126,18 @@ export function createChannelsRouter({
     if (!entry) res.status(404).json({ error: "unknown channel" });
     return entry;
   };
+
+  // Resolve only this conversation's shared identity; personal accounts stay on user pages.
+  router.get("/channels/:channelId/composio-connections", async (req, res, next) => {
+    res.set("Cache-Control", "no-store");
+    try {
+      const entry = await registeredChannel(req, res);
+      if (!entry) return;
+      const meta = await getChannelMeta(entry.slug);
+      const record = { ...entry, ...meta, isDM: Boolean(entry.isDM || meta?.isDM || entry.type === "im" || meta?.type === "im") };
+      res.json(await composioInventory({ kind: "channel", id: req.params.channelId, record }));
+    } catch (error) { next(error); }
+  });
 
   router.get("/channels/:channelId/codex-login", async (req, res, next) => {
     try {

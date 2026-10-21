@@ -1,5 +1,39 @@
 # ChannelGate — Test Plan
 
+## Composio connection inventory (2026-10-21)
+
+- [x] Regression: `node --test test/composio-inventory.test.js test/composio-inventory-ui.test.js
+  test/composio-inventory-routes.test.js`. Provider fixtures include two Gmail accounts, a second
+  app, unrelated discovered toolkits, credential/business payloads in account data, paginated
+  tools and SDK accounts, failed lookups and missing app declarations. Scope fixtures cover a
+  personal key, a distinct channel key, an organization default, no-defaults and a DM.
+- [x] Chromium source-fixture checks at 1440×1100 and 390×844: actual user/channel templates,
+  stylesheet and inventory module with controlled API responses render every account, escape HTML
+  labels, recover through Refresh, and contain narrow-table scrolling without page overflow or
+  JavaScript errors. These source fixtures do not certify live production Composio credentials.
+- [ ] Live Admin UI, **engine-independent**: no engine is invoked by these metadata reads.
+  Use an isolated admin fixture with a user whose Personal Composio key reports two Gmail accounts
+  and one other app; use a channel with a different key, another inheriting the org default, a
+  no-defaults channel without a key, and a DM. Open Users → fixture user, then each channel's
+  Connections tab. **Pass:** all provider-published account rows, aliases/available identities,
+  status/default/type and source appear; user accounts never fall back to shared accounts; shared
+  accounts never appear in the DM; disabled org defaults do not dial Composio. Refresh reflects a
+  provider-side metadata change. Save a replacement key and confirm the list uses the saved key.
+  Personal mode keeps its inactive/unpublished-app caveat visible. No app authorization starts.
+- [ ] Live SDK fixture, **engine-independent**: active Enterprise license and SDK organization
+  key, stable `slack:<team>:user:<id>` and channel identities with distinct accounts, including an
+  expired account and enough accounts to force pagination (or a controlled paginated provider
+  fixture). Open both pages and refresh. **Pass:** every account page belongs to the exact scoped
+  identity; expired status remains visible; no session mapping, account or authorization is created.
+  An unavailable/unentitled SDK configuration reports an explanatory state without token fallback.
+- [ ] Failure/browser fixture, **engine-independent**: deny/expire the provider key, omit the
+  Personal published-app declaration, fail one declared app lookup, and return an alias containing
+  HTML. **Pass:** unavailable/partial is distinct from no accounts, retries recover, no raw provider
+  error/credential/business payload reaches browser responses, aliases render as text, and opening
+  a second user/channel while a request is pending cannot paint the previous scope into it.
+  Unauthenticated API requests are refused by the admin stack. Repeat in a narrow user drawer.
+
+
 ## Slack cancellation progress ordering (2026-10-16)
 
 - [x] Regression: `test/slack-stop-progress.test.js` holds actual pipeline runtime preparation

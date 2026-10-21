@@ -1,5 +1,20 @@
 # ChannelGate — Features
 
+## Composio connection visibility
+
+- Admin UI user pages list that person's personal Composio applications and accounts. Channel
+  Connections pages list the shared identity and identify channel credentials versus organization
+  defaults; personal accounts remain on user pages. Each row shows the app, account alias/available
+  account identity, connection ID, status, default selection and account type when provided.
+- Lists load on demand and have a Refresh connections button. Personal mode discovers the apps
+  published by Composio and reads each app's account metadata; a visible caveat explains that
+  inactive/unpublished connections may be absent. Missing or incomplete provider metadata is
+  reported explicitly. SDK mode lists all account pages for the exact stable user/channel identity
+  under the existing Enterprise entitlement, without creating sessions or authorizations.
+- Inventory reads retain personal-only and channel → organization resolution, refusal of
+  organization defaults, and DM suppression of shared identities. Responses contain allowlisted
+  metadata only, never connector keys, account credential payloads or business records.
+
 - Slack Settings renders populated Cloud MCP and skill pickers on the MCP, Skills and You pages
   without a native Slack `invalid_arguments` error; selection still saves immediately.
 
