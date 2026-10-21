@@ -3,13 +3,11 @@ import { validateConnector } from "../connector.js";
 import { parseConversationId } from "../ids.js";
 import { createChatApi, isSpaceName, isThreadName, isUserName, isMessageName, isPrivateViewerName } from "./api.js";
 import { replyMenuCard } from "./reply-menu.js";
-import { validateChatCard } from "./cards.js";
+import { validateChatCard, routeCardActions } from "./cards.js";
 import { buildNameDirectory } from "../format/mentions.js";
 import { normalizeName } from "../../slack/directory.js";
 
 const DIRECTORY_TTL_MS = 15 * 60 * 1000;
-const cardsFor = card => card ? [{ cardId: 'channelgate', card: validateChatCard(card) }] : [];
-const footerCards = (footer, menu) => footer || menu?.conversationId ? cardsFor(replyMenuCard({ footer, menu })) : [];
 function privateViewer(user) {
   if (!user) return null;
   const name = String(user).startsWith('users/') ? String(user) : `users/${user}`;
@@ -34,8 +32,13 @@ export function toSpaceName(conversationId) {
   return platform === "googlechat" ? id : value;
 }
 
-export function createGoogleChatConnector({ auth, capabilities, api = null, botUserId = "", log = console } = {}) {
+// `actionEndpoint` is the HTTP endpoint URL (or a getter, so a Public URL change applies live) that
+// card clicks are routed to; see routeCardActions.
+export function createGoogleChatConnector({ auth, capabilities, api = null, botUserId = "", actionEndpoint = "", log = console } = {}) {
   const chat = api || createChatApi({ auth });
+  const endpoint = () => String((typeof actionEndpoint === 'function' ? actionEndpoint() : actionEndpoint) || '');
+  const cardsFor = card => card ? [{ cardId: 'channelgate', card: validateChatCard(routeCardActions(card, endpoint())) }] : [];
+  const footerCards = (footer, menu) => footer || menu?.conversationId ? cardsFor(replyMenuCard({ footer, menu })) : [];
   // Per-space member snapshots. Chat has no workspace-wide user list a bot can read, so the
   // directory is per space and built on demand — which is also the only correct scope: resolving
   // "@Ana" against a person who is not in this space would tag a stranger.

@@ -70,7 +70,8 @@ export function normalizeCardEvent(event) {
     kind: /^(DIRECT_MESSAGE|DM)$/i.test(space.spaceType || space.type || '') ? 'dm' : space.displayName ? 'channel' : 'group',
     messageId, threadKey: thread, userId: String(user.email || user.name), userResourceName: String(user.name || ''),
     userName: String(user.displayName || user.email || user.name), userEmail: String(user.email || ''),
-    action: { function: String(action.function || action.actionMethodName || parameters.cgAction || commonEventObject.invokedFunction || ''), parameters },
+    // Add-on clicks name the endpoint URL as the function; the action's own name rides `cgAction`.
+    action: { function: String(parameters.cgAction || action.function || action.actionMethodName || commonEventObject.invokedFunction || ''), parameters },
     commonEventObject, formInputs: commonEventObject.formInputs || {},
     raw: { message, space, user, senderName: String(user.name || ''), threadName: thread },
   };
