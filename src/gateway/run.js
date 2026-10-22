@@ -58,6 +58,7 @@ import { assertUserSkillOverlaySupported, createRunGrantArtifacts, refreshRuntim
 import { isForceStopping } from "./shutdown.js";
 import { allowedFsRoot } from "../web/security.js";
 import { licenseAdmission } from "../ee/limits.js";
+import { assertChannelEngineApproved, isChannelEngineApproved } from "./channel-engines.js";
 import { channelEnvFingerprint, safeSpawnEnv } from "../config/channel-env.js";
 // The other two credential scopes (organization-wide, and the author's own) merged with the
 // channel's at one place, so every spawn site gets the same three-scope answer.
@@ -783,6 +784,7 @@ async function runMessageImpl({ channelId, authorId, workspaceId = "", text, thr
   // its own reasons: did a PERSON name this harness for this thread/run? It decides whether
   // automatic cross-engine failover is allowed to answer as the other harness (see below).
   const enginePinnedByUser = engineExplicit;
+  const requestedEngine = engine;
 
   // A sudo thread is admin-only even if the channel itself admits this author. Return a normal
   // result instead of throwing: unattended delivery and non-Slack surfaces can present the same
@@ -822,12 +824,26 @@ async function runMessageImpl({ channelId, authorId, workspaceId = "", text, thr
         sessionId: null, isNew: false, usage: {}, costUSD: 0, durationMs: 0, engineRefused: true,
       };
     }
-    const substitute = getEnabledEngines()[0] || "";
+    const substitute = getEnabledEngines().find(id => isChannelEngineApproved(channelMeta, id)) || "";
     if (substitute && substitute !== engine) {
       console.warn(`[gateway] ${entry.slug}/${threadKey}: harness ${engine} is disabled in settings — running on ${substitute}`);
       engine = substitute;
       engineExplicit = true;
     }
+  }
+
+  // Enforce the actual thread owner before provisioning or billing. An explicit request never
+  // silently becomes another harness, and an old session cannot retain a revoked approval.
+  const storedEngine = !presetSessionId && !engineExplicit ? await getSessionEngine(entry.slug, threadKey) : "";
+  const admittedEngine = enginePinnedByUser ? requestedEngine : storedEngine || engine;
+  if (!isChannelEngineApproved(channelMeta, admittedEngine)) {
+    let notice;
+    try { assertChannelEngineApproved(channelMeta, admittedEngine); } catch (error) { notice = error.message; }
+    return {
+      slug: entry.slug, cwd: "", model: "", engine: admittedEngine, content: notice,
+      engineRefused: true, channelEngineRefused: true, sessionId: null, isNew: false,
+      usage: {}, costUSD: 0, durationMs: 0,
+    };
   }
 
   // ── License admission (src/ee/limits.js) ────────────────────────────────────────────────────
@@ -958,7 +974,7 @@ async function runMessageImpl({ channelId, authorId, workspaceId = "", text, thr
   // explicit thread/runtime choice still wins, including a thread-scoped model selection.
   if (!presetSessionId && !engineExplicit) {
     const previousEngine = await getSessionEngine(entry.slug, threadKey);
-    const legacyFallback = fallbackTargets(previousEngine).find(isEngineEnabled);
+    const legacyFallback = fallbackTargets(previousEngine).find(id => isEngineEnabled(id) && isChannelEngineApproved(channelMeta, id));
     const pinnedModel = await getThreadModel(entry.slug, threadKey);
     if (legacyFallback && (!pinnedModel || !modelBelongsToEngine(pinnedModel, previousEngine))) {
       await promoteFallbackSession(entry.slug, threadKey, legacyFallback, "", sessionGen);
@@ -1423,7 +1439,7 @@ async function runMessageImpl({ channelId, authorId, workspaceId = "", text, thr
   // Codex declares no settings file at all — so a Codex-primary turn that fell over to Claude used
   // to spawn with no --settings, losing the channel lockdown and the plugin read allowance. The
   // file is content-addressed and shared, so provisioning one this turn never uses costs nothing.
-  const needsClaudeSettings = [engine, ...fallbackTargets(engine).filter(isEngineEnabled)]
+  const needsClaudeSettings = [engine, ...fallbackTargets(engine).filter(id => isEngineEnabled(id) && isChannelEngineApproved(channelMeta, id))]
     .some((id) => engineSupports(id, "settingsFile"));
   const grantArtifacts = await createRunGrantArtifacts({
     slug: entry.slug,
@@ -1486,6 +1502,7 @@ async function runMessageImpl({ channelId, authorId, workspaceId = "", text, thr
   const runOnce = async (sid, fresh, promptOverride = null, modelOverride = model) => {
     assertRuntimeCanStart();
     await assertScheduledSudoAuthority();
+    assertChannelEngineApproved((await getChannelMeta(entry.slug)) ?? channelMeta, engine);
     // The runtime facts belong to THIS attempt, including a model retry or session heal. Keep
     // them per-prompt even in clean mode: they expose no memory, optional skills or connectors.
     const prompt = (fresh && !forkSourceSessionId ? memoryPrefix : "") + composioIdentityPrefix + channelCredentialsPrefix
@@ -1493,6 +1510,7 @@ async function runMessageImpl({ channelId, authorId, workspaceId = "", text, thr
       + runtimeAccessPreamble(target, { clean, allowNetwork: Boolean(meta.allowNetwork), dangerouslySkip })
       + perplexityResearchPreamble(target, { clean })
       + (promptOverride ?? turnText);
+    engineStarted = true;
     return adapter.run(validateRunContext({
       principal: { kind: untrustedPrincipal ? "daemon" : PRINCIPAL_KIND_BY_ORIGIN[origin] || "daemon", id: authorId },
       origin, cwd, prompt, session: { id: sid, fresh }, policy: confinement,
@@ -1657,7 +1675,7 @@ async function runMessageImpl({ channelId, authorId, workspaceId = "", text, thr
   // the other harness never reaches the CLI, so it must not silently disable failover either.
   const modelPinnedByUser = [threadModel, overrides?.model].some((m) => m && modelBelongsToEngine(m, engine));
   const runtimePinned = enginePinnedByUser || modelPinnedByUser;
-  const fallbackEngine = getEngineFallback() && !runtimePinned ? fallbackTargets(engine).find(isEngineEnabled) || "" : "";
+  const fallbackEngine = getEngineFallback() && !runtimePinned ? fallbackTargets(engine).find(id => isEngineEnabled(id) && isChannelEngineApproved(channelMeta, id)) || "" : "";
   // `fallbackPolicy` is the caller's word on WHO decides a switch: "auto" (or nothing — every
   // unattended origin) switches here; "ask" (a watched Slack thread, Settings → engineFallbackMode)
   // throws the replay-safe failure back with `details.askFallback` so the thread gets a card with
@@ -1667,6 +1685,7 @@ async function runMessageImpl({ channelId, authorId, workspaceId = "", text, thr
   const canAsk = Boolean(fallbackEngine) && (fallbackPolicy === "ask" || fallbackPolicy === "auto");
   const fallbackOn = Boolean(fallbackEngine) && !askFallback;
   const runFallbackEngine = async (note, failureContext = "a usage/spend limit") => {
+    assertChannelEngineApproved((await getChannelMeta(entry.slug)) ?? channelMeta, fallbackEngine);
     const fallbackAdapter = requireAdapter(fallbackEngine);
     // Same fail-closed check the primary engine gets: an isolated runtime that cannot authenticate
     // the fallback harness either must say so, not spawn a CLI that will die on its first call.
@@ -1728,6 +1747,7 @@ async function runMessageImpl({ channelId, authorId, workspaceId = "", text, thr
     const exec = async (fbSid, fbFresh, modelOverride = fallbackModel) => {
       assertRuntimeCanStart();
       await assertScheduledSudoAuthority();
+      assertChannelEngineApproved((await getChannelMeta(entry.slug)) ?? channelMeta, fallbackEngine);
       return fallbackAdapter.run(validateRunContext({
         principal: { kind: untrustedPrincipal ? "daemon" : PRINCIPAL_KIND_BY_ORIGIN[origin] || "daemon", id: authorId }, origin, cwd,
         prompt: (fbFresh ? memoryPrefix : "") + composioIdentityPrefix + channelCredentialsPrefix
@@ -1938,9 +1958,9 @@ async function runMessageImpl({ channelId, authorId, workspaceId = "", text, thr
     // engine's: a later failure keeps it (resume-heal, failover and /clear own that story).
     // Minted BEFORE `engineStarted` flips: a failure in here is still a turn whose engine never
     // spawned, so the session row this turn minted must not survive it (see dropUnusedSession).
+    assertChannelEngineApproved((await getChannelMeta(entry.slug)) ?? channelMeta, engine);
     await mintGatewayMcpRuntime();
     if (mcpDropNote) announceAnswerNote(mcpDropNote);
-    engineStarted = true;
     mcpConfigFile = await materializeMcpConfig(engine, mcpConfigJson);
 
     // Resume by default; if the thread's stored session no longer exists, mint a fresh one and retry
@@ -2171,7 +2191,7 @@ async function runMessageImpl({ channelId, authorId, workspaceId = "", text, thr
     if (!fallbackOn && runtimePinned && isUsageLimited(result)) {
       result = {
         ...result,
-        content: `${pinnedNoFailoverNote(engine, fallbackTargets(engine).find(isEngineEnabled) || "")}${result.content || ""}`,
+        content: `${pinnedNoFailoverNote(engine, fallbackTargets(engine).find(id => isEngineEnabled(id) && isChannelEngineApproved(channelMeta, id)) || "")}${result.content || ""}`,
       };
     }
     if (fallbackOn && isUsageLimited(result)) {
