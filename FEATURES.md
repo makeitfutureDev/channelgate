@@ -1,5 +1,20 @@
 # ChannelGate — Features
 
+## Registered inventory limits and Enterprise harness approvals
+
+- Non-Enterprise installs allow at most 20 registered channels (including DMs and the API
+  conversation) and 20 stored human users, including unapproved accounts. Registration checks
+  are atomic; existing records remain editable and usable when an install is already over its cap.
+  Legacy free-license payloads cannot bypass these caps. The no-key monthly one-conversation
+  limit and Registered 500-message monthly limit remain. Enterprise defaults to unlimited.
+- Enterprise organization admins can approve one or more harnesses per channel through the
+  admin editor or Slack Settings → Agent. Unrestricted is the default. Pins, saved sessions,
+  API overrides, automation and fallback cannot launch outside the approved set; queued work
+  rechecks the live policy. Claude memory review is skipped when Claude is excluded.
+- Approval changes are audited. Restrictions remain enforced after Enterprise expiry/downgrade;
+  changing or clearing them requires Enterprise. These approvals govern managed engine launches,
+  not arbitrary shell commands already permitted to Worker/Admin authors.
+
 ## Channel agent directory
 
 - `search_agents` finds registered specialist channel agents by purpose, examples and effective
@@ -5018,7 +5033,8 @@ are retired, bullet by bullet; everything else stands.
   copyright, Licensor gets relicensing rights).
   **v1.2 (2026-08-25)** renames the Software to ChannelGate, adds **license keys and usage limits**
   (§3.2/§4.5: no key → one conversation; free key → unlimited conversations at 500 AI messages per
-  conversation per month; enterprise → unlimited; end-user keys only, never pooled by a service
+  conversation per month at that release; current Registered inventory caps are described above;
+  enterprise → unlimited; end-user keys only, never pooled by a service
   provider; circumvention is a violation; tiers in `docs/LICENSE-KEYS.md`), makes any number of
   separate single-customer deployments permitted service work on the customer's key, names the
   Reseller / White-Label / Enterprise / optional Partner agreements, **removes the v1.1 Change Date**

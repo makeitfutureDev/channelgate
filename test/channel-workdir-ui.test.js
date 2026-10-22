@@ -59,7 +59,7 @@ function fixture({ workDir = "/home/operator/project", saveError } = {}) {
     engineSelect: { value: "codex" }, usersBox: { dataset: { ready: "" } }, mcpsBox: { dataset: {} }, mcpsCount: {}, skillsPicker: null,
     makeToolboxKeyInput: control(".ch-make-toolbox-key"),
     makeToolboxUrlInput: control(".ch-make-toolbox-url"), makeToolboxState: new Control(),
-    clearMakeToolbox: false,
+    clearMakeToolbox: false, approvedHarnesses: () => null, harnessPolicyDirty: false,
     tokenValue: () => "", selectedMcpEntries: () => [], checkedValues: () => [],
     initializeMcpBox() {}, paintAllMcpBoxes() {}, updateChecksCount() {},
     explicitCheckedValues: () => [], channelGuestSavePatch: () => ({}),

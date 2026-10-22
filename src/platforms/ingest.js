@@ -87,8 +87,16 @@ export function createIngest({ connector, log = console, run = runMessage, onCom
     // operator grants Teams RSC or Chat's space-wide events later.
     if (!message.isDM && !message.mentionsBot && !(message.trigger === "reaction" && platformSupports(adapter.id, "reactionTriggers"))) return { skipped: "not-mentioned" };
 
-    const { entry, meta } = await ensureConversation(message, connector);
-    await ensureUserKnown(message);
+    let registered;
+    try {
+      registered = await ensureConversation(message, connector);
+      await ensureUserKnown(message);
+    } catch (error) {
+      if (error?.code !== "license_registration_limit") throw error;
+      await connector.post({ conversationId: message.rawConversationId, threadKey: message.threadKey, text: error.message });
+      return { skipped: error.code };
+    }
+    const { entry, meta } = registered;
     // Trusted platform identity metadata also lets managers enroll an unapproved space member
     // as a scoped guest. Recording it grants no permission to run or use workspace controls.
     await connector.recordUser?.(message);

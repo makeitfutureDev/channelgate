@@ -11,6 +11,7 @@
 // write for one thread can never clobber another thread's override. The old files are imported
 // once at DB open and left on disk as inert backups (db/import-legacy.js importThreadOverrides).
 import { getDb } from "../db/index.js";
+import { assertChannelEngineApproved } from "./channel-engines.js";
 import { ENGINE_IDS } from "../engines/registry.js";
 import { getSessionEngine } from "./sessions.js";
 import { getEngine } from "../config/settings.js";
@@ -27,6 +28,10 @@ function getOverride(slug, threadKey, kind) {
 // An empty value clears the override (absence of a row = no override), mirroring the old writers
 // which deleted the key from the JSON map.
 function setOverride(slug, threadKey, kind, value) {
+  if (kind === "engine" && value) {
+    const row = getDb().prepare("SELECT data FROM channel_meta WHERE slug = ?").get(slug);
+    assertChannelEngineApproved(row ? JSON.parse(row.data) : {}, value);
+  }
   if (value) {
     getDb()
       .prepare("INSERT INTO thread_overrides(slug, thread_key, kind, value) VALUES(?, ?, ?, ?) ON CONFLICT(slug, thread_key, kind) DO UPDATE SET value = excluded.value")
