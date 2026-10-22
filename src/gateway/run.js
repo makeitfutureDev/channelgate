@@ -1749,6 +1749,7 @@ async function runMessageImpl({ channelId, authorId, workspaceId = "", text, thr
       assertRuntimeCanStart();
       await assertScheduledSudoAuthority();
       assertChannelEngineApproved((await getChannelMeta(entry.slug)) ?? channelMeta, fallbackEngine);
+      engineStarted = true;
       return fallbackAdapter.run(validateRunContext({
         principal: { kind: untrustedPrincipal ? "daemon" : PRINCIPAL_KIND_BY_ORIGIN[origin] || "daemon", id: authorId }, origin, cwd,
         prompt: (fbFresh ? memoryPrefix : "") + composioIdentityPrefix + channelCredentialsPrefix

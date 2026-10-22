@@ -161,3 +161,16 @@ test("metadata writes cannot bypass entitlement, remove a saved restriction, or 
   await saveChannelMeta(f.entry.slug, { name: "saved without policy" });
   assert.deepEqual((await getChannelMeta(f.entry.slug)).approvedEngines, ["claude"]);
 });
+
+
+test("a cooldown fallback that starts and fails is not treated as a turn with no engine launch", async () => {
+  const f = await channel("claude", ["claude", "codex"]);
+  const first = await run(f, { text: "CLAUDE_STUB_LIMIT_FAIL_SAFE" });
+  assert.equal(first.engine, "codex");
+  const before = backend.calls.spawn.length;
+  await assert.rejects(run(f, { threadKey: "cooldown-failure", text: "CODEX_STUB_LIMIT_FAIL_SAFE" }), /limit|usage/i);
+  const spawned = backend.calls.spawn.slice(before);
+  assert.equal(spawned.some(call => call.cmd === "claude"), false, "cooldown bypassed the primary");
+  assert.equal(spawned.some(call => call.cmd === "codex"), true, "the approved fallback actually started");
+  assert.ok(await getSession(f.entry.slug, "cooldown-failure"), "a launched turn is not swept as an unused session");
+});
