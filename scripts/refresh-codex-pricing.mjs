@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Dry-run by default. `--apply` backs up the gateway database and installs the current Codex
-// Standard API-equivalent pricing basis over the declared historical window. Daemon boot runs the
-// same idempotent refresh once after an upgraded instance repairs any legacy Codex accounting.
+// Standard API-equivalent pricing basis over the declared historical window. The 2026-10-22 basis
+// requires an impact audit and explicit manual apply; daemon boot defers it until that apply.
 import { DatabaseSync } from "node:sqlite";
 import { dbFile } from "../src/config/paths.js";
 import { getDb } from "../src/db/index.js";

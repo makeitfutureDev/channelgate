@@ -9744,6 +9744,25 @@ companion skill; every change is announced in the reply.
       the new basis atomically, applies GPT-5.6 Sol's $5/$0.50/$30 rate before the official
       2026-08-21 cutover and $4/$0.40/$20 at/after it, backs up once at boot, and skips the applied basis thereafter
       (`test/usage-pricing.test.js`).
+- [x] Unit (2026-10-22): GPT-6.1 Sol uses $2/$0.10/$10 from its 2026-09-29 launch;
+      request inputs of 272,000 use Standard and 272,001 use 2× input/cache plus 1.5× output,
+      including cache writes and dated snapshots. Aggregates alone never trigger the uplift.
+      Terra/Luna retain former rates immediately before July 30 and reduced rates at/after it;
+      custom overrides survive, retired saved defaults migrate, parent/request/component costs
+      agree, and a second explicit refresh has zero delta (`test/usage-pricing.test.js`).
+- [x] Unit (2026-10-22): boot with an absent/old pricing marker defers this basis without changing
+      any usage/request/component/meta row or making a backup. Explicit manual apply records
+      the basis; settled boots skip and later stale rows still use backup-first repair.
+- [ ] Live acceptance — special isolated pricing ledger fixture, engine-independent (the pure
+      estimator/SQLite maintenance path invokes no harness): use `test/usage-pricing.test.js`
+      migrated in-memory fixture with Terra/Luna at 2026-07-29T23:59:59.999Z and July 30 00:00Z,
+      GPT-6.1 Sol at Sep 29 00:00Z, plus request inputs 272000/272001, cache reads/writes, custom
+      rates, Claude and pre-window controls. Run `node --test test/usage-pricing.test.js` in an
+      isolated candidate checkout. Pass: exact asserted costs, all levels balance, boot leaves
+      old/absent-marker snapshots unchanged, manual apply then preview gives zero delta.
+      On a production DB COPY only after read-only impact audit: compare preview with recomputed
+      official dated costs and overrides, apply to copy, verify integrity and zero second delta.
+      Production apply/restart remains deferred pending the ledger audit and separate authorization.
 - [x] Live dated-pricing correction (2026-09-14): apply the new basis to a production copy and the live ledger,
       confirm every GPT-5.6 Sol component before 2026-08-21 uses $5/$0.50/$30 while every component
       at/after the cutover uses $4/$0.40/$20, Astra remains $10/$1/$50, parent totals match their

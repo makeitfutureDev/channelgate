@@ -18,6 +18,11 @@ product overview.
 
 ## Unreleased
 
+- Price GPT-6.1 Sol at its September 29 Standard rates, including per-request long-context
+  multipliers. Preserve pre-July 30 GPT-5.6 Terra/Luna rates during historical previews and
+  refreshes. Defer this pricing basis's automatic historical refresh until an audited,
+  explicitly authorized manual apply; forward estimates use the corrected defaults.
+
 - Scheduled Slack tasks can ask their creator questions using cards and forms. Submitted answers
   resume the correct scheduled session, including silent and retired one-time tasks.
 - Add explicit admin-only sudo task schedules through MCP and the Automations editor. Each fire
