@@ -138,6 +138,24 @@ Approve an exact host for a hidden secret awaiting destination approval.
 
 **Restrictions:** Model API hosts are refused. Does not enable arbitrary network access or override known destination restrictions. Useful when a background job/SSH request posted no approval card.
 
+## Email account tools
+
+An email account is a mailbox's IMAP and SMTP settings entered once on one form — in the admin UI (a conversation's Connections, or a person under Users), in Slack's ⚙️ Settings (the **MCP** page for the conversation's account, the **You** page for your own), in Teams' Settings → MCPs, or through Google Chat's private settings form. Both logins are tested before the account is stored, passwords are write-only, and the mail clients run in the gateway. There is no tool that connects an account: a password typed into chat would stay in the conversation's history.
+
+| Tool | Purpose |
+| --- | --- |
+| `list_email_accounts` | The accounts this turn may use: the conversation's (`channel/<name>`) and the requester's own (`personal/<name>`), with address and whether sending is enabled. |
+| `email_mailboxes` | Folders and their roles. |
+| `email_search` | Newest-first listing with `query`, `from`, `to`, `subject`, `since`, `before`, `unseen`, `flagged` and `limit` (≤ 50). |
+| `email_read` | One message by uid: headers, text body (HTML converted), attachments with part ids. |
+| `email_download_attachment` | Saves one attachment under `uploads/email/<account>/` in the working folder (≤ 50 MB). |
+| `email_move` / `email_set_flag` | File a message elsewhere; mark seen, unseen, flagged, unflagged or answered. |
+| `email_send` | Send as the account, with attachments from the working folder (10 files, 25 MB total) and `in_reply_to` threading; a copy goes to the Sent folder when the server has one. |
+
+**Authority and scope:** channel accounts are usable by anyone authorized in the conversation; personal accounts exist only in runs their owner authored — never in another person's turn, a scheduled run or an HTTP run-API turn. `account` takes a name, `personal/<name>`, `channel/<name>` or the address, and a bare name present in both scopes is refused until qualified.
+
+**Restrictions:** sending is refused on an account whose *allow sending* is off. Replies, streams and job output are redacted of every stored password.
+
 ## Related guides
 
 [Accounts](/docs/features/connected-accounts), [environment configuration](/docs/configuration/environment-variables), [secrets](/docs/features/secrets), [Composio SDK](/docs/features/composio-sdk), and [Toolbox/Make](/docs/features/toolbox-and-make).

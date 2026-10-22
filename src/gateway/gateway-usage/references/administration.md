@@ -99,6 +99,10 @@ gateway applies them; explicitly exempt tools do not receive a human-approval re
   conversation → Connections, or Users → the person. HTTPS and public addresses only; OAuth-only servers go
   through Composio instead. Never ask for the token in chat, and never write an MCP definition
   into a settings or `.mcp.json` file — the engine ignores them.
+- **Email accounts** (a mailbox's IMAP + SMTP settings) are connected the same way — by a person,
+  on the same Settings pages (**MCP** → *Email accounts* for the conversation's, **You** for their
+  own; Teams Settings → MCPs; Google Chat's private settings form; the admin UI) — and used
+  through the `gateway` email tools, never through a password in chat. See `references/email.md`.
 
 ## Skills in this channel (any member, no card)
 - `show_channel_skills` — what is active here, by tier, with the context cost.

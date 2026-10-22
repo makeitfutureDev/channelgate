@@ -40,6 +40,7 @@ import { register as registerQuestions } from "./tools/questions.js";
 import { register as registerSshAccess } from "./tools/ssh-access.js";
 import { sshRequestTarget } from "../gateway/ssh-access.js";
 import { register as registerFileSharing, describeDuration } from "./tools/file-sharing.js";
+import { register as registerEmail } from "./tools/email.js";
 import { prepareInstructionApproval } from "../gateway/instruction-approvals.js";
 import { buildControlPlaneAction, describeControlPlaneTier } from "../gateway/control-plane-approvals.js";
 
@@ -535,6 +536,7 @@ export function createGatewayMcpServer(ctx) {
     registerQuestions(server, ctx);
     registerSshAccess(server, ctx);
     registerFileSharing(server, ctx);
+    registerEmail(server, ctx);
   } else {
     registerMemoryTool(server, ctx);
   }

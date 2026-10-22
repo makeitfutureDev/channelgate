@@ -10,6 +10,8 @@ import { handleCatalogAction } from '../platforms/msteams/settings-catalog.js';
 import { listChannelEnv } from '../config/channel-env.js';
 import { listUserEnv, listOrgEnv } from '../config/scoped-env.js';
 import { getUser } from '../config/store.js';
+import { listEmailAccounts } from '../gateway/email-accounts.js';
+import { listUserEmailAccounts } from '../gateway/email-account-store.js';
 
 export const CONVERSATION_SETTINGS_GRANT_TTL_MS = 10 * 60_000;
 export const CONVERSATION_SETTINGS_SESSION_TTL_MS = 30 * 60_000;
@@ -78,10 +80,22 @@ async function page(session, ctx) {
     + `<h2>My connections</h2><p>Composio: ${status(personal?.composioToken)} · Toolbox: ${status(personal?.toolboxToken)}</p>`
     + form(session, 'settings.personal.save', input('personalComposioToken', 'New personal Composio token', true) + input('personalToolboxToken', 'New personal Toolbox token', true))
     + ['composio', 'toolbox'].map(connection => form(session, 'settings.personal.remove', `<input type="hidden" name="connection" value="${connection}">`, `Disconnect my ${connection}`)).join('');
-  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>Private conversation settings</title></head><body><main><h1>Private settings · ${escapeHtml(ctx.entry.slug)}</h1><p>Values stay hidden. Leave token fields blank to keep their stored values.</p>${session.notice ? `<p role="status">${escapeHtml(session.notice)}</p>` : ''}<h2>Variables</h2><ul>${variableList}</ul>${form(session, 'settings.variable.save', `<label>Scope <select name="variableScope">${scopes.map(scope => `<option value="${scope}">${scope}</option>`).join('')}</select></label><br>` + input('variableName', 'Name') + input('variableValue', 'New value', true) + '<label>Used on hosts <select name="variableHostsMode"><option value="preserve">Keep existing rule</option><option value="replace">Replace rule with hosts below</option><option value="clear">Clear declared rule</option></select></label><br>' + input('variableHosts', 'HTTPS hostnames, comma-separated'))}${connections}<p>This window expires after 30 minutes. Close it when finished.</p></main></body></html>`;
+  // Email accounts: masked rows only (the list shape carries no password) and inputs that are
+  // never prefilled, so no mailbox password is ever part of a rendered attribute.
+  const accounts = [
+    ...listEmailAccounts(ctx.meta.emailAccounts, 'channel').map(account => ({ ...account, formScope: 'channel' })),
+    ...(await listUserEmailAccounts(ctx.ownerId)).map(account => ({ ...account, formScope: 'personal' })),
+  ];
+  const accountList = accounts.map(account => `<li>${escapeHtml(account.formScope)} · ${escapeHtml(account.name)} · ${escapeHtml(account.address)} · IMAP ${escapeHtml(`${account.imap.host}:${account.imap.port}`)} · SMTP ${escapeHtml(`${account.smtp.host}:${account.smtp.port}`)}${form(session, 'settings.email.remove', `<input type="hidden" name="emailScope" value="${account.formScope}"><input type="hidden" name="name" value="${escapeHtml(account.name)}">`, 'Remove')}</li>`).join('');
+  const emailAccounts = `<h2>Email accounts</h2><p>Connect a mailbox by its IMAP and SMTP settings; both logins are tested before anything is saved. Leave passwords blank to keep the stored ones when editing; blank SMTP user/password = same as IMAP. Blank ports mean 993 (IMAP) and 587 (SMTP).</p><ul>${accountList || '<li>No email account connected.</li>'}</ul>`
+    + form(session, 'settings.email.save', '<label>Belongs to <select name="emailScope"><option value="channel">channel</option><option value="personal">personal</option></select></label><br>'
+      + input('name', 'Account name ("work", "support")') + input('address', 'Email address') + input('displayName', 'Display name (optional)')
+      + input('imapHost', 'IMAP server') + input('imapPort', 'IMAP port (blank = 993)') + input('imapUser', 'IMAP user') + input('imapPassword', 'IMAP password', true)
+      + input('smtpHost', 'SMTP server') + input('smtpPort', 'SMTP port (blank = 587)') + input('smtpUser', 'SMTP user (blank = IMAP user)') + input('smtpPassword', 'SMTP password (blank = IMAP password)', true), 'Save email account');
+  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>Private conversation settings</title></head><body><main><h1>Private settings · ${escapeHtml(ctx.entry.slug)}</h1><p>Values stay hidden. Leave token fields blank to keep their stored values.</p>${session.notice ? `<p role="status">${escapeHtml(session.notice)}</p>` : ''}<h2>Variables</h2><ul>${variableList}</ul>${form(session, 'settings.variable.save', `<label>Scope <select name="variableScope">${scopes.map(scope => `<option value="${scope}">${scope}</option>`).join('')}</select></label><br>` + input('variableName', 'Name') + input('variableValue', 'New value', true) + '<label>Used on hosts <select name="variableHostsMode"><option value="preserve">Keep existing rule</option><option value="replace">Replace rule with hosts below</option><option value="clear">Clear declared rule</option></select></label><br>' + input('variableHosts', 'HTTPS hostnames, comma-separated'))}${connections}${emailAccounts}<p>This window expires after 30 minutes. Close it when finished.</p></main></body></html>`;
 }
 
-const ALLOWED_ACTIONS = new Set(['settings.variable.save', 'settings.variable.remove', 'settings.connections.save', 'settings.connections.remove', 'settings.personal.save', 'settings.personal.remove']);
+const ALLOWED_ACTIONS = new Set(['settings.variable.save', 'settings.variable.remove', 'settings.connections.save', 'settings.connections.remove', 'settings.personal.save', 'settings.personal.remove', 'settings.email.save', 'settings.email.remove']);
 export function createConversationSettingsRouter({ authorize, connector } = {}) {
   const router = express.Router();
   router.use((_req, res, next) => { headers(res); next(); });
@@ -151,7 +165,9 @@ export function createConversationSettingsRouter({ authorize, connector } = {}) 
       // A refused save keeps the still-authorized session. Policy messages name rules, never
       // values; a message that echoes any submitted field is replaced rather than reflected.
       const message = String(error?.message || '');
-      const submitted = Object.entries(req.body || {}).filter(([key]) => !['csrf', 'action', 'variableScope', 'variableHostsMode', 'connection'].includes(key))
+      // Mail server hosts and ports are routing data, not secrets: a login failure must be allowed
+      // to name the server it could not reach, or every refused mailbox would read the same.
+      const submitted = Object.entries(req.body || {}).filter(([key]) => !['csrf', 'action', 'variableScope', 'variableHostsMode', 'connection', 'emailScope', 'imapHost', 'imapPort', 'smtpHost', 'smtpPort'].includes(key))
         .map(([, value]) => String(value ?? '').trim()).filter(value => value.length >= 3);
       const safe = message && message.length <= 300 && !/[\r\n]/.test(message) && !error?.code && !error?.status
         && !submitted.some(value => message.includes(value));

@@ -31,6 +31,8 @@ import { ensureChannelFolder, effectiveWorkDir, gatewayInstructionsBlock, splitG
 import { workspaceConflictsBySlug } from "../../gateway/workspace-assignments.js";
 import { listCustomMcps } from "../../gateway/custom-mcps.js";
 import { removeChannelCustomMcp, saveChannelCustomMcp } from "../../gateway/custom-mcp-store.js";
+import { listEmailAccounts } from "../../gateway/email-accounts.js";
+import { removeChannelEmailAccount, saveChannelEmailAccount } from "../../gateway/email-account-store.js";
 import { memoryEnabled, countMemoryFacts, MEM_FILE, MEM_DIR } from "../../gateway/channel-memory.js";
 import {
   ENGINES,
@@ -86,6 +88,16 @@ const WEB_ADMIN_ACTOR = "admin UI";
 // The `...meta` spread is what makes that dangerous: it carries EVERY stored key, including ones
 // no code reads any more. So the dead fields are dropped here too (config/dead-fields.js) — a
 // retired integration's token must not survive as a listing field nobody thought to mask.
+// The flat email-account form fields a PUT body may carry (gateway/email-accounts.js validates).
+export const EMAIL_ACCOUNT_BODY_FIELDS = Object.freeze(["address", "displayName", "imapHost", "imapPort", "imapUser", "imapPassword", "imapSecurity", "smtpHost", "smtpPort", "smtpUser", "smtpPassword", "smtpSecurity"]);
+export function emailAccountBody(req) {
+  const body = req.body && typeof req.body === "object" ? req.body : {};
+  const out = { name: req.params.name };
+  for (const field of EMAIL_ACCOUNT_BODY_FIELDS) if (typeof body[field] === "string") out[field] = body[field];
+  if (typeof body.sendEnabled === "boolean") out.sendEnabled = body.sendEnabled;
+  return out;
+}
+
 export function maskChannelMeta(meta = {}) {
   const mask = (v) => ({ has: Boolean(v), last4: v ? String(v).slice(-4) : "" });
   const tok = mask(meta.composioToken);
@@ -109,6 +121,8 @@ export function maskChannelMeta(meta = {}) {
     makeToolboxKeyLast4: mk.last4,
     // Name, server name, URL and last4 only — the token is write-only (gateway/custom-mcps.js).
     customMcps: listCustomMcps(meta.customMcps, "channel"),
+    // Servers, users and "has password" only — passwords are write-only (gateway/email-accounts.js).
+    emailAccounts: listEmailAccounts(meta.emailAccounts, "channel"),
   };
 }
 
@@ -793,6 +807,54 @@ export function createChannelsRouter({
         return res.status(400).json({ error: e.message });
       }
       res.json({ ok: true, servers });
+    } catch (e) {
+      next(e);
+    }
+  });
+
+  // ── Email accounts (gateway/email-accounts.js) ───────────────────────────────
+  // A mailbox (IMAP + SMTP) this conversation's runs may read and send with through the gateway's
+  // email tools. Same write-only contract as the secrets: GET lists servers, users and
+  // "has password" only, and there is no reveal route. A PUT logs in to both servers before it
+  // stores anything, so it can take several seconds and answers 400 with the failing side.
+  router.get("/channels/:channelId/email-accounts", async (req, res, next) => {
+    try {
+      const ctx = await resolveChannelCtx(req.params.channelId);
+      if (!ctx) return res.status(404).json({ error: "unknown channel" });
+      res.json({ accounts: listEmailAccounts(ctx.meta.emailAccounts, "channel") });
+    } catch (e) {
+      next(e);
+    }
+  });
+
+  // Add or update one account. Passwords may be omitted on an update to keep the stored ones.
+  router.put("/channels/:channelId/email-accounts/:name", async (req, res, next) => {
+    try {
+      const ctx = await resolveChannelCtx(req.params.channelId);
+      if (!ctx) return res.status(404).json({ error: "unknown channel" });
+      let accounts;
+      try {
+        accounts = await saveChannelEmailAccount(ctx.entry.slug, emailAccountBody(req), { actor: WEB_ADMIN_ACTOR });
+      } catch (e) {
+        return res.status(400).json({ error: e.message });
+      }
+      res.json({ ok: true, accounts });
+    } catch (e) {
+      next(e);
+    }
+  });
+
+  router.delete("/channels/:channelId/email-accounts/:name", async (req, res, next) => {
+    try {
+      const ctx = await resolveChannelCtx(req.params.channelId);
+      if (!ctx) return res.status(404).json({ error: "unknown channel" });
+      let accounts;
+      try {
+        accounts = await removeChannelEmailAccount(ctx.entry.slug, req.params.name, { actor: WEB_ADMIN_ACTOR });
+      } catch (e) {
+        return res.status(400).json({ error: e.message });
+      }
+      res.json({ ok: true, accounts });
     } catch (e) {
       next(e);
     }

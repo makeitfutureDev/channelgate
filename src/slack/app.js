@@ -86,7 +86,7 @@ import {
   CHANNEL_SETTINGS_CONFIRM_ACTION_ID, CHANNEL_SETTINGS_CONFIRM_CANCEL_ACTION_ID, CHANNEL_SETTINGS_MEMBER_ACTION_ID,
   ACCESS_MEMBER_BLOCK_PREFIX, CHANNEL_SETTINGS_MEMBER_CLEAR_ACTION_ID, CHANNEL_SETTINGS_MEMBER_FIND_ACTION_ID, CHANNEL_SETTINGS_FALLBACK_TOGGLE_ACTION_ID, CHANNEL_SETTINGS_CLOUD_SELECT_PREFIX,
   CHANNEL_SETTINGS_SKILLS_SELECT_ACTION_ID, CHANNEL_SETTINGS_MY_SKILLS_SELECT_ACTION_ID, CHANNEL_SETTINGS_DM_MODE_ACTION_ID,
-  CHANNEL_SETTINGS_DM_FLAGS_ACTION_ID, readSettingsForm, settingsFieldBlockId,
+  CHANNEL_SETTINGS_DM_FLAGS_ACTION_ID, readSettingsForm, settingsFieldBlockId, SETTINGS_DRAFT_FIELDS,
   CHANNEL_SETTINGS_CLOUD_PAGE_PREFIX, CHANNEL_SETTINGS_CLOUD_TOGGLE_PREFIX,
   CHANNEL_SETTINGS_CONNECTIONS_CALLBACK_ID, CHANNEL_SETTINGS_CONNECTIONS_EDIT_ACTION_ID,
   CHANNEL_SETTINGS_FALLBACK_ACTION_ID, CHANNEL_SETTINGS_THREAD_RESET_ACTION_ID,
@@ -100,6 +100,8 @@ import {
 } from "./channel-settings.js";
 import { listCustomMcps, normalizeCustomMcpName, normalizeCustomMcpToken, normalizeCustomMcpUrl, patchCustomMcps } from "../gateway/custom-mcps.js";
 import { listUserCustomMcps, removeChannelCustomMcp, removeUserCustomMcp, saveChannelCustomMcp, saveUserCustomMcp } from "../gateway/custom-mcp-store.js";
+import { listEmailAccounts, normalizeEmailAccountInput } from "../gateway/email-accounts.js";
+import { listUserEmailAccounts, removeChannelEmailAccount, removeUserEmailAccount, saveChannelEmailAccount, saveUserEmailAccount } from "../gateway/email-account-store.js";
 import { ACCESS_EDIT_ACTION_ID, ACCESS_CALLBACK_ID, accessFieldTarget, accessSettingsPatch, accessSettingsSnapshot, assertAccessManager, memberAccessForm, memberCanUse, readAccessFieldValue } from "./access-settings.js";
 import { assertValidEnvName, assertValidEnvValue, listChannelEnv, patchChannelEnv } from "../config/channel-env.js";
 import { assertValidSwapRuleFields } from "../gateway/egress/catalog-rules.js";
@@ -844,8 +846,37 @@ function assertSettingsFormAllowed(key, { meta, clicker, userIsAdmin, userIsAppr
   if (!["c", "o", "p"].includes(scope)) throw new Error("This form expired. Open Settings again.");
   if (scope === "o" && !userIsAdmin) throw new Error("Only admins change organization variables.");
   if (scope === "c" && (kind === "cm" || kind === "cm-add")) assertCustomMcpManager(meta, { authorId: clicker, isAdminUser: userIsAdmin, isApprovedUser: userIsApproved });
+  // An email account connected here reads and sends mail for every run, so it is a manager's call.
+  if (scope === "c" && isEmailForm(kind) && !canManage(meta, { authorId: clicker, isAdminUser: userIsAdmin, isApprovedUser: userIsApproved })) {
+    throw new Error("Only this channel's managers or an admin can change its email accounts.");
+  }
   if (scope === "o" && !kind.startsWith("var")) throw new Error("This form expired. Open Settings again.");
   return { kind, scope };
+}
+
+const isEmailForm = (kind) => kind === "em" || kind === "em-add";
+
+// Which form field an email account refusal belongs under (src/gateway/email-accounts.js and the
+// store's "IMAP/SMTP login failed" messages). A login failure lands under the password.
+const EMAIL_FIELD_ERROR_PATTERNS = [
+  [/IMAP login/i, "imapPassword"], [/SMTP login/i, "smtpPassword"],
+  [/IMAP server/i, "imapHost"], [/IMAP port/i, "imapPort"], [/IMAP user/i, "imapUser"], [/IMAP password/i, "imapPassword"],
+  [/SMTP server/i, "smtpHost"], [/SMTP port/i, "smtpPort"], [/SMTP user/i, "smtpUser"], [/SMTP password/i, "smtpPassword"],
+  [/Email address/i, "address"], [/Display name/i, "displayName"], [/Account name|email accounts here/i, "name"],
+];
+export function fieldForEmailError(message, fallback = "name") {
+  const text = String(message || "");
+  for (const [pattern, field] of EMAIL_FIELD_ERROR_PATTERNS) if (pattern.test(text)) return field;
+  return fallback;
+}
+
+// The flat input the email account store takes, from a form's values and the key's name on an update.
+function emailAccountFormInput(name, values = {}) {
+  return {
+    name, address: values.address, displayName: values.displayName,
+    imapHost: values.imapHost, imapPort: values.imapPort, imapUser: values.imapUser, imapPassword: values.imapPassword,
+    smtpHost: values.smtpHost, smtpPort: values.smtpPort, smtpUser: values.smtpUser, smtpPassword: values.smtpPassword,
+  };
 }
 
 const SECRET_SCOPE_BY_LETTER = Object.freeze({ c: "channel", o: "organization", p: "personal" });
@@ -880,9 +911,17 @@ function fieldForError(message, fields, fallback) {
 // The checks a form can fail without asking anyone: field syntax only. Run before Slack is
 // answered, so these refusals still land under their field with Slack's own error styling.
 export function localSettingsFormProblem(key, values = {}) {
-  const [kind] = String(key || "").split(":");
+  const [kind, , ...rest] = String(key || "").split(":");
   const refuse = (field, error) => ({ field, error: String(error).slice(0, 150) });
   if (values.token && values.token.length < 6) return refuse("token", "That doesn't look like a valid token.");
+  if (isEmailForm(kind)) {
+    // Syntax only. On an update a blank password keeps the stored one, which this check cannot
+    // see, so a stand-in fills it; the store merges the real one before the connection test.
+    const input = emailAccountFormInput(kind === "em" ? rest.join(":") : values.name, values);
+    if (kind === "em" && !input.imapPassword) input.imapPassword = "stand-in";
+    try { normalizeEmailAccountInput(input); } catch (error) { return refuse(fieldForEmailError(error.message, kind === "em" ? "imapHost" : "name"), error.message); }
+    return null;
+  }
   try {
     if (kind === "var-add") {
       try { assertValidEnvName(values.name); } catch (error) { return refuse("name", error.message); }
@@ -905,6 +944,8 @@ export function localSettingsFormProblem(key, values = {}) {
 }
 
 export const SETTINGS_FORM_TIMEOUT_MS = 15_000;
+// An email save logs in to the IMAP and SMTP servers first, which can take tens of seconds.
+export const EMAIL_SETTINGS_FORM_TIMEOUT_MS = 45_000;
 
 // The root view's submission: save the open inline form and return to the page. Slack expects an
 // answer within three seconds, and a save can need a Slack membership lookup and a DNS check, so:
@@ -915,7 +956,7 @@ export const SETTINGS_FORM_TIMEOUT_MS = 15_000;
 // same view — a remote refusal reopens the form with the error under its field and the token box
 // cleared. A submission with no form open just closes the modal.
 export async function handleSettingsFormSubmission({ ack, body, view, client }, {
-  context = channelSettingsContext, rootView = settingsRootView, save = saveSettingsForm, timeoutMs = SETTINGS_FORM_TIMEOUT_MS,
+  context = channelSettingsContext, rootView = settingsRootView, save = saveSettingsForm, timeoutMs,
 } = {}) {
   const clicker = body?.user?.id;
   const firstField = (view?.blocks || []).find((block) => block.type === "input")?.block_id;
@@ -949,11 +990,13 @@ export async function handleSettingsFormSubmission({ ack, body, view, client }, 
   }
   await ack({ response_action: "update", view: await rootView(local.entry, local.meta, { ...state, form: "", confirm: "" }, local.userIsAdmin, { notice: "⏳ Saving…", quick: true }) });
 
-  // Only the non-secret fields survive into a reopened form; a token is always typed again.
-  const draft = Object.fromEntries(Object.entries(values).filter(([field]) => ["label", "url", "name", "hosts"].includes(field)));
+  // Only the non-secret fields survive into a reopened form; a token or password is always typed again.
+  const draft = Object.fromEntries(Object.entries(values).filter(([field]) => SETTINGS_DRAFT_FIELDS.includes(field)));
+  const emailForm = isEmailForm(String(state.form).split(":")[0]);
+  const budgetMs = timeoutMs ?? (emailForm ? EMAIL_SETTINGS_FORM_TIMEOUT_MS : SETTINGS_FORM_TIMEOUT_MS);
   let expired = false;
   let timer;
-  const timedOut = () => new Error("The access or address check timed out. Nothing was saved; try again.");
+  const timedOut = () => new Error(`The ${emailForm ? "mailbox login" : "access or address check"} timed out. Nothing was saved; try again.`);
   const authorize = async () => {
     if (expired) throw timedOut();
     await context(client, { ...request, verifyMembership: true });
@@ -970,7 +1013,7 @@ export async function handleSettingsFormSubmission({ ack, body, view, client }, 
       fresh = await authorize();
       return save(state.form, values, { ...fresh, clicker, authorize });
     })();
-    const result = await Promise.race([work, new Promise((_, reject) => { timer = setTimeout(() => { expired = true; reject(timedOut()); }, timeoutMs); })]);
+    const result = await Promise.race([work, new Promise((_, reject) => { timer = setTimeout(() => { expired = true; reject(timedOut()); }, budgetMs); })]);
     clearTimeout(timer);
     const meta = (await getChannelMeta(fresh.entry.slug)) || fresh.meta;
     if (result.error) {
@@ -1042,6 +1085,21 @@ export async function saveSettingsForm(key, values, ctx) {
       return refuse(fieldForError(error.message, kind === "cm" ? ["url", "token"] : ["name", "url", "token"], kind === "cm" ? "url" : "name"), error.message);
     }
   }
+  if (isEmailForm(kind)) {
+    const input = emailAccountFormInput(kind === "em" ? name : values.name, values);
+    try {
+      // The store logs in to both servers first; `authorize` re-checks the editor's authority after
+      // that slow part, right before the write.
+      const options = { actor: scope === "c" ? `<@${clicker}>` : clicker, ...(ctx.authorize ? { authorize: ctx.authorize } : {}) };
+      const accounts = scope === "c"
+        ? await saveChannelEmailAccount(entry.slug, input, options)
+        : await saveUserEmailAccount(clicker, input, options);
+      const saved = accounts.find((item) => item.name === String(input.name || "").trim().toLowerCase());
+      return { notice: `✅ Email account ${inlineMcpName(saved?.name || input.name)} ${kind === "em" ? "updated" : "connected"} (IMAP and SMTP logins verified).` };
+    } catch (error) {
+      return refuse(fieldForEmailError(error.message, kind === "em" ? "imapHost" : "name"), error.message);
+    }
+  }
   if (kind === "var-add") {
     let varName;
     try { varName = assertValidEnvName(values.name); } catch (error) { return refuse("name", error.message); }
@@ -1095,6 +1153,11 @@ export async function removeSettingsForm(key, ctx) {
     if (scope === "c") await removeChannelCustomMcp(entry.slug, name, { actor: `<@${clicker}>` });
     else await removeUserCustomMcp(clicker, name, { actor: clicker });
     return `🗑️ Removed ${inlineMcpName(`${scope === "c" ? "custom" : "my"}-${name}`)}. Runs stop receiving it, including any in progress.`;
+  }
+  if (kind === "em") {
+    if (scope === "c") await removeChannelEmailAccount(entry.slug, name, { actor: `<@${clicker}>` });
+    else await removeUserEmailAccount(clicker, name, { actor: clicker });
+    return `🗑️ Removed email account ${inlineMcpName(name)}. Runs stop reading and sending mail with it, including any in progress.`;
   }
   throw new Error("This form expired. Open Settings again.");
 }
@@ -1216,7 +1279,8 @@ export function channelSettingsEditOptions(meta, userIsAdmin, { authorId = "", i
     canManageCloudMcp: Boolean(userIsAdmin),
     canManageVpn: canManage(meta, { authorId, isAdminUser: userIsAdmin, isApprovedUser }),
     // The conversation's custom MCP servers reach every run here, so they are a manager's call;
-    // a person's own (`my-<name>`) are always theirs to edit.
+    // a person's own (`my-<name>`) are always theirs to edit. The conversation's email accounts
+    // follow the same gate (they read and send mail for every run here).
     canManageCustomMcp: canManage(meta, { authorId, isAdminUser: userIsAdmin, isApprovedUser }),
     canEditAccess: !meta.isDM && canManage(meta, { authorId, isAdminUser: userIsAdmin, isApprovedUser }),
   };
@@ -1534,6 +1598,11 @@ async function settingsRootView(entry, meta, state, userIsAdmin, { tab = state.t
   snapshot.customMcps = {
     channel: listCustomMcps(meta.customMcps, "channel"),
     personal: await listUserCustomMcps(state.ownerId).catch(() => []),
+  };
+  // Email accounts, masked (no password ever): the conversation's and the VIEWER's own.
+  snapshot.emailAccounts = {
+    channel: listEmailAccounts(meta.emailAccounts, "channel"),
+    personal: await listUserEmailAccounts(state.ownerId).catch(() => []),
   };
   // The viewer's own connection tokens, masked, for the You page.
   const viewer = (await getUser(state.ownerId).catch(() => null)) || {};

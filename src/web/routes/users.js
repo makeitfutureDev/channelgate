@@ -14,6 +14,9 @@ import { listUserEnv, patchUserEnv } from "../../config/scoped-env.js";
 import { listEnvVars, normalizeEnvName, swapRuleFieldsFrom } from "../../config/channel-env.js";
 import { listCustomMcps } from "../../gateway/custom-mcps.js";
 import { listUserCustomMcps, removeUserCustomMcp, saveUserCustomMcp } from "../../gateway/custom-mcp-store.js";
+import { listEmailAccounts } from "../../gateway/email-accounts.js";
+import { listUserEmailAccounts, removeUserEmailAccount, saveUserEmailAccount } from "../../gateway/email-account-store.js";
+import { emailAccountBody } from "./channels.js";
 import { loadComposioInventory } from "../../gateway/composio-inventory.js";
 
 // The user listing is built field by field, never `...u`. That is the property that matters here:
@@ -46,6 +49,8 @@ function maskUsers(users) {
       secrets: listEnvVars(u.env),
       // Name, server name, URL and last4 only — the token is write-only (gateway/custom-mcps.js).
       customMcps: listCustomMcps(u.customMcps, "user"),
+      // Servers, users and "has password" only — passwords are write-only (gateway/email-accounts.js).
+      emailAccounts: listEmailAccounts(u.emailAccounts, "user"),
       ...cleanAccessGrants(u),
     };
   }
@@ -210,6 +215,45 @@ export function createUsersRouter({ composioInventory = loadComposioInventory } 
         return res.status(400).json({ error: e.message });
       }
       res.json({ ok: true, servers });
+    } catch (e) {
+      next(e);
+    }
+  });
+
+  // ── One person's own email accounts (gateway/email-accounts.js) ─────────────
+  // Usable only in runs this person authored. Write-only like their secrets; a PUT logs in to
+  // both servers before storing anything.
+  router.get("/users/:userId/email-accounts", async (req, res, next) => {
+    try {
+      res.json({ accounts: await listUserEmailAccounts(req.params.userId) });
+    } catch (e) {
+      next(e);
+    }
+  });
+
+  router.put("/users/:userId/email-accounts/:name", async (req, res, next) => {
+    try {
+      let accounts;
+      try {
+        accounts = await saveUserEmailAccount(req.params.userId, emailAccountBody(req), { actor: USER_SECRET_ACTOR });
+      } catch (e) {
+        return res.status(400).json({ error: e.message });
+      }
+      res.json({ ok: true, accounts });
+    } catch (e) {
+      next(e);
+    }
+  });
+
+  router.delete("/users/:userId/email-accounts/:name", async (req, res, next) => {
+    try {
+      let accounts;
+      try {
+        accounts = await removeUserEmailAccount(req.params.userId, req.params.name, { actor: USER_SECRET_ACTOR });
+      } catch (e) {
+        return res.status(400).json({ error: e.message });
+      }
+      res.json({ ok: true, accounts });
     } catch (e) {
       next(e);
     }
