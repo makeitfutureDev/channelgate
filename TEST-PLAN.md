@@ -1,5 +1,53 @@
 # ChannelGate — Test Plan
 
+## Registered inventory caps and Enterprise harness approvals (2026-10-22)
+
+- [x] Automated `test/license-registration.test.js`: signed Registered and no-key fixtures admit
+  19→20 users/channels and refuse 20→21 atomically, including a two-process race for the last
+  slot. Count every stored conversation (DMs/API included), every stored user (approved or not)
+  except the fixed synthetic API principal. Enterprise defaults remain unlimited; old free
+  payloads cannot raise the 20 ceilings. Downgrade preserves 25 existing records while blocking
+  additions. Slack, Teams, Google Chat, admin user API and run API return readable refusals.
+- [x] Automated `test/channel-engines.test.js`: malformed/empty approvals fail closed, changing
+  or clearing approvals requires Enterprise, whole-record saves cannot erase the policy,
+  thread/API overrides and stale sessions cannot select an unapproved engine, and both fallback
+  directions stay within the approved set. All run origins share the gate. A queued revocation
+  prevents spawn and drops an unused provisional session; memory review skips denied Claude.
+- [x] Automated `test/channel-engines-web.test.js`: real HTTP channel/DM writes reject invalid
+  lists, unapproved defaults and channel Codex authentication before starting it. Changes are
+  audited; downgrade preserves approvals and allows unrelated edits. Slack permits approval
+  controls only to Enterprise admins, filters runtime choices, rejects disallowed thread picks,
+  and supports the per-click All → one → multiple → All selection transitions.
+- [x] Chromium smoke using the actual admin template and policy controls in a local fixture:
+  Enterprise supports one/multiple/all approvals, Registered controls stay disabled, and the
+  engine selector disables unapproved choices. This is a local browser check, not live Slack.
+- [x] Full regression with coverage: 3,987 tests, 3,953 passed, 34 explicit skips, zero failures;
+  line/branch/function coverage 93.91% / 86.40% / 89.89%. Additional picker regression passed
+  after its per-click transition refinement. Dedicated security coverage and secret scan passed.
+  Dependency audit passes the high-severity threshold (two pre-existing moderate advisories).
+- [ ] Live inventory fixture, **Claude and Codex** independently: use an isolated daemon with a
+  legitimately signed Registered key, 19 stored conversations and 19 stored human users. Register
+  the 20th then attempt the 21st through admin API and chat on every connected surface. Include a
+  DM, API conversation and unapproved account; repeat concurrent last-slot attempts. **Pass:**
+  exact counts remain 20, refusals appear without engine/session/usage writes, existing users and
+  channels still work. Repeat Enterprise→Registered with 25 records: retain and edit all existing
+  records, refuse additions. Never change a production deployment's license for this drill.
+- [ ] Live harness controls, **Claude and Codex**, paired private Read/Admin fixtures: as an
+  organization admin, approve only the fixture's engine via admin editor and Slack Settings →
+  Agent. Ask "Reply exactly APPROVED-HARNESS" on its approved engine; attempt the opposite engine
+  via /model, thread directive, saved session and API override, then permit both and repeat.
+  **Pass:** approved launches identify the right harness in footer, session and usage; denied
+  attempts show a clear notice with no process/token use. Non-admin and Registered attempts to
+  edit/clear approvals fail; a downgrade retains restriction. Restore prior fixture settings.
+- [ ] Live automation/fallback, **Claude and Codex** separately: use an isolated replay-safe
+  provider-failure fixture and owned scheduled/background/API jobs. Restrict to the primary,
+  trigger failure, then approve both and repeat; revoke the fallback while the turn is queued.
+  **Pass:** only currently approved harnesses start, pins remain pins, rejected queued work
+  leaves no provisional session, and the Claude reviewer never starts when excluded. Record
+  process/spawn, session, audit, native reply and usage evidence; restore all settings/jobs.
+  Private QA definitions: LICENSE-INVENTORY-20-01, HARNESS-APPROVALS-01 and
+  HARNESS-APPROVALS-AUTOMATION-01. Definitions were created and reread; live runs remain pending.
+
 ## Channel agent directory (2026-10-21)
 
 - [x] Production boot integration: `test/agent-directory-slack-boot.test.js` uses the real Slack

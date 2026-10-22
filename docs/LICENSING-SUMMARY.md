@@ -5,7 +5,7 @@ ChannelGate is **source-available**, not OSI open-source software. The binding t
 and any separate agreement with the Licensor. This summary does not replace them.
 
 - Internal business, personal and noncommercial use are permitted within the applicable limits.
-- No key permits one conversation; a free key permits unlimited conversations, each with 500 AI
+- No key permits one conversation; a Registered (free) key permits up to 20 channels and 20 users, each conversation with 500 AI
   messages per UTC month. Enterprise entitlements can remove those limits.
 - Dedicated deployment services for individual customers are permitted when root Section 3.1's
   conditions hold. Paid software distribution, shared customer hosting and white-labeling require

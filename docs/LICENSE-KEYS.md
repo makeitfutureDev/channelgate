@@ -8,17 +8,27 @@ are fixed for its agreed term.
 
 ## Tiers
 
-| Tier | How you get it | Conversations | AI messages per conversation per month |
-| --- | --- | --- | --- |
-| **No key** | install and run | 1 | 500 |
-| **Free key** | create an account with your email on the ChannelGate platform | unlimited | 500 |
-| **Enterprise key** | Enterprise License with Makeitfuture | unlimited | unlimited |
+| Tier | How you get it | Registered channels | Registered users | Active conversations per UTC month | AI messages per conversation per month |
+| --- | --- | --- | --- | --- | --- |
+| **No key** | install and run | 20 | 20 | 1 | 500 |
+| **Registered (free key)** | create an account with your email on the ChannelGate platform | 20 | 20 | up to the registered channels | 500 |
+| **Enterprise key** | Enterprise License with Makeitfuture | unlimited by default | unlimited by default | unlimited by default | unlimited by default |
 
 ## Definitions
 
 - A **conversation** is a distinct channel, group, or direct-message thread on a supported chat
   platform, as identified by the Software. Without a key, the first conversation that receives an
   AI message in a calendar month is the one the deployment serves for that month.
+- **Registered channels** are the persistent conversation records across all connected platforms,
+  including DMs, groups and the synthetic API conversation. **Registered users** are all stored
+  human account records, including unapproved users; the synthetic API principal is excluded.
+  These inventory counts do not reset each month. Non-Enterprise deployments cannot create a 21st
+  record of either kind. Existing records remain editable and usable after an upgrade introduces
+  the cap or an Enterprise downgrade; no records are deleted, and growth is refused until below
+  the applicable cap. Other authorization and monthly message limits still apply.
+- Registered inventory caps are hard ceilings in this version: legacy free payloads that omit
+  them or specify `null` cannot raise them above 20. Signed smaller caps are honored; Enterprise
+  defaults to unlimited and can carry agreed limits.
 - An **AI message** is one engine run started for a conversation. Every origin counts — user
   turns, follow-ups, scheduled runs, and background jobs — except the deployment's own
   memory-review runs. Months are calendar months in UTC.
@@ -70,7 +80,8 @@ removing, disabling, or circumventing what it implements a licence violation.
 | `src/ee/license.js` | key storage, installation id, verification, the state machine |
 | `src/ee/limits.js` | conversation admission, the monthly cap, the usage report |
 
-Enforcement happens in one place: `licenseAdmission()` is called by the run orchestrator
+Inventory admission is checked atomically inside the user/channel store transactions before new
+records are written. `licenseAdmission()` is called by the run orchestrator
 (`src/gateway/run.js`) before a turn provisions a folder, mints a session, or spawns an engine. A
 refused turn is a short reply, never an error and never silence.
 
@@ -156,3 +167,18 @@ Composio SDK mode is **Enterprise-only and Beta**, enforced when settings, sessi
 requests are processed. The standard Composio MCP integration remains available in every tier.
 Microsoft Teams and Google Chat connectors are **Beta**, with platform-specific live acceptance
 required before relying on them for unattended work. Tier changes never weaken core security.
+
+## Enterprise channel harness approvals
+
+Organization admins can configure **Approved harnesses** in the admin channel editor or Slack
+Settings → Agent. Leave the policy unrestricted, or approve one or more known harnesses. The
+channel default must be approved. Channel selection, explicit thread pins, saved sessions,
+per-run overrides, queued work and automatic failover are checked against the saved policy.
+A disallowed selected harness produces a notice; it is never silently substituted to bypass a pin.
+Background/scheduled/API turns use the same launch boundary. The Claude memory reviewer is
+skipped when Claude is not approved.
+
+Only an effective Enterprise license permits changing the policy. A saved restriction remains
+enforced after downgrade or expiry; restoring Enterprise is required to change or clear it.
+The default on existing channels is unrestricted. This governs gateway-managed harness launches,
+not arbitrary commands a Worker/Admin author is otherwise allowed to execute inside a container.

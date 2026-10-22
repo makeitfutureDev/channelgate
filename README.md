@@ -346,19 +346,20 @@ license. See [why teams choose a self-hosted agent gateway](./docs/WHY.md) for m
 noncommercial use. It is not OSI open-source software, and no version
 is relicensed automatically.
 
-| | Conversations | AI messages per conversation per month |
-| --- | --- | --- |
-| **No key** — install and run | 1 | 500 |
-| **Free key** — an account with your email | unlimited | 500 |
-| **Enterprise key** — agreement with Makeitfuture | unlimited | unlimited |
+| | Registered channels | Registered users | AI messages per conversation per month |
+| --- | --- | --- | --- |
+| **No key** — install and run | 20 (one active per month) | 20 | 500 |
+| **Registered (free key)** — an account with your email | 20 | 20 | 500 |
+| **Enterprise key** — agreement with Makeitfuture | unlimited by default | unlimited by default | unlimited by default |
 
-A free key (an account with your email) lifts the one-conversation limit; the ceiling then stays at
-500 AI messages per conversation per month, and an enterprise key removes both. A key belongs to the
-organization that operates the deployment, and security features are identical in every tier.
+A free key lifts the one-active-conversation limit. Registered installations support up to 20
+channels (including DMs) and 20 users, at 500 AI messages per conversation per month. Enterprise
+removes these default caps and adds per-channel approved harnesses. A key belongs to the
+organization that operates the deployment; core confinement remains available in every tier.
 Definitions, the offline grace period, and exactly what a deployment reports are in
 [`docs/LICENSE-KEYS.md`](./docs/LICENSE-KEYS.md).
 
-- **Free — run it yourself.** Any team size, any number of channels with a free key, on your own
+- **Registered — run it yourself.** Up to 20 registered channels and 20 users with a free key, on your own
   infrastructure. Modify SUL-covered code within the license; the EE directory has separate contribution and
   redistribution conditions. There is no obligation to publish internal modifications.
 - **Partner — operate it for clients.** Installing, configuring, supporting or running a **dedicated

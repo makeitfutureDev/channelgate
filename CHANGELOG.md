@@ -23,6 +23,12 @@ product overview.
   refreshes. Defer this pricing basis's automatic historical refresh until an audited,
   explicitly authorized manual apply; forward estimates use the corrected defaults.
 
+- Cap Registered/non-Enterprise installations at 20 registered channels and 20 registered users.
+  Existing records are preserved; excess new registrations receive an explicit limit notice.
+- Add Enterprise-only per-channel Approved harnesses in the admin editor and Slack Settings.
+  Enforce the policy for thread pins, saved sessions, API/automation and automatic fallback;
+  preserve restrictions after a license downgrade.
+
 - Scheduled Slack tasks can ask their creator questions using cards and forms. Submitted answers
   resume the correct scheduled session, including silent and retired one-time tasks.
 - Add explicit admin-only sudo task schedules through MCP and the Automations editor. Each fire
