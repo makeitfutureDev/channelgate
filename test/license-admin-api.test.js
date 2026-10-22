@@ -61,7 +61,7 @@ test("clearing the key falls the deployment back to the no-key tier", async () =
   assert.equal(settingsForApi().hasLicenseKey, false);
   const status = await getJson("/license");
   assert.equal(status.state, "no_key");
-  assert.deepEqual(status.limits, { conversations: 1, messagesPerConversationPerMonth: 500 });
+  assert.deepEqual(status.limits, { conversations: 1, messagesPerConversationPerMonth: 500, channels: 20, users: 20 });
 });
 
 test("GET /api/license carries the state, the limits and this month's usage — never the key", async () => {
@@ -82,7 +82,7 @@ test("GET /api/license carries the state, the limits and this month's usage — 
   assert.equal(status.organization, "Acme GmbH");
   assert.equal(status.hasLicenseKey, true);
   assert.equal(status.licenseKeyLast4, "WXYZ");
-  assert.deepEqual(status.limits, { conversations: null, messagesPerConversationPerMonth: 500 });
+  assert.deepEqual(status.limits, { conversations: null, messagesPerConversationPerMonth: 500, channels: 20, users: 20 });
   assert.equal(status.banner, null, "a verified deployment shows no banner");
   assert.equal(status.usage.runs, 3);
   assert.equal(status.usage.conversations.length, 2);

@@ -6,13 +6,13 @@
 // ─────────────────────────────────────────────────────────────────────────────────────────────
 //
 // The compiled-in facts of the licensing model: the platform URL, the tier defaults, and the
-// canonical JSON encoding the signature is computed over. Everything else about a tier is
-// SERVER-defined — `limits` rides on the signed payload precisely so the Licensor can change what
-// a key is worth without shipping a release (docs/LICENSE-KEYS.md, "Changing the limits").
+// canonical JSON encoding the signature is computed over. Signed limits can tighten registration
+// caps and set monthly allowances; non-Enterprise registration has a compiled ceiling of 20
+// channels and 20 users (docs/LICENSE-KEYS.md, "Changing the limits").
 //
 // `null` means UNLIMITED. It is not "unset": a free key that omits `conversations` gets `null`
-// (unlimited conversations, the published free tier), while a deployment with NO key at all gets
-// the hard-coded 1. Reading "missing" as "unlimited" everywhere would make a truncated payload an
+// (no monthly conversation cap; registration is separately capped), while a deployment with NO key
+// at all gets the hard-coded 1. Reading "missing" as "unlimited" everywhere would make a truncated payload an
 // upgrade, so the fill-in is explicit per tier below.
 
 // One home for the base URL. Env wins over the compiled default; Settings (`platformUrl`) is
@@ -34,12 +34,12 @@ export function signupUrl() {
 export const TIERS = Object.freeze(["free", "enterprise"]);
 
 // No key at all. Compiled in — there is nobody to ask for these.
-export const NO_KEY_LIMITS = Object.freeze({ conversations: 1, messagesPerConversationPerMonth: 500 });
+export const NO_KEY_LIMITS = Object.freeze({ conversations: 1, messagesPerConversationPerMonth: 500, channels: 20, users: 20 });
 
 // Per-tier fill-ins for fields a signed payload omits.
 const TIER_DEFAULTS = Object.freeze({
-  free: Object.freeze({ conversations: null, messagesPerConversationPerMonth: 500 }),
-  enterprise: Object.freeze({ conversations: null, messagesPerConversationPerMonth: null }),
+  free: Object.freeze({ conversations: null, messagesPerConversationPerMonth: 500, channels: 20, users: 20 }),
+  enterprise: Object.freeze({ conversations: null, messagesPerConversationPerMonth: null, channels: null, users: null }),
 });
 
 export function tierDefaults(tier) {
@@ -55,10 +55,19 @@ function normalizeLimit(value, fallback) {
   return Math.floor(value);
 }
 
+function registrationLimit(value, ceiling) {
+  const normalized = normalizeLimit(value, ceiling);
+  return ceiling === null ? normalized : Math.min(normalized ?? ceiling, ceiling);
+}
+
 export function normalizeLimits(limits, tier) {
   const d = tierDefaults(tier);
   const l = limits && typeof limits === "object" ? limits : {};
   return Object.freeze({
+    // Registration caps are compiled product limits. Older signed free payloads granting null
+    // cannot bypass them; stricter signed limits still apply. Enterprise keeps signed overrides.
+    channels: registrationLimit(l.channels, d.channels),
+    users: registrationLimit(l.users, d.users),
     conversations: Object.hasOwn(l, "conversations") ? normalizeLimit(l.conversations, d.conversations) : d.conversations,
     messagesPerConversationPerMonth: Object.hasOwn(l, "messagesPerConversationPerMonth")
       ? normalizeLimit(l.messagesPerConversationPerMonth, d.messagesPerConversationPerMonth)

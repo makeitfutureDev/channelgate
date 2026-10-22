@@ -47,7 +47,7 @@ export function conversationLimitNotice({ limit, licensed, site = signupUrl() })
   if (!licensed) {
     return (
       `This ChannelGate install is limited to ${limit} conversation${limit === 1 ? "" : "s"} without a license key — ` +
-      `get a free key at ${site} to unlock all channels.`
+      `get a free key at ${site} for up to 20 registered channels and 20 users.`
     );
   }
   return (
@@ -62,7 +62,7 @@ export function monthlyCapNotice({ cap, month, licensed, site = signupUrl() }) {
     `The counter resets at the start of the next UTC month` +
     (licensed
       ? ` — an Enterprise License removes the limit: ${site}.`
-      : ` — a free key at ${site} unlocks every channel, and an Enterprise License removes the message limit.`)
+      : ` — a free key at ${site} allows up to 20 registered channels and 20 users, and an Enterprise License removes these limits.`)
   );
 }
 

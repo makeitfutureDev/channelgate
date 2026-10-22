@@ -1891,7 +1891,7 @@ export async function processMessageEvent(event, client, { botUserId = "", teamI
       runQueue.release(runKey, handle); // clears ONLY this turn's entry; promotes the next queued one
     }
   } catch (outer) {
-    if (outer?.code === "engine_selection_unavailable") {
+    if (outer?.code === "engine_selection_unavailable" || outer?.code === "license_registration_limit") {
       await client.chat.postMessage({ channel: event.channel, thread_ts: event.thread_ts ?? event.ts, text: outer.message });
       return;
     }
