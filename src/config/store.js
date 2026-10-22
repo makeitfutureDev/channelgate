@@ -14,6 +14,8 @@ import {
   slugify,
 } from "./paths.js";
 import { getDb, toJson, fromJson } from "../db/index.js";
+import { assertApprovedEnginesUpdate, assertChannelEngineApproved } from "../gateway/channel-engines.js";
+import { assertRegistrationCapacity } from "../ee/registration-limits.js";
 import { isApiPrincipal } from "./api-principal.js";
 // Retired integrations' fields are dropped on the way IN, so a record can never be re-saved with
 // one and no listing has to remember to mask it (see ./dead-fields.js).
@@ -66,6 +68,7 @@ export async function setUser(userId, patch) {
   db.exec("BEGIN IMMEDIATE");
   try {
     const row = db.prepare("SELECT data FROM users WHERE user_id = ?").get(userId);
+    if (!row && !isApiPrincipal(userId)) assertRegistrationCapacity("users", db);
     const existing = row ? fromJson(row.data, {}) : null;
     const next = {
       name: "", composioToken: "", toolboxToken: "", isAdmin: false,
@@ -146,6 +149,7 @@ export async function upsertChannelEntry(channelId, { name, type, isDM, platform
   try {
     const row = db.prepare("SELECT slug, data FROM channels WHERE channel_id = ?").get(channelId);
     const existing = row ? fromJson(row.data, {}) : null;
+    if (!row) assertRegistrationCapacity("channels", db);
     let slug = row?.slug || slugify(name, channelId);
     // The collision loop runs whenever the slug was NEWLY computed — not only for brand-new
     // rows: a legacy row imported with an empty slug lands here too, and skipping the loop for
@@ -244,13 +248,38 @@ export async function getChannelMeta(slug) {
   return row ? stripRetiredChannelFields(fromJson(row.data, null)) : null;
 }
 
+// Gate policy writes at the store boundary so internal callers and tools share the same rules.
+function validateChannelPolicy(current, next) {
+  // A whole-record save omitting an existing restriction must not clear it by accident.
+  if (!Object.hasOwn(next, "approvedEngines") && Object.hasOwn(current || {}, "approvedEngines")) {
+    next.approvedEngines = current.approvedEngines;
+  }
+  if (Object.hasOwn(next, "approvedEngines")) {
+    next.approvedEngines = assertApprovedEnginesUpdate(current, next.approvedEngines);
+  }
+  if (next.engine && next.engine !== current?.engine) assertChannelEngineApproved(next, next.engine);
+  if (next.codexAuthSource === "channel" && next.codexAuthSource !== current?.codexAuthSource) {
+    assertChannelEngineApproved(next, "codex");
+  }
+  return next;
+}
+
 export async function saveChannelMeta(slug, meta) {
-  const record = stripDeadFields(stripRetiredChannelFields(meta));
-  getDb()
-    .prepare("INSERT INTO channel_meta(slug, data) VALUES(?, ?) ON CONFLICT(slug) DO UPDATE SET data = excluded.data")
-    .run(slug, toJson(record));
-  emitConfigChange("channel-meta", { slug });
-  return record;
+  const db = getDb();
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    const row = db.prepare("SELECT data FROM channel_meta WHERE slug = ?").get(slug);
+    const current = row ? fromJson(row.data, null) : null;
+    const record = validateChannelPolicy(current, stripDeadFields(stripRetiredChannelFields(meta)));
+    db.prepare("INSERT INTO channel_meta(slug, data) VALUES(?, ?) ON CONFLICT(slug) DO UPDATE SET data = excluded.data")
+      .run(slug, toJson(record));
+    db.exec("COMMIT");
+    emitConfigChange("channel-meta", { slug });
+    return record;
+  } catch (error) {
+    try { db.exec("ROLLBACK"); } catch { /* transaction already gone */ }
+    throw error;
+  }
 }
 
 // Atomically merge a PARTIAL patch into one channel's meta. The read-modify-write runs inside a
@@ -273,7 +302,7 @@ export async function patchChannelMeta(slug, patch) {
       db.exec("ROLLBACK");
       return null;
     }
-    const next = stripDeadFields(stripRetiredChannelFields({ ...(current || {}), ...partial }));
+    const next = validateChannelPolicy(current, stripDeadFields(stripRetiredChannelFields({ ...(current || {}), ...partial })));
     db.prepare("INSERT INTO channel_meta(slug, data) VALUES(?, ?) ON CONFLICT(slug) DO UPDATE SET data = excluded.data").run(slug, toJson(next));
     db.exec("COMMIT");
     emitConfigChange("channel-meta", { slug });

@@ -1,3 +1,4 @@
+import { assertApprovedEnginesUpdate, assertChannelEngineApproved } from "../../gateway/channel-engines.js";
 import { assertEngineSelectable } from "../../engines/selection.js";
 import { assertNewMcpSelections } from "../../gateway/mcp-selection.js";
 // Channel + DM admin routes: per-DM config, the channel list/members/meta, Make-toolbox and
@@ -38,6 +39,7 @@ import {
   ENGINES,
   CHANNEL_ACCESS_MODES,
   getDefaultChannelAccess,
+  getEngine,
 } from "../../config/settings.js";
 import { testChannelSync, syncChannelNow, driveSyncStatus } from "../../gateway/drivesync.js";
 import { PROFILE_FLAGS, BASE_MODE_FLAGS, modeSettingsPatch } from "../../gateway/modes.js";
@@ -163,6 +165,7 @@ export function createChannelsRouter({
     try {
       const entry = await registeredChannel(req, res);
       if (!entry) return;
+      assertChannelEngineApproved(await getChannelMeta(entry.slug), "codex");
       const method = req.body?.method;
       const status = await startChannelCodexLogin(req.params.channelId, method, {
         key: req.body?.key,
@@ -302,6 +305,7 @@ export function createChannelsRouter({
         catch (error) { return res.status(400).json({ error: error.message }); }
       }
       const next_ = { ...current };
+      if (Object.hasOwn(body, "approvedEngines")) next_.approvedEngines = assertApprovedEnginesUpdate(current, body.approvedEngines);
       if (["user", "admin", "custom"].includes(body.template)) next_.template = body.template;
       if (Array.isArray(body.skills)) next_.skills = body.skills;
       if (typeof body.skillTemplate === "string") {
@@ -329,6 +333,9 @@ export function createChannelsRouter({
       if (body.clearComposioToken === true) next_.composioToken = "";
       if (typeof body.toolboxToken === "string" && body.toolboxToken) next_.toolboxToken = body.toolboxToken.trim();
       if (body.clearToolboxToken === true) next_.toolboxToken = "";
+      if (Object.hasOwn(body, "approvedEngines") || Object.hasOwn(body, "engine") || Object.hasOwn(body, "codexAuthSource")) {
+        assertChannelEngineApproved(next_, effectiveMeta(next_).engine || getEngine());
+      }
       await saveChannelMeta(entry.slug, next_);
       await ensureChannelFolder(entry.slug, effectiveMeta(next_)); // re-provision with effective config
       // Same posture change, same audit row as a channel: a DM's template/admin-mode/network flags
@@ -336,6 +343,7 @@ export function createChannelsRouter({
       await logChannelPolicyChange({ channelId: req.params.channelId, slug: entry.slug, actor: ADMIN_UI_ACTOR, before: current, after: next_ });
       res.json({ ok: true });
     } catch (e) {
+      if (e.statusCode) return res.status(e.statusCode).json({ error: e.message });
       next(e);
     }
   });
@@ -491,10 +499,14 @@ export function createChannelsRouter({
             model: typeof body.model === "string" ? body.model.trim() : current.model,
             effort: typeof body.effort === "string" ? body.effort.trim() : current.effort,
           };
+          if (Object.hasOwn(body, "approvedEngines")) out.approvedEngines = assertApprovedEnginesUpdate(current, body.approvedEngines);
           if (out.codexAuthSource === "channel") {
             out.engine = "codex";
             if (!modelBelongsToEngine(out.model, "codex")) out.model = "";
             if (!effortBelongsToEngine(out.effort, "codex")) out.effort = "";
+          }
+          if (Object.hasOwn(body, "approvedEngines") || Object.hasOwn(body, "engine") || Object.hasOwn(body, "codexAuthSource")) {
+            assertChannelEngineApproved(out, effectiveMeta(out).engine || getEngine());
           }
           // Egress escapes (src/gateway/egress/): raw sockets on the open bridge beside the proxy,
           // and the hosts whose SSH/Postgres ports get a raw tunnel through it. Admin API only, and

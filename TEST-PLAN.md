@@ -69,6 +69,54 @@ inbox). Record the address and the servers; never the password.
 - [ ] Rotation and removal: change the IMAP password with the SMTP box blank (shared password) —
   the next send still works; remove the account — the next turn reports it absent.
 
+## Registered inventory caps and Enterprise harness approvals (2026-10-22)
+
+- [x] Automated `test/license-registration.test.js`: signed Registered and no-key fixtures admit
+  19→20 users/channels and refuse 20→21 atomically, including a two-process race for the last
+  slot. Count every stored conversation (DMs/API included), every stored user (approved or not)
+  except the fixed synthetic API principal. Enterprise defaults remain unlimited; old free
+  payloads cannot raise the 20 ceilings. Downgrade preserves 25 existing records while blocking
+  additions. Slack, Teams, Google Chat, admin user API and run API return readable refusals.
+- [x] Automated `test/channel-engines.test.js`: malformed/empty approvals fail closed, changing
+  or clearing approvals requires Enterprise, whole-record saves cannot erase the policy,
+  thread/API overrides and stale sessions cannot select an unapproved engine, and both fallback
+  directions stay within the approved set. All run origins share the gate. A queued revocation
+  prevents spawn and drops an unused provisional session; memory review skips denied Claude.
+- [x] Automated `test/channel-engines-web.test.js`: real HTTP channel/DM writes reject invalid
+  lists, unapproved defaults and channel Codex authentication before starting it. Changes are
+  audited; downgrade preserves approvals and allows unrelated edits. Slack permits approval
+  controls only to Enterprise admins, filters runtime choices, rejects disallowed thread picks,
+  and supports the per-click All → one → multiple → All selection transitions.
+- [x] Chromium smoke using the actual admin template and policy controls in a local fixture:
+  Enterprise supports one/multiple/all approvals, Registered controls stay disabled, and the
+  engine selector disables unapproved choices. This is a local browser check, not live Slack.
+- [x] Full regression with coverage: 3,987 tests, 3,953 passed, 34 explicit skips, zero failures;
+  line/branch/function coverage 93.91% / 86.40% / 89.89%. Additional picker regression passed
+  after its per-click transition refinement. Dedicated security coverage and secret scan passed.
+  Dependency audit passes the high-severity threshold (two pre-existing moderate advisories).
+- [ ] Live inventory fixture, **Claude and Codex** independently: use an isolated daemon with a
+  legitimately signed Registered key, 19 stored conversations and 19 stored human users. Register
+  the 20th then attempt the 21st through admin API and chat on every connected surface. Include a
+  DM, API conversation and unapproved account; repeat concurrent last-slot attempts. **Pass:**
+  exact counts remain 20, refusals appear without engine/session/usage writes, existing users and
+  channels still work. Repeat Enterprise→Registered with 25 records: retain and edit all existing
+  records, refuse additions. Never change a production deployment's license for this drill.
+- [ ] Live harness controls, **Claude and Codex**, paired private Read/Admin fixtures: as an
+  organization admin, approve only the fixture's engine via admin editor and Slack Settings →
+  Agent. Ask "Reply exactly APPROVED-HARNESS" on its approved engine; attempt the opposite engine
+  via /model, thread directive, saved session and API override, then permit both and repeat.
+  **Pass:** approved launches identify the right harness in footer, session and usage; denied
+  attempts show a clear notice with no process/token use. Non-admin and Registered attempts to
+  edit/clear approvals fail; a downgrade retains restriction. Restore prior fixture settings.
+- [ ] Live automation/fallback, **Claude and Codex** separately: use an isolated replay-safe
+  provider-failure fixture and owned scheduled/background/API jobs. Restrict to the primary,
+  trigger failure, then approve both and repeat; revoke the fallback while the turn is queued.
+  **Pass:** only currently approved harnesses start, pins remain pins, rejected queued work
+  leaves no provisional session, and the Claude reviewer never starts when excluded. Record
+  process/spawn, session, audit, native reply and usage evidence; restore all settings/jobs.
+  Private QA definitions: LICENSE-INVENTORY-20-01, HARNESS-APPROVALS-01 and
+  HARNESS-APPROVALS-AUTOMATION-01. Definitions were created and reread; live runs remain pending.
+
 ## Channel agent directory (2026-10-21)
 
 - [x] Production boot integration: `test/agent-directory-slack-boot.test.js` uses the real Slack
@@ -9813,6 +9861,25 @@ companion skill; every change is announced in the reply.
       the new basis atomically, applies GPT-5.6 Sol's $5/$0.50/$30 rate before the official
       2026-08-21 cutover and $4/$0.40/$20 at/after it, backs up once at boot, and skips the applied basis thereafter
       (`test/usage-pricing.test.js`).
+- [x] Unit (2026-10-22): GPT-6.1 Sol uses $2/$0.10/$10 from its 2026-09-29 launch;
+      request inputs of 272,000 use Standard and 272,001 use 2× input/cache plus 1.5× output,
+      including cache writes and dated snapshots. Aggregates alone never trigger the uplift.
+      Terra/Luna retain former rates immediately before July 30 and reduced rates at/after it;
+      custom overrides survive, retired saved defaults migrate, parent/request/component costs
+      agree, and a second explicit refresh has zero delta (`test/usage-pricing.test.js`).
+- [x] Unit (2026-10-22): boot with an absent/old pricing marker defers this basis without changing
+      any usage/request/component/meta row or making a backup. Explicit manual apply records
+      the basis; settled boots skip and later stale rows still use backup-first repair.
+- [ ] Live acceptance — special isolated pricing ledger fixture, engine-independent (the pure
+      estimator/SQLite maintenance path invokes no harness): use `test/usage-pricing.test.js`
+      migrated in-memory fixture with Terra/Luna at 2026-07-29T23:59:59.999Z and July 30 00:00Z,
+      GPT-6.1 Sol at Sep 29 00:00Z, plus request inputs 272000/272001, cache reads/writes, custom
+      rates, Claude and pre-window controls. Run `node --test test/usage-pricing.test.js` in an
+      isolated candidate checkout. Pass: exact asserted costs, all levels balance, boot leaves
+      old/absent-marker snapshots unchanged, manual apply then preview gives zero delta.
+      On a production DB COPY only after read-only impact audit: compare preview with recomputed
+      official dated costs and overrides, apply to copy, verify integrity and zero second delta.
+      Production apply/restart remains deferred pending the ledger audit and separate authorization.
 - [x] Live dated-pricing correction (2026-09-14): apply the new basis to a production copy and the live ledger,
       confirm every GPT-5.6 Sol component before 2026-08-21 uses $5/$0.50/$30 while every component
       at/after the cutover uses $4/$0.40/$20, Astra remains $10/$1/$50, parent totals match their

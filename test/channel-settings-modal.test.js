@@ -545,7 +545,7 @@ test("Settings and secrets admit authorized members and guests, but Cloud MCP re
     // A non-admin may edit this channel's own secrets in every mode, but never the organization's:
     // that scope reaches every conversation in the deployment.
     assert.deepEqual(channelSettingsEditOptions({ ...base, ...flags }, false), {
-      canEnableAdmin: false, canEditRuntime: true, canEditSecrets: true, canEditOrgSecrets: false, canManageCloudMcp: false, canManageVpn: false,
+      canEnableAdmin: false, canApproveHarnesses: false, canEditRuntime: true, canEditSecrets: true, canEditOrgSecrets: false, canManageCloudMcp: false, canManageVpn: false,
       canManageCustomMcp: false, canEditAccess: false,
     });
     assert.equal(channelSettingsEditOptions({ ...base, ...flags }, true).canEditOrgSecrets, true);

@@ -12,9 +12,9 @@ ensureTestEnv();
 const { resolveLicenseState, nextUtcMonthStart, utcMonth, LICENSE_STATES, bannerFor } = await import("../src/ee/license.js");
 const { NO_KEY_LIMITS, GRACE_MS } = await import("../src/ee/tiers.js");
 
-const NO_KEY = { conversations: 1, messagesPerConversationPerMonth: 500 };
-const FREE = { conversations: null, messagesPerConversationPerMonth: 500 };
-const ENTERPRISE = { conversations: null, messagesPerConversationPerMonth: null };
+const NO_KEY = { conversations: 1, messagesPerConversationPerMonth: 500, channels: 20, users: 20 };
+const FREE = { conversations: null, messagesPerConversationPerMonth: 500, channels: 20, users: 20 };
+const ENTERPRISE = { conversations: null, messagesPerConversationPerMonth: null, channels: null, users: null };
 
 const at = (iso) => Date.parse(iso);
 const cacheOf = (tier, limits, verifiedAt, expiresAt = null) => ({

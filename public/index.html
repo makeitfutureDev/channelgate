@@ -894,7 +894,7 @@
                 </header>
                 <div class="setcard">
                   <h4>License <em class="state" id="license-state-chip"></em></h4>
-                  <p class="desc">Without a key this deployment serves <strong>one conversation</strong> per UTC month. A free key unlocks every conversation; an Enterprise License removes the message limit. See <code>docs/LICENSE-KEYS.md</code>.</p>
+                  <p class="desc">Without a key this deployment serves <strong>one conversation</strong> per UTC month. A Registered (free) key supports up to 20 channels and 20 users; an Enterprise License removes these default caps and the message limit. See <code>docs/LICENSE-KEYS.md</code>.</p>
                   <div id="license-banner" class="license-banner" hidden></div>
                   <dl class="license-facts" id="license-facts"></dl>
                   <label class="field">
@@ -1399,6 +1399,12 @@
             </div>
             <p class="hint">Channel-specific connected apps and secrets are configured in MCP Connections and Environment tokens above.</p>
           </div>
+          <fieldset class="ch-harness-policy" disabled>
+            <legend>Approved harnesses · Enterprise</legend>
+            <label><input type="checkbox" class="ch-harness-restrict"> Restrict this channel to selected harnesses</label>
+            <div class="ch-harness-options checks"></div>
+            <p class="hint ch-harness-help">Loading license…</p>
+          </fieldset>
           <div class="grid grid-2">
             <label class="field ch-engine-field">
               <span>Engine (which CLI drives this channel)</span>

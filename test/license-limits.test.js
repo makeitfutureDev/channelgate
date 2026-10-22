@@ -41,7 +41,7 @@ const admit = (id, origin = "slack_foreground") => licenseAdmission({ conversati
 
 test("no key: the first conversation of the month is served and every other one is refused", () => {
   tier("none");
-  assert.deepEqual(getEffectiveLimits(), { conversations: 1, messagesPerConversationPerMonth: 500 });
+  assert.deepEqual(getEffectiveLimits(), { conversations: 1, messagesPerConversationPerMonth: 500, channels: 20, users: 20 });
 
   const first = admit("C_FIRST");
   assert.equal(first.allowed, true);
@@ -78,7 +78,7 @@ test("a refused turn is a reply, never an exception and never silence", () => {
 
 test("a free key unlocks every conversation and keeps the 500-message cap", () => {
   tier("free");
-  assert.deepEqual(getEffectiveLimits(), { conversations: null, messagesPerConversationPerMonth: 500 });
+  assert.deepEqual(getEffectiveLimits(), { conversations: null, messagesPerConversationPerMonth: 500, channels: 20, users: 20 });
   for (const id of ["C_A", "C_B", "C_C", "gchat:spaces/X", "teams:19:abc@thread.tacv2"]) {
     assert.equal(admit(id).allowed, true, `${id} should be admitted on a free key`);
   }
@@ -118,7 +118,7 @@ test("the monthly cap refuses at the limit and warns exactly once at 80%", () =>
 
 test("an enterprise key never limits anything", () => {
   tier("enterprise");
-  assert.deepEqual(getEffectiveLimits(), { conversations: null, messagesPerConversationPerMonth: null });
+  assert.deepEqual(getEffectiveLimits(), { conversations: null, messagesPerConversationPerMonth: null, channels: null, users: null });
   for (let i = 0; i < 60; i++) assert.equal(admit(`C_${i}`).allowed, true);
   for (let i = 0; i < 600; i++) {
     const result = admit("C_HOT");
@@ -200,7 +200,7 @@ test("an EXPIRED offline payload grants nothing — the no-key limits, immediate
   assert.equal(status.expiresAt, "2020-01-01T00:00:00.000Z", "…while still saying when it ran out");
   assert.equal(status.banner.level, "error");
 
-  assert.deepEqual(getEffectiveLimits(), { conversations: 1, messagesPerConversationPerMonth: 500 });
+  assert.deepEqual(getEffectiveLimits(), { conversations: 1, messagesPerConversationPerMonth: 500, channels: 20, users: 20 });
   assert.equal(admit("C_EXPIRED_FIRST").allowed, true, "the free allowance still works");
   const second = admit("C_EXPIRED_SECOND");
   assert.equal(second.allowed, false);
@@ -216,7 +216,7 @@ test("an EXPIRED offline payload grants nothing — the no-key limits, immediate
     expiresAt: "2099-01-01T00:00:00.000Z",
   });
   assert.equal(getLicenseStatus().state, "valid");
-  assert.deepEqual(getEffectiveLimits(), { conversations: null, messagesPerConversationPerMonth: null });
+  assert.deepEqual(getEffectiveLimits(), { conversations: null, messagesPerConversationPerMonth: null, channels: null, users: null });
   assert.equal(admit("C_STILL_VALID_1").allowed, true);
   assert.equal(admit("C_STILL_VALID_2").allowed, true);
 });

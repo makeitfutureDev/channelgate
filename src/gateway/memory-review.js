@@ -18,6 +18,8 @@
 import { randomUUID } from "node:crypto";
 import { mkdir, writeFile, rm } from "node:fs/promises";
 import path from "node:path";
+import { getChannelMeta } from "../config/store.js";
+import { isChannelEngineApproved } from "./channel-engines.js";
 import { runClaude } from "../engines/claude.js";
 import { buildMcpConfig } from "./mcp.js";
 import { effectiveWorkDir } from "./folders.js";
@@ -145,6 +147,8 @@ export async function runMemoryReview({
   resolveTarget = resolveRuntime,
   run = runClaude,
 } = {}) {
+  meta = (await getChannelMeta(slug)) ?? meta;
+  if (!isChannelEngineApproved(meta, "claude")) return { skipped: "harness-not-approved", saved: 0 };
   const cwd = effectiveWorkDir(slug, meta);
   const snapshot = await readMemorySnapshot(cwd, meta);
   const transcript = String((await fetchTranscript?.()) || "").trim();
@@ -205,6 +209,7 @@ export async function runMemoryReview({
   let saves = 0;
   try {
     await target.runtime.ensureUp(target, { announce: () => {}, lease });
+    if (!isChannelEngineApproved((await getChannelMeta(slug)) ?? meta, "claude")) return { skipped: "harness-not-approved", saved: 0 };
     const result = await run({
       cwd,
       prompt,

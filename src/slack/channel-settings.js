@@ -21,6 +21,7 @@ export const CHANNEL_SETTINGS_TAB_SELECT_ACTION_ID = "cg_channel_settings_tab_se
 // Kept only so a Settings modal opened before the inline dropdowns shipped still has a live
 // control: the handler repaints the runtime tab instead of pushing the retired editor.
 export const CHANNEL_SETTINGS_RUNTIME_EDIT_ACTION_ID = "cg_channel_settings_runtime_edit";
+export const CHANNEL_SETTINGS_HARNESSES_ACTION_ID = "cg_channel_settings_harnesses";
 export const CHANNEL_SETTINGS_RUNTIME_ENGINE_ACTION_ID = "cg_channel_settings_runtime_engine";
 export const CHANNEL_SETTINGS_RUNTIME_MODEL_ACTION_ID = "cg_channel_settings_runtime_model";
 export const CHANNEL_SETTINGS_THREAD_ENGINE_ACTION_ID = "cg_channel_settings_thread_engine";
@@ -707,6 +708,34 @@ function modeRows(snapshot, state, { canEditAccess = false, canEnableAdmin = fal
   ];
 }
 
+// Slack dispatches a multi-select after each click. Selecting an individual option while the
+// initial All chip remains must start a restriction; selecting All on a restricted set clears it.
+export function readHarnessSelection(action, meta) {
+  const picked = (action?.selected_options || []).map((o) => o.value);
+  const specific = picked.filter((value) => value !== SETTINGS_DEFAULT_VALUE);
+  if (picked.includes(SETTINGS_DEFAULT_VALUE)) {
+    return meta?.approvedEngines == null && specific.length ? specific : null;
+  }
+  return specific;
+}
+
+function harnessRows(runtime, opts) {
+  const policy = runtime.approvedEngines;
+  const labels = (runtime.harnessOptions || []).filter((o) => policy?.includes(o.value)).map((o) => o.label);
+  const summary = policy == null ? "All harnesses" : labels.join(", ") || "No available harnesses";
+  const heading = context(`*Approved harnesses · Enterprise* · ${escapeMrkdwn(summary)}`);
+  if (!opts.canApproveHarnesses) return [heading];
+  const options = [option("All harnesses", SETTINGS_DEFAULT_VALUE), ...(runtime.harnessOptions || []).map((o) => option(o.label, o.value))];
+  const selectedValues = policy == null ? [SETTINGS_DEFAULT_VALUE] : policy;
+  return [heading, {
+    type: "actions", elements: [{
+      type: "multi_static_select", action_id: CHANNEL_SETTINGS_HARNESSES_ACTION_ID,
+      placeholder: plain("Approve one or more harnesses"), options,
+      initial_options: options.filter((o) => selectedValues.includes(o.value)),
+    }],
+  }, context("Choose one or more harnesses. Select All harnesses to remove the restriction. The channel default must be approved. Thread pins and automatic fallback follow this policy.")];
+}
+
 function agentPage(snapshot, state, opts) {
   const runtime = snapshot.runtime || {};
   const scopes = runtime.scopes || {};
@@ -725,6 +754,7 @@ function agentPage(snapshot, state, opts) {
     context("*Channel default*"),
     ...runtimeRow("channel", scopes.channel, state, { editable, codexLocked: locked }),
     ...(editable ? [] : [context("🔒 The gateway's policy limits engine changes to admins.")]),
+    ...harnessRows(runtime, opts),
     { type: "divider" },
     ...modeRows(snapshot, state, opts),
     // No service provisioned: one line, no controls. A provisioned one (or one still being read —
@@ -1043,6 +1073,7 @@ const MAX_VIEW_BLOCKS = 100;
 export function buildChannelSettingsView(snapshot = {}, state = {}, {
   tab = state.tab,
   canEditRuntime = true,
+  canApproveHarnesses = false,
   canEnableAdmin = false,
   canEditSecrets = false,
   // The organization scope reaches every conversation, so it is admin-only even for someone who
@@ -1057,7 +1088,7 @@ export function buildChannelSettingsView(snapshot = {}, state = {}, {
   const pages = settingsPages({ isDM: snapshot.isDM });
   const wanted = normalizeTab(tab);
   const active = pages.includes(wanted) ? wanted : pages[0];
-  const opts = { canEditRuntime, canEnableAdmin, canEditSecrets, canEditOrgSecrets, canManageCloudMcp, canManageCustomMcp, canEditAccess, canManageVpn };
+  const opts = { canApproveHarnesses, canEditRuntime, canEnableAdmin, canEditSecrets, canEditOrgSecrets, canManageCloudMcp, canManageCustomMcp, canEditAccess, canManageVpn };
   const content = {
     agent: agentPage, access: accessPage, mcp: mcpPage, variables: variablesPage,
     skills: skillsPage, schedules: scheduleRows, you: youPage,

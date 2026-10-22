@@ -128,9 +128,9 @@ test("version 1.4 names ChannelGate, adds license keys, keeps control, and has n
   assert.match(checklist, /Owner confirmed \*\*ChannelGate\*\*/);
 
   // Tiers are documented once, consistently, with end-user keys and offline grace.
-  assert.match(keys, /\| \*\*No key\*\* \| install and run \| 1 \| 500 \|/);
-  assert.match(keys, /\| \*\*Free key\*\* \| .* \| unlimited \| 500 \|/);
-  assert.match(keys, /\| \*\*Enterprise key\*\* \| .* \| unlimited \| unlimited \|/);
+  assert.match(keys, /\| \*\*No key\*\* \| install and run \| 20 \| 20 \| 1 \| 500 \|/);
+  assert.match(keys, /\| \*\*Registered \(free key\)\*\* \| .* \| 20 \| 20 \| up to the registered channels \| 500 \|/);
+  assert.match(keys, /\| \*\*Enterprise key\*\* \| .* \| unlimited by default \| unlimited by default \| unlimited by default \| unlimited by default \|/);
   assert.match(keys, /an end-user key/);
   assert.match(keys, /never shared, pooled, or transferred across organizations/);
   assert.match(keys, /\*\*14 days\*\*/);

@@ -22,6 +22,7 @@ import { getChannelEntry, getChannelMeta, patchChannelMeta, isAdmin, isApproved 
 // admin UI's save and the `/mode` command (config/channel-audit.js). Thread-scope picks are not:
 // they live in the thread override store, never in the channel's meta.
 import { logChannelPolicyChange } from "../config/channel-audit.js";
+import { isChannelEngineApproved, assertChannelEngineApproved } from "../gateway/channel-engines.js";
 import { getEngine, canChangeChannelRuntime, getEnabledEngines } from "../config/settings.js";
 import { effectiveMeta } from "../gateway/run.js";
 import { isAuthorized } from "../gateway/modes.js";
@@ -137,9 +138,9 @@ function wizardScopeLabel(scope, isDM) {
 // Only harnesses the admin left enabled are offered — the wizard must not hand someone a button
 // that writes an override the orchestrator will immediately substitute away. Falls back to the full
 // list if the setting somehow disables everything (the getter already fails open).
-const OFFERED_ENGINE_IDS = () => {
+const OFFERED_ENGINE_IDS = (meta = {}) => {
   const enabled = getEnabledEngines().filter((id) => adapterFor(id));
-  return enabled.length ? enabled : ENGINE_IDS;
+  return (enabled.length ? enabled : ENGINE_IDS).filter(id => isChannelEngineApproved(meta, id));
 };
 const ENGINE_LABELS = () => OFFERED_ENGINE_IDS().map((id) => requireAdapter(id).label).join(" / ");
 export const MODEL_WIZARD_TEXT = `Change the model: pick scope, then harness (${ENGINE_LABELS()}), then model, then effort.`;
@@ -185,7 +186,7 @@ export function modelWizardScopeBlocks({ threadTs, meta }) {
   ];
 }
 
-function modelWizardEngineBlocks({ scope, threadTs, meta, threadEngine = "" }) {
+export function modelWizardEngineBlocks({ scope, threadTs, meta, threadEngine = "" }) {
   const button = (actionId, label) => wizardButton(actionId, label, encodeWizardState({ scope, threadTs }));
   const current = scope === "thread" ? threadEngine || "channel default" : meta.engine || "gateway default";
   return [
@@ -193,7 +194,7 @@ function modelWizardEngineBlocks({ scope, threadTs, meta, threadEngine = "" }) {
     {
       type: "actions",
       elements: [
-        ...OFFERED_ENGINE_IDS().map((id) => button(`cg_mw_engine_${id}`, requireAdapter(id).label)),
+        ...OFFERED_ENGINE_IDS(meta).map((id) => button(`cg_mw_engine_${id}`, requireAdapter(id).label)),
         button(MODEL_WIZARD_ENGINE_RESET_ACTION, "Use defaults"),
         backButton(MODEL_WIZARD_BACK_SCOPE_ACTION, { scope, threadTs }),
       ],
@@ -442,6 +443,7 @@ export async function handleModelWizard({ ack, body, action, client, respond }) 
       const engine = actionId.slice("cg_mw_engine_".length);
       if (codexLocked && engine !== "codex") { await ephemeral("This channel uses its own Codex login, so its engine stays Codex."); return; }
       if (!adapterFor(engine)) throw new Error(`Unknown engine choice: ${engine}`);
+      assertChannelEngineApproved(meta, engine);
       await assertEngineSelectable(engine);
       let current = "";
       if (scope === "thread") {

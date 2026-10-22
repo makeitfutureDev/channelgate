@@ -33,7 +33,7 @@ Failing any one of them moves the deployment under Section 4.
 
 ### ✅ Permitted without an agreement
 
-**A company runs it for its own team.** Any size, any number of channels with a free key, modified
+**A company runs it for its own team.** Up to 20 registered channels and 20 users with a free key, modified
 however they like. This is the core §3.1 grant. Without a key it serves one conversation — enough
 to evaluate.
 
@@ -109,7 +109,7 @@ how a self-hosted install and Makeitfuture know about each other. Everything sec
 works identically with or without a key.
 
 **What does a free key cost?** Nothing. Create an account with your email on the ChannelGate
-platform and the key is issued immediately; it unlocks unlimited conversations at 500 AI messages
+platform and the key is issued immediately; it supports up to 20 registered channels and 20 users at 500 AI messages
 per conversation per month. Tiers and definitions: [`LICENSE-KEYS.md`](LICENSE-KEYS.md).
 
 **What does licensing transmit?** Verification sends the raw license key, installation id and

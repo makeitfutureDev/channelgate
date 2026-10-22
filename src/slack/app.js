@@ -1,3 +1,5 @@
+import { assertApprovedEnginesUpdate, assertChannelEngineApproved, isChannelEngineApproved } from "../gateway/channel-engines.js";
+import { getLicenseStatus } from "../ee/license.js";
 import { assertEngineSelectable } from "../engines/selection.js";
 import { randomUUID } from "node:crypto";
 import { assertNewMcpSelections } from "../gateway/mcp-selection.js";
@@ -44,7 +46,7 @@ import { sanitizeSkillGrantNames } from "../gateway/access-grants.js";
 import { toolboxUrl } from "../gateway/mcp-catalog.js";
 import { revokeRemoteMcpsForAuthor } from "../mcp/remote-mcp-registry.js";
 import { listSkills } from "../gateway/skills/catalog.js";
-import { engineLabel, effortBelongsToModel, effortsForModel, modelBelongsToEngine, modelsForEngine, requireAdapter } from "../engines/registry.js";
+import { ENGINE_IDS, engineLabel, effortBelongsToModel, effortsForModel, modelBelongsToEngine, modelsForEngine, requireAdapter } from "../engines/registry.js";
 import { persistedSelectionForEngine, selectionFieldForEngine } from "../gateway/mcp-discovery.js";
 import { channelCodexLoginStatus } from "../gateway/channel-codex-login.js";
 import { resolveMakeToolboxUpdate } from "../gateway/make-toolbox.js";
@@ -70,7 +72,7 @@ import {
   buildCatalogManagerView, buildChannelSettingsErrorView, buildChannelSettingsView,
   buildConnectionsEditorView, maskedCredential,
   parseActionValue as parseChannelSettingsActionValue, editorMetadata, parseEditorMetadata, parseSettingsMetadata,
-  readConnectionsForm, readTemplateForm, assertVpnActionBinding, runtimeSelectTarget,
+  readConnectionsForm, readTemplateForm, assertVpnActionBinding, runtimeSelectTarget, readHarnessSelection,
   normalizeTab as normalizeSettingsTab, settingsCommand,
   CHANNEL_SETTINGS_VPN_TOGGLE_ACTION_ID, CHANNEL_SETTINGS_VPN_REFRESH_ACTION_ID,
   CHANNEL_SETTINGS_MODE_PREFIX, CHANNEL_SETTINGS_OPTION_PREFIX,
@@ -90,7 +92,7 @@ import {
   CHANNEL_SETTINGS_CLOUD_PAGE_PREFIX, CHANNEL_SETTINGS_CLOUD_TOGGLE_PREFIX,
   CHANNEL_SETTINGS_CONNECTIONS_CALLBACK_ID, CHANNEL_SETTINGS_CONNECTIONS_EDIT_ACTION_ID,
   CHANNEL_SETTINGS_FALLBACK_ACTION_ID, CHANNEL_SETTINGS_THREAD_RESET_ACTION_ID,
-  CHANNEL_SETTINGS_RUNTIME_EDIT_ACTION_ID, CHANNEL_SETTINGS_SECRETS_MANAGE_ACTION_ID,
+  CHANNEL_SETTINGS_HARNESSES_ACTION_ID, CHANNEL_SETTINGS_RUNTIME_EDIT_ACTION_ID, CHANNEL_SETTINGS_SECRETS_MANAGE_ACTION_ID,
   CHANNEL_SETTINGS_SKILLS_MANAGE_ACTION_ID, CHANNEL_SETTINGS_SKILL_PAGE_PREFIX,
   CHANNEL_SETTINGS_SKILL_TOGGLE_PREFIX, CHANNEL_SETTINGS_TEMPLATE_CALLBACK_ID,
   CHANNEL_SETTINGS_TEMPLATE_EDIT_ACTION_ID, CHANNEL_SETTINGS_TEMPLATE_SELECT_ACTION_ID,
@@ -1225,6 +1227,8 @@ function channelSettingsSnapshot(meta = {}) {
     access: meta,
     mode: { adminMode: effective.adminMode, allowBash: effective.allowBash, autoMode: effective.autoMode, cleanMode: effective.cleanMode, allowNetwork: effective.allowNetwork },
     runtime: {
+      approvedEngines: meta.approvedEngines ?? null,
+      harnessOptions: ENGINE_IDS.map((id) => ({ value: id, label: engineLabel(id) })),
       channelLogin,
       configuredEngineId: channelLogin ? "codex" : effective.engine || "",
       configuredEngine: channelLogin ? "Codex" : effective.engine ? engineLabel(effective.engine) : "",
@@ -1272,6 +1276,7 @@ function channelSettingsSnapshot(meta = {}) {
 export function channelSettingsEditOptions(meta, userIsAdmin, { authorId = "", isApprovedUser = false } = {}) {
   return {
     canEnableAdmin: Boolean(userIsAdmin),
+    canApproveHarnesses: Boolean(userIsAdmin && getLicenseStatus().features.channelHarnessPolicy),
     canEditRuntime: true,
     canEditSecrets: true,
     // Reaches every conversation, so admin-only even for someone who may edit this channel's own.
@@ -1318,7 +1323,7 @@ async function threadRuntimeEngine(slug, threadKey, meta) {
 // thread inside a Claude channel offers Codex models rather than the channel's.
 export async function runtimeScopes(slug, meta, snapshot, threadKey) {
   const runtime = snapshot.runtime;
-  const engines = getEnabledEngines().map((id) => ({ label: engineLabel(id), value: id }));
+  const engines = getEnabledEngines().filter((id) => isChannelEngineApproved(meta, id)).map((id) => ({ label: engineLabel(id), value: id }));
   const channelEngine = runtime.effectiveEngineId;
   const channelModel = runtime.configuredModel || getDefaultModel(channelEngine) || "";
   const parent = inheritedChannelRuntime(meta);
@@ -1397,6 +1402,7 @@ export async function applyThreadRuntimeSelection({ entry, meta, state, actorId,
   };
   const next = nextRuntimeTriple(current, field, value, inheritedEngine);
   const { patch, actualEngine } = runtimeSettingsPatch(next, { gatewayEngine: inheritedEngine });
+  assertChannelEngineApproved(meta, actualEngine);
   if (field === "engine" && patch.engine) await assertEngineSelectable(patch.engine);
   if (patch.engine !== current.engine) await setThreadEngine(entry.slug, threadKey, patch.engine);
   if (patch.model !== current.model) await setThreadModel(entry.slug, threadKey, patch.model);
@@ -2437,6 +2443,21 @@ async function connectAndWire(app) {
         return;
       }
 
+      if (actionId === CHANNEL_SETTINGS_HARNESSES_ACTION_ID) {
+        if (!(await isAdmin(clicker))) throw new Error("Only organization admins can approve channel harnesses.");
+        const value = readHarnessSelection(action, meta);
+        meta = await patchAuditedChannelSettings(entry, clicker, (current) => {
+          const approvedEngines = assertApprovedEnginesUpdate(current, value);
+          const next = { ...current, approvedEngines };
+          assertChannelEngineApproved(next, effectiveMeta(next).engine || getEngine());
+          return { approvedEngines };
+        });
+        await updateCurrent(await settingsRootView(entry, meta, { ...state, tab: "agent" }, userIsAdmin, {
+          tab: "agent", notice: "Approved harnesses saved. Applies to future engine launches, including fallback.",
+        }), { guardHash: false });
+        return;
+      }
+
       const runtimeTarget = runtimeSelectTarget(actionId);
       if (runtimeTarget) {
         const { scope, field } = runtimeTarget;
@@ -2449,6 +2470,7 @@ async function connectAndWire(app) {
           const inheritedEngine = inheritedChannelRuntime(meta).engine;
           const next = nextRuntimeTriple({ engine: meta.engine, model: meta.model, effort: meta.effort }, field, value, inheritedEngine);
           const { patch, actualEngine } = runtimeSettingsPatch(next, { gatewayEngine: inheritedEngine });
+          assertChannelEngineApproved(meta, actualEngine);
           if (field === "engine" && patch.engine) await assertEngineSelectable(patch.engine);
           meta = await patchAuditedChannelSettings(entry, clicker, patch);
           await logEvent("channel_runtime_updated", {
@@ -3517,6 +3539,10 @@ async function connectAndWire(app) {
         console.log(`[slack] ${entry.slug}: added joining MakeItFuture member ${event.user}`);
       }
     } catch (e) {
+      if (e?.code === "license_registration_limit") {
+        await client.chat.postMessage({ channel: event.channel, text: e.message });
+        return;
+      }
       console.error("[slack] member_joined_channel error:", e.message);
     }
   });

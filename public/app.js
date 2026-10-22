@@ -2229,6 +2229,31 @@ function renderChannelDetail(ch) {
   const engineSelect = card.querySelector(".ch-engine");
   engineSelect.innerHTML = engineOptionsHtml({ includeDefault: true });
   engineSelect.value = meta.engine || "";
+  const harnessPolicy = card.querySelector(".ch-harness-policy");
+  const harnessRestrict = card.querySelector(".ch-harness-restrict");
+  const harnessOptions = card.querySelector(".ch-harness-options");
+  const harnessHelp = card.querySelector(".ch-harness-help");
+  let harnessPolicyDirty = false;
+  harnessRestrict.checked = Array.isArray(meta.approvedEngines);
+  checkboxList(harnessOptions, ENGINE_MANIFESTS.map((m) => ({ value: m.id, label: m.label })), meta.approvedEngines || [], "value", "label");
+  const approvedHarnesses = () => harnessRestrict.checked ? explicitCheckedValues(harnessOptions) : null;
+  const paintHarnessPolicy = () => {
+    harnessOptions.hidden = !harnessRestrict.checked;
+    const approved = approvedHarnesses();
+    for (const option of engineSelect.options) {
+      option.disabled = approved !== null && !approved.includes(option.value || GLOBAL_ENGINE || "claude");
+    }
+  };
+  harnessPolicy.addEventListener("change", () => { harnessPolicyDirty = true; paintHarnessPolicy(); });
+  paintHarnessPolicy();
+  void api("/api/license").then((license) => {
+    if (!harnessPolicy.isConnected) return;
+    harnessPolicy.disabled = license.features?.channelHarnessPolicy !== true;
+    harnessHelp.textContent = harnessPolicy.disabled
+      ? "Enterprise is required to change approvals. Any saved restriction remains enforced."
+      : "Approve one or more harnesses, then choose an approved channel default. Thread pins and automatic fallback must also use approved harnesses. Uncheck to allow all harnesses.";
+  }).catch(() => { harnessHelp.textContent = "Could not verify Enterprise access. Reopen this channel to retry; saved approvals are preserved."; });
+
   const authSource = card.querySelector(".ch-codex-auth-source");
   const channelPanel = card.querySelector(".ch-auth-channel-panel");
   const modelSelect = card.querySelector(".ch-model");
@@ -2385,9 +2410,15 @@ function renderChannelDetail(ch) {
     const makeToolboxKey = tokenValue(makeToolboxKeyInput);
     const previousNoDefaultTokens = Boolean(ch.meta?.noDefaultTokens);
     try {
+      const approvals = approvedHarnesses();
+      if (harnessPolicyDirty && approvals !== null && !approvals.length) throw new Error("Select at least one approved harness.");
+      if (approvals !== null && !approvals.includes(authSource.value === "channel" ? "codex" : effectiveEngine(engineSelect.value))) {
+        throw new Error("Choose a channel default from its approved harnesses.");
+      }
       const result = await api(`/api/channels/${encodeURIComponent(ch.channelId)}/meta`, {
         method: "PUT",
         body: JSON.stringify({
+          ...(harnessPolicyDirty ? { approvedEngines: approvals } : {}),
           ...channelGuestSavePatch(usersBox.dataset.ready === "1", explicitCheckedValues(usersBox), usersBox.dataset.changed === "1"),
           allowedMcps: selectedMcpEntries(mcpsBox, "claude")
             .map((s) => ({ name: s.name, match: s.match, namespace: s.namespace })),
@@ -2429,6 +2460,7 @@ function renderChannelDetail(ch) {
       // The server response is the validated, committed record. Reconcile the cached channel from
       // that whole record so a later SPA re-render cannot resurrect stale MCP/skill selections.
       ch.meta = reconcileChannelMeta(ch.meta, result.meta);
+      harnessPolicyDirty = false;
       if (composioTok || previousNoDefaultTokens !== Boolean(ch.meta.noDefaultTokens)) void loadComposioConnections(true);
       initializeMcpBox(mcpsBox, { claude: ch.meta.allowedMcps || [], codex: ch.meta.allowedCodexMcps || [] });
       if (!mcpsBox.dataset.mcpLoading) paintAllMcpBoxes(mcpsBox);
@@ -4211,7 +4243,9 @@ function paintLicense(l) {
     ["Tier", l.tier === "none" ? "no key" : l.tier],
     ["Organization", l.organization || "—"],
     ["Key", l.hasLicenseKey ? `…${escapeHtml(l.licenseKeyLast4)} (from ${escapeHtml(l.licenseKeySource)})` : "none"],
-    ["Conversations", fmtLicenseLimit(l.limits?.conversations)],
+    ["Registered channels", fmtLicenseLimit(l.limits?.channels)],
+    ["Registered users", fmtLicenseLimit(l.limits?.users)],
+    ["Active conversations / month", fmtLicenseLimit(l.limits?.conversations)],
     ["AI messages / conversation / month", fmtLicenseLimit(l.limits?.messagesPerConversationPerMonth)],
     ["Last verified", fmtLicenseTime(l.verifiedAt)],
     ["Next check", fmtLicenseTime(l.nextCheckAt)],

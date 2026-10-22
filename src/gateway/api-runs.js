@@ -33,6 +33,7 @@ import {
   patchChannelMeta,
   defaultChannelMeta,
 } from "../config/store.js";
+import { assertChannelEngineApproved } from "./channel-engines.js";
 import { runMessage, effectiveMeta, applyRunOverrides } from "./run.js";
 import { ATTACHMENT_MAX_BYTES, oversizeMessage, readBoundedBytes } from "../util/bounded-bytes.js";
 import { ensureRealDir, writeNoFollow, writeStreamNoFollow } from "./safe-fs.js";
@@ -619,6 +620,11 @@ async function startClaimedRun({ author, channel, file, fileUrl, fileName, webho
   if (conversationKey && !registeredSlack) return { ok: false, code: 503, error: "Slack must be connected to use conversationKey. Retry when Slack is available." };
 
   const meta = effectiveMeta((await getChannelMeta(slug)) ?? defaultChannelMeta({ channelId: entry.channelId, name: entry.name, type: entry.type, isDM: entry.isDM }));
+  // Reject an explicit disallowed override before preparing files or posting a kickoff. Reused
+  // conversations resolve their session owner later, under the ordinary run admission guard.
+  try {
+    if (engineOv || !conversationKey) assertChannelEngineApproved(meta, engineOv || (ENGINES.includes(meta.engine) ? meta.engine : "") || getEngine());
+  } catch (error) { return { ok: false, code: error.statusCode || 403, error: error.message }; }
   await ensureChannelFolder(slug, meta); // idempotent — writes the lockdown + uploads root exists
   const cwd = effectiveWorkDir(slug, meta);
 

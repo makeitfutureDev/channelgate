@@ -308,5 +308,9 @@ export function createUsersRouter({ composioInventory = loadComposioInventory } 
     }
   });
 
+  router.use((error, _req, res, next) => {
+    if (error?.code === "license_registration_limit") return res.status(403).json({ error: error.message, code: error.code });
+    next(error);
+  });
   return router;
 }

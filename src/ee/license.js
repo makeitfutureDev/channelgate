@@ -401,7 +401,7 @@ export function getLicenseStatus(now = Date.now()) {
     // date it expired on comes from the resolution itself — the card must still say WHEN.
     expiresAt: r.license?.expiresAt || r.expiredAt || null,
     limits: r.limits,
-    features: { composioSdk: enterprise, automaticUpdates: enterprise },
+    features: { composioSdk: enterprise, automaticUpdates: enterprise, channelHarnessPolicy: enterprise },
     hasLicenseKey: hasLicenseKey(),
     licenseKeyLast4: licenseKeyLast4(),
     licenseKeySource: getSettings().licenseKey ? "settings" : hasLicenseKey() ? "env" : "",
