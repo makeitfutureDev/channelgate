@@ -3811,7 +3811,13 @@ are retired, bullet by bullet; everything else stands.
   configuration (…_ID, _REPO, _ORG, _REGION, _USER, _URL…), or its value is a URL or a file path;
   otherwise HIDDEN — STRIPE_SECRET_KEY, API_SECRET and *_CLIENT_SECRET included. A readable name is
   injected raw and flagged `unprotected` — or withheld under `containerEgressSecretsStrict`
-  ("Withhold readable variables"). A hidden one gets a placeholder behind an **approval rule**: a
+  ("Withhold automatically readable variables"). An explicit stored `exposure: readable` choice
+  permits raw injection even in strict mode, only for the winning scope's entry. Automatic or
+  hidden password classification does not grant this exception. `list_secrets` separates explicit
+  readable entries from automatic withholding and respects conversation → personal → organization
+  precedence in its summary; values remain redacted. Returning to hidden/auto takes effect at the
+  next spawn. Existing scope authorization and readable approval cards still apply.
+  → TEST-PLAN: Explicit readable secrets in strict mode. A hidden one gets a placeholder behind an **approval rule**: a
   credential-like header or query parameter (the known auth headers, or a name with auth, token, key,
   secret, session, signature…), the bearer/raw/Basic positions, and only the servers an admin
   approved for that secret (`approvedHosts` on its entry, kept across a rotation). Presented to any
@@ -3927,8 +3933,9 @@ are retired, bullet by bullet; everything else stands.
   this release (read before the first-boot password is saved), so an upgrade never silently
   withholds a secret a working channel uses; a stored choice is never changed. `list_secrets` ends
   with a **Finding** line naming every listed secret that has no egress rule and what happens to it
-  (withheld under strict, raw otherwise, raw today under the legacy bridge) and how to declare its
-  hosts; the settings UI says the same. → TEST-PLAN: Codex login relay, strict secrets, static check
+  (withheld under strict unless explicitly made readable, raw otherwise, raw today under the legacy
+  bridge) and how to declare its hosts; explicit readable entries are reported separately and the
+  settings UI explains the exception. → TEST-PLAN: Codex login relay, strict secrets, static check
   (container-secrets P4).
 - **A static check keeps secrets out of the artifact dir (container-secrets P4).**
   `npm run check:static` runs `scripts/static-secret-writes.mjs` over `src/`: a `writeFile*` /

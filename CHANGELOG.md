@@ -18,6 +18,11 @@ product overview.
 
 ## Unreleased
 
+- Respect an explicit readable choice for an individual environment secret in strict egress
+  mode. CLIs that require the raw value can receive it after the existing scoped approval;
+  automatically readable secrets remain withheld. Secret listings now distinguish the two
+  cases and summarize the most specific scope.
+
 - **Email accounts.** Connect an ordinary mailbox — IMAP for reading, SMTP for sending — to a
   conversation or to yourself by entering its server settings once on one form: in the admin UI
   (the conversation's Connections, or a person under Users), in Slack's ⚙️ Settings (MCP page for

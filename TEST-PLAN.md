@@ -1,5 +1,32 @@
 # ChannelGate — Test Plan
 
+## Explicit readable secrets in strict mode (2026-10-22)
+
+- [x] Regression: `test/egress-grants.test.js` exercises organization, personal and conversation
+  entries in proxy + strict mode. Explicit readable API keys (including catalog, declared and
+  approved-host metadata) are raw and `unprotected`; auto passwords and hidden password-like
+  entries stay absent and `withheld`; hidden API keys remain placeholders. Every real value stays
+  in the redactor inputs. Hidden/auto reversals apply on the next resolve, and an untrusted
+  principal receives no personal secrets. A lower-scope readable entry cannot authorize a
+  higher-scope auto entry.
+- [x] Regression: `test/secrets-tool.test.js` distinguishes automatic WITHHELD findings from
+  **Explicit readable** raw injection, without full values; summaries honor scope precedence.
+  Existing tests verify the scoped caller authority and durable readable approval-card tiers.
+- [ ] UNEXECUTED — live Claude AND Codex, each in a separate Worker + Auto QA conversation with
+  proxy egress, Network on, strict mode on, an approved member allowed to manage it, and synthetic
+  conversation variables `QA_CLI_API_KEY` (hidden) and `QA_DB_PASSWORD` (auto). First prompt:
+  "List the secrets and check only whether QA_DB_PASSWORD is present; never print either value."
+  Pass: password absent and reported WITHHELD; API key is a hidden placeholder. Next prompt:
+  "Make QA_CLI_API_KEY readable in this conversation for a CLI that needs its raw value."
+  Require the real durable card; before approval the stored mode stays hidden; deny once and
+  confirm no change. Repeat and approve with an eligible human. In a fresh turn:
+  "Check only whether QA_CLI_API_KEY is present and starts with cgph_; show no values, then list
+  secrets." Pass: present, not a placeholder, **Explicit readable** listing; QA_DB_PASSWORD still
+  withheld and strict remains on. Restore QA_CLI_API_KEY hidden, then test QA_DB_PASSWORD explicit
+  readable → auto in separate fresh turns: raw only while explicitly readable. Verify another
+  conversation receives neither variable. Restore/remove the fixture variables and retain only
+  value-free evidence. Live execution and private QA registry updates remain pending access.
+
 ## Email accounts (2026-10-22)
 
 ### Regression
