@@ -816,7 +816,8 @@ async function runMessageImpl({ channelId, authorId, workspaceId = "", text, thr
   // flips, so substitute the first enabled engine rather than spawning a CLI that must not run.
   // Marked EXPLICIT so an existing thread doesn't stick to the disabled engine's session: it gets
   // a fresh session on the enabled harness with the thread transcript replayed into it.
-  if (!isEngineEnabled(engine)) {
+  // An explicit unapproved request is refused below, never substituted or announced as running.
+  if (!isEngineEnabled(engine) && (!enginePinnedByUser || isChannelEngineApproved(channelMeta, engine))) {
     if (channelCodexLocked) {
       return {
         slug: entry.slug, cwd: "", model: "", engine: "codex",
