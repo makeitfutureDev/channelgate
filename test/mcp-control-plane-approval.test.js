@@ -90,6 +90,64 @@ const resultText = (r) => r.content?.map((i) => i.text || "").join("\n") || "";
 const approvalReceipt = /Human approval was received before this tool executed/;
 const awaitingCard = /awaiting approval \(request .*\)\. The exact change is saved with no deadline/;
 
+test("both engines keep ordinary schedules automatic and persist sudo work only after an admin approval", async () => {
+  const { listForChannel } = await import("../src/config/schedules.js");
+  for (const engine of ["claude", "codex"]) {
+    approvalRequests.length = 0;
+    approvalResponse = { allow: false, pending: true, approvalId: `sudo-schedule-${engine}` };
+    await withGateway({ engine }, async (client) => {
+      const plain = await client.callTool({ name: "create_schedule", arguments: { in_minutes: 60, prompt: "Ordinary scheduled check" } });
+      assert.match(resultText(plain), /scheduled/);
+      assert.equal(approvalRequests.length, 0, "ordinary schedules remain automatic");
+      const count = listForChannel(CHANNEL).length;
+      const sudo = await client.callTool({ name: "create_schedule", arguments: { in_minutes: 60, prompt: "Explicit host check", sudo: true } });
+      assert.match(resultText(sudo), awaitingCard);
+      assert.equal(listForChannel(CHANNEL).length, count, "pending approval cannot create host work");
+    });
+    assert.equal(approvalRequests.length, 1);
+    const request = approvalRequests[0].body;
+    assert.equal(request.requiredTier, "admin");
+    assert.match(request.toolInput.details, /gateway HOST with permission bypass/);
+    const denied = await applySaved(request, "U_CTRL_MEMBER");
+    assert.equal(denied.ok, false);
+    const approved = await applySaved(request, "U_CTRL_ADMIN");
+    assert.equal(approved.ok, true, approved.error);
+    const schedule = listForChannel(CHANNEL).at(-1);
+    assert.equal(schedule.sudo, true);
+    assert.equal(schedule.createdBy, "U_CTRL_ADMIN");
+    approvalRequests.length = 0;
+    await withGateway({ engine, author: "U_CTRL_MEMBER" }, async (client) => {
+      const denied = await client.callTool({ name: "update_schedule", arguments: { id: schedule.id, execution_visibility: "silent", expected_prompt: schedule.prompt } });
+      assert.match(resultText(denied), /Only admins/);
+    });
+    assert.equal(approvalRequests.length, 0, "non-admin sudo edits never post approval cards");
+    await withGateway({ engine }, async (client) => {
+      const pending = await client.callTool({ name: "update_schedule", arguments: { id: schedule.id, execution_visibility: "silent", expected_prompt: schedule.prompt } });
+      assert.match(resultText(pending), awaitingCard);
+    });
+    assert.equal(approvalRequests.length, 1);
+    assert.equal(listForChannel(CHANNEL).at(-1).executionVisibility, "visible");
+    assert.equal((await applySaved(approvalRequests[0].body, "U_CTRL_ADMIN")).ok, true);
+    assert.equal(listForChannel(CHANNEL).at(-1).executionVisibility, "silent");
+    approvalRequests.length = 0;
+    await withGateway({ engine }, async (client) => {
+      const reduced = await client.callTool({ name: "update_schedule", arguments: { id: schedule.id, sudo: false } });
+      assert.match(resultText(reduced), /^Updated/);
+    });
+    assert.equal(approvalRequests.length, 0, "returning to the container needs no approval");
+    assert.equal(listForChannel(CHANNEL).at(-1).sudo, false);
+    await withGateway({ engine }, async (client) => {
+      const pending = await client.callTool({ name: "update_schedule", arguments: { id: schedule.id, sudo: true, expected_prompt: schedule.prompt } });
+      assert.match(resultText(pending), awaitingCard);
+    });
+    const { updateSchedule } = await import("../src/config/schedules.js");
+    updateSchedule(schedule.id, { prompt: "Changed while the sudo approval was pending" });
+    const stale = await applySaved(approvalRequests[0].body, "U_CTRL_ADMIN");
+    assert.equal(stale.ok, false, "a stale host approval cannot authorize replacement instructions");
+    assert.equal(listForChannel(CHANNEL).at(-1).sudo, false);
+  }
+});
+
 // Apply a saved control-plane approval the way the daemon does on a click (server.js): in-process,
 // as the original requester, through the same gateway MCP server a turn uses. The stdio child
 // above only POSTs the exact action to the stub; this is the other half.
@@ -494,6 +552,7 @@ test("every registered gateway tool is consciously classified as gated or open (
   // omission. This inventory forces the classification to be a reviewed decision: an
   // unclassified tool fails here until it is added to exactly one of these lists.
   const GATED = new Set([
+    "create_schedule", "update_schedule", // ordinary schedules return null; sudo work keeps an admin card
     "set_channel_vpn", "set_channel_admin_mode", "set_channel_network", "set_channel_bash", "set_channel_auto_mode",
     "set_channel_workdir", "clear_channel_workdir", "set_channel_drive_folder", "clear_channel_drive_folder",
     "add_channel_mcps", "remove_channel_mcps", "update_channel_instructions",
@@ -521,7 +580,7 @@ test("every registered gateway tool is consciously classified as gated or open (
   ]);
   const OPEN = new Set([
     // read-only
-    "get_channel_vpn_status", "query_channel_database", "list_available_mcps", "list_channel_mcps", "list_schedules", "get_schedule_runs", "update_schedule", "list_folders",
+    "get_channel_vpn_status", "query_channel_database", "list_available_mcps", "list_channel_mcps", "list_schedules", "get_schedule_runs", "list_folders",
     "get_channel_workdir", "get_channel_drive_folder", "get_gateway_guide",
     "workspace_list", "workspace_read", "workspace_search", "search_agents",
     "search_channel_memory", "read_channel_memory", // channel-scoped read-only retrieval
@@ -536,10 +595,8 @@ test("every registered gateway tool is consciously classified as gated or open (
     "run_in_background", "run_agent_in_background", // shell kind has its own admin-click gate in background.js
     "request_approval", "permission_prompt", "report_progress", "ask_questions",
     "update_channel_memory", // operator decision 2026-08-07: memory is agent-owned, never approval-gated
-    // operator decision 2026-08-19: reminders/scheduled tasks are an ordinary channel request and
-    // are never approval-gated. A schedule fires with origin "schedule" (cannot escalate — A2), in
-    // this channel, as its creator, and stays inspectable/reversible via list_/delete_schedule.
-    "create_schedule", "delete_schedule",
+    // Deleting work is a reduction; ordinary create/update calls conditionally skip their gate.
+    "delete_schedule",
     // skills platform reads/previews; a proposal only queues a review for an admin
     "list_skills", "show_channel_skills", "list_skill_templates", "preview_skill_template",
     "get_skill_file", "get_skill_info", "propose_skill_change", "list_skill_proposals", "skill_usage_report",

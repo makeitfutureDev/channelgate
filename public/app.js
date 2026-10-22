@@ -2965,6 +2965,8 @@ function openScheduleEditor(schedule) {
   document.getElementById("schedule-modal-visibility").value = schedule.executionVisibility || "visible";
   document.getElementById("schedule-modal-result-policy").value = schedule.resultPolicy || "always";
   document.getElementById("schedule-modal-failure-notify").checked = schedule.failureNotify !== false;
+  document.getElementById("schedule-modal-sudo").checked = schedule.sudo === true;
+  document.getElementById("schedule-modal-sudo").disabled = Boolean(schedule.loop);
   for (const field of document.querySelectorAll(".schedule-task-control")) field.hidden = schedule.kind === "reminder";
   syncScheduleDeliveryFields();
   prompt.value = schedule.prompt || "";
@@ -3016,6 +3018,7 @@ async function saveScheduleEditor() {
       body.executionVisibility = document.getElementById("schedule-modal-visibility").value;
       body.resultPolicy = document.getElementById("schedule-modal-result-policy").value;
       body.failureNotify = document.getElementById("schedule-modal-failure-notify").checked;
+      body.sudo = document.getElementById("schedule-modal-sudo").checked;
     }
     const result = await api(`/api/schedules/${scheduleEditor.schedule.id}`, {
       method: "PUT",
@@ -3078,6 +3081,7 @@ function renderSchedules() {
         </button>
         <span class="sched-saved">saved</span>
         ${s.executionVisibility === "silent" ? '<span class="sched-badge">silent</span>' : ""}
+        ${s.sudo ? '<span class="sched-badge">sudo · gateway host</span>' : ""}
         <button type="button" class="ghost sched-history">Runs${s.runSummary?.total ? ` · ${s.runSummary.total}` : ""}</button>
         <button class="sched-del">Delete</button>`;
       const savedFlash = row.querySelector(".sched-saved");

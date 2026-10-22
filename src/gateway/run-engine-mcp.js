@@ -82,6 +82,8 @@ function finishEngineMcpRuntime({ payload, optional, managed, engine, pluginRunt
     slug: identity.slug || "",
     authorId: identity.authorId || "",
     threadKey: identity.threadKey || "",
+    questionThreadKey: identity.questionThreadKey,
+    sudoSchedule: identity.sudoSchedule === true,
     origin: identity.origin || "",
     engine: parsed.mcpServers.gateway.env.CG_ENGINE || engine,
     principalTrusted: identity.principalTrusted !== false,

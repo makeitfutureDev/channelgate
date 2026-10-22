@@ -26,7 +26,7 @@ import { createUsageBank } from "../gateway/usage.js";
 import { contextWindowFor } from "../gateway/model-info.js";
 
 import { recordActiveRun, acceptQuestionReply, updateActiveRunRuntime, clearActiveRun, clearActiveRunHandles, clearPendingRunChoices, shouldClearActiveRun } from "../gateway/active-runs.js";
-import { cancelPendingQuestions, listPendingQuestions } from "../gateway/questions.js";
+import { cancelPendingQuestions, listPendingQuestions, getQuestion } from "../gateway/questions.js";
 import { assertQuestionAccess } from "../gateway/question-access.js";
 import { refreshQuestionCard } from "./questions.js";
 import { clearStoppedTurn, formatStoppedTurnContext, saveStoppedTurn, takeStoppedTurn } from "../gateway/stopped-turns.js";
@@ -1578,10 +1578,23 @@ export async function processMessageEvent(event, client, { botUserId = "", teamI
       // after the queue so a turn queued behind this thread's first run resumes instead of
       // replaying. Runs after the progress indicator starts, so the fetch + name resolution
       // happen behind visible feedback.
+      const pendingQuestionReplies = questionSubmissionId ? [] : listPendingQuestions({
+        channelId: event.channel, threadKey, authorId: event.user,
+      });
+      const scheduledQuestions = pendingQuestionReplies.filter((q) => q.sessionThreadKey);
+      if (scheduledQuestions.length && pendingQuestionReplies.length !== 1) {
+        markTerminal();
+        await status.stop();
+        await client.chat.postMessage({ channel: event.channel, thread_ts: threadKey,
+          text: "There are multiple question cards in this thread. Please use Submit on the card you want to answer so the correct task continues." });
+        return;
+      }
+      const continuationQuestionId = questionSubmissionId || scheduledQuestions[0]?.id || "";
+      const scheduledContinuation = scheduledQuestions.length > 0 || Boolean(questionSubmissionId && getQuestion(questionSubmissionId)?.sessionThreadKey);
       let threadContext = threadClean ? "" : syntheticFork?.threadContext || "";
       // Replay the earlier thread when the bot is first pulled into an existing thread OR when the
       // engine was just switched (the new engine starts a fresh, blind session — give it context).
-      if (!syntheticFork && !threadClean && event.thread_ts && (!(await hasThreadSession(entry.slug, threadKey)) || engineSwitched)) {
+      if (!scheduledContinuation && !syntheticFork && !threadClean && event.thread_ts && (!(await hasThreadSession(entry.slug, threadKey)) || engineSwitched)) {
         threadContext = await fetchThreadContext(client, { channelId: event.channel, threadTs: threadKey, currentTs: contextCurrentTs, botUserId });
       }
       // The requester may lose access while this accepted answer waits behind another turn.
@@ -1607,9 +1620,6 @@ export async function processMessageEvent(event, client, { botUserId = "", teamI
         return;
       }
       const stoppedContext = formatStoppedTurnContext(takeStoppedTurn(entry.slug, threadKey));
-      const pendingQuestionReplies = questionSubmissionId ? [] : listPendingQuestions({
-        channelId: event.channel, threadKey, authorId: event.user,
-      });
       if (pendingQuestionReplies.length) {
         const snapshot = pendingQuestionReplies.map(({ title, questions, answers }) => ({ title, questions, draftAnswers: answers }));
         promptForClaude = "The user replied in the thread while these questions were pending. The following JSON is question context; draft answers are not submitted answers. Interpret the user's message below and do not assume unanswered questions are resolved.\n" +
@@ -1625,7 +1635,7 @@ export async function processMessageEvent(event, client, { botUserId = "", teamI
         authorId: event.user,
         threadKey,
         isDM: Boolean(meta.isDM),
-        ...(questionSubmissionId ? { questionSubmissionId } : {}),
+        ...(continuationQuestionId ? { questionSubmissionId: continuationQuestionId } : {}),
         text: textForRun,
         ...(syntheticFork?.sourceSessionId ? { forkSourceSessionId: syntheticFork.sourceSessionId } : {}),
         attachments: attachmentPaths,
@@ -1641,6 +1651,8 @@ export async function processMessageEvent(event, client, { botUserId = "", teamI
         channelId: event.channel,
         authorId: event.user,
         workspaceId: teamId,
+        ...(continuationQuestionId ? { questionSubmissionId: continuationQuestionId,
+          verifyQuestionAccess: () => assertQuestionAccess(promotedRun, client) } : {}),
         origin: "slack_foreground", // the only escalatable origin: a watched, Slack-authenticated turn
         // A watched Slack thread is the one place a failover can ASK (Settings → engineFallbackMode);
         // every other origin runs with the automatic default.

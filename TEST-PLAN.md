@@ -3157,6 +3157,59 @@ it executes rather than skips, its assertions pass, and it records no page or co
 
 ## Interactive Slack clarification — Claude and Codex acceptance
 
+### Scheduled forms and explicit sudo tasks
+
+Regression: `test/scheduled-questions.test.js`, `test/schedule-sudo.test.js`,
+`test/questions.test.js`, `test/question-continuation.test.js`,
+`test/mcp-capability.test.js`, `test/mcp-config.test.js`,
+`test/mcp-control-plane-approval.test.js`, `test/schedule-health-admin.test.js`,
+`test/schedule-health-browser.test.js`, and `test/schedule-daily-thread.test.js`.
+Use scratch SQLite, fake Slack clients and the existing Claude/Codex CLI fixtures; no real host
+commands or private engine logins are required for automated regression.
+
+Automated validation (2026-10-22): full `npm run test:coverage` passed 3,933 tests with 34
+skipped and zero failures; coverage 94.33% lines, 86.53% branches, 90.22% functions. Static,
+secret-scan and security-coverage checks passed. The schedule editor browser smoke passed with
+Playwright. These results establish fixture/control-plane behavior; real Slack cases below are
+still unexecuted.
+
+Run every live case below with **both Claude and Codex** on the exact beta candidate. Fixtures:
+one disposable Slack Worker channel and one Admin channel per engine, Clean off, an approved
+member as normal requester, a separate current organization admin as sudo requester, and a second
+approved member for rejected interactions. Preserve candidate revision, engine/model/effort,
+form/request IDs, real Slack thread links, run/runtime evidence and observed submitted values.
+These cases remain **NOT RUN** until real engine/Slack evidence is recorded; fixture CLI tests
+do not count as live acceptance.
+
+- [ ] **AUT-SCHEDULE-FORMS-01:** As the approved member ask: “In one minute, remember marker
+  scheduled-form-47, ask through a form whether to use Team or Invite-only access, then wait
+  until I submit. Afterwards report the choice and marker.” Require `create_schedule`, a
+  standard one-time fire, actual `ask_questions` invocation, and a card in the real announcement
+  thread. Select Invite-only, change a draft, then Submit. Pass: only the creator can answer,
+  no dependent work on selection, one continuation retaining marker/choice after one-time row
+  retirement, and no synthetic `thread_ts`. Repeat with silent execution and a text question;
+  require a top-level card whose timestamp becomes its answer thread.
+- [ ] **AUT-SCHEDULE-FORMS-02:** Run a recurring daily-thread form task twice. Pass: each fire
+  starts fresh; submitting an older card resumes that fire, not the latest session. With one
+  pending card, type the answer and require original context. With multiple cards, type an
+  ambiguous answer and require the cards remain open with a request to Submit the intended one.
+  Restart with a draft, then with queued submitted answers; require durable routing and one
+  continuation. Revoke requester access/membership while waiting and require rejection before
+  process spawn. Stop/clear a pending card and require its controls cannot reopen work.
+- [ ] **AUT-SCHEDULE-SUDO-01:** As the admin ask: “In one minute, run a sudo task that reports
+  its runtime and HOME, remembers marker sudo-form-73 and asks me a form whether to continue.
+  Wait for my submission.” Approve the exact schedule card. Pass: explicit stored/listed sudo,
+  host runtime and engine bypass, original admin identity, marker retained after form submission
+  and one-time retirement. An unrelated thread stays in its container. Repeat enabling/disabling
+  sudo through the admin Automations checkbox and `update_schedule` with exact `expected_prompt`;
+  verify subsequent fires follow the selected runtime.
+- [ ] **AUT-SCHEDULE-SUDO-02:** As the approved member try to create/enable/edit a sudo task.
+  Pass: rejection without saving host authority or posting an approvable member action. Demote
+  the admin owner after valid creation but before fire, and separately before answering a sudo
+  form; require explicit refusal before provisioning/spawn. Ordinary schedules created from sudo
+  threads stay in containers. Forged metadata, wrong owner/task IDs and synthetic API authors
+  cannot mint host authority. Restore fixture roles and remove disposable tasks afterwards.
+
 Automated regression: `test/questions.test.js`, `test/question-views.test.js`,
 `test/question-interactions.test.js`, `test/question-continuation.test.js`, plus the gateway MCP
 inventory/approval, folder settings, busy-thread and recovery suites. The four question suites

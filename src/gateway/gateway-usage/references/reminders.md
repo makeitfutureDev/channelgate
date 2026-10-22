@@ -2,7 +2,7 @@
 
 Use the gateway tool **`create_schedule`** (always available) to run something later — once or on
 a repeating schedule — in THIS channel. It runs as **you** (your tokens, your mode) in this
-channel's folder, and posts back here. Creating and deleting schedules needs NO approval click —
+channel's folder, and posts back here. Creating and deleting ordinary schedules needs NO approval click —
 just call the tool. Say what you scheduled (and when it will fire) in your reply so the channel
 can see it, and use `list_schedules` / `delete_schedule` to show or undo it.
 
@@ -29,6 +29,13 @@ converting or relabelling it.
 
 ## Fields
 - `prompt` — what to do (task) or the reminder text (reminder). Required.
+- `sudo` — default false. Only use true when an organization admin explicitly asks for host
+  execution. It runs an ordinary task directly as the daemon OS account with host HOME/network
+  and permission bypass, after an admin approval of the exact MCP request. The original creator
+  must currently be an admin at creation, update and every fire. Reminders and loops cannot use
+  it. `update_schedule` can enable/disable it; every edit leaving sudo enabled needs the exact
+  `expected_prompt` read from `list_schedules`. Sudo is never inherited from a source `/sudo`
+  thread, and `sudo:false` restores the container for future fires.
 - `description` — short title shown in the "Running:" announcement.
 - `notify` — who gets pinged: `"channel"` (@channel, default), `"user"` (pass a Slack user id in
   `notify_user`), or `"none"` (quiet). Leave it unset unless the user asked for a specific person
@@ -57,7 +64,7 @@ converting or relabelling it.
   History lasts 90 days and starts with the feature; it does not backfill past runs. Engine
   execution/delivery are gateway facts; task results and connection checks are agent-reported
   evidence.
-- `update_schedule` changes existing tasks’ prompt/title, visibility, result filtering, failure notifications and delivery destination. Updates retain the creator and execution permissions; they do not silently recreate a task under another identity.
+- `update_schedule` changes existing tasks’ prompt/title, visibility, result filtering, failure notifications and delivery destination. Updates retain the creator; changing sudo requires an admin and explicit authorization. They do not recreate a task under another identity.
 
 ## Change an existing task's instructions
 

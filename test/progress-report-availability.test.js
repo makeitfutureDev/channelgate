@@ -15,7 +15,7 @@ test("runMessage defaults progress report off and threads the opt-in through bot
     source("src/gateway/run-engine-mcp.js"),
   ]);
 
-  assert.match(run, /export async function runMessage\(\{[^}]*progressReport = false/);
+  assert.match(run, /async function runMessageImpl\(\{[^}]*progressReport = false/);
   assert.match(run, /const mcpRuntimeInput = \{[\s\S]*?progressReport: progressReportEnabled/);
   // `target` rides alongside `engine`: mcp.js needs both to pick the gateway server entry (the
   // checkout's stdio server on the host, the in-container bridge for an isolated runtime).

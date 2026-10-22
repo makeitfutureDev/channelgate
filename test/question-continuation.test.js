@@ -171,6 +171,37 @@ test("a typed thread answer carries pending question context into the fixture en
   assert.ok(client.posted.some((m) => /Who should have access/.test(m.text || "") && /invite only please/.test(m.text || "")));
 });
 
+test("a typed scheduled answer resumes its source session without replaying other daily-thread fires", async () => {
+  const context = await setup("6180.001");
+  const client = fakeSlack();
+  const sessionThreadKey = "sched-typed-answer-source";
+  const { runMessage } = await import("../src/gateway/run.js");
+  const { getSession } = await import("../src/gateway/sessions.js");
+  const source = await runMessage({ channelId: context.channelId, authorId: USER, threadKey: sessionThreadKey,
+    origin: "schedule", text: "Original scheduled task", preferCold: true });
+  const request = question({ ...context, sessionThreadKey });
+  client.conversations.replies = async () => ({ messages: [{ ts: context.threadKey, text: "UNRELATED_OTHER_FIRE" }] });
+  await processMessageEvent(event(context, "Actually, invite only please."), client, { botUserId: "U_BOT" });
+  assert.equal(getQuestion(request.id).answeredInThread, true);
+  assert.equal(await getSession(context.slug, sessionThreadKey), source.sessionId);
+  assert.equal(await getSession(context.slug, context.threadKey), null);
+  assert.ok(client.posted.some((m) => /invite only please/.test(m.text || "")));
+  assert.equal(client.posted.some((m) => /UNRELATED_OTHER_FIRE/.test(m.text || "")), false);
+});
+
+test("multiple scheduled forms in a daily thread require choosing a card and preserve all drafts", async () => {
+  const context = await setup("6185.001");
+  const client = fakeSlack();
+  const first = question({ ...context, sessionThreadKey: "sched-first-fire" });
+  const second = question({ ...context, sessionThreadKey: "sched-second-fire" });
+  const before = runtime.calls.spawn.length;
+  await processMessageEvent(event(context, "Use Team only"), client, { botUserId: "U_BOT" });
+  assert.equal(runtime.calls.spawn.length, before);
+  assert.equal(getQuestion(first.id).status, "pending");
+  assert.equal(getQuestion(second.id).status, "pending");
+  assert.ok(client.posted.some((m) => /multiple question cards/.test(m.text || "")));
+});
+
 test("restart recovery rechecks current membership before replaying submitted answers", async () => {
   const context = await setup("6200.001");
   const client = fakeSlack();

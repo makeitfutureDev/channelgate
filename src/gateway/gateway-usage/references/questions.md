@@ -73,11 +73,19 @@ Pending requests and saved drafts survive daemon restarts. Stop/clear cancels th
 
 The tool returns a pending request ID immediately; it does **not** block until the user answers.
 Continue useful independent work, or end the turn with a short note that the questions are ready.
-Only one request per requester/thread can be pending at a time. Do not poll, sleep waiting for
+Only one request per requester/thread (or per scheduled fire) can be pending at a time. Do not poll, sleep waiting for
 answers, post repeated copies, or interpret the pending result as an
 answer. Submission queues the answers into the same author's thread so the agent can continue.
 Wait for that submitted answer before doing work that depends on it. A closed modal, elapsed time,
 or an unsubmitted choice supplies no answer.
+
+Scheduled Slack tasks can use this tool for their creator too. The gateway chooses the real
+delivery thread, or posts a top-level card when there is none; never supply a synthetic schedule
+session key as a Slack timestamp. Answers resume that specific scheduled session, even after a
+one-time task retires. Independent recurring fires remain fresh sessions. A typed answer can
+continue one pending scheduled form; if several cards share a daily thread, submit the intended
+card. A sudo task's form continues on the host only while its original creator remains an admin;
+other messages in the delivery thread retain their own ordinary runtime posture.
 
 This tool gathers information. It does not grant tool permissions, replace `request_approval`,
 or turn channel Auto mode into human consent. Follow `references/approvals.md` for authorization.

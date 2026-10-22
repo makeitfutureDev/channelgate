@@ -502,6 +502,8 @@ export async function recoverRuns(stale, {
         threadKey: rec.threadKey,
         forkSourceSessionId: await recoveryForkSessionId(rec),
         attachments: Array.isArray(rec.attachments) ? rec.attachments : [],
+        ...(rec.questionSubmissionId ? { questionSubmissionId: rec.questionSubmissionId,
+          verifyQuestionAccess: () => assertQuestionAccess(rec, client) } : {}),
         origin: "recovery", // replayed after a restart with nobody watching — never escalates
         signal: handle.controller.signal,
         onDelta: status?.onDelta,

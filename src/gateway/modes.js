@@ -40,9 +40,9 @@ export function authorModeMeta(meta, { isAdminAuthor = false, untrustedPrincipal
     : normalized;
 }
 
-// Transient per-run posture for an admin-authenticated `/sudo` thread. This is never persisted in
-// channel metadata: the sticky thread bit is only a request, and run.js must re-establish current
-// admin authority before adding this capability bundle on every turn.
+// Transient posture for an admin-authenticated sudo thread, explicit sudo schedule, or submitted
+// form continuing that task. Never persisted in channel metadata: saved flags are only requests,
+// and run.js must re-establish current admin authority before adding this bundle on every turn.
 export function sudoModeMeta(meta = {}) {
   return authorizeSudoRuntime({
     ...meta,

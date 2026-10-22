@@ -6,7 +6,7 @@
 // Shape: { id, channelId, slug, cron, runAt, once, prompt, description, createdBy, kind, ack,
 //          ackEmoji, escalateAfterMin, dmAfterMin, escalationStyle, notify, notifyUserId,
 //          delivery, dailyThreadDate, dailyThreadTs, enabled, createdAt, lastRun, lastStatus,
-//          cronEligibleSince, lastCronFireMs, lastFireMinute, executionState, pendingDelivery }
+//          cronEligibleSince, lastCronFireMs, lastFireMinute, executionState, pendingDelivery, sudo }
 // Thread-loop rows (see ../gateway/loops.js) add: { loop, loopId, threadTs, resumeThread,
 //          ticksRemaining, loopReason, loopNoop }. They live in this same table on purpose — one
 //          tick loop, one concurrency cap, one per-channel ceiling — and are declared here so the
@@ -18,7 +18,7 @@ export function getSchedules() {
   return getDb().prepare("SELECT data FROM schedules ORDER BY rowid").all().map((r) => fromJson(r.data, {}));
 }
 
-export function addSchedule({ channelId, slug, cron, prompt, description, createdBy, notify, notifyUserId, delivery, executionVisibility, resultPolicy, failureNotify, deliveryThread, runAt, once, intervalDays, matchPrefix, kind, ack, ackEmoji, escalateAfterMin, dmAfterMin, escalationStyle, loop, loopId, threadTs, resumeThread, ticksRemaining, loopReason, loopNoop }) {
+export function addSchedule({ channelId, slug, cron, prompt, description, createdBy, notify, notifyUserId, delivery, executionVisibility, resultPolicy, failureNotify, deliveryThread, runAt, once, intervalDays, matchPrefix, kind, ack, ackEmoji, escalateAfterMin, dmAfterMin, escalationStyle, loop, loopId, threadTs, resumeThread, ticksRemaining, loopReason, loopNoop, sudo }) {
   const sched = {
     id: randomUUID().slice(0, 8),
     channelId,
@@ -31,6 +31,9 @@ export function addSchedule({ channelId, slug, cron, prompt, description, create
     prompt,
     description: description || "",
     createdBy: createdBy || "",
+    // Explicit host execution, authorized by the creation/edit surface and rechecked at every
+    // spawn. Never infer this from the launching thread's /sudo flag or channel admin mode.
+    sudo: sudo === true,
     // "task" (default): announce + run a Claude session. "reminder": post a single message (the
     // reminder text) with no Claude run — and, when ack is set, require a ✅ and escalate if missing.
     kind: kind === "reminder" ? "reminder" : "task",

@@ -592,6 +592,19 @@ are refused while the thread has running or queued work. This is intentionally m
 Admin channel mode or the operator-home mount: it removes the container process/filesystem boundary.
 Treat it as root-equivalent to the daemon account and use it only in trusted operational threads.
 
+**Sudo task schedules.** An organization admin can explicitly opt an ordinary task into host
+execution using `create_schedule`/`update_schedule` with `sudo:true`, or the Automations editor's
+sudo checkbox. MCP creation and edits that retain sudo require an admin approval of the exact
+request. The scheduler reloads the enabled task and rechecks its creator's current admin role
+before each host spawn. The task keeps its owner; reminders, loops and synthetic API owners
+cannot enable sudo. Unchecking sudo restores container execution on future fires. Creating a
+normal schedule inside a `/sudo` thread does not inherit host access.
+
+Scheduled Slack forms address the task's creator and resume the specific per-fire session on
+submission. A silent task creates a top-level form when there is no delivery thread. Forms from
+sudo tasks retain their host posture for the original still-admin creator's explicit answer,
+including after a one-time task retires; the delivery thread itself stays unchanged.
+
 The stored sudo flag is not authority. Slack ingress, the run orchestrator, and background launches
 recheck current admin status; the run API and channel metadata cannot select the host runtime.
 Host child environments still use ChannelGate's reviewed allowlist rather than blindly copying all

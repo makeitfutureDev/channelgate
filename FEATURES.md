@@ -749,6 +749,14 @@ custom answers. Required and custom-answer settings default to true. Automatic p
 the message for at most four non-text questions and a modal launcher otherwise; the caller can
 explicitly choose message (at most four questions) or modal presentation.
 
+Scheduled Slack tasks also receive `ask_questions`, addressed to their creator. A signed real
+delivery thread is separate from the fresh per-fire engine session; silent/channel-only tasks can
+post a top-level form that becomes its own answer thread. Submission resumes the originating
+scheduled session, even after a one-time schedule retires, and serializes with that run. A single
+pending scheduled form also accepts a typed answer; multiple cards require choosing a card with
+Submit. Creator access is checked again after queue waits and on restart recovery. API principals,
+helper agents, and memory reviews cannot create forms.
+
 Custom text replaces a single choice or supplements multiple choices. Choices remain drafts until
 final submission. Only the requester can answer; stale forms and
 duplicate submissions cannot replace a completed answer. Requests and saved drafts persist through
@@ -757,6 +765,24 @@ same author's thread for continuation. The tool itself returns promptly with the
 so agents can finish independent work without occupying a waiting turn. Clarification never replaces
 the existing approval mechanism. The bundled guide teaches both engines when to use the tool and
 falls back to ordinary questions when it is unavailable. Live acceptance gates: `TEST-PLAN.md`.
+
+## Explicit sudo schedules
+
+Ordinary task schedules default to the channel container. Organization admins can explicitly set
+`sudo:true` with `create_schedule`/`update_schedule`, or the admin Automations editor's **Run as
+sudo on the gateway host** checkbox. Sudo tasks run as the daemon OS account with the host filesystem,
+HOME, network and engine permission bypass. Reminders and thread loops cannot enable this option.
+The task keeps its original creator; creation, edits and each fire require a currently admin owner.
+Enabling or editing a task that remains sudo through MCP requires an admin approval of the exact
+request. Disabling sudo returns future fires to the container. Listings label the host setting.
+Ordinary tasks never inherit sudo merely because their creation or delivery thread uses `/sudo`.
+
+A form posted by an authorized sudo schedule retains that source posture for its original
+creator's human continuation, including after one-time retirement. The creator must still be an
+admin; this does not make the Slack delivery thread a sudo thread or let other senders use host
+history. Invalid schedule identity, revoked admin status, disabled tasks and untrusted API authors
+cannot mint schedule host authority. Regression: `test/schedule-sudo.test.js`,
+`test/scheduled-questions.test.js`, and the MCP approval and schedule editor suites.
 
 ## System health
 

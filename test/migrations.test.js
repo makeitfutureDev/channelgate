@@ -51,6 +51,28 @@ test("running migrations twice is a no-op that preserves existing data", () => {
   }
 });
 
+test("v35 preserves pending foreground forms and scopes scheduled uniqueness to the source fire", () => {
+  const db = memoryDb();
+  try {
+    for (const migration of migrations.filter((item) => item.version <= 34)) {
+      migration.up(db);
+      db.exec(`PRAGMA user_version = ${migration.version}`);
+    }
+    const insert = (id, threadKey, data = {}) => db.prepare(
+      "INSERT INTO question_requests(id,channel_id,thread_key,author_id,status,revision,updated_ms,data) VALUES(?,?,?,?,?,?,?,?)",
+    ).run(id, "C_FORMS", threadKey, "U_CREATOR", "pending", 0, 0, JSON.stringify(data));
+    insert("legacy-card", "100.001", { title: "Saved draft", answers: { access: { values: ["team"] } } });
+    const before = db.prepare("SELECT data FROM question_requests WHERE id='legacy-card'").get().data;
+    assert.throws(() => insert("fire-old-index", "100.001", { sessionThreadKey: "sched-first" }), /UNIQUE/);
+    runMigrations(db);
+    assert.equal(db.prepare("SELECT data FROM question_requests WHERE id='legacy-card'").get().data, before);
+    insert("fire-first", "100.001", { sessionThreadKey: "sched-first" });
+    insert("fire-second", "100.001", { sessionThreadKey: "sched-second" });
+    assert.throws(() => insert("same-fire-different-display", "200.001", { sessionThreadKey: "sched-first" }), /UNIQUE/);
+    assert.throws(() => insert("duplicate-foreground", "100.001"), /UNIQUE/);
+  } finally { db.close(); }
+});
+
 test("an old v3 database upgrades through every later migration without losing rows", () => {
   const db = memoryDb();
   try {

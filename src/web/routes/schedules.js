@@ -1,7 +1,7 @@
 // Schedule admin routes: list every cron job, edit one, delete one. Split from admin.js;
 // mounted by createAdminRouter so every URL is unchanged.
 import { Router } from "express";
-import { getChannelsIndex, getUsers } from "../../config/store.js";
+import { getChannelsIndex, getUsers, isAdmin } from "../../config/store.js";
 import { getSchedules, updateSchedule, deleteSchedule } from "../../config/schedules.js";
 import { cronValid, minIntervalMinutes } from "../../util/cron.js";
 import { settingsForApi } from "../../config/settings.js";
@@ -56,11 +56,18 @@ export function createSchedulesRouter() {
     } catch (e) { next(e); }
   });
 
-  router.put("/schedules/:id", (req, res, next) => {
+  router.put("/schedules/:id", async (req, res, next) => {
     try {
       const current = getSchedules().find((schedule) => schedule.id === req.params.id);
       if (!current) return res.status(404).json({ error: "unknown schedule" });
       const patch = {};
+      if (Object.hasOwn(req.body || {}, "sudo")) {
+        if (typeof req.body.sudo !== "boolean") return res.status(400).json({ error: "sudo must be a boolean" });
+        patch.sudo = req.body.sudo;
+      }
+      if ((patch.sudo ?? current.sudo) && !(await isAdmin(current.createdBy))) {
+        return res.status(400).json({ error: "A sudo schedule's creator must currently be an organization admin." });
+      }
       if (typeof req.body?.enabled === "boolean") patch.enabled = req.body.enabled;
       if (Object.hasOwn(req.body || {}, "cron")) {
         if (typeof req.body.cron !== "string" || !cronValid(req.body.cron)) {
@@ -125,7 +132,8 @@ export function createSchedulesRouter() {
       }
       const optionsError = validateScheduleOptions({ ...current, ...patch });
       if (optionsError) return res.status(400).json({ error: optionsError });
-      const updated = updateSchedule(req.params.id, patch);
+      const updated = updateSchedule(req.params.id, patch, current);
+      if (!updated) return res.status(409).json({ error: "The schedule changed while it was being edited. Reload and retry." });
       res.json({ ok: true, schedule: updated });
     } catch (e) {
       next(e);
