@@ -284,7 +284,9 @@ function strictSetting(target) {
 // active → exactly resolveRunEnv()'s answer (real values), with empty egress facts. Active → every
 // name WITH a swap rule becomes its placeholder; a name WITHOUT one keeps its real value and is
 // listed `unprotected` — unless the gateway's egressSecretsStrict is on, when it is dropped and
-// listed `withheld`. `realValues` inventories all real values; `redactionValues` contains only hidden values
+// listed `withheld`. An explicit stored `exposure: "readable"` opts that entry into raw injection
+// even under strict mode; automatic classification never grants this exception.
+// `realValues` inventories all real values; `redactionValues` contains only hidden values
 // for output redaction. Readable variables may appear in replies and job output.
 // `personalPaused` is true when the author holds personal PLACEHOLDERS that the proxy will refuse
 // right now because a DIFFERENT person has an SSH session open in the channel (liveness.js) — the
@@ -337,7 +339,8 @@ export async function resolveEgressRunEnv({ meta = {}, channelId = "", authorId 
   const approval = [];
   for (const name of Object.keys(real).sort()) {
     const scope = merged.scopes[name];
-    const rule = rulesFor(name, entries[scope]?.[name] || null, { value: real[name] });
+    const entry = entries[scope]?.[name] || null;
+    const rule = rulesFor(name, entry, { value: real[name] });
     const bindable = scope === "organization" || (channelKey && (scope !== "personal" || personalOwner));
     if (rule && bindable) {
       const placeholder = placeholderFor({ scope, channelId: channelKey, ownerId: personalOwner, secretName: name });
@@ -348,7 +351,7 @@ export async function resolveEgressRunEnv({ meta = {}, channelId = "", authorId 
       if (rule.approval) approval.push(name);
       continue;
     }
-    if (strict) {
+    if (strict && entry?.exposure !== "readable") {
       withheld.push(name);
       continue;
     }

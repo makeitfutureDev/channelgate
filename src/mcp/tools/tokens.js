@@ -17,13 +17,16 @@ import { getContainerRuntime } from "../../config/settings.js";
 // Masked, never valued — the same write-only shape every other secret surface returns.
 // The egress proxy's view of one secret (config/channel-env.js listEnvVars): protected = a proxy-mode
 // container receives a placeholder swapped only on these hosts; unprotected = the raw value.
-function egressNote(v) {
+function egressNote(v, { bridge = false, strict = false } = {}) {
   if (v.approval === true) {
     const hosts = (v.hosts || []).join(", ");
     return ` — hidden (placeholder); approved servers: ${hosts || "none yet — the first use on a server asks an admin"}${v.exposureChoice === "hidden" ? " [set hidden]" : ""}`;
   }
   if (v.protected === true) return ` — protected via egress proxy (${(v.hosts || []).join(", ")})`;
-  if (v.protected === false) return ` — readable (raw)${v.exposureChoice === "readable" ? " [set readable]" : " [auto: used outside HTTPS]"}`;
+  if (v.protected === false) {
+    const withheld = strict && !bridge && v.exposureChoice !== "readable";
+    return ` — readable (${withheld ? "withheld by strict mode" : "raw"})${v.exposureChoice === "readable" ? " [set readable]" : " [auto: used outside HTTPS]"}`;
+  }
   return "";
 }
 
@@ -35,18 +38,21 @@ function protectionNote(saved) {
 
 // The remaining raw (unruled) secrets as a FINDING, not a state: what happens to each one in a
 // container and the one fix. "" when every listed secret has a rule.
-export function unruledFinding(names = [], { bridge = false, strict = true } = {}) {
-  if (!names.length) return "";
+export function unruledFinding(names = [], { bridge = false, strict = true, explicitReadable = [] } = {}) {
+  const explicit = explicitReadable.length
+    ? `\n\n**Explicit readable:** ${[...explicitReadable].sort().map((name) => `\`${name}\``).join(", ")}: injected RAW into containers (explicit readable choice, including in strict mode).`
+    : "";
+  if (!names.length) return explicit;
   const list = names.sort().map((name) => `\`${name}\``).join(", ");
   const underProxy = strict ? "WITHHELD from containers (strict mode)" : "injected RAW into containers";
   const effect = bridge ? `injected raw today (the LEGACY bridge mode), and ${underProxy.replace(/^WITHHELD/, "withheld").replace(/^injected RAW/, "raw")} once the egress proxy is on` : underProxy;
-  return `\n\n**Finding:** ${names.length} secret${names.length === 1 ? " is" : "s are"} READABLE — ${list}: ${effect}. That is right for a mail or database password, a connection string or a signing key (a placeholder cannot work outside an HTTPS request); if one is really a web API token, \`set_secret_mode\` hidden gives containers a placeholder instead.`;
+  return `\n\n**Finding:** ${names.length} secret${names.length === 1 ? " is" : "s are"} READABLE — ${list}: ${effect}. For a mail or database password, a connection string or a signing key that needs the real value, explicitly choose \`set_secret_mode\` readable; for a web API token, \`set_secret_mode\` hidden gives containers a placeholder instead.${explicit}`;
 }
 
-function renderVars(vars, empty) {
+function renderVars(vars, empty, runtime = {}) {
   if (!vars.length) return empty;
   return vars
-    .map((v) => `• \`${v.name}\`${v.last4 ? ` (…${v.last4})` : ""}${v.provider && v.provider !== "local" ? ` via ${v.provider}` : ""}${v.setBy ? ` — set by <@${v.setBy}>` : ""}${egressNote(v)}${v.resolvable === false ? " ⚠️ unresolvable provider" : ""}`)
+    .map((v) => `• \`${v.name}\`${v.last4 ? ` (…${v.last4})` : ""}${v.provider && v.provider !== "local" ? ` via ${v.provider}` : ""}${v.setBy ? ` — set by <@${v.setBy}>` : ""}${egressNote(v, runtime)}${v.resolvable === false ? " ⚠️ unresolvable provider" : ""}`)
     .join("\n");
 }
 
@@ -168,36 +174,39 @@ export function register(server, ctx) {
     async ({ scope } = {}) => {
       const wanted = scopeOf(scope, "all");
       const sections = [];
-      // Names with no egress rule, across the listed scopes: reported as a FINDING below, because
-      // under the proxy each one is either withheld (strict) or the one raw value in a container.
-      const unruled = new Set();
-      const noteUnruled = (vars) => { for (const v of vars || []) if (v?.protected === false) unruled.add(v.name); return vars; };
+      const runtime = getContainerRuntime();
+      const bridge = runtime.egressMode === "bridge";
+      const strict = runtime.egressSecretsStrict !== false;
+      // Keep the most specific listed row for each name, just as the spawn resolver does.
+      // Explicit readable choices are injected even under strict; automatic ones are withheld.
+      const effective = new Map();
+      const noteUnruled = (vars) => { for (const v of vars || []) effective.set(v.name, v); return vars; };
       const admin = await requireAdmin();
       if (wanted === "all" || wanted === "organization") {
         // Every run is told the organization NAMES in its prompt already; the tails and authors
         // are the admin surface's, like the UI.
         // Protection is a rule fact, not a secret: shown to everyone who sees the names.
         const vars = noteUnruled(listOrgEnv().map((v) => (admin ? v : { name: v.name, provider: v.provider, resolvable: v.resolvable, protected: v.protected, hosts: v.hosts, exposure: v.exposure, approval: v.approval, exposureChoice: v.exposureChoice, exposureReason: v.exposureReason })));
-        sections.push(`**Organization** (every conversation)\n${renderVars(vars, "_None set._")}`);
+        sections.push(`**Organization** (every conversation)\n${renderVars(vars, "_None set._", { bridge, strict })}`);
       }
       if (wanted === "all" || wanted === "personal") {
         const refusal = requireSelf();
-        sections.push(`**Personal** (yours; only runs you author)\n${refusal ? `_${refusal}_` : renderVars(noteUnruled(await listUserEnv(createdBy)), "_None set._")}`);
+        sections.push(`**Personal** (yours; only runs you author)\n${refusal ? `_${refusal}_` : renderVars(noteUnruled(await listUserEnv(createdBy)), "_None set._", { bridge, strict })}`);
       }
       if (wanted === "all" || wanted === "conversation") {
         const meta = (await loadMeta?.()) || {};
-        sections.push(`**This conversation**\n${renderVars(noteUnruled(listChannelEnv(meta)), "_None set — the Secrets modal (/secrets) or the admin UI adds one._")}`);
+        sections.push(`**This conversation**\n${renderVars(noteUnruled(listChannelEnv(meta)), "_None set — the Secrets modal (/secrets) or the admin UI adds one._", { bridge, strict })}`);
       }
       if (!sections.length) return text(`Unknown scope \`${scope}\`. Use one of: all, ${SCOPES.join(", ")}.`);
-      const runtime = getContainerRuntime();
-      const bridge = runtime.egressMode === "bridge";
-      const strict = runtime.egressSecretsStrict !== false;
       const egressFootnote = bridge
         ? " The gateway runs the LEGACY open-bridge egress mode, so every value — protected or not — is injected raw into containers."
         : strict
-          ? " In a container a protected secret is a placeholder that only works through the gateway's egress proxy on its hosts; an unprotected one is withheld (strict mode)."
+          ? " In a container a protected secret is a placeholder that only works through the gateway's egress proxy on its hosts; an automatically readable one is withheld (strict mode), while an explicitly readable one is injected raw."
           : " In a container a protected secret is a placeholder that only works through the gateway's egress proxy on its hosts; an unprotected one is the raw value (set `hosts` with set_secret to protect it).";
-      return text(`${sections.join("\n\n")}${unruledFinding([...unruled], { bridge, strict })}\n\n_Most specific wins when names collide: conversation over personal over organization. A process that already started keeps its environment; a new one has these.${egressFootnote}_`);
+      const unruled = [...effective.values()].filter((v) => v.protected === false);
+      const automatic = unruled.filter((v) => v.exposureChoice !== "readable").map((v) => v.name);
+      const explicitReadable = unruled.filter((v) => v.exposureChoice === "readable").map((v) => v.name);
+      return text(`${sections.join("\n\n")}${unruledFinding(automatic, { bridge, strict, explicitReadable })}\n\n_Most specific wins when names collide: conversation over personal over organization. A process that already started keeps its environment; a new one has these.${egressFootnote}_`);
     }
   );
 
