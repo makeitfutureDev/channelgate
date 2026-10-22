@@ -18,7 +18,8 @@ export function renderLicenseStatus(status, totals) {
     `• state: \`${status.state}\`${status.banner ? ` — ${status.banner.text}` : ""}`,
     `• tier: ${status.tier}${status.organization ? ` (${status.organization})` : ""}`,
     `• key: ${status.hasLicenseKey ? `…${status.licenseKeyLast4} (${status.licenseKeySource})` : "none"}`,
-    `• conversations: ${fmtLimit(status.limits.conversations)} · AI messages per conversation per month: ${fmtLimit(status.limits.messagesPerConversationPerMonth)}`,
+    `• registered channels: ${fmtLimit(status.limits.channels)} · registered users: ${fmtLimit(status.limits.users)}`,
+    `• active conversations per month: ${fmtLimit(status.limits.conversations)} · AI messages per conversation per month: ${fmtLimit(status.limits.messagesPerConversationPerMonth)}`,
     `• last verified: ${status.verifiedAt || "never"}${status.nextCheckAt ? ` · next check: ${status.nextCheckAt}` : ""}`,
   ];
   if (status.expiresAt) lines.push(`• expires: ${status.expiresAt}`);
@@ -36,7 +37,7 @@ export function register(server, ctx) {
     "get_license_status",
     {
       description:
-        "Show this ChannelGate deployment's license state: tier, the active conversation and " +
+        "Show this ChannelGate deployment's license state: tier, registered-channel/user, active-conversation and " +
         "monthly-message limits, when the key was last verified, and this month's usage. Use it to " +
         "explain why a conversation was refused or is near its limit. Never reveals the key itself.",
       inputSchema: {},
@@ -81,7 +82,7 @@ export function register(server, ctx) {
     {
       description:
         "Remove this deployment's ChannelGate license key (ADMINS ONLY). The deployment falls back " +
-        "to the no-key limits: one conversation per UTC month, 500 AI messages in it.",
+        "to the no-key limits: one conversation per UTC month, 500 AI messages in it, and 20 registered channels/users.",
       inputSchema: {},
     },
     async () => {
