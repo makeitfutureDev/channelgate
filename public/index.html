@@ -1328,6 +1328,12 @@
             <!-- Built by public/admin-custom-mcps.js, shared with the user drawer. -->
             <div class="ch-custom-mcps"></div>
           </div>
+          <div class="setcard email-account-card">
+            <h4>Email accounts <em class="state emac-state"></em></h4>
+            <p class="desc">Mailboxes every run in this conversation can read, organize and send from through the agent's <code>email_*</code> tools (IMAP for reading, SMTP for sending). Enter the account once: both servers are logged in to before it is saved, and the mail clients run in the gateway, so a password never enters the conversation's container. Write-only — a stored password is never shown again. Personal mailboxes belong under the person's own settings, not here.</p>
+            <!-- Built by public/admin-email-accounts.js, shared with the user drawer. -->
+            <div class="ch-email-accounts"></div>
+          </div>
         </div>
 
         <!-- ── MCP SERVERS ───────────────────────────────────────────────── -->
@@ -1529,6 +1535,12 @@
           <label class="fldlab">Personal MCP servers<em class="state cmcp-state"></em></label>
           <p class="desc">Remote MCP servers injected as <code>my-&lt;name&gt;</code> only into runs <strong>this person</strong> authors, in every conversation they talk in. Bearer token only (OAuth servers go through Composio); HTTPS, public addresses only. Saved and removed immediately, separately from the Save button below. Write-only: a stored token is never shown again.</p>
           <div class="ud-custom-mcps"></div>
+        </div>
+
+        <div class="ud-row ud-email-accounts-row">
+          <label class="fldlab">Personal email accounts<em class="state emac-state"></em></label>
+          <p class="desc">Mailboxes (IMAP + SMTP) the agent may read and send from only in runs <strong>this person</strong> authors, in every conversation they talk in. Both servers are logged in to before an account is saved. Saved and removed immediately, separately from the Save button below. Write-only: a stored password is never shown again.</p>
+          <div class="ud-email-accounts"></div>
         </div>
 
         <div class="ud-row ud-secrets-row">

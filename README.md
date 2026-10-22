@@ -155,6 +155,9 @@ catalog, including edge cases and links to regression coverage.
   agent account. When both have the requested app and the account is ambiguous, the agent asks.
 - **Custom MCP servers:** maintain an admin catalog of granted servers and non-interactive
   credentials; supported transports and optional integrations depend on the engine.
+- **Email accounts:** connect an ordinary mailbox (IMAP + SMTP) to a conversation or to yourself
+  from the admin UI or your chat platform's settings; the agent reads, files and sends with it
+  through gateway tools while the passwords stay in the gateway, never in a container.
 - **Enterprise SDK provisioning (Beta):** an organization Composio SDK key provisions separate
   Slack user/channel identities and reusable thread sessions. Standard MCP mode remains available
   without Enterprise entitlement.

@@ -425,10 +425,15 @@ function pageNav(state, active, { isDM = false } = {}) {
 // metadata (`f`); its input block ids are keyed by the form, so a value typed into one form can
 // never be carried into another by Slack's state retention.
 export const SETTINGS_FIELD_ACTION_ID = "v";
+// Write-only fields: their block ids rotate after a refused save, they are never refilled into a
+// reopened form and never echoed in an error or a notice.
+export const SETTINGS_SECRET_FIELDS = Object.freeze(["token", "value", "imapPassword", "smtpPassword"]);
+// The fields a reopened form may be refilled with — every field a form reads, minus the secrets.
+export const SETTINGS_DRAFT_FIELDS = Object.freeze(["label", "url", "name", "hosts", "address", "displayName", "imapHost", "imapPort", "imapUser", "smtpHost", "smtpPort", "smtpUser"]);
 export function settingsFieldBlockId(form, field, secretId = "") {
   // Slack preserves typed values when both input identities survive views.update. A refused
   // async save rotates only write-only inputs; labels, URLs and other draft fields stay put.
-  const key = secretId && (field === "token" || field === "value") ? `${form}:${secretId}` : String(form);
+  const key = secretId && SETTINGS_SECRET_FIELDS.includes(field) ? `${form}:${secretId}` : String(form);
   return `cgf_${field}_${createHmac("sha256", "cg-settings-form").update(key).digest("hex").slice(0, 8)}`;
 }
 
@@ -488,6 +493,19 @@ export function settingsFormSpec(key, snapshot = {}) {
       ],
     };
   }
+  if (kind === "em-add" && (scope === "c" || scope === "p")) {
+    return { key, title: "Connect email account", removable: false, fields: emailAccountFields({ scope }) };
+  }
+  if (kind === "em" && (scope === "c" || scope === "p") && name) {
+    const list = scope === "c" ? snapshot.emailAccounts?.channel : snapshot.emailAccounts?.personal;
+    const entry = (Array.isArray(list) ? list : []).find((item) => item.name === name);
+    if (!entry) return null;
+    return {
+      key, title: `Edit email account ${name}`, removable: true, subject: `email account ${name}`,
+      removeText: "Runs stop reading and sending mail with it, including any run in progress.",
+      fields: emailAccountFields({ scope, entry }),
+    };
+  }
   if (kind === "var-add" && FORM_SCOPES[scope]) {
     return {
       key, title: "New variable", removable: false,
@@ -517,11 +535,35 @@ export function variableEntry(snapshot = {}, scope, name) {
   return (Array.isArray(list) ? list : []).find((entry) => entry.name === name) || null;
 }
 
+// One form for a mailbox's IMAP and SMTP settings (src/gateway/email-accounts.js). `entry` is the
+// stored masked record on an update: it prefills everything but the passwords, which are then
+// optional (blank keeps the saved one). Blank ports take the defaults; blank SMTP user/password
+// mean "same as IMAP".
+function emailAccountFields({ scope, entry = null } = {}) {
+  const password = (name, label, { optional = false, blankMeans = "" } = {}) => ({
+    name, label, optional: Boolean(entry) || optional, maxLength: 1024,
+    placeholder: entry ? "Leave blank to keep the saved one" : blankMeans || "Stored write-only",
+  });
+  return [
+    ...(entry ? [] : [{ name: "name", label: "Name", placeholder: "e.g. work", maxLength: 32, hint: `A short handle for the account${scope === "c" ? " in this conversation" : ""}: work, support` }]),
+    { name: "address", label: "Email address", placeholder: "name@example.com", maxLength: 254, initial: entry?.address },
+    { name: "displayName", label: "Display name", optional: true, placeholder: "Optional — the sender's name", maxLength: 120, initial: entry?.displayName },
+    { name: "imapHost", label: "IMAP server", placeholder: "imap.example.com", maxLength: 253, initial: entry?.imap?.host },
+    { name: "imapPort", label: "IMAP port", optional: true, placeholder: "993", maxLength: 5, hint: "993 TLS · 143 STARTTLS", initial: entry?.imap?.port },
+    { name: "imapUser", label: "IMAP user", placeholder: "name@example.com", maxLength: 320, initial: entry?.imap?.user },
+    password("imapPassword", "IMAP password"),
+    { name: "smtpHost", label: "SMTP server", placeholder: "smtp.example.com", maxLength: 253, initial: entry?.smtp?.host },
+    { name: "smtpPort", label: "SMTP port", optional: true, placeholder: "587", maxLength: 5, hint: "465 TLS · 587 STARTTLS", initial: entry?.smtp?.port },
+    { name: "smtpUser", label: "SMTP user", optional: true, placeholder: "Blank = same as IMAP", maxLength: 320, initial: entry?.smtp?.user },
+    password("smtpPassword", "SMTP password", { optional: true, blankMeans: "Blank = same as IMAP" }),
+  ];
+}
+
 // The values a submitted form carries, by field name, read from the root view's state.
 export function readSettingsForm(view = {}, key, secretId = "") {
   const values = view?.state?.values || {};
   const out = {};
-  for (const field of ["label", "token", "url", "name", "value", "hosts", "secret"]) {
+  for (const field of ["label", "token", "url", "name", "value", "hosts", "secret", "address", "displayName", "imapHost", "imapPort", "imapUser", "imapPassword", "smtpHost", "smtpPort", "smtpUser", "smtpPassword"]) {
     const entry = values[settingsFieldBlockId(key, field, secretId)]?.[SETTINGS_FIELD_ACTION_ID];
     if (!entry) continue;
     out[field] = field === "secret"
@@ -539,7 +581,7 @@ function formBlocks(spec, state) {
   const draft = state.formDraft || {};
   const error = state.formError?.error ? state.formError : null;
   for (const raw of spec.fields) {
-    const field = Object.hasOwn(draft, raw.name) && raw.name !== "token" && raw.name !== "value" ? { ...raw, initial: draft[raw.name] } : raw;
+    const field = Object.hasOwn(draft, raw.name) && !SETTINGS_SECRET_FIELDS.includes(raw.name) ? { ...raw, initial: draft[raw.name] } : raw;
     const blockId = settingsFieldBlockId(spec.key, field.name, state.formSecretId);
     if (field.type === "checkbox") {
       const choice = option(field.label, "secret", field.option || "");
@@ -567,7 +609,7 @@ function formBlocks(spec, state) {
       button(CHANNEL_SETTINGS_FORM_CANCEL_ACTION_ID, "Cancel", state, "form_cancel"),
       ...(spec.removable ? [button(CHANNEL_SETTINGS_FORM_REMOVE_ACTION_ID, "Remove", state, "form_remove", { f: spec.key }, {
         style: "danger",
-        confirm: destructiveConfirm(`Remove ${spec.title}?`, "Runs stop using it, including any run in progress. A token can't be recovered."),
+        confirm: destructiveConfirm(`Remove ${spec.subject || spec.title}?`, spec.removeText || "Runs stop using it, including any run in progress. A token can't be recovered."),
       })] : []),
     ],
   });
@@ -841,6 +883,21 @@ function connectionRows(snapshot, state, scope, opts) {
   if (state.form === addKey) blocks.push(...withForm([], addKey, snapshot, state));
   else if (editable) blocks.push({ type: "actions", elements: [button(CHANNEL_SETTINGS_FORM_OPEN_ACTION_ID, "+ Add custom MCP", state, "form_open", { f: addKey })] });
   else blocks.push(context(list.length ? "🔒 Managers change these. Add your own under *You*." : "_None._ Managers add them here; add your own under *You*."));
+  // Email accounts — masked rows (name, address, servers); passwords never reach the snapshot.
+  // The conversation's follow the custom MCP gate (a manager's call); a person's own are theirs.
+  blocks.push(header("Email accounts"));
+  const accounts = (scope === "c" ? snapshot.emailAccounts?.channel : snapshot.emailAccounts?.personal) || [];
+  const canEditEmail = scope === "p" || Boolean(opts.canManageCustomMcp);
+  for (const account of accounts) {
+    const form = `em:${scope}:${account.name}`;
+    const server = (endpoint = {}) => escapeMrkdwn(`${endpoint.host || ""}:${endpoint.port || ""}`);
+    const row = editableRow(`${inlineCode(account.name)} · ${escapeMrkdwn(String(account.address || "").slice(0, 120))} · IMAP ${server(account.imap)} · SMTP ${server(account.smtp)}`, form, state, { editable: canEditEmail });
+    blocks.push(...withForm(row, form, snapshot, state));
+  }
+  const emailAddKey = `em-add:${scope}`;
+  if (state.form === emailAddKey) blocks.push(...withForm([], emailAddKey, snapshot, state));
+  else if (canEditEmail) blocks.push({ type: "actions", elements: [button(CHANNEL_SETTINGS_FORM_OPEN_ACTION_ID, "+ Connect email account", state, "form_open", { f: emailAddKey })] });
+  else blocks.push(context(accounts.length ? "🔒 Managers change these. Connect your own under *You*." : "_None._ Managers connect them here; connect your own under *You*."));
   return blocks;
 }
 

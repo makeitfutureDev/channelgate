@@ -248,7 +248,7 @@ test("gateway MCP permission list tracks registered gateway tools", () => {
   // Tool registrations live in the per-group modules under src/mcp/tools/ (registered by the
   // gateway-server.js entry). Group order differs from the flat pre-split file, so compare the
   // registered names as a sorted list — same set, no duplicates, nothing lost.
-  const toolModules = ["schedules.js", "background.js", "channel-admin.js", "channel-database.js", "tokens.js", "slack-native.js", "teams-native.js", "skills.js", "questions.js", "ssh-access.js", "agent-directory.js"];
+  const toolModules = ["schedules.js", "background.js", "channel-admin.js", "channel-database.js", "tokens.js", "slack-native.js", "teams-native.js", "skills.js", "questions.js", "ssh-access.js", "agent-directory.js", "email.js"];
   const source = toolModules
     .map((file) => readFileSync(new URL(`../src/mcp/tools/${file}`, import.meta.url), "utf8"))
     .join("\n");

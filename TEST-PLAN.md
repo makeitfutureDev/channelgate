@@ -1,5 +1,74 @@
 # ChannelGate — Test Plan
 
+## Email accounts (2026-10-22)
+
+### Regression
+- [x] Automated: `node --test test/email-accounts.test.js`.
+  - One-form rules: port defaults, security by port, SMTP credentials falling back to IMAP's,
+    name/address/port/user validation, loopback/private/link-local/metadata hosts refused by
+    name and literal.
+  - Updates: blank passwords keep the stored ones, a rotated IMAP password follows into a shared
+    SMTP password and leaves a distinct one alone. Upsert by name, the five-entry cap, remove.
+    The masked list and `emailAccountSecrets` never disagree; malformed rows are dropped.
+  - Run resolution: channel accounts always, personal accounts only for a trusted principal;
+    `selectEmailAccount` with bare names, `personal/` / `channel/` / `my/` prefixes, addresses,
+    the single-account default and the cross-scope name clash.
+  - Store: the connection test receives the MERGED record (stored passwords on an update), a
+    failing test stores nothing, the interactive `authorize` re-check runs after it, audit rows
+    carry no password; personal accounts on the user record.
+  - Tools (fake mail client): every tool registered and in `GATEWAY_TOOL_NAMES`; the verified
+    author sees channel + own, an untrusted principal and another person do not see the personal
+    account; search/read/move/flag pass the chosen account through and render compactly;
+    attachment downloads land under `uploads/email/<account>/` with a sanitized name; `email_send`
+    attaches only confined files (a symlink out of the folder and a `../` path are refused) and
+    refuses an account with sending off before any client call.
+  - `resolveRunIntegrations` returns every channel and personal password as `emailSecrets`, and no
+    personal password for an untrusted principal.
+  - Admin routes: channel and user PUT/GET/DELETE, the failing-login 400 without the password,
+    the loopback refusal, `GET /api/channels` and `/api/users` listings without a password.
+- [x] Automated: `node --test test/slack-email-account-settings.test.js` — the Slack Settings
+  inline forms (`em-add:<scope>`, `em:<scope>:<name>`), the MCP and You page sections, manager
+  gating, masked rendering, the password-field error mapping.
+- [x] Automated: `node --test test/teams-email-account-settings.test.js
+  test/conversation-settings-email.test.js` — the Teams MCPs page blocks and
+  `settings.email.save/remove`, public-card refusal, the confirm round-trip, the private browser
+  form's save/remove and masked listing.
+- [x] `test/folders-settings.test.js` tracks the new tool module in the permission allowlist;
+  `test/progress-report-availability.test.js` still proves the integration resolver's shape.
+
+### Live gates (Claude AND Codex) — UNEXECUTED
+Fixture: a disposable conversation in Worker mode. A mailbox on a public IMAP/SMTP host you own
+(any provider that issues app passwords, or a test domain on a transactional relay with an IMAP
+inbox). Record the address and the servers; never the password.
+- [ ] Connect (dashboard): admin UI → the conversation → Connections → *Email accounts*: name
+  `qa`, the address, IMAP host/user/password, SMTP host (ports blank). Pass: the hint says both
+  logins were verified, the row shows `qa`, the address, `imap…:993` and `smtp…:587`;
+  `GET /api/channels` contains no password. A wrong password answers "IMAP login failed (…)" and
+  stores nothing. `127.0.0.1` or a private host name as the IMAP server is refused.
+- [ ] Connect (Slack): ⚙️ Settings → **MCP** → *+ Connect email account* as a channel manager
+  (name `qa2`); a non-manager sees the list but no button. ⚙️ Settings → **You** → connect
+  `mine`. Pass: the modal acknowledges at once, the row appears masked, no password in the view
+  payload (`views.update` body) or in Slack history.
+- [ ] Connect (Teams and Google Chat): Teams Settings → MCPs → *Email accounts* save; Google Chat
+  Settings → *Open private settings* → the browser form. Pass: the account appears masked on the
+  card and the page; the Chat card itself has no password input.
+- [ ] Read, Claude then Codex (`codex …` directive): "List my newest 5 emails in qa and read the
+  first one; save its attachment." Pass: `email_search` output, `email_read` with headers and
+  body, `email_download_attachment` saves under `uploads/email/qa/` and the reply names the
+  file with a 📄 button. No password in the reply or the artifact dir (`grep -r <password>`).
+- [ ] Send, both engines: "Send an email from qa to <your address>, subject QA, attaching that
+  file, replying to the message you read." Pass: the agent confirms recipients first (or the
+  prompt gave them), the mail arrives threaded (`In-Reply-To` set), with the attachment, From the
+  account's address and display name; a copy sits in the Sent folder where the server has one;
+  the reply names the account used. With *allow sending* off, the tool refuses and the agent
+  reports it without trying another account.
+- [ ] Scope: the personal account `mine` is used by its owner's turn, absent from another approved
+  user's turn in the same conversation and from a `POST /api/runs` turn; a bare name present in
+  both scopes makes the agent ask which one. Lean mode does not hide the tools (they are gateway
+  tools) but the memory reviewer's run has none.
+- [ ] Rotation and removal: change the IMAP password with the SMTP box blank (shared password) —
+  the next send still works; remove the account — the next turn reports it absent.
+
 ## Registered inventory caps and Enterprise harness approvals (2026-10-22)
 
 - [x] Automated `test/license-registration.test.js`: signed Registered and no-key fixtures admit

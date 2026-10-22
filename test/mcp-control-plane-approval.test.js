@@ -624,6 +624,13 @@ test("every registered gateway tool is consciously classified as gated or open (
         // runs this channel's ALREADY-linked Drive sync early — the same pass the schedule runs anyway,
     // this channel only, obeying the admin's global switch; linking/unlinking stays gated
     "sync_channel_drive",
+    // email accounts (gateway/email-accounts.js): the tools only USE a mailbox a person connected
+    // on a settings surface, for the scopes this turn may see — the conversation's and the
+    // VERIFIED author's own. Reading, filing and sending are the account owner's ordinary mail
+    // actions (confirm-before-send is the guide's rule, like a Composio send); connecting,
+    // changing or removing an account has no tool at all, so there is nothing here to gate.
+    "list_email_accounts", "email_mailboxes", "email_search", "email_read",
+    "email_download_attachment", "email_move", "email_set_flag", "email_send",
   ]);
   await withGateway({}, async (client) => {
     const { tools } = await client.listTools();

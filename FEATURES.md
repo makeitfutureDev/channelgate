@@ -415,6 +415,59 @@ control-plane status.
   `--strict-mcp-config`, Codex `--ignore-user-config`).
   → TEST-PLAN: Custom MCP connections.
 
+## Email accounts (IMAP + SMTP, per person and per conversation)
+
+- A mailbox is connected **once, on one form** — name, address, optional display name, IMAP
+  server/port/user/password, SMTP server/port/user/password — to a conversation (channel scope,
+  shared by everyone who talks there) or to one person (personal scope, usable only in runs they
+  author). Each scope holds at most five. Ports default to 993 (IMAP) and 587 (SMTP); security is
+  derived from the port (993/465 implicit TLS, anything else a **mandatory** STARTTLS upgrade —
+  there is no cleartext option). Blank SMTP user/password reuse the IMAP ones. Rules in
+  `src/gateway/email-accounts.js`, writes in `email-account-store.js`.
+- **Tested before stored.** Every save logs in to the IMAP server and the SMTP server (no message
+  is sent) and refuses the record naming the failing side (`IMAP login failed (host:port): …`).
+  The daemon dials each server through the same public-address check as custom MCP relays, pins
+  the connection to the vetted address and verifies TLS against the configured host name:
+  loopback, private, link-local and metadata destinations are refused at save time and again at
+  every dial. A server that does not upgrade to TLS fails the connection.
+- **Where to connect one.** Admin UI → the conversation → Connections → *Email accounts*, or
+  Users → the person → *Personal email accounts* (`/api/channels/:id/email-accounts/:name`,
+  `/api/users/:id/email-accounts/:name`). In Slack: ⚙️ Settings → **MCP** → *Email accounts*
+  (the conversation's; channel managers and admins) and **You** → *Email accounts* (the viewer's
+  own) as inline forms, with the save acknowledged at once and the connection test allowed up to
+  45 s. In Teams: Settings → **MCPs** → *Email accounts* (channel block and *My connections*). In
+  Google Chat: Settings → *Open private settings* — the private browser form, since a public card
+  cannot take a password. All surfaces call the same store; audit events
+  `channel_email_account_set/_removed` and `user_email_account_set/_removed` carry the name, the
+  address and the server hosts, never a password.
+- **Write-only.** Every listing (`GET /api/channels`, `/api/users`, the per-scope routes, the
+  Slack/Teams/Chat views, the browser form) returns servers, ports, security, user names,
+  `hasPassword` and who/when. There is no reveal path. Saving an existing name with the password
+  boxes empty keeps the stored passwords; a new IMAP password with a shared SMTP password rotates
+  both. Passwords are also pushed into every run's output redactor (`emailSecrets` from
+  `resolveRunIntegrations`), so no reply, stream or job log can echo one.
+- **The agent uses it through gateway tools, in the daemon.** `list_email_accounts`,
+  `email_mailboxes`, `email_search`, `email_read`, `email_download_attachment` (into
+  `uploads/email/<account>/`, ≤ 50 MB, no-follow writes), `email_move`, `email_set_flag` and
+  `email_send` (From is the account's address; attachments are opened through the confined-file
+  opener, 10 files / 25 MB; `in_reply_to` threads; a copy is appended to the `\Sent` mailbox
+  when the server exposes one; refused when the account's *allow sending* is off). ImapFlow and
+  Nodemailer run in the daemon process; a container never holds a mailbox password and the
+  `.claude/settings.json` allowlist pre-approves the tools like every other gateway tool. The
+  memory reviewer's reduced toolset does not get them.
+- **Scope resolution is explicit.** A turn sees the conversation's accounts plus the VERIFIED
+  author's own; the HTTP run API's named author is attribution only and gets the channel scope
+  alone, and another person's turn in the same conversation never sees someone's personal account.
+  `account` takes a name, `personal/<name>`, `channel/<name>` or the address; a bare name present
+  in both scopes is refused until qualified; with exactly one account it may be omitted. The
+  `gateway-usage` guide (`references/email.md`) carries the pronoun rule ("my" = personal, "your /
+  the team's" = channel), the confirm-before-send rule, the shared-thread privacy note and the
+  instruction to send people to Settings instead of asking for a password in chat.
+- **Not a Composio replacement.** Gmail, Outlook and the other apps a Composio account already
+  holds stay on Composio; email accounts cover the mailboxes it does not — custom domains, app
+  passwords, shared inboxes, transactional SMTP relays.
+  → TEST-PLAN: Email accounts.
+
 ## Platform activation emoji settings
 
 - Admin Settings → Agent defaults → **Message activation reactions** has independent Slack,

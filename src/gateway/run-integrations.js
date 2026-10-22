@@ -10,6 +10,7 @@ import { requireComposioSdkEntitlement } from "../ee/composio-entitlement.js";
 import { canManage } from "./modes.js";
 import { resolveMakeToolboxRuntime } from "./make-toolbox.js";
 import { resolveCustomMcpsForRun } from "./custom-mcps.js";
+import { emailAccountSecrets } from "./email-accounts.js";
 import { resolveRunUserIdentity } from "./access-grants.js";
 import { composioIdentitiesForRun, composioIdentityPreamble } from "./mcp.js";
 
@@ -188,16 +189,20 @@ export async function resolveRunIntegrations({ meta = {}, channelId = "", author
   });
   // Custom MCP connections: the conversation's own, plus the AUTHOR's personal ones — never a
   // personal list for an author the run did not authenticate (the run API), same as composio-user.
+  const authorRecord = !untrustedPrincipal && authorId ? await getUser(authorId) : null;
   const customMcps = resolveCustomMcpsForRun({
     channelList: meta.customMcps,
-    userList: !clean && !untrustedPrincipal && authorId ? (await getUser(authorId))?.customMcps : [],
+    userList: !clean && authorRecord ? authorRecord.customMcps : [],
     clean,
     principalTrusted: !untrustedPrincipal,
   });
+  // Email account passwords never enter a container (the mail clients run in the daemon), but the
+  // output redactor carries them anyway so no reply, stream or job log can ever echo one.
+  const emailSecrets = [...emailAccountSecrets(meta.emailAccounts), ...emailAccountSecrets(authorRecord?.emailAccounts)];
   return {
     userIdentity, composio, toolbox, identities,
     composioUserToken, composioToken, composioUserEndpoint, composioEndpoint, toolboxToken: toolbox.token,
-    makeToolboxUrl, makeToolboxKey, customMcps,
+    makeToolboxUrl, makeToolboxKey, customMcps, emailSecrets,
     composioIdentityPrefix: composioIdentityPreamble(identities),
   };
 }

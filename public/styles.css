@@ -679,6 +679,10 @@ button.clear-tok.armed { background: rgba(229, 96, 77, .14); border-color: rgba(
 /* Custom MCP servers (public/admin-custom-mcps.js): a long URL truncates (full value in the title)
    so the row's Edit/Remove actions stay on screen. */
 .vars-table td.cmcp-url-cell { max-width: 0; width: 40%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.emac-add { display: flex; flex-direction: column; gap: 8px; }
+.emac-add .emac-label { flex: none; width: 44px; color: var(--muted); font-size: 11.5px; font-weight: 600; letter-spacing: .04em; }
+.emac-add .emac-send-label { display: inline-flex; align-items: center; gap: 6px; color: var(--muted); font-size: 12px; }
+.vars-table td.emac-address-cell { max-width: 260px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .secret-add { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .secret-add input { flex: 1 1 220px; min-width: 0; box-sizing: border-box; background: var(--panel-2); border: 1px solid var(--line); color: var(--ink); padding: 9px 12px; border-radius: 8px; font: inherit; }
 .secret-add .secret-save { flex: none; }

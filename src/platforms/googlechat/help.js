@@ -47,6 +47,7 @@ const TOPICS = [
     'Conversation values override personal values, then organization values. Organization changes are admin-only; hidden secrets may need admin approval for a new server.',
     'Open **MCPs** to manage conversation connections. Use the protected browser page for personal Composio or Toolbox tokens. SDK mode manages its own identities; saved Personal-mode tokens remain inactive there.',
     'Admins can add an HTTPS MCP URL and Bearer token in the admin UI → conversation Connections → Custom MCP servers, or Users → Personal MCP servers. OAuth connections use Composio. Say whose account to use.',
+    'Connect a mailbox from **MCPs** → **Email accounts** on the protected browser page: one form takes the IMAP and SMTP settings, for this conversation or for yourself. Both logins are tested before saving; passwords are never shown again.',
     'Use approval controls here to Approve, Deny or Request changes. Your current authority is checked.',
     'When the host supports SSH, register your `.pub` key, then ask `enable SSH access for me` and `show my SSH connection instructions`. A manager must grant access for another person. Containers with the operator home mounted cannot be opened through SSH.',
   ] },

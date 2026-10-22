@@ -18,6 +18,18 @@ product overview.
 
 ## Unreleased
 
+- **Email accounts.** Connect an ordinary mailbox — IMAP for reading, SMTP for sending — to a
+  conversation or to yourself by entering its server settings once on one form: in the admin UI
+  (the conversation's Connections, or a person under Users), in Slack's ⚙️ Settings (MCP page for
+  the conversation's, You page for your own), in Teams' Settings → MCPs, or through Google Chat's
+  private settings form. Both logins are tested before the account is saved, passwords are
+  write-only everywhere, and the mail clients run in the gateway, so a channel container never
+  holds a mailbox password. The agent reads, searches, files, downloads attachments from and
+  sends with the account through new `gateway` tools (`list_email_accounts`, `email_search`,
+  `email_read`, `email_download_attachment`, `email_move`, `email_set_flag`, `email_send`);
+  personal accounts exist only in their owner's turns. Gmail, Outlook and other Composio apps stay
+  on Composio. Adds the `nodemailer` and `imapflow` dependencies.
+
 - Price GPT-6.1 Sol at its September 29 Standard rates, including per-request long-context
   multipliers. Preserve pre-July 30 GPT-5.6 Terra/Luna rates during historical previews and
   refreshes. Defer this pricing basis's automatic historical refresh until an audited,

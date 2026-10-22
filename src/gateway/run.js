@@ -1211,11 +1211,11 @@ async function runMessageImpl({ channelId, authorId, workspaceId = "", text, thr
   // resolves stable user/channel identities into per-thread sessions. Stored personal-mode tokens
   // are never mutated when SDK mode is active. Clean mode injects none.
   const {
-    userIdentity, composio, toolbox, composioUserToken, composioToken, composioUserEndpoint, composioEndpoint, toolboxToken,
+    userIdentity, composio, toolbox, composioUserToken, composioToken, composioUserEndpoint, composioEndpoint, toolboxToken, emailSecrets = [],
     makeToolboxUrl, makeToolboxKey, customMcps, composioIdentityPrefix,
   } = await resolveRunIntegrations({ meta, channelId, authorId, threadKey, workspaceId, clean, untrustedPrincipal });
   const authorIsAdmin = userIdentity.isAdmin || apiKeyPrincipal;
-  outputSecrets.push(composioUserToken, composioToken, toolboxToken, makeToolboxKey, ...customMcpTokens(customMcps));
+  outputSecrets.push(composioUserToken, composioToken, toolboxToken, makeToolboxKey, ...customMcpTokens(customMcps), ...emailSecrets);
   // Engine homes are deliberately isolated. Resolve these once in the daemon and carry them into
   // the gateway MCP instead of letting its subprocess derive paths from the disposable HOME.
   const gatewayFsRoot = allowedFsRoot();

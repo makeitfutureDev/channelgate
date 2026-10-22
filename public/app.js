@@ -24,6 +24,7 @@ import { mountSkillAssignmentPicker } from "./skill-assignment-picker.js";
 import { mountUserPicker } from "./admin-user-picker.js";
 import { mountSecretEditor, secretEditorMarkup } from "./admin-secrets.js";
 import { customMcpEditorMarkup, mountCustomMcpEditor } from "./admin-custom-mcps.js";
+import { emailAccountEditorMarkup, mountEmailAccountEditor } from "./admin-email-accounts.js";
 import { mountComposioInventory } from "./admin-composio.js";
 import { describeEvent, eventLabel, isAdminEvent } from "./admin-events.js";
 import { automationRunMarkup, automationSummaryMarkup, automationStatusLabel, automationStatusTone } from "./admin-schedules.js";
@@ -2349,6 +2350,18 @@ function renderChannelDetail(ch) {
     removeBody: "Runs in this conversation stop receiving this server, including any run in progress. The token can't be recovered.",
   });
 
+  // Email accounts (gateway/email-accounts.js): same immediate, write-only contract.
+  const emailAccountCard = card.querySelector(".email-account-card");
+  emailAccountCard.querySelector(".ch-email-accounts").appendChild(emailAccountEditorMarkup());
+  mountEmailAccountEditor({
+    root: emailAccountCard,
+    accounts: Array.isArray(meta.emailAccounts) ? meta.emailAccounts : [],
+    userName: (id) => USERS[id]?.name || "",
+    endpoint: (name) => `/api/channels/${encodeURIComponent(ch.channelId)}/email-accounts/${encodeURIComponent(name)}`,
+    emptyText: "No email accounts — connect one and every run here can read and send with it.",
+    removeBody: "Runs in this conversation can no longer read or send with this account. The passwords can't be recovered.",
+  });
+
   const makeToolboxUrlInput = card.querySelector(".ch-make-toolbox-url");
   const makeToolboxKeyInput = card.querySelector(".ch-make-toolbox-key");
   const makeToolboxState = card.querySelector(".ch-make-toolbox-state");
@@ -3366,6 +3379,18 @@ function openUserDrawer(id) {
     endpoint: (name) => `/api/users/${encodeURIComponent(id)}/custom-mcps/${encodeURIComponent(name)}`,
     emptyText: "No personal MCP servers.",
     removeBody: "This person's runs stop receiving this server everywhere, including any run in progress. The token can't be recovered.",
+  });
+
+  // This person's OWN email accounts (gateway/email-accounts.js).
+  const emailAccountRow = drawer.querySelector(".ud-email-accounts-row");
+  emailAccountRow.querySelector(".ud-email-accounts").appendChild(emailAccountEditorMarkup());
+  mountEmailAccountEditor({
+    root: emailAccountRow,
+    accounts: u.emailAccounts || [],
+    userName: (uid) => USERS[uid]?.name || "",
+    endpoint: (name) => `/api/users/${encodeURIComponent(id)}/email-accounts/${encodeURIComponent(name)}`,
+    emptyText: "No personal email accounts.",
+    removeBody: "This person's runs can no longer read or send with this account anywhere. The passwords can't be recovered.",
   });
 
   const secretsRow = drawer.querySelector(".ud-secrets-row");

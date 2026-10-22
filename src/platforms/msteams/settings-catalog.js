@@ -14,10 +14,23 @@ import { listSkills } from '../../gateway/skills/catalog.js';
 import { canSeeSkill, grantSkillsToChannel, revokeSkillsFromChannel } from '../../gateway/skills/authoring.js';
 import { assignTemplateToChannel, channelSkillGrants, listTemplateSummaries, templateOfMeta } from '../../gateway/skills/templates.js';
 import { ensureChannelFolder } from '../../gateway/folders.js';
+import { canManage } from '../../gateway/modes.js';
+import { listEmailAccounts, normalizeEmailAccountName } from '../../gateway/email-accounts.js';
+import { listUserEmailAccounts, removeChannelEmailAccount, removeUserEmailAccount, saveChannelEmailAccount, saveUserEmailAccount } from '../../gateway/email-account-store.js';
 import { logEvent } from '../../util/logger.js';
 
 const PAGE_SIZE = 6;
 const SCOPES = ['channel', 'personal', 'organization'];
+const EMAIL_SCOPES = ['channel', 'personal'];
+// One form serves both scopes: card input ids are unique per card and an Action.Execute submits
+// every input, so the scope is a choice field rather than a second copy of the eleven inputs.
+export const EMAIL_ACCOUNT_FIELDS = Object.freeze(['name', 'address', 'displayName', 'imapHost', 'imapPort', 'imapUser', 'imapPassword', 'smtpHost', 'smtpPort', 'smtpUser', 'smtpPassword']);
+const emailSummary = account => `${account.name} · ${account.address} · IMAP ${account.imap.host}:${account.imap.port} · SMTP ${account.smtp.host}:${account.smtp.port}`;
+function emailAccountRows(ui, scope, accounts, emptyText) {
+  if (!accounts.length) return [ui.text(emptyText)];
+  return accounts.flatMap(account => [ui.text(emailSummary(account)),
+    ui.buttons([ui.execute('Remove', 'settings.email.remove', { emailScope: scope, name: account.name }, 'none')])]);
+}
 const label = scope => ({ channel: 'Channel', organization: 'Organization', personal: 'Personal' })[scope];
 const str = value => typeof value === 'string' ? value.trim() : '';
 const configured = value => value ? `Configured${typeof value === 'string' && value.length >= 12 ? ` (••••${value.slice(-4)})` : ''}` : 'Not configured';
@@ -146,6 +159,18 @@ export async function renderCatalogPage(page, ctx, ui) {
   if (meta.toolboxToken) disconnect.push(ui.execute('Disconnect Toolbox', 'settings.connections.remove', { connection: 'toolbox' }, 'none'));
   if (meta.makeToolboxUrl || meta.makeToolboxKey) disconnect.push(ui.execute('Disconnect Make MCP', 'settings.connections.remove', { connection: 'make' }, 'none'));
   if (disconnect.length) body.push(ui.buttons(disconnect));
+  // Email accounts: the list is masked (hosts, ports, user names — never a password). Inputs are
+  // never prefilled, and a public space card gets no inputs at all.
+  body.push(ui.heading('Email accounts'), ...emailAccountRows(ui, 'channel', listEmailAccounts(meta.emailAccounts, 'channel'), 'No email account is connected to this conversation.'));
+  if (ctx.publicCredentials) body.push(ui.text('Connect or update an email account in your private browser settings.'));
+  else {
+    body.push(ui.text('Connect a mailbox by its IMAP and SMTP settings. Both logins are tested before anything is saved. Blank ports mean 993 (IMAP) and 587 (SMTP); blank SMTP user and password mean the IMAP ones. Leave passwords blank to keep the stored ones when editing.'),
+      ...(ctx.isShared ? [] : [ui.choice('emailScope', 'Belongs to', EMAIL_SCOPES.includes(ctx.state.emailScope) ? ctx.state.emailScope : 'channel', [{ title: 'This conversation', value: 'channel' }, { title: 'Me (personal)', value: 'personal' }])]),
+      ui.input('name', 'Account name ("work", "support")', ''), ui.input('address', 'Email address', ''), ui.input('displayName', 'Display name (optional)', ''),
+      ui.input('imapHost', 'IMAP server', ''), ui.input('imapPort', 'IMAP port (blank = 993)', ''), ui.input('imapUser', 'IMAP user', ''), ui.input('imapPassword', 'IMAP password', ''),
+      ui.input('smtpHost', 'SMTP server', ''), ui.input('smtpPort', 'SMTP port (blank = 587)', ''), ui.input('smtpUser', 'SMTP user (blank = IMAP user)', ''), ui.input('smtpPassword', 'SMTP password (blank = IMAP password)', ''),
+      ui.buttons([ui.execute('Save email account', 'settings.email.save', ctx.isShared ? { emailScope: 'channel' } : {})]));
+  }
   if (!ctx.isShared) {
     const personal = await getUser(ctx.ownerId);
     body.push(ui.heading('My connections'),
@@ -158,6 +183,8 @@ export async function renderCatalogPage(page, ctx, ui) {
     if (personal?.composioToken) remove.push(ui.execute('Disconnect my Composio', 'settings.personal.remove', { connection: 'composio' }, 'none'));
     if (personal?.toolboxToken) remove.push(ui.execute('Disconnect my Toolbox', 'settings.personal.remove', { connection: 'toolbox' }, 'none'));
     if (remove.length) body.push(ui.buttons(remove));
+    body.push(ui.heading('My email accounts'), ...emailAccountRows(ui, 'personal', await listUserEmailAccounts(ctx.ownerId), 'You have no personal email account here.'),
+      ...(ctx.publicCredentials ? [] : [ui.text('Add or update one with the email account form above, choosing "Me (personal)". It is used only for your own requests.')]));
   }
   body.push(ui.heading('Cloud MCP'));
   if (!ctx.userIsAdmin) { body.push(ui.text('Only administrators can manage Cloud MCP.')); return { body, actions }; }
@@ -214,11 +241,41 @@ export async function handleCatalogAction(action, data, ctx, _ui) {
     }
     return true;
   }
-  const known = ['settings.variable.save', 'settings.variable.remove', 'settings.connections.save', 'settings.connections.remove', 'settings.connections.fallback', 'settings.personal.save', 'settings.personal.remove', 'settings.cloud.toggle', 'settings.skills.toggle', 'settings.template'];
+  const known = ['settings.variable.save', 'settings.variable.remove', 'settings.connections.save', 'settings.connections.remove', 'settings.connections.fallback', 'settings.personal.save', 'settings.personal.remove', 'settings.email.save', 'settings.email.remove', 'settings.cloud.toggle', 'settings.skills.toggle', 'settings.template'];
   if (!known.includes(action)) return false;
   const current = await fresh(ctx);
-  if (ctx.publicCredentials && ['settings.variable.save', 'settings.connections.save', 'settings.personal.save'].includes(action)) {
+  if (ctx.publicCredentials && ['settings.variable.save', 'settings.connections.save', 'settings.personal.save', 'settings.email.save'].includes(action)) {
     throw new Error('Submit credentials only through your private browser settings.');
+  }
+  if (action === 'settings.email.save' || action === 'settings.email.remove') {
+    const scope = data.emailScope;
+    if (!EMAIL_SCOPES.includes(scope)) throw new Error('Choose whether the email account belongs to this conversation or to you.');
+    if (scope === 'personal' && (current.isShared || !current.ownerId)) throw new Error('Personal email accounts require your authenticated settings window.');
+    // A conversation's account reads and sends mail for every run here: a manager's call, as in
+    // Slack's Settings (re-read from the fresh roles, never from the card).
+    if (scope === 'channel' && !canManage(current.meta, { authorId: current.ownerId, isAdminUser: current.userIsAdmin, isApprovedUser: current.userIsApproved })) {
+      throw new Error("Only this conversation's managers or an admin can change its email accounts.");
+    }
+    if (action === 'settings.email.remove') {
+      const name = normalizeEmailAccountName(data.name);
+      if (scope === 'personal') await removeUserEmailAccount(current.ownerId, name, { actor: current.ownerId });
+      else await removeChannelEmailAccount(current.entry.slug, name, { actor: current.ownerId });
+      // The store writes the audit row; this line only records which surface the change came from.
+      await record(current, 'email_account_settings_changed', { scope, name, change: 'removed', via: current.source });
+      ctx.state.tab = 'mcp'; ctx.state.notice = `Email account "${name}" removed.`;
+      return true;
+    }
+    // Passwords are passed untrimmed and never copied anywhere else; the store verifies both
+    // logins (slow) and re-authorizes through `fresh` before it writes.
+    const input = Object.fromEntries(EMAIL_ACCOUNT_FIELDS.map(key => [key, typeof data[key] === 'string' ? data[key] : '']));
+    const options = { actor: current.ownerId, authorize: () => fresh(ctx) };
+    if (scope === 'personal') await saveUserEmailAccount(current.ownerId, input, options);
+    else await saveChannelEmailAccount(current.entry.slug, input, options);
+    const name = normalizeEmailAccountName(input.name);
+    await record(current, 'email_account_settings_changed', { scope, name, change: 'set', via: current.source });
+    ctx.state.emailScope = scope;
+    ctx.state.tab = 'mcp'; ctx.state.notice = `Email account "${name}" connected — IMAP and SMTP logins verified.`;
+    return true;
   }
   if (action.startsWith('settings.personal.')) {
     if (current.isShared || !current.ownerId) throw new Error('Personal connections require your authenticated settings window.');
