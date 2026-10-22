@@ -57,7 +57,7 @@ function egressLines(names, { scopes = {}, placeholders = {}, hosts = {}, unprot
   if (personalPaused && personal.length) lines.push(`Personal secrets are PAUSED right now: another person's turn, background job or SSH session is active in this conversation's container, so the egress proxy refuses to use ${JSON.stringify(personal)} (403 "another-author-active" or "another-person-ssh-session") until it ends. Do not retry or substitute another credential; tell the author, or use a conversation/organization credential they approve.`);
   const raw = unprotected.filter((name) => names.includes(name));
   if (raw.length) lines.push(`Readable (the RAW value is in the environment, because it is used outside an HTTPS request — a password, connection string or signing key — or an admin marked it readable): ${JSON.stringify(raw)}. Never print or send it anywhere it does not belong.`);
-  if (withheld.length) lines.push(`Withheld by the gateway's strict egress setting (no egress rule, so not injected at all): ${JSON.stringify([...withheld].sort())}. Ask an admin to declare "used on hosts" for them if this task needs them.`);
+  if (withheld.length) lines.push(`Withheld by the gateway's strict egress setting (no egress rule or explicit readable choice, so not injected at all): ${JSON.stringify([...withheld].sort())}. Ask an admin to declare "used on hosts" for HTTPS use, or explicitly mark the secret readable with the required approval if this task needs its raw value.`);
   return lines;
 }
 

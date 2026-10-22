@@ -101,13 +101,47 @@ test("list_secrets reports the remaining raw (unruled) secrets as a FINDING, wor
   assert.match(strict, /\*\*Finding:\*\* 1 secret is READABLE — `CHAN_DB_PASSWORD`: WITHHELD from containers \(strict mode\)\./);
   assert.doesNotMatch(strict.match(/\*\*Finding:\*\*[^\n]*/)[0], /GITHUB_TOKEN|CHAN_TOKEN/, "a ruled or hidden secret is not a finding");
   assert.match(strict, /`CHAN_TOKEN`[^\n]*hidden \(placeholder\); approved servers: none yet/);
-  assert.match(strict, /an unprotected one is withheld \(strict mode\)/);
+  assert.match(strict, /`CHAN_DB_PASSWORD`[^\n]*readable \(withheld by strict mode\)/);
+  assert.match(strict, /an automatically readable one is withheld \(strict mode\), while an explicitly readable one is injected raw/);
   saveSettings({ containerEgressSecretsStrict: false });
   const raw = await reply(toolsFor(DEV), "list_secrets", { scope: "channel" });
   assert.match(raw, /\*\*Finding:\*\* 1 secret is READABLE — `CHAN_DB_PASSWORD`: injected RAW into containers\./);
+  assert.match(raw, /`CHAN_DB_PASSWORD`[^\n]*readable \(raw\)/);
   assert.equal(unruledFinding([], { strict: true }), "", "nothing unruled, no finding");
   await scoped.patchUserEnv(DEV, { remove: "GITHUB_TOKEN" });
   saveSettings({ containerEgressSecretsStrict: true });
+});
+
+test("list_secrets distinguishes explicit readable from automatic withholding and uses the winning scope", async () => {
+  const { saveSettings } = await import("../src/config/settings.js");
+  saveSettings({ containerEgressSecretsStrict: true, containerEgressMode: "proxy" });
+  await scoped.patchUserEnv(DEV, { set: { name: "CLI_API_KEY", value: "fixture-cli-value-123456", exposure: "readable" } });
+  try {
+    const listed = await reply(toolsFor(DEV), "list_secrets");
+    assert.match(listed, /\*\*Explicit readable:\*\* `CLI_API_KEY`: injected RAW into containers \(explicit readable choice, including in strict mode\)/);
+    assert.doesNotMatch(listed.match(/\*\*Finding:\*\*[^\n]*/)[0], /CLI_API_KEY/);
+    assert.doesNotMatch(listed, /fixture-cli-value-123456/);
+    const explicitOnly = await reply(toolsFor(DEV), "list_secrets", { scope: "personal" });
+    assert.match(explicitOnly, /\*\*Explicit readable:\*\*/);
+    assert.doesNotMatch(explicitOnly, /\*\*Finding:\*\*/);
+    // An explicit lower-scope entry cannot opt the automatic conversation entry into raw access.
+    scoped.patchOrgEnv({ set: { name: "CHAN_DB_PASSWORD", value: "fixture-org-password-1", exposure: "readable" } });
+    const shadowed = await reply(toolsFor(DEV), "list_secrets");
+    assert.match(shadowed, /\*\*Finding:\*\* 1 secret is READABLE — `CHAN_DB_PASSWORD`: WITHHELD/);
+    assert.doesNotMatch(shadowed.match(/\*\*Explicit readable:\*\*[^\n]*/)[0], /CHAN_DB_PASSWORD/);
+    // A higher-scope hidden entry likewise removes a lower-scope readable finding.
+    await scoped.patchUserEnv(DEV, { set: { name: "CHAN_TOKEN", value: "fixture-user-token-001", exposure: "readable" } });
+    const hidden = await reply(toolsFor(DEV), "list_secrets");
+    assert.doesNotMatch(hidden.match(/\*\*Explicit readable:\*\*[^\n]*/)[0], /CHAN_TOKEN/);
+    await reply(toolsFor(DEV), "set_secret_mode", { name: "CLI_API_KEY", mode: "auto" });
+    const auto = await reply(toolsFor(DEV), "list_secrets", { scope: "personal" });
+    assert.match(auto, /`CLI_API_KEY`[^\n]*hidden \(placeholder\)/);
+    assert.doesNotMatch(auto.match(/\*\*Explicit readable:\*\*[^\n]*/)?.[0] || "", /CLI_API_KEY/);
+  } finally {
+    await scoped.patchUserEnv(DEV, { remove: "CLI_API_KEY" });
+    await scoped.patchUserEnv(DEV, { remove: "CHAN_TOKEN" });
+    scoped.patchOrgEnv({ remove: "CHAN_DB_PASSWORD" });
+  }
 });
 
 test("strict is the default when nothing is stored; the boot pin keeps an existing install off and makes a new one strict", async () => {

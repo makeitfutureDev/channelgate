@@ -316,3 +316,80 @@ test("the relay grant resolves the live relay token, cached for a minute", async
 });
 
 test.after(() => setEgressProvider(null));
+
+for (const scope of ["organization", "personal", "channel"]) {
+  test(`strict mode honors explicit readable in ${scope}, and revokes it on hidden/auto`, async () => {
+    const stored = {
+      CLI_API_KEY: { provider: "local", value: "fixture-cli-key-0000001", exposure: "readable", approvedHosts: ["api.example.com"] },
+      GITHUB_TOKEN: { provider: "local", value: "fixture-github-key-0001", exposure: "readable", hosts: ["api.example.com"] },
+      AUTO_DB_PASSWORD: { provider: "local", value: "fixture-db-password-01" },
+      HIDDEN_DB_PASSWORD: { provider: "local", value: "fixture-hidden-pass-01", exposure: "hidden" },
+      HIDDEN_API_KEY: { provider: "local", value: "fixture-hidden-key-001", exposure: "hidden" },
+    };
+    const entries = { organization: {}, personal: {}, channel: {}, [scope]: stored };
+    const values = (tier) => Object.fromEntries(Object.entries(entries[tier]).map(([name, entry]) => [name, entry.value]));
+    const deps = {
+      resolveOrgEnv: () => values("organization"), orgEntries: () => entries.organization,
+      resolveUserEnv: (_id, { untrustedPrincipal }) => untrustedPrincipal ? {} : values("personal"), userEntries: () => entries.personal,
+      resolveChannelEnv: () => values("channel"),
+    };
+    const run = (options = {}) => grants.resolveEgressRunEnv({
+      channelId: "C_EXPLICIT_READABLE", authorId: ALICE,
+      meta: { env: entries.channel }, target: activeTarget("C_EXPLICIT_READABLE", { strict: true }), deps, ...options,
+    });
+    const out = await run();
+    for (const name of ["CLI_API_KEY", "GITHUB_TOKEN"]) {
+      assert.equal(out.env[name], stored[name].value, "an explicit choice wins over approved, declared and catalog hosts");
+      assert.equal(out.scopes[name], scope);
+      assert.equal(out.placeholders[name], undefined);
+    }
+    assert.deepEqual(out.unprotected, ["CLI_API_KEY", "GITHUB_TOKEN"]);
+    assert.deepEqual(out.withheld, ["AUTO_DB_PASSWORD", "HIDDEN_DB_PASSWORD"], "password inference, including a hidden choice, never opts into raw injection");
+    assert.match(out.env.HIDDEN_API_KEY, /^cgph_/);
+    for (const entry of Object.values(stored)) assert.ok(out.realValues.includes(entry.value), "all raw and withheld values still reach the redactor");
+
+    // A fresh spawn applies the new choice; existing processes retain their old environment.
+    stored.CLI_API_KEY.exposure = "hidden";
+    const hidden = await run();
+    assert.match(hidden.env.CLI_API_KEY, /^cgph_/);
+    assert.deepEqual(hidden.hosts.CLI_API_KEY, ["api.example.com"]);
+    stored.CLI_API_KEY.exposure = "auto";
+    stored.GITHUB_TOKEN.exposure = "hidden";
+    const auto = await run();
+    assert.match(auto.env.CLI_API_KEY, /^cgph_/);
+    assert.match(auto.env.GITHUB_TOKEN, /^cgph_/);
+    assert.deepEqual(auto.unprotected, []);
+    if (scope === "personal") {
+      stored.CLI_API_KEY.exposure = "readable";
+      const untrusted = await run({ untrustedPrincipal: true });
+      assert.deepEqual(untrusted.env, {}, "the exception never grants personal credentials to an untrusted principal");
+    }
+  });
+}
+
+test("strict readable permission belongs to the winning scope, never a shadowed entry", async () => {
+  const entries = {
+    organization: { SHARED_DB_PASSWORD: { exposure: "readable", value: "fixture-org-password-1" } },
+    personal: { SHARED_DB_PASSWORD: { exposure: "readable", value: "fixture-user-password1" } },
+    channel: { SHARED_DB_PASSWORD: { value: "fixture-channel-pass-1" } },
+  };
+  const run = () => grants.resolveEgressRunEnv({
+    channelId: "C_READABLE_COLLISION", authorId: ALICE, meta: { env: entries.channel },
+    target: activeTarget("C_READABLE_COLLISION", { strict: true }),
+    deps: {
+      resolveOrgEnv: () => ({ SHARED_DB_PASSWORD: entries.organization.SHARED_DB_PASSWORD.value }), orgEntries: () => entries.organization,
+      resolveUserEnv: () => ({ SHARED_DB_PASSWORD: entries.personal.SHARED_DB_PASSWORD.value }), userEntries: () => entries.personal,
+      resolveChannelEnv: () => ({ SHARED_DB_PASSWORD: entries.channel.SHARED_DB_PASSWORD.value }),
+    },
+  });
+  const withheld = await run();
+  assert.deepEqual(withheld.env, {});
+  assert.deepEqual(withheld.withheld, ["SHARED_DB_PASSWORD"]);
+  entries.channel.SHARED_DB_PASSWORD.exposure = "readable";
+  const readable = await run();
+  assert.equal(readable.env.SHARED_DB_PASSWORD, entries.channel.SHARED_DB_PASSWORD.value);
+  assert.equal(readable.scopes.SHARED_DB_PASSWORD, "channel");
+  assert.deepEqual(readable.withheld, []);
+  delete entries.channel.SHARED_DB_PASSWORD.exposure;
+  assert.deepEqual((await run()).withheld, ["SHARED_DB_PASSWORD"], "returning a password to auto restores withholding");
+});
