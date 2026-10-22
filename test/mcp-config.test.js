@@ -24,6 +24,16 @@ const withIdentity = (options = {}) => ({
 });
 const buildMcpConfig = (options = {}) => buildRawMcpConfig(withIdentity(options));
 
+test("scheduled form routing survives MCP assembly for both engines", async () => {
+  for (const engine of ["claude", "codex"]) {
+    const config = JSON.parse(await buildMcpConfig({ engine, origin: "schedule", threadKey: "sched-per-fire", questionThreadKey: "123.456", sudoSchedule: true }));
+    const { claims } = verifyGatewayCapability(config.mcpServers.gateway.env.CG_GATEWAY_CAPABILITY, { secret: process.env.CG_APPROVAL_SECRET });
+    assert.equal(claims.threadKey, "sched-per-fire");
+    assert.equal(claims.questionThreadKey, "123.456");
+    assert.equal(claims.sudoSchedule, true);
+  }
+});
+
 test("Claude MCP config exposes personal and agent Composio with separate credentials", async () => {
   const config = JSON.parse(await buildMcpConfig({
     composioUserToken: "ck_user_secret",

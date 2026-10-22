@@ -1,4 +1,5 @@
-// Direct host runtime, reachable only through an admin-authenticated thread `/sudo` decision.
+// Direct host runtime, reachable only through an authorized sudo thread, explicit task schedule,
+// or submitted form continuing that schedule; current admin rank is rechecked before execution.
 // The engine is a child of the daemon account: there is no container filesystem or process
 // boundary, and the backend intentionally preserves the host cwd, HOME, PATH and process tree.
 import { spawn } from "node:child_process";

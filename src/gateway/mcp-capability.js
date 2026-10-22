@@ -39,7 +39,7 @@ function validRemoteMcps(claims) {
     claims.remoteMcps.every(validRemoteMcpName) && new Set(claims.remoteMcps).size === claims.remoteMcps.length;
 }
 
-export function mintGatewayCapability({ secret, channelId, slug, authorId, threadKey, origin, engine, principalTrusted = true, toolset = "", progressReport = false, composioSessions = [], remoteMcps = undefined, jti = undefined, now = Date.now(), ttlMs = DEFAULT_TTL_MS } = {}) {
+export function mintGatewayCapability({ secret, channelId, slug, authorId, threadKey, questionThreadKey, sudoSchedule = false, origin, engine, principalTrusted = true, toolset = "", progressReport = false, composioSessions = [], remoteMcps = undefined, jti = undefined, now = Date.now(), ttlMs = DEFAULT_TTL_MS } = {}) {
   if (!secret || !channelId || !slug || !authorId || !threadKey || !ORIGINS.has(origin)) {
     throw new Error("Cannot mint gateway capability without a complete run identity");
   }
@@ -54,6 +54,8 @@ export function mintGatewayCapability({ secret, channelId, slug, authorId, threa
     slug,
     authorId,
     threadKey,
+    ...(questionThreadKey !== undefined ? { questionThreadKey } : {}),
+    ...(sudoSchedule === true ? { sudoSchedule: true } : {}),
     origin,
     engine: String(engine || ""),
     principalTrusted: principalTrusted === true,
@@ -67,6 +69,7 @@ export function mintGatewayCapability({ secret, channelId, slug, authorId, threa
     jti: jti || randomUUID(),
   };
   if (!validComposioGrants(claims)) throw new Error("Invalid Composio session grants");
+  if (!validQuestionRouting(claims)) throw new Error("Invalid question routing claims");
   if (!validRemoteMcps(claims)) throw new Error("Invalid remote MCP grants");
   const payload = encode(JSON.stringify(claims));
   return `${payload}.${sign(payload, secret)}`;
@@ -78,6 +81,14 @@ function validComposioGrants(claims) {
     claims.composioSessions.every((grant) => grant && typeof grant.url === "string" &&
       grant.url.length <= 2048 && ["user", "channel"].includes(grant.kind) &&
       (grant.kind !== "user" || claims.principalTrusted === true));
+}
+
+// A schedule's native reply address is separate from its per-fire engine session. Both are
+// daemon-signed; a tool's input cannot select another thread or assert host execution.
+function validQuestionRouting(claims) {
+  return (claims.questionThreadKey === undefined || (typeof claims.questionThreadKey === "string" &&
+    (claims.questionThreadKey === "" || /^\d+\.\d+$/.test(claims.questionThreadKey)))) &&
+    (claims.sudoSchedule === undefined || typeof claims.sudoSchedule === "boolean");
 }
 
 export function verifyGatewayCapability(token, { secret, now = Date.now() } = {}) {
@@ -102,6 +113,7 @@ export function verifyGatewayCapability(token, { secret, now = Date.now() } = {}
     return { ok: false, reason: "incomplete capability claims" };
   }
   if (!validComposioGrants(claims)) return { ok: false, reason: "invalid Composio session grants" };
+  if (!validQuestionRouting(claims)) return { ok: false, reason: "invalid question routing claims" };
   // Optional claims (see mint): validate the SHAPE when present so a tampered payload can't smuggle
   // an object/array into the tool-surface decision, but never require them — an older token that
   // omits both is still a valid grant, and the reader falls back to its environment.

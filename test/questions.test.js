@@ -81,7 +81,7 @@ test("failed continuation persistence rolls back submission, and cancellation is
   assert.equal(store.acceptQuestionSubmission(record.id, record.revision, "after-stop", ctx), false);
 });
 
-test("question tool is available to both engines only for a trusted foreground thread", async () => {
+test("question tool is available to both engines only with trusted Slack question routing", async () => {
   const base = { origin: "slack_foreground", principalTrusted: true, threadKey: "123.456", channelId: "C_THIS", slug: "this", createdBy: "U_THIS", text: (s) => ({ content: [{ type: "text", text: s }] }) };
   for (const activeEngine of ["claude", "codex"]) {
     const calls = [];
@@ -96,6 +96,23 @@ test("question tool is available to both engines only for a trusted foreground t
   for (const override of [{ origin: "schedule" }, { origin: "recovery" }, { origin: "background_agent" }, { principalTrusted: false }, { threadKey: "123.456::agent-1" }]) {
     let registered = false;
     register({ registerTool() { registered = true; } }, { ...base, ...override });
+    assert.equal(registered, false);
+  }
+  for (const activeEngine of ["claude", "codex"]) {
+    for (const questionThreadKey of ["123.456", ""]) {
+      let handler;
+      let posted;
+      register({ registerTool(name, def, fn) { handler = fn; } }, {
+        ...base, activeEngine, origin: "schedule", threadKey: "sched-test-fire", questionThreadKey, sudoSchedule: true,
+      }, { post: async (ctx) => { posted = ctx; return { id: "scheduled-request" }; } });
+      await handler(input());
+      assert.deepEqual(posted, { channelId: base.channelId, slug: base.slug, authorId: base.createdBy,
+        threadKey: questionThreadKey, sessionThreadKey: "sched-test-fire", sourceSudo: true });
+    }
+  }
+  for (const override of [{ principalTrusted: false }, { questionThreadKey: "sched-forged" }, { createdBy: "" }, { origin: "background_agent" }]) {
+    let registered = false;
+    register({ registerTool() { registered = true; } }, { ...base, origin: "schedule", threadKey: "sched-fire", questionThreadKey: "", ...override });
     assert.equal(registered, false);
   }
 });

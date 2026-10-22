@@ -42,7 +42,7 @@ export async function postQuestions(context, input, { client = questionSlackClie
       await refreshQuestionCard(record, client);
       return record;
     }
-    const result = await client.chat.postMessage({ channel: record.channelId, thread_ts: record.threadKey, client_msg_id: record.id, ...buildQuestionCard(record) });
+    const result = await client.chat.postMessage({ channel: record.channelId, thread_ts: record.threadKey || undefined, client_msg_id: record.id, ...buildQuestionCard(record) });
     if (!result.ts) throw new Error("Slack did not return the question card's message timestamp. Retry with the same questions.");
     // Stop/clear may have cancelled the request while Slack was posting it. Retire that late card.
     record = bindQuestionMessage(record.id, result.ts);

@@ -10,6 +10,8 @@ import {
   isAdmin,
 } from "../config/store.js";
 import { ensureChannelFolder, operatorHomeDirectories } from "./folders.js";
+import { getQuestion } from "./questions.js";
+import { acquireKeyedLock } from "../util/keyed-lock.js";
 import { memorySnapshotPrefix } from "./channel-memory.js";
 import { recordUsage } from "./usage.js";
 import { createSkillUsageRecorder } from "./skills/usage.js";
@@ -30,6 +32,8 @@ import { getPerplexityResearchConfig } from "../config/settings.js";
 import { resolveRuntime } from "../runtimes/resolve.js";
 import { newRunId, runtimeSupports } from "../runtimes/contract.js";
 import { getThreadEngine, getThreadClean, getThreadModel, getThreadEffort, getThreadSudo } from "./thread-engine.js";
+import { authorizedSudoSchedule } from "./schedule-sudo.js";
+import { hasSudoRuntimeAuthority } from "../runtimes/sudo-authority.js";
 import { PROFILE_FLAGS, normalizeModeMeta, authorModeMeta, sudoModeMeta, isApiPrincipal } from "./modes.js";
 import { networkEnforcedFor } from "../engines/network-policy.js";
 import { containerClaudeCredential, resolveEgressRunEnv } from "./egress/grants.js";
@@ -627,16 +631,18 @@ export { RUN_ORIGINS };
 // set gains a platform when that platform gains an approval UI — never before.
 const ESCALATABLE_ORIGINS = new Set(["slack_foreground", "api_foreground"]);
 
-// Escalation (--dangerously-skip-permissions + the bypass-allowing settings variant) requires an
-// escalatable origin AND an adminMode channel AND an admin author — and is refused regardless for
+// Escalation (--dangerously-skip-permissions + the bypass-allowing settings variant) requires a
+// foreground origin (or separately validated explicit sudo schedule), adminMode and an admin
+// author. An ordinary unattended run never gains bypass from a stored sudoMode field. Refused for
 // untrustedPrincipal: we never authenticated the author's rank. Slack does that for us; the HTTP
 // run API authenticates its admin KEY, which ranks as the API principal, never as the `author` the
 // request body names.
 //
 // Refused runs still work — they use the folder's permission allowlist like every other run.
 // Unknown/missing origin fails closed here as a second layer even though runMessage already threw.
-export function mayEscalate({ meta = {}, isAdminAuthor = false, untrustedPrincipal = false, origin = "" } = {}) {
-  return ESCALATABLE_ORIGINS.has(origin) && Boolean(meta.adminMode) && Boolean(isAdminAuthor) && !untrustedPrincipal;
+export function mayEscalate({ meta = {}, isAdminAuthor = false, untrustedPrincipal = false, origin = "", sudoSchedule = false } = {}) {
+  const eligibleOrigin = ESCALATABLE_ORIGINS.has(origin) || (origin === "schedule" && sudoSchedule && hasSudoRuntimeAuthority(meta));
+  return eligibleOrigin && Boolean(meta.adminMode) && Boolean(isAdminAuthor) && !untrustedPrincipal;
 }
 
 // Admin outranks auto. A run that may NOT escalate (any daemon origin, or a foreground turn that
@@ -660,7 +666,31 @@ function assertRuntimeCanStart() {
   }
 }
 
-export async function runMessage({ channelId, authorId, workspaceId = "", text, threadKey, attachments = [], signal = null, onDelta, onEvent, onRuntimeResolved, onForkSessionResolved, sessionId: presetSessionId = "", forkSourceSessionId = "", overrides = null, getFallbackContext = null, preferCold = false, progressReport = false, untrustedPrincipal = false, origin = "", fallbackPolicy = "", sudoSourceThreadKey = "" }) {
+// Forms from schedules display in a Slack thread but resume the original per-fire session.
+// Serialize the source run and its answers, including restart recovery, before resolving state.
+export async function runMessage(args) {
+  let question = null;
+  if (args.questionSubmissionId) {
+    question = getQuestion(args.questionSubmissionId);
+    if (!question || !(question.status === "submitted" || (question.status === "cancelled" && question.answeredInThread)) || question.authorId !== args.authorId ||
+      question.channelId !== args.channelId || question.threadKey !== args.threadKey ||
+      args.untrustedPrincipal || isApiPrincipal(args.authorId) ||
+      question.slug !== (await getChannelEntry(args.channelId))?.slug) {
+      throw new Error("Question continuation identity mismatch.");
+    }
+  }
+  const sessionKey = question?.sessionThreadKey || args.threadKey;
+  const release = args.origin === "schedule" || question?.sessionThreadKey
+    ? await acquireKeyedLock("scheduled-question-session", `${args.channelId}:${sessionKey}`, { signal: args.signal })
+    : null;
+  try {
+    if (question?.sessionThreadKey) await args.verifyQuestionAccess?.();
+    return await runMessageImpl({ ...args, threadKey: sessionKey,
+      ...(question?.sessionThreadKey ? { questionThreadKey: question.threadKey, scheduledQuestion: question } : {}) });
+  } finally { release?.(); }
+}
+
+async function runMessageImpl({ channelId, authorId, workspaceId = "", text, threadKey, attachments = [], signal = null, onDelta, onEvent, onRuntimeResolved, onForkSessionResolved, sessionId: presetSessionId = "", forkSourceSessionId = "", overrides = null, getFallbackContext = null, preferCold = false, progressReport = false, untrustedPrincipal = false, origin = "", fallbackPolicy = "", sudoSourceThreadKey = "", sudoScheduleId = "", questionThreadKey, scheduledQuestion = null }) {
   // Fail closed before anything else: a run with no declared origin is a programming error, not a
   // default-to-interactive.
   if (!RUN_ORIGINS.includes(origin)) throw new Error(`runMessage requires a valid origin (got ${JSON.stringify(origin)}); one of: ${RUN_ORIGINS.join(", ")}`);
@@ -731,7 +761,9 @@ export async function runMessage({ channelId, authorId, workspaceId = "", text, 
   // thread's flag through sudoSourceThreadKey, but the same author check applies.
   const sudoKey = sudoSourceThreadKey || threadKey;
   const sudoThread = Boolean(sudoKey && await getThreadSudo(entry.slug, sudoKey));
-  if (sudoThread && trustedAdminAuthor) meta = sudoModeMeta(meta);
+  const sudoSchedule = Boolean(sudoScheduleId && await authorizedSudoSchedule({ id: sudoScheduleId, channelId, authorId, origin, untrustedPrincipal }));
+  const sudoQuestion = scheduledQuestion?.sourceSudo === true;
+  if ((sudoThread || sudoSchedule || sudoQuestion) && trustedAdminAuthor) meta = sudoModeMeta(meta);
 
   // Engine: an explicit per-run API override is the most specific ask and beats everything
   // (matching the model/effort override precedence below); otherwise the per-thread override (a
@@ -755,18 +787,20 @@ export async function runMessage({ channelId, authorId, workspaceId = "", text, 
   // A sudo thread is admin-only even if the channel itself admits this author. Return a normal
   // result instead of throwing: unattended delivery and non-Slack surfaces can present the same
   // explicit denial without starting diagnosis or provisioning any runtime state.
-  if (sudoThread && !trustedAdminAuthor) {
-    await logEvent("sudo_thread_message_rejected", {
+  if ((sudoThread && !trustedAdminAuthor) || (sudoScheduleId && !sudoSchedule) || (sudoQuestion && !trustedAdminAuthor)) {
+    await logEvent(sudoScheduleId ? "schedule_sudo_rejected" : "sudo_thread_message_rejected", {
       channel: channelId, slug: entry.slug, author: authorId, threadKey: sudoKey, origin,
+      ...(sudoScheduleId ? { scheduleId: sudoScheduleId } : {}),
     });
     return {
       slug: entry.slug,
       cwd: "",
       model: "",
       engine,
-      content: "⛔ This is a sudo thread. Only organization admins can send messages or run work here.",
+      content: sudoScheduleId ? "⛔ This sudo schedule is no longer authorized. Its creator must still be an organization admin and the task must remain enabled with sudo selected." : "⛔ This is a sudo thread. Only organization admins can send messages or run work here.",
       accessRefused: true,
-      sudoThread: true,
+      sudoThread,
+      sudoSchedule: Boolean(sudoScheduleId),
       sessionId: null,
       isNew: false,
       usage: {},
@@ -1176,6 +1210,7 @@ export async function runMessage({ channelId, authorId, workspaceId = "", text, 
     composioUserEndpoint, composioEndpoint, composioUserToken, composioToken,
     toolboxToken, makeToolboxUrl, makeToolboxKey, customMcps,
     channelId, slug: entry.slug, authorId, threadKey, origin,
+    questionThreadKey, sudoSchedule: sudoSchedule || sudoQuestion,
     progressReport: progressReportEnabled,
     principalTrusted: !untrustedPrincipal,
     gatewayFsRoot, gatewayWorkspaceRoot,
@@ -1234,13 +1269,13 @@ export async function runMessage({ channelId, authorId, workspaceId = "", text, 
   // even when the channel selects optional servers; Clean supplies an empty payload.
   const strictMcp = true;
 
-  const dangerouslySkip = mayEscalate({ meta, isAdminAuthor: authorIsAdmin, untrustedPrincipal: rankUntrusted, origin });
+  const dangerouslySkip = mayEscalate({ meta, isAdminAuthor: authorIsAdmin, untrustedPrincipal: rankUntrusted, origin, sudoSchedule });
   // Admin outranks auto: a non-escalated run whose STORED author is an admin in an adminMode
   // channel runs at the AUTO tier (writable work folder, auto-approved permission prompts)
   // instead of the read floor. This covers every daemon origin — background agents, their
   // continuations, schedules, recovery — which used to complete read-only in admin channels and
-  // silently do nothing. A2 stands: these runs still NEVER get the permission bypass; the
-  // unattended ceiling is auto, and only for the admin who authored the persisted prompt.
+  // silently do nothing. Ordinary unattended work remains capped at auto; an explicitly approved
+  // sudo task is the separately validated exception and already has dangerouslySkip above.
   const adminUnattended = adminUnattendedTier({ meta, isAdminAuthor: authorIsAdmin, untrustedPrincipal: rankUntrusted, dangerouslySkip });
   if (adminUnattended) meta = { ...meta, autoMode: true };
   // The bypass allowance rides per-spawn: only an escalated run gets the settings variant that
@@ -1319,6 +1354,7 @@ export async function runMessage({ channelId, authorId, workspaceId = "", text, 
     clean,
     adminMode: Boolean(meta.adminMode),
     sudoThread,
+    sudoSchedule,
     autoMode: Boolean(meta.autoMode),
     allowBash: Boolean(meta.allowBash),
     allowNetwork: Boolean(meta.allowNetwork),
@@ -1439,8 +1475,17 @@ export async function runMessage({ channelId, authorId, workspaceId = "", text, 
       .then(() => { if (forkSourceSessionId) onForkSessionResolved?.(id); })
       .catch((error) => console.warn(`[gateway] could not persist announced session: ${error.message}`));
   };
+  // A task can wait for a run slot or retry on another engine after its initial admission.
+  // Revocation during that wait must win before a cached host target starts a new process.
+  const assertScheduledSudoAuthority = async () => {
+    if (sudoSchedule && !(await authorizedSudoSchedule({ id: sudoScheduleId, channelId, authorId, origin, untrustedPrincipal }))) {
+      throw new Error("Sudo task authorization was revoked before the engine could start.");
+    }
+    if (sudoQuestion && !(await isAdmin(authorId))) throw new Error("Sudo task authorization was revoked before the engine could start.");
+  };
   const runOnce = async (sid, fresh, promptOverride = null, modelOverride = model) => {
     assertRuntimeCanStart();
+    await assertScheduledSudoAuthority();
     // The runtime facts belong to THIS attempt, including a model retry or session heal. Keep
     // them per-prompt even in clean mode: they expose no memory, optional skills or connectors.
     const prompt = (fresh && !forkSourceSessionId ? memoryPrefix : "") + composioIdentityPrefix + channelCredentialsPrefix
@@ -1682,6 +1727,7 @@ export async function runMessage({ channelId, authorId, workspaceId = "", text, 
     if (fbMcpDropNote) announceAnswerNote(fbMcpDropNote);
     const exec = async (fbSid, fbFresh, modelOverride = fallbackModel) => {
       assertRuntimeCanStart();
+      await assertScheduledSudoAuthority();
       return fallbackAdapter.run(validateRunContext({
         principal: { kind: untrustedPrincipal ? "daemon" : PRINCIPAL_KIND_BY_ORIGIN[origin] || "daemon", id: authorId }, origin, cwd,
         prompt: (fbFresh ? memoryPrefix : "") + composioIdentityPrefix + channelCredentialsPrefix

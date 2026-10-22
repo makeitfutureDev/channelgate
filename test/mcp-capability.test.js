@@ -32,6 +32,22 @@ test("gateway capability carries untrusted API provenance as signed authority st
   assert.equal(verified.claims.principalTrusted, false);
 });
 
+test("scheduled question destinations and sudo source are signed, bounded optional facts", () => {
+  for (const questionThreadKey of ["", "123.456"]) {
+    const token = mintGatewayCapability({ ...identity, origin: "schedule", threadKey: "sched-fire", questionThreadKey, sudoSchedule: true });
+    const verified = verifyGatewayCapability(token, { secret });
+    assert.equal(verified.ok, true);
+    assert.equal(verified.claims.questionThreadKey, questionThreadKey);
+    assert.equal(verified.claims.sudoSchedule, true);
+    for (const extra of [{ questionThreadKey: "sched-forged" }, { questionThreadKey: {} }, { sudoSchedule: "yes" }]) {
+      const payload = Buffer.from(JSON.stringify({ ...verified.claims, ...extra })).toString("base64url");
+      const malformed = `${payload}.${createHmac("sha256", secret).update(payload).digest("base64url")}`;
+      assert.equal(verifyGatewayCapability(malformed, { secret }).ok, false);
+    }
+  }
+  assert.throws(() => mintGatewayCapability({ ...identity, questionThreadKey: "not-a-slack-ts" }), /routing/);
+});
+
 test("gateway capability fails closed when tampered, expired, incomplete, or signed elsewhere", () => {
   const token = mintGatewayCapability({ ...identity, now: 1_000, ttlMs: 5_000 });
   const [payload, signature] = token.split(".");

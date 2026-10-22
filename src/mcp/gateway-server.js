@@ -20,6 +20,7 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { getChannelMeta, isAdmin, isApproved } from "../config/store.js";
+import { listForChannel } from "../config/schedules.js";
 import { API_PRINCIPAL, canManage, isApiPrincipal, isAuthorized } from "../gateway/modes.js";
 import { getEngine as getDefaultEngine } from "../config/settings.js";
 import { gatewayRoot } from "../config/paths.js";
@@ -178,6 +179,8 @@ export function ctxFromClaims(claims = {}, { engine = "", toolset = "", progress
     slug,
     createdBy,
     threadKey,
+    questionThreadKey: claims.questionThreadKey,
+    sudoSchedule: claims.sudoSchedule === true,
     origin,
     activeEngine,
     principalTrusted,
@@ -212,13 +215,15 @@ export function ctxFromClaims(claims = {}, { engine = "", toolset = "", progress
 // writes that land visibly in the current thread (charts, tables, snippets, lists) stay un-gated.
 // Channel memory is also deliberately un-gated in every workdir: it is a routine, bounded write to
 // MEMORY.md / memory/<topic>.md with its own signed-principal, path, action, and budget checks.
-// Schedules (`create_schedule` / `update_schedule` / `delete_schedule`) are un-gated too — operator decision
+// Ordinary schedules (`create_schedule` / `update_schedule` / `delete_schedule`) are un-gated — operator decision
 // 2026-08-19: "remind me" / "check every hour" is the most ordinary request a Slack channel gets,
 // and stalling every one of them on a click made the feature unusable. A schedule cannot escalate
 // (it fires with origin "schedule" — A2 — in THIS channel, as its creator, no more often than the
 // configured minimum interval), its visibility is configurable and its runs have durable health logs, and list_schedules /
 // delete_schedule make it inspectable and reversible. Accepted residual risk: injected content can
-// create or drop a schedule inside an already-authorized turn.
+// create or drop an ordinary schedule inside an already-authorized turn. Explicit sudo tasks are
+// different: creating them, enabling sudo, or editing a task that remains sudo needs an admin's
+// durable approval because it authorizes future host execution with permission bypass.
 // `update_gateway` has one explicit operator-selected exception: an admin author may start it
 // without the extra click when the channel is already in Auto or Admin mode. `authz` mirrors the
 // handler's own check so an unauthorized caller gets the handler refusal instead of an approval
@@ -286,9 +291,14 @@ export function gateCardTier(gate, args = {}) {
 // A surviving card is DURABLE: the exact call is saved and applied on the click, with no deadline.
 const AUTOMATIC = () => null;
 
-export function buildControlPlane({ loadMeta, createdBy, principalTrusted }) {
+export function buildControlPlane({ loadMeta, createdBy, principalTrusted, channelId }) {
   const ownSsh = ({ user }) => principalTrusted === true && Boolean(createdBy) && sshRequestTarget(user, createdBy) === createdBy;
+  const sudoEdit = (args = {}) => args.sudo === true || (args.sudo !== false && listForChannel(channelId).some((s) => s.id === args.id && s.sudo === true));
   return new Map([
+    ["create_schedule", { authz: ({ sudo }) => sudo === true ? "admin" : "any", details: ({ sudo, description, prompt }) => sudo === true
+      ? `Create a SUDO schedule that runs directly on the gateway HOST with permission bypass: ${summarize(description || prompt)}.\nTask instructions:\n${String(prompt || "")}` : null }],
+    ["update_schedule", { authz: (args) => sudoEdit(args) || args.sudo !== undefined ? "admin" : "any", tier: "admin", details: (args) => sudoEdit(args)
+      ? `Update SUDO schedule ${summarize(args.id)}; future runs execute directly on the gateway HOST with permission bypass.\nTask instructions:\n${String(args.prompt ?? args.expected_prompt ?? "Read the complete task before approving.")}` : null }],
     // ── Channel settings: automatic for an admin (or the channel's managers), announced in the thread.
     // Admin mode is the one exception: it turns the engine's own permission prompts off for admin
     // authors in this channel, which is the posture every other card relies on — so it keeps its card.

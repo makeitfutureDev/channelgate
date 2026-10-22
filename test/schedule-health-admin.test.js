@@ -41,6 +41,24 @@ test("invalid health controls and missing thread reject the whole edit", async (
   }
 });
 
+test("admin enables sudo only for admin-owned ordinary tasks and can revoke it after demotion", async () => {
+  const schedule = fixture({ createdBy: "U_SUDO_OWNER" });
+  assert.equal((await patch(schedule.id, { sudo: true, description: "Must not save" })).status, 400);
+  assert.equal(getSchedules().find((s) => s.id === schedule.id).description, "");
+  await setUser("U_SUDO_OWNER", { isAdmin: true, approved: true });
+  const response = await patch(schedule.id, { sudo: true });
+  assert.equal(response.status, 200);
+  assert.equal((await response.json()).schedule.sudo, true);
+  assert.equal((await patch(schedule.id, { sudo: "true" })).status, 400);
+  assert.equal((await patch(fixture({ createdBy: "U_SUDO_OWNER", kind: "reminder" }).id, { sudo: true })).status, 400);
+  assert.equal((await patch(fixture({ createdBy: "U_SUDO_OWNER", loop: true }).id, { sudo: true })).status, 400);
+  await setUser("U_SUDO_OWNER", { isAdmin: false });
+  assert.equal((await patch(schedule.id, { prompt: "Replacement" })).status, 400);
+  const reduced = await patch(schedule.id, { sudo: false });
+  assert.equal(reduced.status, 200);
+  assert.equal((await reduced.json()).schedule.sudo, false);
+});
+
 test("reminders reject silent and conditional task policies atomically", async () => {
   const schedule = fixture({ kind: "reminder" });
   for (const fields of [{ executionVisibility: "silent" }, { resultPolicy: "on-result" }, { failureNotify: false }, { delivery: "thread", deliveryThread: "1790355659.378439" }]) {

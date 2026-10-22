@@ -1,7 +1,7 @@
 // resolveRuntime(): the ONE place that builds the RuntimeTarget every backend call receives.
-// Container is the universal default. The only channel-turn exception is `meta.sudoMode`, a
-// transient fact run.js adds after it verifies BOTH the sticky thread flag and the current author's
-// admin status. It is never a stored channel setting or API override.
+// Container is the universal default. Host execution requires process-local sudo authority that
+// run.js mints after checking the author's CURRENT admin rank and an explicit sudo thread, sudo
+// schedule, or submitted form from such a schedule. A stored sudoMode field grants nothing.
 // Clean mode keeps the same backend: the bare clean workspace is mounted next to the workdir.
 // Background jobs, memory-review runs and scheduled runs resolve through here at THEIR OWN spawn
 // time — they outlive the turn that created them.
@@ -14,7 +14,7 @@ import { runtimeArtifactDir } from "./container/names.js";
 import { hasSudoRuntimeAuthority } from "./sudo-authority.js";
 
 // Kept as a function so every caller asks "where does this turn run?" through one door. Stored
-// channel metadata always resolves to the container; only run.js may add the transient sudo fact.
+// channel metadata always resolves to the container; only authorized daemon paths may add proof.
 export function decideRuntimeBackend(meta = {}) {
   return hasSudoRuntimeAuthority(meta)
     ? { backend: "host", reason: "thread-sudo" }

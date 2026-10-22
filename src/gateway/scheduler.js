@@ -16,6 +16,9 @@ import { normalizeUsage, createUsageBank } from "./usage.js";
 import { deliverResult, postNoticeWithMenu } from "../slack/deliver.js";
 import { runQueue } from "../slack/message-lifecycle.js";
 import { postNotice, postDirectMessage, automationTarget } from "../platforms/notify.js";
+import { platformSupports } from "../platforms/registry.js";
+import { platformOfConversation } from "../platforms/ids.js";
+import { isSlackTs } from "../slack/thread-keys.js";
 
 const MAX_CONCURRENT_SCHED = 5; // most schedules allowed to run at once (runaway fan-out backstop)
 // How many times a one-time schedule may actually EXECUTE before we stop retrying it. Only a real
@@ -296,9 +299,9 @@ export async function runSchedule(sched, { runner: runMessage = defaultRunMessag
     }
 
     // 2. Run the saved prompt in the channel's folder, as the schedule's creator (its tokens/mode).
-    // Origin "schedule": nobody is watching this turn, and create_schedule is pre-approved in
-    // every channel — so injected content processed during an admin's turn could have planted this
-    // prompt. It runs under the folder's permission allowlist, never with the sandbox off.
+    // Ordinary schedules retain their unattended permission ceiling. Explicit sudo tasks carry
+    // their ID so run.js can reload the row and check the creator's current admin rank before
+    // selecting host execution; a stored channel sudoMode flag grants nothing.
     // The session key is deliberately synthetic and per-FIRE (scheduleSessionKey) — it is NOT a
     // Slack thread_ts, and it is NOT derived from the delivery thread. Anything that needs to POST
     // into the run's thread (approval cards) takes the announcement's real ts from
@@ -342,6 +345,10 @@ export async function runSchedule(sched, { runner: runMessage = defaultRunMessag
         threadKey: loopTick ? sched.threadTs : scheduleSessionKey(sched),
         signal: loopHandle?.controller.signal ?? null,
         origin: "schedule",
+        ...(platformSupports(platformOfConversation(sched.channelId), "richCards") === "block-kit" &&
+          platformSupports(platformOfConversation(sched.channelId), "modals")
+          ? { questionThreadKey: isSlackTs(threadTs) ? threadTs : "" } : {}),
+        sudoScheduleId: sched.sudo === true ? sched.id : "",
       });
     } finally {
       if (loopTick) runQueue.release(loopRunKey, loopHandle);

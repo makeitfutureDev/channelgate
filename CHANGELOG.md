@@ -18,6 +18,12 @@ product overview.
 
 ## Unreleased
 
+- Scheduled Slack tasks can ask their creator questions using cards and forms. Submitted answers
+  resume the correct scheduled session, including silent and retired one-time tasks.
+- Add explicit admin-only sudo task schedules through MCP and the Automations editor. Each fire
+  rechecks the creator's admin role before running on the gateway host with permission bypass;
+  ordinary schedules continue in their channel container.
+
 - Change Google Chat settings by typing `/settings <option> <value>` (mode, Auto, Lean, network,
   access, managers, VPN, and the thread or channel engine/model/effort). Typed changes use the same
   permission checks as the card buttons and work on a Pub/Sub-connected app, which cannot receive

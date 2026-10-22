@@ -1031,4 +1031,17 @@ export const migrations = [
       `);
     },
   },
+  {
+    // Distinct scheduled fires may display cards under one daily Slack anchor. Keep one pending
+    // request per source session/recipient, while legacy foreground cards stay thread-scoped.
+    version: 35,
+    up(db) {
+      db.exec(`
+        DROP INDEX idx_question_requests_one_pending;
+        CREATE UNIQUE INDEX idx_question_requests_one_pending ON question_requests(
+          channel_id, author_id, COALESCE(NULLIF(json_extract(data, '$.sessionThreadKey'), ''), thread_key)
+        ) WHERE status = 'pending';
+      `);
+    },
+  },
 ];

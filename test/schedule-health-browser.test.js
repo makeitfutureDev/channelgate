@@ -11,7 +11,8 @@ test("automation UI saves reporting controls and exposes silent run logs after d
   const { createAdminRouter } = await import("../src/web/routes/admin.js");
   const { addSchedule, getSchedules } = await import("../src/config/schedules.js");
   const { createScheduleRun, updateScheduleRun, appendScheduleRunEvent } = await import("../src/gateway/schedule-runs.js");
-  const { upsertChannelEntry } = await import("../src/config/store.js");
+  const { upsertChannelEntry, setUser } = await import("../src/config/store.js");
+  await setUser("UTEST", { isAdmin: true, approved: true });
   await upsertChannelEntry("CHEALTHBROWSER", { name: "automation-health-test", type: "channel" });
   const fixture = addSchedule({ channelId: "CHEALTHBROWSER", cron: "0 9 * * *", prompt: "Check email and report the outcome", description: "Inbox health", createdBy: "UTEST", notify: "none" });
   const run = createScheduleRun(fixture);
@@ -38,11 +39,14 @@ test("automation UI saves reporting controls and exposes silent run logs after d
   await page.locator("#schedule-modal-delivery").selectOption("thread");
   await page.locator("#schedule-modal-thread").fill("1790355659.378439");
   await page.locator("#schedule-modal-failure-notify").uncheck();
+  await page.locator("#schedule-modal-sudo").check();
   const saving = page.waitForResponse((r) => r.url().endsWith(`/api/schedules/${fixture.id}`) && r.request().method() === "PUT");
   await page.locator("#schedule-modal-save").click();
   assert.equal((await saving).status(), 200);
   const stored = getSchedules().find((s) => s.id === fixture.id);
   assert.deepEqual([stored.executionVisibility, stored.resultPolicy, stored.delivery, stored.deliveryThread, stored.failureNotify], ["silent", "on-result", "thread", "1790355659.378439", false]);
+  assert.equal(stored.sudo, true);
+  assert.match(await page.locator(".sched-row").innerText(), /sudo · gateway host/i);
   await page.locator(".sched-history").click();
   await page.locator(".schedule-run-row").click();
   await page.locator("#schedule-history-detail h4").first().waitFor();

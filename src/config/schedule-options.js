@@ -4,6 +4,8 @@ import { platformOfConversation } from "../platforms/ids.js";
 // Shared validation for MCP and admin edits. An invalid fixed-thread key must never degrade
 // into a top-level post. Platform-specific target shapes belong to the platform adapter.
 export function validateScheduleOptions(s) {
+  if (s.sudo !== undefined && typeof s.sudo !== "boolean") return "sudo must be a boolean.";
+  if (s.sudo && (s.kind === "reminder" || s.loop)) return "Sudo execution requires an ordinary agent task, not a reminder or thread loop.";
   if (s.kind === "reminder" && (s.executionVisibility === "silent" || s.resultPolicy === "on-result" || s.failureNotify === false || s.delivery === "thread")) {
     return "Silent/result-only/thread options are for agent tasks, not reminders.";
   }

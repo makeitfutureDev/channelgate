@@ -1162,6 +1162,7 @@
           <label class="field schedule-task-control"><span>Run visibility</span><select id="schedule-modal-visibility"><option value="visible">Show when a run starts</option><option value="silent">Run silently in the background</option></select></label>
           <label class="field schedule-task-control"><span>Result messages</span><select id="schedule-modal-result-policy"><option value="always">Send every result</option><option value="on-result">Send only when there is a result</option></select><small>Only an explicitly reported no-result outcome is suppressed.</small></label>
           <label class="toggle schedule-task-control"><input id="schedule-modal-failure-notify" type="checkbox" checked /> <strong>Send failure notifications</strong></label>
+          <label class="field schedule-task-control"><span class="toggle"><input id="schedule-modal-sudo" type="checkbox" /> <strong>Run as sudo on the gateway host</strong></span><small>Bypasses agent permission prompts. The creator must remain an organization admin. Leave off for normal container execution.</small></label>
         </div>
         <label class="field schedule-prompt-field">
           <span>Prompt</span>

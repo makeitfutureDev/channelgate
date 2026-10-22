@@ -61,13 +61,15 @@ Every tool below that CHANGES state is refused outright for a caller without its
 default). For a caller WITH it the change is **automatic**: modes, network, working folder, Drive
 link, MCP servers, secrets and their hiding, connector tokens, skill sources' settings, skill
 removals, the guide's reset, gateway updates and restarts all apply at once, are audited, and you
-announce them in your reply. Schedules never ask either (`references/reminders.md`).
+announce them in your reply. Ordinary schedules do not ask either. Creating or editing a schedule
+that will run with sudo requires an admin approval (`references/reminders.md`).
 
-Exactly these still post a card, because one unasked call would silently reach OTHER channels or
+These still post a card, because one unasked call would silently reach OTHER channels or
 leak a secret and no later message could undo it: `set_channel_admin_mode`,
 `update_gateway_guide`, `add_skill_source`, `add_org_skills`, `update_skill_template` when it
 ADDS skills, `decide_skill_proposal` when it APPROVES, `allow_secret_host`, `set_secret_mode` to
-READABLE, and appending to the channel instructions. Every such card is **durable**: the tool
+READABLE, appending to the channel instructions, and creating or editing a schedule that remains
+sudo. Every such card is **durable**: the tool
 returns *pending* at once with the exact saved call, the card never expires, it survives gateway
 restarts, and the gateway applies the call when it is clicked — so END YOUR TURN and tell the
 user who must click. Who: a gateway admin for the admin-tier ones; for a secret, its tier (the

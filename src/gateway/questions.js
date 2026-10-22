@@ -46,7 +46,9 @@ export function listPendingQuestions({ channelId, threadKey = null, authorId = n
 
 export function createQuestion(context, input) {
   const spec = normalizeQuestions(input);
-  const existing = listPendingQuestions(context);
+  const existing = context.sessionThreadKey
+    ? listPendingQuestions({ channelId: context.channelId, authorId: context.authorId }).filter((r) => r.sessionThreadKey === context.sessionThreadKey)
+    : listPendingQuestions(context);
   if (existing.length) {
     const current = existing[0];
     if (JSON.stringify({ title: current.title, presentation: current.presentation, questions: current.questions }) === JSON.stringify(spec)) return current;
@@ -54,6 +56,7 @@ export function createQuestion(context, input) {
   }
   const record = { ...spec, id: randomUUID(), channelId: context.channelId, threadKey: context.threadKey,
     authorId: context.authorId, slug: context.slug, isDM: Boolean(context.isDM),
+    ...(context.sessionThreadKey ? { sessionThreadKey: context.sessionThreadKey, sourceSudo: context.sourceSudo === true } : {}),
     status: "pending", revision: 0, answers: {}, messageTs: "", createdAt: Date.now(), updatedAt: Date.now() };
   getDb().prepare("INSERT INTO question_requests(id,channel_id,thread_key,author_id,status,revision,updated_ms,data) VALUES(?,?,?,?,?,?,?,?)")
     .run(record.id, record.channelId, record.threadKey, record.authorId, record.status, record.revision, record.updatedAt, toJson(record));
@@ -75,9 +78,9 @@ export function updateQuestion(id, revision, patch) {
 export function bindQuestionMessage(id, messageTs) {
   const record = getQuestion(id);
   if (!record) throw new Error("These questions are no longer available.");
-  const next = { ...record, messageTs };
-  getDb().prepare("UPDATE question_requests SET data=? WHERE id=? AND revision=?")
-    .run(toJson(next), id, record.revision);
+  const next = { ...record, messageTs, threadKey: record.threadKey || messageTs };
+  getDb().prepare("UPDATE question_requests SET data=?,thread_key=? WHERE id=? AND revision=?")
+    .run(toJson(next), next.threadKey, id, record.revision);
   return getQuestion(id);
 }
 

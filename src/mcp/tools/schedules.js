@@ -5,6 +5,7 @@ import { z } from "zod";
 import { addSchedule, listForChannel, updateSchedule, deleteSchedule, countEnabledForChannel } from "../../config/schedules.js";
 import { listScheduleRuns, getScheduleRun, scheduleRunSummary } from "../../gateway/schedule-runs.js";
 import { validateScheduleOptions } from "../../config/schedule-options.js";
+import { isAdmin } from "../../config/store.js";
 import { cronValid, minIntervalMinutes, nextCronRun } from "../../util/cron.js";
 import { daemonTimeZone, isUtcZone, zonedStamp } from "../../util/timezone.js";
 import { getScheduleMinIntervalMinutes, getScheduleMaxPerChannel } from "../../config/settings.js";
@@ -53,6 +54,7 @@ export function register(server, ctx) {
         "failure_notify:false hides failure posts but keeps errors in run history. delivery:'thread' sends results to delivery_thread (defaults to THIS thread), with a fresh agent session per fire. " +
         "Every task receives a structured outcome-report instruction automatically; history exposes engine completion separately from agent-reported task success and connections. " +
         "schedules must fire no more often than the configured minimum interval (default 60 min). " +
+        "Only when the user explicitly requests host execution, set `sudo:true`: an organization admin can create an ordinary task that runs directly on the gateway host with permission bypass. It needs an admin approval and the creator must still be an admin at every fire; sudo is never inherited from this thread. " +
         "Set `kind:'reminder'` to post a SINGLE reminder message instead of running a Claude session " +
         "(no token cost, no restatement). With `ack:true` the reminder requires a ✅: if nobody reacts " +
         "within `ack_escalate_minutes` (default 120) a 2nd notice is posted, then after `ack_dm_minutes` " +
@@ -61,6 +63,7 @@ export function register(server, ctx) {
         execution_visibility: z.enum(["visible", "silent"]).optional(),
         result_policy: z.enum(["always", "on-result"]).optional(),
         failure_notify: z.boolean().optional(),
+        sudo: z.boolean().optional(),
         delivery_thread: z.string().optional(),
         cron: z.string().optional(),
         interval_days: z.number().int().positive().optional(),
@@ -78,12 +81,13 @@ export function register(server, ctx) {
         ack_dm_minutes: z.number().optional(),
       },
     },
-    async ({ execution_visibility, result_policy, failure_notify, delivery_thread, cron, interval_days, in_minutes, run_at, prompt, description, notify, notify_user, delivery, match_prefix, kind, ack, ack_escalate_minutes, ack_dm_minutes }) => {
+    async ({ execution_visibility, result_policy, failure_notify, sudo, delivery_thread, cron, interval_days, in_minutes, run_at, prompt, description, notify, notify_user, delivery, match_prefix, kind, ack, ack_escalate_minutes, ack_dm_minutes }) => {
       if (!channelId) return text("No channel context — cannot schedule here.");
+      if (sudo === true && (!(await ctx.requireAdmin?.()) || !(await isAdmin(createdBy)))) return text("Only organization admins can create sudo schedules under their own admin identity.");
       const deliveryThread = delivery === "thread" ? String(delivery_thread || ctx.threadKey || "").trim() : "";
-      const optionError = validateTaskOptions({ ...argumentsToOptions({ execution_visibility, result_policy, failure_notify, delivery_thread: deliveryThread }), delivery }, kind || "task", channelId);
+      const optionError = validateTaskOptions({ ...argumentsToOptions({ execution_visibility, result_policy, failure_notify, sudo, delivery_thread: deliveryThread }), delivery }, kind || "task", channelId);
       if (optionError) return text(optionError);
-      const taskOptions = { executionVisibility: execution_visibility, resultPolicy: result_policy, failureNotify: failure_notify, deliveryThread };
+      const taskOptions = { executionVisibility: execution_visibility, resultPolicy: result_policy, failureNotify: failure_notify, deliveryThread, sudo };
       const mode = notify || "channel";
       // The HTTP run API principal is not a person to ping: an API-created user-mode schedule must
       // name its recipient.
@@ -159,13 +163,13 @@ export function register(server, ctx) {
       if (id) {
         const schedule = list.find((s) => s.id === id);
         if (!schedule) return text("No schedule in this channel.");
-        const keys = ["id", "prompt", "description", "createdBy", "kind", "cron", "runAt", "once", "intervalDays", "enabled", "notify", "notifyUserId", "delivery", "deliveryThread", "executionVisibility", "resultPolicy", "failureNotify", "matchPrefix", "loop"];
+        const keys = ["id", "prompt", "description", "createdBy", "kind", "cron", "runAt", "once", "intervalDays", "enabled", "notify", "notifyUserId", "delivery", "deliveryThread", "executionVisibility", "resultPolicy", "failureNotify", "matchPrefix", "loop", "sudo"];
         return text(JSON.stringify(Object.fromEntries(keys.map((key) => [key, schedule[key]]))));
       }
       if (!list.length) return text("No schedules in this channel.");
       return text(
         list
-          .map((s) => `• ${s.id} [${s.enabled ? "on" : "off"}] ${s.intervalDays ? `every ${s.intervalDays} days · next ${zonedStamp(new Date(s.runAt))}` : `cron \`${s.cron}\``} — ${s.description || s.prompt} (${s.executionVisibility || "visible"}; ${s.resultPolicy || "always"}; last ${s.lastStatus || "not run"}; ${s.delivery === "dm-on-match" ? `DM creator only on ${JSON.stringify(s.matchPrefix)}` : `notifies ${s.notify === "user" ? `<@${s.notifyUserId}>` : s.notify || "channel"}${s.delivery === "daily-thread" ? ", one thread/day" : s.delivery === "channel" ? ", direct in channel" : ""}`})`)
+          .map((s) => `• ${s.id} [${s.enabled ? "on" : "off"}]${s.sudo ? " [sudo · gateway host]" : ""} ${s.intervalDays ? `every ${s.intervalDays} days · next ${zonedStamp(new Date(s.runAt))}` : `cron \`${s.cron}\``} — ${s.description || s.prompt} (${s.executionVisibility || "visible"}; ${s.resultPolicy || "always"}; last ${s.lastStatus || "not run"}; ${s.delivery === "dm-on-match" ? `DM creator only on ${JSON.stringify(s.matchPrefix)}` : `notifies ${s.notify === "user" ? `<@${s.notifyUserId}>` : s.notify || "channel"}${s.delivery === "daily-thread" ? ", one thread/day" : s.delivery === "channel" ? ", direct in channel" : ""}`})`)
           .join("\n") + (zoneHint() ? `\n${zoneHint().trim()}` : "")
       );
     }
@@ -182,12 +186,17 @@ export function register(server, ctx) {
   });
 
   server.registerTool("update_schedule", {
-    description: "Update an existing task in THIS channel. To change its instructions, first read list_schedules with id, then pass the complete replacement prompt and expected_prompt (the exact old prompt); preserve unrelated instructions. Prompt/title changes require the creator or a gateway admin and apply to future fires. Never delete/recreate the task to edit its prompt. Visibility, result filtering, error notifications and delivery can also be changed. Sessions remain fresh per fire.",
+    description: "Update an existing task in THIS channel. To change its instructions, first read list_schedules with id, then pass the complete replacement prompt and expected_prompt (the exact old prompt); preserve unrelated instructions. Prompt/title changes require the creator or a gateway admin and apply to future fires. Never delete/recreate the task to edit its prompt. Visibility, result filtering, error notifications and delivery can also be changed. sudo:true opts an admin-owned ordinary task into gateway-host execution with permission bypass and an admin approval; sudo:false returns it to the container. Sudo configuration and edits require an admin. Supply expected_prompt for every edit that leaves sudo enabled. Sessions remain fresh per fire.",
     inputSchema: { id: z.string(), prompt: z.string().optional(), expected_prompt: z.string().optional(), description: z.string().optional(), execution_visibility: z.enum(["visible", "silent"]).optional(), result_policy: z.enum(["always", "on-result"]).optional(), failure_notify: z.boolean().optional(),
-      delivery: z.enum(["standard", "daily-thread", "channel", "dm-on-match", "thread"]).optional(), delivery_thread: z.string().optional() },
+      delivery: z.enum(["standard", "daily-thread", "channel", "dm-on-match", "thread"]).optional(), delivery_thread: z.string().optional(), sudo: z.boolean().optional() },
   }, async ({ id, prompt, expected_prompt, description, ...options }) => {
     const current = listForChannel(channelId).find((s) => s.id === id);
     if (!channelId || !current) return text("No schedule in this channel.");
+    const editingSudo = current.sudo === true || options.sudo !== undefined;
+    if (editingSudo && !(await ctx.requireAdmin?.())) return text("Only organization admins can configure or edit sudo schedules.");
+    const nextSudo = options.sudo ?? current.sudo;
+    if (nextSudo && !(await isAdmin(current.createdBy))) return text("Couldn't change this task: its creator must currently be an organization admin to own a sudo schedule.");
+    if (nextSudo && expected_prompt === undefined) return text("Couldn't change this sudo schedule. Read list_schedules with id and pass its exact prompt as expected_prompt before retrying.");
     const editingContent = prompt !== undefined || description !== undefined;
     if (editingContent) {
       if (!createdBy || (current.createdBy !== createdBy && !(await ctx.requireAdmin?.()))) return text("Only the schedule creator or a gateway admin can change its instructions or title.");
@@ -205,9 +214,9 @@ export function register(server, ctx) {
     if (next.delivery === "daily-thread" && current.once) return text("Daily-thread delivery requires a recurring task.");
     if (next.delivery === "dm-on-match" && (!current.createdBy || !current.matchPrefix)) return text("DM on match requires a creator and match prefix.");
     if (patch.delivery && patch.delivery !== current.delivery) Object.assign(patch, { dailyThreadDate: "", dailyThreadTs: "" });
-    const updated = updateSchedule(id, patch, editingContent ? { ...current, prompt: expected_prompt } : null);
-    if (!updated) return text("The schedule changed or was deleted. Read list_schedules with id again and retry without dropping other changes.");
-    return text(`Updated ${id}: ${editingContent ? "instructions/title saved for future fires; " : ""}${updated.executionVisibility || "visible"}, ${updated.resultPolicy || "always"}, delivery ${updated.delivery}, failure messages ${updated.failureNotify !== false ? "on" : "off"}.`);
+    const updated = updateSchedule(id, patch, { ...current, ...((editingContent || nextSudo) ? { prompt: expected_prompt } : {}) });
+    if (!updated) return text("Couldn't update the schedule: it changed or was deleted. Read list_schedules with id again and retry without dropping other changes.");
+    return text(`Updated ${id}: ${editingContent ? "instructions/title saved for future fires; " : ""}${updated.sudo ? "sudo on gateway host; " : ""}${updated.executionVisibility || "visible"}, ${updated.resultPolicy || "always"}, delivery ${updated.delivery}, failure messages ${updated.failureNotify !== false ? "on" : "off"}.`);
   });
 
   server.registerTool(
@@ -221,7 +230,7 @@ export function register(server, ctx) {
 }
 
 function argumentsToOptions(o) {
-  const mapping = { execution_visibility: "executionVisibility", result_policy: "resultPolicy", failure_notify: "failureNotify", delivery_thread: "deliveryThread", delivery: "delivery" };
+  const mapping = { execution_visibility: "executionVisibility", result_policy: "resultPolicy", failure_notify: "failureNotify", delivery_thread: "deliveryThread", delivery: "delivery", sudo: "sudo" };
   return Object.fromEntries(Object.entries(o).filter(([key, value]) => Object.hasOwn(mapping, key) && value !== undefined).map(([key, value]) => [mapping[key], value]));
 }
 
@@ -230,6 +239,7 @@ function validateTaskOptions(options, kind, channelId) {
 }
 
 function optionsHint(s) {
+  if (s.sudo) return `Run options: sudo on the gateway host with permission bypass; ${s.executionVisibility}, ${s.resultPolicy}, ${s.delivery}.\n`;
   if (s.executionVisibility !== "silent" && s.resultPolicy !== "on-result" && s.delivery !== "thread" && s.failureNotify !== false) return "";
   return `Run options: ${s.executionVisibility}, ${s.resultPolicy}, ${s.delivery}${s.deliveryThread ? ` (${s.deliveryThread})` : ""}; failure messages ${s.failureNotify ? "on" : "off"}.\n`;
 }
