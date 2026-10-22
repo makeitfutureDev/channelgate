@@ -4755,21 +4755,23 @@ are retired, bullet by bullet; everything else stands.
   no manual command.
 - **Per-model Codex Standard API-equivalent rates** (Settings → Behavior): Codex reports no dollar
   cost, so the ledger and reply footer estimate attribution value from an editable $/1M table —
-  input / cached-input / output per model (gpt-6-astra, gpt-5.6-sol / gpt-5.6 alias / gpt-5.6-terra /
-  gpt-5.6-luna, gpt-5.5, gpt-5.4, gpt-5.4-mini, gpt-5.4-nano, gpt-5.3-codex; defaults =
-  OpenAI's Standard pricing verified 2026-09-13). Cached reads are a subset of input and never
-  double-counted; cache writes use 1.25× input, and eligible requests above 272K input use 2×
-  input/cache plus 1.5× output. The threshold is evaluated per request, never against a turn
-  aggregate. Official aliases/snapshots match on model boundaries; an unresolved CLI model remains
-  unpriced instead of being guessed. Retired full-table GPT-5.6/Terra/Luna defaults migrate to
-  current rates while genuine admin overrides survive. On the first boot after this pricing basis
-  ships, the daemon backs up SQLite and reprices every request/component and its parent run since
-  2026-07-13, after legacy accounting repair, so upgraded instances do not retain stale dashboard
-  history. Historical pricing follows official effective dates: GPT-5.6 Sol retains
-  $5/$0.50/$30 before 2026-08-21 and uses $4/$0.40/$20 from that date. The basis marker makes later
-  boots no-ops. `npm run usage:reprice` previews the exact
-  rows/model deltas and `--apply` runs the same path manually. Claude runs are never priced with
-  OpenAI rates. Legacy blended rate remains a hidden last-resort fallback for explicitly unknown models.
+  input / cached-input / output per model (GPT-6 Astra/Sol/Luna, GPT-6.1 Sol, GPT-5.6
+  Sol/Terra/Luna and alias, GPT-5.5, GPT-5.4/mini/nano, GPT-5.3 Codex). GPT-6.1 Sol's
+  2026-09-29 launch rate is $2/$0.10/$10 per million tokens. Cached reads are a subset of input
+  and never double-counted; cache writes use 1.25× input, and eligible requests above 272K input
+  use 2× input/cache plus 1.5× output. The threshold is evaluated per request, never against a
+  turn aggregate. Official aliases/snapshots match on model boundaries; an unresolved CLI model
+  remains unpriced instead of being guessed. Retired full-table defaults migrate to current
+  rates while genuine admin overrides survive. Historical pricing preserves GPT-5.6 Sol's
+  $5/$0.50/$30 before 2026-08-21, Terra's $2.50/$0.25/$15 before 2026-07-30, and Luna's
+  $1/$0.10/$6 before 2026-07-30; their respective current rates apply from those dates.
+  GPT-6.1 Sol's default is unavailable before its launch date. The 2026-10-22 pricing basis
+  defers boot-time historical refresh until an operator audits the ledger impact and explicitly
+  runs `npm run usage:reprice -- --apply`. The default command previews request/component/parent
+  deltas since 2026-07-13 without writes; apply backs up first and records the basis atomically.
+  Subsequent boots skip settled history and can repair stale rows from an older daemon after
+  manual apply. Claude runs are never priced with OpenAI rates. Legacy blended rate remains a
+  hidden last-resort fallback for explicitly unknown models.
   → TEST-PLAN: Observability.
 - Audit admin tab: monthly totals, per-channel rollups, and a recent-runs feed over the ledger +
   event log (`GET /api/audit`, `GET /api/audit/events`). No spend cap — visibility only.

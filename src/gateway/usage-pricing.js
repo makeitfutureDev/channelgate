@@ -2,17 +2,29 @@
 // Standard API-equivalent dollar value; when OpenAI changes a published rate, updating only the
 // forward estimator leaves the dashboard's existing period internally inconsistent. This module
 // reprices the requested historical window from the stored component/request evidence, backs up
-// the database first, and records a basis marker so every upgraded gateway applies it once.
+// the database first, and records a basis marker. The October 22 basis requires manual approval
+// after an impact audit; boot defers historical refresh until that manual apply records the basis.
 import { CODEX_PRICING_BASIS, estimateCodexCost } from "./usage.js";
 import { backupGatewayDb } from "./usage-repair.js";
 import { DEFAULT_CODEX_RATES, getCodexModelRates } from "../config/settings.js";
 
 export const CODEX_PRICING_HISTORY_SINCE = "2026-07-13T00:00:00.000Z";
 export const CODEX_SOL_PRICE_CUTOVER = "2026-08-21T00:00:00.000Z";
+export const CODEX_TERRA_LUNA_PRICE_CUTOVER = "2026-07-30T00:00:00.000Z";
+export const CODEX_61_SOL_LAUNCH = "2026-09-29T00:00:00.000Z";
 export const CODEX_PRICING_META_KEY = "codex_usage_pricing_basis";
 
-const RETIRED_SOL_RATES = Object.freeze({ input: 5, cachedInput: 0.5, output: 30 });
-const SOL_RATE_KEYS = Object.freeze(["gpt-5.6-sol", "gpt-5.6"]);
+// This correction requires a ledger-impact audit and explicit manual apply before boot may
+// refresh history. Pin the exact basis so a future, separately reviewed basis can choose its policy.
+const AUDIT_REQUIRED_BASIS = "openai-standard-effective-dates-2026-10-22";
+const HISTORICAL_RATES = [
+  { keys: ["gpt-5.6-sol", "gpt-5.6"], until: CODEX_SOL_PRICE_CUTOVER,
+    rate: { input: 5, cachedInput: 0.5, output: 30 } },
+  { keys: ["gpt-5.6-terra"], until: CODEX_TERRA_LUNA_PRICE_CUTOVER,
+    rate: { input: 2.5, cachedInput: 0.25, output: 15 } },
+  { keys: ["gpt-5.6-luna"], until: CODEX_TERRA_LUNA_PRICE_CUTOVER,
+    rate: { input: 1, cachedInput: 0.1, output: 6 } },
+];
 
 const tokenUsage = (row = {}) => ({
   input_tokens: Number(row.tokens_in) || 0,
@@ -32,12 +44,17 @@ const sameRate = (left, right) => (
 
 function codexRatesAt(ts) {
   const current = getCodexModelRates();
-  if (String(ts || "") >= CODEX_SOL_PRICE_CUTOVER) return current;
   const historical = { ...current };
-  for (const key of SOL_RATE_KEYS) {
-    // Respect genuine admin overrides. Only replace the shipped current default with the official
-    // rate that preceded OpenAI's August 21 reduction.
-    if (sameRate(current[key], DEFAULT_CODEX_RATES[key])) historical[key] = RETIRED_SOL_RATES;
+  if (String(ts || "") < CODEX_61_SOL_LAUNCH
+    && sameRate(current["gpt-6.1-sol"], DEFAULT_CODEX_RATES["gpt-6.1-sol"])) {
+    delete historical["gpt-6.1-sol"];
+  }
+  for (const { keys, until, rate } of HISTORICAL_RATES) {
+    if (String(ts || "") >= until) continue;
+    for (const key of keys) {
+      // Respect genuine admin overrides; only substitute an unchanged shipped default.
+      if (sameRate(current[key], DEFAULT_CODEX_RATES[key])) historical[key] = rate;
+    }
   }
   return historical;
 }
@@ -217,6 +234,10 @@ export async function autoRefreshCodexPricing({ db, makeBackup, log = console } 
   const handle = db || (await import("../db/index.js")).getDb();
   const state = pendingCodexPricingRefresh(handle);
   if (!state.pending) return { applied: false, basis: state.basis };
+  if (state.basis === AUDIT_REQUIRED_BASIS && state.appliedBasis !== state.basis) {
+    log.log?.(`[usage] Codex pricing refresh ${state.basis} deferred: audit ledger impact, then explicitly apply with npm run usage:reprice -- --apply`);
+    return { applied: false, deferred: true, basis: state.basis };
+  }
   const plan = buildCodexPricingRefresh({ db: handle });
   const backupPath = plan.usageRows ? await (makeBackup || backupGatewayDb)() : "";
   const summary = applyCodexPricingRefresh(handle, plan);
