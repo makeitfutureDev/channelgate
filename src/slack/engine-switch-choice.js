@@ -1,6 +1,6 @@
 import { plainFailureText } from "../util/process-outcome.js";
 import { engineLabel } from "../engines/registry.js";
-import { createBusyThreadChoiceStore } from "./busy-thread-choice.js";
+import { createBusyThreadChoiceStore, takeSlackRunChoice, auditRunChoiceAdmin } from "./busy-thread-choice.js";
 
 // "Ask before switching harness" (Settings → engineFallbackMode = "ask"): when a turn dies on a
 // replay-safe provider failure that automatic failover WOULD have covered — a usage limit, a lost
@@ -66,10 +66,12 @@ export async function handleEngineSwitchChoice({ ack, body, action, client }, { 
   if (!choice) return { ok: false, reason: "action" };
 
   const choiceId = String(action?.value || "");
-  const outcome = engineSwitchChoices.take(choiceId, userId, channel);
+  const outcome = await takeSlackRunChoice(engineSwitchChoices, choiceId, userId, channel, client);
   if (!outcome.ok) {
     const text = outcome.reason === "owner"
       ? "This choice belongs to the person who sent that message."
+      : outcome.reason === "access"
+        ? "Only a current organization admin with access to this conversation can answer another person's choice."
       : outcome.reason === "claimed"
         ? "This choice is already being handled."
         : "This choice has already been used, stopped, or expired. Send the message again if it still needs attention.";
@@ -101,6 +103,7 @@ export async function handleEngineSwitchChoice({ ack, body, action, client }, { 
       engineChoiceId: choiceId,
       onEngineChoiceAccepted: ({ runId, rec }) => {
         accepted = engineSwitchChoices.accept(choiceId, runId, rec);
+        if (accepted) void auditRunChoiceAdmin(outcome.record, userId, choiceId, choice);
         // The original message stays visible in Slack; once the choice is accepted the card has
         // done its job — remove it instead of leaving a second persistent bot message.
         if (accepted && channel && messageTs) client.chat.delete({ channel, ts: messageTs }).catch(() => {});

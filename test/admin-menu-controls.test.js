@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdir } from "node:fs/promises";
+import { mkdir, writeFile } from "node:fs/promises";
+import path from "node:path";
 import { ensureTestEnv } from "./helpers.js";
 ensureTestEnv();
 const { useFakeRuntime } = await import("./runtime-fake.js");
@@ -63,7 +64,26 @@ for (const kind of ["files", "variables", "settings"]) {
       assert.equal(f.opened.length, 0, variant);
     }
   });
+  test(`${kind} still opens owned and unbound controls for ordinary members`, async () => {
+    for (const owner of ["self", "unbound"]) {
+      const f = await fixture();
+      f.body.user.id = f.member;
+      f.command.u = owner === "self" ? f.member : "";
+      await openChannelMenuControl({ ...f, kind });
+      assert.equal(f.opened.length, 1);
+      assert.equal(JSON.parse(f.opened[0].view.private_metadata).u, f.member);
+    }
+  });
 }
+test("admin direct file button preserves the requested preview path", async () => {
+  const f = await fixture();
+  const root = effectiveWorkDir(f.entry.slug, await store.getChannelMeta(f.entry.slug));
+  await writeFile(path.join(root, "menu-fixture.txt"), "Admin preview fixture");
+  f.command = { ...f.command, o: "open_file", p: "menu-fixture.txt" };
+  await openChannelMenuControl({ ...f, kind: "files" });
+  assert.match(JSON.stringify(f.updates.at(-1).view), /Admin preview fixture/);
+  assert.equal(JSON.parse(f.updates.at(-1).view.private_metadata).u, f.admin);
+});
 test("Variables action uses the admin override and opens the admin's own form", async () => {
   const f = await fixture();
   await handleSecretsAction({ ...f, ack: async () => {}, action: { value: JSON.stringify(f.command) } });

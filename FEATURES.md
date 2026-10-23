@@ -12,6 +12,10 @@
   admin. Revision checks and single submission still apply. Continuations retain the original
   requester's runtime identity and credentials; audit records identify the responding admin
   without storing their answer text.
+- Admins can also resolve shared busy-thread Steer/Queue/Cancel and engine-switch/retry cards
+  after current rank, membership and channel access checks. The stored incoming event retains its
+  author, credentials and runtime permissions; accepted decisions audit the responding admin.
+  Expiration, duplicate claims and the cross-author automatic steering guard still apply.
 
 ## Registered inventory limits and Enterprise harness approvals
 

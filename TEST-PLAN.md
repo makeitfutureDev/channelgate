@@ -4,12 +4,17 @@
 
 - [x] Automated: `node --test test/admin-menu-controls.test.js test/file-button-actions.test.js
   test/menu.test.js test/question-admin-access.test.js test/question-interactions.test.js
-  test/question-continuation.test.js test/scheduled-questions.test.js`.
+  test/question-continuation.test.js test/scheduled-questions.test.js
+  test/run-choice-admin-access.test.js test/busy-thread-choice.test.js
+  test/engine-switch-choice.test.js`.
   Real scratch stores and captured Slack calls verify admin overrides for all three menu controls,
   actual viewer ownership/personal variable isolation, legacy Resume, question choices, custom text,
   multi-select, paged forms, Back, cancel and submit. Foreign ordinary members, demoted admins,
   revoked requester access, missing membership, wrong cards/channels and stale revisions fail closed.
   Admin answers preserve the original continuation author and audit the responder without answers.
+  Busy-thread/engine-switch fixtures verify admin access, original incoming-event identity and
+  responder audit, plus rejection for ordinary foreign members, demotion, removed membership,
+  dormant access, a different channel and duplicate decisions.
 - [ ] Live menu acceptance (engine-independent; no engine turn for these controls): in a disposable
   Slack channel, admit an approved member, a second ordinary member and a current organization
   admin. Give the first member and admin distinct disposable personal variables. As first member,
@@ -30,6 +35,18 @@
   access revocation and either participant leaving: no continuation. Stale/replayed submission
   must never duplicate a run. Capture question id, Slack payloads, run author/session/runtime,
   credential names only and audit events. No live result is claimed by the automated fixtures.
+
+- [ ] Live shared run-choice acceptance (Claude AND Codex fixtures): as a member start a harmless
+  long turn, then send a second message to obtain the busy-thread card. As member admin click Queue,
+  then repeat separate fixtures for Steer and Cancel Request. Require one original-author message
+  queued/accepted (or durably discarded for Cancel), preserved personal scope/runtime lane and
+  `run_choice_admin_action` naming the admin with no original message text. The existing
+  cross-author automatic steering guard must remain intact. With ask-before-switch enabled and a
+  disposable replay-safe fake-provider failure, have the admin click Switch and Try again in
+  separate fixtures; require the original author to continue once on the selected harness.
+  Ordinary foreign members, demoted/departed admins, dormant channels and wrong-channel cards
+  must fail without consuming the pending choice. Repeat a successful click: no duplicate run.
+  Capture Slack card, pending-choice id, run identity and audit events; no live pass claimed here.
 
 ## Email accounts (2026-10-22)
 
