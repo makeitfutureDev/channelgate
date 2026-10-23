@@ -49,7 +49,7 @@ export function validateRunContext(context) {
 }
 
 const REQUIRED_METHODS = ["compileConfinement", "run", "interrupt", "discoverMcps", "health"];
-const REQUIRED_MANIFEST = ["id", "label", "cli", "defaultModelKey", "mcpMetaKey", "instructionFile", "skillsDir", "mcpTransport", "contextWindow"];
+const REQUIRED_MANIFEST = ["id", "label", "cli", "defaultModelKey", "defaultEffortKey", "mcpMetaKey", "instructionFile", "skillsDir", "mcpTransport", "contextWindow"];
 
 export function validateEngineAdapter(adapter) {
   if (!adapter || typeof adapter !== "object") throw new TypeError("EngineAdapter must be an object");

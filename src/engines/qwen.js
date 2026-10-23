@@ -54,7 +54,7 @@ export function qwenModelLabel(id) {
  * `label`           what every picker shows
  * `harnessLabel`    the short name a provider failure is attributed to (see claude.js)
  * `settings`        the gateway settings keys holding this provider's credential and endpoint
- * `defaultModelKey` the settings key holding this provider's gateway default model
+ * `defaultModelKey` / `defaultEffortKey` settings keys for this provider's gateway defaults
  * `defaultBaseUrl`  shipped endpoint, or "" when only the operator can know it
  * `models`          the catalog offered until the account's own list is read
  * `endpointHint`    admin-UI copy: what a valid endpoint for this provider looks like
@@ -73,7 +73,7 @@ export const QWEN_PROVIDERS = Object.freeze([
     harnessLabel: "Qwen",
     catalogName: "QwenCloud",
     settings: Object.freeze({ apiKey: "qwenApiKey", baseUrl: "qwenBaseUrl" }),
-    defaultModelKey: "defaultQwenModel",
+    defaultModelKey: "defaultQwenModel", defaultEffortKey: "defaultQwenEffort",
     defaultBaseUrl: QWEN_DEFAULT_BASE_URL,
     description: "The same Claude Code CLI, pointed at QwenCloud's Anthropic-compatible endpoint.",
     endpointHint: "Token Plan keys use token-plan.maas.qwencloudapi.com; pay-as-you-go keys use maas.qwencloudapi.com.",
@@ -85,7 +85,7 @@ export const QWEN_PROVIDERS = Object.freeze([
     harnessLabel: "Qwen EU",
     catalogName: "Model Studio",
     settings: Object.freeze({ apiKey: "qwenEuApiKey", baseUrl: "qwenEuBaseUrl" }),
-    defaultModelKey: "defaultQwenEuModel",
+    defaultModelKey: "defaultQwenEuModel", defaultEffortKey: "defaultQwenEuEffort",
     // Deliberately EMPTY. An EU Model Studio endpoint is per-WORKSPACE
     // (`https://ws-<workspace>.eu-central-1.maas.aliyuncs.com/apps/anthropic`), so there is no
     // value this repository could ship that is correct for anyone but the account it was copied

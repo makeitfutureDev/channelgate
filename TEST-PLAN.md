@@ -1,5 +1,28 @@
 # ChannelGate — Test Plan
 
+## Harness default effort (2026-10-23)
+
+- [x] Automated: `node --test test/default-model.test.js test/qwen-provider-settings-route.test.js
+  test/engine-registry.test.js test/engine-adapter-contract.test.js
+  test/runtime-identity-preamble.test.js` — settings round-trip, legacy/invalid/blank handling,
+  atomic API validation for every harness, fresh/resumed CLI flags, request > thread > channel >
+  gateway > CLI precedence, plus destination defaults through failover and model retry.
+- [x] Browser: `CG_BROWSER_MODULE=/absolute/path/to/playwright/index.mjs node --test
+  test/qwen-provider-settings-browser.test.js` — disposable admin API and real Chromium;
+  save/reload/clear distinct Claude, Codex and Qwen EU efforts without changing production settings.
+- [ ] Live Claude and Codex acceptance: for each engine, use a private read fixture with that
+  engine selected and model/effort unset on the channel and thread. Record existing gateway
+  defaults; in Admin UI → Agent defaults set the engine's model and effort to a supported pair
+  (Claude sonnet/high; Codex gpt-6-sol/medium). Start a fresh thread as an approved test actor:
+  “Which configured engine, model and effort are you running? One line.” Check captured runtime
+  facts and actual engine flags, not just the answer. Change gateway effort to low, send “And
+  now?” in the same thread, and verify the resumed turn receives low. Set channel effort medium,
+  then thread effort high, then request effort low through the Run API; each more specific choice
+  must win. Clear each override and the gateway effort; verify the effort flag is omitted. Restore
+  the recorded defaults. PASS only when actual spawn evidence agrees at every step for both
+  engines. Repeat replay-safe failover with different source/destination defaults and verify the
+  destination uses its own effort. Pending live execution; automated stubs are not live engine PASS.
+
 ## Admin access to Slack buttons and forms (2026-10-23)
 
 - [x] Automated: `node --test test/admin-menu-controls.test.js test/file-button-actions.test.js

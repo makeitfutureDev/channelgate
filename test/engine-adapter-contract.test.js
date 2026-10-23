@@ -7,7 +7,7 @@ import { engineUiManifest, fallbackTargets, requireAdapter } from "../src/engine
 
 function fakeAdapter(id = "third") {
   return {
-    id, label: "Third", cli: "third", defaultModelKey: "defaultThirdModel", mcpMetaKey: "allowedThirdMcps",
+    id, label: "Third", cli: "third", defaultModelKey: "defaultThirdModel", defaultEffortKey: "defaultThirdEffort", mcpMetaKey: "allowedThirdMcps",
     instructionFile: "THIRD.md", skillsDir: ".third/skills", mcpTransport: "argv", contextWindow: 1000,
     efforts: ["low"], models: [{ label: "Third One", value: "third-1" }], mintsOwnSessionId: true,
     supports: { warmPool: false, networkModes: ["off"] }, modelBelongs: (m) => m.startsWith("third-"),

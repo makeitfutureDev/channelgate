@@ -7,7 +7,7 @@ import { ensureTestEnv } from "./helpers.js";
 
 ensureTestEnv(); // scratch gateway dir — getSettings() reads no real config
 
-const { getDefaultModel, saveSettings, settingsForApi } = await import("../src/config/settings.js");
+const { getDefaultModel, getDefaultEffort, saveSettings, settingsForApi } = await import("../src/config/settings.js");
 const { isValidModel } = await import("../src/slack/util.js");
 const { invalidModelOrEffort } = await import("../src/web/routes/helpers.js");
 
@@ -45,4 +45,21 @@ test("the admin route's isValidModel guard accepts the intended ids and rejects 
   }
   assert.equal(invalidModelOrEffort({ model: "gpt-6-astra", effort: "ultra" }), "");
   assert.match(invalidModelOrEffort({ effort: "extreme" }), /effort must be one of/);
+});
+
+
+test("default effort is independent per harness, safe for legacy settings, and clearable", async () => {
+  const { ENGINE_IDS, requireAdapter } = await import("../src/engines/registry.js");
+  for (const id of ENGINE_IDS) {
+    const key = requireAdapter(id).defaultEffortKey;
+    assert.equal(getDefaultEffort(id), "");
+    saveSettings({ [key]: "  HIGH  " });
+    assert.equal(getDefaultEffort(id), "high");
+    assert.equal(settingsForApi()[key], "high");
+    if (id.startsWith("qwen")) assert.equal(settingsForApi().qwenProviders.find((p) => p.id === id).defaultEffort, "high");
+    for (const value of ["unsupported", 42, ""]) {
+      saveSettings({ [key]: value });
+      assert.equal(getDefaultEffort(id), "");
+    }
+  }
 });
