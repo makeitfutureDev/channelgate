@@ -21,6 +21,10 @@ product overview.
 - Supply new installations with Astra, Sol, Terra, Fable, Opus and Sonnet (`:sonet`) shortcuts
   using the newest supported stable family versions. Preserve customized lists and thread pins.
 
+- Add a default effort selector beside each harness's default model, including Qwen providers.
+  Inherited runs use it unless a conversation, thread or request overrides effort; blank keeps
+  the CLI default. Validate model compatibility and use the destination harness's effort on failover.
+
 - Let organization admins use another requester's Slack menu buttons and question forms. Menu
   views open under the clicking admin's own identity; question answers continue the original
   requester's session and record which admin responded. Current access, membership and stale-form

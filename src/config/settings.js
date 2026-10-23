@@ -334,6 +334,14 @@ export function getDefaultModel(engine) {
   return typeof v === "string" ? v.trim() : "";
 }
 
+// Blank preserves the CLI default; stale or hand-edited values never reach a runner.
+export function getDefaultEffort(engine) {
+  const adapter = adapterOr(engine);
+  const raw = getSettings()[adapter.defaultEffortKey];
+  const effort = typeof raw === "string" ? raw.trim().toLowerCase() : "";
+  return adapter.efforts.includes(effort) ? effort : "";
+}
+
 export function getModelShortcuts() {
   return modelShortcutsFromSettings(getSettings(), { claude: modelsForEngine("claude"), codex: modelsForEngine("codex") });
 }
@@ -493,12 +501,14 @@ export function qwenProviderSettings() {
       apiKeyField: entry.settings.apiKey,
       baseUrlField: entry.settings.baseUrl,
       defaultModelField: entry.defaultModelKey,
+      defaultEffortField: entry.defaultEffortKey,
       hasApiKey: Boolean(config.apiKey),
       apiKeyLast4: last4(config.apiKey),
       // The STORED endpoint, so an empty box means "still on the shipped default" rather than
       // silently re-saving a default the operator never chose.
       baseUrl: typeof getSettings()[entry.settings.baseUrl] === "string" ? getSettings()[entry.settings.baseUrl].trim() : "",
       defaultModel: getDefaultModel(entry.id),
+      defaultEffort: getDefaultEffort(entry.id),
     };
   });
 }
@@ -1153,6 +1163,7 @@ export function settingsForApi() {
     engine: getEngine(),
     defaultClaudeModel: getDefaultModel("claude"),
     defaultCodexModel: getDefaultModel("codex"),
+    ...Object.fromEntries(ENGINES.map((id) => [adapterOr(id).defaultEffortKey, getDefaultEffort(id)])),
     // One entry per Anthropic-compatible provider, so the admin UI renders a card per harness
     // instead of carrying a hard-coded copy of the table.
     qwenProviders: qwenProviderSettings(),

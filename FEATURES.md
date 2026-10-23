@@ -2458,6 +2458,12 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
   logins stay on Codex. Unknown, disabled or invalid targets and missing request text are refused
   before a child thread is posted.
   A running or sudo/source-host session is refused until it can be forked safely.
+- Gateway-wide **default effort** beside each harness's default model (Settings → Agent defaults →
+  Engine & runtime, including each Qwen provider card). Choices follow the selected model's
+  supported effort levels; saves validate the model/effort pair atomically. Per-request, thread
+  and channel/DM-template effort overrides take precedence. Inherited fresh and resumed turns use
+  the harness default; blank preserves the CLI default. Failover uses the destination harness's
+  own default effort, and model retries recheck compatibility before passing an effort flag.
 - Gateway-wide **default model** per engine (Settings → Engine & runtime, validated like `/model`):
   when a thread/channel/DM-template sets no model, the run gets the gateway default as an explicit
   `--model`/`-m` — so the admin's interactive terminal `/model` choice (written to

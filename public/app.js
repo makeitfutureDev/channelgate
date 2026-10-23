@@ -128,14 +128,14 @@ function engineOptionsHtml({ includeDefault = false } = {}) {
     selectableEngines().map((m) => `<option value="${escapeHtml(m.id)}">${escapeHtml(m.label)}</option>`).join("");
 }
 
-function syncEffortOptions({ engineSelect, modelSelect, effortSelect, label, value }) {
-  const engine = effectiveEngine(engineSelect?.value || "");
+function syncEffortOptions({ engineSelect, modelSelect, effortSelect, label, value, engine: pinnedEngine, blankLabel = "default" }) {
+  const engine = pinnedEngine || effectiveEngine(engineSelect?.value || "");
   const modelEfforts = MODEL_EFFORT_OPTIONS[engine]?.[modelSelect?.value || ""];
   const options = modelEfforts?.length
     ? [["", "default"], ...modelEfforts.map((effort) => [effort, effort])]
     : EFFORT_OPTIONS[engine] || EFFORT_OPTIONS.claude;
   const current = value !== undefined ? value : effortSelect.value;
-  effortSelect.innerHTML = options.map(([v, text]) => `<option value="${escapeHtml(v)}">${escapeHtml(text)}</option>`).join("");
+  effortSelect.innerHTML = options.map(([v, text]) => `<option value="${escapeHtml(v)}">${escapeHtml(v ? text : blankLabel)}</option>`).join("");
   effortSelect.value = options.some(([v]) => v === current) ? current : "";
   if (label) label.textContent = `Effort (${ENGINE_MANIFESTS.find((m) => m.id === engine)?.label || engine})`;
 }
@@ -185,6 +185,12 @@ function syncModelOptions({ engineSelect, modelSelect, value, engine, blankLabel
   if (current && modelMatchesEngine(current, eng) && !options.some(([v]) => v === current)) options.push([current, current]);
   modelSelect.innerHTML = options.map(([v, text]) => `<option value="${escapeHtml(v)}">${escapeHtml(text)}</option>`).join("");
   modelSelect.value = options.some(([v]) => v === current) ? current : "";
+}
+
+function syncDefaultEffort(modelSelect, effortSelect, engine, value) {
+  const sync = (next) => syncEffortOptions({ modelSelect, effortSelect, engine, value: next, blankLabel: "CLI default" });
+  sync(value || "");
+  modelSelect.onchange = () => sync(effortSelect.value);
 }
 
 function addModelShortcutRow(name = "", target = {}) {
@@ -3769,6 +3775,7 @@ function paintQwenProviders(providers) {
     const keyInput = at("api-key");
     const urlInput = at("base-url");
     const modelSelect = at("default-model");
+    const effortSelect = at("default-effort");
     const clearBtn = at("clear-key");
     // An endpoint the provider ships is a placeholder (blank = keep it); one only the operator can
     // know is not, so the box says so instead of implying a default exists.
@@ -3779,6 +3786,7 @@ function paintQwenProviders(providers) {
     // The button sits inside the field's <label>; preventDefault stops the click focusing the input.
     clearBtn.addEventListener("click", (e) => { e.preventDefault(); toggleClearTok(clearBtn); });
     syncModelOptions({ modelSelect, engine: p.id, value: p.defaultModel || "", blankLabel: "provider default" });
+    syncDefaultEffort(modelSelect, effortSelect, p.id, p.defaultEffort);
     // Say WHERE the list came from: a stale shipped list and a live account list look identical in
     // a picker, and the difference decides whether a missing model is a typo or a missing key.
     const catalog = ENGINE_MANIFESTS.find((m) => m.id === p.id)?.modelCatalog;
@@ -3788,7 +3796,7 @@ function paintQwenProviders(providers) {
         ? "Built-in list — the account's own list could not be read. Check the key and endpoint, then reload."
         : "Built-in list. Save an API key to read the account's own models.");
     tpl.parentNode.insertBefore(card, tpl);
-    QWEN_PROVIDER_CARDS.push({ ...p, keyInput, urlInput, modelSelect, clearBtn });
+    QWEN_PROVIDER_CARDS.push({ ...p, keyInput, urlInput, modelSelect, effortSelect, clearBtn });
   }
 }
 
@@ -3799,6 +3807,7 @@ function collectQwenProviders() {
   for (const card of QWEN_PROVIDER_CARDS) {
     body[card.baseUrlField] = card.urlInput.value;
     body[card.defaultModelField] = card.modelSelect.value;
+    body[card.defaultEffortField] = card.effortSelect.value;
     const typed = tokenValue(card.keyInput);
     if (typed) body[card.apiKeyField] = typed;
     if (card.clearBtn.classList.contains("armed")) body[`clear${card.apiKeyField[0].toUpperCase()}${card.apiKeyField.slice(1)}`] = true;
@@ -3905,6 +3914,8 @@ function readSettingsForm() {
     engine: document.getElementById("set-engine").value,
     defaultClaudeModel: document.getElementById("set-default-claude-model").value,
     defaultCodexModel: document.getElementById("set-default-codex-model").value,
+    defaultClaudeEffort: document.getElementById("set-default-claude-effort").value,
+    defaultCodexEffort: document.getElementById("set-default-codex-effort").value,
     ...collectQwenProviders(),
     perplexityResearchEnabled: document.getElementById("set-perplexity-research-enabled").checked,
     ...(document.getElementById("set-perplexity-session-token").value ? { perplexitySessionToken: document.getElementById("set-perplexity-session-token").value } : {}),
@@ -4052,6 +4063,9 @@ function paintSettings(s) {
   GLOBAL_ENGINE = s.engine || "claude";
   syncModelOptions({ modelSelect: document.getElementById("set-default-claude-model"), engine: "claude", value: s.defaultClaudeModel || "", blankLabel: "CLI default" });
   syncModelOptions({ modelSelect: document.getElementById("set-default-codex-model"), engine: "codex", value: s.defaultCodexModel || "", blankLabel: "CLI default" });
+  for (const engine of ["claude", "codex"]) {
+    syncDefaultEffort(document.getElementById(`set-default-${engine}-model`), document.getElementById(`set-default-${engine}-effort`), engine, s[`default${engine === "claude" ? "Claude" : "Codex"}Effort`]);
+  }
   document.getElementById("set-model-change-access").value = s.modelChangeAccess || "admins";
   paintModelShortcuts(s.modelShortcuts);
   document.getElementById("set-engine-fallback").checked = s.engineFallback !== false;

@@ -15,9 +15,10 @@ import { allowedFsRoot, resolveWithinRoot, pathWithin, hashPassword, verifyPassw
 import { listAvailableSkills } from "../../gateway/folders.js";
 import { workspaceAssignmentsAtPath } from "../../gateway/workspace-assignments.js";
 import { listChannels, getChannelsIndex } from "../../config/store.js";
-import { requireAdapter, modelBelongsToEngine } from "../../engines/registry.js";
+import { requireAdapter, modelBelongsToEngine, effortBelongsToModel } from "../../engines/registry.js";
 import {
   getAdminPassword,
+  getSettings,
   settingsForApi,
   saveSettings,
   isPerplexitySessionToken,
@@ -414,6 +415,22 @@ export function createSettingsRouter({
         // defaulted run in the deployment.
         if (v && !modelBelongsToEngine(v, id)) return res.status(400).json({ error: `model "${v}" is not a ${requireAdapter(id).label} model` });
         patch[key] = v;
+      }
+      // Validate the resulting model/effort pair together before any settings are written.
+      const currentSettings = getSettings();
+      for (const id of ENGINES) {
+        const adapter = requireAdapter(id);
+        const key = adapter.defaultEffortKey;
+        if (body[key] !== undefined) {
+          if (typeof body[key] !== "string") return res.status(400).json({ error: `${key} must be a string` });
+          patch[key] = body[key].trim().toLowerCase();
+        }
+        if (patch[key] === undefined && patch[adapter.defaultModelKey] === undefined) continue;
+        const effort = patch[key] ?? currentSettings[key] ?? "";
+        const model = patch[adapter.defaultModelKey] ?? currentSettings[adapter.defaultModelKey] ?? "";
+        if (effort && !effortBelongsToModel(effort, id, model)) {
+          return res.status(400).json({ error: `effort "${effort}" is not supported by the selected ${adapter.label} model` });
+        }
       }
       // Cross-engine failover. `codexFallback` is the pre-rename key an older UI still sends; both
       // write the canonical one so the two can never disagree on disk.

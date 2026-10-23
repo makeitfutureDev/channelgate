@@ -587,8 +587,18 @@
                     <select id="set-default-claude-model"></select>
                   </label>
                   <label class="field">
+                    <span>Default Claude effort</span>
+                    <select id="set-default-claude-effort"></select>
+                    <em class="state">Used when no thread or conversation effort is set. Blank uses the CLI default.</em>
+                  </label>
+                  <label class="field">
                     <span>Default Codex model</span>
                     <select id="set-default-codex-model"></select>
+                  </label>
+                  <label class="field">
+                    <span>Default Codex effort</span>
+                    <select id="set-default-codex-effort"></select>
+                    <em class="state">Used when no thread or conversation effort is set. Blank uses the CLI default.</em>
                   </label>
                   <div class="ch-codex-login" id="gateway-codex-login">
                     <strong>Default gateway Codex login</strong>
@@ -660,6 +670,11 @@
                       <span>Default model</span>
                       <select data-role="default-model"></select>
                       <em class="state" data-role="catalog-note"></em>
+                    </label>
+                    <label class="field">
+                      <span>Default effort</span>
+                      <select data-role="default-effort"></select>
+                      <em class="state">Used when no thread or conversation effort is set. Blank uses the CLI default.</em>
                     </label>
                   </div>
                 </template>

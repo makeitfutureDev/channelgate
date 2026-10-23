@@ -24,7 +24,7 @@ import { abortPooled } from "../engines/session-pool.js";
 import { DEFAULT_SILENCE_WINDOWS } from "../engines/watchdog.js";
 import { mintsOwnSessionId, usesMcpConfigFile, engineSupports, requireAdapter, fallbackTargets, engineLabel, engineCredentialState, engineTransientKinds, modelsForEngine } from "../engines/registry.js";
 import { validateRunContext } from "../engines/contract.js";
-import { getEngine, getDefaultModel, getDmTemplate, getEngineFallback, isEngineEnabled, getEnabledEngines, ENGINES, getOrgAccessGrants } from "../config/settings.js";
+import { getEngine, getDefaultModel, getDefaultEffort, getDmTemplate, getEngineFallback, isEngineEnabled, getEnabledEngines, ENGINES, getOrgAccessGrants } from "../config/settings.js";
 import { claudeTokenFingerprint, resolveContainerClaudeToken } from "./claude-token-relay.js";
 import { installNestedClaudeLogin } from "./nested-claude-login.js";
 import { installPerplexityResearchLogin, perplexityResearchPreamble } from "./perplexity-research.js";
@@ -45,7 +45,7 @@ import { runtimeAccessPreamble } from "./runtime-access.js";
 import { channelCredentialsPreamble } from "./channel-credentials.js";
 import { resolveRunIntegrations } from "./run-integrations.js";
 import { customMcpTokens } from "./custom-mcps.js";
-import { modelBelongsToEngine, effortBelongsToEngine } from "../engines/registry.js";
+import { modelBelongsToEngine, effortBelongsToEngine, effortBelongsToModel } from "../engines/registry.js";
 import { writeFile, rm, mkdir } from "node:fs/promises";
 import path from "node:path";
 import { gatewayRoot, runTmpDir, workspaceRoot } from "../config/paths.js";
@@ -1323,7 +1323,9 @@ async function runMessageImpl({ channelId, authorId, workspaceId = "", text, thr
   // precedence order that actually belongs to this engine wins; none → "" (the CLI's own default).
   const gatewayDefaultModel = getDefaultModel(engine);
   let model = [threadModel, meta.model, gatewayDefaultModel].find((m) => m && modelBelongsToEngine(m, engine)) || "";
-  const effort = [threadEffort, meta.effort].find((e) => e && effortBelongsToEngine(e, engine)) || "";
+  const gatewayDefaultEffort = getDefaultEffort(engine);
+  const effortForModel = (selectedModel) => [threadEffort, meta.effort, gatewayDefaultEffort]
+    .find((e) => e && effortBelongsToModel(e, engine, selectedModel)) || "";
   // Dashboard-only lifecycle signal: by this point the exact spawn engine/model are known. Keep it
   // best-effort so a display-layer callback can never prevent an engine run.
   try { onRuntimeResolved?.({ engine, model, ...runtimeSignal }); } catch { /* non-fatal */ }
@@ -1501,6 +1503,7 @@ async function runMessageImpl({ channelId, authorId, workspaceId = "", text, thr
     if (sudoQuestion && !(await isAdmin(authorId))) throw new Error("Sudo task authorization was revoked before the engine could start.");
   };
   const runOnce = async (sid, fresh, promptOverride = null, modelOverride = model) => {
+    const effort = effortForModel(modelOverride);
     assertRuntimeCanStart();
     await assertScheduledSudoAuthority();
     assertChannelEngineApproved((await getChannelMeta(entry.slug)) ?? channelMeta, engine);
@@ -1745,7 +1748,9 @@ async function runMessageImpl({ channelId, authorId, workspaceId = "", text, thr
     // could still refuse the fallback — so it never promises an engine that then does not run.
     if (note) announceAnswerNote(note);
     if (fbMcpDropNote) announceAnswerNote(fbMcpDropNote);
+    const fallbackDefaultEffort = getDefaultEffort(fallbackEngine);
     const exec = async (fbSid, fbFresh, modelOverride = fallbackModel) => {
+      const effort = effortBelongsToModel(fallbackDefaultEffort, fallbackEngine, modelOverride) ? fallbackDefaultEffort : "";
       assertRuntimeCanStart();
       await assertScheduledSudoAuthority();
       assertChannelEngineApproved((await getChannelMeta(entry.slug)) ?? channelMeta, fallbackEngine);
@@ -1753,7 +1758,7 @@ async function runMessageImpl({ channelId, authorId, workspaceId = "", text, thr
       return fallbackAdapter.run(validateRunContext({
         principal: { kind: untrustedPrincipal ? "daemon" : PRINCIPAL_KIND_BY_ORIGIN[origin] || "daemon", id: authorId }, origin, cwd,
         prompt: (fbFresh ? memoryPrefix : "") + composioIdentityPrefix + channelCredentialsPrefix
-          + runtimeIdentityPreamble({ engine: fallbackEngine, model: modelOverride, effort: "", fresh: fbFresh })
+          + runtimeIdentityPreamble({ engine: fallbackEngine, model: modelOverride, effort, fresh: fbFresh })
           + runtimeAccessPreamble(target, { clean, allowNetwork: Boolean(meta.allowNetwork), dangerouslySkip }) + perplexityResearchPreamble(target, { clean }) + fbPrompt,
         session: { id: fbSid, fresh: fbFresh }, policy: fallbackConfinement,
         // The SAME runtime target: failing over to the other harness changes which CLI runs, not
@@ -1769,7 +1774,7 @@ async function runMessageImpl({ channelId, authorId, workspaceId = "", text, thr
           settingsFile: runSettingsFile, permissionPromptTool,
           writable: codexWritable, autoApprove: codexAutoApprove, clean, composioUserEndpoint, composioEndpoint,
           composioUserToken, composioToken, toolboxToken, makeToolboxUrl, makeToolboxKey, customMcps,
-          gatewayCapability: fallbackMcpRuntime.gatewayCapability, gatewayFsRoot, gatewayWorkspaceRoot, progressReport: progressReportEnabled, model: modelOverride, effort: "",
+          gatewayCapability: fallbackMcpRuntime.gatewayCapability, gatewayFsRoot, gatewayWorkspaceRoot, progressReport: progressReportEnabled, model: modelOverride, effort,
           attachments, signal, timeoutMs, maxSilenceMs, onDelta: scopedOnDelta, onEvent: scopedOnEvent,
           onSessionResolved: sessionResolved(fbKey, fallbackEngine),
           channelEnv, channelEnvFingerprint: channelEnvFp, browserNamespace,

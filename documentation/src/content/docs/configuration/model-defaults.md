@@ -15,6 +15,8 @@ Open **Settings → Agent defaults → Engine & runtime**.
 | Engine (which CLI drives the bot) | Default engine; Claude is the fallback default when none is configured |
 | Default Claude model | Sets the model used by inherited Claude runs |
 | Default Codex model | Sets the model used by inherited Codex runs |
+| Default Claude / Codex effort | Sets reasoning effort when a conversation or thread does not override it |
+| Provider default model and effort | Independent defaults on each optional Qwen provider card |
 | Automatic failover between harnesses | Enables supported Claude–Codex recovery before work starts; defaults on |
 | How a failover happens | Automatic, or ask in a live Slack thread; automatic is the default |
 
@@ -22,7 +24,7 @@ Optional provider harnesses must be explicitly enabled and authenticated. At lea
 
 1. Authenticate the engines you intend to use.
 2. Disable engines the deployment cannot support.
-3. Choose the default engine and an explicit model for each enabled engine when its controls offer one.
+3. Choose the default engine, model, and supported effort for each enabled engine when its controls offer them.
 4. Save, then create a fresh thread to check inherited behavior.
 
 An empty gateway model setting lets the CLI use its own default. An explicit gateway model helps avoid changes in the operator's interactive terminal model choice affecting gateway runs.
@@ -47,7 +49,7 @@ Set a conversation's **Engine**, **Model**, and **Effort** under **Conversations
 
 For a new run, explicit per-run overrides take precedence, followed by thread selection, conversation/DM selection, and gateway defaults. Existing threads retain their owning engine session unless explicitly switched or recovered; changing the global default does not automatically migrate every active thread.
 
-Effort is engine- and model-dependent. Use the offered choices rather than assuming all models support `xhigh` or the same reasoning settings. An empty effort value inherits the engine's default; it is not proof of a specific reasoning level.
+Effort is engine- and model-dependent. Use the offered choices rather than assuming all models support `xhigh` or the same reasoning settings. An empty conversation or thread effort inherits the gateway's default effort for that harness. An empty gateway effort uses the CLI default; it is not proof of a specific reasoning level. Failover uses the destination harness's own gateway effort, checked against its selected model.
 
 ## Control who changes runtime
 
