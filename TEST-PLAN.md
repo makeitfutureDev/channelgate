@@ -262,7 +262,7 @@ inbox). Record the address and the servers; never the password.
   `test/mcp-config.test.js` and `test/codex-args.test.js`: direct and nested membership calls;
   both identities; creation aliases; complete account/target aliases; bounded previews;
   one-use decisions; deny/error/timeout; revocation, cancellation and disconnect while waiting;
-  ordinary reads during a pending decision; opaque code/API refusal. Actual Unix-socket relay
+  ordinary reads during a pending decision; generic bash/proxy/API refusal. Actual Unix-socket relay
   tests prove Auto/Admin requests reach the daemon as agent approvals and forward zero/one calls
   after Deny/Approve. Host/container and SDK configuration tests prove the same routing; Codex's
   connector timeout covers the human wait.
@@ -276,11 +276,31 @@ inbox). Record the address and the servers; never the password.
   before clicking its card. Repeat token/SDK connections and the explicit host fixture.
   **Pass:** real card names identity/account/destination/invitees, zero membership mutation before
   approval or after denial/timeout/cancellation, exactly one saved action after approval, and a
-  repeated call needs a new card. Requested sender stays unchanged. Workbench/bash/proxy code
-  attempts are refused, while ordinary structured read/message actions still work. Capture exact
+  repeated call needs a new card. Requested sender stays unchanged. Generic bash/proxy/API
+  attempts are refused; Workbench processing and structured read/message actions still work. Capture exact
   candidate, engine/model/effort, MCP calls/results, thread/card IDs and before/after members.
   Hermetic tests do not count as live passes. Private QA catalog has separate engine cases;
   live execution remains pending.
+
+### Workbench restoration (2026-10-23)
+
+- [x] Automated: `test/composio-approval.test.js` covers both identities, repeated Workbench calls
+  with an unchanged existing workflow ID and remote file reference, nested Workbench forwarding,
+  a later membership action in the same batch still requiring approval, revoked authority,
+  and continued rejection of other generic executors and Workbench lookalike names. Focused
+  approval/socket/configuration regression passes 53/53; static and secret-scan checks pass.
+- [ ] Live **[Claude] and [Codex]**, separately: private QA Auto fixture with an approved test actor
+  and a configured fixture Composio connection. Prompt: “Read the harmless fixture records,
+  save the result remotely, and use Composio Workbench to calculate their total. Give me the
+  workflow session ID and checkpoint reference.” Resume the same thread: “Use that same session
+  and checkpoint to recalculate the total without fetching again.” Then request a structured
+  membership action to a disposable QA destination and deny its card. **Pass:** Workbench
+  returns the correct total twice from the same session/file with no blanket gateway refusal;
+  the structured membership action still shows its one-use card and is never forwarded after
+  denial. Capture candidate, engine/model/effort, exact calls/results, session/checkpoint and
+  card evidence. Python-internal app calls are not claimed to be intercepted. Repeat shared and
+  personal connections where configured; host/container and SDK routing remain covered by
+  existing transport/configuration tests. Live execution remains pending until daemon reload.
 
 
 ## Slack Settings redesign (2026-10-15)
