@@ -15,6 +15,10 @@
   Busy-thread/engine-switch fixtures verify admin access, original incoming-event identity and
   responder audit, plus rejection for ordinary foreign members, demotion, removed membership,
   dormant access, a different channel and duplicate decisions.
+- [x] Final development validation: `npm run test:coverage` — 4,025 passed, 34 skipped,
+  zero failures; coverage floors passed (lines 94.30%, branches 86.65%, functions 90.28%).
+  `npm run check:static`, `npm run secret-scan`, `npm run test:security-coverage` and DCO passed.
+  Corresponding private QA definitions are updated; live acceptance remains unexecuted.
 - [ ] Live menu acceptance (engine-independent; no engine turn for these controls): in a disposable
   Slack channel, admit an approved member, a second ordinary member and a current organization
   admin. Give the first member and admin distinct disposable personal variables. As first member,
