@@ -730,12 +730,16 @@ function harnessRows(runtime, opts) {
   // Slack refuses the whole view (`invalid_arguments`) when `initial_options` is an empty list, so
   // a policy that is empty or names only engines this build no longer offers starts unselected.
   const initial = options.filter((o) => selectedValues.includes(o.value));
+  // A multi-select is NOT a valid `actions` element (Slack: "unsupported element: multiselect");
+  // it may only be a section accessory or an input. Live Settings refused to open for admins
+  // on Enterprise installs until this moved.
   return [heading, {
-    type: "actions", elements: [{
+    type: "section", block_id: "cg_channel_settings_harnesses", text: mrkdwn("*Approved harnesses*"),
+    accessory: {
       type: "multi_static_select", action_id: CHANNEL_SETTINGS_HARNESSES_ACTION_ID,
       placeholder: plain("Approve one or more harnesses"), options,
       ...(initial.length ? { initial_options: initial } : {}),
-    }],
+    },
   }, context("Choose one or more harnesses. Select All harnesses to remove the restriction. The channel default must be approved. Thread pins and automatic fallback follow this policy.")];
 }
 

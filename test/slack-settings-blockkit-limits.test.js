@@ -69,7 +69,12 @@ export function blockKitProblems(view, where) {
     }
     if (b.type === "actions") {
       if (!(b.elements?.length >= 1 && b.elements.length <= 25)) problems.push(`${p}: actions elements`);
-      (b.elements || []).forEach((e, j) => validateElement(e, `${p}.el${j}`, problems));
+      (b.elements || []).forEach((e, j) => {
+        // Slack: "unsupported element: multiselect" — multi-selects live in a section accessory
+        // or an input block, never in an actions block. This is what refused the live modal.
+        if (String(e?.type || "").startsWith("multi_")) problems.push(`${p}.el${j}: ${e.type} is not allowed in an actions block`);
+        validateElement(e, `${p}.el${j}`, problems);
+      });
     }
     if (b.type === "input") {
       if (!(len(b.label) > 0 && len(b.label) <= 2000)) problems.push(`${p}: label`);
@@ -112,11 +117,11 @@ test("every Settings page respects Slack's Block Kit limits for admins and membe
 test("an empty or retired approved-harness policy renders the picker unselected rather than with empty initial options", () => {
   for (const approvedEngines of [[], ["qwen"]]) {
     const view = buildChannelSettingsView({ ...base, runtime: { ...base.runtime, approvedEngines } }, { tab: "agent", c: "C1", u: "U1" }, everything);
-    const select = view.blocks.flatMap((b) => b.elements || []).find((e) => e.type === "multi_static_select");
-    assert.ok(select, "the picker is rendered for an admin");
+    const select = view.blocks.map((b) => b.accessory).find((e) => e?.type === "multi_static_select");
+    assert.ok(select, "the picker is rendered for an admin, as a section accessory");
     assert.equal(select.initial_options, undefined);
   }
   const all = buildChannelSettingsView({ ...base, runtime: { ...base.runtime, approvedEngines: null } }, { tab: "agent", c: "C1", u: "U1" }, everything);
-  const select = all.blocks.flatMap((b) => b.elements || []).find((e) => e.type === "multi_static_select");
+  const select = all.blocks.map((b) => b.accessory).find((e) => e?.type === "multi_static_select");
   assert.equal(select.initial_options.length, 1);
 });

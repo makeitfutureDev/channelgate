@@ -39,10 +39,12 @@ product overview.
   Existing records are preserved; excess new registrations receive an explicit limit notice.
 - Add Enterprise-only per-channel Approved harnesses in the admin editor and Slack Settings.
   Enforce the policy for thread pins, saved sessions, API/automation and automatic fallback;
-  preserve restrictions after a license downgrade. Fix: an admin's Slack Settings failed to open
-  ("An API error occurred: invalid_arguments") on a channel whose approved list was empty or
-  named an engine the build no longer offers; the picker now starts unselected instead, and a
-  regression test renders every Settings page against Slack's Block Kit limits.
+  preserve restrictions after a license downgrade. Fix: an admin's Slack Settings on an
+  Enterprise install failed to open ("An API error occurred: invalid_arguments — unsupported
+  element: multiselect") because the harness picker sat in an actions block, where Slack allows
+  no multi-select; it is now a section accessory, an empty approved list no longer sends empty
+  initial options, and a regression test renders every Settings page against Slack's Block Kit
+  rules. Slack's own validation detail now rides along in the Settings error notice.
 
 - Scheduled Slack tasks can ask their creator questions using cards and forms. Submitted answers
   resume the correct scheduled session, including silent and retired one-time tasks.
