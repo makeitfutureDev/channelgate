@@ -39,7 +39,10 @@ product overview.
   Existing records are preserved; excess new registrations receive an explicit limit notice.
 - Add Enterprise-only per-channel Approved harnesses in the admin editor and Slack Settings.
   Enforce the policy for thread pins, saved sessions, API/automation and automatic fallback;
-  preserve restrictions after a license downgrade.
+  preserve restrictions after a license downgrade. Fix: an admin's Slack Settings failed to open
+  ("An API error occurred: invalid_arguments") on a channel whose approved list was empty or
+  named an engine the build no longer offers; the picker now starts unselected instead, and a
+  regression test renders every Settings page against Slack's Block Kit limits.
 
 - Scheduled Slack tasks can ask their creator questions using cards and forms. Submitted answers
   resume the correct scheduled session, including silent and retired one-time tasks.

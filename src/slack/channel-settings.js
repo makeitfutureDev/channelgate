@@ -727,11 +727,14 @@ function harnessRows(runtime, opts) {
   if (!opts.canApproveHarnesses) return [heading];
   const options = [option("All harnesses", SETTINGS_DEFAULT_VALUE), ...(runtime.harnessOptions || []).map((o) => option(o.label, o.value))];
   const selectedValues = policy == null ? [SETTINGS_DEFAULT_VALUE] : policy;
+  // Slack refuses the whole view (`invalid_arguments`) when `initial_options` is an empty list, so
+  // a policy that is empty or names only engines this build no longer offers starts unselected.
+  const initial = options.filter((o) => selectedValues.includes(o.value));
   return [heading, {
     type: "actions", elements: [{
       type: "multi_static_select", action_id: CHANNEL_SETTINGS_HARNESSES_ACTION_ID,
       placeholder: plain("Approve one or more harnesses"), options,
-      initial_options: options.filter((o) => selectedValues.includes(o.value)),
+      ...(initial.length ? { initial_options: initial } : {}),
     }],
   }, context("Choose one or more harnesses. Select All harnesses to remove the restriction. The channel default must be approved. Thread pins and automatic fallback follow this policy.")];
 }
