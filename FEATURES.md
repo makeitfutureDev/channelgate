@@ -653,6 +653,14 @@ control-plane status.
 
 ## Gateway model shortcuts
 
+New installations inherit `:astra`, `:sol`, `:terra`, `:fable`, `:opus` and `:sonet` from the
+engine model catalogs. Each resolves to the numerically newest stable version of its family,
+including Sonnet 5.5 and GPT-6.1 Sol when offered by the catalog. Live Codex discovery can advance
+these defaults; Claude uses the curated supported catalog shipped with the gateway. Missing
+families are omitted instead of guessed. A stored shortcut map, including an intentionally empty
+map, is preserved exactly. Saving unrelated settings keeps inherited defaults; editing the shortcut
+list makes it an explicit set of pins. Existing thread pins never follow catalog updates.
+
 Admins can add gateway-wide model shortcuts in Settings → Access & security → Model shortcuts. Each name selects an engine and model. In Slack, `@agent :astra task` pins that engine and model to the current thread and runs the task; `@agent :astra` switches the thread without starting an agent turn. Slack's automatically inserted space after the mention is accepted. Changing a mapping affects later shortcut selections, while threads already pinned keep their selected model. Channel runtime-change access and dedicated Codex-login restrictions apply.
 
 ## Public documentation website
