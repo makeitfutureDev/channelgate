@@ -71,6 +71,12 @@ inbox). Record the address and the servers; never the password.
 
 ## Registered inventory caps and Enterprise harness approvals (2026-10-22)
 
+- [x] Automated `test/slack-settings-blockkit-limits.test.js` (2026-10-23): every Settings page,
+  for an admin and a member, in a channel and a DM, with the approved-harness policy unset,
+  empty, valid and naming a retired engine, passes a Block Kit limits check (block count, text
+  lengths, option counts, `initial_options` never empty). The empty/retired policies render the
+  picker unselected. Live evidence: the admin's ⚙️ Settings on the development channel opened
+  with `invalid_arguments` before the fix and opens after it.
 - [x] Automated `test/license-registration.test.js`: signed Registered and no-key fixtures admit
   19→20 users/channels and refuse 20→21 atomically, including a two-process race for the last
   slot. Count every stored conversation (DMs/API included), every stored user (approved or not)
