@@ -1,7 +1,9 @@
 import { resolveSlackConfig } from "../config/settings.js";
+import { isAdmin } from "../config/store.js";
 import { assertQuestionAccess } from "../gateway/question-access.js";
 import { createQuestion, getQuestion, bindQuestionMessage, updateQuestion, saveQuestionAnswers, validateAnswer, missingQuestionAnswers, acceptQuestionSubmission, formatQuestionAnswers } from "../gateway/questions.js";
 import { acquireKeyedLock } from "../util/keyed-lock.js";
+import { logEvent } from "../util/logger.js";
 import { buildQuestionCard, buildQuestionModal, buildCustomAnswerModal, parseQuestionMetadata, parseQuestionPageAnswers, questionPage, QUESTION_FORM_CALLBACK, QUESTION_CUSTOM_CALLBACK } from "./question-views.js";
 
 // The MCP connection lives in the daemon; no bot credential crosses into the engine container.
@@ -63,10 +65,11 @@ function actionMetadata(action) {
   return parseQuestionMetadata(action?.value);
 }
 
-function ownQuestion(metadata, body, { modal = false, allowStale = false } = {}) {
+async function ownQuestion(metadata, body, { modal = false, allowStale = false } = {}) {
   if (!metadata) throw new Error("Invalid question action.");
   const record = getQuestion(metadata.id);
-  if (!record || record.authorId !== body?.user?.id) throw new Error("Only the person who requested these questions can answer them.");
+  const responderId = body?.user?.id;
+  if (!record || !responderId || (record.authorId !== responderId && !await isAdmin(responderId))) throw new Error("Only the person who requested these questions or an organization admin can answer them.");
   if (!modal) {
     const channel = body?.channel?.id || body?.container?.channel_id;
     const ts = body?.message?.ts || body?.container?.message_ts;
@@ -75,6 +78,24 @@ function ownQuestion(metadata, body, { modal = false, allowStale = false } = {})
   if (record.status !== "pending") throw new Error("These questions have already been submitted or cancelled.");
   if (!allowStale && record.revision !== metadata.revision) throw new Error("These answers changed. Use the latest card or reopen the form.");
   return record;
+}
+
+async function assertResponderAccess(record, responderId, client) {
+  await Promise.all([
+    assertQuestionAccess(record, client, { timeoutMs: 1500 }),
+    ...(responderId !== record.authorId ? [assertQuestionAccess({ ...record, authorId: responderId }, client, { timeoutMs: 1500 })] : []),
+  ]);
+  if (responderId !== record.authorId) {
+    // An admin can operate another member's form, but cannot reuse a stale modal after leaving
+    // the conversation or losing rank. The requester must also remain eligible to continue.
+    if (!await isAdmin(responderId)) throw new Error("Only the person who requested these questions or an organization admin can answer them.");
+  }
+}
+
+function auditAdminAction(record, responderId, action) {
+  if (responderId === record.authorId) return;
+  return logEvent("question_admin_action", { channel: record.channelId, slug: record.slug,
+    author: responderId, requesterId: record.authorId, questionId: record.id, action });
 }
 
 async function notice(client, record, userId, message) {
@@ -86,7 +107,7 @@ const submitting = new Set();
 // Queue a synthetic human answer through the normal authorization, licensing and session path.
 // Nothing executes on selection. The atomic callback alone makes submission terminal. Keep the
 // promise observed, but never make Slack wait for an engine turn to finish before acknowledging.
-export function startQuestionContinuation(record, client, processMessage, { onError = () => {} } = {}) {
+export function startQuestionContinuation(record, client, processMessage, { onError = () => {}, responderId = record.authorId } = {}) {
   if (submitting.has(record.id)) return false;
   submitting.add(record.id);
   const event = {
@@ -95,18 +116,26 @@ export function startQuestionContinuation(record, client, processMessage, { onEr
     ts: `question-${record.id}`, text: formatQuestionAnswers(record),
   };
   let accepted = false;
-  const promise = Promise.resolve().then(() => processMessage(event, client, {
-    bypassMention: true, busyChoice: "queue", questionSubmissionId: record.id,
-    onQuestionSubmissionAccepted: ({ runId, rec }) => {
-      accepted = acceptQuestionSubmission(record.id, record.revision, runId, rec);
-      if (accepted) void refreshQuestionCard(getQuestion(record.id), client).catch(() => {});
-      return accepted;
-    },
-  })).then(() => {
+  const promise = Promise.resolve().then(async () => {
+    // Keep the original execution identity and its personal credentials. Admin form access is
+    // permission to supply answers, never permission to promote the requester's runtime lane.
+    if (responderId !== record.authorId) await assertResponderAccess(record, responderId, client);
+    return processMessage(event, client, {
+      bypassMention: true, busyChoice: "queue", questionSubmissionId: record.id,
+      onQuestionSubmissionAccepted: ({ runId, rec }) => {
+        accepted = acceptQuestionSubmission(record.id, record.revision, runId, rec);
+        if (accepted) {
+          void auditAdminAction(record, responderId, "submit");
+          void refreshQuestionCard(getQuestion(record.id), client).catch(() => {});
+        }
+        return accepted;
+      },
+    });
+  }).then(() => {
     if (!accepted && getQuestion(record.id)?.status === "pending") throw new Error("Your answers are saved, but the continuation could not be queued. Reopen the card and submit again.");
   }).catch(async (error) => {
     onError(error);
-    await notice(client, record, record.authorId, error.message);
+    await notice(client, record, responderId, error.message);
   }).finally(() => submitting.delete(record.id));
   return promise;
 }
@@ -117,15 +146,16 @@ export async function handleQuestionAction({ ack, body, action, client }, { proc
   try {
     const metadata = actionMetadata(action);
     const inModal = Boolean(body.view);
-    record = ownQuestion(metadata, body, { modal: inModal, allowStale: true });
+    record = await ownQuestion(metadata, body, { modal: inModal, allowStale: true });
     // Leave time within Slack's three-second interaction window to acknowledge errors/open views.
-    await assertQuestionAccess(record, client, { timeoutMs: 1500 });
+    await assertResponderAccess(record, body.user.id, client);
     const actionId = action.action_id;
     // Opening is read-only and also repairs a card whose last Slack update failed. Stale writes
     // are never applied; their catch path refreshes the visible controls from the durable draft.
     if (record.revision !== metadata.revision && actionId !== "cg_question_open" && !actionId.startsWith("cg_question_custom:")) throw new Error("These answers changed. The card has been refreshed; please try again.");
     if (actionId === "cg_question_open") {
       await client.views.open({ trigger_id: body.trigger_id, view: buildQuestionModal(record) });
+      await auditAdminAction(record, body.user.id, "open");
       return;
     }
     if (actionId === "cg_question_back") {
@@ -136,6 +166,7 @@ export async function handleQuestionAction({ ack, body, action, client }, { proc
     } else if (actionId.startsWith("cg_question_custom:")) {
       const qid = actionId.slice("cg_question_custom:".length);
       await client.views.open({ trigger_id: body.trigger_id, view: buildCustomAnswerModal(record, qid) });
+      await auditAdminAction(record, body.user.id, "custom_open");
       return;
     } else if (actionId.startsWith("cg_question_choose:")) {
       const [, qid, index] = actionId.split(":");
@@ -151,9 +182,10 @@ export async function handleQuestionAction({ ack, body, action, client }, { proc
       record = updateQuestion(record.id, record.revision, { status: "cancelled" });
     } else if (actionId === "cg_question_submit") {
       if (missingQuestionAnswers(record).length) throw new Error("Please answer every required question before submitting.");
-      startQuestionContinuation(record, client, processMessage);
+      startQuestionContinuation(record, client, processMessage, { responderId: body.user.id });
       return;
     } else throw new Error("Unknown question action.");
+    await auditAdminAction(record, body.user.id, actionId === "cg_question_cancel" ? "cancel" : "save");
     await refreshQuestionCard(record, client);
   } catch (error) {
     if (record) await refreshQuestionCard(record, client).catch(() => {});
@@ -168,14 +200,15 @@ export async function handleQuestionView({ ack, body, view = body?.view, client 
   let record;
   try {
     const metadata = parseQuestionMetadata(view?.private_metadata);
-    record = ownQuestion(metadata, body, { modal: true });
-    await assertQuestionAccess(record, client, { timeoutMs: 1500 });
+    record = await ownQuestion(metadata, body, { modal: true });
+    await assertResponderAccess(record, body.user.id, client);
     if (view.callback_id === QUESTION_CUSTOM_CALLBACK) {
       const qid = metadata.questionId;
       const q = record.questions.find((q) => q.id === qid);
       if (!q || !q.allowCustom) throw new Error("Custom answers are not allowed.");
       const custom = view.state?.values?.[`q:${qid}`]?.custom?.value || "";
       record = saveQuestionAnswers(record.id, record.revision, { [qid]: { values: record.answers[qid]?.values || [], custom } });
+      await auditAdminAction(record, body.user.id, "custom_save");
       await respond();
     } else if (view.callback_id === QUESTION_FORM_CALLBACK) {
       const page = metadata.page;
@@ -189,6 +222,7 @@ export async function handleQuestionView({ ack, body, view = body?.view, client 
         return;
       }
       record = saveQuestionAnswers(record.id, record.revision, patch);
+      await auditAdminAction(record, body.user.id, "save");
       if (page + 1 < slice.totalPages) await respond({ response_action: "update", view: buildQuestionModal(record, page + 1) });
       else if (missingQuestionAnswers(record).length) {
         // Back permits incomplete drafts. Return to the first missing page instead of dropping it.
@@ -196,7 +230,7 @@ export async function handleQuestionView({ ack, body, view = body?.view, client 
         await respond({ response_action: "update", view: buildQuestionModal(record, Math.floor(first / 3)) });
       } else {
         await respond();
-        startQuestionContinuation(record, client, processMessage);
+        startQuestionContinuation(record, client, processMessage, { responderId: body.user.id });
       }
     } else throw new Error("Unknown question form.");
     await refreshQuestionCard(getQuestion(record.id), client);
