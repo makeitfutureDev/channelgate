@@ -1996,6 +1996,15 @@ export function canOpenMenuButton({ ownerId = "", clickerId = "" } = {}) {
 
 // Slack does not infer the source thread for an ephemeral posted from a Block Kit action. Carry
 // the thread encoded into the button (falling back to the action's message envelope) explicitly.
+// A Slack Web API error's message is only its code ("An API error occurred: invalid_arguments");
+// the schema path and reason ride in response_metadata.messages. One line with both.
+export function slackErrorText(error, fallback = "Something went wrong.") {
+  const base = String(error?.message || fallback);
+  const messages = error?.data?.response_metadata?.messages;
+  if (!Array.isArray(messages) || !messages.length) return base;
+  return `${base} — ${messages.map((m) => String(m)).join("; ")}`.slice(0, 1500);
+}
+
 export function fileButtonNoticePayload(body, command, clicker, text) {
   const channel = body?.channel?.id || command?.c || "";
   const threadTs = command?.t || body?.message?.thread_ts || body?.message?.ts || "";
@@ -2647,15 +2656,18 @@ async function connectAndWire(app) {
 
       throw new Error("This channel settings control expired. Open Settings again from a recent reply.");
     } catch (e) {
-      console.warn(`[slack] channel settings error: ${e.message}`);
+      // A Slack API refusal names the offending block in response_metadata.messages; carry it
+      // into the log and the notice, or "invalid_arguments" alone is undiagnosable from chat.
+      const detail = slackErrorText(e);
+      console.warn(`[slack] channel settings error: ${detail}`);
       if (body?.view?.id) {
         await client.views.update({
           view_id: body.view.id,
           ...(body.view.hash ? { hash: body.view.hash } : {}),
-          view: buildChannelSettingsErrorView(e.message),
+          view: buildChannelSettingsErrorView(detail),
         }).catch(() => {});
       } else if ((body?.channel?.id || command?.c) && clicker) {
-        await client.chat.postEphemeral(fileButtonNoticePayload(body, command, clicker, e.message)).catch(() => {});
+        await client.chat.postEphemeral(fileButtonNoticePayload(body, command, clicker, detail)).catch(() => {});
       }
     }
   };
