@@ -18,6 +18,12 @@ product overview.
 
 ## Unreleased
 
+- Restore Composio Remote Workbench for remote data processing and bulk app calls, preserving
+  workflow session and file references. Explicit Slack membership actions still require human
+  approval; Python inside Workbench is outside that structured gate. Other generic connector
+  bash/proxy/API executors remain refused. Clarify local container processing as an option for
+  records returned inline.
+
 - **Email accounts.** Connect an ordinary mailbox — IMAP for reading, SMTP for sending — to a
   conversation or to yourself by entering its server settings once on one form: in the admin UI
   (the conversation's Connections, or a person under Users), in Slack's ⚙️ Settings (MCP page for

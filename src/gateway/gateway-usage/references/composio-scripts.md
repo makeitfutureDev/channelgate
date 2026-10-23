@@ -26,6 +26,11 @@ Never read unrelated business records just to identify an account.
 
 ## Choose the executor
 
+Composio Remote Workbench is admitted by the gateway for remote data processing and bulk app
+calls. Its Python is not inspected by the structured membership-approval check. Any Slack
+join/invite/channel-creation action still needs human approval: issue it as a structured action
+and wait for its card, following `references/messages.md`.
+
 - **Small results or independent calls:** prefer `COMPOSIO_MULTI_EXECUTE_TOOL`. Its `tools` array
   contains `{tool_slug, arguments, account}` entries, with up to 50 logically independent calls.
   Include `session_id`, a concise `current_step` and `current_step_metric`, and the required
@@ -35,6 +40,10 @@ Never read unrelated business records just to identify an account.
   or later scripting is expected. Use the actual saved-file path returned by the executor.
   `COMPOSIO_REMOTE_WORKBENCH` runs Python in a persistent remote Jupyter sandbox; it is for remote
   files and bulk tool executions, not quick inline parsing, arithmetic or summaries.
+- **Local processing:** when records are returned inline, save them in the channel workspace and
+  run Python in the channel container when its mode permits shell/file work. A Composio
+  `/mnt/files/` path belongs to the remote sandbox and cannot be opened locally. A Workbench
+  failure alone does not mean local analysis or further structured reads are unavailable.
 - **Bulk app calls:** the workbench's preloaded
   `run_composio_tool(tool_slug, arguments, account=selected_account)` returns `(result, error)`.
   Use only already discovered app tools with known schemas, never `COMPOSIO_*` meta tools inside

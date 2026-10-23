@@ -68,11 +68,13 @@
 - Container and host runtime connections, including SDK sessions, traverse the same daemon check.
   Denial, timeout, unavailable approval, cancellation, disconnect or expired/revoked authority
   prevents forwarding. Ordinary structured reads and writes continue.
-- Opaque Composio workbench/bash/proxy/API executors are refused because arbitrary persistent
-  code can hide a membership change. Use structured connector actions instead. This enforcement
-  covers managed Composio; independently supplied credentials, custom MCPs and browser sessions
-  remain outside that boundary. The always-loaded guide forbids bypass through any route and
-  treats sharing/posting requests as separate from permission to join or change the sender.
+- Composio Remote Workbench is allowed for remote result processing and bulk app calls, with
+  code and workflow session references forwarded unchanged. Python and app calls inside it are
+  outside the structured membership gate; the guide requires structured actions and human
+  approval for membership changes. Other generic connector bash/proxy/API executors remain
+  refused. Independently supplied credentials, custom MCPs and browser sessions also remain
+  outside that gate. The always-loaded guide forbids bypass through any route and treats
+  sharing/posting requests as separate from permission to join or change the sender.
 
 ## Google Chat native conversation controls
 

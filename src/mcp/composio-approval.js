@@ -29,10 +29,13 @@ export function composioApprovalDetails(params, identity) {
         .filter((field) => Object.hasOwn(args || {}, field)).map((field) => `${field}=${pick(args[field])}`);
       if (account !== undefined) fields.push(`execution account=${pick(account)}`);
       changes.push(`${key}: ${fields.join("; ") || "connected account; destination unspecified"}`);
+    } else if (key === "COMPOSIO_REMOTE_WORKBENCH") {
+      // Workbench is an admitted processing route for remote result files and bulk app calls.
+      // Forward its code/session unchanged; arbitrary Python cannot be inspected reliably here.
+      // Membership actions inside it remain subject to the agent's human-approval instructions,
+      // rather than this structured-call gate. Other opaque executors remain refused below.
+      return;
     } else if (opaque(key)) {
-      // The workbench is persistent and can construct action names dynamically. A regex on its
-      // Python/shell source would be bypassable. Refuse it, rather than presenting a broad code
-      // approval as if it were consent to one concrete channel/invitee change.
       throw new Error("opaque connector execution is disabled");
     } else if (/COMPOSIO_(?:MULTI_EXECUTE_TOOL|EXECUTE_TOOL|EXECUTE_ACTION|RUN_TOOL)$/.test(key)) {
       if (Array.isArray(args?.tools)) {
@@ -98,7 +101,7 @@ export function withComposioApproval(transport, { identity, authorize, requestAp
             if (!closed && !pending.cancelled) {
               await transport.send({ jsonrpc: "2.0", id: request.id, result: {
                 isError: true,
-                content: [{ type: "text", text: "Connector action was not executed. Structured channel membership changes require a one-use human approval; denial, timeout, unavailable approval or revoked authority stops the action. Opaque connector workbench/bash/API executors are disabled because they can hide membership changes. Use explicit structured actions in small batches; never bypass this check with code, another identity, or a direct API call." }],
+                content: [{ type: "text", text: "Connector action was not executed. Structured channel membership changes require a one-use human approval; denial, timeout, unavailable approval or revoked authority stops the action. Generic connector bash/proxy/API executors remain disabled. Composio Remote Workbench is allowed, subject to current run authority; it does not approve membership changes. Never bypass a membership decision with code, another identity, or a direct API call." }],
               } });
             }
           } finally {
