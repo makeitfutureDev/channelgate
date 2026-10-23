@@ -1,5 +1,36 @@
 # ChannelGate — Test Plan
 
+## Admin access to Slack buttons and forms (2026-10-23)
+
+- [x] Automated: `node --test test/admin-menu-controls.test.js test/file-button-actions.test.js
+  test/menu.test.js test/question-admin-access.test.js test/question-interactions.test.js
+  test/question-continuation.test.js test/scheduled-questions.test.js`.
+  Real scratch stores and captured Slack calls verify admin overrides for all three menu controls,
+  actual viewer ownership/personal variable isolation, legacy Resume, question choices, custom text,
+  multi-select, paged forms, Back, cancel and submit. Foreign ordinary members, demoted admins,
+  revoked requester access, missing membership, wrong cards/channels and stale revisions fail closed.
+  Admin answers preserve the original continuation author and audit the responder without answers.
+- [ ] Live menu acceptance (engine-independent; no engine turn for these controls): in a disposable
+  Slack channel, admit an approved member, a second ordinary member and a current organization
+  admin. Give the first member and admin distinct disposable personal variables. As first member,
+  post `@agent /menu`. As admin, open Files, Variables and Settings from that card and from an
+  existing member-authored reply. Require every modal to open; Variables/Settings → You must show
+  only the admin's personal entries. Open and save a disposable channel-variable form and remove
+  the variable afterwards. Require audit attribution to the admin and no raw secret in a view.
+  As second ordinary member, require foreign owned buttons denied. Demote the admin or remove
+  channel membership and retry: deny the foreign button; also deny stale personal modal actions
+  after membership is removed. Record Slack view payloads, actor ids and audit event ids.
+- [ ] Live question acceptance (repeat with Claude AND Codex): pin each engine in its disposable
+  Worker fixture. As approved member ask: “Use ask_questions to collect audience and project name
+  before replying; allow custom text.” As a current member admin, select an option, open custom
+  text, save and submit. Repeat with six questions to exercise Back/Next; cancel a separate request.
+  Require one continuation in the original thread/session as the original requester, their personal
+  scope and project runtime lane, plus `question_admin_action` naming the actual admin with no
+  answer text. A second ordinary member must be refused. Repeat after admin demotion, requester
+  access revocation and either participant leaving: no continuation. Stale/replayed submission
+  must never duplicate a run. Capture question id, Slack payloads, run author/session/runtime,
+  credential names only and audit events. No live result is claimed by the automated fixtures.
+
 ## Email accounts (2026-10-22)
 
 ### Regression
@@ -3393,8 +3424,9 @@ the originating thread under the original author, with no continuation before fi
   useful validation response and no continuation. Leave optional notes empty, complete required
   fields and submit; require all pages' answers, including the written project name.
 - **QST-04 — requester and revision isolation.** With an approved member's pending card, have
-  another approved member and the admin try to choose, open custom text, and submit. Require
-  rejection without modifying the request. As requester, open two modal views, change a draft
+  another approved member try to choose, open custom text, and submit. Require rejection without
+  modifying the request. A current member admin may answer and submit under the original
+  requester continuation identity, with the responding admin recorded in audit. As requester, open two modal views, change a draft
   through the newer view, then submit the stale view. Require stale-view protection, preservation
   of the current draft, and successful submission from refreshed controls. Replay final Submit
   and click an answered card: require no duplicate continuation. Revoke the requester's channel
@@ -3846,7 +3878,8 @@ The skipped/live cases below remain unverified; this branch is not a release can
   without changing data. Settings → Resume Session shows existing sessions with their owning harness
   and container cwd, including Clean cwd; fresh cases show guidance. On a card posted before this
   change, clear the thread and click its old Resume button: no old session command. A channel message `/menu` without mention is ignored;
-  a revoked/nonmember or different author cannot open an old menu's controls. Capture Slack
+  a revoked/nonmember or different non-admin author cannot open an old menu's controls; a current
+  member admin can, under their own viewer identity. Capture Slack
   payloads/screenshots, session identity and event evidence. Card delivery is engine-independent;
   resume ownership/cwd requires both harness fixtures. Live cases remain unexecuted at development
   check time and are required before stable release.

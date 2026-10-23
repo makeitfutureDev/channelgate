@@ -359,7 +359,8 @@ export async function handleMenuResumeAction({ ack, body, action, client }) {
   const userId = body?.user?.id;
   try {
     const value = JSON.parse(action?.value || "{}");
-    if (!userId || value.u !== userId || value.c !== channelId || typeof value.t !== "string") {
+    if (!canOpenMenuButton({ ownerId: value.u, clickerId: userId, clickerIsAdmin: userId ? await isAdmin(userId) : false })
+      || value.c !== channelId || typeof value.t !== "string") {
       throw new Error("This menu isn't yours. Open your own with `/menu`.");
     }
     const context = await fileExplorerContext(client, { channelId, userId, verifyMembership: true });
@@ -370,7 +371,7 @@ export async function handleMenuResumeAction({ ack, body, action, client }) {
   }
 }
 
-async function openFileExplorer(client, triggerId, { channelId, userId, threadTs = "", file = "" } = {}) {
+async function openFileExplorer(client, triggerId, { channelId, userId, threadTs = "", file = "", verifyMembership = false } = {}) {
   if (!(await getChannelEntry(channelId))) {
     await ensureRegistered(client, {
       channel: channelId,
@@ -379,7 +380,7 @@ async function openFileExplorer(client, triggerId, { channelId, userId, threadTs
     });
   }
   await ensureUserKnown(client, userId);
-  const { entry, meta, userIsAdmin, root } = await fileExplorerContext(client, { channelId, userId });
+  const { entry, meta, userIsAdmin, root } = await fileExplorerContext(client, { channelId, userId, verifyMembership });
   const relativeFile = normalizeRelativePath(file || "");
   const parent = relativeFile ? path.posix.dirname(relativeFile) : "";
   const state = { channelId, slug: entry.slug, threadTs, ownerId: userId, relative: parent === "." ? "" : parent, page: 0 };
@@ -429,9 +430,9 @@ export async function secretScopeLists(meta, viewerId) {
   };
 }
 
-async function openSecretsManager(client, triggerId, { channelId, userId, threadTs = "" } = {}) {
+async function openSecretsManager(client, triggerId, { channelId, userId, threadTs = "", verifyMembership = false } = {}) {
   await ensureUserKnown(client, userId);
-  const { entry, meta, mayEdit, userIsAdmin } = await secretsContext(client, { channelId, userId });
+  const { entry, meta, mayEdit, userIsAdmin } = await secretsContext(client, { channelId, userId, verifyMembership });
   const state = { channelId, slug: entry.slug, threadTs, ownerId: userId };
   await client.views.open({
     trigger_id: triggerId,
@@ -457,8 +458,7 @@ export async function handleSecretsAction({ ack, body, action, client }, { conte
   const command = parseSecretActionValue(action?.value);
   try {
     if (command.o === "open") {
-      if (!canOpenMenuButton({ ownerId: command.u, clickerId: clicker }) || !body?.trigger_id) throw new Error("This secrets button isn't for you.");
-      await openSecretsManager(client, body.trigger_id, { channelId: command.c, userId: clicker, threadTs: command.t || "" });
+      await openChannelMenuControl({ body, command, client, kind: "variables" });
       return;
     }
     const state = parseSecretsMetadata(body?.view?.private_metadata);
@@ -1981,17 +1981,32 @@ async function notifyAdminsScopes(client, missing) {
   await logEvent("scope_check_notified", { admins: sent, missing: missing.join(",") });
 }
 
-// A reply footer belongs to the requester who caused that reply, but gateway admins must still
-// be able to inspect its workspace files. Everyone else remains bound to their own controls.
+// A reply footer belongs to the requester who caused that reply, but current gateway admins
+// can open every shared menu control. Everyone else remains bound to their own controls.
 // An automation post's menu is unbound (no owner): it opens for whoever clicks, under that
 // clicker's own live authorization (footer.js explains the binding).
 export function canOpenMessageFileButton({ ownerId = "", clickerId = "", clickerIsAdmin = false } = {}) {
+  return canOpenMenuButton({ ownerId, clickerId, clickerIsAdmin });
+}
+
+export function canOpenMenuButton({ ownerId = "", clickerId = "", clickerIsAdmin = false } = {}) {
   return Boolean(clickerId && (!ownerId || clickerId === ownerId || clickerIsAdmin));
 }
 
-// The same rule for the other menu buttons, which have no admin override.
-export function canOpenMenuButton({ ownerId = "", clickerId = "" } = {}) {
-  return Boolean(clickerId && (!ownerId || clickerId === ownerId));
+// Always open a new view as the actual clicker. Admin access to someone else's shared button
+// must never turn its original requester into the owner of personal settings or credentials.
+export async function openChannelMenuControl({ body, command, client, kind }) {
+  const clicker = body?.user?.id;
+  const channelId = body?.channel?.id || body?.container?.channel_id;
+  const open = { files: openFileExplorer, variables: openSecretsManager, settings: openChannelSettings }[kind];
+  const clickerIsAdmin = clicker && command.u && command.u !== clicker ? await isAdmin(clicker) : false;
+  if (!open || !command.c || (channelId && command.c !== channelId) || !body?.trigger_id
+    || !canOpenMenuButton({ ownerId: command.u, clickerId: clicker, clickerIsAdmin })) {
+    throw new Error("This menu button isn't for you. Open your own with `/menu`.");
+  }
+  // Recheck membership on every shared message button, just as on later modal interactions.
+  await open(client, body.trigger_id, { channelId: command.c, userId: clicker, threadTs: command.t || "",
+    file: command.o === "open_file" ? command.p || "" : "", verifyMembership: true });
 }
 
 // Slack does not infer the source thread for an ephemeral posted from a Block Kit action. Carry
@@ -2044,16 +2059,7 @@ async function connectAndWire(app) {
     const command = parseFileActionValue(action?.value);
     try {
       if (command.o === "open" || command.o === "open_file") {
-        const clickerIsAdmin = clicker && command.u && command.u !== clicker ? await isAdmin(clicker) : false;
-        if (!canOpenMessageFileButton({ ownerId: command.u, clickerId: clicker, clickerIsAdmin }) || !body?.trigger_id) {
-          throw new Error("This file explorer button isn't for you.");
-        }
-        await openFileExplorer(client, body.trigger_id, {
-          channelId: command.c,
-          userId: clicker,
-          threadTs: command.t || "",
-          file: command.o === "open_file" ? command.p || "" : "",
-        });
+        await openChannelMenuControl({ body, command, client, kind: "files" });
         return;
       }
       const state = parseExplorerMetadata(body?.view?.private_metadata);
@@ -2210,12 +2216,7 @@ async function connectAndWire(app) {
     const actionId = String(action?.action_id || "");
     try {
       if (command.o === "open") {
-        if (!canOpenMenuButton({ ownerId: command.u, clickerId: clicker }) || !body?.trigger_id) throw new Error("This settings button isn't for you.");
-        await openChannelSettings(client, body.trigger_id, {
-          channelId: command.c,
-          userId: clicker,
-          threadTs: command.t || "",
-        });
+        await openChannelMenuControl({ body, command, client, kind: "settings" });
         return;
       }
 

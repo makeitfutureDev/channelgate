@@ -1,5 +1,18 @@
 # ChannelGate — Features
 
+## Admin access to Slack controls
+
+- Current organization admins can open Files, Variables, Settings and legacy menu Resume controls
+  on another requester's message or `/menu` card. Each new settings/file/variable view belongs to
+  the admin who clicked; personal credentials, connections and skills use that viewer's identity.
+  Current channel authorization and membership are checked, and ordinary members remain bound to
+  their own controls. Private modal navigation and submissions remain bound to their viewer.
+- Admins can open, answer, page, submit and cancel another requester's pending question cards and
+  forms. Both people must retain channel access and membership, and the responder must remain an
+  admin. Revision checks and single submission still apply. Continuations retain the original
+  requester's runtime identity and credentials; audit records identify the responding admin
+  without storing their answer text.
+
 ## Registered inventory limits and Enterprise harness approvals
 
 - Non-Enterprise installs allow at most 20 registered channels (including DMs and the API

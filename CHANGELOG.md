@@ -18,6 +18,11 @@ product overview.
 
 ## Unreleased
 
+- Let organization admins use another requester's Slack menu buttons and question forms. Menu
+  views open under the clicking admin's own identity; question answers continue the original
+  requester's session and record which admin responded. Current access, membership and stale-form
+  checks still apply.
+
 - Restore Composio Remote Workbench for remote data processing and bulk app calls, preserving
   workflow session and file references. Explicit Slack membership actions still require human
   approval; Python inside Workbench is outside that structured gate. Other generic connector
