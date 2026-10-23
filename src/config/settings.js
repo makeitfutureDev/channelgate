@@ -7,7 +7,7 @@ import path from "node:path";
 import { settingsFile } from "./paths.js";
 import { writeSecretFile } from "./harden.js";
 import { getDb } from "../db/index.js";
-import { ENGINE_IDS, adapterOr } from "../engines/registry.js";
+import { ENGINE_IDS, adapterOr, modelsForEngine } from "../engines/registry.js";
 // Value-only import (the default endpoint constant). qwen.js reads settings LAZILY, so this
 // direction carries no cycle.
 import { QWEN_PROVIDERS, qwenProvider } from "../engines/qwen.js";
@@ -335,7 +335,7 @@ export function getDefaultModel(engine) {
 }
 
 export function getModelShortcuts() {
-  return modelShortcutsFromSettings(getSettings());
+  return modelShortcutsFromSettings(getSettings(), { claude: modelsForEngine("claude"), codex: modelsForEngine("codex") });
 }
 
 // Who may use Slack's /model wizard in a CHANNEL (both channel-wide and thread-scoped picks).

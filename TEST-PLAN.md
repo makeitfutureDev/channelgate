@@ -1561,6 +1561,20 @@ Record blocked fixtures and unexecuted gates explicitly for both engines.
 
 ## Model shortcuts acceptance (2026-10-06)
 
+- [x] Automated: fresh settings without `modelShortcuts` inherit the six catalog families. Numeric
+      ordering selects 6.10 over 6.9 and Sonnet 5.10 over 5.5 independent of catalog order;
+      aliases/previews and missing families never invent targets. Newer catalogs update inherited
+      defaults without mutating settings; explicit custom/empty maps survive and unrelated saves
+      keep inheritance (`test/model-shortcuts.test.js`).
+- [ ] Live Claude/Codex: on a disposable installation without a saved shortcut map, inspect Settings
+      and send `@agent :sonet Reply exactly DEFAULT_SONNET_OK` and `@agent :sol Reply exactly
+      DEFAULT_SOL_OK` as Contact in the corresponding private Auto fixtures. Pass: the supported
+      latest family IDs are selected and pinned, exact sentinels return on the requested engine,
+      and normal followups retain those pins. Save unrelated settings; inherited defaults stay
+      inherited. Customize one mapping, then empty the list; reload/upgrade must preserve each
+      explicit choice. Use an isolated catalog fixture to introduce newer family versions; only
+      inherited mappings advance, never existing thread pins or a customized list.
+
 - [x] Automated: `test/model-shortcuts.test.js` checks parsing, saving, repointing, clearing and refusing invalid mappings.
 - [x] Browser: `test/model-shortcuts-browser.test.js` ran in Chromium against a disposable admin API and store. Added a Codex shortcut from the current catalog, saved and reloaded it, repointed its model and engine, and removed it; no page errors.
 - [x] Pipeline: `test/model-shortcut-pipeline.test.js` ran the real Slack pipeline with spawned Claude/Codex fixture CLIs. Verified Slack's inserted space, model flags on new/resumed turns, a Codex→Claude switch, stable pins after repointing a shortcut, stripped prefixes on runtime-card retries, and refusal before pin changes for runtime permissions, disabled engines and a dedicated Codex login. These are integration fixtures, not live provider acceptance.

@@ -18,6 +18,9 @@ product overview.
 
 ## Unreleased
 
+- Supply new installations with Astra, Sol, Terra, Fable, Opus and Sonnet (`:sonet`) shortcuts
+  using the newest supported stable family versions. Preserve customized lists and thread pins.
+
 - Let organization admins use another requester's Slack menu buttons and question forms. Menu
   views open under the clicking admin's own identity; question answers continue the original
   requester's session and record which admin responded. Current access, membership and stale-form

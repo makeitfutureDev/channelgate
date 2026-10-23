@@ -27,6 +27,20 @@ Optional provider harnesses must be explicitly enabled and authenticated. At lea
 
 An empty gateway model setting lets the CLI use its own default. An explicit gateway model helps avoid changes in the operator's interactive terminal model choice affecting gateway runs.
 
+## Default model shortcuts
+
+New installations include `:astra`, `:sol`, `:terra`, `:fable`, `:opus`, and `:sonet` (Sonnet).
+Use `@agent :sonet your task` in Slack to select and pin the current supported Sonnet model.
+Before an administrator saves a custom shortcut list, targets follow the newest stable version
+of each family in the gateway's model catalog. Codex uses its authenticated CLI catalog, with a
+bundled fallback; Claude uses the curated catalog in the installed gateway version. Updating the
+CLI or gateway is therefore still necessary when a provider exposes a model they do not yet list.
+Unavailable families are omitted rather than assigned a guessed model ID.
+
+Edit shortcuts under **Settings → Access & security → Model shortcuts**. A saved list uses those
+exact mappings until edited again; an empty list disables shortcuts. Existing customized lists and
+thread pins survive updates. Saving unrelated settings does not turn inherited defaults into pins.
+
 ## Conversation and thread overrides
 
 Set a conversation's **Engine**, **Model**, and **Effort** under **Conversations → Runtime**. On Slack, use `/model` to select a channel-wide or **just this thread** runtime. A thread-scoped choice does not change the default for other threads.

@@ -11,7 +11,7 @@ process.env.PATH = `${fileURLToPath(new URL("./fixtures", import.meta.url))}${pa
 process.env.SESSION_KEEPALIVE = "0";
 process.env.PROGRESS_VIEW = "shimmer";
 const { setUser, upsertChannelEntry, saveChannelMeta } = await import("../src/config/store.js");
-const { saveSettings } = await import("../src/config/settings.js");
+const { saveSettings, getModelShortcuts, getDefaultModel, getEngine } = await import("../src/config/settings.js");
 const { getThreadEngine, getThreadModel, getThreadEffort, setThreadEffort } = await import("../src/gateway/thread-engine.js");
 const { processMessageEvent } = await import("../src/slack/message-pipeline.js");
 const { stripMentions } = await import("../src/slack/message-normalize.js");
@@ -36,6 +36,23 @@ const client = {
     history: async () => ({ messages: [] }),
   },
 };
+
+test("fresh-install defaults select supported Sonnet and Sol without changing gateway defaults", async () => {
+  await setUser(USER, { name: "Shortcut User", approved: true, isAdmin: false });
+  const entry = await upsertChannelEntry(CHANNEL, { name: "shortcut-dm", type: "im", isDM: true });
+  await saveChannelMeta(entry.slug, { channelId: CHANNEL, name: entry.name, type: "im", isDM: true, template: "custom", engine: "claude" });
+  const engine = getEngine();
+  const defaults = {claude: getDefaultModel("claude"), codex: getDefaultModel("codex")};
+  const shortcuts = getModelShortcuts();
+  for (const [index, name] of ["sonet", "sol"].entries()) {
+    const ts = `122.00${index}`;
+    await processMessageEvent({ type: "message", channel: CHANNEL, channel_type: "im", user: USER, text: `<@${BOT}> :${name} short task`, ts }, client, { botUserId: BOT });
+    assert.equal(await getThreadModel(entry.slug, ts), shortcuts[name].model);
+    assert.equal(await getThreadEngine(entry.slug, ts), shortcuts[name].engine);
+  }
+  assert.equal(getEngine(), engine);
+  assert.deepEqual({claude: getDefaultModel("claude"), codex: getDefaultModel("codex")}, defaults);
+});
 
 test("Slack's inserted space before :astra switches a DM thread and clears an old effort pin", async () => {
   await setUser(USER, { name: "Shortcut User", approved: true, isAdmin: false });
