@@ -1,51 +1,51 @@
 # Operations runbook
 
-## Admin accounts, passkeys and recovery
+## Dashboard users, passkeys and recovery
 
-Dashboard accounts are local to this gateway and separate from chat users and chat admin roles.
-Existing installations retain their current password for the initial `admin` account until its
-first passkey enrollment. At the sign-in page, expand **First-time setup**, enter that password,
-and follow the browser's passkey prompt. The first successful enrollment permanently disables
-shared-password login and revokes bootstrap sessions. Register a spare authenticator in
-**Settings → Admin access** before losing your primary device.
+Use the existing **Users** list. Give the intended person the **Admin** role, open their details,
+and choose **Invite to dashboard**. Share the generated single-use setup link privately; it expires
+in 15 minutes and grants only passkey registration. Once registered, the user signs in with
+**Sign in with a passkey**, without entering a username or password. Settings → Admin access
+manages the signed-in user's keys. Add a spare authenticator before losing the primary device.
 
-Normal sign-in needs no username entry: click **Sign in with a passkey**, choose a saved account
-in the browser's passkey picker, and verify with your device PIN or biometrics. The credential
-identifies its account. Usernames remain labels for management and host recovery; reauthentication
-for sensitive changes remains bound to the account already signed in.
+Existing passkeys are preserved. On first use after migration, select the owning admin from the
+existing directory and request a private verification code. Enter it in the same browser within
+five minutes. This binds the existing credential to that user's stable ID without replacing it.
+The code is delivered only through the user's native private chat, never a public channel or API
+response. Google Chat users need a previously learned native user resource for private delivery;
+missing delivery configuration fails closed. Unlinked users must finish verification before using
+ordinary dashboard APIs. Names and matching email labels never silently assign credentials.
 
-Configure the gateway's final HTTPS **Public URL before enrollment**. Passkeys belong to that
-origin and hostname; changing domains does not transfer credentials. Only explicit loopback
-origins are supported without HTTPS for local setup/development. Keys enrolled on localhost
-cannot sign in at the remote domain. Changing the Public URL after enrollment requires recent
-passkey verification and should be planned with spare access and host recovery available.
+Before the first passkey, **First-time setup** accepts the existing operator password. If known
+admins exist, their private-code identity proof is required before enrollment. A fresh install
+without known admins can configure its first connection temporarily; once admins exist, identity
+linking is required. First enrollment permanently disables shared-password login and revokes its
+sessions. Setup/recovery cannot restore password fallback.
 
-An enrolled administrator can create named accounts and issue 15-minute single-use setup links
-in **Admin access**. Share each link privately with its intended recipient. The secret lives in
-the URL fragment, is removed from the address bar immediately, and is stored server-side only
-as a digest. Opening a link does not grant dashboard access; the recipient must register a
-verified passkey. Reissuing a link invalidates the previous one. Disabling an account immediately
-revokes its sessions and pending authenticator operations. The last enrolled admin and each
-account's last passkey cannot be disabled/removed through ordinary management.
+Configure the final HTTPS **Public URL before enrollment**. Keys belong to that origin/hostname;
+changing domains does not transfer them. Only explicit loopback origins permit local development
+without HTTPS. Public URL changes require recent passkey verification after enrollment.
 
-For a lost or compromised authenticator, run this **on the gateway host as its daemon OS user**,
-from the gateway checkout, against the intended runtime:
+Removing a person's admin role revokes dashboard authority immediately, including existing sessions,
+setup links and pending authenticator results. Restoring the role requires a new sign-in; old
+sessions remain invalid. Deleting their user record also denies access. Role removal is allowed
+for the last enrolled admin, so keep another enrolled admin or host recovery available. Revoke
+sessions in the user's details when needed. Your final own key cannot be deleted normally.
+
+For lost keys, run **on the gateway host as its daemon OS user**, from the checkout:
 
 ```sh
-npm run admin:recover -- --username admin
+npm run admin:recover -- --user <existing-user-id>
 ```
 
-Replace `admin` with the affected local username. This deliberately revokes **all passkeys and
-sessions for that account**, then prints one enrollment-only URL valid for 15 minutes. Open it
-privately at the configured HTTPS URL and register a replacement key. Treat that link as a
-credential; do not paste it into shared chat or logs. Recovery does not enable password fallback
-and requires direct filesystem authority over the gateway configuration/database. Disabled
-accounts must be enabled by another authenticated administrator before recovery.
+The target must currently be an admin. Recovery revokes all its keys/sessions and prints one
+registration-only URL valid for 15 minutes. Open privately at the configured HTTPS URL and enroll
+a replacement. Treat that URL as a credential. The legacy `--username` option is reserved for
+unlinked migration/bootstrap accounts; it cannot substitute for a known linked user's role.
 
-Sessions are in memory and clear on restart; their idle/absolute limits are 30 minutes/12 hours.
-Sensitive account changes, new authenticators and secret reveal require a passkey authentication
-within five minutes. The HTTP run API's separately scoped bearer key remains an automation
-credential, never a dashboard login or passkey-enrollment credential.
+Sessions clear on restart and expire after 30 minutes idle or 12 hours total. Sensitive mutations,
+new authenticators and secret reveal require passkey verification within five minutes. The run
+API bearer key remains scoped automation access and cannot enroll keys or log into the dashboard.
 
 ## Backup and restore
 

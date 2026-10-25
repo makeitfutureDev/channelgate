@@ -2,31 +2,28 @@
 
 Slack’s native running/Stop label shows the resolved model and explicitly configured effort, plus compact live phases (Thinking, Using tools, Writing, Waiting, Queued, Coordinating agents). Engine fallback replaces both model and effort; unset effort is omitted rather than guessed.
 
-## Individual dashboard administrators and passkeys
+## User-linked dashboard passkeys
 
-- Dashboard administrators have individual local usernames, separate from chat-platform users.
-  Sign-in requires only choosing a saved passkey; the credential and its matching user handle
-  identify the account. Usernames remain account-management labels, with no login field or public
-  list of accounts/credential IDs in authentication options. Pending login challenges retain
-  server-only authorization versions so revocation still invalidates them before account selection.
-  Initial setup uses the existing password for `admin`; enrolling its first passkey permanently
-  retires shared-password login and revokes bootstrap sessions. The login page supports device
-  passkeys and FIDO2 security keys with required PIN/biometric verification.
-- Settings → Admin access manages named accounts, additional passkeys, immediate account
-  disablement and single-use setup links. Setup links expire after 15 minutes, are stored only
-  as digests, and authorize registration alone. An account gains a dashboard session only after
-  verified passkey enrollment. The final own passkey and final enabled enrolled admin are
-  protected against removal/disablement.
-- WebAuthn checks signatures, exact configured HTTPS origin and RP ID, user verification,
-  single-use five-minute challenges, account/browser/session/ceremony binding and credential
-  counters. Sessions expire after 30 minutes idle or 12 hours total; changing account authority
-  invalidates sessions and pending authenticator results immediately. Credential/account changes
-  and secret reveal require recent passkey authentication. Auth events and secret reveals record
-  the local account identity; older dashboard events retain their existing generic actor labels.
-- Host operators can recover an account with `npm run admin:recover -- --username <name>`.
-  Recovery revokes that account's passkeys and sessions and prints a short-lived registration-only
-  link. It never restores password login. Credential private keys remain with the authenticator;
-  the gateway stores public keys and verification metadata in SQLite.
+- The existing **Users** directory and its admin role govern dashboard access. Each credential
+  container links to one stable user ID; there is no separate dashboard user directory. Users →
+  an admin's details issues a 15-minute single-use enrollment link or revokes sessions. Removing
+  the admin role immediately invalidates sessions, invitations and pending authenticator results;
+  restoring the role does not revive old authority. Non-admin and synthetic API users cannot enroll.
+- Sign-in needs only a saved passkey, with required device PIN/biometric verification. The gateway
+  checks signatures, exact configured HTTPS origin/RP ID, single-use five-minute challenges,
+  browser/session/ceremony binding and credential counters. Public options disclose no credential
+  directory. Sessions expire after 30 minutes idle or 12 hours total. Sensitive changes require
+  passkey authentication within five minutes; Settings → Admin access manages your own keys.
+- Existing keys remain intact during migration. Their owner selects an existing admin and proves
+  control using an eight-digit private chat code, valid five minutes and bound to that browser
+  session, with five attempts maximum. Matching names never assign ownership. Unlinked accounts
+  can complete this verification but cannot use ordinary admin APIs once known admins exist.
+  Initial password setup follows the same proof before enrollment; fresh installs without known
+  admins retain temporary operator setup. First enrollment permanently retires password login.
+- Host operators recover a known admin with `npm run admin:recover -- --user <user-id>`.
+  Recovery revokes its keys/sessions and prints a short-lived registration-only link; it never
+  restores password login. Private keys remain with authenticators; SQLite stores public keys
+  and verification metadata. Your final own passkey cannot be deleted through ordinary management.
 
 ## Sign-in assets before authentication
 

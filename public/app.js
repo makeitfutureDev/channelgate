@@ -19,7 +19,7 @@ import { activeSectionFor, filterSettings } from "./admin-settings-search.js";
 import { api } from "./admin-api.js";
 import { setSystemHealthActive } from "./admin-system-health.js";
 import { attachReveal, confirmDialog, escapeHtml, infoDialog, openDialog, paintReveal, revealSecret, tokenValue } from "./admin-view.js";
-import { freshAdminAuth, mountAdminAccess } from "./admin-access.js";
+import { freshAdminAuth, mountAdminAccess, mountUserDashboardAccess } from "./admin-access.js";
 import { loadSkills } from "./admin-skills.js";
 import { mountSkillAssignmentPicker } from "./skill-assignment-picker.js";
 import { mountUserPicker } from "./admin-user-picker.js";
@@ -349,11 +349,16 @@ function capLabelOf(m = {}) {
 }
 
 // ── View switching + URL history ────────────────────────────────────────────────
-function loadView(name) {
+function loadView(name, { refreshIdentity = true } = {}) {
   if (name === "system-health") setSystemHealthActive(true);
   if (name === "channels" && !viewLoaded.channels) { viewLoaded.channels = true; loadConversations().catch(() => {}); }
   if (name === "users" && !viewLoaded.users) { viewLoaded.users = true; loadUsers().catch(() => {}); }
-  if (name === "settings" && !viewLoaded.settings) { viewLoaded.settings = true; loadSettings().catch(() => {}); }
+  if (name === "settings") {
+    if (!viewLoaded.settings) { viewLoaded.settings = true; loadSettings().catch(() => {}); }
+    // The self-saving identity card can change when chat discovers the first admin or a user
+    // role changes. Refresh it independently so existing unsaved Settings edits stay intact.
+    else if (refreshIdentity) mountAdminAccess(document.getElementById("admin-access"), { confirm: confirmDialog }).catch(() => {});
+  }
   if (name === "api" && !viewLoaded.api) { viewLoaded.api = true; loadApiDocs().catch(() => {}); }
   if (name === "skills") loadSkills().catch(() => {}); // always refresh
   if (name === "schedules") loadSchedules().catch(() => {}); // always refresh
@@ -3363,6 +3368,8 @@ function openUserDrawer(id) {
   drawer.hidden = false;
   drawer.appendChild(node);
 
+  mountUserDashboardAccess(drawer.querySelector(".ud-dashboard-access"), id, { confirm: confirmDialog });
+
   // Editable masked token fields — same reveal semantics as before.
   attachReveal(drawer.querySelector(".ud-composio"), { has: u.hasComposioToken, last4: u.composioTokenLast4, fetch: revealSecret("user", "composioToken", id) });
   attachReveal(drawer.querySelector(".ud-toolboxtoken"), { has: u.hasToolboxToken, last4: u.toolboxTokenLast4, fetch: revealSecret("user", "toolboxToken", id) });
@@ -5186,6 +5193,24 @@ document.getElementById("dash-source").addEventListener("change", () => loadDash
 
 // ── Boot ─────────────────────────────────────────────────────────────────────────
 async function init() {
+  const identity = await api("/api/auth/me", { cache: "no-store" });
+  if (identity.linkRequired) {
+    // Existing unlinked passkeys can authenticate, but ordinary admin APIs stay closed until
+    // their owner proves the existing gateway identity. Keep that remedy reachable on its own.
+    document.querySelector(".app").style.display = "none";
+    const gate = document.createElement("main");
+    gate.className = "identity-link-gate";
+    const card = document.createElement("div");
+    card.className = "setcard identity-link-card";
+    const title = document.createElement("h2");
+    title.textContent = "Link your gateway admin user";
+    const access = document.getElementById("admin-access");
+    card.append(title, access);
+    gate.append(card);
+    document.body.append(gate);
+    await mountAdminAccess(access, { confirm: confirmDialog, onLinked: () => window.location.reload() });
+    return;
+  }
   await loadHealth();
   startActiveRunsStream();
   loadUpdateStatus().catch(() => {}); // version chip + update button — off the critical path
@@ -5211,7 +5236,7 @@ async function init() {
   viewLoaded.users = true;
   viewLoaded.settings = true;
   if (initialConversationRoute) await selectConv(initialConversationRoute.key, { history: "none", canonicalize: true });
-  loadView(initialView);
+  loadView(initialView, { refreshIdentity: false });
 
   // Warm both catalogs off the critical path; every grant editor shows Claude and Codex together.
   for (const engine of ["claude", "codex"]) loadMcpCatalog(engine).catch(() => {});

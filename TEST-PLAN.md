@@ -2,6 +2,29 @@
 
 Running label acceptance (Claude and Codex): in a Slack agent thread with chat:write.customize, select an explicit effort using /model, then ask “Read README.md and explain the startup flow.” Confirm Stop shows the selected model (effort), transitions through live tool/writing phases, and becomes active without an activity suffix after completion or Stop. Repeat with each engine and a different effort; verify fallback replaces model/effort. Pass only with observed Slack evidence. Live execution pending; automated coverage: test/slack-progress.test.js native Stop effort/phase test and test/slack-stop-progress.test.js late-event cancellation fixtures.
 
+## User-linked dashboard access (2026-10-25)
+
+- Automated acceptance uses scratch databases and Chromium virtual resident authenticators:
+  legacy-key identity linking preserves credentials; initial setup requires proof when admins
+  exist; existing Users drawer invites another admin; non-admin/API identities cannot enroll;
+  demotion/re-promotion invalidates sessions, invites and pending signatures. Private codes
+  enforce same-session binding, expiry, five attempts and replay prevention. Old independent
+  account creation is retired. Run `test/admin-user-identity.test.js` and the existing admin
+  storage/HTTP/recovery/browser suites.
+- [x] Final combined storage/HTTP/CLI/migration/Chromium acceptance: 43/43 pass, zero skips.
+  Includes actual signed virtual-authenticator flows for both initial and legacy migration;
+  fake private delivery tests never contact deployed users. Migration 37 leaves existing
+  public-key bytes, counters and opaque user handles intact and revokes historical setup links.
+- [x] Independent review plus an HTTP race regression: an actor demoted during asynchronous
+  user validation cannot finish a pending self-promotion. Static checks (946 JavaScript files),
+  secret scan and security-coverage gates pass.
+- Private QA: all seven existing passkey case definitions updated for the new identity model;
+  human native-chat proof and deployed physical-key acceptance remain pending.
+- [ ] Live human acceptance, engine-independent: sign in with an existing physical passkey,
+  verify its owner through the native private chat code, then invite a second existing admin
+  from Users. Confirm independent enrollment, username-free sign-in and role revocation. No
+  virtual authenticator may replace deployed keys; automated tests do not satisfy this gate.
+
 ## Passkey-only account discovery (2026-10-25)
 
 - [x] Combined Chromium/storage/HTTP/recovery acceptance: set `CG_BROWSER_MODULE` to installed

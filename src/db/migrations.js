@@ -1070,4 +1070,24 @@ export const migrations = [
       `);
     },
   },
+  {
+    // Link dashboard credential containers only after proof of the stable platform user ID.
+    // Historical names/emails are not ownership evidence. Pending legacy invites are revoked.
+    version: 37,
+    up(db) {
+      db.exec(`
+        ALTER TABLE admin_accounts ADD COLUMN user_id TEXT;
+        CREATE UNIQUE INDEX idx_admin_accounts_user ON admin_accounts(user_id) WHERE user_id IS NOT NULL;
+        CREATE TABLE admin_identity_links (
+          id TEXT PRIMARY KEY, account_id TEXT NOT NULL REFERENCES admin_accounts(id) ON DELETE CASCADE,
+          user_id TEXT NOT NULL, auth_version INTEGER NOT NULL, session_digest TEXT NOT NULL,
+          code_digest TEXT NOT NULL, expires_ms INTEGER NOT NULL, attempts INTEGER NOT NULL DEFAULT 0
+        );
+        CREATE INDEX idx_admin_identity_links_user ON admin_identity_links(user_id);
+        CREATE INDEX idx_admin_identity_links_expiry ON admin_identity_links(expires_ms);
+        DELETE FROM admin_enrollment_tokens;
+        UPDATE admin_accounts SET auth_version = auth_version + 1;
+      `);
+    },
+  },
 ];

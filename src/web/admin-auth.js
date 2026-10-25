@@ -4,7 +4,7 @@ import crypto from 'node:crypto';
 import express from 'express';
 import { generateRegistrationOptions, verifyRegistrationResponse, generateAuthenticationOptions, verifyAuthenticationResponse } from '@simplewebauthn/server';
 import { getPublicUrl, getAdminPassword } from '../config/settings.js';
-import { adminAccount, adminPasskeys, adminPasskeyById, bootstrapAvailable, createAdminAccount, createAdminEnrollment, adminEnrollment, saveAdminPasskey, advanceAdminCounter, listAdminAccounts, setAdminEnabled, deleteAdminPasskey, revokeAdminSessions } from '../config/admin-accounts.js';
+import { adminAccount, adminPasskeys, adminPasskeyById, bootstrapAvailable, createAdminEnrollment, adminEnrollment, saveAdminPasskey, advanceAdminCounter, listAdminAccounts, deleteAdminPasskey, revokeAdminSessions, adminLinkRequired, eligibleAdminUsers, dashboardUser, adminAccountForUser, ensureUserAdminAccount, createAdminIdentityLink, verifyAdminIdentityLink, cancelAdminIdentityLink, getIdentityLinkState } from '../config/admin-accounts.js';
 import { adminSession, requireRecentAdminAuth, createAdminSession, refreshAdminSession, parseCookies, cookieAttrs } from './auth.js';
 import { clientKey, createLoginLimiter } from './security.js';
 import { logEvent } from '../util/logger.js';
@@ -93,11 +93,14 @@ function consume(req, kind, rp) {
 }
 function loggedIn(req) { const s = adminSession(req); if (!s) reject('unauthorized', 401); return s; }
 function fresh(req) { const s = loggedIn(req); if (!requireRecentAdminAuth(req)) reject('Verify your passkey again to continue.', 403); return s; }
-function publicAccount(a) { return { id: a.id, username: a.username, displayName: a.displayName }; }
+function publicAccount(a) { return { id: a.id, username: a.username, displayName: a.displayName, userId: a.userId }; }
+function canLink(s) { return Boolean(s && !s.account.userId && Date.now() - s.authenticatedAt <= FIVE_MIN && (s.bootstrap || adminPasskeys(s.accountId).length)); }
+function linkSession(req) { const s = loggedIn(req); if (!canLink(s)) reject('Verify your passkey or initial setup password again before linking your user.', 403); return s; }
+function linkedFresh(req) { const s = fresh(req); if (!s.account.userId) reject('Verify and link your existing administrator user first.', 403); return s; }
 function audit(action, a, extra = {}) { logEvent(`admin_auth_${action}`, { actor: a.id, username: a.username, ...extra }); }
 async function registrationOptions(a, rp) {
   return generateRegistrationOptions({ rpName: 'ChannelGate', rpID: rp.rpID,
-    userID: Buffer.from(a.userHandle, 'base64url'), userName: a.username, userDisplayName: a.displayName,
+    userID: Buffer.from(a.userHandle, 'base64url'), userName: a.userId || a.username, userDisplayName: a.displayName,
     attestationType: 'none', timeout: 60_000, supportedAlgorithmIDs: [-7, -257],
     excludeCredentials: adminPasskeys(a.id).map(p => ({ id: p.id, transports: p.transports })),
     authenticatorSelection: { residentKey: 'required', userVerification: 'required' } });
@@ -116,7 +119,7 @@ function safe(handler) {
     }
   };
 }
-export function createAdminAuthRouter() {
+export function createAdminAuthRouter({ adminIdentityDelivery } = {}) {
   const router = express.Router({ caseSensitive: true });
   router.get('/status', safe(async (req, res) => {
     const rp = adminRelyingParty(req);
@@ -124,7 +127,7 @@ export function createAdminAuthRouter() {
   }));
   router.get('/me', safe(async (req, res) => {
     const s = loggedIn(req);
-    res.json({ account: publicAccount(s.account), fresh: requireRecentAdminAuth(req), bootstrap: s.bootstrap,
+    res.json({ account: publicAccount(s.account), fresh: requireRecentAdminAuth(req), bootstrap: s.bootstrap, linkRequired: adminLinkRequired(s.account), canLink: canLink(s),
       passkeys: adminPasskeys(s.accountId).map(p => ({ id: p.id, name: p.name, createdAt: p.createdAt, lastUsedAt: p.lastUsedAt })) });
   }));
   for (const kind of ['login', 'reauth']) {
@@ -179,11 +182,13 @@ export function createAdminAuthRouter() {
         if (s.bootstrap) {
           if (!bootstrapAvailable() || Date.now() - s.authenticatedAt > FIVE_MIN) reject('Sign in again before registering your first passkey.', 403);
         } else fresh(req);
-        a = s.account; extra = { bootstrap: s.bootstrap };
+        a = s.account; if (adminLinkRequired(a)) reject('Verify and link your existing administrator user before registering a passkey.', 403);
+        extra = { bootstrap: s.bootstrap };
       } else {
         const enrollment = adminEnrollment(req.body?.token);
         if (!enrollment) reject('Setup link expired or was already used.', 401);
-        a = enrollment.account; extra = { enrollmentDigest: enrollment.digest };
+        a = enrollment.account; if (adminLinkRequired(a)) reject('This setup link requires a verified administrator user.', 403);
+        extra = { enrollmentDigest: enrollment.digest };
       }
       limited(req, res, starts, a.id, true);
       const options = await registrationOptions(a, rp);
@@ -209,39 +214,84 @@ export function createAdminAuthRouter() {
       audit('passkey_registered', a); res.json({ ok: true });
     }));
   }
-  router.get('/accounts', safe(async (req, res) => {
-    loggedIn(req); res.json({ accounts: listAdminAccounts().map(a => ({ ...publicAccount(a), enabled: a.enabled, passkeyCount: a.passkeyCount })) });
+  // One Users directory owns administration. Historical independent-account routes are retired.
+  router.all(['/accounts', '/accounts/:id', '/accounts/:id/invite', '/accounts/:id/revoke-sessions'], safe(async (req, res) => {
+    loggedIn(req); res.status(410).json({ error: 'Manage dashboard access in the existing Users directory.' });
   }));
-  router.post('/accounts', safe(async (req, res) => {
-    const rp = ceremonyGuard(req); const s = fresh(req);
+  router.get('/link/users', safe(async (req, res) => {
+    const s = loggedIn(req);
+    if (s.account.userId) reject('This account is already linked.');
+    res.json({ users: eligibleAdminUsers().filter(user => {
+      const target = adminAccountForUser(user.id); return !target || !adminPasskeys(target.id).length;
+    }).map(user => ({ id: user.id, name: user.name })) });
+  }));
+  router.post('/link/options', safe(async (req, res) => {
+    const rp = ceremonyGuard(req); const s = linkSession(req);
     limited(req, res, starts, s.accountId, true);
-    let a;
-    try { a = createAdminAccount(req.body?.username, req.body?.displayName); }
-    catch { reject('Username is invalid or already exists.'); }
-    const token = createAdminEnrollment(a.id); audit('account_created', s.account, { target: a.id });
-    res.json({ account: publicAccount(a), setupUrl: `${rp.origin}/login.html#setup=${token}` });
+    if (typeof adminIdentityDelivery !== 'function') reject('Private identity verification is unavailable. Reconnect the user’s chat platform.', 503);
+    let proof;
+    try { proof = createAdminIdentityLink(s.account, req.body?.userId, s.token); }
+    catch (error) { reject(error.message); }
+    try {
+      await adminIdentityDelivery(req.body.userId, `ChannelGate identity verification for ${rp.origin}\nLink your existing administrator user (${req.body.userId}) to the dashboard passkey account signed in on that page.\nYour verification code is: ${proof.code}\nThis code expires in 5 minutes. Enter it only on the gateway page where you requested it. If you did not request this, ignore this message.`);
+      const current = adminSession(req);
+      // A role/version change while delivery is in flight revokes the proof, even if promoted back.
+      const row = getIdentityLinkState(proof.requestId);
+      if (!current || current.token !== s.token || current.authVersion !== s.authVersion || !row || !dashboardUser(req.body.userId)?.isAdmin) throw new Error('Identity verification changed. Start again.');
+    } catch {
+      cancelAdminIdentityLink(proof.requestId);
+      reject('The private verification message could not be delivered, or access changed. Reconnect the user’s chat platform and retry.', 503);
+    }
+    audit('identity_proof_sent', s.account, { targetUser: req.body.userId });
+    res.json({ requestId: proof.requestId, expiresAt: proof.expiresAt });
   }));
-  router.patch('/accounts/:id', safe(async (req, res) => {
-    ceremonyGuard(req); const s = fresh(req);
-    if (req.params.id === s.accountId && req.body?.enabled === false) reject('You cannot disable your own account.');
-    if (typeof req.body?.enabled !== 'boolean') reject('enabled must be true or false.');
-    let a; try { a = setAdminEnabled(req.params.id, req.body.enabled); } catch (error) { reject(error.message); }
-    audit('account_changed', s.account, { target: a.id, enabled: a.enabled }); res.json({ account: { ...publicAccount(a), enabled: a.enabled } });
+  router.post('/link/verify', safe(async (req, res) => {
+    ceremonyGuard(req); const s = linkSession(req);
+    limited(req, res, failures, s.accountId);
+    let updated;
+    try { updated = verifyAdminIdentityLink(s.account, req.body?.requestId, req.body?.code, s.token); }
+    catch (error) { reject(error.message); }
+    createAdminSession(req, res, updated, { bootstrap: s.bootstrap });
+    audit('identity_linked', updated, { userId: updated.userId }); res.json({ ok: true });
   }));
-  router.post('/accounts/:id/revoke-sessions', safe(async (req, res) => {
-    ceremonyGuard(req); const s = fresh(req);
-    const a = adminAccount(req.params.id); if (!a) reject('Account not found.', 404);
-    revokeAdminSessions(a.id);
-    if (a.id === s.accountId) createAdminSession(req, res, adminAccount(a.id));
-    audit('sessions_revoked', s.account, { target: a.id }); res.json({ ok: true });
+  router.get('/users/:userId', safe(async (req, res) => {
+    const s = loggedIn(req);
+    if (adminLinkRequired(s.account)) reject('Verify and link your administrator user before viewing dashboard access.', 403);
+    const user = dashboardUser(req.params.userId);
+    if (!user) reject('User not found.', 404);
+    const a = adminAccountForUser(user.id);
+    const keys = a ? adminPasskeys(a.id) : [];
+    res.json({ userId: user.id, isAdmin: user.isAdmin, passkeyCount: keys.length, linked: Boolean(a),
+      canInvite: Boolean(user.isAdmin && (!a || a.enabled) && !keys.length),
+      passkeys: keys.map(p => ({ id: p.id, name: p.name, createdAt: p.createdAt, lastUsedAt: p.lastUsedAt })) });
   }));
-  router.post('/accounts/:id/invite', safe(async (req, res) => {
-    const rp = ceremonyGuard(req); const s = fresh(req);
+  router.post('/users/:userId/invite', safe(async (req, res) => {
+    const rp = ceremonyGuard(req); const s = linkedFresh(req);
     limited(req, res, starts, s.accountId, true);
-    const a = adminAccount(req.params.id);
-    if (!a?.enabled || adminPasskeys(a.id).length) reject('Only an enabled account without a passkey can receive a setup link.');
-    const token = createAdminEnrollment(a.id); audit('setup_issued', s.account, { target: a.id });
-    res.json({ setupUrl: `${rp.origin}/login.html#setup=${token}` });
+    let a; let token;
+    try {
+      a = ensureUserAdminAccount(req.params.userId);
+      if (!a.enabled || adminPasskeys(a.id).length) reject('Only an administrator without passkeys can receive a setup link.');
+      token = createAdminEnrollment(a.id);
+    } catch (error) { reject(error.message); }
+    audit('setup_issued', s.account, { targetUser: a.userId });
+    res.json({ setupUrl: `${rp.origin}/login.html#setup=${token}`, expiresAt: Date.now() + 15 * 60_000 });
+  }));
+  router.post('/users/:userId/revoke-sessions', safe(async (req, res) => {
+    ceremonyGuard(req); const s = linkedFresh(req);
+    const user = dashboardUser(req.params.userId); if (!user) reject('User not found.', 404);
+    const a = adminAccountForUser(user.id);
+    if (a) {
+      revokeAdminSessions(a.id);
+      if (a.id === s.accountId) createAdminSession(req, res, adminAccount(a.id));
+    }
+    audit('sessions_revoked', s.account, { targetUser: user.id }); res.json({ ok: true });
+  }));
+  router.delete('/users/:userId/passkeys/:keyId', safe(async (req, res) => {
+    ceremonyGuard(req); const s = linkedFresh(req);
+    if (s.account.userId !== req.params.userId) reject('You can remove only your own passkeys.', 403);
+    try { deleteAdminPasskey(s.accountId, req.params.keyId); } catch (error) { reject(error.message); }
+    createAdminSession(req, res, adminAccount(s.accountId)); audit('passkey_removed', s.account); res.json({ ok: true });
   }));
   router.delete('/passkeys/:id', safe(async (req, res) => {
     ceremonyGuard(req); const s = fresh(req);

@@ -39,3 +39,28 @@ test("invalid recovery invocation cannot reset an account", () => {
   assert.match(result.stderr, /Usage:/);
   assert.equal(result.stdout, "");
 });
+
+test("host recovery uses an existing admin ID and cannot bypass canonical roles by local username", async () => {
+  const { setUser } = await import("../src/config/store.js");
+  const userId = "U_RECOVERY_USER";
+  await setUser(userId, { name: "Recovery fixture", isAdmin: true });
+  const account = store.ensureUserAdminAccount(userId);
+  store.saveAdminPasskey({ accountId: account.id, authVersion: account.authVersion,
+    credential: { id: "dXNlci1yZWNvdmVyeS1maXh0dXJl", publicKey: new Uint8Array([2]), counter: 0 },
+    name: "Disposable fixture", deviceType: "singleDevice", backedUp: false });
+  const rejected = spawnSync(process.execPath, [script, "--username", account.username], { encoding: "utf8" });
+  assert.equal(rejected.status, 1);
+  assert.equal(rejected.stdout, "");
+  assert.equal(store.adminPasskeys(account.id).length, 1, "refused recovery must not revoke keys");
+  const recovered = spawnSync(process.execPath, [script, "--user", userId], { encoding: "utf8" });
+  assert.equal(recovered.status, 0, recovered.stderr);
+  const token = recovered.stdout.match(/#setup=([A-Za-z0-9_-]{43})/)?.[1];
+  assert.ok(token);
+  assert.equal(store.adminEnrollment(token).account.userId, userId);
+  assert.equal(store.adminPasskeys(account.id).length, 0);
+  await setUser(userId, { isAdmin: false });
+  const demoted = spawnSync(process.execPath, [script, "--user", userId], { encoding: "utf8" });
+  assert.equal(demoted.status, 1);
+  assert.equal(demoted.stdout, "");
+  assert.equal(store.adminEnrollment(token), null);
+});

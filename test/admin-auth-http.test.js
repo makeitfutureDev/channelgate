@@ -46,7 +46,7 @@ test("HTTP authentication gates remain closed through bootstrap, invitations and
   const login = await request("/api/login", { username: "admin", password });
   assert.equal(login.response.status, 200);
   const cookie = login.response.headers.get("set-cookie").split(";")[0];
-  assert.equal((await request("/api/auth/accounts", { username: "cannot-invite-yet" }, { Cookie: cookie })).response.status, 403);
+  assert.equal((await request("/api/auth/accounts", { username: "cannot-invite-yet" }, { Cookie: cookie })).response.status, 410);
 
   const admin = store.ensureBootstrapAdmin();
   // Storage fixtures cannot authenticate: public-key parsing and signature verification still run.

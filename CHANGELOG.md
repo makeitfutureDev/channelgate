@@ -20,6 +20,10 @@ product overview.
 
 ## Unreleased
 
+- Use the existing Users list and admin role for dashboard passkeys and invitations. Existing
+  keys link to their owner through private chat verification; role removal revokes dashboard
+  access immediately. Remove the separate dashboard account directory and retain host recovery.
+
 - Fix SSH and VS Code Remote-SSH selecting project storage for organization admins: connections
   and refreshes now use the same current-role runtime as ordinary chat turns. Role changes
   disconnect before credential refresh, login/MCP cleanup is scoped to each container, and

@@ -11,6 +11,7 @@
   const byId = (id) => document.getElementById(id);
   const passkeys = window.ChannelGatePasskeys;
   let busy = false;
+  let linkRequestId = "";
 
   async function request(url, body) {
     const response = await fetch(url, {
@@ -28,23 +29,88 @@
     if (busy) return;
     busy = true;
     byId("err").textContent = "";
-    for (const button of document.querySelectorAll("button")) button.disabled = true;
+    for (const control of document.querySelectorAll("button, select")) control.disabled = true;
     try { await action(); }
     catch (error) { byId("err").textContent = passkeys.errorMessage(error); byId("status").textContent = ""; }
     finally {
       busy = false;
-      for (const button of document.querySelectorAll("button")) button.disabled = false;
+      for (const control of document.querySelectorAll("button, select")) control.disabled = control.dataset.unavailable === "true";
     }
   }
 
   function showEnrollment(message) {
     byId("f").hidden = true;
     byId("bootstrap").hidden = true;
+    byId("link-panel").hidden = true;
     byId("enroll-form").hidden = false;
     byId("intro").textContent = message;
     byId("status").textContent = "";
     byId("passkey-name").focus();
+    byId("setup-restart").hidden = Boolean(setupToken);
   }
+
+  async function resumeSetup() {
+    const me = await request("/api/auth/me");
+    byId("setup-restart").hidden = false;
+    if (!me.linkRequired) {
+      if (me.bootstrap || !me.passkeys.length) return showEnrollment("Complete setup: create your first passkey.");
+      return void location.replace("/settings#set-admin-access");
+    }
+    byId("f").hidden = true;
+    byId("bootstrap").hidden = true;
+    byId("enroll-form").hidden = true;
+    byId("link-panel").hidden = false;
+    byId("intro").textContent = me.bootstrap ? "Verify your existing gateway admin user before creating a passkey." : "Link your passkeys to your existing gateway admin user.";
+    byId("status").textContent = "";
+    const { users } = await request("/api/auth/link/users");
+    byId("link-user").replaceChildren(...users.map((user) => {
+      const option = document.createElement("option");
+      option.value = user.id;
+      option.textContent = `${user.name || user.id} (${user.id})`;
+      return option;
+    }));
+    byId("link-status").textContent = users.length
+      ? "Select your own admin user. A verification code will be sent to that user's private chat messages."
+      : "No eligible admin user is available. Ask the gateway operator to check the existing admin users and chat connection.";
+    byId("link-send").dataset.unavailable = String(!users.length);
+  }
+
+  byId("link-send-form").addEventListener("submit", (event) => {
+    event.preventDefault();
+    void run(async () => {
+      const me = await request("/api/auth/me");
+      if (!me.bootstrap && !me.fresh) {
+        const { options } = await request("/api/auth/reauth/options", {});
+        const response = await passkeys.get(options);
+        await request("/api/auth/reauth/verify", { response });
+      }
+      const result = await request("/api/auth/link/options", { userId: byId("link-user").value });
+      linkRequestId = result.requestId;
+      byId("link-code").value = "";
+      byId("link-verify-form").hidden = false;
+      byId("link-status").textContent = "Check the selected user's private chat messages for an 8-digit code. It expires in 5 minutes.";
+      byId("link-code").focus();
+    });
+  });
+  byId("link-verify-form").addEventListener("submit", (event) => {
+    event.preventDefault();
+    void run(async () => {
+      await request("/api/auth/link/verify", { requestId: linkRequestId, code: byId("link-code").value.trim() });
+      linkRequestId = "";
+      byId("link-code").value = "";
+      await resumeSetup();
+    });
+  });
+  byId("link-user").addEventListener("change", () => {
+    linkRequestId = "";
+    byId("link-code").value = "";
+    byId("link-verify-form").hidden = true;
+    byId("link-status").textContent = "Send a new verification code to the selected user.";
+  });
+  byId("setup-restart").addEventListener("click", () => run(async () => {
+    await request("/api/logout", {});
+    location.replace("/login.html");
+  }));
 
   byId("f").addEventListener("submit", (event) => {
     event.preventDefault();
@@ -53,7 +119,9 @@
       const { options } = await request("/api/auth/login/options", {});
       const response = await passkeys.get(options);
       await request("/api/auth/login/verify", { response });
-      location.replace("/");
+      const me = await request("/api/auth/me");
+      if (me.linkRequired) await resumeSetup();
+      else location.replace("/");
     });
   });
 
@@ -63,7 +131,7 @@
       try {
         await request("/api/login", { username: "admin", password: byId("pw").value });
       } finally { byId("pw").value = ""; }
-      showEnrollment("Complete setup: create the first passkey for admin.");
+      await resumeSetup();
     });
   });
 
@@ -89,7 +157,7 @@
       // Refreshing during first-time setup resumes the limited bootstrap session.
       if (status.bootstrapAvailable) {
         const me = await request("/api/auth/me").catch(() => null);
-        if (me?.bootstrap) showEnrollment("Complete setup: create the first passkey for admin.");
+        if (me?.bootstrap) await resumeSetup();
       }
     });
   }

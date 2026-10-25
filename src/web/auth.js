@@ -4,7 +4,7 @@
 // WebAuthn ceremonies live in admin-auth.js; every session use rechecks account authorization.
 import crypto from "node:crypto";
 import { getAdminPassword, getApiKey, getSettings, saveSettings } from "../config/settings.js";
-import { adminAccount, adminAccountByUsername, ensureBootstrapAdmin, bootstrapAvailable, passkeysConfigured } from "../config/admin-accounts.js";
+import { adminAccount, adminAccountByUsername, ensureBootstrapAdmin, bootstrapAvailable, passkeysConfigured, adminLinkRequired } from "../config/admin-accounts.js";
 export { passkeysConfigured } from "../config/admin-accounts.js";
 import { clientKey, timingSafeEqualStr, createLoginLimiter, verifyPassword, hashPassword, isHashedPassword } from "./security.js";
 
@@ -146,8 +146,8 @@ export function csrfOk(req) {
 // the same-machine internal secret for the self-updater; that is a separate, narrower check in
 // web/app.js, not a session.)
 export function isAuthenticated(req) {
-  const cookies = parseCookies(req.headers?.cookie);
-  return Boolean(cookies.cg_session && sessionValid(cookies.cg_session));
+  const s = adminSession(req);
+  return Boolean(s && !adminLinkRequired(s.account));
 }
 
 export function authMiddleware(req, res, next) {
@@ -156,8 +156,9 @@ export function authMiddleware(req, res, next) {
   if (!authEnabled()) return next();
   if (OPEN_PATHS.has(req.path)) return next();
 
-  const cookies = parseCookies(req.headers.cookie);
-  if (cookies.cg_session && sessionValid(cookies.cg_session)) {
+  const s = adminSession(req);
+  if (s) {
+    if (isApiPath(req.path) && adminLinkRequired(s.account)) return res.status(403).json({ code: 'identity_link_required', error: 'Verify and link your existing administrator user before managing the gateway.' });
     if (!csrfOk(req)) return res.status(403).json({ error: "missing X-CG-Request header" });
     return next();
   }
@@ -222,7 +223,7 @@ export function adminSession(req) {
 }
 export function requireRecentAdminAuth(req) {
   const s = adminSession(req);
-  return Boolean(s && !s.bootstrap && Date.now() - s.authenticatedAt <= 5 * 60_000);
+  return Boolean(s && !s.bootstrap && !adminLinkRequired(s.account) && Date.now() - s.authenticatedAt <= 5 * 60_000);
 }
 export function createAdminSession(req, res, a, { bootstrap = false } = {}) {
   const current = adminAccount(a.id);

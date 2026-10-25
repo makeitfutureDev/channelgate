@@ -10,11 +10,13 @@ import { effectiveWorkDir } from "../gateway/folders.js";
 import { resolveRuntime } from "../runtimes/resolve.js";
 import { buildResumeCommand } from "../slack/footer.js";
 import { effectiveMeta } from "../gateway/run.js";
-import { listChannels } from "../config/store.js";
+import { listChannels, getUser } from "../config/store.js";
 import { createAdminRouter } from "./routes/admin.js";
 import { mountSkillsPublicRoutes } from "./skills-mcp.js";
 import { triggerSourceSync } from "../gateway/skills/index.js";
 import { createRunsRouter } from "./routes/runs.js";
+import { automationTarget, postDirectMessage, asConnector } from "../platforms/notify.js";
+import { liveConnector } from "../platforms/live.js";
 import { platformOfConversation } from "../platforms/ids.js";
 import { platformOr } from "../platforms/registry.js";
 import { createFileEditorRouter } from "./file-editor.js";
@@ -62,6 +64,7 @@ function slackLiveness(slack) {
 export function createWebApp({
   slack,
   transports = null,
+  adminIdentityDelivery = null,
   backgroundJobs,
   restartCoordinator,
   updateSmoke = runUpdateSmoke,
@@ -340,7 +343,23 @@ export function createWebApp({
     });
   });
 
-  app.use("/api/auth", createAdminAuthRouter());
+  app.use("/api/auth", createAdminAuthRouter({ adminIdentityDelivery: adminIdentityDelivery || (async (userId, text) => {
+    const user = await getUser(userId);
+    if (!user || user.isAdmin !== true) throw new Error('Administrator is unavailable.');
+    let target = null; let recipient = userId; let platform = '';
+    // Stable native IDs/mappings only. An email or unknown string never defaults to Slack,
+    // and private verification never falls back to a public conversation.
+    if (/^[UW][A-Z0-9]{8,}$/.test(userId)) { platform = 'slack'; target = automationTarget(slack, userId); }
+    else if (/^29:[^\s]{1,512}$/.test(userId)) { platform = 'msteams'; target = liveConnector(platform); }
+    else {
+      const resource = user.googleChatUserName || (/^users\/[A-Za-z0-9_-]+$/.test(userId) ? userId : '');
+      if (/^users\/[A-Za-z0-9_-]+$/.test(resource)) { platform = 'googlechat'; target = liveConnector(platform); recipient = resource; }
+    }
+    if (!target || asConnector(target)?.platform !== platform || target.ready?.() === false) throw new Error('Private chat delivery is unavailable.');
+    const result = await postDirectMessage(target, { userId: recipient, text });
+    if (!result?.messageId) throw new Error('Private chat delivery did not complete.');
+    return result;
+  }) }));
 
   app.use(noPasswordLockdown); // no admin password → privileged API refused on every bind (see auth.js)
   app.use(authMiddleware);

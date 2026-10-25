@@ -1,6 +1,7 @@
-// Local dashboard identities. Chat users never acquire dashboard access implicitly.
+// Dashboard credential containers bind to the canonical Users directory by verified stable ID.
 import crypto from 'node:crypto';
 import { getDb, metaGet, metaSet } from '../db/index.js';
+import { isApiPrincipal } from './api-principal.js';
 
 export function normalizeAdminUsername(value) {
   const name = typeof value === 'string' ? value.trim().toLowerCase() : '';
@@ -8,8 +9,9 @@ export function normalizeAdminUsername(value) {
   return name;
 }
 function account(row) {
-  return row ? { id: row.id, username: row.username, displayName: row.display_name, userHandle: row.user_handle,
-    enabled: Boolean(row.enabled), authVersion: row.auth_version, bootstrapAllowed: Boolean(row.bootstrap_allowed), createdAt: row.created_ms } : null;
+  const user = row?.user_id ? dashboardUser(row.user_id) : null;
+  return row ? { id: row.id, username: row.username, displayName: user?.name || row.display_name, userHandle: row.user_handle,
+    userId: row.user_id || null, enabled: Boolean(row.enabled) && (!row.user_id || user?.isAdmin === true), authVersion: row.auth_version, bootstrapAllowed: Boolean(row.bootstrap_allowed), createdAt: row.created_ms } : null;
 }
 export function adminAccount(id) { return account(getDb().prepare('SELECT * FROM admin_accounts WHERE id = ?').get(id)); }
 export function adminAccountByUsername(name) { return account(getDb().prepare('SELECT * FROM admin_accounts WHERE username = ?').get(normalizeAdminUsername(name))); }
@@ -57,7 +59,12 @@ export function bootstrapAvailable() {
   const a = ensureBootstrapAdmin();
   return Boolean(a?.enabled && a.bootstrapAllowed && metaGet('admin_passkeys_enrolled') !== '1' && !adminPasskeys(a.id).length);
 }
-export function revokeAdminSessions(id) { getDb().prepare('UPDATE admin_accounts SET auth_version = auth_version + 1 WHERE id = ?').run(id); }
+export function revokeAdminSessions(id) {
+  const db = getDb();
+  db.prepare('UPDATE admin_accounts SET auth_version = auth_version + 1 WHERE id = ?').run(id);
+  db.prepare('DELETE FROM admin_enrollment_tokens WHERE account_id = ?').run(id);
+  db.prepare('DELETE FROM admin_identity_links WHERE account_id = ?').run(id);
+}
 export function setAdminEnabled(id, enabled) {
   const db = getDb(); db.exec('BEGIN IMMEDIATE');
   try {
@@ -74,6 +81,7 @@ export function createAdminEnrollment(id, { recover = false } = {}) {
   try {
     const a = adminAccount(id); if (!a?.enabled) throw new Error('Account is unavailable.');
     if (recover) {
+      db.prepare('DELETE FROM admin_identity_links WHERE account_id = ?').run(id);
       db.prepare('DELETE FROM admin_passkeys WHERE account_id = ?').run(id);
       db.prepare('UPDATE admin_accounts SET auth_version = auth_version + 1, bootstrap_allowed = 0 WHERE id = ?').run(id);
       metaSet('admin_passkeys_enrolled', '1');
@@ -98,6 +106,7 @@ export function saveAdminPasskey({ accountId, authVersion, credential, deviceTyp
   try {
     const a = adminAccount(accountId);
     if (!a?.enabled || a.authVersion !== authVersion) throw new Error('Account access changed. Start again.');
+    if (adminLinkRequired(a)) throw new Error('Verify your existing admin user before registering a passkey.');
     if (enrollmentDigest) {
       const result = db.prepare('DELETE FROM admin_enrollment_tokens WHERE digest = ? AND account_id = ? AND auth_version = ? AND expires_ms > ?').run(enrollmentDigest, accountId, authVersion, Date.now());
       if (result.changes !== 1) throw new Error('Setup link expired or was already used.');
@@ -112,7 +121,7 @@ export function saveAdminPasskey({ accountId, authVersion, credential, deviceTyp
 }
 export function advanceAdminCounter(a, key, info) {
   const result = getDb().prepare(`UPDATE admin_passkeys SET counter = ?, last_used_ms = ?, device_type = ?, backed_up = ?
-    WHERE id = ? AND account_id = ? AND counter = ? AND EXISTS (SELECT 1 FROM admin_accounts a WHERE a.id = ? AND a.enabled = 1 AND a.auth_version = ?)`).run(info.newCounter, Date.now(), info.credentialDeviceType, info.credentialBackedUp ? 1 : 0, key.id, a.id, key.counter, a.id, a.authVersion);
+    WHERE id = ? AND account_id = ? AND counter = ? AND EXISTS (SELECT 1 FROM admin_accounts a WHERE a.id = ? AND a.enabled = 1 AND a.auth_version = ? AND (a.user_id IS NULL OR EXISTS (SELECT 1 FROM users u WHERE u.user_id = a.user_id AND u.user_id <> 'api' AND json_valid(u.data) AND json_type(u.data, '$.isAdmin') = 'true')))`).run(info.newCounter, Date.now(), info.credentialDeviceType, info.credentialBackedUp ? 1 : 0, key.id, a.id, key.counter, a.id, a.authVersion);
   if (result.changes !== 1) throw new Error('Account or passkey changed. Start again.');
 }
 export function deleteAdminPasskey(accountId, keyId) {
@@ -125,3 +134,87 @@ export function deleteAdminPasskey(accountId, keyId) {
   } catch (error) { db.exec('ROLLBACK'); throw error; }
 }
 export function passkeysConfigured() { return metaGet('admin_passkeys_enrolled') === '1' || hasAdminPasskeys(); }
+
+// Read only canonical user rows, avoiding a store/settings import cycle. Never infer identity
+// from display names, emails, the API principal, or a caller-provided admin flag.
+export function dashboardUser(userId) {
+  if (typeof userId !== 'string' || !userId || isApiPrincipal(userId)) return null;
+  const row = getDb().prepare('SELECT data FROM users WHERE user_id = ?').get(userId);
+  if (!row) return null;
+  try {
+    const data = JSON.parse(row.data);
+    return { id: userId, name: String(data.name || userId), isAdmin: data.isAdmin === true };
+  } catch { return null; }
+}
+export function eligibleAdminUsers() {
+  return getDb().prepare('SELECT user_id FROM users ORDER BY user_id').all().map(row => dashboardUser(row.user_id)).filter(u => u?.isAdmin);
+}
+export function adminLinkRequired(a) { return Boolean(a && !a.userId && eligibleAdminUsers().length); }
+export function adminAccountForUser(userId) { return account(getDb().prepare('SELECT * FROM admin_accounts WHERE user_id = ?').get(userId)); }
+export function ensureUserAdminAccount(userId) {
+  const user = dashboardUser(userId);
+  if (!user?.isAdmin) throw new Error('The selected user is not an administrator.');
+  let a = adminAccountForUser(userId);
+  if (!a) {
+    const id = crypto.randomUUID();
+    getDb().prepare(`INSERT INTO admin_accounts (id, username, display_name, user_handle, user_id, created_ms) VALUES (?, ?, ?, ?, ?, ?)`)
+      .run(id, `user-${id}`, user.name, crypto.randomBytes(32).toString('base64url'), userId, Date.now());
+    a = adminAccount(id);
+  }
+  return a;
+}
+// Called INSIDE setUser's IMMEDIATE transaction. Both demotion and later promotion invalidate
+// old sessions/ceremonies. Re-promotion never resurrects authority minted before the role change.
+export function adminUserAuthorityChanged(db, userId, previous, next) {
+  if ((previous?.isAdmin === true) === (next?.isAdmin === true)) return;
+  db.prepare('UPDATE admin_accounts SET auth_version = auth_version + 1 WHERE user_id = ?').run(userId);
+  db.prepare('DELETE FROM admin_enrollment_tokens WHERE account_id IN (SELECT id FROM admin_accounts WHERE user_id = ?)').run(userId);
+  db.prepare('DELETE FROM admin_identity_links WHERE user_id = ? OR account_id IN (SELECT id FROM admin_accounts WHERE user_id = ?)').run(userId, userId);
+}
+export function createAdminIdentityLink(a, userId, sessionToken) {
+  const db = getDb(); db.exec('BEGIN IMMEDIATE');
+  try {
+    const current = adminAccount(a.id);
+    if (!current?.enabled || current.userId || current.authVersion !== a.authVersion || !dashboardUser(userId)?.isAdmin) throw new Error('The selected administrator is unavailable.');
+    const target = adminAccountForUser(userId);
+    if (target && adminPasskeys(target.id).length) throw new Error('This user already has linked passkeys. Sign in with those passkeys instead.');
+    db.prepare('DELETE FROM admin_identity_links WHERE account_id = ? OR expires_ms <= ?').run(a.id, Date.now());
+    const requestId = crypto.randomBytes(24).toString('base64url');
+    const code = String(crypto.randomInt(10_000_000, 100_000_000));
+    const expiresAt = Date.now() + 5 * 60_000;
+    db.prepare(`INSERT INTO admin_identity_links (id, account_id, user_id, auth_version, session_digest, code_digest, expires_ms) VALUES (?, ?, ?, ?, ?, ?, ?)`)
+      .run(requestId, a.id, userId, a.authVersion, digest(sessionToken), digest(`${requestId}\0${code}`), expiresAt);
+    db.exec('COMMIT'); return { requestId, code, expiresAt };
+  } catch (error) { db.exec('ROLLBACK'); throw error; }
+}
+export function cancelAdminIdentityLink(requestId) { getDb().prepare('DELETE FROM admin_identity_links WHERE id = ?').run(requestId); }
+export function verifyAdminIdentityLink(a, requestId, code, sessionToken) {
+  const db = getDb(); db.exec('BEGIN IMMEDIATE');
+  try {
+    const row = typeof requestId === 'string' && /^[A-Za-z0-9_-]{32}$/.test(requestId)
+      ? db.prepare('SELECT * FROM admin_identity_links WHERE id = ?').get(requestId) : null;
+    const current = adminAccount(a.id);
+    if (!row || !current?.enabled || current.userId || current.authVersion !== a.authVersion || row.account_id !== a.id || row.auth_version !== a.authVersion || row.session_digest !== digest(sessionToken) || row.expires_ms <= Date.now() || row.attempts >= 5 || !dashboardUser(row.user_id)?.isAdmin) throw new Error('Verification request expired or is no longer valid.');
+    const given = digest(`${requestId}\0${String(code)}`);
+    if (typeof code !== 'string' || !/^\d{8}$/.test(code) || !crypto.timingSafeEqual(Buffer.from(given, 'hex'), Buffer.from(row.code_digest, 'hex'))) {
+      db.prepare('UPDATE admin_identity_links SET attempts = attempts + 1 WHERE id = ?').run(requestId);
+      db.prepare('DELETE FROM admin_identity_links WHERE id = ? AND attempts >= 5').run(requestId);
+      db.exec('COMMIT'); throw new Error('The verification code is incorrect.');
+    }
+    const target = adminAccountForUser(row.user_id);
+    if (target && target.id !== a.id) {
+      if (adminPasskeys(target.id).length) throw new Error('This user already has linked passkeys.');
+      // Only an empty invite container can be displaced; credential bytes are never reassigned.
+      db.prepare('DELETE FROM admin_accounts WHERE id = ?').run(target.id);
+    }
+    db.prepare('UPDATE admin_accounts SET user_id = ?, auth_version = auth_version + 1 WHERE id = ?').run(row.user_id, a.id);
+    db.prepare('DELETE FROM admin_identity_links WHERE account_id = ? OR user_id = ?').run(a.id, row.user_id);
+    db.prepare('DELETE FROM admin_enrollment_tokens WHERE account_id = ?').run(a.id);
+    db.exec('COMMIT'); return adminAccount(a.id);
+  } catch (error) {
+    try { db.exec('ROLLBACK'); } catch { /* wrong code already committed its attempt count */ }
+    throw error;
+  }
+}
+
+export function getIdentityLinkState(requestId) { return getDb().prepare('SELECT id FROM admin_identity_links WHERE id = ? AND expires_ms > ?').get(requestId, Date.now()) || null; }

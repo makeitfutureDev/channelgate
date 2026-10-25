@@ -18,6 +18,7 @@ import { listEmailAccounts } from "../../gateway/email-accounts.js";
 import { listUserEmailAccounts, removeUserEmailAccount, saveUserEmailAccount } from "../../gateway/email-account-store.js";
 import { emailAccountBody } from "./channels.js";
 import { loadComposioInventory } from "../../gateway/composio-inventory.js";
+import { adminSession } from "../auth.js";
 
 // The user listing is built field by field, never `...u`. That is the property that matters here:
 // a stored user record can carry secrets this file has never heard of — a personal token from an
@@ -84,7 +85,7 @@ export function filterUsersForSearch(users, query) {
   }));
 }
 
-export function createUsersRouter({ composioInventory = loadComposioInventory } = {}) {
+export function createUsersRouter({ composioInventory = loadComposioInventory, validateMcpSelections = assertNewMcpSelections } = {}) {
   const router = Router();
 
   // Admin-authenticated metadata only. A person's inventory never falls back to shared keys.
@@ -261,6 +262,7 @@ export function createUsersRouter({ composioInventory = loadComposioInventory } 
 
   router.put("/users/:userId", async (req, res, next) => {
     try {
+      const actor = adminSession(req);
       const { userId } = req.params;
       const body = req.body ?? {};
       const patch = {};
@@ -284,8 +286,17 @@ export function createUsersRouter({ composioInventory = loadComposioInventory } 
 
       if (patch.allowedMcps) {
         const current = await getUser(userId);
-        try { await assertNewMcpSelections("claude", patch.allowedMcps, current?.allowedMcps); }
+        try { await validateMcpSelections("claude", patch.allowedMcps, current?.allowedMcps); }
         catch (error) { return res.status(400).json({ error: error.message }); }
+      }
+      // MCP validation may yield while another administrator revokes this actor. Never let
+      // an already-admitted request restore its author's role after that revocation. Routers
+      // mounted independently in local fixtures have no ambient dashboard session to recheck.
+      if (actor) {
+        const currentActor = adminSession(req);
+        if (!currentActor || currentActor.token !== actor.token || currentActor.authVersion !== actor.authVersion) {
+          return res.status(401).json({ error: "Administrator access changed. Sign in again before saving this user." });
+        }
       }
       const saved = await setUser(userId, patch);
       // The admin UI's "clear token" is the same revocation as clear_my_composio_token /

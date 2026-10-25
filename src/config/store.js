@@ -16,6 +16,7 @@ import {
 import { getDb, toJson, fromJson } from "../db/index.js";
 import { assertApprovedEnginesUpdate, assertChannelEngineApproved } from "../gateway/channel-engines.js";
 import { assertRegistrationCapacity } from "../ee/registration-limits.js";
+import { adminUserAuthorityChanged } from "./admin-accounts.js";
 import { isApiPrincipal } from "./api-principal.js";
 // Retired integrations' fields are dropped on the way IN, so a record can never be re-saved with
 // one and no listing has to remember to mask it (see ./dead-fields.js).
@@ -81,6 +82,7 @@ export async function setUser(userId, patch) {
     const saved = stripDeadFields(next);
     db.prepare("INSERT INTO users(user_id, data) VALUES(?, ?) ON CONFLICT(user_id) DO UPDATE SET data = excluded.data")
       .run(userId, toJson(saved));
+    adminUserAuthorityChanged(db, userId, existing, saved);
     db.exec("COMMIT");
     emitConfigChange("user", { userId });
     return saved;

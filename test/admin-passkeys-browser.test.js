@@ -7,6 +7,7 @@ delete process.env.ADMIN_PASSWORD;
 const { saveSettings } = await import("../src/config/settings.js");
 const { hashPassword } = await import("../src/web/security.js");
 const { createWebApp } = await import("../src/web/app.js");
+const { setUser } = await import("../src/config/store.js");
 const password = "disposable-passkey-bootstrap-password";
 
 async function api(page, route, body, method = "POST") {
@@ -19,7 +20,8 @@ async function api(page, route, body, method = "POST") {
 
 test("real WebAuthn signatures protect named admin login, enrollment, revocation and recovery", { skip: !process.env.CG_BROWSER_MODULE }, async (t) => {
   saveSettings({ publicUrl: "", adminPassword: await hashPassword(password), apiKey: "", slackBotToken: "xoxb-disposable-secret" });
-  const app = createWebApp();
+  let deliveredCode;
+  const app = createWebApp({ adminIdentityDelivery: async (_id, text) => { deliveredCode = text.match(/\b\d{8}\b/)?.[0]; return true; } });
   const server = await new Promise((resolve) => { const s = app.listen(0, "127.0.0.1", () => resolve(s)); });
   t.after(() => new Promise((resolve) => { server.closeAllConnections(); server.close(resolve); }));
   const base = `http://localhost:${server.address().port}`;
@@ -34,6 +36,7 @@ test("real WebAuthn signatures protect named admin login, enrollment, revocation
   async function newAdminBrowser() {
     const context = await browser.newContext();
     const page = await context.newPage();
+    page.setDefaultTimeout(15_000);
     page.on("pageerror", (error) => errors.push(error.message));
     const cdp = await context.newCDPSession(page);
     await cdp.send("WebAuthn.enable");
@@ -56,11 +59,11 @@ test("real WebAuthn signatures protect named admin login, enrollment, revocation
     assert.deepEqual(result.body.options.allowCredentials ?? [], [], "login must not expose an account's credential list");
     return page.evaluate(async (options) => globalThis.ChannelGatePasskeys.get(options), { ...result.body.options, ...optionsOverride });
   }
-  async function signIn(page = admin.page, expectedUsername = "admin") {
+  async function signIn(page = admin.page, expectedUserId = "UOWNER") {
     const response = await assertion(page);
     const result = await api(page, "/api/auth/login/verify", { response });
     assert.equal(result.status, 200, JSON.stringify(result.body));
-    assert.equal((await api(page, "/api/auth/me", undefined, "GET")).body.account.username, expectedUsername);
+    assert.equal((await api(page, "/api/auth/me", undefined, "GET")).body.account.userId, expectedUserId);
     return response;
   }
 
@@ -77,7 +80,7 @@ test("real WebAuthn signatures protect named admin login, enrollment, revocation
     bootstrapCookie = (await admin.context.cookies()).find((cookie) => cookie.name === "cg_session").value;
     await admin.page.locator("#passkey-name").fill("Primary fixture key");
     await Promise.all([admin.page.waitForURL(`${base}/settings#set-admin-access`), admin.page.locator("#enroll-submit").click()]);
-    await admin.page.locator('[data-access="identity"]').filter({ hasText: "admin" }).waitFor();
+    await admin.page.locator('[data-access="identity"]').waitFor();
     const me = await api(admin.page, "/api/auth/me", undefined, "GET");
     assert.equal(me.body.account.username, "admin");
     assert.equal(me.body.bootstrap, false);
@@ -86,6 +89,29 @@ test("real WebAuthn signatures protect named admin login, enrollment, revocation
     assert.equal(session.httpOnly, true);
     assert.equal(session.sameSite, "Strict");
     assert.ok(session.expires * 1000 - Date.now() < 12 * 60 * 60_000 + 1000);
+  });
+
+  await t.test("legacy key links to an existing admin by private code without replacing credentials", async () => {
+    const before = (await api(admin.page, "/api/auth/me", undefined, "GET")).body;
+    await setUser("UOWNER", { name: "Primary operator", isAdmin: true });
+    await setUser("USECOND", { name: "Second operator", isAdmin: true });
+    await setUser("UMEMBER", { name: "Member", isAdmin: false });
+    assert.equal((await api(admin.page, "/api/settings", undefined, "GET")).body.code, "identity_link_required");
+    const choices = await api(admin.page, "/api/auth/link/users", undefined, "GET");
+    assert.ok(choices.body.users?.some(u => u.id === "UOWNER"), JSON.stringify(choices));
+    await admin.page.reload();
+    await admin.page.locator('[data-access="link-user"]').selectOption("UOWNER");
+    await admin.page.locator('[data-access="link-send"]').click();
+    await admin.page.locator('[data-access="link-code"]').waitFor({ state: "visible" });
+    assert.match(deliveredCode, /^\d{8}$/);
+    await admin.page.locator('[data-access="link-code"]').fill(deliveredCode);
+    await admin.page.locator('[data-access="link-verify"]').click();
+    await admin.page.locator('[data-access="identity"]').filter({ hasText: "Primary operator" }).waitFor();
+    const after = (await api(admin.page, "/api/auth/me", undefined, "GET")).body;
+    assert.equal(after.account.userId, "UOWNER");
+    assert.equal(after.account.id, before.account.id);
+    assert.equal(after.passkeys[0].id, before.passkeys[0].id);
+    assert.equal((await api(admin.page, "/api/auth/accounts", { username: "independent" })).status, 410);
   });
 
   await t.test("first enrollment revokes the old password/session and blocks password-setting fallback", async () => {
@@ -146,7 +172,7 @@ test("real WebAuthn signatures protect named admin login, enrollment, revocation
     clockOffset += 6 * 60_000;
       assert.equal((await api(admin.page, "/api/auth/login/verify", { response })).status, 400);
       assert.equal((await api(admin.page, "/api/auth/register/options", {})).status, 403);
-      assert.equal((await api(admin.page, "/api/auth/accounts", { username: "stale", displayName: "Stale" })).status, 403);
+      assert.equal((await api(admin.page, "/api/auth/users/USECOND/invite", {})).status, 403);
       assert.equal((await api(admin.page, "/api/secrets/reveal", { scope: "settings", field: "slackBotToken", password })).status, 403);
       clockOffset += 10_000; // Honor the negative-attempt backoff before proving reauthentication.
       const reauth = await api(admin.page, "/api/auth/reauth/options", {});
@@ -161,12 +187,12 @@ test("real WebAuthn signatures protect named admin login, enrollment, revocation
   let secondId;
   await t.test("a second named account gets a single-use registration-only setup link", async () => {
     await admin.page.goto(`${base}/settings#set-admin-access`);
-    await admin.page.locator('[data-access="identity"]').filter({ hasText: "admin" }).waitFor();
-    await admin.page.locator('[data-access="account-username"]').fill("operator-two");
-    await admin.page.locator('[data-access="account-name"]').fill("Second operator");
-    await admin.page.getByRole("button", { name: "Create admin account", exact: true }).click();
-    await admin.page.locator('[data-access="invite"]').waitFor({ state: "visible" });
-    const setupUrl = await admin.page.locator('[data-access="invite-url"]').inputValue();
+    await admin.page.locator('[data-access="identity"]').waitFor();
+    await admin.page.goto(`${base}/users`);
+    await admin.page.getByText("Second operator", { exact: true }).first().click();
+    await admin.page.locator('[data-dashboard="invite"]').click();
+    await admin.page.locator('[data-dashboard="invite-url"]').waitFor({ state: "visible" });
+    const setupUrl = await admin.page.locator('[data-dashboard="invite-url"]').inputValue();
     const token = new URLSearchParams(new URL(setupUrl).hash.slice(1)).get("setup");
     assert.ok(token);
     second = await newAdminBrowser();
@@ -177,7 +203,7 @@ test("real WebAuthn signatures protect named admin login, enrollment, revocation
     await second.page.locator("#passkey-name").fill("Second operator key");
     await Promise.all([second.page.waitForURL(`${base}/settings#set-admin-access`), second.page.locator("#enroll-submit").click()]);
     const me = await api(second.page, "/api/auth/me", undefined, "GET");
-    assert.equal(me.body.account.username, "operator-two");
+    assert.equal(me.body.account.userId, "USECOND");
     secondId = me.body.account.id;
     assert.equal((await api(second.page, "/api/auth/enroll/options", { token })).status, 401);
     await api(second.page, "/api/logout", {});
@@ -185,7 +211,7 @@ test("real WebAuthn signatures protect named admin login, enrollment, revocation
     await second.page.waitForFunction(() => globalThis.document.querySelector("#sign-in").disabled === false);
     assert.equal(await second.page.locator("#username").count(), 0);
     await Promise.all([second.page.waitForURL(`${base}/`), second.page.locator("#sign-in").click()]);
-    assert.equal((await api(second.page, "/api/auth/me", undefined, "GET")).body.account.username, "operator-two");
+    assert.equal((await api(second.page, "/api/auth/me", undefined, "GET")).body.account.userId, "USECOND");
     const other = await assertion(second.page);
     const wrong = await assertion();
     wrong.response.userHandle = other.response.userHandle;
@@ -199,16 +225,16 @@ test("real WebAuthn signatures protect named admin login, enrollment, revocation
 
   await t.test("disabling an account revokes its sessions and in-flight authentication", async () => {
     const response = await assertion(second.page);
-    assert.equal((await api(admin.page, `/api/auth/accounts/${secondId}`, { enabled: false }, "PATCH")).status, 200);
+    await setUser("USECOND", { isAdmin: false });
     assert.equal((await api(second.page, "/api/settings", undefined, "GET")).status, 401);
     assert.equal((await api(second.page, "/api/auth/login/verify", { response })).status, 401);
-    assert.equal((await api(admin.page, `/api/auth/accounts/${secondId}`, { enabled: true }, "PATCH")).status, 200);
-    await signIn(second.page, "operator-two");
+    await setUser("USECOND", { isAdmin: true });
+    await signIn(second.page, "USECOND");
     assert.equal((await api(second.page, "/api/settings", undefined, "GET")).status, 200);
     const pending = await assertion(second.page);
-    assert.equal((await api(admin.page, `/api/auth/accounts/${secondId}/revoke-sessions`, {})).status, 200);
+    assert.equal((await api(admin.page, `/api/auth/users/USECOND/revoke-sessions`, {})).status, 200);
     assert.equal((await api(second.page, "/api/auth/login/verify", { response: pending })).status, 401);
-    await signIn(second.page, "operator-two");
+    await signIn(second.page, "USECOND");
   });
 
   await t.test("a spare authenticator can replace a key without retaining old sessions", async () => {
@@ -221,6 +247,7 @@ test("real WebAuthn signatures protect named admin login, enrollment, revocation
       isUserVerified: true, automaticPresenceSimulation: true,
     } });
     admin.authenticatorId = spare.authenticatorId;
+    await admin.page.goto(`${base}/settings#set-admin-access`);
     await admin.page.locator('[data-access="key-name"]').fill("Spare fixture key");
     await admin.page.locator('[data-access="register"]').click();
     await admin.page.locator('[data-access="message"]').filter({ hasText: "Passkey added" }).waitFor();
@@ -241,7 +268,7 @@ test("real WebAuthn signatures protect named admin login, enrollment, revocation
     assert.equal((await api(recovered.page, "/api/settings", undefined, "GET")).status, 401);
     await recovered.page.locator("#passkey-name").fill("Recovered fixture key");
     await Promise.all([recovered.page.waitForURL(`${base}/settings#set-admin-access`), recovered.page.locator("#enroll-submit").click()]);
-    assert.equal((await api(recovered.page, "/api/auth/me", undefined, "GET")).body.account.username, "operator-two");
+    assert.equal((await api(recovered.page, "/api/auth/me", undefined, "GET")).body.account.userId, "USECOND");
     assert.equal((await api(recovered.page, "/api/auth/enroll/options", { token })).status, 401);
   });
 
