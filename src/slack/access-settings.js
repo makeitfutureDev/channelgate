@@ -118,8 +118,14 @@ export function accessSettingsPatch(meta, form, actor) {
       throw new Error("Choose up to 100 valid users per list.");
     }
   }
+  // Admin mode is the posture every approval card relies on (permission prompts off for admin
+  // authors), so only an organization admin may switch a channel INTO it — the same rule `/mode
+  // admin` and the `set_channel_admin_mode` tool enforce. A manager may still leave it, and may
+  // change Auto/Lean in a channel that is already in Admin mode: keeping the current mode is not
+  // enabling it.
+  const canEnableAdmin = actor.isAdminUser === true || channelMode(meta) === "admin";
   const patch = {
-    ...modeSettingsPatch(meta, { mode: form.mode, autoMode: form.autoMode, cleanMode: form.cleanMode }, { canEnableAdmin: true }),
+    ...modeSettingsPatch(meta, { mode: form.mode, autoMode: form.autoMode, cleanMode: form.cleanMode }, { canEnableAdmin }),
     allowNetwork: form.allowNetwork, access: form.access, manageAccess: form.manageAccess,
     allowedUsers: [...new Set(form.allowedUsers)], managers: [...new Set(form.managers)],
     excludedUsers: [...new Set(form.excludedUsers)],

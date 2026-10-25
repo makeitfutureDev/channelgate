@@ -2098,6 +2098,7 @@ async function connectAndWire(app) {
         const name = path.basename(file.relative);
         await uploadLocalFile({
           filePath: file.path,
+          rootPath: file.rootReal, // re-proved through /proc/self/fd at open time (symlink-swap race)
           filename: name,
           title: name,
           channelId: state.channelId,
@@ -2125,6 +2126,7 @@ async function connectAndWire(app) {
         if (!dmChannelId) throw new Error("Slack couldn't open your DM with the bot.");
         await uploadLocalFile({
           filePath: file.path,
+          rootPath: file.rootReal,
           filename: name,
           title: name,
           channelId: dmChannelId,
@@ -2955,8 +2957,14 @@ async function connectAndWire(app) {
     if (!channel || !userId) return;
     const threadTs = body?.message?.thread_ts;
     const inThread = threadTs ? { thread_ts: threadTs } : {};
+    // The card is visible to every member of the channel; the status (label + recent output) is
+    // not. Same gate as /status: admin, approved, or an explicit guest of THIS channel — and the
+    // job must belong to this channel, so a job id lifted from another conversation reads nothing.
+    const authorized = await authorizedControlEntry(channel, userId);
+    if (!authorized) return;
     const jobId = String(action?.value || "");
-    const st = getActiveBackgroundJobs?.()?.status(jobId);
+    const live = getActiveBackgroundJobs?.()?.status(jobId);
+    const st = live && live.slug === authorized.slug ? live : null;
     const fmtSpan = (ms) => (ms < 60_000 ? "under a minute" : ms < 3_600_000 ? `${Math.round(ms / 60_000)}m` : ms < 86_400_000 ? `${(ms / 3_600_000).toFixed(1)}h` : `${(ms / 86_400_000).toFixed(1)}d`);
     let text;
     if (!st) {
@@ -2964,8 +2972,7 @@ async function connectAndWire(app) {
       // keep the button useful after completion instead of a bare "not running".
       let tail = "";
       try {
-        const entry = /^[a-f0-9-]{4,40}$/i.test(jobId) ? await getChannelEntry(channel) : null;
-        if (entry) tail = readFileSync(path.join(gatewayRoot(), "logs", "bg", `${entry.slug}__${jobId}.log`), "utf8").trim().slice(-600);
+        if (/^[a-f0-9-]{4,40}$/i.test(jobId)) tail = readFileSync(path.join(gatewayRoot(), "logs", "bg", `${authorized.slug}__${jobId}.log`), "utf8").trim().slice(-600);
       } catch {
         /* no log — fall through to the generic line */
       }
