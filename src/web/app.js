@@ -472,11 +472,12 @@ export function createWebApp({
     res.setHeader("Content-Security-Policy", shellContentSecurityPolicy(publicDir));
     res.type("html").send(renderShell(publicDir, adminShell));
   };
-  // The login page is a plain static file with no inline script (public/login.js), so its policy
-  // needs no hash; it still allows its own inline <style>.
-  app.get("/login.html", (_req, res, next) => {
+  // Stamp login dependencies with the same content version as their HTML. Edge/browser caches
+  // must never pair the current form with an older script expecting removed fields.
+  app.get("/login.html", (_req, res) => {
     res.setHeader("Content-Security-Policy", shellContentSecurityPolicy(publicDir, { inlineScriptHashes: [] }));
-    next();
+    res.setHeader("Cache-Control", "no-store");
+    res.type("html").send(renderShell(publicDir, "login.html"));
   });
   // "/" and "/index.html" are handled here too, ahead of express.static: static would serve the
   // shell straight off disk with its `{{ASSET_V}}` placeholders unsubstituted and no import map,

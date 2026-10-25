@@ -81,6 +81,8 @@ Running label acceptance (Claude and Codex): in a Slack agent thread with chat:w
 
 ## Signed-out admin login assets (2026-10-25)
 
+- Login cache regression: HTML uses `no-store`; both login/passkey scripts carry the same resolved content stamp. Run the asset HTTP/browser and versioning suites to prevent a pre-deploy username-reading script pairing with the new form.
+
 - [x] HTTP regression: `node --test test/admin-login-assets.test.js` serves every script, icon and
   font referenced by the real login HTML without cookies, with correct MIME types and WOFF2
   signatures, including HEAD and versioned requests. Dashboard assets still redirect to login

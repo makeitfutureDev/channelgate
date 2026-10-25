@@ -27,6 +27,8 @@ Slack’s native running/Stop label shows the resolved model and explicitly conf
 
 ## Sign-in assets before authentication
 
+- Login HTML is not cached and versions both classic scripts with a shared content hash, preventing stale edge/browser scripts from expecting fields removed by a deployment.
+
 - The signed-out admin page serves its login script, favicon and three Poppins font files without
   a session. These exact public paths prevent authentication redirects from replacing JavaScript
   and fonts with login HTML; other dashboard assets and privileged APIs remain session-gated.

@@ -20,6 +20,8 @@ product overview.
 
 ## Unreleased
 
+- Version login-page scripts with their HTML so cached pre-upgrade code cannot reference removed fields.
+
 - Use the existing Users list and admin role for dashboard passkeys and invitations. Existing
   keys link to their owner through private chat verification; role removal revokes dashboard
   access immediately. Remove the separate dashboard account directory and retain host recovery.

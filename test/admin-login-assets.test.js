@@ -26,6 +26,11 @@ test("logged-out sign-in serves its real assets while the dashboard stays gated"
   const page = await fetch(`${base}/login.html`);
   assert.equal(page.status, 200);
   const html = await page.text();
+  assert.equal(page.headers.get("cache-control"), "no-store");
+  assert.doesNotMatch(html, /\{\{ASSET_V\}\}/);
+  const stampedScripts = [...html.matchAll(/src="\/(?:login|passkeys)\.js\?v=([a-f0-9]{12})"/g)];
+  assert.equal(stampedScripts.length, 2, "both classic login scripts must bypass stale edge cache entries");
+  assert.equal(stampedScripts[0][1], stampedScripts[1][1], "HTML and both scripts use one deployment version");
   const assets = [...html.matchAll(/(?:src=|href=|url\()"([^"?]+)(?:\?[^\"]*)?"/g)].map((match) => match[1]);
   assert.ok(assets.includes("/login.js"), "exercise the actual login page's script dependency");
   assert.ok(assets.some((asset) => asset.endsWith(".woff2")), "exercise the login page's font dependencies");
