@@ -1,5 +1,7 @@
 # ChannelGate — Features
 
+Slack’s native running/Stop label shows the resolved model and explicitly configured effort, plus compact live phases (Thinking, Using tools, Writing, Waiting, Queued, Coordinating agents). Engine fallback replaces both model and effort; unset effort is omitted rather than guessed.
+
 ## Individual dashboard administrators and passkeys
 
 - Dashboard administrators have individual local usernames, separate from chat-platform users.

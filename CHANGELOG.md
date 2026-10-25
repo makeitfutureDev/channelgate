@@ -1,5 +1,7 @@
 # Changelog — ChannelGate
 
+- Show configured effort and a compact live activity phase beside the running model in Slack’s native Stop label.
+
 ChannelGate was formerly *Claude Gateway for Slack*; entries below the rename keep their original
 wording. All notable changes to the gateway, newest first. Dates are when the work landed.
 This project brings Claude Code (and optionally OpenAI Codex) into Slack as a self-hosted,

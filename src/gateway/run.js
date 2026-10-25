@@ -1328,7 +1328,7 @@ async function runMessageImpl({ channelId, authorId, workspaceId = "", text, thr
     .find((e) => e && effortBelongsToModel(e, engine, selectedModel)) || "";
   // Dashboard-only lifecycle signal: by this point the exact spawn engine/model are known. Keep it
   // best-effort so a display-layer callback can never prevent an engine run.
-  try { onRuntimeResolved?.({ engine, model, ...runtimeSignal }); } catch { /* non-fatal */ }
+  try { onRuntimeResolved?.({ engine, model, effort: effortForModel(model), ...runtimeSignal }); } catch { /* non-fatal */ }
   const timeoutMs = parseTimeoutMs(process.env.COMMAND_TIMEOUT);
   // How long a turn may stay SILENT in total before we treat it as wedged. COMMAND_TIMEOUT is now
   // only how often a quiet turn REPORTS itself (see engines/watchdog.js); this is the give-up
@@ -1728,7 +1728,8 @@ async function runMessageImpl({ channelId, authorId, workspaceId = "", text, thr
     const fallbackGatewayDefaultModel = getDefaultModel(fallbackEngine);
     let fallbackModel = meta.model && modelBelongsToEngine(meta.model, fallbackEngine) ? meta.model : fallbackGatewayDefaultModel;
     let fallbackModelNote = "";
-    try { onRuntimeResolved?.({ engine: fallbackEngine, model: fallbackModel, ...runtimeSignal }); } catch { /* non-fatal */ }
+    const fallbackDefaultEffort = getDefaultEffort(fallbackEngine);
+    try { onRuntimeResolved?.({ engine: fallbackEngine, model: fallbackModel, effort: effortBelongsToModel(fallbackDefaultEffort, fallbackEngine, fallbackModel) ? fallbackDefaultEffort : "", ...runtimeSignal }); } catch { /* non-fatal */ }
     const fallbackConfinement = fallbackAdapter.compileConfinement({ allowNetwork: Boolean(meta.allowNetwork), writable: codexWritable });
     if (!fallbackConfinement.supported) throw new Error(`${fallbackConfinement.reason}. ${fallbackAdapter.label} fallback was refused.`);
     // Failing over TO Claude needs Claude's credential, which the primary turn never resolved when
@@ -1748,7 +1749,6 @@ async function runMessageImpl({ channelId, authorId, workspaceId = "", text, thr
     // could still refuse the fallback — so it never promises an engine that then does not run.
     if (note) announceAnswerNote(note);
     if (fbMcpDropNote) announceAnswerNote(fbMcpDropNote);
-    const fallbackDefaultEffort = getDefaultEffort(fallbackEngine);
     const exec = async (fbSid, fbFresh, modelOverride = fallbackModel) => {
       const effort = effortBelongsToModel(fallbackDefaultEffort, fallbackEngine, modelOverride) ? fallbackDefaultEffort : "";
       assertRuntimeCanStart();
@@ -1823,7 +1823,7 @@ async function runMessageImpl({ channelId, authorId, workspaceId = "", text, thr
         toModel: defaultModel,
         crossEngineFallback: true,
       });
-      try { onRuntimeResolved?.({ engine: fallbackEngine, model: defaultModel, ...runtimeSignal }); } catch { /* non-fatal */ }
+      try { onRuntimeResolved?.({ engine: fallbackEngine, model: defaultModel, effort: effortBelongsToModel(fallbackDefaultEffort, fallbackEngine, defaultModel) ? fallbackDefaultEffort : "", ...runtimeSignal }); } catch { /* non-fatal */ }
       // Told to the delivery layer BEFORE the retry spawns, because a Slack answer is written from
       // the live stream: a note added to the finished `content` below never reaches the message a
       // streamed turn produced. Nothing has streamed yet (the rejection landed before generation),
@@ -2018,7 +2018,7 @@ async function runMessageImpl({ channelId, authorId, workspaceId = "", text, thr
         await sleepUnlessAborted(delayMs, signal);
         if (signal?.aborted) throw err;
         if (yielded) await resumeFromRetry();
-        try { onRuntimeResolved?.({ engine, model: continuationModel, ...runtimeSignal }); } catch { /* display only */ }
+        try { onRuntimeResolved?.({ engine, model: continuationModel, effort: effortForModel(continuationModel), ...runtimeSignal }); } catch { /* display only */ }
         announceAnswerNote(note);
         try {
           result = await runOnce(continuationId, false, CAPACITY_CONTINUATION_PROMPT, continuationModel);
@@ -2049,7 +2049,7 @@ async function runMessageImpl({ channelId, authorId, workspaceId = "", text, thr
             fromModel: rejectedModel,
             toModel: defaultModel,
           });
-          try { onRuntimeResolved?.({ engine, model: defaultModel, ...runtimeSignal }); } catch { /* non-fatal */ }
+          try { onRuntimeResolved?.({ engine, model: defaultModel, effort: effortForModel(defaultModel), ...runtimeSignal }); } catch { /* non-fatal */ }
           // Same reason as the cross-engine path above: the answer the reader gets is STREAMED, so
           // the substitution has to be announced before the retry writes its first token — a prefix
           // on the finished content is only ever seen by a surface that renders that content.

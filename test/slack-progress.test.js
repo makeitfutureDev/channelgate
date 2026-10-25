@@ -3104,3 +3104,29 @@ for (const mode of ["commentary", "no stream", "truncated commentary"]) {
     }
   });
 }
+
+test("native Stop label carries resolved effort and live phases, then clears activity on stop", async () => {
+  const calls = [];
+  const client = {
+    apiCall: async (method, payload) => calls.push([method, payload]),
+    chatStream: () => ({ append: async () => {}, stop: async () => {} }),
+    chat: { postMessage: async () => {} },
+  };
+  const progress = startProgress("stream", client, "C_EFFORT_PHASE", "111.222", { authorId: "U1", teamId: "T1" });
+  progress.onRuntimeResolved({ engine: "codex", model: "gpt-6.1-sol", effort: "low" });
+  progress.onEvent({ kind: "thinking" });
+  await cardReady();
+  progress.onEvent({ kind: "tool_use", name: "Read", target: "README.md" });
+  await cardReady();
+  progress.onDelta("Answer");
+  await cardReady();
+  progress.onRuntimeResolved({ engine: "claude", model: "claude-opus-4-8", effort: "high" });
+  await cardReady();
+  await progress.stop();
+  const native = calls.filter(([method]) => method === "agents.sessions.setStatus").map(([, payload]) => payload);
+  for (const phase of ["Thinking", "Using tools", "Writing"]) {
+    assert.ok(native.some((p) => p.status === "processing" && p.username === `GPT-6.1 Sol (low) · ${phase}`));
+  }
+  assert.equal(native.at(-1).status, "active");
+  assert.equal(native.at(-1).username, "Opus 4.8 (high)");
+});

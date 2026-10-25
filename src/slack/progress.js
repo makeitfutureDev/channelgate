@@ -157,6 +157,7 @@ function startStatusAnimation(client, channel, threadTs) {
   let activity = "is gathering information…";
   let runtime = "";
   let nativeName = "AI agent";
+  let nativeActivity = "";
   let rendered = "";
   let closed = false;
   let disabled = false;
@@ -208,7 +209,7 @@ function startStatusAnimation(client, channel, threadTs) {
     if (pending) pending.done(); // superseded before it was ever sent
     let done;
     const written = new Promise((resolve) => { done = resolve; });
-    pending = { status, loadingMessages, username: nativeName, done };
+    pending = { status, loadingMessages, username: nativeActivity ? `${nativeName} · ${nativeActivity}` : nativeName, done };
     pump();
     return written;
   };
@@ -231,6 +232,13 @@ function startStatusAnimation(client, channel, threadTs) {
   };
   const setActivity = (next) => {
     activity = next;
+    // Full details stay in the stream; the native Stop label shows a compact phase.
+    nativeActivity = next.startsWith("is using ") ? "Using tools"
+      : next.startsWith("is thinking") ? "Thinking"
+      : next.startsWith("is putting") ? "Writing"
+      : next.startsWith("is coordinating") ? "Coordinating agents"
+      : next.startsWith("is waiting") ? "Waiting"
+      : next.startsWith("is queued") ? "Queued" : "Working";
     render();
   };
   render();
@@ -289,12 +297,16 @@ function startStatusAnimation(client, channel, threadTs) {
         }
       }
     },
-    onRuntimeResolved: ({ engine = "", model = "" } = {}) => {
+    onRuntimeResolved: ({ engine = "", model = "", effort = "" } = {}) => {
       if (!engine && !model) return;
       runtime = model
         ? modelLabel({ engine, model })
         : `${engineLabel(engine) || engine} CLI default`;
       nativeName = model ? modelDisplayLabel(model, engine) : runtime;
+      if (effort) {
+        nativeName += ` (${effort})`;
+        runtime += ` (${effort})`;
+      }
       render();
     },
     afterMessageActivity,

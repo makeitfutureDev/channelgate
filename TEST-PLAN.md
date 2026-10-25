@@ -1,5 +1,7 @@
 # ChannelGate — Test Plan
 
+Running label acceptance (Claude and Codex): in a Slack agent thread with chat:write.customize, select an explicit effort using /model, then ask “Read README.md and explain the startup flow.” Confirm Stop shows the selected model (effort), transitions through live tool/writing phases, and becomes active without an activity suffix after completion or Stop. Repeat with each engine and a different effort; verify fallback replaces model/effort. Pass only with observed Slack evidence. Live execution pending; automated coverage: test/slack-progress.test.js native Stop effort/phase test and test/slack-stop-progress.test.js late-event cancellation fixtures.
+
 ## Passkey-only account discovery (2026-10-25)
 
 - [x] Combined Chromium/storage/HTTP/recovery acceptance: set `CG_BROWSER_MODULE` to installed
