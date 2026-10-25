@@ -33,14 +33,14 @@ test("PUT /channels/:id/meta with access=admins evicts seeded approved members a
   assert.equal(res.status, 200, await res.text());
   const meta = await getChannelMeta(entry.slug);
   assert.equal(meta.access, "admins");
-  assert.deepEqual(meta.allowedUsers, ["U_EV_GUEST"]);
+  assert.deepEqual(meta.allowedUsers, ["U_EV_GUEST", "U_EV_ADMIN"], "the seeded member goes; the guest and the admin stay");
   assert.equal(isAuthorized(meta, "U_EV_MEMBER", false, { isApprovedUser: true }), false);
   assert.equal(isAuthorized(meta, "U_EV_GUEST", false, {}), true);
   assert.equal(isAuthorized(meta, "U_EV_ADMIN", false, { isAdminUser: true }), true);
 
   // Widening back resurrects nobody; an unrelated save under a narrow policy touches the list not at all.
   assert.equal((await put(`/channels/${id}/meta`, { access: "approved" })).status, 200);
-  assert.deepEqual((await getChannelMeta(entry.slug)).allowedUsers, ["U_EV_GUEST"]);
+  assert.deepEqual((await getChannelMeta(entry.slug)).allowedUsers, ["U_EV_GUEST", "U_EV_ADMIN"]);
   assert.equal((await put(`/channels/${id}/meta`, { access: "none", allowNetwork: true })).status, 200);
-  assert.deepEqual((await getChannelMeta(entry.slug)).allowedUsers, ["U_EV_GUEST"]);
+  assert.deepEqual((await getChannelMeta(entry.slug)).allowedUsers, ["U_EV_GUEST", "U_EV_ADMIN"]);
 });
