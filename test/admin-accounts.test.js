@@ -75,6 +75,9 @@ test("credentials cannot be reassigned, and removing the final passkey is refuse
   const account = store.createAdminAccount("keys-owner");
   const credential = key();
   const enrolled = enroll(account, credential);
+  assert.equal(store.adminPasskeyById(credential.id).accountId, account.id);
+  assert.equal(store.adminPasskeyById("unknown-credential"), null);
+  assert.equal(store.adminPasskeyById(null), null);
   const other = store.createAdminAccount("keys-other");
   assert.throws(() => enroll(other, credential), /UNIQUE/);
   assert.equal(store.adminPasskeys(other.id).length, 0);

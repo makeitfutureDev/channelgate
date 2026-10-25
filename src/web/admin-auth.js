@@ -4,7 +4,7 @@ import crypto from 'node:crypto';
 import express from 'express';
 import { generateRegistrationOptions, verifyRegistrationResponse, generateAuthenticationOptions, verifyAuthenticationResponse } from '@simplewebauthn/server';
 import { getPublicUrl, getAdminPassword } from '../config/settings.js';
-import { adminAccount, adminAccountByUsername, adminPasskeys, bootstrapAvailable, createAdminAccount, createAdminEnrollment, adminEnrollment, saveAdminPasskey, advanceAdminCounter, listAdminAccounts, setAdminEnabled, deleteAdminPasskey, revokeAdminSessions } from '../config/admin-accounts.js';
+import { adminAccount, adminPasskeys, adminPasskeyById, bootstrapAvailable, createAdminAccount, createAdminEnrollment, adminEnrollment, saveAdminPasskey, advanceAdminCounter, listAdminAccounts, setAdminEnabled, deleteAdminPasskey, revokeAdminSessions } from '../config/admin-accounts.js';
 import { adminSession, requireRecentAdminAuth, createAdminSession, refreshAdminSession, parseCookies, cookieAttrs } from './auth.js';
 import { clientKey, createLoginLimiter } from './security.js';
 import { logEvent } from '../util/logger.js';
@@ -67,7 +67,7 @@ function remember(req, res, kind, rp, a, options, extra = {}) {
   for (const [key, value] of pending) if (value.expiresAt <= now) pending.delete(key);
   if (pending.size >= MAX_PENDING) reject('Authentication is busy. Try again shortly.', 429);
   const binding = browserBinding(req, res);
-  pending.set(`${binding}:${kind}`, { kind, ...rp, accountId: a.id, authVersion: a.authVersion, challenge: options.challenge,
+  pending.set(`${binding}:${kind}`, { kind, ...rp, accountId: a?.id ?? null, authVersion: a?.authVersion ?? null, challenge: options.challenge,
     sessionToken: kind === 'register' || kind === 'reauth' ? adminSession(req)?.token : null, expiresAt: now + FIVE_MIN, ...extra });
 }
 function requireTopLevelResponse(response) {
@@ -84,6 +84,7 @@ function consume(req, kind, rp) {
   const key = `${binding}:${kind}`;
   const saved = pending.get(key); pending.delete(key); // including failed verification: never retry a challenge
   if (!saved || saved.expiresAt <= Date.now() || saved.origin !== rp.origin || saved.rpID !== rp.rpID) reject('Authentication request expired. Start again.');
+  if (kind === 'login' && saved.discoverable) return { saved, account: null };
   const a = adminAccount(saved.accountId);
   if (!a?.enabled || a.authVersion !== saved.authVersion) reject('Account access changed. Start again.', 401);
   if (saved.sessionToken && saved.sessionToken !== adminSession(req)?.token) reject('Sign-in session changed. Start again.', 401);
@@ -132,21 +133,30 @@ export function createAdminAuthRouter() {
       limited(req, res, failures);
       let a;
       if (kind === 'reauth') { const s = loggedIn(req); if (s.bootstrap) reject('Register your first passkey before verifying it.', 403); a = s.account; }
-      else { try { a = adminAccountByUsername(req.body?.username); } catch { /* generic invalid account */ } }
       limited(req, res, starts, a?.id, true);
-      if (!a?.enabled || !adminPasskeys(a.id).length) reject('Unable to sign in with this username and passkey.', 401);
-      const options = await generateAuthenticationOptions({ rpID: rp.rpID, timeout: 60_000, userVerification: 'required', allowCredentials: adminPasskeys(a.id).map(p => ({ id: p.id, transports: p.transports })) });
-      remember(req, res, kind, rp, a, options); res.json({ options });
+      if (kind === 'reauth' && (!a?.enabled || !adminPasskeys(a.id).length)) reject('Unable to verify this account with a passkey.', 401);
+      // Discoverable credentials let the authenticator choose the account. Keep authorization
+      // versions only on the server so a revocation also invalidates unbound login challenges.
+      const extra = kind === 'login' ? { discoverable: true, accountVersions: Object.fromEntries(
+        listAdminAccounts().filter(account => account.enabled && account.passkeyCount).map(account => [account.id, account.authVersion]),
+      ) } : {};
+      const options = await generateAuthenticationOptions({ rpID: rp.rpID, timeout: 60_000, userVerification: 'required',
+        ...(kind === 'reauth' ? { allowCredentials: adminPasskeys(a.id).map(p => ({ id: p.id, transports: p.transports })) } : {}),
+      });
+      remember(req, res, kind, rp, a, options, extra); res.json({ options });
     }));
     router.post(`/${kind}/verify`, safe(async (req, res) => {
       const rp = ceremonyGuard(req); limited(req, res, failures);
-      const { saved, account: a } = consume(req, kind, rp);
+      const { saved, account: boundAccount } = consume(req, kind, rp);
       requireTopLevelResponse(req.body?.response);
+      const key = kind === 'login' ? adminPasskeyById(req.body?.response?.id)
+        : adminPasskeys(boundAccount.id).find(p => p.id === req.body?.response?.id);
+      const a = kind === 'login' && key ? adminAccount(key.accountId) : boundAccount;
+      if (!key || !a?.enabled || (kind === 'login' && saved.accountVersions?.[a.id] !== a.authVersion)) reject('Passkey verification failed.', 401);
+      req.adminAuthAccountId = a.id;
       limited(req, res, failures, a.id);
-      const key = adminPasskeys(a.id).find(p => p.id === req.body?.response?.id);
-      if (!key) reject('Passkey verification failed.', 401);
       const userHandle = req.body?.response?.response?.userHandle;
-      if (userHandle && userHandle !== a.userHandle) reject('Passkey verification failed.', 401);
+      if ((kind === 'login' && !userHandle) || (userHandle && userHandle !== a.userHandle)) reject('Passkey verification failed.', 401);
       let verification;
       try { verification = await verifyAuthenticationResponse({ response: req.body?.response, expectedChallenge: saved.challenge,
         expectedOrigin: rp.origin, expectedRPID: rp.rpID, credential: key, requireUserVerification: true }); }

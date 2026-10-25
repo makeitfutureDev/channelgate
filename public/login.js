@@ -50,7 +50,7 @@
     event.preventDefault();
     void run(async () => {
       byId("status").textContent = "Choose a passkey and verify with your screen lock or security key…";
-      const { options } = await request("/api/auth/login/options", { username: byId("username").value.trim() });
+      const { options } = await request("/api/auth/login/options", {});
       const response = await passkeys.get(options);
       await request("/api/auth/login/verify", { response });
       location.replace("/");

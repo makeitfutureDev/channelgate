@@ -57,9 +57,11 @@ test("HTTP authentication gates remain closed through bootstrap, invitations and
   assert.equal((await request("/api/login", { username: "admin", password })).response.status, 401);
   settings.saveSettings({ adminPassword: await hashPassword("changed-shared-password") });
   assert.equal((await request("/api/auth/status")).body.bootstrapAvailable, false);
-  const options = await request("/api/auth/login/options", { username: "admin" });
+  const options = await request("/api/auth/login/options", {});
   assert.equal(options.response.status, 200);
   assert.equal(options.body.options.userVerification, "required");
+  assert.deepEqual(options.body.options.allowCredentials ?? [], []);
+  assert.equal(JSON.stringify(options.body).includes("Zml4dHVyZS1rZXk"), false, "public login options never list stored credentials");
   const binding = options.response.headers.get("set-cookie").split(";")[0];
   const invalid = await request("/api/auth/login/verify", { response: { id: "Zml4dHVyZS1rZXk", type: "public-key", response: {} } }, { Cookie: binding });
   assert.equal(invalid.response.status, 400);

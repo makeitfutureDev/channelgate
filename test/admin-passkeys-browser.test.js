@@ -45,20 +45,22 @@ test("real WebAuthn signatures protect named admin login, enrollment, revocation
   }
   const admin = await newAdminBrowser();
   let bootstrapCookie;
-  async function assertion(page = admin.page, username = "admin", optionsOverride = {}) {
-    let result = await api(page, "/api/auth/login/options", { username });
+  async function assertion(page = admin.page, optionsOverride = {}) {
+    let result = await api(page, "/api/auth/login/options", {});
     for (let attempt = 0; result.status === 429 && attempt < 3; attempt++) {
       assert.ok(result.retryAfter <= 10, "bounded negative cases should not create a long lockout");
       await new Promise((resolve) => setTimeout(resolve, result.retryAfter * 1000 + 100));
-      result = await api(page, "/api/auth/login/options", { username });
+      result = await api(page, "/api/auth/login/options", {});
     }
     assert.equal(result.status, 200, JSON.stringify(result.body));
+    assert.deepEqual(result.body.options.allowCredentials ?? [], [], "login must not expose an account's credential list");
     return page.evaluate(async (options) => globalThis.ChannelGatePasskeys.get(options), { ...result.body.options, ...optionsOverride });
   }
-  async function signIn(page = admin.page, username = "admin") {
-    const response = await assertion(page, username);
+  async function signIn(page = admin.page, expectedUsername = "admin") {
+    const response = await assertion(page);
     const result = await api(page, "/api/auth/login/verify", { response });
     assert.equal(result.status, 200, JSON.stringify(result.body));
+    assert.equal((await api(page, "/api/auth/me", undefined, "GET")).body.account.username, expectedUsername);
     return response;
   }
 
@@ -96,12 +98,12 @@ test("real WebAuthn signatures protect named admin login, enrollment, revocation
     assert.equal((await api(admin.page, `/api/auth/passkeys/${me.body.passkeys[0].id}`, undefined, "DELETE")).status, 400);
   });
 
-  await t.test("a logged-out browser signs in by username and passkey without password UI", async () => {
+  await t.test("a logged-out browser signs in using only its passkey without username or password fields", async () => {
     await api(admin.page, "/api/logout", {});
     await admin.page.goto(`${base}/login.html`);
     await admin.page.waitForFunction(() => globalThis.document.querySelector("#sign-in").disabled === false);
     assert.equal(await admin.page.locator("#bootstrap").isVisible(), false);
-    await admin.page.locator("#username").fill("admin");
+    assert.equal(await admin.page.locator("#username").count(), 0);
     await Promise.all([admin.page.waitForURL(`${base}/`), admin.page.locator("#sign-in").click()]);
     assert.equal((await api(admin.page, "/api/settings", undefined, "GET")).status, 200);
   });
@@ -125,7 +127,7 @@ test("real WebAuthn signatures protect named admin login, enrollment, revocation
   await t.test("user verification, ceremony type and allowed origin are enforced", async () => {
     await admin.cdp.send("WebAuthn.setUserVerified", { authenticatorId: admin.authenticatorId, isUserVerified: false });
     try {
-      const response = await assertion(admin.page, "admin", { userVerification: "discouraged" });
+      const response = await assertion(admin.page, { userVerification: "discouraged" });
       assert.equal((await api(admin.page, "/api/auth/login/verify", { response })).status, 401);
     } finally { await admin.cdp.send("WebAuthn.setUserVerified", { authenticatorId: admin.authenticatorId, isUserVerified: true }); }
     await signIn();
@@ -178,20 +180,35 @@ test("real WebAuthn signatures protect named admin login, enrollment, revocation
     assert.equal(me.body.account.username, "operator-two");
     secondId = me.body.account.id;
     assert.equal((await api(second.page, "/api/auth/enroll/options", { token })).status, 401);
+    await api(second.page, "/api/logout", {});
+    await second.page.goto(`${base}/login.html`);
+    await second.page.waitForFunction(() => globalThis.document.querySelector("#sign-in").disabled === false);
+    assert.equal(await second.page.locator("#username").count(), 0);
+    await Promise.all([second.page.waitForURL(`${base}/`), second.page.locator("#sign-in").click()]);
+    assert.equal((await api(second.page, "/api/auth/me", undefined, "GET")).body.account.username, "operator-two");
+    const other = await assertion(second.page);
     const wrong = await assertion();
-    assert.equal((await api(admin.page, "/api/auth/login/options", { username: "operator-two" })).status, 200);
+    wrong.response.userHandle = other.response.userHandle;
     assert.equal((await api(admin.page, "/api/auth/login/verify", { response: wrong })).status, 401);
+    await signIn();
+    const missing = await assertion();
+    missing.response.userHandle = null;
+    assert.equal((await api(admin.page, "/api/auth/login/verify", { response: missing })).status, 401);
     await signIn();
   });
 
   await t.test("disabling an account revokes its sessions and in-flight authentication", async () => {
-    const response = await assertion(second.page, "operator-two");
+    const response = await assertion(second.page);
     assert.equal((await api(admin.page, `/api/auth/accounts/${secondId}`, { enabled: false }, "PATCH")).status, 200);
     assert.equal((await api(second.page, "/api/settings", undefined, "GET")).status, 401);
     assert.equal((await api(second.page, "/api/auth/login/verify", { response })).status, 401);
     assert.equal((await api(admin.page, `/api/auth/accounts/${secondId}`, { enabled: true }, "PATCH")).status, 200);
     await signIn(second.page, "operator-two");
     assert.equal((await api(second.page, "/api/settings", undefined, "GET")).status, 200);
+    const pending = await assertion(second.page);
+    assert.equal((await api(admin.page, `/api/auth/accounts/${secondId}/revoke-sessions`, {})).status, 200);
+    assert.equal((await api(second.page, "/api/auth/login/verify", { response: pending })).status, 401);
+    await signIn(second.page, "operator-two");
   });
 
   await t.test("a spare authenticator can replace a key without retaining old sessions", async () => {

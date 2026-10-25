@@ -18,6 +18,8 @@ product overview.
 
 ## Unreleased
 
+- Simplify admin sign-in to passkey selection without a username field. The selected credential
+  identifies its account; password login stays permanently disabled after first enrollment.
 - Add individual dashboard admin usernames and passkey sign-in, with initial-password migration,
   account/passkey management, expiring enrollment links, recent-authentication checks and
   host-operator recovery. Password login stops permanently after first passkey enrollment.

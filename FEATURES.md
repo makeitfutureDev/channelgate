@@ -3,6 +3,10 @@
 ## Individual dashboard administrators and passkeys
 
 - Dashboard administrators have individual local usernames, separate from chat-platform users.
+  Sign-in requires only choosing a saved passkey; the credential and its matching user handle
+  identify the account. Usernames remain account-management labels, with no login field or public
+  list of accounts/credential IDs in authentication options. Pending login challenges retain
+  server-only authorization versions so revocation still invalidates them before account selection.
   Initial setup uses the existing password for `admin`; enrolling its first passkey permanently
   retires shared-password login and revokes bootstrap sessions. The login page supports device
   passkeys and FIDO2 security keys with required PIN/biometric verification.

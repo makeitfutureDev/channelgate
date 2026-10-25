@@ -59,7 +59,8 @@ prerequisite and run `npm run build:image` before sending the first prompt.
 1. Open the admin UI at <http://localhost:4747>. First-time setup uses username `admin` and the
    password printed once at first boot (or your configured password), then asks you to create a
    passkey. Set the HTTPS Public URL before enrolling keys for remote access. After first
-   enrollment, use your username and passkey; password login is retired. The UI starts without
+   enrollment, select **Sign in with a passkey** and choose your saved account; password login is
+   retired and no username entry is needed. The UI starts without
    Slack credentials. See [admin access and recovery](./docs/OPERATIONS.md#admin-accounts-passkeys-and-recovery).
 2. Create a Slack app at <https://api.slack.com/apps> using the bundled
    [Slack app manifest](./slack-app-manifest.json). Generate an app-level token with

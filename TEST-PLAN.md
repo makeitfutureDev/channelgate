@@ -1,5 +1,25 @@
 # ChannelGate — Test Plan
 
+## Passkey-only account discovery (2026-10-25)
+
+- [x] Combined Chromium/storage/HTTP/recovery acceptance: set `CG_BROWSER_MODULE` to installed
+  Playwright and run `node --test test/admin-passkeys-browser.test.js test/admin-login-assets.test.js
+  test/admin-auth-http.test.js test/admin-accounts.test.js test/admin-recovery.test.js` — 25/25
+  pass with no skips. Both independent virtual authenticators use the login button without a
+  username field, and `/api/auth/me` identifies their correct accounts. Public options contain
+  no credential directory. Missing or another account's user handle, invalid signatures,
+  replay, disabled/revoked accounts and stale pending challenges cannot mint a session.
+  Password login remains rejected after first enrollment and recovery.
+- [x] Independent security review: generic login challenges carry only server-side account-version
+  snapshots; the submitted credential resolves its owner and must carry that owner's user handle;
+  signature/UV/origin/browser/expiry checks and post-verification revocation guards remain intact.
+- [x] Focused account/authentication, web hardening, secrets, settings and migration regressions:
+  84/84 pass with no skips. Static checks and the secret scan pass.
+- [ ] Live, engine-independent: after deployment, in a fresh browser at the configured HTTPS URL,
+  click **Sign in with a passkey**, select a previously enrolled account, and complete device
+  verification. PASS when the dashboard opens without typing a username and password setup is
+  absent. Repeat with a separately enrolled administrator and verify the correct account label.
+
 ## Individual admin accounts and passkeys (2026-10-25)
 
 - [x] `node --test test/admin-accounts.test.js`: 7 storage regressions cover username uniqueness,
@@ -8,7 +28,7 @@
 - [x] With `CG_BROWSER_MODULE` pointing to installed Playwright, run
   `node --test test/admin-passkeys-browser.test.js`. Chromium uses a disposable CTAP2 virtual
   authenticator in a scratch runtime. All 11 scenarios plus their parent pass: actual initial
-  password form → passkey creation; old password/session retirement; username/passkey sign-in;
+  password form → passkey creation; old password/session retirement; passkey-only sign-in;
   browser binding, invalid signatures and challenge replay; UV/ceremony/origin/CSRF rejection;
   expired challenges and stale-session reauthentication; second admin invitation/URL-fragment
   cleanup/registration-only authority/account mismatch; disablement revoking sessions and
@@ -26,7 +46,7 @@
 - [ ] Live, engine-independent, human enrollment: at the configured HTTPS Public URL in a fresh
   browser, open first-time setup, use the existing password for `admin`, then register a real
   device/security-key passkey with PIN/biometric verification. PASS when password login disappears,
-  logout and username/passkey sign-in work, a spare authenticator can be added, and an invited
+  logout and passkey-only sign-in work, a spare authenticator can be added, and an invited
   second admin enrolls independently. Existing stored passkeys must never be replaced by virtual
   authenticators. Browser authentication invokes neither Claude nor Codex, so one web acceptance
   case covers both engines. Automated virtual-authenticator results are not human acceptance.

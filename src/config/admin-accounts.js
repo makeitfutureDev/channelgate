@@ -34,12 +34,19 @@ export function ensureBootstrapAdmin() {
   }
   return a;
 }
-export function adminPasskeys(accountId) {
-  return getDb().prepare('SELECT * FROM admin_passkeys WHERE account_id = ? ORDER BY created_ms').all(accountId).map(row => ({
+function passkey(row) {
+  return row ? {
     id: row.id, accountId: row.account_id, publicKey: new Uint8Array(row.public_key), counter: row.counter,
     transports: JSON.parse(row.transports), deviceType: row.device_type, backedUp: Boolean(row.backed_up), name: row.name,
     createdAt: row.created_ms, lastUsedAt: row.last_used_ms,
-  }));
+  } : null;
+}
+export function adminPasskeys(accountId) {
+  return getDb().prepare('SELECT * FROM admin_passkeys WHERE account_id = ? ORDER BY created_ms').all(accountId).map(passkey);
+}
+export function adminPasskeyById(id) {
+  if (typeof id !== 'string' || id.length > 2048) return null;
+  return passkey(getDb().prepare('SELECT * FROM admin_passkeys WHERE id = ?').get(id));
 }
 export function listAdminAccounts() {
   ensureBootstrapAdmin();

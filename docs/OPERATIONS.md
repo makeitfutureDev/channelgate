@@ -9,6 +9,11 @@ and follow the browser's passkey prompt. The first successful enrollment permane
 shared-password login and revokes bootstrap sessions. Register a spare authenticator in
 **Settings → Admin access** before losing your primary device.
 
+Normal sign-in needs no username entry: click **Sign in with a passkey**, choose a saved account
+in the browser's passkey picker, and verify with your device PIN or biometrics. The credential
+identifies its account. Usernames remain labels for management and host recovery; reauthentication
+for sensitive changes remains bound to the account already signed in.
+
 Configure the gateway's final HTTPS **Public URL before enrollment**. Passkeys belong to that
 origin and hostname; changing domains does not transfer credentials. Only explicit loopback
 origins are supported without HTTPS for local setup/development. Keys enrolled on localhost
