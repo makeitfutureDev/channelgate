@@ -18,6 +18,13 @@ product overview.
 
 ## Unreleased
 
+- Security hardening (audit batch 4): switching a channel to "Admins only" or "Locked" now evicts
+  the approved members seeded into its guest list (explicit guests stay) from both the Slack
+  Access control and the admin UI, with the count in the save notice and an audit event; the
+  Slack Settings engine / model / effort pickers, thread pins and thread reset follow the
+  gateway's model-change policy like `/model` does, rendering read-only with the policy line for
+  anyone it excludes.
+
 - Supply new installations with Astra, Sol, Terra, Fable, Opus and Sonnet (`:sonet`) shortcuts
   using the newest supported stable family versions. Preserve customized lists and thread pins.
 

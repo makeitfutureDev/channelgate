@@ -319,3 +319,58 @@ test("the Access people list comes from the channel record and the user store, w
   assert.equal(focus.inChannel, null, "membership unknown without a Slack client — saving still validates it");
   assert.deepEqual(await accessPeople({ isDM: true }, "D1"), { people: [], focus: null });
 });
+
+// ── Narrowing the use policy evicts the seeded members (security audit batch 4) ─────────────────
+test("switching a channel to Admins only or Locked drops the seeded approved members and keeps explicit guests", async () => {
+  const { restrictedAccessAllowedUsers } = await import("../src/slack/access-settings.js");
+  const { isAuthorized } = await import("../src/gateway/modes.js");
+  const users = { UADMIN: { approved: true, isAdmin: true }, UMEMBER: { approved: true }, UMEMBER2: { approved: true }, UGUEST: { approved: false } };
+  const seeded = { ...base, access: "approved", allowedUsers: ["UMEMBER", "UMEMBER2", "UGUEST", "UADMIN"] };
+  for (const access of ["admins", "none"]) {
+    const narrowed = restrictedAccessAllowedUsers(seeded, { access, allowedUsers: seeded.allowedUsers }, users);
+    assert.deepEqual(narrowed, { allowedUsers: ["UGUEST"], dropped: 3 }, access);
+    const after = { ...seeded, access, allowedUsers: narrowed.allowedUsers };
+    assert.equal(isAuthorized(after, "UMEMBER", false, { isApprovedUser: true }), false, `${access}: a seeded member is out`);
+    assert.equal(isAuthorized(after, "UGUEST", false, {}), true, `${access}: the explicit guest stays in`);
+    assert.equal(isAuthorized(after, "UADMIN", false, { isAdminUser: true }), access === "admins", `${access}: admins follow the policy`);
+  }
+  // Not a narrowing: nothing is dropped, and the list is left exactly as submitted.
+  assert.equal(restrictedAccessAllowedUsers(seeded, { access: "approved", allowedUsers: seeded.allowedUsers }, users), null);
+  assert.equal(restrictedAccessAllowedUsers({ ...seeded, access: "admins", allowedUsers: ["UGUEST"] }, { access: "none", allowedUsers: ["UGUEST"] }, users), null);
+  assert.equal(restrictedAccessAllowedUsers({ ...seeded, access: "admins", allowedUsers: [] }, { access: "approved", allowedUsers: [] }, users), null, "widening resurrects nobody by itself");
+  assert.equal(restrictedAccessAllowedUsers(seeded, { access: "admins", allowedUsers: ["UGUEST"] }, users), null, "a list with no seed drops nothing");
+});
+
+test("the Slack Access control evicts seeded members on save, audits the count, and the people rows show them unticked", async () => {
+  const { memberCanUse } = await import("../src/slack/access-settings.js");
+  const { client, state, entry } = await fixture();
+  await store.setUser("UMEMBER2", { approved: true, isAdmin: false });
+  await store.setUser("UGUEST", { approved: false, isAdmin: false });
+  client.conversations.members = async () => ({ members: ["UMANAGER", "UMEMBER2", "UGUEST", "UADMIN", "UBOT"] });
+  await store.patchChannelMeta(entry.slug, { allowedUsers: ["UMANAGER", "UMEMBER2", "UGUEST"] });
+  const adminState = { ...state, ownerId: "UADMIN" };
+  const save = (field, action) => saveAccessSettings(client, adminState, "UADMIN",
+    { ...accessSettingsSnapshot(current), ...readAccessFieldValue(field, action) });
+  let current = await store.getChannelMeta(entry.slug);
+  const result = await save("access", { selected_option: { value: "admins" } });
+  assert.equal(result.saved.access, "admins");
+  assert.deepEqual(result.saved.allowedUsers, ["UGUEST"], "approved members were the seed; the guest is a deliberate grant");
+  assert.equal(result.dropped, 2);
+  const row = getDb().prepare("SELECT * FROM events WHERE event = 'channel_access_members_evicted' ORDER BY rowid DESC LIMIT 1").get();
+  assert.ok(row);
+  assert.match(String(row.data), /"count":2/);
+  assert.equal(memberCanUse(result.saved, "UMEMBER2", { isApprovedUser: true }), false);
+  assert.equal(memberCanUse(result.saved, "UGUEST", {}), true);
+  // Widening back to "approved" does not re-admit anyone by itself (the seed happens on the next message).
+  current = result.saved;
+  const widened = await save("access", { selected_option: { value: "approved" } });
+  assert.deepEqual(widened.saved.allowedUsers, ["UGUEST"]);
+  assert.equal(widened.dropped, 0);
+  // Admins-only → Locked moves nothing more: no approved user is left on the list.
+  current = widened.saved;
+  await store.patchChannelMeta(entry.slug, { access: "admins" });
+  current = await store.getChannelMeta(entry.slug);
+  const locked = await save("access", { selected_option: { value: "none" } });
+  assert.deepEqual(locked.saved.allowedUsers, ["UGUEST"]);
+  assert.equal(locked.dropped, 0);
+});

@@ -1,5 +1,24 @@
 # ChannelGate — Features
 
+## Access policy and runtime controls consistency (security audit batch 4)
+
+- **"Admins only" and "Locked" lock the channel the moment they are saved.** Under the default
+  "Approved members" policy every approved member is seeded into the channel's guest list so the
+  Access page can show them; the run gate honours that list before the policy. Narrowing the
+  policy — from the Slack Access control or the admin UI's channel save — now evicts those seeded
+  (approved) users from the list inside the same metadata transaction and keeps only explicit
+  guests (un-approved users), which remain the one deliberate way into a restricted channel. The
+  Slack save notice reports how many members were removed, an audit event
+  (`channel_access_members_evicted`) records the count only, and widening the policy back does not
+  re-admit anyone by itself (seeding resumes on the next message). The org-wide access reset still
+  clears the whole list.
+- **Settings runtime controls follow the model-change policy.** The channel engine / model / effort
+  pickers, thread pins and the thread reset in Slack Settings apply the gateway's model-change
+  access exactly like `/model`, the wizard, the shortcuts and the platform controls: a DM owner may
+  always set them; elsewhere a non-admin may only under the "users" policy. Someone who may not
+  change them sees the current values and the 🔒 policy line instead of pickers, and a crafted
+  payload is refused with the same message and writes nothing.
+
 ## Admin access to Slack controls
 
 - Current organization admins can open Files, Variables, Settings and legacy menu Resume controls
