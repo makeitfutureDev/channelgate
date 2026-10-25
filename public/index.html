@@ -421,6 +421,7 @@
                 <a href="#set-integrations" data-sec="integrations">Integrations</a>
                 <a href="#set-license" data-sec="license">License</a>
                 <a href="#set-access" data-sec="access">Access &amp; security</a>
+                <a href="#set-admin-access" data-sec="admin-access">Admin access</a>
                 <a href="#set-system" class="dz" data-sec="system">System</a>
               </nav>
 
@@ -1047,19 +1048,20 @@
                 </div>
                 </section>
 
+              <section class="setsec" id="set-admin-access" data-sec="admin-access" aria-labelledby="set-admin-access-h">
+                <header class="setsec-head">
+                  <h3 id="set-admin-access-h">Admin access</h3>
+                  <p class="setsec-desc">Your passkeys and individual accounts for dashboard administrators.</p>
+                </header>
+                <div class="setcard admin-access-card" id="admin-access"></div>
+              </section>
+
               <!-- ── System ──────────────────────────────────────────────── -->
               <section class="setsec" id="set-system" data-sec="system" aria-labelledby="set-system-h">
                 <header class="setsec-head">
                   <h3 id="set-system-h">System</h3>
-                  <p class="setsec-desc">Admin UI password, the HTTP run API token, Slack connection controls and the danger zone.</p>
+                  <p class="setsec-desc">The HTTP run API token, Slack connection controls and the danger zone.</p>
                 </header>
-                <div class="setcard">
-                  <h4>Admin UI</h4>
-                  <label class="field">
-                    <span>Admin password (sign-in to this UI) <em class="state" id="adminpw-state"></em></span>
-                    <input id="set-adminpw" type="password" placeholder="leave blank to keep current" autocomplete="new-password" />
-                  </label>
-                </div>
                 <div class="setcard">
                   <h4>HTTP run API</h4>
                   <p class="desc">A bearer token that lets automations (Make.com, cron, …) trigger runs via <code>POST /api/runs</code> without an admin login. Send it as an <code>X-API-Key</code> header or <code>Authorization: Bearer</code> — it's scoped to the run API only, not the rest of the admin API. <strong>Generate</strong> one, <strong>Save</strong>, then <strong>Copy</strong> it into your automation.</p>
@@ -1085,10 +1087,6 @@
                     <span class="t">Reset every channel's access to default<small>Resets who-can-use (→ default) and who-can-manage (→ org admins only) on every channel, and clears custom guest &amp; manager lists. Profiles, skills, connectors and tokens are left untouched. Can't be undone.</small></span>
                     <button type="button" id="reset-access" class="dz-btn">Reset all…</button>
                     <span class="saved" id="reset-access-saved"></span>
-                  </div>
-                  <div class="dz-row">
-                    <span class="t">Remove admin password<small>The UI becomes open — anyone who can reach it can administer.</small></span>
-                    <button type="button" id="remove-password" class="dz-btn">Remove…</button>
                   </div>
                   <div class="dz-row">
                     <span class="t">Restart daemon<small>Choose to wait for ongoing work or force a restart and interrupt active turns and jobs.</small></span>
@@ -1580,6 +1578,7 @@
       </div>
     </template>
 
+    <script src="/passkeys.js?v={{ASSET_V}}"></script>
     <script type="module" src="/app.js?v={{ASSET_V}}"></script>
   </body>
 </html>

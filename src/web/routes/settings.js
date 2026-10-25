@@ -66,7 +66,7 @@ import { MODEL_SHORTCUT_NAME_RE, MAX_MODEL_SHORTCUTS } from "../../config/model-
 import { listOrgEnv, patchOrgEnv } from "../../config/scoped-env.js";
 import { normalizeEnvName, swapRuleFieldsFrom } from "../../config/channel-env.js";
 import { detectServiceManager, requestShutdown, restartExitCode } from "../../gateway/shutdown.js";
-import { invalidateAllSessions, authEnabled } from "../auth.js";
+import { invalidateAllSessions, authEnabled, adminSession, requireRecentAdminAuth, passkeysConfigured } from "../auth.js";
 import { readSecret } from "../secrets.js";
 // The shared admin principal — one password, no personal identity behind an admin-UI action.
 import { ADMIN_UI_ACTOR } from "../../config/channel-audit.js";
@@ -161,24 +161,31 @@ export function createSettingsRouter({
   });
 
   // Reveal ONE stored secret, on demand. Listing endpoints return has*/last4 only; this is the
-  // single way to see a value, and it costs a fresh password entry every time. All three outcomes
-  // — granted, wrong password, refused field — are audited with the requested NAMES (never the
-  // value) and the admin principal: the UI's sessions carry no personal identity, so "admin-ui" is
-  // who did it, and a row that left `author` empty read as if nobody had.
+  // single way to see a value. Enrolled installations require recent passkey verification;
+  // before first enrollment the bootstrap password remains the reauthentication credential.
+  // Audit the account and requested names, never the secret value or password.
   router.post("/secrets/reveal", async (req, res, next) => {
     // Destructured OUTSIDE the try: the catch below audits the REFUSED request, and it can only
     // name what was asked for if these are in scope there.
     const { scope = "", field = "", id = "", password = "" } = req.body ?? {};
+    const accountId = adminSession(req)?.accountId;
+    const actor = accountId ? `admin:${accountId}` : ADMIN_UI_ACTOR;
     try {
       // Re-authenticate even though a valid session got here: a borrowed session should not be
       // able to drain every credential silently. Skipped only when no password is configured at
       // all, in which case there is nothing to re-enter.
-      if (authEnabled() && !(await verifyPassword(String(password), getAdminPassword()))) {
-        await logEvent("secret_reveal_denied", { scope: clipLabel(scope), field: clipLabel(field), id: clipLabel(id), actor: ADMIN_UI_ACTOR, author: ADMIN_UI_ACTOR });
-        return res.status(401).json({ error: "Wrong password" });
+      let enrolled = passkeysConfigured();
+      let authorized = enrolled ? requireRecentAdminAuth(req) : !authEnabled() || await verifyPassword(String(password), getAdminPassword());
+      // The first enrollment may finish while scrypt yields. Its permanent mode change and
+      // session revocation apply to this request too, before any secret is returned.
+      if (passkeysConfigured()) { enrolled = true; authorized = requireRecentAdminAuth(req); }
+      if (!authorized) {
+        await logEvent("secret_reveal_denied", { scope: clipLabel(scope), field: clipLabel(field), id: clipLabel(id), actor, author: actor });
+        return res.status(enrolled ? 403 : 401).json({ error: enrolled ? "Verify your passkey before revealing a secret." : "Wrong password", ...(enrolled ? { code: "reauth_required" } : {}) });
       }
       const value = await readSecret({ scope, field, id: String(id) });
-      await logEvent("secret_revealed", { scope, field, id, actor: ADMIN_UI_ACTOR, author: ADMIN_UI_ACTOR });
+      if (passkeysConfigured() && !requireRecentAdminAuth(req)) return res.status(403).json({ error: "Verify your passkey before revealing a secret.", code: "reauth_required" });
+      await logEvent("secret_revealed", { scope, field, id, actor, author: actor });
       res.json({ value });
     } catch (e) {
       // A REFUSED reveal is audited too. readSecret throws for anything off the allowlist, and
@@ -188,7 +195,7 @@ export function createSettingsRouter({
       // caller-supplied labels, never a stored value, and they are clipped so a padded request
       // body can't inflate the audit row.
       if (/unknown scope|not revealable|unknown user/.test(e.message)) {
-        await logEvent("secret_reveal_rejected", { scope: clipLabel(scope), field: clipLabel(field), id: clipLabel(id), actor: ADMIN_UI_ACTOR, author: ADMIN_UI_ACTOR, reason: e.message });
+        await logEvent("secret_reveal_rejected", { scope: clipLabel(scope), field: clipLabel(field), id: clipLabel(id), actor, author: actor, reason: e.message });
         return res.status(400).json({ error: e.message });
       }
       next(e);
@@ -611,6 +618,7 @@ export function createSettingsRouter({
       const setPassword = typeof body.adminPassword === "string" && body.adminPassword.length > 0;
       const clearPassword = body.clearAdminPassword === true;
       const passwordChanged = setPassword || clearPassword;
+      if (passwordChanged && passkeysConfigured()) return res.status(409).json({ error: "Password login is disabled. Manage individual accounts and passkeys in Admin access." });
       const passwordBefore = getAdminPassword();
       if (setPassword && clearPassword) return res.status(400).json({ error: "Choose either a new password or password removal." });
       if (passwordChanged) {
@@ -658,7 +666,10 @@ export function createSettingsRouter({
       // version — an older UI, a script, an integration — is merged in as before.
       const expectVersion =
         typeof body.settingsVersion === "string" || typeof body.settingsVersion === "number" ? String(body.settingsVersion).trim() : "";
-      if (passwordChanged && getAdminPassword() !== passwordBefore) return res.status(409).json({ error: "The admin password changed. Authenticate again before retrying." });
+      if (passwordChanged && (passkeysConfigured() || getAdminPassword() !== passwordBefore)) return res.status(409).json({ error: "Admin authentication changed. Authenticate again before retrying." });
+      if (patch.publicUrl !== undefined && normalizePublicUrl(patch.publicUrl) !== normalizePublicUrl(getSettings().publicUrl) && passkeysConfigured() && !requireRecentAdminAuth(req)) {
+        return res.status(403).json({ error: "Verify your passkey before changing the gateway URL.", code: "reauth_required" });
+      }
       try {
         saveSettings(patch, { expectVersion });
       } catch (e) {

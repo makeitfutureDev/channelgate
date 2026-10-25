@@ -1,5 +1,27 @@
 # ChannelGate — Features
 
+## Individual dashboard administrators and passkeys
+
+- Dashboard administrators have individual local usernames, separate from chat-platform users.
+  Initial setup uses the existing password for `admin`; enrolling its first passkey permanently
+  retires shared-password login and revokes bootstrap sessions. The login page supports device
+  passkeys and FIDO2 security keys with required PIN/biometric verification.
+- Settings → Admin access manages named accounts, additional passkeys, immediate account
+  disablement and single-use setup links. Setup links expire after 15 minutes, are stored only
+  as digests, and authorize registration alone. An account gains a dashboard session only after
+  verified passkey enrollment. The final own passkey and final enabled enrolled admin are
+  protected against removal/disablement.
+- WebAuthn checks signatures, exact configured HTTPS origin and RP ID, user verification,
+  single-use five-minute challenges, account/browser/session/ceremony binding and credential
+  counters. Sessions expire after 30 minutes idle or 12 hours total; changing account authority
+  invalidates sessions and pending authenticator results immediately. Credential/account changes
+  and secret reveal require recent passkey authentication. Auth events and secret reveals record
+  the local account identity; older dashboard events retain their existing generic actor labels.
+- Host operators can recover an account with `npm run admin:recover -- --username <name>`.
+  Recovery revokes that account's passkeys and sessions and prints a short-lived registration-only
+  link. It never restores password login. Credential private keys remain with the authenticator;
+  the gateway stores public keys and verification metadata in SQLite.
+
 ## Sign-in assets before authentication
 
 - The signed-out admin page serves its login script, favicon and three Poppins font files without

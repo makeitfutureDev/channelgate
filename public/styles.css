@@ -589,6 +589,24 @@ button.clear-tok.armed { background: rgba(229, 96, 77, .14); border-color: rgba(
 .desc { font-size: 11.5px; color: var(--faint); margin: 0 0 14px; line-height: 1.5; }
 .setcard.danger { border-color: rgba(229, 96, 77, .4); }
 .setcard.danger h4 { color: var(--danger); }
+.admin-access-identity { color: var(--ink); margin: 16px 0; }
+.admin-access-bootstrap { padding: 12px; border: 1px solid var(--orange); border-radius: 8px; color: var(--muted); }
+.admin-access-bootstrap[hidden], .admin-access-invite[hidden] { display: none; }
+.admin-access-form { display: flex; align-items: end; gap: 10px; margin: 16px 0 12px; flex-wrap: wrap; }
+.admin-access-form .field { flex: 1; min-width: 180px; margin: 0; }
+.admin-access-form button { min-height: 38px; }
+.admin-access-account-form .field { min-width: 150px; }
+.admin-access-subhead { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 24px; }
+.admin-access-list { list-style: none; padding: 0; margin: 12px 0 18px; }
+.admin-access-list li { display: flex; align-items: center; gap: 12px; padding: 12px 0; border-top: 1px solid var(--line-soft); }
+.admin-access-list li > div { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.admin-access-list strong { display: block; font-size: 12.5px; font-weight: 500; }
+.admin-access-list small { display: block; color: var(--faint); font-size: 11px; margin-top: 3px; }
+.admin-access-list button { flex: none; font-size: 11.5px; }
+.admin-access-invite { background: var(--panel-dark); border: 1px solid var(--line); border-radius: 8px; padding: 14px; margin-top: 14px; }
+.admin-access-invite button { margin-right: 6px; }
+.admin-access-message { color: var(--ok); min-height: 18px; margin: 14px 0 0; font-size: 12px; }
+.admin-access-message.error { color: var(--danger); }
 .dz-row { display: flex; align-items: center; gap: 14px; padding: 10px 0; border-top: 1px solid var(--line-soft); font-size: 12.5px; }
 .dz-row:first-of-type { border-top: 0; }
 .dz-row .t { flex: 1; }

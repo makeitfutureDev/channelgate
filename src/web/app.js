@@ -27,6 +27,7 @@ import { getSessionMap, getSessionRuntime, getSessionEngine } from "../gateway/s
 import { poolStats } from "../engines/session-pool.js";
 import { getEngine, isEngineEnabled } from "../config/settings.js";
 import { resumeCommandFor } from "../engines/registry.js";
+import { createAdminAuthRouter } from "./admin-auth.js";
 import { authMiddleware, noPasswordLockdown, handleLogin, handleLogout, authEnabled, isAuthenticated, isApiPath } from "./auth.js";
 import { isLoopbackHost, hostAllowed, timingSafeEqualStr } from "./security.js";
 import { dropCounts } from "../util/drops.js";
@@ -338,6 +339,8 @@ export function createWebApp({
         "set its hostname as `publicUrl` in settings (or CG_ALLOWED_HOSTS).",
     });
   });
+
+  app.use("/api/auth", createAdminAuthRouter());
 
   app.use(noPasswordLockdown); // no admin password → privileged API refused on every bind (see auth.js)
   app.use(authMiddleware);

@@ -1,5 +1,36 @@
 # ChannelGate — Test Plan
 
+## Individual admin accounts and passkeys (2026-10-25)
+
+- [x] `node --test test/admin-accounts.test.js`: 7 storage regressions cover username uniqueness,
+  opaque user handles, permanent password retirement, digest-only expiring single-use invitations,
+  revocation races, credential ownership, counter compare-and-swap, final key and final admin.
+- [x] With `CG_BROWSER_MODULE` pointing to installed Playwright, run
+  `node --test test/admin-passkeys-browser.test.js`. Chromium uses a disposable CTAP2 virtual
+  authenticator in a scratch runtime. All 11 scenarios plus their parent pass: actual initial
+  password form → passkey creation; old password/session retirement; username/passkey sign-in;
+  browser binding, invalid signatures and challenge replay; UV/ceremony/origin/CSRF rejection;
+  expired challenges and stale-session reauthentication; second admin invitation/URL-fragment
+  cleanup/registration-only authority/account mismatch; disablement revoking sessions and
+  in-flight assertions; spare-key replacement; and host recovery invalidating old authority
+  before a new key can sign in; and server-side 30-minute idle/12-hour absolute expiry despite
+  repeated keepalives. No physical key is registered in the deployed gateway by tests.
+- [x] Independent security review covers exact origin/RP, required UV, single-use/browser/session
+  binding, durable password retirement, atomic enrollment/counter updates, revocation races and
+  host-only recovery. Secret reveal rechecks mode/session after asynchronous verification/read.
+- [x] `npm test`: 4,076 passed, 32 existing opt-in skips, zero failures. The new always-on HTTP
+  and recovery CLI tests pass separately (4/4), including `.env` selection of a scratch runtime.
+  Final combined storage/HTTP/CLI/Chromium acceptance passes 25/25 with zero skips.
+- [x] `npm run check:static`, `npm run secret-scan`, `npm run test:security-coverage`, and
+  `npm audit --omit=dev --audit-level=high` pass; npm reports zero vulnerabilities.
+- [ ] Live, engine-independent, human enrollment: at the configured HTTPS Public URL in a fresh
+  browser, open first-time setup, use the existing password for `admin`, then register a real
+  device/security-key passkey with PIN/biometric verification. PASS when password login disappears,
+  logout and username/passkey sign-in work, a spare authenticator can be added, and an invited
+  second admin enrolls independently. Existing stored passkeys must never be replaced by virtual
+  authenticators. Browser authentication invokes neither Claude nor Codex, so one web acceptance
+  case covers both engines. Automated virtual-authenticator results are not human acceptance.
+
 ## Signed-out admin login assets (2026-10-25)
 
 - [x] HTTP regression: `node --test test/admin-login-assets.test.js` serves every script, icon and

@@ -18,7 +18,8 @@ import {
 import { activeSectionFor, filterSettings } from "./admin-settings-search.js";
 import { api } from "./admin-api.js";
 import { setSystemHealthActive } from "./admin-system-health.js";
-import { attachReveal, confirmDialog, escapeHtml, infoDialog, openDialog, paintReveal, passwordDialog, revealSecret, tokenValue } from "./admin-view.js";
+import { attachReveal, confirmDialog, escapeHtml, infoDialog, openDialog, paintReveal, revealSecret, tokenValue } from "./admin-view.js";
+import { freshAdminAuth, mountAdminAccess } from "./admin-access.js";
 import { loadSkills } from "./admin-skills.js";
 import { mountSkillAssignmentPicker } from "./skill-assignment-picker.js";
 import { mountUserPicker } from "./admin-user-picker.js";
@@ -71,7 +72,7 @@ let detailDirty = false; // whether the open conversation detail has unsaved edi
 // Controls that save through their OWN request are never part of a card's "Unsaved changes" state.
 // Environment secrets and VPN control have independent writes and must never round-trip through
 // the card's Save or tell the admin the card has edits waiting.
-const SELF_SAVING_CONTROLS = ".channel-env-card, .ch-vpn-controls, .ch-codex-login";
+const SELF_SAVING_CONTROLS = ".channel-env-card, .ch-vpn-controls, .ch-codex-login, .admin-access-card";
 const viewLoaded = {};
 
 const EFFORT_OPTIONS = {
@@ -3972,7 +3973,6 @@ function readSettingsForm() {
     ...(dmTplEditors.user && dmTplEditors.admin
       ? { dmTemplates: { user: dmTplEditors.user.getValues(), admin: dmTplEditors.admin.getValues() } }
       : {}),
-    ...(document.getElementById("set-adminpw").value ? { adminPassword: document.getElementById("set-adminpw").value } : {}),
     // HTTP run API token (write-only): send the new value only if edited/generated; the clear
     // toggle removes it. Leaving the field untouched keeps the stored token.
     ...(tokenValue(document.getElementById("set-apikey")) ? { apiKey: tokenValue(document.getElementById("set-apikey")) } : {}),
@@ -4087,8 +4087,6 @@ function paintSettings(s) {
   document.getElementById("set-container-egress-strict").checked = s.containerEgressSecretsStrict === true;
   document.getElementById("container-token-state").textContent = tokenState(s.hasContainerClaudeOauthToken, s.containerClaudeOauthTokenLast4);
   attachReveal(document.getElementById("set-container-claude-token"), { has: s.hasContainerClaudeOauthToken, last4: s.containerClaudeOauthTokenLast4 || "", fetch: revealSecret("settings", "containerClaudeOauthToken") });
-  document.getElementById("set-adminpw").dataset.hasPassword = String(s.hasAdminPassword === true);
-  document.getElementById("adminpw-state").textContent = s.hasAdminPassword ? "· set" : "· not set (UI open)";
   // HTTP run API key: a revealable field seeded with the stored token (so it can be copied into an
   // automation) plus a set/not-set state. Generated client-side, persisted on Save (write-only).
   attachReveal(document.getElementById("set-apikey"), { has: s.hasApiKey, last4: s.apiKeyLast4, fetch: revealSecret("settings", "apiKey") });
@@ -4165,7 +4163,6 @@ function paintSettings(s) {
   // refused one — to a save that never will. They also have to go before the baseline below, or a
   // pending action would be captured as "already the server's state" and then never sent.
   for (const btn of document.querySelectorAll("#view-settings .clear-tok.armed")) disarmClearTok(btn);
-  document.getElementById("set-adminpw").value = "";
   document.getElementById("set-gchat-key").value = "";
   // Remember what this paint put on the page: Save sends the difference against it, so a field
   // nobody touched here is never re-asserted over another writer's newer value.
@@ -4181,7 +4178,7 @@ async function loadSettings() {
   ]);
   USERS = directory.users || {};
   paintSettings(settings);
-  await Promise.all([loadLicense(), loadOrgSecrets()]);
+  await Promise.all([loadLicense(), loadOrgSecrets(), mountAdminAccess(document.getElementById("admin-access"), { confirm: confirmDialog })]);
 }
 
 // ── Settings: organization-wide environment secrets (config/scoped-env.js) ────────
@@ -4486,32 +4483,24 @@ function bindSettings() {
     try { form = readSettingsForm(); }
     catch (e) { saved.textContent = "✗ " + e.message; return; }
     const patch = diffSettingsPayload(SETTINGS_BASELINE || {}, form);
-    const newPw = form.adminPassword || "";
     // Only (re)connect Slack when a Slack token was actually changed in this save — a normal
     // settings change just persists and takes effect on the next message, no reconnect.
     const slackTokenChanged = !!(form.slackBotToken || form.slackAppToken || form.slackSigningSecret);
     try {
-      const currentAdminPassword = newPw && document.getElementById("set-adminpw").dataset.hasPassword === "true"
-        ? await passwordDialog({ body: "Enter your current admin password to change it." }) : "";
-      if (newPw && document.getElementById("set-adminpw").dataset.hasPassword === "true" && !currentAdminPassword) {
-        saved.textContent = "Password change cancelled";
-        return;
+      if (Object.hasOwn(patch, "publicUrl")) {
+        const me = await api("/api/auth/me");
+        if (!me.bootstrap) await freshAdminAuth();
       }
       const r = await api("/api/settings", {
         method: "PUT",
         body: JSON.stringify({
           ...patch,
-          ...(newPw ? { currentAdminPassword } : {}),
           // Echo the version this page was painted from: the server refuses the save (409) if
           // anything wrote settings in the meantime, instead of landing it on a newer state.
           ...(SETTINGS_VERSION ? { settingsVersion: SETTINGS_VERSION } : {}),
           connectSlack: slackTokenChanged,
         }),
       });
-      if (newPw) await fetch("/api/login", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ password: newPw }) });
-      // Reset only the write-only password box; the token fields are repainted (masked) by the
-      // loadSettings() call below, which re-seeds each reveal field with the freshly stored value.
-      document.getElementById("set-adminpw").value = "";
       for (const id of ["clear-composio-sdk-key", "clear-default-composio", "clear-default-toolbox", "clear-admin-user", "clear-license-key", "clear-gchat-key", "clear-teams-secret", "clear-container-claude-token", "clear-perplexity-session-token"]) disarmClearTok(document.getElementById(id));
       for (const card of QWEN_PROVIDER_CARDS) disarmClearTok(card.clearBtn);
       // A saved key kicks off a fresh verification server-side; repaint so the card shows the new
@@ -5194,26 +5183,6 @@ document.getElementById("dash-refresh").addEventListener("click", (e) => {
 document.getElementById("dash-range").addEventListener("change", () => loadDashboard().catch(() => {}));
 document.getElementById("dash-harness").addEventListener("change", () => loadDashboard().catch(() => {}));
 document.getElementById("dash-source").addEventListener("change", () => loadDashboard().catch(() => {}));
-
-document.getElementById("remove-password").addEventListener("click", async () => {
-  const ok = await confirmDialog({
-    title: "Remove admin password?",
-    body: "The UI becomes open — anyone who can reach it can administer, with no sign-in.",
-    confirmLabel: "Remove",
-    danger: true,
-  });
-  if (!ok) return;
-  const currentAdminPassword = await passwordDialog({ body: "Enter your current admin password to remove it.", danger: true });
-  if (!currentAdminPassword) return;
-  try {
-    await api("/api/settings", { method: "PUT", body: JSON.stringify({ clearAdminPassword: true, currentAdminPassword, connectSlack: false }) });
-    document.getElementById("daemon-msg").textContent = "✓ password removed";
-    await loadSettings();
-    await loadHealth();
-  } catch (error) {
-    document.getElementById("daemon-msg").textContent = "✗ " + error.message;
-  }
-});
 
 // ── Boot ─────────────────────────────────────────────────────────────────────────
 async function init() {

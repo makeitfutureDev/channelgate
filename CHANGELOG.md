@@ -18,6 +18,9 @@ product overview.
 
 ## Unreleased
 
+- Add individual dashboard admin usernames and passkey sign-in, with initial-password migration,
+  account/passkey management, expiring enrollment links, recent-authentication checks and
+  host-operator recovery. Password login stops permanently after first passkey enrollment.
 - Fix signed-out admin login: allow the login script, favicon and required fonts before
   authentication so a fresh browser can submit the sign-in form.
 - Security hardening (audit batch 2): a channel's custom work folder can no longer be the gateway

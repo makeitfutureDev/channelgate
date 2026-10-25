@@ -1,22 +1,20 @@
-// Password gate for the admin UI + API. On correct password we set an httpOnly session cookie
-// backed by an in-memory token set (cleared on restart → re-login). No external deps — cookies are
-// parsed by hand.
-//
-// Two middlewares, in this order (see web/app.js): noPasswordLockdown refuses the privileged API
-// when NO password is configured at all, on every bind; authMiddleware then requires a session (or
-// the run-API key on /api/runs) once one is. There is no "open" posture left — see the lockdown
-// comment below for why a loopback bind never bought one.
+// Dashboard sessions are bound to individual local admin accounts. The existing shared
+// password can authenticate bootstrap username `admin` only until the first passkey is enrolled.
+// The durable passkey latch prevents a later settings/password edit from restoring that path.
+// WebAuthn ceremonies live in admin-auth.js; every session use rechecks account authorization.
 import crypto from "node:crypto";
 import { getAdminPassword, getApiKey, getSettings, saveSettings } from "../config/settings.js";
+import { adminAccount, adminAccountByUsername, ensureBootstrapAdmin, bootstrapAvailable, passkeysConfigured } from "../config/admin-accounts.js";
+export { passkeysConfigured } from "../config/admin-accounts.js";
 import { clientKey, timingSafeEqualStr, createLoginLimiter, verifyPassword, hashPassword, isHashedPassword } from "./security.js";
 
 // Sessions expire two ways: IDLE (untouched for this long) and ABSOLUTE (this old regardless of
 // use). Previously the set only grew and a token stayed valid for the daemon's whole lifetime, so
 // a cookie exfiltrated once — via a tunnel, a shared browser — never stopped working.
-const IDLE_MS = 7 * 24 * 60 * 60 * 1000;
-const ABSOLUTE_MS = 30 * 24 * 60 * 60 * 1000;
+const IDLE_MS = 30 * 60 * 1000;
+const ABSOLUTE_MS = 12 * 60 * 60 * 1000;
 
-// token → { createdAt, lastSeenAt }
+// token → { accountId, authVersion, bootstrap, authenticatedAt, createdAt, lastSeenAt }
 const sessions = new Map();
 
 function sessionValid(token, now = Date.now()) {
@@ -25,6 +23,10 @@ function sessionValid(token, now = Date.now()) {
   if (now - s.createdAt > ABSOLUTE_MS || now - s.lastSeenAt > IDLE_MS) {
     sessions.delete(token);
     return false;
+  }
+  const a = adminAccount(s.accountId);
+  if (!a?.enabled || a.authVersion !== s.authVersion || (s.bootstrap && !bootstrapAvailable())) {
+    sessions.delete(token); return false;
   }
   s.lastSeenAt = now; // sliding idle window
   return true;
@@ -41,10 +43,10 @@ export function invalidateAllSessions() {
 const loginLimiter = createLoginLimiter();
 
 export function authEnabled() {
-  return Boolean(getAdminPassword());
+  return Boolean(getAdminPassword()) || passkeysConfigured();
 }
 
-function parseCookies(header) {
+export function parseCookies(header) {
   const out = {};
   for (const part of (header || "").split(";")) {
     const i = part.indexOf("=");
@@ -75,11 +77,11 @@ async function passwordOk(pw) {
 // Session cookie attributes. `Secure` is added when the request arrived over HTTPS — directly
 // (req.secure) or via a TLS-terminating proxy (x-forwarded-proto, e.g. a Cloudflare tunnel) —
 // so the cookie never travels in clear text there, while plain-HTTP loopback use keeps working.
-function cookieAttrs(req) {
+export function cookieAttrs(req) {
   const proto = String(req.headers["x-forwarded-proto"] || "").split(",")[0].trim().toLowerCase();
   const secure = req.secure || proto === "https";
-  // Strict, not Lax: nothing here is reached by following a link from elsewhere, so the cookie
-  // never needs to ride a cross-site navigation — and Lax still attaches it to top-level GETs.
+  // Setup-link landing pages do not authenticate on GET, so they need no session cookie on
+  // the initial cross-site navigation. Their subsequent ceremony requests are same-origin.
   return `HttpOnly; SameSite=Strict; Path=/${secure ? "; Secure" : ""}`;
 }
 
@@ -88,7 +90,7 @@ const OPEN_PATHS = new Set([
   "/login", "/login.html", "/api/login", "/api/health", "/api/skills/webhook/github", "/mcp/skills",
   // The signed-out page needs its script, icon and fonts before it can submit a password.
   // Keep these exact: other static assets and every privileged route retain their session gate.
-  "/login.js", "/favicon.svg",
+  "/login.js", "/passkeys.js", "/favicon.svg",
   "/fonts/poppins-400-latin.woff2", "/fonts/poppins-600-latin.woff2", "/fonts/poppins-700-latin.woff2",
 ]);
 
@@ -210,30 +212,53 @@ export function loginKey(req) {
   return clientKey(req);
 }
 
+// Authentication context is always revalidated against SQLite, including callers outside the
+// middleware (/health and the passkey router). A disabled account loses access immediately.
+export function adminSession(req) {
+  const token = parseCookies(req.headers?.cookie).cg_session;
+  if (!token || !sessionValid(token)) return null;
+  const s = sessions.get(token);
+  return { ...s, token, account: adminAccount(s.accountId) };
+}
+export function requireRecentAdminAuth(req) {
+  const s = adminSession(req);
+  return Boolean(s && !s.bootstrap && Date.now() - s.authenticatedAt <= 5 * 60_000);
+}
+export function createAdminSession(req, res, a, { bootstrap = false } = {}) {
+  const current = adminAccount(a.id);
+  if (!current?.enabled || current.authVersion !== a.authVersion) throw new Error('Account access changed. Start again.');
+  const previous = parseCookies(req.headers?.cookie).cg_session;
+  if (previous) sessions.delete(previous);
+  const token = crypto.randomBytes(32).toString('hex');
+  const now = Date.now();
+  sessions.set(token, { createdAt: now, lastSeenAt: now, authenticatedAt: now, accountId: a.id, authVersion: a.authVersion, bootstrap });
+  // Bound memory even if an authenticated client deliberately creates sessions repeatedly.
+  while (sessions.size > 10_000) sessions.delete(sessions.keys().next().value);
+  res.setHeader('Set-Cookie', `cg_session=${token}; ${cookieAttrs(req)}; Max-Age=${Math.floor(ABSOLUTE_MS / 1000)}`);
+}
+export function refreshAdminSession(req) {
+  const s = adminSession(req);
+  if (!s || s.bootstrap) throw new Error('Sign in again.');
+  sessions.get(s.token).authenticatedAt = Date.now();
+}
 export async function handleLogin(req, res) {
-  // No password configured → there is nothing to authenticate against, and answering "ok" would
-  // hand back a session-less "logged in" state for an API the lockdown above is refusing anyway.
-  // Say what to fix instead.
   if (!authEnabled()) return res.status(403).json({ error: NO_PASSWORD_ERROR });
   const ip = loginKey(req);
   const wait = loginLimiter.retryAfterMs(ip);
   if (wait > 0) {
-    const secs = Math.ceil(wait / 1000);
-    res.setHeader("Retry-After", String(secs));
+    const secs = Math.ceil(wait / 1000); res.setHeader('Retry-After', String(secs));
     return res.status(429).json({ error: `Too many attempts — try again in ${secs}s` });
   }
-  if (!(await passwordOk(req.body?.password))) {
+  ensureBootstrapAdmin();
+  let a;
+  try { a = adminAccountByUsername(req.body?.username ?? 'admin'); } catch { /* generic failure */ }
+  if (!bootstrapAvailable() || a?.username !== 'admin' || !(await passwordOk(req.body?.password)) || !bootstrapAvailable()) {
     loginLimiter.recordFailure(ip);
-    return res.status(401).json({ error: "Wrong password" });
+    return res.status(401).json({ error: passkeysConfigured() ? 'Use your username and passkey to sign in.' : 'Wrong username or password' });
   }
-  loginLimiter.recordSuccess(ip);
-  // A fresh token per login (never reusing the presented one) means a fixated cookie can't be
-  // promoted to an authenticated session.
-  const token = crypto.randomBytes(24).toString("hex");
-  const now = Date.now();
-  sessions.set(token, { createdAt: now, lastSeenAt: now });
-  res.setHeader("Set-Cookie", `cg_session=${token}; ${cookieAttrs(req)}; Max-Age=${Math.floor(ABSOLUTE_MS / 1000)}`);
-  res.json({ ok: true });
+  a = adminAccount(a.id); loginLimiter.recordSuccess(ip);
+  createAdminSession(req, res, a, { bootstrap: true });
+  res.json({ ok: true, bootstrap: true });
 }
 
 export function handleLogout(req, res) {

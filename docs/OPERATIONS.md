@@ -1,5 +1,47 @@
 # Operations runbook
 
+## Admin accounts, passkeys and recovery
+
+Dashboard accounts are local to this gateway and separate from chat users and chat admin roles.
+Existing installations retain their current password for the initial `admin` account until its
+first passkey enrollment. At the sign-in page, expand **First-time setup**, enter that password,
+and follow the browser's passkey prompt. The first successful enrollment permanently disables
+shared-password login and revokes bootstrap sessions. Register a spare authenticator in
+**Settings → Admin access** before losing your primary device.
+
+Configure the gateway's final HTTPS **Public URL before enrollment**. Passkeys belong to that
+origin and hostname; changing domains does not transfer credentials. Only explicit loopback
+origins are supported without HTTPS for local setup/development. Keys enrolled on localhost
+cannot sign in at the remote domain. Changing the Public URL after enrollment requires recent
+passkey verification and should be planned with spare access and host recovery available.
+
+An enrolled administrator can create named accounts and issue 15-minute single-use setup links
+in **Admin access**. Share each link privately with its intended recipient. The secret lives in
+the URL fragment, is removed from the address bar immediately, and is stored server-side only
+as a digest. Opening a link does not grant dashboard access; the recipient must register a
+verified passkey. Reissuing a link invalidates the previous one. Disabling an account immediately
+revokes its sessions and pending authenticator operations. The last enrolled admin and each
+account's last passkey cannot be disabled/removed through ordinary management.
+
+For a lost or compromised authenticator, run this **on the gateway host as its daemon OS user**,
+from the gateway checkout, against the intended runtime:
+
+```sh
+npm run admin:recover -- --username admin
+```
+
+Replace `admin` with the affected local username. This deliberately revokes **all passkeys and
+sessions for that account**, then prints one enrollment-only URL valid for 15 minutes. Open it
+privately at the configured HTTPS URL and register a replacement key. Treat that link as a
+credential; do not paste it into shared chat or logs. Recovery does not enable password fallback
+and requires direct filesystem authority over the gateway configuration/database. Disabled
+accounts must be enabled by another authenticated administrator before recovery.
+
+Sessions are in memory and clear on restart; their idle/absolute limits are 30 minutes/12 hours.
+Sensitive account changes, new authenticators and secret reveal require a passkey authentication
+within five minutes. The HTTP run API's separately scoped bearer key remains an automation
+credential, never a dashboard login or passkey-enrollment credential.
+
 ## Backup and restore
 
 Stop the daemon before restoring. Interactive restores require typing `RESTORE`; unattended

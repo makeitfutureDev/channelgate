@@ -36,7 +36,8 @@ test("logged-out sign-in serves its real assets while the dashboard stays gated"
     const bytes = Buffer.from(await response.arrayBuffer());
     if (asset.endsWith(".js")) {
       assert.match(response.headers.get("content-type"), /javascript/);
-      assert.match(bytes.toString(), /addEventListener/);
+      assert.doesNotMatch(bytes.toString(), /^\s*</, "JavaScript must not be login HTML");
+      if (asset === "/login.js") assert.match(bytes.toString(), /addEventListener/);
       assert.equal(response.headers.get("cache-control"), "no-cache");
     } else if (asset.endsWith(".woff2")) {
       assert.match(response.headers.get("content-type"), /font\/woff2/);
@@ -58,7 +59,7 @@ test("logged-out sign-in serves its real assets while the dashboard stays gated"
   await settings.arrayBuffer();
 });
 
-test("fresh browser signs in through the form and returns to working sign-in after logout", { skip: !process.env.CG_BROWSER_MODULE }, async (t) => {
+test("fresh browser can bootstrap enrollment and return to working setup after logout", { skip: !process.env.CG_BROWSER_MODULE }, async (t) => {
   const base = await startApp(t);
   const { chromium } = await import(process.env.CG_BROWSER_MODULE);
   const browser = await chromium.launch({ headless: true, executablePath: process.env.CG_BROWSER_EXECUTABLE });
@@ -70,14 +71,14 @@ test("fresh browser signs in through the form and returns to working sign-in aft
   await page.goto(base);
   assert.equal(new URL(page.url()).pathname, "/login.html");
   assert.deepEqual(await context.cookies(), []);
+  await page.locator("#bootstrap").waitFor({ state: "visible" });
+  await page.locator("#bootstrap summary").click();
   await page.locator("#pw").fill("wrong-disposable-password");
-  await page.getByRole("button", { name: "Sign in" }).click();
-  await page.locator("#err").filter({ hasText: "Wrong password" }).waitFor();
+  await page.locator("#bootstrap-submit").click();
+  await page.locator("#err").filter({ hasText: /Wrong.*password/ }).waitFor();
   await page.locator("#pw").fill(password);
-  await Promise.all([
-    page.waitForURL(`${base}/`),
-    page.getByRole("button", { name: "Sign in" }).click(),
-  ]);
+  await page.locator("#bootstrap-submit").click();
+  await page.locator("#enroll-form").waitFor({ state: "visible" });
   const session = (await context.cookies()).find((cookie) => cookie.name === "cg_session");
   assert.ok(session);
   assert.equal(session.httpOnly, true);
@@ -86,10 +87,10 @@ test("fresh browser signs in through the form and returns to working sign-in aft
   assert.equal(await page.evaluate(async () => (await fetch("/api/logout", { method: "POST" })).status), 200);
   await page.goto(base);
   assert.equal(new URL(page.url()).pathname, "/login.html");
+  await page.locator("#bootstrap").waitFor({ state: "visible" });
+  await page.locator("#bootstrap summary").click();
   await page.locator("#pw").fill(password);
-  await Promise.all([
-    page.waitForURL(`${base}/`),
-    page.getByRole("button", { name: "Sign in" }).click(),
-  ]);
+  await page.locator("#bootstrap-submit").click();
+  await page.locator("#enroll-form").waitFor({ state: "visible" });
   assert.deepEqual(errors, []);
 });
