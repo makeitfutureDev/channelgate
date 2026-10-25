@@ -35,6 +35,7 @@ function describeDriveSyncStatus(status) {
     : `⚠️ Last sync failed at ${when(last.at)}${first}: ${last.summary || "unknown error"}`;
 }
 import { allowedFsRoot, resolveWithinRoot } from "../../web/security.js";
+import { forbiddenWorkDirReason } from "../../gateway/workdir-boundary.js";
 import { formatUpdateResult, startUpdate } from "../../gateway/updater.js";
 import { updateGatewayGuide, resetGatewayGuide, readGatewayGuide } from "../../gateway/guide.js";
 import { slackThreadFor } from "../../slack/thread-keys.js";
@@ -320,6 +321,10 @@ export function register(server, ctx) {
         isDir = false;
       }
       if (!isDir) return text(`That path is not a directory:\n${real}`);
+      // Never one of the daemon's own trees or another conversation's folder, whatever the root
+      // allows: the folder is mounted read-write into this channel's container.
+      const forbidden = forbiddenWorkDirReason(real, { slug });
+      if (forbidden) return text(`Refused: ${real} is ${forbidden}. Choose a project directory instead.`);
       if (!(await patchAuditedMeta((meta) => (meta ? { workDir: real } : null)))) {
         return text("Channel isn't set up yet — send a normal message first.");
       }

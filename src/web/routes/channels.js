@@ -11,6 +11,7 @@ import { createHash } from "node:crypto";
 import { readdir, stat } from "node:fs/promises";
 import path from "node:path";
 import { allowedFsRoot, resolveWithinRoot } from "../security.js";
+import { forbiddenWorkDirReason } from "../../gateway/workdir-boundary.js";
 // MEMORY.md and CLAUDE.md live INSIDE the channel's agent-writable working folder, so every read
 // and write below is a symlink sink: a planted `CLAUDE.md -> ~/.channelgate/config/settings.json`
 // would otherwise stream the gateway's secrets straight into an admin browser, and the save would
@@ -443,6 +444,11 @@ export function createChannelsRouter({
           const real = resolveWithinRoot(root, wanted) || resolveWithinRoot(root, body.workDir);
           if (!real || !(await stat(real)).isDirectory())
             return res.status(400).json({ error: `workDir must be an existing directory under ${root}` });
+          // Inside the root is not enough: the daemon's own trees and other conversations' folders
+          // are refused regardless (src/gateway/workdir-boundary.js) — the folder is mounted
+          // read-write into the channel's container.
+          const forbidden = forbiddenWorkDirReason(real, { slug: entry.slug });
+          if (forbidden) return res.status(400).json({ error: `workDir refused: ${real} is ${forbidden}. Choose a project directory instead.` });
           workDirPatch = real;
         }
       }

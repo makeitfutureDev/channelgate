@@ -176,6 +176,24 @@ export function isProtectedWritePath(relative = "") {
   return clean.split("/").filter(Boolean).some((part) => isProtectedName(part));
 }
 
+// EXPORT policy: what may leave the channel through a public link, a Slack file post or a Composio
+// staging. Stricter than the write policy on purpose — a hidden file or directory anywhere in the
+// path (`.env`, `.claude/settings.json`, `.git/config`, `.aws/credentials`, `.github/…`) is
+// refused along with every protected/credential-shaped name, because the folder is where the
+// channel's own credentials live and an export cannot be taken back. Browsing and in-channel
+// reading are untouched: this is about bytes going OUT.
+export function isProtectedExportPath(relative = "") {
+  let clean;
+  try {
+    clean = normalizeRelativePath(relative);
+  } catch {
+    return true;
+  }
+  if (!clean) return true;
+  if (isManagedClaudePath(clean)) return true;
+  return clean.split("/").filter(Boolean).some((part) => part.startsWith(".") || isProtectedName(part));
+}
+
 function isProtectedResolvedPath(resolved) {
   const physicalRelative = path.relative(resolved.rootReal, resolved.path).split(path.sep).join("/");
   return isProtectedWritePath(resolved.relative) || isProtectedWritePath(physicalRelative);

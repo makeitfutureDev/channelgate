@@ -1,5 +1,31 @@
 # ChannelGate — Features
 
+## Work-folder boundary and protected export names (security audit batch 2)
+
+- **Sensitive roots are never a work folder.** Whatever the allowlisted `fsRoot` admits, a channel's
+  custom work folder may not be the gateway account's home directory itself, the gateway runtime
+  root or anything inside it (database, config, secrets), `~/.ssh`, `~/.claude`, `~/.codex`, the
+  container engine's configuration or storage, the hidden runtime artifact trees, the
+  `~/ChannelGate` workspace root or one of its platform folders, another conversation's work
+  folder (default or custom), or a parent of any of those (`src/gateway/workdir-boundary.js`). A
+  subfolder of another conversation's folder stays allowed (a shared repository), and a channel's
+  own folders are always allowed. Enforced at every door with a named reason: the
+  `set_channel_workdir` tool, the admin UI's Working folder field, and the runtime resolver, which
+  refuses to spawn a turn, background job, schedule or review for an already-stored forbidden value
+  and names the remedy (`set_channel_workdir` / Settings → Working folder / `clear_channel_workdir`).
+  Folder provisioning falls back to the default folder rather than writing into such a tree, and
+  the daemon logs one warning per offending channel at boot.
+- **Protected names never leave the channel.** The export door shared by `create_public_file_link`
+  (both purposes), `slack_share_file`, `stage_file_for_composio` and the public-link fetch route
+  refuses a hidden file or directory anywhere in the path (`.env`, `.claude/…`, `.git/…`,
+  `.github/…`), the managed `CLAUDE.md`/`.claude` tree and every credential-shaped name
+  (`*.pem`, `*.key`, `id_rsa`, `credentials.json`, `*token*`, `*secret*`, …). Both the requested
+  path and the physical path of the opened descriptor are checked, so an internal symlinked
+  directory cannot launder one, and a link minted for such a file before the rule stops serving.
+  Browsing, reading and editing inside the channel are unchanged (`.env` stays editable in the
+  file explorer; it simply cannot be exported), and the Teams and Google Chat file windows keep
+  previewing every contained file for the authorized requester.
+
 ## Admin access to Slack controls
 
 - Current organization admins can open Files, Variables, Settings and legacy menu Resume controls
