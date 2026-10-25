@@ -26,7 +26,8 @@ product overview.
   turn, takes HTML, Block Kit, canvas and pull-request tabs plus context-bar items through
   `update_code_channel`, honours Slack's channel-wide Stop, and archives behind a card with the
   wrap-up shared back into the origin thread. The Slack manifest gains `features.code_channels`
-  and the `code_channels:manage` scope (paste and reinstall).
+  and the `code_channels:manage` scope (paste and reinstall). `/status-cg` is accepted as an alias
+  of `/status` for apps whose manifest cannot register the built-in name.
 
 - Supply new installations with Astra, Sol, Terra, Fable, Opus and Sonnet (`:sonet`) shortcuts
   using the newest supported stable family versions. Preserve customized lists and thread pins.

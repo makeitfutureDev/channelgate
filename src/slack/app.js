@@ -3145,8 +3145,12 @@ async function connectAndWire(app) {
   app.command("/menu", handleMenuCommand);
   app.action(MENU_RESUME_ACTION_ID, handleMenuResumeAction);
 
-  // /status slash command — reports what the current channel is working on.
-  app.command("/status", async ({ command, ack, respond, client }) => {
+  // /status slash command — reports what the current channel is working on. Slack treats
+  // `/status` as one of its built-in commands and rejects it in some app manifests, so the same
+  // handler is also registered as `/status-cg`; a manifest may declare either (or both).
+  app.command("/status", handleStatusCommand);
+  app.command("/status-cg", handleStatusCommand);
+  async function handleStatusCommand({ command, ack, respond, client }) {
     await ack();
     try {
       const entry = await authorizedControlEntry(command.channel_id, command.user_id);
@@ -3157,7 +3161,7 @@ async function connectAndWire(app) {
       console.error("[slack] /status error:", e.message);
       await respond({ response_type: "ephemeral", text: "Couldn't build the status — check the gateway logs." });
     }
-  });
+  }
 
   // Per-channel environment secrets. Lists what exists (names + last 4), and lets anyone who can
   // run commands here add or replace one. No path in or out of this modal reveals a value.

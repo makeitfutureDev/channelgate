@@ -41,6 +41,9 @@
   Slack), closes the session and archives the channel behind an approval card anyone working in the
   channel can confirm; the row records `archivedAt`. The native Stop button without a thread
   timestamp stops everything running in a code channel; outside one such an event is ignored.
+- **`/status-cg` alias.** Slack rejects `/status` in some app manifests because it is a built-in
+  Slack command; the gateway registers the same status report under `/status-cg` as well, so a
+  manifest may declare either name.
 - **Surfaces and declarations.** `codeChannels` is a Slack-only platform capability; the tools do
   not register on other surfaces. The `gateway-usage` guide gains a Slack-only
   `references/code-channels.md` and a routing row. Memory review runs for threaded code-channel
