@@ -74,6 +74,7 @@ product overview.
   preview and edit re-prove the opened file under the channel root; the License card escapes
   platform-supplied text; the internal IPC secret is compared in constant time; `npm audit fix`
   moved undici, zod, hono, fast-uri, body-parser and ip-address to patched releases.
+
 - **Slack code channels.** When a requester asks for one, the agent can open a dedicated Slack
   code channel for the task behind an approval card the requester confirms. The channel inherits
   the origin channel's folder, access, secrets, skills and mode, runs as one channel-wide session
