@@ -4240,8 +4240,8 @@ const LICENSE_STATE_LABEL = {
   expired_grace: "· grace expired",
 };
 
-const fmtLicenseLimit = (v) => (v === null || v === undefined ? "unlimited" : String(v));
-const fmtLicenseTime = (v) => (v ? new Date(v).toLocaleString() : "—");
+const fmtLicenseLimit = (v) => (v === null || v === undefined ? "unlimited" : escapeHtml(String(v)));
+const fmtLicenseTime = (v) => (v ? escapeHtml(new Date(v).toLocaleString()) : "—");
 
 function paintLicense(l) {
   document.getElementById("license-state-chip").textContent = LICENSE_STATE_LABEL[l.state] || `· ${l.state}`;
@@ -4255,9 +4255,11 @@ function paintLicense(l) {
   banner.textContent = l.banner?.text || "";
   banner.hidden = !l.banner;
 
+  // Everything here comes from the licensing platform's response. The key fields are already
+  // escaped below; the free-text ones must be too, because this list is rendered as HTML.
   const facts = [
-    ["Tier", l.tier === "none" ? "no key" : l.tier],
-    ["Organization", l.organization || "—"],
+    ["Tier", l.tier === "none" ? "no key" : escapeHtml(l.tier)],
+    ["Organization", escapeHtml(l.organization || "—")],
     ["Key", l.hasLicenseKey ? `…${escapeHtml(l.licenseKeyLast4)} (from ${escapeHtml(l.licenseKeySource)})` : "none"],
     ["Registered channels", fmtLicenseLimit(l.limits?.channels)],
     ["Registered users", fmtLicenseLimit(l.limits?.users)],

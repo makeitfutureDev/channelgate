@@ -687,7 +687,9 @@ function modeRows(snapshot, state, { canEditAccess = false, canEnableAdmin = fal
     const on = flags.filter((flag) => mode[flag]).map((flag) => FLAG_LABELS[flag]);
     return [context(`*Mode* · ${MODE_LABELS[current] || modeLabel(mode)}${on.length ? ` · ${on.join(" · ")}` : ""}`), context("🔒 Managers and admins change the mode.")];
   }
-  const modes = ["read", "worker", ...(dm ? (canEnableAdmin || current === "admin" ? ["admin"] : []) : ["admin"])];
+  // "Admin" is offered only to someone who may enable it (an organization admin) or when it is
+  // already the current mode, so a manager's view shows the truth and can still leave Admin.
+  const modes = ["read", "worker", ...(canEnableAdmin || current === "admin" ? ["admin"] : [])];
   const modeOptions = modes.map((value) => option(MODE_LABELS[value], value));
   const flagOptions = flags.map((flag) => option(FLAG_LABELS[flag], flag));
   const chosen = flagOptions.filter((entry) => mode[entry.value]);
