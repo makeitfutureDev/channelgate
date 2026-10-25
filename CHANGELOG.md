@@ -18,6 +18,12 @@ product overview.
 
 ## Unreleased
 
+- Fix SSH and VS Code Remote-SSH selecting project storage for organization admins: connections
+  and refreshes now use the same current-role runtime as ordinary chat turns. Role changes
+  disconnect before credential refresh, login/MCP cleanup is scoped to each container, and
+  connection guidance explains separate admin/project history. Existing operator-home SSH
+  restrictions remain enforced; no history is copied or deleted.
+
 - Simplify admin sign-in to passkey selection without a username field. The selected credential
   identifies its account; password login stays permanently disabled after first enrollment.
 - Add individual dashboard admin usernames and passkey sign-in, with initial-password migration,

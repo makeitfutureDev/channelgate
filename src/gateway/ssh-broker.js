@@ -25,6 +25,7 @@ import { isAuthorized } from "./modes.js";
 import { isShuttingDown } from "./shutdown.js";
 import { logEvent } from "../util/logger.js";
 import { resolveRuntime } from "../runtimes/resolve.js";
+import { operatorHomeGranted } from "../runtimes/container/lifecycle.js";
 import { cliEnv, defaultExec } from "../runtimes/container/cli.js";
 import { containerRuntimeStatus } from "../runtimes/container/index.js";
 import { prepareSshSession, releaseSshSession } from "./ssh-session.js";
@@ -161,23 +162,28 @@ async function runSession(socket, header, leftover, state) {
   }
   const { key, user, entry, meta } = auth;
   const id = randomUUID();
-  // How many live sessions this developer, and this channel, have: the session files are per
-  // developer and the login file per channel, and each goes when its last session ends.
-  const userKey = `${entry.slug}\u0000${user.id}`;
+  // Match this person's chat runtime. Rank comes from current authorization, never the
+  // client header. The old Admin+home policy is still checked by authorizeSshAttach.
+  const target = deps.resolveTarget(entry.slug, meta, { isAdminAuthor: user.admin === true });
+  if (!target?.container?.name || operatorHomeGranted(target)) {
+    writeLine(socket, { ok: false, error: !target?.container?.name
+      ? "this channel does not run in a container"
+      : "SSH is refused into a container that exposes the operator's home" });
+    socket.end();
+    return;
+  }
+  // Each runtime owns separate files and a separate login. An open session in the other
+  // scope must neither retain this container's credentials nor lose its own on our hang-up.
+  const containerKey = target.container.name;
+  const userKey = `${containerKey}\u0000${user.id}`;
   const counts = state.counts;
   let counted = false;
   const count = (delta) => {
     counts.users.set(userKey, (counts.users.get(userKey) || 0) + delta);
-    counts.channels.set(entry.slug, (counts.channels.get(entry.slug) || 0) + delta);
+    counts.containers.set(containerKey, (counts.containers.get(containerKey) || 0) + delta);
     if ((counts.users.get(userKey) || 0) <= 0) counts.users.delete(userKey);
-    if ((counts.channels.get(entry.slug) || 0) <= 0) counts.channels.delete(entry.slug);
+    if ((counts.containers.get(containerKey) || 0) <= 0) counts.containers.delete(containerKey);
   };
-  const target = deps.resolveTarget(entry.slug, meta);
-  if (!target?.container?.name) {
-    writeLine(socket, { ok: false, error: "this channel does not run in a container" });
-    socket.end();
-    return;
-  }
   const targetKey = sessionTargetKey(target);
   // The lease comes FIRST — before ensureUp, like run.js — so the reaper cannot stop the container
   // between "it is up" and "sshd is inside".
@@ -200,7 +206,7 @@ async function runSession(socket, header, leftover, state) {
     if (counted) {
       count(-1);
       const lastForUser = !counts.users.has(userKey);
-      const lastInChannel = !counts.channels.has(entry.slug);
+      const lastInChannel = !counts.containers.has(containerKey);
       try { await deps.releaseSession({ target, entry, user, cliBin, lastForUser, lastInChannel, log }); }
       catch (error) { log.warn?.(`[ssh] session files for ${entry.slug}/${user.id} not released: ${error?.message || error}`); }
     }
@@ -245,8 +251,8 @@ async function runSession(socket, header, leftover, state) {
             await finish("SSH access is no longer authorized");
             return false;
           }
-          currentTarget = deps.resolveTarget(current.entry.slug, current.meta);
-          if (sessionTargetKey(currentTarget) !== targetKey) {
+          currentTarget = deps.resolveTarget(current.entry.slug, current.meta, { isAdminAuthor: current.user.admin === true });
+          if (operatorHomeGranted(currentTarget) || sessionTargetKey(currentTarget) !== targetKey) {
             await finish("the channel runtime changed — reconnect to use its current configuration");
             return false;
           }
@@ -402,7 +408,7 @@ export async function startSshBroker({ dir = sshAccessDir(), log = console, retr
     active = {
       server: null, dir, path: path.join(dir, SSH_ATTACH_SOCKET), sessions: new Map(), log, retryTimer: null, warned: false, warnedOwner: false, conns: new Set(),
       relayRefreshMs, headerTimeoutMs,
-      counts: { users: new Map(), channels: new Map() },
+      counts: { users: new Map(), containers: new Map() },
       unsubscribe: null,
       deps: {
         authorize: (header) => authorizeSshAttach(header, overrides.authorizeOptions || {}),

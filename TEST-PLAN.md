@@ -11466,3 +11466,30 @@ Documentation-only, engine-independent: no gateway runtime or Microsoft grants c
   live search returns the article and its Outlook/file headings, with no browser errors.
   Rebuilt source: 152 checked routes and 27,179 internal links; website-preserving export
   passed with 86 baseline source files unchanged, plus the updated docs entry/sitemap.
+
+
+## SSH runtime scope and history parity
+
+- [x] Automated: `test/ssh-broker.test.js` uses the real runtime resolver with fake process I/O
+  to check admin/member HOME and artifact parity with chat, promotion/demotion disconnects
+  before credential preparation, resolved operator-home refusals, and independent cleanup while
+  the other runtime still has an SSH session.
+- [x] Automated: `test/ssh-session.test.js` checks that ending a user's old runtime revokes its
+  held/current MCP grants without revoking the same user's grants in another runtime.
+- [x] Automated: `test/ssh-access.test.js` checks current-role history guidance; existing
+  author-isolation and SSH home-mount refusal regressions remain required.
+- [ ] Live SSH-SCOPE-01 (Claude and Codex): in a private Worker fixture with SSH installed,
+  use a current organization admin and an approved member with separate registered keys/grants.
+  Each asks "show SSH access" and starts an ordinary chat session with a harmless unique marker.
+  Connect by terminal/VS Code Remote-SSH as each actor; compare container name and HOME volume
+  with their own chat turn, then resume their native session with the corresponding engine.
+  Pass: admin matches admin, member matches project, work folder is shared, histories stay
+  separate, and the existing history remains intact across reconnect and container recreation.
+  Verify any changed SSH fingerprint against the selected scope's persisted public host key.
+- [ ] Live SSH-SCOPE-02 (Claude and Codex): keep both actors connected in the same fixture.
+  Close the admin connection while the member stays connected, then reverse roles. Pass: only
+  the departing runtime's last-session login and relay files are cleaned; the surviving engine
+  can still use its own MCP session. In a disposable role fixture, promote/demote the connected
+  actor and verify disconnect before new credential preparation; reconnect uses the new scope.
+  Finally enable Admin mode with operator-home access on: SSH remains refused. Restore roles,
+  settings and grants. Live execution is pending; automated passes do not satisfy this gate.

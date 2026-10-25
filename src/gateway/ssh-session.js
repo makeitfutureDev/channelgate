@@ -30,7 +30,7 @@
 //
 // The files live per DEVELOPER under <artifactDir>/ssh/users/<userId>/ (the wrapper picks the dir
 // by CG_SSH_USER, which sshd sets from the developer's key line), and are removed when that
-// developer's last session in the channel ends; the login file goes when the channel's last
+// developer's last session in that runtime ends; the login file goes when the container's last
 // session ends. Everyone in a container is one uid, so these are per developer for correctness,
 // not secrecy from each other — the same trust class as the box itself (docs/SSH-ACCESS.md).
 import path from "node:path";
@@ -54,7 +54,7 @@ import { buildEngineMcpRuntime } from "./run-engine-mcp.js";
 import { resolveRunIntegrations } from "./run-integrations.js";
 import { SSH_TOOLSET } from "../mcp/gateway-server.js";
 import { containerSshDir, EGRESS_CONNECT_HELPER, sessionEgressEnv } from "./ssh-access.js";
-import { clearRemoteMcpsWhere, releaseRemoteMcps } from "../mcp/remote-mcp-registry.js";
+import { clearRemoteMcps, hasRemoteMcps, releaseRemoteMcps } from "../mcp/remote-mcp-registry.js";
 
 export const SSH_SESSION_ORIGIN = "ssh_session";
 export const SSH_USERS_SUBDIR = "users";
@@ -91,11 +91,15 @@ fs.renameSync(temporary, file);
 // with (the broker's contract: a running process keeps what it started with) while an unused
 // grant does not linger for its 12 hours. The session's end drops every grant it minted outright.
 const sessionRelayJtis = new Map();
-const relayKey = (slug, userId) => `${slug}\u0000${userId}`;
-function adoptSessionRelays(slug, userId, jtis) {
-  const key = relayKey(slug, userId);
-  for (const jti of sessionRelayJtis.get(key) || []) releaseRemoteMcps(jti);
-  if (jtis.length) sessionRelayJtis.set(key, jtis);
+const relayKey = (target, userId) => `${target.container.name}\u0000${userId}`;
+function adoptSessionRelays(target, userId, jtis) {
+  const key = relayKey(target, userId);
+  const previous = sessionRelayJtis.get(key);
+  for (const jti of previous?.current || []) releaseRemoteMcps(jti);
+  // Keep held older grants so this container's final disconnect revokes them too. Expired
+  // and unused registrations are pruned on refresh; another runtime's grants stay separate.
+  const all = new Set([...(previous?.all || []), ...jtis].filter((jti) => hasRemoteMcps(jti)));
+  if (all.size) sessionRelayJtis.set(key, { current: jtis, all });
   else sessionRelayJtis.delete(key);
 }
 
@@ -140,11 +144,14 @@ export function renderSessionEnvFile(env = {}, { egress = {} } = {}) {
  * (`--append-system-prompt-file`) — never part of every channel's managed block, whose 4 KB budget
  * is for the rules every run shares. Named facts only; no value ever rides here.
  */
-export function renderSessionNote({ slug, userId, envFile, egress = null }) {
+export function renderSessionNote({ slug, userId, envFile, egress = null, runtimeScope = "" }) {
   const lines = [
     `This is an interactive SSH session in channel \`${slug}\`, prepared by the gateway for <@${userId}> exactly like one of that channel's chat turns: the channel's tool policy, its MCP servers (\`gateway\`, \`composio-user\` = this developer's own accounts, \`composio-agent\` = the channel's) and its secrets as environment variables.`,
     `Secrets change while a session is open. \`list_secrets\` is live, but a process keeps the environment it started with — this one included. The session's CURRENT environment is rewritten within a moment of any change at \`${envFile}\` (also \`$CG_SESSION_ENV\`). When a command needs a credential added after this process started, source that file in the SAME command: \`. "$CG_SESSION_ENV"; <command>\`. Never print a value; refer to secrets by name. A newly selected MCP server needs a new \`claude\`.`,
   ];
+  if (runtimeScope === "admin" || runtimeScope === "project") {
+    lines.push(`Your runtime/history scope is **${runtimeScope}**. This HOME and native engine history match this developer's ordinary chat turns at their current role. Admin and project histories are separate; a different scope's session ID cannot be resumed here. The project work folder is shared.`);
+  }
   if (egress?.active) {
     // Names and rules only — never a value, never a placeholder string.
     lines.push(
@@ -434,7 +441,7 @@ export async function prepareSshSession({ target, entry, meta = {}, user, cliBin
       withheld: [...(resolved.withheld || [])].sort(),
       personalPaused: Boolean(resolved.personalPaused),
     } : null;
-    writePrivate(path.join(userDir, "session.md"), renderSessionNote({ slug, userId: user.id, envFile: path.join(userDir, "env"), egress: egressFacts }));
+    writePrivate(path.join(userDir, "session.md"), renderSessionNote({ slug, userId: user.id, envFile: path.join(userDir, "env"), egress: egressFacts, runtimeScope: target.runtimeScope }));
     // Names, scopes and whether the proxy protects each — never a value or a placeholder.
     result.secrets = names.map((name) => ({ name, scope: scopes[name] || "channel", protected: Boolean(placeholders[name]) }));
     result.egress = egressFacts ? { active: true, unprotected: egressFacts.unprotected, withheld: egressFacts.withheld, personalPaused: egressFacts.personalPaused } : { active: false };
@@ -453,12 +460,12 @@ export async function prepareSshSession({ target, entry, meta = {}, user, cliBin
     result.secrets = [];
     log?.warn?.(`[ssh] ${slug}/${user.id}: session files not prepared — ${result.problems.join("; ")}`);
   }
-  adoptSessionRelays(slug, user.id, relayJtis);
+  adoptSessionRelays(target, user.id, relayJtis);
   return result;
 }
 
 /**
- * The developer's last session in the channel ended: drop their files; the channel's last: the
+ * The developer's last session in this container ended: drop their files; the container's last: the
  * login too — the in-container credentials file, the account record, and the host-side editor
  * token file (`<artifact>/vscode/claude-token`, which the container can read through its mount).
  */
@@ -467,9 +474,9 @@ export async function releaseSshSession({ target, entry = null, user, cliBin, la
     try { rmSync(sshUserDir(target, user.id), { recursive: true, force: true }); } catch { /* already gone */ }
     // The developer's last session here ended: every relay grant any of its preparations minted
     // goes NOW, held or not — a process that outlived the session loses its relayed servers.
-    const slug = entry?.slug || target.slug || "";
-    sessionRelayJtis.delete(relayKey(slug, user.id));
-    clearRemoteMcpsWhere((meta) => meta.origin === SSH_SESSION_ORIGIN && meta.slug === slug && meta.authorId === user.id);
+    const key = relayKey(target, user.id);
+    for (const jti of sessionRelayJtis.get(key)?.all || []) clearRemoteMcps(jti);
+    sessionRelayJtis.delete(key);
   }
   if (!lastInChannel) return;
   // First, and host-side: it needs no container, so a container that is already gone still loses it.

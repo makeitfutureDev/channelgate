@@ -415,6 +415,39 @@ test("a refresh releases the previous relay grant unless a running process holds
   stillRunning();
 });
 
+test("MCP grants and session notes stay in the user's runtime during an overlapping role change", async () => {
+  const { hasRemoteMcps, retainRemoteMcps } = await import("../src/mcp/remote-mcp-registry.js");
+  const sessionEntry = { slug: "ssh-scope-relays", channelId: "C_SCOPE_RELAYS" };
+  const project = { ...target("ssh-scope-project"), slug: sessionEntry.slug, runtimeScope: "project" };
+  const admin = { ...target("ssh-scope-admin"), slug: sessionEntry.slug, runtimeScope: "admin" };
+  const prepare = async (t) => {
+    const { deps } = fakes();
+    await session.prepareSshSession({ target: t, entry: sessionEntry, meta: {}, user, cliBin: "podman", log: { warn() {} } }, deps);
+    const dir = session.sshUserDir(t, user.id);
+    assert.ok(readFileSync(path.join(dir, "session.md"), "utf8").includes(`runtime/history scope is **${t.runtimeScope}**`));
+    const mcp = JSON.parse(readFileSync(path.join(dir, "mcp.json"), "utf8")).mcpServers;
+    const bundle = JSON.parse(readFileSync(path.join(dir, "codex-secrets.json"), "utf8"));
+    return [mcp.gateway.env.CG_GATEWAY_CAPABILITY, bundle.gatewayCapability].map(cap => verifyGatewayCapability(cap, { secret: SECRET }).claims.jti);
+  };
+  const first = await prepare(project);
+  const releaseHeld = retainRemoteMcps(first[0]);
+  const refreshed = await prepare(project);
+  const other = await prepare(admin);
+  try {
+    assert.ok(hasRemoteMcps(first[0]), "held earlier grant stays live until its runtime ends");
+    assert.ok(refreshed.every(jti => hasRemoteMcps(jti)), "preparing another runtime must not release this runtime's current grants");
+    await session.releaseSshSession({ target: project, entry: sessionEntry, user, cliBin: "podman", lastForUser: true }, { runCommand: async () => {} });
+    assert.ok([...first, ...refreshed].every(jti => !hasRemoteMcps(jti)), "all old-runtime grants are revoked, including held ones");
+    assert.ok(other.every(jti => hasRemoteMcps(jti)), "same user's new-runtime grants remain usable");
+    assert.ok(existsSync(session.sshUserDir(admin, user.id)), "new-runtime session files remain");
+  } finally {
+    releaseHeld();
+    await session.releaseSshSession({ target: project, entry: sessionEntry, user, cliBin: "podman", lastForUser: true }, { runCommand: async () => {} });
+    await session.releaseSshSession({ target: admin, entry: sessionEntry, user, cliBin: "podman", lastForUser: true }, { runCommand: async () => {} });
+  }
+  assert.ok(other.every(jti => !hasRemoteMcps(jti)));
+});
+
 // ── Container-secrets P3: a session on placeholders ────────────────────────────────────────────
 // Where the egress proxy is the container's network, a developer's session holds what a turn's
 // process holds — placeholders for every ruled secret, the relay placeholder as Claude's login —
