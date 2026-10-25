@@ -43,6 +43,7 @@ import { resolveCurrentModel } from "./model-info.js";
 import { runtimeIdentityPreamble } from "./runtime-identity.js";
 import { runtimeAccessPreamble } from "./runtime-access.js";
 import { channelCredentialsPreamble } from "./channel-credentials.js";
+import { codeChannelPreamble, syncCodeChannelMeta } from "./code-channels.js";
 import { resolveRunIntegrations } from "./run-integrations.js";
 import { customMcpTokens } from "./custom-mcps.js";
 import { modelBelongsToEngine, effortBelongsToEngine, effortBelongsToModel } from "../engines/registry.js";
@@ -716,10 +717,12 @@ async function runMessageImpl({ channelId, authorId, workspaceId = "", text, thr
 
   // The channel tier is the assigned skill template's CURRENT skills plus the conversation's own
   // additions (skills/templates.js) — resolved live, so a template edit reaches every follower.
-  const channelMeta = withTemplateSkills(effectiveMeta(
+  // A code channel's policy, secrets, skills and folder are its ORIGIN channel's, re-projected
+  // at every spawn so a change there (a rotated secret, a narrowed access) reaches this run.
+  const channelMeta = withTemplateSkills(effectiveMeta(await syncCodeChannelMeta(entry.slug,
     (await getChannelMeta(entry.slug)) ??
       defaultChannelMeta({ channelId, name: entry.name, type: entry.type, isDM: entry.isDM })
-  ));
+  )));
 
   // Resolve the durable org+channel baseline separately from this run's trusted user tier. The
   // HTTP run API authenticates only its API key; its caller-supplied Slack author id must never
@@ -1513,6 +1516,7 @@ async function runMessageImpl({ channelId, authorId, workspaceId = "", text, thr
       + runtimeIdentityPreamble({ engine, model: modelOverride, effort, fresh })
       + runtimeAccessPreamble(target, { clean, allowNetwork: Boolean(meta.allowNetwork), dangerouslySkip })
       + perplexityResearchPreamble(target, { clean })
+      + codeChannelPreamble(meta)
       + (promptOverride ?? turnText);
     engineStarted = true;
     return adapter.run(validateRunContext({
@@ -1759,7 +1763,7 @@ async function runMessageImpl({ channelId, authorId, workspaceId = "", text, thr
         principal: { kind: untrustedPrincipal ? "daemon" : PRINCIPAL_KIND_BY_ORIGIN[origin] || "daemon", id: authorId }, origin, cwd,
         prompt: (fbFresh ? memoryPrefix : "") + composioIdentityPrefix + channelCredentialsPrefix
           + runtimeIdentityPreamble({ engine: fallbackEngine, model: modelOverride, effort, fresh: fbFresh })
-          + runtimeAccessPreamble(target, { clean, allowNetwork: Boolean(meta.allowNetwork), dangerouslySkip }) + perplexityResearchPreamble(target, { clean }) + fbPrompt,
+          + runtimeAccessPreamble(target, { clean, allowNetwork: Boolean(meta.allowNetwork), dangerouslySkip }) + perplexityResearchPreamble(target, { clean }) + codeChannelPreamble(meta) + fbPrompt,
         session: { id: fbSid, fresh: fbFresh }, policy: fallbackConfinement,
         // The SAME runtime target: failing over to the other harness changes which CLI runs, not
         // which machine boundary the channel runs behind.

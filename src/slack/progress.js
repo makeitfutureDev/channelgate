@@ -50,9 +50,10 @@ function normalizeLoadingMessage(message) {
 // A non-empty `status` means the turn is working (the agent session goes `processing`, which is
 // what shows Slack's native Stop button); "" clears it (`active`). The phrase and the loading
 // messages only reach the legacy surface — see agent-sessions.js for the two surfaces.
-export function setAssistantStatus(client, channel, threadTs, status, loadingMessages = [], { username = status ? "AI agent" : "" } = {}) {
-  if (!threadTs) return Promise.resolve(false);
-  const key = `${channel}:${threadTs}`;
+export function setAssistantStatus(client, channel, threadTs, status, loadingMessages = [], { username = status ? "AI agent" : "", channelSession = false } = {}) {
+  // A code channel's session is the channel's own (no thread); every other session is a thread's.
+  if (!threadTs && !channelSession) return Promise.resolve(false);
+  const key = `${channel}:${threadTs || ""}`;
   // A CLEAR is never gated: a thread that refused an activity write may still hold a native
   // session in `processing` (the Stop button up), and Slack never moves it off that on its own.
   // agent-sessions.js remembers per thread which surface refused, so this costs nothing extra.
@@ -60,7 +61,7 @@ export function setAssistantStatus(client, channel, threadTs, status, loadingMes
   const normalizedLoadingMessages = loadingMessages
     .slice(0, SLACK_LOADING_MESSAGE_MAX_COUNT)
     .map(normalizeLoadingMessage);
-  return setAgentSessionStatus(client, { channel, threadTs, phrase: status, loadingMessages: normalizedLoadingMessages, username })
+  return setAgentSessionStatus(client, { channel, threadTs, phrase: status, loadingMessages: normalizedLoadingMessages, username, channelSession })
     .then((accepted) => {
       // Not an assistant thread / not a member / unusable thread_ts — fall back to the placeholder
       // edit, and stop asking for this thread.
@@ -153,7 +154,7 @@ function activeMarkdownFence(text) {
 // RE-ASSERTS the current phrase even when unchanged — a cleared line comes back within one tick
 // instead of staying dark until the next phase change. stop() clears it and waits for that clear
 // attempt before the answer stream is finalized.
-function startStatusAnimation(client, channel, threadTs) {
+function startStatusAnimation(client, channel, threadTs, { channelSession = false } = {}) {
   let activity = "is gathering information…";
   let runtime = "";
   let nativeName = "AI agent";
@@ -188,7 +189,7 @@ function startStatusAnimation(client, channel, threadTs) {
   // phrase superseded before it ever reached Slack is dropped instead of being sent late.
   const write = async (status, loadingMessages, username) => {
     if (disabled && status) return;
-    const accepted = await setAssistantStatus(client, channel, threadTs, status, loadingMessages, { username });
+    const accepted = await setAssistantStatus(client, channel, threadTs, status, loadingMessages, { username, channelSession });
     if (!accepted && status) disabled = true;
   };
   const pump = () => {
@@ -651,7 +652,10 @@ function createTaskTimeline(push) {
 // All append/stop calls are serialized through a promise chain (the streamer's buffer is not
 // concurrency-safe). Any API failure flips `failed`, and finalize() falls back to a plain
 // postMessage so an answer is never lost if streaming is unavailable (missing scope / not enabled).
-function startStreamingProgress(client, { channel, threadTs, isDM, authorId, teamId, dir, menuOwnerId, stopGraceMs = 1_000, uploadFile }) {
+function startStreamingProgress(client, { channel, threadTs, isDM, authorId, teamId, dir, menuOwnerId, stopGraceMs = 1_000, uploadFile, channelSession = false }) {
+  // In a code channel the session status is the channel's: keyed without a thread, whatever
+  // thread the reply itself goes into (top-level when the person wrote top-level).
+  const statusThreadTs = channelSession ? "" : threadTs;
   // Who the reply menu is bound to (footer.js). Defaults to the requester; a caller whose author is
   // not a Slack user (an API run's caller-named author) passes "" for an unbound menu.
   const menu = { channel, threadTs, authorId: menuOwnerId === undefined ? authorId : menuOwnerId };
@@ -665,7 +669,9 @@ function startStreamingProgress(client, { channel, threadTs, isDM, authorId, tea
   const requesterTag = !isDM && authorId ? `<@${authorId}>` : "";
   const streamArgs = {
     channel,
-    thread_ts: threadTs,
+    // Omitted for a top-level reply: Slack accepts that only where the whole channel is one
+    // session (a code channel), which is the only caller that passes no thread.
+    ...(threadTs ? { thread_ts: threadTs } : {}),
     // Group every tool/plan row into ONE collapsible card instead of a separate box per step.
     // Slack's task display mode: "timeline" (the default) narrates each task_update as its own
     // box — space-hungry when a run makes many tool calls — while "plan" collects them all into a
@@ -932,7 +938,7 @@ function startStreamingProgress(client, { channel, threadTs, isDM, authorId, tea
   const timeline = createTaskTimeline(pushTimeline);
   // Pre-text feedback: keep Slack's separate temporary assistant status running for
   // thinking/tool steps where the thread supports it. It is explicitly cleared at termination.
-  shimmer = startStatusAnimation(client, channel, threadTs);
+  shimmer = startStatusAnimation(client, channel, statusThreadTs, { channelSession });
   // Terminal status clear, bounded. It is FIRED here and waited on only for the grace period:
   // under workspace rate limiting a status write can sleep for minutes, and an answer that is
   // ready must not sit behind it. The clear stays in flight and still lands afterwards.
@@ -984,7 +990,7 @@ function startStreamingProgress(client, { channel, threadTs, isDM, authorId, tea
         const compiledMarkdown = streamMarkdown;
         const fence = hadAnswer ? activeMarkdownFence(streamMarkdown) : null;
         try {
-          await retiring.stop(rolloverStopArgs(channel, threadTs, {
+          await retiring.stop(rolloverStopArgs(channel, statusThreadTs, {
             markdown_text: hadAnswer
               ? `${fence ? `\n${fence.marker}` : ""}\n\n_⏳ Refreshing the live reply below…_`
               : "_⏳ Refreshing live progress below…_",
@@ -1026,7 +1032,7 @@ function startStreamingProgress(client, { channel, threadTs, isDM, authorId, tea
         if (terminal || timelineOff || stopped || !timelineStreamer) return;
         const retiring = timelineStreamer;
         const retiringTs = retiring.ts;
-        await retiring.stop(rolloverStopArgs(channel, threadTs, { chunks: timeline.retirementSnapshot() }));
+        await retiring.stop(rolloverStopArgs(channel, statusThreadTs, { chunks: timeline.retirementSnapshot() }));
         shimmer?.afterMessageActivity?.({ immediate: true });
         timelineStreamer = client.chatStream(streamArgs);
         timelineStartedAt = null;

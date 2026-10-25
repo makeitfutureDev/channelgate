@@ -31,6 +31,18 @@ export function effectiveWorkDir(slug, meta = {}) {
   // would either leak grants into clean mode or revoke them underneath the regular author.
   if (meta.cleanMode) return cleanWorkspaceFolder(slug, meta.platform);
   const w = (meta.workDir || "").trim();
+  // A code channel works in its ORIGIN channel's folder (gateway/code-channels.js projects it as
+  // workDir). The origin's gateway-owned default folder is allowed on its own terms — it is where
+  // that channel runs — even when the allowlisted root is narrower than the workspace root; a
+  // custom origin folder still passes the containment check below like any other workDir.
+  const originSlug = meta.codeChannel?.originSlug;
+  if (w && originSlug && w === workspaceFolder(originSlug, meta.platform)) {
+    try {
+      if (statSync(w).isDirectory()) return w;
+    } catch {
+      /* fall through */
+    }
+  }
   if (w && path.isAbsolute(w)) {
     // Read-time containment: the write entry points (admin UI, MCP tool) already validate, but a
     // workDir stored BEFORE the allowlist existed (or before an admin tightened the root) would

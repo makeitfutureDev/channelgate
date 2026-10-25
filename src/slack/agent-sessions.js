@@ -113,9 +113,11 @@ function noteFallback(surface, error) {
 // means the session is `processing`, an empty one `active`. `loadingMessages` are the prominent
 // loading copy (already normalized by the caller). Resolves true when Slack accepted the write on
 // at least one surface, false when this thread can carry no status at all.
-export async function setAgentSessionStatus(client, { channel, threadTs, phrase = "", loadingMessages = [], status = "", username = "" } = {}) {
-  if (!threadTs) return false;
-  const state = threadState(`${channel}:${threadTs}`);
+export async function setAgentSessionStatus(client, { channel, threadTs, phrase = "", loadingMessages = [], status = "", username = "", channelSession = false } = {}) {
+  // A code channel is one session for the whole channel and is addressed by channel id alone
+  // (Slack refuses a thread_ts there); the legacy per-thread bridge has no such surface.
+  if (!threadTs && !channelSession) return false;
+  const state = threadState(`${channel}:${threadTs || ""}`);
   const nativeStatus = status || (phrase ? SESSION_STATUS.processing : SESSION_STATUS.active);
   let nativeAccepted = false;
   if (modes.status === "native" && !state.nativeOff) {
@@ -130,7 +132,7 @@ export async function setAgentSessionStatus(client, { channel, threadTs, phrase 
       || (nativeStatus === SESSION_STATUS.processing && now - state.nativeAt >= NATIVE_REASSERT_MS);
     if (due) {
       try {
-        const payload = { channel_id: channel, thread_ts: threadTs, status: nativeStatus };
+        const payload = { channel_id: channel, ...(channelSession ? {} : { thread_ts: threadTs }), status: nativeStatus };
         if (customize) {
           try {
             await client.apiCall("agents.sessions.setStatus", { ...payload, username: name });
@@ -166,7 +168,7 @@ export async function setAgentSessionStatus(client, { channel, threadTs, phrase 
       nativeAccepted = true;
     }
   }
-  if (state.legacyOff) return nativeAccepted;
+  if (state.legacyOff || channelSession) return nativeAccepted;
   try {
     await client.apiCall("assistant.threads.setStatus", {
       channel_id: channel,
@@ -183,19 +185,19 @@ export async function setAgentSessionStatus(client, { channel, threadTs, phrase 
 
 // What a thread's session is known to be, for tests and the stop handler.
 export function nativeSessionStatus(channel, threadTs) {
-  return threads.get(`${channel}:${threadTs}`)?.native || "";
+  return threads.get(`${channel}:${threadTs || ""}`)?.native || "";
 }
 
 // Name a thread's session. Resolves true when Slack accepted the title.
-export async function renameAgentSession(client, { channel, threadTs, title } = {}) {
+export async function renameAgentSession(client, { channel, threadTs, title, channelSession = false } = {}) {
   const clean = String(title || "").trim().slice(0, 200);
-  if (!threadTs || !clean) return false;
-  if (modes.rename === "native") {
+  if ((!threadTs && !channelSession) || !clean) return false;
+  if (modes.rename === "native" || channelSession) {
     try {
-      await client.apiCall("agents.sessions.rename", { channel_id: channel, thread_ts: threadTs, title: clean });
+      await client.apiCall("agents.sessions.rename", { channel_id: channel, ...(channelSession ? {} : { thread_ts: threadTs }), title: clean });
       return true;
     } catch (error) {
-      if (!fallsBackToLegacy(error)) return false;
+      if (channelSession || !fallsBackToLegacy(error)) return false;
       noteFallback("rename", error);
     }
   }
@@ -207,13 +209,15 @@ export async function renameAgentSession(client, { channel, threadTs, title } = 
   }
 }
 
-// The `agent_session_stopped` event: the user pressed Slack's native Stop button in a thread whose
-// session is `processing`. Returns the thread to stop, or null for a malformed payload.
+// The `agent_session_stopped` event: the user pressed Slack's native Stop button on a session that
+// is `processing`. With a thread_ts it is that thread's session; without one it is a code channel's
+// (the whole channel is one session, and the stop applies to everything running there). Returns the
+// target to stop, or null for a malformed payload.
 export function stoppedSessionTarget(event = {}) {
   const channel = String(event?.channel || "").trim();
   const threadTs = String(event?.thread_ts || "").trim();
   const user = String(event?.user || "").trim();
-  if (!channel || !threadTs) return null;
+  if (!channel) return null;
   return {
     channel,
     threadTs,

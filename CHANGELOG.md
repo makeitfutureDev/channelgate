@@ -74,6 +74,16 @@ product overview.
   preview and edit re-prove the opened file under the channel root; the License card escapes
   platform-supplied text; the internal IPC secret is compared in constant time; `npm audit fix`
   moved undici, zod, hono, fast-uri, body-parser and ip-address to patched releases.
+- **Slack code channels.** When a requester asks for one, the agent can open a dedicated Slack
+  code channel for the task behind an approval card the requester confirms. The channel inherits
+  the origin channel's folder, access, secrets, skills and mode, runs as one channel-wide session
+  with top-level replies and no @-mention, works on a `code/<slug>` branch in a worktree when the
+  folder is a repository (else in place), publishes the branch's diff to the Code tab after every
+  turn, takes HTML, Block Kit, canvas and pull-request tabs plus context-bar items through
+  `update_code_channel`, honours Slack's channel-wide Stop, and archives behind a card with the
+  wrap-up shared back into the origin thread. The Slack manifest gains `features.code_channels`
+  and the `code_channels:manage` scope (paste and reinstall). `/status-cg` is accepted as an alias
+  of `/status` for apps whose manifest cannot register the built-in name.
 
 - Supply new installations with Astra, Sol, Terra, Fable, Opus and Sonnet (`:sonet`) shortcuts
   using the newest supported stable family versions. Preserve customized lists and thread pins.

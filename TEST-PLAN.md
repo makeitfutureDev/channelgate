@@ -209,6 +209,44 @@ Running label acceptance (Claude and Codex): in a Slack agent thread with chat:w
   ephemeral status appears. As a workspace member who is NOT approved and not a guest of the
   channel, click the same button: nothing is posted. PASS when both hold for both engines.
 
+## Slack code channels (2026-10-25)
+
+- [x] Automated: `node --test test/code-channels.test.js test/slack-agent-sessions.test.js
+  test/mcp-control-plane-approval.test.js test/folders-settings.test.js test/platforms.test.js
+  test/channelgate-rename.test.js test/slack-progress.test.js` — one channel-wide session key that
+  is never a Slack ts, top-level vs in-thread reply target, mode decision from the folder with
+  requester override, inherited meta (origin policy, secrets, skills, folder; own identity; no DM
+  fields), re-projection on sync without needless writes, worktree creation from the upstream or
+  exact HEAD with branch-name suffixing and `info/exclude`, diff of committed and uncommitted work
+  excluding the managed instruction block, Slack create/status/context-bar payloads, eligibility
+  error mapping, view validation (key, PR URL, size, type), diff published once per distinct
+  content, archive with wrap-up ts and `archivedAt`, channel-level status/rename without
+  `thread_ts` or the legacy bridge, thread-less Stop sweeping a code channel and ignored elsewhere,
+  `open_code_channel` as an owner-tier card whose saved call opens the channel and kicks off the
+  first turn (refused from a synthetic session key or inside a code channel), `update_code_channel`
+  refusing outside a code channel and publishing title/context/tabs, `archive_code_channel` as an
+  open-tier card, the Slack-only capability, guide file and routing row, manifest feature and
+  scope, and the tool inventory (the GATED/OPEN tripwire and `GATEWAY_TOOL_NAMES`).
+- [ ] Live Slack acceptance (engine-independent for creation; Claude and Codex for the turns):
+  paste the updated `slack-app-manifest.json` into the Slack app (adds `features.code_channels`
+  and `code_channels:manage`), reinstall, restart the daemon. In a private channel fixture whose
+  work folder is a git repository, as an approved member mention the agent: "Open a code channel
+  to add a CHANGELOG entry for X." Expected: a card in the thread naming the task and "a task
+  branch in a git worktree…", approvable by the requester; no channel exists before the click.
+  Approve. Expected: a new channel named from the request appears in the Code channels sidebar
+  section, the requester is a member, the context bar shows the folder and `code/<slug>`, the
+  session title is set, and the agent posts its first top-level message within the turn budget
+  (the turn's preamble carries `[Slack code channel]`; verify from the run log). If Slack answers
+  `feature_disabled` or `user_not_enabled`, the card outcome must name it and the remedy — record
+  that as the eligibility result for the workspace and stop. Send "Change the heading too" without
+  a mention: the agent answers top-level. Press Slack's Stop while a turn runs: the run stops
+  (`run_stopped` event with threadKey `code-channel`). After a turn that edits a tracked file,
+  open the Code tab: the diff shows that change and not the gateway's managed block. Ask for an
+  HTML preview: the tab appears via `update_code_channel`. Ask to archive: a card appears; approve;
+  the wrap-up is shared into the origin thread and the channel is archived; `.worktrees/<slug>`
+  still exists on the host. Repeat the opening in a non-git fixture folder: the card says "this
+  channel's own files" and no worktree is created. Pending live execution.
+
 ## Harness default effort (2026-10-23)
 
 - [x] Automated: `node --test test/default-model.test.js test/qwen-provider-settings-route.test.js

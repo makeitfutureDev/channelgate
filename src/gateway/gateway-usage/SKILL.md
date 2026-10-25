@@ -194,6 +194,7 @@ invite the bot. See `references/messages.md`.
 | Save an ongoing request in the right scope (fact, skill, existing schedule, channel rule) | `references/memory-and-rules.md` | Inspect the target first; `update_channel_memory`, `update_skill`, `update_schedule`, or `update_channel_instructions` |
 | Orchestrate long/high-volume work with visible agents and progress | `references/progress-report.md` | in-turn subagents + `gateway` → `report_progress` |
 | Edit code/docs in a git repository             | `references/git-repos.md`         | `git worktree` per task; merge + push to land |
+| The requester asks for a code channel ("open a code channel for this"), or you are working inside one | `references/code-channels.md` | `gateway` → `open_code_channel` (approval card; Slack only), `update_code_channel` (artifact tabs, context bar, title), `archive_code_channel` |
 | Run something long (build, ASR, tests, data)   | `references/background-jobs.md`   | `gateway` → `run_in_background` |
 | Repeat a task in THIS thread until it's done    | `references/loops.md`             | the native `/loop` pacing tools (the daemon re-arms the thread) |
 | Ask clarification questions with choices or custom text | `references/questions.md` | `gateway` → `ask_questions` when available |

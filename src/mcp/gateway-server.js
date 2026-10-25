@@ -41,6 +41,7 @@ import { register as registerSshAccess } from "./tools/ssh-access.js";
 import { sshRequestTarget } from "../gateway/ssh-access.js";
 import { register as registerFileSharing, describeDuration } from "./tools/file-sharing.js";
 import { register as registerEmail } from "./tools/email.js";
+import { register as registerCodeChannels } from "./tools/code-channels.js";
 import { prepareInstructionApproval } from "../gateway/instruction-approvals.js";
 import { buildControlPlaneAction, describeControlPlaneTier } from "../gateway/control-plane-approvals.js";
 
@@ -51,7 +52,7 @@ export const text = (t) => ({ content: [{ type: "text", text: t }] });
 // a safe restart, start/inspect a channel's Google Drive sync pass (the pass must run in the daemon
 // so it shares the per-channel in-flight guard and outlives the turn). `kind` is also the /internal/<kind> route name, so the two transports stay in
 // lockstep. A tool never learns which one it is using.
-export const DAEMON_IPC_KINDS = Object.freeze(["background", "approval", "restart", "drivesync", "agent-directory"]);
+export const DAEMON_IPC_KINDS = Object.freeze(["background", "approval", "restart", "drivesync", "agent-directory", "code-channel"]);
 
 // Daemon-IPC credentials for the CHILD-PROCESS transport (the /internal/* endpoints). The Claude
 // path forwards CG_APPROVAL_SECRET/CG_PORT via the --mcp-config env; the Codex path can't — its
@@ -389,6 +390,17 @@ export function buildControlPlane({ loadMeta, createdBy, principalTrusted, chann
     // and the worst unasked outcome (the no-key limits) is undone by setting it again.
     ["set_license_key", { authz: "admin", details: AUTOMATIC }],
     ["clear_license_key", { authz: "admin", details: AUTOMATIC }],
+    // Slack code channels: opening one creates a Slack channel other people are invited into and
+    // starts a turn there, so the person who asked for it confirms on a card (the model may only
+    // relay the request). Archiving is reversible in Slack and open to anyone working in the
+    // channel; the in-channel artifact/context updates are open (they land visibly in that channel).
+    ["open_code_channel", { authz: "any", tier: "owner", details: ({ task, name, mode }) => {
+      const files = mode === "in_place" ? "this channel's own files"
+        : mode === "worktree" ? "a new task branch in a git worktree inside this channel's folder"
+          : "a task branch in a git worktree when the folder is a repository, else this channel's own files";
+      return `Open a Slack code channel${name ? ` "${summarize(name)}"` : ""} for: ${summarize(task)}\nFiles: ${files}. Members of this channel may join it; the agent starts working there once approved.`;
+    } }],
+    ["archive_code_channel", { authz: "any", tier: "", details: ({ summary }) => `Archive this code channel${summary ? " after posting the wrap-up" : ""}. History and artifact tabs stay readable and searchable; the task branch stays on disk.` }],
   ]);
 }
 
@@ -537,6 +549,7 @@ export function createGatewayMcpServer(ctx) {
     registerSshAccess(server, ctx);
     registerFileSharing(server, ctx);
     registerEmail(server, ctx);
+    registerCodeChannels(server, ctx);
   } else {
     registerMemoryTool(server, ctx);
   }
