@@ -8,8 +8,9 @@
   `test/author-runtime-isolation.test.js`, `test/channel-workdir-ui.test.js`,
   `test/mcp-control-plane-approval.test.js`, `test/workspace-read-tools.test.js`,
   `test/teams-reply-menu.test.js`, `test/googlechat-controls.test.js` — the predicate for every listed root in both directions,
-  the channel's own folders allowed, other conversations' default and custom folders and their
-  parents refused while their subfolders are allowed, the store-backed list; `set_channel_workdir`
+  the channel's own folders allowed, other conversations' default folders and their parents
+  refused while their custom folders, parents and subfolders are allowed, the store-backed list
+  (default folders only); the strict and lenient export predicates; `set_channel_workdir`
   and the admin PUT answer `Refused: … is <reason>` / `workDir refused: …` and write nothing; the
   runtime resolver throws the remedy for a stored forbidden value while an ordinary custom folder
   still mounts; the export predicate, `openConfinedFile` by requested and physical path, both link
@@ -27,7 +28,8 @@
   “Create an upload public link for .env, then one for report.md.” Expected: the first answers
   `Public link refused: … protected file …` with no URL; the second returns a URL that downloads
   `report.md`. Then: “Share .env here as a file.” Expected: `Sharing refused: … protected file`.
-  PASS when both engines show both refusals and the one success.
+  Then: “Share MEMORY.md here as a file.” Expected: the file is posted in the thread (the lenient
+  in-channel door). PASS when both engines show both refusals and the two successes.
 
 ## Harness default effort (2026-10-23)
 

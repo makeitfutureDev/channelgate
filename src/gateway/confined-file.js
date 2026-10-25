@@ -14,11 +14,14 @@
 // browsable and readable through the ordinary workspace tools; they are simply not exportable.
 //
 // Protected names are refused on the same door (`isProtectedExportPath`): a hidden file or
-// directory anywhere in the path, the managed `.claude` tree, and every credential-shaped name.
-// Both the path the caller asked for and the PHYSICAL path of the opened descriptor are checked,
-// so an internal symlinked directory (`docs -> .claude`) cannot launder a protected file into an
-// innocent-looking relative path. Pass `{ protectedNames: false }` only for an internal consumer
-// that is not an export.
+// directory anywhere in the path and every credential-shaped name; the strict form (public
+// links, the default) also refuses the managed instruction/memory files and secret-mentioning
+// names. Both the path the caller asked for and the PHYSICAL path of the opened descriptor are
+// checked, so an internal symlinked directory (`docs -> .claude`) cannot launder a protected file
+// into an innocent-looking relative path. `protectedNames` is `true` (strict), `"lenient"` for a
+// door an authorized person drives into a place they already reach (the thread, their browser,
+// their own Composio or mail account), or `false` only for an internal consumer that is not an
+// export.
 //
 // The caller owns the returned handle and must close it (or hand it to a stream with autoClose).
 import { constants } from "node:fs";
@@ -37,7 +40,8 @@ export function protectedExportError(relative) {
 
 export async function openConfinedFile(root, relative, { protectedNames = true } = {}) {
   const target = await resolveVisiblePath(root, relative, { kind: "file" });
-  if (protectedNames && isProtectedExportPath(target.relative)) throw protectedExportError(target.relative);
+  const strict = protectedNames !== "lenient";
+  if (protectedNames && isProtectedExportPath(target.relative, { strict })) throw protectedExportError(target.relative);
   const handle = await open(target.path, constants.O_RDONLY | constants.O_NOFOLLOW);
   try {
     const [openedReal, stat] = await Promise.all([
@@ -48,7 +52,7 @@ export async function openConfinedFile(root, relative, { protectedNames = true }
       throw new Error("That file moved outside this channel's working folder.");
     }
     const physicalRelative = path.relative(target.rootReal, openedReal).split(path.sep).join("/");
-    if (protectedNames && isProtectedExportPath(physicalRelative)) throw protectedExportError(target.relative);
+    if (protectedNames && isProtectedExportPath(physicalRelative, { strict })) throw protectedExportError(target.relative);
     return { handle, stat, relative: target.relative, name: path.basename(target.relative), realPath: openedReal, rootReal: target.rootReal };
   } catch (error) {
     await handle.close().catch(() => {});

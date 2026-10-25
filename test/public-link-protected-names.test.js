@@ -47,6 +47,26 @@ test("the export predicate refuses hidden, managed and credential-shaped paths a
   }
   // The WRITE policy is unchanged: .env stays editable in the explorer, it just cannot be exported.
   assert.equal(isProtectedWritePath(".env"), false);
+  // The lenient form (slack_share_file, Composio staging, mail attachments, the Slack footer
+  // download) still refuses every hidden path and credential-shaped file, but lets the channel's
+  // instruction/memory files and a report that merely mentions a token through.
+  for (const bad of [".env", ".claude/settings.json", ".git/config", "work/.hidden/x.txt", "work/server.pem", "work/credentials.json", "id_rsa", "", ".."]) {
+    assert.equal(isProtectedExportPath(bad, { strict: false }), true, `lenient refuses ${bad}`);
+  }
+  for (const fine of ["CLAUDE.md", "AGENTS.md", "MEMORY.md", "reports/token-usage.csv", "secrets-rotation-plan.md", "work/REPORT.md"]) {
+    assert.equal(isProtectedExportPath(fine, { strict: false }), false, `lenient allows ${fine}`);
+    assert.equal(isProtectedExportPath(fine), fine === "work/REPORT.md" ? false : true, `strict decides ${fine}`);
+  }
+});
+
+test("openConfinedFile's lenient door lets MEMORY.md out but never a hidden or credential-shaped file", async () => {
+  writeFileSync(path.join(ROOT, "MEMORY.md"), "# memory\n");
+  const ok = await openConfinedFile(ROOT, "MEMORY.md", { protectedNames: "lenient" });
+  await ok.handle.close();
+  await assert.rejects(() => openConfinedFile(ROOT, "MEMORY.md"), /protected file/);
+  for (const bad of [".env", "docs/cfg/settings.json", "work/server.pem"]) {
+    await assert.rejects(() => openConfinedFile(ROOT, bad, { protectedNames: "lenient" }), /protected file/, bad);
+  }
 });
 
 test("openConfinedFile refuses protected names by requested path AND by physical path", async () => {

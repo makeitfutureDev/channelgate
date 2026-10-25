@@ -81,16 +81,19 @@ test("the visible workspace root, its platform folders and other conversations' 
   assert.match(forbiddenWorkDirReason(path.join(VISIBLE, "slack"), opts), /platform folder/);
   assert.equal(forbiddenWorkDirReason(MY_DEFAULT, opts), "", "the channel's own default folder");
   assert.match(forbiddenWorkDirReason(OTHER_DEFAULT, opts), /another conversation's work folder \(wd-other\)/);
-  assert.match(forbiddenWorkDirReason(OTHER_CUSTOM, opts), /another conversation's work folder \(wd-other\)/);
-  assert.match(forbiddenWorkDirReason(path.join(HOME, "Code"), opts), /parent of another conversation's work folder \(wd-other\)/);
-  // A SUBFOLDER of another conversation's folder is a legitimate shared project.
+  // Another conversation's CUSTOM folder is an admin's explicit choice twice over (two channels on
+  // one repository), so it, its parent and its subfolders stay allowed; only the gateway-made
+  // default folders are each other's.
+  assert.equal(forbiddenWorkDirReason(OTHER_CUSTOM, opts), "");
+  assert.equal(forbiddenWorkDirReason(path.join(HOME, "Code"), opts), "");
   assert.equal(forbiddenWorkDirReason(ensure(path.join(OTHER_CUSTOM, "packages", "api")), opts), "");
+  assert.match(forbiddenWorkDirReason(path.dirname(OTHER_DEFAULT), opts), /platform folder|parent of another conversation's work folder/);
   // The other channel sees the same thing from its side, and its own folders are allowed.
   assert.equal(forbiddenWorkDirReason(OTHER_CUSTOM, { slug: other.slug, home: HOME }), "");
   assert.match(forbiddenWorkDirReason(MY_DEFAULT, { slug: other.slug, home: HOME }), /another conversation's work folder \(wd-mine\)/);
   // The store-backed list names both folders of the other channel and never the asking one's.
   const listed = otherChannelWorkDirs({ exceptSlug: mine.slug }).map((c) => c.path);
-  assert.ok(listed.includes(OTHER_DEFAULT) && listed.includes(OTHER_CUSTOM));
+  assert.ok(listed.includes(OTHER_DEFAULT) && !listed.includes(OTHER_CUSTOM), "default folders only");
   assert.ok(!listed.includes(MY_DEFAULT));
   // An explicit list replaces the store lookup.
   assert.equal(forbiddenWorkDirReason(OTHER_CUSTOM, { ...opts, channels: [] }), "");
@@ -102,7 +105,7 @@ test("set_channel_workdir refuses the daemon's trees and other channels' folders
   registerChannelAdmin({ registerTool: (name, _def, handler) => tools.set(name, handler) }, ctx);
   const set = tools.get("set_channel_workdir");
   // (The home-relative trees are proven above with the home override; the tool uses the real home.)
-  for (const [dir, why] of [[GATEWAY_ROOT, /gateway runtime root/], [OTHER_CUSTOM, /another conversation's work folder/], [VISIBLE, /workspace root/], [ARTIFACTS, /runtime artifact tree/]]) {
+  for (const [dir, why] of [[GATEWAY_ROOT, /gateway runtime root/], [OTHER_DEFAULT, /another conversation's work folder/], [VISIBLE, /workspace root/], [ARTIFACTS, /runtime artifact tree/]]) {
     const result = await set({ path: dir });
     assert.match(result.content[0].text, /^Refused: /, dir);
     assert.match(result.content[0].text, why, dir);
@@ -146,7 +149,7 @@ test("an already-stored forbidden work folder is never mounted: the spawn fails 
   const settings = { fullAccessHome: false, egressMode: "proxy", image: "test-workdir-boundary" };
   const meta = { ...(await getChannelMeta(mine.slug)), platform: "slack", channelId: "C_WD_MINE" };
   // Stored out of band (the way a pre-boundary install would hold it); the resolver is the door.
-  for (const dir of [GATEWAY_ROOT, OTHER_CUSTOM]) {
+  for (const dir of [GATEWAY_ROOT, OTHER_DEFAULT]) {
     assert.throws(() => resolveRuntime(mine.slug, { ...meta, workDir: dir }, { settings }), (error) => {
       assert.match(error.message, /never mounts that into a container/);
       assert.match(error.message, /set_channel_workdir/);
@@ -157,8 +160,10 @@ test("an already-stored forbidden work folder is never mounted: the spawn fails 
   // The hot-path resolver falls back to the default folder for the static trees rather than
   // provisioning the lockdown file inside them.
   assert.equal(effectiveWorkDir(mine.slug, { ...meta, workDir: GATEWAY_ROOT }), MY_DEFAULT);
-  // An ordinary custom folder still resolves and mounts as before.
+  // An ordinary custom folder still resolves and mounts as before — including one another
+  // conversation also uses (a shared repository).
   const target = resolveRuntime(mine.slug, { ...meta, workDir: PROJECT }, { settings });
   assert.equal(target.workDir, PROJECT);
+  assert.equal(resolveRuntime(mine.slug, { ...meta, workDir: OTHER_CUSTOM }, { settings }).workDir, OTHER_CUSTOM);
   assert.equal(forbiddenWorkDirMessage(mine.slug, GATEWAY_ROOT, "x").includes("clear_channel_workdir"), true);
 });

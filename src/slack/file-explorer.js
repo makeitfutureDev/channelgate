@@ -182,7 +182,16 @@ export function isProtectedWritePath(relative = "") {
 // refused along with every protected/credential-shaped name, because the folder is where the
 // channel's own credentials live and an export cannot be taken back. Browsing and in-channel
 // reading are untouched: this is about bytes going OUT.
-export function isProtectedExportPath(relative = "") {
+//
+// Two strengths. `strict` (the default) is for an UNAUTHENTICATED destination — a public link —
+// and also refuses the managed `CLAUDE.md`/`AGENTS.md`/`MEMORY.md` and any name that merely
+// mentions a secret/token/credential. The lenient form is for doors an authorized person drives
+// into a place they already reach — the Slack thread, their own browser download, their own
+// Composio or mail account — where a report called `token-usage.csv` or the channel's `MEMORY.md`
+// is a legitimate thing to send; it still refuses every hidden path and every credential-shaped
+// file, which is what a prompt-injected turn would try to push out.
+const CREDENTIAL_EXACT = new Set(["credentials.json", "secrets.json", "token.json", "tokens.json", "id_rsa", "id_ed25519", "id_ecdsa", "id_dsa"]);
+export function isProtectedExportPath(relative = "", { strict = true } = {}) {
   let clean;
   try {
     clean = normalizeRelativePath(relative);
@@ -190,8 +199,10 @@ export function isProtectedExportPath(relative = "") {
     return true;
   }
   if (!clean) return true;
-  if (isManagedClaudePath(clean)) return true;
-  return clean.split("/").filter(Boolean).some((part) => part.startsWith(".") || isProtectedName(part));
+  if (strict && isManagedClaudePath(clean)) return true;
+  return clean.split("/").filter(Boolean).some((part) =>
+    part.startsWith(".") ||
+    (strict ? isProtectedName(part) : CREDENTIAL_EXACT.has(part) || PROTECTED_EXTENSIONS.has(path.extname(part).toLowerCase())));
 }
 
 function isProtectedResolvedPath(resolved) {

@@ -9,9 +9,12 @@
 // the next container would mount it. This module is the one place that says no.
 //
 // The rule is symmetric for the gateway's own trees (a folder that CONTAINS the gateway root is as
-// bad as one inside it) and parent-or-equal for other channels' folders (their subfolders are a
-// legitimate shared project). The channel's own folders are always allowed. Nonexistent paths are
-// "not forbidden" here — existence is the caller's check — and nothing in this module throws.
+// bad as one inside it) and parent-or-equal for other channels' DEFAULT folders (the gateway-made
+// `~/ChannelGate/<platform>/<slug>`, which carries that channel's uploads, memory and lockdown
+// file). Another channel's CUSTOM folder is deliberately not on the list: two conversations
+// pointed at the same repository by their admins is an explicit, legitimate choice, and so is a
+// subfolder of it. The channel's own folders are always allowed. Nonexistent paths are "not
+// forbidden" here — existence is the caller's check — and nothing in this module throws.
 import os from "node:os";
 import path from "node:path";
 import { realpathSync } from "node:fs";
@@ -56,9 +59,9 @@ export function sensitiveWorkDirRoots({ home = os.homedir() } = {}) {
   ];
 }
 
-// Every OTHER channel's folders (default + custom), read synchronously so the runtime resolver
-// (sync, called at every spawn) can consult it. A store that cannot be read yields nothing rather
-// than an exception: the static roots above still apply.
+// Every OTHER channel's DEFAULT folder, read synchronously so the runtime resolver (sync, called
+// at every spawn) can consult it. Custom folders are not listed (see the module comment). A store
+// that cannot be read yields nothing rather than an exception: the static roots above still apply.
 export function otherChannelWorkDirs({ exceptSlug = "" } = {}) {
   const out = [];
   try {
@@ -83,8 +86,6 @@ export function otherChannelWorkDirs({ exceptSlug = "" } = {}) {
       const meta = metas.get(slug) || {};
       const platform = meta.platform || entry.platform;
       out.push({ slug, path: realOrResolved(workspaceFolder(slug, platform)) });
-      const custom = String(meta.workDir || "").trim();
-      if (custom && path.isAbsolute(custom)) out.push({ slug, path: realOrResolved(custom) });
     }
   } catch {
     /* no store yet (first boot, tests without a database) — the static roots still apply */
