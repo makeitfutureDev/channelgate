@@ -24,6 +24,60 @@
   member's next turn in a fresh thread reports the new engine. Repeat with the policy at "users":
   the member's pickers appear and a member's switch takes effect. PASS when both engines show the
   expected spawn evidence.
+## Login backoff behind a reverse proxy (2026-10-25)
+
+- [x] Automated: `node scripts/run-tests.mjs test/web-security.test.js test/settings-save-version.test.js
+  test/admin-auth-bind.test.js test/approval-links.test.js` — `clientKey` ignores both forwarded
+  headers with no proxy declared (loopback and non-loopback sockets alike); `cloudflare` reads
+  `CF-Connecting-IP` only; `xff` reads the LAST `X-Forwarded-For` hop; the stored setting wins over
+  `CG_TRUST_PROXY`; legacy `1`/`true`/`yes` mean `xff`; an unknown value trusts nothing; the global
+  cap holds fresh keys at the maximum delay after N failures and drains with the window, is
+  switchable off, and defaults to 50 per 10 minutes; the admin API persists `""`/`cloudflare`/`xff`,
+  maps `1` to `xff`, refuses unknown values with 400 and writes nothing; the Settings page paints
+  and saves the select.
+- [x] `npm run check:static`, `npm run secret-scan`.
+- [ ] Live, engine-independent (browser + curl): on the deployment (Cloudflare tunnel in front) set
+  Settings → Connection → Behind a reverse proxy to **Cloudflare tunnel** and save. From a browser
+  through the public hostname enter three wrong admin passwords; the fourth attempt is delayed
+  (the page reports the wait) while a colleague on a different network can still sign in at once.
+  Then, against the LAN/loopback bind only (Cloudflare overwrites the header on the public path),
+  `for i in 1 2 3 4 5 6; do curl -s -o /dev/null -w '%{http_code}\n' -X POST http://127.0.0.1:4747/api/login
+  -H 'content-type: application/json' -H "CF-Connecting-IP: 10.0.0.$i" -d '{"password":"wrong"}'; done`
+  with the setting at **None**: every request shares the loopback bucket, so the 4th onwards is
+  429/delayed regardless of the spoofed header. PASS when both hold and the setting round-trips
+  after a daemon restart.
+## Web and Slack surface hardening, batch 1 (2026-10-25)
+
+- [x] Automated: `node scripts/run-tests.mjs test/web-hardening.test.js test/access-settings.test.js
+  test/admin-auth-bind.test.js test/admin-navigation.test.js test/run-control-auth.test.js
+  test/file-explorer-auth.test.js test/asset-versioning.test.js` — `/API/...` refused by the
+  lockdown / 401 branch and never routed; CSP + nosniff + frame denial on the shell and login page,
+  the import-map hash matching the served map, no inline script or handler in either page; a
+  malformed JSON body answers a bare 400 and the final 4-arity error handler is registered; the
+  internal IPC secret compared with `timingSafeEqualStr`; a manager's Settings save that selects
+  Admin is refused and writes nothing while an admin's succeeds, a manager keeps Admin when
+  changing flags and may step down, the picker lists "Admin" only to an admin or when current;
+  the `cg_bgjob_status` handler calls `authorizedControlEntry` and compares the job's slug; share /
+  send-to-me pass `rootPath`, preview and edit open through the `/proc/self/fd` re-check; the
+  License card escapes; the unit sets `NODE_ENV=production`.
+- [x] `npm run check:static`, `npm run secret-scan`, `npm audit --omit=dev` (0 vulnerabilities).
+- [ ] Live, engine-independent (browser): sign in to the admin UI through the deployment's public
+  hostname. Expected: the page renders and navigates normally (Overview, Conversations, Settings,
+  Skills, System health); the browser console shows no CSP violation; `curl -i https://<host>/`
+  shows `Content-Security-Policy: default-src 'self'; script-src 'self' 'sha256-…'` and
+  `X-Frame-Options: DENY`; `curl -i https://<host>/API/settings` answers 401 (password set) with
+  no settings payload; `curl -i -X POST https://<host>/api/login -H 'content-type: application/json'
+  -d '{bad'` answers 400 with `{"error":…}` and no stack. PASS when all four hold.
+- [ ] Live, Slack, engine-independent: in a test channel with `manageAccess: members` open Settings
+  as an approved NON-admin member. Expected: the Mode picker offers Read-only and Worker only;
+  switching Auto on succeeds and the channel stays in its mode. As an admin, pick Admin: the channel
+  enters Admin mode. Back as the member: the picker now shows Admin (current), ticking Network
+  succeeds and the channel stays in Admin mode, picking Worker steps it down. PASS when every step
+  matches and the audit events name the clicker.
+- [ ] Live, Slack, Claude AND Codex: in a Worker channel start `run_in_background` with
+  `sleep 90; echo done` (one run per engine). As an approved member click "Check status": an
+  ephemeral status appears. As a workspace member who is NOT approved and not a guest of the
+  channel, click the same button: nothing is posted. PASS when both hold for both engines.
 
 ## Harness default effort (2026-10-23)
 

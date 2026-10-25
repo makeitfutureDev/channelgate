@@ -40,7 +40,8 @@ export const APPROVAL_LINK_PRINCIPAL = "link";
 // exponential backoff as a failed admin login. A CORRECT token never records a failure, so a
 // person retrying their own link is never slowed down. "Per-IP" is per REAL client: these URLs are
 // opened from the internet through a loopback tunnel, and keying on the socket would let six bad
-// tokens from anywhere lock out every legitimate link (see clientKey in ../security.js).
+// tokens from anywhere lock out every legitimate link — once the operator has declared the proxy
+// whose header names the client (see clientKey in ../security.js and the `trustProxy` setting).
 const DEFAULT_LIMITER = { freeAttempts: 5, baseDelayMs: 1_000, maxDelayMs: 60_000 };
 
 const escapeHtml = (value) =>

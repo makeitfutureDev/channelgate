@@ -6,7 +6,7 @@
 // traversal, and verify the resolved target still lives under the root. Names are not filtered.
 import path from "node:path";
 import { spawn } from "node:child_process";
-import { chmod, mkdir, open, readFile, readdir, realpath, rename, rm, stat, writeFile } from "node:fs/promises";
+import { chmod, constants, mkdir, open, readFile, readdir, realpath, rename, rm, stat, writeFile } from "node:fs/promises";
 import { createHash, randomUUID } from "node:crypto";
 import { MAX_FILE_UPLOAD_BYTES } from "./upload.js";
 
@@ -735,12 +735,30 @@ export async function saveBrowserUploadedFile(root, baseRelative, uploadRelative
   return { ...(await writeUploadedBytes(directory, name, bytes)), overwritten: false, sourceRelative: clean };
 }
 
+// Open a file `resolveVisiblePath` just proved, without trusting that proof past the open: the
+// folder is writable by the channel's own container between the lookup and the open, so the
+// final component is opened O_NOFOLLOW and the kernel-held descriptor is re-resolved through
+// /proc/self/fd and required to still sit under the root. The caller owns the returned handle.
+// (src/gateway/confined-file.js does the same for the export paths; it imports this module, so
+// the helper lives here rather than the other way round.)
+async function openVisibleFile(file) {
+  const handle = await open(file.path, constants.O_RDONLY | constants.O_NOFOLLOW);
+  try {
+    const [openedReal, info] = await Promise.all([realpath(`/proc/self/fd/${handle.fd}`), handle.stat()]);
+    if (!info.isFile() || !isWithin(file.rootReal, openedReal)) throw new Error("That file moved outside this channel's working folder.");
+    return handle;
+  } catch (error) {
+    await handle.close().catch(() => {});
+    throw error;
+  }
+}
+
 export async function readFilePreview(root, relative) {
   const file = await resolveVisiblePath(root, relative, { kind: "file" });
   const length = Math.min(PREVIEW_BYTES, file.stat.size);
   const bytes = Buffer.alloc(length);
   if (length) {
-    const handle = await open(file.path, "r");
+    const handle = await openVisibleFile(file);
     try {
       await handle.read(bytes, 0, length, 0);
     } finally {
@@ -769,7 +787,13 @@ export async function readEditableFile(root, relative, options = {}) {
   const file = await resolveVisiblePath(root, relative, { kind: "file" });
   if (isProtectedResolvedPath(file)) throw new Error("Protected/internal files are read-only in this explorer.");
   if (file.stat.size > maxBytes) throw new Error(`${label} is limited to ${maxChars.toLocaleString()} characters and ${maxBytes.toLocaleString()} bytes.`);
-  const bytes = await readFile(file.path);
+  const handle = await openVisibleFile(file);
+  let bytes;
+  try {
+    bytes = await handle.readFile();
+  } finally {
+    await handle.close();
+  }
   if (bytes.length > maxBytes) throw new Error(`${label} is limited to ${maxChars.toLocaleString()} characters and ${maxBytes.toLocaleString()} bytes.`);
   if (bytes.includes(0)) throw new Error("This file contains NUL bytes, so it can't be edited as text.");
   let text;

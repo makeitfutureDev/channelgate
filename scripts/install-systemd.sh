@@ -166,6 +166,7 @@ Group=$SERVICE_USER
 WorkingDirectory=$APP_DIR
 Environment=CHANNELGATE_DIR=$SERVICE_HOME
 Environment=HOME=$SERVICE_HOME
+Environment=NODE_ENV=production
 Environment=PATH=$SERVICE_PATH
 Environment=XDG_RUNTIME_DIR=$SERVICE_RUNTIME_DIR
 Environment=DBUS_SESSION_BUS_ADDRESS=unix:path=$SERVICE_RUNTIME_DIR/bus

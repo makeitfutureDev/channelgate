@@ -20,6 +20,55 @@
   always set them; elsewhere a non-admin may only under the "users" policy. Someone who may not
   change them sees the current values and the 🔒 policy line instead of pickers, and a crafted
   payload is refused with the same message and writes nothing.
+## Login backoff behind a reverse proxy (security audit batch 3)
+
+- The admin login backoff and the approval-link token backoff key each client on the header of
+  the proxy the operator DECLARED, never on a header a loopback socket happened to carry. Settings
+  → Connection → *Behind a reverse proxy* (`trustProxy` in settings.json, `CG_TRUST_PROXY` in
+  `.env`; the setting wins) takes `""` (none: the connecting address is the client),
+  `cloudflare` (`CF-Connecting-IP`, which cloudflared overwrites on every request) or `xff` (the
+  LAST `X-Forwarded-For` hop, the one the trusted proxy appended, never the first, which the client
+  typed). The legacy `CG_TRUST_PROXY=1` means `xff`. An unknown value trusts nothing; the admin API
+  refuses it with 400.
+- A global failure cap bounds guessing independently of the key: more than 50 failed attempts in
+  ten minutes across all clients puts every login on the maximum delay until the window drains, so
+  a caller who can mint fresh buckets (a botnet, or a forged header behind a misdeclared proxy) is
+  still bounded, and so is the scrypt work an unauthenticated caller can cause.
+- Documented in `docs/OPERATIONS.md` → Reverse proxies and tunnels and in INSTALL.md: without the
+  setting, all remote logins behind a proxy share one backoff bucket.
+## Web and Slack surface hardening (security audit batch 1)
+
+- **Admin mode is admin-only on every surface.** The Slack Settings mode control refuses to switch
+  a channel into Admin mode unless the clicker is a current organization admin, the same rule
+  `/mode admin` and the `set_channel_admin_mode` tool already enforce. A channel manager keeps
+  every other control in a channel that is already in Admin mode (changing Auto, Lean or the
+  network switch leaves the mode alone) and may step the channel down to Worker or Read-only; the
+  "Admin" option is listed only for someone who may enable it or when it is the current mode.
+- **Case-variant URLs never reach the admin router.** Express case-sensitive routing is on, and the
+  Host/Origin guard, the no-password lockdown, the 401 branch and the run-API key gate all compare
+  lowercased paths, so `/API/settings` is refused exactly like `/api/settings` instead of slipping
+  past them into the router.
+- **Security headers.** Every response carries `X-Content-Type-Options: nosniff`,
+  `X-Frame-Options: DENY` and `Referrer-Policy: same-origin`. The admin shell and the login page are
+  served with a Content-Security-Policy that admits same-origin scripts only plus the import map
+  by content hash (no inline script anywhere; the login handler lives in `public/login.js`),
+  same-origin styles with inline attributes, same-origin fonts, images and connections,
+  `frame-ancestors 'none'`, `object-src 'none'`.
+- **No stack traces.** One Express error handler answers unexpected failures with a bare 500 (logged
+  server-side) and keeps exposable client errors such as a malformed JSON body as their 4xx with
+  the message only; the systemd unit also sets `NODE_ENV=production`. `/resume` requires the admin
+  session; the `/internal/*` IPC secret is compared in constant time.
+- **Background-job status button.** "Check status" on a background job card runs through the same
+  authorization gate as `/status` (admin, approved, or an explicit guest of that channel) and only
+  reports a job that belongs to that channel; the log-tail fallback reads the channel's own log.
+- **File explorer exports re-prove the file.** Share, Send to me, Preview and Edit open the resolved
+  file `O_NOFOLLOW` and re-resolve the kernel descriptor through `/proc/self/fd`, refusing a file
+  that no longer sits under the channel root, which closes the symlink-swap race the agent-side
+  export tools already closed.
+- **License card.** The organization, tier and limit values from the licensing platform are
+  HTML-escaped before rendering.
+- **Dependencies.** `npm audit fix` applied: undici, zod, hono, fast-uri, body-parser and
+  ip-address moved to their patched releases; `npm audit --omit=dev` reports no vulnerabilities.
 
 ## Admin access to Slack controls
 

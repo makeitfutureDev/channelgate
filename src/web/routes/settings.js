@@ -33,6 +33,7 @@ import {
   getOrgAccessGrants,
   getChannelTemplate,
   APPROVAL_LINK_MODES,
+  normalizeTrustProxy,
   AI_TESTING_USER_ID_RE,
   CHANNEL_ACCESS_MODES,
   MODEL_CHANGE_ACCESS_MODES,
@@ -304,6 +305,12 @@ export function createSettingsRouter({
       if (typeof body.composioMcpUrl === "string") patch.composioMcpUrl = body.composioMcpUrl.trim();
       if (typeof body.toolboxMcpUrl === "string") patch.toolboxMcpUrl = body.toolboxMcpUrl.trim();
       if (typeof body.publicUrl === "string") patch.publicUrl = normalizePublicUrl(body.publicUrl);
+      // Which proxy header the login/approval backoff may believe: "" / cloudflare / xff.
+      if (typeof body.trustProxy === "string") {
+        const mode = normalizeTrustProxy(body.trustProxy);
+        if (mode === null) return res.status(400).json({ error: "Behind a reverse proxy must be one of: none, cloudflare, xff" });
+        patch.trustProxy = mode;
+      }
       // Link-based approvals: auto (default) / always / off. See src/web/approval-links.js.
       if (typeof body.approvalLinks === "string" && APPROVAL_LINK_MODES.includes(body.approvalLinks)) patch.approvalLinks = body.approvalLinks;
       if (body.aiTestingUsers !== undefined) {
