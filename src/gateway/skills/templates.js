@@ -98,7 +98,9 @@ export function channelProvidedSkills(meta = {}) {
 export function channelSkillGrants(meta = {}) {
   const own = sanitizeSkillGrantNames(meta?.skills || []);
   const template = templateOfMeta(meta);
-  const scoped = channelScopedSkills(meta?.channelId);
+  // A Slack code channel is a child of the conversation it was opened from: catalog skills scoped
+  // to that ORIGIN channel id are its too (the two share one folder, so their grants must agree).
+  const scoped = channelScopedSkills(meta?.codeChannel?.originChannelId || meta?.channelId);
   if (!template && !scoped.length) return own;
   const fromTemplate = template ? resolveTemplateSkills(template).skills.map((s) => s.slug) : [];
   const off = channelSkillsOff(meta);

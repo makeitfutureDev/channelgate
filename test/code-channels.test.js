@@ -197,6 +197,21 @@ test("opening registers a child channel: Slack create linked to the origin, inhe
   assert.match(core.codeChannelKickoffPrompt(meta.codeChannel), /Add the export button/);
 });
 
+test("channel-scoped catalog skills of the origin count for the code channel, so the shared folder passes the grant guard", async () => {
+  const { channelSkillGrants } = await import("../src/gateway/skills/templates.js");
+  const { assertWorkspaceSkillsCompatible } = await import("../src/gateway/skills/workspace-sync.js");
+  const catalog = await import("../src/gateway/skills/catalog.js");
+  // A catalog skill scoped to the ORIGIN channel id (the repo section of that channel).
+  catalog.putSkillRevision({ files: [{ path: "SKILL.md", content: "---\nname: Origin Section Skill\ndescription: scoped to the origin\n---\n\n# Origin Section Skill\n" }], ownerKind: "local", channelScope: ORIGIN });
+  const originMeta = await getChannelMeta(originSlug);
+  assert.ok(channelSkillGrants(originMeta).includes("origin-section-skill"));
+  const entry = await getChannelEntry(CODE);
+  const meta = await getChannelMeta(entry.slug);
+  assert.deepEqual(channelSkillGrants(meta), channelSkillGrants(originMeta));
+  await assertWorkspaceSkillsCompatible(entry.slug, meta);
+  await assertWorkspaceSkillsCompatible(originSlug, originMeta);
+});
+
 test("a change in the origin reaches the code channel on the next sync, and an unchanged origin writes nothing", async () => {
   const entry = await getChannelEntry(CODE);
   const before = await getChannelMeta(entry.slug);
