@@ -328,11 +328,11 @@ test("switching a channel to Admins only or Locked drops the seeded approved mem
   const seeded = { ...base, access: "approved", allowedUsers: ["UMEMBER", "UMEMBER2", "UGUEST", "UADMIN"] };
   for (const access of ["admins", "none"]) {
     const narrowed = restrictedAccessAllowedUsers(seeded, { access, allowedUsers: seeded.allowedUsers }, users);
-    assert.deepEqual(narrowed, { allowedUsers: ["UGUEST"], dropped: 3 }, access);
+    assert.deepEqual(narrowed, { allowedUsers: ["UGUEST", "UADMIN"], dropped: 2 }, access);
     const after = { ...seeded, access, allowedUsers: narrowed.allowedUsers };
     assert.equal(isAuthorized(after, "UMEMBER", false, { isApprovedUser: true }), false, `${access}: a seeded member is out`);
     assert.equal(isAuthorized(after, "UGUEST", false, {}), true, `${access}: the explicit guest stays in`);
-    assert.equal(isAuthorized(after, "UADMIN", false, { isAdminUser: true }), access === "admins", `${access}: admins follow the policy`);
+    assert.equal(isAuthorized(after, "UADMIN", false, { isAdminUser: true }), true, `${access}: an admin on the list is not locked out by the switch`);
   }
   // Not a narrowing: nothing is dropped, and the list is left exactly as submitted.
   assert.equal(restrictedAccessAllowedUsers(seeded, { access: "approved", allowedUsers: seeded.allowedUsers }, users), null);

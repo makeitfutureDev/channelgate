@@ -6,8 +6,10 @@
   "Approved members" policy every approved member is seeded into the channel's guest list so the
   Access page can show them; the run gate honours that list before the policy. Narrowing the
   policy — from the Slack Access control or the admin UI's channel save — now evicts those seeded
-  (approved) users from the list inside the same metadata transaction and keeps only explicit
-  guests (un-approved users), which remain the one deliberate way into a restricted channel. The
+  (approved, non-admin) users from the list inside the same metadata transaction and keeps the
+  explicit guests (un-approved users), which remain the one deliberate way into a restricted
+  channel, and the admins (admitted by role under "Admins only"; under "Locked" the admin who
+  locks the channel keeps their own grant instead of locking themselves out of its controls). The
   Slack save notice reports how many members were removed, an audit event
   (`channel_access_members_evicted`) records the count only, and widening the policy back does not
   re-admit anyone by itself (seeding resumes on the next message). The org-wide access reset still

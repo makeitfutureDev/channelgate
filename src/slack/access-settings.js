@@ -103,17 +103,20 @@ export function memberCanUse(meta = {}, userId, who = {}) {
 // member of the channel is seeded into `allowedUsers` (message-pipeline.js syncAllowedFromMembers)
 // so the Access page can show them; `isAuthorized` honours that list before the policy, so a later
 // switch to "admins" or "none" would leave every seeded member admitted. When a save moves the
-// policy from "approved" to a narrower one, drop the approved users (the seed) from the list and
-// keep only the un-approved ones — an explicit guest grant is the one deliberate way into a
-// restricted channel and must survive. Returns null when nothing is to be dropped. `users` is the
-// user store map (read before the metadata transaction; approval does not change inside it).
+// policy from "approved" to a narrower one, drop the approved NON-admin users (the seed) from the
+// list and keep the un-approved ones — an explicit guest grant is the one deliberate way into a
+// restricted channel and must survive — and the admins: under "admins" their role admits them
+// anyway, and under "none" (where even admins need a grant) the admin who locks the channel must
+// not lock themselves out of its Slack controls. Returns null when nothing is to be dropped.
+// `users` is the user store map (read before the metadata transaction; approval does not change
+// inside it).
 export function restrictedAccessAllowedUsers(current = {}, patch = {}, users = {}) {
   const before = current.access || "approved";
   const after = patch.access || before;
   if (before !== "approved" || !["admins", "none"].includes(after)) return null;
   const list = Array.isArray(patch.allowedUsers) ? patch.allowedUsers : Array.isArray(current.allowedUsers) ? current.allowedUsers : [];
-  const approvedIn = (id) => Boolean(users?.[id]?.approved || users?.[id]?.isAdmin);
-  const kept = list.filter((id) => !approvedIn(id));
+  const seededMember = (id) => Boolean(users?.[id]?.approved) && !users?.[id]?.isAdmin;
+  const kept = list.filter((id) => !seededMember(id));
   if (kept.length === list.length) return null;
   return { allowedUsers: kept, dropped: list.length - kept.length };
 }
