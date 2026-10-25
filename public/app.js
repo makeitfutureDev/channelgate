@@ -3891,6 +3891,7 @@ function readSettingsForm() {
     composioMcpUrl: document.getElementById("set-composio").value,
     toolboxMcpUrl: document.getElementById("set-toolbox").value,
     publicUrl: document.getElementById("set-public-url").value,
+    trustProxy: document.getElementById("set-trust-proxy").value,
     approvalLinks: document.getElementById("set-approval-links").value,
     aiTestingUsers: aiTestingPicker?.getValues() || [],
     ...(document.getElementById("set-gchat-key").value.trim() ? { googleChatServiceAccountJson: document.getElementById("set-gchat-key").value } : {}),
@@ -4020,6 +4021,7 @@ function paintSettings(s) {
   document.getElementById("set-composio").value = s.composioMcpUrl || "";
   document.getElementById("set-toolbox").value = s.toolboxMcpUrl || "";
   document.getElementById("set-public-url").value = s.publicUrl || "";
+  document.getElementById("set-trust-proxy").value = s.trustProxy || "";
   document.getElementById("set-approval-links").value = s.approvalLinks || "auto";
   aiTestingPicker = mountUserPicker(document.getElementById("set-ai-testing-users"), {
     users: USERS, selected: s.aiTestingUsers || [], onChange: markSettingsDirty,

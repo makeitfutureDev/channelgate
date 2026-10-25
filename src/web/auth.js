@@ -187,10 +187,11 @@ export function noPasswordLockdown(req, res, next) {
 // Which identity the login backoff counts against. Behind a reverse proxy or tunnel every request
 // arrives from 127.0.0.1, so keying on the socket puts all remote clients in ONE bucket: an
 // attacker's failures lock out the real admin, and distributed guessing looks like one client.
-// The forwarding headers fix that and are honoured exactly where they cannot be forged — from a
-// loopback socket, which only the proxy in front and this host's own processes can open — or when
-// the operator declares a trusted proxy elsewhere on the network (CG_TRUST_PROXY). One helper,
-// shared with the approval-link router, so both limiters bucket callers the same way.
+// The forwarding header of the proxy the operator DECLARED (`trustProxy`: cloudflare → the
+// CF-Connecting-IP it overwrites, xff → the last X-Forwarded-For hop it appended) fixes that; an
+// undeclared header is a client's claim and is ignored, and a global failure cap bounds guessing
+// either way. One helper, shared with the approval-link router, so both limiters bucket callers
+// the same way.
 export function loginKey(req) {
   return clientKey(req);
 }

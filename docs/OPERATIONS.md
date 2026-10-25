@@ -96,26 +96,29 @@ allowed past the DNS-rebinding guard (extra names go in `CG_ALLOWED_HOSTS`).
 **Client addresses behind that hop.** Every request then arrives on a loopback socket, so
 `req.ip` — and Express's idea of the client — is `127.0.0.1` for every caller on earth. Two things
 count failures per address: the admin login backoff and the approval-link token backoff. Keyed on
-the socket they would share ONE bucket, and a handful of bad tokens or passwords from anywhere
-would lock out every legitimate admin and every valid approval link. So both read the real client
-through one helper (`clientKey` in `src/web/security.js`): `CF-Connecting-IP` first, then the first
-hop of `X-Forwarded-For`, and **only when the socket itself is loopback** — from a non-loopback
-socket those headers are whatever the client typed and are ignored. A value that is not a valid IP
-address is ignored too.
+the socket they share ONE bucket, and a handful of bad tokens or passwords from anywhere delays
+every legitimate admin and every valid approval link. So **declare the proxy** in *Settings →
+Connection → Behind a reverse proxy* (`trustProxy` in settings.json, or `CG_TRUST_PROXY` in
+`.env`; the setting wins): `cloudflare` makes both limiters key on `CF-Connecting-IP`, which
+cloudflared overwrites on every request; `xff` keys on the **last** hop of `X-Forwarded-For`, the
+one your nginx/caddy appended (never the first, which the client typed). Without it, all remote
+logins share one backoff bucket. A loopback socket on its own is deliberately NOT taken as proof
+of a proxy — any process on the host or any tunnel opens one — so an undeclared header is ignored,
+and a value that is not a valid IP address is ignored too. Independently of the key, more than 50
+failed attempts in ten minutes across all clients puts every login on the maximum delay until the
+window drains, which bounds guessing even where a header is misdeclared.
 
 Notes for operators:
 
 - Express's app-wide `trust proxy` is deliberately NOT enabled: it would also re-point
   `req.secure` / `req.protocol` / `req.hostname` at client-supplied headers (the Host/Origin guard
   and the session cookie's `Secure` flag read those headers themselves, deliberately), and it knows
-  nothing about `CF-Connecting-IP`.
-- If your proxy runs on ANOTHER host, the socket is not loopback and the headers are ignored by
-  default. Set `CG_TRUST_PROXY=1` in `.env` to honour `X-Forwarded-For` there — only do this when a
-  proxy you control rewrites that header, or clients can pick their own limiter bucket.
-- Make the proxy set `X-Forwarded-For` rather than append to a client-supplied one. Where it
-  appends (Cloudflare does), `CF-Connecting-IP` is the unforgeable value and is preferred here; a
-  caller who spoofs the first XFF hop can only shed its own backoff, never push someone else into
-  one.
+  nothing about `CF-Connecting-IP`. The `Secure` cookie decision still reads `x-forwarded-proto`
+  on its own; that only ever makes the cookie stricter.
+- Only declare a proxy you control and that sets the header on EVERY request. If clients can reach
+  the daemon's port directly (a LAN bind) while `xff` is declared, a caller could append its own
+  hop; keep the bind on loopback or firewall the port, as the rest of this guide assumes.
+- The legacy `CG_TRUST_PROXY=1` still works and means `xff`.
 
 ## The ChannelGate rename migration
 
