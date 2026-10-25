@@ -230,8 +230,10 @@ For a shared workflow, start with one dedicated channel and one representative t
    history in the admin UI when reviewing the pilot.
 
 Slack Socket Mode needs no public inbound URL. If operators need the admin UI or approval links
-from outside the host, put a tunnel or reverse proxy in front of the loopback service and set
-**Settings → Connection → Public URL** to its HTTPS origin. See
+from outside the host, put a tunnel or reverse proxy in front of the loopback service, set
+**Settings → Connection → Public URL** to its HTTPS origin, and set **Behind a reverse proxy** to
+the proxy you run (`cloudflare`, or `xff` for nginx/caddy) so the login backoff keys on each real
+client — without it, all remote logins share one backoff bucket. See
 [reverse proxies and tunnels](./docs/OPERATIONS.md#reverse-proxies-and-tunnels).
 
 ## Backup & restore config (encrypted)

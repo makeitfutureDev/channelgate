@@ -30,6 +30,29 @@ product overview.
   Composio staging and mail attachments refuse hidden and credential-shaped files but still send
   the channel's instruction/memory files and ordinary reports; in-channel browsing and editing
   are unchanged.
+- Security hardening (audit batch 4): switching a channel to "Admins only" or "Locked" now evicts
+  the approved members seeded into its guest list (explicit guests and admins stay) from both the Slack
+  Access control and the admin UI, with the count in the save notice and an audit event; the
+  Slack Settings engine / model / effort pickers, thread pins and thread reset follow the
+  gateway's model-change policy like `/model` does, rendering read-only with the policy line for
+  anyone it excludes.
+- Security hardening (audit batch 3): the login and approval-link backoff key each client on the
+  header of the proxy the operator declares (new Settings → Connection → *Behind a reverse proxy*,
+  `trustProxy` / `CG_TRUST_PROXY`: none, `cloudflare`, `xff`) instead of trusting any forwarded
+  header that arrives on a loopback socket, and a global cap (50 failures per 10 minutes) bounds
+  password guessing from fresh buckets. Deployments behind a proxy should set the new option;
+  without it remote logins share one backoff bucket.
+- Security hardening (audit batch 1): the Slack Settings mode control no longer lets a non-admin
+  channel manager switch a channel into Admin mode (managers keep their other controls in an
+  Admin-mode channel and may step it down); case-variant URLs such as `/API/settings` are refused
+  by the admin guards and never routed; the admin shell and login page carry a no-inline-script
+  Content-Security-Policy and every response carries nosniff, frame-denial and referrer headers;
+  an Express error handler replaces default stack-trace responses and the systemd unit sets
+  `NODE_ENV=production`; `/resume` requires the admin session; the background-job "Check status"
+  button is gated like `/status` and scoped to its channel; file explorer share, send-to-me,
+  preview and edit re-prove the opened file under the channel root; the License card escapes
+  platform-supplied text; the internal IPC secret is compared in constant time; `npm audit fix`
+  moved undici, zod, hono, fast-uri, body-parser and ip-address to patched releases.
 
 - Supply new installations with Astra, Sol, Terra, Fable, Opus and Sonnet (`:sonet`) shortcuts
   using the newest supported stable family versions. Preserve customized lists and thread pins.

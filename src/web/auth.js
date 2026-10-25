@@ -102,8 +102,16 @@ export function apiRunKeyOk(req) {
   const got = String(req.headers["x-api-key"] || "") || bearerToken(req);
   return Boolean(got) && timingSafeEqualStr(got, expected);
 }
+// Express matches mount paths case-insensitively unless told otherwise (src/web/app.js turns
+// case-sensitive routing on), so every path test here lowercases first: "/API/settings" must be
+// treated exactly like "/api/settings" by the lockdown, the 401 branch and the run-API key gate,
+// never slip past them into the router.
+export function isApiPath(p) {
+  return String(p || "").toLowerCase().startsWith("/api/");
+}
 function isApiRunPath(p) {
-  return p === API_RUN_PREFIX || p.startsWith(`${API_RUN_PREFIX}/`);
+  const lower = String(p || "").toLowerCase();
+  return lower === API_RUN_PREFIX || lower.startsWith(`${API_RUN_PREFIX}/`);
 }
 
 // CSRF: a state-changing request authenticated by the session COOKIE must carry a header only
@@ -149,7 +157,7 @@ export function authMiddleware(req, res, next) {
   // A valid run-API key stands in for the session cookie on the /api/runs routes.
   if (isApiRunPath(req.path) && apiRunKeyOk(req)) return next();
 
-  if (req.path.startsWith("/api/")) return res.status(401).json({ error: "unauthorized" });
+  if (isApiPath(req.path)) return res.status(401).json({ error: "unauthorized" });
   return res.redirect("/login.html");
 }
 
@@ -177,7 +185,7 @@ export const NO_PASSWORD_ERROR =
 
 export function noPasswordLockdown(req, res, next) {
   if (authEnabled()) return next();
-  if (!req.path.startsWith("/api/") || LOCKDOWN_OPEN.has(req.path)) return next();
+  if (!isApiPath(req.path) || LOCKDOWN_OPEN.has(req.path.toLowerCase())) return next();
   // A configured run-API key IS a credential, so the run routes stay reachable without an admin
   // password — but only with a matching key.
   if (isApiRunPath(req.path) && apiRunKeyOk(req)) return next();
@@ -187,10 +195,11 @@ export function noPasswordLockdown(req, res, next) {
 // Which identity the login backoff counts against. Behind a reverse proxy or tunnel every request
 // arrives from 127.0.0.1, so keying on the socket puts all remote clients in ONE bucket: an
 // attacker's failures lock out the real admin, and distributed guessing looks like one client.
-// The forwarding headers fix that and are honoured exactly where they cannot be forged — from a
-// loopback socket, which only the proxy in front and this host's own processes can open — or when
-// the operator declares a trusted proxy elsewhere on the network (CG_TRUST_PROXY). One helper,
-// shared with the approval-link router, so both limiters bucket callers the same way.
+// The forwarding header of the proxy the operator DECLARED (`trustProxy`: cloudflare → the
+// CF-Connecting-IP it overwrites, xff → the last X-Forwarded-For hop it appended) fixes that; an
+// undeclared header is a client's claim and is ignored, and a global failure cap bounds guessing
+// either way. One helper, shared with the approval-link router, so both limiters bucket callers
+// the same way.
 export function loginKey(req) {
   return clientKey(req);
 }

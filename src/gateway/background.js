@@ -691,7 +691,7 @@ export class BackgroundJobs {
   status(id) {
     const j = this.jobs.get(id);
     if (!j) return null;
-    return { id: j.id, kind: j.kind || "shell", label: j.label, runtimeMs: Date.now() - j.startedAt, maxMs: j.maxMs, tail: j.tail || "", finished: Boolean(j.pendingDelivery) };
+    return { id: j.id, slug: j.slug || "", kind: j.kind || "shell", label: j.label, runtimeMs: Date.now() - j.startedAt, maxMs: j.maxMs, tail: j.tail || "", finished: Boolean(j.pendingDelivery) };
   }
 
   // The job's process (or engine run) ended. This is NOT the terminal boundary: the thread is

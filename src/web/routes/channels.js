@@ -44,6 +44,7 @@ import {
 } from "../../config/settings.js";
 import { testChannelSync, syncChannelNow, driveSyncStatus } from "../../gateway/drivesync.js";
 import { PROFILE_FLAGS, BASE_MODE_FLAGS, modeSettingsPatch } from "../../gateway/modes.js";
+import { restrictedAccessAllowedUsers } from "../../slack/access-settings.js";
 // Two forms on purpose. normalizeStoredDomains is TOLERANT and belongs on the read/spawn path (a
 // hand-edited config must degrade to "no extras", never break run startup). An admin SAVE is the
 // opposite: silently dropping the whole list because one entry has a typo destroyed every
@@ -474,6 +475,10 @@ export function createChannelsRouter({
         if (Array.isArray(body.allowedUsers)) {
           allowedUsersPatch = await validatedChannelGuests(channelId, body.allowedUsers);
         }
+        // Read before the transaction (the callback below is synchronous): narrowing the use policy
+        // evicts the approved members seeded into allowedUsers under "approved", exactly as the
+        // Slack Access control does (src/slack/access-settings.js restrictedAccessAllowedUsers).
+        const users = CHANNEL_ACCESS_MODES.includes(body.access) && body.access !== "approved" ? await getUsers() : null;
         return patchChannelMeta(entry.slug, (existing) => {
           const current = existing ?? defaultChannelMeta({ channelId, name: entry.name, type: entry.type, isDM: entry.isDM });
           replaced = current;
@@ -544,6 +549,10 @@ export function createChannelsRouter({
           if (typeof body.toolboxTokenLabel === "string") out.toolboxTokenLabel = body.toolboxTokenLabel.trim();
           Object.assign(out, resolveMakeToolboxUpdate(current, body));
           if (out.skillTemplate === "__unknown__") throw Object.assign(new Error(`unknown skill template "${String(body.skillTemplate).trim()}"`), { statusCode: 400 });
+          if (users) {
+            const narrowed = restrictedAccessAllowedUsers(current, out, users);
+            if (narrowed) out.allowedUsers = narrowed.allowedUsers;
+          }
           return out;
         });
       };
