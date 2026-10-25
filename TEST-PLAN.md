@@ -18,6 +18,9 @@ Running label acceptance (Claude and Codex): in a Slack agent thread with chat:w
 - [x] Independent review plus an HTTP race regression: an actor demoted during asynchronous
   user validation cannot finish a pending self-promotion. Static checks (946 JavaScript files),
   secret scan and security-coverage gates pass.
+- [x] Full `npm test`: 4,099 passed, 33 opt-in skips, zero failures. The question-continuation
+  fixture now disables its unrelated background memory reviewer; its 12 assertions also pass
+  independently without starting that external process.
 - Private QA: all seven existing passkey case definitions updated for the new identity model;
   human native-chat proof and deployed physical-key acceptance remain pending.
 - [ ] Live human acceptance, engine-independent: sign in with an existing physical passkey,
