@@ -102,8 +102,16 @@ export function apiRunKeyOk(req) {
   const got = String(req.headers["x-api-key"] || "") || bearerToken(req);
   return Boolean(got) && timingSafeEqualStr(got, expected);
 }
+// Express matches mount paths case-insensitively unless told otherwise (src/web/app.js turns
+// case-sensitive routing on), so every path test here lowercases first: "/API/settings" must be
+// treated exactly like "/api/settings" by the lockdown, the 401 branch and the run-API key gate,
+// never slip past them into the router.
+export function isApiPath(p) {
+  return String(p || "").toLowerCase().startsWith("/api/");
+}
 function isApiRunPath(p) {
-  return p === API_RUN_PREFIX || p.startsWith(`${API_RUN_PREFIX}/`);
+  const lower = String(p || "").toLowerCase();
+  return lower === API_RUN_PREFIX || lower.startsWith(`${API_RUN_PREFIX}/`);
 }
 
 // CSRF: a state-changing request authenticated by the session COOKIE must carry a header only
@@ -149,7 +157,7 @@ export function authMiddleware(req, res, next) {
   // A valid run-API key stands in for the session cookie on the /api/runs routes.
   if (isApiRunPath(req.path) && apiRunKeyOk(req)) return next();
 
-  if (req.path.startsWith("/api/")) return res.status(401).json({ error: "unauthorized" });
+  if (isApiPath(req.path)) return res.status(401).json({ error: "unauthorized" });
   return res.redirect("/login.html");
 }
 
@@ -177,7 +185,7 @@ export const NO_PASSWORD_ERROR =
 
 export function noPasswordLockdown(req, res, next) {
   if (authEnabled()) return next();
-  if (!req.path.startsWith("/api/") || LOCKDOWN_OPEN.has(req.path)) return next();
+  if (!isApiPath(req.path) || LOCKDOWN_OPEN.has(req.path.toLowerCase())) return next();
   // A configured run-API key IS a credential, so the run routes stay reachable without an admin
   // password — but only with a matching key.
   if (isApiRunPath(req.path) && apiRunKeyOk(req)) return next();
