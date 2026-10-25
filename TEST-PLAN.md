@@ -1,5 +1,29 @@
 # ChannelGate — Test Plan
 
+## Access policy and runtime controls consistency (2026-10-25)
+
+- [x] Automated: `node scripts/run-tests.mjs test/access-settings.test.js
+  test/access-policy-eviction-web.test.js test/settings-runtime-policy.test.js
+  test/authorization.test.js test/channel-settings-modal.test.js test/slack-settings-redesign.test.js
+  test/channel-engines-web.test.js` — narrowing to "admins"/"none" drops seeded approved members
+  and keeps explicit guests (pure helper, Slack save with audit count and people-row ticks, web
+  PUT), widening resurrects nobody, admins-only → locked moves nothing more; `canEditRuntime`
+  follows the policy (member false under the default, true under "users", DM owner always), the
+  page renders the 🔒 line without pickers, the select and thread-reset handlers call the policy
+  check before any write.
+- [ ] Live, Slack, engine-independent: in a test channel whose Access page shows an approved
+  non-admin member ticked under "Approved members", switch "Who can use it here" to "Admins only"
+  as an admin. Expected: the save notice says one previously admitted member was removed, the
+  member's row is now unticked, and a message by that member is refused with the
+  "restricted to admins" reason. Switch back to "Approved members": the member's next message is
+  admitted again (re-seeded). PASS when all three hold.
+- [ ] Live, Slack, Claude AND Codex: with Settings → model-change access at "admins", open ⚙️
+  Settings as an approved non-admin member. Expected: the Agent page shows the channel default as
+  text with the 🔒 policy line and no engine/model/effort pickers, and `/model` in the channel is
+  refused. As an admin, switch the channel default to the other engine from the same page; the
+  member's next turn in a fresh thread reports the new engine. Repeat with the policy at "users":
+  the member's pickers appear and a member's switch takes effect. PASS when both engines show the
+  expected spawn evidence.
 ## Login backoff behind a reverse proxy (2026-10-25)
 
 - [x] Automated: `node scripts/run-tests.mjs test/web-security.test.js test/settings-save-version.test.js

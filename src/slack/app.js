@@ -104,7 +104,7 @@ import { listCustomMcps, normalizeCustomMcpName, normalizeCustomMcpToken, normal
 import { listUserCustomMcps, removeChannelCustomMcp, removeUserCustomMcp, saveChannelCustomMcp, saveUserCustomMcp } from "../gateway/custom-mcp-store.js";
 import { listEmailAccounts, normalizeEmailAccountInput } from "../gateway/email-accounts.js";
 import { listUserEmailAccounts, removeChannelEmailAccount, removeUserEmailAccount, saveChannelEmailAccount, saveUserEmailAccount } from "../gateway/email-account-store.js";
-import { ACCESS_EDIT_ACTION_ID, ACCESS_CALLBACK_ID, accessFieldTarget, accessSettingsPatch, accessSettingsSnapshot, assertAccessManager, memberAccessForm, memberCanUse, readAccessFieldValue } from "./access-settings.js";
+import { ACCESS_EDIT_ACTION_ID, ACCESS_CALLBACK_ID, accessFieldTarget, accessSettingsPatch, accessSettingsSnapshot, assertAccessManager, memberAccessForm, memberCanUse, readAccessFieldValue, restrictedAccessAllowedUsers } from "./access-settings.js";
 import { assertValidEnvName, assertValidEnvValue, listChannelEnv, patchChannelEnv } from "../config/channel-env.js";
 import { assertValidSwapRuleFields } from "../gateway/egress/catalog-rules.js";
 // The two scopes that are not the channel's (config/scoped-env.js).
@@ -1277,7 +1277,9 @@ export function channelSettingsEditOptions(meta, userIsAdmin, { authorId = "", i
   return {
     canEnableAdmin: Boolean(userIsAdmin),
     canApproveHarnesses: Boolean(userIsAdmin && getLicenseStatus().features.channelHarnessPolicy),
-    canEditRuntime: true,
+    // The same policy `/model` applies: a DM is always its owner's to set; elsewhere a non-admin
+    // edits the runtime only when the gateway's model-change access is "users".
+    canEditRuntime: Boolean(meta.isDM) || canChangeChannelRuntime(userIsAdmin),
     canEditSecrets: true,
     // Reaches every conversation, so admin-only even for someone who may edit this channel's own.
     canEditOrgSecrets: Boolean(userIsAdmin),
@@ -1564,11 +1566,31 @@ export async function saveAccessSettings(client, state, userId, form) {
     const humans = await filterConversationHumanMemberIds(client, state.channelId, requested);
     if (requested.some((id) => !humans.includes(id))) throw new Error("Named users and managers must be current human members of this channel.");
     const { entry } = await channelSettingsContext(client, args);
-    const [userIsAdmin, userIsApproved] = await Promise.all([isAdmin(userId), isApproved(userId)]);
+    const [userIsAdmin, userIsApproved, users] = await Promise.all([isAdmin(userId), isApproved(userId), getUsers()]);
     const actor = { authorId: userId, isAdminUser: userIsAdmin, isApprovedUser: userIsApproved };
-    const saved = await patchAuditedChannelSettings({ ...entry, channelId: state.channelId }, userId, (current) => accessSettingsPatch(current, form, actor));
-    return { entry, saved, userIsAdmin };
+    // Narrowing the use policy evicts the members seeded under "approved" (see
+    // restrictedAccessAllowedUsers) inside the same transaction, so "Admins only" is true the
+    // moment it is saved rather than after an admin also clears the guest list.
+    let dropped = 0;
+    const saved = await patchAuditedChannelSettings({ ...entry, channelId: state.channelId }, userId, (current) => {
+      const patch = accessSettingsPatch(current, form, actor);
+      const narrowed = restrictedAccessAllowedUsers(current, patch, users);
+      if (narrowed) {
+        patch.allowedUsers = narrowed.allowedUsers;
+        dropped = narrowed.dropped;
+      }
+      return patch;
+    });
+    if (dropped) await logEvent("channel_access_members_evicted", { channel: state.channelId, slug: entry.slug, access: saved.access, count: dropped, author: userId });
+    return { entry, saved, userIsAdmin, dropped };
   });
+}
+
+// The Settings runtime controls (channel engine / model / effort, thread pins and their reset)
+// follow the gateway's model-change policy exactly as `/model`, the wizard, the shortcuts and the
+// platform controls do: a DM is always its owner's; elsewhere a non-admin needs the "users" policy.
+export function assertRuntimeChangeAllowed(meta, userIsAdmin) {
+  if (!meta?.isDM && !canChangeChannelRuntime(userIsAdmin)) throw new Error("Only admins can change the harness, model, or effort in a channel.");
 }
 
 // The one builder for the Settings modal's root view. Thread pins and this thread's session are
@@ -2420,9 +2442,12 @@ async function connectAndWire(app) {
         const saved = await saveAccessSettings(client, state, clicker, form);
         // Mode and its options live on Agent; who may use and manage the channel on Access.
         const page = ["mode", "flags"].includes(accessField) ? "agent" : normalizeSettingsTab(state.tab) === "access" ? "access" : "agent";
+        const evicted = saved.dropped
+          ? ` ${saved.saved.access === "none" ? "Locked" : "Admins only"}: ${saved.dropped} previously admitted member${saved.dropped === 1 ? "" : "s"} ${saved.dropped === 1 ? "was" : "were"} removed from the guest list.`
+          : "";
         await updateCurrent(await settingsRootView(saved.entry, saved.saved, { ...state, tab: page }, saved.userIsAdmin, {
           tab: page,
-          notice: "✅ Saved.",
+          notice: `✅ Saved.${evicted}`,
         }), { guardHash: false });
         return;
       }
@@ -2473,6 +2498,7 @@ async function connectAndWire(app) {
       const runtimeTarget = runtimeSelectTarget(actionId);
       if (runtimeTarget) {
         const { scope, field } = runtimeTarget;
+        assertRuntimeChangeAllowed(meta, userIsAdmin);
         if (field === "engine" && meta.codexAuthSource === "channel") throw new Error("This channel uses its own Codex login, so its engine is Codex.");
         const value = String(action?.selected_option?.value || SETTINGS_DEFAULT_VALUE);
         let notice;
@@ -2498,6 +2524,7 @@ async function connectAndWire(app) {
       }
 
       if (actionId === CHANNEL_SETTINGS_THREAD_RESET_ACTION_ID) {
+        assertRuntimeChangeAllowed(meta, userIsAdmin);
         await clearThreadRuntime(entry.slug, requireThread(state));
         await logEvent("thread_runtime_updated", { channel: state.channelId, slug: entry.slug, thread: state.threadTs, cleared: true, author: clicker });
         await updateCurrent(await settingsRootView(entry, meta, { ...state, tab: "agent" }, userIsAdmin, {

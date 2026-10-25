@@ -502,6 +502,7 @@ test("credential snapshots retain only a safe tail", () => {
 });
 
 test("Settings and secrets admit authorized members and guests, but Cloud MCP requires a current admin", async () => {
+  const { saveSettings } = await import("../src/config/settings.js");
   await store.ensureRoot();
   const entry = await store.upsertChannelEntry("C_SETTINGS_AUTH", {
     name: "settings-auth",
@@ -544,10 +545,16 @@ test("Settings and secrets admit authorized members and guests, but Cloud MCP re
     assert.equal((await secretsContext(memberClient, args)).mayEdit, true);
     // A non-admin may edit this channel's own secrets in every mode, but never the organization's:
     // that scope reaches every conversation in the deployment.
+    // The runtime pickers follow the gateway's model-change policy (default: admins only), the
+    // same rule `/model` applies — a member gets them only under the "users" policy.
     assert.deepEqual(channelSettingsEditOptions({ ...base, ...flags }, false), {
-      canEnableAdmin: false, canApproveHarnesses: false, canEditRuntime: true, canEditSecrets: true, canEditOrgSecrets: false, canManageCloudMcp: false, canManageVpn: false,
+      canEnableAdmin: false, canApproveHarnesses: false, canEditRuntime: false, canEditSecrets: true, canEditOrgSecrets: false, canManageCloudMcp: false, canManageVpn: false,
       canManageCustomMcp: false, canEditAccess: false,
     });
+    saveSettings({ modelChangeAccess: "users" });
+    assert.equal(channelSettingsEditOptions({ ...base, ...flags }, false).canEditRuntime, true);
+    saveSettings({ modelChangeAccess: "admins" });
+    assert.equal(channelSettingsEditOptions({ ...base, ...flags }, true).canEditRuntime, true);
     assert.equal(channelSettingsEditOptions({ ...base, ...flags }, true).canEditOrgSecrets, true);
   }
   await store.setUser(args.userId, { approved: false });
