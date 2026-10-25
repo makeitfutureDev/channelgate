@@ -132,6 +132,7 @@ import { registerQuestionActions } from "./questions.js";
 import { appContextForMessage, appContextObservedAt, appContextUserId, createAppContextStore } from "./app-context.js";
 import { registerBusyThreadChoiceActions } from "./busy-thread-choice.js";
 import { registerAgentInterfaceHandlers } from "./agent-interface.js";
+import { isCodeChannelMeta } from "../gateway/code-channels.js";
 import { registerEngineSwitchChoiceActions } from "./engine-switch-choice.js";
 import { composioHomeButtons, registerComposioHomeActions } from "./home-composio.js";
 import { nudgeHomeBlocks, registerNudgeHomeActions } from "./home-nudges.js";
@@ -2892,7 +2893,14 @@ async function connectAndWire(app) {
   registerEngineSwitchChoiceActions(app, processMessageEvent);
   // Slack's native Stop button, session renames, 👍/👎 answer feedback and the ack-only URL
   // buttons in composed replies / data-table rows.
-  registerAgentInterfaceHandlers(app, { botUserId, seenEvents, authorizedControlEntry, stopRunsInChannel, setAssistantStatus });
+  registerAgentInterfaceHandlers(app, {
+    botUserId, seenEvents, authorizedControlEntry, stopRunsInChannel, setAssistantStatus,
+    // A thread-less Stop names a code channel's one session (everything running there).
+    isCodeChannel: async (channelId) => {
+      const entry = await getChannelEntry(channelId);
+      return Boolean(entry) && isCodeChannelMeta(await getChannelMeta(entry.slug));
+    },
+  });
   // Indexed ids (`cg_model_pick_2`) are the per-choice buttons; the bare id is the retired
   // static_select, still clickable in Slack history. One pattern covers both.
   app.action(MODEL_PICKER_ACTION_PATTERN, handleModelWizard);

@@ -173,6 +173,9 @@ export const GATEWAY_TOOL_NAMES = [
   "slack_channel_history",
   "slack_thread_replies",
   "slack_download_file",
+  "open_code_channel",
+  "update_code_channel",
+  "archive_code_channel",
   "permission_prompt",
 ];
 

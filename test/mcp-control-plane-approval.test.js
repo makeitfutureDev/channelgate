@@ -577,6 +577,9 @@ test("every registered gateway tool is consciously classified as gated or open (
     // returns null for the short machine-facing "upload" purpose, the same conditional shape
     // update_gateway/restart_gateway use for their admin-mode exception.
     "create_public_file_link",
+    // Slack code channels: opening one creates a channel people are invited into and starts a
+    // turn there (the requester confirms); archiving is a card anyone working there can approve.
+    "open_code_channel", "archive_code_channel",
   ]);
   const OPEN = new Set([
     // read-only
@@ -592,6 +595,7 @@ test("every registered gateway tool is consciously classified as gated or open (
     "slack_list_create", "slack_list_add_item", "slack_list_update_item", "slack_list_info", "slack_list_items",
     "slack_channel_history", "slack_thread_replies",
     "slack_download_file", // lands only in this thread's uploads/ folder, this channel's files only
+    "update_code_channel", // artifact tabs, context bar and title of the code channel the run is IN; refuses elsewhere
     "run_in_background", "run_agent_in_background", // shell kind has its own admin-click gate in background.js
     "request_approval", "permission_prompt", "report_progress", "ask_questions",
     "update_channel_memory", // operator decision 2026-08-07: memory is agent-owned, never approval-gated

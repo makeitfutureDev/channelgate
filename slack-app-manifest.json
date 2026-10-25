@@ -18,6 +18,9 @@
     "agent_view": {
       "agent_description": "Chat with Claude Code in threads and DMs \u2014 sandboxed per channel."
     },
+    "code_channels": {
+      "enabled": true
+    },
     "slash_commands": [
       {
         "command": "/menu",
@@ -69,6 +72,7 @@
         "channels:read",
         "chat:write",
         "chat:write.customize",
+        "code_channels:manage",
         "commands",
         "files:read",
         "files:write",

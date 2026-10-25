@@ -1,5 +1,52 @@
 # ChannelGate — Features
 
+## Slack code channels (2026-10-25)
+
+- **A code channel is a dedicated Slack channel for one task**, opened by the agent through
+  Slack's code-channel API (`agents.conversations.*`, manifest `features.code_channels`, scope
+  `code_channels:manage`). The whole channel is one agent session: people talk to the agent there
+  without @-mentioning, replies are top-level channel messages (or stay in a thread a person
+  started), Slack shows a channel-wide **Stop** button, a **Code** tab with the task branch's diff,
+  up to five artifact tabs and a context bar (folder, branch, repository, pull request).
+- **Only on explicit request, behind a human click.** The agent calls `open_code_channel` only
+  when the requester asks for a code channel; the call posts a durable approval card in the origin
+  thread that the requester (or an admin) confirms. Nothing is created before the click. On approval
+  the daemon creates the channel linked to the origin message (members of the origin channel may
+  join; privacy follows the origin unless forced), registers it, sets the session active, pins the
+  context bar and starts the first turn there itself with the task as the brief and the origin
+  thread as context. Scheduled and background runs, DMs and code channels themselves cannot open
+  one. Slack's eligibility refusals (`feature_disabled`, `user_not_enabled`, `restricted_action`,
+  a missing scope, a Slack Connect or DM origin) are reported by name with the remedy.
+- **A child of the channel it came from.** The code channel inherits the origin channel's work
+  folder, access policy and guest list, environment secrets, skills and template, engine, model and
+  every mode switch — re-projected from the origin's current meta on every inbound message and
+  every spawn, so a rotated secret or a narrowed policy in the origin reaches the code channel at
+  once. It keeps its own Slack identity, sessions, container and HOME volume; it mounts the same
+  host folder. The origin's gateway-owned default folder is accepted as its folder regardless of
+  the allowlisted filesystem root; a custom origin folder still passes containment.
+- **Files: a task branch by default.** When the origin folder is a git repository the daemon
+  creates branch `code/<slug>` in a worktree at `.worktrees/<slug>` inside it (from the checkout's
+  upstream, else its exact HEAD commit; `.worktrees/` is added to `info/exclude`; a taken branch
+  name gets a numeric suffix), and the run preamble tells the agent to work only there. A folder
+  that is not a repository works in place. The requester can force either (`mode`:
+  `worktree` / `in_place`). After every turn the daemon publishes the worktree's unified diff
+  against the base to the Code tab (committed and uncommitted tracked changes; the gateway's own
+  managed instruction block in CLAUDE.md/AGENTS.md is left out; capped under Slack's 1 MB).
+  Archiving never deletes the worktree.
+- **Artifacts from inside the channel.** `update_code_channel` publishes or replaces a tab by key
+  (`html` self-contained document, `block_kit` view, `canvas` by id, `pull_request` by URL — which
+  also adds a Pull request link to the context bar), adds context-bar items (five in total), renames
+  the session, or forces a Code-tab refresh. It refuses outside a code channel and in an archived one.
+- **Finishing.** `archive_code_channel` posts the wrap-up (shared back into the origin thread by
+  Slack), closes the session and archives the channel behind an approval card anyone working in the
+  channel can confirm; the row records `archivedAt`. The native Stop button without a thread
+  timestamp stops everything running in a code channel; outside one such an event is ignored.
+- **Surfaces and declarations.** `codeChannels` is a Slack-only platform capability; the tools do
+  not register on other surfaces. The `gateway-usage` guide gains a Slack-only
+  `references/code-channels.md` and a routing row. Memory review runs for threaded code-channel
+  turns only; channel-level status writes skip the legacy thread bridge.
+  → TEST-PLAN: Slack code channels.
+
 ## Admin access to Slack controls
 
 - Current organization admins can open Files, Variables, Settings and legacy menu Resume controls

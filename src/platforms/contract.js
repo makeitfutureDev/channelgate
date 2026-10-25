@@ -85,6 +85,9 @@ export const CAPABILITY_SPEC = Object.freeze({
   proactiveDm: { default: false },
   // Live metadata and complete membership proof for audience-scoped specialist discovery.
   agentDirectory: { default: false },
+  // Dedicated one-task agent channels with a channel-wide session, artifact tabs and a context bar
+  // (Slack Code). Only a surface with the native API declares it.
+  codeChannels: { default: false },
 });
 
 const CAPABILITY_KEYS = Object.freeze(Object.keys(CAPABILITY_SPEC));
