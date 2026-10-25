@@ -1,5 +1,21 @@
 # ChannelGate — Features
 
+## Login backoff behind a reverse proxy (security audit batch 3)
+
+- The admin login backoff and the approval-link token backoff key each client on the header of
+  the proxy the operator DECLARED, never on a header a loopback socket happened to carry. Settings
+  → Connection → *Behind a reverse proxy* (`trustProxy` in settings.json, `CG_TRUST_PROXY` in
+  `.env`; the setting wins) takes `""` (none: the connecting address is the client),
+  `cloudflare` (`CF-Connecting-IP`, which cloudflared overwrites on every request) or `xff` (the
+  LAST `X-Forwarded-For` hop, the one the trusted proxy appended, never the first, which the client
+  typed). The legacy `CG_TRUST_PROXY=1` means `xff`. An unknown value trusts nothing; the admin API
+  refuses it with 400.
+- A global failure cap bounds guessing independently of the key: more than 50 failed attempts in
+  ten minutes across all clients puts every login on the maximum delay until the window drains, so
+  a caller who can mint fresh buckets (a botnet, or a forged header behind a misdeclared proxy) is
+  still bounded, and so is the scrypt work an unauthenticated caller can cause.
+- Documented in `docs/OPERATIONS.md` → Reverse proxies and tunnels and in INSTALL.md: without the
+  setting, all remote logins behind a proxy share one backoff bucket.
 ## Web and Slack surface hardening (security audit batch 1)
 
 - **Admin mode is admin-only on every surface.** The Slack Settings mode control refuses to switch

@@ -539,6 +539,15 @@
                     <span>Public URL (the daemon's externally-reachable base URL)</span>
                     <input id="set-public-url" type="text" placeholder="https://gateway.makeitfuture.com" />
                   </label>
+                  <label class="field">
+                    <span>Behind a reverse proxy — which header names the real client (login and approval-link backoff)</span>
+                    <select id="set-trust-proxy">
+                      <option value="">None — the connecting address is the client</option>
+                      <option value="cloudflare">Cloudflare tunnel (CF-Connecting-IP)</option>
+                      <option value="xff">nginx / caddy / other (last X-Forwarded-For hop)</option>
+                    </select>
+                  </label>
+                  <p class="desc">Without this, every remote login shares one backoff bucket behind the proxy; with it, each real client gets its own. Only declare a proxy you control: it must set the header on every request.</p>
                 </div>
                 <div class="setcard">
                   <h4>Approval links</h4>

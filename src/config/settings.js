@@ -262,6 +262,25 @@ export function getApprovalLinks() {
   return APPROVAL_LINK_MODES.includes(v) ? v : "auto";
 }
 
+// Which forwarded-client header the login and approval-link backoff may believe. "" trusts
+// nothing (the socket address is the client); "cloudflare" reads `CF-Connecting-IP`, which
+// cloudflared overwrites on every request; "xff" reads the LAST hop of `X-Forwarded-For` — the one
+// the trusted proxy appended — never the first, which the client typed. The legacy truthy
+// CG_TRUST_PROXY=1 meant "there is a proxy" and maps onto "xff". Settings win over the env.
+export const TRUST_PROXY_MODES = ["", "cloudflare", "xff"];
+export function normalizeTrustProxy(value) {
+  const v = String(value ?? "").trim().toLowerCase();
+  if (v === "" || v === "0" || v === "false" || v === "no" || v === "off" || v === "none") return "";
+  if (v === "cloudflare" || v === "cf") return "cloudflare";
+  if (v === "xff" || v === "x-forwarded-for" || v === "1" || v === "true" || v === "yes" || v === "on") return "xff";
+  return null; // not a mode
+}
+export function getTrustProxy() {
+  const s = getSettings();
+  if (typeof s.trustProxy === "string") return normalizeTrustProxy(s.trustProxy) ?? "";
+  return normalizeTrustProxy(process.env.CG_TRUST_PROXY) ?? "";
+}
+
 // Opt-in recipients of supplemental Slack button links. Missing/invalid legacy values fail closed.
 export const AI_TESTING_USER_ID_RE = /^[UW][A-Z0-9]+$/;
 export function getAiTestingUsers() {
@@ -1105,6 +1124,7 @@ export function settingsForApi() {
     composioMcpUrl: s.composioMcpUrl ?? process.env.COMPOSIO_MCP_URL ?? "https://connect.composio.dev/mcp",
     toolboxMcpUrl: s.toolboxMcpUrl ?? process.env.TOOLBOX_MCP_URL ?? "https://www.skillsmanager.uk/toolbox",
     publicUrl: getPublicUrl(),
+    trustProxy: getTrustProxy(),
     approvalLinks: getApprovalLinks(),
     aiTestingUsers: getAiTestingUsers(),
     progressView: getProgressView(),

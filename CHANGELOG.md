@@ -18,6 +18,12 @@ product overview.
 
 ## Unreleased
 
+- Security hardening (audit batch 3): the login and approval-link backoff key each client on the
+  header of the proxy the operator declares (new Settings → Connection → *Behind a reverse proxy*,
+  `trustProxy` / `CG_TRUST_PROXY`: none, `cloudflare`, `xff`) instead of trusting any forwarded
+  header that arrives on a loopback socket, and a global cap (50 failures per 10 minutes) bounds
+  password guessing from fresh buckets. Deployments behind a proxy should set the new option;
+  without it remote logins share one backoff bucket.
 - Security hardening (audit batch 1): the Slack Settings mode control no longer lets a non-admin
   channel manager switch a channel into Admin mode (managers keep their other controls in an
   Admin-mode channel and may step it down); case-variant URLs such as `/API/settings` are refused

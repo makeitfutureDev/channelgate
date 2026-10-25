@@ -1,5 +1,27 @@
 # ChannelGate — Test Plan
 
+## Login backoff behind a reverse proxy (2026-10-25)
+
+- [x] Automated: `node scripts/run-tests.mjs test/web-security.test.js test/settings-save-version.test.js
+  test/admin-auth-bind.test.js test/approval-links.test.js` — `clientKey` ignores both forwarded
+  headers with no proxy declared (loopback and non-loopback sockets alike); `cloudflare` reads
+  `CF-Connecting-IP` only; `xff` reads the LAST `X-Forwarded-For` hop; the stored setting wins over
+  `CG_TRUST_PROXY`; legacy `1`/`true`/`yes` mean `xff`; an unknown value trusts nothing; the global
+  cap holds fresh keys at the maximum delay after N failures and drains with the window, is
+  switchable off, and defaults to 50 per 10 minutes; the admin API persists `""`/`cloudflare`/`xff`,
+  maps `1` to `xff`, refuses unknown values with 400 and writes nothing; the Settings page paints
+  and saves the select.
+- [x] `npm run check:static`, `npm run secret-scan`.
+- [ ] Live, engine-independent (browser + curl): on the deployment (Cloudflare tunnel in front) set
+  Settings → Connection → Behind a reverse proxy to **Cloudflare tunnel** and save. From a browser
+  through the public hostname enter three wrong admin passwords; the fourth attempt is delayed
+  (the page reports the wait) while a colleague on a different network can still sign in at once.
+  Then, against the LAN/loopback bind only (Cloudflare overwrites the header on the public path),
+  `for i in 1 2 3 4 5 6; do curl -s -o /dev/null -w '%{http_code}\n' -X POST http://127.0.0.1:4747/api/login
+  -H 'content-type: application/json' -H "CF-Connecting-IP: 10.0.0.$i" -d '{"password":"wrong"}'; done`
+  with the setting at **None**: every request shares the loopback bucket, so the 4th onwards is
+  429/delayed regardless of the spoofed header. PASS when both hold and the setting round-trips
+  after a daemon restart.
 ## Web and Slack surface hardening, batch 1 (2026-10-25)
 
 - [x] Automated: `node scripts/run-tests.mjs test/web-hardening.test.js test/access-settings.test.js

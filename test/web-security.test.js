@@ -85,40 +85,77 @@ test("timingSafeEqualStr: equality without length short-circuit", () => {
 // that tells them apart, and they may be believed only where they cannot be forged.
 const req = (remoteAddress, headers = {}) => ({ socket: { remoteAddress }, headers });
 
-test("clientKey: a loopback socket is the proxy hop, so its forwarded client is the key", () => {
-  assert.equal(clientKey(req("127.0.0.1", { "x-forwarded-for": "203.0.113.5" })), "203.0.113.5");
-  // A chain: the FIRST hop is the client, the rest are proxies.
-  assert.equal(clientKey(req("::1", { "x-forwarded-for": "203.0.113.5, 198.51.100.2, 10.0.0.3" })), "203.0.113.5");
-  assert.equal(clientKey(req("::ffff:127.0.0.1", { "x-forwarded-for": " 203.0.113.5 " })), "203.0.113.5");
-  // cloudflared OVERWRITES CF-Connecting-IP, while a client can prepend a hop to X-Forwarded-For,
-  // so the unforgeable one wins.
-  assert.equal(clientKey(req("127.0.0.1", { "cf-connecting-ip": "198.51.100.7", "x-forwarded-for": "203.0.113.5" })), "198.51.100.7");
-  // Ports and brackets, as some proxies write them.
-  assert.equal(clientKey(req("127.0.0.1", { "x-forwarded-for": "203.0.113.5:9000" })), "203.0.113.5");
-  assert.equal(clientKey(req("127.0.0.1", { "x-forwarded-for": "[2001:db8::1]:443" })), "2001:db8::1");
-  // Nothing forwarded at all → the socket, i.e. the old behaviour for a direct loopback caller.
-  assert.equal(clientKey(req("127.0.0.1")), "127.0.0.1");
+test("clientKey: with no proxy declared, the socket is the client and every forwarded header is ignored", () => {
+  // A loopback socket is NOT evidence of a proxy: any process on the host, any tunnel, opens one.
+  // Trusting it let a caller pick a fresh backoff bucket per request by writing its own header.
+  for (const socket of ["127.0.0.1", "::1", "::ffff:127.0.0.1", "198.51.100.9"]) {
+    assert.equal(clientKey(req(socket, { "x-forwarded-for": "203.0.113.5" }), ""), socket);
+    assert.equal(clientKey(req(socket, { "cf-connecting-ip": "203.0.113.5" }), ""), socket);
+    assert.equal(clientKey(req(socket), ""), socket);
+  }
+  // The default mode comes from settings/env; with neither set it is "".
+  delete process.env.CG_TRUST_PROXY;
+  assert.equal(clientKey(req("127.0.0.1", { "x-forwarded-for": "203.0.113.5", "cf-connecting-ip": "198.51.100.7" })), "127.0.0.1");
+  // No socket at all (a synthetic request) still produces a stable, non-empty bucket.
+  assert.equal(clientKey({}), "unknown");
 });
 
-test("clientKey: a non-loopback socket is a client, and a client's header is just a claim", () => {
-  assert.equal(clientKey(req("198.51.100.9", { "x-forwarded-for": "203.0.113.5" })), "198.51.100.9");
-  assert.equal(clientKey(req("198.51.100.9", { "cf-connecting-ip": "203.0.113.5" })), "198.51.100.9");
-  // …unless the operator declares a trusted proxy that is NOT on this host.
-  process.env.CG_TRUST_PROXY = "1";
+test("clientKey: 'cloudflare' reads CF-Connecting-IP only — X-Forwarded-For is a client's claim there", () => {
+  assert.equal(clientKey(req("127.0.0.1", { "cf-connecting-ip": "198.51.100.7", "x-forwarded-for": "203.0.113.5" }), "cloudflare"), "198.51.100.7");
+  assert.equal(clientKey(req("127.0.0.1", { "x-forwarded-for": "203.0.113.5" }), "cloudflare"), "127.0.0.1");
+  // Brackets/ports as some proxies write them; garbage is ignored rather than becoming a bucket.
+  assert.equal(clientKey(req("127.0.0.1", { "cf-connecting-ip": "[2001:db8::1]:443" }), "cloudflare"), "2001:db8::1");
+  assert.equal(clientKey(req("127.0.0.1", { "cf-connecting-ip": "evil; DROP" }), "cloudflare"), "127.0.0.1");
+  assert.equal(clientKey(req("127.0.0.1", { "cf-connecting-ip": "1".repeat(500) }), "cloudflare"), "127.0.0.1");
+});
+
+test("clientKey: 'xff' reads the LAST X-Forwarded-For hop (the proxy's), never the first (the client's)", () => {
+  assert.equal(clientKey(req("127.0.0.1", { "x-forwarded-for": "203.0.113.5" }), "xff"), "203.0.113.5");
+  // A client that prepends hops cannot choose its bucket: the trusted proxy appended the last one.
+  assert.equal(clientKey(req("127.0.0.1", { "x-forwarded-for": "10.9.9.9, 10.8.8.8, 203.0.113.5" }), "xff"), "203.0.113.5");
+  assert.equal(clientKey(req("127.0.0.1", { "x-forwarded-for": " 203.0.113.5 " }), "xff"), "203.0.113.5");
+  assert.equal(clientKey(req("127.0.0.1", { "x-forwarded-for": "203.0.113.5:9000" }), "xff"), "203.0.113.5");
+  assert.equal(clientKey(req("127.0.0.1", { "x-forwarded-for": "[2001:db8::1]:443" }), "xff"), "2001:db8::1");
+  // CF-Connecting-IP is not this proxy's header.
+  assert.equal(clientKey(req("127.0.0.1", { "cf-connecting-ip": "198.51.100.7" }), "xff"), "127.0.0.1");
+  assert.equal(clientKey(req("127.0.0.1", { "x-forwarded-for": "not-an-ip" }), "xff"), "127.0.0.1");
+  assert.equal(clientKey(req("127.0.0.1", { "x-forwarded-for": "unknown" }), "xff"), "127.0.0.1"); // RFC 7239's placeholder
+  // A proxy on ANOTHER host: the socket is not loopback, and the declared header is still honoured.
+  assert.equal(clientKey(req("198.51.100.9", { "x-forwarded-for": "203.0.113.5" }), "xff"), "203.0.113.5");
+});
+
+test("clientKey: the mode comes from settings (over env); the legacy CG_TRUST_PROXY=1 means xff", async () => {
+  const { saveSettings, getTrustProxy, normalizeTrustProxy, TRUST_PROXY_MODES } = await import("../src/config/settings.js");
+  assert.deepEqual(TRUST_PROXY_MODES, ["", "cloudflare", "xff"]);
+  for (const [raw, mode] of [["", ""], ["none", ""], ["0", ""], ["false", ""], ["cloudflare", "cloudflare"], ["CF", "cloudflare"], ["xff", "xff"],
+    ["X-Forwarded-For", "xff"], ["1", "xff"], ["true", "xff"], ["yes", "xff"], ["bogus", null], ["127.0.0.1", null]]) {
+    assert.equal(normalizeTrustProxy(raw), mode, `normalize(${JSON.stringify(raw)})`);
+  }
+  const headers = { "x-forwarded-for": "10.9.9.9, 203.0.113.5", "cf-connecting-ip": "198.51.100.7" };
   try {
-    assert.equal(clientKey(req("198.51.100.9", { "x-forwarded-for": "203.0.113.5" })), "203.0.113.5");
+    saveSettings({ trustProxy: "" });
+    process.env.CG_TRUST_PROXY = "1";
+    assert.equal(getTrustProxy(), "", "a stored value (even the empty one) wins over the env");
+    assert.equal(clientKey(req("127.0.0.1", headers)), "127.0.0.1");
+    // No stored value: the env decides, and the legacy truthy spelling means xff.
+    saveSettings({ trustProxy: null });
+    assert.equal(getTrustProxy(), "xff");
+    assert.equal(clientKey(req("127.0.0.1", headers)), "203.0.113.5");
+    process.env.CG_TRUST_PROXY = "cloudflare";
+    assert.equal(getTrustProxy(), "cloudflare");
+    assert.equal(clientKey(req("127.0.0.1", headers)), "198.51.100.7");
+    process.env.CG_TRUST_PROXY = "bogus";
+    assert.equal(getTrustProxy(), "", "an unknown env value trusts nothing");
   } finally {
     delete process.env.CG_TRUST_PROXY;
   }
-});
-
-test("clientKey: only a real address is honoured, so a header cannot fill the limiter's map", () => {
-  assert.equal(clientKey(req("127.0.0.1", { "x-forwarded-for": "not-an-ip" })), "127.0.0.1");
-  assert.equal(clientKey(req("127.0.0.1", { "x-forwarded-for": "unknown" })), "127.0.0.1"); // RFC 7239's placeholder
-  assert.equal(clientKey(req("127.0.0.1", { "x-forwarded-for": "1".repeat(500) })), "127.0.0.1");
-  assert.equal(clientKey(req("127.0.0.1", { "cf-connecting-ip": "evil; DROP", "x-forwarded-for": "203.0.113.5" })), "203.0.113.5");
-  // No socket at all (a synthetic request) still produces a stable, non-empty bucket.
-  assert.equal(clientKey({}), "unknown");
+  saveSettings({ trustProxy: "cloudflare" });
+  assert.equal(getTrustProxy(), "cloudflare");
+  assert.equal(clientKey(req("127.0.0.1", headers)), "198.51.100.7", "the default argument reads the stored setting");
+  saveSettings({ trustProxy: "xff" });
+  assert.equal(clientKey(req("127.0.0.1", headers)), "203.0.113.5");
+  saveSettings({ trustProxy: "" });
+  assert.equal(clientKey(req("127.0.0.1", headers)), "127.0.0.1");
 });
 
 // ── createLoginLimiter ──────────────────────────────────────────────────────────
@@ -150,6 +187,37 @@ test("loginLimiter: success resets; entries expire after the TTL; IPs are indepe
   assert.equal(lim.retryAfterMs("a", 6000), 0); // pruned after ttlMs of quiet
   lim.recordFailure("a", 6000);
   assert.equal(lim.retryAfterMs("a", 6000), 1000); // and starts over from 1 failure
+});
+
+test("loginLimiter: a global failure cap bounds guessing from fresh keys, and drains with the window", () => {
+  const lim = createLoginLimiter({ freeAttempts: 3, baseDelayMs: 1000, maxDelayMs: 4000, ttlMs: 60_000, globalMaxFailures: 5, globalWindowMs: 10_000 });
+  // Each attempt from a never-seen key: per-key backoff never engages, the global count climbs.
+  for (let i = 0; i < 5; i++) {
+    assert.equal(lim.retryAfterMs(`key-${i}`, i * 100), 0, `attempt ${i} is still free`);
+    lim.recordFailure(`key-${i}`, i * 100);
+  }
+  // The cap is reached: the next fresh key waits — the maximum per-key delay, never more.
+  assert.equal(lim.retryAfterMs("fresh", 500), 4000);
+  // A known-good client is held too (it is the same scrypt the attacker is burning), and a key
+  // with its own backoff gets the larger of the two waits.
+  lim.recordFailure("slow", 500); lim.recordFailure("slow", 500); lim.recordFailure("slow", 500);
+  assert.equal(lim.retryAfterMs("slow", 500), 4000);
+  // As the window drains past the oldest failures, the hold lifts: eight failures were recorded
+  // (t=0…400, then three at 500); the count drops back under 5 once the one at t=300 leaves the
+  // window, at 10_300.
+  assert.equal(lim.retryAfterMs("fresh", 10_000), 300);
+  assert.equal(lim.retryAfterMs("fresh", 10_200), 100);
+  assert.equal(lim.retryAfterMs("fresh", 10_300), 0);
+  // The cap can be turned off, and its defaults are the documented 50 per 10 minutes.
+  const open = createLoginLimiter({ freeAttempts: 3, globalMaxFailures: 0 });
+  for (let i = 0; i < 200; i++) open.recordFailure(`k${i}`, 0);
+  assert.equal(open.retryAfterMs("another", 0), 0);
+  const dflt = createLoginLimiter();
+  for (let i = 0; i < 49; i++) dflt.recordFailure(`k${i}`, 0);
+  assert.equal(dflt.retryAfterMs("another", 0), 0);
+  dflt.recordFailure("k49", 0);
+  assert.equal(dflt.retryAfterMs("another", 0), 300_000);
+  assert.equal(dflt.retryAfterMs("another", 600_000), 0);
 });
 
 // ── sanitizeMcpMatch ────────────────────────────────────────────────────────────
