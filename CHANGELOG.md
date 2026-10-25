@@ -18,6 +18,8 @@ product overview.
 
 ## Unreleased
 
+- Fix signed-out admin login: allow the login script, favicon and required fonts before
+  authentication so a fresh browser can submit the sign-in form.
 - Security hardening (audit batch 2): a channel's custom work folder can no longer be the gateway
   account's home, the gateway runtime root, `~/.ssh`, `~/.claude`, `~/.codex`, the container
   engine's storage, the hidden artifact trees, the ChannelGate workspace root or its platform

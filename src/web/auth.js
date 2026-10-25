@@ -84,7 +84,13 @@ function cookieAttrs(req) {
 }
 
 // Paths reachable without a session (so you can actually log in).
-const OPEN_PATHS = new Set(["/login", "/login.html", "/api/login", "/api/health", "/api/skills/webhook/github", "/mcp/skills"]);
+const OPEN_PATHS = new Set([
+  "/login", "/login.html", "/api/login", "/api/health", "/api/skills/webhook/github", "/mcp/skills",
+  // The signed-out page needs its script, icon and fonts before it can submit a password.
+  // Keep these exact: other static assets and every privileged route retain their session gate.
+  "/login.js", "/favicon.svg",
+  "/fonts/poppins-400-latin.woff2", "/fonts/poppins-600-latin.woff2", "/fonts/poppins-700-latin.woff2",
+]);
 
 // The HTTP run API accepts a bearer API key as an alternative to the admin session cookie, so an
 // automation can fire runs without logging in. It is an admin credential for the RUNS it starts —

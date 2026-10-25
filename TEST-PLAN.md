@@ -1,5 +1,24 @@
 # ChannelGate — Test Plan
 
+## Signed-out admin login assets (2026-10-25)
+
+- [x] HTTP regression: `node --test test/admin-login-assets.test.js` serves every script, icon and
+  font referenced by the real login HTML without cookies, with correct MIME types and WOFF2
+  signatures, including HEAD and versioned requests. Dashboard assets still redirect to login
+  and `/api/settings` still answers 401. The regression fails against the previous auth gate.
+- [x] Browser regression: set `CG_BROWSER_MODULE` to an installed Playwright module and run
+  `node --test test/admin-login-assets.test.js`. A fresh browser with no cookies opens `/`, sees
+  sign-in, submits a wrong password and sees its error, then submits the disposable fixture
+  password and reaches the authenticated dashboard. Log out and repeat sign-in. PASS when both
+  sign-ins work, the session is HttpOnly/SameSite=Strict, and there are no page script errors.
+  Executed with headless Chromium: all 24 tests passed across this file,
+  `test/admin-auth-bind.test.js` and `test/web-security.test.js`, with zero skips.
+- [ ] Live, engine-independent: open the deployed public gateway in a fresh browser context;
+  verify the login script and three font requests return 200 with actual assets, enter the admin
+  password through the form, reach the dashboard, log out, and sign in again. Verify no
+  `Unexpected token '<'` or font decode errors. Browser/HTTP authentication does not invoke an
+  engine, so Claude and Codex share this acceptance case.
+
 ## Work-folder boundary and protected export names (2026-10-25)
 
 - [x] Automated (`node scripts/run-tests.mjs <file>`, one file per invocation):

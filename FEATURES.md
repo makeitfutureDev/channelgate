@@ -1,5 +1,11 @@
 # ChannelGate — Features
 
+## Sign-in assets before authentication
+
+- The signed-out admin page serves its login script, favicon and three Poppins font files without
+  a session. These exact public paths prevent authentication redirects from replacing JavaScript
+  and fonts with login HTML; other dashboard assets and privileged APIs remain session-gated.
+
 ## Work-folder boundary and protected export names (security audit batch 2)
 
 - **Sensitive roots are never a work folder.** Whatever the allowlisted `fsRoot` admits, a channel's
