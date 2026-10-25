@@ -4,13 +4,14 @@
 // for the daemon's /internal/approval endpoint.
 import path from "node:path";
 import http from "node:http";
-import { mkdirSync, writeFileSync, existsSync, readFileSync } from "node:fs";
+import { mkdirSync, writeFileSync, existsSync, readFileSync, realpathSync } from "node:fs";
+import os from "node:os";
 import { fileURLToPath } from "node:url";
 import test, { after } from "node:test";
 import assert from "node:assert/strict";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
-import { ensureTestEnv, testLicenseEnv } from "./helpers.js";
+import { ensureTestEnv, tempDir, testLicenseEnv } from "./helpers.js";
 
 const projectRoot = fileURLToPath(new URL("..", import.meta.url));
 const scratch = ensureTestEnv();
@@ -42,7 +43,9 @@ const ISOLATED_HOME = path.join(scratch, "isolated-engine-home");
 const DEFAULT_WORKSPACE_ROOT = path.join(scratch, "daemon-workspaces");
 // Default channel folders are namespaced by platform: <workspace root>/<platform>/<slug>.
 const DEFAULT_WORKDIR = path.join(DEFAULT_WORKSPACE_ROOT, "slack", SLUG);
-const CUSTOM_WORKDIR = path.join(scratch, "custom-workdir");
+// Beside the scratch gateway root, not under it: a work folder inside the gateway runtime root is
+// refused by the work-folder boundary (src/gateway/workdir-boundary.js), as in production.
+const CUSTOM_WORKDIR = tempDir("cg-ctrl-custom-workdir-");
 mkdirSync(ISOLATED_HOME, { recursive: true });
 mkdirSync(CUSTOM_WORKDIR, { recursive: true });
 
@@ -66,7 +69,7 @@ function gatewayClient({ author = "U_CTRL_ADMIN", port = stubPort, engine = "cla
       CG_GATEWAY_CAPABILITY: mintGatewayCapability({ secret, channelId: CHANNEL, slug: SLUG, authorId: author, threadKey: "1.000", origin: "slack_foreground", engine }),
       CG_APPROVAL_SECRET: secret,
       CG_PORT: String(port),
-      CG_FS_ROOT: scratch,
+      CG_FS_ROOT: path.dirname(realpathSync(os.tmpdir())), // covers the scratch root and the custom work folder
       CG_WORKSPACE_DIR: DEFAULT_WORKSPACE_ROOT,
       HOME: ISOLATED_HOME,
     },

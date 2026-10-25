@@ -176,6 +176,35 @@ export function isProtectedWritePath(relative = "") {
   return clean.split("/").filter(Boolean).some((part) => isProtectedName(part));
 }
 
+// EXPORT policy: what may leave the channel through a public link, a Slack file post or a Composio
+// staging. Stricter than the write policy on purpose — a hidden file or directory anywhere in the
+// path (`.env`, `.claude/settings.json`, `.git/config`, `.aws/credentials`, `.github/…`) is
+// refused along with every protected/credential-shaped name, because the folder is where the
+// channel's own credentials live and an export cannot be taken back. Browsing and in-channel
+// reading are untouched: this is about bytes going OUT.
+//
+// Two strengths. `strict` (the default) is for an UNAUTHENTICATED destination — a public link —
+// and also refuses the managed `CLAUDE.md`/`AGENTS.md`/`MEMORY.md` and any name that merely
+// mentions a secret/token/credential. The lenient form is for doors an authorized person drives
+// into a place they already reach — the Slack thread, their own browser download, their own
+// Composio or mail account — where a report called `token-usage.csv` or the channel's `MEMORY.md`
+// is a legitimate thing to send; it still refuses every hidden path and every credential-shaped
+// file, which is what a prompt-injected turn would try to push out.
+const CREDENTIAL_EXACT = new Set(["credentials.json", "secrets.json", "token.json", "tokens.json", "id_rsa", "id_ed25519", "id_ecdsa", "id_dsa"]);
+export function isProtectedExportPath(relative = "", { strict = true } = {}) {
+  let clean;
+  try {
+    clean = normalizeRelativePath(relative);
+  } catch {
+    return true;
+  }
+  if (!clean) return true;
+  if (strict && isManagedClaudePath(clean)) return true;
+  return clean.split("/").filter(Boolean).some((part) =>
+    part.startsWith(".") ||
+    (strict ? isProtectedName(part) : CREDENTIAL_EXACT.has(part) || PROTECTED_EXTENSIONS.has(path.extname(part).toLowerCase())));
+}
+
 function isProtectedResolvedPath(resolved) {
   const physicalRelative = path.relative(resolved.rootReal, resolved.path).split(path.sep).join("/");
   return isProtectedWritePath(resolved.relative) || isProtectedWritePath(physicalRelative);

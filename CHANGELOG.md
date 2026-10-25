@@ -18,6 +18,18 @@ product overview.
 
 ## Unreleased
 
+- Security hardening (audit batch 2): a channel's custom work folder can no longer be the gateway
+  account's home, the gateway runtime root, `~/.ssh`, `~/.claude`, `~/.codex`, the container
+  engine's storage, the hidden artifact trees, the ChannelGate workspace root or its platform
+  folders, another conversation's default folder, or a parent of any of those (another channel's
+  custom folder stays allowed) — refused with a named reason by the `set_channel_workdir` tool
+  and the admin UI, and failed closed with the remedy at spawn time for an already-stored value
+  (one boot warning per offending channel). Hidden, managed and credential-shaped files (`.env`,
+  `.claude/…`, `*.pem`, `credentials.json`, …) can no longer leave a channel through public file
+  links of either purpose or a previously minted link; `slack_share_file`, the footer download,
+  Composio staging and mail attachments refuse hidden and credential-shaped files but still send
+  the channel's instruction/memory files and ordinary reports; in-channel browsing and editing
+  are unchanged.
 - Security hardening (audit batch 4): switching a channel to "Admins only" or "Locked" now evicts
   the approved members seeded into its guest list (explicit guests and admins stay) from both the Slack
   Access control and the admin UI, with the count in the save notice and an audit event; the

@@ -1,5 +1,35 @@
 # ChannelGate — Test Plan
 
+## Work-folder boundary and protected export names (2026-10-25)
+
+- [x] Automated (`node scripts/run-tests.mjs <file>`, one file per invocation):
+  `test/workdir-boundary.test.js`, `test/public-link-protected-names.test.js`,
+  `test/public-file-links.test.js`, `test/slack-share-file.test.js`, `test/channel-policy-audit.test.js`,
+  `test/author-runtime-isolation.test.js`, `test/channel-workdir-ui.test.js`,
+  `test/mcp-control-plane-approval.test.js`, `test/workspace-read-tools.test.js`,
+  `test/teams-reply-menu.test.js`, `test/googlechat-controls.test.js` — the predicate for every listed root in both directions,
+  the channel's own folders allowed, other conversations' default folders and their parents
+  refused while their custom folders, parents and subfolders are allowed, the store-backed list
+  (default folders only); the strict and lenient export predicates; `set_channel_workdir`
+  and the admin PUT answer `Refused: … is <reason>` / `workDir refused: …` and write nothing; the
+  runtime resolver throws the remedy for a stored forbidden value while an ordinary custom folder
+  still mounts; the export predicate, `openConfinedFile` by requested and physical path, both link
+  purposes, staging, `slack_share_file`, and a pre-existing link to `.env` answering 404.
+- [x] `npm run check:static`, `npm run secret-scan`.
+- [ ] Live, engine-independent (admin UI + MCP): in a private test channel, as an admin, set the
+  Working folder in the admin UI to the gateway account's home directory, then to `~/.channelgate`,
+  then to another registered conversation's folder. Expected: each save answers a 400 whose
+  message starts `workDir refused:` and names the reason; the stored value is unchanged. Then in
+  the channel ask the agent: “Set this channel's working folder to ~/.channelgate.” Expected: the
+  tool answers `Refused: … is inside the gateway runtime root …` and nothing changes. Finally set
+  a real project directory: accepted. PASS when all four hold.
+- [ ] Live, Claude AND Codex: in a Worker channel with public file links enabled, create `.env`
+  (one dummy line) and `report.md` in the folder, then ask (one fresh thread per engine):
+  “Create an upload public link for .env, then one for report.md.” Expected: the first answers
+  `Public link refused: … protected file …` with no URL; the second returns a URL that downloads
+  `report.md`. Then: “Share .env here as a file.” Expected: `Sharing refused: … protected file`.
+  Then: “Share MEMORY.md here as a file.” Expected: the file is posted in the thread (the lenient
+  in-channel door). PASS when both engines show both refusals and the two successes.
 ## Access policy and runtime controls consistency (2026-10-25)
 
 - [x] Automated: `node scripts/run-tests.mjs test/access-settings.test.js

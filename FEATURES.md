@@ -1,5 +1,39 @@
 # ChannelGate — Features
 
+## Work-folder boundary and protected export names (security audit batch 2)
+
+- **Sensitive roots are never a work folder.** Whatever the allowlisted `fsRoot` admits, a channel's
+  custom work folder may not be the gateway account's home directory itself, the gateway runtime
+  root or anything inside it (database, config, secrets), `~/.ssh`, `~/.claude`, `~/.codex`, the
+  container engine's configuration or storage, the hidden runtime artifact trees, the
+  `~/ChannelGate` workspace root or one of its platform folders, another conversation's DEFAULT
+  folder (`~/ChannelGate/<platform>/<slug>`, which carries that channel's uploads, memory and
+  lockdown file), or a parent of any of those (`src/gateway/workdir-boundary.js`). Another
+  conversation's custom folder, its parent and its subfolders stay allowed: two channels pointed
+  at one repository by their admins is an explicit, legitimate choice. A channel's own folders are
+  always allowed. Enforced at every door with a named reason: the
+  `set_channel_workdir` tool, the admin UI's Working folder field, and the runtime resolver, which
+  refuses to spawn a turn, background job, schedule or review for an already-stored forbidden value
+  and names the remedy (`set_channel_workdir` / Settings → Working folder / `clear_channel_workdir`).
+  Folder provisioning falls back to the default folder rather than writing into such a tree, and
+  the daemon logs one warning per offending channel at boot.
+- **Protected names never leave the channel.** One export door (`openConfinedFile`) serves every
+  way bytes leave the folder, at two strengths. The strict form guards the UNAUTHENTICATED
+  destination — `create_public_file_link` (both purposes) and the public-link fetch route — and
+  refuses a hidden file or directory anywhere in the path (`.env`, `.claude/…`, `.git/…`,
+  `.github/…`), the managed `CLAUDE.md`/`AGENTS.md`/`MEMORY.md` and `.claude` tree, and every
+  credential-shaped or secret-mentioning name (`*.pem`, `*.key`, `id_rsa`, `credentials.json`,
+  `*token*`, `*secret*`, …). The lenient form guards the doors an authorized person drives into a
+  place they already reach — `slack_share_file` into the thread, the Slack footer file download
+  to their browser, `stage_file_for_composio` and mail attachments through their own account —
+  and refuses every hidden path and credential-shaped file (`.env`, `.claude/…`, `*.pem`,
+  `credentials.json`, `id_rsa`, …) while letting the channel's instruction/memory files and a
+  report that merely mentions a token through. Both the requested path and the physical path of
+  the opened descriptor are checked, so an internal symlinked directory cannot launder one, and a
+  link minted for such a file before the rule stops serving.
+  Browsing, reading and editing inside the channel are unchanged (`.env` stays editable in the
+  file explorer; it simply cannot be exported), and the Teams and Google Chat file windows keep
+  previewing every contained file for the authorized requester.
 ## Access policy and runtime controls consistency (security audit batch 4)
 
 - **"Admins only" and "Locked" lock the channel the moment they are saved.** Under the default

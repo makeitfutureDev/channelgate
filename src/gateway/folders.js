@@ -12,6 +12,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { channelFolder, channelSettingsFile, channelAdminSettingsFile, cleanWorkspaceFolder, workspaceFolder, gatewayRoot } from "../config/paths.js";
 import { allowedFsRoot, resolveWithinRoot } from "../web/security.js";
+import { forbiddenWorkDirReason } from "./workdir-boundary.js";
 
 
 // The directory Claude actually runs in for a channel: a custom meta.workDir when set to a
@@ -37,10 +38,18 @@ export function effectiveWorkDir(slug, meta = {}) {
     // covers runs, background jobs, lockdown generation, and the memory routes.
     const real = resolveWithinRoot(allowedFsRoot(), w);
     if (real) {
-      try {
-        if (statSync(real).isDirectory()) return real;
-      } catch {
-        /* vanished since resolve — fall back */
+      // The daemon-owned trees (home, gateway root, ~/.ssh, …) are refused even inside the root
+      // (src/gateway/workdir-boundary.js). Only the static roots are checked on this hot path; the
+      // runtime resolver re-checks against other channels' folders and fails the run closed.
+      const forbidden = forbiddenWorkDirReason(real, { slug, channels: [] });
+      if (forbidden) {
+        console.warn(`[workdir] stored workDir ${w} is ${forbidden} — using the default folder for ${slug}`);
+      } else {
+        try {
+          if (statSync(real).isDirectory()) return real;
+        } catch {
+          /* vanished since resolve — fall back */
+        }
       }
     } else {
       console.warn(`[workdir] stored workDir ${w} escapes the allowed root — using the default folder for ${slug}`);
