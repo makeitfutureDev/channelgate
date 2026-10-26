@@ -2,6 +2,8 @@
 
 ## Linked working-folder setup
 
+- Source access exclusions and conversation policy also govern linked DMs. Shared changes notify follower SSH/egress sessions immediately. Separating a follower or moving the source retains source-section skill grants; detached DMs keep their effective setup as Custom instead of reapplying a DM preset. A promoted owner remains stable when an older conversation later joins.
+
 - Conversations assigned to an existing folder follow its established owner live: skills/template and scoped catalog skills, memory, instructions, access, connectors/channel secrets, VPN service metadata, mode/Auto/Lean/network and Drive setup. Shared edits direct users to the source; harness/model/effort/authentication and personal grants remain independent.
 - Admin and Slack settings identify the source; the folder picker explains linking. Durable files use owner identity/platform; cross-platform turns receive actual surface capabilities separately. Drive sync has one owner. Unlinking retains the effective setup; owner departure promotes a remaining conversation with its saved setup.
 

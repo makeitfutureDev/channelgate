@@ -1,5 +1,7 @@
 # Changelog — ChannelGate
 
+- Fix linked-folder access exclusions and DM authorization, preserve section skills and DM settings on separation, and immediately revoke follower SSH sessions after source changes.
+
 - Automatically link conversations sharing a working folder to one live setup, show the source in settings, and keep harness/model choices independent.
 
 
