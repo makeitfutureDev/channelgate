@@ -321,14 +321,15 @@ export function register(server, ctx) {
         isDir = false;
       }
       if (!isDir) return text(`That path is not a directory:\n${real}`);
-      // Never one of the daemon's own trees or another conversation's folder, whatever the root
-      // allows: the folder is mounted read-write into this channel's container.
-      const forbidden = forbiddenWorkDirReason(real, { slug });
+      // Never the daemon's own trees or a parent exposing multiple conversations.
+      // Exact workspace sharing is an explicit admin choice and inherits its existing setup.
+      const forbidden = forbiddenWorkDirReason(real, { slug, allowSharedFolder: true });
       if (forbidden) return text(`Refused: ${real} is ${forbidden}. Choose a project directory instead.`);
       if (!(await patchAuditedMeta((meta) => (meta ? { workDir: real } : null)))) {
         return text("Channel isn't set up yet — send a normal message first.");
       }
-      return text(`✅ This channel now runs in:\n${real}\nActive on the next message. (Dangerous tools still also require admin mode + an admin author.)`);
+      const linked = (await getChannelMeta(slug))?.workspaceLink;
+      return text(`✅ This channel now runs in:\n${real}\n${linked ? `Shared setup is linked to ${linked.name}; edit shared settings there. Harness and model remain independent.\n` : ""}Active on the next message. (Dangerous tools still also require admin mode + an admin author.)`);
     }
   );
 

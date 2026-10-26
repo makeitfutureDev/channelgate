@@ -35,8 +35,11 @@ export function effectiveWorkDir(slug, meta = {}) {
   // workDir). The origin's gateway-owned default folder is allowed on its own terms — it is where
   // that channel runs — even when the allowlisted root is narrower than the workspace root; a
   // custom origin folder still passes the containment check below like any other workDir.
-  const originSlug = meta.codeChannel?.originSlug;
-  if (w && originSlug && w === workspaceFolder(originSlug, meta.platform)) {
+  const origins = [
+    { slug: meta.workspaceOwnerSlug || meta.codeChannel?.originSlug, platform: meta.workspaceLink?.platform || meta.platform },
+    meta.workspaceOrigin,
+  ];
+  if (w && origins.some((origin) => origin?.slug && w === workspaceFolder(origin.slug, origin.platform))) {
     try {
       if (statSync(w).isDirectory()) return w;
     } catch {
@@ -357,7 +360,7 @@ async function ensureInstructionFiles(cwd, slug, meta) {
   if (!getAgentsFile()) return;
   const agents = path.join(cwd, "AGENTS.md");
   const claude = path.join(cwd, "CLAUDE.md");
-  const isDefault = cwd === workspaceFolder(slug, meta?.platform); // gateway-owned default workspace
+  const isDefault = cwd === workspaceFolder(meta.workspaceLink?.slug || slug, meta.workspaceLink?.platform || meta?.platform); // gateway-owned default workspace
 
   // Migrate the old layout (AGENTS.md real + CLAUDE.md → AGENTS.md) to the new one (CLAUDE.md the
   // real file, AGENTS.md → CLAUDE.md). Only for gateway-owned default folders; a custom project
@@ -464,7 +467,7 @@ async function writeChannelInstructions(slug, meta, { text, replace = false, exp
   if (expectedFingerprint && fingerprint !== expectedFingerprint) {
     throw new Error("The channel instructions changed while approval was pending. Submit a fresh request to review the current version.");
   }
-  const isDefault = cwd === workspaceFolder(slug, meta?.platform);
+  const isDefault = cwd === workspaceFolder(meta.workspaceLink?.slug || slug, meta.workspaceLink?.platform || meta?.platform);
   const addition = text.replace(/\s+$/, "");
   let next;
   if (isDefault) {
@@ -715,6 +718,11 @@ async function prepareWorkspaceSkills(cwd, backupDir) {
 
 export async function ensureChannelFolder(slug, meta, { runMeta = meta, target = null } = {}) {
   const { assertWorkspaceSkillsCompatible } = await import("./skills/workspace-sync.js");
+  const { getChannelMeta } = await import("../config/store.js");
+  const { workspaceSetup } = await import("../config/workspace-links.js");
+  const storedMeta = await getChannelMeta(slug);
+  if (storedMeta?.workspaceLink) meta = { ...meta, ...storedMeta };
+  meta = workspaceSetup(meta);
   await assertWorkspaceSkillsCompatible(slug, meta);
   // Every per-channel path is namespaced by the channel's platform; an unknown/missing one
   // resolves to Slack in the registry, which is what keeps pre-multi-platform rows working.
@@ -752,7 +760,7 @@ export async function ensureChannelFolder(slug, meta, { runMeta = meta, target =
     await rm(adminSettingsFile, { force: true });
   }
 
-  const configureWorkspace = async (cwd, workspaceMeta, skills) => {
+  const configureWorkspace = async (cwd, workspaceMeta, skills, workspaceSlug = slug) => {
     const release = await acquireKeyedLock("workspace-skills", cwd);
     try {
       // Recreate the managed skill tree as REAL directories — a symlink swapped in at .claude/ or
@@ -770,7 +778,7 @@ export async function ensureChannelFolder(slug, meta, { runMeta = meta, target =
       // PLATFORM, so a Teams channel is never told to post a Slack List. Marker-guarded +
       // write-on-change, so a channel that changes surface re-materializes on its next message.
       await applyGatewayGuide(cwd, { platform: workspaceMeta?.platform || DEFAULT_PLATFORM, target });
-      await ensureInstructionFiles(cwd, slug, workspaceMeta);
+      await ensureInstructionFiles(cwd, workspaceSlug, workspaceMeta);
       await applyChannelMemory(cwd, { ...workspaceMeta, _slug: slug });
       if (skillSync.missing.length) console.warn(`[skills] ${slug}: unavailable selected skills: ${skillSync.missing.join(", ")}`);
       return skillSync;
@@ -781,9 +789,10 @@ export async function ensureChannelFolder(slug, meta, { runMeta = meta, target =
   // override may select a different cwd, but must not prune or rewrite this shared baseline.
   // The channel tier: the assigned skill template's current skills plus the conversation's own.
   const channelSkills = sanitizeSkillGrantNames([...(getOrgAccessGrants().skills || []), ...channelSkillGrants(meta)]);
-  const durableMeta = { ...meta, cleanMode: false };
-  const durableCwd = effectiveWorkDir(slug, durableMeta);
-  const skillSync = await configureWorkspace(durableCwd, durableMeta, channelSkills);
+  const ownerMeta = workspaceSetup(meta.workspaceLink ? await getChannelMeta(meta.workspaceLink.slug) : meta);
+  const durableMeta = { ...(ownerMeta || meta), workDir: effectiveWorkDir(slug, { ...meta, cleanMode: false }), cleanMode: false };
+  const durableCwd = effectiveWorkDir(slug, { ...meta, cleanMode: false });
+  const skillSync = await configureWorkspace(durableCwd, durableMeta, channelSkills, meta.workspaceLink?.slug || slug);
 
   const cwd = effectiveWorkDir(slug, runMeta);
   if (cwd !== durableCwd) {

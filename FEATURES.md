@@ -1,5 +1,11 @@
 # ChannelGate — Features
 
+## Linked working-folder setup
+
+- Conversations assigned to an existing folder follow its established owner live: skills/template and scoped catalog skills, memory, instructions, access, connectors/channel secrets, VPN service metadata, mode/Auto/Lean/network and Drive setup. Shared edits direct users to the source; harness/model/effort/authentication and personal grants remain independent.
+- Admin and Slack settings identify the source; the folder picker explains linking. Durable files use owner identity/platform; cross-platform turns receive actual surface capabilities separately. Drive sync has one owner. Unlinking retains the effective setup; owner departure promotes a remaining conversation with its saved setup.
+
+
 Slack’s native running/Stop label shows the resolved model and explicitly configured effort, plus compact live phases (Thinking, Using tools, Writing, Waiting, Queued, Coordinating agents). Engine fallback replaces both model and effort; unset effort is omitted rather than guessed.
 
 ## User-linked dashboard passkeys
@@ -1099,11 +1105,7 @@ revocation removes future runtime grants. Source path/symlink/size validation re
 revisions on failed sync. Details and compatibility limits: `docs/SKILLS.md`.
 
 
-- **Slack reports shared-folder conflicts:** an authorized mention or typed command that cannot
-  start because channels share a folder with conflicting skills or memory settings gets a reply
-  in its triggering thread. The reply asks an admin to assign separate folders or align settings,
-  then retry. It exposes no other channel names or filesystem paths. The conflict still blocks
-  workspace writes and engine startup. → TEST-PLAN: Slack shared-folder conflict replies.
+- **Shared-folder conversations link automatically:** incompatible initial skills/memory adopt the established source setup. Settings identify the source, and divergent metadata edits explain where to edit. Engine/model choices stay local. → TEST-PLAN: Linked working-folder setup acceptance.
 
 - **Read/search account routing:** unrestricted information requests may search either or both
   available Composio identities without an account-selection interruption. Explicit account and
@@ -5380,12 +5382,8 @@ are retired, bullet by bullet; everything else stands.
   mirror remains current. Bundled source skills live in `src/gateway/skills/bundled/`.
 - Skills admin saves refresh existing workspaces immediately. Boot and a five-second daemon
   reconciliation pass refresh changed catalog/template/grant state, including MCP changes. Failed
-  writes are reported and retried; conflicting selections for a shared folder are reported.
-- The Admin UI makes shared-folder assignments visible before they break a run. Every channel or
-  DM whose effective working folder is assigned to another conversation gets a red warning row in
-  Conversations. The working-folder browser shows a red, named warning whenever the directory being
-  viewed is already assigned elsewhere, before **Use this folder** can create another shared
-  assignment. Both views use the runtime's resolved path logic rather than raw string comparison.
+  writes are reported and retried; shared folders follow one linked owner setup.
+- The Admin UI shows shared-folder conversations with a linked marker. The folder picker names existing assignments and explains inheritance; the editor opens the source conversation and locks inherited settings. Both views use the runtime's resolved path logic rather than raw strings.
 - Runtime settings provide **Reset to default** beside **Browse**. It clears only the custom
   working folder through the normal Save/Discard flow; the default remains
   `~/ChannelGate/<platform>/<slug>/`. Existing files stay in their original location.

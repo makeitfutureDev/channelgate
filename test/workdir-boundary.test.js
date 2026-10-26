@@ -105,7 +105,7 @@ test("set_channel_workdir refuses the daemon's trees and other channels' folders
   registerChannelAdmin({ registerTool: (name, _def, handler) => tools.set(name, handler) }, ctx);
   const set = tools.get("set_channel_workdir");
   // (The home-relative trees are proven above with the home override; the tool uses the real home.)
-  for (const [dir, why] of [[GATEWAY_ROOT, /gateway runtime root/], [OTHER_DEFAULT, /another conversation's work folder/], [VISIBLE, /workspace root/], [ARTIFACTS, /runtime artifact tree/]]) {
+  for (const [dir, why] of [[GATEWAY_ROOT, /gateway runtime root/], [VISIBLE, /workspace root/], [ARTIFACTS, /runtime artifact tree/]]) {
     const result = await set({ path: dir });
     assert.match(result.content[0].text, /^Refused: /, dir);
     assert.match(result.content[0].text, why, dir);
@@ -129,7 +129,7 @@ const put = async (body) => {
 };
 
 test("the admin UI workDir field refuses the same paths with a named reason", async () => {
-  for (const [dir, why] of [[GATEWAY_ROOT, /gateway runtime root/], [OTHER_DEFAULT, /another conversation's work folder/], [path.join(VISIBLE, "slack"), /platform folder/]]) {
+  for (const [dir, why] of [[GATEWAY_ROOT, /gateway runtime root/], [path.join(VISIBLE, "slack"), /platform folder/]]) {
     const { status, json } = await put({ workDir: dir });
     assert.equal(status, 400, dir);
     assert.match(json.error, /^workDir refused: /);
@@ -166,4 +166,19 @@ test("an already-stored forbidden work folder is never mounted: the spawn fails 
   assert.equal(target.workDir, PROJECT);
   assert.equal(resolveRuntime(mine.slug, { ...meta, workDir: OTHER_CUSTOM }, { settings }).workDir, OTHER_CUSTOM);
   assert.equal(forbiddenWorkDirMessage(mine.slug, GATEWAY_ROOT, "x").includes("clear_channel_workdir"), true);
+});
+
+test("admin selection may link an exact default workspace; raw runtime metadata still fails closed", async () => {
+  const { patchChannelMeta } = await import("../src/config/store.js");
+  await patchChannelMeta(other.slug, { workDir: "" });
+  const result = await put({ workDir: OTHER_DEFAULT });
+  assert.equal(result.status, 200);
+  const linked = await getChannelMeta(mine.slug);
+  assert.equal(linked.workspaceLink.slug, other.slug);
+  assert.equal(resolveRuntime(mine.slug, linked, { settings: { fullAccessHome: false, egressMode: "proxy", image: "test" } }).workDir, OTHER_DEFAULT);
+  await patchChannelMeta(other.slug, { workDir: OTHER_CUSTOM });
+  const promoted = await getChannelMeta(mine.slug);
+  assert.equal(promoted.workspaceLink, undefined);
+  assert.equal(resolveRuntime(mine.slug, promoted, { settings: { fullAccessHome: false, egressMode: "proxy", image: "test" } }).workDir, OTHER_DEFAULT);
+  await put({ workDir: "" });
 });

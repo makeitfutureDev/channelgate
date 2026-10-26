@@ -1459,7 +1459,7 @@ function workDirConflictSummary(conflict) {
   const names = others.map((item) => item.isDM || item.type === "im"
     ? (item.name || item.slug)
     : hashName(item.name || item.slug));
-  return `Working folder is also assigned to ${names.join(", ")}`;
+  return `Working folder setup is linked with ${names.join(", ")}`;
 }
 
 function convRow(key, color, name, sub, cost, conflict = null) {
@@ -1471,10 +1471,10 @@ function convRow(key, color, name, sub, cost, conflict = null) {
   // Compact whole-dollar 30-day cost (skip sub-$1 rows so the list stays quiet).
   const dollars = cost == null ? null : Math.round(cost);
   const costHtml = dollars && dollars >= 1 ? `<span class="conv-cost">$${escapeHtml(dollars.toLocaleString())}</span>` : "";
-  const conflictHtml = conflictText ? '<span class="conv-conflict-mark" aria-label="Working folder conflict">!</span>' : "";
+  const conflictHtml = conflictText ? '<span class="conv-conflict-mark" aria-label="Linked working folder">↔</span>' : "";
   el.innerHTML =
     `<span class="capdot" style="background:${color}"></span>` +
-    `<span class="conv-nm"><b>${escapeHtml(name)}</b>${sub ? `<small>${escapeHtml(sub)}</small>` : ""}${conflictText ? '<small class="conv-conflict-text">Shared working folder</small>' : ""}</span>` +
+    `<span class="conv-nm"><b>${escapeHtml(name)}</b>${sub ? `<small>${escapeHtml(sub)}</small>` : ""}${conflictText ? '<small class="conv-conflict-text">Linked folder setup</small>' : ""}</span>` +
     conflictHtml +
     costHtml;
   el.addEventListener("click", (e) => {
@@ -2098,7 +2098,7 @@ function renderChannelDetail(ch) {
     }
     const inherited = () => {
       const template = SKILL_TEMPLATES.find((t) => t.slug === templateSelect.value);
-      const section = catalog.skills.filter((s) => s.channelScope === ch.channelId && !s.deleted && s.visibility !== "personal").map((s) => s.slug);
+      const section = catalog.skills.filter((s) => s.channelScope === (meta.workspaceLink?.channelId || ch.channelId) && !s.deleted && s.visibility !== "personal").map((s) => s.slug);
       return [
         { id: "organization", label: "Organization skills", slugs: overview.orgSkills || [], note: "Managed organization-wide." },
         { id: "template", label: "Template skills", slugs: template?.resolved || [], note: template ? `Included by ${template.name}. Edit the template in Skills → Templates.` : "Choose a template above to include its skills." },
@@ -2106,7 +2106,8 @@ function renderChannelDetail(ch) {
       ];
     };
     skillsPicker = mountSkillAssignmentPicker(skillsBox, { skills: catalog.skills, sources: catalog.sources, selected: meta.skills || [], inherited: inherited(), onChange: markDirty });
-    templateSelect.disabled = false;
+    templateSelect.disabled = !!meta.workspaceLink;
+    if (meta.workspaceLink) for (const input of skillsBox.querySelectorAll("input,button,select")) input.disabled = true;
     templateSelect.addEventListener("change", () => skillsPicker.update({ inherited: inherited() }));
   }).catch((error) => {
     if (!skillsBox.isConnected) return;
@@ -2177,6 +2178,32 @@ function renderChannelDetail(ch) {
   card.querySelector(".ch-nodefaulttokens").checked = !!meta.noDefaultTokens;
   const workdirInput = card.querySelector(".ch-workdir");
   workdirInput.value = meta.workDir || "";
+  if (meta.workspaceLink) {
+    const notice = document.createElement("p");
+    notice.className = "hint";
+    notice.textContent = `Linked folder setup: ${meta.workspaceLink.name}. Skills, templates, memory, instructions, mode, network and Drive sync follow this source. Edit shared settings there; choose a separate folder to unlink. Harness and model remain independent.`;
+    const source = document.createElement("button");
+    source.type = "button";
+    source.textContent = "Open source conversation";
+    source.addEventListener("click", () => {
+      const id = meta.workspaceLink.channelId;
+      selectConv((DMS.some((d) => d.channelId === id) ? "dm:" : "ch:") + id);
+    });
+    for (const cap of capCards) { cap.style.pointerEvents = "none"; cap.setAttribute("aria-disabled", "true"); }
+    for (const pane of card.querySelectorAll('.subpane[data-pane="access"], .subpane[data-pane="connections"], .subpane[data-pane="mcps"], .subpane[data-pane="environment"], .subpane[data-pane="skills"]')) {
+      const locked = document.createElement("fieldset");
+      locked.disabled = true;
+      locked.style.cssText = "border:0;padding:0;margin:0;min-width:0";
+      while (pane.firstChild) locked.appendChild(pane.firstChild);
+      pane.appendChild(locked);
+    }
+    notice.appendChild(source);
+    card.querySelector(".dhead").after(notice);
+    for (const selector of [".ch-memory", ".ch-syncdrive", ".ch-synctest", ".ch-profile", ".ch-network", ".ch-admin", ".ch-bash", ".ch-auto", ".ch-clean"]) {
+      const input = card.querySelector(selector);
+      if (input) { input.disabled = true; input.title = "Edit this shared setting in the source conversation"; }
+    }
+  }
   card.querySelector(".ch-browse").addEventListener("click", () => openFolderPicker(workdirInput));
   card.querySelector(".ch-workdir-reset").addEventListener("click", () => {
     if (!workdirInput.value) return;
@@ -2429,7 +2456,7 @@ function renderChannelDetail(ch) {
       }
       const result = await api(`/api/channels/${encodeURIComponent(ch.channelId)}/meta`, {
         method: "PUT",
-        body: JSON.stringify({
+        body: JSON.stringify(Object.fromEntries(Object.entries({
           ...(harnessPolicyDirty ? { approvedEngines: approvals } : {}),
           ...channelGuestSavePatch(usersBox.dataset.ready === "1", explicitCheckedValues(usersBox), usersBox.dataset.changed === "1"),
           allowedMcps: selectedMcpEntries(mcpsBox, "claude")
@@ -2467,7 +2494,7 @@ function renderChannelDetail(ch) {
           makeToolboxUrl: makeToolboxUrlInput.value,
           ...(makeToolboxKey ? { makeToolboxKey } : {}),
           ...(clearMakeToolbox ? { clearMakeToolbox: true } : {}),
-        }),
+        }).filter(([key]) => !meta.workspaceLink?.fields?.includes(key)))),
       });
       // The server response is the validated, committed record. Reconcile the cached channel from
       // that whole record so a later SPA re-render cannot resurrect stale MCP/skill selections.
@@ -2499,6 +2526,10 @@ function renderChannelDetail(ch) {
       // conversation collections from the authoritative server rather than repainting stale flags.
       if (!(await refreshConversationRows())) renderConvList();
       detailDirty = false;
+      if (meta.workspaceLink?.slug !== ch.meta.workspaceLink?.slug) {
+        renderChannelDetail(ch);
+        return;
+      }
       savebarMsg.textContent = "Saved";
       savebarMsg.classList.add("clean");
       setTimeout(() => { if (!detailDirty) savebar.hidden = true; }, 1500);
@@ -2882,7 +2913,14 @@ function renderDmDetail(id) {
     <select class="dm-template"><option value="user">User template</option><option value="admin">Admin template</option><option value="custom">Custom</option></select>`;
   card.appendChild(tplField);
   const tplSel = tplField.querySelector(".dm-template");
-  tplSel.value = dm.template;
+  tplSel.value = dm.meta?.workspaceLink ? "custom" : dm.template;
+  if (dm.meta?.workspaceLink) {
+    tplSel.disabled = true;
+    const linked = document.createElement("p");
+    linked.className = "hint";
+    linked.textContent = `Shared setup linked to ${dm.meta.workspaceLink.name}. Edit shared settings in that source conversation; harness, model and effort remain independent.`;
+    head.after(linked);
+  }
 
   const customBox = document.createElement("div");
   customBox.className = "dm-custom";
@@ -2891,7 +2929,13 @@ function renderDmDetail(id) {
   const renderCustom = () => {
     customBox.innerHTML = "";
     ed = null;
-    if (tplSel.value === "custom") { ed = buildConfigEditor(dm.meta || {}); customBox.appendChild(ed.el); }
+    if (tplSel.value === "custom") {
+      ed = buildConfigEditor(dm.meta || {});
+      customBox.appendChild(ed.el);
+      if (dm.meta?.workspaceLink) for (const input of ed.el.querySelectorAll("input,select,button")) {
+        if (!input.matches(".cfg-engine,.cfg-model,.cfg-effort")) input.disabled = true;
+      }
+    }
   };
   renderCustom();
   paintCap(tplSel.value);
@@ -2903,7 +2947,8 @@ function renderDmDetail(id) {
     card, bar,
     async () => {
       const tpl = tplSel.value;
-      const body = { template: tpl, ...(tpl === "custom" && ed ? ed.getValues() : {}) };
+      const values = tpl === "custom" && ed ? ed.getValues() : {};
+      const body = { template: tpl, ...Object.fromEntries(Object.entries(values).filter(([key]) => !dm.meta?.workspaceLink?.fields?.includes(key))) };
       await api(`/api/dms/${encodeURIComponent(dm.channelId)}`, { method: "PUT", body: JSON.stringify(body) });
       dm.template = tpl;
       renderConvList();
@@ -4622,7 +4667,7 @@ async function fsBrowse(p) {
     const names = otherAssignments.map((item) => item.isDM || item.type === "im"
       ? (item.name || item.slug)
       : hashName(item.name || item.slug));
-    conflict.textContent = `Already assigned to ${names.join(", ")}. Selecting it here will share one working folder between conversations.`;
+    conflict.textContent = `Already assigned to ${names.join(", ")}. Selecting it links this conversation to the existing folder setup: skills, memory, instructions, mode, network and Drive sync. Harness and model stay independent.`;
     conflict.hidden = false;
   } else {
     conflict.textContent = "";

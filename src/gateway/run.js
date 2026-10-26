@@ -40,6 +40,7 @@ import { containerClaudeCredential, resolveEgressRunEnv } from "./egress/grants.
 import { markLive } from "./egress/liveness.js";
 import { mcpConfigUrls, noteChannelMcpHosts } from "./egress/service.js";
 import { resolveCurrentModel } from "./model-info.js";
+import { linkedWorkspaceGuidePreamble } from "./guide.js";
 import { runtimeIdentityPreamble } from "./runtime-identity.js";
 import { runtimeAccessPreamble } from "./runtime-access.js";
 import { channelCredentialsPreamble } from "./channel-credentials.js";
@@ -75,7 +76,7 @@ import { createSecretRedactor, redactSecretValues, redactSecretFields } from "..
 // to the first candidate (own, then template) that actually belongs to the resolved engine — a
 // stale value written under the other harness (own or template) is skipped, not spawned.
 export function effectiveMeta(meta) {
-  if (meta?.isDM && (meta.template === "user" || meta.template === "admin")) {
+  if (meta?.isDM && !meta.workspaceLink && (meta.template === "user" || meta.template === "admin")) {
     const t = getDmTemplate(meta.template);
     const engine = (ENGINES.includes(meta.engine) ? meta.engine : "") || (ENGINES.includes(t.engine) ? t.engine : "") || getEngine() || "claude";
     return normalizeModeMeta({
@@ -1505,6 +1506,7 @@ async function runMessageImpl({ channelId, authorId, workspaceId = "", text, thr
     }
     if (sudoQuestion && !(await isAdmin(authorId))) throw new Error("Sudo task authorization was revoked before the engine could start.");
   };
+  const linkedGuidePrefix = await linkedWorkspaceGuidePreamble(meta, target);
   const runOnce = async (sid, fresh, promptOverride = null, modelOverride = model) => {
     const effort = effortForModel(modelOverride);
     assertRuntimeCanStart();
@@ -1512,7 +1514,7 @@ async function runMessageImpl({ channelId, authorId, workspaceId = "", text, thr
     assertChannelEngineApproved((await getChannelMeta(entry.slug)) ?? channelMeta, engine);
     // The runtime facts belong to THIS attempt, including a model retry or session heal. Keep
     // them per-prompt even in clean mode: they expose no memory, optional skills or connectors.
-    const prompt = (fresh && !forkSourceSessionId ? memoryPrefix : "") + composioIdentityPrefix + channelCredentialsPrefix
+    const prompt = (fresh && !forkSourceSessionId ? memoryPrefix : "") + composioIdentityPrefix + channelCredentialsPrefix + linkedGuidePrefix
       + runtimeIdentityPreamble({ engine, model: modelOverride, effort, fresh })
       + runtimeAccessPreamble(target, { clean, allowNetwork: Boolean(meta.allowNetwork), dangerouslySkip })
       + perplexityResearchPreamble(target, { clean })
@@ -1761,7 +1763,7 @@ async function runMessageImpl({ channelId, authorId, workspaceId = "", text, thr
       engineStarted = true;
       return fallbackAdapter.run(validateRunContext({
         principal: { kind: untrustedPrincipal ? "daemon" : PRINCIPAL_KIND_BY_ORIGIN[origin] || "daemon", id: authorId }, origin, cwd,
-        prompt: (fbFresh ? memoryPrefix : "") + composioIdentityPrefix + channelCredentialsPrefix
+        prompt: (fbFresh ? memoryPrefix : "") + composioIdentityPrefix + channelCredentialsPrefix + linkedGuidePrefix
           + runtimeIdentityPreamble({ engine: fallbackEngine, model: modelOverride, effort, fresh: fbFresh })
           + runtimeAccessPreamble(target, { clean, allowNetwork: Boolean(meta.allowNetwork), dangerouslySkip }) + perplexityResearchPreamble(target, { clean }) + codeChannelPreamble(meta) + fbPrompt,
         session: { id: fbSid, fresh: fbFresh }, policy: fallbackConfinement,

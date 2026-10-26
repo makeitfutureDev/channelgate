@@ -1,6 +1,7 @@
 // Daemon-owned convergence for durable, locally visible skills. MCP processes only commit
 // catalog/grant changes; the daemon observes them here, so two processes never prune each
 // other's in-progress materialization. Personal grants belong to individual runs, never here.
+import { workspaceSetup } from "../../config/workspace-links.js";
 import { createHash } from "node:crypto";
 import { listChannels, getChannelMeta } from "../../config/store.js";
 import { getOrgAccessGrants } from "../../config/settings.js";
@@ -33,8 +34,9 @@ async function snapshot() {
 }
 
 function selectionSignature(meta, organization) {
+  meta = workspaceSetup(meta);
   const grants = withDependencies([...(organization.skills || []), ...channelSkillGrants(meta)]).names.sort();
-  return JSON.stringify({ grants, platform: platformFolderName(meta.platform), memory: meta.memory !== false });
+  return JSON.stringify({ grants, platform: platformFolderName(meta.workspaceLink?.platform || meta.platform), memory: meta.memory !== false });
 }
 
 // The same rule applies at every run/save boundary, including after a rejected but persisted
@@ -48,7 +50,7 @@ export async function assertWorkspaceSkillsCompatible(slug, meta) {
     if (!channel.meta || channel.slug === slug) continue;
     if (effectiveWorkDir(channel.slug, { ...channel.meta, cleanMode: false }) !== cwd) continue;
     if (selectionSignature(channel.meta, organization) !== signature) {
-      throw Object.assign(new Error("This working folder is assigned to conversations with different shared skill grants or memory settings. Choose separate folders or align their selections."), { code: "workspace_selection_conflict" });
+      throw Object.assign(new Error("The linked working-folder setup could not be resolved. Open the source conversation in Settings and repair its folder assignment."), { code: "workspace_selection_conflict" });
     }
   }
 }
@@ -77,7 +79,7 @@ async function syncPass({ channelSlugs = null, force = true, log = console.warn 
       if (!meta) continue;
       const cwd = effectiveWorkDir(channel.slug, { ...meta, cleanMode: false });
       if (destinations.get(cwd)?.size > 1) {
-        throw new Error("This working folder is assigned to conversations with different shared skill grants. Choose separate folders or align their grants.");
+        throw new Error("The linked working-folder setup could not be synchronized. Check the source conversation in Settings.");
       }
       const folder = await ensureChannelFolder(channel.slug, meta);
       if (folder.skillSync?.missing?.length) result.warnings.push({ slug: channel.slug, missing: folder.skillSync.missing });

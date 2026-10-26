@@ -1,5 +1,12 @@
 # ChannelGate — Test Plan
 
+## Linked working-folder setup acceptance
+
+Automated: `test/skills-workspace-sync.test.js`, `test/code-channels.test.js`, `test/workspace-conflict-reply.test.js`, `test/workspace-conflict-admin.test.js`, `test/workdir-boundary.test.js`. Verify automatic inheritance instead of skills/memory refusal, live source edits, owner-scoped skills, model independence, shared-write rejection, operator service secret filtering, established-owner selection, owner departure and explicit unlinking. `test/drivesync.test.js` covers sync selection; linked rows must never create a second bisync job.
+
+Live fixture (pending, run once with Claude and once with Codex): disposable private channels `cg-qa-linked-source` and `cg-qa-linked-follower`, same empty project directory, harmless test skill and memory sentinel. Set source Worker/network on; give follower different initial skills/memory. Select source folder from follower in Admin UI. Confirm source label/button, inherited controls, no conflict error, equal durable skill tree and source-scoped skill. Prompt follower: “Report your configured engine/model and the available shared test skill; add a test memory fact.” Change source skill/memory, retry, then change follower harness/model and confirm only runtime changes. Reject follower shared-setting edits with source guidance. Open an approved code channel from source and confirm it starts. Unlink follower and verify independent settings resume. Record message links, settings screenshots and engine evidence; no live PASS is claimed by automated checks. Restore/delete disposable fixtures. Cross-platform fixture: share a source with a Teams/Google Chat follower and verify actual-surface preamble while owner guide bytes remain stable. Drive fixture: valid disposable Drive folder, one scheduled job and one state directory, follower manual sync resolves to owner.
+
+
 Running label acceptance (Claude and Codex): in a Slack agent thread with chat:write.customize, select an explicit effort using /model, then ask “Read README.md and explain the startup flow.” Confirm Stop shows the selected model (effort), transitions through live tool/writing phases, and becomes active without an activity suffix after completion or Stop. Repeat with each engine and a different effort; verify fallback replaces model/effort. Pass only with observed Slack evidence. Live execution pending; automated coverage: test/slack-progress.test.js native Stop effort/phase test and test/slack-stop-progress.test.js late-event cancellation fixtures.
 
 ## User-linked dashboard access (2026-10-25)
@@ -3882,7 +3889,9 @@ observed tool/process/filesystem evidence, and verdict. A missing, skipped, or b
 is not a pass. Maintain the private QA registry alongside these reusable public instructions.
 
 
-## Shared-folder conflict detection and warnings
+## Shared-folder conflict detection and warnings (historical)
+
+Superseded by **Linked working-folder setup acceptance** at the top of this plan. The old rejection/red-warning expectations below describe historical behavior, not current acceptance gates.
 
 Automated regression: `node --test test/workspace-conflict-reply.test.js test/skills-workspace-sync.test.js
 test/workspace-conflict-admin.test.js`.

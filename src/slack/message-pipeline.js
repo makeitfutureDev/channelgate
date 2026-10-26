@@ -1943,7 +1943,7 @@ export async function processMessageEvent(event, client, { botUserId = "", teamI
         await client.chat.postMessage({
           channel: event.channel,
           thread_ts: event.thread_ts ?? event.ts,
-          text: "⚠️ I couldn’t start: this working folder is assigned to more than one channel, with conflicting shared skills or memory settings. Ask a gateway admin to assign this folder to just one channel and choose a separate folder for the others, or align their shared skills and memory settings in the admin UI. Then send your request again.",
+          text: "⚠️ I couldn’t start: the linked working-folder setup could not be resolved. Ask a gateway admin to inspect the source conversation shown in Settings and repair its folder assignment. Then send your request again.",
         });
       } catch (notificationError) {
         console.error("[slack] workspace conflict notification failed:", notificationError);

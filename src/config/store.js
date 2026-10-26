@@ -23,6 +23,7 @@ import { isApiPrincipal } from "./api-principal.js";
 import { stripDeadFields } from "./dead-fields.js";
 import { emitConfigChange } from "./change-events.js";
 import { DEFAULT_PLATFORM, isPlatformId, platformFolderNames } from "../platforms/registry.js";
+import { workspaceProjection, workspaceSetup, WORKSPACE_FIELDS } from "./workspace-links.js";
 const PLATFORM_FOLDER_NAMES = new Set(platformFolderNames());
 
 // `nudges` moved from conversation metadata to user records. Retire this shape-specific key only
@@ -245,9 +246,84 @@ export function defaultChannelMeta({ channelId, name, type, isDM, platform }) {
   };
 }
 
+function workspaceRows() {
+  return getDb().prepare("SELECT slug, data FROM channel_meta ORDER BY rowid").all()
+    .map((row) => ({ slug: row.slug, meta: stripRetiredChannelFields(fromJson(row.data, {})) }));
+}
+
 export async function getChannelMeta(slug) {
-  const row = getDb().prepare("SELECT data FROM channel_meta WHERE slug = ?").get(slug);
-  return row ? stripRetiredChannelFields(fromJson(row.data, null)) : null;
+  const { effectiveWorkDir } = await import("../gateway/folders.js");
+  const rows = workspaceRows();
+  return workspaceProjection(slug, rows.find((row) => row.slug === slug)?.meta || null, rows, effectiveWorkDir);
+}
+
+function prepareWorkspaceSave(slug, current, next, effectiveWorkDir) {
+  delete next.workspaceLink;
+  // Link is derived from the folder, never accepted from a caller.
+  delete next.workspaceOwnerSlug;
+  delete next.workspaceOrigin;
+  if (current && current.workDir === next.workDir) {
+    if (current.workspaceOwnerSlug) next.workspaceOwnerSlug = current.workspaceOwnerSlug;
+    if (current.workspaceOrigin) next.workspaceOrigin = current.workspaceOrigin;
+  }
+  const rows = workspaceRows();
+  // Resolve an existing default workspace before applying the custom-directory allowlist.
+  // The hint comes from stored assignments, never caller-supplied ownership metadata.
+  if (next.workDir && (!current || current.workDir !== next.workDir)) {
+    const assigned = rows.find((row) => row.slug !== slug && effectiveWorkDir(row.slug, { ...row.meta, cleanMode: false }) === next.workDir.trim());
+    if (assigned) {
+      const source = workspaceProjection(assigned.slug, assigned.meta, rows, effectiveWorkDir);
+      next.workspaceOwnerSlug = source.workspaceOwnerSlug || assigned.slug;
+      next.workspaceOrigin = source.workspaceOrigin || { slug: next.workspaceOwnerSlug, platform: source.workspaceLink?.platform || source.platform };
+    }
+  }
+  const cwd = effectiveWorkDir(slug, { ...next, cleanMode: false });
+  const oldCwd = current && effectiveWorkDir(slug, { ...current, cleanMode: false });
+  if (current && oldCwd === cwd) {
+    if (current.workspaceOwnerSlug) next.workspaceOwnerSlug = current.workspaceOwnerSlug;
+  } else {
+    const peer = rows.find((row) => row.slug !== slug && effectiveWorkDir(row.slug, { ...row.meta, cleanMode: false }) === cwd);
+    if (peer) next.workspaceOwnerSlug = workspaceProjection(peer.slug, peer.meta, rows, effectiveWorkDir).workspaceOwnerSlug || peer.slug;
+  }
+  const candidates = rows.map((row) => row.slug === slug ? { slug, meta: next } : row);
+  if (!candidates.some((row) => row.slug === slug)) candidates.push({ slug, meta: next });
+  const projected = workspaceProjection(slug, next, candidates, effectiveWorkDir);
+  const previous = current && workspaceProjection(slug, current, rows, effectiveWorkDir);
+  if (projected.workspaceLink && previous?.workspaceLink?.slug === projected.workspaceLink.slug
+      && current?.workDir === next.workDir) {
+    for (const field of WORKSPACE_FIELDS) {
+      if (JSON.stringify(next[field]) !== JSON.stringify(projected[field])) {
+        throw Object.assign(new Error(`This setting is linked to ${projected.workspaceLink.name}. Edit the source conversation's shared setup, or choose a separate working folder.`),
+          { code: "workspace_setting_linked", status: 409, statusCode: 409 });
+      }
+    }
+  }
+  if (projected.workspaceLink) {
+    const source = rows.find((row) => row.slug === projected.workspaceLink.slug);
+    projected.workspaceOrigin = source?.meta.workspaceOrigin || { slug: projected.workspaceLink.slug, platform: projected.workspaceLink.platform };
+  }
+  delete projected.workspaceLink;
+  return projected;
+}
+
+// Keep a fallback snapshot for explicit unlinking or an owner moving to another folder.
+// Normal reads always project the live owner; snapshots never override a live source.
+function snapshotWorkspaceFollowers(db, slug, current, next, effectiveWorkDir) {
+  if (!current) return;
+  const rows = workspaceRows();
+  if (workspaceProjection(slug, current, rows, effectiveWorkDir).workspaceLink) return;
+  const oldCwd = effectiveWorkDir(slug, { ...current, cleanMode: false });
+  const sameFolder = oldCwd === effectiveWorkDir(slug, { ...next, cleanMode: false });
+  const setup = workspaceSetup(sameFolder ? next : current);
+  for (const row of rows) {
+    if (row.slug === slug || workspaceProjection(row.slug, row.meta, rows, effectiveWorkDir).workspaceLink?.slug !== slug) continue;
+    const copy = { ...row.meta, workspaceOwnerSlug: slug, workspaceOrigin: current.workspaceOrigin || { slug, platform: current.platform } };
+    for (const field of WORKSPACE_FIELDS) {
+      if (Object.hasOwn(setup, field)) copy[field] = setup[field];
+      else delete copy[field];
+    }
+    db.prepare("UPDATE channel_meta SET data = ? WHERE slug = ?").run(toJson(copy), row.slug);
+  }
 }
 
 // Gate policy writes at the store boundary so internal callers and tools share the same rules.
@@ -267,17 +343,19 @@ function validateChannelPolicy(current, next) {
 }
 
 export async function saveChannelMeta(slug, meta) {
+  const { effectiveWorkDir } = await import("../gateway/folders.js");
   const db = getDb();
   db.exec("BEGIN IMMEDIATE");
   try {
     const row = db.prepare("SELECT data FROM channel_meta WHERE slug = ?").get(slug);
     const current = row ? fromJson(row.data, null) : null;
-    const record = validateChannelPolicy(current, stripDeadFields(stripRetiredChannelFields(meta)));
+    const record = validateChannelPolicy(current, prepareWorkspaceSave(slug, current, stripDeadFields(stripRetiredChannelFields({ ...meta })), effectiveWorkDir));
+    snapshotWorkspaceFollowers(db, slug, current, record, effectiveWorkDir);
     db.prepare("INSERT INTO channel_meta(slug, data) VALUES(?, ?) ON CONFLICT(slug) DO UPDATE SET data = excluded.data")
       .run(slug, toJson(record));
     db.exec("COMMIT");
     emitConfigChange("channel-meta", { slug });
-    return record;
+    return getChannelMeta(slug);
   } catch (error) {
     try { db.exec("ROLLBACK"); } catch { /* transaction already gone */ }
     throw error;
@@ -294,21 +372,24 @@ export async function saveChannelMeta(slug, meta) {
 // aborts (nothing written — e.g. "channel not set up yet"). Returns the merged record, or null
 // when aborted.
 export async function patchChannelMeta(slug, patch) {
+  const { effectiveWorkDir } = await import("../gateway/folders.js");
   const db = getDb();
   db.exec("BEGIN IMMEDIATE");
   try {
     const row = db.prepare("SELECT data FROM channel_meta WHERE slug = ?").get(slug);
     const current = row ? stripRetiredChannelFields(fromJson(row.data, {})) : null;
-    const partial = typeof patch === "function" ? patch(current) : patch;
+    const effectiveCurrent = current && workspaceProjection(slug, current, workspaceRows(), effectiveWorkDir);
+    const partial = typeof patch === "function" ? patch(effectiveCurrent) : patch;
     if (partial == null) {
       db.exec("ROLLBACK");
       return null;
     }
-    const next = validateChannelPolicy(current, stripDeadFields(stripRetiredChannelFields({ ...(current || {}), ...partial })));
+    const next = validateChannelPolicy(current, prepareWorkspaceSave(slug, current, stripDeadFields(stripRetiredChannelFields({ ...(effectiveCurrent || {}), ...partial })), effectiveWorkDir));
+    snapshotWorkspaceFollowers(db, slug, current, next, effectiveWorkDir);
     db.prepare("INSERT INTO channel_meta(slug, data) VALUES(?, ?) ON CONFLICT(slug) DO UPDATE SET data = excluded.data").run(slug, toJson(next));
     db.exec("COMMIT");
     emitConfigChange("channel-meta", { slug });
-    return next;
+    return getChannelMeta(slug);
   } catch (e) {
     try {
       db.exec("ROLLBACK");

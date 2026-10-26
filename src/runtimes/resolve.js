@@ -42,7 +42,7 @@ export function resolveRuntime(slug, meta = {}, { settings = getContainerRuntime
   // background jobs, schedules and reviews all come through here.
   const stored = String(meta?.workDir || "").trim();
   if (stored) {
-    const reason = forbiddenWorkDirReason(stored, { slug });
+    const reason = forbiddenWorkDirReason(stored, { slug, allowSharedFolder: Boolean(meta.workspaceLink), sharedFolderOwner: meta.workspaceOrigin?.slug || "" });
     if (reason) throw new Error(forbiddenWorkDirMessage(slug, stored, reason));
   }
   const cwd = effectiveWorkDir(slug, meta);
