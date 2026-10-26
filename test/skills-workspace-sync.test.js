@@ -143,6 +143,7 @@ test("an older conversation joining a folder follows its established owner, with
     assert.equal(linked.workspaceLink, undefined);
     assert.equal(linked.memory, false);
     assert.deepEqual(linked.allowedUsers, ["U_CHANGED"]);
+    assert.ok(channelSkillGrants(linked).includes(scoped.skill.slug), "source section skills survive owner departure");
   } finally {
     await patchChannelMeta(older.slug, { workDir: "" });
     await patchChannelMeta(owner.slug, { workDir: "" });
@@ -175,6 +176,88 @@ test("a follower keeps its trusted default-workspace link when the filesystem ro
     assert.equal(effectiveWorkDir(follower.slug, linked), workDir);
   } finally {
     await patchChannelMeta(follower.slug, { workDir: "" });
+    if (previousRoot === undefined) delete process.env.CG_FS_ROOT;
+    else process.env.CG_FS_ROOT = previousRoot;
+  }
+});
+
+test("linked access exclusions and source restrictions apply in channels and DMs", async () => {
+  const root = tempDir("cg-linked-access-");
+  const previousRoot = process.env.CG_FS_ROOT;
+  process.env.CG_FS_ROOT = root;
+  const workDir = path.join(root, "project");
+  await mkdir(workDir);
+  const owner = await channel("C_LINK_ACCESS_OWNER", { workDir, excludedUsers: ["U_EXCLUDED"] });
+  const follower = await channel("C_LINK_ACCESS_FOLLOWER", { workDir });
+  const dm = await channel("D_LINK_ACCESS_FOLLOWER", { workDir, isDM: true, template: "user" });
+  const { isAuthorized } = await import("../src/gateway/modes.js");
+  try {
+    for (const entry of [follower, dm]) {
+      const linked = await getChannelMeta(entry.slug);
+      assert.equal(isAuthorized(linked, "U_EXCLUDED", entry === dm, { isApprovedUser: true }), false);
+      await assert.rejects(patchChannelMeta(entry.slug, { excludedUsers: [] }), { code: "workspace_setting_linked" });
+    }
+    await patchChannelMeta(owner.slug, { access: "admins", excludedUsers: [] });
+    assert.equal(isAuthorized(await getChannelMeta(dm.slug), "U_APPROVED", true, { isApprovedUser: true }), false, "a DM cannot bypass source channel access");
+    await patchChannelMeta(dm.slug, { workDir: "" });
+    assert.equal(isAuthorized(await getChannelMeta(dm.slug), "U_APPROVED", true, { isApprovedUser: true }), false, "separation preserves the effective restriction alongside copied files and credentials");
+    await patchChannelMeta(dm.slug, { access: "approved" });
+    assert.equal(isAuthorized(await getChannelMeta(dm.slug), "U_APPROVED", true, { isApprovedUser: true }), true, "the detached policy can be explicitly changed");
+    await patchChannelMeta(owner.slug, { access: "approved", excludedUsers: ["U_NEW"] });
+    assert.equal(isAuthorized(await getChannelMeta(follower.slug), "U_NEW", false, { isApprovedUser: true }), false);
+  } finally {
+    for (const entry of [follower, dm, owner]) await patchChannelMeta(entry.slug, { workDir: "" });
+    if (previousRoot === undefined) delete process.env.CG_FS_ROOT;
+    else process.env.CG_FS_ROOT = previousRoot;
+  }
+});
+
+test("explicit unlink preserves source section skills and DM mode without reapplying its template", async () => {
+  const root = tempDir("cg-linked-unlink-");
+  const previousRoot = process.env.CG_FS_ROOT;
+  process.env.CG_FS_ROOT = root;
+  const workDir = path.join(root, "project");
+  await mkdir(workDir);
+  const owner = await channel("C_LINK_UNLINK_OWNER", { workDir, allowBash: true, profile: "worker" });
+  const scoped = await createLocalSkill({ slug: "unlink-source-scoped", files: files("unlink-source-scoped", 1), channelId: "C_LINK_UNLINK_OWNER", publish: false });
+  const follower = await channel("D_LINK_UNLINK_FOLLOWER", { workDir, isDM: true, template: "user" });
+  try {
+    await patchChannelMeta(follower.slug, { workDir: "" });
+    const detached = await getChannelMeta(follower.slug);
+    const { effectiveMeta } = await import("../src/gateway/run.js");
+    const { channelSkillGrants } = await import("../src/gateway/skills/templates.js");
+    assert.equal(detached.workspaceLink, undefined);
+    assert.equal(detached.template, "custom");
+    assert.equal(effectiveMeta(detached).allowBash, true);
+    assert.ok(channelSkillGrants(detached).includes(scoped.skill.slug));
+    // Later additions in the former source's section do not silently re-link the detached setup.
+    const later = await createLocalSkill({ slug: "unlink-source-later", files: files("unlink-source-later", 1), channelId: "C_LINK_UNLINK_OWNER", publish: false });
+    assert.equal(channelSkillGrants(await getChannelMeta(follower.slug)).includes(later.skill.slug), false);
+  } finally {
+    await patchChannelMeta(follower.slug, { workDir: "" });
+    await patchChannelMeta(owner.slug, { workDir: "" });
+    if (previousRoot === undefined) delete process.env.CG_FS_ROOT;
+    else process.env.CG_FS_ROOT = previousRoot;
+  }
+});
+
+test("a promoted owner remains the source when an older conversation joins before it saves", async () => {
+  const root = tempDir("cg-linked-promoted-");
+  const previousRoot = process.env.CG_FS_ROOT;
+  process.env.CG_FS_ROOT = root;
+  const workDir = path.join(root, "project");
+  await mkdir(workDir);
+  const older = await channel("C_PROMOTED_OLDER");
+  const owner = await channel("C_PROMOTED_ORIGINAL", { workDir, memory: true });
+  const promoted = await channel("C_PROMOTED_FOLLOWER", { workDir });
+  try {
+    await patchChannelMeta(owner.slug, { workDir: "" });
+    assert.equal((await getChannelMeta(promoted.slug)).workspaceLink, undefined);
+    await patchChannelMeta(older.slug, { workDir });
+    assert.equal((await getChannelMeta(older.slug)).workspaceLink.slug, promoted.slug);
+    assert.equal((await getChannelMeta(promoted.slug)).workspaceLink, undefined);
+  } finally {
+    for (const entry of [older, promoted, owner]) await patchChannelMeta(entry.slug, { workDir: "" });
     if (previousRoot === undefined) delete process.env.CG_FS_ROOT;
     else process.env.CG_FS_ROOT = previousRoot;
   }

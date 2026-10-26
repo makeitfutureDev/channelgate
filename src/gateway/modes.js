@@ -158,6 +158,8 @@ export function channelProfile(meta = {}) {
 export { API_PRINCIPAL, isApiPrincipal } from "../config/api-principal.js";
 
 export function isAuthorized(meta, authorId, isDM, { isAdminUser = false, isApprovedUser = false } = {}) {
+  if (meta.workspaceLink) isDM = meta.workspaceLink.isDM === true;
+  else if (typeof meta.workspacePolicyIsDM === "boolean") isDM = meta.workspacePolicyIsDM;
   // A per-channel exclusion (meta.excludedUsers, the unticked "Use" box on Settings → Access) takes
   // an approved member out of THIS channel. Admins cannot be excluded, and a DM has no list.
   if (!isDM && !isAdminUser && Array.isArray(meta.excludedUsers) && meta.excludedUsers.includes(authorId)) return false;
@@ -172,6 +174,8 @@ export function isAuthorized(meta, authorId, isDM, { isAdminUser = false, isAppr
 // Explain a failed authorization gate without confusing a channel restriction with the
 // deployment's user approval. Called only after isAuthorized returned false.
 export function authorizationDenialReason(meta, isDM) {
+  if (meta.workspaceLink) isDM = meta.workspaceLink.isDM === true;
+  else if (typeof meta.workspacePolicyIsDM === "boolean") isDM = meta.workspacePolicyIsDM;
   if (!isDM && meta.access === "admins") return "this conversation is restricted to admins. Ask an admin to review its Access settings.";
   if (!isDM && meta.access === "none") return "this conversation is restricted to named users. Ask an admin to grant you access in its Access settings.";
   return "you're not approved to use ChannelGate yet. An admin can approve you in the Users settings.";

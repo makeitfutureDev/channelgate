@@ -257,11 +257,13 @@ export async function getChannelMeta(slug) {
   return workspaceProjection(slug, rows.find((row) => row.slug === slug)?.meta || null, rows, effectiveWorkDir);
 }
 
-function prepareWorkspaceSave(slug, current, next, effectiveWorkDir) {
+function prepareWorkspaceSave(slug, current, next, effectiveWorkDir, channelScopedSkills) {
   delete next.workspaceLink;
   // Link is derived from the folder, never accepted from a caller.
   delete next.workspaceOwnerSlug;
   delete next.workspaceOrigin;
+  delete next.workspacePolicyIsDM;
+  if (typeof current?.workspacePolicyIsDM === "boolean") next.workspacePolicyIsDM = current.workspacePolicyIsDM;
   if (current && current.workDir === next.workDir) {
     if (current.workspaceOwnerSlug) next.workspaceOwnerSlug = current.workspaceOwnerSlug;
     if (current.workspaceOrigin) next.workspaceOrigin = current.workspaceOrigin;
@@ -289,6 +291,10 @@ function prepareWorkspaceSave(slug, current, next, effectiveWorkDir) {
   if (!candidates.some((row) => row.slug === slug)) candidates.push({ slug, meta: next });
   const projected = workspaceProjection(slug, next, candidates, effectiveWorkDir);
   const previous = current && workspaceProjection(slug, current, rows, effectiveWorkDir);
+  if (!projected.workspaceLink && previous?.workspaceLink) {
+    projected.skills = retainWorkspaceSectionSkills(projected, previous.workspaceLink.channelId, channelScopedSkills);
+    if (projected.isDM) projected.template = "custom";
+  }
   if (projected.workspaceLink && previous?.workspaceLink?.slug === projected.workspaceLink.slug
       && current?.workDir === next.workDir) {
     for (const field of WORKSPACE_FIELDS) {
@@ -306,12 +312,20 @@ function prepareWorkspaceSave(slug, current, next, effectiveWorkDir) {
   return projected;
 }
 
+// Section grants are implicit while linked. On separation they become explicit grants so
+// changing the section identity does not silently revoke the folder's existing skills.
+function retainWorkspaceSectionSkills(meta, channelId, channelScopedSkills) {
+  const off = new Set((meta.skillsOff || []).map((name) => name.toLowerCase()));
+  return [...new Set([...(meta.skills || []), ...channelScopedSkills(channelId).filter((name) => !off.has(name.toLowerCase()))])];
+}
+
 // Keep a fallback snapshot for explicit unlinking or an owner moving to another folder.
 // Normal reads always project the live owner; snapshots never override a live source.
-function snapshotWorkspaceFollowers(db, slug, current, next, effectiveWorkDir) {
-  if (!current) return;
+function snapshotWorkspaceFollowers(db, slug, current, next, effectiveWorkDir, channelScopedSkills) {
+  if (!current) return [];
   const rows = workspaceRows();
-  if (workspaceProjection(slug, current, rows, effectiveWorkDir).workspaceLink) return;
+  if (workspaceProjection(slug, current, rows, effectiveWorkDir).workspaceLink) return [];
+  const changed = [];
   const oldCwd = effectiveWorkDir(slug, { ...current, cleanMode: false });
   const sameFolder = oldCwd === effectiveWorkDir(slug, { ...next, cleanMode: false });
   const setup = workspaceSetup(sameFolder ? next : current);
@@ -322,8 +336,16 @@ function snapshotWorkspaceFollowers(db, slug, current, next, effectiveWorkDir) {
       if (Object.hasOwn(setup, field)) copy[field] = setup[field];
       else delete copy[field];
     }
+    copy.workspacePolicyIsDM = current.workspacePolicyIsDM ?? Boolean(current.isDM || current.type === "im");
+    if (!sameFolder) {
+      copy.skills = retainWorkspaceSectionSkills(copy, current.channelId, channelScopedSkills);
+      if (copy.isDM) copy.template = "custom";
+    }
+    if (JSON.stringify(copy) === JSON.stringify(row.meta)) continue;
     db.prepare("UPDATE channel_meta SET data = ? WHERE slug = ?").run(toJson(copy), row.slug);
+    changed.push(row.slug);
   }
+  return changed;
 }
 
 // Gate policy writes at the store boundary so internal callers and tools share the same rules.
@@ -343,18 +365,20 @@ function validateChannelPolicy(current, next) {
 }
 
 export async function saveChannelMeta(slug, meta) {
+  const { channelScopedSkills } = await import("../gateway/skills/templates.js");
   const { effectiveWorkDir } = await import("../gateway/folders.js");
   const db = getDb();
   db.exec("BEGIN IMMEDIATE");
   try {
     const row = db.prepare("SELECT data FROM channel_meta WHERE slug = ?").get(slug);
     const current = row ? fromJson(row.data, null) : null;
-    const record = validateChannelPolicy(current, prepareWorkspaceSave(slug, current, stripDeadFields(stripRetiredChannelFields({ ...meta })), effectiveWorkDir));
-    snapshotWorkspaceFollowers(db, slug, current, record, effectiveWorkDir);
+    const record = validateChannelPolicy(current, prepareWorkspaceSave(slug, current, stripDeadFields(stripRetiredChannelFields({ ...meta })), effectiveWorkDir, channelScopedSkills));
+    const followers = snapshotWorkspaceFollowers(db, slug, current, record, effectiveWorkDir, channelScopedSkills);
     db.prepare("INSERT INTO channel_meta(slug, data) VALUES(?, ?) ON CONFLICT(slug) DO UPDATE SET data = excluded.data")
       .run(slug, toJson(record));
     db.exec("COMMIT");
     emitConfigChange("channel-meta", { slug });
+    for (const follower of followers) emitConfigChange("channel-meta", { slug: follower });
     return getChannelMeta(slug);
   } catch (error) {
     try { db.exec("ROLLBACK"); } catch { /* transaction already gone */ }
@@ -372,6 +396,7 @@ export async function saveChannelMeta(slug, meta) {
 // aborts (nothing written — e.g. "channel not set up yet"). Returns the merged record, or null
 // when aborted.
 export async function patchChannelMeta(slug, patch) {
+  const { channelScopedSkills } = await import("../gateway/skills/templates.js");
   const { effectiveWorkDir } = await import("../gateway/folders.js");
   const db = getDb();
   db.exec("BEGIN IMMEDIATE");
@@ -384,11 +409,12 @@ export async function patchChannelMeta(slug, patch) {
       db.exec("ROLLBACK");
       return null;
     }
-    const next = validateChannelPolicy(current, prepareWorkspaceSave(slug, current, stripDeadFields(stripRetiredChannelFields({ ...(effectiveCurrent || {}), ...partial })), effectiveWorkDir));
-    snapshotWorkspaceFollowers(db, slug, current, next, effectiveWorkDir);
+    const next = validateChannelPolicy(current, prepareWorkspaceSave(slug, current, stripDeadFields(stripRetiredChannelFields({ ...(effectiveCurrent || {}), ...partial })), effectiveWorkDir, channelScopedSkills));
+    const followers = snapshotWorkspaceFollowers(db, slug, current, next, effectiveWorkDir, channelScopedSkills);
     db.prepare("INSERT INTO channel_meta(slug, data) VALUES(?, ?) ON CONFLICT(slug) DO UPDATE SET data = excluded.data").run(slug, toJson(next));
     db.exec("COMMIT");
     emitConfigChange("channel-meta", { slug });
+    for (const follower of followers) emitConfigChange("channel-meta", { slug: follower });
     return getChannelMeta(slug);
   } catch (e) {
     try {

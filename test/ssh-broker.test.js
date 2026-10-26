@@ -753,3 +753,41 @@ test("one user's overlapping reconnect across a role change releases files in ea
     await setUser(DEV, { name: "Apps", approved: true, isAdmin: false });
   }
 });
+
+test("source SSH revocation disconnects an attached linked follower without the periodic refresh", async () => {
+  await broker.stopSshBroker();
+  await broker.startSshBroker({ dir: SSH_DIR, log: silent, retryMs: 0, deps, authorizeOptions, relayRefreshMs: 20 * 60_000 });
+  const root = mkdtempSync(path.join(os.tmpdir(), "cgssh-linked-"));
+  trackTempDir(root);
+  const previousRoot = process.env.CG_FS_ROOT;
+  process.env.CG_FS_ROOT = root;
+  const workDir = path.join(root, "project");
+  mkdirSync(workDir);
+  const source = await upsertChannelEntry("C_SSH_LINK_SOURCE", { name: "ssh-link-source", type: "channel", isDM: false });
+  const follower = await upsertChannelEntry("C_SSH_LINK_FOLLOWER", { name: "ssh-link-follower", type: "channel", isDM: false });
+  const { patchChannelMeta } = await import("../src/config/store.js");
+  let socket;
+  try {
+    await saveChannelMeta(source.slug, { ...defaultChannelMeta({ channelId: "C_SSH_LINK_SOURCE", name: "ssh-link-source", type: "channel", isDM: false }), workDir, allowBash: true, sshUsers: [DEV] });
+    await saveChannelMeta(follower.slug, { ...defaultChannelMeta({ channelId: "C_SSH_LINK_FOLLOWER", name: "ssh-link-follower", type: "channel", isDM: false }), workDir });
+    const result = await attach({ v: 1, key: ED25519, channel: follower.slug, client: "linked-revocation" });
+    socket = result.socket;
+    assert.equal(result.line.ok, true);
+    const child = children.at(-1);
+    assert.equal(broker.liveSshSessions({ slug: follower.slug }).length, 1);
+    await patchChannelMeta(source.slug, { sshUsers: [] });
+    const deadline = Date.now() + 2000;
+    while (broker.liveSshSessions({ slug: follower.slug }).length) {
+      assert.ok(Date.now() < deadline, "source revocation did not close follower SSH promptly");
+      await settle();
+    }
+    assert.equal(child.signalCode, "SIGTERM");
+  } finally {
+    socket?.destroy();
+    await broker.stopSshBroker();
+    await patchChannelMeta(follower.slug, { workDir: "" });
+    await patchChannelMeta(source.slug, { workDir: "" });
+    if (previousRoot === undefined) delete process.env.CG_FS_ROOT;
+    else process.env.CG_FS_ROOT = previousRoot;
+  }
+});
