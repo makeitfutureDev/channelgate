@@ -1225,6 +1225,7 @@ function channelSettingsSnapshot(meta = {}) {
   const template = templateOfMeta(effective);
   return {
     isDM: Boolean(meta.isDM),
+    workspaceLink: meta.workspaceLink,
     access: meta,
     mode: { adminMode: effective.adminMode, allowBash: effective.allowBash, autoMode: effective.autoMode, cleanMode: effective.cleanMode, allowNetwork: effective.allowNetwork },
     runtime: {

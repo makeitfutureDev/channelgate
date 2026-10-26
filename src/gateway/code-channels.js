@@ -71,7 +71,7 @@ export function decideCodeChannelMode(originDir, requested = "auto") {
 }
 
 // The code channel's own identity fields; everything else is the origin's.
-const OWN_FIELDS = ["channelId", "name", "type", "platform", "codeChannel"];
+const OWN_FIELDS = ["channelId", "name", "type", "platform", "codeChannel", "engine", "model", "effort", "codexAuthSource", "approvedEngines", "workspaceOwnerSlug", "workspaceOrigin", "workspaceLink"];
 
 // Project the ORIGIN's meta onto a code channel: the origin's policy, secrets, skills, engine and
 // switches, this channel's own identity, the origin's effective folder as `workDir` (so the same

@@ -273,6 +273,7 @@ export function buildTestArgs({ folderId, keyFile, subject }) {
 export function selectSyncChannels(channels) {
   const out = [];
   for (const ch of channels || []) {
+    if (ch?.meta?.workspaceLink) continue; // one bisync owner per shared folder
     const folderId = parseDriveFolderId(ch?.meta?.syncDriveFolder);
     // Carry meta so the sync targets the channel's ACTUAL working folder (a custom workDir), not
     // just the default one — effectiveWorkDir needs it.
@@ -736,7 +737,12 @@ const delay = (ms) => new Promise((resolve) => { setTimeout(resolve, ms).unref?.
 export async function syncChannelNow(slug, { waitMs = 0, trigger = "manual", resync = false } = {}) {
   const cfg = resolveSyncConfig();
   if (!cfg.ok) return { ok: false, started: false, error: cfg.error, status: driveSyncStatus(slug) };
-  const ch = (await listChannels()).find((c) => c.slug === slug);
+  const channels = await listChannels();
+  let ch = channels.find((c) => c.slug === slug);
+  if (ch?.meta?.workspaceLink) {
+    slug = ch.meta.workspaceLink.slug;
+    ch = channels.find((c) => c.slug === slug);
+  }
   if (!ch) return { ok: false, started: false, error: "Unknown channel.", status: driveSyncStatus(slug) };
   const [target] = selectSyncChannels([ch]);
   if (!target) return { ok: false, started: false, error: "No Google Drive folder is linked to this channel (or the saved link isn't a Drive folder link).", status: driveSyncStatus(slug) };
@@ -764,7 +770,9 @@ export async function syncAllNow() {
 // Daemon IPC entry for the gateway MCP tool (both transports). `slug` comes from the tool's
 // capability-verified context, never from model input.
 export async function handleDriveSyncIpc({ action, slug, waitMs } = {}) {
-  const s = String(slug || "");
+  let s = String(slug || "");
+  const channel = (await listChannels()).find((c) => c.slug === s);
+  s = channel?.meta?.workspaceLink?.slug || s;
   if (!s) return { ok: false, error: "missing channel" };
   if (action === "status") return { ok: true, status: driveSyncStatus(s) };
   if (action === "sync") return syncChannelNow(s, { waitMs: Math.min(Math.max(Number(waitMs) || 0, 0), 45_000), trigger: "agent" });

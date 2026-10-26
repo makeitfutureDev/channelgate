@@ -448,7 +448,7 @@ export function createChannelsRouter({
           // Inside the root is not enough: the daemon's own trees and other conversations' folders
           // are refused regardless (src/gateway/workdir-boundary.js) — the folder is mounted
           // read-write into the channel's container.
-          const forbidden = forbiddenWorkDirReason(real, { slug: entry.slug });
+          const forbidden = forbiddenWorkDirReason(real, { slug: entry.slug, allowSharedFolder: true });
           if (forbidden) return res.status(400).json({ error: `workDir refused: ${real} is ${forbidden}. Choose a project directory instead.` });
           workDirPatch = real;
         }
@@ -647,7 +647,8 @@ export function createChannelsRouter({
     try {
       const entry = (await getChannelsIndex())[req.params.channelId];
       if (!entry) return res.status(404).json({ error: "unknown channel" });
-      res.json(driveSyncStatus(entry.slug));
+      const meta = await getChannelMeta(entry.slug);
+      res.json(driveSyncStatus(meta?.workspaceLink?.slug || entry.slug));
     } catch (e) {
       next(e);
     }
@@ -945,7 +946,7 @@ export function createChannelsRouter({
     try {
       const ctx = await resolveChannelCtx(req.params.channelId);
       if (!ctx) return res.status(404).json({ error: "unknown channel" });
-      const custom = ctx.workDir !== workspaceFolder(ctx.entry.slug, ctx.meta?.platform);
+      const custom = ctx.workDir !== workspaceFolder(ctx.meta?.workspaceLink?.slug || ctx.entry.slug, ctx.meta?.workspaceLink?.platform || ctx.meta?.platform);
       const file = path.join(ctx.workDir, "CLAUDE.md");
       let raw = await readNoFollow(file);
       if (raw === null && !custom) {
@@ -971,7 +972,7 @@ export function createChannelsRouter({
     try {
       const ctx = await resolveChannelCtx(req.params.channelId);
       if (!ctx) return res.status(404).json({ error: "unknown channel" });
-      const custom = ctx.workDir !== workspaceFolder(ctx.entry.slug, ctx.meta?.platform);
+      const custom = ctx.workDir !== workspaceFolder(ctx.meta?.workspaceLink?.slug || ctx.entry.slug, ctx.meta?.workspaceLink?.platform || ctx.meta?.platform);
       const file = path.join(ctx.workDir, "CLAUDE.md");
       const body = typeof req.body?.channel === "string" ? req.body.channel : "";
       const cur = (await readNoFollow(file)) ?? ""; // absent, or a refused symlink

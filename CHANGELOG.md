@@ -1,5 +1,8 @@
 # Changelog — ChannelGate
 
+- Automatically link conversations sharing a working folder to one live setup, show the source in settings, and keep harness/model choices independent.
+
+
 - Show configured effort and a compact live activity phase beside the running model in Slack’s native Stop label.
 
 ChannelGate was formerly *Claude Gateway for Slack*; entries below the rename keep their original

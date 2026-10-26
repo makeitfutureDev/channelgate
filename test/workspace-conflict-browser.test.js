@@ -10,7 +10,7 @@ import { ensureTestEnv, tempDir } from "./helpers.js";
 
 ensureTestEnv();
 
-test("duplicate conversation rows and used folders render red warnings that clear after save", { skip: !process.env.CG_BROWSER_MODULE }, async (t) => {
+test("linked folder rows, inherited controls, source navigation and independent runtime saves", { skip: !process.env.CG_BROWSER_MODULE }, async (t) => {
   const { chromium } = await import(process.env.CG_BROWSER_MODULE);
   const root = tempDir("cg-workspace-browser-");
   process.env.CG_FS_ROOT = root;
@@ -31,6 +31,7 @@ test("duplicate conversation rows and used folders render red warnings that clea
 
   const app = express();
   app.use(express.json());
+  app.get("/api/auth/me", (_req, res) => res.json({ bootstrap: true, linkRequired: false }));
   app.get("/api/mcp/available", (_req, res) => res.json({ servers: [] }));
   app.get("/api/health", (_req, res) => res.json({ slack: { connected: false, status: "off" }, engines: {} }));
   app.get("/api/channels/:channelId/members", (_req, res) => res.json({ members: [] }));
@@ -63,6 +64,17 @@ test("duplicate conversation rows and used folders render red warnings that clea
   assert.deepEqual(await warningRows.locator(".conv-nm b").allTextContents(), ["#folder-warning-a", "#folder-warning-b"]);
   assert.equal(await page.locator('#channel-list a[href="/conversations/channel/C_FOLDER_WARNING_CONTROL"]').getAttribute("class"), "list-item conv-item");
 
+  await page.locator('#channel-list a[href="/conversations/channel/C_FOLDER_WARNING_B"]').click();
+  await page.locator('#channel-detail .subtab[data-pane="runtime"]').click();
+  await page.getByText("Linked folder setup:", { exact: false }).waitFor();
+  assert.equal(await page.locator("#channel-detail .ch-memory").isDisabled(), true);
+  assert.equal(await page.locator("#channel-detail .ch-engine").isEnabled(), true);
+  await page.locator("#channel-detail .ch-effort").selectOption("low");
+  const runtimeSaved = page.waitForResponse((response) => response.url().endsWith("/channels/C_FOLDER_WARNING_B/meta") && response.request().method() === "PUT");
+  await page.locator("#channel-detail .save-channel").click();
+  assert.equal((await runtimeSaved).status(), 200);
+  await page.getByRole("button", { name: "Open source conversation", exact: true }).click();
+  await page.waitForURL("**/conversations/channel/C_FOLDER_WARNING_A");
   await page.locator('#channel-detail .subtab[data-pane="runtime"]').click();
   await page.locator("#channel-detail .ch-browse").click();
   const folderWarning = page.locator("#fs-conflict");

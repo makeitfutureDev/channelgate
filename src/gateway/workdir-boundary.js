@@ -85,7 +85,8 @@ export function otherChannelWorkDirs({ exceptSlug = "" } = {}) {
       if (!slug || slug === exceptSlug) continue;
       const meta = metas.get(slug) || {};
       const platform = meta.platform || entry.platform;
-      out.push({ slug, path: realOrResolved(workspaceFolder(slug, platform)) });
+      const defaultPath = realOrResolved(workspaceFolder(slug, platform));
+      out.push({ slug, path: defaultPath, active: !meta.workDir || realOrResolved(meta.workDir) === defaultPath || [...metas.values()].some((record) => record.workDir && realOrResolved(record.workDir) === defaultPath) });
     }
   } catch {
     /* no store yet (first boot, tests without a database) — the static roots still apply */
@@ -101,7 +102,7 @@ export function otherChannelWorkDirs({ exceptSlug = "" } = {}) {
  * @param {Array}  [options.channels]  other channels' folders to check instead of reading the store
  * @param {string} [options.home]      override of the daemon home (tests)
  */
-export function forbiddenWorkDirReason(candidate, { slug = "", channels, home } = {}) {
+export function forbiddenWorkDirReason(candidate, { slug = "", channels, home, allowSharedFolder = false, sharedFolderOwner = "" } = {}) {
   const real = realOrResolved(candidate);
   if (!path.isAbsolute(real)) return "not an absolute path";
   const roots = sensitiveWorkDirRoots(home ? { home } : {});
@@ -117,14 +118,14 @@ export function forbiddenWorkDirReason(candidate, { slug = "", channels, home } 
   const others = Array.isArray(channels) ? channels : otherChannelWorkDirs({ exceptSlug: slug });
   for (const other of others) {
     if (!other?.path || other.slug === slug) continue;
-    if (real === other.path) return `another conversation's work folder (${other.slug})`;
+    if (real === other.path && !(allowSharedFolder && other.active !== false || sharedFolderOwner === other.slug)) return `another conversation's work folder (${other.slug})`;
   }
   // A parent of any of the above is as bad as the thing itself (it would mount it).
   for (const root of roots) if (within(real, root.path)) return `a parent of ${root.reason}`;
   if (within(real, visible)) return "a parent of the ChannelGate workspace root";
   for (const other of others) {
     if (!other?.path || other.slug === slug) continue;
-    if (within(real, other.path)) return `a parent of another conversation's work folder (${other.slug})`;
+    if (within(real, other.path) && !((allowSharedFolder && other.active !== false || sharedFolderOwner === other.slug) && real === other.path)) return `a parent of another conversation's work folder (${other.slug})`;
   }
   return "";
 }
