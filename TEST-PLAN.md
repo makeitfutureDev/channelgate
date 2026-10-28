@@ -2,7 +2,8 @@
 
 ## Optional password and Slack code authentication (2026-10-28)
 
-- Automated scratch HTTP fixture: `test/admin-password-slack.test.js`. Use fake private delivery,
+- Automated scratch HTTP fixture: `test/admin-password-slack.test.js` and
+  `test/admin-password-slack-race.test.js`. Use fake private delivery,
   disposable passwords and existing Slack Admin/non-admin users. Verify disabled-by-default,
   password-only denial, correct browser-bound code login after passkey enrollment, replay/expiry/
   guess limits, private delivery failure, role and credential/settings revocation. Never send
@@ -19,11 +20,14 @@
   reauthentication. Confirm a wrong/replayed code and a non-admin are refused; disabling the
   checkbox removes alternate login and invalidates its sessions. Check from the RustDesk browser
   through a localhost SSH tunnel. Record screenshots/HTTP evidence without codes/passwords.
-- Local regression: `npm run test:coverage -- --test-concurrency=4` passed with 4,119
+- Local regression: `npm run test:coverage -- --test-concurrency=4` passed with 4,120
   passed / 38 opt-in skipped / zero failed; coverage 93.77% lines, 86.50% branches, 90.09%
   functions. An initial unconstrained run hit the container process limit and was terminated;
   it is not counted as a passing run. Security-coverage, secret scan and production dependency
   audit at the high severity threshold passed (three existing moderate advisories remain).
+- CI fixture isolation: `test/web-security.test.js` now initializes scratch paths before
+  importing security helpers. Its isolated 15-test run under a fresh HOME created no runtime
+  files there; this fixes the existing real-home leak without relaxing the guard.
 - Gate maintenance: linked-workspace authorization cases in `test/authorization.test.js`
   restore the existing 95% branch floor (measured 96.81%); no production policy or floor changed.
 - Private QA registry update pending: the requesting user's personal Airtable connection is not
