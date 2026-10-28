@@ -1,5 +1,29 @@
 # ChannelGate — Test Plan
 
+## Optional password and Slack code authentication (2026-10-28)
+
+- Automated scratch HTTP fixture: `test/admin-password-slack.test.js`. Use fake private delivery,
+  disposable passwords and existing Slack Admin/non-admin users. Verify disabled-by-default,
+  password-only denial, correct browser-bound code login after passkey enrollment, replay/expiry/
+  guess limits, private delivery failure, role and credential/settings revocation. Never send
+  fixture codes to deployed users.
+- Browser fixture: `test/admin-password-slack-browser.test.js` exercises Settings → Admin access enablement, alternate sign-in and sensitive
+  reauthentication and sign-out on disable without a WebAuthn device. Chromium verification:
+  all 15 combined passkey/initial-setup/alternate-login assertions passed, zero skips; the
+  extended disable/sign-out browser fixture also passed. Private delivery is simulated.
+- Live acceptance pending, engine-independent: this HTTP/browser authentication path never calls
+  either engine. On a disposable gateway with an existing Slack administrator and working bot DM
+  delivery, enable the checkbox using recent admin verification, sign out, enter the password
+  and own Slack member ID, then enter the privately received code. Pass only when the dashboard
+  opens as that exact existing user with no passkey prompt. Repeat a sensitive action with code
+  reauthentication. Confirm a wrong/replayed code and a non-admin are refused; disabling the
+  checkbox removes alternate login and invalidates its sessions. Check from the RustDesk browser
+  through a localhost SSH tunnel. Record screenshots/HTTP evidence without codes/passwords.
+- Gate maintenance: linked-workspace authorization cases in `test/authorization.test.js`
+  restore the existing 95% branch floor (measured 96.81%); no production policy or floor changed.
+- Private QA registry update pending: the requesting user's personal Airtable connection is not
+  connected in this run. Do not treat the missing registry or unexecuted live case as passed.
+
 ## Linked working-folder setup acceptance
 
 Re-verification (2026-10-26): regression coverage now checks source `excludedUsers` and restricted-channel policy through linked DMs, explicit-unlink/source-departure section-skill retention, DM template preservation, established promoted-owner selection, and immediate follower SSH disconnection after source revocation (20-minute timer disabled as a fallback). `test/skills-workspace-sync.test.js` and `test/ssh-broker.test.js` cover these gaps. Updated full suite: 4,117 passed, 37 skipped, zero failures; Chromium linked-folder fixture passed. Actual Claude and Codex CLI smoke checks read a source-scoped skill from a generated linked workspace and returned its unique marker. Codex used the gateway's Worker/container mode; an initial nested read-only sandbox attempt failed with a bubblewrap capability error. These are CLI smoke checks, not a Slack end-to-end acceptance pass.

@@ -5239,7 +5239,7 @@ document.getElementById("dash-source").addEventListener("change", () => loadDash
 // ── Boot ─────────────────────────────────────────────────────────────────────────
 async function init() {
   const identity = await api("/api/auth/me", { cache: "no-store" });
-  if (identity.linkRequired) {
+  if (identity.linkRequired || identity.bootstrap) {
     // Existing unlinked passkeys can authenticate, but ordinary admin APIs stay closed until
     // their owner proves the existing gateway identity. Keep that remedy reachable on its own.
     document.querySelector(".app").style.display = "none";
@@ -5248,7 +5248,7 @@ async function init() {
     const card = document.createElement("div");
     card.className = "setcard identity-link-card";
     const title = document.createElement("h2");
-    title.textContent = "Link your gateway admin user";
+    title.textContent = identity.linkRequired ? "Link your gateway admin user" : "Complete dashboard access setup";
     const access = document.getElementById("admin-access");
     card.append(title, access);
     gate.append(card);

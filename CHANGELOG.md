@@ -25,6 +25,9 @@ product overview.
 
 ## Unreleased
 
+- Add an opt-in admin sign-in alternative using the admin password and a private, expiring Slack
+  verification code for existing administrators, including sensitive-action reauthentication.
+
 - Version login-page scripts with their HTML so cached pre-upgrade code cannot reference removed fields.
 
 - Use the existing Users list and admin role for dashboard passkeys and invitations. Existing

@@ -1,6 +1,7 @@
 // Dashboard sessions are bound to individual local admin accounts. The existing shared
 // password can authenticate bootstrap username `admin` only until the first passkey is enrolled.
-// The durable passkey latch prevents a later settings/password edit from restoring that path.
+// The durable passkey latch prevents restoring password-only bootstrap. The optional
+// password-plus-Slack-code path is separately enabled and always verifies both factors.
 // WebAuthn ceremonies live in admin-auth.js; every session use rechecks account authorization.
 import crypto from "node:crypto";
 import { getAdminPassword, getApiKey, getSettings, saveSettings } from "../config/settings.js";
@@ -25,7 +26,7 @@ function sessionValid(token, now = Date.now()) {
     return false;
   }
   const a = adminAccount(s.accountId);
-  if (!a?.enabled || a.authVersion !== s.authVersion || (s.bootstrap && !bootstrapAvailable())) {
+  if (!a?.enabled || a.authVersion !== s.authVersion || (s.bootstrap && !bootstrapAvailable()) || (s.method === 'password-slack' && (getSettings().adminPasswordSlackEnabled !== true || s.passwordFingerprint !== adminPasswordFingerprint() || s.passwordSlackVersion !== (Number(getSettings().adminPasswordSlackVersion) || 0)))) {
     sessions.delete(token); return false;
   }
   s.lastSeenAt = now; // sliding idle window
@@ -58,7 +59,7 @@ export function parseCookies(header) {
 // Verify, and opportunistically retire a legacy cleartext password. Only the settings.json copy
 // is upgraded — an ADMIN_PASSWORD from the environment is owned by whoever wrote .env, so we
 // verify against it but never rewrite config behind their back.
-async function passwordOk(pw) {
+export async function passwordOk(pw) {
   const expected = getAdminPassword();
   if (!expected || !pw) return false;
   const ok = await verifyPassword(String(pw), expected);
@@ -225,14 +226,15 @@ export function requireRecentAdminAuth(req) {
   const s = adminSession(req);
   return Boolean(s && !s.bootstrap && !adminLinkRequired(s.account) && Date.now() - s.authenticatedAt <= 5 * 60_000);
 }
-export function createAdminSession(req, res, a, { bootstrap = false } = {}) {
+export function adminPasswordFingerprint() { return crypto.createHash('sha256').update(getAdminPassword() || '').digest('hex'); }
+export function createAdminSession(req, res, a, { bootstrap = false, method = 'passkey' } = {}) {
   const current = adminAccount(a.id);
   if (!current?.enabled || current.authVersion !== a.authVersion) throw new Error('Account access changed. Start again.');
   const previous = parseCookies(req.headers?.cookie).cg_session;
   if (previous) sessions.delete(previous);
   const token = crypto.randomBytes(32).toString('hex');
   const now = Date.now();
-  sessions.set(token, { createdAt: now, lastSeenAt: now, authenticatedAt: now, accountId: a.id, authVersion: a.authVersion, bootstrap });
+  sessions.set(token, { createdAt: now, lastSeenAt: now, authenticatedAt: now, accountId: a.id, authVersion: a.authVersion, bootstrap, method, ...(method === 'password-slack' ? { passwordFingerprint: adminPasswordFingerprint(), passwordSlackVersion: Number(getSettings().adminPasswordSlackVersion) || 0 } : {}) });
   // Bound memory even if an authenticated client deliberately creates sessions repeatedly.
   while (sessions.size > 10_000) sessions.delete(sessions.keys().next().value);
   res.setHeader('Set-Cookie', `cg_session=${token}; ${cookieAttrs(req)}; Max-Age=${Math.floor(ABSOLUTE_MS / 1000)}`);

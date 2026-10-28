@@ -10,6 +10,18 @@
 
 Slack’s native running/Stop label shows the resolved model and explicitly configured effort, plus compact live phases (Thinking, Using tools, Writing, Waiting, Queued, Coordinating agents). Engine fallback replaces both model and effort; unset effort is omitted rather than guessed.
 
+## Optional password and Slack code sign-in
+
+- Settings → Admin access can enable an alternative to passkeys: the configured admin password
+  followed by an eight-digit code delivered privately to an existing Slack administrator.
+  The option is off by default; password alone never grants dashboard access. Existing passkeys
+  remain available. A recently verified, identity-linked initial setup can enable this option
+  without first registering a passkey.
+- Codes expire after five minutes, are bound to the requesting browser, accept at most five
+  guesses and are single-use. Delivery failures, role revocation, password changes and disabling
+  the option invalidate pending authority. Sensitive actions can repeat password and Slack
+  verification. Sessions retain the normal idle/absolute expiry and current-role checks.
+
 ## User-linked dashboard passkeys
 
 - The existing **Users** directory and its admin role govern dashboard access. Each credential
@@ -27,7 +39,7 @@ Slack’s native running/Stop label shows the resolved model and explicitly conf
   session, with five attempts maximum. Matching names never assign ownership. Unlinked accounts
   can complete this verification but cannot use ordinary admin APIs once known admins exist.
   Initial password setup follows the same proof before enrollment; fresh installs without known
-  admins retain temporary operator setup. First enrollment permanently retires password login.
+  admins retain temporary operator setup. First enrollment retires the password-only bootstrap path; the optional password plus Slack code flow requires explicit enablement.
 - Host operators recover a known admin with `npm run admin:recover -- --user <user-id>`.
   Recovery revokes its keys/sessions and prints a short-lived registration-only link; it never
   restores password login. Private keys remain with authenticators; SQLite stores public keys
