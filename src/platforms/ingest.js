@@ -1,3 +1,4 @@
+import { autoApproveUser } from "../gateway/user-auto-approval.js";
 // From a normalized inbound message to an answered turn, for platforms that are not Slack.
 // Text controls, per-session serialization and conservative progress edits use the same gateway
 // policy/stores as Slack. Interactive approval escalation remains deliberately unavailable here.
@@ -91,6 +92,7 @@ export function createIngest({ connector, log = console, run = runMessage, onCom
     try {
       registered = await ensureConversation(message, connector);
       await ensureUserKnown(message);
+      await autoApproveUser(message.userId, message.userEmail, message.platform);
     } catch (error) {
       if (error?.code !== "license_registration_limit") throw error;
       await connector.post({ conversationId: message.rawConversationId, threadKey: message.threadKey, text: error.message });

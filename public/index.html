@@ -114,6 +114,21 @@
               <button id="add-user-toggle" type="button">+ Add user</button>
             </div>
           </div>
+          <details class="card" id="user-auto-approval">
+            <summary>Auto-approval by company email domain</summary>
+            <p class="hint">Approve members automatically when their platform-provided email matches an exact domain. This grants Approved access, never Admin. Manual revocations prevent automatic reapproval. Removing a domain does not revoke existing approvals.</p>
+            <form id="user-auto-approval-form">
+              <label><input id="user-auto-approval-enabled" type="checkbox" /> Enable auto-approval</label>
+              <label class="field"><span>Company email domains</span><textarea id="user-auto-approval-domains" rows="2" placeholder="example.com, example.org"></textarea></label>
+              <button type="submit">Save auto-approval</button>
+              <button id="user-auto-approval-preview" type="button">Preview existing Slack users</button>
+            </form>
+            <p class="hint">Slack requires users:read.email (reinstall the Slack app after adding this scope). Google Chat and Teams check on the next message when the platform supplies an email; missing email or lookup failures require manual approval.</p>
+            <p id="user-auto-approval-status" role="status"></p>
+            <div id="user-auto-approval-candidates"></div>
+            <button id="user-auto-approval-next" type="button" hidden>Preview next batch</button>
+            <button id="user-auto-approval-apply" type="button" hidden>Approve previewed users</button>
+          </details>
           <form id="add-user" class="add-user" hidden>
             <input id="add-user-id" placeholder="Slack user ID (e.g. U01ABC…)" />
             <button type="submit">Add</button>
