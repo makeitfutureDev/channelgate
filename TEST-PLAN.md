@@ -21,7 +21,7 @@
   checkbox removes alternate login and invalidates its sessions. Check from the RustDesk browser
   through a localhost SSH tunnel. Record screenshots/HTTP evidence without codes/passwords.
 - Local regression: `npm run test:coverage -- --test-concurrency=4` passed with 4,120
-  passed / 38 opt-in skipped / zero failed; coverage 93.77% lines, 86.50% branches, 90.09%
+  passed / 38 opt-in skipped / zero failed; coverage 93.91% lines, 86.55% branches, 90.27%
   functions. An initial unconstrained run hit the container process limit and was terminated;
   it is not counted as a passing run. Security-coverage, secret scan and production dependency
   audit at the high severity threshold passed (three existing moderate advisories remain).
