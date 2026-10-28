@@ -235,3 +235,29 @@ These tools use the gateway’s Slack bot token and trusted current conversation
 **Scope and result:** Asks Slack for a file descriptor, proves sharing in the current conversation, and downloads into this thread’s uploads folder. Returns a local path, MIME type when available, and size. A existing confined download is reused.
 
 **Limits:** At most 500 MiB per attachment. The bot must have file access and Slack must report the file shared here. It returns no private URL/token. Download refusals and unavailable metadata do not count as content inspection.
+
+## open_code_channel
+
+**Required:** `task` (string, 3–2000 characters). **Optional:** `name` (string, up to 80 characters), `mode` (`auto`, `worktree`, or `in_place`; default `auto`), `private` (boolean; default inherits the origin channel).
+
+**Scope and result:** Requests a dedicated Slack code channel for an explicitly requested task. A human must approve the card before creation. The new channel inherits the origin workspace, access policy, secrets, and skills. `auto` creates a task branch and worktree when the workspace is a repository; otherwise it uses the channel's files. Returns the channel and workspace/branch outcome; the daemon starts the first turn when available.
+
+**Restrictions:** Requires an originating Slack message in a configured channel. Not available from a DM, another code channel, or a scheduled/background run without an originating message. Call only when the requester explicitly asks for a code channel.
+
+## update_code_channel
+
+**Optional:** `title` (string, up to 200 characters), `refresh_diff` (boolean), `context_items` (up to five objects with required `key` and `label`, optional `icon` and `url`), `view` (object).
+
+The `view` object requires `type` (`html`, `block_kit`, `canvas`, or `pull_request`) and accepts `key`, `name`, `content` (complete self-contained HTML), `blocks` (up to 50 Block Kit blocks), `canvas_id`, and `pr_url` as appropriate for the type. Reusing a stable `key` replaces that artifact tab.
+
+**Scope and result:** Updates the current code channel's title, context bar, artifact tab, or Code diff independently. Context items merge with defaults; the complete context bar holds up to five items. Returns an outcome for each requested change. The Code diff normally refreshes after each turn; `refresh_diff:true` forces a refresh.
+
+**Restrictions:** Only available inside an active Slack code channel. HTML previews render sandboxed. An archived code channel cannot be updated.
+
+## archive_code_channel
+
+**Optional:** `summary` (string, up to 3900 characters).
+
+**Scope and result:** Requests archival of the current Slack code channel after its task is done and the requester agrees. A human must approve the card. Posts the wrap-up, shares it into the origin thread, and archives the channel. History and artifact tabs remain readable and searchable; the task branch remains on disk.
+
+**Restrictions:** Only available inside a Slack code channel. Repeated archival reports that the channel is already archived.

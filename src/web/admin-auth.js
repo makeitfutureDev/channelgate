@@ -5,7 +5,7 @@ import express from 'express';
 import { generateRegistrationOptions, verifyRegistrationResponse, generateAuthenticationOptions, verifyAuthenticationResponse } from '@simplewebauthn/server';
 import { getPublicUrl, getAdminPassword, getSettings, saveSettings } from '../config/settings.js';
 import { adminAccount, adminPasskeys, adminPasskeyById, bootstrapAvailable, createAdminEnrollment, adminEnrollment, saveAdminPasskey, advanceAdminCounter, listAdminAccounts, deleteAdminPasskey, revokeAdminSessions, adminLinkRequired, eligibleAdminUsers, dashboardUser, adminAccountForUser, ensureUserAdminAccount, createAdminIdentityLink, verifyAdminIdentityLink, cancelAdminIdentityLink, getIdentityLinkState } from '../config/admin-accounts.js';
-import { adminSession, requireRecentAdminAuth, createAdminSession, refreshAdminSession, parseCookies, cookieAttrs, passwordOk, adminPasswordFingerprint } from './auth.js';
+import { adminSession, requireRecentAdminAuth, createAdminSession, refreshAdminSession, parseCookies, cookieAttrs, adminPasswordFingerprint } from './auth.js';
 import { clientKey, createLoginLimiter, hashPassword, verifyPassword } from './security.js';
 import { logEvent } from '../util/logger.js';
 
@@ -193,8 +193,8 @@ export function createAdminAuthRouter({ adminIdentityDelivery } = {}) {
     const bootstrap = s.bootstrap && s.account.userId && Date.now() - s.authenticatedAt <= FIVE_MIN;
     if (!bootstrap) linkedFresh(req);
     if (!s.account.userId) reject('Verify and link your administrator user first.', 403);
-    if (bootstrap && (!enabled || !(await passwordOk(req.body?.password)))) reject('Verify the initial setup password before enabling sign-in.', 403);
     const passwordBefore = getAdminPassword(); const version = passwordSlackVersion();
+    if (bootstrap && (!enabled || typeof req.body?.password !== 'string' || !passwordBefore || !(await verifyPassword(req.body.password, passwordBefore)))) reject('Verify the initial setup password before enabling sign-in.', 403);
     const patch = { adminPasswordSlackEnabled: enabled };
     if (enabled) {
       if (!slackAdmin(s.account.userId) || typeof adminIdentityDelivery !== 'function') reject('A linked Slack administrator and private Slack delivery are required.', 403);
