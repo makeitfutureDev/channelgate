@@ -19,6 +19,11 @@
   reauthentication. Confirm a wrong/replayed code and a non-admin are refused; disabling the
   checkbox removes alternate login and invalidates its sessions. Check from the RustDesk browser
   through a localhost SSH tunnel. Record screenshots/HTTP evidence without codes/passwords.
+- Local regression: `npm run test:coverage -- --test-concurrency=4` passed with 4,119
+  passed / 38 opt-in skipped / zero failed; coverage 93.77% lines, 86.50% branches, 90.09%
+  functions. An initial unconstrained run hit the container process limit and was terminated;
+  it is not counted as a passing run. Security-coverage, secret scan and production dependency
+  audit at the high severity threshold passed (three existing moderate advisories remain).
 - Gate maintenance: linked-workspace authorization cases in `test/authorization.test.js`
   restore the existing 95% branch floor (measured 96.81%); no production policy or floor changed.
 - Private QA registry update pending: the requesting user's personal Airtable connection is not
