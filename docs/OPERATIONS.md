@@ -989,3 +989,21 @@ The restart signal drains active work: SIGUSR2 exits with the restart code for t
 Restart=on-failure unit; SIGTERM supports Restart=always and on-success.
 Readiness allows ten minutes for large skill catalogs to reconcile. The isolated engine response
 probe remains available as a separate diagnostic.
+
+
+### Automatically approve company members
+
+In Admin UI → Users → Auto-approval, enter exact company email domains and enable the policy.
+It is off by default. Slack needs `users:read` and `users:read.email`; add the latter OAuth bot
+scope and reinstall the app if email lookups return no email. Google Chat and Teams require a
+provider-supplied sender email; if unavailable, approve the person manually. Matching does not
+include subdomains: list each separately. No wildcard or URL is accepted.
+
+Only Approved access is granted. Channel restrictions, registration limits and licensing remain
+in force. Unchecking Approved in the user editor prevents later automatic reapproval; checking it
+restores approval manually. Older unapproved records have no explicit opt-out until saved in the
+editor. Disabling the policy or removing a domain does not revoke existing access.
+
+Preview existing Slack users before applying a batch (up to 500 known users). Apply fetches fresh
+profiles and rechecks the current policy and manual opt-outs. Lookup failures grant no access and
+are counted in the result. Non-Slack users are checked on their next authenticated message.

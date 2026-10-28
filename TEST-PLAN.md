@@ -1,5 +1,29 @@
 # ChannelGate — Test Plan
 
+## Company domain auto-approval (2026-10-28)
+
+- Automated: `node --test test/user-auto-approval.test.js test/user-search.test.js` covers
+  canonical exact domains, malicious suffixes/URLs/wildcards, disabled policy, provider failure,
+  bots/deleted/mismatched identities, manual opt-out, preview without mutation, fresh apply checks,
+  policy validation, audit and Approved without Admin.
+- Engine-independent: authorization occurs before engine selection. Disposable fixture: scratch
+  runtime root via `ensureTestEnv()`, Express admin router, fake Slack `users.info` identities
+  `UAUTO1`…`UAUTO6` with `example.com`/`elsewhere.com`; never change real user approvals.
+- Browser acceptance passed: `CG_BROWSER_MODULE=/usr/local/lib/node_modules/playwright/index.mjs
+  node --test test/user-auto-approval-browser.test.js` against a disposable admin app. Open
+  Users → Auto-approval, add `example.com`, enable and save, reload and confirm persistence.
+  Preview known users, verify no approval changed, apply and verify eligible users become Approved
+  without Admin. Revoke one in the drawer, repeat preview and confirm exclusion. Invalid wildcard
+  must fail with no save. Check desktop and 390px width, keyboard controls and no browser errors.
+- Live inbound acceptance (pending): in a disposable Slack deployment with `users:read.email`,
+  use an unapproved human test account matching the configured company domain. Send `@bot Say
+  DOMAIN_APPROVAL_OK`; require an auto-approval audit row, Approved=true, Admin=false, and a normal
+  reply. Revoke manually and resend: no engine turn. Nonmatching/missing email must remain denied.
+  Repeat authenticated Google Chat/Teams sender fixtures when those transports provide email;
+  Teams Bot Framework events without email must remain manual. No engine-specific output is used
+  for the approval pass rule; downstream engine release smoke remains a separate gate.
+- Private QA registry update pending: requesting user's personal Airtable connection is unavailable.
+
 ## Email accounts (2026-10-22)
 
 ### Regression

@@ -61,6 +61,7 @@ export async function getUser(userId) {
 }
 
 // Merge a patch into one user record (create if absent). Returns the saved record.
+// A synchronous patch function runs under the write lock; returning null leaves the row untouched.
 // `approved` = on the approved-users list / cleared to use the bot. New users default to false
 // (an admin approves them); the seeded MIF roster is approved.
 export async function setUser(userId, patch) {
@@ -70,12 +71,14 @@ export async function setUser(userId, patch) {
     const row = db.prepare("SELECT data FROM users WHERE user_id = ?").get(userId);
     if (!row && !isApiPrincipal(userId)) assertRegistrationCapacity("users", db);
     const existing = row ? fromJson(row.data, {}) : null;
+    const values = typeof patch === "function" ? patch(existing) : patch;
+    if (values === null) { db.exec("COMMIT"); return existing; }
     const next = {
       name: "", composioToken: "", toolboxToken: "", isAdmin: false,
       approved: false, skills: [], allowedMcps: [], allowedCodexMcps: [],
       allowedOpenCodeMcps: [], ...existing,
     };
-    for (const [key, value] of Object.entries(patch || {})) {
+    for (const [key, value] of Object.entries(values || {})) {
       if (value !== undefined) next[key] = value;
     }
     const saved = stripDeadFields(next);
