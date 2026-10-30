@@ -112,6 +112,10 @@ product overview.
   bash/proxy/API executors remain refused. Clarify local container processing as an option for
   records returned inline.
 
+- **Company email auto-approval.** Admins can configure exact email domains in Users, preview
+  existing Slack users and approve matching provider identities automatically. Manual revocations
+  prevent automatic reapproval; no administrator privileges are granted.
+
 - **Email accounts.** Connect an ordinary mailbox — IMAP for reading, SMTP for sending — to a
   conversation or to yourself by entering its server settings once on one form: in the admin UI
   (the conversation's Connections, or a person under Users), in Slack's ⚙️ Settings (MCP page for

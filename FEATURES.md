@@ -224,6 +224,20 @@ Slack’s native running/Stop label shows the resolved model and explicitly conf
   author, credentials and runtime permissions; accepted decisions audit the responding admin.
   Expiration, duplicate claims and the cross-author automatic steering guard still apply.
 
+## Company email domain auto-approval
+
+- Admin UI → Users → Auto-approval accepts exact company email domains, disabled by default.
+  Authenticated inbound provider identities can gain Approved access before engine selection;
+  this never grants Admin or bypasses channel access rules, quotas, or license admission.
+- Slack fetches the current human profile (requires `users:read.email`). Google Chat and Teams
+  use provider-supplied sender email when available; missing email remains manual approval.
+  Editable names, message text and run-API attribution cannot establish an email identity.
+- Unchecking Approved in the admin user editor records a manual opt-out from auto-approval;
+  checking it clears that opt-out. Removing domains/disabling the policy retains prior approvals.
+- Existing known Slack users can be previewed and explicitly approved, with fresh identity,
+  current policy and manual opt-out checks on apply. Up to 500 users per batch; lookup failures
+  are reported and grant nothing. Policy changes and automatic approvals are audited.
+
 ## Registered inventory limits and Enterprise harness approvals
 
 - Non-Enterprise installs allow at most 20 registered channels (including DMs and the API

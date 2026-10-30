@@ -38,7 +38,7 @@ export function createAdminRouter({
   router.use(createApprovalsRouter({ slack }));
   router.use(createSchedulesRouter());
   router.use(createChannelsRouter({ slack, testMakeToolbox }));
-  router.use(createUsersRouter());
+  router.use(createUsersRouter({ slack }));
   router.use(createSkillsRouter());
 
   return router;
