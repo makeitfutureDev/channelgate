@@ -2,12 +2,89 @@ import { api } from "./admin-api.js";
 
 const passkeys = () => window.ChannelGatePasskeys;
 
+// Passwords and codes stay only in this temporary form; never browser storage.
+async function passwordSlackReauth(me) {
+  const previousFocus = document.activeElement;
+  const modal = document.createElement("div");
+  modal.className = "modal";
+  modal.innerHTML = `<form class="modal-card" role="dialog" aria-modal="true" aria-labelledby="password-slack-title">
+    <h3 id="password-slack-title">Verify your identity</h3>
+    <p data-auth="status">Enter the dashboard password to receive a private Slack code.</p>
+    <label class="field" data-auth="password-label"><span>Dashboard password</span><input data-auth="password" type="password" autocomplete="current-password" required /></label>
+    <label class="field" data-auth="code-label" hidden><span>8-digit code from Slack</span><input data-auth="code" type="text" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{8}" minlength="8" maxlength="8" /></label>
+    <p data-auth="error" role="alert"></p>
+    <div class="modal-foot"><button type="submit" data-auth="submit">Send Slack code</button><button type="button" class="ghost" data-auth="passkey">Use a passkey</button><button type="button" class="ghost" data-auth="cancel">Cancel</button></div>
+  </form>`;
+  document.body.append(modal);
+  const at = (name) => modal.querySelector(`[data-auth="${name}"]`);
+  at("passkey").hidden = !me.passkeys?.length;
+  let requestId = "";
+  let busy = false;
+  return new Promise((resolve, reject) => {
+    function finish(value, error) {
+      at("password").value = "";
+      at("code").value = "";
+      document.removeEventListener("keydown", onKey);
+      modal.remove();
+      previousFocus?.focus();
+      if (error) reject(error); else resolve(value);
+    }
+    function onKey(event) {
+      if (event.key === "Escape" && !busy) { event.preventDefault(); finish(false, new Error("Identity verification cancelled.")); }
+      if (event.key === "Tab") {
+        const controls = [...modal.querySelectorAll("input, button")].filter((item) => !item.disabled && !item.closest("[hidden]"));
+        const first = controls[0];
+        const last = controls.at(-1);
+        if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last?.focus(); }
+        else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first?.focus(); }
+      }
+    }
+    document.addEventListener("keydown", onKey);
+    at("cancel").addEventListener("click", () => finish(false, new Error("Identity verification cancelled.")));
+    at("passkey").addEventListener("click", () => finish(false));
+    modal.querySelector("form").addEventListener("submit", async (event) => {
+      event.preventDefault();
+      if (busy) return;
+      busy = true;
+      for (const button of modal.querySelectorAll("button")) button.disabled = true;
+      at("error").textContent = "";
+      try {
+        if (!requestId) {
+          let result;
+          try {
+            result = await api("/api/auth/password-slack/options", { method: "POST", body: JSON.stringify({ password: at("password").value, userId: me.account.userId }) });
+          } finally { at("password").value = ""; }
+          requestId = result.requestId;
+          at("password").required = false;
+          at("password-label").hidden = true;
+          at("code-label").hidden = false;
+          at("code").required = true;
+          at("status").textContent = "Check your private Slack messages. The code expires in 5 minutes.";
+          at("submit").textContent = "Verify code";
+          at("code").focus();
+        } else {
+          try {
+            await api("/api/auth/password-slack/verify", { method: "POST", body: JSON.stringify({ requestId, code: at("code").value.trim() }) });
+          } finally { at("code").value = ""; }
+          finish(true);
+        }
+      } catch (error) { at("error").textContent = error.message; }
+      finally {
+        busy = false;
+        for (const button of modal.querySelectorAll("button")) button.disabled = false;
+      }
+    });
+    at("password").focus();
+  });
+}
+
 // Called from a user action (settings, secret reveal, account/key management). The server is
 // authoritative about freshness; never cache a password or an assertion in browser storage.
 export async function freshAdminAuth({ force = false } = {}) {
   const me = await api("/api/auth/me", { cache: "no-store" });
   if (me.bootstrap) throw new Error("Create your first passkey under Settings → Admin access before continuing.");
   if (!force && me.fresh) return true;
+  if (me.passwordSlackEnabled && /^[UW][A-Z0-9]{8,}$/.test(me.account?.userId || "") && await passwordSlackReauth(me)) return true;
   try {
     const { options } = await api("/api/auth/reauth/options", { method: "POST", body: "{}" });
     const response = await passkeys().get(options);
@@ -67,7 +144,13 @@ export async function mountAdminAccess(container, { confirm = async () => false,
       </form>
       <p class="desc" data-access="link-status"></p>
     </div>
-    <p class="admin-access-bootstrap" data-access="bootstrap" hidden>Create your first passkey to finish setup. The existing admin password stops working after enrollment.</p>
+    <p class="admin-access-bootstrap" data-access="bootstrap" hidden>Create your first passkey to finish setup, or enable password and Slack code sign-in below after linking your admin identity.</p>
+    <form data-access="password-slack-form" class="admin-access-form">
+      <label class="toggle"><input data-access="password-slack-enabled" type="checkbox" /> Allow password and Slack code sign-in</label>
+      <p class="desc">Admins can sign in without a passkey using the shared dashboard password and a private Slack code. Requires a connected Slack admin account. Disabling this option signs out password and Slack code sessions.</p>
+      <label class="field"><span data-access="password-slack-label">Dashboard password (leave blank to keep the current password)</span><input data-access="password-slack-password" type="password" autocomplete="new-password" /></label>
+      <button type="submit" data-access="password-slack-save">Save sign-in option</button>
+    </form>
     <form data-access="register-form" class="admin-access-form">
       <label class="field"><span>Passkey name</span><input data-access="key-name" type="text" autocomplete="off" placeholder="For example, work laptop or spare key" required maxlength="100" /></label>
       <button type="submit" data-access="register">Add a passkey</button>
@@ -83,7 +166,7 @@ export async function mountAdminAccess(container, { confirm = async () => false,
   let linkRequestId = "";
   function syncControls() {
     if (!active()) return;
-    for (const control of container.querySelectorAll("button, select")) control.disabled = !ready || busy || control.dataset.unavailable === "true";
+    for (const control of container.querySelectorAll("button, select, input[type=checkbox]")) control.disabled = !ready || busy || control.dataset.unavailable === "true";
   }
   syncControls();
   function message(text, error = false) {
@@ -126,6 +209,10 @@ export async function mountAdminAccess(container, { confirm = async () => false,
       if (!users.length) at("link-status").textContent = "No existing admin user is available to link. Configure your chat connection and admin users first.";
     }
     at("bootstrap").hidden = !me.bootstrap;
+    at("password-slack-label").textContent = me.bootstrap ? "Existing setup password (required to enable sign-in)" : "Dashboard password (leave blank to keep the current password)";
+    at("password-slack-enabled").checked = Boolean(me.passwordSlackEnabled);
+    at("password-slack-save").dataset.unavailable = String(!me.account.userId || me.linkRequired);
+    at("password-slack-enabled").dataset.unavailable = String(!me.account.userId || me.linkRequired);
     at("register").textContent = me.passkeys.length ? "Add a passkey" : "Create your first passkey";
     at("register").dataset.unavailable = String(Boolean(me.linkRequired));
     at("keys").replaceChildren(...me.passkeys.map((key) => accessRow(
@@ -171,6 +258,27 @@ export async function mountAdminAccess(container, { confirm = async () => false,
     at("link-verify-form").hidden = true;
     at("link-status").textContent = "Send a new verification code to the selected user.";
   });
+  async function savePasswordSlack() {
+    const enabled = at("password-slack-enabled").checked;
+    const password = at("password-slack-password").value;
+    at("password-slack-password").value = "";
+    try {
+      if (!me.bootstrap) await freshAdminAuth();
+      const result = await api("/api/auth/password-slack/settings", { method: "PUT", body: JSON.stringify({ enabled, ...(password ? { password } : {}) }) });
+      if (result.signedOut) { location.replace("/login.html"); return; }
+      await refresh();
+      message(enabled ? "Password and Slack code sign-in enabled." : "Password and Slack code sign-in disabled.");
+      if (enabled && !me.bootstrap && !me.passkeys.length) location.replace("/settings#set-admin-access");
+    } catch (error) {
+      at("password-slack-enabled").checked = Boolean(me.passwordSlackEnabled);
+      throw error;
+    }
+  }
+  at("password-slack-form").addEventListener("submit", (event) => {
+    event.preventDefault();
+    void run(savePasswordSlack);
+  });
+  at("password-slack-enabled").addEventListener("change", () => { void run(savePasswordSlack); });
   at("register-form").addEventListener("submit", (event) => {
     event.preventDefault();
     void run(async () => {

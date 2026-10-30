@@ -159,3 +159,55 @@ An email account is a mailbox's IMAP and SMTP settings entered once on one form 
 ## Related guides
 
 [Accounts](/docs/features/connected-accounts), [environment configuration](/docs/configuration/environment-variables), [secrets](/docs/features/secrets), [Composio SDK](/docs/features/composio-sdk), and [Toolbox/Make](/docs/features/toolbox-and-make).
+
+## list_email_accounts
+
+**Inputs:** None.
+
+**Scope and result:** Lists this conversation's connected email accounts and the verified requester's personal accounts, with address, scope, server endpoints, and sending availability. Never returns passwords. Connect accounts through Settings → Email accounts (MCP page for the conversation, You page for personal accounts), not through chat. Personal mail read in a shared conversation appears in that shared thread. Untrusted API author attribution does not grant personal accounts.
+
+The email controls below accept optional `account`: a connected account name, `personal/<name>`, `channel/<name>`, or email address. Omit it only when exactly one account is available. Optional `mailbox` defaults to `INBOX`; message `uid` values are scoped to that mailbox.
+
+## email_mailboxes
+
+**Optional:** `account`.
+
+**Scope and result:** Lists selectable folders and their special roles (Inbox, Sent, Drafts, Archive, Trash, Junk) for the selected connected account.
+
+## email_search
+
+**Optional:** `account`, `mailbox`, `query`, `from`, `to`, `subject`, `since`, `before`, `unseen`, `flagged`, `limit` (integer 1–50; default 20).
+
+**Scope and result:** Lists matching messages newest first, including UID, date, sender, subject, unread/flag marks, and attachment count. Filters combine with AND; no filters lists newest messages. `since` and `before` are ISO dates. Results include the total match count. Use the returned UID with the message controls.
+
+## email_read
+
+**Required:** `uid` (positive integer). **Optional:** `account`, `mailbox`, `max_chars` (integer 500–100000; default 20000).
+
+**Scope and result:** Reads headers, text body (plain text preferred, HTML converted), and attachment part identifiers. Reports body truncation explicitly.
+
+## email_download_attachment
+
+**Required:** `uid` (positive integer), `part` (attachment part ID from `email_read`). **Optional:** `account`, `mailbox`.
+
+**Scope and result:** Downloads an attachment into this conversation's workspace under `uploads/email/<account>/` and returns its local path. Maximum attachment size is 50 MB. The path can be read locally or shared using the conversation's file controls.
+
+## email_move
+
+**Required:** `uid` (positive integer), `to` (destination mailbox path). **Optional:** `account`, `mailbox`.
+
+**Scope and result:** Moves a message into another folder, such as Archive or Trash. Returns the source/destination and new UID when supplied by the server. List valid destinations with `email_mailboxes`.
+
+## email_set_flag
+
+**Required:** `uid` (positive integer), `flag` (`seen`, `unseen`, `flagged`, `unflagged`, or `answered`). **Optional:** `account`, `mailbox`.
+
+**Scope and result:** Changes the selected message's read, flagged, or answered state and returns an acknowledgement.
+
+## email_send
+
+**Required:** `to` (nonempty array of recipient addresses), `subject` (string), `text` (plain-text body). **Optional:** `account`, `cc`, `bcc` (address arrays), `html` (HTML alternative), `attachments` (workspace-relative file paths), `in_reply_to` (original Message-ID), `reply_to` (address).
+
+**Scope and result:** Sends from the selected connected account's address and reports accepted/rejected recipients, Message-ID, and whether a Sent copy was saved. `in_reply_to` sets both In-Reply-To and References. Attachments are confined to the conversation workspace, at most ten files and 25 MB total.
+
+**Restrictions:** Sending must be enabled on the account. Confirm recipients and content unless the user already supplied them. Personal accounts send as that person. Mail credentials remain in the daemon, outside agent containers.

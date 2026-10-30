@@ -25,6 +25,9 @@ product overview.
 
 ## Unreleased
 
+- Add an opt-in admin sign-in alternative using the admin password and a private, expiring Slack
+  verification code for existing administrators, including sensitive-action reauthentication.
+
 - Version login-page scripts with their HTML so cached pre-upgrade code cannot reference removed fields.
 
 - Use the existing Users list and admin role for dashboard passkeys and invitations. Existing
@@ -108,6 +111,10 @@ product overview.
   approval; Python inside Workbench is outside that structured gate. Other generic connector
   bash/proxy/API executors remain refused. Clarify local container processing as an option for
   records returned inline.
+
+- **Company email auto-approval.** Admins can configure exact email domains in Users, preview
+  existing Slack users and approve matching provider identities automatically. Manual revocations
+  prevent automatic reapproval; no administrator privileges are granted.
 
 - **Email accounts.** Connect an ordinary mailbox — IMAP for reading, SMTP for sending — to a
   conversation or to yourself by entering its server settings once on one form: in the admin UI

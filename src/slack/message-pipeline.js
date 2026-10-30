@@ -1,3 +1,4 @@
+import { autoApproveSlackUser } from "../gateway/user-auto-approval.js";
 import { assertEngineSelectable } from "../engines/selection.js";
 // The message pipeline (extracted from slack/app.js — the 2026-08 restructure notes (internal repo) Phase 2.5): gating,
 // authorization, canonical hydration, in-thread slash commands, attachment download, thread
@@ -657,6 +658,7 @@ export async function processMessageEvent(event, client, { botUserId = "", teamI
     const codeChannel = isCodeChannelMeta(meta);
     const { threadKey, replyTs } = codeChannel ? codeChannelReplyTarget(event) : { threadKey: event.thread_ts ?? event.ts, replyTs: event.thread_ts ?? event.ts };
     const threadOpts = replyTs ? { thread_ts: replyTs } : {};
+    await autoApproveSlackUser(client, event.user);
 
     const authorIsAdmin = await isAdmin(event.user);
     const authorApproved = await isApproved(event.user);

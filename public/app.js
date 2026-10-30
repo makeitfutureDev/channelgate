@@ -3335,7 +3335,76 @@ async function loadUserResults() {
   return true;
 }
 
+let userAutoApprovalLoaded = false;
+async function loadUserAutoApproval() {
+  if (userAutoApprovalLoaded) return;
+  const policy = await api("/api/user-auto-approval");
+  userAutoApprovalLoaded = true;
+  const enabled = document.getElementById("user-auto-approval-enabled");
+  const domains = document.getElementById("user-auto-approval-domains");
+  const status = document.getElementById("user-auto-approval-status");
+  const candidates = document.getElementById("user-auto-approval-candidates");
+  const apply = document.getElementById("user-auto-approval-apply");
+  const next = document.getElementById("user-auto-approval-next");
+  let nextOffset = 0;
+  const form = document.getElementById("user-auto-approval-form");
+  enabled.checked = policy.enabled;
+  domains.value = policy.domains.join(", ");
+  let ids = [];
+  let busy = false;
+  function resetPreview() { ids = []; candidates.textContent = ""; apply.hidden = true; next.hidden = true; }
+  form.addEventListener("input", resetPreview);
+  async function perform(action) {
+    if (busy) return;
+    busy = true;
+    for (const button of document.querySelectorAll("#user-auto-approval button")) button.disabled = true;
+    try { await action(); }
+    catch (error) { status.textContent = error.message; }
+    finally {
+      busy = false;
+      for (const button of document.querySelectorAll("#user-auto-approval button")) button.disabled = false;
+    }
+  }
+  form.addEventListener("submit", event => {
+    event.preventDefault();
+    perform(async () => {
+      resetPreview();
+      const saved = await api("/api/user-auto-approval", { method: "PUT", body: JSON.stringify({
+        enabled: enabled.checked, domains: domains.value.split(/[\s,;]+/).filter(Boolean),
+      }) });
+      domains.value = saved.domains.join(", ");
+      status.textContent = "Saved. Applies on the next message. Existing approvals are retained.";
+    });
+  });
+  async function preview(offset = 0) { return perform(async () => {
+    resetPreview();
+    const result = await api("/api/user-auto-approval/preview", { method: "POST", body: JSON.stringify({ offset }) });
+    nextOffset = result.nextOffset;
+    next.hidden = nextOffset === null;
+    ids = result.candidates.map(user => user.id);
+    const list = document.createElement("ul");
+    for (const user of result.candidates) {
+      const item = document.createElement("li");
+      item.textContent = `${user.name} (${user.email})`;
+      list.appendChild(item);
+    }
+    candidates.replaceChildren(list);
+    apply.hidden = !ids.length;
+    status.textContent = `${ids.length} eligible users. ${result.failed} lookups failed.${result.truncated ? " More users available; preview the next batch." : ""}`;
+  }); }
+  document.getElementById("user-auto-approval-preview").addEventListener("click", () => preview());
+  next.addEventListener("click", () => preview(nextOffset));
+  apply.addEventListener("click", () => perform(async () => {
+    const selected = ids;
+    resetPreview();
+    const result = await api("/api/user-auto-approval/apply", { method: "POST", body: JSON.stringify({ userIds: selected }) });
+    status.textContent = `${result.approved} users approved after rechecking current identities and policy. ${result.failed} lookups failed.`;
+    await loadUsers();
+  }));
+}
+
 async function loadUsers() {
+  await loadUserAutoApproval();
   const { users } = await api("/api/users");
   USERS = users;
   if (!await loadUserResults()) return;
@@ -5239,7 +5308,7 @@ document.getElementById("dash-source").addEventListener("change", () => loadDash
 // ── Boot ─────────────────────────────────────────────────────────────────────────
 async function init() {
   const identity = await api("/api/auth/me", { cache: "no-store" });
-  if (identity.linkRequired) {
+  if (identity.linkRequired || identity.bootstrap) {
     // Existing unlinked passkeys can authenticate, but ordinary admin APIs stay closed until
     // their owner proves the existing gateway identity. Keep that remedy reachable on its own.
     document.querySelector(".app").style.display = "none";
@@ -5248,7 +5317,7 @@ async function init() {
     const card = document.createElement("div");
     card.className = "setcard identity-link-card";
     const title = document.createElement("h2");
-    title.textContent = "Link your gateway admin user";
+    title.textContent = identity.linkRequired ? "Link your gateway admin user" : "Complete dashboard access setup";
     const access = document.getElementById("admin-access");
     card.append(title, access);
     gate.append(card);

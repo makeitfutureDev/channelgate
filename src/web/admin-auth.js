@@ -1,12 +1,12 @@
-// WebAuthn ceremonies never run through an agent. Only verified public-key signatures mint
-// dashboard sessions; setup links authorize registration alone, not dashboard access.
+// Authentication never runs through an agent. Verified passkey signatures or the explicitly
+// enabled password-plus-private-Slack-code flow mint sessions; setup links only enroll keys.
 import crypto from 'node:crypto';
 import express from 'express';
 import { generateRegistrationOptions, verifyRegistrationResponse, generateAuthenticationOptions, verifyAuthenticationResponse } from '@simplewebauthn/server';
-import { getPublicUrl, getAdminPassword } from '../config/settings.js';
+import { getPublicUrl, getAdminPassword, getSettings, saveSettings } from '../config/settings.js';
 import { adminAccount, adminPasskeys, adminPasskeyById, bootstrapAvailable, createAdminEnrollment, adminEnrollment, saveAdminPasskey, advanceAdminCounter, listAdminAccounts, deleteAdminPasskey, revokeAdminSessions, adminLinkRequired, eligibleAdminUsers, dashboardUser, adminAccountForUser, ensureUserAdminAccount, createAdminIdentityLink, verifyAdminIdentityLink, cancelAdminIdentityLink, getIdentityLinkState } from '../config/admin-accounts.js';
-import { adminSession, requireRecentAdminAuth, createAdminSession, refreshAdminSession, parseCookies, cookieAttrs } from './auth.js';
-import { clientKey, createLoginLimiter } from './security.js';
+import { adminSession, requireRecentAdminAuth, createAdminSession, refreshAdminSession, parseCookies, cookieAttrs, adminPasswordFingerprint } from './auth.js';
+import { clientKey, createLoginLimiter, hashPassword, verifyPassword } from './security.js';
 import { logEvent } from '../util/logger.js';
 
 const FIVE_MIN = 5 * 60_000;
@@ -15,6 +15,9 @@ const pending = new Map();
 const failures = createLoginLimiter();
 const starts = createLoginLimiter({ freeAttempts: 20, baseDelayMs: 1000, maxDelayMs: 60_000, ttlMs: 60_000, globalMaxFailures: 500, globalWindowMs: 60_000 });
 const COOKIE = 'cg_webauthn';
+const passwordSlackPending = new Map();
+const slackAdmin = id => typeof id === 'string' && /^[UW][A-Z0-9]{8,}$/.test(id) && dashboardUser(id)?.isAdmin === true;
+const passwordSlackVersion = () => Number(getSettings().adminPasswordSlackVersion) || 0;
 function reject(message, status = 400) { const error = new Error(message); error.status = status; error.expose = true; throw error; }
 const loopback = host => ['localhost', '127.0.0.1', '[::1]'].includes(host);
 // A configured public URL is authoritative. With none configured only an explicitly loopback
@@ -110,7 +113,7 @@ function safe(handler) {
     res.setHeader('Cache-Control', 'no-store');
     res.setHeader('Referrer-Policy', 'no-referrer');
     try { await handler(req, res); } catch (error) {
-      if (/^\/(login|reauth|register|enroll)\/(options|verify)\/?$/.test(req.path) && error.status !== 429) {
+      if (/^\/(login|reauth|register|enroll|password-slack)\/(options|verify)\/?$/.test(req.path) && error.status !== 429) {
         for (const key of rateKeys(req, req.adminAuthAccountId)) failures.recordFailure(key);
       }
       // Verifier error strings may contain attacker-controlled assertions. Do not log or echo.
@@ -123,12 +126,93 @@ export function createAdminAuthRouter({ adminIdentityDelivery } = {}) {
   const router = express.Router({ caseSensitive: true });
   router.get('/status', safe(async (req, res) => {
     const rp = adminRelyingParty(req);
-    res.json({ bootstrapAvailable: Boolean(getAdminPassword()) && bootstrapAvailable(), ...rp });
+    res.json({ bootstrapAvailable: Boolean(getAdminPassword()) && bootstrapAvailable(), passwordSlackEnabled: getSettings().adminPasswordSlackEnabled === true, ...rp });
   }));
   router.get('/me', safe(async (req, res) => {
     const s = loggedIn(req);
-    res.json({ account: publicAccount(s.account), fresh: requireRecentAdminAuth(req), bootstrap: s.bootstrap, linkRequired: adminLinkRequired(s.account), canLink: canLink(s),
+    res.json({ account: publicAccount(s.account), passwordSlackEnabled: getSettings().adminPasswordSlackEnabled === true, fresh: requireRecentAdminAuth(req), bootstrap: s.bootstrap, linkRequired: adminLinkRequired(s.account), canLink: canLink(s),
       passkeys: adminPasskeys(s.accountId).map(p => ({ id: p.id, name: p.name, createdAt: p.createdAt, lastUsedAt: p.lastUsedAt })) });
+  }));
+  router.post('/password-slack/options', safe(async (req, res) => {
+    const rp = ceremonyGuard(req);
+    limited(req, res, failures); limited(req, res, starts, '', true);
+    if (getSettings().adminPasswordSlackEnabled !== true || typeof adminIdentityDelivery !== 'function') reject('Password and Slack code sign-in is unavailable.', 403);
+    const userId = req.body?.userId;
+    if (!slackAdmin(userId)) reject('Unable to sign in with those credentials.', 401);
+    const a = ensureUserAdminAccount(userId);
+    req.adminAuthAccountId = a.id;
+    limited(req, res, failures, a.id); limited(req, res, starts, a.id, true);
+    const version = passwordSlackVersion(); const passwordBefore = getAdminPassword();
+    // Verify directly: an opportunistic legacy hash upgrade would invalidate this ceremony.
+    if (!a.enabled || !passwordBefore || typeof req.body?.password !== 'string' || !(await verifyPassword(req.body.password, passwordBefore))) reject('Unable to sign in with those credentials.', 401);
+    const valid = () => getSettings().adminPasswordSlackEnabled === true && passwordSlackVersion() === version && getAdminPassword() === passwordBefore && slackAdmin(userId) && adminAccount(a.id)?.enabled && adminAccount(a.id)?.authVersion === a.authVersion;
+    if (!valid()) reject('Account access changed. Start again.', 401);
+    const now = Date.now();
+    for (const [key, value] of passwordSlackPending) if (value.expiresAt <= now) passwordSlackPending.delete(key);
+    if (passwordSlackPending.size >= MAX_PENDING) reject('Authentication is busy. Try again shortly.', 429);
+    const binding = browserBinding(req, res);
+    // One outstanding code per browser/account; a resend retires the previous code.
+    for (const [key, value] of passwordSlackPending) if (value.binding === binding && value.accountId === a.id) passwordSlackPending.delete(key);
+    const requestId = crypto.randomBytes(24).toString('base64url');
+    const code = String(crypto.randomInt(10_000_000, 100_000_000));
+    const digest = crypto.createHash('sha256').update(`${requestId}\0${code}`).digest('hex');
+    const saved = { binding, accountId: a.id, authVersion: a.authVersion, version, passwordFingerprint: adminPasswordFingerprint(), origin: rp.origin, expiresAt: now + FIVE_MIN, digest, attempts: 0 };
+    passwordSlackPending.set(requestId, saved);
+    try {
+      await adminIdentityDelivery(userId, `ChannelGate dashboard sign-in for ${rp.origin}\nYour sign-in code is: ${code}\nThis code expires in 5 minutes. Enter it only on the gateway page where you requested it. If you did not request this, ignore this message.`);
+      if (!valid() || passwordSlackPending.get(requestId) !== saved || saved.expiresAt <= Date.now()) throw new Error('Access changed');
+    } catch { passwordSlackPending.delete(requestId); reject('The private Slack code could not be delivered, or access changed. Retry sign-in.', 503); }
+    audit('password_slack_code_sent', a);
+    res.json({ requestId, expiresAt: saved.expiresAt });
+  }));
+  router.post('/password-slack/verify', safe(async (req, res) => {
+    const rp = ceremonyGuard(req); limited(req, res, failures);
+    const requestId = req.body?.requestId;
+    const saved = typeof requestId === 'string' ? passwordSlackPending.get(requestId) : null;
+    if (!saved || saved.binding !== parseCookies(req.headers.cookie)[COOKIE] || saved.origin !== rp.origin) reject('Sign-in request expired. Start again.', 401);
+    req.adminAuthAccountId = saved.accountId; limited(req, res, failures, saved.accountId);
+    const a = adminAccount(saved.accountId);
+    if (saved.expiresAt <= Date.now() || saved.attempts >= 5 || getSettings().adminPasswordSlackEnabled !== true || passwordSlackVersion() !== saved.version || saved.passwordFingerprint !== adminPasswordFingerprint() || !a?.enabled || a.authVersion !== saved.authVersion || !slackAdmin(a.userId)) {
+      passwordSlackPending.delete(requestId); reject('Sign-in request expired or access changed. Start again.', 401);
+    }
+    const code = req.body?.code;
+    const digest = crypto.createHash('sha256').update(`${requestId}\0${String(code)}`).digest('hex');
+    if (typeof code !== 'string' || !/^\d{8}$/.test(code) || !crypto.timingSafeEqual(Buffer.from(digest, 'hex'), Buffer.from(saved.digest, 'hex'))) {
+      if (++saved.attempts >= 5) passwordSlackPending.delete(requestId);
+      reject('The verification code is incorrect.', 401);
+    }
+    passwordSlackPending.delete(requestId);
+    createAdminSession(req, res, a, { method: 'password-slack' });
+    for (const key of rateKeys(req, a.id)) { failures.recordSuccess(key); starts.recordSuccess(key); }
+    audit('password_slack_login', a); res.json({ ok: true });
+  }));
+  router.put('/password-slack/settings', safe(async (req, res) => {
+    ceremonyGuard(req); const s = loggedIn(req);
+    if (typeof req.body?.enabled !== 'boolean') reject('Choose whether password and Slack code sign-in is enabled.');
+    const enabled = req.body.enabled;
+    const bootstrap = s.bootstrap && s.account.userId && Date.now() - s.authenticatedAt <= FIVE_MIN;
+    if (!bootstrap) linkedFresh(req);
+    if (!s.account.userId) reject('Verify and link your administrator user first.', 403);
+    const passwordBefore = getAdminPassword(); const version = passwordSlackVersion();
+    if (bootstrap && (!enabled || typeof req.body?.password !== 'string' || !passwordBefore || !(await verifyPassword(req.body.password, passwordBefore)))) reject('Verify the initial setup password before enabling sign-in.', 403);
+    const patch = { adminPasswordSlackEnabled: enabled };
+    if (enabled) {
+      if (!slackAdmin(s.account.userId) || typeof adminIdentityDelivery !== 'function') reject('A linked Slack administrator and private Slack delivery are required.', 403);
+      if (req.body.password !== undefined && req.body.password !== '') {
+        if (typeof req.body.password !== 'string' || req.body.password.length < 12 || req.body.password.length > 1024) reject('Use a password between 12 and 1024 characters.');
+        patch.adminPassword = await hashPassword(req.body.password);
+      }
+      if (!patch.adminPassword && !getAdminPassword()) reject('Set a shared admin password before enabling this sign-in method.');
+    }
+    const current = adminSession(req);
+    if (!current || current.token !== s.token || current.authVersion !== s.authVersion || getAdminPassword() !== passwordBefore || passwordSlackVersion() !== version || (bootstrap ? Date.now() - current.authenticatedAt > FIVE_MIN : !requireRecentAdminAuth(req))) reject('Authentication changed. Start again.', 401);
+    saveSettings(patch); passwordSlackPending.clear();
+    // Preserve this freshly authenticated browser, while old alternate sessions fail validation.
+    const signedOut = !enabled && current.method === 'password-slack';
+    if (!signedOut) createAdminSession(req, res, current.account, { method: bootstrap || current.method === 'password-slack' ? 'password-slack' : 'passkey' });
+    else res.setHeader('Set-Cookie', `cg_session=; ${cookieAttrs(req)}; Max-Age=0`);
+    audit('password_slack_setting_changed', current.account, { enabled });
+    res.json({ ok: true, passwordSlackEnabled: enabled, signedOut });
   }));
   for (const kind of ['login', 'reauth']) {
     router.post(`/${kind}/options`, safe(async (req, res) => {
@@ -251,7 +335,7 @@ export function createAdminAuthRouter({ adminIdentityDelivery } = {}) {
     let updated;
     try { updated = verifyAdminIdentityLink(s.account, req.body?.requestId, req.body?.code, s.token); }
     catch (error) { reject(error.message); }
-    createAdminSession(req, res, updated, { bootstrap: s.bootstrap });
+    createAdminSession(req, res, updated, { bootstrap: s.bootstrap, method: s.method });
     audit('identity_linked', updated, { userId: updated.userId }); res.json({ ok: true });
   }));
   router.get('/users/:userId', safe(async (req, res) => {
@@ -283,7 +367,7 @@ export function createAdminAuthRouter({ adminIdentityDelivery } = {}) {
     const a = adminAccountForUser(user.id);
     if (a) {
       revokeAdminSessions(a.id);
-      if (a.id === s.accountId) createAdminSession(req, res, adminAccount(a.id));
+      if (a.id === s.accountId) createAdminSession(req, res, adminAccount(a.id), { method: s.method });
     }
     audit('sessions_revoked', s.account, { targetUser: user.id }); res.json({ ok: true });
   }));
@@ -291,13 +375,13 @@ export function createAdminAuthRouter({ adminIdentityDelivery } = {}) {
     ceremonyGuard(req); const s = linkedFresh(req);
     if (s.account.userId !== req.params.userId) reject('You can remove only your own passkeys.', 403);
     try { deleteAdminPasskey(s.accountId, req.params.keyId); } catch (error) { reject(error.message); }
-    createAdminSession(req, res, adminAccount(s.accountId)); audit('passkey_removed', s.account); res.json({ ok: true });
+    createAdminSession(req, res, adminAccount(s.accountId), { method: s.method }); audit('passkey_removed', s.account); res.json({ ok: true });
   }));
   router.delete('/passkeys/:id', safe(async (req, res) => {
     ceremonyGuard(req); const s = fresh(req);
     try { deleteAdminPasskey(s.accountId, req.params.id); } catch (error) { reject(error.message); }
     // Other sessions and in-flight ceremonies are revoked, this freshly verified browser rotates.
-    createAdminSession(req, res, adminAccount(s.accountId)); audit('passkey_removed', s.account); res.json({ ok: true });
+    createAdminSession(req, res, adminAccount(s.accountId), { method: s.method }); audit('passkey_removed', s.account); res.json({ ok: true });
   }));
   return router;
 }

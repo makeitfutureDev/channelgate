@@ -1,3 +1,4 @@
+import { createUserAutoApprovalRouter } from "./user-auto-approval.js";
 import { assertNewMcpSelections } from "../../gateway/mcp-selection.js";
 // User admin routes: the masked user list and per-user save (approval/admin flags, personal
 // preferences, and write-only tokens). Split from admin.js; mounted by createAdminRouter so every
@@ -85,8 +86,9 @@ export function filterUsersForSearch(users, query) {
   }));
 }
 
-export function createUsersRouter({ composioInventory = loadComposioInventory, validateMcpSelections = assertNewMcpSelections } = {}) {
+export function createUsersRouter({ slack, composioInventory = loadComposioInventory, validateMcpSelections = assertNewMcpSelections } = {}) {
   const router = Router();
+  router.use(createUserAutoApprovalRouter({ slack }));
 
   // Admin-authenticated metadata only. A person's inventory never falls back to shared keys.
   router.get("/users/:userId/composio-connections", async (req, res, next) => {
@@ -268,7 +270,12 @@ export function createUsersRouter({ composioInventory = loadComposioInventory, v
       const patch = {};
       if (typeof body.name === "string") patch.name = body.name;
       if (typeof body.isAdmin === "boolean") patch.isAdmin = body.isAdmin;
-      if (typeof body.approved === "boolean") patch.approved = body.approved;
+      if (typeof body.approved === "boolean") {
+        patch.approved = body.approved;
+        patch.autoApprovalBlocked = !body.approved;
+        patch.approvalSource = "manual";
+        patch.approvalDomain = "";
+      }
       if (typeof body.nudges === "boolean") patch.nudges = body.nudges;
       // Only overwrite tokens when a non-empty value is sent (write-only fields).
       if (typeof body.composioToken === "string" && body.composioToken.length > 0)

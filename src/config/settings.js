@@ -96,6 +96,10 @@ export function saveSettings(patch, { expectVersion = "" } = {}) {
       if (v === undefined) continue;
       next[k] = k === "publicUrl" ? normalizePublicUrl(v) : v;
     }
+    // A disable/re-enable or password rotation must never resurrect alternate-login proofs.
+    if (next.adminPasswordSlackEnabled !== current.adminPasswordSlackEnabled || next.adminPassword !== current.adminPassword) {
+      next.adminPasswordSlackVersion = (Number(current.adminPasswordSlackVersion) || 0) + 1;
+    }
     // Persist every effective Teams activation change, even A → B → A between Graph
     // refreshes. The comparison and monotonic stamp share the settings write lock.
     if (Object.hasOwn(patch, "teamsMentionReactions") && patch.teamsMentionReactions !== undefined
