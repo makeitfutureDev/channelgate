@@ -1,5 +1,19 @@
 # ChannelGate — Test Plan
 
+## Stable sign-in candidate integration (2026-10-30)
+
+Combined with main's company-domain auto-approval change. Resolved Slack admission and Users
+route conflicts while retaining code-channel routing, domain-based Approved-only grants, manual
+opt-out and current admin-session validation after asynchronous user edits. The domain browser
+fixture now uses an actual linked admin session and authentication router; no production gate
+was relaxed to support the fixture.
+
+Local combined coverage run: 4,126 passed, 39 opt-in skipped, zero failed; line/branch/function
+coverage 93.90% / 86.56% / 90.28%. Static, secret scan, security-coverage, DCO and high-threshold
+production audit passed. Documentation build verified 152 pages and 27,245 internal links.
+Existing physical-authenticator/live Slack delivery and other applicable beta live gates remain
+unexecuted; private QA registry remains pending. These automated checks are not live acceptance.
+
 ## Optional password and Slack code authentication (2026-10-28)
 
 - Automated scratch HTTP fixture: `test/admin-password-slack.test.js` and
