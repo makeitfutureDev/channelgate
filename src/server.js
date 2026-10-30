@@ -14,7 +14,8 @@ if (major < 22 || (major === 22 && minor < 13)) {
   process.exit(1);
 }
 
-import { ensureRoot } from "./config/store.js";
+import { ensureRoot, listChannels } from "./config/store.js";
+import { forbiddenWorkDirReason } from "./gateway/workdir-boundary.js";
 import { createWebApp } from "./web/app.js";
 import { getEngineHealth } from "./engines/engine-health.js";
 import { refreshEngineModels } from "./engines/registry.js";
@@ -25,6 +26,7 @@ import { createPlatformTransports, connectConfiguredPlatforms } from "./platform
 import { startScheduler } from "./gateway/scheduler.js";
 import { searchAgentDirectory } from "./gateway/agent-directory.js";
 import { startAgentDirectoryRefresh } from "./gateway/agent-directory-refresh.js";
+import { handleCodeChannelIpc } from "./slack/code-channel-kickoff.js";
 import { BackgroundJobs, setActiveBackgroundJobs } from "./gateway/background.js";
 import { requestApproval, setDurableApprovalExecutor } from "./slack/approvals.js";
 import { executeInstructionApproval, INSTRUCTION_ACTION } from "./gateway/instruction-approvals.js";
@@ -58,6 +60,16 @@ import { postNotice } from "./platforms/notify.js";
 import { startLicenseVerification } from "./ee/license.js";
 import { startUsageReporting } from "./ee/limits.js";
 import { startSystemHealth } from "./gateway/system-health.js";
+
+// One warn line per channel whose stored custom work folder the boundary refuses.
+async function auditStoredWorkDirs() {
+  for (const channel of await listChannels()) {
+    const stored = String(channel.meta?.workDir || "").trim();
+    if (!stored) continue;
+    const reason = forbiddenWorkDirReason(stored, { slug: channel.slug });
+    if (reason) console.warn(`[workdir] ${channel.slug}: stored work folder ${stored} is ${reason} — runs are refused until an admin changes it (set_channel_workdir / Settings → Working folder, or clear_channel_workdir)`);
+  }
+}
 
 installConsoleRedaction();
 
@@ -184,6 +196,10 @@ async function main() {
 
   const root = await ensureRoot();
   const lock = acquireSingletonLock(root);
+  // A custom work folder stored before the boundary existed (the home itself, the gateway root,
+  // another channel's folder, …) is refused at every spawn with the remedy; say so once here too,
+  // so the operator sees the list without waiting for someone's turn to fail. Never fatal.
+  await auditStoredWorkDirs().catch((e) => console.warn("[workdir] boot audit skipped:", e?.message || e));
   pruneTerminalApprovalRequests();
   pruneApprovalLinkTokens(); // spent/expired approval-link nonces
   applySettingsToEnv(); // UI-managed settings.json overrides .env
@@ -348,6 +364,7 @@ async function main() {
     restart: (body) => restartCoordinator.request(body),
     drivesync: (body) => handleDriveSyncIpc(body),
     "agent-directory": (body) => searchAgentDirectory(body),
+    "code-channel": (body) => handleCodeChannelIpc(body, { slack }),
   });
   const app = createWebApp({ slack, transports, backgroundJobs, restartCoordinator, containerRuntimeStatus: containerRuntimeHealth });
   const server = app.listen(PORT, HOST);

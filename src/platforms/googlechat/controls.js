@@ -87,7 +87,9 @@ export function createGoogleChatControls({ connector, authorize = googleChatWork
   }
   async function preview(state, id, context) {
     const target = await resolveVisiblePath(context.root, normalizeRelativePath(state.relative), { kind: 'file' });
-    const opened = await openConfinedFile(context.root, target.relative);
+    // An in-conversation PREVIEW for an authorized requester, not an export: protected names stay
+    // viewable here exactly as in the Slack explorer.
+    const opened = await openConfinedFile(context.root, target.relative, { protectedNames: false });
     let bytes, document = null;
     try {
       const wholeDoc = /\.docx$/i.test(target.relative) && opened.stat.size <= DOCX_MAX_FILE_BYTES;

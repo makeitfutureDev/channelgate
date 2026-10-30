@@ -33,6 +33,6 @@ export const HELP_TEXT =
   "• `/mode [read|worker|admin]` — show or set this channel's base mode; `bash` is an alias for Worker. Managers may change Read-only/Worker; Admin requires an organization admin. Set Auto and Lean separately in Settings\n" +
   "• `/sudo [on|off|status]` — typed in-thread, organization-admin-only direct host execution; use `@agent /sudo` in channels; `/sudo` means on\n" +
   "• `/next <message>` — queue after the current run without showing the steer-or-queue choice\n" +
-  "• `/status` — show active work and schedules in this conversation (top-level Slack command)\n" +
+  "• `/status` (or `/status-cg` where an app registers it under that name) — show active work and schedules in this conversation (top-level Slack command)\n" +
   "• `/stop` — stop every active run in this conversation (top-level; for one thread use `@agent stop`, `stop` in a DM, or 🛑)\n" +
   "• `/update` — update the gateway to the latest version and restart (admin)";

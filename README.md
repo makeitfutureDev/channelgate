@@ -56,8 +56,12 @@ The installer checks prerequisites, installs dependencies, scaffolds `.env` and 
 container image with the engine CLIs and media tools. If the image build fails, fix the reported
 prerequisite and run `npm run build:image` before sending the first prompt.
 
-1. Open the admin UI at <http://localhost:4747>. On a new install, use the admin password printed
-   once at first boot, or your configured password. The UI starts without Slack credentials.
+1. Open the admin UI at <http://localhost:4747>. First-time setup uses username `admin` and the
+   password printed once at first boot (or your configured password), then asks you to create a
+   passkey. Set the HTTPS Public URL before enrolling keys for remote access. After first
+   enrollment, select **Sign in with a passkey** and choose your saved account; password login is
+   retired and no username entry is needed. The UI starts without
+   Slack credentials. See [admin access and recovery](./docs/OPERATIONS.md#admin-accounts-passkeys-and-recovery).
 2. Create a Slack app at <https://api.slack.com/apps> using the bundled
    [Slack app manifest](./slack-app-manifest.json). Generate an app-level token with
    `connections:write`, install the app, and copy its bot token and signing secret.
@@ -142,8 +146,8 @@ catalog, including edge cases and links to regression coverage.
 - **Channel environment secrets:** configure credentials for tools such as provider CLIs through
   write-only settings. Names are validated, rotations retire warm sessions, and known values are
   redacted from replies and job output. Runtime access and limits are documented below.
-- **Protected administration:** password sign-in, masked secret listings, password-confirmed
-  reveal for eligible settings, audit records and separately scoped API access.
+- **Protected administration:** individual usernames and passkey sign-in, masked secret listings,
+  recent-passkey verification for eligible secret reveals, audit records and separately scoped API access.
 
 ### MCP integrations and Composio accounts
 

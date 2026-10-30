@@ -24,7 +24,7 @@ import { abortPooled } from "../engines/session-pool.js";
 import { DEFAULT_SILENCE_WINDOWS } from "../engines/watchdog.js";
 import { mintsOwnSessionId, usesMcpConfigFile, engineSupports, requireAdapter, fallbackTargets, engineLabel, engineCredentialState, engineTransientKinds, modelsForEngine } from "../engines/registry.js";
 import { validateRunContext } from "../engines/contract.js";
-import { getEngine, getDefaultModel, getDmTemplate, getEngineFallback, isEngineEnabled, getEnabledEngines, ENGINES, getOrgAccessGrants } from "../config/settings.js";
+import { getEngine, getDefaultModel, getDefaultEffort, getDmTemplate, getEngineFallback, isEngineEnabled, getEnabledEngines, ENGINES, getOrgAccessGrants } from "../config/settings.js";
 import { claudeTokenFingerprint, resolveContainerClaudeToken } from "./claude-token-relay.js";
 import { installNestedClaudeLogin } from "./nested-claude-login.js";
 import { installPerplexityResearchLogin, perplexityResearchPreamble } from "./perplexity-research.js";
@@ -40,12 +40,14 @@ import { containerClaudeCredential, resolveEgressRunEnv } from "./egress/grants.
 import { markLive } from "./egress/liveness.js";
 import { mcpConfigUrls, noteChannelMcpHosts } from "./egress/service.js";
 import { resolveCurrentModel } from "./model-info.js";
+import { linkedWorkspaceGuidePreamble } from "./guide.js";
 import { runtimeIdentityPreamble } from "./runtime-identity.js";
 import { runtimeAccessPreamble } from "./runtime-access.js";
 import { channelCredentialsPreamble } from "./channel-credentials.js";
+import { codeChannelPreamble, syncCodeChannelMeta } from "./code-channels.js";
 import { resolveRunIntegrations } from "./run-integrations.js";
 import { customMcpTokens } from "./custom-mcps.js";
-import { modelBelongsToEngine, effortBelongsToEngine } from "../engines/registry.js";
+import { modelBelongsToEngine, effortBelongsToEngine, effortBelongsToModel } from "../engines/registry.js";
 import { writeFile, rm, mkdir } from "node:fs/promises";
 import path from "node:path";
 import { gatewayRoot, runTmpDir, workspaceRoot } from "../config/paths.js";
@@ -74,7 +76,7 @@ import { createSecretRedactor, redactSecretValues, redactSecretFields } from "..
 // to the first candidate (own, then template) that actually belongs to the resolved engine — a
 // stale value written under the other harness (own or template) is skipped, not spawned.
 export function effectiveMeta(meta) {
-  if (meta?.isDM && (meta.template === "user" || meta.template === "admin")) {
+  if (meta?.isDM && !meta.workspaceLink && (meta.template === "user" || meta.template === "admin")) {
     const t = getDmTemplate(meta.template);
     const engine = (ENGINES.includes(meta.engine) ? meta.engine : "") || (ENGINES.includes(t.engine) ? t.engine : "") || getEngine() || "claude";
     return normalizeModeMeta({
@@ -716,10 +718,12 @@ async function runMessageImpl({ channelId, authorId, workspaceId = "", text, thr
 
   // The channel tier is the assigned skill template's CURRENT skills plus the conversation's own
   // additions (skills/templates.js) — resolved live, so a template edit reaches every follower.
-  const channelMeta = withTemplateSkills(effectiveMeta(
+  // A code channel's policy, secrets, skills and folder are its ORIGIN channel's, re-projected
+  // at every spawn so a change there (a rotated secret, a narrowed access) reaches this run.
+  const channelMeta = withTemplateSkills(effectiveMeta(await syncCodeChannelMeta(entry.slug,
     (await getChannelMeta(entry.slug)) ??
       defaultChannelMeta({ channelId, name: entry.name, type: entry.type, isDM: entry.isDM })
-  ));
+  )));
 
   // Resolve the durable org+channel baseline separately from this run's trusted user tier. The
   // HTTP run API authenticates only its API key; its caller-supplied Slack author id must never
@@ -1323,10 +1327,12 @@ async function runMessageImpl({ channelId, authorId, workspaceId = "", text, thr
   // precedence order that actually belongs to this engine wins; none → "" (the CLI's own default).
   const gatewayDefaultModel = getDefaultModel(engine);
   let model = [threadModel, meta.model, gatewayDefaultModel].find((m) => m && modelBelongsToEngine(m, engine)) || "";
-  const effort = [threadEffort, meta.effort].find((e) => e && effortBelongsToEngine(e, engine)) || "";
+  const gatewayDefaultEffort = getDefaultEffort(engine);
+  const effortForModel = (selectedModel) => [threadEffort, meta.effort, gatewayDefaultEffort]
+    .find((e) => e && effortBelongsToModel(e, engine, selectedModel)) || "";
   // Dashboard-only lifecycle signal: by this point the exact spawn engine/model are known. Keep it
   // best-effort so a display-layer callback can never prevent an engine run.
-  try { onRuntimeResolved?.({ engine, model, ...runtimeSignal }); } catch { /* non-fatal */ }
+  try { onRuntimeResolved?.({ engine, model, effort: effortForModel(model), ...runtimeSignal }); } catch { /* non-fatal */ }
   const timeoutMs = parseTimeoutMs(process.env.COMMAND_TIMEOUT);
   // How long a turn may stay SILENT in total before we treat it as wedged. COMMAND_TIMEOUT is now
   // only how often a quiet turn REPORTS itself (see engines/watchdog.js); this is the give-up
@@ -1500,16 +1506,19 @@ async function runMessageImpl({ channelId, authorId, workspaceId = "", text, thr
     }
     if (sudoQuestion && !(await isAdmin(authorId))) throw new Error("Sudo task authorization was revoked before the engine could start.");
   };
+  const linkedGuidePrefix = await linkedWorkspaceGuidePreamble(meta, target);
   const runOnce = async (sid, fresh, promptOverride = null, modelOverride = model) => {
+    const effort = effortForModel(modelOverride);
     assertRuntimeCanStart();
     await assertScheduledSudoAuthority();
     assertChannelEngineApproved((await getChannelMeta(entry.slug)) ?? channelMeta, engine);
     // The runtime facts belong to THIS attempt, including a model retry or session heal. Keep
     // them per-prompt even in clean mode: they expose no memory, optional skills or connectors.
-    const prompt = (fresh && !forkSourceSessionId ? memoryPrefix : "") + composioIdentityPrefix + channelCredentialsPrefix
+    const prompt = (fresh && !forkSourceSessionId ? memoryPrefix : "") + composioIdentityPrefix + channelCredentialsPrefix + linkedGuidePrefix
       + runtimeIdentityPreamble({ engine, model: modelOverride, effort, fresh })
       + runtimeAccessPreamble(target, { clean, allowNetwork: Boolean(meta.allowNetwork), dangerouslySkip })
       + perplexityResearchPreamble(target, { clean })
+      + codeChannelPreamble(meta)
       + (promptOverride ?? turnText);
     engineStarted = true;
     return adapter.run(validateRunContext({
@@ -1725,7 +1734,8 @@ async function runMessageImpl({ channelId, authorId, workspaceId = "", text, thr
     const fallbackGatewayDefaultModel = getDefaultModel(fallbackEngine);
     let fallbackModel = meta.model && modelBelongsToEngine(meta.model, fallbackEngine) ? meta.model : fallbackGatewayDefaultModel;
     let fallbackModelNote = "";
-    try { onRuntimeResolved?.({ engine: fallbackEngine, model: fallbackModel, ...runtimeSignal }); } catch { /* non-fatal */ }
+    const fallbackDefaultEffort = getDefaultEffort(fallbackEngine);
+    try { onRuntimeResolved?.({ engine: fallbackEngine, model: fallbackModel, effort: effortBelongsToModel(fallbackDefaultEffort, fallbackEngine, fallbackModel) ? fallbackDefaultEffort : "", ...runtimeSignal }); } catch { /* non-fatal */ }
     const fallbackConfinement = fallbackAdapter.compileConfinement({ allowNetwork: Boolean(meta.allowNetwork), writable: codexWritable });
     if (!fallbackConfinement.supported) throw new Error(`${fallbackConfinement.reason}. ${fallbackAdapter.label} fallback was refused.`);
     // Failing over TO Claude needs Claude's credential, which the primary turn never resolved when
@@ -1746,15 +1756,16 @@ async function runMessageImpl({ channelId, authorId, workspaceId = "", text, thr
     if (note) announceAnswerNote(note);
     if (fbMcpDropNote) announceAnswerNote(fbMcpDropNote);
     const exec = async (fbSid, fbFresh, modelOverride = fallbackModel) => {
+      const effort = effortBelongsToModel(fallbackDefaultEffort, fallbackEngine, modelOverride) ? fallbackDefaultEffort : "";
       assertRuntimeCanStart();
       await assertScheduledSudoAuthority();
       assertChannelEngineApproved((await getChannelMeta(entry.slug)) ?? channelMeta, fallbackEngine);
       engineStarted = true;
       return fallbackAdapter.run(validateRunContext({
         principal: { kind: untrustedPrincipal ? "daemon" : PRINCIPAL_KIND_BY_ORIGIN[origin] || "daemon", id: authorId }, origin, cwd,
-        prompt: (fbFresh ? memoryPrefix : "") + composioIdentityPrefix + channelCredentialsPrefix
-          + runtimeIdentityPreamble({ engine: fallbackEngine, model: modelOverride, effort: "", fresh: fbFresh })
-          + runtimeAccessPreamble(target, { clean, allowNetwork: Boolean(meta.allowNetwork), dangerouslySkip }) + perplexityResearchPreamble(target, { clean }) + fbPrompt,
+        prompt: (fbFresh ? memoryPrefix : "") + composioIdentityPrefix + channelCredentialsPrefix + linkedGuidePrefix
+          + runtimeIdentityPreamble({ engine: fallbackEngine, model: modelOverride, effort, fresh: fbFresh })
+          + runtimeAccessPreamble(target, { clean, allowNetwork: Boolean(meta.allowNetwork), dangerouslySkip }) + perplexityResearchPreamble(target, { clean }) + codeChannelPreamble(meta) + fbPrompt,
         session: { id: fbSid, fresh: fbFresh }, policy: fallbackConfinement,
         // The SAME runtime target: failing over to the other harness changes which CLI runs, not
         // which machine boundary the channel runs behind.
@@ -1769,7 +1780,7 @@ async function runMessageImpl({ channelId, authorId, workspaceId = "", text, thr
           settingsFile: runSettingsFile, permissionPromptTool,
           writable: codexWritable, autoApprove: codexAutoApprove, clean, composioUserEndpoint, composioEndpoint,
           composioUserToken, composioToken, toolboxToken, makeToolboxUrl, makeToolboxKey, customMcps,
-          gatewayCapability: fallbackMcpRuntime.gatewayCapability, gatewayFsRoot, gatewayWorkspaceRoot, progressReport: progressReportEnabled, model: modelOverride, effort: "",
+          gatewayCapability: fallbackMcpRuntime.gatewayCapability, gatewayFsRoot, gatewayWorkspaceRoot, progressReport: progressReportEnabled, model: modelOverride, effort,
           attachments, signal, timeoutMs, maxSilenceMs, onDelta: scopedOnDelta, onEvent: scopedOnEvent,
           onSessionResolved: sessionResolved(fbKey, fallbackEngine),
           channelEnv, channelEnvFingerprint: channelEnvFp, browserNamespace,
@@ -1818,7 +1829,7 @@ async function runMessageImpl({ channelId, authorId, workspaceId = "", text, thr
         toModel: defaultModel,
         crossEngineFallback: true,
       });
-      try { onRuntimeResolved?.({ engine: fallbackEngine, model: defaultModel, ...runtimeSignal }); } catch { /* non-fatal */ }
+      try { onRuntimeResolved?.({ engine: fallbackEngine, model: defaultModel, effort: effortBelongsToModel(fallbackDefaultEffort, fallbackEngine, defaultModel) ? fallbackDefaultEffort : "", ...runtimeSignal }); } catch { /* non-fatal */ }
       // Told to the delivery layer BEFORE the retry spawns, because a Slack answer is written from
       // the live stream: a note added to the finished `content` below never reaches the message a
       // streamed turn produced. Nothing has streamed yet (the rejection landed before generation),
@@ -2013,7 +2024,7 @@ async function runMessageImpl({ channelId, authorId, workspaceId = "", text, thr
         await sleepUnlessAborted(delayMs, signal);
         if (signal?.aborted) throw err;
         if (yielded) await resumeFromRetry();
-        try { onRuntimeResolved?.({ engine, model: continuationModel, ...runtimeSignal }); } catch { /* display only */ }
+        try { onRuntimeResolved?.({ engine, model: continuationModel, effort: effortForModel(continuationModel), ...runtimeSignal }); } catch { /* display only */ }
         announceAnswerNote(note);
         try {
           result = await runOnce(continuationId, false, CAPACITY_CONTINUATION_PROMPT, continuationModel);
@@ -2044,7 +2055,7 @@ async function runMessageImpl({ channelId, authorId, workspaceId = "", text, thr
             fromModel: rejectedModel,
             toModel: defaultModel,
           });
-          try { onRuntimeResolved?.({ engine, model: defaultModel, ...runtimeSignal }); } catch { /* non-fatal */ }
+          try { onRuntimeResolved?.({ engine, model: defaultModel, effort: effortForModel(defaultModel), ...runtimeSignal }); } catch { /* non-fatal */ }
           // Same reason as the cross-engine path above: the answer the reader gets is STREAMED, so
           // the substitution has to be announced before the retry writes its first token — a prefix
           // on the finished content is only ever seen by a surface that renders that content.

@@ -1,5 +1,229 @@
 # ChannelGate — Features
 
+## Linked working-folder setup
+
+- Source access exclusions and conversation policy also govern linked DMs. Shared changes notify follower SSH/egress sessions immediately. Separating a follower or moving the source retains source-section skill grants; detached DMs keep their effective setup as Custom instead of reapplying a DM preset. A promoted owner remains stable when an older conversation later joins.
+
+- Conversations assigned to an existing folder follow its established owner live: skills/template and scoped catalog skills, memory, instructions, access, connectors/channel secrets, VPN service metadata, mode/Auto/Lean/network and Drive setup. Shared edits direct users to the source; harness/model/effort/authentication and personal grants remain independent.
+- Admin and Slack settings identify the source; the folder picker explains linking. Durable files use owner identity/platform; cross-platform turns receive actual surface capabilities separately. Drive sync has one owner. Unlinking retains the effective setup; owner departure promotes a remaining conversation with its saved setup.
+
+
+Slack’s native running/Stop label shows the resolved model and explicitly configured effort, plus compact live phases (Thinking, Using tools, Writing, Waiting, Queued, Coordinating agents). Engine fallback replaces both model and effort; unset effort is omitted rather than guessed.
+
+## Optional password and Slack code sign-in
+
+- Settings → Admin access can enable an alternative to passkeys: the configured admin password
+  followed by an eight-digit code delivered privately to an existing Slack administrator.
+  The option is off by default; password alone never grants dashboard access. Existing passkeys
+  remain available. A recently verified, identity-linked initial setup can enable this option
+  without first registering a passkey.
+- Codes expire after five minutes, are bound to the requesting browser, accept at most five
+  guesses and are single-use. Delivery failures, role revocation, password changes and disabling
+  the option invalidate pending authority. Sensitive actions can repeat password and Slack
+  verification. Sessions retain the normal idle/absolute expiry and current-role checks.
+
+## User-linked dashboard passkeys
+
+- The existing **Users** directory and its admin role govern dashboard access. Each credential
+  container links to one stable user ID; there is no separate dashboard user directory. Users →
+  an admin's details issues a 15-minute single-use enrollment link or revokes sessions. Removing
+  the admin role immediately invalidates sessions, invitations and pending authenticator results;
+  restoring the role does not revive old authority. Non-admin and synthetic API users cannot enroll.
+- Sign-in needs only a saved passkey, with required device PIN/biometric verification. The gateway
+  checks signatures, exact configured HTTPS origin/RP ID, single-use five-minute challenges,
+  browser/session/ceremony binding and credential counters. Public options disclose no credential
+  directory. Sessions expire after 30 minutes idle or 12 hours total. Sensitive changes require
+  passkey authentication within five minutes; Settings → Admin access manages your own keys.
+- Existing keys remain intact during migration. Their owner selects an existing admin and proves
+  control using an eight-digit private chat code, valid five minutes and bound to that browser
+  session, with five attempts maximum. Matching names never assign ownership. Unlinked accounts
+  can complete this verification but cannot use ordinary admin APIs once known admins exist.
+  Initial password setup follows the same proof before enrollment; fresh installs without known
+  admins retain temporary operator setup. First enrollment retires the password-only bootstrap path; the optional password plus Slack code flow requires explicit enablement.
+- Host operators recover a known admin with `npm run admin:recover -- --user <user-id>`.
+  Recovery revokes its keys/sessions and prints a short-lived registration-only link; it never
+  restores password login. Private keys remain with authenticators; SQLite stores public keys
+  and verification metadata. Your final own passkey cannot be deleted through ordinary management.
+
+## Sign-in assets before authentication
+
+- Login HTML is not cached and versions both classic scripts with a shared content hash, preventing stale edge/browser scripts from expecting fields removed by a deployment.
+
+- The signed-out admin page serves its login script, favicon and three Poppins font files without
+  a session. These exact public paths prevent authentication redirects from replacing JavaScript
+  and fonts with login HTML; other dashboard assets and privileged APIs remain session-gated.
+
+## Work-folder boundary and protected export names (security audit batch 2)
+
+- **Sensitive roots are never a work folder.** Whatever the allowlisted `fsRoot` admits, a channel's
+  custom work folder may not be the gateway account's home directory itself, the gateway runtime
+  root or anything inside it (database, config, secrets), `~/.ssh`, `~/.claude`, `~/.codex`, the
+  container engine's configuration or storage, the hidden runtime artifact trees, the
+  `~/ChannelGate` workspace root or one of its platform folders, another conversation's DEFAULT
+  folder (`~/ChannelGate/<platform>/<slug>`, which carries that channel's uploads, memory and
+  lockdown file), or a parent of any of those (`src/gateway/workdir-boundary.js`). Another
+  conversation's custom folder, its parent and its subfolders stay allowed: two channels pointed
+  at one repository by their admins is an explicit, legitimate choice. A channel's own folders are
+  always allowed. Enforced at every door with a named reason: the
+  `set_channel_workdir` tool, the admin UI's Working folder field, and the runtime resolver, which
+  refuses to spawn a turn, background job, schedule or review for an already-stored forbidden value
+  and names the remedy (`set_channel_workdir` / Settings → Working folder / `clear_channel_workdir`).
+  Folder provisioning falls back to the default folder rather than writing into such a tree, and
+  the daemon logs one warning per offending channel at boot.
+- **Protected names never leave the channel.** One export door (`openConfinedFile`) serves every
+  way bytes leave the folder, at two strengths. The strict form guards the UNAUTHENTICATED
+  destination — `create_public_file_link` (both purposes) and the public-link fetch route — and
+  refuses a hidden file or directory anywhere in the path (`.env`, `.claude/…`, `.git/…`,
+  `.github/…`), the managed `CLAUDE.md`/`AGENTS.md`/`MEMORY.md` and `.claude` tree, and every
+  credential-shaped or secret-mentioning name (`*.pem`, `*.key`, `id_rsa`, `credentials.json`,
+  `*token*`, `*secret*`, …). The lenient form guards the doors an authorized person drives into a
+  place they already reach — `slack_share_file` into the thread, the Slack footer file download
+  to their browser, `stage_file_for_composio` and mail attachments through their own account —
+  and refuses every hidden path and credential-shaped file (`.env`, `.claude/…`, `*.pem`,
+  `credentials.json`, `id_rsa`, …) while letting the channel's instruction/memory files and a
+  report that merely mentions a token through. Both the requested path and the physical path of
+  the opened descriptor are checked, so an internal symlinked directory cannot launder one, and a
+  link minted for such a file before the rule stops serving.
+  Browsing, reading and editing inside the channel are unchanged (`.env` stays editable in the
+  file explorer; it simply cannot be exported), and the Teams and Google Chat file windows keep
+  previewing every contained file for the authorized requester.
+## Access policy and runtime controls consistency (security audit batch 4)
+
+- **"Admins only" and "Locked" lock the channel the moment they are saved.** Under the default
+  "Approved members" policy every approved member is seeded into the channel's guest list so the
+  Access page can show them; the run gate honours that list before the policy. Narrowing the
+  policy — from the Slack Access control or the admin UI's channel save — now evicts those seeded
+  (approved, non-admin) users from the list inside the same metadata transaction and keeps the
+  explicit guests (un-approved users), which remain the one deliberate way into a restricted
+  channel, and the admins (admitted by role under "Admins only"; under "Locked" the admin who
+  locks the channel keeps their own grant instead of locking themselves out of its controls). The
+  Slack save notice reports how many members were removed, an audit event
+  (`channel_access_members_evicted`) records the count only, and widening the policy back does not
+  re-admit anyone by itself (seeding resumes on the next message). The org-wide access reset still
+  clears the whole list.
+- **Settings runtime controls follow the model-change policy.** The channel engine / model / effort
+  pickers, thread pins and the thread reset in Slack Settings apply the gateway's model-change
+  access exactly like `/model`, the wizard, the shortcuts and the platform controls: a DM owner may
+  always set them; elsewhere a non-admin may only under the "users" policy. Someone who may not
+  change them sees the current values and the 🔒 policy line instead of pickers, and a crafted
+  payload is refused with the same message and writes nothing.
+## Login backoff behind a reverse proxy (security audit batch 3)
+
+- The admin login backoff and the approval-link token backoff key each client on the header of
+  the proxy the operator DECLARED, never on a header a loopback socket happened to carry. Settings
+  → Connection → *Behind a reverse proxy* (`trustProxy` in settings.json, `CG_TRUST_PROXY` in
+  `.env`; the setting wins) takes `""` (none: the connecting address is the client),
+  `cloudflare` (`CF-Connecting-IP`, which cloudflared overwrites on every request) or `xff` (the
+  LAST `X-Forwarded-For` hop, the one the trusted proxy appended, never the first, which the client
+  typed). The legacy `CG_TRUST_PROXY=1` means `xff`. An unknown value trusts nothing; the admin API
+  refuses it with 400.
+- A global failure cap bounds guessing independently of the key: more than 50 failed attempts in
+  ten minutes across all clients puts every login on the maximum delay until the window drains, so
+  a caller who can mint fresh buckets (a botnet, or a forged header behind a misdeclared proxy) is
+  still bounded, and so is the scrypt work an unauthenticated caller can cause.
+- Documented in `docs/OPERATIONS.md` → Reverse proxies and tunnels and in INSTALL.md: without the
+  setting, all remote logins behind a proxy share one backoff bucket.
+## Web and Slack surface hardening (security audit batch 1)
+
+- **Admin mode is admin-only on every surface.** The Slack Settings mode control refuses to switch
+  a channel into Admin mode unless the clicker is a current organization admin, the same rule
+  `/mode admin` and the `set_channel_admin_mode` tool already enforce. A channel manager keeps
+  every other control in a channel that is already in Admin mode (changing Auto, Lean or the
+  network switch leaves the mode alone) and may step the channel down to Worker or Read-only; the
+  "Admin" option is listed only for someone who may enable it or when it is the current mode.
+- **Case-variant URLs never reach the admin router.** Express case-sensitive routing is on, and the
+  Host/Origin guard, the no-password lockdown, the 401 branch and the run-API key gate all compare
+  lowercased paths, so `/API/settings` is refused exactly like `/api/settings` instead of slipping
+  past them into the router.
+- **Security headers.** Every response carries `X-Content-Type-Options: nosniff`,
+  `X-Frame-Options: DENY` and `Referrer-Policy: same-origin`. The admin shell and the login page are
+  served with a Content-Security-Policy that admits same-origin scripts only plus the import map
+  by content hash (no inline script anywhere; the login handler lives in `public/login.js`),
+  same-origin styles with inline attributes, same-origin fonts, images and connections,
+  `frame-ancestors 'none'`, `object-src 'none'`.
+- **No stack traces.** One Express error handler answers unexpected failures with a bare 500 (logged
+  server-side) and keeps exposable client errors such as a malformed JSON body as their 4xx with
+  the message only; the systemd unit also sets `NODE_ENV=production`. `/resume` requires the admin
+  session; the `/internal/*` IPC secret is compared in constant time.
+- **Background-job status button.** "Check status" on a background job card runs through the same
+  authorization gate as `/status` (admin, approved, or an explicit guest of that channel) and only
+  reports a job that belongs to that channel; the log-tail fallback reads the channel's own log.
+- **File explorer exports re-prove the file.** Share, Send to me, Preview and Edit open the resolved
+  file `O_NOFOLLOW` and re-resolve the kernel descriptor through `/proc/self/fd`, refusing a file
+  that no longer sits under the channel root, which closes the symlink-swap race the agent-side
+  export tools already closed.
+- **License card.** The organization, tier and limit values from the licensing platform are
+  HTML-escaped before rendering.
+- **Dependencies.** `npm audit fix` applied: undici, zod, hono, fast-uri, body-parser and
+  ip-address moved to their patched releases; `npm audit --omit=dev` reports no vulnerabilities.
+
+## Slack code channels (2026-10-25)
+
+- **A code channel is a dedicated Slack channel for one task**, opened by the agent through
+  Slack's code-channel API (`agents.conversations.*`, manifest `features.code_channels`, scope
+  `code_channels:manage`). The whole channel is one agent session: people talk to the agent there
+  without @-mentioning, replies are top-level channel messages (or stay in a thread a person
+  started), Slack shows a channel-wide **Stop** button, a **Code** tab with the task branch's diff,
+  up to five artifact tabs and a context bar (folder, branch, repository, pull request).
+- **Only on explicit request, behind a human click.** The agent calls `open_code_channel` only
+  when the requester asks for a code channel; the call posts a durable approval card in the origin
+  thread that the requester (or an admin) confirms. Nothing is created before the click. On approval
+  the daemon creates the channel linked to the origin message (members of the origin channel may
+  join; privacy follows the origin unless forced), registers it, sets the session active, pins the
+  context bar and starts the first turn there itself with the task as the brief and the origin
+  thread as context. Scheduled and background runs, DMs and code channels themselves cannot open
+  one. Slack's eligibility refusals (`feature_disabled`, `user_not_enabled`, `restricted_action`,
+  a missing scope, a Slack Connect or DM origin) are reported by name with the remedy.
+- **A child of the channel it came from.** The code channel inherits the origin channel's work
+  folder, access policy and guest list, environment secrets, skills and template, engine, model and
+  every mode switch — re-projected from the origin's current meta on every inbound message and
+  every spawn, so a rotated secret or a narrowed policy in the origin reaches the code channel at
+  once. It keeps its own Slack identity, sessions, container and HOME volume; it mounts the same
+  host folder. The origin's gateway-owned default folder is accepted as its folder regardless of
+  the allowlisted filesystem root; a custom origin folder still passes containment.
+- **Files: a task branch by default.** When the origin folder is a git repository the daemon
+  creates branch `code/<slug>` in a worktree at `.worktrees/<slug>` inside it (from the checkout's
+  upstream, else its exact HEAD commit; `.worktrees/` is added to `info/exclude`; a taken branch
+  name gets a numeric suffix), and the run preamble tells the agent to work only there. A folder
+  that is not a repository works in place. The requester can force either (`mode`:
+  `worktree` / `in_place`). After every turn the daemon publishes the worktree's unified diff
+  against the base to the Code tab (committed and uncommitted tracked changes; the gateway's own
+  managed instruction block in CLAUDE.md/AGENTS.md is left out; capped under Slack's 1 MB).
+  Archiving never deletes the worktree.
+- **Artifacts from inside the channel.** `update_code_channel` publishes or replaces a tab by key
+  (`html` self-contained document, `block_kit` view, `canvas` by id, `pull_request` by URL — which
+  also adds a Pull request link to the context bar), adds context-bar items (five in total), renames
+  the session, or forces a Code-tab refresh. It refuses outside a code channel and in an archived one.
+- **Finishing.** `archive_code_channel` posts the wrap-up (shared back into the origin thread by
+  Slack), closes the session and archives the channel behind an approval card anyone working in the
+  channel can confirm; the row records `archivedAt`. The native Stop button without a thread
+  timestamp stops everything running in a code channel; outside one such an event is ignored.
+- **`/status-cg` alias.** Slack rejects `/status` in some app manifests because it is a built-in
+  Slack command; the gateway registers the same status report under `/status-cg` as well, so a
+  manifest may declare either name.
+- **Surfaces and declarations.** `codeChannels` is a Slack-only platform capability; the tools do
+  not register on other surfaces. The `gateway-usage` guide gains a Slack-only
+  `references/code-channels.md` and a routing row. Memory review runs for threaded code-channel
+  turns only; channel-level status writes skip the legacy thread bridge.
+  → TEST-PLAN: Slack code channels.
+
+## Admin access to Slack controls
+
+- Current organization admins can open Files, Variables, Settings and legacy menu Resume controls
+  on another requester's message or `/menu` card. Each new settings/file/variable view belongs to
+  the admin who clicked; personal credentials, connections and skills use that viewer's identity.
+  Current channel authorization and membership are checked, and ordinary members remain bound to
+  their own controls. Private modal navigation and submissions remain bound to their viewer.
+- Admins can open, answer, page, submit and cancel another requester's pending question cards and
+  forms. Both people must retain channel access and membership, and the responder must remain an
+  admin. Revision checks and single submission still apply. Continuations retain the original
+  requester's runtime identity and credentials; audit records identify the responding admin
+  without storing their answer text.
+- Admins can also resolve shared busy-thread Steer/Queue/Cancel and engine-switch/retry cards
+  after current rank, membership and channel access checks. The stored incoming event retains its
+  author, credentials and runtime permissions; accepted decisions audit the responding admin.
+  Expiration, duplicate claims and the cross-author automatic steering guard still apply.
+
 ## Company email domain auto-approval
 
 - Admin UI → Users → Auto-approval accepts exact company email domains, disabled by default.
@@ -82,11 +306,13 @@
 - Container and host runtime connections, including SDK sessions, traverse the same daemon check.
   Denial, timeout, unavailable approval, cancellation, disconnect or expired/revoked authority
   prevents forwarding. Ordinary structured reads and writes continue.
-- Opaque Composio workbench/bash/proxy/API executors are refused because arbitrary persistent
-  code can hide a membership change. Use structured connector actions instead. This enforcement
-  covers managed Composio; independently supplied credentials, custom MCPs and browser sessions
-  remain outside that boundary. The always-loaded guide forbids bypass through any route and
-  treats sharing/posting requests as separate from permission to join or change the sender.
+- Composio Remote Workbench is allowed for remote result processing and bulk app calls, with
+  code and workflow session references forwarded unchanged. Python and app calls inside it are
+  outside the structured membership gate; the guide requires structured actions and human
+  approval for membership changes. Other generic connector bash/proxy/API executors remain
+  refused. Independently supplied credentials, custom MCPs and browser sessions also remain
+  outside that gate. The always-loaded guide forbids bypass through any route and treats
+  sharing/posting requests as separate from permission to join or change the sender.
 
 ## Google Chat native conversation controls
 
@@ -648,6 +874,14 @@ control-plane status.
 
 ## Gateway model shortcuts
 
+New installations inherit `:astra`, `:sol`, `:terra`, `:fable`, `:opus` and `:sonet` from the
+engine model catalogs. Each resolves to the numerically newest stable version of its family,
+including Sonnet 5.5 and GPT-6.1 Sol when offered by the catalog. Live Codex discovery can advance
+these defaults; Claude uses the curated supported catalog shipped with the gateway. Missing
+families are omitted instead of guessed. A stored shortcut map, including an intentionally empty
+map, is preserved exactly. Saving unrelated settings keeps inherited defaults; editing the shortcut
+list makes it an explicit set of pins. Existing thread pins never follow catalog updates.
+
 Admins can add gateway-wide model shortcuts in Settings → Access & security → Model shortcuts. Each name selects an engine and model. In Slack, `@agent :astra task` pins that engine and model to the current thread and runs the task; `@agent :astra` switches the thread without starting an agent turn. Slack's automatically inserted space after the mention is accepted. Changing a mapping affects later shortcut selections, while threads already pinned keep their selected model. Channel runtime-change access and dedicated Codex-login restrictions apply.
 
 ## Public documentation website
@@ -899,11 +1133,7 @@ revocation removes future runtime grants. Source path/symlink/size validation re
 revisions on failed sync. Details and compatibility limits: `docs/SKILLS.md`.
 
 
-- **Slack reports shared-folder conflicts:** an authorized mention or typed command that cannot
-  start because channels share a folder with conflicting skills or memory settings gets a reply
-  in its triggering thread. The reply asks an admin to assign separate folders or align settings,
-  then retry. It exposes no other channel names or filesystem paths. The conflict still blocks
-  workspace writes and engine startup. → TEST-PLAN: Slack shared-folder conflict replies.
+- **Shared-folder conversations link automatically:** incompatible initial skills/memory adopt the established source setup. Settings identify the source, and divergent metadata edits explain where to edit. Engine/model choices stay local. → TEST-PLAN: Linked working-folder setup acceptance.
 
 - **Read/search account routing:** unrestricted information requests may search either or both
   available Composio identities without an account-selection interruption. Explicit account and
@@ -2445,6 +2675,12 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
   logins stay on Codex. Unknown, disabled or invalid targets and missing request text are refused
   before a child thread is posted.
   A running or sudo/source-host session is refused until it can be forked safely.
+- Gateway-wide **default effort** beside each harness's default model (Settings → Agent defaults →
+  Engine & runtime, including each Qwen provider card). Choices follow the selected model's
+  supported effort levels; saves validate the model/effort pair atomically. Per-request, thread
+  and channel/DM-template effort overrides take precedence. Inherited fresh and resumed turns use
+  the harness default; blank preserves the CLI default. Failover uses the destination harness's
+  own default effort, and model retries recheck compatibility before passing an effort flag.
 - Gateway-wide **default model** per engine (Settings → Engine & runtime, validated like `/model`):
   when a thread/channel/DM-template sets no model, the run gets the gateway default as an explicit
   `--model`/`-m` — so the admin's interactive terminal `/model` choice (written to
@@ -3463,6 +3699,14 @@ are retired, bullet by bullet; everything else stands.
   a gateway run. Closing the window removes the live token and lease; the wrapper itself is inert.
   The lease record itself lives in daemon-owned metadata under the gateway root, never in the
   agent-writable artifact directory. → TEST-PLAN: Container runtime (v0.8 P1).
+- **SSH uses the developer's current-role history scope:** organization admins connect to the
+  admin container/HOME and members or guests to the project container/HOME, matching ordinary
+  chat turns by that person. The broker rechecks rank on refresh and disconnects on scope
+  changes before preparing credentials. Per-user session files, held MCP relays and last-session
+  login cleanup stay within the selected container. The existing Admin + operator-home SSH
+  refusal stays enforced, with a second check on the resolved target. Connection guidance names
+  the requester's scope; no history migration or deletion is performed.
+  → TEST-PLAN: SSH runtime scope and history parity.
 - **Developers SSH into a channel container, not into the host** (`docs/SSH-ACCESS.md`). A person
   registers ONE public key once from chat (`add_my_ssh_key`, bound to the identity that pasted it,
   fingerprinted like `ssh-keygen -lf`, private keys and DSA refused, RSA under 2048 bits refused);
@@ -5166,12 +5410,8 @@ are retired, bullet by bullet; everything else stands.
   mirror remains current. Bundled source skills live in `src/gateway/skills/bundled/`.
 - Skills admin saves refresh existing workspaces immediately. Boot and a five-second daemon
   reconciliation pass refresh changed catalog/template/grant state, including MCP changes. Failed
-  writes are reported and retried; conflicting selections for a shared folder are reported.
-- The Admin UI makes shared-folder assignments visible before they break a run. Every channel or
-  DM whose effective working folder is assigned to another conversation gets a red warning row in
-  Conversations. The working-folder browser shows a red, named warning whenever the directory being
-  viewed is already assigned elsewhere, before **Use this folder** can create another shared
-  assignment. Both views use the runtime's resolved path logic rather than raw string comparison.
+  writes are reported and retried; shared folders follow one linked owner setup.
+- The Admin UI shows shared-folder conversations with a linked marker. The folder picker names existing assignments and explains inheritance; the editor opens the source conversation and locks inherited settings. Both views use the runtime's resolved path logic rather than raw strings.
 - Runtime settings provide **Reset to default** beside **Browse**. It clears only the custom
   working folder through the normal Save/Discard flow; the default remains
   `~/ChannelGate/<platform>/<slug>/`. Existing files stay in their original location.

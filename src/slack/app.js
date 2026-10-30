@@ -104,7 +104,7 @@ import { listCustomMcps, normalizeCustomMcpName, normalizeCustomMcpToken, normal
 import { listUserCustomMcps, removeChannelCustomMcp, removeUserCustomMcp, saveChannelCustomMcp, saveUserCustomMcp } from "../gateway/custom-mcp-store.js";
 import { listEmailAccounts, normalizeEmailAccountInput } from "../gateway/email-accounts.js";
 import { listUserEmailAccounts, removeChannelEmailAccount, removeUserEmailAccount, saveChannelEmailAccount, saveUserEmailAccount } from "../gateway/email-account-store.js";
-import { ACCESS_EDIT_ACTION_ID, ACCESS_CALLBACK_ID, accessFieldTarget, accessSettingsPatch, accessSettingsSnapshot, assertAccessManager, memberAccessForm, memberCanUse, readAccessFieldValue } from "./access-settings.js";
+import { ACCESS_EDIT_ACTION_ID, ACCESS_CALLBACK_ID, accessFieldTarget, accessSettingsPatch, accessSettingsSnapshot, assertAccessManager, memberAccessForm, memberCanUse, readAccessFieldValue, restrictedAccessAllowedUsers } from "./access-settings.js";
 import { assertValidEnvName, assertValidEnvValue, listChannelEnv, patchChannelEnv } from "../config/channel-env.js";
 import { assertValidSwapRuleFields } from "../gateway/egress/catalog-rules.js";
 // The two scopes that are not the channel's (config/scoped-env.js).
@@ -132,6 +132,7 @@ import { registerQuestionActions } from "./questions.js";
 import { appContextForMessage, appContextObservedAt, appContextUserId, createAppContextStore } from "./app-context.js";
 import { registerBusyThreadChoiceActions } from "./busy-thread-choice.js";
 import { registerAgentInterfaceHandlers } from "./agent-interface.js";
+import { isCodeChannelMeta } from "../gateway/code-channels.js";
 import { registerEngineSwitchChoiceActions } from "./engine-switch-choice.js";
 import { composioHomeButtons, registerComposioHomeActions } from "./home-composio.js";
 import { nudgeHomeBlocks, registerNudgeHomeActions } from "./home-nudges.js";
@@ -359,7 +360,8 @@ export async function handleMenuResumeAction({ ack, body, action, client }) {
   const userId = body?.user?.id;
   try {
     const value = JSON.parse(action?.value || "{}");
-    if (!userId || value.u !== userId || value.c !== channelId || typeof value.t !== "string") {
+    if (!canOpenMenuButton({ ownerId: value.u, clickerId: userId, clickerIsAdmin: userId ? await isAdmin(userId) : false })
+      || value.c !== channelId || typeof value.t !== "string") {
       throw new Error("This menu isn't yours. Open your own with `/menu`.");
     }
     const context = await fileExplorerContext(client, { channelId, userId, verifyMembership: true });
@@ -370,7 +372,7 @@ export async function handleMenuResumeAction({ ack, body, action, client }) {
   }
 }
 
-async function openFileExplorer(client, triggerId, { channelId, userId, threadTs = "", file = "" } = {}) {
+async function openFileExplorer(client, triggerId, { channelId, userId, threadTs = "", file = "", verifyMembership = false } = {}) {
   if (!(await getChannelEntry(channelId))) {
     await ensureRegistered(client, {
       channel: channelId,
@@ -379,7 +381,7 @@ async function openFileExplorer(client, triggerId, { channelId, userId, threadTs
     });
   }
   await ensureUserKnown(client, userId);
-  const { entry, meta, userIsAdmin, root } = await fileExplorerContext(client, { channelId, userId });
+  const { entry, meta, userIsAdmin, root } = await fileExplorerContext(client, { channelId, userId, verifyMembership });
   const relativeFile = normalizeRelativePath(file || "");
   const parent = relativeFile ? path.posix.dirname(relativeFile) : "";
   const state = { channelId, slug: entry.slug, threadTs, ownerId: userId, relative: parent === "." ? "" : parent, page: 0 };
@@ -429,9 +431,9 @@ export async function secretScopeLists(meta, viewerId) {
   };
 }
 
-async function openSecretsManager(client, triggerId, { channelId, userId, threadTs = "" } = {}) {
+async function openSecretsManager(client, triggerId, { channelId, userId, threadTs = "", verifyMembership = false } = {}) {
   await ensureUserKnown(client, userId);
-  const { entry, meta, mayEdit, userIsAdmin } = await secretsContext(client, { channelId, userId });
+  const { entry, meta, mayEdit, userIsAdmin } = await secretsContext(client, { channelId, userId, verifyMembership });
   const state = { channelId, slug: entry.slug, threadTs, ownerId: userId };
   await client.views.open({
     trigger_id: triggerId,
@@ -457,8 +459,7 @@ export async function handleSecretsAction({ ack, body, action, client }, { conte
   const command = parseSecretActionValue(action?.value);
   try {
     if (command.o === "open") {
-      if (!canOpenMenuButton({ ownerId: command.u, clickerId: clicker }) || !body?.trigger_id) throw new Error("This secrets button isn't for you.");
-      await openSecretsManager(client, body.trigger_id, { channelId: command.c, userId: clicker, threadTs: command.t || "" });
+      await openChannelMenuControl({ body, command, client, kind: "variables" });
       return;
     }
     const state = parseSecretsMetadata(body?.view?.private_metadata);
@@ -1224,6 +1225,7 @@ function channelSettingsSnapshot(meta = {}) {
   const template = templateOfMeta(effective);
   return {
     isDM: Boolean(meta.isDM),
+    workspaceLink: meta.workspaceLink,
     access: meta,
     mode: { adminMode: effective.adminMode, allowBash: effective.allowBash, autoMode: effective.autoMode, cleanMode: effective.cleanMode, allowNetwork: effective.allowNetwork },
     runtime: {
@@ -1277,7 +1279,9 @@ export function channelSettingsEditOptions(meta, userIsAdmin, { authorId = "", i
   return {
     canEnableAdmin: Boolean(userIsAdmin),
     canApproveHarnesses: Boolean(userIsAdmin && getLicenseStatus().features.channelHarnessPolicy),
-    canEditRuntime: true,
+    // The same policy `/model` applies: a DM is always its owner's to set; elsewhere a non-admin
+    // edits the runtime only when the gateway's model-change access is "users".
+    canEditRuntime: Boolean(meta.isDM) || canChangeChannelRuntime(userIsAdmin),
     canEditSecrets: true,
     // Reaches every conversation, so admin-only even for someone who may edit this channel's own.
     canEditOrgSecrets: Boolean(userIsAdmin),
@@ -1564,11 +1568,31 @@ export async function saveAccessSettings(client, state, userId, form) {
     const humans = await filterConversationHumanMemberIds(client, state.channelId, requested);
     if (requested.some((id) => !humans.includes(id))) throw new Error("Named users and managers must be current human members of this channel.");
     const { entry } = await channelSettingsContext(client, args);
-    const [userIsAdmin, userIsApproved] = await Promise.all([isAdmin(userId), isApproved(userId)]);
+    const [userIsAdmin, userIsApproved, users] = await Promise.all([isAdmin(userId), isApproved(userId), getUsers()]);
     const actor = { authorId: userId, isAdminUser: userIsAdmin, isApprovedUser: userIsApproved };
-    const saved = await patchAuditedChannelSettings({ ...entry, channelId: state.channelId }, userId, (current) => accessSettingsPatch(current, form, actor));
-    return { entry, saved, userIsAdmin };
+    // Narrowing the use policy evicts the members seeded under "approved" (see
+    // restrictedAccessAllowedUsers) inside the same transaction, so "Admins only" is true the
+    // moment it is saved rather than after an admin also clears the guest list.
+    let dropped = 0;
+    const saved = await patchAuditedChannelSettings({ ...entry, channelId: state.channelId }, userId, (current) => {
+      const patch = accessSettingsPatch(current, form, actor);
+      const narrowed = restrictedAccessAllowedUsers(current, patch, users);
+      if (narrowed) {
+        patch.allowedUsers = narrowed.allowedUsers;
+        dropped = narrowed.dropped;
+      }
+      return patch;
+    });
+    if (dropped) await logEvent("channel_access_members_evicted", { channel: state.channelId, slug: entry.slug, access: saved.access, count: dropped, author: userId });
+    return { entry, saved, userIsAdmin, dropped };
   });
+}
+
+// The Settings runtime controls (channel engine / model / effort, thread pins and their reset)
+// follow the gateway's model-change policy exactly as `/model`, the wizard, the shortcuts and the
+// platform controls do: a DM is always its owner's; elsewhere a non-admin needs the "users" policy.
+export function assertRuntimeChangeAllowed(meta, userIsAdmin) {
+  if (!meta?.isDM && !canChangeChannelRuntime(userIsAdmin)) throw new Error("Only admins can change the harness, model, or effort in a channel.");
 }
 
 // The one builder for the Settings modal's root view. Thread pins and this thread's session are
@@ -1981,17 +2005,32 @@ async function notifyAdminsScopes(client, missing) {
   await logEvent("scope_check_notified", { admins: sent, missing: missing.join(",") });
 }
 
-// A reply footer belongs to the requester who caused that reply, but gateway admins must still
-// be able to inspect its workspace files. Everyone else remains bound to their own controls.
+// A reply footer belongs to the requester who caused that reply, but current gateway admins
+// can open every shared menu control. Everyone else remains bound to their own controls.
 // An automation post's menu is unbound (no owner): it opens for whoever clicks, under that
 // clicker's own live authorization (footer.js explains the binding).
 export function canOpenMessageFileButton({ ownerId = "", clickerId = "", clickerIsAdmin = false } = {}) {
+  return canOpenMenuButton({ ownerId, clickerId, clickerIsAdmin });
+}
+
+export function canOpenMenuButton({ ownerId = "", clickerId = "", clickerIsAdmin = false } = {}) {
   return Boolean(clickerId && (!ownerId || clickerId === ownerId || clickerIsAdmin));
 }
 
-// The same rule for the other menu buttons, which have no admin override.
-export function canOpenMenuButton({ ownerId = "", clickerId = "" } = {}) {
-  return Boolean(clickerId && (!ownerId || clickerId === ownerId));
+// Always open a new view as the actual clicker. Admin access to someone else's shared button
+// must never turn its original requester into the owner of personal settings or credentials.
+export async function openChannelMenuControl({ body, command, client, kind }) {
+  const clicker = body?.user?.id;
+  const channelId = body?.channel?.id || body?.container?.channel_id;
+  const open = { files: openFileExplorer, variables: openSecretsManager, settings: openChannelSettings }[kind];
+  const clickerIsAdmin = clicker && command.u && command.u !== clicker ? await isAdmin(clicker) : false;
+  if (!open || !command.c || (channelId && command.c !== channelId) || !body?.trigger_id
+    || !canOpenMenuButton({ ownerId: command.u, clickerId: clicker, clickerIsAdmin })) {
+    throw new Error("This menu button isn't for you. Open your own with `/menu`.");
+  }
+  // Recheck membership on every shared message button, just as on later modal interactions.
+  await open(client, body.trigger_id, { channelId: command.c, userId: clicker, threadTs: command.t || "",
+    file: command.o === "open_file" ? command.p || "" : "", verifyMembership: true });
 }
 
 // Slack does not infer the source thread for an ephemeral posted from a Block Kit action. Carry
@@ -2044,16 +2083,7 @@ async function connectAndWire(app) {
     const command = parseFileActionValue(action?.value);
     try {
       if (command.o === "open" || command.o === "open_file") {
-        const clickerIsAdmin = clicker && command.u && command.u !== clicker ? await isAdmin(clicker) : false;
-        if (!canOpenMessageFileButton({ ownerId: command.u, clickerId: clicker, clickerIsAdmin }) || !body?.trigger_id) {
-          throw new Error("This file explorer button isn't for you.");
-        }
-        await openFileExplorer(client, body.trigger_id, {
-          channelId: command.c,
-          userId: clicker,
-          threadTs: command.t || "",
-          file: command.o === "open_file" ? command.p || "" : "",
-        });
+        await openChannelMenuControl({ body, command, client, kind: "files" });
         return;
       }
       const state = parseExplorerMetadata(body?.view?.private_metadata);
@@ -2092,6 +2122,7 @@ async function connectAndWire(app) {
         const name = path.basename(file.relative);
         await uploadLocalFile({
           filePath: file.path,
+          rootPath: file.rootReal, // re-proved through /proc/self/fd at open time (symlink-swap race)
           filename: name,
           title: name,
           channelId: state.channelId,
@@ -2119,6 +2150,7 @@ async function connectAndWire(app) {
         if (!dmChannelId) throw new Error("Slack couldn't open your DM with the bot.");
         await uploadLocalFile({
           filePath: file.path,
+          rootPath: file.rootReal,
           filename: name,
           title: name,
           channelId: dmChannelId,
@@ -2210,12 +2242,7 @@ async function connectAndWire(app) {
     const actionId = String(action?.action_id || "");
     try {
       if (command.o === "open") {
-        if (!canOpenMenuButton({ ownerId: command.u, clickerId: clicker }) || !body?.trigger_id) throw new Error("This settings button isn't for you.");
-        await openChannelSettings(client, body.trigger_id, {
-          channelId: command.c,
-          userId: clicker,
-          threadTs: command.t || "",
-        });
+        await openChannelMenuControl({ body, command, client, kind: "settings" });
         return;
       }
 
@@ -2417,9 +2444,12 @@ async function connectAndWire(app) {
         const saved = await saveAccessSettings(client, state, clicker, form);
         // Mode and its options live on Agent; who may use and manage the channel on Access.
         const page = ["mode", "flags"].includes(accessField) ? "agent" : normalizeSettingsTab(state.tab) === "access" ? "access" : "agent";
+        const evicted = saved.dropped
+          ? ` ${saved.saved.access === "none" ? "Locked" : "Admins only"}: ${saved.dropped} previously admitted member${saved.dropped === 1 ? "" : "s"} ${saved.dropped === 1 ? "was" : "were"} removed from the guest list.`
+          : "";
         await updateCurrent(await settingsRootView(saved.entry, saved.saved, { ...state, tab: page }, saved.userIsAdmin, {
           tab: page,
-          notice: "✅ Saved.",
+          notice: `✅ Saved.${evicted}`,
         }), { guardHash: false });
         return;
       }
@@ -2470,6 +2500,7 @@ async function connectAndWire(app) {
       const runtimeTarget = runtimeSelectTarget(actionId);
       if (runtimeTarget) {
         const { scope, field } = runtimeTarget;
+        assertRuntimeChangeAllowed(meta, userIsAdmin);
         if (field === "engine" && meta.codexAuthSource === "channel") throw new Error("This channel uses its own Codex login, so its engine is Codex.");
         const value = String(action?.selected_option?.value || SETTINGS_DEFAULT_VALUE);
         let notice;
@@ -2495,6 +2526,7 @@ async function connectAndWire(app) {
       }
 
       if (actionId === CHANNEL_SETTINGS_THREAD_RESET_ACTION_ID) {
+        assertRuntimeChangeAllowed(meta, userIsAdmin);
         await clearThreadRuntime(entry.slug, requireThread(state));
         await logEvent("thread_runtime_updated", { channel: state.channelId, slug: entry.slug, thread: state.threadTs, cleared: true, author: clicker });
         await updateCurrent(await settingsRootView(entry, meta, { ...state, tab: "agent" }, userIsAdmin, {
@@ -2891,7 +2923,14 @@ async function connectAndWire(app) {
   registerEngineSwitchChoiceActions(app, processMessageEvent);
   // Slack's native Stop button, session renames, 👍/👎 answer feedback and the ack-only URL
   // buttons in composed replies / data-table rows.
-  registerAgentInterfaceHandlers(app, { botUserId, seenEvents, authorizedControlEntry, stopRunsInChannel, setAssistantStatus });
+  registerAgentInterfaceHandlers(app, {
+    botUserId, seenEvents, authorizedControlEntry, stopRunsInChannel, setAssistantStatus,
+    // A thread-less Stop names a code channel's one session (everything running there).
+    isCodeChannel: async (channelId) => {
+      const entry = await getChannelEntry(channelId);
+      return Boolean(entry) && isCodeChannelMeta(await getChannelMeta(entry.slug));
+    },
+  });
   // Indexed ids (`cg_model_pick_2`) are the per-choice buttons; the bare id is the retired
   // static_select, still clickable in Slack history. One pattern covers both.
   app.action(MODEL_PICKER_ACTION_PATTERN, handleModelWizard);
@@ -2954,8 +2993,14 @@ async function connectAndWire(app) {
     if (!channel || !userId) return;
     const threadTs = body?.message?.thread_ts;
     const inThread = threadTs ? { thread_ts: threadTs } : {};
+    // The card is visible to every member of the channel; the status (label + recent output) is
+    // not. Same gate as /status: admin, approved, or an explicit guest of THIS channel — and the
+    // job must belong to this channel, so a job id lifted from another conversation reads nothing.
+    const authorized = await authorizedControlEntry(channel, userId);
+    if (!authorized) return;
     const jobId = String(action?.value || "");
-    const st = getActiveBackgroundJobs?.()?.status(jobId);
+    const live = getActiveBackgroundJobs?.()?.status(jobId);
+    const st = live && live.slug === authorized.slug ? live : null;
     const fmtSpan = (ms) => (ms < 60_000 ? "under a minute" : ms < 3_600_000 ? `${Math.round(ms / 60_000)}m` : ms < 86_400_000 ? `${(ms / 3_600_000).toFixed(1)}h` : `${(ms / 86_400_000).toFixed(1)}d`);
     let text;
     if (!st) {
@@ -2963,8 +3008,7 @@ async function connectAndWire(app) {
       // keep the button useful after completion instead of a bare "not running".
       let tail = "";
       try {
-        const entry = /^[a-f0-9-]{4,40}$/i.test(jobId) ? await getChannelEntry(channel) : null;
-        if (entry) tail = readFileSync(path.join(gatewayRoot(), "logs", "bg", `${entry.slug}__${jobId}.log`), "utf8").trim().slice(-600);
+        if (/^[a-f0-9-]{4,40}$/i.test(jobId)) tail = readFileSync(path.join(gatewayRoot(), "logs", "bg", `${authorized.slug}__${jobId}.log`), "utf8").trim().slice(-600);
       } catch {
         /* no log — fall through to the generic line */
       }
@@ -3136,8 +3180,12 @@ async function connectAndWire(app) {
   app.command("/menu", handleMenuCommand);
   app.action(MENU_RESUME_ACTION_ID, handleMenuResumeAction);
 
-  // /status slash command — reports what the current channel is working on.
-  app.command("/status", async ({ command, ack, respond, client }) => {
+  // /status slash command — reports what the current channel is working on. Slack treats
+  // `/status` as one of its built-in commands and rejects it in some app manifests, so the same
+  // handler is also registered as `/status-cg`; a manifest may declare either (or both).
+  app.command("/status", handleStatusCommand);
+  app.command("/status-cg", handleStatusCommand);
+  async function handleStatusCommand({ command, ack, respond, client }) {
     await ack();
     try {
       const entry = await authorizedControlEntry(command.channel_id, command.user_id);
@@ -3148,7 +3196,7 @@ async function connectAndWire(app) {
       console.error("[slack] /status error:", e.message);
       await respond({ response_type: "ephemeral", text: "Couldn't build the status — check the gateway logs." });
     }
-  });
+  }
 
   // Per-channel environment secrets. Lists what exists (names + last 4), and lets anyone who can
   // run commands here add or replace one. No path in or out of this modal reveals a value.

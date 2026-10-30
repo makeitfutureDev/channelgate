@@ -1,5 +1,383 @@
 # ChannelGate — Test Plan
 
+## Stable sign-in candidate integration (2026-10-30)
+
+Combined with main's company-domain auto-approval change. Resolved Slack admission and Users
+route conflicts while retaining code-channel routing, domain-based Approved-only grants, manual
+opt-out and current admin-session validation after asynchronous user edits. The domain browser
+fixture now uses an actual linked admin session and authentication router; no production gate
+was relaxed to support the fixture.
+
+Local combined coverage run: 4,126 passed, 39 opt-in skipped, zero failed; line/branch/function
+coverage 93.90% / 86.56% / 90.28%. Static, secret scan, security-coverage, DCO and high-threshold
+production audit passed. Documentation build verified 152 pages and 27,245 internal links.
+Existing physical-authenticator/live Slack delivery and other applicable beta live gates remain
+unexecuted; private QA registry remains pending. These automated checks are not live acceptance.
+
+## Optional password and Slack code authentication (2026-10-28)
+
+- Automated scratch HTTP fixture: `test/admin-password-slack.test.js` and
+  `test/admin-password-slack-race.test.js`. Use fake private delivery,
+  disposable passwords and existing Slack Admin/non-admin users. Verify disabled-by-default,
+  password-only denial, correct browser-bound code login after passkey enrollment, replay/expiry/
+  guess limits, private delivery failure, role and credential/settings revocation. Never send
+  fixture codes to deployed users.
+- Browser fixture: `test/admin-password-slack-browser.test.js` exercises Settings → Admin access enablement, alternate sign-in and sensitive
+  reauthentication and sign-out on disable without a WebAuthn device. Chromium verification:
+  all 15 combined passkey/initial-setup/alternate-login assertions passed, zero skips; the
+  extended disable/sign-out browser fixture also passed. Private delivery is simulated.
+- Live acceptance pending, engine-independent: this HTTP/browser authentication path never calls
+  either engine. On a disposable gateway with an existing Slack administrator and working bot DM
+  delivery, enable the checkbox using recent admin verification, sign out, enter the password
+  and own Slack member ID, then enter the privately received code. Pass only when the dashboard
+  opens as that exact existing user with no passkey prompt. Repeat a sensitive action with code
+  reauthentication. Confirm a wrong/replayed code and a non-admin are refused; disabling the
+  checkbox removes alternate login and invalidates its sessions. Check from the RustDesk browser
+  through a localhost SSH tunnel. Record screenshots/HTTP evidence without codes/passwords.
+- Local regression: `npm run test:coverage -- --test-concurrency=4` passed with 4,120
+  passed / 38 opt-in skipped / zero failed; coverage 93.91% lines, 86.55% branches, 90.27%
+  functions. An initial unconstrained run hit the container process limit and was terminated;
+  it is not counted as a passing run. Security-coverage, secret scan and production dependency
+  audit at the high severity threshold passed (three existing moderate advisories remain).
+- CI fixture isolation: `test/web-security.test.js` now initializes scratch paths before
+  importing security helpers. Its isolated 15-test run under a fresh HOME created no runtime
+  files there; this fixes the existing real-home leak without relaxing the guard.
+- Gate maintenance: linked-workspace authorization cases in `test/authorization.test.js`
+  restore the existing 95% branch floor (measured 96.81%); no production policy or floor changed.
+- Private QA registry update pending: the requesting user's personal Airtable connection is not
+  connected in this run. Do not treat the missing registry or unexecuted live case as passed.
+
+## Linked working-folder setup acceptance
+
+Re-verification (2026-10-26): regression coverage now checks source `excludedUsers` and restricted-channel policy through linked DMs, explicit-unlink/source-departure section-skill retention, DM template preservation, established promoted-owner selection, and immediate follower SSH disconnection after source revocation (20-minute timer disabled as a fallback). `test/skills-workspace-sync.test.js` and `test/ssh-broker.test.js` cover these gaps. Updated full suite: 4,117 passed, 37 skipped, zero failures; Chromium linked-folder fixture passed. Actual Claude and Codex CLI smoke checks read a source-scoped skill from a generated linked workspace and returned its unique marker. Codex used the gateway's Worker/container mode; an initial nested read-only sandbox attempt failed with a bubblewrap capability error. These are CLI smoke checks, not a Slack end-to-end acceptance pass.
+
+Automated: `test/skills-workspace-sync.test.js`, `test/code-channels.test.js`, `test/workspace-conflict-reply.test.js`, `test/workspace-conflict-admin.test.js`, `test/workdir-boundary.test.js`. Verify automatic inheritance instead of skills/memory refusal, live source edits, owner-scoped skills, model independence, shared-write rejection, operator service secret filtering, established-owner selection, owner departure and explicit unlinking. `test/drivesync.test.js` covers sync selection; linked rows must never create a second bisync job.
+
+Live fixture (pending, run once with Claude and once with Codex): disposable private channels `cg-qa-linked-source` and `cg-qa-linked-follower`, same empty project directory, harmless test skill and memory sentinel. Set source Worker/network on; give follower different initial skills/memory. Select source folder from follower in Admin UI. Confirm source label/button, inherited controls, no conflict error, equal durable skill tree and source-scoped skill. Prompt follower: “Report your configured engine/model and the available shared test skill; add a test memory fact.” Change source skill/memory, retry, then change follower harness/model and confirm only runtime changes. Reject follower shared-setting edits with source guidance. Open an approved code channel from source and confirm it starts. Unlink follower and verify independent settings resume. Record message links, settings screenshots and engine evidence; no live PASS is claimed by automated checks. Restore/delete disposable fixtures. Cross-platform fixture: share a source with a Teams/Google Chat follower and verify actual-surface preamble while owner guide bytes remain stable. Drive fixture: valid disposable Drive folder, one scheduled job and one state directory, follower manual sync resolves to owner.
+
+
+Running label acceptance (Claude and Codex): in a Slack agent thread with chat:write.customize, select an explicit effort using /model, then ask “Read README.md and explain the startup flow.” Confirm Stop shows the selected model (effort), transitions through live tool/writing phases, and becomes active without an activity suffix after completion or Stop. Repeat with each engine and a different effort; verify fallback replaces model/effort. Pass only with observed Slack evidence. Live execution pending; automated coverage: test/slack-progress.test.js native Stop effort/phase test and test/slack-stop-progress.test.js late-event cancellation fixtures.
+
+## User-linked dashboard access (2026-10-25)
+
+- Automated acceptance uses scratch databases and Chromium virtual resident authenticators:
+  legacy-key identity linking preserves credentials; initial setup requires proof when admins
+  exist; existing Users drawer invites another admin; non-admin/API identities cannot enroll;
+  demotion/re-promotion invalidates sessions, invites and pending signatures. Private codes
+  enforce same-session binding, expiry, five attempts and replay prevention. Old independent
+  account creation is retired. Run `test/admin-user-identity.test.js` and the existing admin
+  storage/HTTP/recovery/browser suites.
+- [x] Final combined storage/HTTP/CLI/migration/Chromium acceptance: 43/43 pass, zero skips.
+  Includes actual signed virtual-authenticator flows for both initial and legacy migration;
+  fake private delivery tests never contact deployed users. Migration 37 leaves existing
+  public-key bytes, counters and opaque user handles intact and revokes historical setup links.
+- [x] Independent review plus an HTTP race regression: an actor demoted during asynchronous
+  user validation cannot finish a pending self-promotion. Static checks (946 JavaScript files),
+  secret scan and security-coverage gates pass.
+- [x] Full `npm test`: 4,099 passed, 33 opt-in skips, zero failures. The question-continuation
+  fixture now disables its unrelated background memory reviewer; its 12 assertions also pass
+  independently without starting that external process.
+- Private QA: all seven existing passkey case definitions updated for the new identity model;
+  human native-chat proof and deployed physical-key acceptance remain pending.
+- [ ] Live human acceptance, engine-independent: sign in with an existing physical passkey,
+  verify its owner through the native private chat code, then invite a second existing admin
+  from Users. Confirm independent enrollment, username-free sign-in and role revocation. No
+  virtual authenticator may replace deployed keys; automated tests do not satisfy this gate.
+
+## Passkey-only account discovery (2026-10-25)
+
+- [x] Combined Chromium/storage/HTTP/recovery acceptance: set `CG_BROWSER_MODULE` to installed
+  Playwright and run `node --test test/admin-passkeys-browser.test.js test/admin-login-assets.test.js
+  test/admin-auth-http.test.js test/admin-accounts.test.js test/admin-recovery.test.js` — 25/25
+  pass with no skips. Both independent virtual authenticators use the login button without a
+  username field, and `/api/auth/me` identifies their correct accounts. Public options contain
+  no credential directory. Missing or another account's user handle, invalid signatures,
+  replay, disabled/revoked accounts and stale pending challenges cannot mint a session.
+  Password login remains rejected after first enrollment and recovery.
+- [x] Independent security review: generic login challenges carry only server-side account-version
+  snapshots; the submitted credential resolves its owner and must carry that owner's user handle;
+  signature/UV/origin/browser/expiry checks and post-verification revocation guards remain intact.
+- [x] Focused account/authentication, web hardening, secrets, settings and migration regressions:
+  84/84 pass with no skips. Static checks and the secret scan pass.
+- [ ] Live, engine-independent: after deployment, in a fresh browser at the configured HTTPS URL,
+  click **Sign in with a passkey**, select a previously enrolled account, and complete device
+  verification. PASS when the dashboard opens without typing a username and password setup is
+  absent. Repeat with a separately enrolled administrator and verify the correct account label.
+
+## Individual admin accounts and passkeys (2026-10-25)
+
+- [x] `node --test test/admin-accounts.test.js`: 7 storage regressions cover username uniqueness,
+  opaque user handles, permanent password retirement, digest-only expiring single-use invitations,
+  revocation races, credential ownership, counter compare-and-swap, final key and final admin.
+- [x] With `CG_BROWSER_MODULE` pointing to installed Playwright, run
+  `node --test test/admin-passkeys-browser.test.js`. Chromium uses a disposable CTAP2 virtual
+  authenticator in a scratch runtime. All 11 scenarios plus their parent pass: actual initial
+  password form → passkey creation; old password/session retirement; passkey-only sign-in;
+  browser binding, invalid signatures and challenge replay; UV/ceremony/origin/CSRF rejection;
+  expired challenges and stale-session reauthentication; second admin invitation/URL-fragment
+  cleanup/registration-only authority/account mismatch; disablement revoking sessions and
+  in-flight assertions; spare-key replacement; and host recovery invalidating old authority
+  before a new key can sign in; and server-side 30-minute idle/12-hour absolute expiry despite
+  repeated keepalives. No physical key is registered in the deployed gateway by tests.
+- [x] Independent security review covers exact origin/RP, required UV, single-use/browser/session
+  binding, durable password retirement, atomic enrollment/counter updates, revocation races and
+  host-only recovery. Secret reveal rechecks mode/session after asynchronous verification/read.
+- [x] `npm test`: 4,076 passed, 32 existing opt-in skips, zero failures. The new always-on HTTP
+  and recovery CLI tests pass separately (4/4), including `.env` selection of a scratch runtime.
+  Final combined storage/HTTP/CLI/Chromium acceptance passes 25/25 with zero skips.
+- [x] `npm run check:static`, `npm run secret-scan`, `npm run test:security-coverage`, and
+  `npm audit --omit=dev --audit-level=high` pass; npm reports zero vulnerabilities.
+- [ ] Live, engine-independent, human enrollment: at the configured HTTPS Public URL in a fresh
+  browser, open first-time setup, use the existing password for `admin`, then register a real
+  device/security-key passkey with PIN/biometric verification. PASS when password login disappears,
+  logout and passkey-only sign-in work, a spare authenticator can be added, and an invited
+  second admin enrolls independently. Existing stored passkeys must never be replaced by virtual
+  authenticators. Browser authentication invokes neither Claude nor Codex, so one web acceptance
+  case covers both engines. Automated virtual-authenticator results are not human acceptance.
+
+## Signed-out admin login assets (2026-10-25)
+
+- Login cache regression: HTML uses `no-store`; both login/passkey scripts carry the same resolved content stamp. Run the asset HTTP/browser and versioning suites to prevent a pre-deploy username-reading script pairing with the new form.
+
+- [x] HTTP regression: `node --test test/admin-login-assets.test.js` serves every script, icon and
+  font referenced by the real login HTML without cookies, with correct MIME types and WOFF2
+  signatures, including HEAD and versioned requests. Dashboard assets still redirect to login
+  and `/api/settings` still answers 401. The regression fails against the previous auth gate.
+- [x] Browser regression: set `CG_BROWSER_MODULE` to an installed Playwright module and run
+  `node --test test/admin-login-assets.test.js`. A fresh browser with no cookies opens `/`, sees
+  sign-in, submits a wrong password and sees its error, then submits the disposable fixture
+  password and reaches the authenticated dashboard. Log out and repeat sign-in. PASS when both
+  sign-ins work, the session is HttpOnly/SameSite=Strict, and there are no page script errors.
+  Executed with headless Chromium: all 24 tests passed across this file,
+  `test/admin-auth-bind.test.js` and `test/web-security.test.js`, with zero skips.
+- [ ] Live, engine-independent: open the deployed public gateway in a fresh browser context;
+  verify the login script and three font requests return 200 with actual assets, enter the admin
+  password through the form, reach the dashboard, log out, and sign in again. Verify no
+  `Unexpected token '<'` or font decode errors. Browser/HTTP authentication does not invoke an
+  engine, so Claude and Codex share this acceptance case.
+
+## Work-folder boundary and protected export names (2026-10-25)
+
+- [x] Automated (`node scripts/run-tests.mjs <file>`, one file per invocation):
+  `test/workdir-boundary.test.js`, `test/public-link-protected-names.test.js`,
+  `test/public-file-links.test.js`, `test/slack-share-file.test.js`, `test/channel-policy-audit.test.js`,
+  `test/author-runtime-isolation.test.js`, `test/channel-workdir-ui.test.js`,
+  `test/mcp-control-plane-approval.test.js`, `test/workspace-read-tools.test.js`,
+  `test/teams-reply-menu.test.js`, `test/googlechat-controls.test.js` — the predicate for every listed root in both directions,
+  the channel's own folders allowed, other conversations' default folders and their parents
+  refused while their custom folders, parents and subfolders are allowed, the store-backed list
+  (default folders only); the strict and lenient export predicates; `set_channel_workdir`
+  and the admin PUT answer `Refused: … is <reason>` / `workDir refused: …` and write nothing; the
+  runtime resolver throws the remedy for a stored forbidden value while an ordinary custom folder
+  still mounts; the export predicate, `openConfinedFile` by requested and physical path, both link
+  purposes, staging, `slack_share_file`, and a pre-existing link to `.env` answering 404.
+- [x] `npm run check:static`, `npm run secret-scan`.
+- [ ] Live, engine-independent (admin UI + MCP): in a private test channel, as an admin, set the
+  Working folder in the admin UI to the gateway account's home directory, then to `~/.channelgate`,
+  then to another registered conversation's folder. Expected: each save answers a 400 whose
+  message starts `workDir refused:` and names the reason; the stored value is unchanged. Then in
+  the channel ask the agent: “Set this channel's working folder to ~/.channelgate.” Expected: the
+  tool answers `Refused: … is inside the gateway runtime root …` and nothing changes. Finally set
+  a real project directory: accepted. PASS when all four hold.
+- [ ] Live, Claude AND Codex: in a Worker channel with public file links enabled, create `.env`
+  (one dummy line) and `report.md` in the folder, then ask (one fresh thread per engine):
+  “Create an upload public link for .env, then one for report.md.” Expected: the first answers
+  `Public link refused: … protected file …` with no URL; the second returns a URL that downloads
+  `report.md`. Then: “Share .env here as a file.” Expected: `Sharing refused: … protected file`.
+  Then: “Share MEMORY.md here as a file.” Expected: the file is posted in the thread (the lenient
+  in-channel door). PASS when both engines show both refusals and the two successes.
+## Access policy and runtime controls consistency (2026-10-25)
+
+- [x] Automated: `node scripts/run-tests.mjs test/access-settings.test.js
+  test/access-policy-eviction-web.test.js test/settings-runtime-policy.test.js
+  test/authorization.test.js test/channel-settings-modal.test.js test/slack-settings-redesign.test.js
+  test/channel-engines-web.test.js` — narrowing to "admins"/"none" drops seeded approved members
+  and keeps explicit guests (pure helper, Slack save with audit count and people-row ticks, web
+  PUT), widening resurrects nobody, admins-only → locked moves nothing more; `canEditRuntime`
+  follows the policy (member false under the default, true under "users", DM owner always), the
+  page renders the 🔒 line without pickers, the select and thread-reset handlers call the policy
+  check before any write.
+- [ ] Live, Slack, engine-independent: in a test channel whose Access page shows an approved
+  non-admin member ticked under "Approved members", switch "Who can use it here" to "Admins only"
+  as an admin. Expected: the save notice says one previously admitted member was removed, the
+  member's row is now unticked, and a message by that member is refused with the
+  "restricted to admins" reason. Switch back to "Approved members": the member's next message is
+  admitted again (re-seeded). PASS when all three hold.
+- [ ] Live, Slack, Claude AND Codex: with Settings → model-change access at "admins", open ⚙️
+  Settings as an approved non-admin member. Expected: the Agent page shows the channel default as
+  text with the 🔒 policy line and no engine/model/effort pickers, and `/model` in the channel is
+  refused. As an admin, switch the channel default to the other engine from the same page; the
+  member's next turn in a fresh thread reports the new engine. Repeat with the policy at "users":
+  the member's pickers appear and a member's switch takes effect. PASS when both engines show the
+  expected spawn evidence.
+## Login backoff behind a reverse proxy (2026-10-25)
+
+- [x] Automated: `node scripts/run-tests.mjs test/web-security.test.js test/settings-save-version.test.js
+  test/admin-auth-bind.test.js test/approval-links.test.js` — `clientKey` ignores both forwarded
+  headers with no proxy declared (loopback and non-loopback sockets alike); `cloudflare` reads
+  `CF-Connecting-IP` only; `xff` reads the LAST `X-Forwarded-For` hop; the stored setting wins over
+  `CG_TRUST_PROXY`; legacy `1`/`true`/`yes` mean `xff`; an unknown value trusts nothing; the global
+  cap holds fresh keys at the maximum delay after N failures and drains with the window, is
+  switchable off, and defaults to 50 per 10 minutes; the admin API persists `""`/`cloudflare`/`xff`,
+  maps `1` to `xff`, refuses unknown values with 400 and writes nothing; the Settings page paints
+  and saves the select.
+- [x] `npm run check:static`, `npm run secret-scan`.
+- [ ] Live, engine-independent (browser + curl): on the deployment (Cloudflare tunnel in front) set
+  Settings → Connection → Behind a reverse proxy to **Cloudflare tunnel** and save. From a browser
+  through the public hostname enter three wrong admin passwords; the fourth attempt is delayed
+  (the page reports the wait) while a colleague on a different network can still sign in at once.
+  Then, against the LAN/loopback bind only (Cloudflare overwrites the header on the public path),
+  `for i in 1 2 3 4 5 6; do curl -s -o /dev/null -w '%{http_code}\n' -X POST http://127.0.0.1:4747/api/login
+  -H 'content-type: application/json' -H "CF-Connecting-IP: 10.0.0.$i" -d '{"password":"wrong"}'; done`
+  with the setting at **None**: every request shares the loopback bucket, so the 4th onwards is
+  429/delayed regardless of the spoofed header. PASS when both hold and the setting round-trips
+  after a daemon restart.
+## Web and Slack surface hardening, batch 1 (2026-10-25)
+
+- [x] Automated: `node scripts/run-tests.mjs test/web-hardening.test.js test/access-settings.test.js
+  test/admin-auth-bind.test.js test/admin-navigation.test.js test/run-control-auth.test.js
+  test/file-explorer-auth.test.js test/asset-versioning.test.js` — `/API/...` refused by the
+  lockdown / 401 branch and never routed; CSP + nosniff + frame denial on the shell and login page,
+  the import-map hash matching the served map, no inline script or handler in either page; a
+  malformed JSON body answers a bare 400 and the final 4-arity error handler is registered; the
+  internal IPC secret compared with `timingSafeEqualStr`; a manager's Settings save that selects
+  Admin is refused and writes nothing while an admin's succeeds, a manager keeps Admin when
+  changing flags and may step down, the picker lists "Admin" only to an admin or when current;
+  the `cg_bgjob_status` handler calls `authorizedControlEntry` and compares the job's slug; share /
+  send-to-me pass `rootPath`, preview and edit open through the `/proc/self/fd` re-check; the
+  License card escapes; the unit sets `NODE_ENV=production`.
+- [x] `npm run check:static`, `npm run secret-scan`, `npm audit --omit=dev` (0 vulnerabilities).
+- [ ] Live, engine-independent (browser): sign in to the admin UI through the deployment's public
+  hostname. Expected: the page renders and navigates normally (Overview, Conversations, Settings,
+  Skills, System health); the browser console shows no CSP violation; `curl -i https://<host>/`
+  shows `Content-Security-Policy: default-src 'self'; script-src 'self' 'sha256-…'` and
+  `X-Frame-Options: DENY`; `curl -i https://<host>/API/settings` answers 401 (password set) with
+  no settings payload; `curl -i -X POST https://<host>/api/login -H 'content-type: application/json'
+  -d '{bad'` answers 400 with `{"error":…}` and no stack. PASS when all four hold.
+- [ ] Live, Slack, engine-independent: in a test channel with `manageAccess: members` open Settings
+  as an approved NON-admin member. Expected: the Mode picker offers Read-only and Worker only;
+  switching Auto on succeeds and the channel stays in its mode. As an admin, pick Admin: the channel
+  enters Admin mode. Back as the member: the picker now shows Admin (current), ticking Network
+  succeeds and the channel stays in Admin mode, picking Worker steps it down. PASS when every step
+  matches and the audit events name the clicker.
+- [ ] Live, Slack, Claude AND Codex: in a Worker channel start `run_in_background` with
+  `sleep 90; echo done` (one run per engine). As an approved member click "Check status": an
+  ephemeral status appears. As a workspace member who is NOT approved and not a guest of the
+  channel, click the same button: nothing is posted. PASS when both hold for both engines.
+
+## Slack code channels (2026-10-25)
+
+- [x] Automated: `node --test test/code-channels.test.js test/slack-agent-sessions.test.js
+  test/mcp-control-plane-approval.test.js test/folders-settings.test.js test/platforms.test.js
+  test/channelgate-rename.test.js test/slack-progress.test.js` — one channel-wide session key that
+  is never a Slack ts, top-level vs in-thread reply target, mode decision from the folder with
+  requester override, inherited meta (origin policy, secrets, skills, folder; own identity; no DM
+  fields), re-projection on sync without needless writes, worktree creation from the upstream or
+  exact HEAD with branch-name suffixing and `info/exclude`, diff of committed and uncommitted work
+  excluding the managed instruction block, Slack create/status/context-bar payloads, eligibility
+  error mapping, view validation (key, PR URL, size, type), diff published once per distinct
+  content, archive with wrap-up ts and `archivedAt`, channel-level status/rename without
+  `thread_ts` or the legacy bridge, thread-less Stop sweeping a code channel and ignored elsewhere,
+  `open_code_channel` as an owner-tier card whose saved call opens the channel and kicks off the
+  first turn (refused from a synthetic session key or inside a code channel), `update_code_channel`
+  refusing outside a code channel and publishing title/context/tabs, `archive_code_channel` as an
+  open-tier card, the Slack-only capability, guide file and routing row, manifest feature and
+  scope, and the tool inventory (the GATED/OPEN tripwire and `GATEWAY_TOOL_NAMES`).
+- [ ] Live Slack acceptance (engine-independent for creation; Claude and Codex for the turns):
+  paste the updated `slack-app-manifest.json` into the Slack app (adds `features.code_channels`
+  and `code_channels:manage`), reinstall, restart the daemon. In a private channel fixture whose
+  work folder is a git repository, as an approved member mention the agent: "Open a code channel
+  to add a CHANGELOG entry for X." Expected: a card in the thread naming the task and "a task
+  branch in a git worktree…", approvable by the requester; no channel exists before the click.
+  Approve. Expected: a new channel named from the request appears in the Code channels sidebar
+  section, the requester is a member, the context bar shows the folder and `code/<slug>`, the
+  session title is set, and the agent posts its first top-level message within the turn budget
+  (the turn's preamble carries `[Slack code channel]`; verify from the run log). If Slack answers
+  `feature_disabled` or `user_not_enabled`, the card outcome must name it and the remedy — record
+  that as the eligibility result for the workspace and stop. Send "Change the heading too" without
+  a mention: the agent answers top-level. Press Slack's Stop while a turn runs: the run stops
+  (`run_stopped` event with threadKey `code-channel`). After a turn that edits a tracked file,
+  open the Code tab: the diff shows that change and not the gateway's managed block. Ask for an
+  HTML preview: the tab appears via `update_code_channel`. Ask to archive: a card appears; approve;
+  the wrap-up is shared into the origin thread and the channel is archived; `.worktrees/<slug>`
+  still exists on the host. Repeat the opening in a non-git fixture folder: the card says "this
+  channel's own files" and no worktree is created. Pending live execution.
+
+## Harness default effort (2026-10-23)
+
+- [x] Automated: `node --test test/default-model.test.js test/qwen-provider-settings-route.test.js
+  test/engine-registry.test.js test/engine-adapter-contract.test.js
+  test/runtime-identity-preamble.test.js` — settings round-trip, legacy/invalid/blank handling,
+  atomic API validation for every harness, fresh/resumed CLI flags, request > thread > channel >
+  gateway > CLI precedence, plus destination defaults through failover and model retry.
+- [x] Browser: `CG_BROWSER_MODULE=/absolute/path/to/playwright/index.mjs node --test
+  test/qwen-provider-settings-browser.test.js` — disposable admin API and real Chromium;
+  save/reload/clear distinct Claude, Codex and Qwen EU efforts without changing production settings.
+- [ ] Live Claude and Codex acceptance: for each engine, use a private read fixture with that
+  engine selected and model/effort unset on the channel and thread. Record existing gateway
+  defaults; in Admin UI → Agent defaults set the engine's model and effort to a supported pair
+  (Claude sonnet/high; Codex gpt-6-sol/medium). Start a fresh thread as an approved test actor:
+  “Which configured engine, model and effort are you running? One line.” Check captured runtime
+  facts and actual engine flags, not just the answer. Change gateway effort to low, send “And
+  now?” in the same thread, and verify the resumed turn receives low. Set channel effort medium,
+  then thread effort high, then request effort low through the Run API; each more specific choice
+  must win. Clear each override and the gateway effort; verify the effort flag is omitted. Restore
+  the recorded defaults. PASS only when actual spawn evidence agrees at every step for both
+  engines. Repeat replay-safe failover with different source/destination defaults and verify the
+  destination uses its own effort. Pending live execution; automated stubs are not live engine PASS.
+
+## Admin access to Slack buttons and forms (2026-10-23)
+
+- [x] Automated: `node --test test/admin-menu-controls.test.js test/file-button-actions.test.js
+  test/menu.test.js test/question-admin-access.test.js test/question-interactions.test.js
+  test/question-continuation.test.js test/scheduled-questions.test.js
+  test/run-choice-admin-access.test.js test/busy-thread-choice.test.js
+  test/engine-switch-choice.test.js`.
+  Real scratch stores and captured Slack calls verify admin overrides for all three menu controls,
+  actual viewer ownership/personal variable isolation, legacy Resume, question choices, custom text,
+  multi-select, paged forms, Back, cancel and submit. Foreign ordinary members, demoted admins,
+  revoked requester access, missing membership, wrong cards/channels and stale revisions fail closed.
+  Admin answers preserve the original continuation author and audit the responder without answers.
+  Busy-thread/engine-switch fixtures verify admin access, original incoming-event identity and
+  responder audit, plus rejection for ordinary foreign members, demotion, removed membership,
+  dormant access, a different channel and duplicate decisions.
+- [x] Final development validation: `npm run test:coverage` — 4,025 passed, 34 skipped,
+  zero failures; coverage floors passed (lines 94.30%, branches 86.65%, functions 90.28%).
+  `npm run check:static`, `npm run secret-scan`, `npm run test:security-coverage` and DCO passed.
+  Corresponding private QA definitions are updated; live acceptance remains unexecuted.
+- [ ] Live menu acceptance (engine-independent; no engine turn for these controls): in a disposable
+  Slack channel, admit an approved member, a second ordinary member and a current organization
+  admin. Give the first member and admin distinct disposable personal variables. As first member,
+  post `@agent /menu`. As admin, open Files, Variables and Settings from that card and from an
+  existing member-authored reply. Require every modal to open; Variables/Settings → You must show
+  only the admin's personal entries. Open and save a disposable channel-variable form and remove
+  the variable afterwards. Require audit attribution to the admin and no raw secret in a view.
+  As second ordinary member, require foreign owned buttons denied. Demote the admin or remove
+  channel membership and retry: deny the foreign button; also deny stale personal modal actions
+  after membership is removed. Record Slack view payloads, actor ids and audit event ids.
+- [ ] Live question acceptance (repeat with Claude AND Codex): pin each engine in its disposable
+  Worker fixture. As approved member ask: “Use ask_questions to collect audience and project name
+  before replying; allow custom text.” As a current member admin, select an option, open custom
+  text, save and submit. Repeat with six questions to exercise Back/Next; cancel a separate request.
+  Require one continuation in the original thread/session as the original requester, their personal
+  scope and project runtime lane, plus `question_admin_action` naming the actual admin with no
+  answer text. A second ordinary member must be refused. Repeat after admin demotion, requester
+  access revocation and either participant leaving: no continuation. Stale/replayed submission
+  must never duplicate a run. Capture question id, Slack payloads, run author/session/runtime,
+  credential names only and audit events. No live result is claimed by the automated fixtures.
+
+- [ ] Live shared run-choice acceptance (Claude AND Codex fixtures): as a member start a harmless
+  long turn, then send a second message to obtain the busy-thread card. As member admin click Queue,
+  then repeat separate fixtures for Steer and Cancel Request. Require one original-author message
+  queued/accepted (or durably discarded for Cancel), preserved personal scope/runtime lane and
+  `run_choice_admin_action` naming the admin with no original message text. The existing
+  cross-author automatic steering guard must remain intact. With ask-before-switch enabled and a
+  disposable replay-safe fake-provider failure, have the admin click Switch and Try again in
+  separate fixtures; require the original author to continue once on the selected harness.
+  Ordinary foreign members, demoted/departed admins, dormant channels and wrong-channel cards
+  must fail without consuming the pending choice. Repeat a successful click: no duplicate run.
+  Capture Slack card, pending-choice id, run identity and audit events; no live pass claimed here.
+
 ## Company domain auto-approval (2026-10-28)
 
 - Automated: `node --test test/user-auto-approval.test.js test/user-search.test.js` covers
@@ -286,7 +664,7 @@ inbox). Record the address and the servers; never the password.
   `test/mcp-config.test.js` and `test/codex-args.test.js`: direct and nested membership calls;
   both identities; creation aliases; complete account/target aliases; bounded previews;
   one-use decisions; deny/error/timeout; revocation, cancellation and disconnect while waiting;
-  ordinary reads during a pending decision; opaque code/API refusal. Actual Unix-socket relay
+  ordinary reads during a pending decision; generic bash/proxy/API refusal. Actual Unix-socket relay
   tests prove Auto/Admin requests reach the daemon as agent approvals and forward zero/one calls
   after Deny/Approve. Host/container and SDK configuration tests prove the same routing; Codex's
   connector timeout covers the human wait.
@@ -300,11 +678,31 @@ inbox). Record the address and the servers; never the password.
   before clicking its card. Repeat token/SDK connections and the explicit host fixture.
   **Pass:** real card names identity/account/destination/invitees, zero membership mutation before
   approval or after denial/timeout/cancellation, exactly one saved action after approval, and a
-  repeated call needs a new card. Requested sender stays unchanged. Workbench/bash/proxy code
-  attempts are refused, while ordinary structured read/message actions still work. Capture exact
+  repeated call needs a new card. Requested sender stays unchanged. Generic bash/proxy/API
+  attempts are refused; Workbench processing and structured read/message actions still work. Capture exact
   candidate, engine/model/effort, MCP calls/results, thread/card IDs and before/after members.
   Hermetic tests do not count as live passes. Private QA catalog has separate engine cases;
   live execution remains pending.
+
+### Workbench restoration (2026-10-23)
+
+- [x] Automated: `test/composio-approval.test.js` covers both identities, repeated Workbench calls
+  with an unchanged existing workflow ID and remote file reference, nested Workbench forwarding,
+  a later membership action in the same batch still requiring approval, revoked authority,
+  and continued rejection of other generic executors and Workbench lookalike names. Focused
+  approval/socket/configuration regression passes 53/53; static and secret-scan checks pass.
+- [ ] Live **[Claude] and [Codex]**, separately: private QA Auto fixture with an approved test actor
+  and a configured fixture Composio connection. Prompt: “Read the harmless fixture records,
+  save the result remotely, and use Composio Workbench to calculate their total. Give me the
+  workflow session ID and checkpoint reference.” Resume the same thread: “Use that same session
+  and checkpoint to recalculate the total without fetching again.” Then request a structured
+  membership action to a disposable QA destination and deny its card. **Pass:** Workbench
+  returns the correct total twice from the same session/file with no blanket gateway refusal;
+  the structured membership action still shows its one-use card and is never forwarded after
+  denial. Capture candidate, engine/model/effort, exact calls/results, session/checkpoint and
+  card evidence. Python-internal app calls are not claimed to be intercepted. Repeat shared and
+  personal connections where configured; host/container and SDK routing remain covered by
+  existing transport/configuration tests. Live execution remains pending until daemon reload.
 
 
 ## Slack Settings redesign (2026-10-15)
@@ -1512,6 +1910,20 @@ Record blocked fixtures and unexecuted gates explicitly for both engines.
   are defined, not claimed as executed.
 
 ## Model shortcuts acceptance (2026-10-06)
+
+- [x] Automated: fresh settings without `modelShortcuts` inherit the six catalog families. Numeric
+      ordering selects 6.10 over 6.9 and Sonnet 5.10 over 5.5 independent of catalog order;
+      aliases/previews and missing families never invent targets. Newer catalogs update inherited
+      defaults without mutating settings; explicit custom/empty maps survive and unrelated saves
+      keep inheritance (`test/model-shortcuts.test.js`).
+- [ ] Live Claude/Codex: on a disposable installation without a saved shortcut map, inspect Settings
+      and send `@agent :sonet Reply exactly DEFAULT_SONNET_OK` and `@agent :sol Reply exactly
+      DEFAULT_SOL_OK` as Contact in the corresponding private Auto fixtures. Pass: the supported
+      latest family IDs are selected and pinned, exact sentinels return on the requested engine,
+      and normal followups retain those pins. Save unrelated settings; inherited defaults stay
+      inherited. Customize one mapping, then empty the list; reload/upgrade must preserve each
+      explicit choice. Use an isolated catalog fixture to introduce newer family versions; only
+      inherited mappings advance, never existing thread pins or a customized list.
 
 - [x] Automated: `test/model-shortcuts.test.js` checks parsing, saving, repointing, clearing and refusing invalid mappings.
 - [x] Browser: `test/model-shortcuts-browser.test.js` ran in Chromium against a disposable admin API and store. Added a Codex shortcut from the current catalog, saved and reloaded it, repointed its model and engine, and removed it; no page errors.
@@ -3397,8 +3809,9 @@ the originating thread under the original author, with no continuation before fi
   useful validation response and no continuation. Leave optional notes empty, complete required
   fields and submit; require all pages' answers, including the written project name.
 - **QST-04 — requester and revision isolation.** With an approved member's pending card, have
-  another approved member and the admin try to choose, open custom text, and submit. Require
-  rejection without modifying the request. As requester, open two modal views, change a draft
+  another approved member try to choose, open custom text, and submit. Require rejection without
+  modifying the request. A current member admin may answer and submit under the original
+  requester continuation identity, with the responding admin recorded in audit. As requester, open two modal views, change a draft
   through the newer view, then submit the stale view. Require stale-view protection, preservation
   of the current draft, and successful submission from refreshed controls. Replay final Submit
   and click an answered card: require no duplicate continuation. Revoke the requester's channel
@@ -3549,7 +3962,9 @@ observed tool/process/filesystem evidence, and verdict. A missing, skipped, or b
 is not a pass. Maintain the private QA registry alongside these reusable public instructions.
 
 
-## Shared-folder conflict detection and warnings
+## Shared-folder conflict detection and warnings (historical)
+
+Superseded by **Linked working-folder setup acceptance** at the top of this plan. The old rejection/red-warning expectations below describe historical behavior, not current acceptance gates.
 
 Automated regression: `node --test test/workspace-conflict-reply.test.js test/skills-workspace-sync.test.js
 test/workspace-conflict-admin.test.js`.
@@ -3850,7 +4265,8 @@ The skipped/live cases below remain unverified; this branch is not a release can
   without changing data. Settings → Resume Session shows existing sessions with their owning harness
   and container cwd, including Clean cwd; fresh cases show guidance. On a card posted before this
   change, clear the thread and click its old Resume button: no old session command. A channel message `/menu` without mention is ignored;
-  a revoked/nonmember or different author cannot open an old menu's controls. Capture Slack
+  a revoked/nonmember or different non-admin author cannot open an old menu's controls; a current
+  member admin can, under their own viewer identity. Capture Slack
   payloads/screenshots, session identity and event evidence. Card delivery is engine-independent;
   resume ownership/cwd requires both harness fixtures. Live cases remain unexecuted at development
   check time and are required before stable release.
@@ -11200,3 +11616,30 @@ Documentation-only, engine-independent: no gateway runtime or Microsoft grants c
   live search returns the article and its Outlook/file headings, with no browser errors.
   Rebuilt source: 152 checked routes and 27,179 internal links; website-preserving export
   passed with 86 baseline source files unchanged, plus the updated docs entry/sitemap.
+
+
+## SSH runtime scope and history parity
+
+- [x] Automated: `test/ssh-broker.test.js` uses the real runtime resolver with fake process I/O
+  to check admin/member HOME and artifact parity with chat, promotion/demotion disconnects
+  before credential preparation, resolved operator-home refusals, and independent cleanup while
+  the other runtime still has an SSH session.
+- [x] Automated: `test/ssh-session.test.js` checks that ending a user's old runtime revokes its
+  held/current MCP grants without revoking the same user's grants in another runtime.
+- [x] Automated: `test/ssh-access.test.js` checks current-role history guidance; existing
+  author-isolation and SSH home-mount refusal regressions remain required.
+- [ ] Live SSH-SCOPE-01 (Claude and Codex): in a private Worker fixture with SSH installed,
+  use a current organization admin and an approved member with separate registered keys/grants.
+  Each asks "show SSH access" and starts an ordinary chat session with a harmless unique marker.
+  Connect by terminal/VS Code Remote-SSH as each actor; compare container name and HOME volume
+  with their own chat turn, then resume their native session with the corresponding engine.
+  Pass: admin matches admin, member matches project, work folder is shared, histories stay
+  separate, and the existing history remains intact across reconnect and container recreation.
+  Verify any changed SSH fingerprint against the selected scope's persisted public host key.
+- [ ] Live SSH-SCOPE-02 (Claude and Codex): keep both actors connected in the same fixture.
+  Close the admin connection while the member stays connected, then reverse roles. Pass: only
+  the departing runtime's last-session login and relay files are cleaned; the surviving engine
+  can still use its own MCP session. In a disposable role fixture, promote/demote the connected
+  actor and verify disconnect before new credential preparation; reconnect uses the new scope.
+  Finally enable Admin mode with operator-home access on: SSH remains refused. Restore roles,
+  settings and grants. Live execution is pending; automated passes do not satisfy this gate.

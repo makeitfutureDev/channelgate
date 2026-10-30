@@ -7,7 +7,7 @@ import path from "node:path";
 import { settingsFile } from "./paths.js";
 import { writeSecretFile } from "./harden.js";
 import { getDb } from "../db/index.js";
-import { ENGINE_IDS, adapterOr } from "../engines/registry.js";
+import { ENGINE_IDS, adapterOr, modelsForEngine } from "../engines/registry.js";
 // Value-only import (the default endpoint constant). qwen.js reads settings LAZILY, so this
 // direction carries no cycle.
 import { QWEN_PROVIDERS, qwenProvider } from "../engines/qwen.js";
@@ -95,6 +95,10 @@ export function saveSettings(patch, { expectVersion = "" } = {}) {
     for (const [k, v] of Object.entries(patch)) {
       if (v === undefined) continue;
       next[k] = k === "publicUrl" ? normalizePublicUrl(v) : v;
+    }
+    // A disable/re-enable or password rotation must never resurrect alternate-login proofs.
+    if (next.adminPasswordSlackEnabled !== current.adminPasswordSlackEnabled || next.adminPassword !== current.adminPassword) {
+      next.adminPasswordSlackVersion = (Number(current.adminPasswordSlackVersion) || 0) + 1;
     }
     // Persist every effective Teams activation change, even A → B → A between Graph
     // refreshes. The comparison and monotonic stamp share the settings write lock.
@@ -262,6 +266,25 @@ export function getApprovalLinks() {
   return APPROVAL_LINK_MODES.includes(v) ? v : "auto";
 }
 
+// Which forwarded-client header the login and approval-link backoff may believe. "" trusts
+// nothing (the socket address is the client); "cloudflare" reads `CF-Connecting-IP`, which
+// cloudflared overwrites on every request; "xff" reads the LAST hop of `X-Forwarded-For` — the one
+// the trusted proxy appended — never the first, which the client typed. The legacy truthy
+// CG_TRUST_PROXY=1 meant "there is a proxy" and maps onto "xff". Settings win over the env.
+export const TRUST_PROXY_MODES = ["", "cloudflare", "xff"];
+export function normalizeTrustProxy(value) {
+  const v = String(value ?? "").trim().toLowerCase();
+  if (v === "" || v === "0" || v === "false" || v === "no" || v === "off" || v === "none") return "";
+  if (v === "cloudflare" || v === "cf") return "cloudflare";
+  if (v === "xff" || v === "x-forwarded-for" || v === "1" || v === "true" || v === "yes" || v === "on") return "xff";
+  return null; // not a mode
+}
+export function getTrustProxy() {
+  const s = getSettings();
+  if (typeof s.trustProxy === "string") return normalizeTrustProxy(s.trustProxy) ?? "";
+  return normalizeTrustProxy(process.env.CG_TRUST_PROXY) ?? "";
+}
+
 // Opt-in recipients of supplemental Slack button links. Missing/invalid legacy values fail closed.
 export const AI_TESTING_USER_ID_RE = /^[UW][A-Z0-9]+$/;
 export function getAiTestingUsers() {
@@ -334,8 +357,16 @@ export function getDefaultModel(engine) {
   return typeof v === "string" ? v.trim() : "";
 }
 
+// Blank preserves the CLI default; stale or hand-edited values never reach a runner.
+export function getDefaultEffort(engine) {
+  const adapter = adapterOr(engine);
+  const raw = getSettings()[adapter.defaultEffortKey];
+  const effort = typeof raw === "string" ? raw.trim().toLowerCase() : "";
+  return adapter.efforts.includes(effort) ? effort : "";
+}
+
 export function getModelShortcuts() {
-  return modelShortcutsFromSettings(getSettings());
+  return modelShortcutsFromSettings(getSettings(), { claude: modelsForEngine("claude"), codex: modelsForEngine("codex") });
 }
 
 // Who may use Slack's /model wizard in a CHANNEL (both channel-wide and thread-scoped picks).
@@ -493,12 +524,14 @@ export function qwenProviderSettings() {
       apiKeyField: entry.settings.apiKey,
       baseUrlField: entry.settings.baseUrl,
       defaultModelField: entry.defaultModelKey,
+      defaultEffortField: entry.defaultEffortKey,
       hasApiKey: Boolean(config.apiKey),
       apiKeyLast4: last4(config.apiKey),
       // The STORED endpoint, so an empty box means "still on the shipped default" rather than
       // silently re-saving a default the operator never chose.
       baseUrl: typeof getSettings()[entry.settings.baseUrl] === "string" ? getSettings()[entry.settings.baseUrl].trim() : "",
       defaultModel: getDefaultModel(entry.id),
+      defaultEffort: getDefaultEffort(entry.id),
     };
   });
 }
@@ -1095,6 +1128,7 @@ export function settingsForApi() {
     composioMcpUrl: s.composioMcpUrl ?? process.env.COMPOSIO_MCP_URL ?? "https://connect.composio.dev/mcp",
     toolboxMcpUrl: s.toolboxMcpUrl ?? process.env.TOOLBOX_MCP_URL ?? "https://www.skillsmanager.uk/toolbox",
     publicUrl: getPublicUrl(),
+    trustProxy: getTrustProxy(),
     approvalLinks: getApprovalLinks(),
     aiTestingUsers: getAiTestingUsers(),
     progressView: getProgressView(),
@@ -1153,6 +1187,7 @@ export function settingsForApi() {
     engine: getEngine(),
     defaultClaudeModel: getDefaultModel("claude"),
     defaultCodexModel: getDefaultModel("codex"),
+    ...Object.fromEntries(ENGINES.map((id) => [adapterOr(id).defaultEffortKey, getDefaultEffort(id)])),
     // One entry per Anthropic-compatible provider, so the admin UI renders a card per harness
     // instead of carrying a hard-coded copy of the table.
     qwenProviders: qwenProviderSettings(),

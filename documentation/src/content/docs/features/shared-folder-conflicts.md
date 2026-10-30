@@ -16,13 +16,17 @@ A Git branch alone does not isolate working files. Use a distinct worktree for e
 
 The gateway's per-thread queue orders requests within that thread. It does not lock every project file against work in another thread or an authorized developer session.
 
-## Align conversations sharing one folder
+## Linked folder setup
 
-A working folder also contains gateway-managed instructions, shared skill materialization, and portable memory files. Two conversations pointed at that folder cannot safely impose incompatible managed selections.
+Selecting a folder already assigned to another conversation links to that conversation's shared setup automatically. The established folder owner remains the source even when an older conversation joins later. Existing duplicate assignments resolve to the first stored conversation.
 
-ChannelGate checks compatible shared skill grants and memory settings before workspace synchronization. A conflict refuses provisioning with guidance to separate the folders or align the selections. It does not silently replace the other conversation's managed setup. The conflict notice does not disclose another conversation's identity or private folder path.
+Skills (including owner-scoped catalog skills), templates, memory settings and files, instructions, access policy, connectors, channel secrets, mode, Auto, Lean, network and Drive configuration follow the source live. Edit shared settings in the source conversation; attempts to create conflicting selections in a follower explain where to edit. Personal accounts and grants stay personal. Harness, model, effort, engine authentication and sessions remain independent.
 
-An administrator should identify every conversation assigned to the folder, compare direct grants, template-derived grants, organization grants, and memory settings, then either align them or assign separate paths. Separate paths are usually easier to reason about for unrelated projects.
+The conversation list shows a linked-folder marker. The folder picker explains inheritance before selection; the conversation editor names the source and provides an Open source conversation button. Slack Settings also identifies the source. One owner runs Drive synchronization; follower sync requests use that same job and state.
+
+Changing the working folder unlinks the conversation, retaining the last effective setup as its starting point. When the owner leaves, the first remaining conversation becomes the source using its saved setup. The gateway still refuses its private runtime/configuration trees and parent folders that would expose multiple workspaces. Folder assignment remains an administrator operation.
+
+A shared folder keeps the owner's operating guide stable; a follower on another chat platform receives its actual surface capabilities in each turn's prompt.
 
 ## Confirm the effective path
 

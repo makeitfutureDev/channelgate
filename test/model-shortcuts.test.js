@@ -4,8 +4,8 @@ import express from "express";
 import { ensureTestEnv } from "./helpers.js";
 
 ensureTestEnv();
-const { parseModelShortcut } = await import("../src/config/model-shortcuts.js");
-const { getModelShortcuts, settingsForApi, saveSettings } = await import("../src/config/settings.js");
+const { parseModelShortcut, defaultModelShortcuts, modelShortcutsFromSettings } = await import("../src/config/model-shortcuts.js");
+const { getModelShortcuts, settingsForApi, saveSettings, getSettings } = await import("../src/config/settings.js");
 const { createAdminRouter } = await import("../src/web/routes/admin.js");
 
 const app = express();
@@ -23,6 +23,42 @@ async function put(modelShortcuts, expectedStatus = 200) {
   assert.equal(response.status, expectedStatus);
   return response.json();
 }
+
+test("fresh installs inherit supported family defaults without persisting version pins", () => {
+  const defaults = getModelShortcuts();
+  assert.deepEqual(Object.keys(defaults).sort(), ["astra", "fable", "opus", "sol", "sonet", "terra"]);
+  assert.equal(defaults.sonet.engine, "claude");
+  assert.match(defaults.sonet.model, /^claude-sonnet-/);
+  assert.equal(defaults.sol.engine, "codex");
+  assert.match(defaults.sol.model, /^gpt-[\d.]+-sol$/);
+  saveSettings({ sessionKeepalive: "10" });
+  assert.deepEqual(getModelShortcuts(), defaults, "unrelated saves retain inheritance");
+  assert.deepEqual(settingsForApi().modelShortcuts, defaults);
+  assert.equal(Object.hasOwn(getSettings(), "modelShortcuts"), false);
+});
+
+test("catalog defaults choose the newest stable family numerically and omit absent families", () => {
+  const catalogs = {
+    claude: ["claude-sonnet-5-9", "claude-sonnet-5-10", "claude-sonnet-6-preview", "claude-sonnet-9-20261023", "claude-sonnet-9-2026-10-23", "sonnet", "claude-opus-5-5", "claude-haiku-5-5"].map(value => ({ value })),
+    codex: ["gpt-6.9-sol", "gpt-6.10-sol", "gpt-6.10-sol-preview", "gpt-7-sol", "gpt-6-astra", "codex"].map(value => ({ value })),
+  };
+  const initial = defaultModelShortcuts(catalogs);
+  assert.equal(initial.sonet.model, "claude-sonnet-5-10");
+  assert.equal(initial.sol.model, "gpt-7-sol");
+  assert.equal(defaultModelShortcuts({codex: catalogs.codex.slice(0, 2)}).sol.model, "gpt-6.10-sol");
+  assert.equal(initial.fable, undefined);
+  assert.equal(initial.terra, undefined);
+  const settings = {};
+  assert.deepEqual(modelShortcutsFromSettings(settings, catalogs), initial);
+  catalogs.claude.push({ value: "claude-sonnet-6" });
+  assert.equal(modelShortcutsFromSettings(settings, catalogs).sonet.model, "claude-sonnet-6");
+  assert.deepEqual(settings, {}, "resolution never freezes a version into settings");
+  assert.deepEqual(modelShortcutsFromSettings({modelShortcuts: {}}, catalogs), {});
+  const custom = {sonet: {engine: "claude", model: "claude-sonnet-5-5"}};
+  assert.deepEqual(modelShortcutsFromSettings({modelShortcuts: custom}, catalogs), custom);
+  assert.deepEqual(modelShortcutsFromSettings({modelShortcuts: null}, catalogs), {});
+  assert.deepEqual(defaultModelShortcuts(), {});
+});
 
 test("mention suffix parses a shortcut and preserves the task", () => {
   assert.deepEqual(parseModelShortcut(":astra build this"), { name: "astra", task: "build this" });

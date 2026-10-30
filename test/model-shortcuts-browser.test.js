@@ -10,7 +10,7 @@ ensureTestEnv();
 test("settings creates, repoints and removes model shortcuts through the live catalog", { skip: !process.env.CG_BROWSER_MODULE }, async (t) => {
   const { chromium } = await import(process.env.CG_BROWSER_MODULE);
   const { createAdminRouter } = await import("../src/web/routes/admin.js");
-  const { getModelShortcuts } = await import("../src/config/settings.js");
+  const { getModelShortcuts, saveSettings, getSettings } = await import("../src/config/settings.js");
   const app = express();
   app.use(express.json());
   app.get("/api/skills", (_req, res) => res.json({ skills: [] }));
@@ -35,6 +35,17 @@ test("settings creates, repoints and removes model shortcuts through the live ca
     assert.equal((await response).status(), 200);
     await page.waitForFunction(() => globalThis.document.querySelector("#settings-dirty-msg")?.textContent === "All changes saved");
   };
+  assert.equal(await page.locator(".model-shortcut-row").count(), 6, "fresh settings render all inherited families");
+  assert.equal(await page.locator('.shortcut-name').evaluateAll(nodes => nodes.some(n => n.value === "sonet")), true);
+  await page.locator("#set-keepalive").fill("15m");
+  await persist();
+  assert.equal(Object.hasOwn(getSettings(), "modelShortcuts"), false, "an unrelated API save keeps defaults inherited");
+  await page.reload();
+  await page.waitForFunction(() => globalThis.document.querySelector("#add-model-shortcut")?.disabled === false);
+  assert.equal(await page.locator(".model-shortcut-row").count(), 6);
+  saveSettings({ modelShortcuts: {} });
+  await page.reload();
+  await page.waitForFunction(() => globalThis.document.querySelector("#add-model-shortcut")?.disabled === false);
   await page.locator("#add-model-shortcut").click();
   const row = page.locator(".model-shortcut-row").first();
   await row.locator(".shortcut-name").fill("astra");

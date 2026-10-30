@@ -11,6 +11,7 @@ import { createHash } from "node:crypto";
 import { readdir, stat } from "node:fs/promises";
 import path from "node:path";
 import { allowedFsRoot, resolveWithinRoot } from "../security.js";
+import { forbiddenWorkDirReason } from "../../gateway/workdir-boundary.js";
 // MEMORY.md and CLAUDE.md live INSIDE the channel's agent-writable working folder, so every read
 // and write below is a symlink sink: a planted `CLAUDE.md -> ~/.channelgate/config/settings.json`
 // would otherwise stream the gateway's secrets straight into an admin browser, and the save would
@@ -43,6 +44,7 @@ import {
 } from "../../config/settings.js";
 import { testChannelSync, syncChannelNow, driveSyncStatus } from "../../gateway/drivesync.js";
 import { PROFILE_FLAGS, BASE_MODE_FLAGS, modeSettingsPatch } from "../../gateway/modes.js";
+import { restrictedAccessAllowedUsers } from "../../slack/access-settings.js";
 // Two forms on purpose. normalizeStoredDomains is TOLERANT and belongs on the read/spawn path (a
 // hand-edited config must degrade to "no extras", never break run startup). An admin SAVE is the
 // opposite: silently dropping the whole list because one entry has a typo destroyed every
@@ -443,6 +445,11 @@ export function createChannelsRouter({
           const real = resolveWithinRoot(root, wanted) || resolveWithinRoot(root, body.workDir);
           if (!real || !(await stat(real)).isDirectory())
             return res.status(400).json({ error: `workDir must be an existing directory under ${root}` });
+          // Inside the root is not enough: the daemon's own trees and other conversations' folders
+          // are refused regardless (src/gateway/workdir-boundary.js) — the folder is mounted
+          // read-write into the channel's container.
+          const forbidden = forbiddenWorkDirReason(real, { slug: entry.slug, allowSharedFolder: true });
+          if (forbidden) return res.status(400).json({ error: `workDir refused: ${real} is ${forbidden}. Choose a project directory instead.` });
           workDirPatch = real;
         }
       }
@@ -468,6 +475,10 @@ export function createChannelsRouter({
         if (Array.isArray(body.allowedUsers)) {
           allowedUsersPatch = await validatedChannelGuests(channelId, body.allowedUsers);
         }
+        // Read before the transaction (the callback below is synchronous): narrowing the use policy
+        // evicts the approved members seeded into allowedUsers under "approved", exactly as the
+        // Slack Access control does (src/slack/access-settings.js restrictedAccessAllowedUsers).
+        const users = CHANNEL_ACCESS_MODES.includes(body.access) && body.access !== "approved" ? await getUsers() : null;
         return patchChannelMeta(entry.slug, (existing) => {
           const current = existing ?? defaultChannelMeta({ channelId, name: entry.name, type: entry.type, isDM: entry.isDM });
           replaced = current;
@@ -538,6 +549,10 @@ export function createChannelsRouter({
           if (typeof body.toolboxTokenLabel === "string") out.toolboxTokenLabel = body.toolboxTokenLabel.trim();
           Object.assign(out, resolveMakeToolboxUpdate(current, body));
           if (out.skillTemplate === "__unknown__") throw Object.assign(new Error(`unknown skill template "${String(body.skillTemplate).trim()}"`), { statusCode: 400 });
+          if (users) {
+            const narrowed = restrictedAccessAllowedUsers(current, out, users);
+            if (narrowed) out.allowedUsers = narrowed.allowedUsers;
+          }
           return out;
         });
       };
@@ -632,7 +647,8 @@ export function createChannelsRouter({
     try {
       const entry = (await getChannelsIndex())[req.params.channelId];
       if (!entry) return res.status(404).json({ error: "unknown channel" });
-      res.json(driveSyncStatus(entry.slug));
+      const meta = await getChannelMeta(entry.slug);
+      res.json(driveSyncStatus(meta?.workspaceLink?.slug || entry.slug));
     } catch (e) {
       next(e);
     }
@@ -930,7 +946,7 @@ export function createChannelsRouter({
     try {
       const ctx = await resolveChannelCtx(req.params.channelId);
       if (!ctx) return res.status(404).json({ error: "unknown channel" });
-      const custom = ctx.workDir !== workspaceFolder(ctx.entry.slug, ctx.meta?.platform);
+      const custom = ctx.workDir !== workspaceFolder(ctx.meta?.workspaceLink?.slug || ctx.entry.slug, ctx.meta?.workspaceLink?.platform || ctx.meta?.platform);
       const file = path.join(ctx.workDir, "CLAUDE.md");
       let raw = await readNoFollow(file);
       if (raw === null && !custom) {
@@ -956,7 +972,7 @@ export function createChannelsRouter({
     try {
       const ctx = await resolveChannelCtx(req.params.channelId);
       if (!ctx) return res.status(404).json({ error: "unknown channel" });
-      const custom = ctx.workDir !== workspaceFolder(ctx.entry.slug, ctx.meta?.platform);
+      const custom = ctx.workDir !== workspaceFolder(ctx.meta?.workspaceLink?.slug || ctx.entry.slug, ctx.meta?.workspaceLink?.platform || ctx.meta?.platform);
       const file = path.join(ctx.workDir, "CLAUDE.md");
       const body = typeof req.body?.channel === "string" ? req.body.channel : "";
       const cur = (await readNoFollow(file)) ?? ""; // absent, or a refused symlink

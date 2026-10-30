@@ -88,7 +88,7 @@ export function channelSkillsOff(meta = {}) {
 export function channelProvidedSkills(meta = {}) {
   const template = templateOfMeta(meta);
   const fromTemplate = template ? resolveTemplateSkills(template).skills.map((s) => s.slug) : [];
-  return [...fromTemplate, ...channelScopedSkills(meta?.channelId)];
+  return [...fromTemplate, ...channelScopedSkills(meta?.workspaceLink?.channelId || meta?.channelId)];
 }
 
 // The conversation's own tier: the assigned template's CURRENT skills, the skills in the
@@ -98,7 +98,9 @@ export function channelProvidedSkills(meta = {}) {
 export function channelSkillGrants(meta = {}) {
   const own = sanitizeSkillGrantNames(meta?.skills || []);
   const template = templateOfMeta(meta);
-  const scoped = channelScopedSkills(meta?.channelId);
+  // A Slack code channel is a child of the conversation it was opened from: catalog skills scoped
+  // to that ORIGIN channel id are its too (the two share one folder, so their grants must agree).
+  const scoped = channelScopedSkills(meta?.workspaceLink?.channelId || meta?.codeChannel?.originChannelId || meta?.channelId);
   if (!template && !scoped.length) return own;
   const fromTemplate = template ? resolveTemplateSkills(template).skills.map((s) => s.slug) : [];
   const off = channelSkillsOff(meta);
@@ -117,7 +119,7 @@ export function channelSkillGrants(meta = {}) {
 // own). Used wherever a run or a report resolves grants from a stored meta.
 export function withTemplateSkills(meta) {
   if (!meta) return meta;
-  if (!templateOfMeta(meta) && !channelScopedSkills(meta.channelId).length) return meta;
+  if (!templateOfMeta(meta) && !channelScopedSkills(meta.workspaceLink?.channelId || meta.codeChannel?.originChannelId || meta.channelId).length) return meta;
   return { ...meta, skills: channelSkillGrants(meta) };
 }
 

@@ -186,7 +186,10 @@ test("renames go native with the 200-character title and empty titles are ignore
 test("stoppedSessionTarget reads the agent_session_stopped payload and rejects malformed ones", () => {
   assert.deepEqual(stoppedSessionTarget({ channel: "C1", thread_ts: "1.1", user: "U1", streaming_message_ts: ["1.2", "1.3"] }),
     { channel: "C1", threadTs: "1.1", user: "U1", streamingMessageTs: ["1.2", "1.3"] });
-  assert.equal(stoppedSessionTarget({ channel: "C1" }), null);
+  // No thread names a code channel's one session (the whole channel); the handler decides whether
+  // the channel is one. Only a missing channel is malformed.
+  assert.deepEqual(stoppedSessionTarget({ channel: "C1", user: "U1" }), { channel: "C1", threadTs: "", user: "U1", streamingMessageTs: [] });
+  assert.equal(stoppedSessionTarget({ thread_ts: "1.1" }), null);
   assert.equal(stoppedSessionTarget(null), null);
 });
 

@@ -442,6 +442,10 @@ Native settings dialogs are available; broadcast mentions remain unavailable.
 - Agents use `share_file` to deliver **Open file** in the current Teams conversation. No
   Composio connection or public link is needed; the gateway Public URL is required for its
   authenticated browser downloads. Slack-only tools are not exposed to Teams or Google Chat.
+- **Code channels are Slack-only.** `open_code_channel`, `update_code_channel` and
+  `archive_code_channel` register only where the `codeChannels` capability is declared (Slack). The
+  Slack app needs `features.code_channels.enabled` and the `code_channels:manage` scope from
+  `slack-app-manifest.json`; Slack decides eligibility per workspace and account at creation time.
 - `/settings` → MCPs → **My connections** saves or disconnects personal Composio and Toolbox
   tokens inside the Teams window. Stored values are never prefilled; inputs are masked.
 - Native approvals stay on their source-thread card without supplemental decision-link DMs.

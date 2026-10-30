@@ -99,6 +99,28 @@ export function memberCanUse(meta = {}, userId, who = {}) {
   return isAuthorized(meta, userId, false, who);
 }
 
+// Narrowing the use policy must actually narrow it. Under the "approved" policy every approved
+// member of the channel is seeded into `allowedUsers` (message-pipeline.js syncAllowedFromMembers)
+// so the Access page can show them; `isAuthorized` honours that list before the policy, so a later
+// switch to "admins" or "none" would leave every seeded member admitted. When a save moves the
+// policy from "approved" to a narrower one, drop the approved NON-admin users (the seed) from the
+// list and keep the un-approved ones — an explicit guest grant is the one deliberate way into a
+// restricted channel and must survive — and the admins: under "admins" their role admits them
+// anyway, and under "none" (where even admins need a grant) the admin who locks the channel must
+// not lock themselves out of its Slack controls. Returns null when nothing is to be dropped.
+// `users` is the user store map (read before the metadata transaction; approval does not change
+// inside it).
+export function restrictedAccessAllowedUsers(current = {}, patch = {}, users = {}) {
+  const before = current.access || "approved";
+  const after = patch.access || before;
+  if (before !== "approved" || !["admins", "none"].includes(after)) return null;
+  const list = Array.isArray(patch.allowedUsers) ? patch.allowedUsers : Array.isArray(current.allowedUsers) ? current.allowedUsers : [];
+  const seededMember = (id) => Boolean(users?.[id]?.approved) && !users?.[id]?.isAdmin;
+  const kept = list.filter((id) => !seededMember(id));
+  if (kept.length === list.length) return null;
+  return { allowedUsers: kept, dropped: list.length - kept.length };
+}
+
 export function assertAccessManager(meta, actor) {
   if (meta.isDM || !isAuthorized(meta, actor.authorId, false, actor) || !canManage(meta, actor)) {
     throw new Error("Only admins and current channel managers can change access settings.");
@@ -118,8 +140,14 @@ export function accessSettingsPatch(meta, form, actor) {
       throw new Error("Choose up to 100 valid users per list.");
     }
   }
+  // Admin mode is the posture every approval card relies on (permission prompts off for admin
+  // authors), so only an organization admin may switch a channel INTO it — the same rule `/mode
+  // admin` and the `set_channel_admin_mode` tool enforce. A manager may still leave it, and may
+  // change Auto/Lean in a channel that is already in Admin mode: keeping the current mode is not
+  // enabling it.
+  const canEnableAdmin = actor.isAdminUser === true || channelMode(meta) === "admin";
   const patch = {
-    ...modeSettingsPatch(meta, { mode: form.mode, autoMode: form.autoMode, cleanMode: form.cleanMode }, { canEnableAdmin: true }),
+    ...modeSettingsPatch(meta, { mode: form.mode, autoMode: form.autoMode, cleanMode: form.cleanMode }, { canEnableAdmin }),
     allowNetwork: form.allowNetwork, access: form.access, manageAccess: form.manageAccess,
     allowedUsers: [...new Set(form.allowedUsers)], managers: [...new Set(form.managers)],
     excludedUsers: [...new Set(form.excludedUsers)],

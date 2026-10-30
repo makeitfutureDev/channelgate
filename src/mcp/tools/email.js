@@ -271,7 +271,7 @@ export function register(server, ctx) {
         const files = [];
         let total = 0;
         for (const relative of attachments) {
-          const file = await openConfinedFile(root, relative);
+          const file = await openConfinedFile(root, relative, { protectedNames: "lenient" }); // the sender's own mail account
           opened.push(file);
           total += file.stat.size;
           if (total > ATTACHMENT_TOTAL_MAX_BYTES) throw new Error(`attachments exceed ${formatBytes(ATTACHMENT_TOTAL_MAX_BYTES)} in total`);

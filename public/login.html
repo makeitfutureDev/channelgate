@@ -28,15 +28,23 @@
       * { box-sizing: border-box; }
       body { margin: 0; min-height: 100vh; display: grid; place-items: center;
         background: #122424; color: var(--ink); font: 13.5px/1.5 var(--font); -webkit-font-smoothing: antialiased; }
-      .card { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 30px 28px; width: min(360px, 90vw); }
+      .card { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 30px 28px; width: min(400px, 90vw); }
       .wm { font-weight: 700; font-size: 18px; letter-spacing: .01em; }
       .wm .o { color: var(--orange); }
       .prod { font-size: 10.5px; text-transform: uppercase; letter-spacing: .08em; color: var(--faint); margin: 2px 0 20px; }
       p { color: var(--muted); font-size: 13px; margin: 0 0 18px; }
-      input { width: 100%; box-sizing: border-box; background: var(--panel-2); border: 1px solid var(--line); color: var(--ink); padding: 10px 12px; border-radius: 8px; font: inherit; }
-      input:focus-visible { outline: 2px solid var(--orange); outline-offset: 2px; }
+      input, select { width: 100%; box-sizing: border-box; background: var(--panel-2); border: 1px solid var(--line); color: var(--ink); padding: 10px 12px; border-radius: 8px; font: inherit; }
+      input:focus-visible, select:focus-visible { outline: 2px solid var(--orange); outline-offset: 2px; }
       button { width: 100%; margin-top: 12px; background: var(--orange); color: #fff; border: none; padding: 11px; border-radius: 8px; font: 600 14px var(--font); cursor: pointer; }
       button:hover { filter: brightness(1.08); }
+      button:disabled { opacity: .5; cursor: wait; }
+      label { display: block; margin: 14px 0 6px; color: var(--muted); }
+      details { margin-top: 20px; border-top: 1px solid var(--line); padding-top: 16px; }
+      summary { color: var(--muted); cursor: pointer; }
+      details p { margin-top: 12px; }
+      [hidden] { display: none !important; }
+      .status { color: var(--muted); font-size: 12px; margin: 14px 0 0; }
+      .setup-note { margin: 14px 0 0; font-size: 12px; }
       .err { color: var(--danger); font-size: 13px; margin-top: 10px; min-height: 16px; }
     </style>
   </head>
@@ -44,29 +52,62 @@
     <div class="card">
       <div class="wm"><span class="o">#makeit</span>future<span class="o">.</span></div>
       <div class="prod">Gateway</div>
-      <p>Enter the admin password.</p>
+      <p id="intro">Sign in to your admin account with a passkey.</p>
       <form id="f">
-        <input id="pw" type="password" placeholder="Password" autofocus autocomplete="current-password" />
-        <button type="submit">Sign in</button>
-        <div class="err" id="err"></div>
+        <button type="submit" id="sign-in">Sign in with a passkey</button>
       </form>
+      <details id="password-slack" hidden>
+        <summary>Sign in with password and Slack code</summary>
+        <p>Use the dashboard password and a code sent privately to your Slack admin account.</p>
+        <form id="password-slack-form">
+          <label for="slack-user">Your Slack admin user ID</label>
+          <input id="slack-user" type="text" placeholder="U0123456789" autocomplete="username" required maxlength="100" />
+          <label for="slack-password">Dashboard password</label>
+          <input id="slack-password" type="password" autocomplete="current-password" required />
+          <button type="submit">Send Slack code</button>
+        </form>
+        <form id="password-slack-verify-form" hidden>
+          <label for="slack-code">8-digit code from Slack</label>
+          <input id="slack-code" type="text" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{8}" minlength="8" maxlength="8" required />
+          <button type="submit">Verify and sign in</button>
+        </form>
+        <p class="setup-note" id="password-slack-status"></p>
+      </details>
+      <details id="bootstrap" hidden>
+        <summary>First-time admin setup</summary>
+        <p>Use the existing admin password and verify your gateway admin user. Then create a passkey or enable password and Slack code sign-in in Admin access.</p>
+        <form id="bootstrap-form">
+          <label for="pw">Existing admin password</label>
+          <input id="pw" type="password" placeholder="Password" autocomplete="current-password" required />
+          <button type="submit" id="bootstrap-submit">Continue setup</button>
+        </form>
+      </details>
+      <div id="link-panel" hidden>
+        <form id="link-send-form">
+          <label for="link-user">Your gateway admin user</label>
+          <select id="link-user" required></select>
+          <button type="submit" id="link-send">Send verification code</button>
+        </form>
+        <form id="link-verify-form" hidden>
+          <label for="link-code">Code from your private chat message</label>
+          <input id="link-code" type="text" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{8}" minlength="8" maxlength="8" required />
+          <button type="submit" id="link-verify">Verify your user</button>
+        </form>
+        <p class="setup-note" id="link-status"></p>
+      </div>
+      <form id="enroll-form" hidden>
+        <label for="passkey-name">Passkey name</label>
+        <input id="passkey-name" type="text" placeholder="For example, work laptop" autocomplete="off" required maxlength="100" />
+        <button type="submit" id="enroll-submit">Create your passkey</button>
+        <p class="setup-note">Use your device's screen lock or a security key. Keep a spare passkey once signed in.</p>
+      </form>
+      <button type="button" id="setup-access" hidden>Continue to admin access settings</button>
+      <button type="button" id="setup-restart" hidden>Sign out and restart setup</button>
+      <p id="status" class="status" role="status" aria-live="polite"></p>
+      <div class="err" id="err" role="alert"></div>
     </div>
-    <script>
-      document.getElementById("f").addEventListener("submit", async (e) => {
-        e.preventDefault();
-        const err = document.getElementById("err");
-        err.textContent = "";
-        const res = await fetch("/api/login", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ password: document.getElementById("pw").value }),
-        });
-        if (res.ok) return void (location.href = "/");
-        // A 403 here means no admin password is configured at all — show what the server says to
-        // do about it rather than the misleading "Wrong password."
-        const body = await res.json().catch(() => ({}));
-        err.textContent = body.error || "Wrong password.";
-      });
-    </script>
+    <!-- External on purpose: the page is served under a Content-Security-Policy with no inline script. -->
+    <script src="/passkeys.js?v={{ASSET_V}}"></script>
+    <script src="/login.js?v={{ASSET_V}}"></script>
   </body>
 </html>

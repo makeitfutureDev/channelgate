@@ -35,7 +35,8 @@ export function buildResumeCommand(cwd, sessionId, engine, target = null) {
 // in Channel Settings → Resume Session and `/resume`.
 //
 // Binding: a button carries the requester (`u`) when the post has one, and the handlers refuse a
-// different clicker. An automation post (schedule, background job, API run, restart recovery) has
+// different non-admin clicker. Admins open every menu button under their own identity.
+// An automation post (schedule, background job, API run, restart recovery) has
 // no Slack requester, so its menu is UNBOUND (`u: ""`) and opens for whoever clicks. That grants
 // nothing: every open re-applies the clicker's own live channel authorization, and the modal it
 // opens is bound to that clicker.

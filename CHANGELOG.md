@@ -1,5 +1,12 @@
 # Changelog — ChannelGate
 
+- Fix linked-folder access exclusions and DM authorization, preserve section skills and DM settings on separation, and immediately revoke follower SSH sessions after source changes.
+
+- Automatically link conversations sharing a working folder to one live setup, show the source in settings, and keep harness/model choices independent.
+
+
+- Show configured effort and a compact live activity phase beside the running model in Slack’s native Stop label.
+
 ChannelGate was formerly *Claude Gateway for Slack*; entries below the rename keep their original
 wording. All notable changes to the gateway, newest first. Dates are when the work landed.
 This project brings Claude Code (and optionally OpenAI Codex) into Slack as a self-hosted,
@@ -17,6 +24,93 @@ product overview.
 > | Makeitfuture Sustainable Use License 1.0 | 2026-08-06 | never published |
 
 ## Unreleased
+
+- Add an opt-in admin sign-in alternative using the admin password and a private, expiring Slack
+  verification code for existing administrators, including sensitive-action reauthentication.
+
+- Version login-page scripts with their HTML so cached pre-upgrade code cannot reference removed fields.
+
+- Use the existing Users list and admin role for dashboard passkeys and invitations. Existing
+  keys link to their owner through private chat verification; role removal revokes dashboard
+  access immediately. Remove the separate dashboard account directory and retain host recovery.
+
+- Fix SSH and VS Code Remote-SSH selecting project storage for organization admins: connections
+  and refreshes now use the same current-role runtime as ordinary chat turns. Role changes
+  disconnect before credential refresh, login/MCP cleanup is scoped to each container, and
+  connection guidance explains separate admin/project history. Existing operator-home SSH
+  restrictions remain enforced; no history is copied or deleted.
+
+- Simplify admin sign-in to passkey selection without a username field. The selected credential
+  identifies its account; password login stays permanently disabled after first enrollment.
+- Add individual dashboard admin usernames and passkey sign-in, with initial-password migration,
+  account/passkey management, expiring enrollment links, recent-authentication checks and
+  host-operator recovery. Password login stops permanently after first passkey enrollment.
+- Fix signed-out admin login: allow the login script, favicon and required fonts before
+  authentication so a fresh browser can submit the sign-in form.
+- Security hardening (audit batch 2): a channel's custom work folder can no longer be the gateway
+  account's home, the gateway runtime root, `~/.ssh`, `~/.claude`, `~/.codex`, the container
+  engine's storage, the hidden artifact trees, the ChannelGate workspace root or its platform
+  folders, another conversation's default folder, or a parent of any of those (another channel's
+  custom folder stays allowed) — refused with a named reason by the `set_channel_workdir` tool
+  and the admin UI, and failed closed with the remedy at spawn time for an already-stored value
+  (one boot warning per offending channel). Hidden, managed and credential-shaped files (`.env`,
+  `.claude/…`, `*.pem`, `credentials.json`, …) can no longer leave a channel through public file
+  links of either purpose or a previously minted link; `slack_share_file`, the footer download,
+  Composio staging and mail attachments refuse hidden and credential-shaped files but still send
+  the channel's instruction/memory files and ordinary reports; in-channel browsing and editing
+  are unchanged.
+- Security hardening (audit batch 4): switching a channel to "Admins only" or "Locked" now evicts
+  the approved members seeded into its guest list (explicit guests and admins stay) from both the Slack
+  Access control and the admin UI, with the count in the save notice and an audit event; the
+  Slack Settings engine / model / effort pickers, thread pins and thread reset follow the
+  gateway's model-change policy like `/model` does, rendering read-only with the policy line for
+  anyone it excludes.
+- Security hardening (audit batch 3): the login and approval-link backoff key each client on the
+  header of the proxy the operator declares (new Settings → Connection → *Behind a reverse proxy*,
+  `trustProxy` / `CG_TRUST_PROXY`: none, `cloudflare`, `xff`) instead of trusting any forwarded
+  header that arrives on a loopback socket, and a global cap (50 failures per 10 minutes) bounds
+  password guessing from fresh buckets. Deployments behind a proxy should set the new option;
+  without it remote logins share one backoff bucket.
+- Security hardening (audit batch 1): the Slack Settings mode control no longer lets a non-admin
+  channel manager switch a channel into Admin mode (managers keep their other controls in an
+  Admin-mode channel and may step it down); case-variant URLs such as `/API/settings` are refused
+  by the admin guards and never routed; the admin shell and login page carry a no-inline-script
+  Content-Security-Policy and every response carries nosniff, frame-denial and referrer headers;
+  an Express error handler replaces default stack-trace responses and the systemd unit sets
+  `NODE_ENV=production`; `/resume` requires the admin session; the background-job "Check status"
+  button is gated like `/status` and scoped to its channel; file explorer share, send-to-me,
+  preview and edit re-prove the opened file under the channel root; the License card escapes
+  platform-supplied text; the internal IPC secret is compared in constant time; `npm audit fix`
+  moved undici, zod, hono, fast-uri, body-parser and ip-address to patched releases.
+
+- **Slack code channels.** When a requester asks for one, the agent can open a dedicated Slack
+  code channel for the task behind an approval card the requester confirms. The channel inherits
+  the origin channel's folder, access, secrets, skills and mode, runs as one channel-wide session
+  with top-level replies and no @-mention, works on a `code/<slug>` branch in a worktree when the
+  folder is a repository (else in place), publishes the branch's diff to the Code tab after every
+  turn, takes HTML, Block Kit, canvas and pull-request tabs plus context-bar items through
+  `update_code_channel`, honours Slack's channel-wide Stop, and archives behind a card with the
+  wrap-up shared back into the origin thread. The Slack manifest gains `features.code_channels`
+  and the `code_channels:manage` scope (paste and reinstall). `/status-cg` is accepted as an alias
+  of `/status` for apps whose manifest cannot register the built-in name.
+
+- Supply new installations with Astra, Sol, Terra, Fable, Opus and Sonnet (`:sonet`) shortcuts
+  using the newest supported stable family versions. Preserve customized lists and thread pins.
+
+- Add a default effort selector beside each harness's default model, including Qwen providers.
+  Inherited runs use it unless a conversation, thread or request overrides effort; blank keeps
+  the CLI default. Validate model compatibility and use the destination harness's effort on failover.
+
+- Let organization admins use another requester's Slack menu buttons and question forms. Menu
+  views open under the clicking admin's own identity; question answers continue the original
+  requester's session and record which admin responded. Current access, membership and stale-form
+  checks still apply. The same admin access applies to busy-thread and engine-switch/retry cards.
+
+- Restore Composio Remote Workbench for remote data processing and bulk app calls, preserving
+  workflow session and file references. Explicit Slack membership actions still require human
+  approval; Python inside Workbench is outside that structured gate. Other generic connector
+  bash/proxy/API executors remain refused. Clarify local container processing as an option for
+  records returned inline.
 
 - **Company email auto-approval.** Admins can configure exact email domains in Users, preview
   existing Slack users and approve matching provider identities automatically. Manual revocations

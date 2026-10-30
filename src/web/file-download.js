@@ -94,7 +94,9 @@ export function createFileDownloadRouter({ authorize, audit = logEvent } = {}) {
       // Lookup-then-open is a symlink race (the folder is writable by the channel's own container
       // between the two), so the confined open is shared with every other exporter — see
       // gateway/confined-file.js.
-      const opened = await openConfinedFile(context.root, grant.relative);
+      // An authorized member's own browser: hidden and credential-shaped files stay in, the
+      // channel's instruction/memory files and ordinary reports come out (lenient export policy).
+      const opened = await openConfinedFile(context.root, grant.relative, { protectedNames: "lenient" });
       handle = opened.handle;
       const info = opened.stat;
 

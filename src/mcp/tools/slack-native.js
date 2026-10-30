@@ -229,7 +229,9 @@ export function register(server, ctx) {
       let opened;
       try {
         const meta = await loadMeta();
-        opened = await openConfinedFile(effectiveWorkDir(slug, { ...(meta || {}), _slug: slug }), relative);
+        // Into THIS thread, for the people who can already browse the folder: lenient export policy
+        // (hidden and credential-shaped files still never leave; MEMORY.md or a report may).
+        opened = await openConfinedFile(effectiveWorkDir(slug, { ...(meta || {}), _slug: slug }), relative, { protectedNames: "lenient" });
       } catch (e) {
         return text(`Sharing refused: ${String(e?.message || e)}`);
       }

@@ -9,8 +9,11 @@ const store = await import("../src/config/store.js");
 const { PROFILE_FLAGS } = await import("../src/gateway/modes.js");
 const { getDb } = await import("../src/db/index.js");
 const actor = { authorId: "UMANAGER", isApprovedUser: true, isAdminUser: false };
+const adminActor = { authorId: "UADMIN", isApprovedUser: true, isAdminUser: true };
 const base = { access: "approved", manageAccess: "members", ...PROFILE_FLAGS.worker };
+// Admin mode is what an organization ADMIN sets; a channel manager's form keeps Worker.
 const form = { ...accessSettingsSnapshot(base), mode: "admin", autoMode: true, cleanMode: true, allowNetwork: true };
+const managerForm = { ...form, mode: "worker" };
 const state = { channelId: "CACCESS", slug: "access-test", ownerId: "UMANAGER" };
 
 test("only admins and current managers edit access: mode on Agent, policy and member ticks on Access", () => {
@@ -118,7 +121,7 @@ test("each inline access control contributes only its own field, and unknown one
 
 test("a patch built from one control's value still refuses forged fields and keeps the flags independent", () => {
   const patch = accessSettingsPatch(base, { ...form, ...readAccessFieldValue("mode", { selected_option: { value: "admin" } }),
-    workDir: "/forged", isAdmin: true, env: { SECRET: "forged" } }, actor);
+    workDir: "/forged", isAdmin: true, env: { SECRET: "forged" } }, adminActor);
   assert.equal(patch.profile, "admin");
   assert.equal(patch.autoMode, true);
   assert.equal(patch.allowBash, true);
@@ -126,21 +129,49 @@ test("a patch built from one control's value still refuses forged fields and kee
   assert.equal(patch.cleanMode, true);
   assert.equal(patch.allowNetwork, true);
   for (const key of ["workDir", "isAdmin", "env"]) assert.equal(Object.hasOwn(patch, key), false);
-  const cleared = accessSettingsPatch(base, { ...form, ...readAccessFieldValue("flags", { selected_options: [] }) }, actor);
+  const cleared = accessSettingsPatch(base, { ...form, ...readAccessFieldValue("flags", { selected_options: [] }) }, adminActor);
   assert.equal(cleared.autoMode, false);
   assert.equal(cleared.cleanMode, false);
   assert.equal(cleared.allowNetwork, false);
   assert.equal(cleared.profile, "admin", "clearing the options does not disturb the base mode");
 });
 
+test("only an organization admin switches a channel INTO Admin mode; a manager may keep or leave it", () => {
+  // The Settings mode control used to hand Admin mode to any channel manager — the one switch
+  // that turns the engine's permission prompts off for every admin author in the channel. It is
+  // admin-only here exactly as it is for `/mode admin` and the set_channel_admin_mode tool.
+  assert.throws(() => accessSettingsPatch(base, form, actor), /Only administrators can enable Admin mode/);
+  assert.throws(() => accessSettingsPatch(base, { ...form, ...readAccessFieldValue("mode", { selected_option: { value: "admin" } }) }, actor),
+    /Only administrators can enable Admin mode/);
+  assert.equal(accessSettingsPatch(base, form, adminActor).adminMode, true);
+  // A channel already in Admin mode: the manager's other controls still work (the unchanged mode
+  // is not a request to enable it), and the manager may step the channel back down.
+  const adminChannel = { ...base, ...PROFILE_FLAGS.admin, profile: "admin" };
+  const kept = accessSettingsPatch(adminChannel, { ...form, ...readAccessFieldValue("flags", { selected_options: [{ value: "allowNetwork" }] }) }, actor);
+  assert.equal(kept.adminMode, true);
+  assert.equal(kept.allowNetwork, true);
+  assert.equal(kept.autoMode, false);
+  assert.equal(accessSettingsPatch(adminChannel, managerForm, actor).adminMode, false);
+  // The picker shows "Admin" only to someone who may enable it, or when it is already the mode.
+  const modeOptions = (view) => {
+    const select = [...view.blocks.map((block) => block.accessory), ...view.blocks.flatMap((block) => block.elements || [])]
+      .find((element) => element?.action_id === `${ACCESS_FIELD_PREFIX}mode`);
+    assert.ok(select, "the Agent page renders the mode picker");
+    return select.options.map((option) => option.value);
+  };
+  assert.deepEqual(modeOptions(buildChannelSettingsView({ mode: base, access: base }, state, { tab: "agent", canEditAccess: true, canEnableAdmin: false })), ["read", "worker"]);
+  assert.deepEqual(modeOptions(buildChannelSettingsView({ mode: base, access: base }, state, { tab: "agent", canEditAccess: true, canEnableAdmin: true })), ["read", "worker", "admin"]);
+  assert.deepEqual(modeOptions(buildChannelSettingsView({ mode: adminChannel, access: adminChannel }, state, { tab: "agent", canEditAccess: true, canEnableAdmin: false })), ["read", "worker", "admin"]);
+});
+
 test("access validation fails closed and canonical presets agree with flags", () => {
-  assert.throws(() => accessSettingsPatch({ ...base, manageAccess: "admins" }, form, actor), /current channel managers/);
-  assert.throws(() => accessSettingsPatch({ ...base, access: "admins" }, form, actor), /current channel managers/);
+  assert.throws(() => accessSettingsPatch({ ...base, manageAccess: "admins" }, managerForm, actor), /current channel managers/);
+  assert.throws(() => accessSettingsPatch({ ...base, access: "admins" }, managerForm, actor), /current channel managers/);
   for (const bad of [{ mode: "auto" }, { access: "all" }, { manageAccess: "all" }, { autoMode: "true" }, { allowedUsers: ["bad"] }, { managers: null }]) {
-    assert.throws(() => accessSettingsPatch(base, { ...form, ...bad }, actor));
+    assert.throws(() => accessSettingsPatch(base, { ...managerForm, ...bad }, actor));
   }
   for (const mode of ["read", "worker", "admin"]) {
-    const patch = accessSettingsPatch(base, { ...form, mode, autoMode: false, cleanMode: false }, actor);
+    const patch = accessSettingsPatch(base, { ...form, mode, autoMode: false, cleanMode: false }, mode === "admin" ? adminActor : actor);
     assert.equal(patch.profile, mode);
     for (const [key, value] of Object.entries(PROFILE_FLAGS[mode])) assert.equal(patch[key], value);
   }
@@ -161,8 +192,11 @@ async function fixture() {
 
 test("real save admits managers, audits policy, preserves unrelated fields, and rechecks stale grants", async () => {
   const { client, state, entry } = await fixture();
-  const result = await saveAccessSettings(client, state, state.ownerId, { ...form, allowedUsers: ["UGUEST"], managers: ["UMANAGER"] });
-  assert.equal(result.saved.adminMode, true);
+  // The manager's own role is read from the store on save: Admin mode is refused and nothing is written.
+  await assert.rejects(() => saveAccessSettings(client, state, state.ownerId, { ...form, allowedUsers: ["UGUEST"], managers: ["UMANAGER"] }), /Only administrators can enable Admin mode/);
+  assert.equal((await store.getChannelMeta(entry.slug)).adminMode, false);
+  const result = await saveAccessSettings(client, state, state.ownerId, { ...managerForm, allowedUsers: ["UGUEST"], managers: ["UMANAGER"] });
+  assert.equal(result.saved.adminMode, false);
   assert.equal(result.saved.cleanMode, true);
   assert.equal(result.saved.allowNetwork, true);
   assert.equal(result.saved.model, "unchanged");
@@ -172,9 +206,10 @@ test("real save admits managers, audits policy, preserves unrelated fields, and 
   assert.ok(row);
   assert.doesNotMatch(JSON.stringify(row), /keep-token/);
   await store.patchChannelMeta(entry.slug, { manageAccess: "admins" });
-  await assert.rejects(() => saveAccessSettings(client, state, state.ownerId, form), /current channel managers/);
+  await assert.rejects(() => saveAccessSettings(client, state, state.ownerId, managerForm), /current channel managers/);
   await assert.rejects(() => saveAccessSettings(client, state, "UADMIN", form), /isn't yours/);
-  await saveAccessSettings(client, { ...state, ownerId: "UADMIN" }, "UADMIN", form);
+  const byAdmin = await saveAccessSettings(client, { ...state, ownerId: "UADMIN" }, "UADMIN", form);
+  assert.equal(byAdmin.saved.adminMode, true, "an organization admin enables Admin mode from the same control");
 });
 
 test("one inline control changes one field and leaves the rest of the policy alone", async () => {
@@ -191,7 +226,12 @@ test("one inline control changes one field and leaves the rest of the policy alo
   assert.equal(stored.access, base.access, "picking a guest did not touch the use policy");
   assert.equal(stored.adminMode, false, "…or the mode");
 
-  stored = (await save("mode", { selected_option: { value: "admin" } })).saved;
+  // The manager's mode control cannot enable Admin; an admin's can, and the manager's later
+  // controls then work in the Admin-mode channel without disturbing it.
+  await assert.rejects(() => save("mode", { selected_option: { value: "admin" } }), /Only administrators can enable Admin mode/);
+  assert.equal((await store.getChannelMeta(entry.slug)).adminMode, false);
+  stored = (await saveAccessSettings(client, { ...state, ownerId: "UADMIN" }, "UADMIN",
+    { ...accessSettingsSnapshot(meta()), ...readAccessFieldValue("mode", { selected_option: { value: "admin" } }) })).saved;
   assert.equal(stored.adminMode, true);
   assert.deepEqual(stored.allowedUsers, ["UGUEST"], "the guest saved a moment ago survives the next control");
   assert.equal(stored.model, "unchanged", "unrelated channel settings are untouched throughout");
@@ -213,8 +253,8 @@ test("one inline control changes one field and leaves the rest of the policy alo
 test("save rejects departed users, bots, outsiders and a revocation during user lookup", async () => {
   const { client, state, entry } = await fixture();
   for (const id of ["UBOT", "UOUTSIDE"]) {
-    await assert.rejects(() => saveAccessSettings(client, state, state.ownerId, { ...form, allowedUsers: [id] }), /current human members/);
-    assert.equal((await store.getChannelMeta(entry.slug)).adminMode, false);
+    await assert.rejects(() => saveAccessSettings(client, state, state.ownerId, { ...managerForm, allowedUsers: [id] }), /current human members/);
+    assert.equal((await store.getChannelMeta(entry.slug)).allowNetwork, false);
   }
   await assert.rejects(() => channelSettingsContext({ conversations: { members: async () => ({ members: [] }) } }, {
     channelId: state.channelId, userId: state.ownerId, expectedSlug: state.slug, accessSettings: true, verifyMembership: true,
@@ -223,8 +263,8 @@ test("save rejects departed users, bots, outsiders and a revocation during user 
     await store.patchChannelMeta(entry.slug, { manageAccess: "admins" });
     return { user: { id: user, name: user } };
   };
-  await assert.rejects(() => saveAccessSettings(client, state, state.ownerId, { ...form, allowedUsers: ["UGUEST"] }), /current channel managers/);
-  assert.equal((await store.getChannelMeta(entry.slug)).adminMode, false);
+  await assert.rejects(() => saveAccessSettings(client, state, state.ownerId, { ...managerForm, allowedUsers: ["UGUEST"] }), /current channel managers/);
+  assert.equal((await store.getChannelMeta(entry.slug)).allowNetwork, false);
 });
 
 test("global role revoked during final membership request cannot save", async () => {
@@ -234,8 +274,8 @@ test("global role revoked during final membership request cannot save", async ()
     if (++checks === 3) await store.setUser("UMANAGER", { approved: false, isAdmin: false });
     return { members: ["UMANAGER", "UGUEST"] };
   };
-  await assert.rejects(() => saveAccessSettings(client, state, state.ownerId, { ...form, allowedUsers: ["UGUEST"] }), /current channel managers/);
-  assert.equal((await store.getChannelMeta(entry.slug)).adminMode, false);
+  await assert.rejects(() => saveAccessSettings(client, state, state.ownerId, { ...managerForm, allowedUsers: ["UGUEST"] }), /current channel managers/);
+  assert.equal((await store.getChannelMeta(entry.slug)).allowNetwork, false);
 });
 
 test("an access form left open from before the move says where its controls went, and saves nothing", async () => {
@@ -318,4 +358,59 @@ test("the Access people list comes from the channel record and the user store, w
   assert.equal(focus.id, "UPEOPLE_SEARCHED");
   assert.equal(focus.inChannel, null, "membership unknown without a Slack client — saving still validates it");
   assert.deepEqual(await accessPeople({ isDM: true }, "D1"), { people: [], focus: null });
+});
+
+// ── Narrowing the use policy evicts the seeded members (security audit batch 4) ─────────────────
+test("switching a channel to Admins only or Locked drops the seeded approved members and keeps explicit guests", async () => {
+  const { restrictedAccessAllowedUsers } = await import("../src/slack/access-settings.js");
+  const { isAuthorized } = await import("../src/gateway/modes.js");
+  const users = { UADMIN: { approved: true, isAdmin: true }, UMEMBER: { approved: true }, UMEMBER2: { approved: true }, UGUEST: { approved: false } };
+  const seeded = { ...base, access: "approved", allowedUsers: ["UMEMBER", "UMEMBER2", "UGUEST", "UADMIN"] };
+  for (const access of ["admins", "none"]) {
+    const narrowed = restrictedAccessAllowedUsers(seeded, { access, allowedUsers: seeded.allowedUsers }, users);
+    assert.deepEqual(narrowed, { allowedUsers: ["UGUEST", "UADMIN"], dropped: 2 }, access);
+    const after = { ...seeded, access, allowedUsers: narrowed.allowedUsers };
+    assert.equal(isAuthorized(after, "UMEMBER", false, { isApprovedUser: true }), false, `${access}: a seeded member is out`);
+    assert.equal(isAuthorized(after, "UGUEST", false, {}), true, `${access}: the explicit guest stays in`);
+    assert.equal(isAuthorized(after, "UADMIN", false, { isAdminUser: true }), true, `${access}: an admin on the list is not locked out by the switch`);
+  }
+  // Not a narrowing: nothing is dropped, and the list is left exactly as submitted.
+  assert.equal(restrictedAccessAllowedUsers(seeded, { access: "approved", allowedUsers: seeded.allowedUsers }, users), null);
+  assert.equal(restrictedAccessAllowedUsers({ ...seeded, access: "admins", allowedUsers: ["UGUEST"] }, { access: "none", allowedUsers: ["UGUEST"] }, users), null);
+  assert.equal(restrictedAccessAllowedUsers({ ...seeded, access: "admins", allowedUsers: [] }, { access: "approved", allowedUsers: [] }, users), null, "widening resurrects nobody by itself");
+  assert.equal(restrictedAccessAllowedUsers(seeded, { access: "admins", allowedUsers: ["UGUEST"] }, users), null, "a list with no seed drops nothing");
+});
+
+test("the Slack Access control evicts seeded members on save, audits the count, and the people rows show them unticked", async () => {
+  const { memberCanUse } = await import("../src/slack/access-settings.js");
+  const { client, state, entry } = await fixture();
+  await store.setUser("UMEMBER2", { approved: true, isAdmin: false });
+  await store.setUser("UGUEST", { approved: false, isAdmin: false });
+  client.conversations.members = async () => ({ members: ["UMANAGER", "UMEMBER2", "UGUEST", "UADMIN", "UBOT"] });
+  await store.patchChannelMeta(entry.slug, { allowedUsers: ["UMANAGER", "UMEMBER2", "UGUEST"] });
+  const adminState = { ...state, ownerId: "UADMIN" };
+  const save = (field, action) => saveAccessSettings(client, adminState, "UADMIN",
+    { ...accessSettingsSnapshot(current), ...readAccessFieldValue(field, action) });
+  let current = await store.getChannelMeta(entry.slug);
+  const result = await save("access", { selected_option: { value: "admins" } });
+  assert.equal(result.saved.access, "admins");
+  assert.deepEqual(result.saved.allowedUsers, ["UGUEST"], "approved members were the seed; the guest is a deliberate grant");
+  assert.equal(result.dropped, 2);
+  const row = getDb().prepare("SELECT * FROM events WHERE event = 'channel_access_members_evicted' ORDER BY rowid DESC LIMIT 1").get();
+  assert.ok(row);
+  assert.match(String(row.data), /"count":2/);
+  assert.equal(memberCanUse(result.saved, "UMEMBER2", { isApprovedUser: true }), false);
+  assert.equal(memberCanUse(result.saved, "UGUEST", {}), true);
+  // Widening back to "approved" does not re-admit anyone by itself (the seed happens on the next message).
+  current = result.saved;
+  const widened = await save("access", { selected_option: { value: "approved" } });
+  assert.deepEqual(widened.saved.allowedUsers, ["UGUEST"]);
+  assert.equal(widened.dropped, 0);
+  // Admins-only → Locked moves nothing more: no approved user is left on the list.
+  current = widened.saved;
+  await store.patchChannelMeta(entry.slug, { access: "admins" });
+  current = await store.getChannelMeta(entry.slug);
+  const locked = await save("access", { selected_option: { value: "none" } });
+  assert.deepEqual(locked.saved.allowedUsers, ["UGUEST"]);
+  assert.equal(locked.dropped, 0);
 });

@@ -20,8 +20,11 @@ prepare the text without posting unless sending was separately authorized.
 
 Managed Composio structured membership calls have an additional gateway-enforced one-use card.
 Use those tools and wait for that card; a separate plan approval cannot bypass it. Both identities
-and all runtime types use this check. Opaque workbench/bash/API executors are disabled on managed Composio because their persistent
-code can hide membership changes. Use structured actions for reads and writes. Split large
+and all runtime types use this check. Composio Remote Workbench is available for remote result
+files and bulk app calls; reuse its workflow session ID and saved file references. The gateway
+does not inspect Python or intercept app calls made inside Workbench. That availability does not
+authorize joining, inviting or creating channels: use a structured membership action and wait
+for its card. Other generic connector bash/proxy/API executors remain disabled. Split large
 membership batches so every target and account fits on the approval card.
 
 ## Replying in the current thread — just output text

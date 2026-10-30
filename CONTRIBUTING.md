@@ -26,6 +26,27 @@ database) lives outside the repository under the gateway runtime root, not in th
 `INSTALL.md` covers a full working install; the tests below need neither Slack credentials nor a
 running daemon.
 
+## TypeScript for new code
+
+TypeScript is the default for new backend and browser modules, Node scripts, and tests. Use strict
+type checking and explicit types at module boundaries. Validate external inputs at runtime; types
+do not replace the existing authorization checks, schemas, or adapter validation. Do not suppress
+type errors with blanket `any` annotations or disabled checking.
+
+Adopt TypeScript incrementally. Existing JavaScript files can receive focused maintenance fixes;
+when substantially extending a module, migrate it or extract the new implementation into a typed
+module. A feature does not require a rewrite of unrelated JavaScript. Shell and Python helpers
+keep their appropriate language.
+
+The current daemon and tooling execute JavaScript directly. Before adding the first executable
+TypeScript module, include the mixed JavaScript/TypeScript build and execution support in that
+change, with reproducible checks on the supported Node versions. Cover test discovery, browser
+assets, container helper staging, installation/update/release paths, and the existing static and
+security checks wherever affected. Type checking must run in CI. Do not introduce a `.ts` file
+that these paths cannot execute, ship, or check; do not raise the Node minimum implicitly. This
+policy establishes the language choice; it does not claim that runtime TypeScript support has
+already shipped.
+
 ## Run the checks
 
 ```bash

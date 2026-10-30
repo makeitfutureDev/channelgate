@@ -4,13 +4,14 @@
 // for the daemon's /internal/approval endpoint.
 import path from "node:path";
 import http from "node:http";
-import { mkdirSync, writeFileSync, existsSync, readFileSync } from "node:fs";
+import { mkdirSync, writeFileSync, existsSync, readFileSync, realpathSync } from "node:fs";
+import os from "node:os";
 import { fileURLToPath } from "node:url";
 import test, { after } from "node:test";
 import assert from "node:assert/strict";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
-import { ensureTestEnv, testLicenseEnv } from "./helpers.js";
+import { ensureTestEnv, tempDir, testLicenseEnv } from "./helpers.js";
 
 const projectRoot = fileURLToPath(new URL("..", import.meta.url));
 const scratch = ensureTestEnv();
@@ -42,7 +43,9 @@ const ISOLATED_HOME = path.join(scratch, "isolated-engine-home");
 const DEFAULT_WORKSPACE_ROOT = path.join(scratch, "daemon-workspaces");
 // Default channel folders are namespaced by platform: <workspace root>/<platform>/<slug>.
 const DEFAULT_WORKDIR = path.join(DEFAULT_WORKSPACE_ROOT, "slack", SLUG);
-const CUSTOM_WORKDIR = path.join(scratch, "custom-workdir");
+// Beside the scratch gateway root, not under it: a work folder inside the gateway runtime root is
+// refused by the work-folder boundary (src/gateway/workdir-boundary.js), as in production.
+const CUSTOM_WORKDIR = tempDir("cg-ctrl-custom-workdir-");
 mkdirSync(ISOLATED_HOME, { recursive: true });
 mkdirSync(CUSTOM_WORKDIR, { recursive: true });
 
@@ -66,7 +69,7 @@ function gatewayClient({ author = "U_CTRL_ADMIN", port = stubPort, engine = "cla
       CG_GATEWAY_CAPABILITY: mintGatewayCapability({ secret, channelId: CHANNEL, slug: SLUG, authorId: author, threadKey: "1.000", origin: "slack_foreground", engine }),
       CG_APPROVAL_SECRET: secret,
       CG_PORT: String(port),
-      CG_FS_ROOT: scratch,
+      CG_FS_ROOT: path.dirname(realpathSync(os.tmpdir())), // covers the scratch root and the custom work folder
       CG_WORKSPACE_DIR: DEFAULT_WORKSPACE_ROOT,
       HOME: ISOLATED_HOME,
     },
@@ -577,6 +580,9 @@ test("every registered gateway tool is consciously classified as gated or open (
     // returns null for the short machine-facing "upload" purpose, the same conditional shape
     // update_gateway/restart_gateway use for their admin-mode exception.
     "create_public_file_link",
+    // Slack code channels: opening one creates a channel people are invited into and starts a
+    // turn there (the requester confirms); archiving is a card anyone working there can approve.
+    "open_code_channel", "archive_code_channel",
   ]);
   const OPEN = new Set([
     // read-only
@@ -592,6 +598,7 @@ test("every registered gateway tool is consciously classified as gated or open (
     "slack_list_create", "slack_list_add_item", "slack_list_update_item", "slack_list_info", "slack_list_items",
     "slack_channel_history", "slack_thread_replies",
     "slack_download_file", // lands only in this thread's uploads/ folder, this channel's files only
+    "update_code_channel", // artifact tabs, context bar and title of the code channel the run is IN; refuses elsewhere
     "run_in_background", "run_agent_in_background", // shell kind has its own admin-click gate in background.js
     "request_approval", "permission_prompt", "report_progress", "ask_questions",
     "update_channel_memory", // operator decision 2026-08-07: memory is agent-owned, never approval-gated

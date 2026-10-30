@@ -21,7 +21,7 @@ The Qwen column covers every harness generated from the Anthropic-compatible **p
 `src/engines/qwen.js` — today `qwen` (QwenCloud) and `qwen-eu` (Alibaba Cloud Model Studio, EU
 region). They share this column because they share the CLI and every guarantee in it; what differs
 per entry is the endpoint, the credential, the shipped and discovered model catalog, and the
-gateway default model.
+gateway default model and effort.
 
 Each is **opt-in**: a missing `engineEnabled` entry means OFF, it is terminal in the failover graph
 in both directions, and its provider credential (its own `…ApiKey` / `…BaseUrl` pair) is gateway

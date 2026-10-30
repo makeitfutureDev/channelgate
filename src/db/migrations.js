@@ -1044,4 +1044,50 @@ export const migrations = [
       `);
     },
   },
+  {
+    // Dashboard identities are independent of chat users. Credential IDs are globally unique.
+    version: 36,
+    up(db) {
+      db.exec(`
+        CREATE TABLE admin_accounts (
+          id TEXT PRIMARY KEY, username TEXT NOT NULL UNIQUE, display_name TEXT NOT NULL,
+          user_handle TEXT NOT NULL UNIQUE, enabled INTEGER NOT NULL DEFAULT 1,
+          auth_version INTEGER NOT NULL DEFAULT 1, bootstrap_allowed INTEGER NOT NULL DEFAULT 0,
+          created_ms INTEGER NOT NULL
+        );
+        CREATE TABLE admin_passkeys (
+          id TEXT PRIMARY KEY, account_id TEXT NOT NULL REFERENCES admin_accounts(id) ON DELETE CASCADE,
+          public_key BLOB NOT NULL, counter INTEGER NOT NULL, transports TEXT NOT NULL,
+          device_type TEXT NOT NULL, backed_up INTEGER NOT NULL, name TEXT NOT NULL,
+          created_ms INTEGER NOT NULL, last_used_ms INTEGER NOT NULL DEFAULT 0
+        );
+        CREATE INDEX idx_admin_passkeys_account ON admin_passkeys(account_id);
+        CREATE TABLE admin_enrollment_tokens (
+          digest TEXT PRIMARY KEY, account_id TEXT NOT NULL REFERENCES admin_accounts(id) ON DELETE CASCADE,
+          auth_version INTEGER NOT NULL, expires_ms INTEGER NOT NULL
+        );
+        CREATE INDEX idx_admin_enrollment_expiry ON admin_enrollment_tokens(expires_ms);
+      `);
+    },
+  },
+  {
+    // Link dashboard credential containers only after proof of the stable platform user ID.
+    // Historical names/emails are not ownership evidence. Pending legacy invites are revoked.
+    version: 37,
+    up(db) {
+      db.exec(`
+        ALTER TABLE admin_accounts ADD COLUMN user_id TEXT;
+        CREATE UNIQUE INDEX idx_admin_accounts_user ON admin_accounts(user_id) WHERE user_id IS NOT NULL;
+        CREATE TABLE admin_identity_links (
+          id TEXT PRIMARY KEY, account_id TEXT NOT NULL REFERENCES admin_accounts(id) ON DELETE CASCADE,
+          user_id TEXT NOT NULL, auth_version INTEGER NOT NULL, session_digest TEXT NOT NULL,
+          code_digest TEXT NOT NULL, expires_ms INTEGER NOT NULL, attempts INTEGER NOT NULL DEFAULT 0
+        );
+        CREATE INDEX idx_admin_identity_links_user ON admin_identity_links(user_id);
+        CREATE INDEX idx_admin_identity_links_expiry ON admin_identity_links(expires_ms);
+        DELETE FROM admin_enrollment_tokens;
+        UPDATE admin_accounts SET auth_version = auth_version + 1;
+      `);
+    },
+  },
 ];
