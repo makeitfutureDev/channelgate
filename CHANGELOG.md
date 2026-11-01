@@ -1,6 +1,7 @@
 # Changelog — ChannelGate
 
 - Allow Composio Remote Bash alongside Remote Workbench for authorized remote processing, retaining current-run authority checks and structured membership approvals.
+GPT-6.1 Terra now has Standard API-equivalent usage rates. Upgrades back up and refresh Codex history with dated rates, including previously unpriced Terra usage from October 26, 2026.
 
 - Fix linked-folder access exclusions and DM authorization, preserve section skills and DM settings on separation, and immediately revoke follower SSH sessions after source changes.
 

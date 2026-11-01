@@ -1,5 +1,7 @@
 # ChannelGate — Features
 
+Codex estimates include GPT-6.1 Terra ($1 / $0.05 / $5 per million input / cached / output tokens), request-level long-context pricing, an October 26, 2026 launch boundary, and a backed-up automatic historical refresh on upgrade.
+
 ## Linked working-folder setup
 
 - Source access exclusions and conversation policy also govern linked DMs. Shared changes notify follower SSH/egress sessions immediately. Separating a follower or moving the source retains source-section skill grants; detached DMs keep their effective setup as Custom instead of reapplying a DM preset. A promoted owner remains stable when an older conversation later joins.
