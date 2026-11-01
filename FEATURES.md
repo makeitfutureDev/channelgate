@@ -280,10 +280,10 @@ Slack’s native running/Stop label shows the resolved model and explicitly conf
 - Container and host runtime connections, including SDK sessions, traverse the same daemon check.
   Denial, timeout, unavailable approval, cancellation, disconnect or expired/revoked authority
   prevents forwarding. Ordinary structured reads and writes continue.
-- Composio Remote Workbench is allowed for remote result processing and bulk app calls, with
-  code and workflow session references forwarded unchanged. Python and app calls inside it are
+- Composio Remote Workbench and Remote Bash are allowed for remote result processing and bulk app calls, with
+  code/commands and workflow session references forwarded unchanged. Code and app calls inside them are
   outside the structured membership gate; the guide requires structured actions and human
-  approval for membership changes. Other generic connector bash/proxy/API executors remain
+  approval for membership changes. Other generic connector proxy/API executors remain
   refused. Independently supplied credentials, custom MCPs and browser sessions also remain
   outside that gate. The always-loaded guide forbids bypass through any route and treats
   sharing/posting requests as separate from permission to join or change the sender.
