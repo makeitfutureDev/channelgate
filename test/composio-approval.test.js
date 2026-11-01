@@ -108,9 +108,42 @@ test("Workbench still requires current run authority", async (t) => {
   assert.equal(f.cards.length, 0);
 });
 
+for (const identity of ["composio-user", "composio-agent"]) {
+  test(`${identity}: Remote Bash forwards exact code and session without a membership card`, async (t) => {
+    const f = await fixture(t, { identity });
+    const request = { name: "COMPOSIO_REMOTE_BASH_TOOL", arguments: {
+      command: "jq .total /mnt/files/checkpoint.json",
+      session_id: "existing-workflow",
+    } };
+    for (let turn = 0; turn < 2; turn++) {
+      assert.equal((await f.client.callTool(request)).content[0].text, "executed");
+    }
+    const batched = { name: "COMPOSIO_MULTI_EXECUTE_TOOL", arguments: { tools: [{
+      tool_slug: request.name, arguments: request.arguments,
+    }] } };
+    assert.equal((await f.client.callTool(batched)).content[0].text, "executed");
+    assert.deepEqual(f.calls, [request, request, batched]);
+    assert.equal(f.cards.length, 0);
+    // An admitted Remote Bash item must not skip a later membership action in the same batch.
+    const mixed = structuredClone(batched);
+    mixed.arguments.tools.push(invite.arguments.tools[0]);
+    assert.equal((await f.client.callTool(mixed)).isError, true);
+    assert.equal(f.calls.length, 3);
+    assert.equal(f.cards.length, 1);
+  });
+}
+
+test("Remote Bash still requires current run authority", async (t) => {
+  const f = await fixture(t, { authorize: () => { throw new Error("revoked"); } });
+  const result = await f.client.callTool({ name: "COMPOSIO_REMOTE_BASH_TOOL", arguments: { command: "printf 1" } });
+  assert.equal(result.isError, true);
+  assert.equal(f.calls.length, 0);
+  assert.equal(f.cards.length, 0);
+});
+
 test("other opaque executors fail closed without an unverifiable approval card", async (t) => {
   const f = await fixture(t);
-  for (const name of ["COMPOSIO_REMOTE_WORKBENCH_UNKNOWN", "COMPOSIO_REMOTE_BASH_TOOL", "COMPOSIO_PROXY_EXECUTE", "SLACK_CUSTOM_API_CALL", "COMPOSIO_EXECUTE_UNKNOWN"]) {
+  for (const name of ["COMPOSIO_REMOTE_WORKBENCH_UNKNOWN", "COMPOSIO_REMOTE_BASH_TOOL_UNKNOWN", "COMPOSIO_PROXY_EXECUTE", "SLACK_CUSTOM_API_CALL", "COMPOSIO_EXECUTE_UNKNOWN"]) {
     assert.equal((await f.client.callTool({ name, arguments: { code: "saved_helper()" } })).isError, true);
   }
   assert.equal(f.cards.length, 0);

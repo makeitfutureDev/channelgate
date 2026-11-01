@@ -593,7 +593,7 @@ inbox). Record the address and the servers; never the password.
   `test/mcp-config.test.js` and `test/codex-args.test.js`: direct and nested membership calls;
   both identities; creation aliases; complete account/target aliases; bounded previews;
   one-use decisions; deny/error/timeout; revocation, cancellation and disconnect while waiting;
-  ordinary reads during a pending decision; generic bash/proxy/API refusal. Actual Unix-socket relay
+  ordinary reads during a pending decision; generic proxy/API refusal. Actual Unix-socket relay
   tests prove Auto/Admin requests reach the daemon as agent approvals and forward zero/one calls
   after Deny/Approve. Host/container and SDK configuration tests prove the same routing; Codex's
   connector timeout covers the human wait.
@@ -607,7 +607,7 @@ inbox). Record the address and the servers; never the password.
   before clicking its card. Repeat token/SDK connections and the explicit host fixture.
   **Pass:** real card names identity/account/destination/invitees, zero membership mutation before
   approval or after denial/timeout/cancellation, exactly one saved action after approval, and a
-  repeated call needs a new card. Requested sender stays unchanged. Generic bash/proxy/API
+  repeated call needs a new card. Requested sender stays unchanged. Generic proxy/API
   attempts are refused; Workbench processing and structured read/message actions still work. Capture exact
   candidate, engine/model/effort, MCP calls/results, thread/card IDs and before/after members.
   Hermetic tests do not count as live passes. Private QA catalog has separate engine cases;
@@ -11572,3 +11572,18 @@ Documentation-only, engine-independent: no gateway runtime or Microsoft grants c
   actor and verify disconnect before new credential preparation; reconnect uses the new scope.
   Finally enable Admin mode with operator-home access on: SSH remains refused. Restore roles,
   settings and grants. Live execution is pending; automated passes do not satisfy this gate.
+
+
+### Remote Bash admission (2026-11-01)
+
+- [x] Automated: `test/composio-approval.test.js` exercises exact Remote Bash command/session forwarding
+  for both identities, repeat and nested calls, mixed batches retaining membership approval,
+  revoked authority refusal, and rejection of similarly named/unrecognized executors.
+- Live Claude and Codex (each pending): use a private QA conversation with the selected engine
+  and an active Composio connection. Prompt: “Use Composio Remote Bash to run
+  `printf '{"total":3}\\n' | jq -r .total` and report its output. Do not call any app.”
+  Repeat for user and agent identities and in the same remote session. Pass: output is `3`,
+  no connector-policy refusal, and command/session arguments reach Composio unchanged.
+- In each engine, request a structured membership action on a disposable QA destination and
+  deny the card. Pass: no membership change occurs; a subsequent Remote Bash calculation works.
+  Do not test membership changes through arbitrary shell code; those are outside this gate.

@@ -26,8 +26,8 @@ Never read unrelated business records just to identify an account.
 
 ## Choose the executor
 
-Composio Remote Workbench is admitted by the gateway for remote data processing and bulk app
-calls. Its Python is not inspected by the structured membership-approval check. Any Slack
+Composio Remote Workbench and Remote Bash are admitted by the gateway for remote data processing and bulk app
+calls. Their Python/shell code is not inspected by the structured membership-approval check. Any Slack
 join/invite/channel-creation action still needs human approval: issue it as a structured action
 and wait for its card, following `references/messages.md`.
 
