@@ -1,5 +1,7 @@
 # ChannelGate — Test Plan
 
+Terra pricing regression: `test/usage-pricing.test.js` covers launch/snapshot pricing, strict >272K request uplift, aggregate fallback, upgrades from absent/older/October22 bases, backup-once and zero-delta reruns. Live production ledger rehearsal/integrity/balance verification remains pending host access; this is engine-independent accounting.
+
 ## Linked working-folder setup acceptance
 
 Re-verification (2026-10-26): regression coverage now checks source `excludedUsers` and restricted-channel policy through linked DMs, explicit-unlink/source-departure section-skill retention, DM template preservation, established promoted-owner selection, and immediate follower SSH disconnection after source revocation (20-minute timer disabled as a fallback). `test/skills-workspace-sync.test.js` and `test/ssh-broker.test.js` cover these gaps. Updated full suite: 4,117 passed, 37 skipped, zero failures; Chromium linked-folder fixture passed. Actual Claude and Codex CLI smoke checks read a source-scoped skill from a generated linked workspace and returned its unique marker. Codex used the gateway's Worker/container mode; an initial nested read-only sandbox attempt failed with a bubblewrap capability error. These are CLI smoke checks, not a Slack end-to-end acceptance pass.

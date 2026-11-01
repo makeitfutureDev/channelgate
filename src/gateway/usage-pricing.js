@@ -3,7 +3,7 @@
 // forward estimator leaves the dashboard's existing period internally inconsistent. This module
 // reprices the requested historical window from the stored component/request evidence, backs up
 // the database first, and records a basis marker. The October 22 basis requires manual approval
-// after an impact audit; boot defers historical refresh until that manual apply records the basis.
+// after an impact audit. The November Terra basis uses the backed-up automatic upgrade path.
 import { CODEX_PRICING_BASIS, estimateCodexCost } from "./usage.js";
 import { backupGatewayDb } from "./usage-repair.js";
 import { DEFAULT_CODEX_RATES, getCodexModelRates } from "../config/settings.js";
@@ -11,6 +11,7 @@ import { DEFAULT_CODEX_RATES, getCodexModelRates } from "../config/settings.js";
 export const CODEX_PRICING_HISTORY_SINCE = "2026-07-13T00:00:00.000Z";
 export const CODEX_SOL_PRICE_CUTOVER = "2026-08-21T00:00:00.000Z";
 export const CODEX_TERRA_LUNA_PRICE_CUTOVER = "2026-07-30T00:00:00.000Z";
+export const CODEX_61_TERRA_LAUNCH = "2026-10-26T00:00:00.000Z";
 export const CODEX_61_SOL_LAUNCH = "2026-09-29T00:00:00.000Z";
 export const CODEX_PRICING_META_KEY = "codex_usage_pricing_basis";
 
@@ -45,9 +46,10 @@ const sameRate = (left, right) => (
 function codexRatesAt(ts) {
   const current = getCodexModelRates();
   const historical = { ...current };
-  if (String(ts || "") < CODEX_61_SOL_LAUNCH
-    && sameRate(current["gpt-6.1-sol"], DEFAULT_CODEX_RATES["gpt-6.1-sol"])) {
-    delete historical["gpt-6.1-sol"];
+  for (const [key, launch] of [["gpt-6.1-sol", CODEX_61_SOL_LAUNCH], ["gpt-6.1-terra", CODEX_61_TERRA_LAUNCH]]) {
+    if (String(ts || "") < launch && sameRate(current[key], DEFAULT_CODEX_RATES[key])) {
+      delete historical[key];
+    }
   }
   for (const { keys, until, rate } of HISTORICAL_RATES) {
     if (String(ts || "") >= until) continue;
