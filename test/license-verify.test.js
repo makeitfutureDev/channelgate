@@ -116,7 +116,7 @@ test("a 200 with a good signature is cached and becomes the valid state", async 
   });
   assert.equal(result.outcome, "verified");
   assert.equal(getLicenseStatus().state, "valid");
-  assert.deepEqual(getEffectiveLimits(), { conversations: null, messagesPerConversationPerMonth: 500, channels: 20, users: 20 });
+  assert.deepEqual(getEffectiveLimits(), { conversations: null, messagesPerConversationPerMonth: 500, channels: 10, users: 10 });
   assert.equal(readCache().license.tier, "free");
 
   // The request payload is exactly the three documented fields — never the workspace, the
@@ -141,7 +141,7 @@ test("a 200 whose signature does not verify changes nothing", async () => {
   assert.equal(result.outcome, "unreachable");
   assert.equal(readCache().license.tier, "free");
   assert.equal(getLicenseStatus().state, "grace");
-  assert.deepEqual(getEffectiveLimits(), { conversations: null, messagesPerConversationPerMonth: 500, channels: 20, users: 20 });
+  assert.deepEqual(getEffectiveLimits(), { conversations: null, messagesPerConversationPerMonth: 500, channels: 10, users: 10 });
 });
 
 test("401 is invalid_key, 403 is revoked, and both drop to the no-key limits", async () => {
@@ -149,12 +149,12 @@ test("401 is invalid_key, 403 is revoked, and both drop to the no-key limits", a
   const r401 = await verifyLicense({ fetchImpl: async () => ({ status: 401, json: async () => ({ ok: false, error: "invalid_key" }) }) });
   assert.equal(r401.outcome, "invalid");
   assert.equal(getLicenseStatus().state, "invalid");
-  assert.deepEqual(getEffectiveLimits(), { conversations: 1, messagesPerConversationPerMonth: 500, channels: 20, users: 20 });
+  assert.deepEqual(getEffectiveLimits(), { conversations: 1, messagesPerConversationPerMonth: 500, channels: 10, users: 10 });
 
   const r403 = await verifyLicense({ fetchImpl: async () => ({ status: 403, json: async () => ({ ok: false, error: "revoked" }) }) });
   assert.equal(r403.outcome, "revoked");
   assert.equal(getLicenseStatus().state, "revoked");
-  assert.deepEqual(getEffectiveLimits(), { conversations: 1, messagesPerConversationPerMonth: 500, channels: 20, users: 20 });
+  assert.deepEqual(getEffectiveLimits(), { conversations: 1, messagesPerConversationPerMonth: 500, channels: 10, users: 10 });
 });
 
 test("a network error or an unexpected status is unreachable, never a throw", async () => {
@@ -191,7 +191,7 @@ test("an offline payload signed by the wrong key is ignored", async () => {
   process.env.CHANNELGATE_LICENSE_PAYLOAD = JSON.stringify({ license, signature: signTestLicense(license, generateKeyPairSync("ed25519").privateKey) });
   try {
     assert.equal(offlineLicense(), null);
-    assert.deepEqual(getEffectiveLimits(), { conversations: 1, messagesPerConversationPerMonth: 500, channels: 20, users: 20 });
+    assert.deepEqual(getEffectiveLimits(), { conversations: 1, messagesPerConversationPerMonth: 500, channels: 10, users: 10 });
   } finally {
     delete process.env.CHANNELGATE_LICENSE_PAYLOAD;
   }

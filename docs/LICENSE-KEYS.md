@@ -10,8 +10,8 @@ are fixed for its agreed term.
 
 | Tier | How you get it | Registered channels | Registered users | Active conversations per UTC month | AI messages per conversation per month |
 | --- | --- | --- | --- | --- | --- |
-| **No key** | install and run | 20 | 20 | 1 | 500 |
-| **Registered (free key)** | create an account with your email on the ChannelGate platform | 20 | 20 | up to the registered channels | 500 |
+| **No key** | install and run | 10 | 10 | 1 | 500 |
+| **Registered (free key)** | create an account with your email on the ChannelGate platform | 10 | 10 | up to the registered channels | 500 |
 | **Enterprise key** | Enterprise License with Makeitfuture | unlimited by default | unlimited by default | unlimited by default | unlimited by default |
 
 ## Definitions
@@ -22,12 +22,12 @@ are fixed for its agreed term.
 - **Registered channels** are the persistent conversation records across all connected platforms,
   including DMs, groups and the synthetic API conversation. **Registered users** are all stored
   human account records, including unapproved users; the synthetic API principal is excluded.
-  These inventory counts do not reset each month. Non-Enterprise deployments cannot create a 21st
+  These inventory counts do not reset each month. Non-Enterprise deployments cannot create a 11th
   record of either kind. Existing records remain editable and usable after an upgrade introduces
   the cap or an Enterprise downgrade; no records are deleted, and growth is refused until below
   the applicable cap. Other authorization and monthly message limits still apply.
 - Registered inventory caps are hard ceilings in this version: legacy free payloads that omit
-  them or specify `null` cannot raise them above 20. Signed smaller caps are honored; Enterprise
+  them or specify `null` cannot raise them above 10. Signed smaller caps are honored; Enterprise
   defaults to unlimited and can carry agreed limits.
 - An **AI message** is one engine run started for a conversation. Every origin counts — user
   turns, follow-ups, scheduled runs, and background jobs — except the deployment's own
@@ -182,3 +182,7 @@ Only an effective Enterprise license permits changing the policy. A saved restri
 enforced after downgrade or expiry; restoring Enterprise is required to change or clear it.
 The default on existing channels is unrestricted. This governs gateway-managed harness launches,
 not arbitrary commands a Worker/Admin author is otherwise allowed to execute inside a container.
+
+## Cost-tracking history
+
+Non-Enterprise installations expose one month (30 days) of cost history in audit and dashboard reports. Enterprise history is unlimited. Older accounting remains stored for upgrades; license usage counters and conversation history are independent.

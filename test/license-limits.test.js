@@ -41,7 +41,7 @@ const admit = (id, origin = "slack_foreground") => licenseAdmission({ conversati
 
 test("no key: the first conversation of the month is served and every other one is refused", () => {
   tier("none");
-  assert.deepEqual(getEffectiveLimits(), { conversations: 1, messagesPerConversationPerMonth: 500, channels: 20, users: 20 });
+  assert.deepEqual(getEffectiveLimits(), { conversations: 1, messagesPerConversationPerMonth: 500, channels: 10, users: 10 });
 
   const first = admit("C_FIRST");
   assert.equal(first.allowed, true);
@@ -78,7 +78,7 @@ test("a refused turn is a reply, never an exception and never silence", () => {
 
 test("a free key unlocks every conversation and keeps the 500-message cap", () => {
   tier("free");
-  assert.deepEqual(getEffectiveLimits(), { conversations: null, messagesPerConversationPerMonth: 500, channels: 20, users: 20 });
+  assert.deepEqual(getEffectiveLimits(), { conversations: null, messagesPerConversationPerMonth: 500, channels: 10, users: 10 });
   for (const id of ["C_A", "C_B", "C_C", "gchat:spaces/X", "teams:19:abc@thread.tacv2"]) {
     assert.equal(admit(id).allowed, true, `${id} should be admitted on a free key`);
   }
@@ -200,7 +200,7 @@ test("an EXPIRED offline payload grants nothing — the no-key limits, immediate
   assert.equal(status.expiresAt, "2020-01-01T00:00:00.000Z", "…while still saying when it ran out");
   assert.equal(status.banner.level, "error");
 
-  assert.deepEqual(getEffectiveLimits(), { conversations: 1, messagesPerConversationPerMonth: 500, channels: 20, users: 20 });
+  assert.deepEqual(getEffectiveLimits(), { conversations: 1, messagesPerConversationPerMonth: 500, channels: 10, users: 10 });
   assert.equal(admit("C_EXPIRED_FIRST").allowed, true, "the free allowance still works");
   const second = admit("C_EXPIRED_SECOND");
   assert.equal(second.allowed, false);

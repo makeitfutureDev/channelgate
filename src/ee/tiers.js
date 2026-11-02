@@ -7,8 +7,8 @@
 //
 // The compiled-in facts of the licensing model: the platform URL, the tier defaults, and the
 // canonical JSON encoding the signature is computed over. Signed limits can tighten registration
-// caps and set monthly allowances; non-Enterprise registration has a compiled ceiling of 20
-// channels and 20 users (docs/LICENSE-KEYS.md, "Changing the limits").
+// caps and set monthly allowances; non-Enterprise registration has a compiled ceiling of 10
+// channels and 10 users (docs/LICENSE-KEYS.md, "Changing the limits").
 //
 // `null` means UNLIMITED. It is not "unset": a free key that omits `conversations` gets `null`
 // (no monthly conversation cap; registration is separately capped), while a deployment with NO key
@@ -34,11 +34,11 @@ export function signupUrl() {
 export const TIERS = Object.freeze(["free", "enterprise"]);
 
 // No key at all. Compiled in — there is nobody to ask for these.
-export const NO_KEY_LIMITS = Object.freeze({ conversations: 1, messagesPerConversationPerMonth: 500, channels: 20, users: 20 });
+export const NO_KEY_LIMITS = Object.freeze({ conversations: 1, messagesPerConversationPerMonth: 500, channels: 10, users: 10 });
 
 // Per-tier fill-ins for fields a signed payload omits.
 const TIER_DEFAULTS = Object.freeze({
-  free: Object.freeze({ conversations: null, messagesPerConversationPerMonth: 500, channels: 20, users: 20 }),
+  free: Object.freeze({ conversations: null, messagesPerConversationPerMonth: 500, channels: 10, users: 10 }),
   enterprise: Object.freeze({ conversations: null, messagesPerConversationPerMonth: null, channels: null, users: null }),
 });
 

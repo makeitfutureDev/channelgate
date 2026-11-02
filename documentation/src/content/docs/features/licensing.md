@@ -41,3 +41,7 @@ Core confinement, permissions, memory, skills, standard chat connectors, and bac
 - [Licensing FAQ](/docs/licensing/faq)
 - [Privacy](/docs/privacy)
 - [Usage and costs](/docs/features/usage-and-costs)
+
+## Cost-tracking history
+
+Free installations (with or without a key) expose the most recent 30 days of cost-tracking history. Enterprise exposes unlimited history. This reporting window applies to audit records, summaries and dashboard totals, including external engine usage. It does not delete stored accounting, alter monthly AI allowances, or limit conversation history.
