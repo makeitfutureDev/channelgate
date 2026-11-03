@@ -22,13 +22,17 @@ are fixed for its agreed term.
 - **Registered channels** are the persistent conversation records across all connected platforms,
   including DMs, groups and the synthetic API conversation. **Registered users** are all stored
   human account records, including unapproved users; the synthetic API principal is excluded.
-  These inventory counts do not reset each month. Non-Enterprise deployments cannot create a 11th
+  These inventory counts do not reset each month. Non-Enterprise deployments cannot create an 11th
   record of either kind. Existing records remain editable and usable after an upgrade introduces
   the cap or an Enterprise downgrade; no records are deleted, and growth is refused until below
   the applicable cap. Other authorization and monthly message limits still apply.
 - Registered inventory and active-conversation caps are hard ceilings in this version: legacy free payloads that omit
   them or specify `null` cannot raise them above 10 users/channels or 100 active conversations. Signed smaller caps are honored; Enterprise
   defaults to unlimited and can carry agreed limits.
+- Active conversations admitted before a stricter limit or Enterprise downgrade remain usable
+  for the rest of that UTC month. New conversations are refused once the applicable allowance
+  is reached; the admitted set resets at the next UTC month boundary. Compiled ceilings bound
+  signed Free payloads, rather than evicting already admitted conversations.
 - An **AI message** is one engine run started for a conversation. Every origin counts — user
   turns, follow-ups, scheduled runs, and background jobs — except the deployment's own
   memory-review runs. Months are calendar months in UTC.
@@ -185,4 +189,4 @@ not arbitrary commands a Worker/Admin author is otherwise allowed to execute ins
 
 ## Cost-tracking history
 
-Non-Enterprise installations expose one month (30 days) of cost history in audit and dashboard reports. Enterprise history is unlimited. Older accounting remains stored for upgrades; license usage counters and conversation history are independent.
+Non-Enterprise installations expose one month (30 days) of cost history in audit and dashboard reports. Enterprise history is unlimited. Older accounting remains stored for upgrades; license usage counters and conversation history are independent. Structured costs older than the reporting window are also hidden in audit-event, API-job and schedule-telemetry responses, while their operational records and result text remain available.

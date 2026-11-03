@@ -29,6 +29,7 @@ product overview.
 ## Unreleased
 
 - Add Contabo to the GitHub and public VPS hosting guides, including shared CPU sizing guidance and links to current provider pricing.
+- Apply Free cost-history visibility to audit events, run API job costs and schedule telemetry, preserving operational records and answers.
 
 - Publish a VPS sizing and hosting guide in the official docs, with server tiers, concurrency, storage, and backup recommendations.
 

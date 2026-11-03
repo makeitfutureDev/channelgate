@@ -3,7 +3,8 @@
 // register(server, ctx); the tool contracts are unchanged.
 import { z } from "zod";
 import { addSchedule, listForChannel, updateSchedule, deleteSchedule, countEnabledForChannel } from "../../config/schedules.js";
-import { listScheduleRuns, getScheduleRun, scheduleRunSummary } from "../../gateway/schedule-runs.js";
+import { costHistoryStart } from "../../ee/cost-history.js";
+import { listScheduleRuns, getScheduleRun, scheduleRunSummary, visibleScheduleRun } from "../../gateway/schedule-runs.js";
 import { validateScheduleOptions } from "../../config/schedule-options.js";
 import { isAdmin } from "../../config/store.js";
 import { cronValid, minIntervalMinutes, nextCronRun } from "../../util/cron.js";
@@ -177,12 +178,13 @@ export function register(server, ctx) {
 
 
   server.registerTool("get_schedule_runs", {
-    description: "Read this channel's automation health history and logs (including deleted/one-time schedules). Engine facts and agent-reported task/connection outcomes are separate. History is retained for 90 days; no historical backfill.",
+    description: "Read this channel's automation health history and logs (including deleted/one-time schedules). Engine facts and agent-reported task/connection outcomes are separate. Operational history is retained for 90 days; structured costs follow the plan cost-history window. No historical backfill.",
     inputSchema: { schedule_id: z.string().optional(), run_id: z.string().optional(), limit: z.number().int().min(1).max(100).optional(), before: z.string().optional() },
   }, async ({ schedule_id, run_id, limit, before }) => {
     if (!channelId) return text("No channel context.");
-    if (run_id) return text(JSON.stringify(getScheduleRun(run_id, channelId) || { error: "No run in this channel." }));
-    return text(JSON.stringify({ summary: scheduleRunSummary(schedule_id, channelId), runs: listScheduleRuns({ scheduleId: schedule_id, channelId, limit, before }) }));
+    const historyStart = costHistoryStart();
+    if (run_id) return text(JSON.stringify(visibleScheduleRun(getScheduleRun(run_id, channelId), historyStart) || { error: "No run in this channel." }));
+    return text(JSON.stringify({ summary: scheduleRunSummary(schedule_id, channelId, historyStart), runs: listScheduleRuns({ scheduleId: schedule_id, channelId, limit, before }).map((run) => visibleScheduleRun(run, historyStart)) }));
   });
 
   server.registerTool("update_schedule", {
