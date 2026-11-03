@@ -453,9 +453,18 @@ export async function channelInstructionsSnapshot(slug, meta) {
   return { cwd, file, cur, fingerprint };
 }
 
+export async function assertChannelNotArchived(slug, meta) {
+  const { getChannelMeta } = await import("../config/store.js");
+  const current = await getChannelMeta(slug);
+  if ((current ?? meta)?.archived) {
+    throw Object.assign(new Error("This channel is archived because the bot was removed. Re-invite the bot to resume configuration updates."), { code: "channel_archived", status: 409, statusCode: 409 });
+  }
+}
+
 export async function updateChannelInstructions(slug, meta, options) {
   const release = await acquireKeyedLock("channel-instructions", effectiveWorkDir(slug, meta));
   try {
+    await assertChannelNotArchived(slug, meta);
     return await writeChannelInstructions(slug, meta, options);
   } finally {
     release();
@@ -720,6 +729,7 @@ export async function ensureChannelFolder(slug, meta, { runMeta = meta, target =
   const { assertWorkspaceSkillsCompatible } = await import("./skills/workspace-sync.js");
   const { getChannelMeta } = await import("../config/store.js");
   const { workspaceSetup } = await import("../config/workspace-links.js");
+  await assertChannelNotArchived(slug, meta);
   const storedMeta = await getChannelMeta(slug);
   if (storedMeta?.workspaceLink) meta = { ...meta, ...storedMeta };
   meta = workspaceSetup(meta);
@@ -763,6 +773,7 @@ export async function ensureChannelFolder(slug, meta, { runMeta = meta, target =
   const configureWorkspace = async (cwd, workspaceMeta, skills, workspaceSlug = slug) => {
     const release = await acquireKeyedLock("workspace-skills", cwd);
     try {
+      await assertChannelNotArchived(slug, meta);
       // Recreate the managed skill tree as REAL directories — a symlink swapped in at .claude/ or
       // skills/ would otherwise route every managed write below to wherever the agent pointed it.
       const backupDir = workspaceSkillBackupDir(cwd);

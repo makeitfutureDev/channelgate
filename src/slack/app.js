@@ -127,7 +127,7 @@ import { setAssistantStatus, startProgress } from "./progress.js";
 // 2026-08 restructure split).
 export { buildResumeCommand, filesButton, secretsButton, settingsButton, menuButtons, menuBlocks, footerButtons, footerText, footerBlocks };
 export { setAssistantStatus, startProgress };
-import { processMessageEvent, runQueue, stopRunsInChannel, mentionsBot, stripMentions, isIgnorable, fetchThreadContext, deleteThreadMessages, ensureRegistered, ensureUserKnown, syncAllowedFromMembers, resolveConversation } from "./message-pipeline.js";
+import { processMessageEvent, runQueue, stopRunsInChannel, abortRunsInChannel, mentionsBot, stripMentions, isIgnorable, fetchThreadContext, deleteThreadMessages, ensureRegistered, ensureUserKnown, syncAllowedFromMembers, resolveConversation } from "./message-pipeline.js";
 import { registerQuestionActions } from "./questions.js";
 import { appContextForMessage, appContextObservedAt, appContextUserId, createAppContextStore } from "./app-context.js";
 import { registerBusyThreadChoiceActions } from "./busy-thread-choice.js";
@@ -3505,8 +3505,12 @@ async function connectAndWire(app) {
   });
   app.event("member_left_channel", async ({ event }) => {
     try {
-      if (await handleMemberLeftChannel(event)) {
-        console.log(`[slack] removed departed member ${event.user} from ${event.channel} guest access`);
+      if (await handleMemberLeftChannel(event, { botUserId, getChannelEntry, patchChannelMeta, ensureChannelFolder })) {
+        if (event.user === botUserId) {
+          const entry = await getChannelEntry(event.channel);
+          if (entry) abortRunsInChannel(event.channel, entry.slug, event.user);
+        }
+        console.log(`[slack] processed departure of ${event.user} from ${event.channel}`);
       }
     } catch (e) {
       console.error("[slack] member_left_channel error:", e.message);
@@ -3575,7 +3579,7 @@ async function connectAndWire(app) {
         // rejoin and used to race concurrent admin edits, clobbering them with a stale copy.
         // Join-time defaults apply ONLY when the channel has no meta yet.
         const meta = await patchChannelMeta(entry.slug, (current) => {
-          if (current) return {};
+          if (current) return { archived: false, archivedAt: null, archivedReason: null };
           const fresh = applyChannelTemplate(defaultChannelMeta({ channelId: event.channel, ...info }));
           if (!fresh.isDM) fresh.access = getDefaultChannelAccess();
           return fresh;

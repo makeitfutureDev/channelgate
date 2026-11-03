@@ -149,7 +149,7 @@ export async function removeChannelGuestGrant(channelId, userId, deps = cleanupD
     return { allowedUsers: current.allowedUsers.filter((id) => id !== userId) };
   });
   if (!next) return false;
-  await deps.ensureChannelFolder(entry.slug, next);
+  if (!next.archived) await deps.ensureChannelFolder(entry.slug, next);
   return true;
 }
 
@@ -157,6 +157,16 @@ export async function handleMemberLeftChannel(event, deps = cleanupDeps) {
   if (!event?.channel || !event?.user) return false;
   return withChannelMembershipLock(
     event.channel,
-    () => removeChannelGuestGrant(event.channel, event.user, deps),
+    async () => {
+      if (deps.botUserId && event.user === deps.botUserId) {
+        const entry = await deps.getChannelEntry(event.channel);
+        if (!entry) return false;
+        const next = await deps.patchChannelMeta(entry.slug, (current) => current ? {
+          archived: true, archivedAt: new Date().toISOString(), archivedReason: "bot_removed",
+        } : null);
+        return Boolean(next);
+      }
+      return removeChannelGuestGrant(event.channel, event.user, deps);
+    },
   );
 }

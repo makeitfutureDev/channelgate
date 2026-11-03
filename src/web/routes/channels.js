@@ -29,7 +29,7 @@ import {
   getUsers,
 } from "../../config/store.js";
 import { syncWorkspaceSkillsOrThrow } from "../../gateway/skills/workspace-sync.js";
-import { ensureChannelFolder, effectiveWorkDir, gatewayInstructionsBlock, splitGatewayBlock, channelSeed } from "../../gateway/folders.js";
+import { ensureChannelFolder, assertChannelNotArchived, effectiveWorkDir, gatewayInstructionsBlock, splitGatewayBlock, channelSeed } from "../../gateway/folders.js";
 import { workspaceConflictsBySlug } from "../../gateway/workspace-assignments.js";
 import { listCustomMcps } from "../../gateway/custom-mcps.js";
 import { removeChannelCustomMcp, saveChannelCustomMcp } from "../../gateway/custom-mcp-store.js";
@@ -138,6 +138,18 @@ export function createChannelsRouter({
   composioInventory = loadComposioInventory,
 } = {}) {
   const router = Router();
+  // Archived conversations remain inspectable, but no admin write may provision or edit their files.
+  router.use("/channels/:channelId", async (req, res, next) => {
+    if (["GET", "HEAD", "OPTIONS"].includes(req.method)) return next();
+    try {
+      const entry = (await getChannelsIndex())[req.params.channelId];
+      if (entry) await assertChannelNotArchived(entry.slug);
+      next();
+    } catch (error) {
+      if (error.code === "channel_archived") return res.status(409).json({ error: error.message, code: error.code });
+      next(error);
+    }
+  });
 
   const registeredChannel = async (req, res) => {
     const entry = (await getChannelsIndex())[req.params.channelId];
@@ -661,7 +673,7 @@ export function createChannelsRouter({
   router.post("/channels/reset-access", async (_req, res, next) => {
     try {
       const orgDefault = getDefaultChannelAccess();
-      const channels = (await listChannels()).filter((c) => !c.isDM && c.type !== "im");
+      const channels = (await listChannels()).filter((c) => !c.isDM && c.type !== "im" && !c.meta?.archived);
       let reset = 0;
       for (const ch of channels) {
         const current = ch.meta ?? defaultChannelMeta({ channelId: ch.channelId, name: ch.name, type: ch.type, isDM: ch.isDM });
@@ -693,7 +705,7 @@ export function createChannelsRouter({
   router.post("/channels/reset-runtime", async (req, res, next) => {
     try {
       const includeThreads = Boolean(req.body?.includeThreads);
-      const channels = (await listChannels()).filter((c) => !c.isDM && c.type !== "im");
+      const channels = (await listChannels()).filter((c) => !c.isDM && c.type !== "im" && !c.meta?.archived);
       let reset = 0;
       for (const ch of channels) {
         const patched = await patchChannelMeta(ch.slug, (current) => {
@@ -949,7 +961,7 @@ export function createChannelsRouter({
       const custom = ctx.workDir !== workspaceFolder(ctx.meta?.workspaceLink?.slug || ctx.entry.slug, ctx.meta?.workspaceLink?.platform || ctx.meta?.platform);
       const file = path.join(ctx.workDir, "CLAUDE.md");
       let raw = await readNoFollow(file);
-      if (raw === null && !custom) {
+      if (raw === null && !custom && !ctx.meta?.archived) {
         // Default folder never provisioned yet — materialize it so the editor shows reality.
         await ensureChannelFolder(ctx.entry.slug, effectiveMeta(ctx.meta));
         raw = await readNoFollow(file); // still null when the agentsFile toggle is off
