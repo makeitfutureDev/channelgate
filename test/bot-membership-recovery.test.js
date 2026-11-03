@@ -309,3 +309,36 @@ test("a failed refresh closes prior verification without falsely archiving a mem
   assert.equal(f.read(id).botMembership, "pending");
   assert.throws(() => assertChannelMembership(f.read(id)), { code: "channel_membership_unverified" });
 });
+
+test("a transient preparation failure retries persistence and does not permanently wedge verification", async (t) => {
+  const id = "C_PREPARATION_RETRY";
+  let stored = meta(id);
+  let fail = true;
+  let listings = 0;
+  const recovery = createBotMembershipRecovery({
+    slack: {
+      getClient: () => ({ users: { conversations: async () => { listings++; return { channels: [{ id }] }; } } }),
+      snapshot: () => ({ connected: true }),
+    },
+    channels: async () => {
+      if (fail) { fail = false; throw new Error("transient store failure"); }
+      return [{ slug: "preparation-retry", channelId: id, meta: structuredClone(stored) }];
+    },
+    patch: async (_slug, change) => {
+      const partial = change(structuredClone(stored));
+      if (!partial) return null;
+      stored = { ...stored, ...partial };
+      return structuredClone(stored);
+    },
+    log: () => {},
+  });
+  t.after(() => recovery.stop());
+  await assert.rejects(recovery.invalidate(), /transient store failure/);
+  assert.throws(() => assertChannelMembership(stored), { code: "channel_membership_unverified" });
+  assert.equal((await recovery.reconcile()).reason, "preparation_failed");
+  assert.equal(listings, 0, "failed persistence cannot certify membership");
+  assert.equal((await recovery.reconcile()).ok, true, "a new pass must retry preparation after the transient error clears");
+  assert.equal(listings, 1);
+  assert.equal(stored.botMembership, "member");
+  assert.doesNotThrow(() => assertChannelMembership(stored));
+});

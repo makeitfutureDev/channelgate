@@ -113,8 +113,11 @@ export function createBotMembershipRecovery({
   }
   function reconcile() {
     if (stopped) return Promise.resolve({ ok: false, deferred: true, reason: "stopped" });
-    if (!running) running = pass().catch((error) => {
+    if (!running) running = pass().catch(async (error) => {
       log(`[slack] membership preparation deferred: ${error?.message || error}`);
+      // A rejected preparation promise is not reusable. Retry the persistence step as well as
+      // the Slack read, so one transient store failure cannot wedge admission until reconnect.
+      await invalidate().catch(() => {});
       schedule(retryMs);
       return { ok: false, deferred: true, reason: "preparation_failed" };
     }).finally(() => { running = null; });
