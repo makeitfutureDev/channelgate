@@ -591,6 +591,9 @@ test("every registered gateway tool is consciously classified as gated or open (
     "workspace_list", "workspace_read", "workspace_search", "search_agents",
     "search_channel_memory", "read_channel_memory", // channel-scoped read-only retrieval
     "get_license_status", // read-only; exposes the tier/limits and the key's last 4, never the key
+    // Channel-level user API tokens: a verified person's OWN credential for THIS conversation, acting
+    // as them with their live rank; listing/revoking others' needs manage (the handler enforces it).
+    "create_api_token", "list_api_tokens", "revoke_api_token",
     // writes that land visibly in the current thread, or run inside normal confinement
     "slack_post_chart", "slack_post_table", "slack_upload_snippet",
     "slack_compose_reply", // validates + acknowledges only; the daemon renders the observed call under THIS thread's answer

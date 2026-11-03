@@ -29,6 +29,7 @@ import { register as registerSchedules } from "./tools/schedules.js";
 import { register as registerBackground } from "./tools/background.js";
 import { register as registerChannelAdmin, registerMemoryTool } from "./tools/channel-admin.js";
 import { register as registerTokens } from "./tools/tokens.js";
+import { register as registerApiTokens } from "./tools/api-tokens.js";
 import { register as registerSlackNative } from "./tools/slack-native.js";
 import { register as registerTeamsNative } from "./tools/teams-native.js";
 import { register as registerLicense } from "./tools/license.js";
@@ -458,7 +459,7 @@ export function createGatewayMcpServer(ctx) {
     const handler = rawHandlers.get(name);
     if (!handler) throw new Error(`unknown gateway tool "${name}"`);
     if (!CONTROL_PLANE.has(name)) throw new Error(`"${name}" is not a control-plane tool`);
-    const capability = ctx.verifyCapability();
+    const capability = ctx.verifyCapability({ tool: name });
     if (!capability.ok) throw new Error(`gateway capability rejected (${capability.reason})`);
     const result = await handler(args ?? {}, {});
     const message = (result?.content || []).filter((c) => c?.type === "text").map((c) => c.text).join("\n");
@@ -471,7 +472,9 @@ export function createGatewayMcpServer(ctx) {
       // Claude Code parses permission_prompt's reply as an allow/deny decision, so a refusal
       // there must keep that shape — plain text reads as "invalid permission result" to the CLI.
       const refuse = (message) => name === "permission_prompt" ? text(JSON.stringify({ behavior: "deny", message })) : text(message);
-      const capability = ctx.verifyCapability();
+      // The verifier receives the tool name for its audit row (the socket's liveness-aware verifier
+      // uses it; the stdio one ignores it).
+      const capability = ctx.verifyCapability({ tool: name });
       if (!capability.ok) {
         return refuse(`🚫 Gateway capability rejected (${capability.reason}). Start a fresh run and try again.`);
       }
@@ -545,6 +548,7 @@ export function createGatewayMcpServer(ctx) {
     registerChannelAdmin(server, ctx);
     registerChannelDatabase(server, ctx);
     registerTokens(server, ctx);
+    registerApiTokens(server, ctx);
     registerSlackNative(server, ctx);
     registerTeamsNative(server, ctx);
     registerLicense(server, ctx);

@@ -22,6 +22,51 @@
   off per client with the login limiter (429 + Retry-After), and `library_whoami` reports the kind
   and owner. The admin UI's token table shows both kinds with the owner of a user token; admins
   revoke any token there. Migration 39 adds `kind` and `owner_id` to `skill_access_tokens`.
+## Channel-level user API tokens
+
+- **A token per conversation and per person.** Anyone authorized in a conversation asks the agent
+  for `create_api_token` (gateway tools `create_api_token`, `list_api_tokens`,
+  `revoke_api_token`; `src/gateway/api-tokens.js`, table `api_tokens`, migration 39). The value
+  (`cgk_…`, 192 random bits) is returned once inside the tool result with a curl example and is
+  stored only as a sha256 hash with a prefix and last four characters. A channel manager or admin
+  lists and revokes every token of the conversation; others see and revoke their own. The Admin
+  UI → API page lists every token across conversations with a Revoke button
+  (`GET /api/api-tokens`, `POST /api/api-tokens/:id/revoke`, admin session only, never a value).
+- **A run acts as the token's creator.** `POST /api/runs` with a channel token is bound to the
+  token's conversation (`channel` may be omitted or must match, else 403), authored by the creator
+  as a trusted principal: their role is read live from the user store, `isAuthorized()` is
+  re-checked at every run (403 once they lose access), Admin-mode bypass follows the same rule as
+  a Slack message of theirs (admin author + Admin-mode channel), personal connections and skills
+  apply as in Slack, the reply menu is theirs, and work the run spawns (background jobs,
+  schedules, the memory review) carries them as author. The body's `author` is ignored. Status,
+  list and stop answer only for runs of that conversation. A revoked token answers 401.
+- **The organization-wide key is deprecated, not removed.** It keeps working unchanged for
+  existing automations (fixed admin principal, any conversation) and logs one deprecation warning
+  per hour when used; the Settings card and the API page say so.
+## Run capability liveness
+
+- **A run's control-socket capability is authority only while its conversation has live work.**
+  The signed capability a container run holds (`src/gateway/mcp-capability.js`) used to stay valid
+  for its whole TTL (6 h for a turn, 12 h for an SSH session) after the turn that minted it ended.
+  The daemon's MCP socket now re-checks the egress liveness registry (`src/gateway/egress/liveness.js`:
+  live turns, background jobs and agents, memory reviews, SSH sessions, any author) on the hello and
+  on every tool call and relayed request (`src/gateway/capability-liveness.js`): a validly signed,
+  unexpired capability whose channel has nothing live is refused with the fixed sentence "This run's
+  gateway capability is no longer active: its conversation has no live work." and an audit event
+  `capability_refused_idle` (channel, token id, tool name — never the token; one row per token and
+  tool per minute).
+- **Grace and scope.** A call within 30 seconds of the channel's last release is still honoured,
+  which covers the engine's final tool call racing the daemon's release of the turn. The check is
+  per channel, not per token: the registry has no per-token entries, every spawn path already
+  registers its channel (foreground, API, scheduled, loop/follow-up/nudge and diagnosis turns
+  through `run.js`; background jobs and agents for their whole life including recovery; memory
+  reviews; the update smoke turn; SSH sessions through the broker), and the warm engine pool keeps
+  one process and one capability across turns, so the check refuses calls BETWEEN turns and never
+  kills the process. Residual: a copied token works while some work is live in that same channel,
+  which is the container's own trust domain. The jti-bound remote-MCP relay registry is unchanged.
+  The daemon-spawned stdio control server used by host (`/sudo`) turns is not covered: that run
+  already executes as the daemon account with the signing secret in reach, so liveness adds nothing
+  there.
 
 ## Catalog-first skill authoring
 

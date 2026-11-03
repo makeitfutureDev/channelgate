@@ -24,6 +24,58 @@
   `library_update_skill` on an organization skill answers “organization skills are changed by
   admins”. Then “Revoke my skill token laptop-test”: the next laptop call answers 401. PASS when
   both engines show the same, and the admin UI lists the token as kind user with Apps' id.
+## Channel-level user API tokens (2026-11-03)
+
+- [x] Automated: `node scripts/run-tests.mjs test/api-tokens.test.js` (one file per invocation;
+  also `test/run-api.test.js`, `test/api-runs-channel-parity.test.js`) — store create/resolve/
+  revoke/last-used and prefix shape; `/api/runs` accepts a channel token (validation 400 proves
+  authentication), answers 401 for a revoked token, 403 for a `channel` naming another
+  conversation, 403 when the creator is un-approved; the driver receives the creator as a trusted
+  author (`untrustedPrincipal:false`, `principalKind:"user"`) while the legacy key still yields
+  the API principal; job list/status/stop are scoped to the token's conversation; the admin
+  listing never carries a value; the MCP tools refuse a non-person principal and let only a
+  manager/admin see or revoke others' tokens.
+- [ ] Live, Claude AND Codex: in `cg-testing-<engine>-admin` (Admin mode) contact asks “Create an
+  API token for this channel named qa-admin”, Apps asks the same named qa-member. From a shell,
+  POST `/api/runs` with each token and the message “Which engine, model and role is this run using?
+  Then try set_channel_network on.” Expected: both runs are posted as threads in that channel;
+  contact's run reports admin rank and the network tool succeeds (audited with contact as author);
+  Apps' run reports member rank and the tool answers that only admins can run it. Then contact
+  revokes qa-admin (`revoke_api_token`) and the next POST with it answers 401; a POST with
+  qa-member and `"channel":"cg-testing-<other-engine>-admin"` answers 403; a POST with the legacy
+  organization key still starts a run and the daemon log shows the deprecation warning. PASS when
+  every step holds for both engines.
+## Run capability liveness (2026-11-03)
+
+- [x] Automated: `node scripts/run-tests.mjs test/capability-liveness.test.js` (then
+  `test/mcp-socket-server.test.js`, `test/egress-service.test.js`, `test/egress-secret-approval.test.js`,
+  `test/mcp-capability.test.js`, `test/gateway-mcp-authz.test.js`, `test/ssh-broker.test.js`, one file per
+  invocation) — the liveness-aware verifier admits a live channel, refuses an idle one with the fixed
+  sentence, audits once per token and tool per minute without the token, honours the 30 s
+  post-release grace and refuses after it; a background job, a memory review or an SSH session keeps
+  the channel live after the turn ended and another channel's work never vouches; the control socket
+  refuses the hello for an idle channel and accepts it while live; the remote-MCP jti registry still
+  authorizes; a wiring test pins every spawn path's registration (`run.js` lease → markLive →
+  bringRuntimeUp → finally release, background start and recovery, memory review, update smoke,
+  the broker's SSH source, every daemon-originated turn entering through `run.js`) and the socket's
+  verifier plus the chokepoint passing the tool name.
+- [x] `npm run check:static`, `npm run secret-scan`.
+- [ ] Live, Claude AND Codex (Worker fixture per engine, approved test actor): (1) "Write a small
+  Node script `probe.mjs` in this folder that connects to the gateway MCP bridge the way you do
+  (same env), sends tools/list, and prints the number of tools. Run it now." Expected: a tool count
+  is printed (live turn). (2) "Run `sleep 120; node probe.mjs` in the background." Expected: the
+  background job's log shows the same count (the job keeps the channel live after the turn ended).
+  (3) Wait until nothing is live in the channel (no turn, job, review, SSH; at least 2 minutes after
+  the memory review posted), then from an admin `/sudo` host thread replay the capability the
+  background job used (it is in the job's 0600 run env under the artifact dir; never paste it into
+  Slack) against the daemon socket with the bridge: expected one error frame whose reason contains
+  "This run's gateway capability is no longer active". (4) Warm-pool regression: two quick
+  consecutive turns in the same Claude thread both answer and both can call `list_secrets`.
+  (5) A schedule due in 2 minutes fires and its turn can call a gateway tool. (6) The memory
+  review after a turn posts its save notice (it runs with its own live registration). (7) With SSH
+  access granted, an SSH session open for 5 minutes can call `show_channel_ssh` at minute 4 while
+  nothing else is live. PASS only when every step holds for both engines; the audit feed shows
+  `capability_refused_idle` for step 3 only.
 
 ## Catalog-first skill authoring instructions (2026-11-03)
 

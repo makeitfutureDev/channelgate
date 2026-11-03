@@ -37,6 +37,16 @@ product overview.
   approval. Admin-minted catalog tokens remain the library for other systems and peer gateways
   and never reach a personal skill in any scope. The endpoint verifies the bearer before parsing
   the body and backs off invalid tokens. Migration 39.
+- Channel-level user API tokens: anyone working in a conversation can create a personal run API
+  token for it (`create_api_token` / `list_api_tokens` / `revoke_api_token`); runs it starts are
+  bound to that conversation and act as the creator with their live role and authorization. The
+  Admin UI → API page lists and revokes every token. The organization-wide run API key is
+  deprecated (still works, logs a warning).
+- Security hardening (run capability liveness): the daemon's MCP socket refuses a run's signed
+  capability on the hello and on every tool call or relayed request once its conversation has no
+  live work (no turn, background job or agent, memory review or SSH session, with a 30 s
+  post-release grace), answering a fixed sentence and auditing `capability_refused_idle`; a token
+  copied out of a container no longer works for its remaining 6–12 h TTL.
 
 - Preserve channel archival across delayed Slack joins and concurrent admin resets; reconcile missed removals/rejoins after startup or reconnect, pausing workspace updates until bot membership is verified.
 
