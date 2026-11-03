@@ -5,6 +5,12 @@ its own local **catalog** and materializes into this conversation's folder as re
 discover them natively — the always-on list is each skill's name + description; the body loads
 when a skill fires. No token or network call is involved.
 
+## Where agents must save skills
+
+Create and grant skills through the ChannelGate catalog using `create_skill` and the gateway grant tools. Do not install active skills by writing directly into `.claude/skills`, `.agents/skills`, or engine HOME skill folders: gateway reconciliation replaces managed copies and archives unmanaged workspace entries. An on-disk export is only an export, not a durable active channel skill. This rule overrides a generic skill creator's local-folder default.
+
+Repository-synced skills can be used read-only without a write token. To create or modify a skill in an external source repository, first verify that an available token or authenticated connection has write access to that exact repository and tracked branch. A token name or successful read does not prove write access. Only then edit, commit, push and sync the source; verify the effective revision. Without write access, treat the source as read-only and create any additions as a catalog companion skill. Do not add an external repository as the writable home for a new skill unless write access is established. Never request or paste a token in chat; use the gateway secret/connection flow. Do not bypass this by editing materialized files or pinning a catalog override.
+
 ## Ongoing changes to a task procedure
 
 An “always do this when checking email” correction belongs in the existing email skill, within

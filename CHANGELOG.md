@@ -1,5 +1,7 @@
 # Changelog — ChannelGate
 
+- Clarify catalog-first skill authoring: local skill installs are not durable; external source edits require verified repository write access.
+
 - Allow Composio Remote Bash alongside Remote Workbench for authorized remote processing, retaining current-run authority checks and structured membership approvals.
 GPT-6.1 Terra now has Standard API-equivalent usage rates. Upgrades back up and refresh Codex history with dated rates, including previously unpriced Terra usage from October 26, 2026.
 
