@@ -355,12 +355,13 @@ is relicensed automatically.
 
 | | Registered channels | Registered users | AI messages per conversation per month |
 | --- | --- | --- | --- |
-| **No key** — install and run | 20 (one active per month) | 20 | 500 |
+| **No key** — install and run | 10 (one active per month) | 10 | 500 |
 | **Registered (free key)** — an account with your email | 10 | 10 | 500 |
 | **Enterprise key** — agreement with Makeitfuture | unlimited by default | unlimited by default | unlimited by default |
 
-A free key lifts the one-active-conversation limit. Registered installations support up to 20
-channels (including DMs) and 10 users, at 500 AI messages per conversation per month. Enterprise
+A free key allows up to 100 active conversations per UTC month. Registered installations support
+up to 10 channels (including DMs) and 10 users, at 500 AI messages per conversation per month,
+with one month (30 days) of cost-tracking history. Enterprise
 removes these default caps and adds per-channel approved harnesses. A key belongs to the
 organization that operates the deployment; core confinement remains available in every tier.
 Definitions, the offline grace period, and exactly what a deployment reports are in

@@ -116,7 +116,7 @@ test("a 200 with a good signature is cached and becomes the valid state", async 
   });
   assert.equal(result.outcome, "verified");
   assert.equal(getLicenseStatus().state, "valid");
-  assert.deepEqual(getEffectiveLimits(), { conversations: null, messagesPerConversationPerMonth: 500, channels: 10, users: 10 });
+  assert.deepEqual(getEffectiveLimits(), { conversations: 100, messagesPerConversationPerMonth: 500, channels: 10, users: 10 });
   assert.equal(readCache().license.tier, "free");
 
   // The request payload is exactly the three documented fields — never the workspace, the
@@ -141,7 +141,7 @@ test("a 200 whose signature does not verify changes nothing", async () => {
   assert.equal(result.outcome, "unreachable");
   assert.equal(readCache().license.tier, "free");
   assert.equal(getLicenseStatus().state, "grace");
-  assert.deepEqual(getEffectiveLimits(), { conversations: null, messagesPerConversationPerMonth: 500, channels: 10, users: 10 });
+  assert.deepEqual(getEffectiveLimits(), { conversations: 100, messagesPerConversationPerMonth: 500, channels: 10, users: 10 });
 });
 
 test("401 is invalid_key, 403 is revoked, and both drop to the no-key limits", async () => {

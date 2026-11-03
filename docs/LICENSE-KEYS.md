@@ -11,7 +11,7 @@ are fixed for its agreed term.
 | Tier | How you get it | Registered channels | Registered users | Active conversations per UTC month | AI messages per conversation per month |
 | --- | --- | --- | --- | --- | --- |
 | **No key** | install and run | 10 | 10 | 1 | 500 |
-| **Registered (free key)** | create an account with your email on the ChannelGate platform | 10 | 10 | up to the registered channels | 500 |
+| **Registered (free key)** | create an account with your email on the ChannelGate platform | 10 | 10 | 100 | 500 |
 | **Enterprise key** | Enterprise License with Makeitfuture | unlimited by default | unlimited by default | unlimited by default | unlimited by default |
 
 ## Definitions
@@ -26,8 +26,8 @@ are fixed for its agreed term.
   record of either kind. Existing records remain editable and usable after an upgrade introduces
   the cap or an Enterprise downgrade; no records are deleted, and growth is refused until below
   the applicable cap. Other authorization and monthly message limits still apply.
-- Registered inventory caps are hard ceilings in this version: legacy free payloads that omit
-  them or specify `null` cannot raise them above 10. Signed smaller caps are honored; Enterprise
+- Registered inventory and active-conversation caps are hard ceilings in this version: legacy free payloads that omit
+  them or specify `null` cannot raise them above 10 users/channels or 100 active conversations. Signed smaller caps are honored; Enterprise
   defaults to unlimited and can carry agreed limits.
 - An **AI message** is one engine run started for a conversation. Every origin counts — user
   turns, follow-ups, scheduled runs, and background jobs — except the deployment's own

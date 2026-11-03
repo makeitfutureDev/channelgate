@@ -13,7 +13,7 @@ const { resolveLicenseState, nextUtcMonthStart, utcMonth, LICENSE_STATES, banner
 const { NO_KEY_LIMITS, GRACE_MS } = await import("../src/ee/tiers.js");
 
 const NO_KEY = { conversations: 1, messagesPerConversationPerMonth: 500, channels: 10, users: 10 };
-const FREE = { conversations: null, messagesPerConversationPerMonth: 500, channels: 10, users: 10 };
+const FREE = { conversations: 100, messagesPerConversationPerMonth: 500, channels: 10, users: 10 };
 const ENTERPRISE = { conversations: null, messagesPerConversationPerMonth: null, channels: null, users: null };
 
 const at = (iso) => Date.parse(iso);

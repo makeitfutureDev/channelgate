@@ -1,6 +1,6 @@
 ---
 title: Account and secret controls
-description: Nine controls for personal connected accounts and scoped environment credentials.
+description: Seventeen controls for connected accounts, email, and scoped environment credentials.
 ---
 
 Credential tools change saved account or environment state. Prefer the private UI fields so secrets never enter chat history. No tool on this page reveals a stored secret value. Process environment availability and connected-account identity are separate concepts.
@@ -155,6 +155,60 @@ An email account is a mailbox's IMAP and SMTP settings entered once on one form 
 **Authority and scope:** channel accounts are usable by anyone authorized in the conversation; personal accounts exist only in runs their owner authored — never in another person's turn, a scheduled run or an HTTP run-API turn. `account` takes a name, `personal/<name>`, `channel/<name>` or the address, and a bare name present in both scopes is refused until qualified.
 
 **Restrictions:** sending is refused on an account whose *allow sending* is off. Replies, streams and job output are redacted of every stored password.
+
+## list_email_accounts
+
+**Arguments:** none.
+
+**Scope and result:** Lists available channel and verified requester's personal accounts, their names, addresses, scopes, mail servers and whether sending is enabled. Never returns passwords. Connect accounts through the private settings forms described above.
+
+**Limits:** Personal results in a shared channel are visible to that thread's audience; explain this before reading personal mail. HTTP run-API attribution does not grant access to personal accounts.
+
+## email_mailboxes
+
+**Optional:** `account` (account selector described above; optional only when exactly one account is available).
+
+**Scope and result:** Lists selectable folders and their special roles for the chosen account.
+
+## email_search
+
+**Optional:** `account`, `mailbox` (defaults to `INBOX`), `query`, `from`, `to`, `subject`, `since` (inclusive ISO date), `before` (exclusive ISO date), `unseen`, `flagged`, and `limit` (integer 1–50; default 20).
+
+**Scope and result:** Returns matching message UIDs, dates, senders, subjects, unread/flag marks and attachment counts, newest first. Filters combine with AND; omit filters to list recent messages. Use the UID with the same account and mailbox in subsequent controls.
+
+## email_read
+
+**Required:** `uid` (positive integer from search). **Optional:** `account`, `mailbox` (default `INBOX`), `max_chars` (integer 500–100,000; default 20,000).
+
+**Scope and result:** Returns headers, text body (plain text preferred, HTML converted), and attachment part IDs. Reports truncated bodies; raw body reads are bounded to 2 MiB.
+
+## email_download_attachment
+
+**Required:** `uid` (positive integer), `part` (part ID from `email_read`, such as `2` or `1.2`). **Optional:** `account`, `mailbox` (default `INBOX`).
+
+**Scope and result:** Saves one attachment under `uploads/email/<account>/` in the current working folder and returns its relative path, size and content type.
+
+**Limits:** 50 MiB per attachment; confined no-follow writes. Read the returned file or share it through the current conversation's file tool.
+
+## email_move
+
+**Required:** `uid` (positive integer), `to` (destination mailbox path from `email_mailboxes`). **Optional:** `account`, `mailbox` (source; default `INBOX`).
+
+**Scope and result:** Moves the message, returning source, destination and the new UID when the server provides one. Use for archiving, trash or filing only within the selected account.
+
+## email_set_flag
+
+**Required:** `uid` (positive integer), `flag` (`seen`, `unseen`, `flagged`, `unflagged`, `answered`). **Optional:** `account`, `mailbox` (default `INBOX`).
+
+**Scope and result:** Changes the selected message's flag and returns a confirmation identifying account, mailbox and UID.
+
+## email_send
+
+**Required:** `to` (nonempty array of recipient strings), `subject`, `text` (plain-text body). **Optional:** `account`, `cc`, `bcc` (recipient arrays), `html` (HTML alternative), `attachments` (up to 10 working-folder-relative paths), `in_reply_to` (original Message-ID for threading), `reply_to` (Reply-To header).
+
+**Scope and result:** Sends from the connected account's address, returns accepted and rejected recipients and Message-ID when available, and reports whether a Sent copy was saved. Names such as `Name <person@example.com>` are accepted as recipient strings.
+
+**Limits:** Sending must be enabled for the selected account. Attachments must be confined to the working folder and total at most 25 MiB. Confirm recipients and content unless the user already supplied them; personal accounts send as that person. A Sent copy depends on the server exposing a Sent mailbox.
 
 ## Related guides
 

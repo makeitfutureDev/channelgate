@@ -645,7 +645,12 @@ export function usageDashboard({ range = "last30", harness = "all", source = "al
   externalModelBuckets.forEach(addModelBucket);
 
   const series = [];
-  for (let d = start; d < end; d = stepBucket(d, unit)) {
+  // SQL keeps the exact history cutoff, but gap filling walks calendar buckets. A
+  // cutoff midway through a day must still include the current day's partial bucket.
+  const seriesStart = unit === "month" ? utcMonthStart(start)
+    : unit === "day" ? utcDayStart(start)
+    : new Date(Math.floor(start.getTime() / 3600000) * 3600000);
+  for (let d = seriesStart; start < end && d < end; d = stepBucket(d, unit)) {
     const key = bucketKey(d, unit);
     const row = totalsByBucket.get(key);
     const models = {};

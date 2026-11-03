@@ -82,7 +82,7 @@ test("GET /api/license carries the state, the limits and this month's usage — 
   assert.equal(status.organization, "Acme GmbH");
   assert.equal(status.hasLicenseKey, true);
   assert.equal(status.licenseKeyLast4, "WXYZ");
-  assert.deepEqual(status.limits, { conversations: null, messagesPerConversationPerMonth: 500, channels: 10, users: 10 });
+  assert.deepEqual(status.limits, { conversations: 100, messagesPerConversationPerMonth: 500, channels: 10, users: 10 });
   assert.equal(status.banner, null, "a verified deployment shows no banner");
   assert.equal(status.usage.runs, 3);
   assert.equal(status.usage.conversations.length, 2);

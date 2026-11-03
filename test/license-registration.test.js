@@ -35,6 +35,11 @@ test("signed legacy null or omitted capacity fields cannot exceed Registered cap
     assert.equal(getLicenseStatus().features.channelHarnessPolicy, false);
   }
   assert.equal(normalizeLimits({ channels: 10, users: 3 }, "free").channels, 10);
+  for (const conversations of [undefined, null, 200, -1, "100"]) {
+    assert.equal(normalizeLimits({ conversations }, "free").conversations, 100);
+  }
+  assert.equal(normalizeLimits({ conversations: 25 }, "free").conversations, 25);
+  assert.equal(normalizeLimits({ conversations: null }, "enterprise").conversations, null);
   reset("enterprise");
   assert.equal(getEffectiveLimits().channels, null);
   assert.equal(getEffectiveLimits().users, null);
@@ -53,7 +58,7 @@ for (const tier of ["free", "none"]) {
     assert.equal((await getUser("U0")).name, "updated");
     assert.equal(Object.keys(await getChannelsIndex()).length, 10);
     assert.equal(await getUser("U21"), null);
-    assert.equal(getEffectiveLimits().conversations, tier === "none" ? 1 : null);
+    assert.equal(getEffectiveLimits().conversations, tier === "none" ? 1 : 100);
   });
 }
 

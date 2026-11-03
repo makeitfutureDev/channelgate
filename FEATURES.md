@@ -220,7 +220,7 @@ Slack’s native running/Stop label shows the resolved model and explicitly conf
   conversation) and 10 stored human users, including unapproved accounts. Registration checks
   are atomic; existing records remain editable and usable when an install is already over its cap.
   Legacy free-license payloads cannot bypass these caps. The no-key monthly one-conversation
-  limit and Registered 500-message monthly limit remain. Enterprise defaults to unlimited.
+  limit remains; Registered allows 100 active conversations per UTC month and 500 AI messages per conversation per month. Enterprise defaults to unlimited.
 - Enterprise organization admins can approve one or more harnesses per channel through the
   admin editor or Slack Settings → Agent. Unrestricted is the default. Pins, saved sessions,
   API overrides, automation and fallback cannot launch outside the approved set; queued work
