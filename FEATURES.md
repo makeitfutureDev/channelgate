@@ -1,5 +1,9 @@
 # ChannelGate — Features
 
+## Catalog-first skill authoring
+
+Gateway and bundled authoring instructions require catalog creation and grants. Direct engine skill-folder writes are not durable channel installations. External sources remain usable read-only; authoring in them requires verified repository and branch write access, otherwise additions live in a catalog companion skill.
+
 ## Generated skill dependency warnings
 
 Generated `gateway-usage` and `channel-memory` guides satisfy shared and personal skill dependencies when their manifests are copied into the run. Missing or rejected generated sources and unrelated unavailable skills still produce the warning.

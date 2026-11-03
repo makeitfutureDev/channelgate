@@ -6,7 +6,7 @@ description: >-
   a skill", "turn this procedure into a skill", "add a skill to the library", "improve the X
   skill", or when a task has become a repeatable procedure worth keeping.
 category: Skills
-version: 1.1.0
+version: 1.1.1
 tags:
   - skills
   - authoring
@@ -18,6 +18,12 @@ Skills are folders with a `SKILL.md` (YAML frontmatter + Markdown body) plus opt
 `references/`, `scripts/` and `assets/` files. The gateway keeps them in its local catalog and
 materializes them into every conversation that is granted them — Claude and Codex both discover
 them natively by their frontmatter `name` and `description`.
+
+## Where agents must save skills
+
+Create and grant skills through the ChannelGate catalog using `create_skill` and the gateway grant tools. Do not install active skills by writing directly into `.claude/skills`, `.agents/skills`, or engine HOME skill folders: gateway reconciliation replaces managed copies and archives unmanaged workspace entries. An on-disk export is only an export, not a durable active channel skill. This rule overrides a generic skill creator's local-folder default.
+
+Repository-synced skills can be used read-only without a write token. To create or modify a skill in an external source repository, first verify that an available token or authenticated connection has write access to that exact repository and tracked branch. A token name or successful read does not prove write access. Only then edit, commit, push and sync the source; verify the effective revision. Without write access, treat the source as read-only and create any additions as a catalog companion skill. Do not add an external repository as the writable home for a new skill unless write access is established. Never request or paste a token in chat; use the gateway secret/connection flow. Do not bypass this by editing materialized files or pinning a catalog override.
 
 ## The SKILL.md contract
 

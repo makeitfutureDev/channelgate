@@ -1,5 +1,11 @@
 # ChannelGate — Test Plan
 
+## Catalog-first skill authoring instructions (2026-11-03)
+
+Validation: 42/42 existing workspace materialization and reconciliation checks passed.
+
+Documentation verification: compare the bundled gateway skills reference, `skill-authoring`, ChannelGate MCP/skills reference and `docs/SKILLS.md`: all require catalog creation, distinguish exports from active skills, allow read-only source use and require verified write access before source edits. Verify the existing workspace materialization regression suite still preserves the archive/replace behavior described here. No runtime enforcement or live engine acceptance is claimed by this instruction-only change.
+
 ## Generated skill dependencies (2026-11-03)
 
 Validation: focused suite 25/25 passed; full `npm test` 4,144 passed, 33 skipped, zero failures; static checks and secret scan passed.
