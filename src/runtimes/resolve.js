@@ -5,6 +5,7 @@
 // Clean mode keeps the same backend: the bare clean workspace is mounted next to the workdir.
 // Background jobs, memory-review runs and scheduled runs resolve through here at THEIR OWN spawn
 // time — they outlive the turn that created them.
+import { assertChannelMembership } from "../gateway/channel-membership.js";
 import { effectiveWorkDir } from "../gateway/folders.js";
 import { forbiddenWorkDirMessage, forbiddenWorkDirReason } from "../gateway/workdir-boundary.js";
 import { cleanWorkspaceFolder } from "../config/paths.js";
@@ -31,6 +32,7 @@ export function decideRuntimeBackend(meta = {}) {
  */
 export function resolveRuntime(slug, meta = {}, { settings = getContainerRuntime(), backend: forced = "", isAdminAuthor = false } = {}) {
   if (meta?.archived) throw Object.assign(new Error("This channel is archived. Re-invite the bot before starting work."), { code: "channel_archived" });
+  assertChannelMembership(meta);
   const platform = platformOr(meta?.platform).id;
   const decided = decideRuntimeBackend(meta);
   const { backend: id, reason } = isRuntimeBackendId(forced)

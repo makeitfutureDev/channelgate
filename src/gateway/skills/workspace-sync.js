@@ -14,7 +14,7 @@ let lastFingerprint = "";
 let pending = Promise.resolve();
 
 async function snapshot() {
-  const channels = (await listChannels()).filter((channel) => channel.meta && !channel.meta.archived);
+  const channels = (await listChannels()).filter((channel) => channel.meta && !channel.meta.archived && channel.meta.botMembership !== "pending");
   const organization = getOrgAccessGrants();
   const fingerprint = createHash("sha256").update(JSON.stringify({
     organization,
@@ -85,7 +85,11 @@ async function syncPass({ channelSlugs = null, force = true, log = console.warn 
       if (folder.skillSync?.missing?.length) result.warnings.push({ slug: channel.slug, missing: folder.skillSync.missing });
       result.synced.push(channel.slug);
     } catch (error) {
-      if (error?.code === "channel_archived") continue;
+      if (["channel_archived", "channel_membership_unverified"].includes(error?.code)) {
+        // Verification can change without a catalog edit; retry this pass after readiness returns.
+        result.deferred = true;
+        continue;
+      }
       result.ok = false;
       const failure = { slug: channel.slug, error: error?.message || String(error) };
       result.failed.push(failure);
@@ -94,7 +98,7 @@ async function syncPass({ channelSlugs = null, force = true, log = console.warn 
   }
   // Failed passes retry even without another catalog change. A targeted pass cannot certify
   // other folders against this fingerprint, and a concurrent change is caught next time.
-  if (result.ok && !selected) lastFingerprint = state.fingerprint;
+  if (result.ok && !result.deferred && !selected) lastFingerprint = state.fingerprint;
   return result;
 }
 

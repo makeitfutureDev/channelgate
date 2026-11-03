@@ -372,7 +372,16 @@ export async function saveChannelMeta(slug, meta) {
   try {
     const row = db.prepare("SELECT data FROM channel_meta WHERE slug = ?").get(slug);
     const current = row ? fromJson(row.data, null) : null;
-    const record = validateChannelPolicy(current, prepareWorkspaceSave(slug, current, stripDeadFields(stripRetiredChannelFields({ ...meta })), effectiveWorkDir, channelScopedSkills));
+    // Whole-record configuration saves may have been prepared before a Slack lifecycle event.
+    // Only atomic lifecycle patches can change admission; stale saves cannot undo a removal.
+    const input = { ...meta };
+    if (current) {
+      for (const field of ["archived", "archivedAt", "archivedReason", "botMembership", "botMembershipEventTs"]) {
+        if (Object.hasOwn(current, field)) input[field] = current[field];
+        else delete input[field];
+      }
+    }
+    const record = validateChannelPolicy(current, prepareWorkspaceSave(slug, current, stripDeadFields(stripRetiredChannelFields(input)), effectiveWorkDir, channelScopedSkills));
     const followers = snapshotWorkspaceFollowers(db, slug, current, record, effectiveWorkDir, channelScopedSkills);
     db.prepare("INSERT INTO channel_meta(slug, data) VALUES(?, ?) ON CONFLICT(slug) DO UPDATE SET data = excluded.data")
       .run(slug, toJson(record));

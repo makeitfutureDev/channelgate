@@ -13,6 +13,7 @@ import { fileURLToPath } from "node:url";
 import { channelFolder, channelSettingsFile, channelAdminSettingsFile, cleanWorkspaceFolder, workspaceFolder, gatewayRoot } from "../config/paths.js";
 import { allowedFsRoot, resolveWithinRoot } from "../web/security.js";
 import { forbiddenWorkDirReason } from "./workdir-boundary.js";
+import { assertChannelMembership } from "./channel-membership.js";
 
 
 // The directory Claude actually runs in for a channel: a custom meta.workDir when set to a
@@ -456,9 +457,11 @@ export async function channelInstructionsSnapshot(slug, meta) {
 export async function assertChannelNotArchived(slug, meta) {
   const { getChannelMeta } = await import("../config/store.js");
   const current = await getChannelMeta(slug);
-  if ((current ?? meta)?.archived) {
+  const actual = current ?? meta;
+  if (actual?.archived) {
     throw Object.assign(new Error("This channel is archived because the bot was removed. Re-invite the bot to resume configuration updates."), { code: "channel_archived", status: 409, statusCode: 409 });
   }
+  assertChannelMembership(actual);
 }
 
 export async function updateChannelInstructions(slug, meta, options) {

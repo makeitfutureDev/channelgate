@@ -28,6 +28,8 @@ product overview.
 
 ## Unreleased
 
+- Preserve channel archival across delayed Slack joins and concurrent admin resets; reconcile missed removals/rejoins after startup or reconnect, pausing workspace updates until bot membership is verified.
+
 - Fix Slack List message references, attachments and URL fields so agents can populate clickable source links and read them back.
 
 - Fix false unavailable-skill warnings for generated operating and memory guides required by shared or personal skills.

@@ -9,7 +9,7 @@ const ui = readFileSync(new URL("../public/app.js", import.meta.url), "utf8");
 const html = readFileSync(new URL("../public/index.html", import.meta.url), "utf8");
 
 test("first channel registration copies the configured channel template", () => {
-  assert.match(app, /if \(current\) return \{ archived: false, archivedAt: null, archivedReason: null \};/);
+  assert.match(app, /handleBotJoinedChannel\(event/);
   assert.match(app, /applyChannelTemplate\(defaultChannelMeta/);
   assert.match(pipeline, /applyChannelTemplate\(defaultChannelMeta/);
   assert.match(ingest, /applyChannelTemplate\(defaultChannelMeta/);
