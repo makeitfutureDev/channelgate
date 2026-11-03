@@ -43,10 +43,21 @@ export function createRunsRouter({ slack } = {}) {
   // Bigger than the app-wide 1mb so a modest inline base64 file fits; large files should use fileUrl.
   router.use(express.json({ limit: "30mb" }));
 
+  // A channel token (src/gateway/api-tokens.js) resolved by the auth layer: the run acts as its
+  // creator in its conversation, and the job routes below answer only for that conversation.
+  const tokenPrincipal = (req) => {
+    const token = req.cgApiCredential?.kind === "channel" ? req.cgApiCredential.token : null;
+    return token ? { channelId: token.channelId, slug: token.slug, createdBy: token.createdBy, tokenId: token.id } : null;
+  };
+  const visible = (req, job) => {
+    const principal = tokenPrincipal(req);
+    return !principal || (job && job.channelId === principal.channelId);
+  };
+
   router.post("/", async (req, res, next) => {
     try {
       const { message, channel, author, file, fileUrl, fileName, webhook, engine, model, effort, mode, idempotencyKey, conversationKey } = req.body ?? {};
-      const started = await startApiRun({ message, channel, author, file, fileUrl, fileName, webhook, engine, model, effort, mode, idempotencyKey, conversationKey, slack });
+      const started = await startApiRun({ message, channel, author, file, fileUrl, fileName, webhook, engine, model, effort, mode, idempotencyKey, conversationKey, slack, principal: tokenPrincipal(req) });
       if (!started.ok) return res.status(started.code || 400).json({ ok: false, error: started.error });
       // 200 for an idempotent hit on an existing job (nothing new started), 202 for a fresh run.
       res.status(started.reused ? 200 : 202).json({
@@ -77,11 +88,12 @@ export function createRunsRouter({ slack } = {}) {
     const limit = Number(req.query.limit) || 50;
     const now = new Date();
     const historyStart = costHistoryStart(now);
-    res.json({ ok: true, jobs: listApiJobs({ status, limit }).map((job) => publicJob(job, now, historyStart)) });
+    res.json({ ok: true, jobs: listApiJobs({ status, limit }).filter((job) => visible(req, job)).map((job) => publicJob(job, now, historyStart)) });
   });
 
   // Stop an in-flight run.
   router.post("/:id/stop", (req, res) => {
+    if (!visible(req, getApiJob(String(req.params.id || "")))) return res.status(404).json({ ok: false, error: "No such run." });
     const r = stopApiRun(String(req.params.id || ""));
     if (!r.ok) return res.status(r.code || 400).json({ ok: false, error: r.error });
     res.status(202).json({ ok: true, jobId: r.jobId, status: r.status });
@@ -89,7 +101,7 @@ export function createRunsRouter({ slack } = {}) {
 
   router.get("/:id", (req, res) => {
     const job = getApiJob(String(req.params.id || ""));
-    if (!job) return res.status(404).json({ ok: false, error: "No such run." });
+    if (!job || !visible(req, job)) return res.status(404).json({ ok: false, error: "No such run." });
     res.json({ ok: true, ...publicJob(job) });
   });
 

@@ -1104,4 +1104,30 @@ export const migrations = [
       `);
     },
   },
+  {
+    // Channel-level user tokens for the HTTP run API (src/gateway/api-tokens.js): a token belongs
+    // to ONE conversation and ONE person; a run it starts acts as that person, with their live
+    // rank. Only the sha256 of the value is stored. The organization-wide run API key stays as a
+    // deprecated fallback in settings.
+    version: 39,
+    up(db) {
+      db.exec(`
+        CREATE TABLE api_tokens (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          name TEXT NOT NULL,
+          token_hash TEXT NOT NULL UNIQUE,
+          token_prefix TEXT NOT NULL DEFAULT '',
+          last4 TEXT NOT NULL DEFAULT '',
+          channel_id TEXT NOT NULL,
+          slug TEXT NOT NULL,
+          created_by TEXT NOT NULL,
+          created_at TEXT NOT NULL,
+          last_used_at TEXT NOT NULL DEFAULT '',
+          revoked_at TEXT NOT NULL DEFAULT ''
+        );
+        CREATE INDEX idx_api_tokens_channel ON api_tokens(channel_id);
+        CREATE INDEX idx_api_tokens_creator ON api_tokens(created_by);
+      `);
+    },
+  },
 ];

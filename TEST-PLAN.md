@@ -1,5 +1,27 @@
 # ChannelGate — Test Plan
 
+## Channel-level user API tokens (2026-11-03)
+
+- [x] Automated: `node scripts/run-tests.mjs test/api-tokens.test.js` (one file per invocation;
+  also `test/run-api.test.js`, `test/api-runs-channel-parity.test.js`) — store create/resolve/
+  revoke/last-used and prefix shape; `/api/runs` accepts a channel token (validation 400 proves
+  authentication), answers 401 for a revoked token, 403 for a `channel` naming another
+  conversation, 403 when the creator is un-approved; the driver receives the creator as a trusted
+  author (`untrustedPrincipal:false`, `principalKind:"user"`) while the legacy key still yields
+  the API principal; job list/status/stop are scoped to the token's conversation; the admin
+  listing never carries a value; the MCP tools refuse a non-person principal and let only a
+  manager/admin see or revoke others' tokens.
+- [ ] Live, Claude AND Codex: in `cg-testing-<engine>-admin` (Admin mode) contact asks “Create an
+  API token for this channel named qa-admin”, Apps asks the same named qa-member. From a shell,
+  POST `/api/runs` with each token and the message “Which engine, model and role is this run using?
+  Then try set_channel_network on.” Expected: both runs are posted as threads in that channel;
+  contact's run reports admin rank and the network tool succeeds (audited with contact as author);
+  Apps' run reports member rank and the tool answers that only admins can run it. Then contact
+  revokes qa-admin (`revoke_api_token`) and the next POST with it answers 401; a POST with
+  qa-member and `"channel":"cg-testing-<other-engine>-admin"` answers 403; a POST with the legacy
+  organization key still starts a run and the daemon log shows the deprecation warning. PASS when
+  every step holds for both engines.
+
 ## Catalog-first skill authoring instructions (2026-11-03)
 
 Validation: 42/42 existing workspace materialization and reconciliation checks passed.

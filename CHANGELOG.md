@@ -30,6 +30,12 @@ product overview.
 
 ## Unreleased
 
+- Channel-level user API tokens: anyone working in a conversation can create a personal run API
+  token for it (`create_api_token` / `list_api_tokens` / `revoke_api_token`); runs it starts are
+  bound to that conversation and act as the creator with their live role and authorization. The
+  Admin UI → API page lists and revokes every token. The organization-wide run API key is
+  deprecated (still works, logs a warning).
+
 - Preserve channel archival across delayed Slack joins and concurrent admin resets; reconcile missed removals/rejoins after startup or reconnect, pausing workspace updates until bot membership is verified.
 
 - Fix Slack List message references, attachments and URL fields so agents can populate clickable source links and read them back.

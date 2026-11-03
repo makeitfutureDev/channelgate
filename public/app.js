@@ -411,11 +411,48 @@ async function loadApiDocs() {
   if (note) {
     note.textContent =
       hasKey === true
-        ? "A token is set. Reveal, copy, or regenerate it under Settings → HTTP run API."
-        : hasKey === false
-        ? "No token generated yet — create one under Settings → HTTP run API."
-        : "Generate one under Settings → HTTP run API.";
-    note.classList.toggle("apidoc-note-warn", hasKey === false);
+        ? "Channel tokens: ask the agent in a conversation for create_api_token. A deprecated organization-wide key is also set under Settings → HTTP run API."
+        : "Channel tokens: ask the agent in a conversation for create_api_token (listed below). No organization-wide key is set — good.";
+    note.classList.toggle("apidoc-note-warn", hasKey === true);
+  }
+  await paintApiTokens();
+}
+
+// Every channel token across conversations — names, conversation, creator, dates, last four
+// characters — and a revoke. Values never reach this page (they exist once, in the minting reply).
+async function paintApiTokens() {
+  const rows = document.getElementById("apitok-rows");
+  if (!rows) return;
+  let tokens = [];
+  try {
+    tokens = (await api("/api/api-tokens")).tokens || [];
+  } catch {
+    rows.innerHTML = `<tr><td colspan="6" class="hint">Sign in to see channel tokens.</td></tr>`;
+    return;
+  }
+  const when = (v) => (v ? escapeHtml(String(v).slice(0, 16).replace("T", " ")) : "never");
+  rows.innerHTML = tokens.length
+    ? tokens.map((t) => `<tr${t.revoked ? ' class="muted"' : ""}>
+        <td><code>${escapeHtml(t.prefix)}…${escapeHtml(t.last4)}</code> ${escapeHtml(t.name)}${t.revoked ? " <em>(revoked)</em>" : ""}</td>
+        <td>${escapeHtml(t.channelName || t.slug)}</td>
+        <td><code>${escapeHtml(t.createdBy)}</code></td>
+        <td>${when(t.createdAt)}</td>
+        <td>${when(t.lastUsedAt)}</td>
+        <td>${t.revoked ? "" : `<button type="button" class="ghost apitok-revoke" data-id="${escapeHtml(String(t.id))}">Revoke</button>`}</td>
+      </tr>`).join("")
+    : `<tr><td colspan="6" class="hint">No channel tokens yet. In a conversation, ask the agent: “create an API token for this channel”.</td></tr>`;
+  for (const btn of rows.querySelectorAll(".apitok-revoke")) {
+    btn.addEventListener("click", async () => {
+      btn.disabled = true;
+      try {
+        await api(`/api/api-tokens/${encodeURIComponent(btn.dataset.id)}/revoke`, { method: "POST", body: "{}" });
+      } catch (e) {
+        btn.disabled = false;
+        alert(`Could not revoke: ${e?.message || e}`);
+        return;
+      }
+      await paintApiTokens();
+    });
   }
 }
 
