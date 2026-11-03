@@ -11785,3 +11785,9 @@ Documentation-only, engine-independent: no gateway runtime or Microsoft grants c
 - Automated: `node --test test/slack-stream-recipient.test.js test/slack-agent-sessions.test.js test/slack-progress.test.js test/slack-stop-progress.test.js`. Cover sender-team metadata and lookup/cache fallback, failed stream start/stop with classic delivery, native active after all delivery, and an obsolete clear held behind a legacy request while its successor starts.
 - Live Claude/Codex acceptance: in a Slack Connect fixture where the requester and bot belong to different workspaces, send `@bot Reply CONNECT_STATUS_OK` with each engine. Require one complete answer, no `user_not_found` stream error, and the Stop/spinner to disappear after delivery. Repeat a second turn and Stop during a longer turn; require the successor's spinner to remain while it is actually running. Engine output is part of the live check; both engines must be recorded separately.
 - QA catalog cases: SLK-CONNECT-CLAUDE and SLK-CONNECT-CODEX (registered through the authorized personal Airtable connection). Deployment evidence and remaining live outcomes are recorded with the task handoff; automated passes do not substitute for human-visible acceptance.
+
+### Slack installer manifest compatibility
+
+Automated: `node --test test/slack-manifest.test.js` checks import-safe command names and URLs, runtime handlers, code-channel declarations and native agent events. The manifest skill source also runs its generator regression suite.
+
+Live acceptance pending (engine-independent configuration): import the shipped JSON into a disposable Socket Mode Slack app; install it, generate a separate `connections:write` app token, connect to a test gateway and invoke `/status-cg` and `/model`. Require successful import and the expected status report/model picker. Local validation is not Slack server acceptance.

@@ -1,7 +1,7 @@
 {
   "display_information": {
     "name": "ChannelGate",
-    "description": "ChannelGate \u2014 run Claude Code or Codex in your Slack, sandboxed per channel.",
+    "description": "ChannelGate — run Claude Code or Codex in your Slack, sandboxed per channel.",
     "background_color": "#171a23",
     "long_description": "ChannelGate brings Claude Code into Slack. Mention the bot in a channel (or just DM it) and it runs a headless Claude session inside a per-conversation sandboxed folder, with each user's own Composio token injected only into their own messages. Admins configure per-channel access, MCP servers, and skills from a local admin UI. Runs over Socket Mode against a self-hosted gateway daemon."
   },
@@ -16,7 +16,7 @@
       "always_online": true
     },
     "agent_view": {
-      "agent_description": "Chat with Claude Code in threads and DMs \u2014 sandboxed per channel."
+      "agent_description": "Chat with Claude Code in threads and DMs — sandboxed per channel."
     },
     "code_channels": {
       "enabled": true
@@ -25,27 +25,32 @@
       {
         "command": "/menu",
         "description": "Show the Files, Variables, and Settings buttons",
-        "should_escape": false
+        "should_escape": false,
+        "url": "https://example.com/slack/commands"
       },
       {
         "command": "/stop",
         "description": "Stop the bot's in-progress answer in this conversation",
-        "should_escape": false
+        "should_escape": false,
+        "url": "https://example.com/slack/commands"
       },
       {
-        "command": "/status",
+        "command": "/status-cg",
         "description": "Show what this channel is working on (jobs, schedules, sessions)",
-        "should_escape": false
+        "should_escape": false,
+        "url": "https://example.com/slack/commands"
       },
       {
         "command": "/secrets",
         "description": "See and set this channel's environment secrets (values are never shown)",
-        "should_escape": false
+        "should_escape": false,
+        "url": "https://example.com/slack/commands"
       },
       {
         "command": "/model",
         "description": "Pick the harness, model and effort for this channel or just this thread",
-        "should_escape": false
+        "should_escape": false,
+        "url": "https://example.com/slack/commands"
       }
     ],
     "shortcuts": [

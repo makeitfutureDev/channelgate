@@ -289,7 +289,8 @@ Slack’s native running/Stop label shows the resolved model and explicitly conf
   timestamp stops everything running in a code channel; outside one such an event is ignored.
 - **`/status-cg` alias.** Slack rejects `/status` in some app manifests because it is a built-in
   Slack command; the gateway registers the same status report under `/status-cg` as well, so a
-  manifest may declare either name.
+  shipped manifest registers `/status-cg` and supplies explicit HTTPS placeholder URLs
+  for Socket Mode imports. `/model` replaces the retired `/engine` and `/effort` commands.
 - **Surfaces and declarations.** `codeChannels` is a Slack-only platform capability; the tools do
   not register on other surfaces. The `gateway-usage` guide gains a Slack-only
   `references/code-channels.md` and a routing row. Memory review runs for threaded code-channel
