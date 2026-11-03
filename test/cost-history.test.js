@@ -57,3 +57,41 @@ test("Free dashboard chart includes partial calendar buckets at the history cuto
   assert.equal(monthly.series.at(-1).runs, 1);
   assert.equal(monthly.series.reduce((sum, row) => sum + row.runs, 0), monthly.totals.runs);
 });
+
+test("exact cutoff and non-hour external buckets stay bounded across every breakdown and tier change", async t => {
+  t.mock.timers.enable({ apis: ["Date"], now: Date.UTC(2026, 2, 31, 12, 30) });
+  const db = getDb();
+  db.exec("DELETE FROM usage_components; DELETE FROM usage; DELETE FROM external_usage");
+  const cutoff = Date.UTC(2026, 2, 1, 12, 30);
+  for (const [name, delta] of [["old", -1], ["equal", 0], ["new", 1]]) {
+    db.prepare("INSERT INTO usage(ts, channel_id, slug, author_id, engine, model, task_kind, tokens_in, tokens_out, cost_usd) VALUES(?, ?, ?, ?, 'codex', ?, 'interactive', 10, 5, 1)")
+      .run(new Date(cutoff + delta).toISOString(), name, name, name, name);
+  }
+  for (const hour of [12, 13]) {
+    db.prepare("INSERT INTO external_usage(scope, engine, session_id, bucket, channel_id, slug, origin, model, turns, cost_usd, updated_ms) VALUES('operator', 'codex', ?, ?, ?, ?, 'terminal', ?, 1, 1, 0)")
+      .run(`external-${hour}`, `2026-03-01T${hour}`, `external-${hour}`, `external-${hour}`, `external-${hour}`);
+  }
+  for (const tier of ["free", "enterprise", "free"]) {
+    testLicenseEnv({ tier });
+    const free = tier === "free";
+    const report = usageDashboard({ range: "month" });
+    assert.equal((await readUsage()).length, free ? 2 : 3);
+    assert.equal((await usageSummary()).totalRuns, free ? 2 : 3);
+    assert.equal(report.totals.runs, free ? 3 : 5);
+    assert.equal(report.series.reduce((sum, r) => sum + r.runs, 0), report.totals.runs);
+    assert.equal(report.models.some(r => r.model === "old"), !free);
+    assert.equal(report.byUser.some(r => r.userId === "old"), !free);
+    assert.equal(report.byChannel.some(r => r.channelId === "external-12"), !free);
+    assert.equal(report.origins.find(r => r.origin === "terminal").cost, free ? 1 : 2);
+    assert.equal(report.byChannel.reduce((sum, r) => sum + r.cost, 0), report.totals.cost);
+  }
+  assert.equal(db.prepare("SELECT COUNT(*) n FROM usage").get().n, 3);
+  assert.equal(db.prepare("SELECT COUNT(*) n FROM external_usage").get().n, 2);
+});
+
+test("costHistoryStart resolves Enterprise expiry using the supplied clock", () => {
+  const expiry = Date.UTC(2026, 5, 15);
+  testLicenseEnv({ tier: "enterprise", expiresAt: new Date(expiry).toISOString() });
+  assert.equal(costHistoryStart(new Date(expiry - 1)), null);
+  assert.equal(costHistoryStart(new Date(expiry + 1)).getTime(), expiry + 1 - 30 * 86400000);
+});

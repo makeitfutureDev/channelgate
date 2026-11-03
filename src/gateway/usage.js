@@ -5,7 +5,8 @@
 // view and future dashboards need cheap. Daemon-side only (never inside a channel cwd).
 //
 // Free installations expose the most recent month of cost history; Enterprise exposes all history.
-import { getLicenseStatus } from "../ee/license.js";
+import { costHistoryStart } from "../ee/cost-history.js";
+export { costHistoryStart } from "../ee/cost-history.js";
 import { getDb } from "../db/index.js";
 import { getSettings, getCodexModelRates, getAssumedModels } from "../config/settings.js";
 import { countDrop } from "../util/drops.js";
@@ -389,19 +390,11 @@ const MODEL_ATTRIBUTION_CTE = `WITH component_priced AS (
    WHERE NOT EXISTS (SELECT 1 FROM usage_components c WHERE c.usage_id = u.id)
 )`;
 
-// Keep underlying accounting intact across upgrades and downgrades. This is a read window,
-// independent of license admission counters, never a destructive retention job.
-export function costHistoryStart(now = new Date()) {
-  if (getLicenseStatus().features.costHistoryDays === null) return null;
-  return new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
-}
-
 // Read ledger records (newest-first), optionally filtered. `month` is "YYYY-MM" (default: all).
 // Used by the Audit view. Caps at `limit` records.
-export async function readUsage({ month = "", channelId = "", authorId = "", limit = 500 } = {}) {
+export async function readUsage({ month = "", channelId = "", authorId = "", limit = 500, historyStart = costHistoryStart() } = {}) {
   const where = [];
   const params = {};
-  const historyStart = costHistoryStart();
   if (historyStart) {
     where.push("ts >= @historyStart");
     params.historyStart = historyStart.toISOString();
@@ -432,8 +425,8 @@ export async function readUsage({ month = "", channelId = "", authorId = "", lim
 
 // Aggregate rollups over the ledger (per channel + per author) for a month. Powers the Audit
 // summary table.
-export async function usageSummary({ month = "" } = {}) {
-  const recs = await readUsage({ month, limit: 100_000 });
+export async function usageSummary({ month = "", historyStart = costHistoryStart() } = {}) {
+  const recs = await readUsage({ month, limit: 100_000, historyStart });
   const byChannel = new Map();
   const byAuthor = new Map();
   let totalCost = 0;

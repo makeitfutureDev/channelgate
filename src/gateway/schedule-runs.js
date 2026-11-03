@@ -1,5 +1,6 @@
 // Durable, bounded automation telemetry. No FK to schedules: one-offs and deleted tasks
 // retain their history. No tool arguments, outputs, reasoning or credential payloads are saved.
+import { costHistoryStart, costVisibleAt } from "../ee/cost-history.js";
 import { randomUUID } from "node:crypto";
 import { getDb, toJson, fromJson } from "../db/index.js";
 import { redactLogValue } from "../util/redact.js";
@@ -78,17 +79,24 @@ export function listScheduleRuns({ scheduleId, channelId, limit = 50, before } =
   return db.prepare(`SELECT data FROM schedule_runs ${clauses.length ? `WHERE ${clauses.join(" AND ")}` : ""} ORDER BY rowid DESC LIMIT ?`).all(...args).map((r) => fromJson(r.data, {}));
 }
 
-export function scheduleRunSummary(scheduleId, channelId) {
+// Output-only view: internal readers and update paths always retain original accounting.
+export function visibleScheduleRun(run, historyStart = costHistoryStart()) {
+  if (!run || costVisibleAt(run.completedAt ?? run.startedAt, new Date(), historyStart)) return run;
+  return { ...run, costUsd: null, ...(Object.hasOwn(run, "costEstimated") ? { costEstimated: false } : {}) };
+}
+
+export function scheduleRunSummary(scheduleId, channelId, historyStart = costHistoryStart()) {
   const clauses = [], args = [];
   if (scheduleId !== undefined) { clauses.push("schedule_id = ?"); args.push(scheduleId); }
   if (channelId !== undefined) { clauses.push("channel_id = ?"); args.push(channelId); }
   const rows = getDb().prepare(`SELECT status, count(*) AS n,
     sum(CASE WHEN json_extract(data, '$.engineStatus') = 'completed' THEN 1 ELSE 0 END) AS engine_completed,
     sum(CASE WHEN json_extract(data, '$.deliveryStatus') = 'failed' THEN 1 ELSE 0 END) AS delivery_failed,
-    sum(json_extract(data, '$.costUsd')) AS cost, max(json_extract(data, '$.startedAt')) AS last_started
-    FROM schedule_runs ${clauses.length ? `WHERE ${clauses.join(" AND ")}` : ""} GROUP BY status`).all(...args);
+    sum(CASE WHEN ? IS NULL OR julianday(COALESCE(json_extract(data, '$.completedAt'), json_extract(data, '$.startedAt'))) >= julianday(?)
+      THEN json_extract(data, '$.costUsd') ELSE NULL END) AS cost, max(json_extract(data, '$.startedAt')) AS last_started
+    FROM schedule_runs ${clauses.length ? `WHERE ${clauses.join(" AND ")}` : ""} GROUP BY status`).all(historyStart?.toISOString() ?? null, historyStart?.toISOString() ?? null, ...args);
   const summary = { total: 0, succeeded: 0, noOp: 0, failed: 0, blocked: 0, unreported: 0, interrupted: 0, skipped: 0,
-    engineCompleted: 0, deliveryFailed: 0, successRate: null, lastStartedAt: null, totalCostUsd: null, retentionDays: RETENTION_DAYS };
+    engineCompleted: 0, deliveryFailed: 0, successRate: null, lastStartedAt: null, totalCostUsd: null, retentionDays: RETENTION_DAYS, costHistoryDays: historyStart ? 30 : null };
   let finished = 0;
   for (const r of rows) {
     summary.total += r.n;

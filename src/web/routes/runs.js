@@ -7,10 +7,12 @@
 //                           statusUrl, engine, slackThread }.
 //   GET  /api/runs/:id    → the job's status + result.
 import express from "express";
+import { costHistoryStart, costVisibleAt } from "../../ee/cost-history.js";
 import { startApiRun, getApiJob, listApiJobs, stopApiRun } from "../../gateway/api-runs.js";
 
 // A public (caller-facing) view of a job record — the internal webhook secret is never echoed.
-function publicJob(job) {
+function publicJob(job, now = new Date(), historyStart = costHistoryStart(now)) {
+  const costVisible = costVisibleAt(job.completedMs ?? job.createdMs, now, historyStart);
   return {
     jobId: job.id,
     status: job.status,
@@ -26,10 +28,10 @@ function publicJob(job) {
     resumeCommand: job.resumeCommand,
     createdAt: job.createdMs ? new Date(job.createdMs).toISOString() : null,
     completedAt: job.completedMs ? new Date(job.completedMs).toISOString() : null,
-    costUSD: job.costUSD ?? null,
+    costUSD: costVisible ? job.costUSD ?? null : null,
     // True when the figure is the usage ledger's priced estimate rather than an engine-reported
     // amount (Codex reports no cost of its own) — the same distinction the Audit view draws.
-    costEstimated: Boolean(job.costEstimated),
+    costEstimated: costVisible && Boolean(job.costEstimated),
     durationMs: job.durationMs ?? null,
     result: job.result ? job.result.content : null,
     error: job.error || null,
@@ -73,7 +75,9 @@ export function createRunsRouter({ slack } = {}) {
   router.get("/", (req, res) => {
     const status = String(req.query.status || "").trim();
     const limit = Number(req.query.limit) || 50;
-    res.json({ ok: true, jobs: listApiJobs({ status, limit }).map(publicJob) });
+    const now = new Date();
+    const historyStart = costHistoryStart(now);
+    res.json({ ok: true, jobs: listApiJobs({ status, limit }).map((job) => publicJob(job, now, historyStart)) });
   });
 
   // Stop an in-flight run.

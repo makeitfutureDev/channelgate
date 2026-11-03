@@ -44,4 +44,4 @@ Core confinement, permissions, memory, skills, standard chat connectors, and bac
 
 ## Cost-tracking history
 
-Free installations (with or without a key) expose the most recent 30 days of cost-tracking history. Enterprise exposes unlimited history. This reporting window applies to audit records, summaries and dashboard totals, including external engine usage. It does not delete stored accounting, alter monthly AI allowances, or limit conversation history.
+Free installations (with or without a key) expose the most recent 30 days of cost-tracking history. Enterprise exposes unlimited history. This reporting window applies to audit records, summaries and dashboard totals, including external engine usage. Structured costs in audit events, HTTP run-job responses and schedule telemetry follow the same window; operational records and answer text remain available. It does not delete stored accounting, alter monthly AI allowances, or limit conversation history.

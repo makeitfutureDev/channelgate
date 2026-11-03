@@ -227,3 +227,16 @@ test("an EXPIRED offline payload grants nothing — the no-key limits, immediate
   assert.equal(admit("C_STILL_VALID_1").allowed, true);
   assert.equal(admit("C_STILL_VALID_2").allowed, true);
 });
+
+
+test("a tighter monthly allowance preserves admitted conversations until the UTC month resets", () => {
+  tier("enterprise");
+  for (let i = 0; i < 101; i++) assert.equal(admit(`previous-${i}`).allowed, true);
+  testLicenseEnv({ tier: "free" });
+  assert.equal(admit("previous-100").allowed, true);
+  assert.equal(admit("new-after-downgrade").reason, "conversation_limit");
+  const now = new Date();
+  const next = Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 2);
+  assert.equal(licenseAdmission({ conversationId: "new-after-downgrade", now: next }).allowed, true);
+  assert.equal(conversationUsage({ month: utcMonth(next), limit: 500 }).filter(r => r.admitted).length, 1);
+});

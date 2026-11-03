@@ -2,6 +2,7 @@
 // and the usage dashboard rollups. Split from admin.js; mounted by createAdminRouter so every
 // URL is unchanged.
 import { Router } from "express";
+import { costHistoryStart, visibleEventCosts } from "../../ee/cost-history.js";
 import { readUsage, usageSummary, usageDashboard } from "../../gateway/usage.js";
 import { externalUsageStatus, externalTrackingStartedAt } from "../../gateway/external-usage.js";
 import { activeRunForApi, listActiveRuns, onActiveRunsChanged } from "../../gateway/active-runs.js";
@@ -27,8 +28,9 @@ export function createObservabilityRouter() {
       const authorId = req.query.authorId ? String(req.query.authorId) : "";
       const month = /^\d{4}-\d{2}$/.test(String(req.query.month || "")) ? String(req.query.month) : "";
       const limit = Math.min(2000, Math.max(1, Number(req.query.limit) || 500));
-      const usage = await readUsage({ month, channelId, authorId, limit });
-      const summary = await usageSummary({ month });
+      const historyStart = costHistoryStart();
+      const usage = await readUsage({ month, channelId, authorId, limit, historyStart });
+      const summary = await usageSummary({ month, historyStart });
       const index = await getChannelsIndex();
       const users = await getUsers();
       const named = usage.map((r) => ({
@@ -157,7 +159,9 @@ export function createObservabilityRouter() {
   router.get("/audit/events", async (req, res, next) => {
     try {
       const limit = Math.min(1000, Math.max(1, Number(req.query.limit) || 200));
-      res.json({ events: readEvents({ limit }) });
+      const now = new Date();
+      const historyStart = costHistoryStart(now);
+      res.json({ events: readEvents({ limit }).map((event) => visibleEventCosts(event, now, historyStart)) });
     } catch (e) {
       next(e);
     }

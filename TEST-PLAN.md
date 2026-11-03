@@ -11606,3 +11606,7 @@ Documentation-only, engine-independent: no gateway runtime or Microsoft grants c
 - Registered Free monthly allowance: legacy null/missing/oversized signed conversation limits clamp to 100; admit the 100th unique conversation, refuse the 101st before engine spawn, and keep an already admitted conversation usable. No-key evaluation remains one. Automated: `test/license-limits.test.js`, `test/license-registration.test.js`.
 
 - Private acceptance definitions updated: LICENSE-INVENTORY-20-01 (stable ID retained; now 10 inventory slots), LICENSE-FREE-100-01 and COST-HISTORY-30-01. Claude and Codex execution remains pending; automated fixtures do not claim live acceptance.
+
+- Free cost-history verification: `test/cost-history-http.test.js` checks old/unknown-date structured costs in event and job list/detail HTTP responses, raw-data preservation, and Free→Enterprise→Free. `test/cost-history.test.js` checks cutoff −1ms/equal/+1ms, partial external hours, month ends, old-only model/user/channel/origin splits and supplied-clock license expiry. `test/license-limits.test.js` checks already-admitted conversations across downgrade and UTC reset. Live Claude/Codex acceptance remains pending.
+
+- `test/cost-history-schedules.test.js`: HTTP and MCP schedule list/detail and embedded summaries restrict Free structured costs to 30 days, retain 90-day operational counts, restore costs with Enterprise, and preserve raw costs during internal status/event updates.

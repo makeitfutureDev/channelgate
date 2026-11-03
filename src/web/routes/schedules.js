@@ -5,7 +5,8 @@ import { getChannelsIndex, getUsers, isAdmin } from "../../config/store.js";
 import { getSchedules, updateSchedule, deleteSchedule } from "../../config/schedules.js";
 import { cronValid, minIntervalMinutes } from "../../util/cron.js";
 import { settingsForApi } from "../../config/settings.js";
-import { listScheduleRuns, getScheduleRun, scheduleRunSummary } from "../../gateway/schedule-runs.js";
+import { costHistoryStart } from "../../ee/cost-history.js";
+import { listScheduleRuns, getScheduleRun, scheduleRunSummary, visibleScheduleRun } from "../../gateway/schedule-runs.js";
 import { validateScheduleOptions } from "../../config/schedule-options.js";
 
 export function createSchedulesRouter() {
@@ -16,11 +17,12 @@ export function createSchedulesRouter() {
   router.get("/schedules", async (_req, res, next) => {
     try {
       const [index, users] = await Promise.all([getChannelsIndex(), getUsers()]);
+      const historyStart = costHistoryStart();
       const schedules = getSchedules().map((s) => ({
         ...s,
         channelName: scheduleConversationName(s, index[s.channelId], users),
         cronValid: cronValid(s.cron),
-        runSummary: scheduleRunSummary(s.id, s.channelId),
+        runSummary: scheduleRunSummary(s.id, s.channelId, historyStart),
       }));
       res.json({ schedules });
     } catch (e) {
@@ -39,10 +41,11 @@ export function createSchedulesRouter() {
       const scheduleId = req.params.id || req.query.scheduleId;
       const channelId = req.query.channelId;
       const [index, users] = await Promise.all([getChannelsIndex(), getUsers()]);
+      const historyStart = costHistoryStart();
       const runs = listScheduleRuns({ scheduleId, channelId, limit, before: req.query.before }).map((run) => ({
-        ...run, channelName: scheduleConversationName(run, index[run.channelId], users),
+        ...visibleScheduleRun(run, historyStart), channelName: scheduleConversationName(run, index[run.channelId], users),
       }));
-      res.json({ runs, summary: scheduleId ? scheduleRunSummary(scheduleId, channelId) : null, nextBefore: runs.length === limit ? runs.at(-1).id : null });
+      res.json({ runs, summary: scheduleId ? scheduleRunSummary(scheduleId, channelId, historyStart) : null, nextBefore: runs.length === limit ? runs.at(-1).id : null });
     } catch (e) { next(e); }
   };
   router.get("/schedules/:id/runs", history);
@@ -52,7 +55,7 @@ export function createSchedulesRouter() {
       const run = getScheduleRun(req.params.id);
       if (!run) return res.status(404).json({ error: "unknown automation run" });
       const [index, users] = await Promise.all([getChannelsIndex(), getUsers()]);
-      res.json({ run: { ...run, channelName: scheduleConversationName(run, index[run.channelId], users) } });
+      res.json({ run: { ...visibleScheduleRun(run), channelName: scheduleConversationName(run, index[run.channelId], users) } });
     } catch (e) { next(e); }
   });
 
