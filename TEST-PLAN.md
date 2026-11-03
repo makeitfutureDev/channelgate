@@ -1,5 +1,13 @@
 # ChannelGate — Test Plan
 
+## Generated skill dependencies (2026-11-03)
+
+Validation: focused suite 25/25 passed; full `npm test` 4,144 passed, 33 skipped, zero failures; static checks and secret scan passed.
+
+Automated: `node --test test/run-grant-isolation.test.js` covers shared/personal dependencies on both generated protocols, preservation of unrelated omissions, and absent, manifest-less or symlinked sources.
+
+Live Claude and Codex acceptance (pending): in a dedicated writable test conversation pinned to each engine, grant a fixture skill `generated-protocol-probe` with `requires: [gateway-usage, channel-memory]`. Prompt: "Read the generated operating guide and memory protocol, then reply GUIDES-OK." Pass: both guides are readable and the streamed/final reply has no unavailable-skill warning. Repeat with the fixture granted only to the test author; the same pass rule applies and personal files remain isolated. Then add `requires: [gateway-usage, channel-memory, nonexistent-protocol-probe]`; pass only if the reply warns for the nonexistent dependency, omits both available guides from the warning and completes. Remove fixture grants afterward. Actual engine turns remain a deployment acceptance gate; unit tests are not a live pass.
+
 ## Environment output visibility
 
 Automated: `test/egress-grants.test.js` checks auto-readable URLs, explicit Readable, hidden values, personal/organization/channel scopes and identical-byte collisions across active/inactive/no-target runtimes, character-split streaming, final and structured output. `test/egress-run.test.js` executes both engine parsers through `runMessage` with deterministic fake engine output. `test/runtime-integration-jobs.test.js` verifies readable URLs in persisted shell logs and recovered tails alongside hidden-value redaction.

@@ -1,5 +1,9 @@
 # ChannelGate — Features
 
+## Generated skill dependency warnings
+
+Generated `gateway-usage` and `channel-memory` guides satisfy shared and personal skill dependencies when their manifests are copied into the run. Missing or rejected generated sources and unrelated unavailable skills still produce the warning.
+
 ## Environment output visibility
 
 - Reply streams, final replies, structured events and background-job logs honor the effective Hidden/Readable variable setting across organization, personal and channel scopes. Readable configuration such as public URLs remains shareable; hidden credentials and engine/service tokens remain redacted. A hidden value stays protected when another scope has a readable entry with identical bytes.

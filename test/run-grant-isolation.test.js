@@ -585,3 +585,43 @@ test("available personal instructions survive unavailable revisions and dependen
   const plugin = artifacts.claudePluginDirs.find((dir) => dir.includes("user-grants-plugin"));
   for (const name of [missing, staged, removed]) assert.ok(await absent(path.join(plugin, "skills", name)));
 });
+
+for (const tier of ["sharedSkills", "userSkills"]) {
+  test(`generated protocols satisfy ${tier} dependencies without hiding real omissions`, async (t) => {
+    const { putSkillRevision } = await import("../src/gateway/skills/catalog.js");
+    const name = `generated-dependency-${tier.toLowerCase()}`;
+    const missing = `${name}-absent`;
+    putSkillRevision({ files: [{ path: "SKILL.md", content: `---\nname: ${name}\ndescription: Generated protocol dependency fixture\nrequires: [gateway-usage, channel-memory, ${missing}]\n---\nRead the operating guide.\n` }] });
+    const workspace = await ensureChannelFolder(name, {});
+    const artifacts = await grants({ slug: name, [tier]: [name], workspaceSkillsDir: path.join(workspace.cwd, ".claude", "skills") });
+    t.after(() => artifacts.cleanup());
+    assert.deepEqual(artifacts.missingSkills, [missing]);
+    for (const protocol of ["gateway-usage", "channel-memory"]) {
+      const manifest = path.join(artifacts.claudePluginDirs[0], "skills", protocol, "SKILL.md");
+      assert.ok((await readFile(manifest, "utf8")).length > 0);
+    }
+    if (tier === "userSkills") assert.deepEqual(artifacts.personalSkillCatalog.map((skill) => skill.name), [name]);
+  });
+}
+
+for (const state of ["absent", "no-manifest", "symlink"]) {
+  test(`generated dependency remains missing when its workspace source is ${state}`, async (t) => {
+    const { putSkillRevision } = await import("../src/gateway/skills/catalog.js");
+    const name = `generated-dependency-${state}`;
+    putSkillRevision({ files: [{ path: "SKILL.md", content: `---\nname: ${name}\ndescription: Unavailable generated protocol fixture\nrequires: [gateway-usage]\n---\nRead the operating guide.\n` }] });
+    const workspaceSkillsDir = path.join(gatewayRoot, name);
+    await mkdir(workspaceSkillsDir, { recursive: true });
+    const source = path.join(workspaceSkillsDir, "gateway-usage");
+    if (state === "no-manifest") await mkdir(source);
+    if (state === "symlink") {
+      const outside = path.join(gatewayRoot, `${name}-outside`);
+      await mkdir(outside);
+      await writeFile(path.join(outside, "SKILL.md"), "Untrusted linked protocol");
+      await symlink(outside, source, "dir");
+    }
+    const artifacts = await grants({ slug: name, sharedSkills: [name], workspaceSkillsDir });
+    t.after(() => artifacts.cleanup());
+    assert.deepEqual(artifacts.missingSkills, ["gateway-usage"]);
+    assert.ok(await absent(path.join(artifacts.claudePluginDirs[0], "skills", "gateway-usage", "SKILL.md")));
+  });
+}

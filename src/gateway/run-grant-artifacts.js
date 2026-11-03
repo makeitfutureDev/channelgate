@@ -160,6 +160,7 @@ async function materializePlugin({ pluginDir, name, description, skillNames = []
   // arbitrary project skill. `cp` retains references/, scripts/, and assets.
   // Same no-follow rule as copyWorkspaceAgents: both the container and the named skill folder must
   // be REAL directories in the workspace, or the copy walks wherever a planted link points.
+  const generatedSkills = [];
   const skillsSourceOk = Boolean(workspaceSkillsDir) && (await isRealDir(workspaceSkillsDir));
   for (const skillName of ["gateway-usage", "channel-memory"]) {
     if (!skillsSourceOk) continue;
@@ -167,6 +168,7 @@ async function materializePlugin({ pluginDir, name, description, skillNames = []
     const destination = path.join(skillsDir, skillName);
     if (!(await isRealDir(source)) || await exists(destination)) continue;
     await cp(source, destination, { recursive: true });
+    if ((await lstat(path.join(destination, "SKILL.md")).catch(() => null))?.isFile()) generatedSkills.push(skillName);
   }
   const hasAgents = await copyWorkspaceAgents(pluginDir, workspaceAgentsDir);
   // The manifest is written LAST so it can declare the directories that actually exist. Claude Code
@@ -179,7 +181,7 @@ async function materializePlugin({ pluginDir, name, description, skillNames = []
   );
   const populated =
     hasAgents || (await readdir(skillsDir, { withFileTypes: true })).some((entry) => entry.isDirectory() || entry.isSymbolicLink());
-  return { populated, missing: copied.missing };
+  return { populated, missing: copied.missing, generatedSkills };
 }
 
 export async function createRunGrantArtifacts({
@@ -266,6 +268,7 @@ export async function createRunGrantArtifacts({
       }
     }
     let missingSkills = [];
+    const generatedSkills = new Set();
     // The two content-addressed roots a warm process keeps reading between turns live under the
     // artifact dir, mounted at the same absolute path inside the container so the digest path the
     // engine was given resolves there.
@@ -285,6 +288,7 @@ export async function createRunGrantArtifacts({
         workspaceAgentsDir,
       });
       missingSkills = [...new Set([...missingSkills, ...shared.missing])];
+      for (const name of shared.generatedSkills) generatedSkills.add(name);
       if (shared.populated) {
         const digest = await treeDigest(staging);
         const stableRoot = path.join(stableArtifactRoot, "claude-plugins");
@@ -329,6 +333,10 @@ export async function createRunGrantArtifacts({
         }
       }
     }
+
+    // Generated protocols satisfy dependencies from either grant tier. Only clear omissions
+    // after their manifests were actually copied into the shared plugin for this run.
+    missingSkills = missingSkills.filter((name) => !generatedSkills.has(name));
 
     let settingsFile = "";
     if (needsClaudeSettings || sharedPackages.length || personalPackages.length) {
