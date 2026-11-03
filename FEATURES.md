@@ -1,5 +1,30 @@
 # ChannelGate — Features
 
+## Run capability liveness
+
+- **A run's control-socket capability is authority only while its conversation has live work.**
+  The signed capability a container run holds (`src/gateway/mcp-capability.js`) used to stay valid
+  for its whole TTL (6 h for a turn, 12 h for an SSH session) after the turn that minted it ended.
+  The daemon's MCP socket now re-checks the egress liveness registry (`src/gateway/egress/liveness.js`:
+  live turns, background jobs and agents, memory reviews, SSH sessions, any author) on the hello and
+  on every tool call and relayed request (`src/gateway/capability-liveness.js`): a validly signed,
+  unexpired capability whose channel has nothing live is refused with the fixed sentence "This run's
+  gateway capability is no longer active: its conversation has no live work." and an audit event
+  `capability_refused_idle` (channel, token id, tool name — never the token; one row per token and
+  tool per minute).
+- **Grace and scope.** A call within 30 seconds of the channel's last release is still honoured,
+  which covers the engine's final tool call racing the daemon's release of the turn. The check is
+  per channel, not per token: the registry has no per-token entries, every spawn path already
+  registers its channel (foreground, API, scheduled, loop/follow-up/nudge and diagnosis turns
+  through `run.js`; background jobs and agents for their whole life including recovery; memory
+  reviews; the update smoke turn; SSH sessions through the broker), and the warm engine pool keeps
+  one process and one capability across turns, so the check refuses calls BETWEEN turns and never
+  kills the process. Residual: a copied token works while some work is live in that same channel,
+  which is the container's own trust domain. The jti-bound remote-MCP relay registry is unchanged.
+  The daemon-spawned stdio control server used by host (`/sudo`) turns is not covered: that run
+  already executes as the daemon account with the signing secret in reach, so liveness adds nothing
+  there.
+
 ## Catalog-first skill authoring
 
 Gateway and bundled authoring instructions require catalog creation and grants. Direct engine skill-folder writes are not durable channel installations. External sources remain usable read-only; authoring in them requires verified repository and branch write access, otherwise additions live in a catalog companion skill.

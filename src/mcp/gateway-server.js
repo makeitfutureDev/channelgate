@@ -458,7 +458,7 @@ export function createGatewayMcpServer(ctx) {
     const handler = rawHandlers.get(name);
     if (!handler) throw new Error(`unknown gateway tool "${name}"`);
     if (!CONTROL_PLANE.has(name)) throw new Error(`"${name}" is not a control-plane tool`);
-    const capability = ctx.verifyCapability();
+    const capability = ctx.verifyCapability({ tool: name });
     if (!capability.ok) throw new Error(`gateway capability rejected (${capability.reason})`);
     const result = await handler(args ?? {}, {});
     const message = (result?.content || []).filter((c) => c?.type === "text").map((c) => c.text).join("\n");
@@ -471,7 +471,9 @@ export function createGatewayMcpServer(ctx) {
       // Claude Code parses permission_prompt's reply as an allow/deny decision, so a refusal
       // there must keep that shape — plain text reads as "invalid permission result" to the CLI.
       const refuse = (message) => name === "permission_prompt" ? text(JSON.stringify({ behavior: "deny", message })) : text(message);
-      const capability = ctx.verifyCapability();
+      // The verifier receives the tool name for its audit row (the socket's liveness-aware verifier
+      // uses it; the stdio one ignores it).
+      const capability = ctx.verifyCapability({ tool: name });
       if (!capability.ok) {
         return refuse(`🚫 Gateway capability rejected (${capability.reason}). Start a fresh run and try again.`);
       }
