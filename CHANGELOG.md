@@ -30,6 +30,12 @@ product overview.
 
 ## Unreleased
 
+- Security hardening (run capability liveness): the daemon's MCP socket refuses a run's signed
+  capability on the hello and on every tool call or relayed request once its conversation has no
+  live work (no turn, background job or agent, memory review or SSH session, with a 30 s
+  post-release grace), answering a fixed sentence and auditing `capability_refused_idle`; a token
+  copied out of a container no longer works for its remaining 6–12 h TTL.
+
 - Preserve channel archival across delayed Slack joins and concurrent admin resets; reconcile missed removals/rejoins after startup or reconnect, pausing workspace updates until bot membership is verified.
 
 - Fix Slack List message references, attachments and URL fields so agents can populate clickable source links and read them back.
