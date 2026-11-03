@@ -343,6 +343,9 @@ export async function runSchedule(sched, { runner: runMessage = defaultRunMessag
           if (["tool_use", "tool_result", "thinking", "quiet", "notice", "engine_note", "run_queued", "agent_activity"].includes(event?.kind)) appendScheduleRunEvent(run.id, event);
         },
         threadKey: loopTick ? sched.threadTs : scheduleSessionKey(sched),
+        // Session keys stay fresh per fire; billing follows a known delivery thread.
+        // Silent first fires have no chat root yet: retain one logical identity per run.
+        admissionThreadKey: threadTs || `schedule-fire-${run.id}`,
         signal: loopHandle?.controller.signal ?? null,
         origin: "schedule",
         ...(platformSupports(platformOfConversation(sched.channelId), "richCards") === "block-kit" &&

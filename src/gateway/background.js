@@ -244,7 +244,7 @@ export class BackgroundJobs {
           // behaving exactly as before (pid + kernel start time are its identity); a job in an
           // isolated runtime is found again by its runId, because its pid belongs to a client
           // process that is already gone.
-          ins.run(j.id, toJson({ id: j.id, kind: j.kind || "shell", channelId: j.channelId, slug: j.slug, authorId: j.authorId, threadKey: j.threadKey, label: j.label, command: j.command, task: j.task || "", startedAt: j.startedAt, pid: j.pid || null, startTime: j.startTime || "", maxMs: j.maxMs, logFile: j.logFile || "", approvalId: j.approvalId || "", runtime: j.runtime || null, pendingDelivery: j.pendingDelivery || null, deliveryAttempts: j.deliveryAttempts || 0 }));
+          ins.run(j.id, toJson({ id: j.id, kind: j.kind || "shell", channelId: j.channelId, slug: j.slug, authorId: j.authorId, threadKey: j.threadKey, admissionThreadKey: j.admissionThreadKey, label: j.label, command: j.command, task: j.task || "", startedAt: j.startedAt, pid: j.pid || null, startTime: j.startTime || "", maxMs: j.maxMs, logFile: j.logFile || "", approvalId: j.approvalId || "", runtime: j.runtime || null, pendingDelivery: j.pendingDelivery || null, deliveryAttempts: j.deliveryAttempts || 0 }));
         }
         db.exec("COMMIT");
       } catch (e) {
@@ -290,7 +290,7 @@ export class BackgroundJobs {
     });
   }
 
-  async _start({ channelId, slug, authorId, threadKey, command, label, maxMs = 0, kind = "shell", task }, approval = {}) {
+  async _start({ channelId, slug, authorId, threadKey, admissionThreadKey = threadKey, command, label, maxMs = 0, kind = "shell", task }, approval = {}) {
     // Never persist a new job while boot recovery still has un-re-tracked rows in bg_jobs.
     if (this._recoveryGate) await this._recoveryGate;
     const isAgent = kind === "agent";
@@ -386,6 +386,7 @@ export class BackgroundJobs {
               slug: entry.slug,
               authorId,
               threadKey,
+              ...(admissionThreadKey !== threadKey ? { admissionThreadKey } : {}),
               command: cmd,
               workDir,
               label: (label || cmd).slice(0, 80),
@@ -457,7 +458,7 @@ export class BackgroundJobs {
       /* logging is best-effort */
     }
 
-    const rec = { id, kind, channelId, slug: entry.slug, authorId, threadKey, label: name, command: cmd, task: taskText, startedAt, child: null, pid: null, maxMs, logFile, tail: "", timedOut: false, approvalId: approval.approvalId || "", target };
+    const rec = { id, kind, channelId, slug: entry.slug, authorId, threadKey, admissionThreadKey, label: name, command: cmd, task: taskText, startedAt, child: null, pid: null, maxMs, logFile, tail: "", timedOut: false, approvalId: approval.approvalId || "", target };
     const writeChunk = (chunk) => {
       try {
         logStream?.write(chunk);
@@ -624,6 +625,7 @@ export class BackgroundJobs {
       authorId: rec.authorId,
       text: prompt,
       threadKey: `${rec.threadKey}::agent-${rec.id}`,
+      admissionThreadKey: rec.admissionThreadKey ?? rec.threadKey,
       sudoSourceThreadKey: rec.threadKey,
       origin: "background_agent", // daemon-triggered: structurally never escalates
       preferCold: true, // one-shot: don't leave a warm process idling after the agent finishes
@@ -853,6 +855,7 @@ export class BackgroundJobs {
               authorId: rec.authorId,
               text,
               threadKey: rec.threadKey,
+              admissionThreadKey: rec.admissionThreadKey ?? rec.threadKey,
               origin: "continuation",
               signal: handle.controller.signal,
             });

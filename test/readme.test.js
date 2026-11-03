@@ -147,11 +147,11 @@ test("the licensing section keeps the tier limit and the no-automatic-relicensin
   assert.ok(section.length > 500, "the Licensing & partners section is missing or truncated");
   assert.match(section, /source-available fair-code/i);
   assert.match(section, /not OSI open-source/);
-  assert.match(section, /500 AI messages per conversation per month/);
-  assert.match(section, /100 active conversations per UTC month/);
-  assert.match(section, /one month \(30 days\) of cost-tracking history/);
+  assert.match(section, /500 AI runs per channel per month/);
+  assert.match(section, /100 active conversations \*\*in each\s+channel per UTC month\*\*/);
+  assert.match(section, /one month \(30 days\) of\s+cost-tracking history/);
   assert.match(section, /no version\s+is relicensed automatically/);
-  assert.match(section, /\| \*\*No key\*\* — install and run \| 10 \(one active per month\) \| 10 \| 500 \|/);
+  assert.match(section, /\| \*\*No key\*\* — install and run \| 10 \(one active per month\) \| 10 \| 100 in the active channel \| 500 \|/);
   // The three lanes the release plan sells against.
   for (const lane of [/\*\*Registered — /, /\*\*Partner — /, /\*\*Reseller, white-label, enterprise — /]) {
     assert.match(section, lane);

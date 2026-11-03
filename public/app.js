@@ -4316,14 +4316,15 @@ function paintLicense(l) {
     ["Key", l.hasLicenseKey ? `…${escapeHtml(l.licenseKeyLast4)} (from ${escapeHtml(l.licenseKeySource)})` : "none"],
     ["Registered channels", fmtLicenseLimit(l.limits?.channels)],
     ["Registered users", fmtLicenseLimit(l.limits?.users)],
-    ["Active conversations / month", fmtLicenseLimit(l.limits?.conversations)],
-    ["AI messages / conversation / month", fmtLicenseLimit(l.limits?.messagesPerConversationPerMonth)],
+    ["Conversation threads / channel / month", l.limits?.conversationsPerChannelPerMonth === undefined ? "not reported" : fmtLicenseLimit(l.limits.conversationsPerChannelPerMonth)],
+    ["AI messages / channel / month", fmtLicenseLimit(l.limits?.messagesPerConversationPerMonth)],
     ["Last verified", fmtLicenseTime(l.verifiedAt)],
     ["Next check", fmtLicenseTime(l.nextCheckAt)],
     ["Expires", l.expiresAt ? fmtLicenseTime(l.expiresAt) : "—"],
     ["Installation id", `<code>${escapeHtml(l.installationId || "")}</code>`],
     ["Platform", `<code>${escapeHtml(l.platformUrl || "")}</code>`],
   ];
+  if (l.tier !== "free" && l.limits?.conversations !== null) facts.push(["Active channels / month", fmtLicenseLimit(l.limits?.conversations)]);
   if (l.placeholderPublicKey) facts.push(["Signing key", "PLACEHOLDER — this build cannot verify a production key"]);
   document.getElementById("license-facts").innerHTML = facts
     .map(([k, v]) => `<dt>${escapeHtml(k)}</dt><dd>${v}</dd>`)
@@ -4342,17 +4343,17 @@ function paintLicense(l) {
   // instead of every conversation filling the track relative to the busiest one.
   const max = cap === null ? Math.max(1, ...rows.map((r) => r.runs)) : cap;
   const limitLine = cap === null
-    ? `Unlimited AI messages per conversation on this tier — bars are relative to the busiest conversation.`
-    : `Limit: ${cap} AI messages per conversation this month. A conversation is warned once at 80% and refused at the limit.`;
+    ? `Unlimited AI messages per channel on this tier — bars are relative to the busiest channel.`
+    : `Limit: ${cap} AI messages per channel this month. A channel is warned once at 80% and refused at the limit.`;
   host.innerHTML =
     `<p class="license-usage-limit">${escapeHtml(limitLine)}</p>` +
     rows.map((r) => {
       const pct = Math.max(2, Math.min(100, (r.runs / max) * 100));
       const ratio = cap === null ? 0 : r.runs / cap;
       const tone = ratio >= 1 ? "over" : ratio >= 0.8 ? "near" : "";
-      const name = r.conversationId + (r.admitted ? "" : " (not in this month's allowed set)");
+      const name = `${r.conversationId} · ${r.activeConversations ?? 0} active threads` + (r.admitted ? "" : " (not in this month's allowed set)");
       return `<div class="bar-row">
-        <span class="bar-name" title="${escapeHtml(name)}">${escapeHtml(r.conversationId)}</span>
+        <span class="bar-name" title="${escapeHtml(name)}">${escapeHtml(name)}</span>
         <span class="bar-track"><span class="bar-fill ${tone}" style="width:${pct}%${tone ? "" : ";background:var(--orange)"}"></span></span>
         <span class="bar-val">${r.runs}${cap === null ? "" : ` / ${cap}`}</span>
       </div>`;

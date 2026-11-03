@@ -8,36 +8,42 @@ are fixed for its agreed term.
 
 ## Tiers
 
-| Tier | How you get it | Registered channels | Registered users | Active conversations per UTC month | AI messages per conversation per month |
+| Tier | How you get it | Registered channels | Registered users | Active chat threads per channel per UTC month | AI runs per channel per UTC month |
 | --- | --- | --- | --- | --- | --- |
-| **No key** | install and run | 10 | 10 | 1 | 500 |
-| **Registered (free key)** | create an account with your email on the ChannelGate platform | 10 | 10 | 100 | 500 |
+| **No key** | install and run | 10 (one active channel per month) | 10 | 100 in the active channel | 500 |
+| **Registered (free key)** | create an account with your email on the ChannelGate platform | 10 | 10 | 100 in each channel | 500 |
 | **Enterprise key** | Enterprise License with Makeitfuture | unlimited by default | unlimited by default | unlimited by default | unlimited by default |
 
 ## Definitions
 
-- A **conversation** is a distinct channel, group, or direct-message thread on a supported chat
-  platform, as identified by the Software. Without a key, the first conversation that receives an
-  AI message in a calendar month is the one the deployment serves for that month.
-- **Registered channels** are the persistent conversation records across all connected platforms,
-  including DMs, groups and the synthetic API conversation. **Registered users** are all stored
-  human account records, including unapproved users; the synthetic API principal is excluded.
-  These inventory counts do not reset each month. Non-Enterprise deployments cannot create an 11th
-  record of either kind. Existing records remain editable and usable after an upgrade introduces
-  the cap or an Enterprise downgrade; no records are deleted, and growth is refused until below
-  the applicable cap. Other authorization and monthly message limits still apply.
-- Registered inventory and active-conversation caps are hard ceilings in this version: legacy free payloads that omit
-  them or specify `null` cannot raise them above 10 users/channels or 100 active conversations. Signed smaller caps are honored; Enterprise
-  defaults to unlimited and can carry agreed limits.
-- Active conversations admitted before a stricter limit or Enterprise downgrade remain usable
-  for the rest of that UTC month. New conversations are refused once the applicable allowance
-  is reached; the admitted set resets at the next UTC month boundary. Compiled ceilings bound
-  signed Free payloads, rather than evicting already admitted conversations.
-- An **AI message** is one engine run started for a conversation. Every origin counts — user
-  turns, follow-ups, scheduled runs, and background jobs — except the deployment's own
-  memory-review runs. Months are calendar months in UTC.
-- At the monthly limit the assistant answers with a short notice instead of starting a run; it
-  warns once at 80 %.
+- A **channel** is a persistent channel, group or direct-message record on a supported chat
+  platform. A **conversation** for the 100 allowance is an active chat thread within that channel,
+  not another channel and not an individual AI message. Each channel has its own UTC-month
+  allowance. Repeated messages and automation in the same admitted thread reuse its slot.
+- **Registered channels** include DMs, groups and the synthetic API conversation. **Registered
+  users** are all stored human account records, including unapproved users; the synthetic API
+  principal is excluded. Inventory counts do not reset monthly. Non-Enterprise deployments
+  cannot create an 11th record of either kind. Existing records remain editable and usable after
+  an upgrade or downgrade; growth is refused until below the cap, and other limits still apply.
+- Free installations allow 100 active threads **per channel per UTC month**, 10 channels and 10
+  users. Legacy or newly signed Free payloads cannot raise these compiled ceilings by omitting
+  fields, supplying `null`, or granting larger values. Signed smaller caps are honored.
+  Enterprise defaults to unlimited and may carry agreed limits.
+- Without a key, the first active channel admitted in a UTC month remains the one served that
+  month; its thread allowance is 100. A registered Free key allows activity in its registered
+  channels, each with its own 100-thread allowance.
+- Threads already admitted before a stricter limit or Enterprise downgrade remain usable for
+  that UTC month. New threads are refused once their channel's allowance is reached. The set
+  resets at the next UTC month boundary; admitted threads still obey the AI-run allowance.
+- An **AI run** is one engine run started for a channel. User turns, follow-ups, schedules and
+  background jobs share the existing 500-run allowance per channel per UTC month. Memory-review
+  runs are excluded. The 100-thread allowance does not grant 500 runs to each thread.
+- Thread tracking begins with post-upgrade activity. The upgrade does not fabricate past thread
+  history: an old thread counts when it is next used, and existing channel AI-run counts remain.
+- At a monthly limit the assistant answers with a short notice instead of starting a run. The
+  existing AI-run allowance warns once at 80 %.
+
+Standalone automation fires without an existing chat thread use a stable logical conversation identity for that fire. Once a delivery thread is known, later runs in that thread share its slot. Background agents and question continuations in an existing conversation keep the parent conversation identity even when their engine sessions are isolated.
 
 ## Whose key
 
@@ -147,21 +153,26 @@ unreachable in both directions: it can neither raise nor lower a tier.
 
 ## Counting, exactly
 
-- The counters are keyed on `(UTC month, conversation id)` in the local `license_usage` table
-  (schema migration 12). Nothing else reads or writes them.
-- A run is counted **at spawn**, so a refused turn never counts and a burst of concurrent turns
-  cannot slip past a cap that is already reached.
-- The conversation id is the qualified id from `src/platforms/ids.js`, so the same channel name on
-  two different chat platforms is two different conversations.
+- The existing `(UTC month, channel id)` `license_usage` ledger counts AI runs and legacy
+  active-channel admission. Its `conversations` signed limit retains this channel-ID meaning for
+  compatibility; it is not the 100-thread product allowance. The Free default of 100 there is
+  redundant with the 10-channel inventory cap; stricter signed active-channel limits still apply.
+- `conversationsPerChannelPerMonth` is the signed thread allowance: 100 for Free and no-key,
+  unlimited (`null`) by default for Enterprise. The separate monthly thread ledger is keyed by
+  channel and the gateway's resolved thread identity. Platform-qualified channel IDs prevent
+  collisions between identically named channels on different platforms.
+- Admission and counting happen before engine spawn, atomically, so a refused turn does not
+  count and concurrent first messages cannot exceed a cap. A run without a thread identity uses
+  the gateway's stable unthreaded identity in that channel; it cannot create unlimited slots.
 - Memory-review runs are excluded, by origin (`memory_review`) and by toolset
   (`CG_TOOLSET=memory-review`).
-- The 80% warning is posted once per conversation per month, prefixed to the answer the user is
+- The 80% AI-run warning is posted once per channel per month, prefixed to the answer the user is
   already receiving — it costs no extra message and cannot be missed.
 
 ## Seeing the state
 
 - Admin UI: **Settings → License** — tier, key last four, when it was last verified, when the next
-  check is due, the state banner, and this month's per-conversation usage with the limit line.
+  check is due, the state banner, and this month's per-channel AI-run and active-thread usage with their limit lines.
 - Chat: the `get_license_status` gateway tool.
 - API: `GET /api/license` (admin session), and `POST /api/license/verify` to check now.
 

@@ -128,14 +128,14 @@ test("version 1.4 names ChannelGate, adds license keys, keeps control, and has n
   assert.match(checklist, /Owner confirmed \*\*ChannelGate\*\*/);
 
   // Tiers are documented once, consistently, with end-user keys and offline grace.
-  assert.match(keys, /\| \*\*No key\*\* \| install and run \| 10 \| 10 \| 1 \| 500 \|/);
-  assert.match(keys, /\| \*\*Registered \(free key\)\*\* \| .* \| 10 \| 10 \| 100 \| 500 \|/);
+  assert.match(keys, /\| \*\*No key\*\* \| install and run \| 10 \(one active channel per month\) \| 10 \| 100 in the active channel \| 500 \|/);
+  assert.match(keys, /\| \*\*Registered \(free key\)\*\* \| .* \| 10 \| 10 \| 100 in each channel \| 500 \|/);
   assert.match(keys, /\| \*\*Enterprise key\*\* \| .* \| unlimited by default \| unlimited by default \| unlimited by default \| unlimited by default \|/);
   assert.match(keys, /an end-user key/);
   assert.match(keys, /never shared, pooled, or transferred across organizations/);
   assert.match(keys, /\*\*14 days\*\*/);
   assert.match(keys, /never contain message content/);
-  assert.match(readme, /500 AI messages per conversation per month/);
+  assert.match(readme, /500 AI runs per channel per month/);
   assert.match(faq, /Running ChannelGate for yourself is free, within the limits of your key/);
   assert.match(faq, /An agency does the above for twenty clients\.\*\* Permitted/);
   assert.match(faq, /An agency puts its own key into every client's deployment\.\*\* §3\.2\/§4\.5/);

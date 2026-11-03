@@ -233,8 +233,10 @@ Slack’s native running/Stop label shows the resolved model and explicitly conf
 - Non-Enterprise installs allow at most 10 registered channels (including DMs and the API
   conversation) and 10 stored human users, including unapproved accounts. Registration checks
   are atomic; existing records remain editable and usable when an install is already over its cap.
-  Legacy free-license payloads cannot bypass these caps. The no-key monthly one-conversation
-  limit remains; Registered allows 100 active conversations per UTC month and 500 AI messages per conversation per month. Enterprise defaults to unlimited.
+  Legacy free-license payloads cannot bypass these caps. The no-key monthly one-active-channel
+  evaluation remains. Free allows 100 active chat threads per channel per UTC month, with
+  500 AI runs shared by that channel each month. Enterprise defaults to unlimited. Thread
+  tracking starts with post-upgrade activity; existing AI-run accounting is retained.
 - Enterprise organization admins can approve one or more harnesses per channel through the
   admin editor or Slack Settings → Agent. Unrestricted is the default. Pins, saved sessions,
   API overrides, automation and fallback cannot launch outside the approved set; queued work
@@ -4970,10 +4972,13 @@ are retired, bullet by bullet; everything else stands.
   air-gapped promise true: an offline payload is stamped as verified at read time, so an expired one
   routed through grace would have looked freshly checked forever. A response whose signature does
   not verify changes nothing in either direction. An in-process event fires on every state change.
-- **Two enforcement points**, both in `licenseAdmission()` (`src/ee/limits.js`), called from the
+- **Monthly enforcement**, in `licenseAdmission()` (`src/ee/limits.js`), called from the
   run orchestrator before a turn provisions a folder, mints a session, or spawns an engine:
-  conversation admission (the month's first N distinct conversations are the allowed set,
-  persisted in `license_usage`) and the per-conversation monthly cap, counted AT SPAWN for every
+  legacy active-channel admission and channel AI-run counts (persisted in `license_usage`), plus
+  100 active chat threads per channel per UTC month (`conversationsPerChannelPerMonth`).
+  Existing threads retain admission through a stricter limit or downgrade for that month; new
+  threads reset with the next UTC month. Thread activity starts tracking on upgrade, without
+  inventing historical usage. AI runs are counted AT SPAWN for every
   origin except memory-review runs, with a one-time 80 % warning prefixed to the answer the user
   is already getting. A refused turn returns a short, platform-degraded reply carrying the sign-up
   link — never an exception, never silence, and no run starts.
@@ -5495,3 +5500,5 @@ sandbox or a new runtime tool.
 - Free cost history exposes the last 30 days in audit, summaries and dashboard (gateway and external usage); Enterprise exposes all history. Stored accounting and monthly admission counters remain intact. Verify both engines at the 30-day boundary and after upgrade/downgrade.
 
 - Free cost-history visibility applies to structured costs in Audit events, HTTP run-job views and schedule telemetry as well as the ledger/dashboard. Operational records and answer text remain available; stored accounting is not deleted.
+
+- Conversation admission identity stays separate from engine-session identity: background/nested agents, known scheduled delivery threads and scheduled question continuations share the existing parent slot. An automation fire without a chat anchor uses its own stable logical conversation identity.
