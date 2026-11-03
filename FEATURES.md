@@ -5473,3 +5473,5 @@ schemas, selected identities/accounts, independent multi-execute batches, persis
 workbench scripts, pagination and resumable checkpoints. Local file staging, protected credentials
 and operator overrides retain their existing rules. This is agent guidance, not a local Composio
 sandbox or a new runtime tool.
+
+- Slack bot removal archives the registered channel, displays Archived in the conversation list/detail, blocks admin changes and new runtime launches, and skips skill/configuration and Drive sync propagation. Re-inviting the bot resumes synchronization without deleting workspace files or sessions. Shared folders can still change through another active conversation that uses the same folder.

@@ -1511,7 +1511,7 @@ function renderConvList() {
       e.textContent = CHANNELS.length ? "No channels match." : "No channels yet — invite the bot and send a message.";
       list.appendChild(e);
     } else {
-      for (const c of chans) list.appendChild(convRow("ch:" + c.channelId, capColorOf(c.meta || {}), conversationChannelName(c), capLabelOf(c.meta || {}), costFor(c.channelId, c.slug), c.workDirConflict));
+      for (const c of chans) list.appendChild(convRow("ch:" + c.channelId, capColorOf(c.meta || {}), conversationChannelName(c), c.meta?.archived ? "Archived" : capLabelOf(c.meta || {}), costFor(c.channelId, c.slug), c.workDirConflict));
     }
   }
 
@@ -2017,12 +2017,12 @@ function renderChannelDetail(ch) {
   const node = document.getElementById("channel-card").content.cloneNode(true);
   const card = node.querySelector(".conv-detail");
   card.querySelector(".ch-name").textContent = conversationChannelName(ch);
-  card.querySelector(".ch-type").textContent = ch.type + (ch.isDM ? " · DM" : "");
+  card.querySelector(".ch-type").textContent = ch.type + (ch.isDM ? " · DM" : "") + (meta.archived ? " · Archived — re-invite the bot to resume configuration updates" : "");
   card.querySelector(".ch-slug").textContent = ch.slug;
 
   // Header capability pill — colored by the live mode; kept in sync as flags change.
   const modePill = card.querySelector(".ch-mode");
-  const paintModePill = (m) => { modePill.textContent = capLabelOf(m); modePill.setAttribute("style", capPillStyle(m)); };
+  const paintModePill = (m) => { modePill.textContent = meta.archived ? "Archived" : capLabelOf(m); modePill.setAttribute("style", capPillStyle(m)); };
   paintModePill(meta);
 
   // ── Dirty tracking / savebar ──────────────────────────────────────────────────
@@ -2657,6 +2657,9 @@ function renderChannelDetail(ch) {
   }
 
   detail.innerHTML = "";
+  if (meta.archived) {
+    for (const control of card.querySelectorAll("input, select, textarea, button:not(.subtab)")) control.disabled = true;
+  }
   detail.appendChild(node);
   const refreshVpn = mountChannelVpnControls(card, ch.channelId);
 }

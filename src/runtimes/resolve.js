@@ -30,6 +30,7 @@ export function decideRuntimeBackend(meta = {}) {
  * @param {object} [options.settings]   the container-runtime settings snapshot
  */
 export function resolveRuntime(slug, meta = {}, { settings = getContainerRuntime(), backend: forced = "", isAdminAuthor = false } = {}) {
+  if (meta?.archived) throw Object.assign(new Error("This channel is archived. Re-invite the bot before starting work."), { code: "channel_archived" });
   const platform = platformOr(meta?.platform).id;
   const decided = decideRuntimeBackend(meta);
   const { backend: id, reason } = isRuntimeBackendId(forced)

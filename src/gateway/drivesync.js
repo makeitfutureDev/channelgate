@@ -273,7 +273,7 @@ export function buildTestArgs({ folderId, keyFile, subject }) {
 export function selectSyncChannels(channels) {
   const out = [];
   for (const ch of channels || []) {
-    if (ch?.meta?.workspaceLink) continue; // one bisync owner per shared folder
+    if (ch?.meta?.archived || ch?.meta?.workspaceLink) continue; // one bisync owner per shared folder
     const folderId = parseDriveFolderId(ch?.meta?.syncDriveFolder);
     // Carry meta so the sync targets the channel's ACTUAL working folder (a custom workDir), not
     // just the default one — effectiveWorkDir needs it.

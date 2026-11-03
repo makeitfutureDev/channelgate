@@ -14,7 +14,7 @@ let lastFingerprint = "";
 let pending = Promise.resolve();
 
 async function snapshot() {
-  const channels = (await listChannels()).filter((channel) => channel.meta);
+  const channels = (await listChannels()).filter((channel) => channel.meta && !channel.meta.archived);
   const organization = getOrgAccessGrants();
   const fingerprint = createHash("sha256").update(JSON.stringify({
     organization,
@@ -47,7 +47,7 @@ export async function assertWorkspaceSkillsCompatible(slug, meta) {
   const organization = getOrgAccessGrants();
   const signature = selectionSignature(meta, organization);
   for (const channel of await listChannels()) {
-    if (!channel.meta || channel.slug === slug) continue;
+    if (!channel.meta || channel.meta.archived || channel.slug === slug) continue;
     if (effectiveWorkDir(channel.slug, { ...channel.meta, cleanMode: false }) !== cwd) continue;
     if (selectionSignature(channel.meta, organization) !== signature) {
       throw Object.assign(new Error("The linked working-folder setup could not be resolved. Open the source conversation in Settings and repair its folder assignment."), { code: "workspace_selection_conflict" });
@@ -76,7 +76,7 @@ async function syncPass({ channelSlugs = null, force = true, log = console.warn 
     try {
       // Read again at the write boundary, so a queued UI save uses the committed record.
       const meta = await getChannelMeta(channel.slug);
-      if (!meta) continue;
+      if (!meta || meta.archived) continue;
       const cwd = effectiveWorkDir(channel.slug, { ...meta, cleanMode: false });
       if (destinations.get(cwd)?.size > 1) {
         throw new Error("The linked working-folder setup could not be synchronized. Check the source conversation in Settings.");
@@ -85,6 +85,7 @@ async function syncPass({ channelSlugs = null, force = true, log = console.warn 
       if (folder.skillSync?.missing?.length) result.warnings.push({ slug: channel.slug, missing: folder.skillSync.missing });
       result.synced.push(channel.slug);
     } catch (error) {
+      if (error?.code === "channel_archived") continue;
       result.ok = false;
       const failure = { slug: channel.slug, error: error?.message || String(error) };
       result.failed.push(failure);

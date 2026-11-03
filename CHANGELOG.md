@@ -28,6 +28,8 @@ product overview.
 
 ## Unreleased
 
+- Archive Slack channels when the bot is removed and stop workspace configuration updates until it is re-invited. Show Archived in the admin UI and reject edits/new work for archived channels.
+
 - Version login-page scripts with their HTML so cached pre-upgrade code cannot reference removed fields.
 
 - Use the existing Users list and admin role for dashboard passkeys and invitations. Existing
