@@ -28,6 +28,8 @@ product overview.
 
 ## Unreleased
 
+- Fix Slack List message references, attachments and URL fields so agents can populate clickable source links and read them back.
+
 - Fix false unavailable-skill warnings for generated operating and memory guides required by shared or personal skills.
 
 - Honor Readable variable visibility in reply streams, final replies and background-job output so public configuration URLs remain usable; continue redacting hidden credentials.

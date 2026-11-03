@@ -68,7 +68,9 @@ export function register(server, ctx) {
         "Add a row (item) to a Slack List. `list_id` is the List's F-id or a pasted List URL. `name` " +
         "sets the primary/title column. `fields` is an optional map of other columns keyed by column " +
         "name, key, or id → value (e.g. {\"Status\":\"In progress\"}; select values accept the option " +
-        "label). Use slack_list_info first if you're unsure of the columns.",
+        "label). Message fields take Slack message URLs; attachment fields take existing Slack file IDs; " +
+        "link fields take URLs or {original_url, display_name?, display_as_url?} objects. Scalars and arrays " +
+        "are accepted; [] clears these fields. Use slack_list_info first if you're unsure of the columns.",
       inputSchema: {
         list_id: z.string(),
         name: z.string().optional(),
@@ -92,7 +94,9 @@ export function register(server, ctx) {
       description:
         "Update an existing row in a Slack List. Needs `list_id` and the item's `item_id` (the Rec-id " +
         "from slack_list_items). Pass `name` to change the title and/or `fields` (map of column " +
-        "name/key/id → value, e.g. {\"Status\":\"Done\"}) to change other cells.",
+        "name/key/id → value, e.g. {\"Status\":\"Done\"}) to change other cells. Message fields take Slack " +
+        "message URLs; attachments take existing Slack file IDs; links take URLs or {original_url, " +
+        "display_name?, display_as_url?} objects. Scalars and arrays are accepted; [] clears these fields.",
       inputSchema: {
         list_id: z.string(),
         item_id: z.string(),

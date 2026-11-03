@@ -8347,6 +8347,14 @@ none` for its cases and live gates. Kept as history.
 - [ ] Acks survive a daemon restart (persisted in `config/acks.json`).
 
 ### Slack Lists (control MCP)
+- [x] Message, attachment and link fields use their native Slack payload keys on add/update;
+      scalar and array inputs and empty-array clearing work. Reads preserve message response
+      `value` URLs, camelCase/snake_case link URLs, and attachment IDs (mock API regression).
+- [ ] Live Claude and Codex acceptance: in a private fixture channel with a shared List containing
+      Message, Attachment and Link columns, ask each engine to create a row referencing a known
+      source message/file, then update it to another source and read it back. Click Message to open
+      the exact thread; verify attachment/link targets and clearing with []. Preserve the title,
+      status and other rows. Automated coverage does not mark this live check passed.
 - [ ] `slack_list_create name:"…"` returns a `list_id`; the new List has a **Name** text column +
       a **Status** select (New / In progress / Done). `todo_mode:true` and a custom `columns` schema
       also work. (Needs bot scopes `lists:read` + `lists:write`.)

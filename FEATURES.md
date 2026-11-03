@@ -2473,7 +2473,10 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
   can spin up a tasklist (default **Name** + **Status** New/In progress/Done, or `todo_mode`/custom
   columns) and read/add/update rows. Composio has no Lists coverage, so these call the Slack Web API
   (`slackLists.*`) directly with the workspace bot token (needs `lists:read`/`lists:write`); text cells
-  are wrapped as rich text and select values accept the option label. `list_id` accepts a raw F-id or a
+  are wrapped as rich text and select values accept the option label. Message columns accept source
+  permalinks as native clickable references, attachment columns accept existing Slack file IDs, and
+  link columns accept URLs or labeled link objects; reads retain their URLs and file IDs. Empty arrays
+  clear these typed fields. `list_id` accepts a raw F-id or a
   pasted List URL. A newly created standalone List is immediately granted write access to the current
   conversation, so members can see and edit it; sharing failure is reported instead of returning an
   invisible tracker. Available to any allowed user (no admin gate). → TEST-PLAN: Slack Lists.
