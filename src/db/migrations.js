@@ -1104,4 +1104,18 @@ export const migrations = [
       `);
     },
   },
+  {
+    // Skill catalog access tokens get a KIND: 'catalog' (admin-minted, the library for other
+    // systems and peer gateways — never personal skills) or 'user' (minted by a person for
+    // themselves; resolves to that person's live reach: organization, their channels, their own
+    // personal skills). Existing rows are catalog tokens.
+    version: 39,
+    up(db) {
+      db.exec(`
+        ALTER TABLE skill_access_tokens ADD COLUMN kind TEXT NOT NULL DEFAULT 'catalog';
+        ALTER TABLE skill_access_tokens ADD COLUMN owner_id TEXT NOT NULL DEFAULT '';
+        CREATE INDEX IF NOT EXISTS idx_skill_access_tokens_owner ON skill_access_tokens(owner_id);
+      `);
+    },
+  },
 ];

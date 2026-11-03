@@ -1,5 +1,30 @@
 # ChannelGate — Test Plan
 
+## User-level skill catalog tokens (2026-11-03)
+
+- [x] Automated: `node scripts/run-tests.mjs test/user-skill-tokens.test.js` (then
+  `test/skills-standalone.test.js`, `test/skills-admin-api.test.js`, `test/skills-admin-ui.test.js`)
+  — owner-only mint/list/revoke, API principal and unapproved users refused, the per-person cap;
+  a user token's reach over the real endpoint (library, admitted channel's section, own personal;
+  not another's personal, not an admins-only channel's section, not a non-discoverable library
+  skill until granted), edit rules per tier, creation targets, no `sync`; the token dies and
+  revives with the owner's approval; an admin's token reaches the library but no one else's
+  personal skill; a catalog token never lists/reads/exports/edits a personal skill; the bearer
+  gate runs before the body parser and bad tokens back off with 429.
+- [x] `npm run check:static`, `npm run secret-scan`.
+- [ ] Live, engine-independent (HTTP): with a catalog token holding `read,sync`, run
+  `library_export` from a laptop MCP client; expected: library skills only, no personal skill
+  slug. Revoke the token in the admin UI; the next call answers 401.
+- [ ] Live, Claude AND Codex: in `cg-testing-<engine>-bash` as Apps (approved, non-admin) send
+  “Create a personal skill token called laptop-test and show me how to use it.” Expected: the
+  reply shows a `cgs_…` value once, the endpoint URL and the Claude Code command. From a laptop,
+  `claude mcp add --transport http channelgate-skills <url> --header "Authorization: Bearer <value>"`
+  then `library_search_skills` lists the channel's section skill and Apps' personal skill, not a
+  skill of `cg-testing-<engine>-admin` and not another person's personal skill;
+  `library_update_skill` on an organization skill answers “organization skills are changed by
+  admins”. Then “Revoke my skill token laptop-test”: the next laptop call answers 401. PASS when
+  both engines show the same, and the admin UI lists the token as kind user with Apps' id.
+
 ## Catalog-first skill authoring instructions (2026-11-03)
 
 Validation: 42/42 existing workspace materialization and reconciliation checks passed.

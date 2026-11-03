@@ -614,6 +614,9 @@ test("every registered gateway tool is consciously classified as gated or open (
     // operator decision 2026-09-05: a member's OWN skill tier (what only their runs carry) is
     // self-service like starring in a skill library — reversible, affects nobody else, no card.
     "add_my_skills", "remove_my_skills",
+    // personal skill catalog tokens are self-service: the owner mints, lists and revokes their own,
+    // and the token reaches only what its owner reaches (skills/token-scope.js)
+    "create_my_skill_token", "list_my_skill_tokens", "revoke_my_skill_token",
     // operator decision 2026-09-27: personal and CHANNEL skills are their author's / the channel
     // members' and never wait for anyone. The handlers enforce the tier (a non-admin's organization
     // request becomes a channel skill plus an admin proposal; a full catalog delete is an admin's)

@@ -30,6 +30,14 @@ product overview.
 
 ## Unreleased
 
+- User-level skill catalog tokens: a person mints their own bearer for `POST /mcp/skills` from
+  chat (`create_my_skill_token`, `list_my_skill_tokens`, `revoke_my_skill_token`); it acts as that
+  person — organization skills, the skills of channels that admit them, their own personal skills,
+  resolved live, with the chat edit rules and never the library export — and dies with their
+  approval. Admin-minted catalog tokens remain the library for other systems and peer gateways
+  and never reach a personal skill in any scope. The endpoint verifies the bearer before parsing
+  the body and backs off invalid tokens. Migration 39.
+
 - Preserve channel archival across delayed Slack joins and concurrent admin resets; reconcile missed removals/rejoins after startup or reconnect, pausing workspace updates until bot membership is verified.
 
 - Fix Slack List message references, attachments and URL fields so agents can populate clickable source links and read them back.
