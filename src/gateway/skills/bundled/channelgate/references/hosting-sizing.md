@@ -40,9 +40,14 @@ Other tiers:
 
 ## Recommended providers (estimated monthly totals)
 
+The original estimates below are dated 2026-09-22. The Contabo option was checked against its
+[product documentation](https://docs.contabo.com/docs/servers-hosting/vps/) on 2026-11-03;
+confirm current prices and plan details at checkout.
+
 | Provider and plan | Region | What you get | Estimated total/month |
 |---|---|---|---|
 | **Hetzner Cloud CCX23** — first choice | Germany (fsn1, nbg1), Finland (hel1) | 4 dedicated vCPU, 16 GB, 160 GB NVMe, 20 TB traffic | **≈ €25** (€24.49 + €0.50 IPv4); ≈ €30 with Hetzner backups (+20%) |
+| **[Contabo Cloud VPS 8](https://contabo.com/)** — budget alternative | EU or another available region | 8 shared vCPU, 24 GB RAM, 300 GB SSD | Check [current pricing](https://contabo.com/en/pricing/); region, term, tax and add-ons affect the total |
 | **netcup VPS 2000 G12** — budget/pilot | Nuremberg, Vienna, Amsterdam | 8 shared vCore, 16 GB ECC DDR5, 512 GB NVMe, IPv4 included | **≈ €16** (€19.25 incl. 19% German VAT) |
 | **RoLeaf Enterprise** — Romanian hosting | Romania | 8 vCPU, 16 GB, 240 GB SSD, 8 TB traffic | **≈ €32** |
 | **Google Cloud `n4-standard-4`** — when a hyperscaler is required | `europe-west4` (Netherlands) | 4 vCPU, 16 GB, 150 GB `pd-balanced`, static IPv4 | **≈ $159 (≈ €139)** on demand; **≈ $108 (≈ €94)** with a 1-year commitment; internet egress extra (≈ $0.12/GB) |
@@ -53,7 +58,11 @@ How to choose:
   the disk already covers 150 GB, and 20 TB of traffic is included. It has an official CLI
   (`hcloud server create --type ccx23 --image ubuntu-24.04 --location fsn1 ...`), a REST API and a
   Terraform provider; cloud-init user data can install ChannelGate unattended on first boot.
-- **netcup** is the cheapest serious box, but its cores are shared: CPU steal shows up exactly when
+- **Contabo** offers a budget alternative. Its Cloud VPS plans use shared cores; start with
+  `MAX_CONCURRENT_RUNS=2` and raise after measuring your workload. For dedicated cores, compare
+  Contabo’s Max Performance VPS (VDS) family. The published specs are a sizing reference, not a
+  ChannelGate performance benchmark.
+- **netcup** is another budget option, but its cores are shared: CPU steal shows up exactly when
   several channels run turns at once. Treat it as a pilot or low-traffic server.
 - **RoLeaf** fits when the customer wants the server and data physically in Romania. Larger
   Romanian providers with 4 vCPU/16 GB plans (ClausWeb CloudVPS3 ≈ €75, Hostico vps:go3 ≈ €64)
