@@ -113,13 +113,44 @@ function noteFallback(surface, error) {
 // means the session is `processing`, an empty one `active`. `loadingMessages` are the prominent
 // loading copy (already normalized by the caller). Resolves true when Slack accepted the write on
 // at least one surface, false when this thread can carry no status at all.
-export async function setAgentSessionStatus(client, { channel, threadTs, phrase = "", loadingMessages = [], status = "", username = "", channelSession = false } = {}) {
+// Serialize lifecycle requests per client/session so a slow terminal clear cannot land
+// after a successor's processing request. Obsolete producers are checked again after awaits.
+const statusTails = new WeakMap();
+export function setAgentSessionStatus(client, args = {}) {
+  let tails = statusTails.get(client);
+  if (!tails) { tails = new Map(); statusTails.set(client, tails); }
+  const key = `${args.channel}:${args.threadTs || ""}`;
+  const previous = tails.get(key);
+  const write = () => writeAgentSessionStatus(client, args);
+  const current = previous ? previous.catch(() => {}).then(write) : write();
+  tails.set(key, current);
+  const cleanup = () => { if (tails.get(key) === current) tails.delete(key); };
+  current.then(cleanup, cleanup);
+  return current;
+}
+
+async function writeAgentSessionStatus(client, { channel, threadTs, phrase = "", loadingMessages = [], status = "", username = "", channelSession = false, force = false, isCurrent = () => true } = {}) {
   // A code channel is one session for the whole channel and is addressed by channel id alone
   // (Slack refuses a thread_ts there); the legacy per-thread bridge has no such surface.
-  if (!threadTs && !channelSession) return false;
+  if ((!threadTs && !channelSession) || !isCurrent()) return false;
   const state = threadState(`${channel}:${threadTs || ""}`);
   const nativeStatus = status || (phrase ? SESSION_STATUS.processing : SESSION_STATUS.active);
   let nativeAccepted = false;
+  let legacyAccepted = false;
+  const writeLegacy = async () => {
+    if (state.legacyOff || channelSession) return;
+    try {
+      await client.apiCall("assistant.threads.setStatus", {
+        channel_id: channel, thread_ts: threadTs, status: phrase,
+        ...(loadingMessages.length ? { loading_messages: loadingMessages } : {}),
+      });
+      legacyAccepted = true;
+    } catch { state.legacyOff = true; }
+  };
+  // The legacy bridge may affect the native lifecycle. A terminal clear must end
+  // with native active, never with a compatibility write after it.
+  if (!phrase) await writeLegacy();
+  if (!isCurrent()) return legacyAccepted;
   if (modes.status === "native" && !state.nativeOff) {
     const now = Date.now();
     const name = [...String(username || "").replace(/[\x00-\x1f\x7f]/g, " ").replace(/\s+/g, " ").trim()].slice(0, 200).join("");
@@ -128,7 +159,7 @@ export async function setAgentSessionStatus(client, { channel, threadTs, phrase 
     const nameChanged = customize && state.username !== name;
     // Asserted on every transition; a steady `processing` is re-asserted on a slow cadence so a
     // long turn never hits the hour expiry, and a steady `active` is never repeated.
-    const due = state.native !== nativeStatus || nameChanged
+    const due = force || state.native !== nativeStatus || nameChanged
       || (nativeStatus === SESSION_STATUS.processing && now - state.nativeAt >= NATIVE_REASSERT_MS);
     if (due) {
       try {
@@ -168,19 +199,8 @@ export async function setAgentSessionStatus(client, { channel, threadTs, phrase 
       nativeAccepted = true;
     }
   }
-  if (state.legacyOff || channelSession) return nativeAccepted;
-  try {
-    await client.apiCall("assistant.threads.setStatus", {
-      channel_id: channel,
-      thread_ts: threadTs,
-      status: phrase,
-      ...(loadingMessages.length ? { loading_messages: loadingMessages } : {}),
-    });
-    return true;
-  } catch {
-    state.legacyOff = true;
-    return nativeAccepted;
-  }
+  if (phrase && isCurrent()) await writeLegacy();
+  return nativeAccepted || legacyAccepted;
 }
 
 // What a thread's session is known to be, for tests and the stop handler.

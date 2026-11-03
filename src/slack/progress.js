@@ -50,7 +50,7 @@ function normalizeLoadingMessage(message) {
 // A non-empty `status` means the turn is working (the agent session goes `processing`, which is
 // what shows Slack's native Stop button); "" clears it (`active`). The phrase and the loading
 // messages only reach the legacy surface — see agent-sessions.js for the two surfaces.
-export function setAssistantStatus(client, channel, threadTs, status, loadingMessages = [], { username = status ? "AI agent" : "", channelSession = false } = {}) {
+export function setAssistantStatus(client, channel, threadTs, status, loadingMessages = [], { username = status ? "AI agent" : "", channelSession = false, isCurrent } = {}) {
   // A code channel's session is the channel's own (no thread); every other session is a thread's.
   if (!threadTs && !channelSession) return Promise.resolve(false);
   const key = `${channel}:${threadTs || ""}`;
@@ -61,15 +61,15 @@ export function setAssistantStatus(client, channel, threadTs, status, loadingMes
   const normalizedLoadingMessages = loadingMessages
     .slice(0, SLACK_LOADING_MESSAGE_MAX_COUNT)
     .map(normalizeLoadingMessage);
-  return setAgentSessionStatus(client, { channel, threadTs, phrase: status, loadingMessages: normalizedLoadingMessages, username, channelSession })
+  return setAgentSessionStatus(client, { channel, threadTs, phrase: status, loadingMessages: normalizedLoadingMessages, username, channelSession, isCurrent })
     .then((accepted) => {
       // Not an assistant thread / not a member / unusable thread_ts — fall back to the placeholder
       // edit, and stop asking for this thread.
-      if (!accepted && status) assistantStatusOff.add(key);
+      if (!accepted && status && (!isCurrent || isCurrent())) assistantStatusOff.add(key);
       return accepted;
     })
     .catch(() => {
-      if (status) assistantStatusOff.add(key);
+      if (status && (!isCurrent || isCurrent())) assistantStatusOff.add(key);
       return false;
     });
 }
@@ -154,7 +154,14 @@ function activeMarkdownFence(text) {
 // RE-ASSERTS the current phrase even when unchanged — a cleared line comes back within one tick
 // instead of staying dark until the next phase change. stop() clears it and waits for that clear
 // attempt before the answer stream is finalized.
+const statusOwners = new WeakMap();
 function startStatusAnimation(client, channel, threadTs, { channelSession = false } = {}) {
+  let owners = statusOwners.get(client);
+  if (!owners) { owners = new Map(); statusOwners.set(client, owners); }
+  const key = `${channel}:${threadTs || ""}`;
+  const owner = Symbol();
+  owners.set(key, owner);
+  const isCurrent = () => owners.get(key) === owner;
   let activity = "is gathering information…";
   let runtime = "";
   let nativeName = "AI agent";
@@ -189,7 +196,7 @@ function startStatusAnimation(client, channel, threadTs, { channelSession = fals
   // phrase superseded before it ever reached Slack is dropped instead of being sent late.
   const write = async (status, loadingMessages, username) => {
     if (disabled && status) return;
-    const accepted = await setAssistantStatus(client, channel, threadTs, status, loadingMessages, { username, channelSession });
+    const accepted = await setAssistantStatus(client, channel, threadTs, status, loadingMessages, { username, channelSession, isCurrent });
     if (!accepted && status) disabled = true;
   };
   const pump = () => {
@@ -311,6 +318,7 @@ function startStatusAnimation(client, channel, threadTs, { channelSession = fals
       render();
     },
     afterMessageActivity,
+    finish: () => setAgentSessionStatus(client, { channel, threadTs, channelSession, force: true, isCurrent }),
     // The clear supersedes whatever activity write was still waiting (it can only be stale now)
     // and is the LAST write this thread's status ever receives — `closed` refuses every later
     // queueWrite, so nothing can land after it and resurrect the box. It waits behind at most ONE
@@ -942,11 +950,17 @@ function startStreamingProgress(client, { channel, threadTs, isDM, authorId, tea
   // Terminal status clear, bounded. It is FIRED here and waited on only for the grace period:
   // under workspace rate limiting a status write can sleep for minutes, and an answer that is
   // ready must not sit behind it. The clear stays in flight and still lands afterwards.
-  const clearShimmer = async () => {
-    const cleared = Promise.resolve(shimmer?.stop?.()).catch(() => {});
+  let statusClearTimedOut = false;
+  const clearShimmer = async ({ afterDelivery = false } = {}) => {
+    const cleared = Promise.resolve(shimmer?.stop?.()).then(async () => {
+      // Starting/finalizing a stream can change Slack's lifecycle even when the API fails.
+      // Reassert idle AFTER delivery, bypassing the cache of the earlier pre-delivery clear.
+      if (afterDelivery) await shimmer.finish();
+    }).catch(() => {});
+    if (statusClearTimedOut) return; // one grace budget for the entire terminal path
     let timer = null;
     const grace = new Promise((resolve) => {
-      timer = setTimeout(resolve, STATUS_CLEAR_GRACE_MS);
+      timer = setTimeout(() => { statusClearTimedOut = true; resolve(); }, STATUS_CLEAR_GRACE_MS);
       timer.unref?.();
     });
     await Promise.race([cleared, grace]);
@@ -1189,197 +1203,201 @@ function startStreamingProgress(client, { channel, threadTs, isDM, authorId, tea
       stopped = true;
       stopHeartbeat();
       await clearShimmer();
-      const fullRaw = result?.content || "";
-      const imageBlocks = answerImageBlocks(fullRaw);
-      let imageFilesShared = false;
-      const shareImageFiles = async () => {
-        if (imageFilesShared) return;
-        imageFilesShared = true;
-        await shareAnswerImageFiles({ markdown: fullRaw, cwd: result?.cwd, channel, threadTs, uploadFile });
-      };
-      // What is still OWED to this message. A gateway note (a substituted model) was streamed as
-      // the head of the answer and the orchestrator also carries it on `content` for surfaces with
-      // no stream — so it is subtracted here, and the sentence lands exactly once.
-      // Each streamed note is removed once, wherever it sits; a note the content does not carry is
-      // simply not there to remove. Removing only an exact whole-preface PREFIX delivered a note
-      // twice whenever content ordered the notes differently from the stream.
-      const pending = prefaceParts.reduce((owed, part) => {
-        const at = owed.indexOf(part);
-        return at === -1 ? owed : owed.slice(0, at) + owed.slice(at + part.length);
-      }, fullRaw);
-      const full = pending.trim();
-      // Release any "@name" the holdback buffer was still waiting on (already counted in rawLen).
-      const remainder = mentionStream.flush();
-      if (remainder && !failed && rawLen > 0) enqueue(() => appendCurrent({ markdown_text: remainder }));
-      // Text the live stream never carried: everything past the cap, or the whole answer when
-      // nothing streamed (a tool-only run) and it's longer than one message.
-      let oneShot = "";
-      let overflow = "";
-      if (rawLen === 0) {
-        // Fence-safe split (a raw slice could cut mid-line/mid-``` and corrupt everything after).
-        const parts = chunkMrkdwn(full, MAX_SLACK_CHARS);
-        oneShot = parts[0] || "_(empty response)_";
-        overflow = parts.slice(1).join("\n");
-        if (overflow) oneShot += "\n\n…_(continued below)_";
-      } else if (result?.answerless && full && pending !== streamed) {
-        // These deltas were interim narration, not a final answer. The orchestrator substituted
-        // an authoritative notice, which must survive even when the live stream stayed below
-        // its cap. Use the existing chunked follow-up path so mentions, long notices and terminal
-        // delivery retries retain the same handling as overflow; never repeat ordinary answers.
-        overflow = pending;
-      } else if (truncated) {
-        // The slice is only valid when the final content really is the concatenation of the
-        // streamed deltas (true for Claude; Codex deltas are best-effort and the limit-fallback
-        // prepends a notice that never streamed). On divergence, deliver the full authoritative
-        // answer below instead of a mis-sliced tail.
-        overflow = pending.startsWith(streamed)
-          ? pending.slice(streamed.length)
-          : "_(the live stream above was truncated — full answer:)_\n\n" + pending;
-      }
-      // The requester @-mention rides the LAST message of the reply so they get a notification even
-      // in a channel thread they aren't watching (requesterTag is "" in a DM / author-less post, so
-      // every branch below is a no-op then). When there's overflow, "last" is that trailing
-      // follow-up; otherwise it's the streamed/oneShot message finalized here — and for a pure
-      // streamed answer the tag has to go out as one final delta before stop().
-      const hasOverflow = Boolean(overflow.trim());
-      const tag = requesterTag ? `\n\n${requesterTag}` : "";
-      if (tag && !hasOverflow && rawLen > 0 && !failed) enqueue(() => appendCurrent({ markdown_text: tag }));
-      timeline.finishAgents(); // never leave a native child spinner running after the turn closes
-      timeline.flushActive(); // check off the last tool row before the stream closes
-      await chain; // drain queued appends (incl. the timeline, the remainder + trailing mention)
-      if (!failed) {
-        const fence = rawLen > 0 ? activeMarkdownFence(streamMarkdown) : null;
-        const terminalPayload = {
-          // If nothing was streamed live, send the answer's first part now so the stream never
-          // finalizes with no content (which the API rejects). Resolve mentions in it too; the
-          // requester tag rides here when there's no overflow to carry it.
-          ...(rawLen === 0 ? { markdown_text: resolveMentions(oneShot, dir) + (hasOverflow ? "" : tag) } : {}),
-          ...(rawLen > 0 && fence ? { markdown_text: `\n${fence.marker}` } : {}),
-        };
-        // The streamed message IS the reply: seal the toolbox, remove any retired copy and put
-        // the overflow beneath it. Shared by the first attempt and every recovery below, so an
-        // answer that had to move to a new message never loses its follow-ups.
-        const sealDelivered = async () => {
-          if (!answerStreamer?.ts) return false;
-          await stopTimeline();
-          await cleanupRetiredStreams();
-          // The menu ENDS the reply: with overflow it rides the last follow-up, not the streamed head.
-          if (hasOverflow) {
-            // The composed visuals ride the LAST follow-up together with the footer, so the reply
-            // still ends on one message carrying the takeaway's blocks and the menu.
-            await postChunkedReply(client, channel, threadTs, resolveMentions(mdToMrkdwn(overflow), dir).trim() + tag,
-              footerText(result), footerButtons(result, menu),
-              replyBlocks.length ? { footerBlocks: footerBlocks(result, menu), answerBlocks: replyBlocks } : {});
-          }
-          await shareImageFiles();
-          return true;
-        };
-        // With overflow the footer and menu go under the LAST follow-up (sealDelivered), so the
-        // streamed head closes without them — and without the composed blocks, which follow it.
-        const finalFooterBlocks = hasOverflow ? [] : footerBlocks(result, menu);
-        const composedBlocks = hasOverflow ? [] : replyBlocks;
-        // Terminal block sets, richest first. Slack rejects a whole stopStream for one bad block
-        // without saying which, so a rejected write is retried with ONE suspect removed at a time
-        // — image previews first (a bad/unreachable URL is the known failure), then the agent's
-        // composed blocks, then the feedback controls — before anything else is given up, so a
-        // valid chart is not discarded for a broken image, and nothing ever discards the stats
-        // footer.
-        const plainFooterBlocks = hasOverflow ? [] : footerBlocks(result, menu, { feedback: false });
-        const candidates = [];
-        const addCandidate = (blocks) => {
-          const key = JSON.stringify(blocks);
-          if (!candidates.some((candidate) => candidate.key === key)) candidates.push({ key, blocks });
-        };
-        addCandidate([...imageBlocks, ...composedBlocks, ...finalFooterBlocks]);
-        addCandidate([...composedBlocks, ...finalFooterBlocks]);
-        addCandidate([...imageBlocks, ...finalFooterBlocks]);
-        addCandidate([...imageBlocks, ...composedBlocks, ...plainFooterBlocks]);
-        addCandidate([...composedBlocks, ...plainFooterBlocks]);
-        addCandidate(finalFooterBlocks);
-        addCandidate(plainFooterBlocks);
-        addCandidate([]);
-        const stopBlocks = candidates[0].blocks;
-        const stopWithFooter = () => answerStreamer.stop({
-          ...terminalPayload,
-          ...(stopBlocks.length ? { blocks: stopBlocks } : {}),
-        });
-        try {
-          if (!answerStreamer) answerStreamer = client.chatStream(streamArgs);
-          await stopWithFooter();
-          if (await sealDelivered()) return;
-        } catch (error) {
-          reportStreamFailure("stop", error);
-          // Slack had already ended the stream, so the terminal write — the footer, and for a
-          // tool-only run the answer itself — never landed. Reseed and finish on a live message,
-          // the same recovery the progress card has, instead of dropping to a fallback that must
-          // delete and repost the whole answer.
-          if (isDeadStreamError(error) && (await reseedAnswer())) {
-            try {
-              await stopWithFooter();
-              if (await sealDelivered()) return;
-            } catch (retryError) {
-              reportStreamFailure("stop reseed", retryError);
-            }
-          } else if (isSlackInvalidBlocksError(error)) {
-            // The SDK keeps buffered markdown after a rejected stopStream call, so every retry
-            // sends blocks only — never the terminal markdown a second time: that text is still in
-            // ChatStreamer's buffer from the rejected request. A stop that Slack accepts ends the
-            // stream, so the loop ends on the first success whether or not the seal then lands.
-            let accepted = false;
-            for (const { blocks } of candidates.slice(1)) {
-              try {
-                await answerStreamer.stop(blocks.length ? { blocks } : undefined);
-                accepted = true;
-                break;
-              } catch (retryError) {
-                if (!isSlackInvalidBlocksError(retryError)) break;
-              }
-            }
-            // The seal is outside the loop: a stop Slack accepted has ended the stream, and a
-            // seal that then fails must not make the loop call stop() on a completed stream.
-            if (accepted) {
-              try {
-                if (await sealDelivered()) return;
-              } catch (sealError) {
-                reportStreamFailure("stop seal", sealError);
-              }
-            }
-          }
-          failed = true;
-        }
-      }
-      // Fallback: streaming unavailable — post the whole answer the classic way (chunked). The
-      // footer rides the answer message itself so the recovery never adds a stats-only message.
       try {
-        await discardPartialAnswer();
-        // Any predecessor a rollover or a failed reseed could not remove: the fallback is about to
-        // post the complete answer, and a stranded partial next to it is exactly what this path
-        // exists to prevent.
-        await cleanupRetiredStreams();
-        await postChunkedReply(
-          client,
-          channel,
-          threadTs,
-          // The COMPLETE content, gateway note included: discardPartialAnswer() above removed the
-          // streamed copy this fallback replaces, so nothing of it survives to be duplicated.
-          resolveMentions(mdToMrkdwn(fullRaw.trim()), dir).trim() + tag,
-          footerText(result),
-          footerButtons(result, menu),
-          {
-            footerBlocks: footerBlocks(result, menu),
-            answerBlocks: [...imageBlocks, ...replyBlocks],
-          },
-        );
-        await stopTimeline();
-        await shareImageFiles();
-      } catch (error) {
-        // Both delivery surfaces failed. The outer run handler will call stop(), but this finalize
-        // already owns the terminal state, so close and drain the Plan here before rethrowing.
-        // A later stop() only awaits the settled shared chain and cannot duplicate this update.
-        timeline.interruptReport();
-        await chain;
-        await stopTimeline();
-        throw error;
+        const fullRaw = result?.content || "";
+        const imageBlocks = answerImageBlocks(fullRaw);
+        let imageFilesShared = false;
+        const shareImageFiles = async () => {
+          if (imageFilesShared) return;
+          imageFilesShared = true;
+          await shareAnswerImageFiles({ markdown: fullRaw, cwd: result?.cwd, channel, threadTs, uploadFile });
+        };
+        // What is still OWED to this message. A gateway note (a substituted model) was streamed as
+        // the head of the answer and the orchestrator also carries it on `content` for surfaces with
+        // no stream — so it is subtracted here, and the sentence lands exactly once.
+        // Each streamed note is removed once, wherever it sits; a note the content does not carry is
+        // simply not there to remove. Removing only an exact whole-preface PREFIX delivered a note
+        // twice whenever content ordered the notes differently from the stream.
+        const pending = prefaceParts.reduce((owed, part) => {
+          const at = owed.indexOf(part);
+          return at === -1 ? owed : owed.slice(0, at) + owed.slice(at + part.length);
+        }, fullRaw);
+        const full = pending.trim();
+        // Release any "@name" the holdback buffer was still waiting on (already counted in rawLen).
+        const remainder = mentionStream.flush();
+        if (remainder && !failed && rawLen > 0) enqueue(() => appendCurrent({ markdown_text: remainder }));
+        // Text the live stream never carried: everything past the cap, or the whole answer when
+        // nothing streamed (a tool-only run) and it's longer than one message.
+        let oneShot = "";
+        let overflow = "";
+        if (rawLen === 0) {
+          // Fence-safe split (a raw slice could cut mid-line/mid-``` and corrupt everything after).
+          const parts = chunkMrkdwn(full, MAX_SLACK_CHARS);
+          oneShot = parts[0] || "_(empty response)_";
+          overflow = parts.slice(1).join("\n");
+          if (overflow) oneShot += "\n\n…_(continued below)_";
+        } else if (result?.answerless && full && pending !== streamed) {
+          // These deltas were interim narration, not a final answer. The orchestrator substituted
+          // an authoritative notice, which must survive even when the live stream stayed below
+          // its cap. Use the existing chunked follow-up path so mentions, long notices and terminal
+          // delivery retries retain the same handling as overflow; never repeat ordinary answers.
+          overflow = pending;
+        } else if (truncated) {
+          // The slice is only valid when the final content really is the concatenation of the
+          // streamed deltas (true for Claude; Codex deltas are best-effort and the limit-fallback
+          // prepends a notice that never streamed). On divergence, deliver the full authoritative
+          // answer below instead of a mis-sliced tail.
+          overflow = pending.startsWith(streamed)
+            ? pending.slice(streamed.length)
+            : "_(the live stream above was truncated — full answer:)_\n\n" + pending;
+        }
+        // The requester @-mention rides the LAST message of the reply so they get a notification even
+        // in a channel thread they aren't watching (requesterTag is "" in a DM / author-less post, so
+        // every branch below is a no-op then). When there's overflow, "last" is that trailing
+        // follow-up; otherwise it's the streamed/oneShot message finalized here — and for a pure
+        // streamed answer the tag has to go out as one final delta before stop().
+        const hasOverflow = Boolean(overflow.trim());
+        const tag = requesterTag ? `\n\n${requesterTag}` : "";
+        if (tag && !hasOverflow && rawLen > 0 && !failed) enqueue(() => appendCurrent({ markdown_text: tag }));
+        timeline.finishAgents(); // never leave a native child spinner running after the turn closes
+        timeline.flushActive(); // check off the last tool row before the stream closes
+        await chain; // drain queued appends (incl. the timeline, the remainder + trailing mention)
+        if (!failed) {
+          const fence = rawLen > 0 ? activeMarkdownFence(streamMarkdown) : null;
+          const terminalPayload = {
+            // If nothing was streamed live, send the answer's first part now so the stream never
+            // finalizes with no content (which the API rejects). Resolve mentions in it too; the
+            // requester tag rides here when there's no overflow to carry it.
+            ...(rawLen === 0 ? { markdown_text: resolveMentions(oneShot, dir) + (hasOverflow ? "" : tag) } : {}),
+            ...(rawLen > 0 && fence ? { markdown_text: `\n${fence.marker}` } : {}),
+          };
+          // The streamed message IS the reply: seal the toolbox, remove any retired copy and put
+          // the overflow beneath it. Shared by the first attempt and every recovery below, so an
+          // answer that had to move to a new message never loses its follow-ups.
+          const sealDelivered = async () => {
+            if (!answerStreamer?.ts) return false;
+            await stopTimeline();
+            await cleanupRetiredStreams();
+            // The menu ENDS the reply: with overflow it rides the last follow-up, not the streamed head.
+            if (hasOverflow) {
+              // The composed visuals ride the LAST follow-up together with the footer, so the reply
+              // still ends on one message carrying the takeaway's blocks and the menu.
+              await postChunkedReply(client, channel, threadTs, resolveMentions(mdToMrkdwn(overflow), dir).trim() + tag,
+                footerText(result), footerButtons(result, menu),
+                replyBlocks.length ? { footerBlocks: footerBlocks(result, menu), answerBlocks: replyBlocks } : {});
+            }
+            await shareImageFiles();
+            return true;
+          };
+          // With overflow the footer and menu go under the LAST follow-up (sealDelivered), so the
+          // streamed head closes without them — and without the composed blocks, which follow it.
+          const finalFooterBlocks = hasOverflow ? [] : footerBlocks(result, menu);
+          const composedBlocks = hasOverflow ? [] : replyBlocks;
+          // Terminal block sets, richest first. Slack rejects a whole stopStream for one bad block
+          // without saying which, so a rejected write is retried with ONE suspect removed at a time
+          // — image previews first (a bad/unreachable URL is the known failure), then the agent's
+          // composed blocks, then the feedback controls — before anything else is given up, so a
+          // valid chart is not discarded for a broken image, and nothing ever discards the stats
+          // footer.
+          const plainFooterBlocks = hasOverflow ? [] : footerBlocks(result, menu, { feedback: false });
+          const candidates = [];
+          const addCandidate = (blocks) => {
+            const key = JSON.stringify(blocks);
+            if (!candidates.some((candidate) => candidate.key === key)) candidates.push({ key, blocks });
+          };
+          addCandidate([...imageBlocks, ...composedBlocks, ...finalFooterBlocks]);
+          addCandidate([...composedBlocks, ...finalFooterBlocks]);
+          addCandidate([...imageBlocks, ...finalFooterBlocks]);
+          addCandidate([...imageBlocks, ...composedBlocks, ...plainFooterBlocks]);
+          addCandidate([...composedBlocks, ...plainFooterBlocks]);
+          addCandidate(finalFooterBlocks);
+          addCandidate(plainFooterBlocks);
+          addCandidate([]);
+          const stopBlocks = candidates[0].blocks;
+          const stopWithFooter = () => answerStreamer.stop({
+            ...terminalPayload,
+            ...(stopBlocks.length ? { blocks: stopBlocks } : {}),
+          });
+          try {
+            if (!answerStreamer) answerStreamer = client.chatStream(streamArgs);
+            await stopWithFooter();
+            if (await sealDelivered()) return;
+          } catch (error) {
+            reportStreamFailure("stop", error);
+            // Slack had already ended the stream, so the terminal write — the footer, and for a
+            // tool-only run the answer itself — never landed. Reseed and finish on a live message,
+            // the same recovery the progress card has, instead of dropping to a fallback that must
+            // delete and repost the whole answer.
+            if (isDeadStreamError(error) && (await reseedAnswer())) {
+              try {
+                await stopWithFooter();
+                if (await sealDelivered()) return;
+              } catch (retryError) {
+                reportStreamFailure("stop reseed", retryError);
+              }
+            } else if (isSlackInvalidBlocksError(error)) {
+              // The SDK keeps buffered markdown after a rejected stopStream call, so every retry
+              // sends blocks only — never the terminal markdown a second time: that text is still in
+              // ChatStreamer's buffer from the rejected request. A stop that Slack accepts ends the
+              // stream, so the loop ends on the first success whether or not the seal then lands.
+              let accepted = false;
+              for (const { blocks } of candidates.slice(1)) {
+                try {
+                  await answerStreamer.stop(blocks.length ? { blocks } : undefined);
+                  accepted = true;
+                  break;
+                } catch (retryError) {
+                  if (!isSlackInvalidBlocksError(retryError)) break;
+                }
+              }
+              // The seal is outside the loop: a stop Slack accepted has ended the stream, and a
+              // seal that then fails must not make the loop call stop() on a completed stream.
+              if (accepted) {
+                try {
+                  if (await sealDelivered()) return;
+                } catch (sealError) {
+                  reportStreamFailure("stop seal", sealError);
+                }
+              }
+            }
+            failed = true;
+          }
+        }
+        // Fallback: streaming unavailable — post the whole answer the classic way (chunked). The
+        // footer rides the answer message itself so the recovery never adds a stats-only message.
+        try {
+          await discardPartialAnswer();
+          // Any predecessor a rollover or a failed reseed could not remove: the fallback is about to
+          // post the complete answer, and a stranded partial next to it is exactly what this path
+          // exists to prevent.
+          await cleanupRetiredStreams();
+          await postChunkedReply(
+            client,
+            channel,
+            threadTs,
+            // The COMPLETE content, gateway note included: discardPartialAnswer() above removed the
+            // streamed copy this fallback replaces, so nothing of it survives to be duplicated.
+            resolveMentions(mdToMrkdwn(fullRaw.trim()), dir).trim() + tag,
+            footerText(result),
+            footerButtons(result, menu),
+            {
+              footerBlocks: footerBlocks(result, menu),
+              answerBlocks: [...imageBlocks, ...replyBlocks],
+            },
+          );
+          await stopTimeline();
+          await shareImageFiles();
+        } catch (error) {
+          // Both delivery surfaces failed. The outer run handler will call stop(), but this finalize
+          // already owns the terminal state, so close and drain the Plan here before rethrowing.
+          // A later stop() only awaits the settled shared chain and cannot duplicate this update.
+          timeline.interruptReport();
+          await chain;
+          await stopTimeline();
+          throw error;
+        }
+      } finally {
+        await clearShimmer({ afterDelivery: true });
       }
     },
     // Abort/error path: close the stream so the partial message finalizes cleanly (or clear the

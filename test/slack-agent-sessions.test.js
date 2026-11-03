@@ -82,8 +82,8 @@ test("a status write asserts the native lifecycle once per transition and carrie
     // Still processing: no second native write for a phrase change.
     ["assistant.threads.setStatus", { channel_id: "C1", thread_ts: "1.1", status: "is using Bash…" }],
     // The clear is the transition Slack never makes on its own.
-    ["agents.sessions.setStatus", { channel_id: "C1", thread_ts: "1.1", status: "active" }],
     ["assistant.threads.setStatus", { channel_id: "C1", thread_ts: "1.1", status: "" }],
+    ["agents.sessions.setStatus", { channel_id: "C1", thread_ts: "1.1", status: "active" }],
   ]);
   assert.equal(nativeSessionStatus("C1", "1.1"), "active");
   assert.equal(await setAgentSessionStatus(client, { channel: "C1", threadTs: "1.1", phrase: "" }), true);
@@ -304,4 +304,45 @@ test("the manifest subscribes to the agent session events and registers /model",
   assert.ok(manifest.oauth_config.scopes.bot.includes("chat:write"));
   assert.ok(manifest.oauth_config.scopes.bot.includes("chat:write.customize"));
   assert.ok(manifest.features.slash_commands.some((command) => command.command === "/model"));
+});
+
+test("terminal native active follows compatibility clear and can override delivery side effects", async () => {
+  let actual = "processing";
+  const calls = [];
+  const client = { apiCall: async (method, payload) => {
+    calls.push(method);
+    actual = method === "agents.sessions.setStatus" ? payload.status : "processing";
+  } };
+  await setAgentSessionStatus(client, { channel: "C_FINAL", threadTs: "1", phrase: "working" });
+  await setAgentSessionStatus(client, { channel: "C_FINAL", threadTs: "1" });
+  assert.equal(actual, "active", "legacy clear cannot undo native completion");
+  actual = "processing"; // failed stream attempt changed Slack after the pre-delivery clear
+  await setAgentSessionStatus(client, { channel: "C_FINAL", threadTs: "1", force: true });
+  assert.equal(actual, "active");
+  assert.equal(calls.at(-1), "agents.sessions.setStatus");
+});
+
+test("an obsolete terminal clear cannot overwrite its successor after a slow legacy request", async () => {
+  let owner = "old";
+  let release;
+  const gate = new Promise((resolve) => { release = resolve; });
+  const writes = [];
+  const client = { apiCall: async (method, payload) => {
+    writes.push([method, payload.status]);
+    if (method === "assistant.threads.setStatus" && payload.status === "") await gate;
+  } };
+  const oldClear = setAgentSessionStatus(client, { channel: "C_OWNER", threadTs: "1", force: true, isCurrent: () => owner === "old" });
+  owner = "new";
+  const successor = setAgentSessionStatus(client, { channel: "C_OWNER", threadTs: "1", phrase: "working", isCurrent: () => owner === "new" });
+  release();
+  await Promise.all([oldClear, successor]);
+  assert.deepEqual(writes.filter(([method]) => method === "agents.sessions.setStatus").map(([, status]) => status), ["processing"]);
+});
+
+test("an obsolete activity write cannot disable its healthy successor's status", async () => {
+  const calls = [];
+  const client = { apiCall: async (method, payload) => { calls.push([method, payload.status]); } };
+  await setAssistantStatus(client, "C_OBSOLETE_ACTIVITY", "1", "working", [], { isCurrent: () => false });
+  await setAssistantStatus(client, "C_OBSOLETE_ACTIVITY", "1", "working", [], { isCurrent: () => true });
+  assert.ok(calls.some(([method, status]) => method === "agents.sessions.setStatus" && status === "processing"));
 });

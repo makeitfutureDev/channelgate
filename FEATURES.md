@@ -5588,3 +5588,7 @@ sandbox or a new runtime tool.
 
 - Conversation admission identity stays separate from engine-session identity: background/nested agents, known scheduled delivery threads and scheduled question continuations share the existing parent slot. An automation fire without a chat anchor uses its own stable logical conversation identity.
 - Slack archival survives delayed join delivery and concurrent access/runtime resets. Join restoration requires current membership; whole-record settings saves preserve lifecycle admission state. At startup and Socket Mode reconnect, configuration propagation and new runtime launches wait for a complete calling-bot membership snapshot. Missing removal/rejoin events are reconciled from all paginated public/private/group-DM memberships, with periodic reconciliation and retry on incomplete/error responses. A membership API failure pauses verification without falsely archiving channels.
+
+## Slack Connect streaming and terminal session cleanup (2026-11-03)
+
+Streaming uses the requesting user's workspace (`user_team`, otherwise a verified cached user lookup) rather than the bot installation's workspace. A completed reply reasserts native `active` after stream finalization or classic fallback. Compatibility status clears precede native completion, and session writes are serialized with producer ownership checks so a delayed clear cannot override the next turn.

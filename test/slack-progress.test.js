@@ -275,7 +275,7 @@ test("persistent toolbox appends immediately restore the temporary assistant sta
   const client = {
     apiCall: async (method, payload) => {
       calls.push(["apiCall", method, payload]);
-      visibleStatus = payload.status;
+      if (method === "assistant.threads.setStatus") visibleStatus = payload.status;
     },
     chatStream: () => streamer,
     chat: { postMessage: async () => {}, update: async () => {} },
@@ -555,7 +555,7 @@ test("answer-stream appends restore the temporary status on a bounded cadence", 
   const client = {
     apiCall: async (method, payload) => {
       calls.push(["apiCall", method, payload]);
-      visibleStatus = payload.status;
+      if (method === "assistant.threads.setStatus") visibleStatus = payload.status;
     },
     chatStream: () => streamer,
     chat: { postMessage: async () => {}, update: async () => {} },
@@ -622,7 +622,7 @@ test("assistant status writes are serialized so the terminal clear is last", asy
   await stopPromise;
 
   assert.equal(maxInFlight, 1, "status requests must not race or apply out of order");
-  assert.equal(applied.at(-1).status, "", "no stale activity update may land after the terminal clear");
+  assert.equal(applied.at(-1).status, "active", "native idle must be the last status write");
   const native = applied.filter((p) => p.method === "agents.sessions.setStatus");
   assert.deepEqual(native.map((p) => [p.status, p.username]), [
     ["processing", "AI agent"], ["active", "GPT-6.1 Sol"],
@@ -1379,7 +1379,7 @@ test("progress-report toolbox writes restore the independent temporary assistant
   let visibleStatus = "";
   const streamWrites = [];
   const client = {
-    apiCall: async (_method, payload) => { visibleStatus = payload.status; },
+    apiCall: async (method, payload) => { if (method === "assistant.threads.setStatus") visibleStatus = payload.status; },
     chatStream: () => ({
       ts: "1720000000.000100",
       append: async (payload) => {
@@ -2766,7 +2766,7 @@ test("a jammed assistant status never holds back the answer, and still clears af
   releaseStatus();
   await new Promise((resolve) => setImmediate(resolve));
   const statuses = calls.filter((call) => call[0] === "apiCall").map((call) => call[2].status);
-  assert.equal(statuses.at(-1), "", "the terminal clear is still attempted once Slack answers");
+  assert.equal(statuses.at(-1), "active", "the terminal native clear is still attempted once Slack answers");
 });
 
 // The other half of the same guard: the status queue holds ONE in-flight write and ONE pending
@@ -3129,4 +3129,25 @@ test("native Stop label carries resolved effort and live phases, then clears act
   }
   assert.equal(native.at(-1).status, "active");
   assert.equal(native.at(-1).username, "Opus 4.8 (high)");
+});
+
+test("failed stream fallback clears native processing after delivery", async () => {
+  let actual = "active";
+  const calls = [];
+  const client = {
+    apiCall: async (method, payload) => {
+      calls.push(method);
+      actual = method === "agents.sessions.setStatus" ? payload.status : "processing";
+    },
+    chatStream: () => ({ stop: async () => {
+      actual = "processing";
+      throw Object.assign(new Error("user_not_found"), { data: { error: "user_not_found" } });
+    } }),
+    chat: { postMessage: async () => { calls.push("delivered"); return { ts: "2" }; } },
+  };
+  const progress = startProgress("stream", client, "C_CONNECT_FINAL", "1", { authorId: "U1", teamId: "T1" });
+  await progress.finalize({ content: "Done", durationMs: 1, usage: {} });
+  assert.equal(actual, "active");
+  assert.equal(calls.at(-1), "agents.sessions.setStatus");
+  assert.ok(calls.lastIndexOf("agents.sessions.setStatus") > calls.indexOf("delivered"));
 });

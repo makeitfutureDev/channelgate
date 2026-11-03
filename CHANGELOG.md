@@ -3119,3 +3119,7 @@ copying cross-channel auto-memory.
   injected into `CLAUDE.md`; visible working folders under `~/Slack Agent/<channel>`.
 - Optional **admin-UI password**; one-command installer; encrypted config **backup/restore**;
   **launchd** service with `npm run update`.
+
+### Fixed — Slack Connect running indicator
+
+Use the sender's workspace for streaming replies in shared channels and clear the native running status after delivery, including stream failures, without allowing an older turn to clear its successor.

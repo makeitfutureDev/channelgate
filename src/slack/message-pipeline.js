@@ -1,3 +1,4 @@
+import { resolveStreamRecipientTeam } from "./stream-recipient.js";
 import { autoApproveSlackUser } from "../gateway/user-auto-approval.js";
 import { assertEngineSelectable } from "../engines/selection.js";
 // The message pipeline (extracted from slack/app.js — the 2026-08 restructure notes (internal repo) Phase 2.5): gating,
@@ -1580,7 +1581,8 @@ export async function processMessageEvent(event, client, { botUserId = "", teamI
     // spent the moment the run resolves, on every branch below, and exactly once.
     const bankUsage = createUsageBank();
     try {
-      // Directory lookup above may have yielded after queue ownership. A stopped/steered owner
+      const recipientTeam = await resolveStreamRecipientTeam(client, event, teamId);
+      // Directory and recipient lookup may have yielded after queue ownership. A stopped/steered owner
       // must not create a new processing session while its successor is waiting for this slot.
       if (handle.controller.signal.aborted || isForceStopping()) {
         if (handle.controller.signal.aborted) markTerminal();
@@ -1590,7 +1592,7 @@ export async function processMessageEvent(event, client, { botUserId = "", teamI
       status = startProgress(getProgressView(), client, event.channel, replyTs, {
         isDM: meta.isDM,
         authorId: event.user,
-        teamId,
+        teamId: recipientTeam,
         dir,
         // A code channel's session status is the channel's (no thread), whatever thread the reply uses.
         channelSession: codeChannel,
