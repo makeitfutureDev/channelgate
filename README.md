@@ -353,17 +353,20 @@ license. See [why teams choose a self-hosted agent gateway](./docs/WHY.md) for m
 noncommercial use. It is not OSI open-source software, and no version
 is relicensed automatically.
 
-| | Registered channels | Registered users | AI messages per conversation per month |
-| --- | --- | --- | --- |
-| **No key** — install and run | 10 (one active per month) | 10 | 500 |
-| **Registered (free key)** — an account with your email | 10 | 10 | 500 |
-| **Enterprise key** — agreement with Makeitfuture | unlimited by default | unlimited by default | unlimited by default |
+| | Registered channels | Registered users | Active conversations per channel per UTC month | AI runs per channel per UTC month |
+| --- | --- | --- | --- | --- |
+| **No key** — install and run | 10 (one active per month) | 10 | 100 in the active channel | 500 |
+| **Registered (free key)** — an account with your email | 10 | 10 | 100 in each channel | 500 |
+| **Enterprise key** — agreement with Makeitfuture | unlimited by default | unlimited by default | unlimited by default | unlimited by default |
 
-A free key allows up to 100 active conversations per UTC month. Registered installations support
-up to 10 channels (including DMs) and 10 users, at 500 AI messages per conversation per month,
-with one month (30 days) of cost-tracking history. Enterprise
-removes these default caps and adds per-channel approved harnesses. A key belongs to the
-organization that operates the deployment; core confinement remains available in every tier.
+A conversation here is a chat thread, distinct from its registered channel. A free key supports
+up to 10 channels (including DMs) and 10 users, with up to 100 active conversations **in each
+channel per UTC month**, 500 AI runs per channel per month, and one month (30 days) of
+cost-tracking history. Repeated messages in an admitted thread do not consume another
+conversation slot. Thread counting starts with activity after the upgrade; old threads are
+counted when next used. Enterprise removes these default caps and adds per-channel approved
+harnesses. A key belongs to the organization that operates the deployment; core confinement
+remains available in every tier.
 Definitions, the offline grace period, and exactly what a deployment reports are in
 [`docs/LICENSE-KEYS.md`](./docs/LICENSE-KEYS.md).
 

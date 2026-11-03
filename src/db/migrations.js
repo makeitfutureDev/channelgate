@@ -1090,4 +1090,18 @@ export const migrations = [
       `);
     },
   },
+  {
+    // Track real thread admissions from this version onward; historical runs cannot reliably
+    // reconstruct their thread identity, so no synthetic backfill is created.
+    version: 38,
+    up(db) {
+      db.exec(`
+        CREATE TABLE license_thread_usage (
+          month TEXT NOT NULL, channel_id TEXT NOT NULL, thread_key TEXT NOT NULL,
+          first_ts TEXT NOT NULL,
+          PRIMARY KEY (month, channel_id, thread_key)
+        );
+      `);
+    },
+  },
 ];

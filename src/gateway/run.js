@@ -689,11 +689,12 @@ export async function runMessage(args) {
   try {
     if (question?.sessionThreadKey) await args.verifyQuestionAccess?.();
     return await runMessageImpl({ ...args, threadKey: sessionKey,
+      admissionThreadKey: question?.threadKey ?? args.admissionThreadKey ?? args.threadKey,
       ...(question?.sessionThreadKey ? { questionThreadKey: question.threadKey, scheduledQuestion: question } : {}) });
   } finally { release?.(); }
 }
 
-async function runMessageImpl({ channelId, authorId, workspaceId = "", text, threadKey, attachments = [], signal = null, onDelta, onEvent, onRuntimeResolved, onForkSessionResolved, sessionId: presetSessionId = "", forkSourceSessionId = "", overrides = null, getFallbackContext = null, preferCold = false, progressReport = false, untrustedPrincipal = false, origin = "", fallbackPolicy = "", sudoSourceThreadKey = "", sudoScheduleId = "", questionThreadKey, scheduledQuestion = null }) {
+async function runMessageImpl({ channelId, authorId, workspaceId = "", text, threadKey, admissionThreadKey = threadKey, attachments = [], signal = null, onDelta, onEvent, onRuntimeResolved, onForkSessionResolved, sessionId: presetSessionId = "", forkSourceSessionId = "", overrides = null, getFallbackContext = null, preferCold = false, progressReport = false, untrustedPrincipal = false, origin = "", fallbackPolicy = "", sudoSourceThreadKey = "", sudoScheduleId = "", questionThreadKey, scheduledQuestion = null }) {
   // Fail closed before anything else: a run with no declared origin is a programming error, not a
   // default-to-interactive.
   if (!RUN_ORIGINS.includes(origin)) throw new Error(`runMessage requires a valid origin (got ${JSON.stringify(origin)}); one of: ${RUN_ORIGINS.join(", ")}`);
@@ -866,7 +867,7 @@ async function runMessageImpl({ channelId, authorId, workspaceId = "", text, thr
   // The 80% warning rides on an ADMITTED turn: it is prefixed to the answer the user is already
   // getting, the same way the cross-engine failover note is, so it costs no extra message and
   // cannot be missed.
-  const admission = licenseAdmission({ conversationId: channelId, origin });
+  const admission = licenseAdmission({ conversationId: channelId, threadKey: admissionThreadKey, origin });
   if (!admission.allowed) {
     await logEvent("license_run_refused", {
       channel: channelId,
@@ -1227,7 +1228,7 @@ async function runMessageImpl({ channelId, authorId, workspaceId = "", text, thr
     clean,
     composioUserEndpoint, composioEndpoint, composioUserToken, composioToken,
     toolboxToken, makeToolboxUrl, makeToolboxKey, customMcps,
-    channelId, slug: entry.slug, authorId, threadKey, origin,
+    channelId, slug: entry.slug, authorId, threadKey, admissionThreadKey, origin,
     questionThreadKey, sudoSchedule: sudoSchedule || sudoQuestion,
     progressReport: progressReportEnabled,
     principalTrusted: !untrustedPrincipal,

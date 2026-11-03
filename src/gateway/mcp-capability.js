@@ -39,7 +39,7 @@ function validRemoteMcps(claims) {
     claims.remoteMcps.every(validRemoteMcpName) && new Set(claims.remoteMcps).size === claims.remoteMcps.length;
 }
 
-export function mintGatewayCapability({ secret, channelId, slug, authorId, threadKey, questionThreadKey, sudoSchedule = false, origin, engine, principalTrusted = true, toolset = "", progressReport = false, composioSessions = [], remoteMcps = undefined, jti = undefined, now = Date.now(), ttlMs = DEFAULT_TTL_MS } = {}) {
+export function mintGatewayCapability({ secret, channelId, slug, authorId, threadKey, admissionThreadKey, questionThreadKey, sudoSchedule = false, origin, engine, principalTrusted = true, toolset = "", progressReport = false, composioSessions = [], remoteMcps = undefined, jti = undefined, now = Date.now(), ttlMs = DEFAULT_TTL_MS } = {}) {
   if (!secret || !channelId || !slug || !authorId || !threadKey || !ORIGINS.has(origin)) {
     throw new Error("Cannot mint gateway capability without a complete run identity");
   }
@@ -54,6 +54,7 @@ export function mintGatewayCapability({ secret, channelId, slug, authorId, threa
     slug,
     authorId,
     threadKey,
+    ...(admissionThreadKey !== undefined ? { admissionThreadKey } : {}),
     ...(questionThreadKey !== undefined ? { questionThreadKey } : {}),
     ...(sudoSchedule === true ? { sudoSchedule: true } : {}),
     origin,
@@ -68,6 +69,7 @@ export function mintGatewayCapability({ secret, channelId, slug, authorId, threa
     exp: now + ttl,
     jti: jti || randomUUID(),
   };
+  if (!validAdmissionThread(claims)) throw new Error("Invalid admission thread claim");
   if (!validComposioGrants(claims)) throw new Error("Invalid Composio session grants");
   if (!validQuestionRouting(claims)) throw new Error("Invalid question routing claims");
   if (!validRemoteMcps(claims)) throw new Error("Invalid remote MCP grants");
@@ -112,6 +114,7 @@ export function verifyGatewayCapability(token, { secret, now = Date.now() } = {}
   if (!claims.channelId || !claims.slug || !claims.authorId || !claims.threadKey || !ORIGINS.has(claims.origin) || typeof claims.principalTrusted !== "boolean") {
     return { ok: false, reason: "incomplete capability claims" };
   }
+  if (!validAdmissionThread(claims)) return { ok: false, reason: "invalid admission thread claim" };
   if (!validComposioGrants(claims)) return { ok: false, reason: "invalid Composio session grants" };
   if (!validQuestionRouting(claims)) return { ok: false, reason: "invalid question routing claims" };
   // Optional claims (see mint): validate the SHAPE when present so a tampered payload can't smuggle
@@ -135,3 +138,9 @@ export function mintedCapabilityClaims(token) {
 }
 
 export const GATEWAY_CAPABILITY_TTL_MS = DEFAULT_TTL_MS;
+
+// Billing metadata is optional for older capabilities and never changes tool authorization.
+function validAdmissionThread(claims) {
+  return claims.admissionThreadKey === undefined ||
+    (typeof claims.admissionThreadKey === "string" && claims.admissionThreadKey.length <= 2048);
+}

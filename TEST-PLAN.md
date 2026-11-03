@@ -11625,10 +11625,44 @@ Documentation-only, engine-independent: no gateway runtime or Microsoft grants c
 - Live acceptance (pending; repeat with Claude and Codex): use a disposable private Slack channel with a dedicated folder and a granted revisioned fixture skill. Invite the bot; pin the engine and ask “Read the fixture skill and report its revision.” Remove the bot, verify Archived in admin list/detail; update the skill and global instructions, wait at least 10 seconds, verify workspace files remain byte-identical and admin writes return 409. Reinvite, repeat the prompt and verify the new skill revision/config arrives while existing files/sessions remain. Pass only with observed evidence for both engines. Engine-independent UI/API checks may share evidence. A folder shared with an active conversation remains shared; archival must skip the archived channel's own provisioning.
 - Free cost history exposes the last 30 days in audit, summaries and dashboard (gateway and external usage); Enterprise exposes all history. Stored accounting and monthly admission counters remain intact. Verify both engines at the 30-day boundary and after upgrade/downgrade.
 
-- Registered Free monthly allowance: legacy null/missing/oversized signed conversation limits clamp to 100; admit the 100th unique conversation, refuse the 101st before engine spawn, and keep an already admitted conversation usable. No-key evaluation remains one. Automated: `test/license-limits.test.js`, `test/license-registration.test.js`.
+- Free monthly thread allowance: `conversationsPerChannelPerMonth` clamps legacy missing/null/oversized signed values to 100; admit the 100th distinct thread in one channel, refuse the 101st before engine spawn, and independently admit threads in a second channel. Repeated messages in admitted threads reuse their slots. No-key evaluation serves one active channel with 100 thread slots. Preserve the shared 500 AI runs/channel/month and 10-channel/10-user inventory caps. Automated: `test/license-limits.test.js`, `test/license-registration.test.js` and real orchestrator integration.
 
 - Private acceptance definitions updated: LICENSE-INVENTORY-20-01 (stable ID retained; now 10 inventory slots), LICENSE-FREE-100-01 and COST-HISTORY-30-01. Claude and Codex execution remains pending; automated fixtures do not claim live acceptance.
 
 - Free cost-history verification: `test/cost-history-http.test.js` checks old/unknown-date structured costs in event and job list/detail HTTP responses, raw-data preservation, and Free→Enterprise→Free. `test/cost-history.test.js` checks cutoff −1ms/equal/+1ms, partial external hours, month ends, old-only model/user/channel/origin splits and supplied-clock license expiry. `test/license-limits.test.js` checks already-admitted conversations across downgrade and UTC reset. Live Claude/Codex acceptance remains pending.
 
 - `test/cost-history-schedules.test.js`: HTTP and MCP schedule list/detail and embedded summaries restrict Free structured costs to 30 days, retain 90-day operational counts, restore costs with Enterprise, and preserve raw costs during internal status/event updates.
+
+
+### Free active conversations per channel — acceptance (2026-11-03)
+
+- Engine-independent fixtures: signed Free defaults and legacy missing/null/oversized
+  `conversationsPerChannelPerMonth`, two registered channels, an approved author, and a fixed UTC
+  month. Seed 99 admitted threads in channel A and none in B; retain existing channel AI-run
+  accounting. Admit A's 100th thread; refuse A's 101st before engine spawn/session/folder side
+  effects; admit B's first thread independently. Repeat a message in A's admitted thread and
+  require its thread count unchanged, with the AI-run count incremented. A 501st channel run is
+  refused even if fewer than 100 threads are active. Concurrent last-slot attempts admit only one.
+- Upgrade/reset fixtures: no historic thread backfill; an old thread first used after upgrade
+  creates one slot. Signed smaller caps refuse only new threads once full. Enterprise admits
+  beyond 100; downgrade preserves those admitted threads for that month and refuses new ones.
+  At 00:00:00 UTC on the next month, each channel starts a new admitted set. No-key serves only
+  its first active channel, with 100 threads in it. HTTP keyed and unthreaded runs use stable
+  identities; retries, resumes, schedules and background work cannot evade admission.
+- [ ] Live Claude: use two owned disposable Worker channels, pin Claude, install a maintainer
+  Free fixture and seed A to 99 admitted threads in the current UTC month. In a fresh thread
+  send “Reply FREE-THREAD-100.” Require an actual Claude response and count 100; a 101st fresh
+  thread with the same prompt must return the license refusal with no engine start. Reply in
+  an admitted thread and require a response/count still 100; send “Reply FREE-CHANNEL-B.” in
+  B's first thread and require a response/count 1. Record platform message/thread IDs, effective
+  license status, before/after counters and engine start evidence. Restore the fixture afterward.
+- [ ] Live Codex: repeat the identical fixture, prompts and pass rules with Codex pinned, using
+  separate owned fixture channels. Actual engine sessions must be observed for admitted turns.
+- Real `runMessage` integration: `test/free-channel-conversations.test.js` uses a controlled
+  Claude runtime fixture to prove the 100th thread in each of two registered channels starts
+  an engine, each 101st is refused before spawn, and retries reuse a thread slot. The two
+  channels can therefore admit 200 threads independently. Repeat equivalent controlled
+  integration for Codex where applicable. Automated integration does not mark either live
+  gate passed; no live PASS is claimed by these definitions.
+
+- `test/free-thread-automation.test.js`: background and nested agents at the 100-thread boundary share parent billing, two scheduled fires in a known daily anchor use one slot with isolated engine sessions, question continuations preserve the original thread, and signed admission metadata rejects invalid/oversized values. `test/free-channel-conversations.test.js` verifies two registered channels each independently reach 100. Standalone automation with no chat anchor uses a stable per-fire identity.

@@ -40,7 +40,7 @@ product overview.
 - Publish a VPS sizing and hosting guide in the official docs, with server tiers, concurrency, storage, and backup recommendations.
 
 - Archive Slack channels when the bot is removed and stop workspace configuration updates until it is re-invited. Show Archived in the admin UI and reject edits/new work for archived channels.
-- Limit Registered Free installations to 100 active conversations per UTC month and all non-Enterprise installations to 10 registered channels and 10 users, and expose one month (30 days) of cost-tracking history. Enterprise history remains unlimited.
+- Allow up to 100 active chat conversations in each channel per UTC month on Free, with 10 registered channels, 10 users and one month (30 days) of cost-tracking history. The existing 500 AI runs per channel per month remains. No-key evaluation serves one active channel with the same 100-thread allowance; Enterprise defaults to unlimited. Thread usage starts tracking on upgrade without fabricated history.
 
 - Version login-page scripts with their HTML so cached pre-upgrade code cannot reference removed fields.
 

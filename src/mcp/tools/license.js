@@ -19,11 +19,12 @@ export function renderLicenseStatus(status, totals) {
     `• tier: ${status.tier}${status.organization ? ` (${status.organization})` : ""}`,
     `• key: ${status.hasLicenseKey ? `…${status.licenseKeyLast4} (${status.licenseKeySource})` : "none"}`,
     `• registered channels: ${fmtLimit(status.limits.channels)} · registered users: ${fmtLimit(status.limits.users)}`,
-    `• active conversations per month: ${fmtLimit(status.limits.conversations)} · AI messages per conversation per month: ${fmtLimit(status.limits.messagesPerConversationPerMonth)}`,
+    `• active conversation threads per channel per month: ${fmtLimit(status.limits.conversationsPerChannelPerMonth)} · AI messages per channel per month: ${fmtLimit(status.limits.messagesPerConversationPerMonth)}`,
     `• last verified: ${status.verifiedAt || "never"}${status.nextCheckAt ? ` · next check: ${status.nextCheckAt}` : ""}`,
   ];
   if (status.expiresAt) lines.push(`• expires: ${status.expiresAt}`);
-  if (totals) lines.push(`• this month (${totals.month}): ${totals.runs} AI message(s) across ${totals.conversations} conversation(s)`);
+  if (status.tier !== "free" && status.limits.conversations !== null) lines.push(`• active channels per month: ${fmtLimit(status.limits.conversations)}`);
+  if (totals) lines.push(`• this month (${totals.month}): ${totals.runs} AI message(s), ${totals.activeConversations ?? 0} active conversation thread(s) across ${totals.admitted} channel(s)`);
   return lines.join("\n");
 }
 
@@ -37,7 +38,7 @@ export function register(server, ctx) {
     "get_license_status",
     {
       description:
-        "Show this ChannelGate deployment's license state: tier, registered-channel/user, active-conversation and " +
+        "Show this ChannelGate deployment's license state: tier, registered-channel/user, per-channel conversation-thread and " +
         "monthly-message limits, when the key was last verified, and this month's usage. Use it to " +
         "explain why a conversation was refused or is near its limit. Never reveals the key itself.",
       inputSchema: {},
@@ -47,7 +48,7 @@ export function register(server, ctx) {
       const totals = usageTotals();
       const top = conversationUsage({ limit: 5 });
       const busiest = top.length
-        ? `\n• busiest conversations this month: ${top.map((c) => `${c.runs}`).join(", ")} run(s)`
+        ? `\n• busiest channels this month: ${top.map((c) => `${c.runs} run(s) / ${c.activeConversations} thread(s)`).join(", ")}`
         : "";
       return text(`${renderLicenseStatus(status, totals)}${busiest}\n\nManage the key in the admin UI under Settings → License, or with set_license_key (admins only).`);
     }
@@ -82,7 +83,7 @@ export function register(server, ctx) {
     {
       description:
         "Remove this deployment's ChannelGate license key (ADMINS ONLY). The deployment falls back " +
-        "to the no-key limits: one conversation per UTC month, 500 AI messages in it, and 20 registered channels/users.",
+        "to the no-key limits: one active channel per UTC month, 100 conversation threads in it, 500 AI messages/channel/month, and 10 registered channels/users.",
       inputSchema: {},
     },
     async () => {

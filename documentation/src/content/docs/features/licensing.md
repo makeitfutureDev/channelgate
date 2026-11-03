@@ -17,15 +17,27 @@ Keys belong to the organization operating the installation. A service provider i
 
 The published defaults are:
 
-| State | Conversations | AI runs per conversation per UTC month |
-| --- | --- | --- |
-| No key | 1 | 500 |
-| Free key | 100 active per UTC month | 500 |
-| Enterprise key | Unlimited | Unlimited |
+| State | Registered channels | Active conversations per channel per UTC month | AI runs per channel per UTC month |
+| --- | --- | --- | --- |
+| No key | Up to 10; one active channel per month | 100 in the active channel | 500 |
+| Free key | Up to 10 | 100 in each channel | 500 |
+| Enterprise key | Unlimited by default | Unlimited by default | Unlimited by default |
 
-Free installations allow up to 10 registered channels (including DMs) and 10 stored human users. Signed smaller limits are honored; older Free keys cannot exceed these compiled ceilings or the 100-active-conversation allowance. Enterprise defaults to unlimited. Without a key, the first conversation admitted in a calendar month is the one served that month.
+A conversation in the 100 allowance is an active **chat thread within a channel**, not an
+individual AI run. Free installations also allow up to 10 stored human users. Every channel has
+its own monthly thread allowance; repeated messages in an admitted thread reuse its slot. The
+500-run monthly allowance is shared by the whole channel. Signed smaller limits are honored;
+older Free keys cannot exceed these ceilings. Enterprise defaults to unlimited.
 
-An AI message means an engine run started, including user tasks, follow-ups, scheduled runs, and background work. The gateway's memory-review runs are excluded. It warns at 80% of a monthly cap; at the cap it posts a visible refusal instead of spawning a run.
+Without a key, the first active channel admitted in a UTC month is the one served that month.
+Thread tracking starts with post-upgrade activity, without inventing earlier thread history;
+old threads count when next used. Already admitted threads remain usable through a stricter
+limit or downgrade for the rest of the month, subject to the channel's AI-run allowance. The
+thread set resets at the next UTC month boundary.
+
+An AI run includes user tasks, follow-ups, schedules and background work. Memory-review runs
+are excluded. At a cap the gateway posts a visible refusal instead of spawning an engine; the
+existing AI-run allowance warns at 80%.
 
 ## Offline and privacy
 

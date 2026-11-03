@@ -181,6 +181,7 @@ export function ctxFromClaims(claims = {}, { engine = "", toolset = "", progress
     slug,
     createdBy,
     threadKey,
+    admissionThreadKey: claims.admissionThreadKey ?? threadKey,
     questionThreadKey: claims.questionThreadKey,
     sudoSchedule: claims.sudoSchedule === true,
     origin,
@@ -196,7 +197,11 @@ export function ctxFromClaims(claims = {}, { engine = "", toolset = "", progress
     // than through the capability). It grants no authority: the handler acknowledges a snapshot
     // the daemon has already validated, and rendering is decided daemon-side either way.
     progressReport: claims.progressReport === true || progressReport === true,
-    daemon: daemon || createDirectDaemonIpc({}),
+    daemon: (() => {
+      const transport = daemon || createDirectDaemonIpc({});
+      return { ...transport, call: (kind, body, options) => transport.call(kind,
+        kind === "background" ? { ...body, admissionThreadKey: claims.admissionThreadKey ?? threadKey } : body, options) };
+    })(),
     // Re-checked at every tool call. Defaults to "the claims we were built from are still valid",
     // which is only correct for a caller that has no token to re-verify (tests).
     verifyCapability: verifyCapability || (() => ({ ok: true, claims })),
