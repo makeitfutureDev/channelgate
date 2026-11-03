@@ -2,6 +2,7 @@
 
 ## Public VPS sizing guide
 
+- GitHub and public hosting guides include Contabo as a budget option, with sourced plan specs, shared/dedicated CPU guidance, conservative starting concurrency, and current-pricing links.
 - Official docs include `/docs/configuration/vps-sizing`, linked from installation, deployment, and the sidebar, with production/pilot/busy tiers, concurrency, monitoring, storage, and recovery guidance.
 
 

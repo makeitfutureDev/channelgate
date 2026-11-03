@@ -58,6 +58,14 @@ Static hosting and serverless application platforms can host the public website 
 
 A public IPv4 is a practical hosting choice, rather than a requirement for Slack Socket Mode. Public HTTPS reachability is needed for Microsoft Teams messaging and externally accessible links or webhooks; see [Deployment configuration](/docs/configuration/deployment) for the relevant integrations and tunnel/proxy options.
 
+## Contabo option
+
+[Contabo](https://contabo.com/) is a budget alternative. Its [current VPS documentation](https://docs.contabo.com/docs/servers-hosting/vps/) lists **Cloud VPS 8: 8 shared vCPU, 24 GB RAM, and 300 GB SSD** (checked 2026-11-03).
+
+This meets our memory and disk starting points, with shared CPU allocation. Start at `MAX_CONCURRENT_RUNS=2` and raise after measuring your workload. Compare Contabo’s Max Performance VPS (VDS) family if you need dedicated cores. These are published specifications; we have not benchmarked ChannelGate on this plan.
+
+Check [Contabo’s current pricing](https://contabo.com/en/pricing/) for your region, contract term, tax, setup fees, and backup add-ons before ordering. Choose Ubuntu 24.04 LTS and follow the same installation and off-host backup guidance as for other providers.
+
 ## Plan for storage and recovery
 
 Allow room for runtime images, conversation workspaces and HOME volumes, browser assets, uploaded files, build artifacts, logs, and backups. The disk recommendations are starting capacities; retained project files and media can outgrow them.
