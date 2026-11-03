@@ -7,6 +7,7 @@ const docsRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const repository = resolve(docsRoot, '..');
 const output = resolve(docsRoot, 'src/content/docs/generated');
 const slugs = new Map(guides.map((guide) => [guide.source, guide.slug]));
+slugs.set('documentation/src/content/docs/configuration/vps-sizing.md', 'configuration/vps-sizing');
 const sourceRef = process.env.CHANNELGATE_DOCS_REF || 'beta';
 const sourceBase = `https://github.com/makeitfutureDev/channelgate/blob/${encodeURIComponent(sourceRef)}/`;
 
