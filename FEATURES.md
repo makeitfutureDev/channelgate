@@ -1,5 +1,10 @@
 # ChannelGate — Features
 
+## Public VPS sizing guide
+
+- Official docs include `/docs/configuration/vps-sizing`, linked from installation, deployment, and the sidebar, with production/pilot/busy tiers, concurrency, monitoring, storage, and recovery guidance.
+
+
 Codex estimates include GPT-6.1 Terra ($1 / $0.05 / $5 per million input / cached / output tokens), request-level long-context pricing, an October 26, 2026 launch boundary, and a backed-up automatic historical refresh on upgrade.
 
 ## Linked working-folder setup

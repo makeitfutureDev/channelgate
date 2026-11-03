@@ -5,6 +5,9 @@ A step-by-step guide to get the gateway running on a fresh Linux host. ChannelGa
 Podman container (Ubuntu 24.04 is the tested distribution). For what it does and how it works,
 see [README.md](./README.md).
 
+Before choosing a server, see [VPS sizing and hosting](documentation/src/content/docs/configuration/vps-sizing.md)
+for production and pilot configurations, concurrency, storage, and backups.
+
 ## 1. Prerequisites
 
 - **Linux with systemd** (Ubuntu 24.04 tested). The daemon refuses to start anywhere else.

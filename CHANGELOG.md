@@ -28,6 +28,8 @@ product overview.
 
 ## Unreleased
 
+- Publish a VPS sizing and hosting guide in the official docs, with server tiers, concurrency, storage, and backup recommendations.
+
 - Archive Slack channels when the bot is removed and stop workspace configuration updates until it is re-invited. Show Archived in the admin UI and reject edits/new work for archived channels.
 - Limit Registered Free installations to 100 active conversations per UTC month and all non-Enterprise installations to 10 registered channels and 10 users, and expose one month (30 days) of cost-tracking history. Enterprise history remains unlimited.
 
