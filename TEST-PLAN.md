@@ -1,5 +1,11 @@
 # ChannelGate — Test Plan
 
+## Environment output visibility
+
+Automated: `test/egress-grants.test.js` checks auto-readable URLs, explicit Readable, hidden values, personal/organization/channel scopes and identical-byte collisions across active/inactive/no-target runtimes, character-split streaming, final and structured output. `test/egress-run.test.js` executes both engine parsers through `runMessage` with deterministic fake engine output. `test/runtime-integration-jobs.test.js` verifies readable URLs in persisted shell logs and recovered tails alongside hidden-value redaction.
+
+Live acceptance (pending, both Claude and Codex): private `cg-testing-claude-bash` and `cg-testing-codex-bash`. Add harmless `MAKE_BASE_URL=https://public.example.test` (auto-readable), `VISIBLE_API_KEY=visible-fixture-123` (Readable), `HIDDEN_API_KEY=hidden-credential-fixture-123` (Hidden). Prompt: “Read the fixture variables and return the base URL plus /8175/scenarios/123/logs/example as a Markdown link and plain text; include both fixture keys.” Pass: full URL and readable fixture survive streamed/final output; hidden bytes never appear. Repeat as a background shell and inspect persisted log and recovered tail; repeat with personal/organization scope and identical bytes in hidden/readable entries (hidden wins). Capture engine, message links/settings and job evidence; restore fixtures. QA registry case `ENV-READABLE-OUTPUT` covers both engines; automated success does not imply live acceptance. Validation: 4,135 passed, 37 skipped, zero failures in the full regression suite; static and secret-scan checks passed. The new Claude/Codex URL regressions both fail against the pre-fix source and pass with the fix.
+
 ## Public VPS sizing guide (engine-independent documentation)
 
 - Contabo addition: verify GitHub/public guides agree on Cloud VPS 8 specs, shared CPU status, starting concurrency, source date and links. Validated 2026-11-03: 153-page build and 27,741 internal links; export preservation/idempotency; six existing domain-skill tests; DCO; secret scan. Preview `dpl_FDyYBt1h6jbBVcKeh5iVkkWXPwHF` and production `dpl_51edFqeHjYQBo5P4FS7cTrJytA89` passed 13 route/content/preservation checks each. Live browser verified the Contabo section and specs at desktop/mobile widths. Published source: `4a51680f762f256cdb84e8f781948be051fee21b`.

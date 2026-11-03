@@ -18,7 +18,7 @@
 import { parse } from "acorn";
 
 export const ARTIFACT_ROOTS = /\b(?:artifactDir|runArtifactRoot|sshUserDir|sshUsersDir|channelArtifactDir)\b/;
-export const SECRET_SOURCES = /\b(?:composioUserToken|composioToken|toolboxToken|makeToolboxKey|resolvedRunEnv|realValues)\b|\brelay\??\.token\b/;
+export const SECRET_SOURCES = /\b(?:composioUserToken|composioToken|toolboxToken|makeToolboxKey|resolvedRunEnv|realValues|redactionValues)\b|\brelay\??\.token\b/;
 export const WRITERS = new Set(["writeFile", "writeFileSync", "appendFile", "appendFileSync", "writePrivate", "writeSecretFile"]);
 export const ALLOW_MARKER = "static-check: allow-secret-artifact-write";
 

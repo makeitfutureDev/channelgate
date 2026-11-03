@@ -30,7 +30,6 @@ import { getDb, toJson, fromJson } from "../db/index.js";
 import { postNotice, automationTarget } from "../platforms/notify.js";
 import { safeSpawnEnv } from "../config/channel-env.js";
 // A job gets the same three credential scopes a foreground turn does (config/scoped-env.js).
-import { resolveRunEnv } from "../config/scoped-env.js";
 import { resolveEgressRunEnv } from "./egress/grants.js";
 import { markLive } from "./egress/liveness.js";
 import { browserNamespaceFor, browserSpawnEnv } from "./browser-env.js";
@@ -475,11 +474,10 @@ export class BackgroundJobs {
     //
     // Through the egress wrapper (src/gateway/egress/grants.js) with THIS job's target: in a
     // proxy-mode container a ruled secret is its placeholder, exactly as in the foreground. The
-    // redaction set is the REAL values either way (a placeholder is not a secret).
+    // redaction set contains hidden REAL values; readable configuration remains shareable.
     const jobRunEnv = await resolveEgressRunEnv({ meta, channelId, authorId, target });
     const jobEnv = safeSpawnEnv(jobRunEnv.env);
-    const jobPlaceholders = new Set(Object.values(jobRunEnv.placeholders));
-    const jobSecretValues = [...new Set([...Object.values(jobEnv).filter((value) => !jobPlaceholders.has(value)), ...jobRunEnv.realValues])];
+    const jobSecretValues = jobRunEnv.redactionValues;
     rec.secretValues = [...jobSecretValues, ...serviceSecretValues()];
     rec.label = redactSecretValues(rec.label, rec.secretValues);
     let onChunk = writeChunk;
@@ -531,7 +529,7 @@ export class BackgroundJobs {
           cmd: "bash",
           // Isolated: a runtime-side wrapper redacts BOTH streams before writing the durable
           // log, and starts the command in one login shell. The outer shell only execs the wrapper.
-          args: isolatedJob ? ["-c", containerJobScript(cmd, logFile, Object.keys(jobEnv))] : ["-lc", cmd],
+          args: isolatedJob ? ["-c", containerJobScript(cmd, logFile, Object.keys(jobEnv).filter((name) => jobSecretValues.includes(jobEnv[name])))] : ["-lc", cmd],
           cwd,
           env: buildShellEnv(shellEnv),
           stdio: ["ignore", "pipe", "pipe"],
@@ -1029,7 +1027,7 @@ export class BackgroundJobs {
         // Recovery may attach to a job launched before this build stopped injecting operator VPN
         // credentials. Resolve a value-only projection so those former environment values remain
         // covered by output redaction without making them available to new jobs.
-        rec.secretValues = [...Object.values(safeSpawnEnv((await resolveRunEnv({ meta: { env: meta.env }, authorId: rec.authorId })).env)), ...serviceSecretValues()];
+        rec.secretValues = [...(await resolveEgressRunEnv({ meta: { env: meta.env }, authorId: rec.authorId })).redactionValues, ...serviceSecretValues()];
       } catch {
         rec.secretValues = serviceSecretValues();
       }

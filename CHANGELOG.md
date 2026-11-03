@@ -28,6 +28,8 @@ product overview.
 
 ## Unreleased
 
+- Honor Readable variable visibility in reply streams, final replies and background-job output so public configuration URLs remain usable; continue redacting hidden credentials.
+
 - Add Contabo to the GitHub and public VPS hosting guides, including shared CPU sizing guidance and links to current provider pricing.
 - Apply Free cost-history visibility to audit events, run API job costs and schedule telemetry, preserving operational records and answers.
 

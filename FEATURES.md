@@ -1,5 +1,9 @@
 # ChannelGate — Features
 
+## Environment output visibility
+
+- Reply streams, final replies, structured events and background-job logs honor the effective Hidden/Readable variable setting across organization, personal and channel scopes. Readable configuration such as public URLs remains shareable; hidden credentials and engine/service tokens remain redacted. A hidden value stays protected when another scope has a readable entry with identical bytes.
+
 ## Public VPS sizing guide
 
 - GitHub and public hosting guides include Contabo as a budget option, with sourced plan specs, shared/dedicated CPU guidance, conservative starting concurrency, and current-pricing links.

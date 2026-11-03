@@ -44,7 +44,7 @@ async function channel(channelId, env = {}) {
   const entry = await upsertChannelEntry(channelId, { name: channelId, type: "channel", isDM: false, platform: "slack" });
   await patchChannelMeta(entry.slug, (existing) => {
     let next = existing?.env || {};
-    for (const [name, value] of Object.entries(env)) next = patchChannelEnv(next, { set: { name, value: value.value ?? value, ...(value.hosts ? { hosts: value.hosts } : {}) } });
+    for (const [name, value] of Object.entries(env)) next = patchChannelEnv(next, { set: { name, value: value.value ?? value, ...(value.hosts ? { hosts: value.hosts } : {}), ...(value.exposure ? { exposure: value.exposure } : {}) } });
     return { ...(existing || defaultChannelMeta({ channelId, name: channelId, type: "channel", isDM: false })), env: next };
   });
   return getChannelMeta(entry.slug);
@@ -152,7 +152,7 @@ test("resolveEgressRunEnv: inactive egress is exactly the real resolve", async (
   assert.deepEqual(out.placeholders, {});
   assert.deepEqual(out.unprotected, []);
   assert.ok(out.realValues.includes("ghp_plain_value_0001"));
-  assert.deepEqual(await grants.resolveEgressRunEnv({ meta, channelId: "C_GRANTS_PLAIN", target: inactiveTarget("C_GRANTS_PLAIN"), clean: true }), { env: {}, scopes: {}, placeholders: {}, hosts: {}, unprotected: [], withheld: [], approval: [], realValues: [], personalPaused: false });
+  assert.deepEqual(await grants.resolveEgressRunEnv({ meta, channelId: "C_GRANTS_PLAIN", target: inactiveTarget("C_GRANTS_PLAIN"), clean: true }), { env: {}, scopes: {}, placeholders: {}, hosts: {}, unprotected: [], withheld: [], approval: [], realValues: [], redactionValues: [], personalPaused: false });
   // No target at all (an agent job resolves its own per turn), even with a running service: real values.
   setEgressProvider({ running: () => true, socketDirFor: () => "/x", caBundlePath: () => "/y" });
   try {
@@ -316,3 +316,36 @@ test("the relay grant resolves the live relay token, cached for a minute", async
 });
 
 test.after(() => setEgressProvider(null));
+
+
+test("readable variables survive final, streamed and structured output while hidden scopes stay redacted", async () => {
+  const { redactSecretValues, createSecretRedactor, redactSecretFields } = await import("../src/util/redact.js");
+  const url = "https://public.example.test";
+  const hidden = "hidden-credential-fixture-123";
+  const shared = "shared-hidden-fixture-123";
+  const meta = await channel("C_VISIBLE_OUTPUT", {
+    MAKE_BASE_URL: url,
+    VISIBLE_API_KEY: { value: "visible-fixture-123", exposure: "readable" },
+    HIDDEN_API_KEY: { value: hidden, exposure: "hidden" },
+    SHARED_CONFIG: { value: shared, exposure: "readable" },
+  });
+  const deps = {
+    resolveOrgEnv: () => ({ SHARED_CONFIG: shared }),
+    orgEntries: () => ({ SHARED_CONFIG: { exposure: "hidden", hosts: ["api.example.test"] } }),
+    resolveUserEnv: () => ({ PERSONAL_CONFIG: "personal-visible-123" }),
+    userEntries: () => ({ PERSONAL_CONFIG: { exposure: "readable" } }),
+  };
+  const text = `[Open execution](${url}/8175/scenarios/123/logs/example) visible-fixture-123 personal-visible-123 ${hidden} ${shared}`;
+  const expected = text.replace(hidden, "[REDACTED]").replace(shared, "[REDACTED]");
+  for (const target of [activeTarget("C_VISIBLE_OUTPUT"), inactiveTarget("C_VISIBLE_OUTPUT"), null]) {
+    const out = await grants.resolveEgressRunEnv({ meta, authorId: ALICE, channelId: "C_VISIBLE_OUTPUT", target, deps });
+    assert.ok(out.realValues.includes(url));
+    assert.ok(!out.redactionValues.includes(url));
+    assert.equal(redactSecretValues(text, out.redactionValues), expected);
+    const stream = createSecretRedactor(out.redactionValues);
+    let streamed = "";
+    for (const char of text) streamed += stream.push(char);
+    assert.equal(streamed + stream.flush(), expected);
+    assert.deepEqual(redactSecretFields({ url: url + "/logs/example", text }, out.redactionValues), { url: url + "/logs/example", text: expected });
+  }
+});

@@ -1123,7 +1123,7 @@ async function runMessageImpl({ channelId, authorId, workspaceId = "", text, thr
   // Egress (src/gateway/egress/grants.js): when the proxy is this container's network, every name
   // with a swap rule arrives as its PLACEHOLDER — stable per key, swapped for the live value only
   // on its declared hosts — and a name without one arrives raw and is flagged unprotected (or is
-  // withheld under egressSecretsStrict). `realValues` is every real value, for the redactor.
+  // withheld under egressSecretsStrict). `redactionValues` carries hidden values for the redactor.
   const egressRunEnv = await resolveEgressRunEnv({
     meta, channelId, authorId, untrustedPrincipal, clean, target,
   });
@@ -1148,12 +1148,9 @@ async function runMessageImpl({ channelId, authorId, workspaceId = "", text, thr
   // a failing CLI will echo a token into its error line. Redact the values out of everything this
   // turn says, in the stream (holdback, so a value split across two deltas still matches) and in
   // the final content. Both must use the same values or finalize()'s streamed-prefix check breaks.
-  // The REAL values, not the placeholders the container may hold: a real value must never appear in
-  // a reply however it got there (defense in depth — the proxy also scrubs response bodies).
-  const placeholderValues = new Set(Object.values(egressRunEnv.placeholders));
+  // Hidden REAL values, not placeholders; readable variables remain shareable in output.
   const outputSecrets = [...new Set([
-    ...Object.values(channelEnv).filter((value) => !placeholderValues.has(value)),
-    ...egressRunEnv.realValues,
+    ...egressRunEnv.redactionValues,
     ...serviceSecretValues(),
     getPerplexityResearchConfig().sessionToken,
   ])];

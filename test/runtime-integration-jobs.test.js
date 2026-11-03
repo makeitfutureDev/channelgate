@@ -4,7 +4,7 @@
 // restart can only be found again through the backend — its pid belonged to a client process that
 // died with the old daemon.
 import path from "node:path";
-import { mkdirSync, writeFileSync } from "node:fs";
+import { mkdirSync, writeFileSync, readFileSync } from "node:fs";
 import test from "node:test";
 import assert from "node:assert/strict";
 import { ensureTestEnv } from "./helpers.js";
@@ -54,13 +54,13 @@ test("a shell job in an isolated runtime spawns through the backend, holds a lea
   const backend = createFakeRuntimeBackend();
   const { entry, meta } = await autoChannel("C_JOB_CTR", "job-ctr");
   const canary = "synthetic-job-log-canary";
-  await saveChannelMeta(entry.slug, { ...meta, env: { QA_BG_CANARY: { provider: "local", value: canary } } });
+  await saveChannelMeta(entry.slug, { ...meta, env: { QA_BG_CANARY: { provider: "local", value: canary }, MAKE_BASE_URL: { provider: "local", value: "https://public.example.test" } } });
   // Auto mode still requires an admin to sign off on the exact command; that gate is not what
   // this test is about, so it is answered rather than bypassed.
   const approve = async () => ({ allow: true, decidedBy: "U_JOB" });
   const jobs = new BackgroundJobs({ requestShellApproval: approve, resolveTarget: (slug, meta) => fakeTarget(backend, slug, meta) });
 
-  const started = await jobs.start({ channelId: "C_JOB_CTR", authorId: "U_JOB", threadKey: "t-ctr", command: "echo hello", label: "echo" });
+  const started = await jobs.start({ channelId: "C_JOB_CTR", authorId: "U_JOB", threadKey: "t-ctr", command: 'printf "%s %s" "$MAKE_BASE_URL" "$QA_BG_CANARY"', label: "echo" });
   assert.equal(started.ok, true, started.error);
 
   // The runtime is made ready before the job is put into it, and held up for its whole life.
@@ -79,6 +79,17 @@ test("a shell job in an isolated runtime spawns through the backend, holds a lea
   assert.match(spawn.args[1], /\["QA_BG_CANARY"\]/);
   assert.equal(spawn.args[1].includes(canary), false, "the wrapper receives names, never resolved values in argv");
   assert.equal(spawn.env.QA_BG_CANARY, canary, "the existing job environment supplies the secret");
+  assert.ok(!spawn.args[1].includes('"MAKE_BASE_URL"'), "readable config is excluded from wrapper redaction names");
+  for (let i = 0; i < 100; i++) {
+    let log = "";
+    try { log = readFileSync(persistedRow(started.id).logFile, "utf8"); } catch {}
+    if (parseContainerJobExit(log) !== null) {
+      assert.match(log, /https:\/\/public\.example\.test \[REDACTED\]/);
+      break;
+    }
+    assert.ok(i < 99, "job completed");
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
 
   const row = persistedRow(started.id);
   assert.deepEqual(row.runtime, { backend: "container", runId: spawn.runId, container: FAKE_CONTAINER });
@@ -89,11 +100,15 @@ test("a shell job in an isolated runtime spawns through the backend, holds a lea
 
 test("a recovered container job is probed and signalled through the backend, never by pid", async () => {
   const backend = createFakeRuntimeBackend();
-  const { entry } = await autoChannel("C_JOB_RECOVER", "job-recover");
+  const { entry, meta } = await autoChannel("C_JOB_RECOVER", "job-recover");
+  await saveChannelMeta(entry.slug, { ...meta, env: {
+    MAKE_BASE_URL: { provider: "local", value: "https://public.example.test" },
+    QA_HIDDEN_KEY: { provider: "local", value: "recovery-hidden-fixture", exposure: "hidden" },
+  } });
   const target = fakeTarget(backend, entry.slug, { platform: "slack" });
   mkdirSync(path.join(target.artifactDir, "jobs"), { recursive: true });
   const logFile = path.join(target.artifactDir, "jobs", "recover.log");
-  writeFileSync(logFile, "partial output\n");
+  writeFileSync(logFile, "partial output https://public.example.test recovery-hidden-fixture\n");
 
   // A durable row exactly as _persist writes it, for a job whose daemon has since restarted. The
   // recorded pid belongs to a client process that is long gone, so anything derived from it would
@@ -113,7 +128,8 @@ test("a recovered container job is probed and signalled through the backend, nev
   assert.ok(backend.calls.probe.includes("job-abc123"), "the recovered job was probed through the backend");
   const status = jobs.status("recover1");
   assert.ok(status, "a job the backend says is alive keeps being tracked");
-  assert.match(status.tail, /partial output/);
+  assert.match(status.tail, /partial output https:\/\/public\.example\.test \[REDACTED\]/);
+  assert.ok(!status.tail.includes("recovery-hidden-fixture"));
 });
 
 test("a recovered container job the backend says is gone is finished, not signalled", async () => {
