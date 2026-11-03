@@ -22,6 +22,9 @@ import { refreshEngineModels } from "./engines/registry.js";
 import { applySettingsToEnv, resolveSlackConfig, hasSlackConfig, getAdminPassword, getSettings, saveSettings, getContainerRuntime, pinEgressSecretsStrictDefault } from "./config/settings.js";
 import { getBindHost, hashPassword } from "./web/security.js";
 import { createSlackManager } from "./slack/manager.js";
+import { createBotMembershipRecovery } from "./slack/bot-membership.js";
+import { abortRunsInChannel } from "./slack/message-pipeline.js";
+import { syncWorkspaceSkills } from "./gateway/skills/workspace-sync.js";
 import { createPlatformTransports, connectConfiguredPlatforms } from "./platforms/boot.js";
 import { startScheduler } from "./gateway/scheduler.js";
 import { searchAgentDirectory } from "./gateway/agent-directory.js";
@@ -153,8 +156,10 @@ async function containerRuntimeHealth() {
 // stop its timers alongside the other runtime services.
 let claudeLoginWatch = null;
 let agentDirectoryRefresh = null;
+let membershipRecovery = null;
 
 async function stopRuntimeServices(reason) {
+  membershipRecovery?.stop();
   agentDirectoryRefresh?.stop();
   agentDirectoryRefresh = null;
   try {
@@ -203,6 +208,15 @@ async function main() {
   pruneTerminalApprovalRequests();
   pruneApprovalLinkTokens(); // spent/expired approval-link nonces
   applySettingsToEnv(); // UI-managed settings.json overrides .env
+  membershipRecovery = createBotMembershipRecovery({
+    slack,
+    onArchived: (row) => abortRunsInChannel(row.channelId, row.slug, "bot_removed"),
+    onVerified: () => syncWorkspaceSkills({ force: true }),
+  });
+  slack.onDisconnected(() => membershipRecovery.invalidate());
+  slack.onConnected(() => membershipRecovery.reconcile());
+  // Before catalog boot can touch a workspace: persist the unknown state for MCP children too.
+  await membershipRecovery.invalidate();
   // Skills platform (src/gateway/skills): fill the local catalog from the bundled starter library
   // and the host's skill folders, and seed the built-in channel templates. Never fatal — a turn
   // runs without a catalog exactly as it did before, on host-folder copies.
@@ -395,7 +409,10 @@ async function main() {
 
   // Connect Slack if tokens are configured (settings.json or .env). Can also be (re)connected
   // at runtime from the admin Settings page.
-  if (hasSlackConfig()) await slack.connect(resolveSlackConfig());
+  if (hasSlackConfig()) {
+    await slack.connect(resolveSlackConfig());
+    await membershipRecovery.reconcile();
+  }
   else console.log("[gateway] Slack tokens not set — set them in the admin Settings page (admin UI still available).");
 
   // The other surfaces, on the same terms: connect what is configured, and never let a bad

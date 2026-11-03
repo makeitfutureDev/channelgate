@@ -676,11 +676,22 @@ export function createChannelsRouter({
       const channels = (await listChannels()).filter((c) => !c.isDM && c.type !== "im" && !c.meta?.archived);
       let reset = 0;
       for (const ch of channels) {
-        const current = ch.meta ?? defaultChannelMeta({ channelId: ch.channelId, name: ch.name, type: ch.type, isDM: ch.isDM });
-        const next_ = { ...current, access: orgDefault, manageAccess: "admins", managers: [], allowedUsers: [] };
-        await saveChannelMeta(ch.slug, next_);
-        await ensureChannelFolder(ch.slug, next_);
+        // The list is a snapshot: a removal or another admin's update can commit while the
+        // preceding channel is being provisioned. Re-read and guard archival inside the write.
+        const patched = await patchChannelMeta(ch.slug, (current) => {
+          if (current?.archived) return null;
+          const base = current ?? defaultChannelMeta({ channelId: ch.channelId, name: ch.name, type: ch.type, isDM: ch.isDM });
+          return { ...base, access: orgDefault, manageAccess: "admins", managers: [], allowedUsers: [] };
+        });
+        if (!patched) continue;
         reset++;
+        try {
+          await ensureChannelFolder(ch.slug, patched);
+        } catch (error) {
+          // Removal after this reset committed still wins; provisioning's live guard refuses
+          // the write. Keep processing the other channels and count the committed reset.
+          if (!["channel_archived", "channel_membership_unverified"].includes(error.code)) throw error;
+        }
       }
       await logEvent("channels_access_reset", { count: reset, orgDefault });
       res.json({ ok: true, count: reset, orgDefault });
@@ -707,15 +718,26 @@ export function createChannelsRouter({
       const includeThreads = Boolean(req.body?.includeThreads);
       const channels = (await listChannels()).filter((c) => !c.isDM && c.type !== "im" && !c.meta?.archived);
       let reset = 0;
+      const resetSlugs = [];
       for (const ch of channels) {
         const patched = await patchChannelMeta(ch.slug, (current) => {
+          if (current?.archived) return null;
           const base = current ?? defaultChannelMeta({ channelId: ch.channelId, name: ch.name, type: ch.type, isDM: ch.isDM });
           return { ...base, engine: base.codexAuthSource === "channel" ? "codex" : "", model: "", effort: "" };
         });
-        if (patched) reset++;
+        if (patched) {
+          reset++;
+          resetSlugs.push(ch.slug);
+        }
       }
-      // Same set of channels as above, so a DM's thread pins survive exactly as its meta does.
-      const threads = includeThreads ? await clearThreadRuntimeOverrides(channels.map((c) => c.slug)) : 0;
+      // A channel skipped by the atomic guard must keep its thread pins too. Re-check each one
+      // before clearing pins, since removal may also have committed during a later channel's reset.
+      let threads = 0;
+      if (includeThreads) {
+        for (const slug of resetSlugs) {
+          if (!(await getChannelMeta(slug))?.archived) threads += await clearThreadRuntimeOverrides([slug]);
+        }
+      }
       await logEvent("channels_runtime_reset", { count: reset, includeThreads, threads });
       res.json({ ok: true, count: reset, threads });
     } catch (e) {

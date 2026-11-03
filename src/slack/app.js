@@ -57,7 +57,8 @@ import { COMPOSIO_INVENTORY_ACTION_ID } from "./composio-inventory-view.js";
 
 import { createTtlSet } from "./util.js";
 import { refreshDirectory } from "./directory.js";
-import { handleMemberLeftChannel, listConversationMemberIds, filterConversationHumanMemberIds, withChannelMembershipLock } from "./members.js";
+import { readBotMemberships } from "./bot-membership.js";
+import { handleBotJoinedChannel, handleMemberLeftChannel, listConversationMemberIds, filterConversationHumanMemberIds, withChannelMembershipLock } from "./members.js";
 import { checkBotScopes, formatScopeWarning, shouldNotify } from "./scope-check.js";
 import { buildFileEditView, buildFilePreviewView, buildFilesLoadingView, buildFilesView, buildNewFileView, buildNewFolderView, canEditChannelFiles, createVisibleDirectory, createVisibleFile, FILES_ACTION_PATTERN, FILES_NEW_FILE_CONTENT_BLOCK_ID, FILES_NEW_FILE_CONTENT_INPUT_ACTION_ID, FILES_NEW_FILE_NAME_BLOCK_ID, FILES_NEW_FILE_NAME_INPUT_ACTION_ID, FILES_NEW_FOLDER_BLOCK_ID, FILES_NEW_FOLDER_INPUT_ACTION_ID, FILES_SHORTCUT_ID, normalizeNewFileName, normalizeNewFolderName, normalizeRelativePath, parseActionValue as parseFileActionValue, parseExplorerMetadata, resolveVisiblePath, writeEditableFile } from "./file-explorer.js";
 import {
@@ -3572,22 +3573,24 @@ async function connectAndWire(app) {
   app.event("member_joined_channel", async ({ event, client }) => {
     try {
       if (event.user === botUserId) {
-        // The bot joining is the canonical "join" moment — capture the org default access policy.
-        const info = await resolveConversation(client, { channel: event.channel, channel_type: event.channel_type });
-        const entry = await upsertChannelEntry(event.channel, info);
-        // One transactional patch, not read-modify-write: this branch fires on every reconnect/
-        // rejoin and used to race concurrent admin edits, clobbering them with a stale copy.
-        // Join-time defaults apply ONLY when the channel has no meta yet.
-        const meta = await patchChannelMeta(entry.slug, (current) => {
-          if (current) return { archived: false, archivedAt: null, archivedReason: null };
-          const fresh = applyChannelTemplate(defaultChannelMeta({ channelId: event.channel, ...info }));
-          if (!fresh.isDM) fresh.access = getDefaultChannelAccess();
-          return fresh;
+        const joined = await handleBotJoinedChannel(event, {
+          patchChannelMeta,
+          initialize: async () => {
+            // A delayed/retried join event is historical evidence. Require current membership
+            // before restoring configuration, including after snapshot recovery of a missed leave.
+            if (!(await readBotMemberships(client)).has(event.channel)) return null;
+            const info = await resolveConversation(client, { channel: event.channel, channel_type: event.channel_type });
+            const entry = await upsertChannelEntry(event.channel, info);
+            const initialMeta = applyChannelTemplate(defaultChannelMeta({ channelId: event.channel, ...info }));
+            if (!initialMeta.isDM) initialMeta.access = getDefaultChannelAccess();
+            return { entry, initialMeta };
+          },
+          provision: async (entry, meta) => {
+            await ensureChannelFolder(entry.slug, meta);
+            await syncAllowedFromMembers(client, event.channel, entry.slug, meta);
+          },
         });
-        await ensureChannelFolder(entry.slug, meta);
-        await syncAllowedFromMembers(client, event.channel, entry.slug, meta);
-        // If a tag pulled us in (Slack's invite-on-mention), answer that pending message.
-        await answerPendingJoinMention(client, event.channel);
+        if (joined) await answerPendingJoinMention(client, event.channel);
       } else {
         const entry = await getChannelEntry(event.channel);
         if (!entry) return;
