@@ -2,7 +2,7 @@
 
 ## Public VPS sizing guide (engine-independent documentation)
 
-- Contabo addition: verify GitHub/public guides agree on Cloud VPS 8 specs, shared CPU status, starting concurrency, source date and links. Build/export and preview/live publication checks pending.
+- Contabo addition: verify GitHub/public guides agree on Cloud VPS 8 specs, shared CPU status, starting concurrency, source date and links. Validated 2026-11-03: 153-page build and 27,741 internal links; export preservation/idempotency; six existing domain-skill tests; DCO; secret scan. Preview `dpl_FDyYBt1h6jbBVcKeh5iVkkWXPwHF` and production `dpl_51edFqeHjYQBo5P4FS7cTrJytA89` passed 13 route/content/preservation checks each. Live browser verified the Contabo section and specs at desktop/mobile widths. Published source: `4a51680f762f256cdb84e8f781948be051fee21b`.
 
 - Build the documentation and run its export checks; verify the new route, canonical URL, sidebar, search index, installation/deployment links, and the production/pilot/busy sizing tables.
 - Preview the combined website, then publish and verify `/docs/configuration/vps-sizing` plus installation/deployment entry points. Preserve existing website, blog, sitemap, and API configuration.
