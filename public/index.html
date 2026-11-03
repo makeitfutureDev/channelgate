@@ -232,7 +232,12 @@
 
             <div class="setcard">
               <h4>Authentication</h4>
-              <p class="desc">Send the token you generated in Settings as either an <code>X-API-Key</code> header or an <code>Authorization: Bearer</code> header. The token is scoped to <code>/api/runs</code> only — it is <strong>not</strong> a general admin credential and can't read settings, tokens, or the filesystem browser. A logged-in admin session cookie also works from the browser.</p>
+              <p class="desc"><strong>Channel tokens</strong> are the way to authenticate: anyone working in a conversation asks the agent there to <code>create_api_token</code> (or uses <code>list_api_tokens</code> / <code>revoke_api_token</code>). Such a token belongs to that one conversation and to the person who created it: runs it starts are posted there, act with that person's current role and authorization (an admin's token can do what an admin can; a member's token is a member), and stop working the moment the token is revoked or the person loses access. Send it as <code>X-API-Key</code> or <code>Authorization: Bearer</code>. It is scoped to <code>/api/runs</code> and to its conversation only; <code>channel</code> may be omitted or must name that conversation, and <code>author</code> is ignored.</p>
+              <p class="desc"><strong>Deprecated — organization-wide key.</strong> The single key under Settings → HTTP run API still works for existing automations, acts as a fixed admin principal in any conversation, and logs a deprecation warning when used. Replace it with channel tokens and clear it.</p>
+              <table class="utable apidoc-table" id="apitok-table">
+                <thead><tr><th>Token</th><th>Conversation</th><th>Created by</th><th>Created</th><th>Last used</th><th></th></tr></thead>
+                <tbody id="apitok-rows"><tr><td colspan="6" class="hint">Loading…</td></tr></tbody>
+              </table>
             </div>
 
             <div class="setcard">
@@ -1063,8 +1068,8 @@
                   <p class="setsec-desc">The HTTP run API token, Slack connection controls and the danger zone.</p>
                 </header>
                 <div class="setcard">
-                  <h4>HTTP run API</h4>
-                  <p class="desc">A bearer token that lets automations (Make.com, cron, …) trigger runs via <code>POST /api/runs</code> without an admin login. Send it as an <code>X-API-Key</code> header or <code>Authorization: Bearer</code> — it's scoped to the run API only, not the rest of the admin API. <strong>Generate</strong> one, <strong>Save</strong>, then <strong>Copy</strong> it into your automation.</p>
+                  <h4>HTTP run API — deprecated organization-wide key</h4>
+                  <p class="desc"><strong>Deprecated:</strong> prefer channel tokens (ask the agent in a conversation for <code>create_api_token</code>; listed on the API page). This single key acts as a fixed admin in every conversation. A bearer token that lets automations (Make.com, cron, …) trigger runs via <code>POST /api/runs</code> without an admin login. Send it as an <code>X-API-Key</code> header or <code>Authorization: Bearer</code> — it's scoped to the run API only, not the rest of the admin API. <strong>Generate</strong> one, <strong>Save</strong>, then <strong>Copy</strong> it into your automation.</p>
                   <label class="field">
                     <span>API token <em class="state" id="apikey-state"></em></span>
                     <input id="set-apikey" type="password" placeholder="leave blank to keep current" autocomplete="off" />

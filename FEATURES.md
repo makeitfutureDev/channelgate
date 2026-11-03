@@ -1,5 +1,26 @@
 # ChannelGate — Features
 
+## Channel-level user API tokens
+
+- **A token per conversation and per person.** Anyone authorized in a conversation asks the agent
+  for `create_api_token` (gateway tools `create_api_token`, `list_api_tokens`,
+  `revoke_api_token`; `src/gateway/api-tokens.js`, table `api_tokens`, migration 39). The value
+  (`cgk_…`, 192 random bits) is returned once inside the tool result with a curl example and is
+  stored only as a sha256 hash with a prefix and last four characters. A channel manager or admin
+  lists and revokes every token of the conversation; others see and revoke their own. The Admin
+  UI → API page lists every token across conversations with a Revoke button
+  (`GET /api/api-tokens`, `POST /api/api-tokens/:id/revoke`, admin session only, never a value).
+- **A run acts as the token's creator.** `POST /api/runs` with a channel token is bound to the
+  token's conversation (`channel` may be omitted or must match, else 403), authored by the creator
+  as a trusted principal: their role is read live from the user store, `isAuthorized()` is
+  re-checked at every run (403 once they lose access), Admin-mode bypass follows the same rule as
+  a Slack message of theirs (admin author + Admin-mode channel), personal connections and skills
+  apply as in Slack, the reply menu is theirs, and work the run spawns (background jobs,
+  schedules, the memory review) carries them as author. The body's `author` is ignored. Status,
+  list and stop answer only for runs of that conversation. A revoked token answers 401.
+- **The organization-wide key is deprecated, not removed.** It keeps working unchanged for
+  existing automations (fixed admin principal, any conversation) and logs one deprecation warning
+  per hour when used; the Settings card and the API page say so.
 ## Run capability liveness
 
 - **A run's control-socket capability is authority only while its conversation has live work.**

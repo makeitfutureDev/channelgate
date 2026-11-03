@@ -7,6 +7,7 @@ import { getAdminPassword, getApiKey, getSettings, saveSettings } from "../confi
 import { adminAccount, adminAccountByUsername, ensureBootstrapAdmin, bootstrapAvailable, passkeysConfigured, adminLinkRequired } from "../config/admin-accounts.js";
 export { passkeysConfigured } from "../config/admin-accounts.js";
 import { clientKey, timingSafeEqualStr, createLoginLimiter, verifyPassword, hashPassword, isHashedPassword } from "./security.js";
+import { looksLikeApiToken, resolveApiToken } from "../gateway/api-tokens.js";
 
 // Sessions expire two ways: IDLE (untouched for this long) and ABSOLUTE (this old regardless of
 // use). Previously the set only grew and a token stayed valid for the daemon's whole lifetime, so
@@ -104,11 +105,40 @@ function bearerToken(req) {
   const m = /^Bearer\s+(.+)$/i.exec(h);
   return m ? m[1].trim() : "";
 }
-export function apiRunKeyOk(req) {
-  const expected = getApiKey();
-  if (!expected) return false;
+// The DEPRECATED organization-wide key: every use logs one warning per hour, so an operator who
+// still has an automation on it is told, without a flood, that channel tokens replace it.
+let legacyKeyWarnedAt = 0;
+function warnLegacyKeyUse() {
+  const now = Date.now();
+  if (now - legacyKeyWarnedAt < 3_600_000) return;
+  legacyKeyWarnedAt = now;
+  console.warn("[web] the organization-wide run API key is DEPRECATED: create a channel token instead (ask the agent in the channel for `create_api_token`, or see the Admin UI → API page). The key keeps working until it is cleared.");
+}
+
+/**
+ * Which run-API credential a request carries: `{ kind: "channel", token }` for a channel-level
+ * user token (src/gateway/api-tokens.js), `{ kind: "legacy" }` for the organization-wide key,
+ * or null. A channel token is a `cgk_…` value; anything else is compared with the legacy key.
+ */
+export function resolveRunApiCredential(req) {
   const got = String(req.headers["x-api-key"] || "") || bearerToken(req);
-  return Boolean(got) && timingSafeEqualStr(got, expected);
+  if (!got) return null;
+  if (looksLikeApiToken(got)) {
+    const token = resolveApiToken(got);
+    return token ? { kind: "channel", token } : null;
+  }
+  const expected = getApiKey();
+  if (!expected || !timingSafeEqualStr(got, expected)) return null;
+  warnLegacyKeyUse();
+  return { kind: "legacy" };
+}
+
+export function apiRunKeyOk(req) {
+  const credential = resolveRunApiCredential(req);
+  if (!credential) return false;
+  // Routes read the resolved principal from here; it never comes from the body.
+  req.cgApiCredential = credential;
+  return true;
 }
 // Express matches mount paths case-insensitively unless told otherwise (src/web/app.js turns
 // case-sensitive routing on), so every path test here lowercases first: "/API/settings" must be
