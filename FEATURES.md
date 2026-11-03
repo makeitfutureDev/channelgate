@@ -1,5 +1,27 @@
 # ChannelGate — Features
 
+## User-level skill catalog tokens
+
+- **Two kinds of token for `POST /mcp/skills`.** A **catalog** token (minted by an admin in the
+  admin UI, as before) is the library for other systems and peer gateways: organization and
+  channel skills, with the existing read/propose/manage/sync scopes, and it never lists, reads,
+  exports or edits a personal skill. A **user** token is minted by a person for themselves with the
+  gateway tools `create_my_skill_token` / `list_my_skill_tokens` / `revoke_my_skill_token` (an
+  approved person's own Slack message; never the HTTP API principal; up to five active per person;
+  the value is shown once with the endpoint and a Claude Code example). It acts as that person,
+  resolved live on every request from the stores: organization skills (granted org-wide or
+  discoverable), the skills of every channel whose access policy admits them right now (the
+  channel's own grants, its template, its section), and their own personal skills — never another
+  person's personal skill, never an unauthorized channel's section skill. Its scopes are fixed to
+  read, propose and manage, never sync; edits follow the chat rules (a personal skill is its
+  author's, a channel skill its members', the organization tier an admin's); creation makes a
+  personal skill by default, a channel skill when `channel_id` names an admitting channel, an
+  organization skill only for an admin. The skill records the person, not the token, as author. A
+  token whose owner is no longer approved answers 403 and acts on nothing.
+- **Endpoint hygiene.** The bearer is verified before the 20 MB body is parsed, invalid tokens back
+  off per client with the login limiter (429 + Retry-After), and `library_whoami` reports the kind
+  and owner. The admin UI's token table shows both kinds with the owner of a user token; admins
+  revoke any token there. Migration 39 adds `kind` and `owner_id` to `skill_access_tokens`.
 ## Channel-level user API tokens
 
 - **A token per conversation and per person.** Anyone authorized in a conversation asks the agent
