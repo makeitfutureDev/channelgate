@@ -30,6 +30,8 @@ product overview.
 
 ## Unreleased
 
+- Fix Slack app imports: register `/status-cg` instead of the built-in `/status`, include explicit command URLs, and clarify Socket Mode setup in the installer.
+
 - **Company email auto-approval.** Admins can configure exact email domains in Users, preview
   existing Slack users and approve matching provider identities automatically. Manual revocations
   prevent automatic reapproval; no administrator privileges are granted.

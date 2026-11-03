@@ -134,6 +134,9 @@ fi
 cat <<EOT
   1) Create the Slack app from slack-app-manifest.json
        api.slack.com/apps → Create New App → From a manifest → paste the file → Create → Install.
+       Socket Mode: command URLs are placeholders; no command webhook is required.
+       Status uses /status-cg; choose engine/model/effort with /model.
+       Generate a separate app-level token with connections:write.
   2) Open the admin UI:  http://localhost:${PORT_SHOW}
        → Settings tab → paste the Slack Bot / App-Level / Signing tokens → Save & connect.
   3) Invite the bot to a channel (/invite) or DM it.
