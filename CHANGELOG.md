@@ -30,6 +30,9 @@ product overview.
 
 ## Unreleased
 
+- **Company email auto-approval.** Admins can configure exact email domains in Users, preview
+  existing Slack users and approve matching provider identities automatically. Manual revocations
+  prevent automatic reapproval; no administrator privileges are granted.
 - Channel-level user API tokens: anyone working in a conversation can create a personal run API
   token for it (`create_api_token` / `list_api_tokens` / `revoke_api_token`); runs it starts are
   bound to that conversation and act as the creator with their live role and authorization. The

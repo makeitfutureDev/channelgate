@@ -1,3 +1,4 @@
+import { autoApproveSlackUser } from "../gateway/user-auto-approval.js";
 import { assertEngineSelectable } from "../engines/selection.js";
 // The message pipeline (extracted from slack/app.js — the 2026-08 restructure notes (internal repo) Phase 2.5): gating,
 // authorization, canonical hydration, in-thread slash commands, attachment download, thread
@@ -652,6 +653,7 @@ export async function processMessageEvent(event, client, { botUserId = "", teamI
 
     const { entry, meta } = await ensureRegistered(client, event);
     await ensureUserKnown(client, event.user);
+    await autoApproveSlackUser(client, event.user);
     // In a code channel the whole channel is one session and replies go TOP-LEVEL (or into the
     // thread the person used); everywhere else the message's own thread is both.
     const codeChannel = isCodeChannelMeta(meta);
