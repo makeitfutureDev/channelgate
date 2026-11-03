@@ -41,7 +41,7 @@ const admit = (id, origin = "slack_foreground") => licenseAdmission({ conversati
 
 test("no key: the first conversation of the month is served and every other one is refused", () => {
   tier("none");
-  assert.deepEqual(getEffectiveLimits(), { conversations: 1, messagesPerConversationPerMonth: 500, channels: 20, users: 20 });
+  assert.deepEqual(getEffectiveLimits(), { conversations: 1, messagesPerConversationPerMonth: 500, channels: 10, users: 10 });
 
   const first = admit("C_FIRST");
   assert.equal(first.allowed, true);
@@ -76,13 +76,20 @@ test("a refused turn is a reply, never an exception and never silence", () => {
   assert.ok(!/undefined|null|NaN/.test(refused.notice));
 });
 
-test("a free key unlocks every conversation and keeps the 500-message cap", () => {
+test("a free key admits 100 active conversations and keeps the 500-message cap", () => {
   tier("free");
-  assert.deepEqual(getEffectiveLimits(), { conversations: null, messagesPerConversationPerMonth: 500, channels: 20, users: 20 });
+  assert.deepEqual(getEffectiveLimits(), { conversations: 100, messagesPerConversationPerMonth: 500, channels: 10, users: 10 });
   for (const id of ["C_A", "C_B", "C_C", "gchat:spaces/X", "teams:19:abc@thread.tacv2"]) {
     assert.equal(admit(id).allowed, true, `${id} should be admitted on a free key`);
   }
   assert.equal(usageTotals().conversations, 5);
+  for (let i = 5; i < 100; i++) assert.equal(admit(`C_${i}`).allowed, true);
+  const refused = admit("C_101");
+  assert.equal(refused.allowed, false);
+  assert.equal(refused.reason, "conversation_limit");
+  assert.match(refused.notice, /100 conversations per month/);
+  assert.equal(admit("C_A").allowed, true, "an admitted conversation stays usable");
+  assert.equal(conversationUsage({ limit: 500 }).filter(row => row.admitted).length, 100);
 });
 
 test("the monthly cap refuses at the limit and warns exactly once at 80%", () => {
@@ -200,7 +207,7 @@ test("an EXPIRED offline payload grants nothing — the no-key limits, immediate
   assert.equal(status.expiresAt, "2020-01-01T00:00:00.000Z", "…while still saying when it ran out");
   assert.equal(status.banner.level, "error");
 
-  assert.deepEqual(getEffectiveLimits(), { conversations: 1, messagesPerConversationPerMonth: 500, channels: 20, users: 20 });
+  assert.deepEqual(getEffectiveLimits(), { conversations: 1, messagesPerConversationPerMonth: 500, channels: 10, users: 10 });
   assert.equal(admit("C_EXPIRED_FIRST").allowed, true, "the free allowance still works");
   const second = admit("C_EXPIRED_SECOND");
   assert.equal(second.allowed, false);

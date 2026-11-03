@@ -20,10 +20,10 @@ The published defaults are:
 | State | Conversations | AI runs per conversation per UTC month |
 | --- | --- | --- |
 | No key | 1 | 500 |
-| Free key | Unlimited | 500 |
+| Free key | 100 active per UTC month | 500 |
 | Enterprise key | Unlimited | Unlimited |
 
-The issued key's verified limits are authoritative; limits may change under the published terms. Without a key, the first conversation admitted in a calendar month is the one served that month.
+Free installations allow up to 10 registered channels (including DMs) and 10 stored human users. Signed smaller limits are honored; older Free keys cannot exceed these compiled ceilings or the 100-active-conversation allowance. Enterprise defaults to unlimited. Without a key, the first conversation admitted in a calendar month is the one served that month.
 
 An AI message means an engine run started, including user tasks, follow-ups, scheduled runs, and background work. The gateway's memory-review runs are excluded. It warns at 80% of a monthly cap; at the cap it posts a visible refusal instead of spawning a run.
 
@@ -41,3 +41,7 @@ Core confinement, permissions, memory, skills, standard chat connectors, and bac
 - [Licensing FAQ](/docs/licensing/faq)
 - [Privacy](/docs/privacy)
 - [Usage and costs](/docs/features/usage-and-costs)
+
+## Cost-tracking history
+
+Free installations (with or without a key) expose the most recent 30 days of cost-tracking history. Enterprise exposes unlimited history. This reporting window applies to audit records, summaries and dashboard totals, including external engine usage. It does not delete stored accounting, alter monthly AI allowances, or limit conversation history.

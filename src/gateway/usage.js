@@ -4,7 +4,8 @@
 // columns (ts, channel_id, author_id) make the per-day/week/month/channel/user rollups the Audit
 // view and future dashboards need cheap. Daemon-side only (never inside a channel cwd).
 //
-// No cap is enforced — this is for understanding + the Audit view, per the product decision.
+// Free installations expose the most recent month of cost history; Enterprise exposes all history.
+import { getLicenseStatus } from "../ee/license.js";
 import { getDb } from "../db/index.js";
 import { getSettings, getCodexModelRates, getAssumedModels } from "../config/settings.js";
 import { countDrop } from "../util/drops.js";
@@ -388,11 +389,23 @@ const MODEL_ATTRIBUTION_CTE = `WITH component_priced AS (
    WHERE NOT EXISTS (SELECT 1 FROM usage_components c WHERE c.usage_id = u.id)
 )`;
 
+// Keep underlying accounting intact across upgrades and downgrades. This is a read window,
+// independent of license admission counters, never a destructive retention job.
+export function costHistoryStart(now = new Date()) {
+  if (getLicenseStatus().features.costHistoryDays === null) return null;
+  return new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
+}
+
 // Read ledger records (newest-first), optionally filtered. `month` is "YYYY-MM" (default: all).
 // Used by the Audit view. Caps at `limit` records.
 export async function readUsage({ month = "", channelId = "", authorId = "", limit = 500 } = {}) {
   const where = [];
   const params = {};
+  const historyStart = costHistoryStart();
+  if (historyStart) {
+    where.push("ts >= @historyStart");
+    params.historyStart = historyStart.toISOString();
+  }
   if (month) {
     where.push("substr(ts, 1, 7) = @month");
     params.month = month;
@@ -511,8 +524,14 @@ export function usageDashboard({ range = "last30", harness = "all", source = "al
   const withGateway = selectedSource !== "external";
   const withExternal = selectedSource !== "gateway";
   const now = new Date();
-  const { start, end, unit } = resolveRange(r, now);
-  const { bucketStart, bucketEnd } = bucketWindow(start, end);
+  let { start, end, unit } = resolveRange(r, now);
+  const historyStart = costHistoryStart(now);
+  if (historyStart && start < historyStart) start = historyStart;
+  let { bucketStart, bucketEnd } = bucketWindow(start, end);
+  // External records are hourly aggregates: exclude a partial hour straddling the cutoff.
+  if (historyStart && start.getTime() === historyStart.getTime()) {
+    bucketStart = new Date(Math.ceil(start.getTime() / 3600000) * 3600000).toISOString().slice(0, 13);
+  }
   // node:sqlite rejects a named parameter the statement does not use, so the two halves carry their
   // own bindings: the ledger filters on the ISO timestamp, `external_usage` on its hour-bucket key.
   const harnessBinding = selectedHarness === "all" ? {} : { harness: selectedHarness };
@@ -626,7 +645,12 @@ export function usageDashboard({ range = "last30", harness = "all", source = "al
   externalModelBuckets.forEach(addModelBucket);
 
   const series = [];
-  for (let d = start; d < end; d = stepBucket(d, unit)) {
+  // SQL keeps the exact history cutoff, but gap filling walks calendar buckets. A
+  // cutoff midway through a day must still include the current day's partial bucket.
+  const seriesStart = unit === "month" ? utcMonthStart(start)
+    : unit === "day" ? utcDayStart(start)
+    : new Date(Math.floor(start.getTime() / 3600000) * 3600000);
+  for (let d = seriesStart; start < end && d < end; d = stepBucket(d, unit)) {
     const key = bucketKey(d, unit);
     const row = totalsByBucket.get(key);
     const models = {};
@@ -818,6 +842,7 @@ export function usageDashboard({ range = "last30", harness = "all", source = "al
   const externalCost = Number(extTotals?.cost || 0);
   return {
     range: r,
+    historyDays: historyStart ? 30 : null,
     harness: selectedHarness,
     source: selectedSource,
     unit,

@@ -148,8 +148,10 @@ test("the licensing section keeps the tier limit and the no-automatic-relicensin
   assert.match(section, /source-available fair-code/i);
   assert.match(section, /not OSI open-source/);
   assert.match(section, /500 AI messages per conversation per month/);
+  assert.match(section, /100 active conversations per UTC month/);
+  assert.match(section, /one month \(30 days\) of cost-tracking history/);
   assert.match(section, /no version\s+is relicensed automatically/);
-  assert.match(section, /\| \*\*No key\*\* — install and run \| 20 \(one active per month\) \| 20 \| 500 \|/);
+  assert.match(section, /\| \*\*No key\*\* — install and run \| 10 \(one active per month\) \| 10 \| 500 \|/);
   // The three lanes the release plan sells against.
   for (const lane of [/\*\*Registered — /, /\*\*Partner — /, /\*\*Reseller, white-label, enterprise — /]) {
     assert.match(section, lane);

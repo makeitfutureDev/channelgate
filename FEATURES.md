@@ -216,11 +216,11 @@ Slack’s native running/Stop label shows the resolved model and explicitly conf
 
 ## Registered inventory limits and Enterprise harness approvals
 
-- Non-Enterprise installs allow at most 20 registered channels (including DMs and the API
-  conversation) and 20 stored human users, including unapproved accounts. Registration checks
+- Non-Enterprise installs allow at most 10 registered channels (including DMs and the API
+  conversation) and 10 stored human users, including unapproved accounts. Registration checks
   are atomic; existing records remain editable and usable when an install is already over its cap.
   Legacy free-license payloads cannot bypass these caps. The no-key monthly one-conversation
-  limit and Registered 500-message monthly limit remain. Enterprise defaults to unlimited.
+  limit remains; Registered allows 100 active conversations per UTC month and 500 AI messages per conversation per month. Enterprise defaults to unlimited.
 - Enterprise organization admins can approve one or more harnesses per channel through the
   admin editor or Slack Settings → Agent. Unrestricted is the default. Pins, saved sessions,
   API overrides, automation and fallback cannot launch outside the approved set; queued work
@@ -5475,3 +5475,4 @@ and operator overrides retain their existing rules. This is agent guidance, not 
 sandbox or a new runtime tool.
 
 - Slack bot removal archives the registered channel, displays Archived in the conversation list/detail, blocks admin changes and new runtime launches, and skips skill/configuration and Drive sync propagation. Re-inviting the bot resumes synchronization without deleting workspace files or sessions. Shared folders can still change through another active conversation that uses the same folder.
+- Free cost history exposes the last 30 days in audit, summaries and dashboard (gateway and external usage); Enterprise exposes all history. Stored accounting and monthly admission counters remain intact. Verify both engines at the 30-day boundary and after upgrade/downgrade.

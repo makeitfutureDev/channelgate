@@ -1235,6 +1235,7 @@ async function loadDashboard() {
     </div>`;
 
   body.innerHTML = `
+    ${d.historyDays ? `<p class="hint">Free cost-tracking history covers the last ${fmtNum(d.historyDays)} days. Enterprise includes unlimited history.</p>` : ""}
     <div class="kpi-row">${kpiHtml}</div>
     <div id="dash-approvals"></div>
     <div class="dash-legend">${modelLegend(keys)}</div>

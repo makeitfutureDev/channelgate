@@ -413,10 +413,10 @@ inbox). Record the address and the servers; never the password.
   `invalid_arguments — [ERROR] unsupported element: multiselect [json-pointer:view/blocks/7]`
   before the fix; it must open after it.
 - [x] Automated `test/license-registration.test.js`: signed Registered and no-key fixtures admit
-  19→20 users/channels and refuse 20→21 atomically, including a two-process race for the last
+  9→10 users/channels and refuse 10→11 atomically, including a two-process race for the last
   slot. Count every stored conversation (DMs/API included), every stored user (approved or not)
   except the fixed synthetic API principal. Enterprise defaults remain unlimited; old free
-  payloads cannot raise the 20 ceilings. Downgrade preserves 25 existing records while blocking
+  payloads cannot raise the 10 ceilings. Downgrade preserves 25 existing records while blocking
   additions. Slack, Teams, Google Chat, admin user API and run API return readable refusals.
 - [x] Automated `test/channel-engines.test.js`: malformed/empty approvals fail closed, changing
   or clearing approvals requires Enterprise, whole-record saves cannot erase the policy,
@@ -437,9 +437,9 @@ inbox). Record the address and the servers; never the password.
   Dependency audit passes the high-severity threshold (two pre-existing moderate advisories).
 - [ ] Live inventory fixture, **Claude and Codex** independently: use an isolated daemon with a
   legitimately signed Registered key, 19 stored conversations and 19 stored human users. Register
-  the 20th then attempt the 21st through admin API and chat on every connected surface. Include a
+  the 10th then attempt the 11th through admin API and chat on every connected surface. Include a
   DM, API conversation and unapproved account; repeat concurrent last-slot attempts. **Pass:**
-  exact counts remain 20, refusals appear without engine/session/usage writes, existing users and
+  exact counts remain 10, refusals appear without engine/session/usage writes, existing users and
   channels still work. Repeat Enterprise→Registered with 25 records: retain and edit all existing
   records, refuse additions. Never change a production deployment's license for this drill.
 - [ ] Live harness controls, **Claude and Codex**, paired private Read/Admin fixtures: as an
@@ -11592,3 +11592,8 @@ Documentation-only, engine-independent: no gateway runtime or Microsoft grants c
 
 - Bot-removal archival: automated `test/channel-archival.test.js` covers bot versus human departure, durable archive state, stale-metadata provisioning refusal, frozen skill/config files and reactivation convergence. Run alongside Slack membership, workspace sync, runtime and channel admin regressions.
 - Live acceptance (pending; repeat with Claude and Codex): use a disposable private Slack channel with a dedicated folder and a granted revisioned fixture skill. Invite the bot; pin the engine and ask “Read the fixture skill and report its revision.” Remove the bot, verify Archived in admin list/detail; update the skill and global instructions, wait at least 10 seconds, verify workspace files remain byte-identical and admin writes return 409. Reinvite, repeat the prompt and verify the new skill revision/config arrives while existing files/sessions remain. Pass only with observed evidence for both engines. Engine-independent UI/API checks may share evidence. A folder shared with an active conversation remains shared; archival must skip the archived channel's own provisioning.
+- Free cost history exposes the last 30 days in audit, summaries and dashboard (gateway and external usage); Enterprise exposes all history. Stored accounting and monthly admission counters remain intact. Verify both engines at the 30-day boundary and after upgrade/downgrade.
+
+- Registered Free monthly allowance: legacy null/missing/oversized signed conversation limits clamp to 100; admit the 100th unique conversation, refuse the 101st before engine spawn, and keep an already admitted conversation usable. No-key evaluation remains one. Automated: `test/license-limits.test.js`, `test/license-registration.test.js`.
+
+- Private acceptance definitions updated: LICENSE-INVENTORY-20-01 (stable ID retained; now 10 inventory slots), LICENSE-FREE-100-01 and COST-HISTORY-30-01. Claude and Codex execution remains pending; automated fixtures do not claim live acceptance.
