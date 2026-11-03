@@ -14,7 +14,8 @@
 import { z } from "zod";
 import { readFileSync } from "node:fs";
 import { getUser, isAdminPrincipal, isApproved, getChannelMeta, getChannelEntry } from "../../config/store.js";
-import { getOrgAccessGrants, getSkillsContextWarnTokens, getSkillsPublish, getEngine } from "../../config/settings.js";
+import { getOrgAccessGrants, getSkillsContextWarnTokens, getSkillsPublish, getEngine, getPublicUrl } from "../../config/settings.js";
+import { createUserAccessToken, listUserAccessTokens, revokeUserAccessToken } from "../../gateway/skills/tokens.js";
 import { resolveAccessGrants } from "../../gateway/access-grants.js";
 import { getSkill, listSkills, listCategories, skillBundle, revisionFile, listProposals, listSources, addSource, updateSource, removeSource, excludeSkill, restoreSkill, effectiveRevisionFor, listRevisions, usageCountsBySlug, setSkillDiscoverable, getTemplate, SOURCE_KINDS, SOURCE_MODES } from "../../gateway/skills/catalog.js";
 import { resolveSkillProfile, checkCompatibility, skillGrantContextChange } from "../../gateway/skills/resolve.js";
@@ -793,6 +794,60 @@ export function register(server, ctx) {
       }
       if (!results.length) return text("No sources are configured (add_skill_source, or admin UI → Skills → Sources).");
       return text(results.map((r) => (r.ok ? `✅ ${r.url}: ${r.discovered} skill(s) — ${r.created} new, ${r.updated} updated, ${r.staged} staged for review, ${r.unchanged} unchanged${r.tombstoned ? `, ${r.tombstoned} removed` : ""}${r.conflicts?.length ? `, conflicts: ${r.conflicts.map((c) => c.slug).join(", ")}` : ""}` : `🚫 ${r.url}: ${r.error}`)).join("\n"));
+    },
+  );
+
+  // ── Personal access tokens for the catalog's MCP endpoint ─────────────────────────────────
+  // A person's own bearer for `POST <public URL>/mcp/skills` from a laptop (Claude Code, Codex,
+  // any MCP client). It is THEM: what it reaches is resolved live from their rank, their channels
+  // and their personal skills (skills/token-scope.js), never a fixed grant — so a revoked approval
+  // kills it. Only a verified person mints one (never the HTTP API principal); only the owner
+  // lists or revokes theirs; admins see every token in the admin UI.
+  const tokenEndpoint = () => (getPublicUrl() ? `${getPublicUrl()}/mcp/skills` : "<the gateway's public URL>/mcp/skills");
+  server.registerTool(
+    "create_my_skill_token",
+    { description: "Create YOUR personal access token for the skill catalog's MCP endpoint (laptop Claude Code, Codex, any MCP client). It reaches exactly what you reach: organization skills, the skills of channels that admit you, and your own personal skills; it can read, propose and edit within those rules, never export the library. Shown once; up to 5 active per person.", inputSchema: { name: z.string().describe("A label, e.g. 'work laptop'") } },
+    async ({ name }) => {
+      if (!(await personalAuthor())) return text("Only an approved person can mint a personal skill token from their own message (not an HTTP API run).");
+      try {
+        const { token, record } = createUserAccessToken({ ownerId: createdBy, name });
+        await logEvent("skill_token_created", { token: record.id, kind: "user", scopes: record.scopes, author: createdBy });
+        return text(`🔑 Personal skill token **${record.name}** (id ${record.id}) — copy it now, it is not shown again:
+\`${token}\`
+
+Use it with any MCP client, e.g. Claude Code:
+\`claude mcp add --transport http channelgate-skills ${tokenEndpoint()} --header "Authorization: Bearer ${token}"\`
+
+It acts as you: organization skills, the skills of channels that admit you, your personal skills; edits follow the same rules as here. Revoke it any time with revoke_my_skill_token.`);
+      } catch (err) {
+        return text(`🚫 ${err?.message || err}`);
+      }
+    },
+  );
+
+  server.registerTool(
+    "list_my_skill_tokens",
+    { description: "List YOUR personal skill catalog tokens (name, prefix, created, last used, revoked). Values are never shown again.", inputSchema: {} },
+    async () => {
+      if (!(await personalAuthor())) return text("Only an approved person has personal skill tokens.");
+      const rows = listUserAccessTokens(createdBy);
+      if (!rows.length) return text("You have no personal skill tokens. Create one with create_my_skill_token.");
+      return text(rows.map((t) => `• #${t.id} **${t.name}** (${t.prefix}…) — created ${t.createdAt.slice(0, 10)}${t.lastUsedAt ? `, last used ${t.lastUsedAt.slice(0, 10)}` : ", never used"}${t.revoked ? ", revoked" : ""}`).join("\n"));
+    },
+  );
+
+  server.registerTool(
+    "revoke_my_skill_token",
+    { description: "Revoke one of YOUR personal skill catalog tokens by id (list_my_skill_tokens). Takes effect on its next request.", inputSchema: { id: z.number().int() } },
+    async ({ id }) => {
+      if (!(await personalAuthor())) return text("Only an approved person has personal skill tokens.");
+      try {
+        const record = revokeUserAccessToken(id, createdBy);
+        await logEvent("skill_token_revoked", { token: record.id, kind: "user", author: createdBy });
+        return text(`✅ Token #${record.id} **${record.name}** is revoked.`);
+      } catch (err) {
+        return text(`🚫 ${err?.message || err}`);
+      }
     },
   );
 

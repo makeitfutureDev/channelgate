@@ -33,6 +33,13 @@ product overview.
 - **Company email auto-approval.** Admins can configure exact email domains in Users, preview
   existing Slack users and approve matching provider identities automatically. Manual revocations
   prevent automatic reapproval; no administrator privileges are granted.
+- User-level skill catalog tokens: a person mints their own bearer for `POST /mcp/skills` from
+  chat (`create_my_skill_token`, `list_my_skill_tokens`, `revoke_my_skill_token`); it acts as that
+  person — organization skills, the skills of channels that admit them, their own personal skills,
+  resolved live, with the chat edit rules and never the library export — and dies with their
+  approval. Admin-minted catalog tokens remain the library for other systems and peer gateways
+  and never reach a personal skill in any scope. The endpoint verifies the bearer before parsing
+  the body and backs off invalid tokens. Migration 39.
 - Channel-level user API tokens: anyone working in a conversation can create a personal run API
   token for it (`create_api_token` / `list_api_tokens` / `revoke_api_token`); runs it starts are
   bound to that conversation and act as the creator with their live role and authorization. The

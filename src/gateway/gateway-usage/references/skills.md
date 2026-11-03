@@ -57,6 +57,10 @@ applies at once.
 - `add_my_skills` / `remove_my_skills` — carry catalog skills in YOUR runs, in every
   conversation (the personal tier; like starring in a skill library). No approval card.
 - `get_skill_info` — a skill's owner, version, revisions, files and dependencies.
+- `create_my_skill_token` / `list_my_skill_tokens` / `revoke_my_skill_token` — YOUR personal
+  bearer for the catalog's MCP endpoint (laptop Claude Code, Codex, any MCP client). It acts as
+  you — organization skills, the skills of channels that admit you, your personal skills, same
+  edit rules as here — never the library export. Shown once; up to 5 active per person.
 
 ## This channel's skills (any member)
 

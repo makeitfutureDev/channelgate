@@ -311,7 +311,16 @@ tokens*: random, shown once, stored hashed, revocable, with scopes:
 | sync    | `library_export`, `library_export_skill` (what a peer gateway needs)                    |
 
 Claude Code: `claude mcp add --transport http channelgate-skills <public URL>/mcp/skills --header
-"Authorization: Bearer <token>"`. Personal skills never appear over MCP.
+"Authorization: Bearer <token>"`.
+
+### Two kinds of token
+
+| kind    | minted by                                     | reaches                                                                                               |
+| ------- | --------------------------------------------- | ----------------------------------------------------------------------------------------------------- |
+| catalog | an admin, in the admin UI (scopes above)      | the LIBRARY: organization and channel skills (also non-discoverable ones for `sync`). Never a personal skill — not listed, read, exported or edited. `manage` writes library skills. For other systems and peer gateways. |
+| user    | a person, from chat (`create_my_skill_token`) | that person, resolved LIVE on every call: organization skills (granted or discoverable), the skills of every channel whose access policy admits them right now (own grants, template, section), and their own personal skills. `read`, `propose`, `manage` with the chat rules (personal: author; channel: members; organization: admins); never `sync`. Dies when the owner is no longer approved; up to 5 active per person; the owner lists/revokes theirs, admins see and revoke all in the admin UI. |
+
+The bearer is verified before the request body is parsed, and invalid tokens back off per client.
 
 ## Peer gateways
 
