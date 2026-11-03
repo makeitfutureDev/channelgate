@@ -22,7 +22,8 @@
   Repeat authenticated Google Chat/Teams sender fixtures when those transports provide email;
   Teams Bot Framework events without email must remain manual. No engine-specific output is used
   for the approval pass rule; downstream engine release smoke remains a separate gate.
-- Private QA registry update pending: requesting user's personal Airtable connection is unavailable.
+- Beta integration (2026-11-03): 46 focused approval/ingest/user-search/code-channel/MCP-inventory checks passed, plus admin-role-race and personal skill-token regression checks. Static validation passed. The existing beta reply-target and MCP-selection safeguards are retained.
+- Private QA definitions and blocked Claude/Codex live runs are recorded. Host-side verification confirmed the deployed Slack bot lacks `users:read.email`; live positive acceptance remains blocked until the scope is granted and the app reinstalled. A scratch main pipeline using the real bot profile correctly denied the missing-email sender before engine execution.
 ## User-level skill catalog tokens (2026-11-03)
 
 - [x] Automated: `node scripts/run-tests.mjs test/user-skill-tokens.test.js` (then
