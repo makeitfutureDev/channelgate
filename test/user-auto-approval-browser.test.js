@@ -18,6 +18,7 @@ test("company domain policy persists, previews safely and respects manual revoca
   };
   const app = express();
   app.use(express.json());
+  app.get("/api/auth/me", (_req, res) => res.json({ bootstrap: true, linkRequired: false }));
   app.get("/api/skills", (_req, res) => res.json({ skills: [] }));
   app.get("/api/mcp/available", (_req, res) => res.json({ servers: [] }));
   app.get("/api/health", (_req, res) => res.json({ slack: slack.snapshot(), engines: {} }));
