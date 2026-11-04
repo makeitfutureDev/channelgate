@@ -1,5 +1,11 @@
 # ChannelGate — Test Plan
 
+## Invalid skill-folder grants (2026-11-04)
+
+- Automated: `test/run-grant-isolation.test.js` covers personal/shared parent-folder grants, alone and alongside a valid skill; verifies warnings, source preservation, and exclusion from both Claude plugins and the Codex catalog.
+- Live Claude/Codex acceptance: use Apps in `cg-testing-{claude,codex}-bash` with a disposable personal grant `synced` containing a nested skill but no root `SKILL.md`, alongside a valid marker skill. Send “Reply SKILL_FOLDER_OK.” Require a normal answer plus a warning naming `synced` and the missing `SKILL.md`, no nested skill in delivered artifacts, and the valid skill retained. Repeat with only the invalid grant. Restore fixture grants afterward. Live chat acceptance pending; remote artifact verification is separate from a human-visible engine run.
+
+
 ## Company domain auto-approval (2026-10-28)
 
 - Automated: `node --test test/user-auto-approval.test.js test/user-search.test.js` covers

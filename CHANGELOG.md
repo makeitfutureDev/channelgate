@@ -1,5 +1,7 @@
 # Changelog — ChannelGate
 
+- Skip granted folders without a regular `SKILL.md`, warn with the folder name, and continue with valid skills instead of failing the request.
+
 - Make completed `/delete` commands silent, including partial deletion; retain audit counts without posting a report.
 
 - Clarify catalog-first skill authoring: local skill installs are not durable; external source edits require verified repository write access.
