@@ -17,7 +17,7 @@ process.env.PATH = `${path.join(projectRoot, "test", "fixtures")}${path.delimite
 process.env.SESSION_KEEPALIVE = "0";
 
 const {
-  skillModelPreference, engineForModel, withSkillRuntimeHeader, skillRuntimeHeader, decideSkillSwap, skillSwapReply,
+  skillModelPreference, engineForModel, withSkillRuntimeHeader, skillRuntimeHeader, decideSkillSwap, skillSwapReply, setSkillModelFrontmatter,
   registerSkillSwapHandler, requestSkillSwap, hasSkillSwapHandler, skillSwapKey, _resetSkillSwapHandlers, USE_SKILL_TOOL,
 } = await import("../src/gateway/skill-runtime.js");
 const catalog = await import("../src/gateway/skills/catalog.js");
@@ -88,6 +88,49 @@ test("materializeSkill writes the header into the channel copy and sees it as un
   assert.equal((await readFile(path.join(dir, "swap-mat-plain", "SKILL.md"), "utf8")).includes(USE_SKILL_TOOL), false, "a skill without a preference is byte-identical to its revision");
   const stored = catalog.revisionFile(catalog.effectiveRevisionFor(catalog.getSkill("swap-mat-skill")).id, "SKILL.md").content.toString("utf8");
   assert.equal(stored.includes(USE_SKILL_TOOL), false, "the catalog revision is never rewritten");
+});
+
+test("setSkillModelFrontmatter sets, replaces, clears and validates the model line without touching the rest", () => {
+  const base = "---\nname: triage\ndescription: Triage mail\ntags: [a]\n---\n\n# triage\n";
+  assert.equal(setSkillModelFrontmatter(base, "Sonnet"), "---\nname: triage\ndescription: Triage mail\ntags: [a]\nmodel: sonnet\n---\n\n# triage\n");
+  const withModel = "---\nname: triage\nmodel: opus\ndescription: Triage mail\n---\nbody\n";
+  assert.equal(setSkillModelFrontmatter(withModel, "gpt-6.1-sol"), "---\nname: triage\nmodel: gpt-6.1-sol\ndescription: Triage mail\n---\nbody\n", "replaced in place");
+  assert.equal(setSkillModelFrontmatter(withModel, ""), "---\nname: triage\ndescription: Triage mail\n---\nbody\n", "an empty model removes the line");
+  assert.equal(setSkillModelFrontmatter(base, ""), base, "clearing an absent line changes nothing");
+  assert.equal(setSkillModelFrontmatter("# bare\n", "sonnet"), "---\nmodel: sonnet\n---\n\n# bare\n", "no frontmatter → a minimal header");
+  assert.equal(setSkillModelFrontmatter("# bare\n", ""), "# bare\n");
+  assert.throws(() => setSkillModelFrontmatter(base, "made-up-model"), /not a model any engine/);
+  assert.throws(() => setSkillModelFrontmatter("---\nname: x\n", "sonnet"), /not closed/);
+});
+
+test("create_skill and update_skill take an optional model that writes the frontmatter line", async () => {
+  await setUser("U_SWAP_AUTHOR", { name: "Swap Author", approved: true, isAdmin: true });
+  const entry = await upsertChannelEntry("C_SWAP_AUTHOR", { name: "swap-author", type: "channel" });
+  await saveChannelMeta(entry.slug, { ...defaultChannelMeta({ channelId: "C_SWAP_AUTHOR", name: entry.name, type: "channel", isDM: false }), access: "approved" });
+  const tools = new Map();
+  registerSkillTools({ registerTool: (name, _def, handler) => tools.set(name, handler) },
+    ctxFromClaims({ channelId: "C_SWAP_AUTHOR", slug: entry.slug, authorId: "U_SWAP_AUTHOR", threadKey: "1700000000.000400", principalTrusted: true, engine: "claude", toolset: "full" }));
+  const skillMd = (slug) => catalog.revisionFile(catalog.effectiveRevisionFor(catalog.getSkill(slug)).id, "SKILL.md").content.toString("utf8");
+
+  const created = await tools.get("create_skill")({ files: [md("Swap Authored", "a skill created with a model")], model: "Sonnet", scope: "channel" });
+  assert.match(created.content[0].text, /Created channel skill `swap-authored`/);
+  assert.match(skillMd("swap-authored"), /\nmodel: sonnet\n---/);
+  assert.deepEqual(skillModelPreference(catalog.getSkill("swap-authored")), { model: "sonnet", engine: "claude" });
+  // An unknown model is refused before anything is written.
+  const refused = await tools.get("create_skill")({ files: [md("Swap Refused", "never created")], model: "no-such-model" });
+  assert.match(refused.content[0].text, /not a model any engine/);
+  assert.equal(catalog.getSkill("swap-refused"), null);
+  // A model-only update rewrites just the frontmatter and keeps every other file.
+  catalog.putSkillRevision({ files: [md("Swap Authored", "a skill created with a model", "model: sonnet\n"), { path: "references/a.md", content: "A" }], ownerKind: "local" });
+  const updated = await tools.get("update_skill")({ skill: "swap-authored", model: "gpt-6.1-sol" });
+  assert.match(updated.content[0].text, /is now revision/);
+  assert.match(skillMd("swap-authored"), /\nmodel: gpt-6.1-sol\n---/);
+  assert.equal(catalog.revisionFiles(catalog.effectiveRevisionFor(catalog.getSkill("swap-authored")).id).length, 2, "the reference file survived a model-only update");
+  const cleared = await tools.get("update_skill")({ skill: "swap-authored", model: "" });
+  assert.match(cleared.content[0].text, /is now revision/);
+  assert.doesNotMatch(skillMd("swap-authored"), /model:/);
+  assert.equal(skillModelPreference(catalog.getSkill("swap-authored")), null);
+  assert.match((await tools.get("update_skill")({ skill: "swap-authored" })).content[0].text, /Nothing to change/);
 });
 
 // ── The decision ──────────────────────────────────────────────────────────────────────────────

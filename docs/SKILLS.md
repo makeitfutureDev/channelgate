@@ -45,7 +45,9 @@ model swapping** switch is on (off by default; `set_channel_skill_swap`, the adm
 the Slack Settings ticks), and when nobody pinned the thread with `/model`, a model of the current
 engine resumes the same session on the preferred model and the thread stays there; a model of the
 other engine is delegated to a background agent on that engine. A pin, the switch being off or an
-unavailable engine leave the skill on the conversation's model.
+unavailable engine leave the skill on the conversation's model. `create_skill` and `update_skill`
+take an optional `model` argument that writes (or, with `""`, clears) this line; the library's
+skill detail shows the preferred model.
 
 Every skill has one **owner**:
 

@@ -332,7 +332,7 @@ function renderDetail() {
       <div class="card-head"><h3><code>${esc(s.slug)}</code> ${esc(s.name !== s.slug ? s.name : "")}${pluginBadge(s)}</h3><span class="badge">${esc(s.owner)}</span>${s.excluded ? '<span class="badge" title="Excluded by an admin; stays out across syncs until restored">excluded</span>' : s.deleted ? '<span class="badge" title="Dropped by its source; comes back if the source delivers it again">removed</span>' : ""}</div>
       <p class="skills-note">${esc(s.description)}</p>
       ${pluginSummary(s)}
-      <p class="skills-note">Category: ${esc(s.category || "—")} · Version: ${esc(s.version || "—")} · Tags: ${esc((s.tags || []).join(", ") || "—")} · Requires: ${esc((s.requires || []).join(", ") || "—")}${s.createdBy ? ` · Author: ${esc(s.createdBy)}` : ""}</p>
+      <p class="skills-note">Category: ${esc(s.category || "—")} · Version: ${esc(s.version || "—")} · Tags: ${esc((s.tags || []).join(", ") || "—")} · Requires: ${esc((s.requires || []).join(", ") || "—")} · Preferred model: ${esc(s.model || "—")}${s.createdBy ? ` · Author: ${esc(s.createdBy)}` : ""}</p>
       <p class="skills-note">${esc(usage)}</p>
       <div><strong>Files</strong> (effective revision)</div>
       <div class="files">${files || '<span class="skills-muted">no approved revision yet</span>'}</div>
