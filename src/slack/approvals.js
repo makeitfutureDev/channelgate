@@ -30,6 +30,7 @@ import { platformOfConversation } from "../platforms/ids.js";
 import { platformOr } from "../platforms/registry.js";
 import { postPrivately } from "../platforms/notify.js";
 import { INSTRUCTION_ACTION } from "../gateway/instruction-approvals.js";
+import { isChannelWorker } from "../gateway/egress-hosts.js";
 import { SECRET_HOST_ACTION } from "../gateway/secret-host-approvals.js";
 
 // The live Slack client of the currently-connected app (set from connectAndWire); the approval
@@ -125,6 +126,7 @@ function requesterLabel(authorId) {
 // The authority a card needs, stated ON the card: a member who could only ever Deny must learn
 // that before clicking, not from the ephemeral refusal after (the Symphonia finding of 2026-10-06).
 function tierNotice(requiredTier = "") {
+  if (requiredTier === "worker") return " Any authorized channel member with *write access* may approve this; no admin is required.";
   if (requiredTier === "admin") return " Only a gateway *admin* can approve this; anyone eligible may Deny or Comment.";
   if (requiredTier === "manage") return " Only a channel *manager* (or a gateway admin) can approve this; anyone eligible may Deny or Comment.";
   if (requiredTier === "owner") return " Only the requester (or a gateway admin) can approve this; anyone eligible may Deny or Comment.";
@@ -677,7 +679,9 @@ export async function canResolveApproval(entry, clicker) {
   const tier = entry.requiredTier || "";
   const clickerCanManage = clickerIsAdmin || canManage(m || {}, { authorId: clicker, isAdminUser: clickerIsAdmin, isApprovedUser: clickerIsApproved });
   const meetsTier =
-    tier === "admin"
+    tier === "worker"
+      ? await isChannelWorker(entry.channelId, entry.slug, clicker)
+      : tier === "admin"
       ? clickerIsAdmin
       : tier === "manage"
         ? clickerCanManage
@@ -726,7 +730,7 @@ export async function handleApprovalClick({ ack, body, action, client }) {
         channel,
         user: clicker,
         thread_ts: ts,
-        text: `This approval needs ${tier === "admin" ? "a gateway *admin*" : tier === "owner" ? "the requester (or an admin)" : "a channel *manager*"} to click Approve — you can still Deny or Comment.`,
+        text: `This approval needs ${tier === "worker" ? "an authorized channel member with write access" : tier === "admin" ? "a gateway *admin*" : tier === "owner" ? "the requester (or an admin)" : "a channel *manager*"} to click Approve — you can still Deny or Comment.`,
       });
     } catch {
       /* no ephemeral scope — ignore */

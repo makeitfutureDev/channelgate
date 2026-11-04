@@ -1,5 +1,7 @@
 # Changelog — ChannelGate
 
+- Let authorized channel members with write access approve public SSH destinations on a durable card, enabling container SSH without `/sudo`.
+
 - Skip granted folders without a regular `SKILL.md`, warn with the folder name, and continue with valid skills instead of failing the request.
 
 - Make completed `/delete` commands silent, including partial deletion; retain audit counts without posting a report.

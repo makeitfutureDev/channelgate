@@ -26,6 +26,19 @@ private database from the agent container. A provider profile outside the import
 contract, a different protocol, or a database requiring unsupported TLS settings
 calls for Option 2 or an operator handoff; never weaken validation to make it fit.
 
+## Public SSH from an ordinary channel container
+
+For an exact public SSH hostname not yet in this channel's `egressRawHosts`, use
+`allow_channel_ssh_host`. The gateway posts a durable card that any currently authorized
+channel member with write access may approve; neither admin rights nor `/sudo` are needed.
+The card persists across restarts and is never auto-approved. End the turn while it is pending.
+Once approved, retry with the existing key and
+`-o ProxyCommand='/opt/channelgate/bin/cg-egress-connect %h %p'`.
+The existing host list enables TCP ports 22, 5432 and 6543; the card names that scope.
+Network must remain on and private/loopback/metadata addresses remain blocked. Approval
+adds no SSH key, secret host grant, private route, or open network. Use the isolated VPN or
+operator paths below when the destination is private.
+
 ## Option 2: Agent procedure — VPN or SSH tunnel access
 
 Use this when a task needs a private network or database and the supported

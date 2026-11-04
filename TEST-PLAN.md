@@ -1,5 +1,11 @@
 # ChannelGate — Test Plan
 
+## Channel SSH egress approval (2026-11-04)
+
+- Automated: `test/egress-hosts.test.js` covers exact public destinations, denied private/malformed hosts, current worker authority, network/mode changes, and atomic append. `test/mcp-control-plane-approval.test.js` exercises real MCP tools in Claude/Codex contexts, pending durable cards in Auto mode, no mutation before approval, member approval and live authorization. Existing durable-approval and approval-link suites cover restart persistence, replay and single-use decisions.
+- Live Claude and Codex acceptance (pending): in `cg-testing-claude-bash` and `cg-testing-codex-bash`, use an approved non-admin member and a disposable public SSH fixture with a verified host key and existing test key. Ensure Network on, Worker mode and no existing host entry. Ask “Connect to the test SSH server; request approval if it is not allowed.” Require `allow_channel_ssh_host`, a card naming the host and TCP 22/5432/6543, and no append before the human click. Approve as a second authorized non-admin member; require only that host appended, unrelated settings preserved, and successful SSH via `cg-egress-connect` without `/sudo`. Repeat in Auto mode: still requires a click.
+- Deny a fresh destination and verify no append. Request another destination, restart the disposable gateway, then approve the saved card once; replay must not execute twice. Revoke requester/approver access, switch to Read-only or turn Network off before approval: no grant. Private IP, wildcard and URL requests must refuse without posting a card. Remove fixture grants/keys after testing. No live pass is implied by automated results.
+
 ## Invalid skill-folder grants (2026-11-04)
 
 - Automated: `test/run-grant-isolation.test.js` covers personal/shared parent-folder grants, alone and alongside a valid skill; verifies warnings, source preservation, and exclusion from both Claude plugins and the Codex catalog.

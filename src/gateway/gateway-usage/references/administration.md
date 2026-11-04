@@ -156,8 +156,12 @@ These channel modes do not leave the container. The separate organization-admin-
   switch on every request — off: only the engine endpoints and this channel's selected connectors
   (anything else answers HTTP 403 `network-off`); on: public hosts, never private, loopback or
   cloud-metadata addresses. A flip applies to the next request. Raw sockets (`ssh`, `psql`) are
-  tunnelled only to `github.com:22` and hosts an admin declared (`egressRawHosts`, admin API) and
-  need a client pointed at the proxy — for `ssh`/`git@…`:
+  tunnelled only to `github.com:22` and hosts in this channel's `egressRawHosts`. For a new
+  public SSH server, call `allow_channel_ssh_host` with the exact hostname. It posts a durable
+  approval card: any authorized channel member with write access may approve, without `/sudo`
+  or an admin. End the turn while pending; after approval retry with the existing key. The card
+  adds this host for TCP 22, 5432 and 6543, preserves existing hosts, and never enables Network
+  or permits private addresses. Do not switch to `/sudo` just to bypass this approval. Point raw clients at the proxy — for `ssh`/`git@…`:
   `GIT_SSH_COMMAND="ssh -o ProxyCommand='/opt/channelgate/bin/cg-egress-connect %h %p'"`. Where the access note says the switch is *advisory* (the
   operator's legacy bridge mode, a channel given `rawNetwork`, a `/sudo` thread) a request may
   still succeed while it is off — that is not permission. If the switch is off and a task needs

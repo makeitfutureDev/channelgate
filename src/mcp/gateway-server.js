@@ -39,6 +39,8 @@ import { register as registerSkills } from "./tools/skills.js";
 import { register as registerAgentDirectory } from "./tools/agent-directory.js";
 import { register as registerQuestions } from "./tools/questions.js";
 import { register as registerSshAccess } from "./tools/ssh-access.js";
+import { register as registerEgressHosts } from "./tools/egress-hosts.js";
+import { isChannelWorker, prepareEgressHost } from "../gateway/egress-hosts.js";
 import { sshRequestTarget } from "../gateway/ssh-access.js";
 import { register as registerFileSharing, describeDuration } from "./tools/file-sharing.js";
 import { register as registerEmail } from "./tools/email.js";
@@ -312,6 +314,7 @@ export function buildControlPlane({ loadMeta, createdBy, principalTrusted, chann
     // authors in this channel, which is the posture every other card relies on — so it keeps its card.
     ["set_channel_admin_mode", { authz: "admin", details: ({ enabled }) => `Turn ADMIN MODE (no sandbox, no prompts for admin authors) ${onOff(enabled)} for this channel.` }],
     ["set_channel_vpn", { authz: "manage", details: AUTOMATIC }],
+    ["allow_channel_ssh_host", { authz: "worker", details: ({ host }) => `Allow raw TCP connections to ${host} for THIS channel on ports 22 (SSH), 5432 and 6543 (PostgreSQL)? This persists for future channel runs. Network must remain on; private addresses stay blocked. No SSH key or secret access is granted.` }],
     ["set_channel_network", { authz: "admin", details: AUTOMATIC }],
     ["set_channel_bash", { authz: "manage", details: AUTOMATIC }],
     ["set_channel_auto_mode", { authz: "manage", details: AUTOMATIC }],
@@ -419,6 +422,7 @@ export function createGatewayMcpServer(ctx) {
   const CONTROL_PLANE = buildControlPlane(ctx);
 
   async function passesAuthzPrecheck(authz) {
+    if (authz === "worker") return ctx.principalTrusted && isChannelWorker(ctx.channelId, ctx.slug, ctx.createdBy);
     if (authz === "admin") return ctx.requireAdmin();
     if (authz === "manage") return ctx.requireManage();
     return true;
@@ -491,9 +495,21 @@ export function createGatewayMcpServer(ctx) {
         if (!(await passesAuthzPrecheck(authz))) {
           return text(authz === "admin"
             ? `🚫 Only admins can run \`${name}\`. Nothing was changed.`
+            : authz === "worker" ? `🚫 Only authorized channel members with write access can run \`${name}\`. Nothing was changed.`
             : `🚫 Only this channel's managers (or an admin) can run \`${name}\`. Nothing was changed.`);
         }
-        let details = await gate.details(args ?? {});
+        // Validate before posting a card, and use canonical args for the exact saved action.
+        let hostAlreadyAllowed = false;
+        if (name === "allow_channel_ssh_host") {
+          try {
+            const prepared = await prepareEgressHost(ctx, args?.host);
+            args = { host: prepared.host };
+            hostAlreadyAllowed = prepared.alreadyAllowed;
+          } catch (error) {
+            return text(`Couldn't request SSH egress: ${error.message}`);
+          }
+        }
+        let details = hostAlreadyAllowed ? null : await gate.details(args ?? {});
         if (details !== null) {
           // The clicker must independently hold the card's tier ("" needs no extra rank): the
           // human factor for an admin-tier change must come from an admin, never a bystander.
@@ -546,6 +562,7 @@ export function createGatewayMcpServer(ctx) {
     registerSchedules(server, ctx);
     if (ctx.toolset === "full") registerBackground(server, ctx);
     registerChannelAdmin(server, ctx);
+    registerEgressHosts(server, ctx);
     registerChannelDatabase(server, ctx);
     registerTokens(server, ctx);
     registerApiTokens(server, ctx);
