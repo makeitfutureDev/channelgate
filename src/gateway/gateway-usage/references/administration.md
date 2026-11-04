@@ -123,6 +123,11 @@ These channel modes do not leave the container. The separate organization-admin-
 - `set_channel_bash` (managers) — Bash + file-edit tools in the working folder.
 - `set_channel_auto_mode` (managers) — autonomous: permission prompts auto-approved, folder
   writable. Needed for `run_in_background`.
+- `set_channel_skill_swap` (managers) — **Allow skill engine and model swapping**: a skill that
+  declares `model:` in its SKILL.md may take the turn over when it is USED. Its materialized copy
+  asks you to call `use_skill` first; follow that reply literally — "stop" means the gateway resumes
+  this same session on the preferred model (sticky for the thread, below a person's `/model` pin),
+  "delegate" means `run_agent_in_background` with the given `engine`/`model`. Off by default.
 - `set_channel_admin_mode` (admin) — for **admin authors**, every tool without prompts
   (`--dangerously-skip-permissions`). Non-admin authors get Worker with the selected Auto/Lean options. Still inside the
   container — see "Admin access & the container" below.

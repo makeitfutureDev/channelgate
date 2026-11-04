@@ -2214,6 +2214,7 @@ function renderChannelDetail(ch) {
 
   card.querySelector(".ch-memory").checked = meta.memory !== false; // default on (global default is on)
   card.querySelector(".ch-nodefaulttokens").checked = !!meta.noDefaultTokens;
+  card.querySelector(".ch-skillswap").checked = !!meta.skillRuntimeSwap;
   const workdirInput = card.querySelector(".ch-workdir");
   workdirInput.value = meta.workDir || "";
   if (meta.workspaceLink) {
@@ -2237,7 +2238,7 @@ function renderChannelDetail(ch) {
     }
     notice.appendChild(source);
     card.querySelector(".dhead").after(notice);
-    for (const selector of [".ch-memory", ".ch-syncdrive", ".ch-synctest", ".ch-profile", ".ch-network", ".ch-admin", ".ch-bash", ".ch-auto", ".ch-clean"]) {
+    for (const selector of [".ch-memory", ".ch-syncdrive", ".ch-synctest", ".ch-profile", ".ch-network", ".ch-admin", ".ch-bash", ".ch-auto", ".ch-clean", ".ch-skillswap"]) {
       const input = card.querySelector(selector);
       if (input) { input.disabled = true; input.title = "Edit this shared setting in the source conversation"; }
     }
@@ -2516,6 +2517,7 @@ function renderChannelDetail(ch) {
           allowNetwork: card.querySelector(".ch-network").checked,
           autoMode: card.querySelector(".ch-auto").checked,
           cleanMode: card.querySelector(".ch-clean").checked,
+          skillRuntimeSwap: card.querySelector(".ch-skillswap").checked,
           memory: card.querySelector(".ch-memory").checked,
           noDefaultTokens: card.querySelector(".ch-nodefaulttokens").checked,
           engine: engineSelect.value,

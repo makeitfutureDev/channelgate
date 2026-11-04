@@ -55,7 +55,7 @@ export const text = (t) => ({ content: [{ type: "text", text: t }] });
 // a safe restart, start/inspect a channel's Google Drive sync pass (the pass must run in the daemon
 // so it shares the per-channel in-flight guard and outlives the turn). `kind` is also the /internal/<kind> route name, so the two transports stay in
 // lockstep. A tool never learns which one it is using.
-export const DAEMON_IPC_KINDS = Object.freeze(["background", "approval", "restart", "drivesync", "agent-directory", "code-channel"]);
+export const DAEMON_IPC_KINDS = Object.freeze(["background", "approval", "restart", "drivesync", "agent-directory", "code-channel", "skill-swap"]);
 
 // Daemon-IPC credentials for the CHILD-PROCESS transport (the /internal/* endpoints). The Claude
 // path forwards CG_APPROVAL_SECRET/CG_PORT via the --mcp-config env; the Codex path can't — its
@@ -318,6 +318,7 @@ export function buildControlPlane({ loadMeta, createdBy, principalTrusted, chann
     ["set_channel_network", { authz: "admin", details: AUTOMATIC }],
     ["set_channel_bash", { authz: "manage", details: AUTOMATIC }],
     ["set_channel_auto_mode", { authz: "manage", details: AUTOMATIC }],
+    ["set_channel_skill_swap", { authz: "manage", details: AUTOMATIC }],
     ["set_channel_agent_profile", { authz: "manage", details: AUTOMATIC }],
     // The folder is contained to the allowlisted root (web/security.js), so it cannot point at
     // the operator home, the gateway root or another channel; a wrong change is one message away.

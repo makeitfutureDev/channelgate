@@ -43,6 +43,7 @@ import {
   moveSkillScope,
 } from "../../gateway/skills/authoring.js";
 import { publishRevision, publishTarget } from "../../gateway/skills/publish.js";
+import { USE_SKILL_TOOL, skillSwapReply } from "../../gateway/skill-runtime.js";
 import { syncOneSource, runScheduledSkillSync } from "../../gateway/skills/index.js";
 // A conversation's granted skills and its skill template are policy: they decide what loads into
 // every future run here. The admin UI's grant/revoke/template routes already wrote these rows; the
@@ -101,7 +102,35 @@ function publishLine(p) {
 }
 
 export function register(server, ctx) {
-  const { channelId, slug, createdBy, text, requireAdmin, requireManage, loadMeta } = ctx;
+  const { channelId, slug, createdBy, text, requireAdmin, requireManage, loadMeta, threadKey, daemon } = ctx;
+
+  // ── Model-specific skills (src/gateway/skill-runtime.js) ─────────────────────────────────
+  // The explicit "I am now following this skill" signal. A materialized skill that declares a
+  // preferred model carries one line asking for this call; the LIVE TURN (found by this
+  // capability's thread key) decides, so reading a skill never switches anything.
+  server.registerTool(
+    "use_skill", // USE_SKILL_TOOL — spelled out so the registered-vs-catalog tripwire can read it
+    {
+      description:
+        "Call this when you START FOLLOWING a skill whose SKILL.md asks for it (skills that declare a preferred " +
+        "model). Not for reading or comparing skills. The gateway decides how to honor the skill's preferred " +
+        "engine/model for THIS turn and answers with exactly what to do next: continue as you are, stop so the " +
+        "same session is resumed on the preferred model, or delegate to a background agent on the other engine. " +
+        "Follow the reply literally.",
+      inputSchema: { name: z.string().describe("The skill's name/slug exactly as its SKILL.md states it") },
+    },
+    async ({ name }) => {
+      if (!slug || !threadKey) return text("No live conversation context — continue with the current model.");
+      if (!daemon?.available?.("skill-swap")) return text("Skill model swapping is unavailable right now — continue with the current model.");
+      try {
+        const data = await daemon.call("skill-swap", { slug, threadKey, name: String(name || "").slice(0, 200) }, { timeoutMs: 15_000 });
+        if (!data?.ok) return text(`Couldn't evaluate the skill's preferred model (${data?.error || "unknown error"}) — continue with the current model.`);
+        return text(data.decision?.reply || skillSwapReply(data.decision));
+      } catch (error) {
+        return text(`Couldn't evaluate the skill's preferred model (${error.message}) — continue with the current model.`);
+      }
+    }
+  );
   // Anyone this conversation admits may change ITS skills (the handler re-checks the verified
   // author against the channel's access policy; the run itself was already authorized).
   const memberHere = async () => (ctx.requireChannelAccess ? ctx.requireChannelAccess() : requireManage());

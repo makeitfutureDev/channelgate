@@ -168,6 +168,7 @@ export function channelSwitchesNote(meta = {}) {
     `- Mode: **${mode}** — ${MODE_NOTE[mode]}.`,
     `- Auto: **${meta.autoMode ? "on" : "off"}** — ${meta.autoMode ? "tool requests are automatically approved for every authorized member" : "tools outside the mode allowlist require approval"}.`,
     `- Lean: **${meta.cleanMode ? "on" : "off"}** — ${meta.cleanMode ? "bare model without skills or connectors" : "configured skills and connectors are available"}.`,
+    `- Skill model swap: **${meta.skillRuntimeSwap ? "on" : "off"}**${meta.skillRuntimeSwap ? " — a skill's preferred model takes over when `use_skill` says so" : ""}.`,
     `- Network: ${networkLine}`,
   ].join("\n");
 }

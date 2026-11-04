@@ -101,8 +101,10 @@ test("each inline access control contributes only its own field, and unknown one
   // The checkbox group reports its WHOLE selection, which is what makes an unchecked box a false
   // rather than a key the patch would reject as missing.
   assert.deepEqual(readAccessFieldValue("flags", { selected_options: [{ value: "autoMode" }, { value: "allowNetwork" }] }),
-    { autoMode: true, cleanMode: false, allowNetwork: true });
-  assert.deepEqual(readAccessFieldValue("flags", { selected_options: [] }), { autoMode: false, cleanMode: false, allowNetwork: false });
+    { autoMode: true, cleanMode: false, allowNetwork: true, skillRuntimeSwap: false });
+  assert.deepEqual(readAccessFieldValue("flags", { selected_options: [] }), { autoMode: false, cleanMode: false, allowNetwork: false, skillRuntimeSwap: false });
+  assert.deepEqual(readAccessFieldValue("flags", { selected_options: [{ value: "skillRuntimeSwap" }] }),
+    { autoMode: false, cleanMode: false, allowNetwork: false, skillRuntimeSwap: true });
 
   for (const [field, action] of [["mode", { selected_option: { value: "auto" } }], ["access", {}], ["manageAccess", { selected_option: {} }],
     ["flags", {}], ["flags", { selected_options: [{ value: "isAdmin" }] }], ["allowedUsers", {}], ["managers", { selected_users: "UONE" }],

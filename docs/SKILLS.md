@@ -32,8 +32,20 @@ category: Sales
 version: 1.2.0
 tags: [crm]
 requires: [makeitfuture-organization]   # catalog skills granted together with this one
+model: sonnet                           # optional: the model this skill works best with
 ---
 ```
+
+**`model:` (optional) — model-specific skills.** Name the model the skill works best with
+(`sonnet`, `claude-opus-5-5`, `gpt-6.1-sol`, …); the engine is derived from it. Nothing else is
+declared — the gateway decides how to honor the preference when the skill is actually *used*, not
+when it is read: every materialized copy carries one line asking the model to call the gateway tool
+`use_skill` as it starts following the skill. In a conversation whose **Allow skill engine and
+model swapping** switch is on (off by default; `set_channel_skill_swap`, the admin Runtime pane or
+the Slack Settings ticks), and when nobody pinned the thread with `/model`, a model of the current
+engine resumes the same session on the preferred model and the thread stays there; a model of the
+other engine is delegated to a background agent on that engine. A pin, the switch being off or an
+unavailable engine leave the skill on the conversation's model.
 
 Every skill has one **owner**:
 

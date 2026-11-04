@@ -557,6 +557,7 @@ test("every registered gateway tool is consciously classified as gated or open (
   const GATED = new Set([
     "create_schedule", "update_schedule", // ordinary schedules return null; sudo work keeps an admin card
     "set_channel_vpn", "set_channel_admin_mode", "allow_channel_ssh_host", "set_channel_network", "set_channel_bash", "set_channel_auto_mode",
+    "set_channel_skill_swap", // a channel switch like auto mode: managers, automatic, audited
     "set_channel_workdir", "clear_channel_workdir", "set_channel_drive_folder", "clear_channel_drive_folder",
     "add_channel_mcps", "remove_channel_mcps", "update_channel_instructions",
     "update_gateway", "restart_gateway", "update_gateway_guide", "reset_gateway_guide",
@@ -590,6 +591,7 @@ test("every registered gateway tool is consciously classified as gated or open (
     "get_channel_workdir", "get_channel_drive_folder", "get_gateway_guide",
     "workspace_list", "workspace_read", "workspace_search", "search_agents",
     "search_channel_memory", "read_channel_memory", // channel-scoped read-only retrieval
+    "use_skill", // asks the LIVE turn how to honor a skill's preferred model; the turn decides, nothing is persisted here
     "get_license_status", // read-only; exposes the tier/limits and the key's last 4, never the key
     // Channel-level user API tokens: a verified person's OWN credential for THIS conversation, acting
     // as them with their live rank; listing/revoking others' needs manage (the handler enforces it).

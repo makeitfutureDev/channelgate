@@ -78,13 +78,24 @@ export function register(server, ctx) {
         "(writable + auto-approved, still sandboxed — never sandbox-off). Agents may run up to a week. " +
         "The report uses the normal sanitized/chunked reply pipeline and does not depend on a second " +
         "parent-model turn. Returns a job id; after that, STOP and end your turn.",
-      inputSchema: { task: z.string(), label: z.string().optional() },
+      inputSchema: {
+        task: z.string(),
+        label: z.string().optional(),
+        // Optional runtime for the agent: a skill that prefers the OTHER engine is delegated this
+        // way (skill-runtime.js). Validated daemon-side against the enabled, channel-approved
+        // engines and the engine's model patterns; an unknown pair refuses, never silently drops.
+        engine: z.string().optional().describe("Run the agent on this engine (e.g. \"claude\", \"codex\") instead of the conversation's"),
+        model: z.string().optional().describe("Run the agent with this model (must belong to the chosen/current engine)"),
+      },
     },
-    async ({ task, label }) => {
+    async ({ task, label, engine, model }) => {
       if (!channelId) return text("No channel context — can't run a background agent here.");
       if (!daemon.available("background")) return text("Background agents are unavailable right now.");
       try {
-        const data = await daemon.call("background", { kind: "agent", channelId, slug, authorId: createdBy, threadKey, admissionThreadKey, task, label: label || "" }, { timeoutMs: 15_000 });
+        const data = await daemon.call("background", {
+          kind: "agent", channelId, slug, authorId: createdBy, threadKey, admissionThreadKey, task, label: label || "",
+          ...(engine ? { engine: String(engine) } : {}), ...(model ? { model: String(model) } : {}),
+        }, { timeoutMs: 15_000 });
         if (!data.ok) return text(`Couldn't start the background agent: ${data.error || "unknown error"}`);
         return text(
           `✅ Started background agent *${data.label}* (id ${data.id}). It's running on the daemon now. ` +
