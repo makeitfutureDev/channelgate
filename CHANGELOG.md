@@ -1,5 +1,7 @@
 # Changelog — ChannelGate
 
+- Show host skill folders missing `SKILL.md` in the library with an issue badge, path, personal grant owners and a missing-file filter.
+
 - Let authorized channel members with write access approve public SSH destinations on a durable card, enabling container SSH without `/sudo`.
 
 - Skip granted folders without a regular `SKILL.md`, warn with the folder name, and continue with valid skills instead of failing the request.
