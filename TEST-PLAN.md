@@ -1,5 +1,12 @@
 # ChannelGate — Test Plan
 
+## Library missing skill manifests (2026-11-04)
+
+- Regression: `test/skills-admin-api.test.js` verifies missing host folders, path/user attribution, no token exposure, plugin exemption, read-only diagnostics and automatic disappearance after repair. `test/skills-catalog-filters.test.js` covers filter composition.
+- Browser: `CG_BROWSER_MODULE=<playwright/index.mjs> node --test test/skills-folder-issues-browser.test.js` opens a disposable admin app, verifies the default diagnostic row, missing/healthy filters, attribution and absence of governance controls at desktop and 390px width.
+- Fixture: Admin UI with disposable `synced/nested/SKILL.md` but no `synced/SKILL.md`, a valid catalog skill, and a user personally granted `synced`. Open Skills → Library and select Skill file status → Missing SKILL.md. Require the warning row and folder/user details; no native plugin false positives. Engine independent because no engine runs or grant writes occur. QA case `SKILL-FOLDER-LIBRARY`; existing dual-engine loader cases remain unchanged.
+
+
 ## Channel SSH egress approval (2026-11-04)
 
 - Automated: `test/egress-hosts.test.js` covers exact public destinations, denied private/malformed hosts, current worker authority, network/mode changes, and atomic append. `test/mcp-control-plane-approval.test.js` exercises real MCP tools in Claude/Codex contexts, pending durable cards in Auto mode, no mutation before approval, member approval and live authorization. Existing durable-approval and approval-link suites cover restart persistence, replay and single-use decisions.

@@ -60,3 +60,11 @@ test("source and category compose with governance and preserve unfiltered defaul
   assert.deepEqual(filterSkillCatalog(rows, { source: "1", category: "Sales", mandatory: "1" }).map((s) => s.slug), ["a"]);
   assert.deepEqual(filterSkillCatalog(rows, { source: "1", enabled: "0" }).map((s) => s.slug), ["c"]);
 });
+
+
+test("missing manifest filters preserve diagnostic personal assignment and compose with search facets", () => {
+  const rows = [{ slug: "valid", enabled: true }, { slug: "synced", diagnosticOnly: true, missingSkillMd: true, assigned: true, enabled: false }];
+  assert.deepEqual(filterSkillCatalog(rows, { missingSkillMd: "1", assigned: "1" }).map((s) => s.slug), ["synced"]);
+  assert.deepEqual(filterSkillCatalog(rows, { missingSkillMd: "0" }).map((s) => s.slug), ["valid"]);
+  assert.deepEqual(filterSkillCatalog(rows, { missingSkillMd: "1", enabled: "1" }), []);
+});

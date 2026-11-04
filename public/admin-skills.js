@@ -26,7 +26,8 @@ const state = {
   sourceSkills: [],
   sourceQuery: "",
   sourceQueryDraft: "",
-  enabled: "1",
+  enabled: "all",
+  missingSkillMd: "all",
   discoverable: "all",
   mandatory: "all",
   assigned: "all",
@@ -78,6 +79,7 @@ async function refreshAll() {
     state.source ? `source=${encodeURIComponent(state.source)}` : "",
     state.category ? `category=${encodeURIComponent(state.category)}` : "",
     state.enabled ? `enabled=${state.enabled}` : "",
+    `missingSkillMd=${state.missingSkillMd}`,
     state.discoverable ? `discoverable=${state.discoverable}` : "",
     state.mandatory ? `mandatory=${state.mandatory}` : "",
     state.assigned ? `assigned=${state.assigned}` : "",
@@ -93,6 +95,7 @@ async function refreshAll() {
     ...catalog,
     skills: filterSkillCatalog(catalog.skills, {
       enabled: state.enabled,
+      missingSkillMd: state.missingSkillMd,
       discoverable: state.discoverable,
       mandatory: state.mandatory,
       assigned: state.assigned,
@@ -100,7 +103,7 @@ async function refreshAll() {
       category: state.category,
     }, { overview, profiles: profiles.profiles }),
   };
-  state.catalogAll = catalogAll;
+  state.catalogAll = { ...catalogAll, skills: catalogAll.skills.filter((skill) => !skill.diagnosticOnly) };
   state.profiles = profiles.profiles;
   if (state.sourceSelected) {
     const result = await api(`/api/skills/catalog?source=${encodeURIComponent(state.sourceSelected)}&deleted=1`);
@@ -247,7 +250,10 @@ function renderCatalog() {
     ["1", yes],
     ["0", no],
   ].map(([value, label]) => `<option value="${value}"${value === current ? " selected" : ""}>${label}</option>`).join("");
-  const rows = skills.map((s) => `
+  const rows = skills.map((s) => s.diagnosticOnly ? `
+    <tr data-slug="${esc(s.slug)}"><td><code>${esc(s.slug)}</code> <span class="pill">Missing SKILL.md</span></td>
+      <td class="desc">${esc(s.description)}</td><td>—</td><td>Host folder</td><td>—</td>
+      <td colspan="3" class="muted">Unavailable — fix the folder or remove its grant in Users.</td><td class="num">0</td></tr>` : `
     <tr class="clickable${s.slug === state.selected ? " selected" : ""}" data-action="select" data-slug="${esc(s.slug)}">
       <td><code>${esc(s.slug)}</code>${pluginBadge(s)}${s.visibility === "personal" ? ' <span class="pill">personal</span>' : ""}${s.excluded ? ' <span class="pill">excluded</span>' : s.deleted ? ' <span class="pill">removed</span>' : ""}${s.channelScope ? ` <span class="pill" title="Kept in this channel's section of the skills repository">${esc(channelLabel(s.channelScope))}</span>` : ""}${s.pinnedRevisionId ? ' <span class="pill">pinned</span>' : ""}${s.stagedCount ? ` <span class="pill">${s.stagedCount} staged</span>` : ""}${s.currentRevisionId == null && !s.deleted ? ' <span class="pill">not active</span>' : ""}</td>
       <td class="desc">${esc(s.description)}</td>
@@ -265,6 +271,7 @@ function renderCatalog() {
       <select id="skills-owner">${owners.map((o) => `<option value="${o}"${o === state.owner ? " selected" : ""}>${o ? esc(o) : "every owner"}</option>`).join("")}</select>
       <select id="skills-source" aria-label="Source"><option value="">Every source</option>${(state.overview?.sources || []).map((source) => `<option value="${source.id}"${String(source.id) === state.source ? " selected" : ""}>${esc(source.label || source.url)}</option>`).join("")}</select>
       <select id="skills-category" aria-label="Category"><option value="">Every category</option>${(state.catalog?.categories || []).map((category) => `<option value="${esc(category.category)}"${category.category === state.category ? " selected" : ""}>${esc(category.category)}</option>`).join("")}</select>
+      <select id="skills-missing-manifest" aria-label="Skill file status">${binaryOptions(state.missingSkillMd, "Every skill file status", "Missing SKILL.md", "Has SKILL.md")}</select>
       <select id="skills-enabled" aria-label="Enabled status">${binaryOptions(state.enabled, "enabled or disabled", "Enabled", "Disabled")}</select>
       <select id="skills-discoverable" aria-label="Discoverability">${binaryOptions(state.discoverable, "discoverable or not", "Discoverable", "Not discoverable")}</select>
       <select id="skills-mandatory" aria-label="Mandatory status">${binaryOptions(state.mandatory, "mandatory or not", "Mandatory", "Not mandatory")}</select>
@@ -892,12 +899,13 @@ function wire() {
     }
     // Not "skills-q": a search box commits on Enter or its Search button, never on blur. Picking
     // a filter here does apply whatever is currently typed — that click is a deliberate ask too.
-    if (["skills-owner", "skills-source", "skills-category", "skills-enabled", "skills-discoverable", "skills-mandatory", "skills-assigned"].includes(el.id)) {
+    if (["skills-owner", "skills-source", "skills-category", "skills-enabled", "skills-discoverable", "skills-mandatory", "skills-assigned", "skills-missing-manifest"].includes(el.id)) {
       state.query = state.queryDraft = val("skills-q");
       state.owner = val("skills-owner");
       state.source = val("skills-source");
       state.category = val("skills-category");
       state.enabled = val("skills-enabled");
+      state.missingSkillMd = val("skills-missing-manifest");
       state.discoverable = val("skills-discoverable");
       state.mandatory = val("skills-mandatory");
       state.assigned = val("skills-assigned");
