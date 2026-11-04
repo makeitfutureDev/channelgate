@@ -5170,6 +5170,23 @@ are retired, bullet by bullet; everything else stands.
   beyond the last batch's cutoff (backup first; a batch is recorded even on zero matches so settled
   history is never rescanned) — updating + restarting another gateway recalculates its history with
   no manual command.
+- **Claude turns are charged their own delta, whole tree, per model.** Claude Code's terminal
+  result reports the provider SESSION's cumulative `total_cost_usd` and `modelUsage` (CLI ≥
+  2.1.277 restores a resumed session's earlier spend) while `usage` covers the main loop only,
+  without subagents. The ledger (`src/db/claude-session-usage.js`, applied inside `recordUsage`
+  for every call site — interactive, warm pool, scheduled, background, API, memory review)
+  differences each run against the same session's last recorded cumulative, so a resumed thread
+  is never charged its history again; records one `usage_components` row per model the run spent
+  on (the answering model as `root`, a Sonnet subagent or the Haiku helper as `auxiliary`) with
+  the CLI's own per-model cost (`pricing_basis = claude-cli-reported`), so the Models chart and
+  the per-model split show subagent spend under the model that incurred it; and keeps the raw
+  cumulative figures beside the row (`provider_cost_cumulative`, `provider_model_usage`) as the
+  next run's baseline. A cumulative that goes DOWN (a CLI that restarted its totals) is taken at
+  face value and never recorded negative; a per-model split that does not reconcile with the
+  run's cost delta is dropped as a whole rather than charted inconsistently. Migration 41
+  re-differences the Claude rows recorded since the image first pinned a cumulative-reporting CLI
+  (2026-09-24) losslessly: each row's original figure survives in `provider_cost_cumulative`, and
+  the repair is idempotent. → TEST-PLAN: Per-model dashboard stacking.
 - **Per-model Codex Standard API-equivalent rates** (Settings → Behavior): Codex reports no dollar
   cost, so the ledger and reply footer estimate attribution value from an editable $/1M table —
   input / cached-input / output per model (GPT-6 Astra/Sol/Luna, GPT-6.1 Sol, GPT-5.6

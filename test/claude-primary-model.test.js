@@ -28,20 +28,28 @@ const events = [
   terminal,
 ];
 
-async function assertAttribution(result, suffix) {
+// The CLI reports a resumed session's CUMULATIVE totals, so the second warm turn below carries
+// doubled figures and the ledger must charge it only the difference — the first turn's figure.
+const resumedTerminal = {
+  ...terminal,
+  total_cost_usd: terminal.total_cost_usd * 2,
+  modelUsage: Object.fromEntries(Object.entries(terminal.modelUsage).map(([model, usage]) => [model, { ...usage, inputTokens: usage.inputTokens * 2, outputTokens: usage.outputTokens * 2 }])),
+};
+
+async function assertAttribution(result, suffix, reported = terminal) {
   const governed = { ...result, engine: "claude", model: "opus[1m]" };
   assert.equal(result.primaryModel, primary);
   assert.equal(resolveCurrentModel(governed), primary, "actual primary answer beats larger auxiliary usage");
   assert.equal(modelLabel(governed), "Opus 1M", "footer keeps the governing variant");
   assert.equal(contextWindowFor(governed), 1000000);
-  assert.deepEqual(result.raw.modelUsage, terminal.modelUsage, "provider accounting remains untouched");
+  assert.deepEqual(result.raw.modelUsage, reported.modelUsage, "provider accounting remains untouched");
   const channelId = `primary-model-${suffix}`;
   await recordUsage({ channelId, slug: channelId, engine: "claude", result: governed });
   const rows = await readUsage({ channelId });
   assert.equal(rows.length, 1);
   assert.equal(rows[0].model, primary);
   assert.equal(rows[0].runtimeModel, primary);
-  assert.equal(rows[0].costUSD, terminal.total_cost_usd);
+  assert.equal(rows[0].costUSD, terminal.total_cost_usd, "a resumed turn is charged its delta, never the session total");
 }
 
 test("cold Claude accounts the short primary answer model instead of larger auxiliary usage", async () => {
@@ -66,8 +74,11 @@ test("warm Claude retains primary model attribution across turns and ignores chi
   session.state = "ready";
   for (const suffix of ["warm-fresh", "warm-resume"]) {
     const turn = session.send("Reply with exactly CONTAINER-OK.", { timeoutMs: 1000 });
-    for (const event of suffix === "warm-fresh" ? events : events.slice(1)) session._handleLine(JSON.stringify(event));
-    await assertAttribution(await turn, suffix);
+    // The warm pool is its own provider session: a different id from the cold test's, so the
+    // fresh turn is a new session (charged in full) and the resumed one is charged its delta.
+    const reported = { ...(suffix === "warm-fresh" ? terminal : resumedTerminal), session_id: "primary-model-session-warm" };
+    for (const event of [...events.slice(suffix === "warm-fresh" ? 0 : 1, -1), reported]) session._handleLine(JSON.stringify(event));
+    await assertAttribution(await turn, suffix, reported);
   }
   session._clearIdle();
 });

@@ -10,6 +10,7 @@
 // need no migration; the columns pulled out alongside the blob exist only so the hot queries
 // (filter by channel, enabled, etc.) are indexable. The two dashboard tables (usage, events) use
 // fully typed columns + indexes because they're aggregated by day/week/month/channel/user.
+import { repairClaudeCumulativeCost } from "./claude-session-usage.js";
 
 import { ensureMemoryFtsTable } from "./fts.js";
 
@@ -1142,6 +1143,21 @@ export const migrations = [
         ALTER TABLE skill_access_tokens ADD COLUMN owner_id TEXT NOT NULL DEFAULT '';
         CREATE INDEX IF NOT EXISTS idx_skill_access_tokens_owner ON skill_access_tokens(owner_id);
       `);
+    },
+  },
+  {
+    // Claude Code's terminal result reports the provider SESSION's cumulative cost and per-model
+    // usage (CLI ≥ 2.1.277 restores a resumed session's earlier spend), so every resumed turn was
+    // charged its thread's whole history again. Keep the raw cumulative beside each row, and
+    // re-difference the rows recorded since the image first pinned a cumulative-reporting CLI
+    // (2.1.281, 2026-09-24) — lossless: the original figure survives in the new column.
+    version: 41,
+    up(db) {
+      db.exec(`
+        ALTER TABLE usage ADD COLUMN provider_cost_cumulative REAL;
+        ALTER TABLE usage ADD COLUMN provider_model_usage TEXT NOT NULL DEFAULT '';
+      `);
+      repairClaudeCumulativeCost(db, { since: "2026-09-24T00:00:00.000Z" });
     },
   },
 ];
