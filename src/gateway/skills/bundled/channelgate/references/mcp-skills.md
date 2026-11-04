@@ -44,7 +44,7 @@ See [folder and headless configuration](folder-headless.md) for the low-level po
 ## Local governed skill catalog
 
 ChannelGate's SQLite catalog stores exact, content-hashed skill revisions and bundled resources.
-Skills may be bundled, locally authored, imported from reviewed host folders, synchronized from Git
+Skills may be bundled, gateway-owned, imported from reviewed host folders, synchronized from Git
 sources, or synchronized from a peer gateway. Review mode stages source changes; auto mode
 activates them. Excluding a skill is sticky across future syncs; deleting/tombstoning and restoring
 retain revision history.

@@ -1,4 +1,4 @@
-// The Skills view of the admin UI: the local skill catalog (browse, read, author, pin/rollback,
+// The Skills view of the admin UI: the gateway skill catalog (browse, read, author, pin/rollback,
 // remove), the review queue (staged source revisions + proposals), sources (GitHub / gateway,
 // sync, settings), templates (edit, preview and apply to a conversation) and usage. Talks to
 // src/web/routes/skills.js. No framework — one delegated click handler per panel.
@@ -51,7 +51,8 @@ const state = {
 
 const body = () => document.getElementById("skills-body");
 const fmtWhen = (ts) => (ts ? String(ts).replace("T", " ").slice(0, 16) : "—");
-const ownerLabel = (s) => (s.ownerKind === "git" ? `git source #${s.sourceId}` : s.ownerKind);
+const ownerKindLabel = (kind) => kind === "local" ? "Gateway-owned" : kind;
+const ownerLabel = (s) => (s.ownerKind === "git" ? `git source #${s.sourceId}` : ownerKindLabel(s.ownerKind));
 
 function setMessage(msg, isError = false) {
   state.message = isError ? "" : msg;
@@ -262,7 +263,7 @@ function renderCatalog() {
   return `
     <div class="skills-toolbar">
       ${searchBox("skills-q", { label: "Search the skill catalog", placeholder: "Search slug, name, description, tags…" })}
-      <select id="skills-owner">${owners.map((o) => `<option value="${o}"${o === state.owner ? " selected" : ""}>${o ? esc(o) : "every owner"}</option>`).join("")}</select>
+      <select id="skills-owner">${owners.map((o) => `<option value="${o}"${o === state.owner ? " selected" : ""}>${o ? esc(ownerKindLabel(o)) : "every owner"}</option>`).join("")}</select>
       <select id="skills-source" aria-label="Source"><option value="">Every source</option>${(state.overview?.sources || []).map((source) => `<option value="${source.id}"${String(source.id) === state.source ? " selected" : ""}>${esc(source.label || source.url)}</option>`).join("")}</select>
       <select id="skills-category" aria-label="Category"><option value="">Every category</option>${(state.catalog?.categories || []).map((category) => `<option value="${esc(category.category)}"${category.category === state.category ? " selected" : ""}>${esc(category.category)}</option>`).join("")}</select>
       <select id="skills-enabled" aria-label="Enabled status">${binaryOptions(state.enabled, "enabled or disabled", "Enabled", "Disabled")}</select>
@@ -283,7 +284,7 @@ function renderCatalog() {
 function renderNewSkillForm() {
   return `
     <div class="card skills-detail">
-      <h3>New local skill</h3>
+      <h3>New gateway-owned skill</h3>
       <div class="skills-form">
         <label class="field"><span>Slug (folder name; empty = from the frontmatter name)</span><input id="ns-slug" placeholder="customer-record" /></label>
         <label class="field"><span>Note</span><input id="ns-note" placeholder="why this skill exists" /></label>
@@ -357,7 +358,7 @@ function renderReview() {
     <tr>
       <td><code>${esc(r.slug)}</code>${pluginBadge(r)} <span class="muted">${esc(r.skillName || "")}</span>${pluginSummary(r)}</td>
       <td>#${r.revisionNo}${r.version ? ` v${esc(r.version)}` : ""} · ${r.fileCount} file(s)</td>
-      <td class="muted">${esc(r.ownerKind === "git" ? `git source #${r.sourceId}` : r.ownerKind)} · ${esc(r.sourceRef.slice(0, 12))}</td>
+      <td class="muted">${esc(ownerLabel(r))} · ${esc(r.sourceRef.slice(0, 12))}</td>
       <td class="muted">${fmtWhen(r.createdAt)}</td>
       <td><span class="skills-inline"><button type="button" class="ghost" data-action="view-rev" data-id="${r.id}">files</button><button type="button" data-action="approve-rev" data-id="${r.id}">Approve</button><button type="button" class="ghost" data-action="reject-rev" data-id="${r.id}">Reject</button></span></td>
     </tr>`).join("");
@@ -374,7 +375,7 @@ function renderReview() {
     <table class="skills-table"><thead><tr><th>Skill or plugin</th><th>Revision</th><th>From</th><th>Received</th><th></th></tr></thead><tbody>${stagedRows || '<tr><td colspan="5" class="muted">Nothing staged.</td></tr>'}</tbody></table>
     ${state.fileView?.kind === "revision" ? `<div class="card skills-detail"><h3>Revision #${state.fileView.revisionNo} files</h3>${state.fileView.files.map((f) => `<p><strong>${esc(f.path)}</strong> <span class="skills-muted">${f.size} B</span></p>${f.content != null ? `<pre>${esc(f.content)}</pre>` : ""}`).join("")}</div>` : ""}
     <h3 style="margin-top:18px">Proposals</h3>
-    <p class="skills-note">Changes members proposed from chat. Approving a change publishes a revision (pinned as a local override when the skill comes from a source); approving a promotion grants the skill organization-wide.</p>
+    <p class="skills-note">Changes members proposed from chat. Approving a change publishes a revision (pinned as a gateway override when the skill comes from a source); approving a promotion grants the skill organization-wide.</p>
     <table class="skills-table"><thead><tr><th>Proposal</th><th>Note / files</th><th>By</th><th></th></tr></thead><tbody>${proposalRows || '<tr><td colspan="4" class="muted">No pending proposals.</td></tr>'}</tbody></table>
     ${state.fileView?.kind === "proposal" ? `<div class="card skills-detail"><h3>Proposal #${state.fileView.id} files</h3>${state.fileView.files.map((f) => `<p><strong>${esc(f.path)}</strong></p><pre>${esc(f.encoding === "base64" ? "(binary)" : f.content)}</pre>`).join("")}</div>` : ""}`;
 }

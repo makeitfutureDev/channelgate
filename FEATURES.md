@@ -1,5 +1,9 @@
 # ChannelGate — Features
 
+## Skill ownership terminology
+
+- Skills managed directly in the catalog are labelled **Gateway-owned** in the Skills catalog, owner filter, creation form, assignment picker and MCP guidance. Personal/channel/organization scope remains independent; internal `ownerKind: "local"` values remain compatible.
+
 ## Company email domain auto-approval
 
 - Admin UI → Users → Auto-approval accepts exact company email domains, disabled by default.

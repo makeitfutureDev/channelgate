@@ -15,7 +15,7 @@ tags:
 # Authoring skills
 
 Skills are folders with a `SKILL.md` (YAML frontmatter + Markdown body) plus optional
-`references/`, `scripts/` and `assets/` files. The gateway keeps them in its local catalog and
+`references/`, `scripts/` and `assets/` files. The gateway keeps them in its gateway catalog and
 materializes them into every conversation that is granted them — Claude and Codex both discover
 them natively by their frontmatter `name` and `description`.
 

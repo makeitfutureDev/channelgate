@@ -1,5 +1,7 @@
 # Changelog — ChannelGate
 
+- Rename user-facing “local skills” to “gateway-owned skills” across skill management and guidance; stored ownership values and update behavior are unchanged.
+
 - Clarify catalog-first skill authoring: local skill installs are not durable; external source edits require verified repository write access.
 
 - Allow Composio Remote Bash alongside Remote Workbench for authorized remote processing, retaining current-run authority checks and structured membership approvals.

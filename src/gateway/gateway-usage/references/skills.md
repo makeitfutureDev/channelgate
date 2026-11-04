@@ -1,9 +1,11 @@
 # Skills: what is active here, templates, authoring and proposals
 
 Skills are reusable procedures (a `SKILL.md` plus references/scripts) that the gateway keeps in
-its own local **catalog** and materializes into this conversation's folder as real files. You
+its own gateway **catalog** and materializes into this conversation's folder as real files. You
 discover them natively — the always-on list is each skill's name + description; the body loads
 when a skill fires. No token or network call is involved.
+
+**Gateway-owned** skills are managed directly in the catalog (internal owner value `local`). This ownership is independent of personal/channel/organization scope and does not mean unmanaged files installed in an engine skill folder.
 
 ## Where agents must save skills
 
@@ -143,7 +145,7 @@ never-expiring) card; the rest are automatic for an admin (`references/administr
 - `set_skill_governance` — enable/disable a catalog skill, approve it for organization-wide
   discovery, or make it mandatory. Mandatory implies enabled and discoverable.
 - `set_skill_excluded` — hide a synced/bundled skill from the catalog (it stays hidden across syncs) or bring it back.
-- `publish_skill` (managers too) — push a local skill to the configured Git repository now.
+- `publish_skill` (managers too) — push a gateway-owned or writable publishing-repository skill to the configured Git repository now.
 - `set_skill_scope` (admins) — move a skill between the shared library and a channel's section
   (`scope: "library"` promotes a customer skill for everyone; the channel it leaves keeps it as
   an explicit grant; `scope: "channel"` keeps it for one customer). The files move in the
