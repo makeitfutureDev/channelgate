@@ -1,5 +1,7 @@
 # ChannelGate — Features
 
+- Invalid legacy skill-folder grants are omitted from Claude plugins and the Codex personal catalog. The reply names folders missing a regular `SKILL.md`; remaining skills continue loading and source folders/grants remain intact.
+
 ## Company email domain auto-approval
 
 - Admin UI → Users → Auto-approval accepts exact company email domains, disabled by default.

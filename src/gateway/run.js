@@ -1475,7 +1475,7 @@ async function runMessageImpl({ channelId, authorId, workspaceId = "", text, thr
   if (homeGuarded && needsClaudeSettings && !grantArtifacts.settingsFile) throw new Error("this channel mounts the operator home but no home-guard settings were generated; refusing to run a non-admin turn unguarded");
   const runSettingsFile = grantArtifacts.settingsFile || sharedRunSettingsFile;
   const skillWarning = grantArtifacts.missingSkills.length
-    ? `⚠️ Some granted skills could not be loaded: ${grantArtifacts.missingSkills.join(", ")}. Continuing with the available skills.\n\n`
+    ? `⚠️ Some granted skills could not be loaded: ${grantArtifacts.missingSkills.map((name) => grantArtifacts.invalidSkillFolders.includes(name) ? `${name} (skill folder has no regular SKILL.md)` : name).join(", ")}. Continuing with the available skills.\n\n`
     : "";
   const runWarning = licenseWarning + skillWarning;
   const grantFingerprint = JSON.stringify({

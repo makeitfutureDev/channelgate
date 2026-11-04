@@ -625,3 +625,41 @@ for (const state of ["absent", "no-manifest", "symlink"]) {
     assert.ok(await absent(path.join(artifacts.claudePluginDirs[0], "skills", "gateway-usage", "SKILL.md")));
   });
 }
+
+
+test("a parent folder grant without SKILL.md warns without breaking either engine's artifacts", async (t) => {
+  const temp = await mkdtemp(path.join(os.tmpdir(), "cg-invalid-grant-"));
+  const previousSources = process.env.GATEWAY_SKILL_SOURCES;
+  t.after(async () => {
+    if (previousSources == null) delete process.env.GATEWAY_SKILL_SOURCES;
+    else process.env.GATEWAY_SKILL_SOURCES = previousSources;
+    await rm(temp, { recursive: true, force: true });
+  });
+  const source = path.join(temp, "sources");
+  await mkdir(path.join(source, "synced", "nested-skill"), { recursive: true });
+  await writeFile(path.join(source, "synced", "nested-skill", "SKILL.md"), "# Nested skill\n");
+  await mkdir(path.join(source, "valid"), { recursive: true });
+  await writeFile(path.join(source, "valid", "SKILL.md"), "# Valid skill\n");
+  process.env.GATEWAY_SKILL_SOURCES = source;
+  for (const tier of ["personal", "shared"]) {
+    for (const valid of [false, true]) {
+      const selected = valid ? ["synced", "valid"] : ["synced"];
+      const artifacts = await grants({
+        slug: `invalid-grant-${tier}-${valid}`,
+        userSkills: tier === "personal" ? selected : [],
+        sharedSkills: tier === "shared" ? selected : [],
+        needsClaudeSettings: true,
+      });
+      t.after(() => artifacts.cleanup());
+      assert.deepEqual(artifacts.invalidSkillFolders, ["synced"]);
+      assert.deepEqual(artifacts.missingSkills, ["synced"]);
+      assert.deepEqual(artifacts.personalSkillCatalog.map((s) => s.name), tier === "personal" && valid ? ["valid"] : []);
+      assert.equal(artifacts.claudePluginDirs.length, valid ? 1 : 0);
+      for (const dir of artifacts.claudePluginDirs) {
+        assert.ok(await absent(path.join(dir, "skills", "synced")), "invalid parent and its nested skills never reach native discovery");
+        assert.equal(await readFile(path.join(dir, "skills", "valid", "SKILL.md"), "utf8"), "# Valid skill\n");
+      }
+    }
+  }
+  assert.equal(await readFile(path.join(source, "synced", "nested-skill", "SKILL.md"), "utf8"), "# Nested skill\n", "source folder is preserved");
+});
