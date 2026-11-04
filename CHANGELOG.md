@@ -1,5 +1,7 @@
 # Changelog — ChannelGate
 
+- Add an optional `model` argument to `create_skill` / `update_skill` that writes or clears the skill's preferred-model frontmatter line, document it in the skill-authoring guide, and show the preferred model in the skills library.
+
 - Let a skill declare its preferred model (`model:` in SKILL.md): with the new per-channel "Allow skill engine and model swapping" switch on, using the skill resumes the same session on that model (sticky below a `/model` pin), or delegates to a background agent on the other engine; `run_agent_in_background` takes `engine`/`model`.
 
 - Charge each Claude turn only its own spend: a resumed session is no longer re-billed its history on every message, subagent tokens are counted, and every model a turn used (a Sonnet subagent under Opus) gets its own priced slice; migration 41 repairs recorded history losslessly.

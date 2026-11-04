@@ -55,6 +55,33 @@ export function engineForModel(model) {
   return ENGINE_IDS.find((id) => modelBelongsToEngine(value, id)) || "";
 }
 
+// ── Authoring: set or clear `model:` in a SKILL.md's frontmatter ─────────────────────────────
+// Used by create_skill / update_skill's optional `model` argument so an author never has to hand-
+// edit YAML. Rewrites only the one key: an existing `model:` line is replaced in place, a missing
+// one is appended just before the closing `---`, an empty model removes the line, and a file with
+// no frontmatter gets a minimal header. Throws on a model no engine recognizes.
+export function setSkillModelFrontmatter(text, model) {
+  const value = String(model ?? "").trim().toLowerCase();
+  if (value && !engineForModel(value)) throw new Error(`"${value}" is not a model any engine of this gateway recognizes.`);
+  const src = String(text ?? "");
+  const lines = src.split(/\r?\n/);
+  const line = value ? `${SKILL_MODEL_KEY}: ${value}` : "";
+  if (lines[0]?.trim() !== "---") {
+    if (!value) return src;
+    return `---\n${line}\n---\n\n${src.replace(/^\n+/, "")}`;
+  }
+  const close = lines.findIndex((l, i) => i > 0 && (l.trim() === "---" || l.trim() === "..."));
+  if (close === -1) throw new Error("SKILL.md frontmatter is not closed.");
+  const header = lines.slice(1, close);
+  const at = header.findIndex((l) => /^model\s*:/.test(l));
+  if (at >= 0) {
+    if (value) header[at] = line; else header.splice(at, 1);
+  } else if (value) {
+    header.push(line);
+  }
+  return [lines[0], ...header, ...lines.slice(close)].join("\n");
+}
+
 // ── The instruction line a materialized SKILL.md carries ─────────────────────────────────────
 
 export function skillRuntimeHeader(slug) {

@@ -57,6 +57,7 @@ import { listSkillFolderIssues } from "../../gateway/skills/folder-issues.js";
 import { skillSourceDirs } from "../../gateway/folders.js";
 import { logEvent } from "../../util/logger.js";
 import { syncWorkspaceSkillsOrThrow } from "../../gateway/skills/workspace-sync.js";
+import { skillModelPreference } from "../../gateway/skill-runtime.js";
 
 // The one spelling of the admin-UI principal across the whole audit trail (config/channel-audit.js).
 const ADMIN_UI = ADMIN_UI_ACTOR;
@@ -83,6 +84,8 @@ function skillToApi(skill, usage = null) {
   return {
     ...skill,
     meta: undefined,
+    // The skill's declared preferred model (src/gateway/skill-runtime.js), "" when none.
+    model: skillModelPreference(skill)?.model || "",
     plugin: pluginSummaryFromMetadata(skill.meta),
     owner: describeOwner(skill),
     enabled: !skill.deleted,
