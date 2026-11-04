@@ -5,7 +5,12 @@ import assert from "node:assert/strict";
 import { mkdirSync, symlinkSync, realpathSync, rmSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { tempDir } from "./helpers.js";
+import { ensureTestEnv, tempDir } from "./helpers.js";
+
+// The trust-proxy case below saves SETTINGS, which opens the runtime root's database and writes
+// its settings.json. Pin the scratch root first or those writes land in the operator's real
+// ~/.channelgate — on this project a machine serving the daemon in production.
+ensureTestEnv();
 import {
   isLoopbackHost,
   pathWithin,
