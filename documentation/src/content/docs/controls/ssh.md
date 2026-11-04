@@ -81,3 +81,17 @@ SSH gives a person a full interactive shell inside a conversation’s shared con
 **Scope and result:** Read-only connection/status view for a requester authorized in this conversation. Returns host setup state, granted people, registered-key readiness, live sessions, the SSH config block, and the working-folder/VS Code command when setup permits.
 
 **Limits:** A displayed snippet is not a access grant. The broker rechecks the key ownership, conversation authorization/grant, and operator-home restriction on connection. The container stays leased while a SSH session is live; daemon restart drops it. All people in the container share its operating-system user, so set Git identity and coordinate edits.
+
+## allow_channel_ssh_host
+
+**Required:** `host` (one exact public DNS hostname, without a URL, wildcard or port).
+
+```json
+{
+  "host": "ssh.example.com"
+}
+```
+
+**Scope and result:** Requests a durable human approval card for outbound SSH from this conversation's container. Any currently authorized conversation member with write access may approve; manager/admin rights and `/sudo` are not required. The gateway appends the approved hostname to this conversation's `egressRawHosts`, preserving other entries and settings. An existing exact entry needs no additional card.
+
+**Limits:** Network must be on and the conversation must permit writes. Auto mode never approves the card. The saved request survives restarts and applies once; the requester and approver must still be authorized when it is decided. The card discloses that the existing egress list permits raw TCP ports 22, 5432 and 6543. Private, loopback and metadata addresses remain blocked, including after DNS changes. Approval supplies no SSH key or secret permission. Once approved, retry SSH with the existing key and `-o ProxyCommand='/opt/channelgate/bin/cg-egress-connect %h %p'`.
