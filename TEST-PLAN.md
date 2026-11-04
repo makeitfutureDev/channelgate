@@ -7707,15 +7707,20 @@ none` for its cases and live gates. Kept as history.
       child root, separate request and answer. Follow up in both threads; each must remember its
       own continuation while retaining the shared pre-fork history. Try during a running turn,
       without a prior session, and from `/sudo`: each must refuse without creating a new root.
+- [ ] Live engine-independent acceptance (command intercepted before engine dispatch): in a
+      disposable Slack thread with a human root and bot replies, an admin sends `@bot /delete`.
+      Verify bot replies disappear, the human root stays without a replacement report, and another
+      thread is untouched. Repeat with a bot root and optional admin user token. Audit event retains
+      deleted/left counts. Pending live execution; no engine turn should start.
 - [ ] `/delete` (org-admin only) inside a thread removes the BOT's messages there (replies before the
-      parent) and posts an ephemeral summary; without an Admin User Token, human messages stay and
-      the summary explains how to enable full deletion (Settings → Slack credentials).
+      parent) silently; without an Admin User Token, human messages stay. No ephemeral summary,
+      regular report, or fallback message is posted, even when the root remains.
       A non-admin (approved) author gets "Only admins can use `/delete`." and NOTHING is deleted.
       Top-level `/delete` replies with guidance; on a mid-run thread it refuses until stopped.
       Another thread in the same channel is untouched (scope check).
 - [ ] `/delete` with an Admin User Token (xoxp) set: human/other-app messages are deleted too (token
       override per call); if the workspace refuses (admin-delete pref off), they're counted as
-      stayed with the "even with the admin user token" wording. Settings rejects a non-`xoxp-`
+      stayed in the audit log, without a report. Settings rejects a non-`xoxp-`
       value for the field (400); the token is write-only (masked on read) and never appears in any
       run/MCP config.
 - [ ] `/pending` (alias `/followups`) and the bare words `pending` / `my followups` reply in-thread

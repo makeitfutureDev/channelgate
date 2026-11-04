@@ -898,19 +898,7 @@ export async function processMessageEvent(event, client, { botUserId = "", teamI
           lastCtx.delete(runKey);
         }
         await logEvent("thread_deleted", { channel: event.channel, author: event.user, slug: entry.slug, deleted: res.deleted, left: res.left });
-        // Report ephemerally so the summary doesn't repopulate the thread we just emptied.
-        const summary =
-          `🗑️ Deleted ${res.deleted} of ${res.total} message(s) in this thread.` +
-          (res.left
-            ? res.usedUserToken
-              ? ` ${res.left} stayed — Slack refused to delete them even with the admin user token (workspace settings may not allow admins to delete others' messages).`
-              : ` ${res.left} stayed — the bot token can only delete my own messages. To delete everyone's, add a Slack admin user token (xoxp) in Settings → Slack credentials.`
-            : "");
-        try {
-          await client.chat.postEphemeral({ channel: event.channel, user: event.user, ...(res.parentDeleted ? {} : threadOpts), text: summary });
-        } catch {
-          await client.chat.postMessage({ channel: event.channel, ...(res.parentDeleted ? {} : threadOpts), text: summary }).catch(() => {});
-        }
+        // Successful deletion is silent: never repopulate the thread or post a summary.
       } else if (sc.cmd === "files") {
         await reply("The /files command has been removed. Use the 📂 button on a reply or the Browse channel files message shortcut.");
       } else if (sc.cmd === "context") {

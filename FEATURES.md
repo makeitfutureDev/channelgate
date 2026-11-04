@@ -2386,9 +2386,8 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
   `/delete` (org-admin only: wipe THIS thread — replies first, parent last — hard-scoped to the
   triggering channel+thread; the bot token deletes the bot's own messages, and when an optional
   Admin User Token (xoxp) is set in Settings → Slack credentials, everyone else's are deleted via a
-  per-call token override too — workspace prefs permitting; anything Slack refuses is tallied +
-  reported in the ephemeral summary, which also says how to enable full deletion when no user token
-  is set; refuses non-admin authors, mid-run threads, and top-level use; a deleted bot-owned root
+  per-call token override too — workspace prefs permitting; anything Slack refuses is tallied in the audit log; completed deletion posts no summary
+  (neither ephemeral nor regular), including partial deletion; refuses non-admin authors, mid-run threads, and top-level use; a deleted bot-owned root
   also drops the session like `/clear`), and `/update` (admin-only — git pull + install + restart, detached).
   → TEST-PLAN: In-thread commands.
 - Stop an in-flight run four ways: Slack's **native Stop button** on the thread (the agent session's

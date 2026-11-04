@@ -1,5 +1,7 @@
 # Changelog — ChannelGate
 
+- Make completed `/delete` commands silent, including partial deletion; retain audit counts without posting a report.
+
 - Clarify catalog-first skill authoring: local skill installs are not durable; external source edits require verified repository write access.
 
 - Allow Composio Remote Bash alongside Remote Workbench for authorized remote processing, retaining current-run authority checks and structured membership approvals.
