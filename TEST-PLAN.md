@@ -3454,6 +3454,26 @@ unchecked live gate above.
 
 ## Per-model dashboard stacking and usage outside the gateway
 
+- [x] `test/claude-session-cost.test.js`: a Claude session resumed for a second turn is charged its
+      DELTA (the fixture replays the figures observed on the development ledger on 2026-11-04: an
+      Opus turn with a Sonnet subagent reported $0.38, the next turn of the same session $0.43 and
+      the ledger must store $0.05), its row carries the whole tree's tokens (subagent included),
+      one `usage_components` row per model prices the Sonnet subagent under its own model, and the
+      channel total equals the session's cumulative rather than the sum of cumulatives. A
+      cumulative that goes down is a restarted session (recorded at face value, flagged, never
+      negative); a per-model split that does not reconcile is dropped as a whole while the cost
+      delta is kept; a result with no session totals records what it was given. Migration 41
+      re-differences historical rows losslessly (the original survives beside the delta), leaves
+      pre-2026-09-24 rows and rows without a session id alone, and is idempotent.
+      `test/claude-primary-model.test.js` now feeds the warm pool's resumed turn a cumulative
+      terminal and asserts the delta. Engine-independent: ledger arithmetic over a recorded
+      terminal line.
+      Live acceptance (Claude): in a channel on the Claude engine, send three messages in one
+      thread, the second asking for a subagent on another model ("run X with a subagent on
+      sonnet"); then in the admin UI's Audit view confirm each row's cost is that turn's own (the
+      three rows sum to the last row's `provider_cost_cumulative` in `usage`), and the Models card
+      shows the subagent's model with its own slice. Pass: no row repeats an earlier row's cost
+      plus its own, and the subagent model appears.
 - [x] `test/usage-model-breakdown.test.js`: a run's cost is attributed to the model that ANSWERED,
       and a Codex run whose subagent used a different model contributes a slice to each — while the
       run is still counted once, so per-model run counts sum to the headline run count and a

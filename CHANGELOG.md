@@ -1,5 +1,7 @@
 # Changelog — ChannelGate
 
+- Charge each Claude turn only its own spend: a resumed session is no longer re-billed its history on every message, subagent tokens are counted, and every model a turn used (a Sonnet subagent under Opus) gets its own priced slice; migration 41 repairs recorded history losslessly.
+
 - Accept public IPv4/IPv6 destinations in SSH approval cards and raw tunnels, fixing IP-only customer connections.
 
 - Show host skill folders missing `SKILL.md` in the library with an issue badge, path, personal grant owners and a missing-file filter.
