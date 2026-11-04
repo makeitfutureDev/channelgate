@@ -37,6 +37,7 @@ export const POLICY_KEYS = Object.freeze([
   "rawNetwork", // raw sockets on the open bridge beside the egress proxy (admin escape)
   "egressRawHosts", // hosts whose SSH/Postgres ports get a raw tunnel through the proxy
   "cleanMode", // run bare (no MCP servers, no skills)
+  "skillRuntimeSwap", // a skill's preferred model may switch the turn's engine/model
   "noDefaultTokens", // refuse the org-default token fallback here
   "approvedEngines", // Enterprise channel harness approval policy
   "engine", // per-channel engine override

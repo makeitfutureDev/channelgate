@@ -7,7 +7,7 @@ export const WORKSPACE_FIELDS = Object.freeze([
   "access", "manageAccess", "managers", "allowedUsers", "excludedUsers", "approvedTools", "sshUsers",
   "allowedMcps", "allowedCodexMcps", "allowedOpenCodeMcps", "customMcps", "emailAccounts", "noDefaultTokens",
   "composioToken", "composioTokenLabel", "toolboxToken", "toolboxTokenLabel", "makeToolboxUrl", "makeToolboxKey", "env", "egressRawHosts",
-  "profile", "adminMode", "allowBash", "autoMode", "cleanMode", "allowNetwork", "rawNetwork",
+  "profile", "adminMode", "allowBash", "autoMode", "cleanMode", "allowNetwork", "rawNetwork", "skillRuntimeSwap",
 ]);
 
 export function workspaceSetup(meta) {

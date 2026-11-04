@@ -260,6 +260,30 @@ export function register(server, ctx) {
     }
   );
 
+  server.registerTool(
+    "set_channel_skill_swap",
+    {
+      description:
+        "ADMINS / CHANNEL MANAGERS. Allow or forbid skill engine and model swapping in this conversation. With it ON, " +
+        "a skill that declares a preferred model (its SKILL.md `model:` field) switches the turn to that model when the " +
+        "skill is used: the same session is resumed on it when the model belongs to the current engine, and a skill " +
+        "preferring the other engine is delegated to a background agent there. A person's /model pin always wins. " +
+        "OFF (the default) leaves every skill on the conversation's configured model. Effective on the next use_skill call.",
+      inputSchema: { enabled: z.boolean() },
+    },
+    async ({ enabled }) => {
+      if (!(await requireManage())) return text("Only this channel's managers (or an admin) can change skill model swapping.");
+      if (!(await patchAuditedMeta((meta) => (meta ? { skillRuntimeSwap: Boolean(enabled) } : null)))) {
+        return text("Channel isn't set up yet — send a normal message first.");
+      }
+      return text(
+        enabled
+          ? "✅ Skill engine/model swapping ON — a skill with a preferred model switches the turn to it when used (a person's pin still wins)."
+          : "✅ Skill engine/model swapping OFF — skills run on the conversation's configured model."
+      );
+    }
+  );
+
   // A run can act only on its capability-bound channel. The daemon controls the host
   // helper; no container gains a shell, Podman socket, NET_ADMIN or credential mount.
   const vpnControl = ctx.vpnControl || { getStatus: getChannelVpnStatus, setEnabled: setChannelVpnEnabled };

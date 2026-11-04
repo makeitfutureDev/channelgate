@@ -676,13 +676,13 @@ function runtimeRow(scope, data = {}, state, { editable = true, codexLocked = fa
 }
 
 const MODE_LABELS = Object.freeze({ read: "Read-only", worker: "Worker", admin: "Admin" });
-const FLAG_LABELS = Object.freeze({ autoMode: "Auto-approve", cleanMode: "Lean", allowNetwork: "Internet" });
+const FLAG_LABELS = Object.freeze({ autoMode: "Auto-approve", cleanMode: "Lean", allowNetwork: "Internet", skillRuntimeSwap: "Skill model swap" });
 
 function modeRows(snapshot, state, { canEditAccess = false, canEnableAdmin = false } = {}) {
   const mode = snapshot.mode || {};
   const current = channelMode(mode);
   const dm = Boolean(snapshot.isDM);
-  const flags = dm ? ["autoMode", "cleanMode"] : ["autoMode", "cleanMode", "allowNetwork"];
+  const flags = dm ? ["autoMode", "cleanMode", "skillRuntimeSwap"] : ["autoMode", "cleanMode", "allowNetwork", "skillRuntimeSwap"];
   if (!dm && !canEditAccess) {
     const on = flags.filter((flag) => mode[flag]).map((flag) => FLAG_LABELS[flag]);
     return [context(`*Mode* · ${MODE_LABELS[current] || modeLabel(mode)}${on.length ? ` · ${on.join(" · ")}` : ""}`), context("🔒 Managers and admins change the mode.")];

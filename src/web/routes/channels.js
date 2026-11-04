@@ -336,6 +336,7 @@ export function createChannelsRouter({
       if (typeof body.allowNetwork === "boolean") next_.allowNetwork = body.allowNetwork;
       if (typeof body.autoMode === "boolean") next_.autoMode = body.autoMode;
       if (typeof body.cleanMode === "boolean") next_.cleanMode = body.cleanMode;
+      if (typeof body.skillRuntimeSwap === "boolean") next_.skillRuntimeSwap = body.skillRuntimeSwap;
       if (typeof body.engine === "string" && (body.engine === "" || ENGINES.includes(body.engine))) next_.engine = body.engine;
       if (CODEX_AUTH_SOURCES.includes(body.codexAuthSource)) next_.codexAuthSource = body.codexAuthSource;
       if (next_.codexAuthSource === "channel") {
@@ -510,6 +511,7 @@ export function createChannelsRouter({
             allowNetwork: typeof body.allowNetwork === "boolean" ? body.allowNetwork : current.allowNetwork,
             autoMode: typeof body.autoMode === "boolean" ? body.autoMode : current.autoMode,
             cleanMode: typeof body.cleanMode === "boolean" ? body.cleanMode : current.cleanMode,
+            skillRuntimeSwap: typeof body.skillRuntimeSwap === "boolean" ? body.skillRuntimeSwap : Boolean(current.skillRuntimeSwap),
             noDefaultTokens: typeof body.noDefaultTokens === "boolean" ? body.noDefaultTokens : current.noDefaultTokens,
             memory: typeof body.memory === "boolean" ? body.memory : current.memory,
             engine: typeof body.engine === "string" && (body.engine === "" || ENGINES.includes(body.engine)) ? body.engine : current.engine,

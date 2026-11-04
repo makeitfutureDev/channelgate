@@ -15,7 +15,7 @@ const selects = {
   manageAccess: [["Org admins only", "admins"], ["Approved channel members", "members"], ["Named managers", "custom"]],
 };
 const labels = { mode: "Mode", access: "Who can use it here", manageAccess: "Who can manage this channel" };
-const flags = [["Auto — automatically approve tool requests", "autoMode"], ["Lean — bare model without skills or connectors", "cleanMode"], ["Network — tell the engine network use is allowed", "allowNetwork"]];
+const flags = [["Auto — automatically approve tool requests", "autoMode"], ["Lean — bare model without skills or connectors", "cleanMode"], ["Network — tell the engine network use is allowed", "allowNetwork"], ["Skill model swap — a skill's preferred engine/model may take over the turn", "skillRuntimeSwap"]];
 const userLists = [["allowedUsers", "Guest access — named users"], ["managers", "Named managers (when selected above)"]];
 
 // The catalogs the Settings page renders its rows from. Exported rather than duplicated there so
@@ -64,6 +64,7 @@ export function accessSettingsSnapshot(meta = {}) {
   return {
     mode: channelMode(meta),
     autoMode: Boolean(meta.autoMode), cleanMode: Boolean(meta.cleanMode), allowNetwork: Boolean(meta.allowNetwork),
+    skillRuntimeSwap: Boolean(meta.skillRuntimeSwap),
     access: meta.access || "approved", manageAccess: meta.manageAccess || "admins",
     allowedUsers: meta.allowedUsers || [], managers: meta.managers || [],
     excludedUsers: meta.excludedUsers || [],
@@ -148,7 +149,7 @@ export function accessSettingsPatch(meta, form, actor) {
   const canEnableAdmin = actor.isAdminUser === true || channelMode(meta) === "admin";
   const patch = {
     ...modeSettingsPatch(meta, { mode: form.mode, autoMode: form.autoMode, cleanMode: form.cleanMode }, { canEnableAdmin }),
-    allowNetwork: form.allowNetwork, access: form.access, manageAccess: form.manageAccess,
+    allowNetwork: form.allowNetwork, skillRuntimeSwap: form.skillRuntimeSwap, access: form.access, manageAccess: form.manageAccess,
     allowedUsers: [...new Set(form.allowedUsers)], managers: [...new Set(form.managers)],
     excludedUsers: [...new Set(form.excludedUsers)],
   };

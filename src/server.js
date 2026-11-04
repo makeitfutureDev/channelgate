@@ -30,6 +30,7 @@ import { startScheduler } from "./gateway/scheduler.js";
 import { searchAgentDirectory } from "./gateway/agent-directory.js";
 import { startAgentDirectoryRefresh } from "./gateway/agent-directory-refresh.js";
 import { handleCodeChannelIpc } from "./slack/code-channel-kickoff.js";
+import { requestSkillSwap } from "./gateway/skill-runtime.js";
 import { BackgroundJobs, setActiveBackgroundJobs } from "./gateway/background.js";
 import { requestApproval, setDurableApprovalExecutor } from "./slack/approvals.js";
 import { executeInstructionApproval, INSTRUCTION_ACTION } from "./gateway/instruction-approvals.js";
@@ -379,6 +380,7 @@ async function main() {
     drivesync: (body) => handleDriveSyncIpc(body),
     "agent-directory": (body) => searchAgentDirectory(body),
     "code-channel": (body) => handleCodeChannelIpc(body, { slack }),
+    "skill-swap": (body) => requestSkillSwap(body),
   });
   const app = createWebApp({ slack, transports, backgroundJobs, restartCoordinator, containerRuntimeStatus: containerRuntimeHealth });
   const server = app.listen(PORT, HOST);

@@ -37,6 +37,9 @@ import { createSecretRedactor, redactSecretValues, redactSecretFields } from "..
 import { containerJobScript } from "./background-shell-log.js";
 import { getThreadSudo } from "./thread-engine.js";
 import { sudoModeMeta } from "./modes.js";
+import { ENGINES, isEngineEnabled, getEngine } from "../config/settings.js";
+import { modelBelongsToEngine } from "../engines/registry.js";
+import { isChannelEngineApproved } from "./channel-engines.js";
 export { containerJobScript } from "./background-shell-log.js";
 
 const MAX_TAIL = 6_000; // chars of combined stdout/stderr fed back to the agent
@@ -244,7 +247,7 @@ export class BackgroundJobs {
           // behaving exactly as before (pid + kernel start time are its identity); a job in an
           // isolated runtime is found again by its runId, because its pid belongs to a client
           // process that is already gone.
-          ins.run(j.id, toJson({ id: j.id, kind: j.kind || "shell", channelId: j.channelId, slug: j.slug, authorId: j.authorId, threadKey: j.threadKey, admissionThreadKey: j.admissionThreadKey, label: j.label, command: j.command, task: j.task || "", startedAt: j.startedAt, pid: j.pid || null, startTime: j.startTime || "", maxMs: j.maxMs, logFile: j.logFile || "", approvalId: j.approvalId || "", runtime: j.runtime || null, pendingDelivery: j.pendingDelivery || null, deliveryAttempts: j.deliveryAttempts || 0 }));
+          ins.run(j.id, toJson({ id: j.id, kind: j.kind || "shell", channelId: j.channelId, slug: j.slug, authorId: j.authorId, threadKey: j.threadKey, admissionThreadKey: j.admissionThreadKey, label: j.label, command: j.command, task: j.task || "", startedAt: j.startedAt, pid: j.pid || null, startTime: j.startTime || "", maxMs: j.maxMs, logFile: j.logFile || "", approvalId: j.approvalId || "", runtime: j.runtime || null, pendingDelivery: j.pendingDelivery || null, deliveryAttempts: j.deliveryAttempts || 0, overrides: j.overrides || null }));
         }
         db.exec("COMMIT");
       } catch (e) {
@@ -290,10 +293,20 @@ export class BackgroundJobs {
     });
   }
 
-  async _start({ channelId, slug, authorId, threadKey, admissionThreadKey = threadKey, command, label, maxMs = 0, kind = "shell", task }, approval = {}) {
+  async _start({ channelId, slug, authorId, threadKey, admissionThreadKey = threadKey, command, label, maxMs = 0, kind = "shell", task, engine = "", model = "" }, approval = {}) {
     // Never persist a new job while boot recovery still has un-re-tracked rows in bg_jobs.
     if (this._recoveryGate) await this._recoveryGate;
     const isAgent = kind === "agent";
+    // An agent's optional runtime override (a skill delegated to the other engine, or an explicit
+    // ask). Checked here, at the daemon, against what this gateway can actually run: the engine
+    // must be enabled and the model must belong to the engine it will spawn on. Shell jobs have no
+    // engine and ignore both.
+    const overrideEngine = isAgent ? String(engine || "").trim().toLowerCase() : "";
+    const overrideModel = isAgent ? String(model || "").trim().toLowerCase() : "";
+    if (overrideEngine && (!ENGINES.includes(overrideEngine) || !isEngineEnabled(overrideEngine))) {
+      return { ok: false, error: `Engine "${overrideEngine}" is not available on this gateway (enabled: ${ENGINES.filter((id) => isEngineEnabled(id)).join(", ") || "none"}).` };
+    }
+    if (overrideModel && (overrideModel.length > 64 || /\s/.test(overrideModel))) return { ok: false, error: "That model id is not valid." };
     maxMs = resolveJobCap(kind, maxMs);
     const cmd = (command || "").trim();
     const taskText = (task || "").trim();
@@ -316,6 +329,16 @@ export class BackgroundJobs {
       }
       meta = sudoModeMeta(meta);
     }
+    if (overrideEngine && !isChannelEngineApproved(meta, overrideEngine)) {
+      return { ok: false, error: `Engine "${overrideEngine}" is not approved for this conversation.` };
+    }
+    if (overrideModel) {
+      const spawnEngine = overrideEngine || (ENGINES.includes(meta.engine) ? meta.engine : "") || getEngine();
+      if (!modelBelongsToEngine(overrideModel, spawnEngine)) {
+        return { ok: false, error: `Model "${overrideModel}" does not belong to the ${spawnEngine} engine. Pass the matching engine too, or choose one of its models.` };
+      }
+    }
+    const agentOverrides = overrideEngine || overrideModel ? { ...(overrideEngine ? { engine: overrideEngine } : {}), ...(overrideModel ? { model: overrideModel } : {}) } : null;
 
     // WHERE this shell job runs. Agent jobs go through runMessage, which resolves its own target
     // per turn, so only the shell branch needs one here. Resolved BEFORE the approval gate because
@@ -458,7 +481,7 @@ export class BackgroundJobs {
       /* logging is best-effort */
     }
 
-    const rec = { id, kind, channelId, slug: entry.slug, authorId, threadKey, admissionThreadKey, label: name, command: cmd, task: taskText, startedAt, child: null, pid: null, maxMs, logFile, tail: "", timedOut: false, approvalId: approval.approvalId || "", target };
+    const rec = { id, kind, channelId, slug: entry.slug, authorId, threadKey, admissionThreadKey, label: name, command: cmd, task: taskText, startedAt, child: null, pid: null, maxMs, logFile, tail: "", timedOut: false, approvalId: approval.approvalId || "", target, overrides: agentOverrides };
     const writeChunk = (chunk) => {
       try {
         logStream?.write(chunk);
@@ -628,6 +651,9 @@ export class BackgroundJobs {
       admissionThreadKey: rec.admissionThreadKey ?? rec.threadKey,
       sudoSourceThreadKey: rec.threadKey,
       origin: "background_agent", // daemon-triggered: structurally never escalates
+      // The agent's own engine/model when one was asked for (validated in _start); applyRunOverrides
+      // can only narrow capability, never widen it.
+      overrides: rec.overrides || null,
       preferCold: true, // one-shot: don't leave a warm process idling after the agent finishes
       signal: controller.signal,
       onDelta: onChunk,

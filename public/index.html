@@ -1471,6 +1471,11 @@
               </select>
             </label>
           </div>
+          <label class="togglerow">
+            <input type="checkbox" class="ch-skillswap" />
+            <span class="switch"></span>
+            <span class="t"><b>Allow skill engine and model swapping</b><small>A skill that declares a preferred model (its SKILL.md <code>model:</code> field) switches the turn to it when the skill is used: the same session continues on that model, and a skill preferring the other engine is delegated to a background agent there. A person's /model pin always wins.</small></span>
+          </label>
           <label class="field">
             <span>Working folder (blank = default gateway folder)</span>
             <div class="row">
