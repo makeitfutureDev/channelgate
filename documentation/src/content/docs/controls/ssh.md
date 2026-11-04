@@ -84,7 +84,7 @@ SSH gives a person a full interactive shell inside a conversation’s shared con
 
 ## allow_channel_ssh_host
 
-**Required:** `host` (one exact public DNS hostname, without a URL, wildcard or port).
+**Required:** `host` (one exact public DNS hostname or IPv4/IPv6 address, without a URL, wildcard or port).
 
 ```json
 {
@@ -92,6 +92,6 @@ SSH gives a person a full interactive shell inside a conversation’s shared con
 }
 ```
 
-**Scope and result:** Requests a durable human approval card for outbound SSH from this conversation's container. Any currently authorized conversation member with write access may approve; manager/admin rights and `/sudo` are not required. The gateway appends the approved hostname to this conversation's `egressRawHosts`, preserving other entries and settings. An existing exact entry needs no additional card.
+**Scope and result:** Requests a durable human approval card for outbound SSH from this conversation's container. Any currently authorized conversation member with write access may approve; manager/admin rights and `/sudo` are not required. The gateway appends the approved hostname or IP address to this conversation's `egressRawHosts`, preserving other entries and settings. An existing exact entry needs no additional card.
 
 **Limits:** Network must be on and the conversation must permit writes. Auto mode never approves the card. The saved request survives restarts and applies once; the requester and approver must still be authorized when it is decided. The card discloses that the existing egress list permits raw TCP ports 22, 5432 and 6543. Private, loopback and metadata addresses remain blocked, including after DNS changes. Approval supplies no SSH key or secret permission. Once approved, retry SSH with the existing key and `-o ProxyCommand='/opt/channelgate/bin/cg-egress-connect %h %p'`.

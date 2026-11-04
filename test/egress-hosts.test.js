@@ -54,8 +54,11 @@ test("untrusted principals, unauthorized users, read mode and network-off cannot
 test("wildcards, URLs and ports are refused before DNS; private and mixed DNS answers never grant raw egress", async () => {
   const ctx = await fixture();
   const unexpectedLookup = async () => { assert.fail("invalid host must not reach DNS"); };
-  for (const host of ["*.example.com", "https://ssh.example.com", "ssh.example.com:22", "ssh.example.com/path", "8.8.8.8", "127.0.0.1", "::1"]) {
+  for (const host of ["*.example.com", "https://ssh.example.com", "ssh.example.com:22", "ssh.example.com/path"]) {
     await assert.rejects(prepareEgressHost(ctx, host, { lookup: unexpectedLookup }), /exact hostname/);
+  }
+  for (const host of ["127.0.0.1", "10.0.0.1", "169.254.169.254", "::1", "fc00::1", "::ffff:127.0.0.1"]) {
+    await assert.rejects(prepareEgressHost(ctx, host, { lookup: unexpectedLookup }), /which channels may not reach/);
   }
   for (const addresses of [
     [{ address: "192.168.1.5", family: 4 }],
@@ -121,5 +124,35 @@ test("durable worker executor revalidates the requester and approver before invo
     assert.equal(calls.length, 1);
   } finally {
     cp.__resetControlPlaneApprovals();
+  }
+});
+
+
+test("public IPv4 and IPv6 literals are approved without DNS and become raw tunnels", async () => {
+  const ctx = await fixture();
+  const { rawPassthroughFor } = await import("../src/gateway/egress/service.js");
+  const { checkDestination } = await import("../src/gateway/egress/policy.js");
+  const { assertValidEgressRawHosts, isValidRuleHost, assertValidSwapRuleFields } = await import("../src/gateway/egress/catalog-rules.js");
+  const lookup = async () => assert.fail("IP literals must not require DNS");
+  for (const host of ["8.8.8.8", "2001:4860:4860::8888"]) {
+    const prepared = await prepareEgressHost(ctx, host, { lookup });
+    assert.equal(prepared.host, host);
+    assert.equal(prepared.alreadyAllowed, false);
+    await addApprovedEgressHost(ctx, host, { lookup });
+    const meta = await store.getChannelMeta(ctx.slug);
+    const rawPassthrough = rawPassthroughFor(meta);
+    assert.ok(rawPassthrough.some(rule => rule.host === host && rule.port === 22));
+    const on = await checkDestination({ hostname: host, port: 22, mode: "on", rawPassthrough, lookup });
+    assert.equal(on.ok, true);
+    assert.equal(on.tunnel, true, "the proxy must bypass TLS for an approved SSH IP");
+    const off = await checkDestination({ hostname: host, port: 22, mode: "off", rawPassthrough, lookup });
+    assert.equal(off.ok, false);
+    assert.equal(isValidRuleHost(host), false, "secret-host declarations remain DNS-only");
+    assert.throws(() => assertValidSwapRuleFields({ hosts: [host] }));
+  }
+  assert.deepEqual(assertValidEgressRawHosts(["[2001:4860:4860::8888]", "8.8.8.8"]), ["2001:4860:4860::8888", "8.8.8.8"]);
+  for (const host of ["10.0.0.1", "127.0.0.1", "169.254.169.254", "fc00::1", "::1", "::ffff:127.0.0.1", "999.1.1.1", "8.8.8.8:22", "2001:4860:4860::8888%eth0"]) {
+    assert.throws(() => assertValidEgressRawHosts([host]), /not a raw destination/);
+    assert.ok(!rawPassthroughFor({ egressRawHosts: [host] }).some(rule => rule.host === host));
   }
 });

@@ -43,7 +43,7 @@ import { isChannelLive, isOwnerLive, otherOwnerActive, otherSshOpen } from "./li
 import { activeEditorLeases } from "../../runtimes/container/editor-lease.js";
 import { containerName } from "../../runtimes/container/names.js";
 import { engineHostsFor, hostOfUrl } from "./engine-hosts.js";
-import { isValidRuleHost } from "./catalog-rules.js";
+import { isValidRawHost } from "./catalog-rules.js";
 
 // sockaddr_un.sun_path is 108 bytes including the terminating NUL.
 export const MAX_SOCKET_PATH_BYTES = 107;
@@ -124,7 +124,7 @@ export function rawPassthroughFor(meta = {}) {
   const declared = Array.isArray(meta?.egressRawHosts) ? meta.egressRawHosts : [];
   for (const raw of declared) {
     const host = normalizeHost(raw);
-    if (!host || !isValidRuleHost(host)) continue;
+    if (!host || !isValidRawHost(host)) continue;
     for (const port of RAW_PASSTHROUGH_PORTS) out.push({ host, port });
   }
   return out;

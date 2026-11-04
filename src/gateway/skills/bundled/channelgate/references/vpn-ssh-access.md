@@ -28,7 +28,7 @@ calls for Option 2 or an operator handoff; never weaken validation to make it fi
 
 ## Public SSH from an ordinary channel container
 
-For an exact public SSH hostname not yet in this channel's `egressRawHosts`, use
+For an exact public SSH hostname or IPv4/IPv6 address not yet in this channel's `egressRawHosts`, use
 `allow_channel_ssh_host`. The gateway posts a durable card that any currently authorized
 channel member with write access may approve; neither admin rights nor `/sudo` are needed.
 The card persists across restarts and is never auto-approved. End the turn while it is pending.

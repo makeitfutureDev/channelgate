@@ -1,5 +1,7 @@
 # Changelog — ChannelGate
 
+- Accept public IPv4/IPv6 destinations in SSH approval cards and raw tunnels, fixing IP-only customer connections.
+
 - Show host skill folders missing `SKILL.md` in the library with an issue badge, path, personal grant owners and a missing-file filter.
 
 - Let authorized channel members with write access approve public SSH destinations on a durable card, enabling container SSH without `/sudo`.

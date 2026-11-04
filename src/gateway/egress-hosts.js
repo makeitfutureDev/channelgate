@@ -5,7 +5,7 @@ import { logChannelPolicyChange } from "../config/channel-audit.js";
 import { channelMode, isAuthorized } from "./modes.js";
 import { checkDestination, isValidDestinationHost } from "./egress/policy.js";
 import { normalizeHost } from "./egress/rules.js";
-import { isValidRuleHost, assertValidEgressRawHosts } from "./egress/catalog-rules.js";
+import { assertValidEgressRawHosts } from "./egress/catalog-rules.js";
 
 export async function isChannelWorker(channelId, slug, userId) {
   if (!userId) return false;
@@ -24,7 +24,7 @@ export async function prepareEgressHost(ctx, value, { lookup } = {}) {
   const meta = await getChannelMeta(ctx.slug);
   if (meta.allowNetwork !== true) throw new Error("Network access is off for this channel.");
   const host = normalizeHost(value);
-  if (!isValidDestinationHost(host) || !isValidRuleHost(host)) throw new Error("Use one exact hostname, without wildcards, a URL, or a port.");
+  if (!isValidDestinationHost(host)) throw new Error("Use one exact hostname or public IP address, without wildcards, a URL, or a port.");
   const result = await checkDestination({ hostname: host, port: 22, mode: "on", rawPassthrough: [{ host, port: 22 }], lookup });
   if (!result.ok) throw new Error(result.reason);
   assertValidEgressRawHosts([...(meta.egressRawHosts || []), host]);

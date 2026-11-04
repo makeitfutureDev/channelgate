@@ -157,7 +157,7 @@ These channel modes do not leave the container. The separate organization-admin-
   (anything else answers HTTP 403 `network-off`); on: public hosts, never private, loopback or
   cloud-metadata addresses. A flip applies to the next request. Raw sockets (`ssh`, `psql`) are
   tunnelled only to `github.com:22` and hosts in this channel's `egressRawHosts`. For a new
-  public SSH server, call `allow_channel_ssh_host` with the exact hostname. It posts a durable
+  public SSH server, call `allow_channel_ssh_host` with the exact hostname or public IP address. It posts a durable
   approval card: any authorized channel member with write access may approve, without `/sudo`
   or an admin. End the turn while pending; after approval retry with the existing key. The card
   adds this host for TCP 22, 5432 and 6543, preserves existing hosts, and never enables Network

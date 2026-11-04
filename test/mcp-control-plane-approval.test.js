@@ -49,7 +49,7 @@ const CUSTOM_WORKDIR = tempDir("cg-ctrl-custom-workdir-");
 mkdirSync(ISOLATED_HOME, { recursive: true });
 mkdirSync(CUSTOM_WORKDIR, { recursive: true });
 
-function gatewayClient({ author = "U_CTRL_ADMIN", port = stubPort, engine = "claude", preload = "" } = {}) {
+function gatewayClient({ author = "U_CTRL_ADMIN", port = stubPort, engine = "claude" } = {}) {
   const secret = "ctrl-test-secret";
   const transport = new StdioClientTransport({
     command: process.execPath,
@@ -59,7 +59,6 @@ function gatewayClient({ author = "U_CTRL_ADMIN", port = stubPort, engine = "cla
     env: {
       PATH: process.env.PATH || "",
       NODE_ENV: "test",
-      ...(preload ? { NODE_OPTIONS: `--import=${preload}` } : {}),
       CHANNELGATE_LICENSE_PUBLIC_KEY: process.env.CHANNELGATE_LICENSE_PUBLIC_KEY,
       CHANNELGATE_LICENSE_PAYLOAD: process.env.CHANNELGATE_LICENSE_PAYLOAD,
       CHANNELGATE_LICENSE_KEY: process.env.CHANNELGATE_LICENSE_KEY,
@@ -897,41 +896,36 @@ test("list_channel_mcps names the conversation's custom MCP servers, never their
 
 test("both engines request durable worker approval for SSH egress, including Auto mode", async () => {
   const { patchChannelMeta } = await import("../src/config/store.js");
-  const preload = path.join(scratch, "egress-dns.mjs");
-  writeFileSync(preload, `import dns from "node:dns"; const orig = dns.promises.lookup; dns.promises.lookup = (host, ...args) => host === "ssh.example.com" ? Promise.resolve([{address:"8.8.8.8", family:4}]) : orig(host, ...args);`);
-  const dns = (await import("node:dns")).default;
-  const originalLookup = dns.promises.lookup;
-  dns.promises.lookup = async () => [{ address: "8.8.8.8", family: 4 }];
   const original = await getChannelMeta(SLUG);
   try {
     for (const engine of ["claude", "codex"]) {
       await patchChannelMeta(SLUG, { allowBash: true, allowNetwork: true, autoMode: true, egressRawHosts: ["existing.example"] });
       approvalRequests.length = 0;
       approvalResponse = { allow: false, pending: true, approvalId: `egress-${engine}` };
-      await withGateway({ engine, author: "U_CTRL_MEMBER", preload }, async (client) => {
-        const result = await client.callTool({ name: "allow_channel_ssh_host", arguments: { host: "ssh.example.com" } });
+      await withGateway({ engine, author: "U_CTRL_MEMBER" }, async (client) => {
+        const result = await client.callTool({ name: "allow_channel_ssh_host", arguments: { host: "8.8.8.8" } });
         assert.match(resultText(result), awaitingCard);
       });
       assert.equal(approvalRequests.length, 1);
       const request = approvalRequests[0].body;
       assert.equal(request.approvalType, "agent");
       assert.equal(request.requiredTier, "worker");
-      assert.deepEqual(request.durableAction.args, { host: "ssh.example.com" });
+      assert.deepEqual(request.durableAction.args, { host: "8.8.8.8" });
       assert.match(request.toolInput.details, /22.*5432.*6543/);
       assert.deepEqual((await getChannelMeta(SLUG)).egressRawHosts, ["existing.example"]);
       const bad = await applySaved(request, "U_UNAUTHORIZED");
       assert.equal(bad.ok, false);
       const saved = await applySaved(request, "U_CTRL_MEMBER");
       assert.equal(saved.ok, true, saved.error);
-      assert.deepEqual((await getChannelMeta(SLUG)).egressRawHosts, ["existing.example", "ssh.example.com"]);
+      assert.deepEqual((await getChannelMeta(SLUG)).egressRawHosts, ["existing.example", "8.8.8.8"]);
       approvalRequests.length = 0;
-      await withGateway({ engine, author: "U_CTRL_MEMBER", preload }, async (client) => {
-        assert.match(resultText(await client.callTool({ name: "allow_channel_ssh_host", arguments: { host: "ssh.example.com" } })), /allowed/);
+      await withGateway({ engine, author: "U_CTRL_MEMBER" }, async (client) => {
+        assert.match(resultText(await client.callTool({ name: "allow_channel_ssh_host", arguments: { host: "8.8.8.8" } })), /allowed/);
       });
       assert.equal(approvalRequests.length, 0, "an existing host needs no further approval");
       await patchChannelMeta(SLUG, { allowBash: false, adminMode: false, autoMode: false });
       const stale = await applySaved(request, "admin UI");
       assert.equal(stale.ok, false, "even admin UI cannot apply a worker approval in a read-only channel");
     }
-  } finally { dns.promises.lookup = originalLookup; await saveChannelMeta(SLUG, original); }
+  } finally { await saveChannelMeta(SLUG, original); }
 });
