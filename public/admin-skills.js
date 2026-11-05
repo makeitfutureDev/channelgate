@@ -255,7 +255,7 @@ function renderCatalog() {
       <td class="desc">${esc(s.description)}</td><td>—</td><td>Host folder</td><td>—</td>
       <td colspan="3" class="muted">Unavailable — fix the folder or remove its grant in Users.</td><td class="num">0</td></tr>` : `
     <tr class="clickable${s.slug === state.selected ? " selected" : ""}" data-action="select" data-slug="${esc(s.slug)}">
-      <td><code>${esc(s.slug)}</code>${pluginBadge(s)}${s.visibility === "personal" ? ' <span class="pill">personal</span>' : ""}${s.excluded ? ' <span class="pill">excluded</span>' : s.deleted ? ' <span class="pill">removed</span>' : ""}${s.channelScope ? ` <span class="pill" title="Kept in this channel's section of the skills repository">${esc(channelLabel(s.channelScope))}</span>` : ""}${s.pinnedRevisionId ? ' <span class="pill">pinned</span>' : ""}${s.stagedCount ? ` <span class="pill">${s.stagedCount} staged</span>` : ""}${s.currentRevisionId == null && !s.deleted ? ' <span class="pill">not active</span>' : ""}</td>
+      <td><code>${esc(s.slug)}</code>${pluginBadge(s)}${s.visibility === "personal" ? ' <span class="pill">personal</span>' : ""}${s.excluded ? ' <span class="pill">excluded</span>' : s.deleted ? ' <span class="pill">removed</span>' : ""}${s.channelScope ? ` <span class="pill" title="Kept in this channel's section of the skills repository">${esc(channelLabel(s.channelScope))}</span>` : ""}${s.pinnedRevisionId ? `<span class="pill">${s.pinReason === "publication" ? "publication recovery" : "pinned"}</span>` : ""}${s.stagedCount ? ` <span class="pill">${s.stagedCount} staged</span>` : ""}${s.currentRevisionId == null && !s.deleted ? ' <span class="pill">not active</span>' : ""}</td>
       <td class="desc">${esc(s.description)}</td>
       <td>${esc(s.category || "—")}</td>
       <td><span class="muted">${esc(ownerLabel(s))}</span></td>
@@ -337,7 +337,7 @@ function renderDetail() {
       <div><strong>Files</strong> (effective revision)</div>
       <div class="files">${files || '<span class="skills-muted">no approved revision yet</span>'}</div>
       ${state.fileView ? `<pre>${esc(state.fileView.content)}</pre>` : ""}
-      <div><strong>Revisions</strong>${s.pinnedRevisionId ? ' — pinned <button type="button" class="ghost" data-action="unpin">follow current</button>' : ""}</div>
+      <div><strong>Revisions</strong>${s.pinnedRevisionId ? ` — ${s.pinReason === "publication" ? "publication recovery (clears after successful publication)" : "pinned"} <button type="button" class="ghost" data-action="unpin">follow current</button>` : ""}</div>
       <div class="revs">${revs}</div>
       <div class="skills-actions">
         <span class="skills-inline">Grant to

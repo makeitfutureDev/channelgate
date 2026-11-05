@@ -233,12 +233,15 @@ export function register(server, ctx) {
       if (!skill) return text(`No catalog skill named "${key}". See list_skills.`);
       const rev = effectiveRevisionFor(skill);
       const revs = listRevisions(skill.id);
+      const currentRev = revs.find((r) => r.id === skill.currentRevisionId);
       const files = rev ? skillBundle(skill).files.map((f) => f.path) : [];
       return text(clipText([
         `\`${skill.slug}\` — ${skill.name}${skill.deleted ? " (removed)" : ""}`,
         skill.description,
         `Owner: ${describeOwner(skill)} · visibility: ${skill.visibility} · category: ${skill.category || "—"} · version: ${skill.version || "—"} · tags: ${skill.tags.join(", ") || "—"}`,
         `Requires: ${skill.requires.join(", ") || "—"}`,
+        `Current revision: ${currentRev ? `#${currentRev.revisionNo}` : "none"}`,
+        `Pin: ${skill.pinnedRevisionId == null ? "none (following current)" : skill.pinReason === "publication" ? "publication recovery — clears after successful publication" : skill.pinReason === "proposal" ? "approved source override — cleared only by an admin" : "manual or legacy — cleared only by an admin"}`,
         rev ? `Effective revision: #${rev.revisionNo}${skill.pinnedRevisionId ? " (pinned)" : ""} · ${files.length} file(s): ${files.join(", ")}${rev.publishedRef ? ` · published ${rev.publishedRef.slice(0, 7)}` : ""}` : `No approved revision yet${skill.stagedCount ? ` (${skill.stagedCount} staged for review)` : ""}.`,
         `Revisions: ${revs.map((r) => `#${r.revisionNo} ${r.status}${r.version ? ` v${r.version}` : ""}`).join(", ")}`,
       ].join("\n")));
@@ -566,8 +569,8 @@ export function register(server, ctx) {
       }
       try {
         const r = await updateLocalSkill({ skill, files, remove, note, createdBy });
-        if (!r.changed) return text(`\`${skill.slug}\` is unchanged — those files match the current revision.`);
-        const pinNote = r.pinned && r.via === "repository" && !r.published?.published ? " It is pinned here until the repository has these files, so a sync cannot revert it." : "";
+        if (!r.changed && !r.published?.published) return text(`\`${skill.slug}\` is unchanged — those files match the current revision.${r.skill.pinReason === "publication" ? `${publishLine(r.published)} Publication recovery is still pending; retry update_skill or publish_skill.` : ""}`);
+        const pinNote = r.skill.pinReason === "publication" ? " A publication recovery pin protects this edit from source sync; it clears after successful publication." : r.pinned ? " The existing intentional pin is retained on this revision." : r.published?.publicationPinCleared ? " Publication recovery pin cleared; following current again." : "";
         return text(`✅ \`${skill.slug}\` is now revision ${r.revision.revisionNo} (${r.revision.fileCount} file(s)). Conversations that use it get the new files on their next message.${publishLine(r.published)}${pinNote}\n${ANNOUNCE}`);
       } catch (err) {
         return text(`🚫 Could not update the skill: ${err?.message || err}`);
@@ -709,7 +712,7 @@ export function register(server, ctx) {
       if (!skill || skill.deleted) return text(`No catalog skill named "${key}".`);
       try {
         const r = await publishRevision({ slug: skill.slug, actor: createdBy });
-        return text(r.published ? `✅ Published \`${skill.slug}\` to ${r.repo}@${r.branch} under ${r.path} (${r.files.length} file(s)${r.deleted.length ? `, ${r.deleted.length} removed` : ""}).${r.adopted ? " It is now owned by that source." : ""}` : `Not published: ${r.reason}`);
+        return text(r.published ? `✅ Published \`${skill.slug}\` to ${r.repo}@${r.branch} under ${r.path} (${r.files.length} file(s)${r.deleted.length ? `, ${r.deleted.length} removed` : ""}).${r.adopted ? " It is now owned by that source." : ""}${r.publicationPinCleared ? " Publication recovery pin cleared; following current again." : ""}` : `Not published: ${r.reason}`);
       } catch (err) {
         return text(`🚫 Publishing failed: ${err?.message || err}`);
       }

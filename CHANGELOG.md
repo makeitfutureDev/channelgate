@@ -1,5 +1,7 @@
 # Changelog — ChannelGate
 
+- Clear automatic skill publication recovery pins after a successful retry, including retries of unchanged edits. Preserve manual/legacy and approved override pins, protect newer edits from late publication attempts, and expose pin reasons in metadata and the library.
+
 - Show the new user request above the fork icon and source link in forked Slack thread roots so their topic is visible in the channel.
 
 - Add an optional `model` argument to `create_skill` / `update_skill` that writes or clears the skill's preferred-model frontmatter line, document it in the skill-authoring guide, and show the preferred model in the skills library.

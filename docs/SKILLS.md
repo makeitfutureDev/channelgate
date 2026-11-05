@@ -251,8 +251,13 @@ it can never reach the organization tier.
 - `update_skill` — a new revision. Pass only the files that change; the rest are carried over
   (`remove` drops files). A local skill is revised in place; a skill synced from the configured
   publish repository is revised and pushed back to its own folder (if the push fails the new
-  revision is pinned, so the next sync cannot revert it). A skill pinned to an older revision is
-  re-pinned to the new one. A non-admin's edit of an organization skill becomes a `change`
+  revision gets a publication recovery pin, so the next sync cannot revert it). A successful
+  retry through `publish_skill` or a later successful update clears that recovery pin and follows
+  the published revision again. Manual pins and approved source overrides retain their reason
+  when advanced to a new edit and are never automatically cleared. Existing pins from before
+  provenance tracking remain manual/legacy; their origin cannot be inferred safely. `get_skill_info`
+  reports current and effective revisions plus an explicit pin reason or "none".
+  A non-admin's edit of an organization skill becomes a `change`
   proposal automatically. Any other source is read-only: `update_skill` explains how to extend
   it with a companion skill.
 - `delete_skill` — a catalog tombstone: an admin, or the author of a personal skill. Anyone else
