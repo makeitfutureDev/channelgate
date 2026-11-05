@@ -90,6 +90,12 @@ test("the session is prepared like a turn: lockdown, MCP payload signed for THIS
   assert.equal(statSync(dir).mode & 0o777, 0o700);
   // The lockdown is the channel's own.
   assert.deepEqual(JSON.parse(readFileSync(path.join(dir, "settings.json"), "utf8")).slug, entry.slug);
+  const status = JSON.parse(readFileSync(path.join(dir, "settings.json"), "utf8")).statusLine;
+  assert.equal(status.type, "command");
+  assert.equal(statSync(path.join(dir, "statusline.mjs")).mode & 0o777, 0o600);
+  const footer = execFileSync("sh", ["-c", status.command], { input: JSON.stringify({ model: { display_name: "Opus" }, effort: { level: "high" }, context_window: { used_percentage: 23 } }), encoding: "utf8", env: { ...process.env, NO_COLOR: "1" } });
+  assert.match(footer, /Opus · effort high · ctx 23%/);
+  assert.match(readFileSync(path.join(dir, "codex-args.sh"), "utf8"), /tui.status_line=.*model-with-reasoning.*context-used/);
   // The MCP payload: the gateway control server over the image bridge with a capability naming the
   // developer, the ssh toolset, the ssh_session origin and a session-length TTL.
   const mcp = JSON.parse(readFileSync(path.join(dir, "mcp.json"), "utf8")).mcpServers;
