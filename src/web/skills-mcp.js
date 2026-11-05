@@ -145,7 +145,7 @@ export function buildSkillsMcpServer(token, reach = null) {
 
   server.registerTool(
     "library_create_skill",
-    { description: "Create a new local skill in the catalog from files (SKILL.md required). A catalog token creates a library skill; a user token creates a PERSONAL skill by default, a channel skill when channel_id names a channel that admits you, an organization skill only for an admin (organization: true).", inputSchema: { slug: z.string().optional(), files: z.array(FILE_INPUT).min(1), note: z.string().optional(), channel_id: z.string().optional(), organization: z.boolean().optional() } },
+    { description: "Create a new gateway-owned skill in the catalog from files (SKILL.md required). A catalog token creates a library skill; a user token creates a PERSONAL skill by default, a channel skill when channel_id names a channel that admits you, an organization skill only for an admin (organization: true).", inputSchema: { slug: z.string().optional(), files: z.array(FILE_INPUT).min(1), note: z.string().optional(), channel_id: z.string().optional(), organization: z.boolean().optional() } },
     async ({ slug = "", files, note = "", channel_id = "", organization = false }) => {
       const denied = need("manage");
       if (denied) return denied;
@@ -161,7 +161,7 @@ export function buildSkillsMcpServer(token, reach = null) {
 
   server.registerTool(
     "library_update_skill",
-    { description: "Publish a new revision of a local skill from partial files (unnamed files are kept).", inputSchema: { name: z.string(), files: z.array(FILE_INPUT).min(1), remove: z.array(z.string()).optional(), note: z.string().optional() } },
+    { description: "Publish a new revision of a gateway-owned skill or a skill in the gateway's writable publishing repository from partial files (unnamed files are kept).", inputSchema: { name: z.string(), files: z.array(FILE_INPUT).min(1), remove: z.array(z.string()).optional(), note: z.string().optional() } },
     async ({ name, files, remove = [], note = "" }) => {
       const denied = need("manage");
       if (denied) return denied;

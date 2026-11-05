@@ -36,8 +36,8 @@ export function mountSkillAssignmentPicker(root, options) {
   const source = root.querySelector("[data-picker-source]");
   const sourceLabel = (skill) => config.sources.find((s) => String(s.id) === String(skill.sourceId))?.label
     || config.sources.find((s) => String(s.id) === String(skill.sourceId))?.url
-    || ({ local: "Local skills", bundled: "Built-in skills", folder: "Host folders" }[skill.ownerKind])
-    || (skill.sourceId != null ? `Source #${skill.sourceId}` : "Local skills");
+    || ({ local: "Gateway-owned skills", bundled: "Built-in skills", folder: "Host folders" }[skill.ownerKind])
+    || (skill.sourceId != null ? `Source #${skill.sourceId}` : "Gateway-owned skills");
   function paintSources() {
     const previous = source.value;
     const sources = new Map(config.skills.map((skill) => [sourceKey(skill), sourceLabel(skill)]));

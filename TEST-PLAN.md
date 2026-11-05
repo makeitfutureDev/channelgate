@@ -1,5 +1,12 @@
 # ChannelGate — Test Plan
 
+## Skill ownership terminology (2026-11-04)
+
+- Wording-only, engine-independent: open Skills with a gateway-owned fixture (`ownerKind: "local"`) and a Git-source fixture. Require **Gateway-owned** in the catalog owner column/filter and creation form, and **Gateway-owned skills** in the assignment picker. Filter/select/save the gateway-owned fixture; API owner/filter values must remain `local` and the grant must persist. Repository-backed labels must remain distinct.
+- MCP: `list_skills` and `get_skill_info` on the same gateway-owned fixture must describe gateway ownership; catalog create/update/publish tool descriptions must use the same vocabulary. Existing skill CRUD, publishing and scope regression suites verify unchanged contracts.
+- Passed: 31 focused skill CRUD, publishing, admin UI and picker regression checks; static validation. Disposable Chromium acceptance passed for catalog owner/filter/create labels, distinct Git-source label, raw `owner=local` filter request, picker source label/filter/add and unchanged stored ownership. This wording-only check is engine-independent.
+- Existing full conversation/template browser suite: compact layout case passed; conversation navigation case timed out before reaching the skill picker (`#channel-detail .subtab[data-pane="skills"]`). Its unrelated full-flow acceptance remains unresolved.
+
 ## Slack email for password and code sign-in (2026-11-05)
 
 - Local automated verification (2026-11-05): 4,246 passed / 40 opt-in skipped / zero failed in
@@ -46,6 +53,7 @@
 - Live Claude acceptance (pending): in `cg-testing-claude-bash`, turn **Allow skill engine and model swapping** on (Settings → Access ticks or `set_channel_skill_swap`), grant a disposable channel skill `swap-probe` whose SKILL.md declares `model: sonnet` and whose body says "reply with the word SWAPPED and the model you are". As Apps, in a thread whose channel default is Opus, ask "use the swap-probe skill". Pass only when the thread shows a `use_skill` tool row, the reply starts with the "Switched this thread to sonnet" note, the footer names sonnet, `run_skill_swap` is in Observability, and a plain follow-up in the same thread also runs on sonnet without a note. Then `/model` → this thread → opus and ask again: no switch, the tool reply says pinned. Turn the switch off and repeat in a new thread: no switch, the reply says swapping is OFF.
 - Live Codex acceptance (pending): same fixture in `cg-testing-codex-bash` with `model: gpt-6.1-sol` on a channel defaulting to another Codex model; pass rules identical, with `codex exec resume` carrying the new model. Cross-engine: in the Claude fixture grant a skill declaring `model: gpt-6.1-sol`; pass when the model calls `run_agent_in_background` with `engine: codex, model: gpt-6.1-sol`, the agent report posts back, and the launching thread stays on Claude.
 - Authoring (automated, `test/skill-runtime.test.js`): `setSkillModelFrontmatter` sets/replaces/clears/validates the line; `create_skill` with `model` writes it and refuses an unknown model before creating anything; a model-only `update_skill` rewrites the frontmatter, keeps the other files, `""` clears it, and an empty call answers "Nothing to change". Live (engine-independent): in a fixture ask "create a channel skill swap-authored that replies SWAPPED, and make it prefer sonnet" — pass when the created SKILL.md carries `model: sonnet`, the library detail shows "Preferred model: sonnet", and "make swap-authored prefer no particular model" removes the line.
+- Teams/Google Chat (automated): `teams-settings-general` saves `skillRuntimeSwap` in a channel and a custom DM without touching Lean, and rejects a malformed value; `googlechat-settings-commands` parses `skillswap on`. Live checks stay on hold with the other Teams/Google Chat fixtures.
 - Engine-independent: the admin UI Runtime pane toggle and the Slack tick persist `skillRuntimeSwap`, show in `/status`'s managed block line "Skill model swap", and write a `channel_meta_changed` audit row with that key; a linked folder follows its source's value.
 
 ## Library missing skill manifests (2026-11-04)

@@ -1,4 +1,4 @@
-# Skills — the local catalog, channel profiles, templates, authoring and sources
+# Skills — the gateway catalog, channel profiles, templates, authoring and sources
 
 **Enterprise:** channel skill templates, the external catalog MCP endpoint/access tokens and
 honoring skill preferred-model switches require an effective Enterprise license. Ordinary local
@@ -61,7 +61,9 @@ Every skill has one **owner**:
 | bundled  | shipped in this checkout (`src/gateway/skills/bundled/`), imported at boot     | a new gateway release                            |
 | folder   | the host's `~/.claude/skills`, `~/.agents/skills` or `GATEWAY_SKILL_SOURCES`, imported at boot and re-read by content | edit the folder; the next boot / re-import picks it up |
 | git      | a GitHub source (below)                                                        | the source's next sync; a skill of the gateway's own publish repository also takes `update_skill` (pushed back) |
-| local    | authored from chat (`create_skill`) or the admin UI                            | `update_skill` — see *Who may change what* below  |
+| gateway-owned (`local` internally) | authored from chat (`create_skill`) or the admin UI                            | `update_skill` — see *Who may change what* below  |
+
+**Gateway-owned** means managed directly in this gateway's catalog, independently of whether the skill is personal, channel-scoped or organization-wide. It does not mean an unmanaged file installed in an engine skill folder. Publishing to the configured Git source adopts the skill into that source; it remains editable through `update_skill` when that source is the gateway's writable publishing repository. Internal API/database ownership values remain `local` for compatibility.
 
 A slug is owned by exactly one owner. A sync or an import that finds a slug another owner holds
 reports a **conflict** and writes nothing. A skill whose source this gateway cannot write to
@@ -118,7 +120,7 @@ in every other conversation) and back on with `add_channel_skills`. `set_skill_s
 `POST /api/skills/catalog/:slug/scope` move a skill either way: **promoting** a customer skill to
 the library moves its files in the repository and leaves the channel with an explicit grant, so
 nothing changes there; demoting keeps it for that channel only. Only skills the publish
-repository owns (or unpublished local ones) move — a skill synced from another source stays with
+repository owns (or unpublished gateway-owned ones) move — a skill synced from another source stays with
 its source. Names must be unique across the whole repository (the slug comes from the skill's
 name), so customer skills are prefixed with the customer.
 
@@ -254,7 +256,7 @@ it can never reach the organization tier.
   above). The bundled `skill-authoring` skill teaches the contract and how to write a
   description that triggers.
 - `update_skill` — a new revision. Pass only the files that change; the rest are carried over
-  (`remove` drops files). A local skill is revised in place; a skill synced from the configured
+  (`remove` drops files). A gateway-owned skill is revised in place; a skill synced from the configured
   publish repository is revised and pushed back to its own folder (if the push fails the new
   revision gets a publication recovery pin, so the next sync cannot revert it). A successful
   retry through `publish_skill` or a later successful update clears that recovery pin and follows
@@ -272,7 +274,7 @@ it can never reach the organization tier.
   organization skill gets granted everywhere), a catalog delete (`kind: delete`), or feedback.
 - Admins review with `list_skill_proposals` / `decide_skill_proposal` in chat, or in the admin UI
   (Skills → Review). An approved change becomes one revision; when the skill is source-owned the
-  revision is **pinned** as a local override, so the source keeps flowing into later revisions
+  revision is **pinned** as a gateway override, so the source keeps flowing into later revisions
   and the pin holds until an admin unpins. An approved promotion moves a channel skill into the
   library (the channel keeps it as an explicit grant), makes a personal skill an organization
   skill, or adds an organization skill to the organization tier; an approved `delete` tombstones
@@ -302,7 +304,7 @@ publishes it). Any approved member can also carry organization skills in their o
 ## Publishing to Git
 
 Admin UI → Skills → Sync settings → *Publishing to Git*: a GitHub repository, folder and its own
-write-only token. Publishing follows `main`. Every new revision of a local skill — created,
+write-only token. Publishing follows `main`. Every new revision of a gateway-owned skill — created,
 updated, an approved change, an approved promotion — is pushed with the GitHub Contents API, one
 commit per file under `<folder>/<slug>/` (`.` as the folder = the repository root) — or under
 `channels/<channel id>/<slug>/` for a channel-scoped skill, with a README naming the channel — and
@@ -368,7 +370,7 @@ with the gateway's environment, uses the Skills Manager tokens the old integrati
 3. with `SM_SUPABASE_URL` + `SM_SUPABASE_SERVICE_KEY` (Skills Manager's service role): team
    favorites become templates (Development; Sales & Marketing → sales and marketing; Management;
    Admin), admin exclusions become tombstones, and each token user's personal skills become
-   personal local skills.
+   personal gateway-owned skills.
 
 The script is idempotent and prints what it would do with `--dry-run`. Stub folders the old
 integration left in channel folders are pruned automatically on each channel's next message.
