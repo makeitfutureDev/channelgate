@@ -46,7 +46,8 @@ test("Graph creates scoped beta chat subscriptions, no encrypted data or lifecyc
   assert.equal(request.redirect, "error");
   assert.equal(body.includeResourceData, false);
   assert.equal(body.expirationDateTime, "2026-09-09T10:55:00.000Z");
-  assert.equal(body.resource, "/chats/19%3Achat%40thread.v2/messages");
+  assert.equal(body.resource, "/chats/19:chat@thread.v2/messages");
+  assert.equal(row.subscriptionResource, body.resource);
   await f.service.ensure(f.row);
   assert.equal(f.requests.length, 1);
   f.advance(21 * 60_000);
@@ -63,6 +64,33 @@ test("Graph uses stable channel API and permits only replies inside subscribed c
   assert.equal((await f.handle({ value: [notification] })).code, 200);
   assert.match(f.requests[1].url, /\/teams\/team-1\/channels\/channel-1\/messages\/root\/replies\/123$/);
   assert.equal(f.messages.length, 1);
+});
+
+test('subscription JSON preserves literal Teams IDs while message GET paths encode them', async () => {
+  for (const resource of ['/chats/19:example_A@thread.v2/messages', '/teams/team-1/channels/19:example_A@thread.tacv2/messages']) {
+    const f = fixture();
+    const row = await f.service.ensure({ ...f.row, resource });
+    assert.equal(JSON.parse(f.requests[0].body).resource, resource);
+    assert.equal(row.subscriptionResource, resource);
+    assert.equal(row.resource, resource.split('/').map(encodeURIComponent).join('/'));
+    const event = { ...f.notification(), resource: `${resource}/123` };
+    assert.equal((await f.handle({ value: [event] })).code, 200);
+    assert.equal(f.requests[1].url, `https://graph.microsoft.com/${row.apiVersion}${row.resource}/123`);
+    assert.equal(f.messages.length, 1);
+  }
+});
+
+test('subscription recreation corrects a legacy encoded selector without resetting activation cutoffs', async () => {
+  const f = fixture(), first = await f.service.ensure(f.row);
+  const legacy = f.rows.get(f.row.conversationId);
+  legacy.subscriptionResource = legacy.resource;
+  f.rows.set(f.row.conversationId, legacy);
+  f.advance(56 * 60_000);
+  await f.service.renew();
+  const recreated = f.rows.get(f.row.conversationId);
+  assert.equal(JSON.parse(f.requests.at(-1).body).resource, '/chats/19:chat@thread.v2/messages');
+  assert.equal(recreated.subscriptionResource, '/chats/19:chat@thread.v2/messages');
+  for (const key of ['startedAt', 'reactionSnapshotsStartedAt', 'activationReactionsStartedAt', 'activationReactionsVersion', 'alienReactionStartedAt']) assert.equal(recreated[key], first[key], key);
 });
 
 test("Graph validation token is echoed plain text without authenticating or fetching", async () => {

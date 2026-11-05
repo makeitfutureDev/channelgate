@@ -436,6 +436,10 @@ product overview.
 - Make Teams reply statistics smaller and add a gap above them, including replies that replace
   the working placeholder and background/scheduled results.
 
+- Register Teams Graph subscriptions with literal conversation identifiers in the JSON resource
+  selector, while retaining URL encoding for message-fetch paths. Record the registered selector
+  separately so a successfully renewed subscription's provider scope is visible to operators.
+
 - Remove container image references from reply statistics in Slack, Teams and Google Chat.
 
 - Fix Google Drive sync channels getting stuck after an interrupted pass. Passes now use rclone's
