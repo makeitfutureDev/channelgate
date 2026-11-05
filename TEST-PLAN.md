@@ -1,5 +1,13 @@
 # ChannelGate — Test Plan
 
+
+## SSH engine status bars (SSH-STATUS-01)
+
+- Automated: `node --test test/ssh-statusline.test.js test/ssh-session.test.js`. Verify the actual staged Claude command renders, retains lockdown settings and private file permissions, Codex overrides include native footer fields, current-context/cache calculations, live model/effort changes, missing/zero values, warning colours, malformed JSON and terminal control sanitization.
+- Live Claude: use `cg-testing-claude-auto`, an approved SSH developer key, a current candidate daemon and a freshly reconnected shell. Start `claude`, accept folder trust, send `Reply with OK`, then change model/effort with the native picker and send again. Require model and effort to follow the selection; context percentage/window match `/context`; folder/branch match the checked-out fixture; available cost/quota fields render without login data or credentials. Before the first response or after compacting, missing context must stay unknown. Resize the terminal and check legibility and green/amber/red thresholds using the staged formatter with owned JSON fixtures.
+- Live Codex: repeat in `cg-testing-codex-auto` with `codex`; require native footer model plus reasoning and used-context percent to agree with `/status`, and folder/branch/quotas when available. Change model/effort, resume, and verify the footer updates; launch with an explicit `-c tui.status_line` override and verify the user's CLI override wins. No changes to MCP, login, permission or network policy.
+- These are dual-engine SSH fixture cases; automated checks are not terminal-rendering/live acceptance. Live SSH visual acceptance remains pending until executed against the deployed candidate. New sessions load daemon changes after its next safe restart; no container image rebuild.
+
 ## Skill ownership terminology (2026-11-04)
 
 - Wording-only, engine-independent: open Skills with a gateway-owned fixture (`ownerKind: "local"`) and a Git-source fixture. Require **Gateway-owned** in the catalog owner column/filter and creation form, and **Gateway-owned skills** in the assignment picker. Filter/select/save the gateway-owned fixture; API owner/filter values must remain `local` and the grant must persist. Repository-backed labels must remain distinct.

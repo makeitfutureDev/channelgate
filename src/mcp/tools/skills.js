@@ -43,7 +43,7 @@ import {
   moveSkillScope,
 } from "../../gateway/skills/authoring.js";
 import { publishRevision, publishTarget } from "../../gateway/skills/publish.js";
-import { USE_SKILL_TOOL, skillSwapReply, setSkillModelFrontmatter } from "../../gateway/skill-runtime.js";
+import { USE_SKILL_TOOL, skillSwapReply, setSkillModelFrontmatter, skillModelPreference } from "../../gateway/skill-runtime.js";
 import { syncOneSource, runScheduledSkillSync } from "../../gateway/skills/index.js";
 // A conversation's granted skills and its skill template are policy: they decide what loads into
 // every future run here. The admin UI's grant/revoke/template routes already wrote these rows; the
@@ -98,6 +98,8 @@ function skillLine(skill, { detail = true } = {}) {
   const bits = [];
   if (skill.version) bits.push(`v${skill.version}`);
   if (skill.category) bits.push(skill.category);
+  const preferred = skillModelPreference(skill);
+  if (preferred) bits.push(`prefers ${preferred.model}`);
   bits.push(skill.ownerKind === "git" ? "synced" : skill.ownerKind === "local" ? "gateway-owned" : skill.ownerKind);
   if (skill.visibility === "personal") bits.push("personal");
   const desc = skill.description ? ` — ${skill.description.length > 140 ? `${skill.description.slice(0, 137)}…` : skill.description}` : "";
@@ -238,7 +240,7 @@ export function register(server, ctx) {
       return text(clipText([
         `\`${skill.slug}\` — ${skill.name}${skill.deleted ? " (removed)" : ""}`,
         skill.description,
-        `Owner: ${describeOwner(skill)} · visibility: ${skill.visibility} · category: ${skill.category || "—"} · version: ${skill.version || "—"} · tags: ${skill.tags.join(", ") || "—"}`,
+        `Owner: ${describeOwner(skill)} · visibility: ${skill.visibility} · category: ${skill.category || "—"} · version: ${skill.version || "—"} · tags: ${skill.tags.join(", ") || "—"} · preferred model: ${skillModelPreference(skill)?.model || "—"}`,
         `Requires: ${skill.requires.join(", ") || "—"}`,
         `Current revision: ${currentRev ? `#${currentRev.revisionNo}` : "none"}`,
         `Pin: ${skill.pinnedRevisionId == null ? "none (following current)" : skill.pinReason === "publication" ? "publication recovery — clears after successful publication" : skill.pinReason === "proposal" ? "approved source override — cleared only by an admin" : "manual or legacy — cleared only by an admin"}`,
@@ -263,7 +265,7 @@ export function register(server, ctx) {
         if (templateSkills.has(k)) return `template ${template?.name || meta.skillTemplate}`;
         return "your personal grant";
       };
-      const lines = profile.active.map((e) => `• \`${e.slug}\` — ${tier(e)}${e.revision?.version ? `, v${e.revision.version}` : ""} (~${e.tokens} tokens)`);
+      const lines = profile.active.map((e) => `• \`${e.slug}\` — ${tier(e)}${e.revision?.version ? `, v${e.revision.version}` : ""}${skillModelPreference(e.skill) ? `, prefers ${skillModelPreference(e.skill).model}` : ""} (~${e.tokens} tokens)`);
       const extra = [];
       if (profile.unknown.length) extra.push(`Not in the catalog (materialized from a host folder if one exists): ${profile.unknown.map((s) => `\`${s}\``).join(", ")}`);
       if (profile.staged.length) extra.push(`Awaiting admin review, not active yet: ${profile.staged.map((s) => `\`${s.slug}\``).join(", ")}`);

@@ -2,6 +2,10 @@
 
 - Require Enterprise for skill preferred-model switching, exact company email-domain auto-approval, dedicated channel Codex logins, external skill-catalog MCP and tokens, organization environment variables, Google Drive sync and channel skill templates. Preserve saved configuration after entitlement loss while disabling Enterprise behavior; dedicated Codex channels never silently switch accounts.
 - Add Enterprise per-channel monthly USD spending limits, enforced at run admission against recorded UTC-month spend. Running and concurrent work can overshoot the cap; this is not a provider billing limit.
+- SSH Claude and Codex sessions now display model, reasoning effort and context usage, with working directory, Git branch and available usage details.
+
+- Show a skill's preferred model in the skills library table, the chat skill listings and Slack Settings → Skills.
+
 - Expose "Skill model swap" in Microsoft Teams settings and as `/settings skillswap on|off` in Google Chat.
 
 - Rename user-facing “local skills” to “gateway-owned skills” across skill management and guidance; stored ownership values and update behavior are unchanged.
