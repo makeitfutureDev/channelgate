@@ -7850,6 +7850,9 @@ none` for its cases and live gates. Kept as history.
 - [x] Restart fixtures (`test/queued-fork-recovery.test.js`): Claude/Codex source recovery precedes
       fork command replay; distinct native child, permission recheck, Stop cancellation, forced
       shutdown retention and bounded recovery attempts.
+- [x] Handoff fixtures (`test/queued-fork-handoff.test.js`): restart redelivery cannot duplicate
+      a queued command; accepted child recovery state already contains native source ID or
+      captured cross-engine history, including source bot replies posted while waiting.
 - [ ] Live queued-fork acceptance, separately in `cg-testing-claude-auto` and
       `cg-testing-codex-auto`: as the admitted contact fixture author, start a source task that
       writes a random token, runs `python3 -c "import time; time.sleep(30)"`, and returns the token.

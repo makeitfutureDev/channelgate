@@ -380,7 +380,7 @@ const THREAD_CONTEXT_MAX_CHARS = 24_000; // total replay budget — keeps a huge
 // prompt. `currentTs` is the triggering message, excluded from the replay. Returns "" when there's
 // nothing to add (empty thread, fetch failure, or history that yields no text). A thread the bot
 // already owns has a session and resumes it, so this is only called for the first turn in a thread.
-export async function fetchThreadContext(client, { channelId, threadTs, currentTs, botUserId, raw = false }) {
+export async function fetchThreadContext(client, { channelId, threadTs, currentTs, botUserId, raw = false, completedReplyCutoff = 0 }) {
   try {
     const messages = [];
     let cursor;
@@ -390,9 +390,12 @@ export async function fetchThreadContext(client, { channelId, threadTs, currentT
       cursor = r.response_metadata?.next_cursor || "";
     } while (cursor);
 
-    // Keep only real messages posted strictly before the triggering one (drop it + anything after).
+    // Ordinary handoffs exclude the triggering message and later messages. A queued fork also
+    // includes bot replies completed while it waited, without copying later human requests.
     let prior = messages.filter((m) =>
-      m.ts && Number(m.ts) < Number(currentTs) && (m.text || m.files?.length || extractSlackTables(m).length)
+      m.ts && (Number(m.ts) < Number(currentTs) ||
+        (m.user === botUserId && Number(m.ts) < completedReplyCutoff)) &&
+        (m.text || m.files?.length || extractSlackTables(m).length)
     );
     if (!prior.length) return "";
     if (prior.length > THREAD_CONTEXT_MAX_MSGS) prior = prior.slice(-THREAD_CONTEXT_MAX_MSGS);
@@ -774,6 +777,7 @@ export async function processMessageEvent(event, client, { botUserId = "", teamI
         const forkShortcut = parseModelShortcut(sc.arg);
         const task = forkShortcut ? forkShortcut.task : sc.arg.trim();
         if (!task) { await reply("Use `/fork [:model-shortcut] <new message>` inside a thread with a Claude or Codex session."); return; }
+        if (!queuedForkHandle && runQueue.hasRun(runKey, `${runKey}::${event.ts}`)) return;
         if (!queuedForkHandle && runQueue.isActive(runKey)) {
           if (runQueue.count(runKey) >= 21) { await reply("The thread queue is full. The fork was not queued; try again after some work finishes."); return; }
           const handle = { aborted: false, controller: new AbortController(), authorId: event.user,
@@ -799,6 +803,7 @@ export async function processMessageEvent(event, client, { botUserId = "", teamI
           return;
         }
         if (queuedForkHandle?.aborted || queuedForkHandle?.controller.signal.aborted || isForceStopping()) return;
+        const forkSnapshotTs = Date.now() / 1000;
         pendingForkSources.add(runKey);
         try {
           if (await getThreadSudo(entry.slug, threadKey)) { await reply("A sudo thread cannot be forked into an ordinary channel thread."); return; }
@@ -836,7 +841,8 @@ export async function processMessageEvent(event, client, { botUserId = "", teamI
           const sourceUrl = await slackPermalink(client, event.channel, threadKey);
           let sourceContext = "";
           if (!nativeFork && !sourceClean) {
-            sourceContext = await fetchThreadContext(client, { channelId: event.channel, threadTs: threadKey, currentTs: event.ts, botUserId });
+            sourceContext = await fetchThreadContext(client, { channelId: event.channel, threadTs: threadKey, currentTs: event.ts, botUserId,
+              completedReplyCutoff: queuedForkHandle ? forkSnapshotTs : 0 });
             if (!sourceContext) {
               await reply("I could not read the source thread's messages. Please try the fork again once its Slack history is available."); return;
             }
@@ -1510,7 +1516,8 @@ export async function processMessageEvent(event, client, { botUserId = "", teamI
       threadKey,
       isDM: Boolean(meta.isDM),
       ...(questionSubmissionId ? { questionSubmissionId } : {}),
-      text: provenance + promptForClaude,
+      text: provenance + (syntheticFork?.threadContext || "") + promptForClaude,
+      ...(syntheticFork?.sourceSessionId ? { forkSourceSessionId: syntheticFork.sourceSessionId } : {}),
       attachments: attachmentPaths,
       startedAt: Date.now(),
     };

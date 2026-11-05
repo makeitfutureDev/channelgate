@@ -39,7 +39,7 @@ function slack() {
 }
 
 async function fixture(name, engine = "codex") {
-  saveSettings({ engine, composioMode: "personal", autoApproveUsers: false });
+  saveSettings({ engine, composioMode: "personal", userAutoApprovalEnabled: false });
   const client = slack();
   const event = { type: "message", channel: `D_RECOVER_FORK_${name}`, channel_type: "im", user: `U_RECOVER_FORK_${name}`, ts: "1000.001", text: "Source task" };
   await setUser(event.user, { name: "Recovery User", approved: true });
@@ -128,6 +128,19 @@ test("queued fork recovery preserves its accepted command when the Slack message
   assert.equal(runQueue.count(f.key), 0);
 });
 
+test("Slack redelivery cannot duplicate a fork already reserved for restart recovery", async () => {
+  const f = await fixture("redelivered");
+  recordActiveRun(f.row.id, f.row);
+  const reservations = reserveRecoveryRuns(takeStaleRuns());
+  await processMessageEvent(f.row.queuedFork.event, f.client, { botUserId: "UBOT", teamId: "T_RECOVER_FORK" });
+  assert.equal(runQueue.count(f.key), 1, "the recovered command keeps its sole source reservation");
+  assert.equal(JSON.parse(stored(f.row.id).data).recoveryPending, true);
+  await recoverRuns([], options(f.client, { reservations }));
+  assert.equal(roots(f.client).length, 1);
+  assert.equal(stored(f.row.id), undefined);
+  assert.equal(runQueue.count(f.key), 0);
+});
+
 test("a real Stop message cancels recovered fork preparation before its child root is posted", async () => {
   const f = await fixture("preparing");
   const reading = deferred(); const release = deferred();
@@ -140,6 +153,7 @@ test("a real Stop message cancels recovered fork preparation before its child ro
   recordActiveRun(f.row.id, f.row);
   const replay = recoverRuns(takeStaleRuns(), options(f.client));
   await reading.promise;
+  assert.equal(JSON.parse(stored(f.row.id).data).attempts, 1, "claim the bounded attempt before command side effects");
   await processMessageEvent({ ...f.event, thread_ts: f.event.ts, ts: "1000.004", text: "stop" }, f.client, { botUserId: "UBOT" });
   release.resolve();
   await replay;
