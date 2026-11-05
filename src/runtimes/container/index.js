@@ -304,7 +304,7 @@ export async function bootContainerRuntime({ settings, log: logger } = {}) {
     log(`[container] no usable container CLI — ${status.cli.reason}`);
     return status;
   }
-  log(`[container] ${status.cli.kind} ${status.cli.version}${status.cli.rootless ? " (rootless)" : ""} via ${status.cli.bin}, uid strategy ${status.cli.uidStrategy}${status.cli.cgroupLimits ? "" : ", cgroup limits unavailable"}`);
+  log(`[container] ${status.cli.kind} ${status.cli.version}${status.cli.rootless ? " (rootless)" : ""} via ${status.cli.bin}, uid strategy ${status.cli.uidStrategy}${status.cli.cgroupLimits ? "" : ", resource limits not verified"}`);
   try {
     status.image = await r.image.inspect(status.cli, settings || {}, { force: true });
     if (!status.image.present) log(`[container] WARNING: ${status.image.reason}`);

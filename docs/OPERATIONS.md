@@ -1060,3 +1060,63 @@ editor. Disabling the policy or removing a domain does not revoke existing acces
 Preview existing Slack users before applying a batch (up to 500 known users). Apply fetches fresh
 profiles and rechecks the current policy and manual opt-outs. Lookup failures grant no access and
 are counted in the result. Non-Slack users are checked on their next authenticated message.
+
+## Rootless Podman system-service upgrades
+
+The system-service installer writes only its managed
+`~/.config/containers/containers.conf.d/99-channelgate-system-service.conf` for the dedicated
+service account. It sets `cgroup_manager="cgroupfs"`: container processes stay beneath the
+system unit's `Delegate=yes` hierarchy, so `podman exec` does not cross into a different
+systemd ownership subtree. Some rootless cgroupfs versions do not create a per-container
+subgroup at all; successful execution does not imply resource-limit enforcement.
+A systemd-manager container created beneath `user@UID.service` can start
+successfully yet reject every exec from a daemon in `/system.slice/channelgate.service`.
+The installer checks the effective manager and refuses a conflicting later configuration;
+it preserves the operator's main `containers.conf` and other snippets.
+
+The unit bind-mounts service-owned mode-0700 `service-tmp` and `service-var-tmp` directories
+under the service HOME onto `/tmp` and `/var/tmp`. This keeps temporary files private while
+preserving their backing paths when Podman's rootless pause namespace outlives a daemon
+restart. `PrivateTmp` is disabled because its backing directories are deleted on stop.
+Existing temporary contents are retained; there is no automatic deletion or pruning.
+
+Changing those settings does not repair an existing stale pause namespace or migrate
+containers already created with another cgroup manager. For an **existing installation**, an
+operator first arranges an idle maintenance window (no turns, background jobs, SSH/editor
+sessions or other users of that account's Podman store), then:
+
+1. Stop the gateway service. Confirm the service username, HOME and UID from the unit rather
+   than assuming the fresh-install defaults.
+2. As that service account, from a traversable working directory and with its own `HOME` and
+   `XDG_RUNTIME_DIR=/run/user/<uid>`, inspect its named containers. Remove only stopped gateway
+   containers that must be recreated after the manager change, by exact name with `podman rm`
+   (without volume-removal options). Retain every channel HOME/tmp/var-tmp named volume.
+3. Run `podman system migrate` as that account while its containers are stopped. This resets
+   the account's shared pause namespace and affects its entire container store. If it reports
+   a stale conmon exit, inspect the named container's state; do not proceed as if migration
+   succeeded. Reconcile only the identified stopped containers, then rerun migration until it
+   exits successfully. Do not put this operation in an unconditional `ExecStartPre`.
+4. Run `sudo bash scripts/install-systemd.sh --no-start` from the intended installed revision
+   to install the managed configuration and persistent temp mounts without starting the daemon.
+   Remove any operator-added unconditional `podman system migrate` startup drop-in only after
+   the idle migration succeeded; keep unrelated overrides. Start the service and verify
+   `podman exec` through an actual gateway turn, then restart
+   while idle and repeat. Require normal file access inside `/home/agent`, accurate resource-limit
+   status (including the unenforced warning where applicable), and no `cgroup.procs` permission
+   or deleted-namespace/pasta error. Source/image changes
+   and per-channel state follow the normal deployment rules.
+
+The resource-limit probe uses `--network none --pull never`: it needs neither pasta nor
+registry access and never downloads a missing image. Missing image, mount namespace, timeout
+and other launch failures are reported as **unverified limits**, separately from a positively
+identified cgroup delegation failure. Probe diagnostics omit raw runtime output.
+
+A zero exit from `podman run --memory ...` or matching `podman inspect` settings is not proof
+of enforcement. In particular, rootless `cgroupfs` without an explicitly prepared cgroup parent
+can accept CPU/memory/pids flags yet leave processes in the service's unrestricted cgroup. The
+probe now requires actual kernel values for all three limits, inside the test container. An
+unenforced or unreadable configuration disables advertised per-container limits and produces
+an explicit warning; the gateway follows its existing run-without-limits fallback policy. This
+installer fixes container execution but does not add a delegated-parent cgroup supervisor.
+Operators requiring enforced per-container limits must use a correctly delegated configuration
+and verify the probe succeeds; configured values alone are insufficient.

@@ -48,7 +48,7 @@ export function createFakeCli({
     if (rest[0] === "run" && rest[1] === "--help") return { code: 0, stdout: RUN_HELP, stderr: "" };
     if (rest[0] === "exec" && rest[1] === "--help") return { code: 0, stdout: EXEC_HELP, stderr: "" };
     if (rest[0] === "run" && rest.includes("--rm") && rest.includes("--cpus")) {
-      return cgroupLimits ? { code: 0, stdout: "", stderr: "" } : { code: 125, stdout: "", stderr: "cgroup controllers not delegated" };
+      return cgroupLimits ? { code: 0, stdout: "CG_LIMITS_VERIFIED\n", stderr: "" } : { code: 125, stdout: "", stderr: "cgroup controllers not delegated" };
     }
     return { code: 0, stdout: "", stderr: "" };
   }

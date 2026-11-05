@@ -5622,3 +5622,7 @@ sandbox or a new runtime tool.
 ## Slack Connect streaming and terminal session cleanup (2026-11-03)
 
 Streaming uses the requesting user's workspace (`user_team`, otherwise a verified cached user lookup) rather than the bot installation's workspace. A completed reply reasserts native `active` after stream finalization or classic fallback. Compatibility status clears precede native completion, and session writes are serialized with producer ownership checks so a delayed clear cannot override the next turn.
+
+## Rootless Podman in system services (2026-11-05)
+
+System-service installs add a managed per-account `cgroupfs` configuration without replacing operator settings, verify the effective manager, and bind persistent private temporary directories into the unit. The daemon's restart no longer deletes the backing paths retained by a rootless pause namespace. Limits probes use no network and never pull images; actual kernel memory/CPU/pids values must match before support is advertised. Silently ignored flags, missing images, namespace failures, timeouts and generic launch errors are distinguished from delegation failures. Existing-store recovery is an explicit idle operator procedure; startup never globally migrates or prunes containers.

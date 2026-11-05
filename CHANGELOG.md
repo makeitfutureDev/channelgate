@@ -3145,3 +3145,7 @@ copying cross-channel auto-memory.
 ### Fixed — Slack Connect running indicator
 
 Use the sender's workspace for streaming replies in shared channels and clear the native running status after delivery, including stream failures, without allowing an older turn to clear its successor.
+
+### Fixed — rootless Podman system-service setup
+
+Keep container cgroups inside the delegated daemon service, preserve private temporary backing across restarts, and run offline resource-limit probes with distinct runtime failure diagnostics. Preserve operator Podman configuration and document idle recovery for existing stores.
