@@ -50,3 +50,19 @@ Most saved conversation changes apply on the next message. Secrets and Codex sig
 Gateway admins can manage conversation access. Delegated channel managers can use the Slack Access settings allowed by the management policy, but cannot make themselves organization admins. Runtime changes have a separate organization policy. Conversation skill assignments are available to members; organization templates remain admin-managed.
 
 See [Permissions](/docs/features/permissions), [Models and effort](/docs/features/models-and-effort), [Shared workspaces](/docs/features/shared-workspaces), and [Environment variables](/docs/configuration/environment-variables).
+
+## Monthly channel spending limit · Enterprise
+
+Set a positive USD amount for the conversation's monthly spending limit, or leave it unset for
+no cap (`monthlySpendingLimitUSD: null`). The limit compares recorded spend in the current UTC
+calendar month before admitting another run. Foreground, scheduled, API and background agent
+launches use the same admission check.
+
+This is not a provider invoice cap. A running job can finish above the limit, and concurrent
+launches can overshoot because spend is not reserved in advance. Unknown-cost records in the
+current month block admission until pricing is repaired or an admin clears the cap. Usage and
+costs outside this gateway are not controlled.
+
+Setting a limit requires Enterprise. A saved limit refuses new runs after downgrade instead of
+silently removing the safety control; an admin can clear it without Enterprise. Existing recorded
+usage is retained and the accounting month changes at midnight UTC on the first of the month.
