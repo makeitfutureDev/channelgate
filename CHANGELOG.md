@@ -87,6 +87,9 @@ product overview.
 - Archive Slack channels when the bot is removed and stop workspace configuration updates until it is re-invited. Show Archived in the admin UI and reject edits/new work for archived channels.
 - Allow up to 100 active chat conversations in each channel per UTC month on Free, with 10 registered channels, 10 users and one month (30 days) of cost-tracking history. The existing 500 AI runs per channel per month remains. No-key evaluation serves one active channel with the same 100-thread allowance; Enterprise defaults to unlimited. Thread usage starts tracking on upgrade without fabricated history.
 
+- Add an opt-in admin sign-in alternative using the admin password and a private, expiring Slack
+  verification code for existing administrators, including sensitive-action reauthentication.
+
 - Version login-page scripts with their HTML so cached pre-upgrade code cannot reference removed fields.
 
 - Use the existing Users list and admin role for dashboard passkeys and invitations. Existing
@@ -170,6 +173,11 @@ product overview.
   approval; Python inside Workbench is outside that structured gate. Other generic connector
   bash/proxy/API executors remain refused. Clarify local container processing as an option for
   records returned inline.
+
+
+- **Company email auto-approval.** Admins can configure exact email domains in Users, preview
+  existing Slack users and approve matching provider identities automatically. Manual revocations
+  prevent automatic reapproval; no administrator privileges are granted.
 
 - **Email accounts.** Connect an ordinary mailbox — IMAP for reading, SMTP for sending — to a
   conversation or to yourself by entering its server settings once on one form: in the admin UI

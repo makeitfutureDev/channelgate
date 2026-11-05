@@ -5,13 +5,9 @@ import assert from "node:assert/strict";
 import { mkdirSync, symlinkSync, realpathSync, rmSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { ensureTestEnv, tempDir } from "./helpers.js";
-
-// The trust-proxy case below saves SETTINGS, which opens the runtime root's database and writes
-// its settings.json. Pin the scratch root first or those writes land in the operator's real
-// ~/.channelgate — on this project a machine serving the daemon in production.
+import { tempDir, ensureTestEnv } from "./helpers.js";
 ensureTestEnv();
-import {
+const {
   isLoopbackHost,
   pathWithin,
   resolveWithinRoot,
@@ -20,7 +16,7 @@ import {
   createLoginLimiter,
   sanitizeMcpMatch,
   sanitizeCodexMcpSelection,
-} from "../src/web/security.js";
+} = await import("../src/web/security.js");
 
 // ── isLoopbackHost ──────────────────────────────────────────────────────────────
 test("isLoopbackHost: loopback forms", () => {

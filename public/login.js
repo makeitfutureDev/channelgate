@@ -12,6 +12,7 @@
   const passkeys = window.ChannelGatePasskeys;
   let busy = false;
   let linkRequestId = "";
+  let passwordSlackRequestId = "";
 
   async function request(url, body) {
     const response = await fetch(url, {
@@ -40,9 +41,11 @@
 
   function showEnrollment(message) {
     byId("f").hidden = true;
+    byId("password-slack").hidden = true;
     byId("bootstrap").hidden = true;
     byId("link-panel").hidden = true;
     byId("enroll-form").hidden = false;
+    byId("setup-access").hidden = true;
     byId("intro").textContent = message;
     byId("status").textContent = "";
     byId("passkey-name").focus();
@@ -53,10 +56,16 @@
     const me = await request("/api/auth/me");
     byId("setup-restart").hidden = false;
     if (!me.linkRequired) {
-      if (me.bootstrap || !me.passkeys.length) return showEnrollment("Complete setup: create your first passkey.");
+      if (!me.bootstrap && me.passwordSlackEnabled && me.account?.userId) return void location.replace("/settings#set-admin-access");
+      if (me.bootstrap || !me.passkeys.length) {
+        showEnrollment("Complete setup: create your first passkey.");
+        byId("setup-access").hidden = !me.bootstrap || !me.account?.userId;
+        return;
+      }
       return void location.replace("/settings#set-admin-access");
     }
     byId("f").hidden = true;
+    byId("password-slack").hidden = true;
     byId("bootstrap").hidden = true;
     byId("enroll-form").hidden = true;
     byId("link-panel").hidden = false;
@@ -107,6 +116,7 @@
     byId("link-verify-form").hidden = true;
     byId("link-status").textContent = "Send a new verification code to the selected user.";
   });
+  byId("setup-access").addEventListener("click", () => location.assign("/settings#set-admin-access"));
   byId("setup-restart").addEventListener("click", () => run(async () => {
     await request("/api/logout", {});
     location.replace("/login.html");
@@ -123,6 +133,41 @@
       if (me.linkRequired) await resumeSetup();
       else location.replace("/");
     });
+  });
+
+  byId("password-slack-form").addEventListener("submit", (event) => {
+    event.preventDefault();
+    void run(async () => {
+      passwordSlackRequestId = "";
+      byId("password-slack-verify-form").hidden = true;
+      byId("slack-code").value = "";
+      let result;
+      try {
+        result = await request("/api/auth/password-slack/options", {
+          userId: byId("slack-user").value.trim(), password: byId("slack-password").value,
+        });
+      } finally { byId("slack-password").value = ""; }
+      passwordSlackRequestId = result.requestId;
+      byId("password-slack-verify-form").hidden = false;
+      byId("password-slack-status").textContent = "Check your private Slack messages for an 8-digit code. It expires in 5 minutes.";
+      byId("slack-code").focus();
+    });
+  });
+  byId("password-slack-verify-form").addEventListener("submit", (event) => {
+    event.preventDefault();
+    void run(async () => {
+      try {
+        await request("/api/auth/password-slack/verify", { requestId: passwordSlackRequestId, code: byId("slack-code").value.trim() });
+      } finally { byId("slack-code").value = ""; }
+      passwordSlackRequestId = "";
+      location.replace("/");
+    });
+  });
+  byId("slack-user").addEventListener("input", () => {
+    passwordSlackRequestId = "";
+    byId("slack-code").value = "";
+    byId("password-slack-verify-form").hidden = true;
+    byId("password-slack-status").textContent = "";
   });
 
   byId("bootstrap-form").addEventListener("submit", (event) => {
@@ -154,6 +199,8 @@
     void run(async () => {
       const status = await request("/api/auth/status");
       byId("bootstrap").hidden = !status.bootstrapAvailable;
+      byId("password-slack").hidden = !status.passwordSlackEnabled;
+      if (status.passwordSlackEnabled) byId("intro").textContent = "Sign in with a passkey or your password and a Slack code.";
       // Refreshing during first-time setup resumes the limited bootstrap session.
       if (status.bootstrapAvailable) {
         const me = await request("/api/auth/me").catch(() => null);
@@ -161,5 +208,9 @@
       }
     });
   }
-  if (!passkeys.available()) byId("err").textContent = "Passkeys need a supported browser and a secure HTTPS connection (or localhost).";
+  if (!passkeys.available()) {
+    byId("sign-in").disabled = true;
+    byId("sign-in").dataset.unavailable = "true";
+    byId("status").textContent = "Passkeys need a supported browser and a secure HTTPS connection (or localhost).";
+  }
 })();

@@ -111,6 +111,7 @@ Generated `gateway-usage` and `channel-memory` guides satisfy shared and persona
 
 Codex estimates include GPT-6.1 Terra ($1 / $0.05 / $5 per million input / cached / output tokens), request-level long-context pricing, an October 26, 2026 launch boundary, and a backed-up automatic historical refresh on upgrade.
 
+
 ## Linked working-folder setup
 
 - Source access exclusions and conversation policy also govern linked DMs. Shared changes notify follower SSH/egress sessions immediately. Separating a follower or moving the source retains source-section skill grants; detached DMs keep their effective setup as Custom instead of reapplying a DM preset. A promoted owner remains stable when an older conversation later joins.
@@ -120,6 +121,18 @@ Codex estimates include GPT-6.1 Terra ($1 / $0.05 / $5 per million input / cache
 
 
 Slack’s native running/Stop label shows the resolved model and explicitly configured effort, plus compact live phases (Thinking, Using tools, Writing, Waiting, Queued, Coordinating agents). Engine fallback replaces both model and effort; unset effort is omitted rather than guessed.
+
+## Optional password and Slack code sign-in
+
+- Settings → Admin access can enable an alternative to passkeys: the configured admin password
+  followed by an eight-digit code delivered privately to an existing Slack administrator.
+  The option is off by default; password alone never grants dashboard access. Existing passkeys
+  remain available. A recently verified, identity-linked initial setup can enable this option
+  without first registering a passkey.
+- Codes expire after five minutes, are bound to the requesting browser, accept at most five
+  guesses and are single-use. Delivery failures, role revocation, password changes and disabling
+  the option invalidate pending authority. Sensitive actions can repeat password and Slack
+  verification. Sessions retain the normal idle/absolute expiry and current-role checks.
 
 ## User-linked dashboard passkeys
 
@@ -138,7 +151,7 @@ Slack’s native running/Stop label shows the resolved model and explicitly conf
   session, with five attempts maximum. Matching names never assign ownership. Unlinked accounts
   can complete this verification but cannot use ordinary admin APIs once known admins exist.
   Initial password setup follows the same proof before enrollment; fresh installs without known
-  admins retain temporary operator setup. First enrollment permanently retires password login.
+  admins retain temporary operator setup. First enrollment retires the password-only bootstrap path; the optional password plus Slack code flow requires explicit enablement.
 - Host operators recover a known admin with `npm run admin:recover -- --user <user-id>`.
   Recovery revokes its keys/sessions and prints a short-lived registration-only link; it never
   restores password login. Private keys remain with authenticators; SQLite stores public keys
@@ -323,6 +336,21 @@ Slack’s native running/Stop label shows the resolved model and explicitly conf
   after current rank, membership and channel access checks. The stored incoming event retains its
   author, credentials and runtime permissions; accepted decisions audit the responding admin.
   Expiration, duplicate claims and the cross-author automatic steering guard still apply.
+
+
+## Company email domain auto-approval
+
+- Admin UI → Users → Auto-approval accepts exact company email domains, disabled by default.
+  Authenticated inbound provider identities can gain Approved access before engine selection;
+  this never grants Admin or bypasses channel access rules, quotas, or license admission.
+- Slack fetches the current human profile (requires `users:read.email`). Google Chat and Teams
+  use provider-supplied sender email when available; missing email remains manual approval.
+  Editable names, message text and run-API attribution cannot establish an email identity.
+- Unchecking Approved in the admin user editor records a manual opt-out from auto-approval;
+  checking it clears that opt-out. Removing domains/disabling the policy retains prior approvals.
+- Existing known Slack users can be previewed and explicitly approved, with fresh identity,
+  current policy and manual opt-out checks on apply. Up to 500 users per batch; lookup failures
+  are reported and grant nothing. Policy changes and automatic approvals are audited.
 
 ## Registered inventory limits and Enterprise harness approvals
 

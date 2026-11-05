@@ -144,3 +144,30 @@ test("a per-channel exclusion refuses an approved member there, never an admin, 
   // A malformed list is ignored rather than trusted.
   assert.equal(isAuthorized({ access: "approved", excludedUsers: "U_OUT" }, "U_OUT", false, { isApprovedUser: true }), true);
 });
+
+// Linked execution surfaces inherit the source workspace's policy, including its DM semantics.
+test("linked workspace authorization uses the source DM flag rather than the inbound surface", () => {
+  for (const source of [
+    { workspaceLink: { isDM: true } },
+    { workspacePolicyIsDM: true },
+  ]) {
+    const meta = { ...source, access: "none", allowedUsers: ["UGUEST"], excludedUsers: ["UAPPROVED"] };
+    assert.equal(isAuthorized(meta, "UAPPROVED", false, APPROVED), true, "source DMs ignore per-channel exclusions");
+    assert.equal(isAuthorized(meta, "UGUEST", false, UNKNOWN), false, "source DMs cannot inherit a channel guest escape hatch");
+    assert.match(authorizationDenialReason(meta, false), /not approved to use ChannelGate/);
+  }
+  for (const source of [
+    { workspaceLink: { isDM: false } },
+    { workspaceLink: {} },
+    { workspacePolicyIsDM: false },
+  ]) {
+    const meta = { ...source, access: "admins", excludedUsers: ["UAPPROVED"] };
+    assert.equal(isAuthorized(meta, "UAPPROVED", true, APPROVED), false, "source channel exclusions apply even through a DM-shaped execution surface");
+    assert.match(authorizationDenialReason(meta, true), /restricted to admins/);
+    assert.equal(isAuthorized({ ...meta, access: "none", allowedUsers: ["UGUEST"] }, "UGUEST", true, UNKNOWN), true);
+    assert.match(authorizationDenialReason({ ...meta, access: "none" }, true), /restricted to named users/);
+  }
+  const conflicting = { workspaceLink: { isDM: false }, workspacePolicyIsDM: true, access: "none" };
+  assert.equal(isAuthorized(conflicting, "UADMIN", true, ADMIN), false, "an explicit workspace link takes precedence over the policy hint");
+  assert.match(authorizationDenialReason(conflicting, true), /restricted to named users/);
+});
