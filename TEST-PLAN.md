@@ -1,5 +1,32 @@
 # ChannelGate — Test Plan
 
+## Slack email for password and code sign-in (2026-11-05)
+
+- Local automated verification (2026-11-05): 4,246 passed / 40 opt-in skipped / zero failed in
+  the full coverage suite at concurrency 4; coverage 94.09% lines, 86.63% branches, 90.42%
+  functions. All 16 combined Chromium checks passed. Static (994 JavaScript files), secret scan,
+  security coverage, DCO and root high-threshold dependency audit passed. Documentation build
+  verified 153 pages, 27,783 internal links and all 130 gateway controls.
+- Engine-independent: the HTTP/browser authentication path never launches an engine. Use scratch
+  databases, disposable passwords and simulated Slack lookup/private delivery only.
+- Verify whitespace/case normalization, exact provider email and stable user ID matching, current
+  Admin status, password-before-lookup, no account directory disclosure, missing-scope guidance,
+  and refusal of absent/deactivated/bot/mismatched/non-admin users. Editable user-store emails
+  must not resolve identity. Preserve OTP browser binding, expiry, five guesses and one-time use.
+- Reauthentication uses the current linked session and requires password plus its private Slack
+  code; session/role/password/settings changes while lookup, delivery or verification is pending
+  must not restore stale authority. Existing passkey account labels and credentials are unchanged.
+- Live acceptance pending: on a disposable gateway grant `users:read.email` and reinstall the
+  Slack app, enable optional password/Slack-code sign-in, then sign out. Enter the existing Slack
+  administrator's email and dashboard password; require a private Slack code to that same member
+  and a full session linked to the original stable user ID. Test reauthentication and a non-admin
+  email. Record only success/failure, message links and redacted screenshots. Check scope failure
+  guidance on a separate test app lacking email access; never change the production bot to test.
+- Private QA definitions recorded through the established personal QA connection:
+  `ADM-SLACK-EMAIL-01` (email sign-in/provider checks) and `ADM-SLACK-EMAIL-02`
+  (authority races/session-bound reauthentication). Both are engine-independent and explicitly
+  retain human deployed acceptance as pending; no simulated delivery is recorded as live PASS.
+
 ## DM template egress and HTML attachments (2026-11-05)
 
 - Automated: `node --test test/egress-service.test.js test/skills-templates-assign.test.js test/skills-workspace-sync.test.js test/new-channel-template.test.js test/slack-download-file.test.js test/managed-write-symlinks.test.js`. Real CONNECT/TLS tests cover user/admin template ON over stored OFF, live template OFF over stored ON, live re-enable on the same listener and custom-DM independence. Download tests cover HTML and identical renamed text, ordinary HTML containing Slack/sign-in prose, Slack authentication redirects and split-chunk branded error pages, real HTTP errors, byte caps, and no-follow writes.
@@ -171,6 +198,53 @@ Live acceptance (pending, both Claude and Codex): private `cg-testing-claude-bas
 
 
 Terra pricing regression: `test/usage-pricing.test.js` covers launch/snapshot pricing, strict >272K request uplift, aggregate fallback, upgrades from absent/older/October22 bases, backup-once and zero-delta reruns. Live production ledger rehearsal/integrity/balance verification remains pending host access; this is engine-independent accounting.
+
+## Stable sign-in candidate integration (2026-10-30)
+
+Combined with main's company-domain auto-approval change. Resolved Slack admission and Users
+route conflicts while retaining code-channel routing, domain-based Approved-only grants, manual
+opt-out and current admin-session validation after asynchronous user edits. The domain browser
+fixture now uses an actual linked admin session and authentication router; no production gate
+was relaxed to support the fixture.
+
+Local combined coverage run: 4,126 passed, 39 opt-in skipped, zero failed; line/branch/function
+coverage 93.90% / 86.56% / 90.28%. Static, secret scan, security-coverage, DCO and high-threshold
+production audit passed. Documentation build verified 152 pages and 27,245 internal links.
+Existing physical-authenticator/live Slack delivery and other applicable beta live gates remain
+unexecuted; private QA registry remains pending. These automated checks are not live acceptance.
+
+## Optional password and Slack code authentication (2026-10-28)
+
+- Automated scratch HTTP fixture: `test/admin-password-slack.test.js` and
+  `test/admin-password-slack-race.test.js`. Use fake private delivery,
+  disposable passwords and existing Slack Admin/non-admin users. Verify disabled-by-default,
+  password-only denial, correct browser-bound code login after passkey enrollment, replay/expiry/
+  guess limits, private delivery failure, role and credential/settings revocation. Never send
+  fixture codes to deployed users.
+- Browser fixture: `test/admin-password-slack-browser.test.js` exercises Settings → Admin access enablement, alternate sign-in and sensitive
+  reauthentication and sign-out on disable without a WebAuthn device. Chromium verification:
+  all 15 combined passkey/initial-setup/alternate-login assertions passed, zero skips; the
+  extended disable/sign-out browser fixture also passed. Private delivery is simulated.
+- Live acceptance pending, engine-independent: this HTTP/browser authentication path never calls
+  either engine. On a disposable gateway with an existing Slack administrator and working bot DM
+  delivery, enable the checkbox using recent admin verification, sign out, enter the password
+  and own Slack member ID, then enter the privately received code. Pass only when the dashboard
+  opens as that exact existing user with no passkey prompt. Repeat a sensitive action with code
+  reauthentication. Confirm a wrong/replayed code and a non-admin are refused; disabling the
+  checkbox removes alternate login and invalidates its sessions. Check from the RustDesk browser
+  through a localhost SSH tunnel. Record screenshots/HTTP evidence without codes/passwords.
+- Local regression: `npm run test:coverage -- --test-concurrency=4` passed with 4,120
+  passed / 38 opt-in skipped / zero failed; coverage 93.91% lines, 86.55% branches, 90.27%
+  functions. An initial unconstrained run hit the container process limit and was terminated;
+  it is not counted as a passing run. Security-coverage, secret scan and production dependency
+  audit at the high severity threshold passed (three existing moderate advisories remain).
+- CI fixture isolation: `test/web-security.test.js` now initializes scratch paths before
+  importing security helpers. Its isolated 15-test run under a fresh HOME created no runtime
+  files there; this fixes the existing real-home leak without relaxing the guard.
+- Gate maintenance: linked-workspace authorization cases in `test/authorization.test.js`
+  restore the existing 95% branch floor (measured 96.81%); no production policy or floor changed.
+- Private QA registry update pending: the requesting user's personal Airtable connection is not
+  connected in this run. Do not treat the missing registry or unexecuted live case as passed.
 
 ## Linked working-folder setup acceptance
 
@@ -502,6 +576,7 @@ Running label acceptance (Claude and Codex): in a Slack agent thread with chat:w
   Ordinary foreign members, demoted/departed admins, dormant channels and wrong-channel cards
   must fail without consuming the pending choice. Repeat a successful click: no duplicate run.
   Capture Slack card, pending-choice id, run identity and audit events; no live pass claimed here.
+
 
 ## Email accounts (2026-10-22)
 

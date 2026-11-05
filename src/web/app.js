@@ -66,6 +66,7 @@ export function createWebApp({
   slack,
   transports = null,
   adminIdentityDelivery = null,
+  adminSlackIdentityLookup = null,
   backgroundJobs,
   restartCoordinator,
   updateSmoke = runUpdateSmoke,
@@ -357,7 +358,12 @@ export function createWebApp({
     });
   });
 
-  app.use("/api/auth", createAdminAuthRouter({ adminIdentityDelivery: adminIdentityDelivery || (async (userId, text) => {
+  app.use("/api/auth", createAdminAuthRouter({ adminSlackIdentityLookup: adminSlackIdentityLookup || (async email => {
+    const client = slack?.getClient?.();
+    if (!client?.users?.lookupByEmail) throw new Error('Slack identity lookup is unavailable.');
+    const result = await client.users.lookupByEmail({ email });
+    return result?.user;
+  }), adminIdentityDelivery: adminIdentityDelivery || (async (userId, text) => {
     const user = await getUser(userId);
     if (!user || user.isAdmin !== true) throw new Error('Administrator is unavailable.');
     let target = null; let recipient = userId; let platform = '';

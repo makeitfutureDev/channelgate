@@ -161,7 +161,7 @@ export function createSettingsRouter({
   });
 
   // Reveal ONE stored secret, on demand. Listing endpoints return has*/last4 only; this is the
-  // single way to see a value. Enrolled installations require recent passkey verification;
+  // single way to see a value. Full individual sessions require recent authentication;
   // before first enrollment the bootstrap password remains the reauthentication credential.
   // Audit the account and requested names, never the secret value or password.
   router.post("/secrets/reveal", async (req, res, next) => {
@@ -174,17 +174,17 @@ export function createSettingsRouter({
       // Re-authenticate even though a valid session got here: a borrowed session should not be
       // able to drain every credential silently. Skipped only when no password is configured at
       // all, in which case there is nothing to re-enter.
-      let enrolled = passkeysConfigured();
+      let enrolled = passkeysConfigured() || adminSession(req)?.method === 'password-slack';
       let authorized = enrolled ? requireRecentAdminAuth(req) : !authEnabled() || await verifyPassword(String(password), getAdminPassword());
       // The first enrollment may finish while scrypt yields. Its permanent mode change and
       // session revocation apply to this request too, before any secret is returned.
-      if (passkeysConfigured()) { enrolled = true; authorized = requireRecentAdminAuth(req); }
+      if (passkeysConfigured() || adminSession(req)?.method === 'password-slack') { enrolled = true; authorized = requireRecentAdminAuth(req); }
       if (!authorized) {
         await logEvent("secret_reveal_denied", { scope: clipLabel(scope), field: clipLabel(field), id: clipLabel(id), actor, author: actor });
-        return res.status(enrolled ? 403 : 401).json({ error: enrolled ? "Verify your passkey before revealing a secret." : "Wrong password", ...(enrolled ? { code: "reauth_required" } : {}) });
+        return res.status(enrolled ? 403 : 401).json({ error: enrolled ? "Verify your sign-in again before revealing a secret." : "Wrong password", ...(enrolled ? { code: "reauth_required" } : {}) });
       }
       const value = await readSecret({ scope, field, id: String(id) });
-      if (passkeysConfigured() && !requireRecentAdminAuth(req)) return res.status(403).json({ error: "Verify your passkey before revealing a secret.", code: "reauth_required" });
+      if (enrolled && !requireRecentAdminAuth(req)) return res.status(403).json({ error: "Verify your sign-in again before revealing a secret.", code: "reauth_required" });
       await logEvent("secret_revealed", { scope, field, id, actor, author: actor });
       res.json({ value });
     } catch (e) {

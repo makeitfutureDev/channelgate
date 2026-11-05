@@ -118,6 +118,7 @@ Generated `gateway-usage` and `channel-memory` guides satisfy shared and persona
 
 Codex estimates include GPT-6.1 Terra ($1 / $0.05 / $5 per million input / cached / output tokens), request-level long-context pricing, an October 26, 2026 launch boundary, and a backed-up automatic historical refresh on upgrade.
 
+
 ## Linked working-folder setup
 
 - Source access exclusions and conversation policy also govern linked DMs. Shared changes notify follower SSH/egress sessions immediately. Separating a follower or moving the source retains source-section skill grants; detached DMs keep their effective setup as Custom instead of reapplying a DM preset. A promoted owner remains stable when an older conversation later joins.
@@ -127,6 +128,21 @@ Codex estimates include GPT-6.1 Terra ($1 / $0.05 / $5 per million input / cache
 
 
 Slack’s native running/Stop label shows the resolved model and explicitly configured effort, plus compact live phases (Thinking, Using tools, Writing, Waiting, Queued, Coordinating agents). Engine fallback replaces both model and effort; unset effort is omitted rather than guessed.
+
+## Optional password and Slack code sign-in
+
+- Settings → Admin access can enable an alternative to passkeys: the configured admin password
+  and the administrator’s Slack email address, followed by an eight-digit code delivered
+  privately to that existing Slack administrator. Email lookup uses the configured gateway Slack
+  app and requires `users:read.email`; user-entered or editable stored email never grants access.
+  Slack IDs remain the internal identity, and passkey selection is unchanged.
+  The option is off by default; password alone never grants dashboard access. Existing passkeys
+  remain available. A recently verified, identity-linked initial setup can enable this option
+  without first registering a passkey.
+- Codes expire after five minutes, are bound to the requesting browser, accept at most five
+  guesses and are single-use. Delivery failures, role revocation, password changes and disabling
+  the option invalidate pending authority. Sensitive actions can repeat password and Slack
+  verification. Sessions retain the normal idle/absolute expiry and current-role checks.
 
 ## User-linked dashboard passkeys
 
@@ -145,7 +161,7 @@ Slack’s native running/Stop label shows the resolved model and explicitly conf
   session, with five attempts maximum. Matching names never assign ownership. Unlinked accounts
   can complete this verification but cannot use ordinary admin APIs once known admins exist.
   Initial password setup follows the same proof before enrollment; fresh installs without known
-  admins retain temporary operator setup. First enrollment permanently retires password login.
+  admins retain temporary operator setup. First enrollment retires the password-only bootstrap path; the optional password plus Slack code flow requires explicit enablement.
 - Host operators recover a known admin with `npm run admin:recover -- --user <user-id>`.
   Recovery revokes its keys/sessions and prints a short-lived registration-only link; it never
   restores password login. Private keys remain with authenticators; SQLite stores public keys
@@ -330,6 +346,7 @@ Slack’s native running/Stop label shows the resolved model and explicitly conf
   after current rank, membership and channel access checks. The stored incoming event retains its
   author, credentials and runtime permissions; accepted decisions audit the responding admin.
   Expiration, duplicate claims and the cross-author automatic steering guard still apply.
+
 
 ## Registered inventory limits and Enterprise harness approvals
 

@@ -213,3 +213,25 @@ An email account is a mailbox's IMAP and SMTP settings entered once on one form 
 ## Related guides
 
 [Accounts](/docs/features/connected-accounts), [environment configuration](/docs/configuration/environment-variables), [secrets](/docs/features/secrets), [Composio SDK](/docs/features/composio-sdk), and [Toolbox/Make](/docs/features/toolbox-and-make).
+
+## create_api_token
+
+**Required:** `name` (string label).
+
+**Scope and result:** Creates a personal HTTP run API token bound to this conversation. Runs act as the token owner with their current role, conversation authorization, and personal connections. Returns the token value once with an example request; subsequent listings never reveal it. Runs appear as threads in this conversation.
+
+**Restrictions:** Requires a trusted human requester. The token stops working when revoked or when its owner loses access. Store the returned value securely.
+
+## list_api_tokens
+
+**Inputs:** None.
+
+**Scope and result:** Lists this requester's HTTP run API tokens in the current conversation. A channel manager or administrator can list all tokens here. Returns IDs, labels, status, and last four characters, never token values. Requires a trusted human requester.
+
+## revoke_api_token
+
+**Required:** `id` (integer token ID from `list_api_tokens`).
+
+**Scope and result:** Revokes a token in the current conversation. Its next API request is refused with HTTP 401. Repeated revocation reports that it is already revoked.
+
+**Restrictions:** Requires a trusted human requester who owns the token, manages this channel, or is an administrator. Cannot revoke a token belonging to another conversation.
