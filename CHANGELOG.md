@@ -1,5 +1,7 @@
 # Changelog — ChannelGate
 
+- Add admin-managed monthly USD budgets per conversation, unlimited by default, with recorded-spend display, UTC monthly reset and refusal of new agent runs after exhaustion.
+
 - Queue Slack `/fork` automatically while the source thread is busy, with explicit acknowledgement, Stop cancellation and restart recovery.
 
 - Suppress unfinished-thread nudges and follow-up digest entries when the Slack thread root or latest reply has a ✅ reaction; thumbs-up does not close a thread.

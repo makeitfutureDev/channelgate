@@ -1,5 +1,17 @@
 # ChannelGate — Test Plan
 
+
+## Monthly channel USD budgets
+
+- Automated regression: `node --test test/channel-budget.test.js test/memory-review.test.js test/license-run-gate.test.js`. Covers unlimited/zero, strict numeric validation, atomic invalid saves, audit, unrelated-save preservation, canonical component totals, UTC boundaries/year rollover, channel isolation, all task kinds, dual-engine/all-origin rejection, memory-review skip and live queued-policy recheck without an engine spawn.
+- Live Claude and Codex acceptance (pending; run each case on a disposable private channel with that engine selected):
+  1. Admin UI → conversation → Access → Monthly budget: blank/save/reopen remains unlimited; save $1.23 and reopen; negative or three-decimal values fail without changing the saved cap. Set zero and send `Reply with BUDGET-ACCEPTANCE`; expect the budget notice, no engine process/session or priced usage added. A non-admin channel manager has no budget editing control or authorized API route.
+  2. Seed the isolated fixture ledger with $1 canonical spend this UTC month (including a component override, memory review and background spend), plus costs from another month/channel. Cap at $1 blocks; raise to $2 admits; null removes the cap. Verify displayed spend matches canonical accounting. Move the fixture clock across the UTC month boundary; prior-month costs no longer block, with no metadata reset required.
+  3. Hold the fixture's only run slot; queue a request, then set cap to zero and release the slot. Expect refusal before engine spawn. Repeat a schedule, API and background-agent launch; each delivers the same actionable notice. Recheck a retry/fallback attempt after changing the cap while parked.
+  4. At zero, trigger a memory-review signal; expect `channel-budget-exhausted` and no reviewer process. Admit a turn below its cap and let it finish above: its recorded cost is retained, it finishes normally, and the next run/review is refused. Concurrent active runs can overshoot; no claim of a hard provider spending cap. Unpriced costs and external service charges remain explicitly excluded.
+- Browser acceptance passed in disposable Chromium at desktop and 390px width: `PLAYWRIGHT_BROWSERS_PATH=/opt/channelgate/browsers CG_BROWSER_MODULE=/usr/local/lib/node_modules/playwright/index.mjs node --test test/channel-budget-browser.test.js`; $12.34, zero and blank persist after reload, with no browser errors.
+- Private dual-engine acceptance definitions registered as BUDGET-01 through BUDGET-04; live executions remain pending.
+
 ## Slack email for password and code sign-in (2026-11-05)
 
 - Local automated verification (2026-11-05): 4,246 passed / 40 opt-in skipped / zero failed in

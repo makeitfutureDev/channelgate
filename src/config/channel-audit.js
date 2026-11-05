@@ -33,6 +33,7 @@ export const POLICY_KEYS = Object.freeze([
   "adminMode", // Full access: no sandbox, no prompts, for admin authors
   "autoMode", // permission prompts auto-approved
   "allowBash", // shell + file-edit tools
+  "monthlyBudgetUSD", // admin-managed channel spend limit (null = unlimited)
   "allowNetwork", // network egress for the channel's runs
   "rawNetwork", // raw sockets on the open bridge beside the egress proxy (admin escape)
   "egressRawHosts", // hosts whose SSH/Postgres ports get a raw tunnel through the proxy

@@ -1,3 +1,4 @@
+import { assertChannelBudget, budgetRefusal } from "./channel-budget.js";
 import { effectiveMeta } from "./effective-meta.js";
 // Orchestrates a single authorized message end-to-end: provision the gated folder, resolve
 // the thread session, build the per-run MCP config, decide admin escalation, and run the
@@ -670,6 +671,12 @@ export async function runMessage(args) {
     return await runMessageImpl({ ...args, threadKey: sessionKey,
       admissionThreadKey: question?.threadKey ?? args.admissionThreadKey ?? args.threadKey,
       ...(question?.sessionThreadKey ? { questionThreadKey: question.threadKey, scheduledQuestion: question } : {}) });
+  } catch (error) {
+    if (error.code === "channel_budget_exhausted") {
+      const entry = await getChannelEntry(args.channelId);
+      return budgetRefusal(error.budget, { slug: entry?.slug });
+    }
+    throw error;
   } finally { release?.(); }
 }
 
@@ -830,6 +837,8 @@ async function runMessageImpl({ channelId, authorId, workspaceId = "", text, thr
       usage: {}, costUSD: 0, durationMs: 0,
     };
   }
+
+  await assertChannelBudget(channelId, entry.slug);
 
   // ── License admission (src/ee/limits.js) ────────────────────────────────────────────────────
   // The last gate before this turn has ANY side effect: the folder is not provisioned, no session
@@ -1500,6 +1509,7 @@ async function runMessageImpl({ channelId, authorId, workspaceId = "", text, thr
       + perplexityResearchPreamble(target, { clean })
       + codeChannelPreamble(meta)
       + (promptOverride ?? turnText);
+    await assertChannelBudget(channelId, entry.slug);
     engineStarted = true;
     return adapter.run(validateRunContext({
       principal: { kind: untrustedPrincipal ? "daemon" : PRINCIPAL_KIND_BY_ORIGIN[origin] || "daemon", id: authorId },
@@ -1577,6 +1587,7 @@ async function runMessageImpl({ channelId, authorId, workspaceId = "", text, thr
         const out = await attempt();
         return retries && out && typeof out === "object" ? { ...out, transientRetries: retries } : out;
       } catch (err) {
+        if (err.code === "channel_budget_exhausted") throw err;
         const kind = transientProviderFailure(err, engineName);
         if (!kind || retries >= maxAttempts || signal?.aborted) {
           if (retries) {
@@ -1741,6 +1752,7 @@ async function runMessageImpl({ channelId, authorId, workspaceId = "", text, thr
       assertRuntimeCanStart();
       await assertScheduledSudoAuthority();
       assertChannelEngineApproved((await getChannelMeta(entry.slug)) ?? channelMeta, fallbackEngine);
+      await assertChannelBudget(channelId, entry.slug);
       engineStarted = true;
       return fallbackAdapter.run(validateRunContext({
         principal: { kind: untrustedPrincipal ? "daemon" : PRINCIPAL_KIND_BY_ORIGIN[origin] || "daemon", id: authorId }, origin, cwd,
@@ -1822,7 +1834,7 @@ async function runMessageImpl({ channelId, authorId, workspaceId = "", text, thr
         fallbackModel = defaultModel;
         fallbackModelNote = gatewayDefaultModelNote(rejectedModel, defaultModel);
       } catch (defaultModelError) {
-        if (defaultModelError?.details?.incompleteTurn && !defaultModelError.details.replaySafe) throw defaultModelError;
+        if (defaultModelError?.code === "channel_budget_exhausted" || (defaultModelError?.details?.incompleteTurn && !defaultModelError.details.replaySafe)) throw defaultModelError;
         console.warn(`[gateway] gateway-default fallback model ${defaultModel} also failed (${defaultModelError.message}) — preserving the original model error`);
         err.details = { ...(err.details || {}), defaultModel, defaultModelError: defaultModelError.message };
         throw err;
@@ -2009,6 +2021,7 @@ async function runMessageImpl({ channelId, authorId, workspaceId = "", text, thr
       // continues the conversation instead of starting amnesiac.
       result = await withTransientRetry(engine, () => runOnce(sid, fresh, initialPromptOverride), { beforeRetry: remintFreshSession });
     } catch (err) {
+      if (err.code === "channel_budget_exhausted") throw err;
       if (codexCapacityContinuation(err) && !signal?.aborted) {
         // This is a new turn in the SAME Codex session, not a replay of the user message. Its
         // transcript contains the completed tools, so the model can continue from their results.
@@ -2079,7 +2092,7 @@ async function runMessageImpl({ channelId, authorId, workspaceId = "", text, thr
               content: `${gatewayDefaultModelNote(rejectedModel, defaultModel)}${result.content || ""}`,
             };
           } catch (defaultModelError) {
-            if (defaultModelError?.details?.incompleteTurn && !defaultModelError.details.replaySafe) throw defaultModelError;
+            if (defaultModelError?.code === "channel_budget_exhausted" || (defaultModelError?.details?.incompleteTurn && !defaultModelError.details.replaySafe)) throw defaultModelError;
             console.warn(`[gateway] gateway-default model ${defaultModel} also failed (${defaultModelError.message}) — preserving the original model error`);
             err.details = { ...(err.details || {}), defaultModel, defaultModelError: defaultModelError.message };
             throw err;
@@ -2125,7 +2138,7 @@ async function runMessageImpl({ channelId, authorId, workspaceId = "", text, thr
                     : "it hit a usage limit before any tool call",
               );
             } catch (fallbackError) {
-              if (fallbackError?.details?.incompleteTurn) throw fallbackError;
+              if (fallbackError?.code === "channel_budget_exhausted" || fallbackError?.details?.incompleteTurn) throw fallbackError;
               // Both harnesses failed. Keep the original error authoritative (its details drive every
               // consumer), but say the whole story in one sentence, and — when a person is watching —
               // hand it back as a choice (try either harness again) instead of a dead end.
@@ -2270,7 +2283,7 @@ async function runMessageImpl({ channelId, authorId, workspaceId = "", text, thr
       try {
         return await runFallbackEngine(`⚠️ _${engineLabel(engine)} hit its usage limit — answered with ${engineLabel(fallbackEngine)}._\n\n`);
       } catch (e) {
-        if (e?.details?.incompleteTurn) throw e;
+        if (e?.code === "channel_budget_exhausted" || e?.details?.incompleteTurn) throw e;
         console.warn(`[gateway] ${fallbackEngine} fallback failed (${e.message}) — returning the limit notice`);
         // fall through to return the limited engine's own notice
       }

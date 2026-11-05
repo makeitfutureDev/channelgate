@@ -1307,6 +1307,12 @@
             </label>
           </div>
 
+          <label class="field">
+            <span>Monthly budget (USD)</span>
+            <input type="number" class="ch-budget" min="0" step="0.01" placeholder="Unlimited" />
+            <em class="state">Blank = unlimited. Zero pauses new agent runs. Resets on the first of each month at 00:00 UTC. Active runs can exceed the limit; unpriced usage and external service charges are excluded.</em>
+            <em class="state ch-budget-status" role="status"></em>
+          </label>
           <label class="togglerow ch-network-wrap">
             <input type="checkbox" class="ch-network" />
             <span class="switch"></span>

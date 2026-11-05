@@ -71,7 +71,7 @@ export function decideCodeChannelMode(originDir, requested = "auto") {
 }
 
 // The code channel's own identity fields; everything else is the origin's.
-const OWN_FIELDS = ["channelId", "name", "type", "platform", "codeChannel", "engine", "model", "effort", "codexAuthSource", "approvedEngines", "workspaceOwnerSlug", "workspaceOrigin", "workspacePolicyIsDM", "workspaceLink"];
+const OWN_FIELDS = ["monthlyBudgetUSD", "channelId", "name", "type", "platform", "codeChannel", "engine", "model", "effort", "codexAuthSource", "approvedEngines", "workspaceOwnerSlug", "workspaceOrigin", "workspacePolicyIsDM", "workspaceLink"];
 
 // Project the ORIGIN's meta onto a code channel: the origin's policy, secrets, skills, engine and
 // switches, this channel's own identity, the origin's effective folder as `workDir` (so the same
@@ -83,6 +83,7 @@ export function inheritedCodeChannelMeta(originMeta, own) {
   delete base.dmUserId;
   const next = {
     ...base,
+    monthlyBudgetUSD: own?.monthlyBudgetUSD ?? null,
     isDM: false,
     template: "",
     workDir: originSlug ? effectiveWorkDir(originSlug, { ...base, cleanMode: false }) : (base.workDir || ""),
@@ -107,7 +108,7 @@ export async function syncCodeChannelMeta(slug, meta) {
   const own = Object.fromEntries(OWN_FIELDS.map((f) => [f, meta[f]]));
   const next = inheritedCodeChannelMeta(originMeta, own);
   if (sameRecord(next, meta)) return meta;
-  return (await patchChannelMeta(slug, () => next)) || next;
+  return (await patchChannelMeta(slug, (current) => ({ ...next, monthlyBudgetUSD: current?.monthlyBudgetUSD ?? null }))) || next;
 }
 
 // ── Host-side git: the task worktree and its diff ────────────────────────────────────────────

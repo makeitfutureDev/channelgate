@@ -210,6 +210,7 @@ export function defaultChannelMeta({ channelId, name, type, isDM, platform }) {
     isDM: Boolean(isDM),
     // The chat surface. Read through platformOr()/capabilitiesFor() — never compared to a literal.
     platform: isPlatformId(platform) ? platform : DEFAULT_PLATFORM,
+    monthlyBudgetUSD: null, // null = unlimited; admin UI only, per UTC calendar month
     access: "approved", // who can USE the channel: "approved" | "admins" | "none" (set from the gateway
     // default at join). Governs who's auto-granted in a channel; allowedUsers is the manual override.
     // Who can MANAGE this channel (modes, network, MCP servers, secrets' modes) from chat:
@@ -380,6 +381,8 @@ export async function saveChannelMeta(slug, meta) {
     // Only atomic lifecycle patches can change admission; stale saves cannot undo a removal.
     const input = { ...meta };
     if (current) {
+      // Omitted on an older whole-record save means preserve the admin budget.
+      if (!Object.hasOwn(input, "monthlyBudgetUSD") && Object.hasOwn(current, "monthlyBudgetUSD")) input.monthlyBudgetUSD = current.monthlyBudgetUSD;
       for (const field of ["archived", "archivedAt", "archivedReason", "botMembership", "botMembershipEventTs"]) {
         if (Object.hasOwn(current, field)) input[field] = current[field];
         else delete input[field];
