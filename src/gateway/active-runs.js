@@ -447,6 +447,29 @@ export async function recoverRuns(stale, {
     try {
       if (handle.aborted) { markTerminal(); return; }
       if (forceStopping()) return;
+      // A queued /fork is a gateway command, not an engine prompt. Re-enter the Slack
+      // command path only after its source reservation is acquired, so it snapshots the
+      // completed source turn and rechecks the author's current access before forking.
+      if (rec.queuedFork) {
+        const queueError = await acquired;
+        if (queueError) throw queueError;
+        if (handle.aborted || handle.controller.signal.aborted) { markTerminal(); return; }
+        if (forceStopping()) return;
+        recordActiveRun(id, { ...rec, id, attempts, recoveryPending: undefined });
+        await logEvent("run_recover", { slug: rec.slug, channel: rec.channelId, threadKey: rec.threadKey, attempts });
+        const { processMessageEvent } = await import("../slack/message-pipeline.js");
+        if (handle.aborted || handle.controller.signal.aborted) { markTerminal(); return; }
+        if (forceStopping()) return;
+        await processMessageEvent(rec.queuedFork.event, client, {
+          botUserId: rec.queuedFork.botUserId || "",
+          teamId: rec.queuedFork.teamId || rec.workspaceId || process.env.CG_SLACK_TEAM_ID || "",
+          bypassMention: true,
+          queuedForkHandle: handle,
+        });
+        if (forceStopping()) return;
+        markTerminal();
+        return;
+      }
       // A recovered turn is still an interactive Slack turn. Reconnect it to the same two native
       // surfaces as a foreground run whenever the Slack SDK supports native streaming. Older SDKs
       // and test clients retain the safe final-only delivery path instead of losing the recovery.

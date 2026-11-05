@@ -19,7 +19,7 @@ const { buildClaudeArgs } = await import("../src/engines/claude.js");
 const { buildCodexArgs } = await import("../src/engines/codex.js");
 const { createFakeRuntime } = await import("./fixtures/fake-runtime-backend.js");
 const { parseSlashCommand } = await import("../src/slack/message-normalize.js");
-const { processMessageEvent } = await import("../src/slack/message-pipeline.js");
+const { processMessageEvent, runQueue, abortRunsInChannel } = await import("../src/slack/message-pipeline.js");
 
 function slack() {
   const posted = [];
@@ -262,4 +262,88 @@ test("another-engine fork respects clean mode and a dedicated channel Codex logi
   assert.match(client.posted.at(-1).text, /engine stays Codex/);
   assert.ok(client.posted.slice(count).every((m) => m.thread_ts === event.ts));
   assert.equal(runtime.calls.spawn.length, spawns);
+});
+
+async function until(check) {
+  for (let n = 0; n < 200; n++) {
+    if (check()) return;
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  assert.fail("timed out waiting for queued fork");
+}
+
+for (const engine of ["claude", "codex"]) {
+  test(`${engine} busy /fork queues, waits, forks once and releases source ownership`, async () => {
+    saveSettings({ engine, engineEnabled: { claude: true, codex: true } });
+    const user = `U_QUEUE_FORK_${engine}`;
+    const channel = `D_QUEUE_FORK_${engine}`;
+    await setUser(user, { name: "Queued Fork", approved: true });
+    const client = slack();
+    const event = { type: "message", channel, channel_type: "im", user, ts: "9200.001", text: "Source task" };
+    await processMessageEvent(event, client, { botUserId: "UBOT" });
+    const entry = await getChannelEntry(channel);
+    const sourceId = await getSession(entry.slug, event.ts);
+    const key = `${entry.slug}::${event.ts}`;
+    const source = { aborted: false, controller: new AbortController(), authorId: user };
+    await runQueue.acquire(key, source);
+    const before = runtime.calls.spawn.length;
+    const fork = processMessageEvent({ ...event, ts: "9200.002", thread_ts: event.ts, text: "/fork Queued alternative" }, client, { botUserId: "UBOT" });
+    try {
+      await until(() => client.posted.some((m) => /Fork queued/.test(m.text || "")));
+      assert.equal(runQueue.count(key), 2);
+      assert.equal(runtime.calls.spawn.length, before);
+      assert.equal(client.posted.some((m) => !m.thread_ts && /Fork of/.test(m.text || "")), false);
+    } finally {
+      runQueue.release(key, source);
+    }
+    await fork;
+    const childTs = client.posted.find((m) => /New request from/.test(m.text || ""))?.thread_ts;
+    assert.ok(childTs);
+    assert.notEqual(await getSession(entry.slug, childTs), sourceId);
+    assert.equal(await getSession(entry.slug, event.ts), sourceId);
+    assert.equal(client.posted.filter((m) => !m.thread_ts && /Fork of/.test(m.text || "")).length, 1);
+    assert.equal(runQueue.count(key), 0);
+  });
+}
+
+test("Stop cancels queued forks before they can create a child", async () => {
+  saveSettings({ engine: "codex" });
+  const user = "U_QUEUE_FORK_STOP", channel = "D_QUEUE_FORK_STOP";
+  await setUser(user, { name: "Queued Fork Stop", approved: true });
+  const client = slack();
+  const event = { type: "message", channel, channel_type: "im", user, ts: "9300.001", text: "Source task" };
+  await processMessageEvent(event, client, { botUserId: "UBOT" });
+  const entry = await getChannelEntry(channel);
+  const key = `${entry.slug}::${event.ts}`;
+  const source = { aborted: false, controller: new AbortController(), authorId: user };
+  await runQueue.acquire(key, source);
+  const fork = processMessageEvent({ ...event, ts: "9300.002", thread_ts: event.ts, text: "/fork Cancel this alternative" }, client, { botUserId: "UBOT" });
+  try {
+    await until(() => client.posted.some((m) => /Fork queued/.test(m.text || "")));
+    abortRunsInChannel(channel, entry.slug, user, event.ts);
+    await fork;
+    assert.equal(client.posted.some((m) => !m.thread_ts && /Fork of/.test(m.text || "")), false);
+  } finally { runQueue.release(key, source); }
+});
+
+
+test("queued fork rechecks current admission after waiting", async () => {
+  saveSettings({ engine: "codex" });
+  const user = "U_QUEUE_FORK_REVOKE", channel = "D_QUEUE_FORK_REVOKE";
+  await setUser(user, { name: "Queued Fork Revoke", approved: true });
+  const client = slack();
+  const event = { type: "message", channel, channel_type: "im", user, ts: "9400.001", text: "Source task" };
+  await processMessageEvent(event, client, { botUserId: "UBOT" });
+  const entry = await getChannelEntry(channel);
+  const key = `${entry.slug}::${event.ts}`;
+  const source = { aborted: false, controller: new AbortController(), authorId: user };
+  await runQueue.acquire(key, source);
+  const fork = processMessageEvent({ ...event, ts: "9400.002", thread_ts: event.ts, text: "/fork Revoked alternative" }, client, { botUserId: "UBOT" });
+  await until(() => client.posted.some((m) => /Fork queued/.test(m.text || "")));
+  await setUser(user, { approved: false, isAdmin: false });
+  runQueue.release(key, source);
+  await fork;
+  assert.equal(client.posted.some((m) => !m.thread_ts && /Fork of/.test(m.text || "")), false);
+  assert.ok(client.posted.some((m) => /Sorry/.test(m.text || "")));
+  assert.equal(runQueue.count(key), 0);
 });

@@ -2790,11 +2790,11 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
   access policy as ordinary shortcuts. A shortcut for a different engine starts a fresh session
   in the linked child thread and replays the source's Slack messages through the existing bounded
   context handoff. It does not transfer the old engine's native transcript/tool state. The fork
-  command and later source messages are excluded; unavailable Slack history is refused before
+  command and later source requests are excluded; queued cross-engine forks include bot replies completed while waiting; unavailable Slack history is refused before
   creating the child. Clean threads stay bare without history replay. Dedicated channel Codex
   logins stay on Codex. Unknown, disabled or invalid targets and missing request text are refused
   before a child thread is posted.
-  A running or sudo/source-host session is refused until it can be forked safely.
+  A running source queues the fork automatically, acknowledges it explicitly, and starts it after preceding work finishes. Stop cancels queued forks. Admission and session state are rechecked at promotion; queued forks survive restart through active-run recovery. Sudo/source-host sessions remain refused.
 - Gateway-wide **default effort** beside each harness's default model (Settings → Agent defaults →
   Engine & runtime, including each Qwen provider card). Choices follow the selected model's
   supported effort levels; saves validate the model/effort pair atomically. Per-request, thread
