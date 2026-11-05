@@ -80,6 +80,21 @@ test('subscription JSON preserves literal Teams IDs while message GET paths enco
   }
 });
 
+test('successful renewal retains the actual legacy selector metadata and activation cutoffs', async () => {
+  const f = fixture(), first = await f.service.ensure(f.row);
+  const legacy = { ...f.rows.get(f.row.conversationId), subscriptionResource: first.resource };
+  f.rows.set(f.row.conversationId, legacy);
+  f.advance(21 * 60_000);
+  await f.service.renew();
+  const renewed = f.rows.get(f.row.conversationId);
+  assert.equal(f.requests.at(-1).method, 'PATCH');
+  assert.deepEqual(Object.keys(JSON.parse(f.requests.at(-1).body)), ['expirationDateTime']);
+  assert.equal(renewed.subscriptionResource, legacy.subscriptionResource);
+  assert.equal(renewed.subscriptionId, first.subscriptionId);
+  assert.equal(renewed.clientState, first.clientState);
+  for (const key of ['startedAt', 'reactionSnapshotsStartedAt', 'activationReactionsStartedAt', 'activationReactionsVersion', 'alienReactionStartedAt']) assert.equal(renewed[key], first[key], key);
+});
+
 test('subscription recreation corrects a legacy encoded selector without resetting activation cutoffs', async () => {
   const f = fixture(), first = await f.service.ensure(f.row);
   const legacy = f.rows.get(f.row.conversationId);
