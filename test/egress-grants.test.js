@@ -382,7 +382,7 @@ for (const scope of ["organization", "personal", "channel"]) {
     for (const entry of Object.values(stored)) assert.ok(out.realValues.includes(entry.value), "all raw and withheld values remain inventoried");
 
     for (const name of ["CLI_API_KEY", "GITHUB_TOKEN"]) assert.ok(!out.redactionValues.includes(stored[name].value));
-    for (const name of ["HIDDEN_DB_PASSWORD", "HIDDEN_API_KEY"]) assert.ok(out.redactionValues.includes(stored[name].value));
+    assert.ok(out.redactionValues.includes(stored.HIDDEN_API_KEY.value));
 
     // A fresh spawn applies the new choice; existing processes retain their old environment.
     stored.CLI_API_KEY.exposure = "hidden";

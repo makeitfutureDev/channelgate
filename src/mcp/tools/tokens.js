@@ -325,7 +325,8 @@ export function register(server, ctx) {
       if (target.refusal) return text(target.refusal);
       try {
         const row = await patchSecretEntry({ ...target, name, exposure: mode });
-        return text(`✅ \`${row?.name || name}\` is now ${row?.exposure === "hidden" ? "hidden" : "readable"}${mode === "auto" ? " (decided automatically)" : ""}${egressNote(row || {})}. A process that already started keeps its environment; the next one gets the change.`);
+        const runtime = getContainerRuntime();
+        return text(`✅ \`${row?.name || name}\` is now ${row?.exposure === "hidden" ? "hidden" : "readable"}${mode === "auto" ? " (decided automatically)" : ""}${egressNote(row || {}, { bridge: runtime.egressMode === "bridge", strict: runtime.egressSecretsStrict !== false })}. A process that already started keeps its environment; the next one gets the change.`);
       } catch (e) {
         return text(`❌ ${e.message}`);
       }

@@ -199,3 +199,20 @@ test("set_secret_mode and allow_secret_host: scoped authority, the value untouch
   assert.match(await reply(toolsFor(ADMIN), "allow_secret_host", { name: "CHAN_TOKEN", host: "api.other.example", scope: "conversation" }), /may now be used on api\.other\.example/);
   await scoped.patchUserEnv(DEV, { remove: "MY_PAY_TOKEN" });
 });
+
+
+test("set_secret_mode reports automatic password withholding under the current strict policy", async () => {
+  const { getSettings, saveSettings } = await import("../src/config/settings.js");
+  const previous = getSettings().containerEgressSecretsStrict;
+  try {
+    saveSettings({ containerEgressSecretsStrict: true });
+    await scoped.patchUserEnv(DEV, { set: { name: "QA_MODE_PASSWORD", value: "fixture-mode-password-123", exposure: "readable" } });
+    const automatic = await reply(toolsFor(DEV), "set_secret_mode", { name: "QA_MODE_PASSWORD", mode: "auto" });
+    assert.match(automatic, /withheld by strict mode/);
+    const readable = await reply(toolsFor(DEV), "set_secret_mode", { name: "QA_MODE_PASSWORD", mode: "readable" });
+    assert.match(readable, /readable \(raw\).*set readable/);
+  } finally {
+    await scoped.patchUserEnv(DEV, { remove: "QA_MODE_PASSWORD" });
+    saveSettings({ containerEgressSecretsStrict: previous });
+  }
+});
