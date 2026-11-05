@@ -1022,7 +1022,10 @@ function skillsPage(snapshot, state) {
   const direct = new Set((skills.additional || []).map((value) => String(value).toLowerCase()));
   const fromTemplate = (skills.channel || []).filter((value) => !direct.has(String(value).toLowerCase()));
   const org = skills.organization || [];
-  const short = (list) => `${list.slice(0, 6).map(inlineCode).join(" ")}${list.length > 6 ? ` +${list.length - 6} more` : ""}`;
+  const models = skills.models || {};
+  const named = (value) => `${inlineCode(value)}${models[String(value).toLowerCase()] ? ` _(${escapeMrkdwn(models[String(value).toLowerCase()])})_` : ""}`;
+  const short = (list) => `${list.slice(0, 6).map(named).join(" ")}${list.length > 6 ? ` +${list.length - 6} more` : ""}`;
+  const preferring = [...direct].filter((value) => models[value]);
   return [
     templates.length
       ? selectRow({
@@ -1033,6 +1036,7 @@ function skillsPage(snapshot, state) {
       : fieldBlock("Template", "_none defined_"),
     context(`*Channel skills* · ${direct.size}`),
     ...skillPicker(CHANNEL_SETTINGS_SKILLS_SELECT_ACTION_ID, snapshot.skillPicker, "Add a skill…"),
+    ...(preferring.length ? [context(`Preferred models: ${preferring.slice(0, 8).map(named).join(" ")}`)] : []),
     ...(fromTemplate.length ? [context(`From the *${escapeMrkdwn(skills.template || "template")}* template: ${short(fromTemplate)}`)] : []),
     ...(org.length ? [context(`Always on from the organization (${org.length}): ${short(org)}`)] : []),
   ];

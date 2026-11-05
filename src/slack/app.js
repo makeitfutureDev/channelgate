@@ -45,7 +45,8 @@ import { canSeeSkill, grantSkillsToChannel, grantSkillsToUser, revokeSkillsFromC
 import { sanitizeSkillGrantNames } from "../gateway/access-grants.js";
 import { toolboxUrl } from "../gateway/mcp-catalog.js";
 import { revokeRemoteMcpsForAuthor } from "../mcp/remote-mcp-registry.js";
-import { listSkills } from "../gateway/skills/catalog.js";
+import { listSkills, getSkill } from "../gateway/skills/catalog.js";
+import { skillModelPreference } from "../gateway/skill-runtime.js";
 import { ENGINE_IDS, engineLabel, effortBelongsToModel, effortsForModel, modelBelongsToEngine, modelsForEngine, requireAdapter } from "../engines/registry.js";
 import { persistedSelectionForEngine, selectionFieldForEngine } from "../gateway/mcp-discovery.js";
 import { channelCodexLoginStatus } from "../gateway/channel-codex-login.js";
@@ -1270,6 +1271,8 @@ function channelSettingsSnapshot(meta = {}) {
       channel: channelTier.skills || [],
       organization: organization.skills || [],
       effective: shared.skills || [],
+      // Skill slug → preferred model, for the Skills page (only skills that declare one).
+      models: Object.fromEntries((shared.skills || []).map((name) => [String(name).toLowerCase(), skillModelPreference(getSkill(name))?.model || ""]).filter(([, model]) => model)),
     },
     // listChannelEnv is the write-only subsystem's public shape: no value/ref can cross this line.
     secrets: listChannelEnv(meta),
