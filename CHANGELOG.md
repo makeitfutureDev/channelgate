@@ -1,5 +1,8 @@
 # Changelog — ChannelGate
 
+- Honor inherited DM network settings in the egress proxy, including live template changes, and allow legitimate HTML Slack attachments without misdiagnosing their content as a missing scope.
+
+
 - Clear automatic skill publication recovery pins after a successful retry, including retries of unchanged edits. Preserve manual/legacy and approved override pins, protect newer edits from late publication attempts, and expose pin reasons in metadata and the library.
 
 - Show the new user request above the fork icon and source link in forked Slack thread roots so their topic is visible in the channel.

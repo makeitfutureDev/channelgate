@@ -21,6 +21,7 @@
 // its telemetry batch between turns, and each attempt was a row (241 in 25 minutes across six
 // channels); those refusals are expected, carry no secret a person set, and are still counted.
 // Everything is counted per channel in memory for egressStatus().
+import { effectiveMeta } from "../effective-meta.js";
 import crypto from "node:crypto";
 import net from "node:net";
 import path from "node:path";
@@ -212,7 +213,7 @@ export async function egressPolicyFor(ctx) {
 }
 
 async function policyForCtx(ctx) {
-  const meta = (await getChannelMeta(ctx?.slug)) || {};
+  const meta = effectiveMeta((await getChannelMeta(ctx?.slug)) || {});
   const runHosts = [];
   const seen = state?.runHosts.get(channelKey(ctx));
   if (seen) {
