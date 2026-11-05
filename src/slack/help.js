@@ -22,7 +22,7 @@ export const HELP_TEXT =
   "• `/menu` — show only the Files, Variables, and Settings buttons; use `@agent /menu` inside a channel thread\n" +
   "• `/help` — show this guide\n" +
   "• `/clear` — start a fresh session in this thread\n" +
-  "• `/fork [:model-shortcut] <new message>` — branch from a completed Claude or Codex container session into a linked new Slack thread; same-engine shortcuts fork the session, other-engine shortcuts start a new session with Slack history (after the current turn finishes)\n" +
+  "• `/fork [:model-shortcut] <new message>` — branch from a completed Claude or Codex container session into a linked new Slack thread; same-engine shortcuts fork the session, other-engine shortcuts start a new session with Slack history (busy threads queue the fork automatically)\n" +
   "• `/delete` — delete this thread's messages (admin; irreversible—everyone's if an admin user token is set in Settings, otherwise mine only)\n" +
   "• `/secrets` — open Variables for this channel, your personal scope, and (admins) the organization. Listings show names and masked values; add/replace follows your permissions. Channel values override personal values, then organization values. Hidden secrets work only on approved servers; a new server can require an admin approval. Passwords and connection strings stay usable by programs. Stored values are never shown in this console\n" +
   "• `/context` — token usage of the last turn\n" +

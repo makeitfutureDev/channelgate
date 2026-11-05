@@ -7843,8 +7843,22 @@ none` for its cases and live gates. Kept as history.
       child root showing `Compare an alternative approach` above the `↪️ Fork of this thread`
       link in the channel timeline, separate request and answer. Repeat with a model shortcut
       and verify its prefix is absent from the root. Follow up in both threads; each must remember its
-      own continuation while retaining the shared pre-fork history. Try during a running turn,
-      without a prior session, and from `/sudo`: each must refuse without creating a new root.
+      own continuation while retaining the shared pre-fork history. Try without a prior session and from `/sudo`: each must refuse without creating a new root.
+- [x] Fixture regression (`test/slack-fork.test.js`): busy source queues `/fork` for Claude and
+      Codex, posts an explicit automatic-start acknowledgement, creates no child before promotion,
+      then creates exactly one distinct child without changing the source session. Stop cancels it; revoked admission denies it at promotion.
+- [x] Restart fixtures (`test/queued-fork-recovery.test.js`): Claude/Codex source recovery precedes
+      fork command replay; distinct native child, permission recheck, Stop cancellation, forced
+      shutdown retention and bounded recovery attempts.
+- [ ] Live queued-fork acceptance, separately in `cg-testing-claude-auto` and
+      `cg-testing-codex-auto`: as the admitted contact fixture author, start a source task that
+      writes a random token, runs `python3 -c "import time; time.sleep(30)"`, and returns the token.
+      While busy, send `@bot /fork Repeat the source token and explore another approach`.
+      Pass only if a queued acknowledgement appears immediately, no child starts before the source
+      completes, and exactly one linked child recalls the token with a distinct native session id.
+      Repeat with Stop while queued: no child may appear. Restart while queued and verify source
+      recovery precedes one fork; a permission revocation must refuse at promotion. Record live
+      results separately; fixture tests do not establish live acceptance.
 - [ ] Live engine-independent acceptance (command intercepted before engine dispatch): in a
       disposable Slack thread with a human root and bot replies, an admin sends `@bot /delete`.
       Verify bot replies disappear, the human root stays without a replacement report, and another

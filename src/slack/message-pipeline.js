@@ -627,7 +627,7 @@ async function ensureUserKnown(client, userId) {
 // harness-switch card (src/slack/engine-switch-choice.js) re-entering with the original event —
 // run it on `engineChoice`, pin the thread there when `engineChoiceSwitch`, and hand the pending
 // row over exactly like a busy-thread choice.
-export async function processMessageEvent(event, client, { botUserId = "", teamId = "", bypassMention = false, dedupeTrigger = false, activeViewContext = null, busyChoice = "", busyTargetRunId = "", busyChoiceId = "", onBusyChoiceAccepted = null, engineChoice = "", engineChoiceSwitch = false, engineChoiceId = "", onEngineChoiceAccepted = null, questionSubmissionId = "", onQuestionSubmissionAccepted = null, syntheticFork = null } = {}) {
+export async function processMessageEvent(event, client, { botUserId = "", teamId = "", bypassMention = false, dedupeTrigger = false, activeViewContext = null, busyChoice = "", busyTargetRunId = "", busyChoiceId = "", onBusyChoiceAccepted = null, engineChoice = "", engineChoiceSwitch = false, engineChoiceId = "", onEngineChoiceAccepted = null, questionSubmissionId = "", onQuestionSubmissionAccepted = null, syntheticFork = null, queuedForkHandle = null } = {}) {
   try {
     if (isIgnorable(event, botUserId, getTrustedBotApps())) return;
     // A message without a human author (e.g. a trusted-bot post carrying no `user`) can't be
@@ -676,7 +676,9 @@ export async function processMessageEvent(event, client, { botUserId = "", teamI
       await client.chat.postMessage({ channel: event.channel, ...threadOpts, text: "This fork is still starting. Please send your next message after its first reply." });
       return;
     }
-    if (pendingForkSources.has(`${entry.slug}::${threadKey}`)) {
+    const earlyControl = stripMentions(event.text || "", botUserId);
+    const cancelsFork = isStopCommand(earlyControl) || parseSlashCommand(earlyControl)?.cmd === "clear";
+    if (pendingForkSources.has(`${entry.slug}::${threadKey}`) && !cancelsFork) {
       await client.chat.postMessage({ channel: event.channel, ...threadOpts, text: "A fork of this thread is starting. Please send your next message after the new thread appears." });
       return;
     }
@@ -699,7 +701,7 @@ export async function processMessageEvent(event, client, { botUserId = "", teamI
     // A question continuation is an internal event containing the answers authenticated by its
     // Slack interaction handler. It is not a message Slack can hydrate: using the card timestamp
     // would replace the answers with the card's text and could carry unrelated attachments.
-    if (!questionSubmissionId && !syntheticFork) event = await hydrateSlackMessage(event, client, {
+    if (!questionSubmissionId && !syntheticFork && !queuedForkHandle) event = await hydrateSlackMessage(event, client, {
       includeThreadFiles: async (message) => {
         const text = stripMentions(message.text, botUserId);
         const command = parseSlashCommand(text);
@@ -772,7 +774,31 @@ export async function processMessageEvent(event, client, { botUserId = "", teamI
         const forkShortcut = parseModelShortcut(sc.arg);
         const task = forkShortcut ? forkShortcut.task : sc.arg.trim();
         if (!task) { await reply("Use `/fork [:model-shortcut] <new message>` inside a thread with a Claude or Codex session."); return; }
-        if (runQueue.isActive(runKey)) { await reply("Wait for this thread's current run to finish before forking it."); return; }
+        if (!queuedForkHandle && runQueue.isActive(runKey)) {
+          if (runQueue.count(runKey) >= 21) { await reply("The thread queue is full. The fork was not queued; try again after some work finishes."); return; }
+          const handle = { aborted: false, controller: new AbortController(), authorId: event.user,
+            runId: `${runKey}::${event.ts}` };
+          recordActiveRun(handle.runId, {
+            channelId: event.channel, slug: entry.slug, threadKey, authorId: event.user,
+            workspaceId: teamId, isDM, startedAt: Date.now(),
+            queuedFork: { event, botUserId, teamId },
+          });
+          try {
+            // Reserve before acknowledging: another message must not overtake this fork.
+            const acquired = runQueue.acquire(runKey, handle).then(() => null, (error) => error);
+            await reply("⏳ Fork queued — it will start automatically when the preceding work in this thread finishes. Stop cancels queued forks too.");
+            const error = await acquired;
+            if (error) { await reply(`The fork could not be queued: ${error.message}`); return; }
+            if (handle.aborted || handle.controller.signal.aborted || isForceStopping()) return;
+            // Re-enter admission with current permissions, pins and the completed session id.
+            await processMessageEvent(event, client, { botUserId, teamId, bypassMention: true, queuedForkHandle: handle });
+          } finally {
+            if (shouldClearActiveRun({ forceStopping: isForceStopping() })) clearActiveRun(handle.runId);
+            runQueue.release(runKey, handle);
+          }
+          return;
+        }
+        if (queuedForkHandle?.aborted || queuedForkHandle?.controller.signal.aborted || isForceStopping()) return;
         pendingForkSources.add(runKey);
         try {
           if (await getThreadSudo(entry.slug, threadKey)) { await reply("A sudo thread cannot be forked into an ordinary channel thread."); return; }
@@ -817,6 +843,7 @@ export async function processMessageEvent(event, client, { botUserId = "", teamI
             sourceContext = `You are continuing a conversation in a new Slack thread using ${engineLabel(childEngine)}. Source thread: ${sourceUrl}. The quoted history below comes from that source thread; continue with the user's new request after it.\n\n${sourceContext}`;
           }
           const handoffNote = nativeFork ? "" : ` · continuing with ${engineLabel(childEngine)}${sourceClean ? " (clean session; no history replay)" : " from Slack history"}`;
+          if (queuedForkHandle?.aborted || queuedForkHandle?.controller.signal.aborted || isForceStopping()) return;
           const root = await client.chat.postMessage({ channel: event.channel, text: `${task}\n\n↪️ Fork of <${sourceUrl}|this thread>${handoffNote}` });
           if (!root?.ts) throw new Error("Slack did not return a thread timestamp for the fork.");
           const forkKey = String(root.ts);
@@ -833,10 +860,16 @@ export async function processMessageEvent(event, client, { botUserId = "", teamI
             const forkUrl = await slackPermalink(client, event.channel, forkKey);
             await reply(`↪️ Fork started in <${forkUrl}|a new thread>.`);
             // A fresh engine uses the captured Slack snapshot, so the source may continue now.
-            if (!nativeFork) pendingForkSources.delete(runKey);
+            if (!nativeFork) {
+              pendingForkSources.delete(runKey);
+              if (queuedForkHandle) runQueue.release(runKey, queuedForkHandle);
+            }
+            if (queuedForkHandle?.aborted || queuedForkHandle?.controller.signal.aborted || isForceStopping()) return;
             await processMessageEvent({ ...event, ts: request.ts, thread_ts: forkKey, text: task, files: [] }, client, {
               botUserId, teamId, bypassMention: true, syntheticFork: {
                 sourceSessionId: nativeFork ? sourceId : "", sourceRunKey: runKey, threadContext: sourceContext,
+                onAccepted: () => { if (queuedForkHandle) clearActiveRun(queuedForkHandle.runId); },
+                onSourceForked: () => { if (queuedForkHandle) runQueue.release(runKey, queuedForkHandle); },
               },
             });
           } finally {
@@ -1494,6 +1527,8 @@ export async function processMessageEvent(event, client, { botUserId = "", teamI
       recordActiveRun(runId, acceptedRun);
     }
 
+    syntheticFork?.onAccepted?.();
+
     // The requester explicitly chose Steer Conversation. Warm Claude uses its in-protocol
     // interrupt; cold Claude and Codex use the active handle's AbortSignal. Either way the new
     // message waits for the current owner to release the thread, then runs next with its context.
@@ -1690,6 +1725,7 @@ export async function processMessageEvent(event, client, { botUserId = "", teamI
           recordActiveRun(runId, { ...promotedRun, forkSourceSessionId: "" });
           pendingForkThreads.delete(`${entry.slug}::${threadKey}`);
           pendingForkSources.delete(syntheticFork.sourceRunKey);
+          syntheticFork.onSourceForked?.();
         } : undefined,
         attachments: attachmentPaths,
         signal: handle.controller.signal,
