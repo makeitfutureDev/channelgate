@@ -1,5 +1,7 @@
 # Changelog — ChannelGate
 
+- Suppress unfinished-thread nudges and follow-up digest entries when the Slack thread root or latest reply has a ✅ reaction; thumbs-up does not close a thread.
+
 - Honor inherited DM network settings in the egress proxy, including live template changes, and allow legitimate HTML Slack attachments without misdiagnosing their content as a missing scope.
 
 

@@ -11868,3 +11868,24 @@ Live acceptance pending (engine-independent configuration): import the shipped J
 
 - Live system-unit evidence (2026-11-05): a disposable service with the generated hardening passed start, file-writing exec, service-local process placement and persistent private temporary backing before/after restart. The existing gateway service was not restarted or reconfigured. Kernel inspection exposed ignored limit flags on Podman 5.4.2 rootless cgroupfs; the new probe correctly treats this as unsupported enforcement. A fresh account/store transition from the old manager and normal dual-engine turns remain separate pending acceptance gates.
 - QA catalog: SVC-PODMAN-01 records the engine-independent service/kernel canary, while SVC-PODMAN-02 covers separate Claude and Codex normal-turn acceptance after an idle upgrade. A live canary detected and correctly reported unenforced cgroupfs limits both before and after restart; it did not certify CPU/memory enforcement on that host.
+
+
+### Slack completion reactions suppress unfinished-thread notifications (2026-11-05)
+
+- Automated: `node --test test/thread-completion.test.js test/nudges-ttl.test.js test/followups-store.test.js`.
+  Verify root/latest ✅, older reply versus newer unchecked reply, 👍 and text-only ✅ controls,
+  removed reactions, pagination, API failure deferral/retry, single nudge and digest suppression.
+- Live fixture: private `cg-testing-claude-auto` and `cg-testing-codex-auto`; an approved tester with
+  personal nudges enabled, follow-up digests enabled and access to the gateway bot. In each engine
+  create separate threads with “Ask me a question and wait for my decision.” Wait for the final reply.
+  Add ✅ to the root of one thread, ✅ to the latest reply of a second, and 👍 only to a third.
+  Use an operator-owned short reminder threshold/digest slot fixture and restore settings afterward.
+  Expected: no thread nudge or digest source line for either ✅ thread; the 👍 control remains
+  eligible and gets exactly one nudge. `pending` omits both ✅ threads. Append a new reply after a
+  checked root: it remains suppressed. A checked older reply alone must not suppress a newer
+  unchecked last reply absent a separate personal dismissal. Use a second participant to verify
+  that source reaction suppression applies to everyone, independent of who added the reaction.
+  Remove ✅ before delivery on a separate un-dismissed fixture: it becomes eligible again.
+- Engine-independent decision: all checks execute in the daemon against Slack messages, without
+  invoking an engine. Both engine fixtures above exercise actual delivered bot replies.
+- Live acceptance is pending; automated success does not certify deployed behavior.
