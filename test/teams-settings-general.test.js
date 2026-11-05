@@ -316,6 +316,12 @@ test('mode flags preserve independent values and cannot forge privileged DM cont
   const dm = context({ isDM: true, template: 'custom' });
   await assert.rejects(handleGeneral('settings.access', { field: 'mode', access_mode: 'admin' }, dm, ui), /Only administrators/);
   await assert.rejects(handleGeneral('settings.access', { field: 'allowNetwork', access_allowNetwork: 'on' }, dm, ui), /DM template/);
+  // Skill model swap is an independent switch: channels and DMs, never part of the mode preset.
+  await handleGeneral('settings.access', { field: 'skillRuntimeSwap', access_skillRuntimeSwap: 'on' }, ctx, ui);
+  assert.equal(ctx.meta.skillRuntimeSwap, true); assert.equal(ctx.meta.cleanMode, true);
+  await handleGeneral('settings.access', { field: 'skillRuntimeSwap', access_skillRuntimeSwap: 'on' }, dm, ui);
+  assert.equal(dm.meta.skillRuntimeSwap, true);
+  await assert.rejects(handleGeneral('settings.access', { field: 'skillRuntimeSwap', access_skillRuntimeSwap: 'yes' }, ctx, ui), /Invalid access option/);
 });
 
 test('render never includes secrets and nonmanagers see policy readouts', async () => {

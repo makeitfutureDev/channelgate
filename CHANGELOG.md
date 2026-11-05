@@ -1,5 +1,7 @@
 # Changelog — ChannelGate
 
+- Expose "Skill model swap" in Microsoft Teams settings and as `/settings skillswap on|off` in Google Chat.
+
 - Rename user-facing “local skills” to “gateway-owned skills” across skill management and guidance; stored ownership values and update behavior are unchanged.
 
 - Queue Slack `/fork` automatically while the source thread is busy, with explicit acknowledgement, Stop cancellation and restart recovery.

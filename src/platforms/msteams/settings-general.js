@@ -18,8 +18,8 @@ const accessChoices = {
   access: [{ label: 'Approved members', value: 'approved' }, { label: 'Admins only', value: 'admins' }, { label: 'Locked — named users only', value: 'none' }],
   manageAccess: [{ label: 'Org admins only', value: 'admins' }, { label: 'Approved channel members', value: 'members' }, { label: 'Named managers', value: 'custom' }],
 };
-const labels = { mode: 'Mode', access: 'Who can use it here', manageAccess: 'Who can manage this channel', autoMode: 'Auto — automatically approve tool requests', cleanMode: 'Lean — bare model without skills or connectors', allowNetwork: 'Allow network', allowedUsers: 'Guest access — named users', managers: 'Named managers' };
-const flagFields = ['autoMode', 'cleanMode', 'allowNetwork'];
+const labels = { mode: 'Mode', access: 'Who can use it here', manageAccess: 'Who can manage this channel', autoMode: 'Auto — automatically approve tool requests', cleanMode: 'Lean — bare model without skills or connectors', allowNetwork: 'Allow network', skillRuntimeSwap: 'Skill model swap — a skill’s preferred engine/model may take over the turn', allowedUsers: 'Guest access — named users', managers: 'Named managers' };
+const flagFields = ['autoMode', 'cleanMode', 'allowNetwork', 'skillRuntimeSwap'];
 const namedFields = ['allowedUsers', 'managers'];
 // Full rosters are repeated for two native multi-selects. Bound this to keep the entire card
 // below Teams' payload limit; large rosters use the authenticated browser's channel editor.
@@ -146,7 +146,7 @@ export async function renderGeneral(ctx, ui) {
         else body.push(ui.text('The complete member selectors are too large for this conversation card. Edit guest access and named managers in the authenticated channel settings website. All saved selections remain unchanged.'));
       } catch { body.push(ui.text('Named users cannot be edited until current conversation membership is available.')); }
     }
-  } else body.push(ui.text(`Mode: ${channelMode(meta)}${meta.autoMode ? ' · Auto' : ''}${meta.cleanMode ? ' · Lean' : ''}. Only current managers can change channel access settings.`));
+  } else body.push(ui.text(`Mode: ${channelMode(meta)}${meta.autoMode ? ' · Auto' : ''}${meta.cleanMode ? ' · Lean' : ''}${meta.skillRuntimeSwap ? ' · Skill model swap' : ''}. Only current managers can change channel access settings.`));
   body.push(ui.text(networkLabel(meta, { detail: true })));
   let vpn = unconfiguredChannelVpnStatus(ctx.meta);
   if (!vpn) { try { vpn = await getChannelVpnStatus(ctx.channelId); } catch { vpn = { state: 'unavailable', message: 'VPN status is unavailable for this conversation.' }; } }
@@ -318,7 +318,7 @@ export async function handleGeneral(action, data, ctx, _ui) {
     ctx.meta = await ctx.patch((current, fresh) => {
       if (current.isDM) {
         assertCurrentAuthorized(fresh, current);
-        if (!['mode', 'autoMode', 'cleanMode'].includes(field)) throw new Error('This setting is managed by the DM template.');
+        if (!['mode', 'autoMode', 'cleanMode', 'skillRuntimeSwap'].includes(field)) throw new Error('This setting is managed by the DM template.');
       } else assertManager(fresh, current);
       // Revalidate against the roster obtained at this write's authorization boundary.
       if (namedFields.includes(field) && Array.isArray(fresh.members) && value.some(id =>
