@@ -2541,6 +2541,11 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
   Pending acks persist in `config/acks.json` so the chain survives a daemon restart. The renderer
   owns the "⏰ *Reminder:*" label: one leading "Reminder:" the author already wrote is stripped from
   the posted message, the 2nd notice and the DM, so the line never stutters.
+- Slack thread completion: no-response nudges, scheduled follow-up digests and on-demand
+  pending reports check current reactions before delivery. A `white_check_mark` (✅) on the
+  root or latest reply suppresses the thread for all recipients; 👍 does not. Root checks remain
+  effective after newer replies. Reply checks apply while that reply is latest. Long threads are
+  paginated; unreadable reaction state defers notifications until a later attempt.
 - Personal no-response nudge: each user chooses whether the bot posts one gentle reminder addressed
   to them when their last agent reply has gone quiet past a window (default 24h). The live user
   preference follows them across channels and DMs and is self-service in Slack App Home; admins can
