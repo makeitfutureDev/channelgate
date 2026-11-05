@@ -1,6 +1,14 @@
 # ChannelGate — Test Plan
 
 
+## Monthly channel USD budget management
+
+- Automated: `node --test test/channel-budget.test.js test/channel-spending.test.js test/memory-review.test.js test/license-run-gate.test.js`. Covers unlimited/positive-limit validation, invalid/atomic saves, audit, unrelated-save preservation, canonical totals, UTC month/year boundaries, channel isolation, all task kinds, both engines/all origins, memory-review skip, Enterprise entitlement preservation and queued-policy recheck without an engine spawn.
+- Browser: `PLAYWRIGHT_BROWSERS_PATH=/opt/channelgate/browsers CG_BROWSER_MODULE=/usr/local/lib/node_modules/playwright/index.mjs node --test test/channel-budget-browser.test.js`; decimal and blank values must persist after reload at desktop and 390px width, with no browser errors.
+- Live Claude and Codex (pending): in a disposable Enterprise channel, admin UI → Runtime → Monthly spending limit, save/reopen a positive amount; blank restores unlimited. With canonical recorded current UTC-month spend at the cap, send `Reply with BUDGET-ACCEPTANCE`; require the limit notice and no engine process. Raise/remove the cap and require admission. A non-admin channel manager has no budget setting control or authorized admin API route.
+- Isolated fixtures: count canonical root/components across memory and background tasks, exclude other channels/months; unpriced rows must fail closed until repaired. Cross the fixture clock's UTC month boundary and require automatic admission without resetting metadata. Hold one run slot, queue a request, exhaust its cap, release, and require no engine spawn; repeat schedule/API/background and fallback/retry paths.
+- Admit a run below its cap and let it finish above: retain its recorded cost, finish normally, refuse the next run/review. Concurrent active runs may overshoot. External provider/service charges are excluded. Private BUDGET-01 through BUDGET-04 definitions exist; live execution remains pending and must use the final positive-cap/unpriced-fail-closed contract.
+
 ## SSH engine status bars (SSH-STATUS-01)
 
 - Automated: `node --test test/ssh-statusline.test.js test/ssh-session.test.js`. Verify the actual staged Claude command renders, retains lockdown settings and private file permissions, Codex overrides include native footer fields, current-context/cache calculations, live model/effort changes, missing/zero values, warning colours, malformed JSON and terminal control sanitization.

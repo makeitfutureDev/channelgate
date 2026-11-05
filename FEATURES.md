@@ -1,5 +1,7 @@
 # ChannelGate — Features
 
+- **Monthly channel budget management.** The admin UI shows this UTC month's recorded spend with the Enterprise spending limit (channel Runtime pane or DM detail), unlimited by default. Limits remain local to each conversation; saves, code-channel synchronization and shared DM templates preserve them. Queued runs, retries, fallback attempts and memory reviews recheck the current cap immediately before spawning and deliver an actionable refusal. Active/concurrent runs can overshoot; unpriced usage refuses new runs until repaired, and external charges are outside the channel ledger.
+
 ## Enterprise organization controls
 
 The following capabilities require an effective Enterprise license (including use of previously

@@ -1,3 +1,4 @@
+import { channelBudgetStatus } from "../../gateway/channel-budget.js";
 import { requireEnterpriseFeature } from "../../ee/feature-entitlements.js";
 import { assertApprovedEnginesUpdate, assertChannelEngineApproved } from "../../gateway/channel-engines.js";
 import { assertSpendingLimitUpdate } from "../../ee/channel-spending.js";
@@ -158,6 +159,15 @@ export function createChannelsRouter({
     if (!entry) res.status(404).json({ error: "unknown channel" });
     return entry;
   };
+
+  router.get("/channels/:channelId/budget", async (req, res, next) => {
+    res.set("Cache-Control", "no-store");
+    try {
+      const entry = await registeredChannel(req, res);
+      if (!entry) return;
+      res.json(channelBudgetStatus(req.params.channelId, await getChannelMeta(entry.slug)));
+    } catch (error) { next(error); }
+  });
 
   // Resolve only this conversation's shared identity; personal accounts stay on user pages.
   router.get("/channels/:channelId/composio-connections", async (req, res, next) => {
@@ -320,7 +330,8 @@ export function createChannelsRouter({
         try { await assertNewMcpSelections("claude", sanitizeMcps(body.allowedMcps), current.allowedMcps); }
         catch (error) { return res.status(400).json({ error: error.message }); }
       }
-      const next_ = { ...current };
+      let next_ = { ...current };
+      if (Object.hasOwn(body, "monthlySpendingLimitUSD")) next_.monthlySpendingLimitUSD = body.monthlySpendingLimitUSD;
       if (Object.hasOwn(body, "approvedEngines")) next_.approvedEngines = assertApprovedEnginesUpdate(current, body.approvedEngines);
       if (["user", "admin", "custom"].includes(body.template)) next_.template = body.template;
       if (Array.isArray(body.skills)) next_.skills = body.skills;
@@ -354,11 +365,15 @@ export function createChannelsRouter({
       if (Object.hasOwn(body, "approvedEngines") || Object.hasOwn(body, "engine") || Object.hasOwn(body, "codexAuthSource")) {
         assertChannelEngineApproved(next_, effectiveMeta(next_).engine || getEngine());
       }
-      await saveChannelMeta(entry.slug, next_);
+      let replaced = current;
+      next_ = await patchChannelMeta(entry.slug, (live) => {
+        replaced = live || current;
+        return { ...next_, monthlySpendingLimitUSD: Object.hasOwn(body, "monthlySpendingLimitUSD") ? body.monthlySpendingLimitUSD : live?.monthlySpendingLimitUSD ?? null };
+      });
       await ensureChannelFolder(entry.slug, effectiveMeta(next_)); // re-provision with effective config
       // Same posture change, same audit row as a channel: a DM's template/admin-mode/network flags
       // decide what its runs can reach. Nothing is written when only unaudited fields moved.
-      await logChannelPolicyChange({ channelId: req.params.channelId, slug: entry.slug, actor: ADMIN_UI_ACTOR, before: current, after: next_ });
+      await logChannelPolicyChange({ channelId: req.params.channelId, slug: entry.slug, actor: ADMIN_UI_ACTOR, before: replaced, after: next_ });
       res.json({ ok: true });
     } catch (e) {
       if (e.statusCode) return res.status(e.statusCode).json({ error: e.message });

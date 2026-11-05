@@ -2165,6 +2165,7 @@ function renderChannelDetail(ch) {
   flagEls.cleanMode.checked = !!meta.cleanMode;
   const networkBox = card.querySelector(".ch-network");
   networkBox.checked = !!meta.allowNetwork;
+  showBudgetStatus(card.querySelector(".ch-budget-status"), ch.channelId);
 
   // Capability radio cards drive the hidden <select class="ch-profile"> (what the save reads).
   // Picking a base preserves the independent Auto/Lean controls.
@@ -2558,6 +2559,7 @@ function renderChannelDetail(ch) {
       // The server response is the validated, committed record. Reconcile the cached channel from
       // that whole record so a later SPA re-render cannot resurrect stale MCP/skill selections.
       ch.meta = reconcileChannelMeta(ch.meta, result.meta);
+      showBudgetStatus(card.querySelector(".ch-budget-status"), ch.channelId);
       harnessPolicyDirty = false;
       if (composioTok || previousNoDefaultTokens !== Boolean(ch.meta.noDefaultTokens)) void loadComposioConnections(true);
       initializeMcpBox(mcpsBox, { claude: ch.meta.allowedMcps || [], codex: ch.meta.allowedCodexMcps || [] });
@@ -2892,6 +2894,17 @@ function buildConfigEditor(cfg = {}) {
   return { el, getValues };
 }
 
+// Budgets are conversation-local and administered here, outside shared workspace/template policy.
+function readBudgetInput(input) {
+  if (!input.checkValidity()) throw new Error("Enter a positive monthly USD budget, or leave it blank for unlimited.");
+  return input.value === "" ? null : Number(input.value);
+}
+function showBudgetStatus(element, channelId) {
+  api(`/api/channels/${encodeURIComponent(channelId)}/budget`).then((budget) => {
+    element.textContent = `${budget.month} UTC: $${budget.spentUSD.toFixed(2)} recorded${budget.limitUSD === null ? " · Unlimited" : ` of $${budget.limitUSD.toFixed(2)}${!budget.allowed ? " · New agent runs paused" : ""}`}${budget.unpricedRuns ? ` · ${budget.unpricedRuns} unpriced run(s)${budget.limitUSD === null ? "" : "; repair pricing to resume"}` : ""}`;
+  }).catch(() => { element.textContent = "Budget usage unavailable. Reopen this conversation to retry."; });
+}
+
 // ── Shared savebar (DM + template details) ────────────────────────────────────────
 function buildSavebar() {
   const bar = document.createElement("div");
@@ -2984,6 +2997,12 @@ function renderDmDetail(id) {
     head.after(linked);
   }
 
+  const budgetField = document.createElement("label");
+  budgetField.className = "field";
+  budgetField.innerHTML = `<span>Monthly budget (USD) · Enterprise</span><input type="number" class="dm-budget" min="0.01" step="any" placeholder="Unlimited" /><em class="state">Blank = unlimited. Resets monthly at 00:00 UTC. Active runs may exceed the limit; unpriced usage pauses new runs until pricing is repaired. External service charges are excluded.</em><em class="state dm-budget-status" role="status"></em>`;
+  budgetField.querySelector("input").value = dm.meta?.monthlySpendingLimitUSD ?? "";
+  card.appendChild(budgetField);
+  showBudgetStatus(budgetField.querySelector(".dm-budget-status"), dm.channelId);
   const customBox = document.createElement("div");
   customBox.className = "dm-custom";
   card.appendChild(customBox);
@@ -3010,9 +3029,11 @@ function renderDmDetail(id) {
     async () => {
       const tpl = tplSel.value;
       const values = tpl === "custom" && ed ? ed.getValues() : {};
-      const body = { template: tpl, ...Object.fromEntries(Object.entries(values).filter(([key]) => !dm.meta?.workspaceLink?.fields?.includes(key))) };
+      const body = { template: tpl, monthlySpendingLimitUSD: readBudgetInput(budgetField.querySelector("input")), ...Object.fromEntries(Object.entries(values).filter(([key]) => !dm.meta?.workspaceLink?.fields?.includes(key))) };
       await api(`/api/dms/${encodeURIComponent(dm.channelId)}`, { method: "PUT", body: JSON.stringify(body) });
+      showBudgetStatus(budgetField.querySelector(".dm-budget-status"), dm.channelId);
       dm.template = tpl;
+      dm.meta = { ...dm.meta, monthlySpendingLimitUSD: body.monthlySpendingLimitUSD };
       renderConvList();
     },
     () => renderDmDetail(id),

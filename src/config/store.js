@@ -212,6 +212,7 @@ export function defaultChannelMeta({ channelId, name, type, isDM, platform }) {
     isDM: Boolean(isDM),
     // The chat surface. Read through platformOr()/capabilitiesFor() — never compared to a literal.
     platform: isPlatformId(platform) ? platform : DEFAULT_PLATFORM,
+    monthlySpendingLimitUSD: null, // null = unlimited; admin UI only, per UTC calendar month
     access: "approved", // who can USE the channel: "approved" | "admins" | "none" (set from the gateway
     // default at join). Governs who's auto-granted in a channel; allowedUsers is the manual override.
     // Who can MANAGE this channel (modes, network, MCP servers, secrets' modes) from chat:
