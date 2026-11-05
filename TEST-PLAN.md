@@ -2,6 +2,11 @@
 
 ## Slack email for password and code sign-in (2026-11-05)
 
+- Local automated verification (2026-11-05): 4,246 passed / 40 opt-in skipped / zero failed in
+  the full coverage suite at concurrency 4; coverage 94.09% lines, 86.63% branches, 90.42%
+  functions. All 16 combined Chromium checks passed. Static (994 JavaScript files), secret scan,
+  security coverage, DCO and root high-threshold dependency audit passed. Documentation build
+  verified 153 pages, 27,783 internal links and all 130 gateway controls.
 - Engine-independent: the HTTP/browser authentication path never launches an engine. Use scratch
   databases, disposable passwords and simulated Slack lookup/private delivery only.
 - Verify whitespace/case normalization, exact provider email and stable user ID matching, current
