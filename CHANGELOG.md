@@ -1,5 +1,7 @@
 # Changelog — ChannelGate
 
+- SSH Claude and Codex sessions now display model, reasoning effort and context usage, with working directory, Git branch and available usage details.
+
 - Show a skill's preferred model in the skills library table, the chat skill listings and Slack Settings → Skills.
 
 - Expose "Skill model swap" in Microsoft Teams settings and as `/settings skillswap on|off` in Google Chat.

@@ -1,5 +1,8 @@
 # ChannelGate — Features
 
+
+- **SSH engine status bars.** Prepared SSH sessions give Claude a coloured footer with the live model, reasoning effort, context used percentage/window size, folder, Git branch, session cost and available 5h/7d quota usage. Missing context stays `--%` until reported; context uses the current input/cache snapshot, never cumulative tokens. Codex uses its native footer for model with reasoning, context used percentage, folder, branch and available quotas. Model/effort changes follow native live state. Settings are session-scoped, refreshed on SSH preparation; no image rebuild is needed. Reopen Claude/Codex after reconnecting to load the change.
+
 - **Consistent DM network policy.** The egress proxy resolves the same current organization DM template policy as engine turns. User/admin template edits take effect on the next request, including OFF overriding a stale saved ON; custom DMs and linked workspaces retain their own resolved policy. The resolver is shared without importing the run orchestrator into the proxy.
 
 - **HTML attachments.** Slack HTML uploads and identical HTML renamed to text download normally. The downloader rejects recognizable Slack authentication/error pages and authentication landing URLs with an access diagnostic, rather than treating all HTML as proof of a missing scope. Inspection is bounded and streamed; byte caps, channel scope and no-follow publication remain enforced.
