@@ -1,5 +1,7 @@
-import { channelBudgetStatus, validateMonthlyBudget } from "../../gateway/channel-budget.js";
+import { channelBudgetStatus } from "../../gateway/channel-budget.js";
+import { requireEnterpriseFeature } from "../../ee/feature-entitlements.js";
 import { assertApprovedEnginesUpdate, assertChannelEngineApproved } from "../../gateway/channel-engines.js";
+import { assertSpendingLimitUpdate } from "../../ee/channel-spending.js";
 import { assertEngineSelectable } from "../../engines/selection.js";
 import { assertNewMcpSelections } from "../../gateway/mcp-selection.js";
 // Channel + DM admin routes: per-DM config, the channel list/members/meta, Make-toolbox and
@@ -318,7 +320,6 @@ export function createChannelsRouter({
       if (!entry) return res.status(404).json({ error: "unknown DM" });
       const current = (await getChannelMeta(entry.slug)) ?? defaultChannelMeta({ channelId: req.params.channelId, name: entry.name, type: entry.type, isDM: true });
       const body = req.body ?? {};
-      if (Object.hasOwn(body, "monthlyBudgetUSD")) validateMonthlyBudget(body.monthlyBudgetUSD);
       const badModel = invalidModelOrEffort(body);
       if (badModel) return res.status(400).json({ error: badModel });
       if (body.engine && body.engine !== current.engine) {
@@ -330,12 +331,13 @@ export function createChannelsRouter({
         catch (error) { return res.status(400).json({ error: error.message }); }
       }
       let next_ = { ...current };
-      if (Object.hasOwn(body, "monthlyBudgetUSD")) next_.monthlyBudgetUSD = body.monthlyBudgetUSD;
+      if (Object.hasOwn(body, "monthlySpendingLimitUSD")) next_.monthlySpendingLimitUSD = body.monthlySpendingLimitUSD;
       if (Object.hasOwn(body, "approvedEngines")) next_.approvedEngines = assertApprovedEnginesUpdate(current, body.approvedEngines);
       if (["user", "admin", "custom"].includes(body.template)) next_.template = body.template;
       if (Array.isArray(body.skills)) next_.skills = body.skills;
       if (typeof body.skillTemplate === "string") {
         const key = body.skillTemplate.trim();
+        if (key && key !== current.skillTemplate) requireEnterpriseFeature("skillTemplates");
         if (key && !getTemplate(key)) return res.status(400).json({ error: `unknown skill template "${key}"` });
         next_.skillTemplate = key ? getTemplate(key).slug : "";
       }
@@ -366,7 +368,7 @@ export function createChannelsRouter({
       let replaced = current;
       next_ = await patchChannelMeta(entry.slug, (live) => {
         replaced = live || current;
-        return { ...next_, monthlyBudgetUSD: Object.hasOwn(body, "monthlyBudgetUSD") ? body.monthlyBudgetUSD : live?.monthlyBudgetUSD ?? null };
+        return { ...next_, monthlySpendingLimitUSD: Object.hasOwn(body, "monthlySpendingLimitUSD") ? body.monthlySpendingLimitUSD : live?.monthlySpendingLimitUSD ?? null };
       });
       await ensureChannelFolder(entry.slug, effectiveMeta(next_)); // re-provision with effective config
       // Same posture change, same audit row as a channel: a DM's template/admin-mode/network flags
@@ -433,7 +435,6 @@ export function createChannelsRouter({
       if (!entry) return res.status(404).json({ error: "unknown channel" });
 
       const body = req.body ?? {};
-      if (Object.hasOwn(body, "monthlyBudgetUSD")) validateMonthlyBudget(body.monthlyBudgetUSD);
       const badModel = invalidModelOrEffort(body);
       if (badModel) return res.status(400).json({ error: badModel });
       if (body.engine) {
@@ -512,8 +513,11 @@ export function createChannelsRouter({
         return patchChannelMeta(entry.slug, (existing) => {
           const current = existing ?? defaultChannelMeta({ channelId, name: entry.name, type: entry.type, isDM: entry.isDM });
           replaced = current;
+          const spendingPatch = Object.hasOwn(body, "monthlySpendingLimitUSD")
+            ? { monthlySpendingLimitUSD: assertSpendingLimitUpdate(current, body.monthlySpendingLimitUSD) } : {};
           const out = {
             ...current,
+            ...spendingPatch,
             // Access model: who can USE (access) and who can MANAGE (manageAccess + managers[]).
             access: CHANNEL_ACCESS_MODES.includes(body.access) ? body.access : current.access ?? "approved",
             manageAccess: ["admins", "members", "custom"].includes(body.manageAccess) ? body.manageAccess : current.manageAccess ?? "admins",
@@ -525,7 +529,6 @@ export function createChannelsRouter({
             skillTemplate: typeof body.skillTemplate === "string" ? (body.skillTemplate.trim() ? getTemplate(body.skillTemplate.trim())?.slug ?? "__unknown__" : "") : (current.skillTemplate || ""),
             adminMode: typeof body.adminMode === "boolean" ? body.adminMode : current.adminMode,
             allowBash: typeof body.allowBash === "boolean" ? body.allowBash : current.allowBash,
-            monthlyBudgetUSD: Object.hasOwn(body, "monthlyBudgetUSD") ? body.monthlyBudgetUSD : current.monthlyBudgetUSD ?? null,
             allowNetwork: typeof body.allowNetwork === "boolean" ? body.allowNetwork : current.allowNetwork,
             autoMode: typeof body.autoMode === "boolean" ? body.autoMode : current.autoMode,
             cleanMode: typeof body.cleanMode === "boolean" ? body.cleanMode : current.cleanMode,
@@ -580,6 +583,8 @@ export function createChannelsRouter({
           if (typeof body.composioTokenLabel === "string") out.composioTokenLabel = body.composioTokenLabel.trim();
           if (typeof body.toolboxTokenLabel === "string") out.toolboxTokenLabel = body.toolboxTokenLabel.trim();
           Object.assign(out, resolveMakeToolboxUpdate(current, body));
+          if (out.skillTemplate && out.skillTemplate !== current.skillTemplate) requireEnterpriseFeature("skillTemplates");
+          if (out.syncDriveFolder && out.syncDriveFolder !== current.syncDriveFolder) requireEnterpriseFeature("driveSync");
           if (out.skillTemplate === "__unknown__") throw Object.assign(new Error(`unknown skill template "${String(body.skillTemplate).trim()}"`), { statusCode: 400 });
           if (users) {
             const narrowed = restrictedAccessAllowedUsers(current, out, users);

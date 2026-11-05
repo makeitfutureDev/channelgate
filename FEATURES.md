@@ -1,6 +1,38 @@
 # ChannelGate — Features
 
-- **Monthly channel USD budgets.** Admins set a per-conversation budget in the admin UI (channel Access or DM detail); blank defaults to unlimited, zero pauses new agent runs. Recorded canonical channel USD spend across engines and task kinds, including estimated costs, background agents and memory reviews, counts for the current UTC calendar month. Exhaustion refuses new chat, API, scheduled and background agent runs with an actionable notice; queued attempts, retries and memory reviews recheck before spawning. Raising/removing a limit takes effect on the next attempt; the month resets at 00:00 UTC on the first. Active/concurrent runs may overshoot; unpriced runs, external service charges and gateway credential maintenance are excluded. Budgets remain local to the conversation even when folders or DM templates are shared, and changes are audited.
+- **Monthly channel budget management.** The admin UI shows this UTC month's recorded spend with the Enterprise spending limit (channel Runtime pane or DM detail), unlimited by default. Limits remain local to each conversation; saves, code-channel synchronization and shared DM templates preserve them. Queued runs, retries, fallback attempts and memory reviews recheck the current cap immediately before spawning and deliver an actionable refusal. Active/concurrent runs can overshoot; unpriced usage refuses new runs until repaired, and external charges are outside the channel ledger.
+
+## Enterprise organization controls
+
+The following capabilities require an effective Enterprise license (including use of previously
+saved configuration after downgrade or expiry):
+
+- Skill preferred-model switching: opt a conversation into honoring a skill's engine/model preference.
+- Exact company email-domain auto-approval for new users and policy application to existing users.
+- A dedicated Codex login per conversation, separate from the gateway login.
+- The external skill-catalog MCP endpoint and its catalog/user access tokens.
+- Organization environment variables shared across conversations.
+- Google Drive workspace synchronization, both scheduled and on demand.
+- Channel skill templates and their inherited skill grants.
+- Per-channel monthly USD spending limits.
+
+Other tiers retain ordinary skills, channel/personal environment variables, the shared gateway
+Codex login, manual user approval and standard chat connectors. Stored Enterprise configuration
+is preserved when an entitlement expires; it does not activate Enterprise behavior. A channel
+configured with a dedicated Codex login is refused rather than silently switched to another account.
+
+A spending limit is an admission control against the channel's recorded spend in the current UTC
+calendar month. It is not a provider billing limit: an in-flight run can take recorded spend above
+the cap, concurrent runs can overshoot, and provider-side costs are not reserved in advance.
+`monthlySpendingLimitUSD: null` means no cap; a configured cap is a positive finite USD amount.
+A current-month usage row with unknown cost refuses new runs until pricing is repaired or an
+admin clears the cap. A saved cap also refuses new runs after downgrade; an admin can clear it
+without Enterprise, so the safety control never silently disappears.
+See [license keys](docs/LICENSE-KEYS.md#enterprise-organization-controls) and the regression checks
+under **Enterprise organization controls** in `TEST-PLAN.md`.
+
+
+- **SSH engine status bars.** Prepared SSH sessions give Claude a coloured footer with the live model, reasoning effort, context used percentage/window size, folder, Git branch, session cost and available 5h/7d quota usage. Missing context stays `--%` until reported; context uses the current input/cache snapshot, never cumulative tokens. Codex uses its native footer for model with reasoning, context used percentage, folder, branch and available quotas. Model/effort changes follow native live state. Settings are session-scoped, refreshed on SSH preparation; no image rebuild is needed. Reopen Claude/Codex after reconnecting to load the change.
 
 - **Consistent DM network policy.** The egress proxy resolves the same current organization DM template policy as engine turns. User/admin template edits take effect on the next request, including OFF overriding a stale saved ON; custom DMs and linked workspaces retain their own resolved policy. The resolver is shared without importing the run orchestrator into the proxy.
 
@@ -9,7 +41,7 @@
 
 - **Skill publication recovery.** Failed repository updates carry an explicit publication recovery pin, released after a successful publish retry or update (including identical-byte retries). Source sync cannot discard the protected edit; recovery resumes at the published revision. Manual, legacy and approved source-override pins remain intentional. Skill metadata reports current/effective revisions and the pin reason; the library labels publication recovery separately.
 
-- **Model-specific skills.** A skill may declare the model it works best with in its SKILL.md frontmatter (`model: gpt-6.1-sol`, `model: sonnet`); the engine is derived from the model and nothing else is declared. Every materialized copy of such a skill carries one instruction line asking the model to call the gateway tool `use_skill` when it starts FOLLOWING the skill (reading or comparing skills switches nothing). The live turn decides: with the per-channel switch **Allow skill engine and model swapping** (`skillRuntimeSwap`, off by default; admin UI Runtime pane, Slack Settings mode ticks, `set_channel_skill_swap` for managers, audited) on and no person's pin on the thread, a model of the SAME engine resumes the SAME session with the preferred model (the previous attempt ends on request, its spend is banked on its own model, the reply carries a "Switched this thread to …" note and the footer names the new model) and sticks on the thread as a skill preference below the `/model` pin and above the channel default; a preferred model on the OTHER engine is delegated through `run_agent_in_background`, which now accepts `engine`/`model` overrides validated against the enabled, channel-approved engines; a second skill with another model in the same turn is advised to use a subagent. A pin, the switch being off, an unavailable engine or an unknown model all answer "continue with the current model". Thread runtime reset clears the preference with the pin. Events `run_skill_swap_decision` / `run_skill_swap`. Authoring: `create_skill` and `update_skill` take an optional `model` argument that writes (or, with `""`, clears) the `model:` frontmatter line — a model-only update needs no files — refusing a model no engine recognizes; the skill-authoring guide documents the key, and the library's skill detail and `/api/skills` show the preferred model.
+- **Model-specific skills.** A skill may declare the model it works best with in its SKILL.md frontmatter (`model: gpt-6.1-sol`, `model: sonnet`); the engine is derived from the model and nothing else is declared. Every materialized copy of such a skill carries one instruction line asking the model to call the gateway tool `use_skill` when it starts FOLLOWING the skill (reading or comparing skills switches nothing). The live turn decides: with the per-channel switch **Allow skill engine and model swapping** (`skillRuntimeSwap`, off by default; admin UI Runtime pane, Slack Settings mode ticks, `set_channel_skill_swap` for managers, audited) on and no person's pin on the thread, a model of the SAME engine resumes the SAME session with the preferred model (the previous attempt ends on request, its spend is banked on its own model, the reply carries a "Switched this thread to …" note and the footer names the new model) and sticks on the thread as a skill preference below the `/model` pin and above the channel default; a preferred model on the OTHER engine is delegated through `run_agent_in_background`, which now accepts `engine`/`model` overrides validated against the enabled, channel-approved engines; a second skill with another model in the same turn is advised to use a subagent. A pin, the switch being off, an unavailable engine or an unknown model all answer "continue with the current model". Thread runtime reset clears the preference with the pin. Events `run_skill_swap_decision` / `run_skill_swap`. Authoring: `create_skill` and `update_skill` take an optional `model` argument that writes (or, with `""`, clears) the `model:` frontmatter line — a model-only update needs no files — refusing a model no engine recognizes; the skill-authoring guide documents the key, and the library's skill detail and table, `/api/skills`, `list_skills` / `get_skill_info` / `show_channel_skills`, and the Slack Settings → Skills page show the preferred model. Microsoft Teams settings (Access rows, channels and DMs) and Google Chat (`/settings skillswap on|off`) expose the same switch through the shared guarded settings action.
 
 - SSH egress approval accepts exact public IPv4 and IPv6 addresses as well as DNS hostnames. Approved literals are retained by the proxy’s raw-tunnel filter; private/loopback/metadata addresses remain blocked, and secret-host declarations remain DNS-only.
 
@@ -18,6 +50,10 @@
 - `allow_channel_ssh_host` posts a durable approval for one public SSH destination. Any currently authorized channel member with write access can approve it; no admin or `/sudo` is needed. Approval appends to this channel’s `egressRawHosts` without replacing other entries. Cards disclose supported TCP ports 22, 5432 and 6543; Auto never approves them, and network-off/private-address protections remain enforced.
 
 - Invalid legacy skill-folder grants are omitted from Claude plugins and the Codex personal catalog. The reply names folders missing a regular `SKILL.md`; remaining skills continue loading and source folders/grants remain intact.
+
+## Skill ownership terminology
+
+- Skills managed directly in the catalog are labelled **Gateway-owned** in the Skills catalog, owner filter, creation form, assignment picker and MCP guidance. Personal/channel/organization scope remains independent; internal `ownerKind: "local"` values remain compatible.
 
 ## Company email domain auto-approval
 

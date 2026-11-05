@@ -1,3 +1,4 @@
+import { enterpriseFeatureEnabled } from "../../ee/feature-entitlements.js";
 // Placeholder grants: what a channel container holds instead of a secret, and how the proxy gets
 // back to the real value.
 //
@@ -157,6 +158,8 @@ async function cachedRelayToken(secretName, deps, channelId = "") {
     : (deps.relayToken || resolveContainerClaudeToken);
   const now = Date.now();
   const meta = codexSecret ? await channelMetaFor(channelId, deps) : null;
+  // An existing dedicated-login relay must pause immediately, including warm cached tokens.
+  if (codexSecret && meta?.codexAuthSource === "channel" && !enterpriseFeatureEnabled("channelCodexLogin")) return "";
   const cacheKey = codexSecret ? `${secretName}:${channelId}:${meta?.codexAuthSource || "gateway"}` : secretName;
   let cache = relayCaches.get(cacheKey);
   if (!cache || now - cache.at > RELAY_CACHE_MS) {
@@ -207,6 +210,7 @@ export async function resolveGrantMaterial(row, deps = {}) {
     return { value: await cachedRelayToken(name, deps, row.channelId), entry: null, exists: true };
   }
   if (row.scope === "organization") {
+    if (!enterpriseFeatureEnabled("organizationVariables")) return { value: "", entry: null, exists: false };
     const entry = (deps.orgEntries ? deps.orgEntries() : getOrgEnv())[name] || null;
     const values = await (deps.resolveOrgEnv || resolveOrgEnv)();
     return { value: String(values[name] || ""), entry, exists: Boolean(entry) };
@@ -237,6 +241,8 @@ export async function resolveGrantValue(row, deps = {}) {
 export async function resolveEgressGrant(core, deps = {}) {
   const row = lookupGrant(core);
   if (!row) return null;
+  // Check entitlement before the material cache: downgrade must stop existing placeholders too.
+  if (row.scope === "organization" && !enterpriseFeatureEnabled("organizationVariables")) return null;
   const now = Date.now();
   let material = materialCache.get(row.placeholder);
   if (row.scope === "relay" || !material || now - material.at > MATERIAL_CACHE_MS) {
@@ -288,7 +294,7 @@ export async function resolveEgressRunEnv({ meta = {}, channelId = "", authorId 
   const empty = { env: {}, scopes: {}, placeholders: {}, hosts: {}, unprotected: [], withheld: [], approval: [], realValues: [], redactionValues: [], personalPaused: false };
   if (clean) return empty;
   const [org, user, channel] = await Promise.all([
-    (deps.resolveOrgEnv || resolveOrgEnv)(),
+    enterpriseFeatureEnabled("organizationVariables") ? (deps.resolveOrgEnv || resolveOrgEnv)() : {},
     (deps.resolveUserEnv || resolveUserEnv)(authorId, { untrustedPrincipal }),
     (deps.resolveChannelEnv || resolveChannelEnv)(meta),
   ]);
@@ -297,7 +303,7 @@ export async function resolveEgressRunEnv({ meta = {}, channelId = "", authorId 
   const realValues = [...new Set([...Object.values(safeSpawnEnv(org)), ...Object.values(safeSpawnEnv(user)), ...Object.values(safeSpawnEnv(channel))])];
   const personalOwner = untrustedPrincipal ? "" : String(authorId || "");
   const entries = {
-    organization: deps.orgEntries ? deps.orgEntries() : getOrgEnv(),
+    organization: enterpriseFeatureEnabled("organizationVariables") ? (deps.orgEntries ? deps.orgEntries() : getOrgEnv()) : {},
     personal: personalOwner ? await (deps.userEntries || getUserEnv)(personalOwner) : {},
     channel: normalizeChannelEnv(meta?.env),
   };

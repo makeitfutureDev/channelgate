@@ -1,4 +1,5 @@
 import { assertChannelBudget, budgetRefusal } from "./channel-budget.js";
+import { requireEnterpriseFeature } from "../ee/feature-entitlements.js";
 import { effectiveMeta } from "./effective-meta.js";
 // Orchestrates a single authorized message end-to-end: provision the gated folder, resolve
 // the thread session, build the per-run MCP config, decide admin escalation, and run the
@@ -763,6 +764,7 @@ async function runMessageImpl({ channelId, authorId, workspaceId = "", text, thr
   // engine, then the global default. For an EXISTING thread this is only the requested engine:
   // the session's own engine can still outrank a channel/global value (see decideThreadEngine).
   const channelCodexLocked = meta.codexAuthSource === "channel";
+  if (channelCodexLocked) requireEnterpriseFeature("channelCodexLogin");
   const threadEngine = channelCodexLocked || (overrides?.engine && ENGINES.includes(overrides.engine)) ? "" : await getThreadEngine(entry.slug, threadKey);
   const channelEngine = channelCodexLocked ? "codex" : ENGINES.includes(meta.engine) ? meta.engine : "";
   let engine = channelCodexLocked ? "codex" : threadEngine || channelEngine || getEngine();

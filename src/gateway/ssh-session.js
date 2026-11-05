@@ -34,7 +34,7 @@
 // session ends. Everyone in a container is one uid, so these are per developer for correctness,
 // not secrecy from each other — the same trust class as the box itself (docs/SSH-ACCESS.md).
 import path from "node:path";
-import { mkdirSync, writeFileSync, chmodSync, renameSync, rmSync } from "node:fs";
+import { mkdirSync, writeFileSync, chmodSync, renameSync, rmSync, readFileSync } from "node:fs";
 import { allowedFsRoot } from "../web/security.js";
 import { workspaceRoot } from "../config/paths.js";
 import { safeSpawnEnv } from "../config/channel-env.js";
@@ -55,6 +55,16 @@ import { resolveRunIntegrations } from "./run-integrations.js";
 import { SSH_TOOLSET } from "../mcp/gateway-server.js";
 import { containerSshDir, EGRESS_CONNECT_HELPER, sessionEgressEnv } from "./ssh-access.js";
 import { clearRemoteMcps, hasRemoteMcps, releaseRemoteMcps } from "../mcp/remote-mcp-registry.js";
+
+// Native Codex TUI fields, ordered so model/effort and context survive narrow terminals.
+export const SSH_CODEX_STATUS_LINE = ["model-with-reasoning", "context-used", "current-dir", "git-branch", "five-hour-limit", "weekly-limit"];
+const claudeStatuslineSource = readFileSync(new URL("./ssh-statusline.js", import.meta.url), "utf8");
+function withSshStatusline(settings, userDir) {
+  const helper = path.join(userDir, "statusline.mjs");
+  writePrivate(helper, claudeStatuslineSource);
+  const quoted = `'${helper.replaceAll("'", "'\\''")}'`;
+  return { ...settings, statusLine: { type: "command", command: `node ${quoted}`, padding: 0 } };
+}
 
 export const SSH_SESSION_ORIGIN = "ssh_session";
 export const SSH_USERS_SUBDIR = "users";
@@ -289,7 +299,7 @@ async function prepareCodexSessionFiles({ target, userDir, integrations, meta, c
     writeFileSync(spec.path, headerHelperSource({ ...spec, bundlePath: secretBundlePath }), { mode: 0o700 });
     chmodSync(spec.path, 0o700);
   }
-  const overrides = codexSessionOverrides(args);
+  const overrides = [...codexSessionOverrides(args), `tui.status_line=${JSON.stringify(SSH_CODEX_STATUS_LINE)}`];
   writePrivate(path.join(userDir, "codex-args.sh"), renderCodexArgsScript(overrides));
   await installWrapper(target, cliBin, runCommand ? { runCommand: (bin, a, o) => runCommand(a, o) } : {});
   const servers = [...new Set(overrides.filter((v) => v.startsWith("mcp_servers.")).map((v) => v.split(".")[1]))];
@@ -377,7 +387,7 @@ export async function prepareSshSession({ target, entry, meta = {}, user, cliBin
   chmodSync(userDir, 0o700);
   try {
     const lockdown = await buildLockdown({ ...meta, _slug: slug }, { target });
-    writePrivate(path.join(userDir, "settings.json"), `${JSON.stringify(lockdown, null, 2)}\n`);
+    writePrivate(path.join(userDir, "settings.json"), `${JSON.stringify(withSshStatusline(lockdown, userDir), null, 2)}\n`);
   } catch (error) {
     result.problems.push(`lockdown: ${String(error?.message || error).slice(0, 160)}`);
   }
@@ -399,7 +409,7 @@ export async function prepareSshSession({ target, entry, meta = {}, user, cliBin
     if (Object.keys(integrations.customMcps || {}).length) {
       // Names only: an SSH session is always the container, whose entry is the relay bridge.
       const lockdown = admitCustomMcpsInSettings(await buildLockdown({ ...meta, _slug: slug }, { target }), Object.keys(integrations.customMcps).map((name) => ({ name })));
-      writePrivate(path.join(userDir, "settings.json"), `${JSON.stringify(lockdown, null, 2)}\n`);
+      writePrivate(path.join(userDir, "settings.json"), `${JSON.stringify(withSshStatusline(lockdown, userDir), null, 2)}\n`);
     }
     writePrivate(path.join(userDir, "mcp.json"), runtime.mcpConfigJson);
     result.mcpServers = Object.keys(JSON.parse(runtime.mcpConfigJson).mcpServers || {});

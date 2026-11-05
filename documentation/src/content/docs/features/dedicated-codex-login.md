@@ -3,6 +3,9 @@ title: A dedicated Codex login for a conversation
 description: Select a separate Codex account without falling back to another conversation or gateway login.
 ---
 
+**Enterprise availability.** Dedicated channel Codex authentication requires an effective Enterprise license. A configured dedicated-login channel refuses a run after downgrade rather than silently using the shared gateway account. Shared gateway Codex authentication remains available in other tiers.
+
+
 A conversation can use the gateway's Codex connection or its own dedicated Codex login. This separates the authentication source for that conversation while leaving Slack and Claude on their existing gateway connections.
 
 ## Select the authentication source

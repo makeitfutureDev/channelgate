@@ -380,18 +380,16 @@ const CANONICAL_CTE = `WITH component_rollup AS (
     FROM usage u LEFT JOIN component_rollup c ON c.usage_id = u.id
 )`;
 
-// Budget accounting deliberately ignores dashboard history cutoffs and row limits.
-// Use reconciled component totals, exactly like the usage dashboard, without double counting.
-export function channelMonthSpend(channelId, now = new Date()) {
-  const start = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
-  const end = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 1));
+// Budget admission uses the complete ledger, independent of UI history retention and row limits.
+export function monthlyChannelSpend(channelId, now = Date.now()) {
+  const date = new Date(now);
+  const start = new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), 1)).toISOString();
+  const end = new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth() + 1, 1)).toISOString();
   const row = getDb().prepare(`${CANONICAL_CTE}
-    SELECT COALESCE(SUM(MAX(0, canonical_cost_usd)), 0) AS spent,
-           SUM(CASE WHEN canonical_cost_usd IS NULL THEN 1 ELSE 0 END) AS unpriced
-      FROM canonical_usage WHERE channel_id = ? AND ts >= ? AND ts < ?`)
-    .get(channelId, start.toISOString(), end.toISOString());
-  return { month: start.toISOString().slice(0, 7), resetsAt: end.toISOString(),
-    spentUSD: Number(row.spent.toFixed(6)), unpricedRuns: row.unpriced || 0 };
+    SELECT COALESCE(SUM(canonical_cost_usd), 0) AS spent,
+           COALESCE(SUM(CASE WHEN canonical_cost_usd IS NULL THEN 1 ELSE 0 END), 0) AS unpriced
+      FROM canonical_usage WHERE channel_id = ? AND ts >= ? AND ts < ?`).get(channelId, start, end);
+  return { month: start.slice(0, 7), spentUSD: Number(row.spent.toFixed(6)), unpricedRuns: Number(row.unpriced) };
 }
 
 // Per-MODEL attribution over the same ledger. A run is one row with one `model`, but a Codex run

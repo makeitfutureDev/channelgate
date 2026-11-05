@@ -1,3 +1,4 @@
+import { enterpriseFeatureEnabled, requireEnterpriseFeature } from "../../ee/feature-entitlements.js";
 // Channel skill templates: "this channel follows the Development template". A template is data
 // (a row: explicit skill slugs and/or categories) edited under Settings → Access Templates; the
 // four seeded ones exist so a fresh deployment has something to assign, and admins add more.
@@ -63,6 +64,7 @@ export function listTemplateSummaries() {
 
 // The template a conversation follows (by its stored slug), or null.
 export function templateOfMeta(meta) {
+  if (!enterpriseFeatureEnabled("skillTemplates")) return null;
   const key = typeof meta?.skillTemplate === "string" ? meta.skillTemplate.trim() : "";
   return key ? getTemplate(key) : null;
 }
@@ -134,6 +136,7 @@ export function withTemplateSkills(meta) {
 // whatever the template says), and the EFFECTIVE union the conversation actually pays. Reporting
 // the tier alone understated a real conversation by the whole organization tier.
 export function previewTemplate(templateKey, meta = {}, { additions = null, orgSkills = null } = {}) {
+  if (templateKey) requireEnterpriseFeature("skillTemplates");
   const template = templateKey ? getTemplate(templateKey) : null;
   if (templateKey && !template) return null;
   const currentTier = channelSkillGrants(meta);
@@ -171,6 +174,7 @@ export function previewTemplate(templateKey, meta = {}, { additions = null, orgS
 export async function assignTemplateToChannel(channelSlug, templateKey) {
   const key = String(templateKey || "").trim();
   const clearing = !key || key.toLowerCase() === "none";
+  if (!clearing) requireEnterpriseFeature("skillTemplates");
   const template = clearing ? null : getTemplate(key);
   if (!clearing && !template) return null;
   let preview = null;

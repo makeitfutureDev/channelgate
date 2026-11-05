@@ -11,12 +11,13 @@ const ACCESS = {
   auto: { field: 'autoMode', values: ['on', 'off'] },
   lean: { field: 'cleanMode', values: ['on', 'off'] },
   network: { field: 'allowNetwork', values: ['on', 'off'] },
+  skillswap: { field: 'skillRuntimeSwap', values: ['on', 'off'] },
 };
 const RUNTIME = ['engine', 'model', 'effort'];
 
 export const GOOGLE_CHAT_SETTINGS_COMMANDS = [
   '`/settings mode read|worker|admin`',
-  '`/settings auto on|off` · `/settings lean on|off` · `/settings network on|off`',
+  '`/settings auto on|off` · `/settings lean on|off` · `/settings network on|off` · `/settings skillswap on|off`',
   '`/settings access approved|admins|none` · `/settings managers admins|members|custom`',
   '`/settings vpn on|off`',
   '`/settings [thread|channel] engine|model|effort <value|default>` (thread is the default)',

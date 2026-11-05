@@ -6,11 +6,12 @@ import { mkdir } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import express from "express";
-import { ensureTestEnv, tempDir } from "./helpers.js";
+import { ensureTestEnv, tempDir, testLicenseEnv } from "./helpers.js";
 
 ensureTestEnv();
+testLicenseEnv();
 
-test("monthly USD budget saves and persists unlimited, zero and decimal values", { skip: !process.env.CG_BROWSER_MODULE }, async (t) => {
+test("monthly USD budget saves and persists unlimited and decimal values", { skip: !process.env.CG_BROWSER_MODULE }, async (t) => {
   const { chromium } = await import(process.env.CG_BROWSER_MODULE);
   const root = tempDir("cg-workspace-browser-");
   process.env.CG_FS_ROOT = root;
@@ -60,18 +61,18 @@ test("monthly USD budget saves and persists unlimited, zero and decimal values",
   await page.goto(`http://127.0.0.1:${server.address().port}/conversations/channel/C_FOLDER_WARNING_A`);
 
 
-  await page.locator('#channel-detail .subtab[data-pane="access"]').click();
-  const input = page.locator('#channel-detail .ch-budget');
+  await page.locator('#channel-detail .subtab[data-pane="runtime"]').click();
+  const input = page.locator('#channel-detail .ch-monthly-spending-limit');
   await input.waitFor();
   assert.equal(await input.inputValue(), '');
-  for (const [value, expected] of [['12.34', 12.34], ['0', 0], ['', null]]) {
+  for (const [value, expected] of [['12.34', 12.34], ['', null]]) {
     await input.fill(value);
     const saved = page.waitForResponse(r => r.url().endsWith('/channels/C_FOLDER_WARNING_A/meta') && r.request().method() === 'PUT');
     await page.locator('#channel-detail .save-channel').click();
     assert.equal((await saved).status(), 200);
-    assert.equal((await getChannelMeta((await getChannelEntry('C_FOLDER_WARNING_A')).slug)).monthlyBudgetUSD, expected);
+    assert.equal((await getChannelMeta((await getChannelEntry('C_FOLDER_WARNING_A')).slug)).monthlySpendingLimitUSD, expected);
     await page.reload();
-    await page.locator('#channel-detail .subtab[data-pane="access"]').click();
+    await page.locator('#channel-detail .subtab[data-pane="runtime"]').click();
     await input.waitFor();
     assert.equal(await input.inputValue(), value);
   }

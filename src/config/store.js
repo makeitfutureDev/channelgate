@@ -1,3 +1,5 @@
+import { assertSpendingLimitUpdate } from "../ee/channel-spending.js";
+import { requireEnterpriseFeature } from "../ee/feature-entitlements.js";
 // Config store — the single source of truth for users, the channel index, and per-channel meta.
 // Backed by SQLite (see ../db). Functions keep their original async signatures so the ~40 call
 // sites are unchanged; the underlying reads/writes are synchronous SQLite calls that resolve
@@ -210,7 +212,7 @@ export function defaultChannelMeta({ channelId, name, type, isDM, platform }) {
     isDM: Boolean(isDM),
     // The chat surface. Read through platformOr()/capabilitiesFor() — never compared to a literal.
     platform: isPlatformId(platform) ? platform : DEFAULT_PLATFORM,
-    monthlyBudgetUSD: null, // null = unlimited; admin UI only, per UTC calendar month
+    monthlySpendingLimitUSD: null, // null = unlimited; admin UI only, per UTC calendar month
     access: "approved", // who can USE the channel: "approved" | "admins" | "none" (set from the gateway
     // default at join). Governs who's auto-granted in a channel; allowedUsers is the manual override.
     // Who can MANAGE this channel (modes, network, MCP servers, secrets' modes) from chat:
@@ -355,6 +357,14 @@ function snapshotWorkspaceFollowers(db, slug, current, next, effectiveWorkDir, c
 
 // Gate policy writes at the store boundary so internal callers and tools share the same rules.
 function validateChannelPolicy(current, next) {
+  if (!Object.hasOwn(next, "monthlySpendingLimitUSD") && Object.hasOwn(current || {}, "monthlySpendingLimitUSD")) {
+    next.monthlySpendingLimitUSD = current.monthlySpendingLimitUSD;
+  }
+  if (next.skillTemplate && next.skillTemplate !== current?.skillTemplate) requireEnterpriseFeature("skillTemplates");
+  if (next.syncDriveFolder && next.syncDriveFolder !== current?.syncDriveFolder) requireEnterpriseFeature("driveSync");
+  if (Object.hasOwn(next, "monthlySpendingLimitUSD")) next.monthlySpendingLimitUSD = assertSpendingLimitUpdate(current, next.monthlySpendingLimitUSD);
+  if (next.skillRuntimeSwap === true && current?.skillRuntimeSwap !== true) requireEnterpriseFeature("skillModelRouting");
+  if (next.codexAuthSource === "channel" && current?.codexAuthSource !== "channel") requireEnterpriseFeature("channelCodexLogin");
   // A whole-record save omitting an existing restriction must not clear it by accident.
   if (!Object.hasOwn(next, "approvedEngines") && Object.hasOwn(current || {}, "approvedEngines")) {
     next.approvedEngines = current.approvedEngines;
@@ -381,8 +391,6 @@ export async function saveChannelMeta(slug, meta) {
     // Only atomic lifecycle patches can change admission; stale saves cannot undo a removal.
     const input = { ...meta };
     if (current) {
-      // Omitted on an older whole-record save means preserve the admin budget.
-      if (!Object.hasOwn(input, "monthlyBudgetUSD") && Object.hasOwn(current, "monthlyBudgetUSD")) input.monthlyBudgetUSD = current.monthlyBudgetUSD;
       for (const field of ["archived", "archivedAt", "archivedReason", "botMembership", "botMembershipEventTs"]) {
         if (Object.hasOwn(current, field)) input[field] = current[field];
         else delete input[field];

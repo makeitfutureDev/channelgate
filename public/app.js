@@ -2165,7 +2165,6 @@ function renderChannelDetail(ch) {
   flagEls.cleanMode.checked = !!meta.cleanMode;
   const networkBox = card.querySelector(".ch-network");
   networkBox.checked = !!meta.allowNetwork;
-  card.querySelector(".ch-budget").value = meta.monthlyBudgetUSD ?? "";
   showBudgetStatus(card.querySelector(".ch-budget-status"), ch.channelId);
 
   // Capability radio cards drive the hidden <select class="ch-profile"> (what the save reads).
@@ -2328,6 +2327,21 @@ function renderChannelDetail(ch) {
   paintHarnessPolicy();
   void api("/api/license").then((license) => {
     if (!harnessPolicy.isConnected) return;
+    for (const [selector, key] of [[".ch-skillswap", "skillModelRouting"], [".ch-skill-template", "skillTemplates"], [".ch-syncdrive", "driveSync"]]) {
+      const control = card.querySelector(selector);
+      if (control) {
+        const entitled = license.features?.[key] === true;
+        control.title = entitled ? "" : "Requires Enterprise; existing configuration can be cleared";
+        if (control.type === "checkbox") control.disabled = !entitled && !control.checked;
+        else if (control.tagName === "SELECT") for (const option of control.options) option.disabled = !entitled && Boolean(option.value);
+        else control.readOnly = !entitled && !control.value;
+      }
+    }
+    const dedicatedOption = card.querySelector('.ch-codex-auth-source option[value="channel"]');
+    if (dedicatedOption) dedicatedOption.disabled = license.features?.channelCodexLogin !== true;
+    if (license.features?.channelCodexLogin !== true) {
+      card.querySelectorAll(".ch-auth-channel-panel input, .ch-auth-channel-panel select, .ch-auth-channel-panel button:not(.ch-codex-device-cancel)").forEach((control) => { control.disabled = true; });
+    }
     harnessPolicy.disabled = license.features?.channelHarnessPolicy !== true;
     harnessHelp.textContent = harnessPolicy.disabled
       ? "Enterprise is required to change approvals. Any saved restriction remains enforced."
@@ -2335,6 +2349,8 @@ function renderChannelDetail(ch) {
   }).catch(() => { harnessHelp.textContent = "Could not verify Enterprise access. Reopen this channel to retry; saved approvals are preserved."; });
 
   const authSource = card.querySelector(".ch-codex-auth-source");
+  const spendingLimitInput = card.querySelector(".ch-monthly-spending-limit");
+  spendingLimitInput.value = meta.monthlySpendingLimitUSD ?? "";
   const channelPanel = card.querySelector(".ch-auth-channel-panel");
   const modelSelect = card.querySelector(".ch-model");
   const effortSelect = card.querySelector(".ch-effort");
@@ -2517,7 +2533,6 @@ function renderChannelDetail(ch) {
           adminMode: card.querySelector(".ch-admin").checked,
           allowBash: card.querySelector(".ch-bash").checked,
           allowNetwork: card.querySelector(".ch-network").checked,
-          monthlyBudgetUSD: readBudgetInput(card.querySelector(".ch-budget")),
           autoMode: card.querySelector(".ch-auto").checked,
           cleanMode: card.querySelector(".ch-clean").checked,
           skillRuntimeSwap: card.querySelector(".ch-skillswap").checked,
@@ -2525,6 +2540,8 @@ function renderChannelDetail(ch) {
           noDefaultTokens: card.querySelector(".ch-nodefaulttokens").checked,
           engine: engineSelect.value,
           codexAuthSource: card.querySelector(".ch-codex-auth-source").value,
+          ...(spendingLimitInput.value !== String(ch.meta?.monthlySpendingLimitUSD ?? "")
+            ? { monthlySpendingLimitUSD: spendingLimitInput.value.trim() ? Number(spendingLimitInput.value) : null } : {}),
           workDir: card.querySelector(".ch-workdir").value,
           syncDriveFolder: card.querySelector(".ch-syncdrive").value,
           model: card.querySelector(".ch-model").value,
@@ -2879,12 +2896,12 @@ function buildConfigEditor(cfg = {}) {
 
 // Budgets are conversation-local and administered here, outside shared workspace/template policy.
 function readBudgetInput(input) {
-  if (!input.checkValidity()) throw new Error("Enter a non-negative monthly USD budget with at most two decimal places, or leave it blank for unlimited.");
+  if (!input.checkValidity()) throw new Error("Enter a positive monthly USD budget, or leave it blank for unlimited.");
   return input.value === "" ? null : Number(input.value);
 }
 function showBudgetStatus(element, channelId) {
   api(`/api/channels/${encodeURIComponent(channelId)}/budget`).then((budget) => {
-    element.textContent = `${budget.month} UTC: $${budget.spentUSD.toFixed(2)} recorded${budget.limitUSD === null ? " · Unlimited" : ` of $${budget.limitUSD.toFixed(2)}${budget.exhausted ? " · New agent runs paused" : ""}`}${budget.unpricedRuns ? ` · ${budget.unpricedRuns} unpriced run(s) excluded` : ""}`;
+    element.textContent = `${budget.month} UTC: $${budget.spentUSD.toFixed(2)} recorded${budget.limitUSD === null ? " · Unlimited" : ` of $${budget.limitUSD.toFixed(2)}${!budget.allowed ? " · New agent runs paused" : ""}`}${budget.unpricedRuns ? ` · ${budget.unpricedRuns} unpriced run(s); repair pricing to resume` : ""}`;
   }).catch(() => { element.textContent = "Budget usage unavailable. Reopen this conversation to retry."; });
 }
 
@@ -2982,8 +2999,8 @@ function renderDmDetail(id) {
 
   const budgetField = document.createElement("label");
   budgetField.className = "field";
-  budgetField.innerHTML = `<span>Monthly budget (USD)</span><input type="number" class="dm-budget" min="0" step="0.01" placeholder="Unlimited" /><em class="state">Blank = unlimited. Zero pauses new agent runs. Resets monthly at 00:00 UTC. Active runs may exceed the limit; unpriced usage and external service charges are excluded.</em><em class="state dm-budget-status" role="status"></em>`;
-  budgetField.querySelector("input").value = dm.meta?.monthlyBudgetUSD ?? "";
+  budgetField.innerHTML = `<span>Monthly budget (USD) · Enterprise</span><input type="number" class="dm-budget" min="0.01" step="any" placeholder="Unlimited" /><em class="state">Blank = unlimited. Resets monthly at 00:00 UTC. Active runs may exceed the limit; unpriced usage pauses new runs until pricing is repaired. External service charges are excluded.</em><em class="state dm-budget-status" role="status"></em>`;
+  budgetField.querySelector("input").value = dm.meta?.monthlySpendingLimitUSD ?? "";
   card.appendChild(budgetField);
   showBudgetStatus(budgetField.querySelector(".dm-budget-status"), dm.channelId);
   const customBox = document.createElement("div");
@@ -3012,11 +3029,11 @@ function renderDmDetail(id) {
     async () => {
       const tpl = tplSel.value;
       const values = tpl === "custom" && ed ? ed.getValues() : {};
-      const body = { template: tpl, monthlyBudgetUSD: readBudgetInput(budgetField.querySelector("input")), ...Object.fromEntries(Object.entries(values).filter(([key]) => !dm.meta?.workspaceLink?.fields?.includes(key))) };
+      const body = { template: tpl, monthlySpendingLimitUSD: readBudgetInput(budgetField.querySelector("input")), ...Object.fromEntries(Object.entries(values).filter(([key]) => !dm.meta?.workspaceLink?.fields?.includes(key))) };
       await api(`/api/dms/${encodeURIComponent(dm.channelId)}`, { method: "PUT", body: JSON.stringify(body) });
       showBudgetStatus(budgetField.querySelector(".dm-budget-status"), dm.channelId);
       dm.template = tpl;
-      dm.meta = { ...dm.meta, monthlyBudgetUSD: body.monthlyBudgetUSD };
+      dm.meta = { ...dm.meta, monthlySpendingLimitUSD: body.monthlySpendingLimitUSD };
       renderConvList();
     },
     () => renderDmDetail(id),
@@ -4373,24 +4390,30 @@ async function loadSettings() {
 // hand-written has*/last4 echoes, and an arbitrary-name secret bag behind it is exactly the shape
 // that erodes the "resolve a NAMED field" property web/secrets.js depends on.
 let orgSecretEditor = null;
+let orgSecretEntitled = null;
 async function loadOrgSecrets() {
   const host = document.getElementById("org-secrets-editor");
   if (!host) return;
   let vars = [];
+  const license = await api("/api/license").catch(() => ({ features: {} }));
+  const entitled = license.features?.organizationVariables === true;
   try {
     vars = (await api("/api/org-secrets")).vars || [];
   } catch {
     /* an older daemon, or a transient failure: the card renders empty rather than breaking Settings */
   }
-  if (orgSecretEditor) {
+  if (orgSecretEditor && orgSecretEntitled === entitled) {
     orgSecretEditor.setVars(vars);
     return;
   }
   host.textContent = "";
+  orgSecretEntitled = entitled;
   host.appendChild(secretEditorMarkup());
   const card = document.getElementById("org-secrets-card");
   orgSecretEditor = mountSecretEditor({
     root: card,
+    disabled: !entitled,
+    allowRemoval: true,
     vars,
     userName: (id) => USERS[id]?.name || "",
     endpoint: (name) => `/api/org-secrets/${encodeURIComponent(name)}`,
@@ -4433,6 +4456,11 @@ function paintLicense(l) {
   document.querySelector('#set-composio-mode option[value="sdk"]').disabled = l.features?.composioSdk !== true;
   document.getElementById("set-composio-sdk-key").disabled = l.features?.composioSdk !== true;
   syncComposioModeUi();
+  document.querySelectorAll('[id^="set-drivesync-"]').forEach((control) => {
+    if ("disabled" in control) { control.disabled = l.features?.driveSync !== true; control.title = control.disabled ? "Google Drive sync requires Enterprise" : ""; }
+  });
+  const domainToggle = document.getElementById("user-auto-approval-enabled");
+  if (domainToggle && !domainToggle.checked) domainToggle.disabled = l.features?.companyDomainApproval !== true;
 
   const banner = document.getElementById("license-banner");
   banner.className = `license-banner ${l.banner?.level || ""}`.trim();

@@ -1,3 +1,4 @@
+import { requireEnterpriseFeature } from "../../ee/feature-entitlements.js";
 // Mounted behind the existing admin authentication and origin guard.
 import { Router } from "express";
 import { getUsers, getUser } from "../../config/store.js";
@@ -27,6 +28,7 @@ export function createUserAutoApprovalRouter({ slack } = {}) {
   // no editable/cached email becomes an authorization credential. Other platforms approve on
   // their next authenticated inbound event when an email is available.
   for (const action of ["preview", "apply"]) router.post(`/user-auto-approval/${action}`, async (req, res, next) => {
+    try { requireEnterpriseFeature("companyDomainApproval"); } catch (error) { return next(error); }
     const client = slack?.getClient?.();
     if (!client) return res.status(503).json({ error: "Connect Slack to preview existing users. Other platforms are checked on their next message." });
     if (!getAutoApprovalPolicy().enabled) return res.status(400).json({ error: "Save and enable the policy first." });

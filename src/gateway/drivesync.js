@@ -1,3 +1,4 @@
+import { enterpriseFeatureEnabled, requireEnterpriseFeature } from "../ee/feature-entitlements.js";
 // Scheduled two-way Google Drive ↔ channel-folder sync, via `rclone bisync`.
 //
 // A channel with `meta.syncDriveFolder` set (a Drive folder link) gets its WHOLE working folder
@@ -491,6 +492,7 @@ export function __setDriveSyncContainerProbe(probe) { containerProbe = probe || 
 // work folder keeps its real path — it is what the channel sees). Tests with a fake rclone use the
 // host launcher.
 async function confinedRcloneLaunch({ bin, slug, localPath, stateDir, filtersFile, keyFile, buildArgs }) {
+  requireEnterpriseFeature("driveSync");
   const rclone = resolveBinary(bin);
   if (!rclone) throw new Error(`rclone not found (${bin})`);
   const base = `/cg-sync-${randomBytes(12).toString("hex")}`;
@@ -589,6 +591,7 @@ function clearWedgedNotice(slug) {
 // Sync one channel. Assumes the caller resolved config + eligibility. Serialized per-slug: a pass
 // that is already running (scheduled or manual) is never doubled — the caller gets `busy`.
 async function syncOne({ slug, channelId, folderId, meta, name = "" }, { bin, keyFile, subject, conflict, trigger = "schedule", resync = false }) {
+  requireEnterpriseFeature("driveSync");
   if (inFlight.has(slug)) return { busy: true }; // previous pass still running — skip this one
   inFlight.add(slug);
   startedAt.set(slug, { at: Date.now(), trigger });
@@ -622,6 +625,7 @@ async function syncOne({ slug, channelId, folderId, meta, name = "" }, { bin, ke
     const buildArgs = (p) => buildBisyncArgs({ localPath: p.localPath, folderId, keyFile: p.keyFile, subject, workDir: p.stateDir, conflict, firstRun, filtersFile: p.filtersFile, extraExcludes, recovery });
     let res;
     try {
+      requireEnterpriseFeature("driveSync");
       const { argv, cleanup } = await launch({ bin, slug, localPath, stateDir, filtersFile, keyFile, buildArgs });
       res = await runRclone(argv[0], argv.slice(1), workDir, { onTimeout: cleanup });
     } catch (error) {
@@ -668,6 +672,7 @@ async function syncOne({ slug, channelId, folderId, meta, name = "" }, { bin, ke
 // manual "Sync now" paths so both refuse for the same reasons: the global switch is the admin's
 // off switch for the WHOLE feature, manual runs included.
 export function resolveSyncConfig() {
+  if (!enterpriseFeatureEnabled("driveSync")) return { ok: false, error: "Google Drive synchronization requires Enterprise.", code: "enterprise_required" };
   if (!getDriveSyncEnabled()) return { ok: false, error: "Google Drive sync is turned off (Settings → Google Drive sync → Enable)." };
   const keyFile = resolveDriveSyncKeyFile();
   if (!keyFile) return { ok: false, error: "No service-account key configured (Settings → Google Drive sync)." };
@@ -733,8 +738,9 @@ const delay = (ms) => new Promise((resolve) => { setTimeout(resolve, ms).unref?.
 
 // Start one channel's bisync pass now, outside the schedule. The pass runs in the daemon and
 // outlives the caller; `waitMs` lets a caller (the agent tool) wait a bounded time for the outcome.
-// Returns { ok, started, busy, done, error, status } — never throws.
+// Returns { ok, started, busy, done, error, status }; an unlicensed start throws HTTP 403.
 export async function syncChannelNow(slug, { waitMs = 0, trigger = "manual", resync = false } = {}) {
+  requireEnterpriseFeature("driveSync");
   const cfg = resolveSyncConfig();
   if (!cfg.ok) return { ok: false, started: false, error: cfg.error, status: driveSyncStatus(slug) };
   const channels = await listChannels();
@@ -758,6 +764,7 @@ export async function syncChannelNow(slug, { waitMs = 0, trigger = "manual", res
 
 // Start a full sweep of every linked channel now. Returns immediately; poll driveSyncStatusAll().
 export async function syncAllNow() {
+  requireEnterpriseFeature("driveSync");
   const cfg = resolveSyncConfig();
   if (!cfg.ok) return { ok: false, started: false, error: cfg.error };
   const channels = selectSyncChannels(await listChannels());
@@ -780,8 +787,9 @@ export async function handleDriveSyncIpc({ action, slug, waitMs } = {}) {
 }
 
 // One-off connection test for the admin UI: does the service account authenticate + see the folder?
-// Returns { ok, output } — never throws. Used by the per-channel "Test" button.
+// Returns { ok, output }; an unlicensed test throws HTTP 403. Used by the per-channel "Test" button.
 export async function testChannelSync({ syncDriveFolder }) {
+  requireEnterpriseFeature("driveSync");
   const folderId = parseDriveFolderId(syncDriveFolder);
   if (!folderId) return { ok: false, output: "Not a valid Google Drive folder link." };
   const keyFile = resolveDriveSyncKeyFile();

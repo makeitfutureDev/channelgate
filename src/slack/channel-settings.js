@@ -1,3 +1,4 @@
+import { enterpriseFeatureEnabled } from "../ee/feature-entitlements.js";
 // Channel Settings modal for Slack. It mirrors the web conversation editor's safe channel-level
 // controls while keeping credential values write-only and re-authorizing every interaction in the
 // controller. Dangerous gateway-wide/admin-only settings remain in the web admin UI.
@@ -691,10 +692,11 @@ function modeRows(snapshot, state, { canEditAccess = false, canEnableAdmin = fal
   // already the current mode, so a manager's view shows the truth and can still leave Admin.
   const modes = ["read", "worker", ...(canEnableAdmin || current === "admin" ? ["admin"] : [])];
   const modeOptions = modes.map((value) => option(MODE_LABELS[value], value));
-  const flagOptions = flags.map((flag) => option(FLAG_LABELS[flag], flag));
+  const skillRoutingEnabled = enterpriseFeatureEnabled("skillModelRouting");
+  const flagOptions = flags.filter(flag => flag !== "skillRuntimeSwap" || skillRoutingEnabled || mode.skillRuntimeSwap).map((flag) => option(FLAG_LABELS[flag] + (flag === "skillRuntimeSwap" && !skillRoutingEnabled ? " (Enterprise required; turn off to clear)" : ""), flag));
   const chosen = flagOptions.filter((entry) => mode[entry.value]);
   return [
-    context("*Mode*"),
+    context("*Mode*" + (!skillRoutingEnabled ? " · Skill model swap requires Enterprise" : "")),
     { type: "actions", block_id: "cg_mode_row", elements: [{
       type: "static_select",
       action_id: dm ? CHANNEL_SETTINGS_DM_MODE_ACTION_ID : `${ACCESS_FIELD_PREFIX}mode`,
@@ -1022,7 +1024,10 @@ function skillsPage(snapshot, state) {
   const direct = new Set((skills.additional || []).map((value) => String(value).toLowerCase()));
   const fromTemplate = (skills.channel || []).filter((value) => !direct.has(String(value).toLowerCase()));
   const org = skills.organization || [];
-  const short = (list) => `${list.slice(0, 6).map(inlineCode).join(" ")}${list.length > 6 ? ` +${list.length - 6} more` : ""}`;
+  const models = skills.models || {};
+  const named = (value) => `${inlineCode(value)}${models[String(value).toLowerCase()] ? ` _(${escapeMrkdwn(models[String(value).toLowerCase()])})_` : ""}`;
+  const short = (list) => `${list.slice(0, 6).map(named).join(" ")}${list.length > 6 ? ` +${list.length - 6} more` : ""}`;
+  const preferring = [...direct].filter((value) => models[value]);
   return [
     templates.length
       ? selectRow({
@@ -1033,6 +1038,7 @@ function skillsPage(snapshot, state) {
       : fieldBlock("Template", "_none defined_"),
     context(`*Channel skills* · ${direct.size}`),
     ...skillPicker(CHANNEL_SETTINGS_SKILLS_SELECT_ACTION_ID, snapshot.skillPicker, "Add a skill…"),
+    ...(preferring.length ? [context(`Preferred models: ${preferring.slice(0, 8).map(named).join(" ")}`)] : []),
     ...(fromTemplate.length ? [context(`From the *${escapeMrkdwn(skills.template || "template")}* template: ${short(fromTemplate)}`)] : []),
     ...(org.length ? [context(`Always on from the organization (${org.length}): ${short(org)}`)] : []),
   ];

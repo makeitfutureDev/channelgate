@@ -1,16 +1,27 @@
 # ChannelGate — Test Plan
 
 
-## Monthly channel USD budgets
+## Monthly channel USD budget management
 
-- Automated regression: `node --test test/channel-budget.test.js test/memory-review.test.js test/license-run-gate.test.js`. Covers unlimited/zero, strict numeric validation, atomic invalid saves, audit, unrelated-save preservation, canonical component totals, UTC boundaries/year rollover, channel isolation, all task kinds, dual-engine/all-origin rejection, memory-review skip and live queued-policy recheck without an engine spawn.
-- Live Claude and Codex acceptance (pending; run each case on a disposable private channel with that engine selected):
-  1. Admin UI → conversation → Access → Monthly budget: blank/save/reopen remains unlimited; save $1.23 and reopen; negative or three-decimal values fail without changing the saved cap. Set zero and send `Reply with BUDGET-ACCEPTANCE`; expect the budget notice, no engine process/session or priced usage added. A non-admin channel manager has no budget editing control or authorized API route.
-  2. Seed the isolated fixture ledger with $1 canonical spend this UTC month (including a component override, memory review and background spend), plus costs from another month/channel. Cap at $1 blocks; raise to $2 admits; null removes the cap. Verify displayed spend matches canonical accounting. Move the fixture clock across the UTC month boundary; prior-month costs no longer block, with no metadata reset required.
-  3. Hold the fixture's only run slot; queue a request, then set cap to zero and release the slot. Expect refusal before engine spawn. Repeat a schedule, API and background-agent launch; each delivers the same actionable notice. Recheck a retry/fallback attempt after changing the cap while parked.
-  4. At zero, trigger a memory-review signal; expect `channel-budget-exhausted` and no reviewer process. Admit a turn below its cap and let it finish above: its recorded cost is retained, it finishes normally, and the next run/review is refused. Concurrent active runs can overshoot; no claim of a hard provider spending cap. Unpriced costs and external service charges remain explicitly excluded.
-- Browser acceptance passed in disposable Chromium at desktop and 390px width: `PLAYWRIGHT_BROWSERS_PATH=/opt/channelgate/browsers CG_BROWSER_MODULE=/usr/local/lib/node_modules/playwright/index.mjs node --test test/channel-budget-browser.test.js`; $12.34, zero and blank persist after reload, with no browser errors.
-- Private dual-engine acceptance definitions registered as BUDGET-01 through BUDGET-04; live executions remain pending.
+- Automated: `node --test test/channel-budget.test.js test/channel-spending.test.js test/memory-review.test.js test/license-run-gate.test.js`. Covers unlimited/positive-limit validation, invalid/atomic saves, audit, unrelated-save preservation, canonical totals, UTC month/year boundaries, channel isolation, all task kinds, both engines/all origins, memory-review skip, Enterprise entitlement preservation and queued-policy recheck without an engine spawn.
+- Browser: `PLAYWRIGHT_BROWSERS_PATH=/opt/channelgate/browsers CG_BROWSER_MODULE=/usr/local/lib/node_modules/playwright/index.mjs node --test test/channel-budget-browser.test.js`; decimal and blank values must persist after reload at desktop and 390px width, with no browser errors.
+- Live Claude and Codex (pending): in a disposable Enterprise channel, admin UI → Runtime → Monthly spending limit, save/reopen a positive amount; blank restores unlimited. With canonical recorded current UTC-month spend at the cap, send `Reply with BUDGET-ACCEPTANCE`; require the limit notice and no engine process. Raise/remove the cap and require admission. A non-admin channel manager has no budget setting control or authorized admin API route.
+- Isolated fixtures: count canonical root/components across memory and background tasks, exclude other channels/months; unpriced rows must fail closed until repaired. Cross the fixture clock's UTC month boundary and require automatic admission without resetting metadata. Hold one run slot, queue a request, exhaust its cap, release, and require no engine spawn; repeat schedule/API/background and fallback/retry paths.
+- Admit a run below its cap and let it finish above: retain its recorded cost, finish normally, refuse the next run/review. Concurrent active runs may overshoot. External provider/service charges are excluded. Private BUDGET-01 through BUDGET-04 definitions exist; live execution remains pending and must use the final positive-cap/unpriced-fail-closed contract.
+
+## SSH engine status bars (SSH-STATUS-01)
+
+- Automated: `node --test test/ssh-statusline.test.js test/ssh-session.test.js`. Verify the actual staged Claude command renders, retains lockdown settings and private file permissions, Codex overrides include native footer fields, current-context/cache calculations, live model/effort changes, missing/zero values, warning colours, malformed JSON and terminal control sanitization.
+- Live Claude: use `cg-testing-claude-auto`, an approved SSH developer key, a current candidate daemon and a freshly reconnected shell. Start `claude`, accept folder trust, send `Reply with OK`, then change model/effort with the native picker and send again. Require model and effort to follow the selection; context percentage/window match `/context`; folder/branch match the checked-out fixture; available cost/quota fields render without login data or credentials. Before the first response or after compacting, missing context must stay unknown. Resize the terminal and check legibility and green/amber/red thresholds using the staged formatter with owned JSON fixtures.
+- Live Codex: repeat in `cg-testing-codex-auto` with `codex`; require native footer model plus reasoning and used-context percent to agree with `/status`, and folder/branch/quotas when available. Change model/effort, resume, and verify the footer updates; launch with an explicit `-c tui.status_line` override and verify the user's CLI override wins. No changes to MCP, login, permission or network policy.
+- These are dual-engine SSH fixture cases; automated checks are not terminal-rendering/live acceptance. Live SSH visual acceptance remains pending until executed against the deployed candidate. New sessions load daemon changes after its next safe restart; no container image rebuild.
+
+## Skill ownership terminology (2026-11-04)
+
+- Wording-only, engine-independent: open Skills with a gateway-owned fixture (`ownerKind: "local"`) and a Git-source fixture. Require **Gateway-owned** in the catalog owner column/filter and creation form, and **Gateway-owned skills** in the assignment picker. Filter/select/save the gateway-owned fixture; API owner/filter values must remain `local` and the grant must persist. Repository-backed labels must remain distinct.
+- MCP: `list_skills` and `get_skill_info` on the same gateway-owned fixture must describe gateway ownership; catalog create/update/publish tool descriptions must use the same vocabulary. Existing skill CRUD, publishing and scope regression suites verify unchanged contracts.
+- Passed: 31 focused skill CRUD, publishing, admin UI and picker regression checks; static validation. Disposable Chromium acceptance passed for catalog owner/filter/create labels, distinct Git-source label, raw `owner=local` filter request, picker source label/filter/add and unchanged stored ownership. This wording-only check is engine-independent.
+- Existing full conversation/template browser suite: compact layout case passed; conversation navigation case timed out before reaching the skill picker (`#channel-detail .subtab[data-pane="skills"]`). Its unrelated full-flow acceptance remains unresolved.
 
 ## Slack email for password and code sign-in (2026-11-05)
 
@@ -58,6 +69,7 @@
 - Live Claude acceptance (pending): in `cg-testing-claude-bash`, turn **Allow skill engine and model swapping** on (Settings → Access ticks or `set_channel_skill_swap`), grant a disposable channel skill `swap-probe` whose SKILL.md declares `model: sonnet` and whose body says "reply with the word SWAPPED and the model you are". As Apps, in a thread whose channel default is Opus, ask "use the swap-probe skill". Pass only when the thread shows a `use_skill` tool row, the reply starts with the "Switched this thread to sonnet" note, the footer names sonnet, `run_skill_swap` is in Observability, and a plain follow-up in the same thread also runs on sonnet without a note. Then `/model` → this thread → opus and ask again: no switch, the tool reply says pinned. Turn the switch off and repeat in a new thread: no switch, the reply says swapping is OFF.
 - Live Codex acceptance (pending): same fixture in `cg-testing-codex-bash` with `model: gpt-6.1-sol` on a channel defaulting to another Codex model; pass rules identical, with `codex exec resume` carrying the new model. Cross-engine: in the Claude fixture grant a skill declaring `model: gpt-6.1-sol`; pass when the model calls `run_agent_in_background` with `engine: codex, model: gpt-6.1-sol`, the agent report posts back, and the launching thread stays on Claude.
 - Authoring (automated, `test/skill-runtime.test.js`): `setSkillModelFrontmatter` sets/replaces/clears/validates the line; `create_skill` with `model` writes it and refuses an unknown model before creating anything; a model-only `update_skill` rewrites the frontmatter, keeps the other files, `""` clears it, and an empty call answers "Nothing to change". Live (engine-independent): in a fixture ask "create a channel skill swap-authored that replies SWAPPED, and make it prefer sonnet" — pass when the created SKILL.md carries `model: sonnet`, the library detail shows "Preferred model: sonnet", and "make swap-authored prefer no particular model" removes the line.
+- Teams/Google Chat (automated): `teams-settings-general` saves `skillRuntimeSwap` in a channel and a custom DM without touching Lean, and rejects a malformed value; `googlechat-settings-commands` parses `skillswap on`. Live checks stay on hold with the other Teams/Google Chat fixtures.
 - Engine-independent: the admin UI Runtime pane toggle and the Slack tick persist `skillRuntimeSwap`, show in `/status`'s managed block line "Skill model swap", and write a `channel_meta_changed` audit row with that key; a linked folder follows its source's value.
 
 ## Library missing skill manifests (2026-11-04)
@@ -11993,3 +12005,34 @@ Live acceptance pending (engine-independent configuration): import the shipped J
 - Engine-independent decision: all checks execute in the daemon against Slack messages, without
   invoking an engine. Both engine fixtures above exercise actual delivered bot replies.
 - Live acceptance is pending; automated success does not certify deployed behavior.
+
+
+## Enterprise organization controls
+
+Run entitlement-independent cases once; exercise runtime cases on both Claude and Codex. Use
+no-key, Registered and Enterprise fixtures, then expire/downgrade a previously configured
+Enterprise deployment without deleting saved data. Never record a live pass from fixtures alone.
+
+- Verify non-Enterprise admin API, Slack controls and gateway tools refuse activating each of:
+  skill preferred-model switching; company email-domain auto-approval; dedicated channel Codex
+  authentication; skill catalog MCP/tokens; organization secrets; Google Drive sync; channel
+  skill templates; monthly channel USD spending limits. Enterprise permits authorized changes.
+- Verify saved domain policies do not approve a user after downgrade; manual approvals still work.
+- Verify a downgraded dedicated-Codex channel refuses the run with an actionable Enterprise
+  message and never uses the shared gateway account instead. Shared-login channels still run.
+- Verify existing catalog/user tokens cannot read or mutate through the external MCP endpoint
+  after downgrade; ordinary in-channel skill use still works. Check token mint/list/revoke policy.
+- Verify organization environment variables do not enter new launches after downgrade; channel
+  and personal variables retain their normal precedence and isolation. Check background and
+  scheduled launches, and verify no secret value appears in errors or audit events.
+- Verify scheduled and manual Drive sync are blocked after downgrade, without deleting local or
+  Drive files. Verify channel template grants and preferred-model switches cannot activate via
+  saved configuration or linked-folder inheritance after downgrade; direct grants still work.
+- For a monthly spending limit, test null (uncapped), positive finite values, invalid negative,
+  zero, nonnumeric and infinite inputs. Test recorded spend below/equal/above the limit, UTC
+  month rollover and channel isolation. Confirm foreground, scheduled, API and background agent
+  admission share the limit. Test admission when current-month usage cannot be priced.
+- Verify a run admitted below the cap may complete above it and subsequent runs are refused;
+  concurrent admission can overshoot. UI copy must describe recorded spend, UTC calendar months
+  and the distinction from provider billing limits. Verify cap configuration survives downgrade
+  and refuses new runs after downgrade until an admin clears it; ordinary licensing caps still apply.
