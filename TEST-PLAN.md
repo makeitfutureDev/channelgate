@@ -1,5 +1,12 @@
 # ChannelGate — Test Plan
 
+## Skill ownership terminology (2026-11-04)
+
+- Wording-only, engine-independent: open Skills with a gateway-owned fixture (`ownerKind: "local"`) and a Git-source fixture. Require **Gateway-owned** in the catalog owner column/filter and creation form, and **Gateway-owned skills** in the assignment picker. Filter/select/save the gateway-owned fixture; API owner/filter values must remain `local` and the grant must persist. Repository-backed labels must remain distinct.
+- MCP: `list_skills` and `get_skill_info` on the same gateway-owned fixture must describe gateway ownership; catalog create/update/publish tool descriptions must use the same vocabulary. Existing skill CRUD, publishing and scope regression suites verify unchanged contracts.
+- Passed: 31 focused skill CRUD, publishing, admin UI and picker regression checks; static validation. Disposable Chromium acceptance passed for catalog owner/filter/create labels, distinct Git-source label, raw `owner=local` filter request, picker source label/filter/add and unchanged stored ownership. This wording-only check is engine-independent.
+- Existing full conversation/template browser suite: compact layout case passed; conversation navigation case timed out before reaching the skill picker (`#channel-detail .subtab[data-pane="skills"]`). Its unrelated full-flow acceptance remains unresolved.
+
 ## Slack email for password and code sign-in (2026-11-05)
 
 - Local automated verification (2026-11-05): 4,246 passed / 40 opt-in skipped / zero failed in

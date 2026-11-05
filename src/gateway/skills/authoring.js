@@ -48,7 +48,7 @@ export function describeOwner(skill) {
     case "bundled":
       return "bundled with the gateway";
     default:
-      return `${skill?.visibility === "personal" ? "personal, " : ""}authored locally${skill?.createdBy ? ` by ${skill.createdBy}` : ""}`;
+      return `${skill?.visibility === "personal" ? "personal, " : ""}gateway-owned${skill?.createdBy ? `, created by ${skill.createdBy}` : ""}`;
   }
 }
 

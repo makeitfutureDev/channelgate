@@ -98,7 +98,7 @@ function skillLine(skill, { detail = true } = {}) {
   const bits = [];
   if (skill.version) bits.push(`v${skill.version}`);
   if (skill.category) bits.push(skill.category);
-  bits.push(skill.ownerKind === "git" ? "synced" : skill.ownerKind);
+  bits.push(skill.ownerKind === "git" ? "synced" : skill.ownerKind === "local" ? "gateway-owned" : skill.ownerKind);
   if (skill.visibility === "personal") bits.push("personal");
   const desc = skill.description ? ` — ${skill.description.length > 140 ? `${skill.description.slice(0, 137)}…` : skill.description}` : "";
   return `• \`${skill.slug}\`${detail ? ` (${bits.join(", ")})` : ""}${desc}`;
@@ -581,7 +581,7 @@ export function register(server, ctx) {
   server.registerTool(
     "delete_skill",
     {
-      description: "Delete a skill from the WHOLE catalog (tombstone; an admin can restore it). Admins: any locally authored skill; anyone: their own personal skill. For anyone else it deactivates the skill in this conversation and files a delete request for an admin. When a member says \"delete this skill\" about a channel skill they usually mean remove_channel_skills (deactivate it here).",
+      description: "Delete a skill from the WHOLE catalog (tombstone; an admin can restore it). Admins: any gateway-owned skill; anyone: their own personal skill. For anyone else it deactivates the skill in this conversation and files a delete request for an admin. When a member says \"delete this skill\" about a channel skill they usually mean remove_channel_skills (deactivate it here).",
       inputSchema: { skill: z.string() },
     },
     async ({ skill: key }) => {
@@ -652,7 +652,7 @@ export function register(server, ctx) {
   server.registerTool(
     "decide_skill_proposal",
     {
-      description: "ADMINS. Approve or reject a skill proposal. Approving a change publishes a new revision (pinned as a local override when the skill comes from a source); approving a promotion makes a personal skill an organization skill or grants an organization skill everywhere; approving feedback closes it.",
+      description: "ADMINS. Approve or reject a skill proposal. Approving a change publishes a new revision (pinned as a gateway override when the skill comes from a source); approving a promotion makes a personal skill an organization skill or grants an organization skill everywhere; approving feedback closes it.",
       inputSchema: { id: z.number().int(), decision: z.enum(["approve", "reject"]), note: z.string().optional() },
     },
     async ({ id, decision, note = "" }) => {
@@ -660,7 +660,7 @@ export function register(server, ctx) {
       try {
         const r = await decideSkillProposal(id, { decision, decidedBy: createdBy, note });
         if (decision === "reject") return text(`Proposal #${id} rejected.`);
-        return text(`✅ Proposal #${id} approved${r.revision ? ` — \`${r.proposal.slug}\` is now revision ${r.revision.revisionNo}${r.pinned ? " (pinned as a local override of its source; unpin in the admin UI to follow the source again)" : ""}` : ""}${r.promoted ? ` — \`${r.proposal.slug}\` promoted` : ""}${r.deleted ? ` — \`${r.proposal.slug}\` removed from the catalog (restorable in the admin UI)` : ""}${r.templated ? ` — \`${r.proposal.slug}\` added to the ${r.proposal.target} template (every conversation following it gets it on its next message)` : ""}.${publishLine(r.published)}`);
+        return text(`✅ Proposal #${id} approved${r.revision ? ` — \`${r.proposal.slug}\` is now revision ${r.revision.revisionNo}${r.pinned ? " (pinned as a gateway override of its source; unpin in the admin UI to follow the source again)" : ""}` : ""}${r.promoted ? ` — \`${r.proposal.slug}\` promoted` : ""}${r.deleted ? ` — \`${r.proposal.slug}\` removed from the catalog (restorable in the admin UI)` : ""}${r.templated ? ` — \`${r.proposal.slug}\` added to the ${r.proposal.target} template (every conversation following it gets it on its next message)` : ""}.${publishLine(r.published)}`);
       } catch (err) {
         return text(`🚫 ${err?.message || err}`);
       }
@@ -703,7 +703,7 @@ export function register(server, ctx) {
 
   server.registerTool(
     "publish_skill",
-    { description: "ADMINS / CHANNEL MANAGERS. Push a local skill's current revision to the configured Git repository now (normally automatic on create/update/approve).", inputSchema: { skill: z.string() } },
+    { description: "ADMINS / CHANNEL MANAGERS. Push a gateway-owned or writable publishing-repository skill's current revision to the configured Git repository now (normally automatic on create/update/approve).", inputSchema: { skill: z.string() } },
     async ({ skill: key }) => {
       if (!(await requireManage())) return text("Only this channel's managers (or an admin) can publish skills.");
       const target = publishTarget();

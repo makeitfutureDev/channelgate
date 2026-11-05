@@ -1,5 +1,7 @@
 # Changelog — ChannelGate
 
+- Rename user-facing “local skills” to “gateway-owned skills” across skill management and guidance; stored ownership values and update behavior are unchanged.
+
 - Queue Slack `/fork` automatically while the source thread is busy, with explicit acknowledgement, Stop cancellation and restart recovery.
 
 - Suppress unfinished-thread nudges and follow-up digest entries when the Slack thread root or latest reply has a ✅ reaction; thumbs-up does not close a thread.
