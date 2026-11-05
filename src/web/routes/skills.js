@@ -1,3 +1,4 @@
+import { enterpriseFeatureEnabled, requireEnterpriseFeature } from "../../ee/feature-entitlements.js";
 // Skills platform admin routes (mounted by createAdminRouter under /api): the catalog, its
 // revisions and files, sources and their sync, templates (preview/apply per conversation),
 // channel profiles, usage, and proposals. Every listing returns metadata only; a file's bytes
@@ -127,6 +128,7 @@ export function createSkillsRouter() {
   router.get("/skills/overview", guard(async (_req, res) => {
     res.json({
       stats: catalogStats(),
+      features: { skillTemplates: enterpriseFeatureEnabled("skillTemplates") },
       sources: listSources(),
       templates: listTemplateSummaries(),
       staged: listStagedRevisions().map(revisionToApi),
@@ -358,6 +360,7 @@ export function createSkillsRouter() {
   }));
 
   router.post("/skills/templates", guard(async (req, res) => {
+    requireEnterpriseFeature("skillTemplates");
     const b = req.body || {};
     const existing = b.slug ? getTemplate(b.slug) : null;
     const t = upsertTemplate({ slug: b.slug, name: b.name, description: b.description || "", skills: b.skills || [], categories: [], builtin: existing ? existing.builtin : false });

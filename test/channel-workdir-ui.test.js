@@ -58,6 +58,7 @@ function fixture({ workDir = "/home/operator/project", saveError } = {}) {
     card, ch, meta: ch.meta, Event, detailDirty: false, SELF_SAVING_CONTROLS: ".channel-env-card, .ch-vpn-controls",
     engineSelect: { value: "codex" }, usersBox: { dataset: { ready: "" } }, mcpsBox: { dataset: {} }, mcpsCount: {}, skillsPicker: null,
     makeToolboxKeyInput: control(".ch-make-toolbox-key"),
+    spendingLimitInput: control(".ch-monthly-spending-limit"),
     makeToolboxUrlInput: control(".ch-make-toolbox-url"), makeToolboxState: new Control(),
     clearMakeToolbox: false, approvedHarnesses: () => null, harnessPolicyDirty: false,
     tokenValue: () => "", selectedMcpEntries: () => [], checkedValues: () => [],
@@ -80,6 +81,16 @@ test("Runtime offers a folder reset beside Browse and describes when it applies"
   assert.match(html, /class="ch-browse ghost">Browse…<\/button>\s*<button type="button" class="ch-workdir-reset ghost"[^>]*>Reset to default<\/button>/);
   assert.match(html, /class="ch-workdir"[^>]*placeholder="Default gateway folder"/);
   assert.match(html, /Save to apply a folder change\. Existing files stay in their current folders\./);
+});
+
+test("channel Save sends a changed USD limit and can clear it again without reopening", async () => {
+  const { calls, control } = fixture();
+  control(".ch-monthly-spending-limit").value = "2.50";
+  await control(".save-channel").click();
+  assert.equal(calls[0].body.monthlySpendingLimitUSD, 2.5);
+  control(".ch-monthly-spending-limit").value = "";
+  await control(".save-channel").click();
+  assert.equal(calls[1].body.monthlySpendingLimitUSD, null);
 });
 
 test("reset stages an empty workDir, then Save persists it without resetting runtime options", async () => {

@@ -380,6 +380,18 @@ const CANONICAL_CTE = `WITH component_rollup AS (
     FROM usage u LEFT JOIN component_rollup c ON c.usage_id = u.id
 )`;
 
+// Budget admission uses the complete ledger, independent of UI history retention and row limits.
+export function monthlyChannelSpend(channelId, now = Date.now()) {
+  const date = new Date(now);
+  const start = new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), 1)).toISOString();
+  const end = new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth() + 1, 1)).toISOString();
+  const row = getDb().prepare(`${CANONICAL_CTE}
+    SELECT COALESCE(SUM(canonical_cost_usd), 0) AS spent,
+           COALESCE(SUM(CASE WHEN canonical_cost_usd IS NULL THEN 1 ELSE 0 END), 0) AS unpriced
+      FROM canonical_usage WHERE channel_id = ? AND ts >= ? AND ts < ?`).get(channelId, start, end);
+  return { month: start.slice(0, 7), spentUSD: Number(row.spent), unpricedRuns: Number(row.unpriced) };
+}
+
 // Per-MODEL attribution over the same ledger. A run is one row with one `model`, but a Codex run
 // with component accounting can have spent on SEVERAL models (a gpt-5.6-sol turn whose subagent ran
 // gpt-6-astra, or an auto-review pass), and the canonical rollup above deliberately collapses that

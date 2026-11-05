@@ -509,6 +509,7 @@ function renderMcp() {
 }
 
 function renderTemplates() {
+  if (!state.overview?.features?.skillTemplates) return `<div class="skills-empty"><h3>Skill templates · Enterprise</h3><p>Channel skill templates require Enterprise. Saved templates and assignments are retained and inactive on Free. You can still grant skills directly to a conversation.</p>${(state.overview?.templates || []).map((template) => `<p>${esc(template.name)} · saved${template.builtin ? " · built-in" : ` <button type="button" class="ghost" data-action="delete-template" data-slug="${esc(template.slug)}">Delete</button>`}</p>`).join("")}</div>`;
   const templates = state.overview?.templates || [];
   const e = state.editTemplate;
   const form = e ? `

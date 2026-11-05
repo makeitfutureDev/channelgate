@@ -1,3 +1,4 @@
+import { enterpriseFeatureEnabled, requireEnterpriseFeature } from "../ee/feature-entitlements.js";
 // Environment secrets that are NOT the channel's: the ORGANIZATION's and a PERSON's.
 //
 // config/channel-env.js answers "this conversation's own CLI logins". Two scopes were missing
@@ -43,6 +44,7 @@ export function listOrgEnv() {
 // One mutation entry point per scope, mirroring patchChannelEnv — the admin API and the MCP tool
 // must not grow two different validation stories.
 export function patchOrgEnv({ set = null, remove = "", actor = "", now = Date.now() } = {}) {
+  if (set) requireEnterpriseFeature("organizationVariables");
   const next = patchChannelEnv(getOrgEnv(), {
     set, remove, actor, now,
     scopeNoun: "The organization", scopeWhere: "the organization",
@@ -53,6 +55,7 @@ export function patchOrgEnv({ set = null, remove = "", actor = "", now = Date.no
 }
 
 export async function resolveOrgEnv() {
+  if (!enterpriseFeatureEnabled("organizationVariables")) return {};
   return resolveEnvMap(getOrgEnv(), { scopeLabel: "Organization" });
 }
 
@@ -105,6 +108,7 @@ export async function getSecretEntry({ scope, slug = "", userId = "", name } = {
 export async function patchSecretEntry({ scope, slug = "", userId = "", name, addApprovedHost = "", exposure = undefined, hosts = undefined } = {}) {
   const fields = { addApprovedHost, exposure, hosts };
   if (scope === "organization") {
+    requireEnterpriseFeature("organizationVariables");
     const next = patchEnvEntry(getOrgEnv(), name, { ...fields, scopeWhere: "the organization" });
     saveSettings({ orgEnv: next });
     emitConfigChange("org-env", {});

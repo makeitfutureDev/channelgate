@@ -1619,8 +1619,11 @@ async function settingsRootView(entry, meta, state, userIsAdmin, { tab = state.t
   ]);
   snapshot.runtime.scopes = scopes;
   if (snapshot.runtime.channelLogin) {
-    const login = await channelCodexLoginStatus(meta.channelId);
-    snapshot.runtime.channelLoginStatus = login.authenticated
+    const login = await channelCodexLoginStatus(meta.channelId).catch(error => {
+      if (error.code === "enterprise_required") return { enterpriseRequired: true };
+      throw error;
+    });
+    snapshot.runtime.channelLoginStatus = login.enterpriseRequired ? "Dedicated sign-in requires Enterprise; switch to the gateway login in admin Settings to resume runs" : login.authenticated
       ? `Signed in with ${login.method === "chatgpt" ? "ChatGPT" : "an API key"}`
       : login.phase === "pending" ? "ChatGPT sign-in in progress" : "No channel login yet";
   }

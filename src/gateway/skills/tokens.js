@@ -1,3 +1,4 @@
+import { enterpriseFeatureEnabled, requireEnterpriseFeature } from "../../ee/feature-entitlements.js";
 // Access tokens for the catalog's MCP endpoint (/mcp/skills) and the gateway-to-gateway source.
 // A token is random, shown exactly once, stored as a sha256 hash with a short prefix for
 // recognition, carries scopes, and can be revoked. Verification is a hash lookup, so the table
@@ -52,6 +53,7 @@ export function normalizeScopes(scopes) {
 }
 
 function mint({ name, scopes, kind, ownerId, createdBy, now }) {
+  requireEnterpriseFeature("skillCatalogMcp");
   const label = String(name || "").trim().slice(0, 80);
   if (!label) throw new SkillCatalogError("a token needs a name");
   const value = `${PREFIX}${randomBytes(24).toString("base64url")}`;
@@ -108,6 +110,7 @@ export function deleteAccessToken(id) {
 
 // Resolve a presented bearer value to its record (null when unknown or revoked). Records the use.
 export function verifyAccessToken(value, { now = nowIso() } = {}) {
+  if (!enterpriseFeatureEnabled("skillCatalogMcp")) return null;
   const v = String(value || "").trim();
   if (!v.startsWith(PREFIX)) return null;
   const row = getDb().prepare("SELECT * FROM skill_access_tokens WHERE token_hash = ?").get(hashToken(v));

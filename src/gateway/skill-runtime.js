@@ -1,3 +1,4 @@
+import { enterpriseFeatureEnabled, requireEnterpriseFeature } from "../ee/feature-entitlements.js";
 // Per-skill preferred model ("model-specific skills").
 //
 // A skill may name, in its SKILL.md frontmatter, the model it works best with:
@@ -62,6 +63,7 @@ export function engineForModel(model) {
 // no frontmatter gets a minimal header. Throws on a model no engine recognizes.
 export function setSkillModelFrontmatter(text, model) {
   const value = String(model ?? "").trim().toLowerCase();
+  if (value) requireEnterpriseFeature("skillModelRouting");
   if (value && !engineForModel(value)) throw new Error(`"${value}" is not a model any engine of this gateway recognizes.`);
   const src = String(text ?? "");
   const lines = src.split(/\r?\n/);
@@ -94,7 +96,39 @@ const SKILL_FILE = "SKILL.md";
 // top when there is none). Byte-for-byte deterministic, so the materializer's on-disk comparison
 // and its write see the same content. A skill without a preference comes back untouched (same
 // object), and so does a bundle with no SKILL.md.
+// Native Claude skill loading can honor `model:` without calling use_skill. Remove that
+// executable directive from delivered copies on lower tiers, including nested package skills;
+// retain the original revision so upgrading restores it. Exact-byte materialization compares
+// this transformed bundle each run, so a downgrade repairs already materialized files too.
+function withoutSkillModelRouting(bundle) {
+  if (!bundle || !Array.isArray(bundle.files)) return bundle;
+  let changed = false;
+  const files = bundle.files.map(file => {
+    if (!/(?:^|\/)SKILL\.md$/.test(file.path || "")) return file;
+    const original = Buffer.isBuffer(file.content) ? file.content.toString("utf8") : String(file.content ?? "");
+    let text = original.replace(/^(---[^\S\n]*\r?\n)([\s\S]*?)(\r?\n(?:---|\.\.\.)[^\S\n]*(?:\r?\n|$))/, (_match, open, header, close) => {
+      const lines = header.split(/\r?\n/);
+      let removedIndent = null;
+      const kept = [];
+      for (const line of lines) {
+        const key = /^([ \t]*)(?:model|"model"|'model')\s*:/i.exec(line);
+        if (key) { removedIndent = key[1].length; continue; }
+        if (removedIndent !== null && (!line.trim() || /^[ \t]*/.exec(line)[0].length > removedIndent)) continue;
+        removedIndent = null;
+        kept.push(line);
+      }
+      return open + kept.join("\n") + close;
+    });
+    text = text.replace(/^> \*\*ChannelGate:\*\* before following this skill, call the gateway tool `use_skill`[^\n]*reading this file does not\.\r?\n(?:\r?\n)?/gm, "");
+    if (text === original) return file;
+    changed = true;
+    return { ...file, content: Buffer.from(text, "utf8") };
+  });
+  return changed ? { ...bundle, files } : bundle;
+}
+
 export function withSkillRuntimeHeader(skill, bundle) {
+  if (!enterpriseFeatureEnabled("skillModelRouting")) return withoutSkillModelRouting(bundle);
   const preference = skillModelPreference(skill);
   if (!preference || !bundle || !Array.isArray(bundle.files)) return bundle;
   const index = bundle.files.findIndex((file) => file?.path === SKILL_FILE);
@@ -116,7 +150,8 @@ function insertAfterFrontmatter(text, header) {
 }
 
 // ── The decision ─────────────────────────────────────────────────────────────────────────────
-// Pure. `engine`/`model` are the turn's CURRENT runtime; `pinned` is the orchestrator's own
+// The live entitlement gates every decision. `engine`/`model` are the turn's CURRENT runtime;
+// `pinned` is the orchestrator's own
 // user-pin verdict (a thread model/engine pin or a per-run override); `swapped` says this turn
 // already switched once; `engineAvailable(id)` answers whether the other harness may run here.
 export function decideSkillSwap({ meta = {}, engine = "", model = "", pinned = false, skill = null, swapped = false, engineAvailable = () => false } = {}) {
@@ -125,6 +160,7 @@ export function decideSkillSwap({ meta = {}, engine = "", model = "", pinned = f
   if (!skill) return { action: "none", reason: "unknown-skill", slug };
   if (!preference) return { action: "none", reason: "no-preference", slug };
   const base = { slug, model: preference.model, engine: preference.engine };
+  if (!enterpriseFeatureEnabled("skillModelRouting")) return { ...base, action: "none", reason: "enterprise-required" };
   if (!meta?.skillRuntimeSwap) return { ...base, action: "none", reason: "disabled" };
   if (pinned) return { ...base, action: "none", reason: "pinned" };
   if (preference.engine === engine) {
@@ -152,6 +188,7 @@ export function skillSwapReply(decision, { engineLabel = (id) => id, currentMode
   switch (decision?.reason) {
     case "unknown-skill": return `No skill named "${name}" is in this conversation's catalog. Continue with the current model.`;
     case "no-preference": return `The ${name} skill declares no preferred model. Continue with the current model.`;
+    case "enterprise-required": return `Skill model routing requires Enterprise. Continue with the current model.`;
     case "disabled": return `The ${name} skill prefers ${decision.model}, but skill engine/model swapping is OFF for this conversation (an admin or channel manager can enable it in the channel settings). Continue with the current model.`;
     case "pinned": return `The ${name} skill prefers ${decision.model}, but this thread's runtime was pinned by a person (/model or an explicit engine choice), and a pin is never traded away. Continue with the current model.`;
     case "already": return `Already running ${decision.model}, the model the ${name} skill prefers. Continue.`;

@@ -3,6 +3,9 @@ title: Skill sources and templates
 description: Import, review, publish, and grant reusable skills and plugins.
 ---
 
+**Enterprise availability.** Channel skill-template assignment and inherited template grants require an effective Enterprise license. Other tiers can continue assigning skills directly.
+
+
 The skills catalog stores reusable instructions and their supporting files as versioned revisions. Importing a skill makes it available in the catalog; granting it determines which conversations or people receive it. Templates collect skills into a reusable selection that conversations can follow.
 
 ## Add a source

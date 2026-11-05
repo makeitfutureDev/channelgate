@@ -1,3 +1,4 @@
+import { enterpriseFeatureEnabled, requireEnterpriseFeature } from "../ee/feature-entitlements.js";
 // Per-thread engine override. A user can pick the engine for a thread by starting a message with
 // "claude" or "codex" (e.g. "@bot codex build X"), or via the /model wizard's "just this thread"
 // scope; it sticks for the thread until changed. Precedence at run time: thread override >
@@ -103,10 +104,11 @@ export async function setThreadEffort(slug, threadKey, effort) {
 // it never disables failover or holds a capacity continuation on its model. Stored as its own
 // kind so a pin and a preference can never be mistaken for one another.
 export async function getThreadSkillModel(slug, threadKey) {
-  return getOverride(slug, threadKey, "skill_model");
+  return enterpriseFeatureEnabled("skillModelRouting") ? getOverride(slug, threadKey, "skill_model") : "";
 }
 
 export async function setThreadSkillModel(slug, threadKey, model) {
+  if (String(model || "").trim()) requireEnterpriseFeature("skillModelRouting");
   setOverride(slug, threadKey, "skill_model", String(model || "").trim());
 }
 

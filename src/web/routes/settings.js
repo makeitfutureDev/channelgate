@@ -939,7 +939,7 @@ export function createSettingsRouter({
       try {
         vars = patchOrgEnv({ set: { name: req.params.name, value, ...swapRuleFieldsFrom(req.body) }, actor: ORG_SECRET_ACTOR });
       } catch (e) {
-        return res.status(400).json({ error: e.message });
+        return res.status(e.statusCode || 400).json({ error: e.message, ...(e.code ? { code: e.code } : {}) });
       }
       // Name only. The audit trail must never carry what was set.
       logEvent("org_env_set", { name, actor: ORG_SECRET_ACTOR });

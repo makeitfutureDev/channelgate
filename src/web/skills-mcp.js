@@ -1,3 +1,4 @@
+import { enterpriseFeatureEnabled, requireEnterpriseFeature } from "../ee/feature-entitlements.js";
 // The catalog's own MCP endpoint (`POST /mcp/skills`, Streamable HTTP, stateless) and the GitHub
 // webhook (`POST /api/skills/webhook/github`). Both sit OUTSIDE the admin session: the MCP
 // endpoint authenticates a bearer ACCESS TOKEN minted in the admin UI (skills/tokens.js — hashed,
@@ -51,6 +52,7 @@ function summary(skill) {
 // may reach (skills/token-scope.js): a catalog token sees the library and never a personal skill;
 // a user token is the person who minted it, resolved live.
 export function buildSkillsMcpServer(token, reach = null) {
+  requireEnterpriseFeature("skillCatalogMcp");
   const server = new McpServer({ name: "channelgate-skills", version: "1.0.0" });
   const need = (scope) => (tokenHasScope(token, scope) ? null : text(`This token lacks the "${scope}" scope.`));
   const scope = reach || { kind: "catalog", ownerId: "", admin: false, viewer: "", canRead: (s) => Boolean(s) && !s.deleted && s.visibility !== "personal" && Boolean(s.discoverable), canExport: (s) => Boolean(s) && !s.deleted && s.visibility !== "personal", canManage: (s) => Boolean(s) && !s.deleted && s.visibility !== "personal", createOptions: () => ({ personal: false, channelId: "" }) };
@@ -217,6 +219,7 @@ export function buildSkillsMcpServer(token, reach = null) {
 // (de-approved, deleted) answers 403 with the reason instead of acting.
 export function skillsMcpAuthGate({ limiter = createLoginLimiter({ freeAttempts: 5, baseDelayMs: 1_000, maxDelayMs: 60_000 }) } = {}) {
   return async (req, res, next) => {
+    if (!enterpriseFeatureEnabled("skillCatalogMcp")) return res.status(403).json({ error: "Skill catalog MCP requires Enterprise.", code: "enterprise_required" });
     const key = clientKey(req);
     const wait = limiter.retryAfterMs(key);
     if (wait > 0) {
@@ -243,6 +246,7 @@ export function skillsMcpAuthGate({ limiter = createLoginLimiter({ freeAttempts:
 // Express handler for the MCP endpoint. Stateless: one server + transport per request.
 export function skillsMcpHandler() {
   return async (req, res) => {
+    if (!enterpriseFeatureEnabled("skillCatalogMcp")) return res.status(403).json({ error: "Skill catalog MCP requires Enterprise.", code: "enterprise_required" });
     const token = req.skillsToken || verifyAccessToken(bearer(req));
     if (!token) {
       res.status(401).json({ error: "a valid skills access token is required (Authorization: Bearer …)" });

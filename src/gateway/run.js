@@ -1,3 +1,4 @@
+import { requireEnterpriseFeature } from "../ee/feature-entitlements.js";
 import { effectiveMeta } from "./effective-meta.js";
 // Orchestrates a single authorized message end-to-end: provision the gated folder, resolve
 // the thread session, build the per-run MCP config, decide admin escalation, and run the
@@ -62,6 +63,7 @@ import { assertUserSkillOverlaySupported, createRunGrantArtifacts, refreshRuntim
 import { isForceStopping } from "./shutdown.js";
 import { allowedFsRoot } from "../web/security.js";
 import { licenseAdmission } from "../ee/limits.js";
+import { channelSpendingAdmission } from "../ee/channel-spending.js";
 import { assertChannelEngineApproved, isChannelEngineApproved } from "./channel-engines.js";
 import { channelEnvFingerprint, safeSpawnEnv } from "../config/channel-env.js";
 // The other two credential scopes (organization-wide, and the author's own) merged with the
@@ -756,6 +758,7 @@ async function runMessageImpl({ channelId, authorId, workspaceId = "", text, thr
   // engine, then the global default. For an EXISTING thread this is only the requested engine:
   // the session's own engine can still outrank a channel/global value (see decideThreadEngine).
   const channelCodexLocked = meta.codexAuthSource === "channel";
+  if (channelCodexLocked) requireEnterpriseFeature("channelCodexLogin");
   const threadEngine = channelCodexLocked || (overrides?.engine && ENGINES.includes(overrides.engine)) ? "" : await getThreadEngine(entry.slug, threadKey);
   const channelEngine = channelCodexLocked ? "codex" : ENGINES.includes(meta.engine) ? meta.engine : "";
   let engine = channelCodexLocked ? "codex" : threadEngine || channelEngine || getEngine();
@@ -846,6 +849,11 @@ async function runMessageImpl({ channelId, authorId, workspaceId = "", text, thr
   // The 80% warning rides on an ADMITTED turn: it is prefixed to the answer the user is already
   // getting, the same way the cross-engine failover note is, so it costs no extra message and
   // cannot be missed.
+  const spending = channelSpendingAdmission({ channelId, meta: channelMeta });
+  if (!spending.allowed) {
+    return { slug: entry.slug, cwd: "", model: "", engine, content: spending.notice,
+      spendingRefused: true, sessionId: null, isNew: false, usage: {}, costUSD: 0, durationMs: 0 };
+  }
   const admission = licenseAdmission({ conversationId: channelId, threadKey: admissionThreadKey, origin });
   if (!admission.allowed) {
     await logEvent("license_run_refused", {
@@ -1491,6 +1499,8 @@ async function runMessageImpl({ channelId, authorId, workspaceId = "", text, thr
     const effort = effortForModel(modelOverride);
     assertRuntimeCanStart();
     await assertScheduledSudoAuthority();
+    const spendingNow = channelSpendingAdmission({ channelId, meta: (await getChannelMeta(entry.slug)) ?? channelMeta });
+    if (!spendingNow.allowed) throw Object.assign(new Error(spendingNow.notice), { code: "channel_spending_limit" });
     assertChannelEngineApproved((await getChannelMeta(entry.slug)) ?? channelMeta, engine);
     // The runtime facts belong to THIS attempt, including a model retry or session heal. Keep
     // them per-prompt even in clean mode: they expose no memory, optional skills or connectors.
