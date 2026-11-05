@@ -125,6 +125,8 @@ test("create_skill and update_skill take an optional model that writes the front
   const updated = await tools.get("update_skill")({ skill: "swap-authored", model: "gpt-6.1-sol" });
   assert.match(updated.content[0].text, /is now revision/);
   assert.match(skillMd("swap-authored"), /\nmodel: gpt-6.1-sol\n---/);
+  assert.match((await tools.get("get_skill_info")({ skill: "swap-authored" })).content[0].text, /preferred model: gpt-6\.1-sol/);
+  assert.match((await tools.get("list_skills")({ query: "swap-authored" })).content[0].text, /prefers gpt-6\.1-sol/);
   assert.equal(catalog.revisionFiles(catalog.effectiveRevisionFor(catalog.getSkill("swap-authored")).id).length, 2, "the reference file survived a model-only update");
   const cleared = await tools.get("update_skill")({ skill: "swap-authored", model: "" });
   assert.match(cleared.content[0].text, /is now revision/);

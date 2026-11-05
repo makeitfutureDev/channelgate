@@ -1,5 +1,7 @@
 # Changelog — ChannelGate
 
+- Show a skill's preferred model in the skills library table, the chat skill listings and Slack Settings → Skills.
+
 - Expose "Skill model swap" in Microsoft Teams settings and as `/settings skillswap on|off` in Google Chat.
 
 - Rename user-facing “local skills” to “gateway-owned skills” across skill management and guidance; stored ownership values and update behavior are unchanged.

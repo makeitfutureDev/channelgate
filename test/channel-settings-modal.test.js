@@ -847,3 +847,11 @@ test("native You and MCP pages show the scoped account list beneath Composio and
   assert.equal(elements(editing).some((element) => element.action_id === COMPOSIO_INVENTORY_ACTION_ID), false);
   assert.doesNotMatch(rendered(editing), /viewer@example.test/);
 });
+
+
+test("Skills page names each channel skill's preferred model", () => {
+  const view = buildChannelSettingsView({ ...snapshot, skills: { ...(snapshot.skills || {}), additional: ["triage", "plain"], channel: ["triage", "plain"], organization: [], templates: [], models: { triage: "gpt-6.1-sol" } } }, state, { tab: "skills" });
+  const text = rendered(view);
+  assert.match(text, /Preferred models: `triage` _\(gpt-6\.1-sol\)_/);
+  assert.doesNotMatch(text, /`plain` _\(/);
+});
