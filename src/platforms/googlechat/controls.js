@@ -22,7 +22,7 @@ import { handleGeneral } from '../msteams/settings-general.js';
 import { verifyMenuAction } from './reply-menu.js';
 import { handlePlatformApproval } from '../../slack/approvals.js';
 
-const FORMS = /^(?:(?:channel|thread)_(?:engine|model|effort)|access_(?:mode|access|manageAccess|autoMode|cleanMode|allowNetwork|allowedUsers|managers)|skillTemplate|resumeCommand|scope|comment)$/;
+const FORMS = /^(?:(?:channel|thread)_(?:engine|model|effort)|access_(?:mode|access|manageAccess|autoMode|cleanMode|allowNetwork|skillRuntimeSwap|allowedUsers|managers)|skillTemplate|resumeCommand|scope|comment)$/;
 export function googleChatActionData(event) {
   const fn = event.action?.function;
   if (typeof fn !== 'string' || !/^[a-z][a-z0-9_.-]{0,79}$/.test(fn)) throw new Error('Invalid card action.');
