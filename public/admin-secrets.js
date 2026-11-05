@@ -20,6 +20,7 @@ export function mountSecretEditor({
   savedText = (name) => `Saved ${name}. It reaches the next run.`,
   namePlaceholder = "GH_TOKEN",
   disabled = false,
+  allowRemoval = false,
   // Slack user id → display name (the admin app's user directory); "" when unknown.
   userName = () => "",
 }) {
@@ -84,7 +85,7 @@ export function mountSecretEditor({
       cell(entry.setAt ? new Date(entry.setAt).toISOString().slice(0, 10) : "—", { className: "state" });
       const actions = row.insertCell();
       actions.className = "vars-actions";
-      if (!disabled) {
+      if (!disabled || allowRemoval) {
         const remove = document.createElement("button");
         remove.type = "button";
         remove.className = "ghost secret-remove";
@@ -127,6 +128,7 @@ export function mountSecretEditor({
   nameInput.addEventListener("blur", () => { nameInput.value = nameInput.value.trim().toUpperCase(); });
 
   saveButton.addEventListener("click", async () => {
+    if (disabled) return;
     const name = nameInput.value.trim().toUpperCase();
     nameInput.value = name; // what gets sent is what the admin can see
     const value = valueInput.value;
@@ -154,7 +156,7 @@ export function mountSecretEditor({
     } catch (e) {
       hint.textContent = e.message || "Couldn't save that variable.";
     } finally {
-      saveButton.disabled = false;
+      saveButton.disabled = disabled;
     }
   });
 

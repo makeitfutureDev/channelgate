@@ -1,4 +1,6 @@
+import { requireEnterpriseFeature } from "../../ee/feature-entitlements.js";
 import { assertApprovedEnginesUpdate, assertChannelEngineApproved } from "../../gateway/channel-engines.js";
+import { assertSpendingLimitUpdate } from "../../ee/channel-spending.js";
 import { assertEngineSelectable } from "../../engines/selection.js";
 import { assertNewMcpSelections } from "../../gateway/mcp-selection.js";
 // Channel + DM admin routes: per-DM config, the channel list/members/meta, Make-toolbox and
@@ -324,6 +326,7 @@ export function createChannelsRouter({
       if (Array.isArray(body.skills)) next_.skills = body.skills;
       if (typeof body.skillTemplate === "string") {
         const key = body.skillTemplate.trim();
+        if (key && key !== current.skillTemplate) requireEnterpriseFeature("skillTemplates");
         if (key && !getTemplate(key)) return res.status(400).json({ error: `unknown skill template "${key}"` });
         next_.skillTemplate = key ? getTemplate(key).slug : "";
       }
@@ -495,8 +498,11 @@ export function createChannelsRouter({
         return patchChannelMeta(entry.slug, (existing) => {
           const current = existing ?? defaultChannelMeta({ channelId, name: entry.name, type: entry.type, isDM: entry.isDM });
           replaced = current;
+          const spendingPatch = Object.hasOwn(body, "monthlySpendingLimitUSD")
+            ? { monthlySpendingLimitUSD: assertSpendingLimitUpdate(current, body.monthlySpendingLimitUSD) } : {};
           const out = {
             ...current,
+            ...spendingPatch,
             // Access model: who can USE (access) and who can MANAGE (manageAccess + managers[]).
             access: CHANNEL_ACCESS_MODES.includes(body.access) ? body.access : current.access ?? "approved",
             manageAccess: ["admins", "members", "custom"].includes(body.manageAccess) ? body.manageAccess : current.manageAccess ?? "admins",
@@ -562,6 +568,8 @@ export function createChannelsRouter({
           if (typeof body.composioTokenLabel === "string") out.composioTokenLabel = body.composioTokenLabel.trim();
           if (typeof body.toolboxTokenLabel === "string") out.toolboxTokenLabel = body.toolboxTokenLabel.trim();
           Object.assign(out, resolveMakeToolboxUpdate(current, body));
+          if (out.skillTemplate && out.skillTemplate !== current.skillTemplate) requireEnterpriseFeature("skillTemplates");
+          if (out.syncDriveFolder && out.syncDriveFolder !== current.syncDriveFolder) requireEnterpriseFeature("driveSync");
           if (out.skillTemplate === "__unknown__") throw Object.assign(new Error(`unknown skill template "${String(body.skillTemplate).trim()}"`), { statusCode: 400 });
           if (users) {
             const narrowed = restrictedAccessAllowedUsers(current, out, users);

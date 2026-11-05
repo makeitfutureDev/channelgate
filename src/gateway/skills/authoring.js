@@ -1,3 +1,4 @@
+import { requireEnterpriseFeature } from "../../ee/feature-entitlements.js";
 // Authoring and review: create a local skill, revise one, delete your own, decide a proposal,
 // and the grant helpers for the three tiers. Shared by the gateway MCP tools (chat), the external
 // MCP endpoint and the admin API so every surface applies exactly the same rules:
@@ -347,6 +348,7 @@ export function proposeSkillChange({ skill = "", kind = "change", files = [], no
   if ((kind === "promote" || kind === "feedback" || kind === "delete" || kind === "template") && !existing) throw new SkillCatalogError(`"${skill}" is not in the catalog`, { status: 404 });
   let target = "";
   if (kind === "template") {
+    requireEnterpriseFeature("skillTemplates");
     const tpl = getTemplate(template);
     if (!tpl) throw new SkillCatalogError(`no skill template named "${template}" (see list_skill_templates)`, { status: 404 });
     if (existing.visibility === "personal") throw new SkillCatalogError(`"${slug}" is a personal skill; promote it before it can join a template`, { status: 409 });
@@ -436,6 +438,7 @@ export async function decideSkillProposal(id, { decision, decidedBy = "", note =
 // else asks with a "template" proposal. Personal and deleted skills never join a template.
 
 export function addSkillsToTemplate(templateKey, slugs = [], { actor = "" } = {}) {
+  requireEnterpriseFeature("skillTemplates");
   const tpl = getTemplate(templateKey);
   if (!tpl) throw new SkillCatalogError(`no skill template named "${templateKey}"`, { status: 404 });
   const have = new Set((tpl.skills || []).map((s) => s.toLowerCase()));

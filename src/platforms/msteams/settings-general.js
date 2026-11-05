@@ -112,8 +112,11 @@ export async function renderGeneral(ctx, ui) {
   const meta = effectiveMeta(ctx.meta), manager = managed(ctx.meta, ctx);
   const body = [ui.text('Models are shown only for the selected engine. After changing Engine, use Load models, then choose model and effort and Apply for that scope. Channel defaults affect new sessions; thread overrides apply to this session.'), ui.heading('Channel defaults'), ...runtimeRows('channel', runtimeDisplay(ctx, 'channel', channel, locked), locked, ui)];
   if (locked) {
-    const login = await channelCodexLoginStatus(ctx.channelId);
-    body.push(ui.text(`Channel Codex login: ${login.authenticated ? 'Signed in' : login.phase === 'pending' ? 'Sign-in in progress' : 'No channel login yet'}.`));
+    const login = await channelCodexLoginStatus(ctx.channelId).catch(error => {
+      if (error.code === "enterprise_required") return { enterpriseRequired: true };
+      throw error;
+    });
+    body.push(ui.text(`Channel Codex login: ${login.enterpriseRequired ? 'Enterprise required; switch to the gateway login in admin Settings to resume runs' : login.authenticated ? 'Signed in' : login.phase === 'pending' ? 'Sign-in in progress' : 'No channel login yet'}.`));
   }
   if (thread) {
     body.push(ui.heading('Current session'), ...runtimeRows('thread', runtimeDisplay(ctx, 'thread', thread, locked), locked, ui));

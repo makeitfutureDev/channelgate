@@ -1,3 +1,4 @@
+import { enterpriseFeatureEnabled } from "../../ee/feature-entitlements.js";
 // Daemon-owned convergence for durable, locally visible skills. MCP processes only commit
 // catalog/grant changes; the daemon observes them here, so two processes never prune each
 // other's in-progress materialization. Personal grants belong to individual runs, never here.
@@ -19,6 +20,7 @@ async function snapshot() {
   const fingerprint = createHash("sha256").update(JSON.stringify({
     organization,
     templates: listTemplates(),
+    skillTemplatesEnabled: enterpriseFeatureEnabled("skillTemplates"),
     // No file bytes or private skills are needed to detect effective revision changes.
     catalog: listSkills({ viewer: "", includeDeleted: true }).map((skill) => ({
       slug: skill.slug, revision: skill.currentRevisionId, pinned: skill.pinnedRevisionId,

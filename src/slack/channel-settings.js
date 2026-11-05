@@ -1,3 +1,4 @@
+import { enterpriseFeatureEnabled } from "../ee/feature-entitlements.js";
 // Channel Settings modal for Slack. It mirrors the web conversation editor's safe channel-level
 // controls while keeping credential values write-only and re-authorizing every interaction in the
 // controller. Dangerous gateway-wide/admin-only settings remain in the web admin UI.
@@ -691,10 +692,11 @@ function modeRows(snapshot, state, { canEditAccess = false, canEnableAdmin = fal
   // already the current mode, so a manager's view shows the truth and can still leave Admin.
   const modes = ["read", "worker", ...(canEnableAdmin || current === "admin" ? ["admin"] : [])];
   const modeOptions = modes.map((value) => option(MODE_LABELS[value], value));
-  const flagOptions = flags.map((flag) => option(FLAG_LABELS[flag], flag));
+  const skillRoutingEnabled = enterpriseFeatureEnabled("skillModelRouting");
+  const flagOptions = flags.filter(flag => flag !== "skillRuntimeSwap" || skillRoutingEnabled || mode.skillRuntimeSwap).map((flag) => option(FLAG_LABELS[flag] + (flag === "skillRuntimeSwap" && !skillRoutingEnabled ? " (Enterprise required; turn off to clear)" : ""), flag));
   const chosen = flagOptions.filter((entry) => mode[entry.value]);
   return [
-    context("*Mode*"),
+    context("*Mode*" + (!skillRoutingEnabled ? " · Skill model swap requires Enterprise" : "")),
     { type: "actions", block_id: "cg_mode_row", elements: [{
       type: "static_select",
       action_id: dm ? CHANNEL_SETTINGS_DM_MODE_ACTION_ID : `${ACCESS_FIELD_PREFIX}mode`,

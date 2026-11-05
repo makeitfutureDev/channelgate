@@ -115,7 +115,7 @@
             </div>
           </div>
           <details class="card" id="user-auto-approval">
-            <summary>Auto-approval by company email domain</summary>
+            <summary>Auto-approval by company email domain · Enterprise</summary>
             <p class="hint">Approve members automatically when their platform-provided email matches an exact domain. This grants Approved access, never Admin. Manual revocations prevent automatic reapproval. Removing a domain does not revoke existing approvals.</p>
             <form id="user-auto-approval-form">
               <label><input id="user-auto-approval-enabled" type="checkbox" /> Enable auto-approval</label>
@@ -799,7 +799,7 @@
                   <label class="toggle"><input type="checkbox" id="set-public-file-links-enabled" /> <strong>Enable temporary public file links</strong> — off refuses every mint and every outstanding link.</label>
                 </div>
                 <div class="setcard">
-                  <h4>Google Drive sync</h4>
+                  <h4>Google Drive sync · Enterprise</h4>
                   <p class="desc">Two-way sync (scheduled, via <code>rclone bisync</code>) between a per-channel Google Drive folder and that channel's whole working folder — except agent instructions and skills (<code>CLAUDE.md</code>, <code>AGENTS.md</code>, <code>.claude/</code>, …), channel memory, secrets (<code>.env</code>, keys), <code>.git</code> and dependency trees, plus anything listed in the folder's <code>.driveignore</code>. Symlinks are never followed, and rclone runs in a throwaway container that sees only the channel folder. Auth is a Workspace <strong>service account</strong> — drop its JSON key file on this host and point to it below. Set a channel's folder link under Conversations → the channel → Google Drive sync folder. rclone must be installed on this host (<code>apt install rclone</code>, or the official installer from rclone.org).</p>
                   <label class="toggle"><input type="checkbox" id="set-drivesync-enabled" /> <strong>Enable scheduled Drive sync</strong> — off keeps the whole feature dormant even if channels have a folder link set.</label>
                   <label class="field">
@@ -849,7 +849,7 @@
                   <p class="setsec-desc">The capabilities new channels and DMs start from.</p>
                 </header>
                 <div class="setcard" id="skill-templates-card">
-                  <h4>Skill templates <em class="state">· Development, Sales, Marketing, Management, …</em></h4>
+                  <h4>Skill templates · Enterprise <em class="state">· Development, Sales, Marketing, Management, …</em></h4>
                   <p class="desc">A named, explicit set of skills from the catalog. Assign one to a conversation under Conversations → Tools or with <code>set_channel_skill_template</code>; edits reach every conversation that follows it, and channel-specific skills come on top.</p>
                   <div id="skill-templates-editor">Loading…</div>
                 </div>
@@ -877,7 +877,7 @@
                   <p class="setsec-desc">Composio and Toolbox endpoints plus the org-default tokens. Skills come from the gateway's own catalog (Skills view).</p>
                 </header>
                 <div class="setcard" id="org-secrets-card">
-                  <h4>Organization variables <em class="state secret-state"></em></h4>
+                  <h4>Organization variables · Enterprise <em class="state secret-state"></em></h4>
                   <p class="desc">Environment variables passed to <strong>every</strong> conversation's runs &mdash; one credential the whole deployment shares, such as a <code>GH_TOKEN</code> every channel can push with. A conversation's own secret of the same name overrides it there, and a person's own fills names neither defines. Write-only: a stored value is never shown again, here or in Slack. To replace one, set it again.</p>
                   <div id="org-secrets-editor"></div>
                 </div>
@@ -1401,7 +1401,7 @@
         <div class="subpane" data-pane="skills">
           <div class="col tools-col">
             <label class="field">
-              <span>Skill template <em class="state">· included skills follow the template; additional skills stay with this conversation</em></span>
+              <span>Skill template · Enterprise <em class="state">· included skills follow the template; additional skills stay with this conversation</em></span>
               <select class="ch-skill-template"><option value="">none</option></select>
               <em class="state ch-skill-template-state"></em>
             </label>
@@ -1413,7 +1413,7 @@
         <div class="subpane" data-pane="runtime">
           <div class="ch-auth-chooser">
             <label class="field">
-              <span>Which Codex login should this channel use?</span>
+              <span>Which Codex login should this channel use? · Dedicated login requires Enterprise</span>
               <select class="ch-codex-auth-source">
                 <option value="gateway">Default gateway login (shared)</option>
                 <option value="channel">This channel's own login</option>
@@ -1447,6 +1447,11 @@
             <div class="ch-harness-options checks"></div>
             <p class="hint ch-harness-help">Loading license…</p>
           </fieldset>
+          <label class="field">
+            <span>Monthly spending limit (USD) · Enterprise</span>
+            <input type="number" class="ch-monthly-spending-limit" min="0.01" step="any" placeholder="No limit" />
+            <em class="state">Recorded gateway usage per UTC month. Blank clears the limit. In-flight runs may exceed it; unpriced usage blocks new runs while a limit is configured.</em>
+          </label>
           <div class="grid grid-2">
             <label class="field ch-engine-field">
               <span>Engine (which CLI drives this channel)</span>
@@ -1474,7 +1479,7 @@
           <label class="togglerow">
             <input type="checkbox" class="ch-skillswap" />
             <span class="switch"></span>
-            <span class="t"><b>Allow skill engine and model swapping</b><small>A skill that declares a preferred model (its SKILL.md <code>model:</code> field) switches the turn to it when the skill is used: the same session continues on that model, and a skill preferring the other engine is delegated to a background agent there. A person's /model pin always wins.</small></span>
+            <span class="t"><b>Allow skill engine and model swapping · Enterprise</b><small>A skill that declares a preferred model (its SKILL.md <code>model:</code> field) switches the turn to it when the skill is used: the same session continues on that model, and a skill preferring the other engine is delegated to a background agent there. A person's /model pin always wins.</small></span>
           </label>
           <label class="field">
             <span>Working folder (blank = default gateway folder)</span>

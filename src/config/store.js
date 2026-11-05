@@ -1,3 +1,5 @@
+import { assertSpendingLimitUpdate } from "../ee/channel-spending.js";
+import { requireEnterpriseFeature } from "../ee/feature-entitlements.js";
 // Config store — the single source of truth for users, the channel index, and per-channel meta.
 // Backed by SQLite (see ../db). Functions keep their original async signatures so the ~40 call
 // sites are unchanged; the underlying reads/writes are synchronous SQLite calls that resolve
@@ -354,6 +356,14 @@ function snapshotWorkspaceFollowers(db, slug, current, next, effectiveWorkDir, c
 
 // Gate policy writes at the store boundary so internal callers and tools share the same rules.
 function validateChannelPolicy(current, next) {
+  if (!Object.hasOwn(next, "monthlySpendingLimitUSD") && Object.hasOwn(current || {}, "monthlySpendingLimitUSD")) {
+    next.monthlySpendingLimitUSD = current.monthlySpendingLimitUSD;
+  }
+  if (next.skillTemplate && next.skillTemplate !== current?.skillTemplate) requireEnterpriseFeature("skillTemplates");
+  if (next.syncDriveFolder && next.syncDriveFolder !== current?.syncDriveFolder) requireEnterpriseFeature("driveSync");
+  if (Object.hasOwn(next, "monthlySpendingLimitUSD")) next.monthlySpendingLimitUSD = assertSpendingLimitUpdate(current, next.monthlySpendingLimitUSD);
+  if (next.skillRuntimeSwap === true && current?.skillRuntimeSwap !== true) requireEnterpriseFeature("skillModelRouting");
+  if (next.codexAuthSource === "channel" && current?.codexAuthSource !== "channel") requireEnterpriseFeature("channelCodexLogin");
   // A whole-record save omitting an existing restriction must not clear it by accident.
   if (!Object.hasOwn(next, "approvedEngines") && Object.hasOwn(current || {}, "approvedEngines")) {
     next.approvedEngines = current.approvedEngines;

@@ -44,7 +44,7 @@ import { createCodexUsageReader, subtractCodexTokenUsage } from "./codex-usage.j
 import { MCP_STARTUP_TIMEOUT_SECONDS } from "./mcp-timeouts.js";
 import { gatewayRoot, runTmpDir, runtimeSocketFile } from "../config/paths.js";
 import { readCodexAuthState, describeCodexAuth } from "./codex-auth.js";
-import { channelCodexHome } from "../gateway/channel-codex-auth.js";
+import { channelCodexHome } from "../gateway/channel-codex-paths.js";
 import { remoteMcpServerProblem } from "../mcp/remote-mcp-registry.js";
 import { CODEX_NO_TELEMETRY } from "./codex-telemetry.js";
 
@@ -1032,6 +1032,10 @@ export async function runCodex({
   // before any work exists to lose, so the orchestrator diverts it to the other harness with a
   // visible reason. The probe fails OPEN: only a positively absent/empty credential lands here.
   const runtime = runtimeTargetOr(target, cwd);
+  if (runtime?.meta?.codexAuthSource === "channel") {
+    const { requireEnterpriseFeature } = await import("../ee/feature-entitlements.js");
+    requireEnterpriseFeature("channelCodexLogin");
+  }
   const isolated = isIsolatedTarget(runtime);
   if (isolated && !artifactDir) {
     throw commandError("Codex container runs require an artifact directory", { engine: "codex", providerError: false });

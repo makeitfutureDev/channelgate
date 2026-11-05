@@ -1,3 +1,4 @@
+import { requireEnterpriseFeature } from "../../ee/feature-entitlements.js";
 import { assertNewMcpSelections } from "../../gateway/mcp-selection.js";
 // Channel-admin tools for the gateway control MCP server: the channel's MCP allowlist, the
 // mode switches (admin/bash/network/auto), working folder, Google Drive sync link, standing
@@ -480,6 +481,7 @@ export function register(server, ctx) {
     },
     async ({ link }) => {
       if (!(await requireAdmin())) return text("Only admins can set this channel's Google Drive sync folder.");
+      requireEnterpriseFeature("driveSync");
       const raw = (link || "").trim();
       const folderId = parseDriveFolderId(raw);
       if (!folderId) return text("That doesn't look like a Google Drive folder link. Paste the folder URL (…/folders/<id>), an ?id=<id> link, or the bare folder id.");

@@ -1,3 +1,4 @@
+import { enterpriseFeatureEnabled } from "../ee/feature-entitlements.js";
 // Only provider-supplied identity data may enter this module. Never use message text,
 // a display name, a stored editable profile or a caller-supplied run-API author as an email.
 import { domainToASCII } from "node:url";
@@ -23,7 +24,7 @@ export function normalizeApprovalDomains(value) {
 export function getAutoApprovalPolicy() {
   const settings = getSettings();
   try {
-    return { enabled: settings.userAutoApprovalEnabled === true,
+    return { enabled: enterpriseFeatureEnabled("companyDomainApproval") && settings.userAutoApprovalEnabled === true,
       domains: normalizeApprovalDomains(settings.userAutoApprovalDomains || []) };
   } catch { return { enabled: false, domains: [] }; }
 }

@@ -33,6 +33,7 @@ import { channelSettingsFile, workspaceRoot } from "../config/paths.js";
 import { getMemoryReviewEvery, getMemoryReviewModel, getMemoryReviewNotify } from "../config/settings.js";
 import { memoryEnabled, readMemorySnapshot, isMemorySaveTool, MEM_DIR, MEMORY_SECTIONS } from "./channel-memory.js";
 import { recordUsage } from "./usage.js";
+import { channelSpendingAdmission } from "../ee/channel-spending.js";
 import { logEvent } from "../util/logger.js";
 import { postNotice } from "../platforms/notify.js";
 import { allowedFsRoot } from "../web/security.js";
@@ -148,6 +149,7 @@ export async function runMemoryReview({
   run = runClaude,
 } = {}) {
   meta = (await getChannelMeta(slug)) ?? meta;
+  if (!channelSpendingAdmission({ channelId, meta }).allowed) return { skipped: "channel-spending-limit", saved: 0 };
   if (!isChannelEngineApproved(meta, "claude")) return { skipped: "harness-not-approved", saved: 0 };
   const cwd = effectiveWorkDir(slug, meta);
   const snapshot = await readMemorySnapshot(cwd, meta);
@@ -210,6 +212,7 @@ export async function runMemoryReview({
   try {
     await target.runtime.ensureUp(target, { announce: () => {}, lease });
     if (!isChannelEngineApproved((await getChannelMeta(slug)) ?? meta, "claude")) return { skipped: "harness-not-approved", saved: 0 };
+    if (!channelSpendingAdmission({ channelId, meta: (await getChannelMeta(slug)) ?? meta }).allowed) return { skipped: "channel-spending-limit", saved: 0 };
     const result = await run({
       cwd,
       prompt,

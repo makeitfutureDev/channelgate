@@ -40,6 +40,7 @@ export const POLICY_KEYS = Object.freeze([
   "skillRuntimeSwap", // a skill's preferred model may switch the turn's engine/model
   "noDefaultTokens", // refuse the org-default token fallback here
   "approvedEngines", // Enterprise channel harness approval policy
+  "monthlySpendingLimitUSD", // Enterprise monthly recorded-cost admission limit
   "engine", // per-channel engine override
   "codexAuthSource", // gateway-wide or channel-specific Codex login
   "model",

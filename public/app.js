@@ -2326,6 +2326,21 @@ function renderChannelDetail(ch) {
   paintHarnessPolicy();
   void api("/api/license").then((license) => {
     if (!harnessPolicy.isConnected) return;
+    for (const [selector, key] of [[".ch-skillswap", "skillModelRouting"], [".ch-skill-template", "skillTemplates"], [".ch-syncdrive", "driveSync"]]) {
+      const control = card.querySelector(selector);
+      if (control) {
+        const entitled = license.features?.[key] === true;
+        control.title = entitled ? "" : "Requires Enterprise; existing configuration can be cleared";
+        if (control.type === "checkbox") control.disabled = !entitled && !control.checked;
+        else if (control.tagName === "SELECT") for (const option of control.options) option.disabled = !entitled && Boolean(option.value);
+        else control.readOnly = !entitled && !control.value;
+      }
+    }
+    const dedicatedOption = card.querySelector('.ch-codex-auth-source option[value="channel"]');
+    if (dedicatedOption) dedicatedOption.disabled = license.features?.channelCodexLogin !== true;
+    if (license.features?.channelCodexLogin !== true) {
+      card.querySelectorAll(".ch-auth-channel-panel input, .ch-auth-channel-panel select, .ch-auth-channel-panel button:not(.ch-codex-device-cancel)").forEach((control) => { control.disabled = true; });
+    }
     harnessPolicy.disabled = license.features?.channelHarnessPolicy !== true;
     harnessHelp.textContent = harnessPolicy.disabled
       ? "Enterprise is required to change approvals. Any saved restriction remains enforced."
@@ -2333,6 +2348,8 @@ function renderChannelDetail(ch) {
   }).catch(() => { harnessHelp.textContent = "Could not verify Enterprise access. Reopen this channel to retry; saved approvals are preserved."; });
 
   const authSource = card.querySelector(".ch-codex-auth-source");
+  const spendingLimitInput = card.querySelector(".ch-monthly-spending-limit");
+  spendingLimitInput.value = meta.monthlySpendingLimitUSD ?? "";
   const channelPanel = card.querySelector(".ch-auth-channel-panel");
   const modelSelect = card.querySelector(".ch-model");
   const effortSelect = card.querySelector(".ch-effort");
@@ -2522,6 +2539,8 @@ function renderChannelDetail(ch) {
           noDefaultTokens: card.querySelector(".ch-nodefaulttokens").checked,
           engine: engineSelect.value,
           codexAuthSource: card.querySelector(".ch-codex-auth-source").value,
+          ...(spendingLimitInput.value !== String(ch.meta?.monthlySpendingLimitUSD ?? "")
+            ? { monthlySpendingLimitUSD: spendingLimitInput.value.trim() ? Number(spendingLimitInput.value) : null } : {}),
           workDir: card.querySelector(".ch-workdir").value,
           syncDriveFolder: card.querySelector(".ch-syncdrive").value,
           model: card.querySelector(".ch-model").value,
@@ -4350,24 +4369,30 @@ async function loadSettings() {
 // hand-written has*/last4 echoes, and an arbitrary-name secret bag behind it is exactly the shape
 // that erodes the "resolve a NAMED field" property web/secrets.js depends on.
 let orgSecretEditor = null;
+let orgSecretEntitled = null;
 async function loadOrgSecrets() {
   const host = document.getElementById("org-secrets-editor");
   if (!host) return;
   let vars = [];
+  const license = await api("/api/license").catch(() => ({ features: {} }));
+  const entitled = license.features?.organizationVariables === true;
   try {
     vars = (await api("/api/org-secrets")).vars || [];
   } catch {
     /* an older daemon, or a transient failure: the card renders empty rather than breaking Settings */
   }
-  if (orgSecretEditor) {
+  if (orgSecretEditor && orgSecretEntitled === entitled) {
     orgSecretEditor.setVars(vars);
     return;
   }
   host.textContent = "";
+  orgSecretEntitled = entitled;
   host.appendChild(secretEditorMarkup());
   const card = document.getElementById("org-secrets-card");
   orgSecretEditor = mountSecretEditor({
     root: card,
+    disabled: !entitled,
+    allowRemoval: true,
     vars,
     userName: (id) => USERS[id]?.name || "",
     endpoint: (name) => `/api/org-secrets/${encodeURIComponent(name)}`,
@@ -4410,6 +4435,11 @@ function paintLicense(l) {
   document.querySelector('#set-composio-mode option[value="sdk"]').disabled = l.features?.composioSdk !== true;
   document.getElementById("set-composio-sdk-key").disabled = l.features?.composioSdk !== true;
   syncComposioModeUi();
+  document.querySelectorAll('[id^="set-drivesync-"]').forEach((control) => {
+    if ("disabled" in control) { control.disabled = l.features?.driveSync !== true; control.title = control.disabled ? "Google Drive sync requires Enterprise" : ""; }
+  });
+  const domainToggle = document.getElementById("user-auto-approval-enabled");
+  if (domainToggle && !domainToggle.checked) domainToggle.disabled = l.features?.companyDomainApproval !== true;
 
   const banner = document.getElementById("license-banner");
   banner.className = `license-banner ${l.banner?.level || ""}`.trim();

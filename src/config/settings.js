@@ -15,6 +15,7 @@ import { QWEN_PROVIDERS, qwenProvider } from "../engines/qwen.js";
 // transactional updater can name the same image without importing this file's database layer.
 import { CONTAINER_DEFAULT_IMAGE } from "../runtimes/container/image.js";
 import { modelShortcutsFromSettings } from "./model-shortcuts.js";
+import { enterpriseFeatureEnabled, requireEnterpriseFeature } from "../ee/feature-entitlements.js";
 // Dependency-free reaction normalization keeps reserved Teams controls out of activation lists.
 import { teamsReactionKey, teamsActivationFingerprint, DEFAULT_TEAMS_ACTIVATION_REACTIONS } from "../platforms/msteams/reactions.js";
 
@@ -89,6 +90,14 @@ export function saveSettings(patch, { expectVersion = "" } = {}) {
   db.exec("BEGIN IMMEDIATE");
   try {
     const current = getSettings();
+    if (patch.userAutoApprovalEnabled === true && current.userAutoApprovalEnabled !== true) requireEnterpriseFeature("companyDomainApproval");
+    for (const [key, value] of Object.entries(patch)) {
+      if (key.startsWith("driveSync") && value && JSON.stringify(value) !== JSON.stringify(current[key])) requireEnterpriseFeature("driveSync");
+    }
+    for (const [scope, template] of Object.entries(patch.dmTemplates || {})) {
+      if (template?.skillTemplate && template.skillTemplate !== current.dmTemplates?.[scope]?.skillTemplate) requireEnterpriseFeature("skillTemplates");
+    }
+    if (patch.channelTemplate?.skillTemplate && patch.channelTemplate.skillTemplate !== current.channelTemplate?.skillTemplate) requireEnterpriseFeature("skillTemplates");
     const currentVersion = String(Number.isFinite(Number(current.settingsRev)) && Number(current.settingsRev) >= 0 ? Math.floor(Number(current.settingsRev)) : 0);
     if (expectVersion !== "" && String(expectVersion) !== currentVersion) throw new SettingsVersionConflict(currentVersion);
     const next = { ...current };
@@ -1056,7 +1065,11 @@ export function applyChannelTemplate(meta) {
   if (meta?.isDM) return meta;
   // Templates store canonical flags, not a profile label. Removing the base record's explicit
   // "read" marker lets channelProfile() derive the selected profile from the copied flags.
-  return { ...meta, ...getChannelTemplate(), profile: undefined };
+  const template = getChannelTemplate();
+  // Retain the saved default while omitting its inactive Enterprise skill assignment for new
+  // Free channels. Otherwise the store would refuse ordinary channel registration on downgrade.
+  if (!enterpriseFeatureEnabled("skillTemplates")) template.skillTemplate = "";
+  return { ...meta, ...template, profile: undefined };
 }
 export function getDmTemplates() {
   const t = getSettings().dmTemplates || {};
