@@ -70,6 +70,7 @@ for (const engine of ["claude", "codex"]) {
     await processMessageEvent({ ...event, ts: `${sourceTs.slice(0, 4)}.002`, thread_ts: sourceTs, text: "/fork Explore another solution" }, client, { botUserId: "UBOT", teamId: "T_FORK" });
     const root = client.posted.find((m) => !m.thread_ts && /Fork of/.test(m.text || ""));
     assert.ok(root, "fork gets a new top-level Slack message");
+    assert.match(root.text, /^Explore another solution\n\n↪️ Fork of </, "channel preview leads with the user request");
     const forkTs = client.posted.find((m) => m.thread_ts === sourceTs && /Fork started/.test(m.text || ""))?.text.match(/p(\d+)/)?.[1];
     assert.ok(forkTs, "source thread links to child");
     const childTs = `${forkTs.slice(0, -3)}.${forkTs.slice(-3)}`;
@@ -200,7 +201,7 @@ for (const sourceEngine of ["claude", "codex"]) {
     await processMessageEvent({ ...event, ts: "8000.003", thread_ts: event.ts, text: "<@UBOT> /fork :other Continue the decision" }, client, { botUserId: "UBOT" });
     const childTs = client.posted.find((m) => /New request from/.test(m.text || ""))?.thread_ts;
     assert.ok(childTs);
-    assert.ok(client.posted.some((m) => !m.thread_ts && /from Slack history/.test(m.text || "")));
+    assert.ok(client.posted.some((m) => !m.thread_ts && /^Continue the decision\n\n↪️ Fork of <.*from Slack history/.test(m.text || "")));
     assert.equal(await getSessionEngine(entry.slug, childTs), childEngine);
     assert.equal(await getThreadModel(entry.slug, childTs), model);
     assert.equal(await getThreadEffort(entry.slug, childTs), "");

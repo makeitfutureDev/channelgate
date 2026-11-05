@@ -817,7 +817,7 @@ export async function processMessageEvent(event, client, { botUserId = "", teamI
             sourceContext = `You are continuing a conversation in a new Slack thread using ${engineLabel(childEngine)}. Source thread: ${sourceUrl}. The quoted history below comes from that source thread; continue with the user's new request after it.\n\n${sourceContext}`;
           }
           const handoffNote = nativeFork ? "" : ` · continuing with ${engineLabel(childEngine)}${sourceClean ? " (clean session; no history replay)" : " from Slack history"}`;
-          const root = await client.chat.postMessage({ channel: event.channel, text: `↪️ Fork of <${sourceUrl}|this thread>${handoffNote}` });
+          const root = await client.chat.postMessage({ channel: event.channel, text: `${task}\n\n↪️ Fork of <${sourceUrl}|this thread>${handoffNote}` });
           if (!root?.ts) throw new Error("Slack did not return a thread timestamp for the fork.");
           const forkKey = String(root.ts);
           const pendingKey = `${entry.slug}::${forkKey}`;
