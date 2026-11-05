@@ -2901,7 +2901,7 @@ function readBudgetInput(input) {
 }
 function showBudgetStatus(element, channelId) {
   api(`/api/channels/${encodeURIComponent(channelId)}/budget`).then((budget) => {
-    element.textContent = `${budget.month} UTC: $${budget.spentUSD.toFixed(2)} recorded${budget.limitUSD === null ? " · Unlimited" : ` of $${budget.limitUSD.toFixed(2)}${!budget.allowed ? " · New agent runs paused" : ""}`}${budget.unpricedRuns ? ` · ${budget.unpricedRuns} unpriced run(s); repair pricing to resume` : ""}`;
+    element.textContent = `${budget.month} UTC: $${budget.spentUSD.toFixed(2)} recorded${budget.limitUSD === null ? " · Unlimited" : ` of $${budget.limitUSD.toFixed(2)}${!budget.allowed ? " · New agent runs paused" : ""}`}${budget.unpricedRuns ? ` · ${budget.unpricedRuns} unpriced run(s)${budget.limitUSD === null ? "" : "; repair pricing to resume"}` : ""}`;
   }).catch(() => { element.textContent = "Budget usage unavailable. Reopen this conversation to retry."; });
 }
 

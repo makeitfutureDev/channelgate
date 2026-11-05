@@ -151,7 +151,7 @@ export async function runMemoryReview({
   meta = (await getChannelMeta(slug)) ?? meta;
   try { await assertChannelBudget(channelId, slug); }
   catch (error) {
-    if (error.code === "channel_budget_exhausted") return { skipped: "channel-budget-exhausted", saved: 0 };
+    if (error.code === "channel_spending_limit") return { skipped: "channel-spending-limit", saved: 0 };
     throw error;
   }
   if (!isChannelEngineApproved(meta, "claude")) return { skipped: "harness-not-approved", saved: 0 };
@@ -218,7 +218,7 @@ export async function runMemoryReview({
     if (!isChannelEngineApproved((await getChannelMeta(slug)) ?? meta, "claude")) return { skipped: "harness-not-approved", saved: 0 };
     try { await assertChannelBudget(channelId, slug); }
     catch (error) {
-      if (error.code === "channel_budget_exhausted") return { skipped: "channel-budget-exhausted", saved: 0 };
+      if (error.code === "channel_spending_limit") return { skipped: "channel-spending-limit", saved: 0 };
       throw error;
     }
     const result = await run({

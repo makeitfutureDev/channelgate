@@ -91,12 +91,10 @@ test("a budget exhausted during runtime warmup is rechecked before spawn and is 
     spend(c.channelId);
     return result;
   };
-  await assert.rejects(runMessage(args(c, "slack_foreground")), error => {
-    assert.equal(error.code, "channel_spending_limit");
-    assert.equal(isDiagnosableRunError(error), false);
-    assert.match(error.message, /reached.*spending limit/);
-    return true;
-  });
+  const result = await runMessage(args(c, "slack_foreground"));
+  assert.equal(result.spendingRefused, true);
+  assert.match(result.content, /reached.*spending limit/);
+  assert.equal(isDiagnosableRunError({ code: "channel_spending_limit" }), false);
   assert.equal(b.runtime.calls.ensureUp.length, 1, "the turn passed initial admission");
   assert.equal(b.spawns, 0, "the engine and any failover remain unstarted");
   assert.ok(b.runtime.calls.leases.every(lease => lease.released), "refusal releases the runtime lease");

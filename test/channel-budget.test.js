@@ -93,7 +93,7 @@ test('budget blocks every run origin and both engines before provisioning, with 
     }
   }
   let called = false;
-  assert.deepEqual(await runMemoryReview({ channelId: id, slug: entry.slug, run: () => { called = true; } }), { skipped: 'channel-budget-exhausted', saved: 0 });
+  assert.deepEqual(await runMemoryReview({ channelId: id, slug: entry.slug, run: () => { called = true; } }), { skipped: 'channel-spending-limit', saved: 0 });
   assert.equal(called, false);
   await saveChannelMeta(entry.slug, { channelId: id, monthlySpendingLimitUSD: null });
   await assert.doesNotReject(assertChannelBudget(id, entry.slug));
@@ -105,7 +105,7 @@ test('budget policy is fetched anew for each attempt and code channels retain th
   await assert.doesNotReject(assertChannelBudget(id, entry.slug));
   row(id, new Date().toISOString(), 10);
   await saveChannelMeta(entry.slug, { channelId: id, monthlySpendingLimitUSD: 10 });
-  await assert.rejects(assertChannelBudget(id, entry.slug), { code: 'channel_budget_exhausted' });
+  await assert.rejects(assertChannelBudget(id, entry.slug), { code: 'channel_spending_limit' });
   assert.equal(inheritedCodeChannelMeta({ monthlySpendingLimitUSD: 10 }, {}).monthlySpendingLimitUSD, null);
   assert.equal(inheritedCodeChannelMeta({ monthlySpendingLimitUSD: 10 }, { monthlySpendingLimitUSD: 5 }).monthlySpendingLimitUSD, 5);
 });

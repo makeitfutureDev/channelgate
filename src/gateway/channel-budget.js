@@ -26,7 +26,7 @@ export async function assertChannelBudget(channelId, slug) {
   if (meta.monthlySpendingLimitUSD == null) return;
   const status = channelBudgetStatus(channelId, meta);
   if (!status.allowed) throw Object.assign(new Error(status.notice), {
-    code: "channel_budget_exhausted", budget: status,
+    code: "channel_spending_limit", budget: status,
     details: { replaySafe: false, providerError: false },
   });
 }
