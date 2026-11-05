@@ -1,5 +1,10 @@
 # Skills — the local catalog, channel profiles, templates, authoring and sources
 
+**Enterprise:** channel skill templates, the external catalog MCP endpoint/access tokens and
+honoring skill preferred-model switches require an effective Enterprise license. Ordinary local
+skills and authoring remain available in other tiers. Saved Enterprise configuration is retained
+after expiry without activating those behaviors; see [license keys](LICENSE-KEYS.md#enterprise-organization-controls).
+
 ChannelGate keeps its own **skill catalog** in the gateway database and materializes real skill
 folders into every conversation that is granted them. Skills work with no external token and no
 network call at run time; Claude and Codex both discover them natively.

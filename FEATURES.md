@@ -1,5 +1,35 @@
 # ChannelGate — Features
 
+## Enterprise organization controls
+
+The following capabilities require an effective Enterprise license (including use of previously
+saved configuration after downgrade or expiry):
+
+- Skill preferred-model switching: opt a conversation into honoring a skill's engine/model preference.
+- Exact company email-domain auto-approval for new users and policy application to existing users.
+- A dedicated Codex login per conversation, separate from the gateway login.
+- The external skill-catalog MCP endpoint and its catalog/user access tokens.
+- Organization environment variables shared across conversations.
+- Google Drive workspace synchronization, both scheduled and on demand.
+- Channel skill templates and their inherited skill grants.
+- Per-channel monthly USD spending limits.
+
+Other tiers retain ordinary skills, channel/personal environment variables, the shared gateway
+Codex login, manual user approval and standard chat connectors. Stored Enterprise configuration
+is preserved when an entitlement expires; it does not activate Enterprise behavior. A channel
+configured with a dedicated Codex login is refused rather than silently switched to another account.
+
+A spending limit is an admission control against the channel's recorded spend in the current UTC
+calendar month. It is not a provider billing limit: an in-flight run can take recorded spend above
+the cap, concurrent runs can overshoot, and provider-side costs are not reserved in advance.
+`monthlySpendingLimitUSD: null` means no cap; a configured cap is a positive finite USD amount.
+A current-month usage row with unknown cost refuses new runs until pricing is repaired or an
+admin clears the cap. A saved cap also refuses new runs after downgrade; an admin can clear it
+without Enterprise, so the safety control never silently disappears.
+See [license keys](docs/LICENSE-KEYS.md#enterprise-organization-controls) and the regression checks
+under **Enterprise organization controls** in `TEST-PLAN.md`.
+
+
 - **Consistent DM network policy.** The egress proxy resolves the same current organization DM template policy as engine turns. User/admin template edits take effect on the next request, including OFF overriding a stale saved ON; custom DMs and linked workspaces retain their own resolved policy. The resolver is shared without importing the run orchestrator into the proxy.
 
 - **HTML attachments.** Slack HTML uploads and identical HTML renamed to text download normally. The downloader rejects recognizable Slack authentication/error pages and authentication landing URLs with an access diagnostic, rather than treating all HTML as proof of a missing scope. Inspection is bounded and streamed; byte caps, channel scope and no-follow publication remain enforced.

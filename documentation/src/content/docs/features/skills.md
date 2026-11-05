@@ -3,6 +3,9 @@ title: Reusable skills
 description: Give recurring workflows their own instructions, references, and scripts.
 ---
 
+**Enterprise availability.** Honoring skill preferred-model switching requires an effective Enterprise license and the conversation switch. Ordinary reusable skills and model metadata remain available in other tiers.
+
+
 A skill is a reusable workflow package with a `SKILL.md` entry point and optional references, scripts, and assets. It tells the agent when to use the workflow and how to perform it. Skills do not grant tool permissions or connect provider accounts.
 
 ## Add the right skills

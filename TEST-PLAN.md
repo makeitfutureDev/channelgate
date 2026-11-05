@@ -11981,3 +11981,34 @@ Live acceptance pending (engine-independent configuration): import the shipped J
 - Engine-independent decision: all checks execute in the daemon against Slack messages, without
   invoking an engine. Both engine fixtures above exercise actual delivered bot replies.
 - Live acceptance is pending; automated success does not certify deployed behavior.
+
+
+## Enterprise organization controls
+
+Run entitlement-independent cases once; exercise runtime cases on both Claude and Codex. Use
+no-key, Registered and Enterprise fixtures, then expire/downgrade a previously configured
+Enterprise deployment without deleting saved data. Never record a live pass from fixtures alone.
+
+- Verify non-Enterprise admin API, Slack controls and gateway tools refuse activating each of:
+  skill preferred-model switching; company email-domain auto-approval; dedicated channel Codex
+  authentication; skill catalog MCP/tokens; organization secrets; Google Drive sync; channel
+  skill templates; monthly channel USD spending limits. Enterprise permits authorized changes.
+- Verify saved domain policies do not approve a user after downgrade; manual approvals still work.
+- Verify a downgraded dedicated-Codex channel refuses the run with an actionable Enterprise
+  message and never uses the shared gateway account instead. Shared-login channels still run.
+- Verify existing catalog/user tokens cannot read or mutate through the external MCP endpoint
+  after downgrade; ordinary in-channel skill use still works. Check token mint/list/revoke policy.
+- Verify organization environment variables do not enter new launches after downgrade; channel
+  and personal variables retain their normal precedence and isolation. Check background and
+  scheduled launches, and verify no secret value appears in errors or audit events.
+- Verify scheduled and manual Drive sync are blocked after downgrade, without deleting local or
+  Drive files. Verify channel template grants and preferred-model switches cannot activate via
+  saved configuration or linked-folder inheritance after downgrade; direct grants still work.
+- For a monthly spending limit, test null (uncapped), positive finite values, invalid negative,
+  zero, nonnumeric and infinite inputs. Test recorded spend below/equal/above the limit, UTC
+  month rollover and channel isolation. Confirm foreground, scheduled, API and background agent
+  admission share the limit. Test admission when current-month usage cannot be priced.
+- Verify a run admitted below the cap may complete above it and subsequent runs are refused;
+  concurrent admission can overshoot. UI copy must describe recorded spend, UTC calendar months
+  and the distinction from provider billing limits. Verify cap configuration survives downgrade
+  and refuses new runs after downgrade until an admin clears it; ordinary licensing caps still apply.

@@ -201,3 +201,31 @@ not arbitrary commands a Worker/Admin author is otherwise allowed to execute ins
 ## Cost-tracking history
 
 Non-Enterprise installations expose one month (30 days) of cost history in audit and dashboard reports. Enterprise history is unlimited. Older accounting remains stored for upgrades; license usage counters and conversation history are independent. Structured costs older than the reporting window are also hidden in audit-event, API-job and schedule-telemetry responses, while their operational records and result text remain available.
+
+## Enterprise organization controls
+
+The following capabilities require an effective Enterprise license (including use of previously
+saved configuration after downgrade or expiry):
+
+- Skill preferred-model switching: opt a conversation into honoring a skill's engine/model preference.
+- Exact company email-domain auto-approval for new users and policy application to existing users.
+- A dedicated Codex login per conversation, separate from the gateway login.
+- The external skill-catalog MCP endpoint and its catalog/user access tokens.
+- Organization environment variables shared across conversations.
+- Google Drive workspace synchronization, both scheduled and on demand.
+- Channel skill templates and their inherited skill grants.
+- Per-channel monthly USD spending limits.
+
+Other tiers retain ordinary skills, channel/personal environment variables, the shared gateway
+Codex login, manual user approval and standard chat connectors. Stored Enterprise configuration
+is preserved when an entitlement expires; it does not activate Enterprise behavior. A channel
+configured with a dedicated Codex login is refused rather than silently switched to another account.
+
+A spending limit is an admission control against the channel's recorded spend in the current UTC
+calendar month. It is not a provider billing limit: an in-flight run can take recorded spend above
+the cap, concurrent runs can overshoot, and provider-side costs are not reserved in advance.
+`monthlySpendingLimitUSD: null` means no cap; a configured cap is a positive finite USD amount.
+A current-month usage row with unknown cost refuses new runs until pricing is repaired or an
+admin clears the cap. A saved cap also refuses new runs after downgrade; an admin can clear it
+without Enterprise, so the safety control never silently disappears.
+See the regression checks under **Enterprise organization controls** in `TEST-PLAN.md`.
