@@ -60,8 +60,8 @@
         <summary>Sign in with password and Slack code</summary>
         <p>Use the dashboard password and a code sent privately to your Slack admin account.</p>
         <form id="password-slack-form">
-          <label for="slack-user">Your Slack admin user ID</label>
-          <input id="slack-user" type="text" placeholder="U0123456789" autocomplete="username" required maxlength="100" />
+          <label for="slack-email">Your Slack email address</label>
+          <input id="slack-email" type="email" placeholder="you@company.com" autocomplete="username" autocapitalize="none" spellcheck="false" required maxlength="254" />
           <label for="slack-password">Dashboard password</label>
           <input id="slack-password" type="password" autocomplete="current-password" required />
           <button type="submit">Send Slack code</button>

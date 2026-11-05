@@ -30,7 +30,7 @@ test('optional password + private Slack code remains a two-factor, browser-bound
   let releaseDelivery;
   let signalDelivery;
   const deliveries = [];
-  const app = createWebApp({ adminIdentityDelivery: async (userId, text) => {
+  const app = createWebApp({ adminSlackIdentityLookup: async email => ({ id: email === 'admin@example.test' ? 'UPASSWORDADMIN' : email === 'member@example.test' ? 'UPASSWORDMEMBER' : 'UMISSING99', profile: { email } }), adminIdentityDelivery: async (userId, text) => {
     const code = text.match(/\b\d{8}\b/)?.[0];
     assert.match(code, /^\d{8}$/);
     deliveries.push({ userId, code, text });
@@ -59,8 +59,8 @@ test('optional password + private Slack code remains a two-factor, browser-bound
     return { status: response.status, body: await response.json(), cookies,
       cookie: cookies.map(value => value.split(';')[0]).join('; ') };
   }
-  const options = (userId = 'UPASSWORDADMIN', suppliedPassword = password, cookie = '') =>
-    request('/api/auth/password-slack/options', { userId, password: suppliedPassword }, cookie);
+  const options = (email = 'admin@example.test', suppliedPassword = password, cookie = '') =>
+    request('/api/auth/password-slack/options', { email, password: suppliedPassword }, cookie);
   const verify = (proof, code = deliveries.at(-1).code, cookie = proof.cookie) =>
     request('/api/auth/password-slack/verify', { requestId: proof.body.requestId, code }, cookie);
   const configure = enabled => request('/api/auth/password-slack/settings', { enabled }, administratorCookie, 'PUT');
@@ -73,10 +73,10 @@ test('optional password + private Slack code remains a two-factor, browser-bound
   accounts.saveAdminPasskey({ accountId: account.id, authVersion: account.authVersion,
     credential: { id: 'cGFzc3dvcmQtc2xhY2stZml4dHVyZQ', publicKey: new Uint8Array([1]), counter: 0, transports: ['internal'] }, name: 'Fixture', deviceType: 'singleDevice', backedUp: false });
   assert.equal((await request('/api/login', { password })).status, 401, 'the old password-only bootstrap stays closed');
-  for (const userId of ['UPASSWORDMEMBER', 'msteams:fixture-admin', 'api', 'missing']) {
+  for (const userId of ['member@example.test', 'missing@example.test']) {
     assert.notEqual((await options(userId)).status, 200);
   }
-  assert.notEqual((await options('UPASSWORDADMIN', 'wrong-password')).status, 200);
+  assert.notEqual((await options('admin@example.test', 'wrong-password')).status, 200);
   assert.equal(deliveries.length, 0);
   const proof = await options();
   assert.equal(proof.status, 200);
@@ -127,9 +127,9 @@ test('optional password + private Slack code remains a two-factor, browser-bound
   assert.equal((await verify(active)).status, 200, 'a fresh successful login resets failure backoff');
   const deliveryStarted = new Promise(resolve => { signalDelivery = resolve; });
   deliveryMode = 'pause';
-  const superseded = options('UPASSWORDADMIN', password, active.cookie);
+  const superseded = options('admin@example.test', password, active.cookie);
   await deliveryStarted;
-  const replacement = await options('UPASSWORDADMIN', password, active.cookie);
+  const replacement = await options('admin@example.test', password, active.cookie);
   releaseDelivery();
   assert.equal((await superseded).status, 503, 'a slower resend cannot revive its superseded challenge');
   assert.equal(replacement.status, 200);

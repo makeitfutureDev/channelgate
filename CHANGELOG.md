@@ -48,6 +48,10 @@ product overview.
 
 ## Unreleased
 
+- Use the administrator's Slack email for optional password and Slack-code sign-in. Resolve the
+  address through Slack after password verification, retain stable user IDs internally, and
+  keep sensitive-action reauthentication bound to the signed-in administrator.
+
 - Fix Slack app imports: register `/status-cg` instead of the built-in `/status`, include explicit command URLs, and clarify Socket Mode setup in the installer.
 
 - **Company email auto-approval.** Admins can configure exact email domains in Users, preview

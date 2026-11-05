@@ -125,7 +125,10 @@ Slack’s native running/Stop label shows the resolved model and explicitly conf
 ## Optional password and Slack code sign-in
 
 - Settings → Admin access can enable an alternative to passkeys: the configured admin password
-  followed by an eight-digit code delivered privately to an existing Slack administrator.
+  and the administrator’s Slack email address, followed by an eight-digit code delivered
+  privately to that existing Slack administrator. Email lookup uses the configured gateway Slack
+  app and requires `users:read.email`; user-entered or editable stored email never grants access.
+  Slack IDs remain the internal identity, and passkey selection is unchanged.
   The option is off by default; password alone never grants dashboard access. Existing passkeys
   remain available. A recently verified, identity-linked initial setup can enable this option
   without first registering a passkey.
@@ -337,20 +340,6 @@ Slack’s native running/Stop label shows the resolved model and explicitly conf
   author, credentials and runtime permissions; accepted decisions audit the responding admin.
   Expiration, duplicate claims and the cross-author automatic steering guard still apply.
 
-
-## Company email domain auto-approval
-
-- Admin UI → Users → Auto-approval accepts exact company email domains, disabled by default.
-  Authenticated inbound provider identities can gain Approved access before engine selection;
-  this never grants Admin or bypasses channel access rules, quotas, or license admission.
-- Slack fetches the current human profile (requires `users:read.email`). Google Chat and Teams
-  use provider-supplied sender email when available; missing email remains manual approval.
-  Editable names, message text and run-API attribution cannot establish an email identity.
-- Unchecking Approved in the admin user editor records a manual opt-out from auto-approval;
-  checking it clears that opt-out. Removing domains/disabling the policy retains prior approvals.
-- Existing known Slack users can be previewed and explicitly approved, with fresh identity,
-  current policy and manual opt-out checks on apply. Up to 500 users per batch; lookup failures
-  are reported and grant nothing. Policy changes and automatic approvals are audited.
 
 ## Registered inventory limits and Enterprise harness approvals
 

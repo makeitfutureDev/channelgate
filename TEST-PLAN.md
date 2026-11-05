@@ -1,5 +1,27 @@
 # ChannelGate — Test Plan
 
+## Slack email for password and code sign-in (2026-11-05)
+
+- Engine-independent: the HTTP/browser authentication path never launches an engine. Use scratch
+  databases, disposable passwords and simulated Slack lookup/private delivery only.
+- Verify whitespace/case normalization, exact provider email and stable user ID matching, current
+  Admin status, password-before-lookup, no account directory disclosure, missing-scope guidance,
+  and refusal of absent/deactivated/bot/mismatched/non-admin users. Editable user-store emails
+  must not resolve identity. Preserve OTP browser binding, expiry, five guesses and one-time use.
+- Reauthentication uses the current linked session and requires password plus its private Slack
+  code; session/role/password/settings changes while lookup, delivery or verification is pending
+  must not restore stale authority. Existing passkey account labels and credentials are unchanged.
+- Live acceptance pending: on a disposable gateway grant `users:read.email` and reinstall the
+  Slack app, enable optional password/Slack-code sign-in, then sign out. Enter the existing Slack
+  administrator's email and dashboard password; require a private Slack code to that same member
+  and a full session linked to the original stable user ID. Test reauthentication and a non-admin
+  email. Record only success/failure, message links and redacted screenshots. Check scope failure
+  guidance on a separate test app lacking email access; never change the production bot to test.
+- Private QA definitions recorded through the established personal QA connection:
+  `ADM-SLACK-EMAIL-01` (email sign-in/provider checks) and `ADM-SLACK-EMAIL-02`
+  (authority races/session-bound reauthentication). Both are engine-independent and explicitly
+  retain human deployed acceptance as pending; no simulated delivery is recorded as live PASS.
+
 ## Model-specific skills (2026-11-05)
 
 - Automated: `node --test test/skill-runtime.test.js` covers the `model:` frontmatter reader and engine derivation, the SKILL.md header insertion (after frontmatter, once, catalog bytes untouched, materializer sees it as unchanged), the full decision table (disabled / no preference / pinned / already / inline / second skill → subagent / other engine → delegate / engine unavailable), every tool reply, the live-turn registry keyed by thread, the channel switch on the audit/folder-link/managed-block surfaces, `set_channel_skill_swap` authorization + audit, `use_skill` relaying the live turn's reply, and the orchestrator E2E against the Claude stub: a mid-turn `use_skill` ends the attempt, the continuation RESUMES the session with `--model sonnet`, the footer/result name `sonnet`, the thread keeps `sonnet` on the next message, a `/model` pin wins and the skill is refused as pinned, the runtime reset clears the preference, and the switch off refuses with the current model kept. `channel-settings-modal`, `access-settings`, `mcp-control-plane-approval`, `folders-settings` cover the new tick, flag parsing and tool classification.
@@ -537,30 +559,6 @@ Running label acceptance (Claude and Codex): in a Slack agent thread with chat:w
   must fail without consuming the pending choice. Repeat a successful click: no duplicate run.
   Capture Slack card, pending-choice id, run identity and audit events; no live pass claimed here.
 
-
-## Company domain auto-approval (2026-10-28)
-
-- Automated: `node --test test/user-auto-approval.test.js test/user-search.test.js` covers
-  canonical exact domains, malicious suffixes/URLs/wildcards, disabled policy, provider failure,
-  bots/deleted/mismatched identities, manual opt-out, preview without mutation, fresh apply checks,
-  policy validation, audit and Approved without Admin.
-- Engine-independent: authorization occurs before engine selection. Disposable fixture: scratch
-  runtime root via `ensureTestEnv()`, Express admin router, fake Slack `users.info` identities
-  `UAUTO1`…`UAUTO6` with `example.com`/`elsewhere.com`; never change real user approvals.
-- Browser acceptance passed: `CG_BROWSER_MODULE=/usr/local/lib/node_modules/playwright/index.mjs
-  node --test test/user-auto-approval-browser.test.js` against a disposable admin app. Open
-  Users → Auto-approval, add `example.com`, enable and save, reload and confirm persistence.
-  Preview known users, verify no approval changed, apply and verify eligible users become Approved
-  without Admin. Revoke one in the drawer, repeat preview and confirm exclusion. Invalid wildcard
-  must fail with no save. Check desktop and 390px width, keyboard controls and no browser errors.
-- Live inbound acceptance (pending): in a disposable Slack deployment with `users:read.email`,
-  use an unapproved human test account matching the configured company domain. Send `@bot Say
-  DOMAIN_APPROVAL_OK`; require an auto-approval audit row, Approved=true, Admin=false, and a normal
-  reply. Revoke manually and resend: no engine turn. Nonmatching/missing email must remain denied.
-  Repeat authenticated Google Chat/Teams sender fixtures when those transports provide email;
-  Teams Bot Framework events without email must remain manual. No engine-specific output is used
-  for the approval pass rule; downstream engine release smoke remains a separate gate.
-- Private QA registry update pending: requesting user's personal Airtable connection is unavailable.
 
 ## Email accounts (2026-10-22)
 

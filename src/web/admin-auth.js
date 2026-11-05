@@ -122,7 +122,7 @@ function safe(handler) {
     }
   };
 }
-export function createAdminAuthRouter({ adminIdentityDelivery } = {}) {
+export function createAdminAuthRouter({ adminIdentityDelivery, adminSlackIdentityLookup } = {}) {
   const router = express.Router({ caseSensitive: true });
   router.get('/status', safe(async (req, res) => {
     const rp = adminRelyingParty(req);
@@ -137,16 +137,46 @@ export function createAdminAuthRouter({ adminIdentityDelivery } = {}) {
     const rp = ceremonyGuard(req);
     limited(req, res, failures); limited(req, res, starts, '', true);
     if (getSettings().adminPasswordSlackEnabled !== true || typeof adminIdentityDelivery !== 'function') reject('Password and Slack code sign-in is unavailable.', 403);
-    const userId = req.body?.userId;
-    if (!slackAdmin(userId)) reject('Unable to sign in with those credentials.', 401);
-    const a = ensureUserAdminAccount(userId);
+    const session = adminSession(req);
+    const reauth = session && !session.bootstrap && slackAdmin(session.account.userId) ? session : null;
+    const email = typeof req.body?.email === 'string' ? req.body.email.trim().toLowerCase() : '';
+    if ((!email || email.length > 254 || !/^[^\s@]+@[^\s@]+$/.test(email)) && !reauth) reject('Unable to sign in with those credentials.', 401);
+    if (req.body?.email !== undefined && (!email || email.length > 254 || !/^[^\s@]+@[^\s@]+$/.test(email))) reject('Unable to sign in with those credentials.', 401);
+    const version = passwordSlackVersion(); const passwordBefore = getAdminPassword();
+    const sameSession = () => !reauth || (() => {
+      const current = adminSession(req);
+      return current?.token === reauth.token && current.authVersion === reauth.authVersion && current.accountId === reauth.accountId;
+    })();
+    const credentialsValid = () => getSettings().adminPasswordSlackEnabled === true && passwordSlackVersion() === version && getAdminPassword() === passwordBefore && sameSession();
+    // No Slack directory lookup until the shared password is verified. Do not upgrade a legacy
+    // hash here: changing it would invalidate this ceremony's credential snapshot.
+    if (!passwordBefore || typeof req.body?.password !== 'string' || !(await verifyPassword(req.body.password, passwordBefore)) || !credentialsValid()) reject('Unable to sign in with those credentials.', 401);
+    // Only a verified password may create empty credential containers. Snapshot authority
+    // before provider lookup yields, so demotion/re-promotion during lookup or delivery revokes it.
+    const candidates = new Map(eligibleAdminUsers().filter(user => slackAdmin(user.id)).map(user => {
+      const account = ensureUserAdminAccount(user.id); return [user.id, account];
+    }));
+    let userId = reauth?.account.userId;
+    if (email) {
+      let identity;
+      try {
+        if (typeof adminSlackIdentityLookup !== 'function') throw new Error('unavailable');
+        identity = await adminSlackIdentityLookup(email);
+      } catch (error) {
+        if (!credentialsValid()) reject('Unable to sign in with those credentials.', 401);
+        if (error?.data?.error === 'missing_scope' || error?.code === 'missing_scope' || error?.message === 'missing_scope') return res.status(503).json({ error: 'Slack email sign-in requires users:read.email. Ask an administrator to grant the scope and reinstall the Slack app.' });
+        reject('Unable to sign in with those credentials.', 401);
+      }
+      const actualEmail = typeof identity?.profile?.email === 'string' ? identity.profile.email.trim().toLowerCase() : '';
+      if (!identity || identity.deleted || identity.is_bot || identity.is_app_user || identity.id === 'USLACKBOT' || !slackAdmin(identity.id) || actualEmail !== email || (reauth && identity.id !== reauth.account.userId)) reject('Unable to sign in with those credentials.', 401);
+      userId = identity.id;
+    }
+    const a = candidates.get(userId);
+    if (!a) reject('Unable to sign in with those credentials.', 401);
     req.adminAuthAccountId = a.id;
     limited(req, res, failures, a.id); limited(req, res, starts, a.id, true);
-    const version = passwordSlackVersion(); const passwordBefore = getAdminPassword();
-    // Verify directly: an opportunistic legacy hash upgrade would invalidate this ceremony.
-    if (!a.enabled || !passwordBefore || typeof req.body?.password !== 'string' || !(await verifyPassword(req.body.password, passwordBefore))) reject('Unable to sign in with those credentials.', 401);
-    const valid = () => getSettings().adminPasswordSlackEnabled === true && passwordSlackVersion() === version && getAdminPassword() === passwordBefore && slackAdmin(userId) && adminAccount(a.id)?.enabled && adminAccount(a.id)?.authVersion === a.authVersion;
-    if (!valid()) reject('Account access changed. Start again.', 401);
+    const valid = () => credentialsValid() && slackAdmin(userId) && adminAccount(a.id)?.enabled && adminAccount(a.id)?.authVersion === a.authVersion;
+    if (!a.enabled || !valid()) reject('Unable to sign in with those credentials.', 401);
     const now = Date.now();
     for (const [key, value] of passwordSlackPending) if (value.expiresAt <= now) passwordSlackPending.delete(key);
     if (passwordSlackPending.size >= MAX_PENDING) reject('Authentication is busy. Try again shortly.', 429);
@@ -156,7 +186,7 @@ export function createAdminAuthRouter({ adminIdentityDelivery } = {}) {
     const requestId = crypto.randomBytes(24).toString('base64url');
     const code = String(crypto.randomInt(10_000_000, 100_000_000));
     const digest = crypto.createHash('sha256').update(`${requestId}\0${code}`).digest('hex');
-    const saved = { binding, accountId: a.id, authVersion: a.authVersion, version, passwordFingerprint: adminPasswordFingerprint(), origin: rp.origin, expiresAt: now + FIVE_MIN, digest, attempts: 0 };
+    const saved = { binding, sessionToken: reauth?.token || null, accountId: a.id, authVersion: a.authVersion, version, passwordFingerprint: adminPasswordFingerprint(), origin: rp.origin, expiresAt: now + FIVE_MIN, digest, attempts: 0 };
     passwordSlackPending.set(requestId, saved);
     try {
       await adminIdentityDelivery(userId, `ChannelGate dashboard sign-in for ${rp.origin}\nYour sign-in code is: ${code}\nThis code expires in 5 minutes. Enter it only on the gateway page where you requested it. If you did not request this, ignore this message.`);
@@ -172,7 +202,7 @@ export function createAdminAuthRouter({ adminIdentityDelivery } = {}) {
     if (!saved || saved.binding !== parseCookies(req.headers.cookie)[COOKIE] || saved.origin !== rp.origin) reject('Sign-in request expired. Start again.', 401);
     req.adminAuthAccountId = saved.accountId; limited(req, res, failures, saved.accountId);
     const a = adminAccount(saved.accountId);
-    if (saved.expiresAt <= Date.now() || saved.attempts >= 5 || getSettings().adminPasswordSlackEnabled !== true || passwordSlackVersion() !== saved.version || saved.passwordFingerprint !== adminPasswordFingerprint() || !a?.enabled || a.authVersion !== saved.authVersion || !slackAdmin(a.userId)) {
+    if ((saved.sessionToken && saved.sessionToken !== adminSession(req)?.token) || saved.expiresAt <= Date.now() || saved.attempts >= 5 || getSettings().adminPasswordSlackEnabled !== true || passwordSlackVersion() !== saved.version || saved.passwordFingerprint !== adminPasswordFingerprint() || !a?.enabled || a.authVersion !== saved.authVersion || !slackAdmin(a.userId)) {
       passwordSlackPending.delete(requestId); reject('Sign-in request expired or access changed. Start again.', 401);
     }
     const code = req.body?.code;

@@ -13,7 +13,7 @@ test('browser completes initial setup and Slack code sign-in without an authenti
   saveSettings({ publicUrl: '', adminPassword: await hashPassword(password), adminPasswordSlackEnabled: false });
   await setUser('U123456789', { name: 'Fixture administrator', isAdmin: true });
   let code;
-  const app = createWebApp({ adminIdentityDelivery: async (_id, text) => { code = text.match(/\b\d{8}\b/)[0]; } });
+  const app = createWebApp({ adminSlackIdentityLookup: async email => ({ id: 'U123456789', profile: { email } }), adminIdentityDelivery: async (_id, text) => { code = text.match(/\b\d{8}\b/)[0]; } });
   const server = await new Promise(resolve => { const s = app.listen(0, '127.0.0.1', () => resolve(s)); });
   t.after(() => new Promise(resolve => { server.closeAllConnections(); server.close(resolve); }));
   const base = `http://localhost:${server.address().port}`;
@@ -53,7 +53,7 @@ test('browser completes initial setup and Slack code sign-in without an authenti
   await page.goto(`${base}/login.html`);
   await page.locator('#password-slack').waitFor({ state: 'visible' });
   await page.locator('#password-slack summary').click();
-  await page.locator('#slack-user').fill('U123456789');
+  await page.locator('#slack-email').fill('admin@example.test');
   await page.locator('#slack-password').fill(password);
   await page.locator('#password-slack-form button').click();
   await page.locator('#slack-code').waitFor({ state: 'visible' });

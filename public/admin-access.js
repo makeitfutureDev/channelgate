@@ -52,7 +52,7 @@ async function passwordSlackReauth(me) {
         if (!requestId) {
           let result;
           try {
-            result = await api("/api/auth/password-slack/options", { method: "POST", body: JSON.stringify({ password: at("password").value, userId: me.account.userId }) });
+            result = await api("/api/auth/password-slack/options", { method: "POST", body: JSON.stringify({ password: at("password").value }) });
           } finally { at("password").value = ""; }
           requestId = result.requestId;
           at("password").required = false;
@@ -147,7 +147,7 @@ export async function mountAdminAccess(container, { confirm = async () => false,
     <p class="admin-access-bootstrap" data-access="bootstrap" hidden>Create your first passkey to finish setup, or enable password and Slack code sign-in below after linking your admin identity.</p>
     <form data-access="password-slack-form" class="admin-access-form">
       <label class="toggle"><input data-access="password-slack-enabled" type="checkbox" /> Allow password and Slack code sign-in</label>
-      <p class="desc">Admins can sign in without a passkey using the shared dashboard password and a private Slack code. Requires a connected Slack admin account. Disabling this option signs out password and Slack code sessions.</p>
+      <p class="desc">Admins can sign in without a passkey using the shared dashboard password and a private Slack code. Requires a Slack admin account and the Slack app permission users:read.email. Disabling this option signs out password and Slack code sessions.</p>
       <label class="field"><span data-access="password-slack-label">Dashboard password (leave blank to keep the current password)</span><input data-access="password-slack-password" type="password" autocomplete="new-password" /></label>
       <button type="submit" data-access="password-slack-save">Save sign-in option</button>
     </form>

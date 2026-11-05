@@ -144,7 +144,7 @@
       let result;
       try {
         result = await request("/api/auth/password-slack/options", {
-          userId: byId("slack-user").value.trim(), password: byId("slack-password").value,
+          email: byId("slack-email").value.trim(), password: byId("slack-password").value,
         });
       } finally { byId("slack-password").value = ""; }
       passwordSlackRequestId = result.requestId;
@@ -163,7 +163,7 @@
       location.replace("/");
     });
   });
-  byId("slack-user").addEventListener("input", () => {
+  byId("slack-email").addEventListener("input", () => {
     passwordSlackRequestId = "";
     byId("slack-code").value = "";
     byId("password-slack-verify-form").hidden = true;
