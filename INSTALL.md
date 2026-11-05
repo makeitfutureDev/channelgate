@@ -93,7 +93,11 @@ builds/probes the image in that user's own rootless Podman store. A foreground `
 setup installs `rclone` into `~/.local/bin` instead. Downloads are checked against the release
 checksum; a failed optional install leaves Drive sync dormant and prints a manual remedy. It writes
 `/etc/systemd/system/channelgate.service`, with `ProtectSystem=strict`, `ProtectHome=read-only`
-and private `/tmp`. The daemon must permit Podman's setuid namespace helpers; every channel
+and persistent private `/tmp`/`/var/tmp` backing under the service HOME. A managed Podman
+configuration keeps container cgroups inside the delegated system service. Existing installations
+need the idle migration checks in `docs/OPERATIONS.md` (Rootless Podman system-service upgrades);
+installing the new unit alone does not repair old containers or a stale pause namespace.
+The daemon must permit Podman's setuid namespace helpers; every channel
 container still uses no-new-privileges and dropped capabilities. API credentials belong in the
 0600 `/var/lib/channelgate/service.env` before starting real turns. Manage it with `systemctl`:
 

@@ -1160,4 +1160,11 @@ export const migrations = [
       repairClaudeCumulativeCost(db, { since: "2026-09-24T00:00:00.000Z" });
     },
   },
+  {
+    // Old pins have no reliable provenance; preserve them as intentional.
+    version: 42,
+    up(db) {
+      db.exec("ALTER TABLE skills ADD COLUMN pin_reason TEXT NOT NULL DEFAULT 'manual'");
+    },
+  },
 ];

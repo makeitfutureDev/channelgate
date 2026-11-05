@@ -1,5 +1,12 @@
 # ChannelGate — Features
 
+- **Consistent DM network policy.** The egress proxy resolves the same current organization DM template policy as engine turns. User/admin template edits take effect on the next request, including OFF overriding a stale saved ON; custom DMs and linked workspaces retain their own resolved policy. The resolver is shared without importing the run orchestrator into the proxy.
+
+- **HTML attachments.** Slack HTML uploads and identical HTML renamed to text download normally. The downloader rejects recognizable Slack authentication/error pages and authentication landing URLs with an access diagnostic, rather than treating all HTML as proof of a missing scope. Inspection is bounded and streamed; byte caps, channel scope and no-follow publication remain enforced.
+
+
+- **Skill publication recovery.** Failed repository updates carry an explicit publication recovery pin, released after a successful publish retry or update (including identical-byte retries). Source sync cannot discard the protected edit; recovery resumes at the published revision. Manual, legacy and approved source-override pins remain intentional. Skill metadata reports current/effective revisions and the pin reason; the library labels publication recovery separately.
+
 - **Model-specific skills.** A skill may declare the model it works best with in its SKILL.md frontmatter (`model: gpt-6.1-sol`, `model: sonnet`); the engine is derived from the model and nothing else is declared. Every materialized copy of such a skill carries one instruction line asking the model to call the gateway tool `use_skill` when it starts FOLLOWING the skill (reading or comparing skills switches nothing). The live turn decides: with the per-channel switch **Allow skill engine and model swapping** (`skillRuntimeSwap`, off by default; admin UI Runtime pane, Slack Settings mode ticks, `set_channel_skill_swap` for managers, audited) on and no person's pin on the thread, a model of the SAME engine resumes the SAME session with the preferred model (the previous attempt ends on request, its spend is banked on its own model, the reply carries a "Switched this thread to …" note and the footer names the new model) and sticks on the thread as a skill preference below the `/model` pin and above the channel default; a preferred model on the OTHER engine is delegated through `run_agent_in_background`, which now accepts `engine`/`model` overrides validated against the enabled, channel-approved engines; a second skill with another model in the same turn is advised to use a subagent. A pin, the switch being off, an unavailable engine or an unknown model all answer "continue with the current model". Thread runtime reset clears the preference with the pin. Events `run_skill_swap_decision` / `run_skill_swap`. Authoring: `create_skill` and `update_skill` take an optional `model` argument that writes (or, with `""`, clears) the `model:` frontmatter line — a model-only update needs no files — refusing a model no engine recognizes; the skill-authoring guide documents the key, and the library's skill detail and `/api/skills` show the preferred model.
 
 - SSH egress approval accepts exact public IPv4 and IPv6 addresses as well as DNS hostnames. Approved literals are retained by the proxy’s raw-tunnel filter; private/loopback/metadata addresses remain blocked, and secret-host declarations remain DNS-only.
@@ -2551,6 +2558,11 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
   Pending acks persist in `config/acks.json` so the chain survives a daemon restart. The renderer
   owns the "⏰ *Reminder:*" label: one leading "Reminder:" the author already wrote is stripped from
   the posted message, the 2nd notice and the DM, so the line never stutters.
+- Slack thread completion: no-response nudges, scheduled follow-up digests and on-demand
+  pending reports check current reactions before delivery. A `white_check_mark` (✅) on the
+  root or latest reply suppresses the thread for all recipients; 👍 does not. Root checks remain
+  effective after newer replies. Reply checks apply while that reply is latest. Long threads are
+  paginated; unreadable reaction state defers notifications until a later attempt.
 - Personal no-response nudge: each user chooses whether the bot posts one gentle reminder addressed
   to them when their last agent reply has gone quiet past a window (default 24h). The live user
   preference follows them across channels and DMs and is self-service in Slack App Home; admins can
@@ -5637,3 +5649,7 @@ sandbox or a new runtime tool.
 ## Slack Connect streaming and terminal session cleanup (2026-11-03)
 
 Streaming uses the requesting user's workspace (`user_team`, otherwise a verified cached user lookup) rather than the bot installation's workspace. A completed reply reasserts native `active` after stream finalization or classic fallback. Compatibility status clears precede native completion, and session writes are serialized with producer ownership checks so a delayed clear cannot override the next turn.
+
+## Rootless Podman in system services (2026-11-05)
+
+System-service installs add a managed per-account `cgroupfs` configuration without replacing operator settings, verify the effective manager, and bind persistent private temporary directories into the unit. The daemon's restart no longer deletes the backing paths retained by a rootless pause namespace. Limits probes use no network and never pull images; actual kernel memory/CPU/pids values must match before support is advertised. Silently ignored flags, missing images, namespace failures, timeouts and generic launch errors are distinguished from delegation failures. Existing-store recovery is an explicit idle operator procedure; startup never globally migrates or prunes containers.

@@ -1,3 +1,4 @@
+import { effectiveMeta } from "./effective-meta.js";
 // Orchestrates a single authorized message end-to-end: provision the gated folder, resolve
 // the thread session, build the per-run MCP config, decide admin escalation, and run the
 // headless Claude subprocess. Mention-gating and allowedUsers authorization happen upstream
@@ -24,7 +25,7 @@ import { abortPooled } from "../engines/session-pool.js";
 import { DEFAULT_SILENCE_WINDOWS } from "../engines/watchdog.js";
 import { mintsOwnSessionId, usesMcpConfigFile, engineSupports, requireAdapter, fallbackTargets, engineLabel, engineCredentialState, engineTransientKinds, modelsForEngine } from "../engines/registry.js";
 import { validateRunContext } from "../engines/contract.js";
-import { getEngine, getDefaultModel, getDefaultEffort, getDmTemplate, getEngineFallback, isEngineEnabled, getEnabledEngines, ENGINES, getOrgAccessGrants } from "../config/settings.js";
+import { getEngine, getDefaultModel, getDefaultEffort, getEngineFallback, isEngineEnabled, getEnabledEngines, ENGINES, getOrgAccessGrants } from "../config/settings.js";
 import { claudeTokenFingerprint, resolveContainerClaudeToken } from "./claude-token-relay.js";
 import { installNestedClaudeLogin } from "./nested-claude-login.js";
 import { installPerplexityResearchLogin, perplexityResearchPreamble } from "./perplexity-research.js";
@@ -35,7 +36,7 @@ import { getThreadEngine, getThreadClean, getThreadModel, getThreadEffort, getTh
 import { decideSkillSwap, registerSkillSwapHandler, skillSwapKey, skillSwapReply } from "./skill-runtime.js";
 import { authorizedSudoSchedule } from "./schedule-sudo.js";
 import { hasSudoRuntimeAuthority } from "../runtimes/sudo-authority.js";
-import { PROFILE_FLAGS, normalizeModeMeta, authorModeMeta, sudoModeMeta, isApiPrincipal } from "./modes.js";
+import { PROFILE_FLAGS, authorModeMeta, sudoModeMeta, isApiPrincipal } from "./modes.js";
 import { networkEnforcedFor } from "../engines/network-policy.js";
 import { containerClaudeCredential, resolveEgressRunEnv } from "./egress/grants.js";
 import { markLive } from "./egress/liveness.js";
@@ -48,7 +49,7 @@ import { channelCredentialsPreamble } from "./channel-credentials.js";
 import { codeChannelPreamble, syncCodeChannelMeta } from "./code-channels.js";
 import { resolveRunIntegrations } from "./run-integrations.js";
 import { customMcpTokens } from "./custom-mcps.js";
-import { modelBelongsToEngine, effortBelongsToEngine, effortBelongsToModel } from "../engines/registry.js";
+import { modelBelongsToEngine, effortBelongsToModel } from "../engines/registry.js";
 import { writeFile, rm, mkdir } from "node:fs/promises";
 import path from "node:path";
 import { gatewayRoot, runTmpDir, workspaceRoot } from "../config/paths.js";
@@ -69,35 +70,8 @@ import { browserNamespaceFor } from "./browser-env.js";
 import { serviceSecretValues } from "../engines/child-env.js";
 import { createSecretRedactor, redactSecretValues, redactSecretFields } from "../util/redact.js";
 
-// For a DM that selected an org template (user/admin), overlay the template's knobs onto its
-// meta. "custom" DMs and regular channels use their own meta unchanged. Engine/model/effort are
-// the exception: a runtime pick made IN the DM (the /model wizard writes meta.engine/model/effort)
-// wins over the template's — otherwise the wizard would be a silent no-op in every template-managed
-// DM. Empty = inherit the template, as before. Model/effort are engine-specific, so each resolves
-// to the first candidate (own, then template) that actually belongs to the resolved engine — a
-// stale value written under the other harness (own or template) is skipped, not spawned.
-export function effectiveMeta(meta) {
-  if (meta?.isDM && !meta.workspaceLink && (meta.template === "user" || meta.template === "admin")) {
-    const t = getDmTemplate(meta.template);
-    const engine = (ENGINES.includes(meta.engine) ? meta.engine : "") || (ENGINES.includes(t.engine) ? t.engine : "") || getEngine() || "claude";
-    return normalizeModeMeta({
-      ...meta,
-      skills: t.skills,
-      skillTemplate: typeof t.skillTemplate === "string" ? t.skillTemplate : "",
-      allowedMcps: t.allowedMcps,
-      allowedCodexMcps: t.allowedCodexMcps,
-      model: [meta.model, t.model].find((m) => m && modelBelongsToEngine(m, engine)) || "",
-      effort: [meta.effort, t.effort].find((e) => e && effortBelongsToEngine(e, engine)) || "",
-      adminMode: t.adminMode,
-      allowBash: t.allowBash,
-      allowNetwork: t.allowNetwork,
-      autoMode: t.autoMode,
-      cleanMode: t.cleanMode,
-      engine: meta.engine || t.engine,
-    });
-  }
-  return normalizeModeMeta(meta);
-}
+// Kept as an export for existing settings and tool callers.
+export { effectiveMeta } from "./effective-meta.js";
 
 // True when an engine error means "the session you tried to resume no longer exists" (vs. a real
 // failure) — so we can transparently start a fresh session instead of erroring out. Claude prints
