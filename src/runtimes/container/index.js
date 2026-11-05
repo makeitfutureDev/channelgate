@@ -280,6 +280,10 @@ export const containerBackend = Object.freeze({
     return runtime().state.inspectUsage(target, request);
   },
 
+  async inspectResources(target, request) {
+    return runtime().state.inspectResources(target, request);
+  },
+
   async inspectState(target, request) {
     return runtime().state.inspectState(target, request);
   },

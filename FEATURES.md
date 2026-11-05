@@ -5702,3 +5702,18 @@ Streaming uses the requesting user's workspace (`user_team`, otherwise a verifie
 ## Rootless Podman in system services (2026-11-05)
 
 System-service installs add a managed per-account `cgroupfs` configuration without replacing operator settings, verify the effective manager, and bind persistent private temporary directories into the unit. The daemon's restart no longer deletes the backing paths retained by a rootless pause namespace. Limits probes use no network and never pull images; actual kernel memory/CPU/pids values must match before support is advertised. Silently ignored flags, missing images, namespace failures, timeouts and generic launch errors are distinguished from delegation failures. Existing-store recovery is an explicit idle operator procedure; startup never globally migrates or prunes containers.
+
+
+### Codex process creation resource failures
+
+Codex's own router diagnostic for a failed unified tool-process creation starts a 15-second
+recovery window. A successful command or completed turn cancels it, including timestamped older
+stderr delivered after successful stdout. Persistent failure ends with `ENGINE_RESOURCE_EXHAUSTED`
+and an actionable process/thread-limit message, retains partial usage, and is never automatically
+replayed on another engine. Generic EAGAIN or tool output does not trigger this path.
+
+A best-effort runtime-local snapshot records process/thread counts, process soft/hard limits and
+leaf cgroup PID current/max/event counts. Leaf counts do not establish effective ancestor limits.
+The probe never reconfigures/recreates the runtime, retries, reads argv/environment/credentials or
+extends the recovery deadline; unavailable probes remain explicitly unavailable. Bounded snapshot
+facts are retained with the run-error event. No container image rebuild is needed for this reducer.

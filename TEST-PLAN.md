@@ -12070,3 +12070,24 @@ Enterprise deployment without deleting saved data. Never record a live pass from
   concurrent admission can overshoot. UI copy must describe recorded spend, UTC calendar months
   and the distinction from provider billing limits. Verify cap configuration survives downgrade
   and refuses new runs after downgrade until an admin clears it; ordinary licensing caps still apply.
+
+
+### Codex process creation resource failures
+
+- Automated: `test/codex-resource.test.js` covers exact-router matching, persistent failures,
+  post-tool failures without replay, positive partial usage, successful recovery including reversed
+  pipe delivery, immediate nonzero exit, unavailable/rejecting/hanging probes and explicit stop.
+- Automated: `test/resource-snapshot.test.js` covers runtime-local procfs/limits/cgroup facts,
+  incomplete/unavailable procfs, hidden ancestors, hybrid v1/v2 membership, output minimization and
+  execution of the exact serialized container reducer without lifecycle mutation or retry.
+- Live acceptance pending (QA registry `ENG-RESOURCE-01`, Codex; `ENG-RESOURCE-02`, Claude control):
+  use only a dedicated disposable fixture under `cg-testing-codex-bash`, never resource-exhaust the
+  serving container or host. Inject the exact router CreateProcess diagnostic via a controlled CLI
+  fixture with ample normal process capacity. Persistent failure must terminate after the real
+  15-second window plus shutdown/accounting, retain usage and any one recorded side effect, and
+  never replay/fail over. Repeat with a successful command within the window, older timestamped
+  stderr delivered after successful stdout, and unavailable inspection; recovery must finish
+  successfully and missing inspection must not delay failure. Verify run_error facts contain only
+  bounded numeric/limit fields and explicit leaf-only scope, never command names/argv/environment.
+  In `cg-testing-claude-bash`, run a normal command and confirm ordinary success/accounting and no
+  Codex resource classification. These definitions do not claim live execution or acceptance.
