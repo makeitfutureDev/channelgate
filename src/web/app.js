@@ -42,6 +42,7 @@ import { publicUpdateState, readUpdateStatus } from "../gateway/update-state.js"
 import { renderShell, shellContentSecurityPolicy } from "./assets.js";
 import { handleDriveSyncIpc } from "../gateway/drivesync.js";
 import { searchAgentDirectory } from "../gateway/agent-directory.js";
+import { requestSkillSwap } from "../gateway/skill-runtime.js";
 
 const escapeHtml = (s) =>
   String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -65,6 +66,7 @@ export function createWebApp({
   slack,
   transports = null,
   adminIdentityDelivery = null,
+  adminSlackIdentityLookup = null,
   backgroundJobs,
   restartCoordinator,
   updateSmoke = runUpdateSmoke,
@@ -150,6 +152,19 @@ export function createWebApp({
     if (internalForbidden(req)) return res.status(403).json({ ok: false, error: "forbidden" });
     try {
       res.json(await handleDriveSyncIpc(req.body || {}));
+    } catch (e) {
+      res.json({ ok: false, error: e.message });
+    }
+  });
+
+  // The gateway MCP server's use_skill tool on the host stdio path: ask the LIVE turn for this
+  // thread how to honor a skill's preferred model (src/gateway/skill-runtime.js). Container runs
+  // reach the same service in-process through the socket server.
+  app.post("/internal/skill-swap", async (req, res) => {
+    if (internalForbidden(req)) return res.status(403).json({ ok: false, error: "forbidden" });
+    try {
+      const { slug, threadKey, name } = req.body || {};
+      res.json(await requestSkillSwap({ slug, threadKey, name }));
     } catch (e) {
       res.json({ ok: false, error: e.message });
     }
@@ -343,7 +358,12 @@ export function createWebApp({
     });
   });
 
-  app.use("/api/auth", createAdminAuthRouter({ adminIdentityDelivery: adminIdentityDelivery || (async (userId, text) => {
+  app.use("/api/auth", createAdminAuthRouter({ adminSlackIdentityLookup: adminSlackIdentityLookup || (async email => {
+    const client = slack?.getClient?.();
+    if (!client?.users?.lookupByEmail) throw new Error('Slack identity lookup is unavailable.');
+    const result = await client.users.lookupByEmail({ email });
+    return result?.user;
+  }), adminIdentityDelivery: adminIdentityDelivery || (async (userId, text) => {
     const user = await getUser(userId);
     if (!user || user.isAdmin !== true) throw new Error('Administrator is unavailable.');
     let target = null; let recipient = userId; let platform = '';

@@ -28,6 +28,7 @@ const { patchChannelEnv } = await import("../src/config/channel-env.js");
 const { resolveRuntime } = await import("../src/runtimes/resolve.js");
 const { containerBackend } = await import("../src/runtimes/container/index.js");
 const { getDb } = await import("../src/db/index.js");
+const { getSettings, saveSettings } = await import("../src/config/settings.js");
 
 const SETTINGS = { cli: "auto", image: "channelgate/runtime:latest", idleMinutes: 10, maxRunning: 8, pidsLimit: 1024, memory: "", cpus: "", hasClaudeOauthToken: true, egressMode: "proxy", egressSecretsStrict: false };
 const CHANNEL = "C_EGSVC";
@@ -271,6 +272,39 @@ test("policyFor reads the channel's CURRENT meta: off blocks non-engine hosts on
   const on = await request({ headers: {} });
   assert.equal(on.status, 200, "flipped on: the very next request goes through");
 });
+
+for (const template of ["user", "admin"]) {
+  test(`DM ${template} template policy governs real requests and updates without a container restart`, async () => {
+    const previous = getSettings().dmTemplates;
+    const dmId = `D_EGSVC_${template}`;
+    const dm = await upsertChannelEntry(dmId, { name: dmId, type: "im", isDM: true, platform: "slack" });
+    await patchChannelMeta(dm.slug, () => ({ ...defaultChannelMeta({ channelId: dmId, name: dmId, type: "im", isDM: true }), template, allowNetwork: false }));
+    const dmBound = await service.ensureChannelEgress(await targetFor(dmId, dm.slug));
+    const setTemplateNetwork = (allowNetwork) => saveSettings({ dmTemplates: { ...previous, [template]: { ...previous?.[template], allowNetwork } } });
+    try {
+      setTemplateNetwork(true);
+      assert.equal((await service.egressPolicyFor({ slug: dm.slug })).mode, "on");
+      assert.equal((await request({ socketPath: dmBound.socketPath })).status, 200, "inherited ON overrides the stale saved OFF");
+      assert.equal((await getChannelMeta(dm.slug)).allowNetwork, false, "template resolution does not rewrite saved policy");
+
+      await patchChannelMeta(dm.slug, (meta) => ({ ...meta, allowNetwork: true }));
+      setTemplateNetwork(false);
+      const off = await request({ socketPath: dmBound.socketPath });
+      assert.equal(off.connect, 403);
+      assert.match(off.body, /network-off/, "live template OFF overrides a stale saved ON");
+
+      setTemplateNetwork(true);
+      assert.equal((await request({ socketPath: dmBound.socketPath })).status, 200, "same listener sees a live template update");
+      await patchChannelMeta(dm.slug, (meta) => ({ ...meta, template: "custom", allowNetwork: false }));
+      assert.equal((await request({ socketPath: dmBound.socketPath })).connect, 403, "custom DM keeps its own OFF");
+      await patchChannelMeta(dm.slug, (meta) => ({ ...meta, template: "custom", allowNetwork: true }));
+      setTemplateNetwork(false);
+      assert.equal((await request({ socketPath: dmBound.socketPath })).status, 200, "custom DM keeps its own ON");
+    } finally {
+      saveSettings({ dmTemplates: previous });
+    }
+  });
+}
 
 test("raw passthrough: github.com:22 always, plus each declared raw host on 22/5432/6543", () => {
   assert.deepEqual(service.rawPassthroughFor({ egressRawHosts: ["db.example.com", "not a host"] }), [

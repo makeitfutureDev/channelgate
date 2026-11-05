@@ -38,6 +38,7 @@ version: 1.0.0
 tags: [crm, hubspot]
 requires: [makeitfuture-organization]   # other catalog skills this one loads (auto-granted with it)
 allowed-tools: Read Grep         # optional: tools the skill needs
+model: sonnet                    # optional: the model this skill works best with (engine derived)
 ---
 
 # Customer record
@@ -45,6 +46,15 @@ allowed-tools: Read Grep         # optional: tools the skill needs
 Step-by-step instructions. Keep the body focused; put long material in `references/*.md` and
 point to it ("read `references/ids.md` for the field map").
 ```
+
+`model:` is optional and only worth setting when the skill clearly runs better or cheaper on a
+particular model (email triage on a small fast model, deck generation on the strongest one). Any
+model one of the gateway's engines knows (`sonnet`, `claude-opus-5-5`, `gpt-6.1-sol`, …) works;
+don't name an engine, it follows from the model. When a conversation allows skill engine/model
+swapping, using the skill resumes the same session on that model (or delegates to a background
+agent on the other engine); otherwise the line is simply ignored. `create_skill` and
+`update_skill` take a `model` argument that writes this line for you — ask the user only when
+they mentioned a model or a cost/quality preference; never add one unprompted.
 
 Rules for a description that actually fires:
 - Say the **trigger** ("Use when …", "Use whenever a request mentions …"), not just the topic.

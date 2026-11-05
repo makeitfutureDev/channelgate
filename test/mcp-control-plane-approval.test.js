@@ -556,7 +556,8 @@ test("every registered gateway tool is consciously classified as gated or open (
   // unclassified tool fails here until it is added to exactly one of these lists.
   const GATED = new Set([
     "create_schedule", "update_schedule", // ordinary schedules return null; sudo work keeps an admin card
-    "set_channel_vpn", "set_channel_admin_mode", "set_channel_network", "set_channel_bash", "set_channel_auto_mode",
+    "set_channel_vpn", "set_channel_admin_mode", "allow_channel_ssh_host", "set_channel_network", "set_channel_bash", "set_channel_auto_mode",
+    "set_channel_skill_swap", // a channel switch like auto mode: managers, automatic, audited
     "set_channel_workdir", "clear_channel_workdir", "set_channel_drive_folder", "clear_channel_drive_folder",
     "add_channel_mcps", "remove_channel_mcps", "update_channel_instructions",
     "update_gateway", "restart_gateway", "update_gateway_guide", "reset_gateway_guide",
@@ -590,6 +591,7 @@ test("every registered gateway tool is consciously classified as gated or open (
     "get_channel_workdir", "get_channel_drive_folder", "get_gateway_guide",
     "workspace_list", "workspace_read", "workspace_search", "search_agents",
     "search_channel_memory", "read_channel_memory", // channel-scoped read-only retrieval
+    "use_skill", // asks the LIVE turn how to honor a skill's preferred model; the turn decides, nothing is persisted here
     "get_license_status", // read-only; exposes the tier/limits and the key's last 4, never the key
     // Channel-level user API tokens: a verified person's OWN credential for THIS conversation, acting
     // as them with their live rank; listing/revoking others' needs manage (the handler enforces it).
@@ -891,4 +893,41 @@ test("list_channel_mcps names the conversation's custom MCP servers, never their
   } finally {
     await saveChannelMeta(SLUG, original);
   }
+});
+
+
+test("both engines request durable worker approval for SSH egress, including Auto mode", async () => {
+  const { patchChannelMeta } = await import("../src/config/store.js");
+  const original = await getChannelMeta(SLUG);
+  try {
+    for (const engine of ["claude", "codex"]) {
+      await patchChannelMeta(SLUG, { allowBash: true, allowNetwork: true, autoMode: true, egressRawHosts: ["existing.example"] });
+      approvalRequests.length = 0;
+      approvalResponse = { allow: false, pending: true, approvalId: `egress-${engine}` };
+      await withGateway({ engine, author: "U_CTRL_MEMBER" }, async (client) => {
+        const result = await client.callTool({ name: "allow_channel_ssh_host", arguments: { host: "8.8.8.8" } });
+        assert.match(resultText(result), awaitingCard);
+      });
+      assert.equal(approvalRequests.length, 1);
+      const request = approvalRequests[0].body;
+      assert.equal(request.approvalType, "agent");
+      assert.equal(request.requiredTier, "worker");
+      assert.deepEqual(request.durableAction.args, { host: "8.8.8.8" });
+      assert.match(request.toolInput.details, /22.*5432.*6543/);
+      assert.deepEqual((await getChannelMeta(SLUG)).egressRawHosts, ["existing.example"]);
+      const bad = await applySaved(request, "U_UNAUTHORIZED");
+      assert.equal(bad.ok, false);
+      const saved = await applySaved(request, "U_CTRL_MEMBER");
+      assert.equal(saved.ok, true, saved.error);
+      assert.deepEqual((await getChannelMeta(SLUG)).egressRawHosts, ["existing.example", "8.8.8.8"]);
+      approvalRequests.length = 0;
+      await withGateway({ engine, author: "U_CTRL_MEMBER" }, async (client) => {
+        assert.match(resultText(await client.callTool({ name: "allow_channel_ssh_host", arguments: { host: "8.8.8.8" } })), /allowed/);
+      });
+      assert.equal(approvalRequests.length, 0, "an existing host needs no further approval");
+      await patchChannelMeta(SLUG, { allowBash: false, adminMode: false, autoMode: false });
+      const stale = await applySaved(request, "admin UI");
+      assert.equal(stale.ok, false, "even admin UI cannot apply a worker approval in a read-only channel");
+    }
+  } finally { await saveChannelMeta(SLUG, original); }
 });

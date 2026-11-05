@@ -13,6 +13,7 @@ import { countDrop } from "../util/drops.js";
 import { resolveCurrentModel, modelDisplayLabel } from "./model-info.js";
 import { engineSupports, engineCostRateKey } from "../engines/registry.js";
 import { normalizeCodexTokenUsage } from "../engines/codex-usage.js";
+import { claudeCumulativeSnapshot, claudeSessionDelta, latestClaudeSnapshot } from "../db/claude-session-usage.js";
 
 // Codex reports no dollar cost — derive an ESTIMATE from the per-model $/1M rates in Settings
 // (input / cached-input / output; OpenAI's cached_input_tokens is a SUBSET of input_tokens, so
@@ -147,6 +148,37 @@ export function componentRow(accounting, { sourceKind = "root", parentSourceId =
   };
 }
 
+// One `usage_components` row per model a Claude run spent on, from the run's `modelUsage` DELTA
+// (see ../db/claude-session-usage.js). The CLI prices each model itself, so the row carries its
+// reported cost rather than an estimate; the primary (answering) model heads the run, every other
+// model — a Sonnet subagent under an Opus turn, the Haiku helper — is an auxiliary slice.
+export function claudeModelComponent(slice, { usageId, sessionId, primaryModel = "", startedTs = "", endedTs = "", durationMs = null } = {}) {
+  const isRoot = Boolean(primaryModel) && slice.model === primaryModel;
+  return {
+    sourceKey: `claude-model:${sessionId}:${usageId}:${slice.model}`,
+    sourceKind: isRoot ? "root" : "auxiliary",
+    providerSessionId: String(sessionId || ""),
+    parentProviderSessionId: "",
+    providerTurnId: `claude-turn:${sessionId}:${usageId}`,
+    startedTs,
+    endedTs,
+    model: slice.model,
+    usage: normalizeCodexTokenUsage({
+      input_tokens: slice.input + slice.cacheRead + slice.cacheWrite,
+      cached_input_tokens: slice.cacheRead,
+      cache_write_input_tokens: slice.cacheWrite,
+      output_tokens: slice.output,
+    }),
+    requests: [],
+    costUSD: slice.costUSD,
+    costEstimated: false,
+    pricingBasis: slice.costUSD === null ? "unpriced" : "claude-cli-reported",
+    provenance: "claude-model-usage-delta",
+    confidence: "verified-total",
+    durationMs: isRoot ? durationMs : null,
+  };
+}
+
 export function insertComponent(db, usageId, component) {
   if (!component.sourceKey) return;
   db.prepare(
@@ -209,37 +241,65 @@ export function insertComponent(db, usageId, component) {
 export async function recordUsage({ channelId, slug, authorId, engine, model, taskKind = "interactive", result = {} } = {}) {
   try {
     const normalizedResult = { ...result, engine: engine || result.engine || "", model: result.model || model || "" };
-    const { inTok, outTok, costUSD, estimated } = normalizeUsage(normalizedResult);
+    const resolvedEngine = normalizedResult.engine;
+    const sessionId = String(result.sessionId || "");
     const currentModel = resolveCurrentModel(normalizedResult);
     const db = getDb();
+    let settledFigures = normalizeUsage(normalizedResult);
     db.exec("BEGIN IMMEDIATE");
     try {
+      // Claude reports the SESSION's cumulative cost and per-model usage, and `usage` without the
+      // subagents. Difference against this session's last recorded cumulative so the row carries
+      // only THIS run — and the whole tree of it, with one priced component per model. Read under
+      // the write lock: the baseline is the last row this very transaction can see.
+      const claudeCumulative = resolvedEngine === "claude" ? claudeCumulativeSnapshot(result.raw) : null;
+      const claudeDelta = claudeCumulative ? claudeSessionDelta(claudeCumulative, latestClaudeSnapshot(db, sessionId)) : null;
+      if (claudeDelta) settledFigures = normalizeUsage({ ...normalizedResult, costUSD: claudeDelta.costUSD });
+      const { inTok, outTok, costUSD, estimated } = settledFigures;
+      const claudeTokens = claudeDelta?.models.length ? { inTok: claudeDelta.tokensIn, outTok: claudeDelta.tokensOut } : null;
       const info = db.prepare(
         `INSERT INTO usage(ts, channel_id, slug, author_id, engine, model, task_kind, tokens_in, tokens_out,
-           cost_usd, cost_estimated, duration_ms, runtime_model, accounting_status, session_id)
+           cost_usd, cost_estimated, duration_ms, runtime_model, accounting_status, session_id,
+           provider_cost_cumulative, provider_model_usage)
          VALUES(@ts, @channel_id, @slug, @author_id, @engine, @model, @task_kind, @tokens_in, @tokens_out,
-           @cost_usd, @cost_estimated, @duration_ms, @runtime_model, @accounting_status, @session_id)`
+           @cost_usd, @cost_estimated, @duration_ms, @runtime_model, @accounting_status, @session_id,
+           @provider_cost_cumulative, @provider_model_usage)`
       ).run({
         ts: new Date().toISOString(),
         channel_id: channelId || "",
         slug: slug || "",
         author_id: authorId || "",
-        engine: engine || result.engine || "",
+        engine: resolvedEngine,
         model: currentModel,
         task_kind: taskKind,
-        tokens_in: inTok,
-        tokens_out: outTok,
+        tokens_in: claudeTokens?.inTok ?? inTok,
+        tokens_out: claudeTokens?.outTok ?? outTok,
         cost_usd: costUSD,
         cost_estimated: estimated ? 1 : 0,
         duration_ms: result.durationMs ?? null,
         runtime_model: currentModel,
-        accounting_status: normalizedResult.usageAccounting?.root ? "verified" : (engineSupports(engine || result.engine, "realCost") ? "provider-reported" : "unverified"),
+        accounting_status: normalizedResult.usageAccounting?.root || claudeDelta?.models.length
+          ? "verified"
+          : (engineSupports(resolvedEngine, "realCost") ? "provider-reported" : "unverified"),
         // The ENGINE session this run spent tokens in. Recorded so external-usage.js can tell a
         // transcript the gateway wrote from one a person drove by hand: without it, the two are
         // indistinguishable on disk and outside spend can only be guessed at.
-        session_id: String(result.sessionId || ""),
+        session_id: sessionId,
+        // The CLI's cumulative figures as reported, kept verbatim: the next run of this session
+        // differences against them, and a historical repair can always recover the original.
+        provider_cost_cumulative: claudeCumulative ? claudeCumulative.costUSD : null,
+        provider_model_usage: claudeCumulative ? JSON.stringify(claudeCumulative.models) : "",
       });
       const usageId = Number(info.lastInsertRowid);
+      if (claudeDelta?.models.length) {
+        const endedTs = new Date().toISOString();
+        const startedTs = Number.isFinite(Number(result.durationMs)) ? new Date(Date.now() - Number(result.durationMs)).toISOString() : "";
+        for (const slice of claudeDelta.models) {
+          insertComponent(db, usageId, claudeModelComponent(slice, {
+            usageId, sessionId, primaryModel: currentModel, startedTs, endedTs, durationMs: result.durationMs ?? null,
+          }));
+        }
+      }
       if (normalizedResult.usageAccounting?.root) {
         const root = componentRow(normalizedResult.usageAccounting.root, { fallbackModel: currentModel, durationMs: result.durationMs ?? null });
         insertComponent(db, usageId, root);
@@ -277,7 +337,7 @@ export async function recordUsage({ channelId, slug, authorId, engine, model, ta
       try { db.exec("ROLLBACK"); } catch { /* transaction already gone */ }
       throw error;
     }
-    return { costUSD, costEstimated: estimated, tokensIn: inTok, tokensOut: outTok };
+    return { costUSD: settledFigures.costUSD, costEstimated: settledFigures.estimated, tokensIn: settledFigures.inTok, tokensOut: settledFigures.outTok };
   } catch (err) {
     countDrop("usage", err); // ledger is best-effort, but a silent drop diverges the spend numbers
     return null;

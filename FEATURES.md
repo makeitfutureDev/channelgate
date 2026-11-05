@@ -1,5 +1,22 @@
 # ChannelGate — Features
 
+- **Consistent DM network policy.** The egress proxy resolves the same current organization DM template policy as engine turns. User/admin template edits take effect on the next request, including OFF overriding a stale saved ON; custom DMs and linked workspaces retain their own resolved policy. The resolver is shared without importing the run orchestrator into the proxy.
+
+- **HTML attachments.** Slack HTML uploads and identical HTML renamed to text download normally. The downloader rejects recognizable Slack authentication/error pages and authentication landing URLs with an access diagnostic, rather than treating all HTML as proof of a missing scope. Inspection is bounded and streamed; byte caps, channel scope and no-follow publication remain enforced.
+
+
+- **Skill publication recovery.** Failed repository updates carry an explicit publication recovery pin, released after a successful publish retry or update (including identical-byte retries). Source sync cannot discard the protected edit; recovery resumes at the published revision. Manual, legacy and approved source-override pins remain intentional. Skill metadata reports current/effective revisions and the pin reason; the library labels publication recovery separately.
+
+- **Model-specific skills.** A skill may declare the model it works best with in its SKILL.md frontmatter (`model: gpt-6.1-sol`, `model: sonnet`); the engine is derived from the model and nothing else is declared. Every materialized copy of such a skill carries one instruction line asking the model to call the gateway tool `use_skill` when it starts FOLLOWING the skill (reading or comparing skills switches nothing). The live turn decides: with the per-channel switch **Allow skill engine and model swapping** (`skillRuntimeSwap`, off by default; admin UI Runtime pane, Slack Settings mode ticks, `set_channel_skill_swap` for managers, audited) on and no person's pin on the thread, a model of the SAME engine resumes the SAME session with the preferred model (the previous attempt ends on request, its spend is banked on its own model, the reply carries a "Switched this thread to …" note and the footer names the new model) and sticks on the thread as a skill preference below the `/model` pin and above the channel default; a preferred model on the OTHER engine is delegated through `run_agent_in_background`, which now accepts `engine`/`model` overrides validated against the enabled, channel-approved engines; a second skill with another model in the same turn is advised to use a subagent. A pin, the switch being off, an unavailable engine or an unknown model all answer "continue with the current model". Thread runtime reset clears the preference with the pin. Events `run_skill_swap_decision` / `run_skill_swap`. Authoring: `create_skill` and `update_skill` take an optional `model` argument that writes (or, with `""`, clears) the `model:` frontmatter line — a model-only update needs no files — refusing a model no engine recognizes; the skill-authoring guide documents the key, and the library's skill detail and `/api/skills` show the preferred model.
+
+- SSH egress approval accepts exact public IPv4 and IPv6 addresses as well as DNS hostnames. Approved literals are retained by the proxy’s raw-tunnel filter; private/loopback/metadata addresses remain blocked, and secret-host declarations remain DNS-only.
+
+- The admin skill library includes read-only diagnostics for host folders without a root `SKILL.md`, including folder paths and personal grant owners. Skill file status filters isolate missing files. Native plugins remain valid, and diagnostic rows cannot be enabled or assigned as catalog skills.
+
+- `allow_channel_ssh_host` posts a durable approval for one public SSH destination. Any currently authorized channel member with write access can approve it; no admin or `/sudo` is needed. Approval appends to this channel’s `egressRawHosts` without replacing other entries. Cards disclose supported TCP ports 22, 5432 and 6543; Auto never approves them, and network-off/private-address protections remain enforced.
+
+- Invalid legacy skill-folder grants are omitted from Claude plugins and the Codex personal catalog. The reply names folders missing a regular `SKILL.md`; remaining skills continue loading and source folders/grants remain intact.
+
 ## Skill ownership terminology
 
 - Skills managed directly in the catalog are labelled **Gateway-owned** in the Skills catalog, owner filter, creation form, assignment picker and MCP guidance. Personal/channel/organization scope remains independent; internal `ownerKind: "local"` values remain compatible.
@@ -105,6 +122,7 @@ Generated `gateway-usage` and `channel-memory` guides satisfy shared and persona
 
 Codex estimates include GPT-6.1 Terra ($1 / $0.05 / $5 per million input / cached / output tokens), request-level long-context pricing, an October 26, 2026 launch boundary, and a backed-up automatic historical refresh on upgrade.
 
+
 ## Linked working-folder setup
 
 - Source access exclusions and conversation policy also govern linked DMs. Shared changes notify follower SSH/egress sessions immediately. Separating a follower or moving the source retains source-section skill grants; detached DMs keep their effective setup as Custom instead of reapplying a DM preset. A promoted owner remains stable when an older conversation later joins.
@@ -114,6 +132,21 @@ Codex estimates include GPT-6.1 Terra ($1 / $0.05 / $5 per million input / cache
 
 
 Slack’s native running/Stop label shows the resolved model and explicitly configured effort, plus compact live phases (Thinking, Using tools, Writing, Waiting, Queued, Coordinating agents). Engine fallback replaces both model and effort; unset effort is omitted rather than guessed.
+
+## Optional password and Slack code sign-in
+
+- Settings → Admin access can enable an alternative to passkeys: the configured admin password
+  and the administrator’s Slack email address, followed by an eight-digit code delivered
+  privately to that existing Slack administrator. Email lookup uses the configured gateway Slack
+  app and requires `users:read.email`; user-entered or editable stored email never grants access.
+  Slack IDs remain the internal identity, and passkey selection is unchanged.
+  The option is off by default; password alone never grants dashboard access. Existing passkeys
+  remain available. A recently verified, identity-linked initial setup can enable this option
+  without first registering a passkey.
+- Codes expire after five minutes, are bound to the requesting browser, accept at most five
+  guesses and are single-use. Delivery failures, role revocation, password changes and disabling
+  the option invalidate pending authority. Sensitive actions can repeat password and Slack
+  verification. Sessions retain the normal idle/absolute expiry and current-role checks.
 
 ## User-linked dashboard passkeys
 
@@ -132,7 +165,7 @@ Slack’s native running/Stop label shows the resolved model and explicitly conf
   session, with five attempts maximum. Matching names never assign ownership. Unlinked accounts
   can complete this verification but cannot use ordinary admin APIs once known admins exist.
   Initial password setup follows the same proof before enrollment; fresh installs without known
-  admins retain temporary operator setup. First enrollment permanently retires password login.
+  admins retain temporary operator setup. First enrollment retires the password-only bootstrap path; the optional password plus Slack code flow requires explicit enablement.
 - Host operators recover a known admin with `npm run admin:recover -- --user <user-id>`.
   Recovery revokes its keys/sessions and prints a short-lived registration-only link; it never
   restores password login. Private keys remain with authenticators; SQLite stores public keys
@@ -317,6 +350,7 @@ Slack’s native running/Stop label shows the resolved model and explicitly conf
   after current rank, membership and channel access checks. The stored incoming event retains its
   author, credentials and runtime permissions; accepted decisions audit the responding admin.
   Expiration, duplicate claims and the cross-author automatic steering guard still apply.
+
 
 ## Registered inventory limits and Enterprise harness approvals
 
@@ -2390,9 +2424,8 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
   `/delete` (org-admin only: wipe THIS thread — replies first, parent last — hard-scoped to the
   triggering channel+thread; the bot token deletes the bot's own messages, and when an optional
   Admin User Token (xoxp) is set in Settings → Slack credentials, everyone else's are deleted via a
-  per-call token override too — workspace prefs permitting; anything Slack refuses is tallied +
-  reported in the ephemeral summary, which also says how to enable full deletion when no user token
-  is set; refuses non-admin authors, mid-run threads, and top-level use; a deleted bot-owned root
+  per-call token override too — workspace prefs permitting; anything Slack refuses is tallied in the audit log; completed deletion posts no summary
+  (neither ephemeral nor regular), including partial deletion; refuses non-admin authors, mid-run threads, and top-level use; a deleted bot-owned root
   also drops the session like `/clear`), and `/update` (admin-only — git pull + install + restart, detached).
   → TEST-PLAN: In-thread commands.
 - Stop an in-flight run four ways: Slack's **native Stop button** on the thread (the agent session's
@@ -2529,6 +2562,11 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
   Pending acks persist in `config/acks.json` so the chain survives a daemon restart. The renderer
   owns the "⏰ *Reminder:*" label: one leading "Reminder:" the author already wrote is stripped from
   the posted message, the 2nd notice and the DM, so the line never stutters.
+- Slack thread completion: no-response nudges, scheduled follow-up digests and on-demand
+  pending reports check current reactions before delivery. A `white_check_mark` (✅) on the
+  root or latest reply suppresses the thread for all recipients; 👍 does not. Root checks remain
+  effective after newer replies. Reply checks apply while that reply is latest. Long threads are
+  paginated; unreadable reaction state defers notifications until a later attempt.
 - Personal no-response nudge: each user chooses whether the bot posts one gentle reminder addressed
   to them when their last agent reply has gone quiet past a window (default 24h). The live user
   preference follows them across channels and DMs and is self-service in Slack App Home; admins can
@@ -2746,7 +2784,8 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
   resume the old one's conversation), and replays the Slack thread context into it so the new
   engine continues the conversation instead of starting blind.
 - Slack `@agent /fork <new message>` branches a completed Claude or Codex container session using
-  the engine's native fork command. The bot posts a new top-level message linking to the source,
+  the engine's native fork command. The bot posts a new top-level message with the user’s new request first and the
+  `↪️ Fork of this thread` source link underneath,
   posts the new request in that thread, links back from the source, and runs the request in the
   forked session. The source session keeps its ID and history; the new Slack `thread_ts` maps to
   the engine's distinct child ID. Engine, model, effort and clean-mode pins carry into the branch.
@@ -2755,11 +2794,11 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
   access policy as ordinary shortcuts. A shortcut for a different engine starts a fresh session
   in the linked child thread and replays the source's Slack messages through the existing bounded
   context handoff. It does not transfer the old engine's native transcript/tool state. The fork
-  command and later source messages are excluded; unavailable Slack history is refused before
+  command and later source requests are excluded; queued cross-engine forks include bot replies completed while waiting; unavailable Slack history is refused before
   creating the child. Clean threads stay bare without history replay. Dedicated channel Codex
   logins stay on Codex. Unknown, disabled or invalid targets and missing request text are refused
   before a child thread is posted.
-  A running or sudo/source-host session is refused until it can be forked safely.
+  A running source queues the fork automatically, acknowledges it explicitly, and starts it after preceding work finishes. Stop cancels queued forks. Admission and session state are rechecked at promotion; queued forks survive restart through active-run recovery. Sudo/source-host sessions remain refused.
 - Gateway-wide **default effort** beside each harness's default model (Settings → Agent defaults →
   Engine & runtime, including each Qwen provider card). Choices follow the selected model's
   supported effort levels; saves validate the model/effort pair atomically. Per-request, thread
@@ -5167,6 +5206,23 @@ are retired, bullet by bullet; everything else stands.
   beyond the last batch's cutoff (backup first; a batch is recorded even on zero matches so settled
   history is never rescanned) — updating + restarting another gateway recalculates its history with
   no manual command.
+- **Claude turns are charged their own delta, whole tree, per model.** Claude Code's terminal
+  result reports the provider SESSION's cumulative `total_cost_usd` and `modelUsage` (CLI ≥
+  2.1.277 restores a resumed session's earlier spend) while `usage` covers the main loop only,
+  without subagents. The ledger (`src/db/claude-session-usage.js`, applied inside `recordUsage`
+  for every call site — interactive, warm pool, scheduled, background, API, memory review)
+  differences each run against the same session's last recorded cumulative, so a resumed thread
+  is never charged its history again; records one `usage_components` row per model the run spent
+  on (the answering model as `root`, a Sonnet subagent or the Haiku helper as `auxiliary`) with
+  the CLI's own per-model cost (`pricing_basis = claude-cli-reported`), so the Models chart and
+  the per-model split show subagent spend under the model that incurred it; and keeps the raw
+  cumulative figures beside the row (`provider_cost_cumulative`, `provider_model_usage`) as the
+  next run's baseline. A cumulative that goes DOWN (a CLI that restarted its totals) is taken at
+  face value and never recorded negative; a per-model split that does not reconcile with the
+  run's cost delta is dropped as a whole rather than charted inconsistently. Migration 41
+  re-differences the Claude rows recorded since the image first pinned a cumulative-reporting CLI
+  (2026-09-24) losslessly: each row's original figure survives in `provider_cost_cumulative`, and
+  the repair is idempotent. → TEST-PLAN: Per-model dashboard stacking.
 - **Per-model Codex Standard API-equivalent rates** (Settings → Behavior): Codex reports no dollar
   cost, so the ledger and reply footer estimate attribution value from an editable $/1M table —
   input / cached-input / output per model (GPT-6 Astra/Sol/Luna, GPT-6.1 Sol, GPT-5.6
@@ -5597,3 +5653,7 @@ sandbox or a new runtime tool.
 ## Slack Connect streaming and terminal session cleanup (2026-11-03)
 
 Streaming uses the requesting user's workspace (`user_team`, otherwise a verified cached user lookup) rather than the bot installation's workspace. A completed reply reasserts native `active` after stream finalization or classic fallback. Compatibility status clears precede native completion, and session writes are serialized with producer ownership checks so a delayed clear cannot override the next turn.
+
+## Rootless Podman in system services (2026-11-05)
+
+System-service installs add a managed per-account `cgroupfs` configuration without replacing operator settings, verify the effective manager, and bind persistent private temporary directories into the unit. The daemon's restart no longer deletes the backing paths retained by a rootless pause namespace. Limits probes use no network and never pull images; actual kernel memory/CPU/pids values must match before support is advertised. Silently ignored flags, missing images, namespace failures, timeouts and generic launch errors are distinguished from delegation failures. Existing-store recovery is an explicit idle operator procedure; startup never globally migrates or prunes containers.

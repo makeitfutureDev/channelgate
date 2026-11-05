@@ -43,6 +43,7 @@ import {
   moveSkillScope,
 } from "../../gateway/skills/authoring.js";
 import { publishRevision, publishTarget } from "../../gateway/skills/publish.js";
+import { USE_SKILL_TOOL, skillSwapReply, setSkillModelFrontmatter } from "../../gateway/skill-runtime.js";
 import { syncOneSource, runScheduledSkillSync } from "../../gateway/skills/index.js";
 // A conversation's granted skills and its skill template are policy: they decide what loads into
 // every future run here. The admin UI's grant/revoke/template routes already wrote these rows; the
@@ -55,6 +56,30 @@ const FILE_INPUT = z.object({
   content: z.string().describe("File content (text), or base64 when encoding is base64"),
   encoding: z.enum(["utf8", "base64"]).optional(),
 });
+
+// The optional `model` argument of create_skill / update_skill: write (or clear, with "") the
+// `model:` frontmatter key of the skill's SKILL.md so the author never hand-edits YAML. The file
+// comes from the call when it carries one, otherwise from the skill's current revision (an update
+// that changes only the model). Returns the files to store; throws when there is no SKILL.md to
+// edit or the model is one no engine recognizes.
+function withModelFrontmatter(files, model, skill = null) {
+  if (model === undefined || model === null) return files;
+  const index = files.findIndex((f) => f?.path === "SKILL.md");
+  let current = "";
+  if (index >= 0) {
+    const f = files[index];
+    current = f.encoding === "base64" ? Buffer.from(String(f.content || ""), "base64").toString("utf8") : String(f.content ?? "");
+  } else if (skill) {
+    const revision = effectiveRevisionFor(skill);
+    const stored = revision ? revisionFile(revision.id, "SKILL.md") : null;
+    if (!stored) throw new Error("this skill has no SKILL.md to set a model on");
+    current = Buffer.from(stored.content).toString("utf8");
+  } else {
+    throw new Error("files must include SKILL.md when a model is given");
+  }
+  const next = { path: "SKILL.md", content: setSkillModelFrontmatter(current, model), encoding: "utf8" };
+  return index >= 0 ? files.map((f, i) => (i === index ? next : f)) : [...files, next];
+}
 
 function packageVersion() {
   try {
@@ -101,7 +126,35 @@ function publishLine(p) {
 }
 
 export function register(server, ctx) {
-  const { channelId, slug, createdBy, text, requireAdmin, requireManage, loadMeta } = ctx;
+  const { channelId, slug, createdBy, text, requireAdmin, requireManage, loadMeta, threadKey, daemon } = ctx;
+
+  // ── Model-specific skills (src/gateway/skill-runtime.js) ─────────────────────────────────
+  // The explicit "I am now following this skill" signal. A materialized skill that declares a
+  // preferred model carries one line asking for this call; the LIVE TURN (found by this
+  // capability's thread key) decides, so reading a skill never switches anything.
+  server.registerTool(
+    "use_skill", // USE_SKILL_TOOL — spelled out so the registered-vs-catalog tripwire can read it
+    {
+      description:
+        "Call this when you START FOLLOWING a skill whose SKILL.md asks for it (skills that declare a preferred " +
+        "model). Not for reading or comparing skills. The gateway decides how to honor the skill's preferred " +
+        "engine/model for THIS turn and answers with exactly what to do next: continue as you are, stop so the " +
+        "same session is resumed on the preferred model, or delegate to a background agent on the other engine. " +
+        "Follow the reply literally.",
+      inputSchema: { name: z.string().describe("The skill's name/slug exactly as its SKILL.md states it") },
+    },
+    async ({ name }) => {
+      if (!slug || !threadKey) return text("No live conversation context — continue with the current model.");
+      if (!daemon?.available?.("skill-swap")) return text("Skill model swapping is unavailable right now — continue with the current model.");
+      try {
+        const data = await daemon.call("skill-swap", { slug, threadKey, name: String(name || "").slice(0, 200) }, { timeoutMs: 15_000 });
+        if (!data?.ok) return text(`Couldn't evaluate the skill's preferred model (${data?.error || "unknown error"}) — continue with the current model.`);
+        return text(data.decision?.reply || skillSwapReply(data.decision));
+      } catch (error) {
+        return text(`Couldn't evaluate the skill's preferred model (${error.message}) — continue with the current model.`);
+      }
+    }
+  );
   // Anyone this conversation admits may change ITS skills (the handler re-checks the verified
   // author against the channel's access policy; the run itself was already authorized).
   const memberHere = async () => (ctx.requireChannelAccess ? ctx.requireChannelAccess() : requireManage());
@@ -180,12 +233,15 @@ export function register(server, ctx) {
       if (!skill) return text(`No catalog skill named "${key}". See list_skills.`);
       const rev = effectiveRevisionFor(skill);
       const revs = listRevisions(skill.id);
+      const currentRev = revs.find((r) => r.id === skill.currentRevisionId);
       const files = rev ? skillBundle(skill).files.map((f) => f.path) : [];
       return text(clipText([
         `\`${skill.slug}\` — ${skill.name}${skill.deleted ? " (removed)" : ""}`,
         skill.description,
         `Owner: ${describeOwner(skill)} · visibility: ${skill.visibility} · category: ${skill.category || "—"} · version: ${skill.version || "—"} · tags: ${skill.tags.join(", ") || "—"}`,
         `Requires: ${skill.requires.join(", ") || "—"}`,
+        `Current revision: ${currentRev ? `#${currentRev.revisionNo}` : "none"}`,
+        `Pin: ${skill.pinnedRevisionId == null ? "none (following current)" : skill.pinReason === "publication" ? "publication recovery — clears after successful publication" : skill.pinReason === "proposal" ? "approved source override — cleared only by an admin" : "manual or legacy — cleared only by an admin"}`,
         rev ? `Effective revision: #${rev.revisionNo}${skill.pinnedRevisionId ? " (pinned)" : ""} · ${files.length} file(s): ${files.join(", ")}${rev.publishedRef ? ` · published ${rev.publishedRef.slice(0, 7)}` : ""}` : `No approved revision yet${skill.stagedCount ? ` (${skill.stagedCount} staged for review)` : ""}.`,
         `Revisions: ${revs.map((r) => `#${r.revisionNo} ${r.status}${r.version ? ` v${r.version}` : ""}`).join(", ")}`,
       ].join("\n")));
@@ -405,18 +461,25 @@ export function register(server, ctx) {
   server.registerTool(
     "create_skill",
     {
-      description: "Create a NEW skill from files (SKILL.md with name + description frontmatter is required; add references/*, scripts/* as needed). Where it lives: by default a CHANNEL skill of this conversation (active here automatically, editable by its members; in a DM, a personal skill). Only when the user explicitly asks for an organization-wide skill pass scope \"organization\": an admin's goes straight into the shared library; anyone else's is created here as a channel skill and an admin is asked to promote it. personal:true keeps it private to you. No approval card for channel or personal skills. Read the skill-authoring skill first.",
+      description: "Create a NEW skill from files (SKILL.md with name + description frontmatter is required; add references/*, scripts/* as needed). Where it lives: by default a CHANNEL skill of this conversation (active here automatically, editable by its members; in a DM, a personal skill). Only when the user explicitly asks for an organization-wide skill pass scope \"organization\": an admin's goes straight into the shared library; anyone else's is created here as a channel skill and an admin is asked to promote it. personal:true keeps it private to you. No approval card for channel or personal skills. Optional `model`: the model (and so the engine) this skill works best with, written into the SKILL.md `model:` frontmatter — honored when a conversation allows skill engine/model swapping. Read the skill-authoring skill first.",
       inputSchema: {
         slug: z.string().optional().describe("Folder name; defaults to the frontmatter name, slugified"),
         files: z.array(FILE_INPUT).min(1),
+        model: z.string().optional().describe("Preferred model for this skill (e.g. \"sonnet\", \"claude-opus-5-5\", \"gpt-6.1-sol\"); the engine is derived. Written as `model:` in the SKILL.md frontmatter. Omit when the user did not ask for one."),
         note: z.string().optional(),
         grant_here: z.boolean().optional().describe("For an organization skill an admin creates, also activate it in this conversation (default true). Channel and personal skills are active automatically."),
         personal: z.boolean().optional().describe("Private to you and active in your own runs everywhere (default false). Cannot be combined with scope channel."),
         scope: z.enum(["channel", "organization", "library"]).optional().describe("Omit unless the user said where it belongs. channel (the default in a channel): this conversation's own skill. organization (alias library): the shared library for every conversation — only when the user explicitly asked for an organization-level skill."),
       },
     },
-    async ({ slug: wanted = "", files, note = "", grant_here = true, personal = false, scope }) => {
+    async ({ slug: wanted = "", files: inputFiles, model, note = "", grant_here = true, personal = false, scope }) => {
       if (!(await approvedAuthor())) return text("Only approved members can add skills.");
+      let files;
+      try {
+        files = withModelFrontmatter(inputFiles, model);
+      } catch (err) {
+        return text(`🚫 Could not create the skill: ${err?.message || err}`);
+      }
       if (personal && ctx.apiPrincipal) return text("An HTTP API run has no personal catalog — create a shared skill instead (personal: false).");
       const { channelId, meta: scopeMeta } = await channelProfile();
       const inChannel = Boolean(channelId) && !scopeMeta.isDM;
@@ -464,12 +527,25 @@ export function register(server, ctx) {
   server.registerTool(
     "update_skill",
     {
-      description: "Publish a new revision of a skill (pass only the files that change; the rest is kept). Personal skills: their author. Channel skills: any member of that channel. Organization skills: admins directly — anyone else's edit is filed as a change proposal for an admin. No approval card otherwise. A skill whose source this gateway cannot write to (bundled, another repository, a host folder, a peer gateway) is never edited in place: create a companion skill instead.",
-      inputSchema: { skill: z.string(), files: z.array(FILE_INPUT).min(1), remove: z.array(z.string()).optional(), note: z.string().optional() },
+      description: "Publish a new revision of a skill (pass only the files that change; the rest is kept). Personal skills: their author. Channel skills: any member of that channel. Organization skills: admins directly — anyone else's edit is filed as a change proposal for an admin. No approval card otherwise. A skill whose source this gateway cannot write to (bundled, another repository, a host folder, a peer gateway) is never edited in place: create a companion skill instead. Optional `model` sets (or, with \"\", clears) the skill's preferred model in its SKILL.md frontmatter — it may be the only change (files may then be empty).",
+      inputSchema: {
+        skill: z.string(),
+        files: z.array(FILE_INPUT).optional().describe("Files that change (required unless only `model` changes)"),
+        model: z.string().optional().describe("Preferred model for this skill (\"sonnet\", \"gpt-6.1-sol\", …), written as `model:` in SKILL.md; pass \"\" to remove the preference."),
+        remove: z.array(z.string()).optional(),
+        note: z.string().optional(),
+      },
     },
-    async ({ skill: key, files, remove = [], note = "" }) => {
+    async ({ skill: key, files: inputFiles = [], model, remove = [], note = "" }) => {
       const skill = await visibleSkill(key);
       if (!skill || skill.deleted) return text(`No catalog skill named "${key}".`);
+      if (!inputFiles.length && model === undefined && !remove.length) return text("Nothing to change: pass the files that change, a `model`, or files to remove.");
+      let files;
+      try {
+        files = withModelFrontmatter(inputFiles, model, skill);
+      } catch (err) {
+        return text(`🚫 Could not update the skill: ${err?.message || err}`);
+      }
       const edit = skillEditability(skill);
       if (!edit.editable) {
         return text(`\`${skill.slug}\` is ${describeOwner(skill)} — this gateway cannot write to that source, so it is not edited in place (a sync would bring the old files back). Extend it instead: create_skill a companion skill (e.g. \`${skill.slug}-extras\`, a channel skill by default) whose SKILL.md says when to use it together with \`${skill.slug}\`, lists \`requires: [${skill.slug}]\` in its frontmatter so the original loads with it, and carries the additional references/scripts.`);
@@ -493,8 +569,8 @@ export function register(server, ctx) {
       }
       try {
         const r = await updateLocalSkill({ skill, files, remove, note, createdBy });
-        if (!r.changed) return text(`\`${skill.slug}\` is unchanged — those files match the current revision.`);
-        const pinNote = r.pinned && r.via === "repository" && !r.published?.published ? " It is pinned here until the repository has these files, so a sync cannot revert it." : "";
+        if (!r.changed && !r.published?.published) return text(`\`${skill.slug}\` is unchanged — those files match the current revision.${r.skill.pinReason === "publication" ? `${publishLine(r.published)} Publication recovery is still pending; retry update_skill or publish_skill.` : ""}`);
+        const pinNote = r.skill.pinReason === "publication" ? " A publication recovery pin protects this edit from source sync; it clears after successful publication." : r.pinned ? " The existing intentional pin is retained on this revision." : r.published?.publicationPinCleared ? " Publication recovery pin cleared; following current again." : "";
         return text(`✅ \`${skill.slug}\` is now revision ${r.revision.revisionNo} (${r.revision.fileCount} file(s)). Conversations that use it get the new files on their next message.${publishLine(r.published)}${pinNote}\n${ANNOUNCE}`);
       } catch (err) {
         return text(`🚫 Could not update the skill: ${err?.message || err}`);
@@ -636,7 +712,7 @@ export function register(server, ctx) {
       if (!skill || skill.deleted) return text(`No catalog skill named "${key}".`);
       try {
         const r = await publishRevision({ slug: skill.slug, actor: createdBy });
-        return text(r.published ? `✅ Published \`${skill.slug}\` to ${r.repo}@${r.branch} under ${r.path} (${r.files.length} file(s)${r.deleted.length ? `, ${r.deleted.length} removed` : ""}).${r.adopted ? " It is now owned by that source." : ""}` : `Not published: ${r.reason}`);
+        return text(r.published ? `✅ Published \`${skill.slug}\` to ${r.repo}@${r.branch} under ${r.path} (${r.files.length} file(s)${r.deleted.length ? `, ${r.deleted.length} removed` : ""}).${r.adopted ? " It is now owned by that source." : ""}${r.publicationPinCleared ? " Publication recovery pin cleared; following current again." : ""}` : `Not published: ${r.reason}`);
       } catch (err) {
         return text(`🚫 Publishing failed: ${err?.message || err}`);
       }

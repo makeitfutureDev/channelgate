@@ -32,8 +32,22 @@ category: Sales
 version: 1.2.0
 tags: [crm]
 requires: [makeitfuture-organization]   # catalog skills granted together with this one
+model: sonnet                           # optional: the model this skill works best with
 ---
 ```
+
+**`model:` (optional) — model-specific skills.** Name the model the skill works best with
+(`sonnet`, `claude-opus-5-5`, `gpt-6.1-sol`, …); the engine is derived from it. Nothing else is
+declared — the gateway decides how to honor the preference when the skill is actually *used*, not
+when it is read: every materialized copy carries one line asking the model to call the gateway tool
+`use_skill` as it starts following the skill. In a conversation whose **Allow skill engine and
+model swapping** switch is on (off by default; `set_channel_skill_swap`, the admin Runtime pane or
+the Slack Settings ticks), and when nobody pinned the thread with `/model`, a model of the current
+engine resumes the same session on the preferred model and the thread stays there; a model of the
+other engine is delegated to a background agent on that engine. A pin, the switch being off or an
+unavailable engine leave the skill on the conversation's model. `create_skill` and `update_skill`
+take an optional `model` argument that writes (or, with `""`, clears) this line; the library's
+skill detail shows the preferred model.
 
 Every skill has one **owner**:
 
@@ -239,8 +253,13 @@ it can never reach the organization tier.
 - `update_skill` — a new revision. Pass only the files that change; the rest are carried over
   (`remove` drops files). A gateway-owned skill is revised in place; a skill synced from the configured
   publish repository is revised and pushed back to its own folder (if the push fails the new
-  revision is pinned, so the next sync cannot revert it). A skill pinned to an older revision is
-  re-pinned to the new one. A non-admin's edit of an organization skill becomes a `change`
+  revision gets a publication recovery pin, so the next sync cannot revert it). A successful
+  retry through `publish_skill` or a later successful update clears that recovery pin and follows
+  the published revision again. Manual pins and approved source overrides retain their reason
+  when advanced to a new edit and are never automatically cleared. Existing pins from before
+  provenance tracking remain manual/legacy; their origin cannot be inferred safely. `get_skill_info`
+  reports current and effective revisions plus an explicit pin reason or "none".
+  A non-admin's edit of an organization skill becomes a `change`
   proposal automatically. Any other source is read-only: `update_skill` explains how to extend
   it with a companion skill.
 - `delete_skill` — a catalog tombstone: an admin, or the author of a personal skill. Anyone else

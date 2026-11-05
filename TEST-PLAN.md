@@ -7,6 +7,73 @@
 - Passed: 31 focused skill CRUD, publishing, admin UI and picker regression checks; static validation. Disposable Chromium acceptance passed for catalog owner/filter/create labels, distinct Git-source label, raw `owner=local` filter request, picker source label/filter/add and unchanged stored ownership. This wording-only check is engine-independent.
 - Existing full conversation/template browser suite: compact layout case passed; conversation navigation case timed out before reaching the skill picker (`#channel-detail .subtab[data-pane="skills"]`). Its unrelated full-flow acceptance remains unresolved.
 
+## Slack email for password and code sign-in (2026-11-05)
+
+- Local automated verification (2026-11-05): 4,246 passed / 40 opt-in skipped / zero failed in
+  the full coverage suite at concurrency 4; coverage 94.09% lines, 86.63% branches, 90.42%
+  functions. All 16 combined Chromium checks passed. Static (994 JavaScript files), secret scan,
+  security coverage, DCO and root high-threshold dependency audit passed. Documentation build
+  verified 153 pages, 27,783 internal links and all 130 gateway controls.
+- Engine-independent: the HTTP/browser authentication path never launches an engine. Use scratch
+  databases, disposable passwords and simulated Slack lookup/private delivery only.
+- Verify whitespace/case normalization, exact provider email and stable user ID matching, current
+  Admin status, password-before-lookup, no account directory disclosure, missing-scope guidance,
+  and refusal of absent/deactivated/bot/mismatched/non-admin users. Editable user-store emails
+  must not resolve identity. Preserve OTP browser binding, expiry, five guesses and one-time use.
+- Reauthentication uses the current linked session and requires password plus its private Slack
+  code; session/role/password/settings changes while lookup, delivery or verification is pending
+  must not restore stale authority. Existing passkey account labels and credentials are unchanged.
+- Live acceptance pending: on a disposable gateway grant `users:read.email` and reinstall the
+  Slack app, enable optional password/Slack-code sign-in, then sign out. Enter the existing Slack
+  administrator's email and dashboard password; require a private Slack code to that same member
+  and a full session linked to the original stable user ID. Test reauthentication and a non-admin
+  email. Record only success/failure, message links and redacted screenshots. Check scope failure
+  guidance on a separate test app lacking email access; never change the production bot to test.
+- Private QA definitions recorded through the established personal QA connection:
+  `ADM-SLACK-EMAIL-01` (email sign-in/provider checks) and `ADM-SLACK-EMAIL-02`
+  (authority races/session-bound reauthentication). Both are engine-independent and explicitly
+  retain human deployed acceptance as pending; no simulated delivery is recorded as live PASS.
+
+## DM template egress and HTML attachments (2026-11-05)
+
+- Automated: `node --test test/egress-service.test.js test/skills-templates-assign.test.js test/skills-workspace-sync.test.js test/new-channel-template.test.js test/slack-download-file.test.js test/managed-write-symlinks.test.js`. Real CONNECT/TLS tests cover user/admin template ON over stored OFF, live template OFF over stored ON, live re-enable on the same listener and custom-DM independence. Download tests cover HTML and identical renamed text, ordinary HTML containing Slack/sign-in prose, Slack authentication redirects and split-chunk branded error pages, real HTTP errors, byte caps, and no-follow writes.
+- Claude and Codex live acceptance (`DM-EGRESS-TEMPLATE-01`): use Apps DM / Tiberiu DM on an isolated QA deployment, organization user then admin DM template, Worker + network ON; preserve prior settings. With saved DM network OFF and inherited ON, ask each engine: "Fetch https://www.google.com and report only the HTTP status." Require a real public response through the DM proxy. Flip only the assigned template OFF, repeat, and require proxy `network-off`; turn it back ON and require the next request to succeed without recreating the container. Repeat custom-DM ON/OFF and a linked-folder DM to ensure the source policy wins. Restore fixture settings; no disabling TLS or private-address checks.
+- Claude and Codex live acceptance (`SLK-HTML-FILE-01`): in the dedicated Attachment Fixture on `cg-testing-claude-bash` / `cg-testing-codex-bash`, upload a harmless HTML file containing marker HTML_ATTACHMENT_OK and the same bytes as `.txt`; ask "Read both attachments and report the marker and SHA-256 of each." Both local files must contain the exact uploaded bytes and equal digests, and no scope warning may appear. In an isolated HTTP fixture return Slack sign-in/error HTML or a Slack authentication landing URL: require a clear file-access refusal and no delivered marker/file. Ordinary documents mentioning Slack sign-in remain valid. UI rendering of HTML and customer re-upload are separate pending human checks; automated regressions are not a live engine pass.
+
+
+## Skill publication recovery (2026-11-05)
+
+- Automated: `node --test test/skills-publication-recovery.test.js test/skills-platform.test.js test/skills-standalone.test.js test/skills-admin-api.test.js` covers successful unpinned updates, failed publication protection, retry through publication or update (including identical bytes), stale source sync, next source activation, manual/proposal preservation, legacy migration and concurrent operator/newer edit decisions. The new metadata is exercised through the registered gateway tools in both Claude and Codex contexts.
+- Live Claude and Codex acceptance (pending): use `cg-testing-claude-admin` and `cg-testing-codex-admin`, Contact as admin actor, and a disposable skill `publication-recovery-probe-<engine>` in a dedicated writable Git publishing fixture; never change production sources or credentials. Ask: "Update the probe to reply RECOVERY_V2 through update_skill, then report current/effective revisions, publication and pin reason." With the fixture's publisher returning HTTP 500, require the saved V2 to stay effective with `Pin: publication recovery`, including after a source sync delivers V1. Restore publisher success, ask "Retry the exact same update," and require publication success, no new revision, `Pin: none (following current)`, V2 effective and `skill_publication_pin_cleared` audit evidence. Repeat recovery using `publish_skill`, then a changed V3 update. Each must clear only its own recovery pin.
+- In the same two fixtures, an admin manually pins the probe (and separately approves a source override); retry publication and require the intentional pin and its reason to remain. Verify library badges distinguish recovery from intentional pins. An existing pre-migration pin must remain manual/legacy. Deactivate/exclude only the disposable probe after testing. Record exact thread, candidate and results in QA cases `SKILL-PUBLISH-RECOVERY-CLAUDE` / `SKILL-PUBLISH-RECOVERY-CODEX`; automated tests and the earlier Atlas investigation are not post-fix live acceptance.
+
+## Model-specific skills (2026-11-05)
+
+- Automated: `node --test test/skill-runtime.test.js` covers the `model:` frontmatter reader and engine derivation, the SKILL.md header insertion (after frontmatter, once, catalog bytes untouched, materializer sees it as unchanged), the full decision table (disabled / no preference / pinned / already / inline / second skill → subagent / other engine → delegate / engine unavailable), every tool reply, the live-turn registry keyed by thread, the channel switch on the audit/folder-link/managed-block surfaces, `set_channel_skill_swap` authorization + audit, `use_skill` relaying the live turn's reply, and the orchestrator E2E against the Claude stub: a mid-turn `use_skill` ends the attempt, the continuation RESUMES the session with `--model sonnet`, the footer/result name `sonnet`, the thread keeps `sonnet` on the next message, a `/model` pin wins and the skill is refused as pinned, the runtime reset clears the preference, and the switch off refuses with the current model kept. `channel-settings-modal`, `access-settings`, `mcp-control-plane-approval`, `folders-settings` cover the new tick, flag parsing and tool classification.
+- Live Claude acceptance (pending): in `cg-testing-claude-bash`, turn **Allow skill engine and model swapping** on (Settings → Access ticks or `set_channel_skill_swap`), grant a disposable channel skill `swap-probe` whose SKILL.md declares `model: sonnet` and whose body says "reply with the word SWAPPED and the model you are". As Apps, in a thread whose channel default is Opus, ask "use the swap-probe skill". Pass only when the thread shows a `use_skill` tool row, the reply starts with the "Switched this thread to sonnet" note, the footer names sonnet, `run_skill_swap` is in Observability, and a plain follow-up in the same thread also runs on sonnet without a note. Then `/model` → this thread → opus and ask again: no switch, the tool reply says pinned. Turn the switch off and repeat in a new thread: no switch, the reply says swapping is OFF.
+- Live Codex acceptance (pending): same fixture in `cg-testing-codex-bash` with `model: gpt-6.1-sol` on a channel defaulting to another Codex model; pass rules identical, with `codex exec resume` carrying the new model. Cross-engine: in the Claude fixture grant a skill declaring `model: gpt-6.1-sol`; pass when the model calls `run_agent_in_background` with `engine: codex, model: gpt-6.1-sol`, the agent report posts back, and the launching thread stays on Claude.
+- Authoring (automated, `test/skill-runtime.test.js`): `setSkillModelFrontmatter` sets/replaces/clears/validates the line; `create_skill` with `model` writes it and refuses an unknown model before creating anything; a model-only `update_skill` rewrites the frontmatter, keeps the other files, `""` clears it, and an empty call answers "Nothing to change". Live (engine-independent): in a fixture ask "create a channel skill swap-authored that replies SWAPPED, and make it prefer sonnet" — pass when the created SKILL.md carries `model: sonnet`, the library detail shows "Preferred model: sonnet", and "make swap-authored prefer no particular model" removes the line.
+- Engine-independent: the admin UI Runtime pane toggle and the Slack tick persist `skillRuntimeSwap`, show in `/status`'s managed block line "Skill model swap", and write a `channel_meta_changed` audit row with that key; a linked folder follows its source's value.
+
+## Library missing skill manifests (2026-11-04)
+
+- Regression: `test/skills-admin-api.test.js` verifies missing host folders, path/user attribution, no token exposure, plugin exemption, read-only diagnostics and automatic disappearance after repair. `test/skills-catalog-filters.test.js` covers filter composition.
+- Browser: `CG_BROWSER_MODULE=<playwright/index.mjs> node --test test/skills-folder-issues-browser.test.js` opens a disposable admin app, verifies the default diagnostic row, missing/healthy filters, attribution and absence of governance controls at desktop and 390px width.
+- Fixture: Admin UI with disposable `synced/nested/SKILL.md` but no `synced/SKILL.md`, a valid catalog skill, and a user personally granted `synced`. Open Skills → Library and select Skill file status → Missing SKILL.md. Require the warning row and folder/user details; no native plugin false positives. Engine independent because no engine runs or grant writes occur. QA case `SKILL-FOLDER-LIBRARY`; existing dual-engine loader cases remain unchanged.
+
+
+## Channel SSH egress approval (2026-11-04)
+
+- Automated: `test/egress-hosts.test.js` covers exact public destinations, denied private/malformed hosts, current worker authority, network/mode changes, and atomic append. `test/mcp-control-plane-approval.test.js` exercises real MCP tools in Claude/Codex contexts, pending durable cards in Auto mode, no mutation before approval, member approval and live authorization. Existing durable-approval and approval-link suites cover restart persistence, replay and single-use decisions.
+- Live Claude and Codex acceptance (pending): in `cg-testing-claude-bash` and `cg-testing-codex-bash`, use an approved non-admin member and a disposable public SSH fixture with a verified host key and existing test key. Ensure Network on, Worker mode and no existing host entry. Ask “Connect to the test SSH server; request approval if it is not allowed.” Require `allow_channel_ssh_host`, a card naming the host and TCP 22/5432/6543, and no append before the human click. Approve as a second authorized non-admin member; require only that host appended, unrelated settings preserved, and successful SSH via `cg-egress-connect` without `/sudo`. Repeat in Auto mode: still requires a click.
+- Deny a fresh destination and verify no append. Request another destination, restart the disposable gateway, then approve the saved card once; replay must not execute twice. Revoke requester/approver access, switch to Read-only or turn Network off before approval: no grant. Public IPv4 and IPv6 literals must create approval cards and tunnel SSH bytes without TLS after approval; IP destinations require no DNS lookup. Private IP, wildcard and URL requests must refuse without posting a card. Remove fixture grants/keys after testing. No live pass is implied by automated results.
+
+## Invalid skill-folder grants (2026-11-04)
+
+- Automated: `test/run-grant-isolation.test.js` covers personal/shared parent-folder grants, alone and alongside a valid skill; verifies warnings, source preservation, and exclusion from both Claude plugins and the Codex catalog.
+- Live Claude/Codex acceptance: use Apps in `cg-testing-{claude,codex}-bash` with a disposable personal grant `synced` containing a nested skill but no root `SKILL.md`, alongside a valid marker skill. Send “Reply SKILL_FOLDER_OK.” Require a normal answer plus a warning naming `synced` and the missing `SKILL.md`, no nested skill in delivered artifacts, and the valid skill retained. Repeat with only the invalid grant. Restore fixture grants afterward. Live chat acceptance pending; remote artifact verification is separate from a human-visible engine run.
+
+
 ## Company domain auto-approval (2026-10-28)
 
 - Automated: `node --test test/user-auto-approval.test.js test/user-search.test.js` covers
@@ -138,6 +205,53 @@ Live acceptance (pending, both Claude and Codex): private `cg-testing-claude-bas
 
 
 Terra pricing regression: `test/usage-pricing.test.js` covers launch/snapshot pricing, strict >272K request uplift, aggregate fallback, upgrades from absent/older/October22 bases, backup-once and zero-delta reruns. Live production ledger rehearsal/integrity/balance verification remains pending host access; this is engine-independent accounting.
+
+## Stable sign-in candidate integration (2026-10-30)
+
+Combined with main's company-domain auto-approval change. Resolved Slack admission and Users
+route conflicts while retaining code-channel routing, domain-based Approved-only grants, manual
+opt-out and current admin-session validation after asynchronous user edits. The domain browser
+fixture now uses an actual linked admin session and authentication router; no production gate
+was relaxed to support the fixture.
+
+Local combined coverage run: 4,126 passed, 39 opt-in skipped, zero failed; line/branch/function
+coverage 93.90% / 86.56% / 90.28%. Static, secret scan, security-coverage, DCO and high-threshold
+production audit passed. Documentation build verified 152 pages and 27,245 internal links.
+Existing physical-authenticator/live Slack delivery and other applicable beta live gates remain
+unexecuted; private QA registry remains pending. These automated checks are not live acceptance.
+
+## Optional password and Slack code authentication (2026-10-28)
+
+- Automated scratch HTTP fixture: `test/admin-password-slack.test.js` and
+  `test/admin-password-slack-race.test.js`. Use fake private delivery,
+  disposable passwords and existing Slack Admin/non-admin users. Verify disabled-by-default,
+  password-only denial, correct browser-bound code login after passkey enrollment, replay/expiry/
+  guess limits, private delivery failure, role and credential/settings revocation. Never send
+  fixture codes to deployed users.
+- Browser fixture: `test/admin-password-slack-browser.test.js` exercises Settings → Admin access enablement, alternate sign-in and sensitive
+  reauthentication and sign-out on disable without a WebAuthn device. Chromium verification:
+  all 15 combined passkey/initial-setup/alternate-login assertions passed, zero skips; the
+  extended disable/sign-out browser fixture also passed. Private delivery is simulated.
+- Live acceptance pending, engine-independent: this HTTP/browser authentication path never calls
+  either engine. On a disposable gateway with an existing Slack administrator and working bot DM
+  delivery, enable the checkbox using recent admin verification, sign out, enter the password
+  and own Slack member ID, then enter the privately received code. Pass only when the dashboard
+  opens as that exact existing user with no passkey prompt. Repeat a sensitive action with code
+  reauthentication. Confirm a wrong/replayed code and a non-admin are refused; disabling the
+  checkbox removes alternate login and invalidates its sessions. Check from the RustDesk browser
+  through a localhost SSH tunnel. Record screenshots/HTTP evidence without codes/passwords.
+- Local regression: `npm run test:coverage -- --test-concurrency=4` passed with 4,120
+  passed / 38 opt-in skipped / zero failed; coverage 93.91% lines, 86.55% branches, 90.27%
+  functions. An initial unconstrained run hit the container process limit and was terminated;
+  it is not counted as a passing run. Security-coverage, secret scan and production dependency
+  audit at the high severity threshold passed (three existing moderate advisories remain).
+- CI fixture isolation: `test/web-security.test.js` now initializes scratch paths before
+  importing security helpers. Its isolated 15-test run under a fresh HOME created no runtime
+  files there; this fixes the existing real-home leak without relaxing the guard.
+- Gate maintenance: linked-workspace authorization cases in `test/authorization.test.js`
+  restore the existing 95% branch floor (measured 96.81%); no production policy or floor changed.
+- Private QA registry update pending: the requesting user's personal Airtable connection is not
+  connected in this run. Do not treat the missing registry or unexecuted live case as passed.
 
 ## Linked working-folder setup acceptance
 
@@ -469,6 +583,7 @@ Running label acceptance (Claude and Codex): in a Slack agent thread with chat:w
   Ordinary foreign members, demoted/departed admins, dormant channels and wrong-channel cards
   must fail without consuming the pending choice. Repeat a successful click: no duplicate run.
   Capture Slack card, pending-choice id, run identity and audit events; no live pass claimed here.
+
 
 ## Email accounts (2026-10-22)
 
@@ -3442,6 +3557,26 @@ unchecked live gate above.
 
 ## Per-model dashboard stacking and usage outside the gateway
 
+- [x] `test/claude-session-cost.test.js`: a Claude session resumed for a second turn is charged its
+      DELTA (the fixture replays the figures observed on the development ledger on 2026-11-04: an
+      Opus turn with a Sonnet subagent reported $0.38, the next turn of the same session $0.43 and
+      the ledger must store $0.05), its row carries the whole tree's tokens (subagent included),
+      one `usage_components` row per model prices the Sonnet subagent under its own model, and the
+      channel total equals the session's cumulative rather than the sum of cumulatives. A
+      cumulative that goes down is a restarted session (recorded at face value, flagged, never
+      negative); a per-model split that does not reconcile is dropped as a whole while the cost
+      delta is kept; a result with no session totals records what it was given. Migration 41
+      re-differences historical rows losslessly (the original survives beside the delta), leaves
+      pre-2026-09-24 rows and rows without a session id alone, and is idempotent.
+      `test/claude-primary-model.test.js` now feeds the warm pool's resumed turn a cumulative
+      terminal and asserts the delta. Engine-independent: ledger arithmetic over a recorded
+      terminal line.
+      Live acceptance (Claude): in a channel on the Claude engine, send three messages in one
+      thread, the second asking for a subagent on another model ("run X with a subagent on
+      sonnet"); then in the admin UI's Audit view confirm each row's cost is that turn's own (the
+      three rows sum to the last row's `provider_cost_cumulative` in `usage`), and the Models card
+      shows the subagent's model with its own slice. Pass: no row repeats an earlier row's cost
+      plus its own, and the subagent model appears.
 - [x] `test/usage-model-breakdown.test.js`: a run's cost is attributed to the model that ANSWERED,
       and a Codex run whose subagent used a different model contributes a slice to each — while the
       run is still counted once, so per-model run counts sum to the headline run count and a
@@ -7680,7 +7815,8 @@ none` for its cases and live gates. Kept as history.
       and lists all commands (including `/status`, `/stop`, and `/pending`).
 - [x] Unit/fixture (`test/slack-fork.test.js`): `/fork <new message>` is parsed as a command;
       Claude uses `--resume <source> --fork-session`, Codex uses `exec fork <source>`, and both
-      keep confinement flags. A fake Slack DM receives a linked top-level root, a separate new
+      keep confinement flags. A fake Slack DM receives a top-level root beginning with the
+      request, a blank line and the `↪️ Fork of` source link, plus a separate new
       request in that thread and the engine reply there; source and child IDs remain distinct.
 - [x] Unit/fixture (`test/slack-fork.test.js`): `/fork :shortcut <new message>` resolves a
       model on the source engine for Claude and Codex, strips the prefix from the request,
@@ -7711,18 +7847,42 @@ none` for its cases and live gates. Kept as history.
       login refuses Claude. Simulate unavailable Slack history and confirm no child root.
 - [ ] Live Slack acceptance (Claude and Codex separately): finish a source turn, send
       `@agent /fork Compare an alternative approach` in its thread, and verify the source link,
-      child root, separate request and answer. Follow up in both threads; each must remember its
-      own continuation while retaining the shared pre-fork history. Try during a running turn,
-      without a prior session, and from `/sudo`: each must refuse without creating a new root.
+      child root showing `Compare an alternative approach` above the `↪️ Fork of this thread`
+      link in the channel timeline, separate request and answer. Repeat with a model shortcut
+      and verify its prefix is absent from the root. Follow up in both threads; each must remember its
+      own continuation while retaining the shared pre-fork history. Try without a prior session and from `/sudo`: each must refuse without creating a new root.
+- [x] Fixture regression (`test/slack-fork.test.js`): busy source queues `/fork` for Claude and
+      Codex, posts an explicit automatic-start acknowledgement, creates no child before promotion,
+      then creates exactly one distinct child without changing the source session. Stop cancels it; revoked admission denies it at promotion.
+- [x] Restart fixtures (`test/queued-fork-recovery.test.js`): Claude/Codex source recovery precedes
+      fork command replay; distinct native child, permission recheck, Stop cancellation, forced
+      shutdown retention and bounded recovery attempts.
+- [x] Handoff fixtures (`test/queued-fork-handoff.test.js`): restart redelivery cannot duplicate
+      a queued command; accepted child recovery state already contains native source ID or
+      captured cross-engine history, including source bot replies posted while waiting.
+- [ ] Live queued-fork acceptance, separately in `cg-testing-claude-auto` and
+      `cg-testing-codex-auto`: as the admitted contact fixture author, start a source task that
+      writes a random token, runs `python3 -c "import time; time.sleep(30)"`, and returns the token.
+      While busy, send `@bot /fork Repeat the source token and explore another approach`.
+      Pass only if a queued acknowledgement appears immediately, no child starts before the source
+      completes, and exactly one linked child recalls the token with a distinct native session id.
+      Repeat with Stop while queued: no child may appear. Restart while queued and verify source
+      recovery precedes one fork; a permission revocation must refuse at promotion. Record live
+      results separately; fixture tests do not establish live acceptance.
+- [ ] Live engine-independent acceptance (command intercepted before engine dispatch): in a
+      disposable Slack thread with a human root and bot replies, an admin sends `@bot /delete`.
+      Verify bot replies disappear, the human root stays without a replacement report, and another
+      thread is untouched. Repeat with a bot root and optional admin user token. Audit event retains
+      deleted/left counts. Pending live execution; no engine turn should start.
 - [ ] `/delete` (org-admin only) inside a thread removes the BOT's messages there (replies before the
-      parent) and posts an ephemeral summary; without an Admin User Token, human messages stay and
-      the summary explains how to enable full deletion (Settings → Slack credentials).
+      parent) silently; without an Admin User Token, human messages stay. No ephemeral summary,
+      regular report, or fallback message is posted, even when the root remains.
       A non-admin (approved) author gets "Only admins can use `/delete`." and NOTHING is deleted.
       Top-level `/delete` replies with guidance; on a mid-run thread it refuses until stopped.
       Another thread in the same channel is untouched (scope check).
 - [ ] `/delete` with an Admin User Token (xoxp) set: human/other-app messages are deleted too (token
       override per call); if the workspace refuses (admin-delete pref off), they're counted as
-      stayed with the "even with the admin user token" wording. Settings rejects a non-`xoxp-`
+      stayed in the audit log, without a report. Settings rejects a non-`xoxp-`
       value for the field (400); the token is write-only (masked on read) and never appears in any
       run/MCP config.
 - [ ] `/pending` (alias `/followups`) and the bare words `pending` / `my followups` reply in-thread
@@ -11798,3 +11958,33 @@ Documentation-only, engine-independent: no gateway runtime or Microsoft grants c
 Automated: `node --test test/slack-manifest.test.js` checks import-safe command names and URLs, runtime handlers, code-channel declarations and native agent events. The manifest skill source also runs its generator regression suite.
 
 Live acceptance pending (engine-independent configuration): import the shipped JSON into a disposable Socket Mode Slack app; install it, generate a separate `connections:write` app token, connect to a test gateway and invoke `/status-cg` and `/model`. Require successful import and the expected status report/model picker. Local validation is not Slack server acceptance.
+
+## Rootless system-service Podman regression (2026-11-05)
+
+- Automated: `node --test test/service-podman-config.test.js test/container-cli.test.js test/operations-readiness.test.js test/service-path-preflight.test.js test/update-script.test.js`. Require preservation of operator configuration and temporary files, private directory/file modes, refusal of symlinks/unmanaged collisions, effective-manager check before provisioning, no unconditional store migration, offline/no-pull probes and distinct sanitized diagnostics.
+- Live service fixture: disposable Linux system unit with dedicated rootless Podman account and the generated hardening/configuration. Create a named test container with CPU/memory caps, `--network none`, and the prebuilt runtime image; execute a file write under `/home/agent/.claude`. Check its cgroup is inside the delegated service. Stop/clean only the named fixture, restart the unit, and repeat start/exec/limits. Require persistent service-private temp contents and mode0700; unrelated host users must not access them. Inspect actual kernel memory.max/cpu.max/pids.max, not just container configuration. A rootless cgroupfs host that ignores flags must report limits unenforced, not supported. Do not restart the serving gateway for this fixture.
+- Existing-store fixture: a dedicated disposable account/store initially using the old systemd-manager/PrivateTmp unit; reproduce the exec denial and stale namespace after restart, follow the documented idle migration, then pass start/exec/limits before and after another restart. Named channel volumes must survive. These runtime mechanics are engine-independent; final normal-turn acceptance uses separate Claude and Codex prompts `Reply SERVICE_RESTART_OK` in private approved-user fixtures after the unit change. Record unexecuted cases as pending.
+
+- Live system-unit evidence (2026-11-05): a disposable service with the generated hardening passed start, file-writing exec, service-local process placement and persistent private temporary backing before/after restart. The existing gateway service was not restarted or reconfigured. Kernel inspection exposed ignored limit flags on Podman 5.4.2 rootless cgroupfs; the new probe correctly treats this as unsupported enforcement. A fresh account/store transition from the old manager and normal dual-engine turns remain separate pending acceptance gates.
+- QA catalog: SVC-PODMAN-01 records the engine-independent service/kernel canary, while SVC-PODMAN-02 covers separate Claude and Codex normal-turn acceptance after an idle upgrade. A live canary detected and correctly reported unenforced cgroupfs limits both before and after restart; it did not certify CPU/memory enforcement on that host.
+
+
+### Slack completion reactions suppress unfinished-thread notifications (2026-11-05)
+
+- Automated: `node --test test/thread-completion.test.js test/nudges-ttl.test.js test/followups-store.test.js`.
+  Verify root/latest ✅, older reply versus newer unchecked reply, 👍 and text-only ✅ controls,
+  removed reactions, pagination, API failure deferral/retry, single nudge and digest suppression.
+- Live fixture: private `cg-testing-claude-auto` and `cg-testing-codex-auto`; an approved tester with
+  personal nudges enabled, follow-up digests enabled and access to the gateway bot. In each engine
+  create separate threads with “Ask me a question and wait for my decision.” Wait for the final reply.
+  Add ✅ to the root of one thread, ✅ to the latest reply of a second, and 👍 only to a third.
+  Use an operator-owned short reminder threshold/digest slot fixture and restore settings afterward.
+  Expected: no thread nudge or digest source line for either ✅ thread; the 👍 control remains
+  eligible and gets exactly one nudge. `pending` omits both ✅ threads. Append a new reply after a
+  checked root: it remains suppressed. A checked older reply alone must not suppress a newer
+  unchecked last reply absent a separate personal dismissal. Use a second participant to verify
+  that source reaction suppression applies to everyone, independent of who added the reaction.
+  Remove ✅ before delivery on a separate un-dismissed fixture: it becomes eligible again.
+- Engine-independent decision: all checks execute in the daemon against Slack messages, without
+  invoking an engine. Both engine fixtures above exercise actual delivered bot replies.
+- Live acceptance is pending; automated success does not certify deployed behavior.

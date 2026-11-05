@@ -231,6 +231,7 @@ export function defaultChannelMeta({ channelId, name, type, isDM, platform }) {
     allowNetwork: false, // allow sandbox network egress (to the configured domains) for git/gh/curl
     autoMode: false, // autonomous: auto-approve permission prompts (no Slack buttons); still sandboxed
     cleanMode: false, // run bare: no MCP servers (gateway/composio/skills), no skills, no favorites block
+    skillRuntimeSwap: false, // let a skill's declared preferred model switch the turn's engine/model (src/gateway/skill-runtime.js)
     noDefaultTokens: false, // refuse the org-default token fallback here (channel/user tokens still apply)
     memory: undefined, // folder-scoped MEMORY.md: undefined = use the gateway default; true/false to override
     engine: "", // per-channel engine: "" = use the global default, or "claude" / "codex"

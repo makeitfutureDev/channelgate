@@ -2214,6 +2214,7 @@ function renderChannelDetail(ch) {
 
   card.querySelector(".ch-memory").checked = meta.memory !== false; // default on (global default is on)
   card.querySelector(".ch-nodefaulttokens").checked = !!meta.noDefaultTokens;
+  card.querySelector(".ch-skillswap").checked = !!meta.skillRuntimeSwap;
   const workdirInput = card.querySelector(".ch-workdir");
   workdirInput.value = meta.workDir || "";
   if (meta.workspaceLink) {
@@ -2237,7 +2238,7 @@ function renderChannelDetail(ch) {
     }
     notice.appendChild(source);
     card.querySelector(".dhead").after(notice);
-    for (const selector of [".ch-memory", ".ch-syncdrive", ".ch-synctest", ".ch-profile", ".ch-network", ".ch-admin", ".ch-bash", ".ch-auto", ".ch-clean"]) {
+    for (const selector of [".ch-memory", ".ch-syncdrive", ".ch-synctest", ".ch-profile", ".ch-network", ".ch-admin", ".ch-bash", ".ch-auto", ".ch-clean", ".ch-skillswap"]) {
       const input = card.querySelector(selector);
       if (input) { input.disabled = true; input.title = "Edit this shared setting in the source conversation"; }
     }
@@ -2516,6 +2517,7 @@ function renderChannelDetail(ch) {
           allowNetwork: card.querySelector(".ch-network").checked,
           autoMode: card.querySelector(".ch-auto").checked,
           cleanMode: card.querySelector(".ch-clean").checked,
+          skillRuntimeSwap: card.querySelector(".ch-skillswap").checked,
           memory: card.querySelector(".ch-memory").checked,
           noDefaultTokens: card.querySelector(".ch-nodefaulttokens").checked,
           engine: engineSelect.value,
@@ -5350,7 +5352,7 @@ document.getElementById("dash-source").addEventListener("change", () => loadDash
 // ── Boot ─────────────────────────────────────────────────────────────────────────
 async function init() {
   const identity = await api("/api/auth/me", { cache: "no-store" });
-  if (identity.linkRequired) {
+  if (identity.linkRequired || identity.bootstrap) {
     // Existing unlinked passkeys can authenticate, but ordinary admin APIs stay closed until
     // their owner proves the existing gateway identity. Keep that remedy reachable on its own.
     document.querySelector(".app").style.display = "none";
@@ -5359,7 +5361,7 @@ async function init() {
     const card = document.createElement("div");
     card.className = "setcard identity-link-card";
     const title = document.createElement("h2");
-    title.textContent = "Link your gateway admin user";
+    title.textContent = identity.linkRequired ? "Link your gateway admin user" : "Complete dashboard access setup";
     const access = document.getElementById("admin-access");
     card.append(title, access);
     gate.append(card);

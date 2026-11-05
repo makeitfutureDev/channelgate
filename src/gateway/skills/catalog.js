@@ -82,6 +82,7 @@ function rowToSkill(r) {
     sourcePath: r.source_path,
     currentRevisionId: r.current_revision_id ?? null,
     pinnedRevisionId: r.pinned_revision_id ?? null,
+    pinReason: r.pinned_revision_id == null ? "" : r.pin_reason || "manual",
     category: r.category,
     tags: fromJson(r.tags, []) || [],
     requires: fromJson(r.requires, []) || [],
@@ -461,20 +462,37 @@ export function listStagedRevisions() {
 }
 
 // Pin a skill to one of its active revisions (rollback), or clear the pin (follow current).
-export function pinSkill(slug, revisionNo, { now = nowIso() } = {}) {
+export function pinSkill(slug, revisionNo, { now = nowIso(), reason = "manual" } = {}) {
+  if (!["manual", "proposal"].includes(reason)) throw new SkillCatalogError("invalid pin reason");
   return tx((db) => {
     const skill = db.prepare("SELECT * FROM skills WHERE slug = ? COLLATE NOCASE").get(String(slug));
     if (!skill) throw new SkillCatalogError("skill not found", { status: 404 });
     if (revisionNo == null || revisionNo === "") {
-      db.prepare("UPDATE skills SET pinned_revision_id = NULL, updated_at = ? WHERE id = ?").run(now, skill.id);
+      db.prepare("UPDATE skills SET pinned_revision_id = NULL, pin_reason = 'manual', updated_at = ? WHERE id = ?").run(now, skill.id);
       return getSkillById(skill.id);
     }
     const rev = db.prepare("SELECT * FROM skill_revisions WHERE skill_id = ? AND revision_no = ?").get(skill.id, Number(revisionNo));
     if (!rev) throw new SkillCatalogError(`revision ${revisionNo} not found`, { status: 404 });
     if (rev.status !== "active") throw new SkillCatalogError(`revision ${revisionNo} is ${rev.status}; only an active revision can be pinned`);
-    db.prepare("UPDATE skills SET pinned_revision_id = ?, updated_at = ? WHERE id = ?").run(rev.id, now, skill.id);
+    db.prepare("UPDATE skills SET pinned_revision_id = ?, pin_reason = ?, updated_at = ? WHERE id = ?").run(rev.id, reason, now, skill.id);
     return getSkillById(skill.id);
   });
+}
+
+// Keep provenance while advancing an existing pin. A concurrent operator selection wins.
+export function advanceSkillPin(skillId, fromRevisionId, revisionId, { now = nowIso() } = {}) {
+  getDb().prepare(`UPDATE skills SET pinned_revision_id = ?, updated_at = ?
+    WHERE id = ? AND pinned_revision_id = ? AND current_revision_id = ?`)
+    .run(revisionId, now, skillId, fromRevisionId, revisionId);
+}
+
+// A slow failed push cannot pin over a newer edit, completed publication, or manual pin.
+export function protectUnpublishedSkillRevision(revisionId, { now = nowIso() } = {}) {
+  return getDb().prepare(`UPDATE skills SET pinned_revision_id = ?, pin_reason = 'publication', updated_at = ?
+    WHERE current_revision_id = ? AND deleted_at = ''
+      AND (pinned_revision_id IS NULL OR pin_reason = 'publication')
+      AND EXISTS (SELECT 1 FROM skill_revisions r WHERE r.id = ? AND r.skill_id = skills.id AND r.published_at = '')`)
+    .run(revisionId, now, revisionId, revisionId).changes > 0;
 }
 
 // ── Repository sections ────────────────────────────────────────────────────────────────────
@@ -548,8 +566,17 @@ export function adoptSkillIntoSource(slug, sourceId, { sourcePath = "", sourceRe
 }
 
 export function markRevisionPublished(revisionId, { ref = "", now = nowIso() } = {}) {
-  getDb().prepare("UPDATE skill_revisions SET published_ref = ?, published_at = ? WHERE id = ?").run(String(ref || ""), now, Number(revisionId));
-  return getRevision(revisionId);
+  return tx((db) => {
+    db.prepare("UPDATE skill_revisions SET published_ref = ?, published_at = ? WHERE id = ?").run(String(ref || ""), now, Number(revisionId));
+    const skill = db.prepare("SELECT * FROM skills WHERE pinned_revision_id = ? AND pin_reason = 'publication' AND deleted_at = ''").get(Number(revisionId));
+    if (skill) {
+      // A sync during the failed push may have activated old repository bytes. Resume at
+      // the just-published revision when releasing its recovery pin, not that stale snapshot.
+      activateRow(db, skill.id, Number(revisionId), now);
+      db.prepare("UPDATE skills SET pinned_revision_id = NULL, pin_reason = 'manual' WHERE id = ?").run(skill.id);
+    }
+    return { ...getRevision(revisionId), publicationPinCleared: Boolean(skill) };
+  });
 }
 
 // A source's sync found these slugs; every other live skill of that source is gone upstream and

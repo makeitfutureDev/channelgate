@@ -39,6 +39,8 @@ import { register as registerSkills } from "./tools/skills.js";
 import { register as registerAgentDirectory } from "./tools/agent-directory.js";
 import { register as registerQuestions } from "./tools/questions.js";
 import { register as registerSshAccess } from "./tools/ssh-access.js";
+import { register as registerEgressHosts } from "./tools/egress-hosts.js";
+import { isChannelWorker, prepareEgressHost } from "../gateway/egress-hosts.js";
 import { sshRequestTarget } from "../gateway/ssh-access.js";
 import { register as registerFileSharing, describeDuration } from "./tools/file-sharing.js";
 import { register as registerEmail } from "./tools/email.js";
@@ -53,7 +55,7 @@ export const text = (t) => ({ content: [{ type: "text", text: t }] });
 // a safe restart, start/inspect a channel's Google Drive sync pass (the pass must run in the daemon
 // so it shares the per-channel in-flight guard and outlives the turn). `kind` is also the /internal/<kind> route name, so the two transports stay in
 // lockstep. A tool never learns which one it is using.
-export const DAEMON_IPC_KINDS = Object.freeze(["background", "approval", "restart", "drivesync", "agent-directory", "code-channel"]);
+export const DAEMON_IPC_KINDS = Object.freeze(["background", "approval", "restart", "drivesync", "agent-directory", "code-channel", "skill-swap"]);
 
 // Daemon-IPC credentials for the CHILD-PROCESS transport (the /internal/* endpoints). The Claude
 // path forwards CG_APPROVAL_SECRET/CG_PORT via the --mcp-config env; the Codex path can't — its
@@ -312,9 +314,11 @@ export function buildControlPlane({ loadMeta, createdBy, principalTrusted, chann
     // authors in this channel, which is the posture every other card relies on — so it keeps its card.
     ["set_channel_admin_mode", { authz: "admin", details: ({ enabled }) => `Turn ADMIN MODE (no sandbox, no prompts for admin authors) ${onOff(enabled)} for this channel.` }],
     ["set_channel_vpn", { authz: "manage", details: AUTOMATIC }],
+    ["allow_channel_ssh_host", { authz: "worker", details: ({ host }) => `Allow raw TCP connections to ${host} for THIS channel on ports 22 (SSH), 5432 and 6543 (PostgreSQL)? This persists for future channel runs. Network must remain on; private addresses stay blocked. No SSH key or secret access is granted.` }],
     ["set_channel_network", { authz: "admin", details: AUTOMATIC }],
     ["set_channel_bash", { authz: "manage", details: AUTOMATIC }],
     ["set_channel_auto_mode", { authz: "manage", details: AUTOMATIC }],
+    ["set_channel_skill_swap", { authz: "manage", details: AUTOMATIC }],
     ["set_channel_agent_profile", { authz: "manage", details: AUTOMATIC }],
     // The folder is contained to the allowlisted root (web/security.js), so it cannot point at
     // the operator home, the gateway root or another channel; a wrong change is one message away.
@@ -419,6 +423,7 @@ export function createGatewayMcpServer(ctx) {
   const CONTROL_PLANE = buildControlPlane(ctx);
 
   async function passesAuthzPrecheck(authz) {
+    if (authz === "worker") return ctx.principalTrusted && isChannelWorker(ctx.channelId, ctx.slug, ctx.createdBy);
     if (authz === "admin") return ctx.requireAdmin();
     if (authz === "manage") return ctx.requireManage();
     return true;
@@ -491,9 +496,21 @@ export function createGatewayMcpServer(ctx) {
         if (!(await passesAuthzPrecheck(authz))) {
           return text(authz === "admin"
             ? `🚫 Only admins can run \`${name}\`. Nothing was changed.`
+            : authz === "worker" ? `🚫 Only authorized channel members with write access can run \`${name}\`. Nothing was changed.`
             : `🚫 Only this channel's managers (or an admin) can run \`${name}\`. Nothing was changed.`);
         }
-        let details = await gate.details(args ?? {});
+        // Validate before posting a card, and use canonical args for the exact saved action.
+        let hostAlreadyAllowed = false;
+        if (name === "allow_channel_ssh_host") {
+          try {
+            const prepared = await prepareEgressHost(ctx, args?.host);
+            args = { host: prepared.host };
+            hostAlreadyAllowed = prepared.alreadyAllowed;
+          } catch (error) {
+            return text(`Couldn't request SSH egress: ${error.message}`);
+          }
+        }
+        let details = hostAlreadyAllowed ? null : await gate.details(args ?? {});
         if (details !== null) {
           // The clicker must independently hold the card's tier ("" needs no extra rank): the
           // human factor for an admin-tier change must come from an admin, never a bystander.
@@ -546,6 +563,7 @@ export function createGatewayMcpServer(ctx) {
     registerSchedules(server, ctx);
     if (ctx.toolset === "full") registerBackground(server, ctx);
     registerChannelAdmin(server, ctx);
+    registerEgressHosts(server, ctx);
     registerChannelDatabase(server, ctx);
     registerTokens(server, ctx);
     registerApiTokens(server, ctx);

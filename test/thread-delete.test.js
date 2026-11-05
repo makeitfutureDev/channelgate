@@ -163,3 +163,33 @@ test("message_not_found (raced a manual delete) is already-gone, not a failure",
   assert.equal(res.deleted, 0);
   assert.equal(res.left, 1, "only the human root is reported as left — the vanished bot message isn't");
 });
+
+// Exercise the real command path: helper-only tests cannot catch a replacement report.
+const { processMessageEvent } = await import("../src/slack/message-pipeline.js");
+const { setUser, upsertChannelEntry, saveChannelMeta } = await import("../src/config/store.js");
+const { saveSettings } = await import("../src/config/settings.js");
+
+for (const rootOwner of ["UHUMAN", BOT]) {
+  test(`/delete stays silent with a ${rootOwner === BOT ? "deleted" : "retained"} root`, async () => {
+    const channel = rootOwner === BOT ? "D_DELETE_BOT" : "D_DELETE_HUMAN";
+    const user = "U_DELETE_ADMIN";
+    await setUser(user, { name: "Delete Admin", approved: true, isAdmin: true });
+    const entry = await upsertChannelEntry(channel, { name: channel, type: "im", isDM: true });
+    await saveChannelMeta(entry.slug, { channelId: channel, type: "im", isDM: true, template: "custom" });
+    saveSettings({ slackAdminUserToken: "" });
+    const { client, deletes } = makeClient([[
+      { ts: "800.000", user: rootOwner, text: "root" },
+      { ts: "800.001", user: BOT, text: "reply" },
+    ]]);
+    const posts = [];
+    client.chat.postMessage = async (args) => { posts.push(args); return { ok: true }; };
+    client.chat.postEphemeral = async (args) => { posts.push(args); throw new Error("ephemeral unavailable"); };
+    client.conversations.info = async () => ({ channel: { id: channel, is_im: true } });
+    client.conversations.history = async () => ({ messages: [] });
+    client.users = { info: async () => ({ user: { id: user, real_name: "Delete Admin" } }) };
+    await processMessageEvent({ type: "message", channel, channel_type: "im", user,
+      ts: "800.002", thread_ts: "800.000", text: "/delete" }, client, { botUserId: BOT });
+    assert.equal(deletes.length, rootOwner === BOT ? 2 : 1, "command must actually delete");
+    assert.deepEqual(posts, [], "neither ephemeral nor regular reports may follow deletion");
+  });
+}

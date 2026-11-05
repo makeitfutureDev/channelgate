@@ -7,15 +7,17 @@
 // unasked call would silently hand attacker-controlled content or a secret to OTHER channels and a
 // later admin message could not undo it — the gateway guide, admitting a skill source, granting a
 // skill organization-wide (directly, through a template, or by approving a proposal), approving a
-// server for a hidden secret, making a secret readable, and Admin mode on/off. Every other
+// server for a hidden secret, making a secret readable, Admin mode on/off, and a channel
+// raw egress destination (authorized workers may approve that narrow channel grant). Every other
 // control-plane change is automatic for the author who holds its authority.
 import { getChannelEntry, getChannelMeta, isAdminPrincipal, isApproved } from "../config/store.js";
+import { isChannelWorker } from "./egress-hosts.js";
 import { canManage, isAuthorized } from "./modes.js";
 
 export const CONTROL_PLANE_ACTION = "control_plane";
 // Who may click Approve: a gateway admin, a channel manager, the requester themself (a personal
-// secret's owner), or anyone authorized to work in the channel ("").
-export const CONTROL_PLANE_TIERS = Object.freeze(["admin", "manage", "owner", ""]);
+// secret's owner), an authorized worker, or anyone authorized to work in the channel ("").
+export const CONTROL_PLANE_TIERS = Object.freeze(["admin", "manage", "owner", "worker", ""]);
 
 // Arguments that must never be persisted with the saved action. They are held in daemon memory
 // under the approval id until the click; a restart in between loses them, and the executor then
@@ -73,6 +75,7 @@ export function setControlPlaneInvoker(fn) {
 export function describeControlPlaneTier(tier = "") {
   if (tier === "admin") return "a gateway admin";
   if (tier === "manage") return "one of this channel's managers (or an admin)";
+  if (tier === "worker") return "an authorized channel member with write access";
   if (tier === "owner") return "you (the requester)";
   return "anyone working in this channel";
 }
@@ -108,6 +111,7 @@ export async function executeControlPlaneApproval(record) {
     // posted is not evidence of holding the authority now.
     const requester = await rank(action.authorId, meta, entry.isDM);
     const tier = action.tier || "";
+    if (tier === "worker" && !(await isChannelWorker(action.channelId, action.slug, action.authorId))) throw new Error("The requester no longer has write access in this channel.");
     if (tier === "admin" && !requester.admin) throw new Error("The requester is no longer an admin.");
     if (tier === "manage" && !requester.manager) throw new Error("The requester no longer manages this channel.");
     if (!requester.admin && !requester.member) throw new Error("The requester is no longer authorized in this channel.");
@@ -115,7 +119,8 @@ export async function executeControlPlaneApproval(record) {
     // requester and its route re-validates them on every POST; a chat click is checked here.
     if (record.decidedBy !== "admin UI" && record.decidedBy !== "link") {
       const clicker = await rank(record.decidedBy, meta, entry.isDM);
-      const meets = tier === "admin" ? clicker.admin
+      const meets = tier === "worker" ? await isChannelWorker(action.channelId, action.slug, record.decidedBy)
+        : tier === "admin" ? clicker.admin
         : tier === "manage" ? clicker.manager
           : tier === "owner" ? clicker.admin || record.decidedBy === action.authorId
             : clicker.admin || clicker.member;

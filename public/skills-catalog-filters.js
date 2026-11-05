@@ -23,9 +23,10 @@ export function filterSkillCatalog(skills = [], filters = {}, { overview = {}, p
   const assigned = directAssignmentSlugs(overview, profiles);
   return skills.map((skill) => ({
     ...skill,
-    assigned: assigned.has(String(skill.slug).toLowerCase()),
+    assigned: skill.diagnosticOnly ? Boolean(skill.assigned) : assigned.has(String(skill.slug).toLowerCase()),
   })).filter((skill) => (
-    matchesBoolean(skill.enabled, filters.enabled)
+    matchesBoolean(skill.missingSkillMd, filters.missingSkillMd)
+    && matchesBoolean(skill.enabled, filters.enabled)
     && matchesBoolean(skill.discoverable, filters.discoverable)
     && matchesBoolean(skill.mandatory, filters.mandatory)
     && matchesBoolean(skill.assigned, filters.assigned)

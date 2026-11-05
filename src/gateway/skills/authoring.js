@@ -11,7 +11,7 @@
 //     proposal, once approved, makes it an organization skill;
 //   • every new revision of a local skill is published to the configured Git repository when
 //     publishing is on (publish.js) — best effort, reported, never blocking.
-import { getSkill, putSkillRevision, skillBundle, pinSkill, getProposal, decideProposal, createProposal, normalizeSlug, setSkillVisibility, tombstoneSkill, excludeSkill, SkillCatalogError } from "./catalog.js";
+import { getSkill, putSkillRevision, skillBundle, pinSkill, advanceSkillPin, protectUnpublishedSkillRevision, getProposal, decideProposal, createProposal, normalizeSlug, setSkillVisibility, tombstoneSkill, excludeSkill, SkillCatalogError } from "./catalog.js";
 import { normalizeSkillFiles, decodeInputFile, isSkillManifestPath } from "./files.js";
 import { parseFrontmatter, skillMetadata, slugFromName } from "./frontmatter.js";
 import { withDependencies } from "./resolve.js";
@@ -115,7 +115,8 @@ export function skillTier(skill) {
 // caller's job; ownership is enforced here. A skill pinned to an older revision is re-pinned to
 // the new one — otherwise the edit would be stored and silently never run. A publish-repository
 // skill is pushed back to its folder; when that push fails the new revision stays pinned so the
-// next sync of the repository cannot quietly bring the old files back.
+// next sync of the repository cannot quietly bring the old files back. Successful publication
+// clears recovery pins only; manual and approved-proposal pins remain intentional.
 export async function updateLocalSkill({ skill, files = [], remove = [], note = "", createdBy = "", publish = true, fetchImpl = undefined } = {}) {
   if (!skill) throw new SkillCatalogError("skill not found", { status: 404 });
   const edit = skillEditability(skill);
@@ -127,17 +128,13 @@ export async function updateLocalSkill({ skill, files = [], remove = [], note = 
   const r = putSkillRevision({ slug: skill.slug, files: merged, ...owner, sourceRef: "manual", note, createdBy, status: "active" });
   if (r.conflict) throw new SkillCatalogError(r.reason, { status: 409 });
   if (r.changed) logEvent("skill_updated", { author: createdBy, skill: skill.slug, revision: r.revision?.revisionNo, via: edit.via });
-  const shouldPublish = r.changed && skill.visibility !== "personal" && publish;
+  if (r.changed && r.skill.pinnedRevisionId != null) advanceSkillPin(r.skill.id, r.skill.pinnedRevisionId, r.revision.id);
+  const retryPublication = r.skill.pinReason === "publication" && r.skill.pinnedRevisionId === r.revision?.id;
+  const shouldPublish = (r.changed || retryPublication) && skill.visibility !== "personal" && publish;
   const published = shouldPublish ? await publishQuietly({ slug: skill.slug, revisionId: r.revision.id, actor: createdBy, ...(fetchImpl ? { fetchImpl } : {}) }) : { published: false, reason: r.changed ? "not published" : "unchanged" };
-  let pinned = false;
-  if (r.changed && r.revision) {
-    const keepPinned = skill.pinnedRevisionId != null || (edit.via === "repository" && !published.published);
-    if (keepPinned) {
-      pinSkill(skill.slug, r.revision.revisionNo);
-      pinned = true;
-    }
-  }
-  return { ...r, skill: getSkill(skill.slug) || r.skill, published, pinned, via: edit.via };
+  if (r.changed && edit.via === "repository" && !published.published) protectUnpublishedSkillRevision(r.revision.id);
+  const current = getSkill(skill.slug) || r.skill;
+  return { ...r, skill: current, published, pinned: current.pinnedRevisionId != null, via: edit.via };
 }
 
 // Move a skill between the shared library and a channel's section ("" = the library). The
@@ -423,7 +420,7 @@ export async function decideSkillProposal(id, { decision, decidedBy = "", note =
     if (r.conflict) throw new SkillCatalogError(r.reason, { status: 409 });
     revision = r.revision;
     if (skill && skill.ownerKind !== "local" && revision) {
-      pinSkill(skill.slug, revision.revisionNo);
+      pinSkill(skill.slug, revision.revisionNo, { reason: "proposal" });
       pinned = true;
     }
     if (revision && (skill?.ownerKind === "local" || !skill)) published = await publishQuietly({ slug: r.skill.slug, revisionId: revision.id, actor: decidedBy });

@@ -5,8 +5,9 @@ import assert from "node:assert/strict";
 import { mkdirSync, symlinkSync, realpathSync, rmSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { tempDir } from "./helpers.js";
-import {
+import { tempDir, ensureTestEnv } from "./helpers.js";
+ensureTestEnv();
+const {
   isLoopbackHost,
   pathWithin,
   resolveWithinRoot,
@@ -15,7 +16,7 @@ import {
   createLoginLimiter,
   sanitizeMcpMatch,
   sanitizeCodexMcpSelection,
-} from "../src/web/security.js";
+} = await import("../src/web/security.js");
 
 // ── isLoopbackHost ──────────────────────────────────────────────────────────────
 test("isLoopbackHost: loopback forms", () => {

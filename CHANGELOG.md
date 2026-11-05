@@ -2,6 +2,33 @@
 
 - Rename user-facing “local skills” to “gateway-owned skills” across skill management and guidance; stored ownership values and update behavior are unchanged.
 
+- Queue Slack `/fork` automatically while the source thread is busy, with explicit acknowledgement, Stop cancellation and restart recovery.
+
+- Suppress unfinished-thread nudges and follow-up digest entries when the Slack thread root or latest reply has a ✅ reaction; thumbs-up does not close a thread.
+
+- Honor inherited DM network settings in the egress proxy, including live template changes, and allow legitimate HTML Slack attachments without misdiagnosing their content as a missing scope.
+
+
+- Clear automatic skill publication recovery pins after a successful retry, including retries of unchanged edits. Preserve manual/legacy and approved override pins, protect newer edits from late publication attempts, and expose pin reasons in metadata and the library.
+
+- Show the new user request above the fork icon and source link in forked Slack thread roots so their topic is visible in the channel.
+
+- Add an optional `model` argument to `create_skill` / `update_skill` that writes or clears the skill's preferred-model frontmatter line, document it in the skill-authoring guide, and show the preferred model in the skills library.
+
+- Let a skill declare its preferred model (`model:` in SKILL.md): with the new per-channel "Allow skill engine and model swapping" switch on, using the skill resumes the same session on that model (sticky below a `/model` pin), or delegates to a background agent on the other engine; `run_agent_in_background` takes `engine`/`model`.
+
+- Charge each Claude turn only its own spend: a resumed session is no longer re-billed its history on every message, subagent tokens are counted, and every model a turn used (a Sonnet subagent under Opus) gets its own priced slice; migration 41 repairs recorded history losslessly.
+
+- Accept public IPv4/IPv6 destinations in SSH approval cards and raw tunnels, fixing IP-only customer connections.
+
+- Show host skill folders missing `SKILL.md` in the library with an issue badge, path, personal grant owners and a missing-file filter.
+
+- Let authorized channel members with write access approve public SSH destinations on a durable card, enabling container SSH without `/sudo`.
+
+- Skip granted folders without a regular `SKILL.md`, warn with the folder name, and continue with valid skills instead of failing the request.
+
+- Make completed `/delete` commands silent, including partial deletion; retain audit counts without posting a report.
+
 - Clarify catalog-first skill authoring: local skill installs are not durable; external source edits require verified repository write access.
 
 - Allow Composio Remote Bash alongside Remote Workbench for authorized remote processing, retaining current-run authority checks and structured membership approvals.
@@ -31,6 +58,10 @@ product overview.
 > | Makeitfuture Sustainable Use License 1.0 | 2026-08-06 | never published |
 
 ## Unreleased
+
+- Use the administrator's Slack email for optional password and Slack-code sign-in. Resolve the
+  address through Slack after password verification, retain stable user IDs internally, and
+  keep sensitive-action reauthentication bound to the signed-in administrator.
 
 - Fix Slack app imports: register `/status-cg` instead of the built-in `/status`, include explicit command URLs, and clarify Socket Mode setup in the installer.
 
@@ -70,6 +101,9 @@ product overview.
 
 - Archive Slack channels when the bot is removed and stop workspace configuration updates until it is re-invited. Show Archived in the admin UI and reject edits/new work for archived channels.
 - Allow up to 100 active chat conversations in each channel per UTC month on Free, with 10 registered channels, 10 users and one month (30 days) of cost-tracking history. The existing 500 AI runs per channel per month remains. No-key evaluation serves one active channel with the same 100-thread allowance; Enterprise defaults to unlimited. Thread usage starts tracking on upgrade without fabricated history.
+
+- Add an opt-in admin sign-in alternative using the admin password and a private, expiring Slack
+  verification code for existing administrators, including sensitive-action reauthentication.
 
 - Version login-page scripts with their HTML so cached pre-upgrade code cannot reference removed fields.
 
@@ -154,6 +188,11 @@ product overview.
   approval; Python inside Workbench is outside that structured gate. Other generic connector
   bash/proxy/API executors remain refused. Clarify local container processing as an option for
   records returned inline.
+
+
+- **Company email auto-approval.** Admins can configure exact email domains in Users, preview
+  existing Slack users and approve matching provider identities automatically. Manual revocations
+  prevent automatic reapproval; no administrator privileges are granted.
 
 - **Email accounts.** Connect an ordinary mailbox — IMAP for reading, SMTP for sending — to a
   conversation or to yourself by entering its server settings once on one form: in the admin UI
@@ -3127,3 +3166,7 @@ copying cross-channel auto-memory.
 ### Fixed — Slack Connect running indicator
 
 Use the sender's workspace for streaming replies in shared channels and clear the native running status after delivery, including stream failures, without allowing an older turn to clear its successor.
+
+### Fixed — rootless Podman system-service setup
+
+Keep container cgroups inside the delegated daemon service, preserve private temporary backing across restarts, and run offline resource-limit probes with distinct runtime failure diagnostics. Preserve operator Podman configuration and document idle recovery for existing stores.

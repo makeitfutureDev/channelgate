@@ -1228,7 +1228,7 @@ function channelSettingsSnapshot(meta = {}) {
     isDM: Boolean(meta.isDM),
     workspaceLink: meta.workspaceLink,
     access: meta,
-    mode: { adminMode: effective.adminMode, allowBash: effective.allowBash, autoMode: effective.autoMode, cleanMode: effective.cleanMode, allowNetwork: effective.allowNetwork },
+    mode: { adminMode: effective.adminMode, allowBash: effective.allowBash, autoMode: effective.autoMode, cleanMode: effective.cleanMode, allowNetwork: effective.allowNetwork, skillRuntimeSwap: Boolean(effective.skillRuntimeSwap) },
     runtime: {
       approvedEngines: meta.approvedEngines ?? null,
       harnessOptions: ENGINE_IDS.map((id) => ({ value: id, label: engineLabel(id) })),
@@ -2416,11 +2416,12 @@ async function connectAndWire(app) {
         if (!meta.isDM) throw new Error("This control belongs to a direct message. Reopen Settings.");
         const change = actionId === CHANNEL_SETTINGS_DM_MODE_ACTION_ID
           ? { mode: String(action?.selected_option?.value || "") }
-          : Object.fromEntries(["autoMode", "cleanMode"].map((key) => [key, (action?.selected_options || []).some((entry) => entry.value === key)]));
+          : Object.fromEntries(["autoMode", "cleanMode", "skillRuntimeSwap"].map((key) => [key, (action?.selected_options || []).some((entry) => entry.value === key)]));
         if (change.mode !== undefined && !["read", "worker", "admin"].includes(change.mode)) throw new Error("Unknown mode.");
         meta = await patchAuditedChannelSettings(entry, clicker, (current) => {
           const baseline = effectiveMeta(current);
-          const patch = modeSettingsPatch(baseline, change, { isAdminUser: userIsAdmin });
+          // Skill model swap is an independent switch, not part of the mode preset: carried beside it.
+          const patch = { ...modeSettingsPatch(baseline, change, { isAdminUser: userIsAdmin }), ...(typeof change.skillRuntimeSwap === "boolean" ? { skillRuntimeSwap: change.skillRuntimeSwap } : {}) };
           return current.isDM && ["user", "admin"].includes(current.template) ? { ...baseline, ...patch, template: "custom" } : patch;
         });
         await repaint({ meta }, { notice: "✅ Saved. Applies to the next turn." });

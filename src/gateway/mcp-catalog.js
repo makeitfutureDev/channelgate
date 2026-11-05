@@ -88,6 +88,8 @@ export const GATEWAY_TOOL_NAMES = [
   "query_channel_database",
   "set_channel_vpn",
   "set_channel_auto_mode",
+  "set_channel_skill_swap",
+  "use_skill",
   "get_channel_workdir",
   "set_channel_workdir",
   "clear_channel_workdir",

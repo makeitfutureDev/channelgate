@@ -12,6 +12,32 @@ import path from "node:path";
 export const CLI_CANDIDATES = Object.freeze(["podman", "docker"]);
 export const PROBE_TTL_MS = 60_000;
 
+// Successful launch is not evidence of enforcement: rootless cgroupfs can silently ignore
+// resource flags. Inspect the kernel's actual container cgroup (v2 or conventional v1 mounts).
+export const LIMITS_PROBE_SCRIPT = `
+set -eu
+if [ -r /sys/fs/cgroup/cgroup.controllers ]; then
+  cg=$(sed -n 's/^0:://p' /proc/self/cgroup)
+  base=/sys/fs/cgroup
+  if [ -r "$base$cg/memory.max" ]; then base="$base$cg"; fi
+  memory=$(cat "$base/memory.max")
+  read quota period < "$base/cpu.max"
+  pids=$(cat "$base/pids.max")
+else
+  memory=$(cat /sys/fs/cgroup/memory/memory.limit_in_bytes)
+  quota=$(cat /sys/fs/cgroup/cpu/cpu.cfs_quota_us)
+  period=$(cat /sys/fs/cgroup/cpu/cpu.cfs_period_us)
+  pids=$(cat /sys/fs/cgroup/pids/pids.max)
+fi
+if [ "$memory" = 134217728 ] && [ "$quota" = "$period" ] && [ "$pids" = 64 ]; then
+  echo CG_LIMITS_VERIFIED
+else
+  echo CG_LIMITS_UNENFORCED >&2
+  exit 78
+fi
+`;
+
+
 // The env the CLI CLIENT runs with — the daemon's, never the run's. A container CLI needs its
 // socket/config discovery vars and nothing else; the engine's environment (which carries channel
 // secrets) reaches the container through the 0600 --env-file, never through the client.
@@ -187,10 +213,26 @@ export function createContainerCli({ exec = defaultExec, now = () => Date.now(),
         // Hermes' lesson (plan §10): where cgroup controllers are not delegated, EVERY spawn would
         // fail on --memory/--cpus. One throwaway container answers it once per probe window; we
         // degrade to no limits with a warning instead of failing every run.
-        const trial = await exec([bin, "run", "--rm", "--cpus", "1", "--memory", "128m", image, "true"], { timeoutMs: 60_000 });
-        caps.cgroupLimits = trial.code === 0;
+        const trial = await exec([bin, "run", "--rm", "--network", "none", "--pull", "never", "--cpus", "1", "--memory", "128m", "--pids-limit", "64", image, "/bin/sh", "-c", LIMITS_PROBE_SCRIPT], { timeoutMs: 60_000 });
+        caps.cgroupLimits = trial.code === 0 && String(trial.stdout || "").split(/\r?\n/).includes("CG_LIMITS_VERIFIED");
         if (!caps.cgroupLimits) {
-          caps.reason = "cgroup cpu/memory limits are not delegated on this host — containers run without them";
+          const diagnostic = `${trial.stderr || ""}\n${trial.stdout || ""}`;
+          if (trial.code === 78 && diagnostic.includes("CG_LIMITS_UNENFORCED")) {
+            caps.reason = "resource limits are not enforced by this container runtime — containers run without them";
+          } else if (trial.code === 0) {
+            caps.reason = "resource limits not verified: container probe returned no kernel verification";
+          } else if (/cgroup[^\n]*(?:not delegated|permission denied)|(?:cpu|memory)[^\n]*(?:controller|not delegated)|cgroup controllers/i.test(diagnostic)) {
+            caps.reason = "cgroup cpu/memory limits are not delegated on this host — containers run without them";
+          } else if (/image[^\n]*(?:not known|not found|does not exist)|no such image|unable to find image/i.test(diagnostic)) {
+            caps.reason = "resource limits not verified: runtime image is missing — run `npm run build:image`";
+          } else if (/pasta|pivot_root|empty tmpfs|mount namespace/i.test(diagnostic)) {
+            caps.reason = "resource limits not verified: rootless runtime mount namespace failed — see docs/OPERATIONS.md";
+          } else if (trial.code === 124) {
+            caps.reason = "resource limits not verified: container probe timed out";
+          } else {
+            caps.reason = `resource limits not verified: container probe failed (exit ${Number.isInteger(trial.code) ? trial.code : "unknown"}); inspect the container runtime`;
+          }
+          // Never log raw CLI output: image/storage errors may contain operator data.
           log(`[container] ${caps.reason}`);
         }
       }
