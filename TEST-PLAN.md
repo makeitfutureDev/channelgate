@@ -7720,7 +7720,8 @@ none` for its cases and live gates. Kept as history.
       and lists all commands (including `/status`, `/stop`, and `/pending`).
 - [x] Unit/fixture (`test/slack-fork.test.js`): `/fork <new message>` is parsed as a command;
       Claude uses `--resume <source> --fork-session`, Codex uses `exec fork <source>`, and both
-      keep confinement flags. A fake Slack DM receives a linked top-level root, a separate new
+      keep confinement flags. A fake Slack DM receives a top-level root beginning with the
+      request, a blank line and the `↪️ Fork of` source link, plus a separate new
       request in that thread and the engine reply there; source and child IDs remain distinct.
 - [x] Unit/fixture (`test/slack-fork.test.js`): `/fork :shortcut <new message>` resolves a
       model on the source engine for Claude and Codex, strips the prefix from the request,
@@ -7751,7 +7752,9 @@ none` for its cases and live gates. Kept as history.
       login refuses Claude. Simulate unavailable Slack history and confirm no child root.
 - [ ] Live Slack acceptance (Claude and Codex separately): finish a source turn, send
       `@agent /fork Compare an alternative approach` in its thread, and verify the source link,
-      child root, separate request and answer. Follow up in both threads; each must remember its
+      child root showing `Compare an alternative approach` above the `↪️ Fork of this thread`
+      link in the channel timeline, separate request and answer. Repeat with a model shortcut
+      and verify its prefix is absent from the root. Follow up in both threads; each must remember its
       own continuation while retaining the shared pre-fork history. Try during a running turn,
       without a prior session, and from `/sudo`: each must refuse without creating a new root.
 - [ ] Live engine-independent acceptance (command intercepted before engine dispatch): in a
