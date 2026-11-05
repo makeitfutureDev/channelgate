@@ -1,5 +1,8 @@
 # Changelog — ChannelGate
 
+- Detect Codex tool-process creation exhaustion after a short recovery window, preserve partial
+  usage without automatic replay, and record bounded runtime process/thread-limit diagnostics.
+
 - Extend Enterprise monthly channel spending limits with recorded-spend display, DM editing, conversation-local preservation and consistent queued/retry/fallback refusal.
 - Require Enterprise for skill preferred-model switching, exact company email-domain auto-approval, dedicated channel Codex logins, external skill-catalog MCP and tokens, organization environment variables, Google Drive sync and channel skill templates. Preserve saved configuration after entitlement loss while disabling Enterprise behavior; dedicated Codex channels never silently switch accounts.
 - Add Enterprise per-channel monthly USD spending limits, enforced at run admission against recorded UTC-month spend. Running and concurrent work can overshoot the cap; this is not a provider billing limit.
@@ -67,6 +70,7 @@ product overview.
 > | Makeitfuture Sustainable Use License 1.0 | 2026-08-06 | never published |
 
 ## Unreleased
+
 
 - Use the administrator's Slack email for optional password and Slack-code sign-in. Resolve the
   address through Slack after password verification, retain stable user IDs internally, and

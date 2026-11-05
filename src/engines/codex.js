@@ -19,6 +19,7 @@
 //     message is read from the `-o` file. Token usage comes from turn.completed; no dollar cost.
 //   - timeoutMs is an inactivity watchdog, not a wall-clock runtime cap: a busy Codex turn may run
 //     as long as it keeps producing JSONL/progress output.
+import { resourceSnapshotFacts } from "../runtimes/resource-snapshot.js";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -203,6 +204,13 @@ const LIVE_AUTH_FAILURE_RE = /not (?:logged|signed) in|run `?codex login|please 
 // Only "authentication" is actionable live. A usage limit reliably arrives as a JSON error event
 // or a nonzero exit, both already handled on close; killing a live turn on stderr prose about
 // limits would risk ending a healthy run that merely quoted one.
+// Require the CLI router's own CreateProcess diagnostic; generic EAGAIN/network errors and
+// text printed by a tool are not evidence that the harness cannot create a process.
+export function isCodexResourceFailure(line = "") {
+  return /\bcodex_core::tools::router:/.test(line)
+    && /\bexec_command failed:.*CreateProcess.*Failed to create unified exec process: Resource temporarily unavailable/.test(line);
+}
+
 export function classifyCodexLiveStderr(line = "") {
   return LIVE_AUTH_FAILURE_RE.test(String(line)) ? "authentication" : "";
 }
@@ -1018,6 +1026,7 @@ export async function runCodex({
   runId = "",
   timeoutMs = 10 * 60 * 1000,
   maxSilenceMs = null,
+  resourceRecoveryMs = 15_000,
   signal = null,
   onDelta = null,
   onEvent = null,
@@ -1148,6 +1157,13 @@ export async function runCodex({
     const pendingTools = new Map();
     let timedOut = false;
     let liveFailure = null;
+    let resourceTimer = null;
+    let resourceSnapshot = { unavailable: true };
+    let resourceObserved = false;
+    let resourceGeneration = 0;
+    let lastSuccessfulCommandAt = 0;
+    let closing = false;
+    const clearResourceTimer = () => { clearTimeout(resourceTimer); resourceTimer = null; };
     let stderrBuffer = "";
     let lastNote = "";
     let lastNoteAt = 0;
@@ -1230,6 +1246,12 @@ export async function runCodex({
       if (!p) return;
       const messageId = p.item?.id || p.item_id || p.itemId;
       const explicitPhase = p.item?.phase ?? p.phase;
+      if (p.type === "turn.completed" || (p.type === "item.completed" && codexItemKey(p.item?.type) === "commandexecution" && p.item?.exit_code === 0)) {
+        clearResourceTimer();
+        resourceObserved = false;
+        resourceGeneration += 1;
+        lastSuccessfulCommandAt = Date.now();
+      }
       if (messageId && explicitPhase) messagePhases.set(messageId, explicitPhase);
       if (codexItemMayExecuteTool(p.item)) {
         if (p.type === "item.started") {
@@ -1324,6 +1346,27 @@ export async function runCodex({
           /* a status callback must never end a live run */
         }
       }
+      const diagnosticAt = Date.parse(/^\S+/.exec(line)?.[0] || "");
+      // stdout/stderr are separate pipes. A successful command may arrive before an OLDER
+      // timestamped failure log. Treat that as possible recovery, never kill on stale evidence.
+      const recoveredDiagnostic = lastSuccessfulCommandAt > 0 && Number.isFinite(diagnosticAt) && diagnosticAt <= lastSuccessfulCommandAt;
+      if (!completed && !resourceObserved && !recoveredDiagnostic && isCodexResourceFailure(line)) {
+        resourceObserved = true;
+        resourceSnapshot = { unavailable: true };
+        const generation = ++resourceGeneration;
+        // Capture where the engine runs, before killing it. A failed or slow probe never changes
+        // the recovery deadline. Optional backends cannot leak arbitrary fields into the log.
+        Promise.resolve().then(() => runtime.runtime.inspectResources?.(runtime, {
+          pid: child.pid, runId: child.runtime?.runId || "",
+        })).then((value) => { if (generation === resourceGeneration) resourceSnapshot = resourceSnapshotFacts(value); }).catch(() => {});
+        if (!closing) resourceTimer = setTimeout(() => {
+          resourceTimer = null;
+          if (closing || completed || signal?.aborted) return;
+          liveFailure = { kind: "runtime_resource" };
+          onAbort();
+        }, Math.max(1, resourceRecoveryMs));
+        resourceTimer?.unref?.();
+      }
       if (liveFailure || classifyCodexLiveStderr(line) !== "authentication") return;
       // Only while the turn provably has nothing to lose. Once a tool ran or text streamed, a log
       // line never ends the run — and never makes it replayable on the other harness.
@@ -1361,9 +1404,12 @@ export async function runCodex({
         i = stderrBuffer.indexOf("\n");
       }
       if (stderrBuffer.length > 4_000) { handleStderrLine(stderrBuffer.trim()); stderrBuffer = ""; }
+      else if (isCodexResourceFailure(stderrBuffer)) handleStderrLine(stderrBuffer.trim());
     });
 
     child.on("error", (err) => {
+      closing = true;
+      clearResourceTimer();
       watchdog.stop();
       rm(scratchDir, { recursive: true, force: true }).catch(() => {});
       for (const file of removeRunSecrets()) rm(file, { force: true }).catch(() => {});
@@ -1375,6 +1421,8 @@ export async function runCodex({
     });
 
     child.on("close", async (code, exitSignal) => {
+      closing = true;
+      clearResourceTimer();
       watchdog.stop();
       if (buffer.trim()) handleLine(buffer.trim());
       if (stderrBuffer.trim()) { handleStderrLine(stderrBuffer.trim()); stderrBuffer = ""; }
@@ -1451,6 +1499,13 @@ export async function runCodex({
         exitCode: code,
         signal: exitSignal || null,
       };
+      if (!signal?.aborted && (liveFailure?.kind === "runtime_resource" || (resourceObserved && !completed && code !== 0))) {
+        return reject(commandError("Codex could not create a tool process because runtime resources were unavailable. Check process/thread limits and running jobs before retrying.", {
+          ...failureDetails, engine: "codex", errorCode: "ENGINE_RESOURCE_EXHAUSTED",
+          processEnded: true, resourceSnapshot, replaySafe: false,
+          stderr: stderr.slice(0, 4000),
+        }));
+      }
       if (timedOut) {
         // A wedged turn is still worth classifying: the reason it went quiet is usually sitting in
         // the stderr we buffered. Naming it turns an opaque "no output" into an actionable
