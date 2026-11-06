@@ -1,5 +1,5 @@
 // SQLite FTS5 is compiled into Node's bundled SQLite only from some 22.x/23.x builds onward
-// (Node 22.13, the documented floor, lacks it; 22.22 and 24 have it). The channel-memory search
+// (older Node builds lacked it; the supported Node 24 line includes it). The channel-memory search
 // index is a DERIVED cache, so its absence must never stop the database from opening — the daemon
 // probes once per handle and every consumer asks here instead of assuming.
 const probed = new WeakMap();

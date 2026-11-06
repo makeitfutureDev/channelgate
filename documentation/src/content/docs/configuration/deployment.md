@@ -11,7 +11,7 @@ Start with **4 dedicated vCPU, 16 GB RAM, and 150 GB or more of persistent SSD/N
 
 ## Host prerequisites
 
-Follow [Installation](/docs/installation) for the complete installer. The daemon needs Node.js **22.13 or later** and a usable container CLI. Rootless Podman is the preferred runtime; the daemon probes Podman and then Docker. Build the runtime image for the installed checkout before expecting agent turns to run.
+Follow [Installation](/docs/installation) for the complete installer. The daemon needs Node.js **24.0.0 or later** and a usable container CLI. Rootless Podman is the preferred runtime; the daemon probes Podman and then Docker. Build the runtime image for the installed checkout before expecting agent turns to run.
 
 Choose the daemon's Linux account and persistent disk location before connecting your team. The optional systemd installer creates a dedicated non-login service account; it is a separate root-only operation. An interactive operator deployment and a dedicated service do not necessarily use the same home or engine login.
 

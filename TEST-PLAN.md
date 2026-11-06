@@ -6005,7 +6005,7 @@ exercise the `qwen-eu` adapter itself, in a scratch runtime root (no production 
 
 ## How to run
 
-1. `node --version` (≥ 22.13), `claude --version` (must be authenticated).
+1. `node --version` (≥ 24.0.0), `claude --version` (must be authenticated).
 2. Copy `.env.example` → `.env`, fill Slack tokens. `npm install`.
 3. `npm start`. Watch logs; hit `GET /api/health`.
 
@@ -6036,7 +6036,7 @@ exercise the `qwen-eu` adapter itself, in a scratch runtime root (no production 
       dependency-free static/format gate; repo-wide ESLint/typed-JS adoption remains a future
       ratchet rather than a permanently red flag-day check.
 - [x] `npm run test:coverage`: full-suite coverage floors remain 67% lines / 67% branches / 66%
-      functions on Linux at Node 22.13 and 24 (the macOS leg retired 2026-09-03 — Linux only).
+      functions on Linux at Node 24.0.0 and current 24.x (the macOS leg retired 2026-09-03 — Linux only).
 - [x] `npm run test:security-coverage`: independent floors prevent unrelated code from masking
       regressions in authorization (95/95/95), access grants and engine-scope isolation
       (95/75/70), sandbox policy (90/90/80), secrets (90/80/65), and transactional updater state
@@ -12112,3 +12112,12 @@ Enterprise deployment without deleting saved data. Never record a live pass from
   bounded numeric/limit fields and explicit leaf-only scope, never command names/argv/environment.
   In `cg-testing-claude-bash`, run a normal command and confirm ordinary success/accounting and no
   Codex resource classification. These definitions do not claim live execution or acceptance.
+
+## Node 24 runtime alignment
+
+- Automated startup-gate checks reject Node 22/23 before importing the server and accept Node
+  24.0.0 and newer. Installer, updater, package engines and documentation advertise the same floor.
+- CI runs the full regression suite at 24.0.0 and current 24.x; release evidence uses Node 24.
+- Reuse the dependency-refresh CLI and dual-engine acceptance definitions for runtime adoption;
+  pending provider-account checks remain pending. After a safe restart, verify the actual service
+  process executable is Node 24 and the health endpoint responds.

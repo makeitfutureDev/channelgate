@@ -7,7 +7,7 @@ website home, blog, and other routes keep their own build and assets.
 
 ## Build and preview locally
 
-Run these commands from this directory on Node.js 22.13 or newer:
+Run these commands from this directory on Node.js 24.0.0 or newer:
 
 ```sh
 npm ci

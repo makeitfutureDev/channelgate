@@ -11,8 +11,8 @@ for production and pilot configurations, concurrency, storage, and backups.
 ## 1. Prerequisites
 
 - **Linux with systemd** (Ubuntu 24.04 tested). The daemon refuses to start anywhere else.
-- **Node.js ≥ 22.13** — `node -v` (the gateway's SQLite store uses the built-in `node:sqlite`,
-  stable from 22.13). Install from <https://nodejs.org> or your distribution's packages.
+- **Node.js ≥ 24.0.0** — install the current Node 24 LTS release and verify with `node -v`.
+  The daemon and default runtime image use Node 24. Install from <https://nodejs.org> or your distribution's packages.
 - **Claude Code CLI**, installed and signed in on the host as the daemon user. Turns run inside
   the channel containers (the runtime image ships the engine CLIs), and the gateway relays that
   host login's short-lived access token into each container — the credentials file itself is

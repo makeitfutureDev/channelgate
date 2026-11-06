@@ -942,7 +942,7 @@ export function buildCodexEnv({ extraEnv = {}, browserNamespace = "", target = n
     // warning on every node process's stderr — the Codex npm launcher's and every node child a
     // shell command starts. Gateway-owned and set LAST: NODE_OPTIONS is a reserved name a channel
     // secret can never carry (channel-env.js, re-filtered by safeSpawnEnv above) and it is not in
-    // the host passthrough list, so there is nothing of anyone else's to merge. The image's Node 22
+    // the host passthrough list, so there is nothing of anyone else's to merge. The image's Node 24
     // accepts --disable-warning in NODE_OPTIONS.
     if (env.CG_EGRESS === "proxy") env.NODE_OPTIONS = CODEX_PROXY_NODE_OPTIONS;
     return env;

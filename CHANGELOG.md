@@ -1,5 +1,10 @@
 # Changelog — ChannelGate
 
+- Require Node 24.0.0 or newer consistently for the daemon, installer, updater and documentation
+  build. Align release CI and setup guidance with the Node 24 runtime image; upgrade the host
+  Node runtime before updating older deployments. Refresh Astro and Starlight documentation
+  dependencies within their current major versions.
+
 - Include the official Make.com `make-cli` in every new runtime image, with per-channel
   `MAKE_API_KEY` / `MAKE_ZONE` setup and destination-bound API-key protection. Refresh pinned
   Claude Code, MCP remote, Vercel, Supabase and Playwright CLI versions. Existing deployments

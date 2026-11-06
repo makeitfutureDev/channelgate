@@ -64,7 +64,7 @@ post/edit the reply in the thread (degraded to the surface's capabilities) → u
 ## Where things live
 
 - `src/start.js` + `src/platform-gate.js` + `src/server.js` — entry and boot. `start.js` checks the
-  Node floor (≥ 22.13, `node:sqlite`) with NO static imports, the gate refuses every non-Linux
+  Node floor (≥ 24.0.0, `node:sqlite`) with NO static imports, the gate refuses every non-Linux
   host with one plain line, then `server.js` boots in this order: `.env`, the legacy-layout
   migration FIRST, the runtime root + database + singleton lock, settings over env, the skills
   catalog, hardening, the container CLI probe (FATAL without one), the MCP socket, Express,
