@@ -183,6 +183,12 @@ Codex estimates include GPT-6.1 Terra ($1 / $0.05 / $5 per million input / cache
 
 Slack’s native running/Stop label shows the resolved model and explicitly configured effort, plus compact live phases (Thinking, Using tools, Writing, Waiting, Queued, Coordinating agents). Engine fallback replaces both model and effort; unset effort is omitted rather than guessed.
 
+Claude task lifecycle messages distinguish shell work from subagents: explicit non-agent tasks,
+including foreground and background `local_bash`, never create agent activity rows or the
+Coordinating agents phase. Their later untyped lifecycle messages retain that classification,
+including tool-use aliases. Ordinary Bash tool events and genuine local/remote Agent or legacy
+Task progress remain visible; older agent streams without optional task-type metadata still work.
+
 ## Optional password and Slack code sign-in
 
 - Settings → Admin access can enable an alternative to passkeys: the configured admin password

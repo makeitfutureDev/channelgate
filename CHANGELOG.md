@@ -12,6 +12,9 @@ release gates. Stable promotion and publication require approval of the exact te
 
 ### Beta development notes
 
+- Keep Claude shell-task lifecycle updates out of subagent progress rows and the Coordinating
+  agents label, while preserving ordinary tool progress and genuine agent activity.
+
 - Preserve parsed container background-job exit codes in the structured completion audit, while
   keeping completion messages in plain language and unconfirmed outcomes unknown.
 

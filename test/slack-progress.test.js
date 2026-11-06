@@ -3131,6 +3131,48 @@ test("native Stop label carries resolved effort and live phases, then clears act
   assert.equal(native.at(-1).username, "Opus 4.8 (high)");
 });
 
+test("parsed shell tasks keep native tool status while real subagents coordinate", async () => {
+  const { createStreamConsumer } = await import("../src/engines/stream.js");
+  for (const engine of ["claude", "codex"]) {
+    const calls = [];
+    const client = {
+      apiCall: async (method, payload) => calls.push([method, payload]),
+      chatStream: () => ({ append: async () => {}, stop: async () => {} }),
+      chat: { postMessage: async () => {} },
+    };
+    const progress = startProgress("stream", client, `C_TASK_TYPE_${engine}`, "111.223",
+      { authorId: "U1", teamId: "T1" });
+    progress.onRuntimeResolved({ engine, model: engine === "claude" ? "sonnet" : "gpt-6.1-sol" });
+    const consumer = createStreamConsumer({ onEvent: progress.onEvent });
+    try {
+      if (engine === "claude") {
+        consumer.consume({ type: "stream_event", event: { type: "content_block_start", index: 0,
+          content_block: { type: "tool_use", id: "shell", name: "Bash" } } });
+        consumer.consume({ type: "stream_event", event: { type: "content_block_stop", index: 0 } });
+        consumer.consume({ type: "system", subtype: "task_started", task_id: "shell-task",
+          tool_use_id: "shell", task_type: "local_bash", is_backgrounded: false });
+        consumer.consume({ type: "system", subtype: "task_progress", task_id: "shell-task" });
+      } else {
+        progress.onEvent(progressFromCodexEvent({ type: "item.started",
+          item: { id: "shell", type: "command_execution", command: "sleep 1" } }).event);
+      }
+      await cardReady();
+      const native = () => calls.filter(([method]) => method === "agents.sessions.setStatus")
+        .map(([, payload]) => payload.username || "");
+      assert.ok(native().some((name) => name.includes("Using tools")));
+      assert.ok(native().every((name) => !name.includes("Coordinating agents")));
+      if (engine === "claude") {
+        consumer.consume({ type: "system", subtype: "task_started", task_id: "research",
+          task_type: "local_agent", description: "Research files" });
+        await cardReady();
+        assert.ok(native().some((name) => name.includes("Coordinating agents")));
+      }
+    } finally {
+      await progress.stop();
+    }
+  }
+});
+
 test("failed stream fallback clears native processing after delivery", async () => {
   let actual = "active";
   const calls = [];
