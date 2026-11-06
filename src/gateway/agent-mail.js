@@ -35,6 +35,9 @@ import { platformSupports } from "../platforms/registry.js";
 import { parseConversationId } from "../platforms/ids.js";
 import { runMessage } from "./run.js";
 import { deliverResult } from "../slack/deliver.js";
+import { startProgress } from "../slack/progress.js";
+import { getDirectory } from "../slack/directory.js";
+import { getProgressView } from "../config/settings.js";
 import { runQueue } from "../slack/message-lifecycle.js";
 import { slackThreadFor } from "../slack/thread-keys.js";
 import { defangControlSeqs, mdToMrkdwn } from "../slack/format.js";
@@ -180,6 +183,7 @@ export class AgentMail {
     loadMeta = getChannelMeta,
     loadUser = getUser,
     resolveClient = null,
+    progress = null,
     turnMaxMs = DEFAULT_TURN_MAX_MS,
     now = Date.now,
   } = {}) {
@@ -192,9 +196,26 @@ export class AgentMail {
     this.loadMeta = loadMeta;
     this.loadUser = loadUser;
     this.resolveClient = resolveClient || ((channelId) => automationTarget(this.slack, channelId));
+    // The live progress stream a normal turn shows (the assistant status, the Stop button, the
+    // streamed answer): both the delivered turn in the target thread and the reply turn in the
+    // origin thread get one, so an exchange never looks dead while an engine works. Null where the
+    // connector has no Slack chat API (another surface, tests).
+    this.progress = progress || (({ client, channelId, threadKey, authorId, menuOwnerId }) => this._startProgress({ client, channelId, threadKey, authorId, menuOwnerId }));
     this.turnMaxMs = turnMaxMs;
     this.now = now;
     this.active = new Map(); // id → { controller }
+  }
+
+  async _startProgress({ client, channelId, threadKey, authorId, menuOwnerId }) {
+    if (!client?.chat?.postMessage) return null;
+    const dir = await getDirectory(client).catch(() => null);
+    return startProgress(getProgressView(), client, channelId, threadKey, {
+      isDM: false, authorId, teamId: this.slack?.snapshot?.().teamId || null, dir, menuOwnerId,
+    });
+  }
+
+  _teamId() {
+    return this.slack?.snapshot?.().teamId || process.env.CG_SLACK_TEAM_ID || "";
   }
 
   async _effectiveMeta(entry) {
@@ -302,10 +323,20 @@ export class AgentMail {
         text: `📨 Your message reached the agent in ${channelRef(facts.target)}${targetLink ? ` (<${targetLink}|its thread>)` : ""}. I'll post the reply here when it arrives.` });
     } catch { /* visibility is best-effort; the reply still lands */ }
 
+    // The target thread is a real thread with a real session: take its per-thread queue like a
+    // live message does, so a human replying there meanwhile waits instead of sharing the
+    // session, and so the thread's Stop button reaches this run through the same handle.
     const controller = new AbortController();
+    const targetRunKey = `${record.toSlug || record.toChannelId}::${toThreadKey}`;
+    const handle = { aborted: false, controller, authorId: record.requestedBy, background: true };
     this.active.set(record.id, { controller });
+    await runQueue.acquire(targetRunKey, handle);
     const timer = setTimeout(() => { record.timedOut = true; controller.abort(); }, this.turnMaxMs);
     timer.unref?.();
+    let status = null;
+    try { status = await this.progress({ client, channelId: record.toChannelId, threadKey: toThreadKey, authorId: record.requestedBy, menuOwnerId: "" }); } catch { status = null; }
+    const stopProgressOnAbort = () => { void status?.stop?.().catch(() => {}); };
+    controller.signal.addEventListener("abort", stopProgressOnAbort, { once: true });
     const prompt =
       `[agent message] This is a message from another channel's agent, delivered by the gateway. It was ` +
       `sent by the agent working in ${sourceRef} on behalf of ${requesterName || `user ${record.requestedBy}`}, a member of this channel. ` +
@@ -326,24 +357,38 @@ export class AgentMail {
         threadKey: toThreadKey,
         origin: AGENT_MESSAGE_ORIGIN,
         toolset: AGENT_MESSAGE_TOOLSET,
+        workspaceId: this._teamId(),
         preferCold: true,
         signal: controller.signal,
+        progressReport: Boolean(status),
+        onDelta: status?.onDelta,
+        onEvent: status?.onEvent,
       });
     } catch (err) {
       failure = record.timedOut
         ? describeProcessOutcome({ timedOut: true, timeout: `${Math.round(this.turnMaxMs / 60_000)} min` }).summary
-        : (err?.message || String(err));
+        : handle.aborted || controller.signal.aborted ? "stopped in its thread" : (err?.message || String(err));
     } finally {
       clearTimeout(timer);
+      controller.signal.removeEventListener("abort", stopProgressOnAbort);
       this.active.delete(record.id);
+      runQueue.release(targetRunKey, handle);
     }
-    if (!result) return this._fail(record, `The agent in ${channelRef(facts.target)} could not answer: ${failure}`, { client });
+    if (!result) {
+      await status?.stop?.().catch(() => {});
+      return this._fail(record, `The agent in ${channelRef(facts.target)} could not answer: ${failure}`, { client });
+    }
     try {
       await recordUsage({ channelId: record.toChannelId, slug: record.toSlug, authorId: agentPrincipal(record.fromSlug), engine: result.engine, taskKind: "agent-message", result });
     } catch { /* accounting is best-effort */ }
     const reply = String(result.content || "").trim();
     try {
-      await this.deliver(client, { channel: record.toChannelId, threadKey: toThreadKey, result, footer: true });
+      // Native streaming owns the final message; otherwise the stream stops and the reply posts.
+      if (status?.ownsFinal) await status.finalize(result);
+      else {
+        await status?.stop?.().catch(() => {});
+        await this.deliver(client, { channel: record.toChannelId, threadKey: toThreadKey, result, footer: true });
+      }
     } catch (err) {
       await logEvent("agent_message_error", { id: record.id, stage: "target-post", error: err?.message || String(err) }).catch(() => {});
     }
@@ -396,18 +441,38 @@ export class AgentMail {
         await postNotice(client, { conversationId: record.fromChannelId, threadKey: slackThreadFor(record.fromThreadKey),
           text: `📬 Reply from the agent in ${toRef} arrived${record.targetLink ? ` (<${record.targetLink}|its thread>)` : ""}.` });
       } catch { /* non-fatal */ }
-      const result = await this.runner({
-        channelId: record.fromChannelId,
-        authorId: record.requestedBy,
-        text: continuation,
-        threadKey: record.fromThreadKey,
-        origin: "continuation",
-        signal: handle.controller.signal,
-      });
+      let status = null;
+      try { status = await this.progress({ client, channelId: record.fromChannelId, threadKey: slackThreadFor(record.fromThreadKey), authorId: record.requestedBy, menuOwnerId: record.requestedBy }); } catch { status = null; }
+      const stopProgressOnAbort = () => { void status?.stop?.().catch(() => {}); };
+      handle.controller.signal.addEventListener("abort", stopProgressOnAbort, { once: true });
+      let result;
+      try {
+        result = await this.runner({
+          channelId: record.fromChannelId,
+          authorId: record.requestedBy,
+          workspaceId: this._teamId(),
+          text: continuation,
+          threadKey: record.fromThreadKey,
+          origin: "continuation",
+          signal: handle.controller.signal,
+          progressReport: Boolean(status),
+          onDelta: status?.onDelta,
+          onEvent: status?.onEvent,
+        });
+      } catch (err) {
+        await status?.stop?.().catch(() => {});
+        throw err;
+      } finally {
+        handle.controller.signal.removeEventListener("abort", stopProgressOnAbort);
+      }
       try {
         await recordUsage({ channelId: record.fromChannelId, slug: record.fromSlug, authorId: record.requestedBy, engine: result.engine, taskKind: "background", result });
       } catch { /* accounting is best-effort */ }
-      await this.deliver(client, { channel: record.fromChannelId, threadKey: slackThreadFor(record.fromThreadKey), result, footer: true });
+      if (status?.ownsFinal) await status.finalize(result);
+      else {
+        await status?.stop?.().catch(() => {});
+        await this.deliver(client, { channel: record.fromChannelId, threadKey: slackThreadFor(record.fromThreadKey), result, footer: true });
+      }
       update(record, { status: "delivered", deliveredMs: this.now() });
       await logEvent("agent_message_completed", { id: record.id, from: record.fromChannelId, to: record.toChannelId });
     } catch (err) {
