@@ -5029,7 +5029,11 @@ pass. Many checks are manual (require a real Slack workspace + an authenticated 
   explicit exits 17/23 remain recoverable through the terminal marker. Short final tails survive.
 - [x] Runtime integration: `test/runtime-integration-jobs.test.js` confirms the isolated spawn
   receives only secret names in wrapper arguments and values through its existing environment,
-  keeps its container run ID/lease, and uses the same durable recovery path.
+  keeps its container run ID/lease, and uses the same durable recovery path. The 2026-11-06 proxy
+  regression starts a real `BackgroundJobs` shell through the egress resolver and actual wrapper:
+  full and interleaved split hidden placeholders are redacted in raw logs, status and continuation
+  input, while explicit Readable configuration survives. The lease releases, exit status remains
+  truthful, and exactly one continuation retires the durable row.
 - [x] Candidate wrapper executed directly as a detached exec in an owned live container with a
   disposable random canary: raw artifact bytes contained exactly two `[REDACTED]` markers and a
   recoverable exit 23. This wrapper-level check does not substitute for the engine-origin gate.

@@ -1557,7 +1557,8 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
   pending product decision, not shipped).
 - **Secret handling:** masked dialogs collect password proof. Known credential values are redacted
   from primary/fallback replies, stream events, errors and background delivery checkpoints. Shell
-  jobs also redact injected channel secrets inside their detached container process before stdout
+  jobs also redact injected channel secrets and their hidden proxy placeholders inside their
+  detached container process before stdout
   or stderr reaches the durable artifact log. Independent stream buffers protect split values,
   and the wrapper survives the daemon while preserving the command's terminal status. The wrapper
   receives secret names only; jobs do not inherit engine service credentials. Existing historical

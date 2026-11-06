@@ -14,6 +14,9 @@ release gates. Stable promotion and publication require approval of the exact te
 
 - Automatically continue the original agent thread after approving a server for a hidden variable; no manual “continue” message is needed.
 
+- Redact hidden proxy placeholders from detached background-shell logs before persistence,
+  while keeping explicitly Readable configuration visible in job output.
+
 - Clarify that the network tool's policy is advisory in `/sudo` direct-host threads, with no
   OS-level egress cutoff. Ordinary proxy-mode container enforcement is unchanged.
 

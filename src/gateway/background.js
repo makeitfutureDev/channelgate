@@ -552,8 +552,10 @@ export class BackgroundJobs {
         child = target.runtime.spawn(target, {
           cmd: "bash",
           // Isolated: a runtime-side wrapper redacts BOTH streams before writing the durable
-          // log, and starts the command in one login shell. The outer shell only execs the wrapper.
-          args: isolatedJob ? ["-c", containerJobScript(cmd, logFile, Object.keys(jobEnv).filter((name) => jobSecretValues.includes(jobEnv[name])))] : ["-lc", cmd],
+          // log, and starts the command in one login shell. Hidden proxy placeholders are selected
+          // by resolver metadata: their bytes differ from the real redaction values. Readable
+          // configuration has no placeholder and remains shareable. The outer shell only execs the wrapper.
+          args: isolatedJob ? ["-c", containerJobScript(cmd, logFile, Object.keys(jobEnv).filter((name) => Object.hasOwn(jobRunEnv.placeholders, name) || jobSecretValues.includes(jobEnv[name])))] : ["-lc", cmd],
           cwd,
           env: buildShellEnv(shellEnv),
           stdio: ["ignore", "pipe", "pipe"],
