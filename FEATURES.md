@@ -1,5 +1,8 @@
 # ChannelGate — Features
 
+The documentation handbook includes its branded favicon in standalone builds and website exports.
+The build validator checks that every handbook page references the shipped SVG asset.
+
 ## Organization policy licensing
 
 Mandatory organization skill grants and organization-wide agent instructions require Enterprise to add or change. All HTTP, MCP and raw settings writers share the settings boundary. Saved policies continue applying after downgrade; admins can explicitly remove grants or clear instructions. Existing Lean-mode exclusions still apply; these policies do not override Lean mode. Personal/channel grants, skill content maintenance, channel instructions and core safety rules remain available on every tier.

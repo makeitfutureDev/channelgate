@@ -9,6 +9,8 @@ release gates. Stable promotion and publication require approval of the exact te
 
 ### Beta development notes
 
+- Ship the documentation favicon so handbook pages no longer request a missing asset.
+
 - Revoke pending identity-link proofs for a recovered administrator, preventing an older proof
   from replacing the new recovery enrollment link. Other administrators' proofs remain valid.
 
