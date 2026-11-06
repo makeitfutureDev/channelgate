@@ -1,3 +1,8 @@
+> **0.7.0 candidate preparation (2026-11-06):** see [the candidate record](releases/0.7.0.md).
+> Stable promotion is pending exact-candidate automated and live acceptance evidence and
+> organization-admin approval. Historical approvals and deferrals below do not authorize this
+> candidate. No release tag or publication is authorized by preparation alone.
+
 > 0.6.3 API conversation candidate (2026-10-11): focused backport of `ac523624`,
 > migration 32 schema prerequisite to preserve upgrade ordering, and the compatible dependency
 > lock refresh from `6d72d299`. No unrelated beta runtime changes are included. Package version
