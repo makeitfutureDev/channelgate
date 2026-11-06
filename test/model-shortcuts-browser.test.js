@@ -13,6 +13,8 @@ test("settings creates, repoints and removes model shortcuts through the live ca
   const { getModelShortcuts, saveSettings, getSettings } = await import("../src/config/settings.js");
   const app = express();
   app.use(express.json());
+  // This focused router fixture represents an authenticated admin; real login is tested separately.
+  app.get("/api/auth/me", (_req, res) => res.json({ bootstrap: false, linkRequired: false, fresh: true, account: { userId: "U_BROWSER_ADMIN" }, passkeys: [] }));
   app.get("/api/skills", (_req, res) => res.json({ skills: [] }));
   app.get("/api/mcp/available", (_req, res) => res.json({ servers: [] }));
   app.get("/api/health", (_req, res) => res.json({ slack: { connected: false, status: "off" }, engines: {} }));
