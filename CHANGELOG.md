@@ -9,6 +9,9 @@ release gates. Stable promotion and publication require approval of the exact te
 
 ### Beta development notes
 
+- Fix horizontal overflow in the Users editor caused by stretching the personal-email sending
+  checkbox to the full form width.
+
 - Fix Sunday cron expressions using weekday `7`, including lists, ranges and steps, in schedule
   validation, matching and next-run previews. Sunday `0` remains supported.
 

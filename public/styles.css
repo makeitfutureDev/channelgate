@@ -711,6 +711,8 @@ button.clear-tok.armed { background: rgba(229, 96, 77, .14); border-color: rgba(
    match them — same control, same width, instead of two narrow boxes sharing a row. */
 .drawer .secret-add { flex-direction: column; align-items: stretch; gap: 8px; }
 .drawer .secret-add input { flex: none; width: 100%; }
+/* Checkbox labels share the row with their text; only text fields fill the drawer. */
+.drawer .secret-add input[type="checkbox"] { width: auto; }
 .drawer .secret-add .secret-save { align-self: flex-start; }
 .secret-hint { display: block; margin-top: 8px; }
 .channel-env-card .ch-env-hint { display: block; margin-top: 8px; }

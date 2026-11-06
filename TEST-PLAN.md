@@ -8586,6 +8586,9 @@ none` for its cases and live gates. Kept as history.
       editor is at least 600px wide; at 1100/390px it stacks above the table without horizontal
       editor overflow, with reachable Save/Close. No browser exceptions. No engine is spawned;
       Claude/Codex cannot affect this browser-only behavior.
+      The personal-email "allow sending" checkbox and label must fit inside the editor; full-width
+      text-field styling must not stretch that checkbox past the drawer edge. The standalone fixture
+      supplies a linked admin identity and accepts `CG_BROWSER_EXECUTABLE` for a local Chromium binary.
 - [ ] Live operator: repeat the preceding counts/edit/reload/resize actions on disposable users in
       the deployed Admin UI. Fixture browser evidence does not count as a deployed live pass.
 - [x] Airtable: `UI-USERS-SKILLS-01` defines the corresponding engine-independent acceptance case.
