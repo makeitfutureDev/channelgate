@@ -168,8 +168,10 @@ export function createSettingsRouter({
     // Destructured OUTSIDE the try: the catch below audits the REFUSED request, and it can only
     // name what was asked for if these are in scope there.
     const { scope = "", field = "", id = "", password = "" } = req.body ?? {};
-    const accountId = adminSession(req)?.accountId;
+    const session = adminSession(req);
+    const accountId = session?.accountId;
     const actor = accountId ? `admin:${accountId}` : ADMIN_UI_ACTOR;
+    const identity = session?.account?.userId ? { userId: session.account.userId } : {};
     try {
       // Re-authenticate even though a valid session got here: a borrowed session should not be
       // able to drain every credential silently. Skipped only when no password is configured at
@@ -180,12 +182,12 @@ export function createSettingsRouter({
       // session revocation apply to this request too, before any secret is returned.
       if (passkeysConfigured() || adminSession(req)?.method === 'password-slack') { enrolled = true; authorized = requireRecentAdminAuth(req); }
       if (!authorized) {
-        await logEvent("secret_reveal_denied", { scope: clipLabel(scope), field: clipLabel(field), id: clipLabel(id), actor, author: actor });
+        await logEvent("secret_reveal_denied", { scope: clipLabel(scope), field: clipLabel(field), id: clipLabel(id), actor, author: actor, ...identity });
         return res.status(enrolled ? 403 : 401).json({ error: enrolled ? "Verify your sign-in again before revealing a secret." : "Wrong password", ...(enrolled ? { code: "reauth_required" } : {}) });
       }
       const value = await readSecret({ scope, field, id: String(id) });
       if (enrolled && !requireRecentAdminAuth(req)) return res.status(403).json({ error: "Verify your sign-in again before revealing a secret.", code: "reauth_required" });
-      await logEvent("secret_revealed", { scope, field, id, actor, author: actor });
+      await logEvent("secret_revealed", { scope, field, id, actor, author: actor, ...identity });
       res.json({ value });
     } catch (e) {
       // A REFUSED reveal is audited too. readSecret throws for anything off the allowlist, and
@@ -195,7 +197,7 @@ export function createSettingsRouter({
       // caller-supplied labels, never a stored value, and they are clipped so a padded request
       // body can't inflate the audit row.
       if (/unknown scope|not revealable|unknown user/.test(e.message)) {
-        await logEvent("secret_reveal_rejected", { scope: clipLabel(scope), field: clipLabel(field), id: clipLabel(id), actor, author: actor, reason: e.message });
+        await logEvent("secret_reveal_rejected", { scope: clipLabel(scope), field: clipLabel(field), id: clipLabel(id), actor, author: actor, ...identity, reason: e.message });
         return res.status(400).json({ error: e.message });
       }
       next(e);
