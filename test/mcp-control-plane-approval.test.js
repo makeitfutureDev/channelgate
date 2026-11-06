@@ -590,7 +590,7 @@ test("every registered gateway tool is consciously classified as gated or open (
     // read-only
     "get_channel_vpn_status", "query_channel_database", "list_available_mcps", "list_channel_mcps", "list_schedules", "get_schedule_runs", "list_folders",
     "get_channel_workdir", "get_channel_drive_folder", "get_gateway_guide",
-    "workspace_list", "workspace_read", "workspace_search", "search_agents",
+    "workspace_list", "workspace_read", "workspace_search", "search_agents", "continue_agent_conversation", // continuing a human-started exchange: open, like answering in a thread
     "search_channel_memory", "read_channel_memory", // channel-scoped read-only retrieval
     "use_skill", // asks the LIVE turn how to honor a skill's preferred model; the turn decides, nothing is persisted here
     "get_license_status", // read-only; exposes the tier/limits and the key's last 4, never the key

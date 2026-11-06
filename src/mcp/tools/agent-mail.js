@@ -34,7 +34,34 @@ export function register(server, ctx) {
       return ctx.text(`Agent message not sent: ${e.message}`);
     }
     if (!data?.ok) return ctx.text(`🚫 Agent message not sent: ${data?.error || "refused"}`);
-    const target = data.to?.name ? `#${data.to.name}` : data.to?.slug || to;
-    return ctx.text(`📨 Sent to the agent in ${target} (message ${data.id}). Its reply will be posted in this thread as a new turn when it arrives.`);
+    const target = data.to?.name ? `#${String(data.to.name).replace(/^#+/, "")}` : data.to?.slug || to;
+    return ctx.text(`💬 Asked the ${target} agent. Its replies land in this thread as new turns; the conversation goes on as long as you keep answering it.`);
+  });
+
+  server.registerTool("continue_agent_conversation", {
+    description:
+      "Continue the agent conversation open in THIS thread. While you are answering the other channel's agent (your turn began with " +
+      "\"[agent conversation] … just said\"), call it with NO message: your reply itself is delivered to that agent when this turn ends. " +
+      "Do not call it when the other agent delivered the final result — presenting that to the user ends the conversation. From an " +
+      "ordinary turn (the user wants to tell the other agent something more), pass `message`: it is delivered now and the reply comes " +
+      "back here as a new turn. Only the person the conversation is for can continue it; a conversation closes after its message limit or an hour of silence.",
+    inputSchema: {
+      message: z.string().max(8200).optional().describe("Omit while answering the other agent. From an ordinary turn, the message to deliver now."),
+    },
+  }, async ({ message = "" }) => {
+    if (ctx.principalTrusted !== true || ctx.apiPrincipal || !ctx.createdBy || !(await ctx.requireChannelAccess())) {
+      return ctx.text("Agent conversations can only be continued by the authenticated person they are for.");
+    }
+    if (!ctx.daemon.available("agent-mail")) return ctx.text("Agent messaging is unavailable: the live conversation connector cannot be reached.");
+    let data;
+    try {
+      data = await ctx.daemon.call("agent-mail", { action: "continue", channelId: ctx.channelId, slug: ctx.slug, createdBy: ctx.createdBy, threadKey: ctx.threadKey, message }, { timeoutMs: 60_000 });
+    } catch (e) {
+      return ctx.text(`Could not continue: ${e.message}`);
+    }
+    if (!data?.ok) return ctx.text(`🚫 ${data?.error || "refused"}`);
+    return ctx.text(data.mode === "flag"
+      ? `✅ Your reply will be delivered to the ${data.to} agent when this turn ends. Write only what it should read.`
+      : `💬 Delivered to the ${data.to} agent. Its reply lands in this thread as a new turn.`);
   });
 }

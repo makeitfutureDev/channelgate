@@ -454,13 +454,19 @@ Task progress remain visible; older agent streams without optional task-type met
 
 ## Channel-to-channel agent mail
 
-- `send_agent_message` lets one channel's agent ask another channel's agent a question on the
+- `send_agent_message` opens a conversation between one channel's agent and another's on the
   requesting person's behalf (`src/gateway/agent-mail.js`). Calling it posts a durable
   control-plane card in the asking thread; the requester (or an admin) confirms the exact text, in
-  Auto mode too. On the click the daemon opens a new thread in the target channel quoting the
-  message with the source channel and requester named, runs the target's agent on it as a normal
-  turn in its own container, folder, mode, memory and secrets, posts the reply there, and brings
-  the reply back into the asking thread as a new continuation turn of the origin session.
+  Auto mode too. On the click the opener appears as a new thread in the target channel under the
+  origin's persona ("💬 *#marketing agent* (for @Alex): …", no links, nothing else), the target's
+  agent answers there as itself in its own container, folder, mode, memory and secrets, its words
+  appear in the asking thread under its persona ("💬 *#sales agent:* …"), and the origin's agent
+  takes a turn: if it answers and calls `continue_agent_conversation`, its reply is copied into
+  the target thread under the origin persona and the target answers again; if it presents the
+  result and calls nothing, the conversation closes. Each side's session resumes per hop, so it
+  reads like two colleagues talking. At most 10 messages per conversation, both directions
+  counted; the limit closes it with a notice in both threads. Afterwards the requester can pick
+  it up within an hour with `continue_agent_conversation({ message })` from an ordinary turn.
 - The typed directive `@agent ask #channel <text>` (also `ask <#C…>`; a Slack channel mention or a
   `#name`) sends the person's exact text without a model turn and without a card — the person
   wrote it. It works at a conversation's top level and inside threads, in channels and DMs, and
