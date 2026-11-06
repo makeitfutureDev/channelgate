@@ -249,7 +249,7 @@ post/edit the reply in the thread (degraded to the surface's capabilities) → u
   idle reaper), exec (session-leader helpers so a later exec can signal the whole tree),
   credentials, the per-channel HOME volume and the mounts, the operator's VS Code lease
   (`npm run vscode -- <channel>`).
-- `containers/` — the runtime image: `Containerfile` (`node:22-bookworm-slim`, the `agent` user
+- `containers/` — the runtime image: `Containerfile` (`node:24-bookworm-slim`, the `agent` user
   at the daemon's real uid/gid, tini, a root-owned toolchain under `/opt/channelgate`),
   `versions.json` (`imageSpecVersion` + every pin: Claude Code, Codex, `mcp-remote`, `vercel`,
   `supabase`, Playwright + `agent-browser` with Chromium, Python with OpenCV and faster-whisper;

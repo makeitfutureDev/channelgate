@@ -639,8 +639,10 @@ other per-channel HOME data, survives a recreate.
 
 **Enterprise Composio SDK prerequisite.** The current SDK requires Node 22.22.3 or newer on
 the daemon host. This is stricter than the gateway bootstrap floor; check `node --version` before
-enabling the SDK. The container base remains Node 22 and its resolved version is verified during
-image acceptance. Updating the container does not upgrade the host Node installation.
+enabling the SDK. Node 24 LTS is the recommended daemon host runtime and the default container
+base (`node:24-bookworm-slim`); the container also ships agent-browser 0.41.2, which requires
+Node 24 or newer. Its resolved Node version is verified during image acceptance. Updating the
+container does not upgrade the host Node installation.
 
 **Installing tools in a channel.** An agent can install whatever it needs, and it stays installed —
 everything below writes inside the per-channel HOME volume:

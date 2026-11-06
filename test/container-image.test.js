@@ -101,6 +101,11 @@ test("pins: the image installs the same mcp-remote the daemon depends on, and ev
   }
 });
 
+test("the default channel image uses the Node 24 LTS base declared by its pins", () => {
+  assert.equal(versions.base, "node:24-bookworm-slim");
+  assert.match(containerfile, new RegExp(`^FROM ${versions.base}$`, "m"));
+});
+
 test("every channel image includes the pinned official Make CLI before switching to the agent user", () => {
   assert.match(versions.npm["@makehq/cli"], /^\d+\.\d+\.\d+$/);
   assert.match(buildScript, /MAKE_CLI_VERSION=\$\{npmPins\["@makehq\/cli"\]\}/);

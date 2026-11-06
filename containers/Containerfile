@@ -13,7 +13,7 @@
 #      seeded from the image, and the Codex auth file is bind-mounted at
 #      /home/agent/.codex/auth.json — if that directory did not already exist in the volume, the
 #      container runtime would create it root-owned and Codex could not write its sessions.
-FROM node:22-bookworm-slim
+FROM node:24-bookworm-slim
 
 ARG UID=1000
 ARG GID=1000
