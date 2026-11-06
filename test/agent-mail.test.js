@@ -46,6 +46,9 @@ function fixture({ clock = { now: 1_800_000_000_000 } } = {}) {
   };
   let replyText = "Pipeline: 12 open deals, €340k weighted.";
   let failTargetRun = null;
+  const progressCalls = [];
+  let ownsFinal = false;
+  const finalized = [];
   const agentMail = new AgentMail({
     loadChannels: async () => [...entries.values()],
     loadEntry: async (id) => entries.get(id) || null,
@@ -68,13 +71,25 @@ function fixture({ clock = { now: 1_800_000_000_000 } } = {}) {
       return { content: `Relayed: ${args.text.length} chars`, engine: "claude", costUSD: 0.002 };
     },
     deliver: async (_client, payload) => { delivered.push(payload); },
+    progress: async (args) => {
+      const entry = { ...args, deltas: 0, events: 0, stopped: 0 };
+      progressCalls.push(entry);
+      return {
+        ownsFinal,
+        onDelta: () => { entry.deltas += 1; },
+        onEvent: () => { entry.events += 1; },
+        stop: async () => { entry.stopped += 1; },
+        finalize: async (result) => { finalized.push({ channelId: args.channelId, content: result.content }); },
+      };
+    },
     now: () => clock.now,
     turnMaxMs: 60_000,
   });
   const send = (over = {}) => agentMail.send({ channelId: SOURCE, slug: "c_marketing", createdBy: REQUESTER, threadKey: ORIGIN_THREAD, to: TARGET, message: "What is the Q4 pipeline?", origin: "slack_foreground", ...over });
   const settle = async () => { for (let i = 0; i < 20; i += 1) await new Promise((r) => setImmediate(r)); };
   return {
-    agentMail, send, settle, entries, metas, members, posts, runs, delivered, verifierCalls, clock,
+    agentMail, send, settle, entries, metas, members, posts, runs, delivered, verifierCalls, clock, progressCalls, finalized,
+    setOwnsFinal: (v) => { ownsFinal = v; },
     setConnected: (v) => { connected = v; }, setReply: (t) => { replyText = t; }, failTarget: (e) => { failTargetRun = e; },
   };
 }
@@ -331,7 +346,7 @@ test("stop() aborts an in-flight target turn, which is reported as a failure in 
   assert.equal(f.agentMail.stop(sent.id), true);
   await f.settle();
   assert.equal(getAgentMessage(sent.id).status, "failed");
-  assert.match(getAgentMessage(sent.id).error, /aborted by operator/);
+  assert.match(getAgentMessage(sent.id).error, /stopped in its thread/);
   assert.ok(f.posts.some((p) => p.conversationId === TARGET && p.threadKey && /could not answer/.test(p.text)));
 });
 
@@ -424,4 +439,64 @@ test("liveMembership reads both rosters through the platform's directory interfa
   assert.equal(await liveMembership({ userId: "U1", fromChannelId: "C_S", toChannelId: "C_T" }, { connectorFor: () => null }), null, "no connector → unverifiable");
   assert.equal(await liveMembership({ userId: "U1", fromChannelId: "C_S", toChannelId: "C_T" }, { connectorFor: () => ({ agentDirectory: { ...directory, conversationMembers: async () => null } }) }), null, "a truncated roster → unverifiable");
   assert.equal(await liveMembership({ userId: "U1", fromChannelId: "gchat:spaces/X", toChannelId: "C_T" }, { connectorFor }), null, "cross-platform → unverifiable");
+});
+
+test("both turns show the live progress stream: the target thread's run and the reply turn at home", async () => {
+  const f = fixture();
+  const sent = await f.send();
+  await f.settle();
+  assert.equal(getAgentMessage(sent.id).status, "delivered");
+  assert.equal(f.progressCalls.length, 2);
+  const [target, origin] = f.progressCalls;
+  assert.equal(target.channelId, TARGET);
+  assert.equal(target.threadKey, getAgentMessage(sent.id).toThreadKey);
+  assert.equal(target.authorId, REQUESTER, "the status stream is addressed to the requester, a member of the target");
+  assert.equal(target.menuOwnerId, "", "the reply menu in the target thread is unbound");
+  assert.equal(origin.channelId, SOURCE);
+  assert.equal(origin.threadKey, ORIGIN_THREAD);
+  assert.equal(origin.menuOwnerId, REQUESTER, "the reply turn at home is the requester's own");
+  // Without native streaming the stream stops and the reply is posted; the runner received the
+  // stream's callbacks and the progress-report flag.
+  assert.equal(target.stopped, 1);
+  assert.equal(origin.stopped, 1);
+  assert.equal(f.delivered.length, 2);
+  for (const run of f.runs) {
+    assert.equal(run.progressReport, true);
+    assert.equal(typeof run.onDelta, "function");
+    assert.equal(typeof run.onEvent, "function");
+  }
+  // With native streaming the stream owns the final message: finalize, no separate post.
+  f.setOwnsFinal(true);
+  const second = await f.send({ threadKey: "1700000006.000001" });
+  await f.settle();
+  assert.equal(getAgentMessage(second.id).status, "delivered");
+  assert.deepEqual(f.finalized.map((x) => x.channelId), [TARGET, SOURCE]);
+  assert.equal(f.delivered.length, 2, "nothing posted beside the finalized streams");
+});
+
+test("a failed or stopped target turn stops its progress stream", async () => {
+  const f = fixture();
+  f.failTarget(new Error("engine exploded"));
+  const sent = await f.send();
+  await f.settle();
+  assert.equal(getAgentMessage(sent.id).status, "failed");
+  assert.equal(f.progressCalls.length, 1);
+  assert.ok(f.progressCalls[0].stopped >= 1);
+  assert.equal(f.finalized.length, 0);
+});
+
+test("the target thread's per-thread queue is held while its agent answers", async () => {
+  const f = fixture();
+  let release;
+  const gate = new Promise((r) => { release = r; });
+  const runner = f.agentMail.runner;
+  f.agentMail.runner = async (args) => { if (args.origin === "agent_message") await gate; return runner(args); };
+  const sent = await f.send();
+  await f.settle();
+  const record = getAgentMessage(sent.id);
+  const { runQueue } = await import("../src/slack/message-lifecycle.js");
+  assert.equal(runQueue.isActive(`${record.toSlug}::${record.toThreadKey}`), true, "a human reply in the target thread would wait, not share the session");
+  release();
+  await f.settle();
+  assert.equal(runQueue.isActive(`${record.toSlug}::${record.toThreadKey}`), false);
 });

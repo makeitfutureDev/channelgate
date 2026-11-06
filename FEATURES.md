@@ -481,6 +481,11 @@ Task progress remain visible; older agent streams without optional task-type met
   channel's Slack tools, permission cards) and no further `send_agent_message`, `search_agents`,
   background work, schedules, questions or admin switches. API runs and delivered agent turns
   cannot send. Permission cards name "The agent from #<source>" and mint no personal links.
+- Both turns show the normal live feedback: the target thread's run and the reply turn at home
+  carry the same progress stream a Slack message does (the native assistant status, the Stop
+  button, the streamed answer and the reply menu). The target run holds that thread's per-thread
+  queue, so a human reply there waits for it instead of sharing the session, and the thread's Stop
+  button stops it ("stopped in its thread" is reported in both threads).
 - Guards: one message in flight per asking thread and target channel, at most 3 per pair per hour
   and 20 per source channel per hour, text only (≤ 8000 characters) with Slack control sequences
   defanged in the quoted message, a 30-minute ceiling on the target turn, redaction at both ends,
