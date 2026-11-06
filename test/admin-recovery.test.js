@@ -64,3 +64,36 @@ test("host recovery uses an existing admin ID and cannot bypass canonical roles 
   assert.equal(demoted.stdout, "");
   assert.equal(store.adminEnrollment(token), null);
 });
+
+test("host recovery revokes pending proofs targeting its user without touching another user's proof", async () => {
+  const { setUser } = await import("../src/config/store.js");
+  for (const keyed of [false, true]) {
+    const suffix = keyed ? "KEYED" : "EMPTY";
+    const userId = `U_RECOVERY_PENDING_${suffix}`;
+    const otherUserId = `U_RECOVERY_UNRELATED_${suffix}`;
+    await setUser(userId, { name: "Recovery proof fixture", isAdmin: true });
+    await setUser(otherUserId, { name: "Unrelated proof fixture", isAdmin: true });
+    const target = store.ensureUserAdminAccount(userId);
+    const oldInvite = store.createAdminEnrollment(target.id);
+    const legacy = store.createAdminAccount(`recovery-pending-${suffix.toLowerCase()}`);
+    const otherLegacy = store.createAdminAccount(`recovery-unrelated-${suffix.toLowerCase()}`);
+    const proof = store.createAdminIdentityLink(legacy, userId, "recovery-proof-browser");
+    const unrelated = store.createAdminIdentityLink(otherLegacy, otherUserId, "unrelated-proof-browser");
+    // A proof can be issued before the target enrolls its first key. Recovery must revoke
+    // that proof even though its account_id belongs to a different credential container.
+    if (keyed) store.saveAdminPasskey({ accountId: target.id, authVersion: target.authVersion,
+      credential: { id: "cmVjb3ZlcnktcGVuZGluZy1rZXk", publicKey: new Uint8Array([3]), counter: 0 },
+      name: "Disposable target key", deviceType: "singleDevice", backedUp: false });
+    const recovered = spawnSync(process.execPath, [script, "--user", userId], { encoding: "utf8" });
+    assert.equal(recovered.status, 0, recovered.stderr);
+    const token = recovered.stdout.match(/#setup=([A-Za-z0-9_-]{43})/)?.[1];
+    assert.ok(token);
+    assert.equal(store.getIdentityLinkState(proof.requestId), null, "recovery must revoke proofs targeting the canonical user");
+    assert.throws(() => store.verifyAdminIdentityLink(legacy, proof.requestId, proof.code, "recovery-proof-browser"), /no longer valid|expired/);
+    assert.equal(store.adminEnrollment(oldInvite), null);
+    assert.equal(store.adminEnrollment(token).account.id, target.id, "stale proof must not displace the recovered container");
+    assert.equal(store.adminPasskeys(target.id).length, 0);
+    assert.ok(store.getIdentityLinkState(unrelated.requestId), "another user's pending proof remains valid");
+    assert.equal(store.verifyAdminIdentityLink(otherLegacy, unrelated.requestId, unrelated.code, "unrelated-proof-browser").userId, otherUserId);
+  }
+});

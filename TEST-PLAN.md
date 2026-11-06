@@ -308,6 +308,14 @@ Running label acceptance (Claude and Codex): in a Slack agent thread with chat:w
 
 ## User-linked dashboard access (2026-10-25)
 
+- Recovery proof revocation regression (engine-independent): run
+  `node --test test/admin-recovery.test.js` against scratch state and the actual recovery CLI.
+  Issue a private identity proof from an unlinked container for an existing canonical admin,
+  then recover that user with `--user`. Test both an empty invited target and a target whose
+  first key was enrolled after proof issuance. The old proof and invitation must be invalid,
+  the new registration-only link must still name the recovered container, its old keys must
+  be gone, and another user's unrelated pending proof must still verify. No deployed recovery
+  or native private-message delivery is performed by this regression.
 - Secret reveal identity regression (engine-independent): run `node --test test/secret-reveal.test.js`
   against its scratch store and actual admin router. A linked administrator's fresh session reveals
   a synthetic allowed setting, requests a forbidden setting, then repeats after six minutes.

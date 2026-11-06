@@ -81,7 +81,8 @@ export function createAdminEnrollment(id, { recover = false } = {}) {
   try {
     const a = adminAccount(id); if (!a?.enabled) throw new Error('Account is unavailable.');
     if (recover) {
-      db.prepare('DELETE FROM admin_identity_links WHERE account_id = ?').run(id);
+      // Proofs can target this user from a different, still-unlinked credential container.
+      db.prepare('DELETE FROM admin_identity_links WHERE account_id = ? OR user_id = ?').run(id, a.userId);
       db.prepare('DELETE FROM admin_passkeys WHERE account_id = ?').run(id);
       db.prepare('UPDATE admin_accounts SET auth_version = auth_version + 1, bootstrap_allowed = 0 WHERE id = ?').run(id);
       metaSet('admin_passkeys_enrolled', '1');
