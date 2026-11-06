@@ -51,7 +51,7 @@
     "vpn": "node scripts/channel-vpn.mjs"
   },
   "engines": {
-    "node": ">=22.13"
+    "node": ">=24.0.0"
   },
   "dependencies": {
     "@composio/core": "0.28.0",

@@ -637,12 +637,13 @@ A deliberate interactive `make-cli login` saves credentials only under that chan
 for headless automation so credentials retain their egress protection. Saved login state, like
 other per-channel HOME data, survives a recreate.
 
-**Enterprise Composio SDK prerequisite.** The current SDK requires Node 22.22.3 or newer on
-the daemon host. This is stricter than the gateway bootstrap floor; check `node --version` before
-enabling the SDK. Node 24 LTS is the recommended daemon host runtime and the default container
-base (`node:24-bookworm-slim`); the container also ships agent-browser 0.41.2, which requires
-Node 24 or newer. Its resolved Node version is verified during image acceptance. Updating the
-container does not upgrade the host Node installation.
+**Node runtime prerequisite.** The daemon, installer, updater and documentation build require
+Node 24.0.0 or newer; use the current Node 24 LTS patch on the host. This baseline satisfies the
+Composio SDK and agent-browser requirements. The default container base is
+`node:24-bookworm-slim`, and its resolved Node version is verified during image acceptance.
+Upgrade the host Node installation before updating an older deployment, retain its previous
+runtime for rollback, and restart the daemon safely. Rebuilding the container alone does not
+upgrade the host Node installation.
 
 **Installing tools in a channel.** An agent can install whatever it needs, and it stays installed —
 everything below writes inside the per-channel HOME volume:

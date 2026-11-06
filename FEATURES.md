@@ -1664,7 +1664,7 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
   memory body. `search_channel_memory` rebuilds and queries a derived SQLite FTS5 index and
   `read_channel_memory` loads one validated source; both handlers return through the injected MCP
   response formatter. Writes no longer fail on a character budget. The index is optional per
-  engine build: a Node whose SQLite lacks FTS5 (22.13, the floor) still boots, and search falls
+  engine build: a supported SQLite build without FTS5 still boots, and search falls
   back to a plain scan with the same AND semantics and excerpts until the index exists.
   → TEST-PLAN: Conversation settings + on-demand memory.
 
@@ -3410,7 +3410,7 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
   application-code change is needed.
   → TEST-PLAN: ChannelGate skill package.
 - **Trustworthy release gate** (the macOS leg retired 2026-09-03 — Linux only): every pull request
-  runs the complete coverage-gated suite on Ubuntu at the exact Node 22.13 minimum and Node 24, plus dependency-free syntax /
+  runs the complete coverage-gated suite on Ubuntu at the exact Node 24.0.0 minimum and current Node 24, plus dependency-free syntax /
   whitespace checks, tracked-file secret scanning, production dependency audit, and independent
   coverage floors for authorization, access-grant isolation, sandbox policy, secret handling, and
   updater state. Claude
@@ -5721,3 +5721,10 @@ leaf cgroup PID current/max/event counts. Leaf counts do not establish effective
 The probe never reconfigures/recreates the runtime, retries, reads argv/environment/credentials or
 extends the recovery deadline; unavailable probes remain explicitly unavailable. Bounded snapshot
 facts are retained with the run-error event. No container image rebuild is needed for this reducer.
+
+## Node 24 runtime baseline
+
+The daemon, installer, transactional updater and documentation build require Node 24.0.0 or
+newer. The runtime image and release workflow use Node 24; CI exercises both the exact minimum
+and the current 24.x release. `.nvmrc` selects the Node 24 development line. Existing operators
+upgrade host Node before updating; rebuilding the image alone does not upgrade the daemon.

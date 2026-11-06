@@ -1,3 +1,4 @@
+import { runInNewContext } from "node:vm";
 import test from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
@@ -195,7 +196,7 @@ test("the service entry point gates the Node version before any src module is im
   assert.doesNotMatch(entry, /^\s*import\s+[^(]/m, "src/start.js must not use a static import");
   assert.doesNotMatch(entry, /^\s*(?:export|require\()/m);
   assert.match(entry, /process\.versions\.node/);
-  assert.match(entry, /major === 22 && minor < 13/);
+  assert.match(entry, /major < 24/);
   assert.match(entry, /await import\("\.\/server\.js"\)/);
   // Everything that launches the daemon must exec the gate, not the server directly.
   const pkg = JSON.parse(readFileSync(path.join(root, "package.json"), "utf8"));
@@ -247,4 +248,28 @@ test("every operations shell script parses", () => {
   const scripts = readdirSync(path.join(root, "scripts")).filter((name) => name.endsWith(".sh"));
   assert.ok(scripts.length > 0);
   for (const name of scripts) execFileSync("bash", ["-n", path.join(root, "scripts", name)], { stdio: "pipe" });
+});
+
+
+test("startup rejects older Node before imports and accepts the Node 24 baseline", () => {
+  const entry = readFileSync(path.join(root, "src/start.js"), "utf8");
+  const gate = entry.slice(0, entry.indexOf('const { platformRefusal }'));
+  for (const version of ["20.19.0", "22.23.3", "23.11.0", "24.0.0", "24.22.2", "26.0.0"]) {
+    const errors = [];
+    const refused = new Error("refused");
+    const context = {
+      process: { versions: { node: version }, exit(code) { assert.equal(code, 1); throw refused; } },
+      console: { error(message) { errors.push(message); } },
+    };
+    if (Number(version.split(".")[0]) < 24) {
+      assert.throws(() => runInNewContext(gate, context), (error) => error === refused);
+      assert.deepEqual(errors, [`ChannelGate requires Node >= 24.0.0; running on ${version}. Upgrade Node and restart.`]);
+    } else {
+      runInNewContext(gate, context);
+      assert.deepEqual(errors, []);
+    }
+  }
+  const pkg = JSON.parse(readFileSync(path.join(root, "package.json"), "utf8"));
+  assert.equal(pkg.engines.node, ">=24.0.0");
+  assert.equal(readFileSync(path.join(root, ".nvmrc"), "utf8").trim(), "24");
 });

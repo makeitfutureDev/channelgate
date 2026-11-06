@@ -253,9 +253,9 @@ async function defaultPreflight({ root, repoRoot }) {
   logStep("→ Preflight: Git, runtime, configuration, service, disk, and daemon health…");
   await runCommand("git", ["--version"], { cwd: repoRoot, quiet: true });
   await runCommand("npm", ["--version"], { cwd: repoRoot, quiet: true });
-  const [nodeMajor, nodeMinor] = process.versions.node.split(".").map(Number);
-  if (!Number.isInteger(nodeMajor) || nodeMajor < 22 || (nodeMajor === 22 && nodeMinor < 13)) {
-    throw refusal(`Node.js >=22.13 is required (found ${process.version})`); // matches package.json engines.node / src/start.js
+  const nodeMajor = Number(process.versions.node.split(".")[0]);
+  if (!Number.isInteger(nodeMajor) || nodeMajor < 24) {
+    throw refusal(`Node.js >=24.0.0 is required (found ${process.version})`); // matches package.json engines.node / src/start.js
   }
   if (!existsSync(path.join(repoRoot, "package-lock.json"))) throw refusal("package-lock.json is required for an exact update");
 
