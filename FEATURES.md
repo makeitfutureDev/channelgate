@@ -428,7 +428,9 @@ Slack’s native running/Stop label shows the resolved model and explicitly conf
   recommends a channel without sending messages, delegating or transferring files. Organization
   skills can supply company terminology; no company directory is hardcoded in the product skill.
 - Built-in reconciliation refreshes channel metadata at startup and nightly at 03:00 in the host
-  local timezone without an engine turn or user schedule. Metadata caches narrow keyword searches;
+  local timezone without an engine turn or user schedule. A missing spring-forward 03:00 runs at
+  the first valid local time and the next day returns to 03:00; autumn runs once per local day.
+  Metadata caches narrow keyword searches;
   returned recommendations still verify live metadata/membership and fresh gateway access.
   The daemon registers its existing Slack lifecycle manager in the live connector registry;
   disconnects fail closed and reconnects resolve the current client without retaining old readers.
