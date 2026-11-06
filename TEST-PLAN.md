@@ -1,5 +1,24 @@
 # ChannelGate — Test Plan
 
+## Shell tasks versus subagent progress (2026-11-06)
+
+Run `node --test test/progress-report.test.js test/slack-progress.test.js test/codex-message-to-reply-e2e.test.js`.
+Feed the actual Claude parser foreground/background `local_bash` starts followed by untyped
+progress, updates, notifications and late tool-use aliases. No frame may become agent activity;
+ordinary Bash tool use/results remain visible. Interleave real `local_agent`/`remote_agent`
+lifecycle frames and retain their stable identities, elapsed tool progress and terminal states.
+Retain Agent/legacy Task launches and older agent messages without optional task-type metadata.
+Through the actual Slack progress consumer, shell work stays Using tools and genuine agents
+produce Coordinating agents; Codex command execution remains a negative control.
+
+Live acceptance on an activated candidate must observe a harmless foreground shell wait and
+genuine in-turn subagent work separately in each engine, with exact native status/card evidence,
+tool traces and final delivery. The Claude-only background-task protocol variant is isolated;
+do not start harness background work in production solely for this check. The confirmed parser
+defect follows the official SDK task-type contract; a prior live Bash-only misleading label is
+corroborating presentation evidence, not proof of its unretained raw event shape or loaded
+revision. Isolated parser/status tests do not establish live Slack rendering or deployed acceptance.
+
 ## Readable background continuation errors (2026-11-06)
 
 `node --test test/background-continuation-errors.test.js test/process-outcome.test.js`

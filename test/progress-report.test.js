@@ -430,3 +430,77 @@ test("Claude stream maps task failure and tool progress without requiring option
     },
   ]);
 });
+
+test("Claude Bash task lifecycles never become subagent activity", () => {
+  for (const is_backgrounded of [false, true]) {
+    const events = [];
+    const consumer = createStreamConsumer({ onEvent: (event) => events.push(event) });
+    consumer.consume({ type: "stream_event", event: {
+      type: "content_block_start", index: 0,
+      content_block: { type: "tool_use", id: "bash-tool", name: "Bash" },
+    } });
+    consumer.consume({ type: "stream_event", event: {
+      type: "content_block_delta", index: 0,
+      delta: { type: "input_json_delta", partial_json: '{"command":"sleep 1"}' },
+    } });
+    consumer.consume({ type: "stream_event", event: { type: "content_block_stop", index: 0 } });
+    consumer.consume({ type: "system", subtype: "task_started", task_id: "bash-task",
+      task_type: "local_bash", is_backgrounded, description: "Wait briefly" });
+    // Later frames may omit the type and introduce the originating tool-use alias.
+    consumer.consume({ type: "system", subtype: "task_progress", task_id: "bash-task",
+      tool_use_id: "bash-tool", description: "Still waiting", usage: { duration_ms: 500 } });
+    consumer.consume({ type: "tool_progress", tool_use_id: "bash-tool",
+      tool_name: "Bash", elapsed_time_seconds: 0.5 });
+    consumer.consume({ type: "system", subtype: "task_updated", task_id: "bash-task",
+      patch: { status: "completed" } });
+    consumer.consume({ type: "system", subtype: "task_notification", task_id: "bash-task",
+      status: "completed", summary: "Done" });
+    consumer.consume({ type: "user", message: { content: [
+      { type: "tool_result", tool_use_id: "bash-tool", content: "Done", is_error: false },
+    ] } });
+    assert.equal(events.some((event) => event.kind === "agent_activity"), false);
+    assert.ok(events.some((event) => event.kind === "tool_use" && event.name === "Bash"));
+    assert.ok(events.some((event) => event.kind === "tool_result" && event.id === "bash-tool"));
+  }
+});
+
+test("Claude explicit agent tasks retain progress while interleaved non-agent tasks stay separate", () => {
+  for (const task_type of ["local_agent", "remote_agent"]) {
+    const events = [];
+    const consumer = createStreamConsumer({ onEvent: (event) => events.push(event) });
+    consumer.consume({ type: "system", subtype: "task_started", task_id: "child",
+      tool_use_id: "agent-tool", task_type, description: "Research" });
+    consumer.consume({ type: "system", subtype: "task_started", task_id: "shell",
+      tool_use_id: "shell-tool", task_type: "local_bash", parent_task_id: "child" });
+    consumer.consume({ type: "system", subtype: "task_progress", task_id: "shell" });
+    consumer.consume({ type: "tool_progress", task_id: "child", tool_name: "Read", elapsed_time_seconds: 2 });
+    consumer.consume({ type: "system", subtype: "task_notification", task_id: "shell", status: "completed" });
+    consumer.consume({ type: "system", subtype: "task_notification", task_id: "child", status: "completed" });
+    const activity = events.filter((event) => event.kind === "agent_activity");
+    assert.deepEqual(activity.map((event) => [event.id, event.status]), [
+      ["agent-tool", "running"], ["agent-tool", "running"], ["agent-tool", "completed"],
+    ]);
+    assert.equal(activity[1].elapsedMs, 2000);
+  }
+});
+
+test("Claude Agent and legacy Task aliases retain untyped lifecycle updates", () => {
+  for (const name of ["Agent", "Task"]) {
+    const events = [];
+    const consumer = createStreamConsumer({ onEvent: (event) => events.push(event) });
+    consumer.consume({ type: "stream_event", event: { type: "content_block_start", index: 0,
+      content_block: { type: "tool_use", id: "legacy-tool", name } } });
+    consumer.consume({ type: "stream_event", event: { type: "content_block_delta", index: 0,
+      delta: { type: "input_json_delta", partial_json: '{"description":"Check files"}' } } });
+    consumer.consume({ type: "stream_event", event: { type: "content_block_stop", index: 0 } });
+    consumer.consume({ type: "system", subtype: "task_started", task_id: "legacy-task",
+      tool_use_id: "legacy-tool" });
+    consumer.consume({ type: "tool_progress", task_id: "legacy-task", elapsed_time_seconds: 1 });
+    consumer.consume({ type: "system", subtype: "task_updated", task_id: "legacy-task",
+      patch: { status: "completed" } });
+    assert.deepEqual(events.map((event) => [event.kind, event.id, event.status]), [
+      ["agent_activity", "legacy-tool", "running"], ["agent_activity", "legacy-tool", "running"],
+      ["agent_activity", "legacy-tool", "running"], ["agent_activity", "legacy-tool", "completed"],
+    ]);
+  }
+});
