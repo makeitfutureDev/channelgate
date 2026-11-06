@@ -1,5 +1,8 @@
 # Changelog — ChannelGate
 
+- Fix Sunday cron expressions using weekday `7`, including lists, ranges and steps, in schedule
+  validation, matching and next-run previews. Sunday `0` remains supported.
+
 - Add channel-to-channel agent mail: `send_agent_message` asks another channel's agent a question on the requester's behalf, gated on the requester's own access (authorization, live membership and the whole source audience, re-checked at send, delivery and reply), the target's new `acceptsMessages` profile switch and the requester's approval card. The target answers in its own channel as the rank-less `agent:<source>` principal with a reduced toolset, and the reply returns to the asking thread as a new turn; one in flight per pair, hourly caps, restart recovery and audit events.
 
 - Require Node 24.0.0 or newer consistently for the daemon, installer, updater and documentation
