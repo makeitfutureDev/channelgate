@@ -211,7 +211,9 @@ Slack’s native running/Stop label shows the resolved model and explicitly conf
   Initial password setup follows the same proof before enrollment; fresh installs without known
   admins retain temporary operator setup. First enrollment retires the password-only bootstrap path; the optional password plus Slack code flow requires explicit enablement.
 - Host operators recover a known admin with `npm run admin:recover -- --user <user-id>`.
-  Recovery revokes its keys/sessions and prints a short-lived registration-only link; it never
+  Recovery revokes its keys/sessions and every pending identity proof targeting that user,
+  including proofs issued from another unlinked credential container. Other users' proofs remain
+  valid. It prints a short-lived registration-only link; it never
   restores password login. Private keys remain with authenticators; SQLite stores public keys
   and verification metadata. Your final own passkey cannot be deleted through ordinary management.
 

@@ -54,7 +54,8 @@ test("store: a token is minted once, resolved by hash, listed without its value,
   assert.equal(resolved.id, record.id);
   assert.equal(resolved.createdBy, "U_TOK_MEMBER");
   assert.ok(tokens.getApiToken(record.id).lastUsedAt, "use is recorded");
-  assert.equal(tokens.resolveApiToken(`${token.slice(0, -1)}x`), null);
+  const tampered = `${token.slice(0, -1)}${token.endsWith("x") ? "y" : "x"}`;
+  assert.equal(tokens.resolveApiToken(tampered), null);
   assert.equal(tokens.resolveApiToken("cg_not_a_channel_token"), null);
   assert.doesNotMatch(JSON.stringify(tokens.listApiTokens({ channelId: main.channelId })), new RegExp(token.slice(8, 30)));
   tokens.revokeApiToken(record.id);
