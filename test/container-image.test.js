@@ -463,3 +463,9 @@ test("cg-init removes a pre-relay Codex login (one with a refresh token) under t
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+
+test("fresh HOME has agent-owned XDG state parents for CLI logins", () => {
+  const ownership = containerfile.indexOf('RUN install -d -o agent -g agent -m 0755 /home/agent/.local /home/agent/.local/share');
+  assert.ok(ownership >= 0 && ownership < containerfile.indexOf('\nUSER agent\n'));
+});

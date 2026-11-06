@@ -219,6 +219,10 @@ RUN printf '%s\n' \
       'fi' > /etc/profile.d/channelgate-workdir.sh \
  && chmod 0644 /etc/profile.d/channelgate-workdir.sh
 
+# Ensure the shared XDG parent is writable on a freshly seeded HOME volume.
+# install -d on .local/bin alone can leave its intermediate .local parent root-owned.
+RUN install -d -o agent -g agent -m 0755 /home/agent/.local /home/agent/.local/share
+
 USER agent
 WORKDIR /home/agent
 
