@@ -1,10 +1,10 @@
 # Changelog — ChannelGate
 
-## 0.7.0 — candidate, pending approval
+## 0.6.5 — candidate, pending approval
 
 Prepared 2026-11-06 from integrated beta development. This is not a publication date.
 Requires Node.js 24.0.0 or newer and runtime image spec 1.6.3. See
-[the candidate record](docs/releases/0.7.0.md) for scope, excluded unfinished work and
+[the candidate record](docs/releases/0.6.5.md) for scope, excluded unfinished work and
 release gates. Stable promotion and publication require approval of the exact tested candidate.
 
 ### Beta development notes
