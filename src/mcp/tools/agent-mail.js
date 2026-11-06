@@ -8,13 +8,14 @@ export function register(server, ctx) {
   server.registerTool("send_agent_message", {
     description:
       "Send a question or request to ANOTHER channel's agent, on behalf of the person who asked you. " +
-      "Use after search_agents found a channel whose agent can help (its knowledge, memory, files or skills). " +
+      "Use when the user names a channel (\"ask #sales …\", \"tell the agent in #dev to …\") or when search_agents found a channel " +
+      "whose agent can help (its knowledge, memory, files or skills). A channel the directory did not list may still accept: call " +
+      "this tool anyway when the user named it; a refusal states the exact failed check, which you relay. " +
       "Calling it posts a card in THIS thread for the requesting person to confirm the exact text; on their click the gateway " +
       "delivers the message as a new thread in that channel, its agent answers there with its own tools and permissions, " +
       "and the reply is brought back into THIS thread as a new turn. So: call it once, tell the user what you asked and that " +
       "they need to approve the card, then END YOUR TURN — never wait or poll. Allowed only where the requesting " +
-      "person could post themselves: they must be authorized and a current member of that channel, everyone who can " +
-      "read this conversation must belong to it too, and that channel's manager must have switched acceptsMessages on. " +
+      "person could post themselves: they must be authorized in that channel and a current member of it and of this conversation. " +
       "One message in flight per thread and channel, a few per hour. Text only (≤ 8000 characters): say what you need, " +
       "the context, and the shape of the answer you want.",
     inputSchema: {

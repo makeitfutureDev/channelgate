@@ -208,31 +208,35 @@ daemon-copied attachment. Every hop is visible to the humans of both channels.
 
 ### 3.1 Addressing, discovery and the access rule
 
-**The access rule (decided 2026-11-06).** An agent acts on a person's behalf, so it may only
-message a channel that person can reach, and the answer may only land where everyone who will
-read it could have read the target themselves. Concretely, a send is admitted only when ALL of:
+**The access rule (decided 2026-11-06, revised the same day after the first live attempt).** An
+agent acts on a person's behalf, so it may message exactly the channels that person can reach.
+A send is admitted when BOTH:
 
 1. the requesting person passes `isAuthorized()` on the target channel (admin or approved, the
    target's access policy, a guest grant), AND
-2. the requesting person is a live member of the target conversation (admin status does not skip
-   this; a person who cannot open the target thread may not have an agent write there), AND
-3. every member of the SOURCE conversation is also a member of the target, because the reply is
-   re-injected into the source thread and read by all of them (a public channel can therefore
-   never message a private one), AND
-4. the target channel's manager has switched "accepts agent messages" on.
+2. the requesting person is a live member of the target conversation AND of the asking one
+   (admin status does not skip this; a person who cannot open the target thread may not have an
+   agent write there).
 
-These are exactly the semantics the specialist agent directory shipped on 2026-10-21
-(`search_agents`, `src/gateway/agent-directory.js`, verifier in `src/slack/agent-directory.js`):
-requester authorization, live chat membership, the source-audience rule, DMs excluded, re-verified
-live rather than from cache. `send_agent_message` reuses that verifier as its gate. The checks run
-at every hop: when the tool is called, again immediately before the target turn spawns (membership
-can change while a message waits in the queue), and again before every reply is re-injected.
+Nothing else gates it. The first version also required every reader of the asking thread to be
+a member of the target and a per-channel opt-in; the first real attempt (a management channel
+asking the development channel) was refused because five *apps* installed in the management
+channel were not in the development channel. The operator's ruling: the person could copy the
+answer across by hand, so the other readers are their responsibility, and every channel's agent
+answers — the feature relies on the person doing the right thing, exactly as everything else
+they paste does. Membership is read live from Slack through the agent directory's membership
+interface (`src/slack/agent-directory.js`) and fails closed when it cannot be read; the checks run
+at every hop: when the tool is called, again immediately before the target turn spawns
+(membership can change while a message waits in the queue), and again before every reply is
+re-injected. The directory's stricter audience rule still governs what `search_agents` LISTS; a
+channel it hides can still be messaged when the person names it.
 
-- Discovery is `search_agents`; there is no separate peer list. Managers describe or hide their
-  agent with `set_channel_agent_profile`; the new `acceptsMessages` flag sits beside `hidden`.
-  The access rule makes a per-channel sender allowlist redundant, so there is none.
-- `send_agent_message({ to, message, reply_wanted, attachment? })` addresses a channel by the id
-  or name a `search_agents` result returned.
+- Discovery is `search_agents`; there is no separate peer list and no opt-in.
+- `send_agent_message({ to, message })` addresses a channel by id or name — one a
+  `search_agents` result returned, or one the person named.
+- The typed directive `@agent ask #channel <text>` sends a person's exact text with no model turn
+  and no approval card (the person wrote it); the tool-initiated path keeps the card because
+  there the model composed the text.
 - The person's access decides REACHABILITY, never AUTHORITY: the delivered turn runs as the fixed
   `agent:<from-slug>` principal with the requester as attribution only (section 3.2), so a
   prompt-injected sender can never borrow the requester's personal tokens or admin bypass in the
@@ -308,8 +312,9 @@ can change while a message waits in the queue), and again before every reply is 
 | Tool `send_agent_message` (discovery stays `search_agents`) | `src/mcp/tools/agent-mail.js` (new), registered in `gateway-server.js` behind the capability toolset |
 | Principal | `src/config/api-principal.js` (add the `agent:<slug>` principal) |
 | Schema | `src/db/migrations.js` migration 43 (`agent_messages`) |
-| Channel setting | `acceptsMessages` in the agent profile (`set_channel_agent_profile`, `src/gateway/agent-directory.js`), the Access tab of `src/slack/channel-settings.js`, `routes/channels.js`, admin UI |
-| Access gate | the directory verifier (`src/slack/agent-directory.js`) called at send, delivery and reply time |
+| Channel setting | none — every registered channel's agent answers |
+| Access gate | `liveMembership` in `agent-mail.js` over the platform's directory membership interface (`src/slack/agent-directory.js`), called at send, delivery and reply time |
+| Typed directive | `parseAskDirective` in `agent-mail.js`, handled in `src/slack/message-pipeline.js` before the model runs |
 | Guide | `src/gateway/gateway-usage/references/agent-mail.md` (when to use it, the queued-then-end-turn rule) |
 | Tests | `test/agent-mail.test.js`: requester authorization, live membership, source-audience rule, re-check at delivery and reply, round and depth caps, cycle refusal, principal has no personal scope, re-injection targets the origin thread, refusal messages |
 

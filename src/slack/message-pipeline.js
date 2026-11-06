@@ -13,6 +13,7 @@ import { plainFailureText, runFailureDiagnostics } from "../util/process-outcome
 import { ensureChannelFolder, effectiveWorkDir } from "../gateway/folders.js";
 import { runMessage, isEmptyResult } from "../gateway/run.js";
 import { modeLabel, MODES, modeSettingsPatch, canManage, isAuthorized, authorizationDenialReason } from "../gateway/modes.js";
+import { activeAgentMail, AgentMailError, parseAskDirective } from "../gateway/agent-mail.js";
 
 import { postModelWizard } from "./model-wizard.js";
 import { getSession, getSessionMap, clearSession, hasThreadSession, getSessionEngine, getSessionRuntime, saveSession } from "../gateway/sessions.js";
@@ -1285,6 +1286,31 @@ export async function processMessageEvent(event, client, { botUserId = "", teamI
           prompt = trimmed.replace(phrase[0], " ").replace(/\s+/g, " ").trim();
           if (!prompt) prompt = "Please try that again — continue with the most recent request in this thread.";
         }
+      }
+    }
+
+    // Ask directive: "@bot ask #channel <message>" hands the message straight to THAT channel's
+    // agent (gateway/agent-mail.js) — the dedicated way to address another agent without a model
+    // turn in between. The person typed the exact text, so there is no approval card: the gate is
+    // their own live access to both channels, re-checked by the daemon. The reply comes back into
+    // this thread as a new turn, exactly as for a tool-initiated message.
+    if (!syntheticFork && files.length === 0) {
+      const ask = parseAskDirective(prompt);
+      if (ask) {
+        const mail = activeAgentMail();
+        const reply = (t) => client.chat.postMessage({ channel: event.channel, ...threadOpts, text: t });
+        if (!mail) { await reply("Agent messaging is not available on this gateway right now."); return; }
+        if (!ask.message) { await reply("Use `ask #channel <your question or request>`."); return; }
+        try {
+          const sent = await mail.send({ channelId: event.channel, slug: entry.slug, createdBy: event.user, threadKey, to: ask.to, message: ask.message, origin: "slack_foreground" });
+          const target = sent.to?.name ? `#${sent.to.name}` : sent.to?.slug || ask.to;
+          await reply(`📨 Sent to the agent in ${target} (message ${sent.id}). Its reply will be posted in this thread when it arrives.`);
+        } catch (error) {
+          if (!(error instanceof AgentMailError)) throw error;
+          await logEvent("agent_message_refused", { channel: event.channel, author: event.user, slug: entry.slug, to: ask.to, reason: error.message, directive: true }).catch(() => {});
+          await reply(`🚫 Not sent: ${error.message}`);
+        }
+        return;
       }
     }
 

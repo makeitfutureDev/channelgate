@@ -9,13 +9,14 @@
 // Every hop is visible to the humans of both channels, and either of them can reply in either
 // thread like in any other thread.
 //
-// The access rule (operator decision 2026-11-06): an agent acts on a PERSON's behalf, so it may
-// only write where that person could — the requester must pass the gateway's own authorization on
-// the target AND be a live member of it, and because the reply lands in the source thread, every
-// member of the source must also belong to the target. That is exactly what the specialist
-// directory's verifier already proves (agent-directory-refresh.js), so the gate IS that verifier,
-// re-run at send time, again right before the target turn spawns, and again before the reply is
-// re-injected. The target's manager must additionally have switched `acceptsMessages` on.
+// The access rule (operator decision 2026-11-06, revised the same day): an agent acts on a
+// PERSON's behalf, so it may write wherever that person could — the requester must pass the
+// gateway's own authorization on the target AND be a live member of both conversations. Nothing
+// else gates it: no per-channel opt-in (every registered channel's agent answers), and no proof
+// about the other readers of the asking thread — the person could copy the answer across by hand,
+// so the rule relies on them to do the right thing, exactly as it does for anything else they
+// paste. The checks run live at send time, again right before the target turn spawns, and again
+// before the reply is re-injected.
 //
 // Reachability is not authority: the delivered turn runs as the fixed `agent:<source slug>`
 // principal (config/api-principal.js) with no personal scope and no rank, under the target's own
@@ -29,8 +30,9 @@ import { getChannelEntry, getChannelMeta, getUser, listChannels, defaultChannelM
 import { agentPrincipal } from "../config/api-principal.js";
 import { effectiveMeta } from "./effective-meta.js";
 import { isAuthorized } from "./modes.js";
-import { directoryEligible } from "./agent-directory.js";
-import { prepareDirectoryVerifier } from "./agent-directory-refresh.js";
+import { liveConnector } from "../platforms/live.js";
+import { platformSupports } from "../platforms/registry.js";
+import { parseConversationId } from "../platforms/ids.js";
 import { runMessage } from "./run.js";
 import { deliverResult } from "../slack/deliver.js";
 import { runQueue } from "../slack/message-lifecycle.js";
@@ -133,12 +135,46 @@ export function resolveTargetChannel(channels, to) {
   return matches.length === 1 ? matches[0] : null;
 }
 
+// Is this person a current member of both conversations, per the platform's live connector? The
+// same membership interface the agent directory reads; a platform without it (or a disconnected
+// one) answers null, which the gate treats as "could not verify" — never as "allowed".
+export async function liveMembership({ userId, fromChannelId, toChannelId }, { connectorFor = liveConnector } = {}) {
+  const source = parseConversationId(fromChannelId);
+  const target = parseConversationId(toChannelId);
+  if (!source.id || !target.id || source.platform !== target.platform) return null;
+  const directory = platformSupports(source.platform, "agentDirectory") ? connectorFor(source.platform)?.agentDirectory : null;
+  if (!directory?.describeConversation || !directory?.conversationMembers) return null;
+  const [sourceMembers, targetMembers, targetInfo] = await Promise.all([
+    directory.conversationMembers({ conversationId: source.id }),
+    directory.conversationMembers({ conversationId: target.id }),
+    directory.describeConversation({ conversationId: target.id }),
+  ]);
+  if (!Array.isArray(sourceMembers) || !Array.isArray(targetMembers) || !targetInfo) return null;
+  if (targetInfo.archived || !["channel", "group"].includes(targetInfo.type)) return null;
+  return { inSource: sourceMembers.includes(userId), inTarget: targetMembers.includes(userId), target: targetInfo };
+}
+
+// The typed form: "ask #channel <message>" (Slack renders a typed #channel as <#C…|name>; a typed
+// "#name" that Slack did not link is resolved by the daemon). Leading punctuation after the
+// channel is dropped. Only the anchored verb followed by a #channel counts: "ask Petru to review"
+// or "ask me anything" is a prompt, not a directive.
+export function parseAskDirective(prompt) {
+  const match = /^(?:ask|întreabă|intreaba)\s+(?:<#([A-Z0-9]+)(?:\|[^>]*)?>|#([^\s<>:,]+))\s*[:,–—-]*\s*([\s\S]*)$/i.exec(String(prompt || "").trim());
+  if (!match) return null;
+  return { to: match[1] || match[2] || "", message: (match[3] || "").trim() };
+}
+
+// The daemon's instance, for the Slack `ask #channel …` directive (slack/message-pipeline.js).
+let activeInstance = null;
+export function setActiveAgentMail(instance) { activeInstance = instance; }
+export function activeAgentMail() { return activeInstance; }
+
 export class AgentMail {
   constructor({
     slack = null,
     runner = runMessage,
     deliver = deliverResult,
-    prepareVerifier = prepareDirectoryVerifier,
+    checkMembership = null,
     loadChannels = listChannels,
     loadEntry = getChannelEntry,
     loadMeta = getChannelMeta,
@@ -150,7 +186,7 @@ export class AgentMail {
     this.slack = slack;
     this.runner = runner;
     this.deliver = deliver;
-    this.prepareVerifier = prepareVerifier;
+    this.checkMembership = checkMembership || ((args) => liveMembership(args));
     this.loadChannels = loadChannels;
     this.loadEntry = loadEntry;
     this.loadMeta = loadMeta;
@@ -167,8 +203,8 @@ export class AgentMail {
   }
 
   // The gate. Everything a send needs to be allowed, evaluated LIVE: the requester's own access on
-  // both conversations, the directory verifier's membership and audience proof, and the target's
-  // opt-in. Returns the resolved facts or throws an AgentMailError naming the first failed check.
+  // both conversations and their current membership of both. Returns the resolved facts or throws
+  // an AgentMailError naming the first failed check.
   async authorize({ fromChannelId, requestedBy, toChannelId }) {
     if (!requestedBy || !fromChannelId || !toChannelId) throw new AgentMailError("An agent message needs a verified requester and both conversations.");
     if (fromChannelId === toChannelId) throw new AgentMailError("That is this conversation's own agent. Answer here instead of sending yourself a message.");
@@ -176,27 +212,23 @@ export class AgentMail {
     const source = channels.find((c) => c.channelId === fromChannelId);
     const target = channels.find((c) => c.channelId === toChannelId);
     if (!source) throw new AgentMailError("This conversation is not registered with the gateway.");
-    if (!target) throw new AgentMailError("That channel is not registered with the gateway, so it has no agent to message.");
+    if (!target) throw new AgentMailError("That channel is not registered with the gateway, so it has no agent to message. Invite the bot there and send it one message first.");
+    if (target.isDM || target.type === "im" || target.type === "mpim") throw new AgentMailError("That is a direct message, not a channel agent.");
     const user = await this.loadUser(requestedBy);
     const auth = { isAdminUser: user?.isAdmin === true, isApprovedUser: user?.approved === true };
     const sourceMeta = await this._effectiveMeta(source);
     if (!isAuthorized(sourceMeta, requestedBy, Boolean(source.isDM || sourceMeta.isDM), auth)) throw new AgentMailError("You are not authorized in this conversation.");
-    if (source.isDM || sourceMeta.isDM) throw new AgentMailError("Agent messages cannot be sent from a direct message: the reply would have no shared audience to check. Ask from a channel both of you are in.");
     const targetMeta = await this._effectiveMeta(target);
-    if (!directoryEligible(target, targetMeta)) throw new AgentMailError(`${channelRef(target)} is not available to other agents (hidden, disabled, archived, clean, or not a channel).`);
-    if (targetMeta.agentDirectory?.acceptsMessages !== true) {
-      throw new AgentMailError(`${channelRef(target)} does not accept messages from other channels' agents. A manager of that channel can switch it on with set_channel_agent_profile({ acceptsMessages: true }).`, { code: "not_accepting" });
+    if (target.disabled || target.archived || target.deleted || targetMeta.disabled || targetMeta.archived || targetMeta.deleted) {
+      throw new AgentMailError(`${channelRef(target)} is disabled or archived, so its agent cannot answer.`);
     }
     if (!isAuthorized(targetMeta, requestedBy, false, auth)) throw new AgentMailError(`You are not authorized to use the agent in ${channelRef(target)}, so your agent cannot message it on your behalf.`, { code: "requester_unauthorized" });
-    let verify;
-    try { verify = await this.prepareVerifier({ createdBy: requestedBy, channelId: fromChannelId }); } catch { verify = null; }
-    if (typeof verify !== "function") throw new AgentMailError("The live conversation connector could not verify membership; nothing was sent.", { code: "unverifiable" });
-    let verified = null;
-    try { verified = await verify({ channelId: toChannelId }); } catch { verified = null; }
-    if (verified?.visible !== true || verified.isDM || verified.archived || !["channel", "group"].includes(verified.type)) {
-      throw new AgentMailError(`You must be a current member of ${channelRef(target)}, and so must everyone who can read this conversation, because the reply lands here. That could not be confirmed, so nothing was sent.`, { code: "audience" });
-    }
-    return { source, target, sourceMeta, targetMeta, verified };
+    let membership;
+    try { membership = await this.checkMembership({ userId: requestedBy, fromChannelId, toChannelId }); } catch { membership = null; }
+    if (!membership) throw new AgentMailError("The live conversation connector could not verify membership; nothing was sent.", { code: "unverifiable" });
+    if (!membership.inSource) throw new AgentMailError("You must be a current member of this conversation to send from it.", { code: "membership" });
+    if (!membership.inTarget) throw new AgentMailError(`You must be a current member of ${channelRef(target)} for your agent to message it on your behalf. That could not be confirmed, so nothing was sent.`, { code: "membership" });
+    return { source, target, sourceMeta, targetMeta, verified: membership.target };
   }
 
   // The tool entry point. Admits, persists and kicks off delivery; returns at once so the sending

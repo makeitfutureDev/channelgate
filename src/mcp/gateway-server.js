@@ -183,9 +183,9 @@ export function ctxFromClaims(claims = {}, { engine = "", toolset = "", progress
     if (!createdBy) return false;
     // The API key was accepted as this channel's caller; the capability is scoped to it.
     if (apiPrincipal) return Boolean(await loadMeta());
-    // The daemon admitted the agent message against the channel's CURRENT opt-in; it stays valid
-    // only while that switch is on.
-    if (agentPrincipal) return (await loadMeta())?.agentDirectory?.acceptsMessages === true;
+    // The daemon admitted the agent message on the requester's live access; the capability is
+    // scoped to this channel.
+    if (agentPrincipal) return Boolean(await loadMeta());
     const meta = await loadMeta();
     return Boolean(meta) && isAuthorized(meta, createdBy, meta.isDM, {
       isAdminUser: await isAdmin(createdBy), isApprovedUser: await isApproved(createdBy),

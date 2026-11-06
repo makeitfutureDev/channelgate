@@ -21,7 +21,7 @@ test.before(async () => {
   await setUser(actor, { approved: true, isAdmin: false });
   const entry = await upsertChannelEntry(channel, { name: "mail-tools", type: "channel", isDM: false });
   slug = entry.slug;
-  await saveChannelMeta(slug, { channelId: channel, type: "channel", isDM: false, agentDirectory: { description: "Marketing", acceptsMessages: true } });
+  await saveChannelMeta(slug, { channelId: channel, type: "channel", isDM: false, agentDirectory: { description: "Marketing" } });
 });
 
 async function withClient(engine, run, { claims = {}, handlers = {} } = {}) {
@@ -91,8 +91,8 @@ for (const engine of ["claude", "codex"]) {
 test("a daemon refusal and an unavailable transport are relayed without sending", async () => {
   await withClient("claude", async (_client, _ctx, server) => {
     const refused = await server.invokeApproved("send_agent_message", { to: "C_SALES", message: "hi" });
-    assert.match(refused.text, /🚫 Agent message not sent: #sales does not accept messages/);
-  }, { handlers: { "agent-mail": () => ({ ok: false, code: "not_accepting", error: "#sales does not accept messages from other channels' agents." }) } });
+    assert.match(refused.text, /🚫 Agent message not sent: You must be a current member of #sales/);
+  }, { handlers: { "agent-mail": () => ({ ok: false, code: "membership", error: "You must be a current member of #sales for your agent to message it on your behalf." }) } });
   await withClient("claude", async (_client, _ctx, server) => {
     assert.match((await server.invokeApproved("send_agent_message", { to: "C_SALES", message: "hi" })).text, /unavailable/);
   });
@@ -112,7 +112,7 @@ test("only a verified human member may send: API runs and delivered agent turns 
   assert.equal(sends.length, 0);
 });
 
-test("a delivered agent message's context has no rank and lives only while the channel accepts messages", async () => {
+test("a delivered agent message's context has no rank and is scoped to its registered channel", async () => {
   const ctx = ctxFromClaims({ channelId: channel, slug, authorId: agentPrincipal("sales"), threadKey: thread, engine: "claude", origin: "agent_message", principalTrusted: false, toolset: AGENT_MESSAGE_TOOLSET }, { daemon: createDirectDaemonIpc({}) });
   assert.equal(ctx.createdBy, "agent:sales");
   assert.equal(ctx.principalTrusted, false);
@@ -122,9 +122,8 @@ test("a delivered agent message's context has no rank and lives only while the c
   assert.equal(await ctx.requireAdmin(), false);
   assert.equal(await ctx.requireManage(), false);
   assert.equal(await ctx.requireChannelAccess(), true);
-  await saveChannelMeta(slug, { channelId: channel, type: "channel", isDM: false, agentDirectory: { description: "Marketing", acceptsMessages: false } });
-  assert.equal(await ctx.requireChannelAccess(), false);
-  await saveChannelMeta(slug, { channelId: channel, type: "channel", isDM: false, agentDirectory: { description: "Marketing", acceptsMessages: true } });
+  const unregistered = ctxFromClaims({ channelId: "C_NOPE", slug: "nope-slug", authorId: agentPrincipal("sales"), threadKey: thread, engine: "claude", origin: "agent_message", principalTrusted: false, toolset: AGENT_MESSAGE_TOOLSET }, { daemon: createDirectDaemonIpc({}) });
+  assert.equal(await unregistered.requireChannelAccess(), false);
   // An untrusted claim naming a real-looking person still maps to the API principal, as before.
   const api = ctxFromClaims({ channelId: channel, slug, authorId: "U_SOMEONE", principalTrusted: false }, { daemon: createDirectDaemonIpc({}) });
   assert.equal(api.createdBy, "api");

@@ -21,16 +21,7 @@ export function sanitizeAgentDirectoryProfile(value = {}) {
     description: text(value?.description, 600),
     examples: Array.isArray(value?.examples) ? [...new Set(value.examples.map((entry) => text(entry, 160)).filter(Boolean))].slice(0, 6) : [],
     hidden: value?.hidden === true,
-    // Agent mail (gateway/agent-mail.js): may another channel's agent send this channel's agent a
-    // message? Off by default; a manager's explicit choice, independent of discovery.
-    acceptsMessages: value?.acceptsMessages === true,
   };
-}
-
-// A channel that can appear in the directory for SOME audience. Agent mail reuses the same shape:
-// a hidden, disabled, archived, clean or DM conversation is never a destination either.
-export function directoryEligible(entry, meta) {
-  return eligible(entry, meta);
 }
 
 function eligible(entry, meta) {

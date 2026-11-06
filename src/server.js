@@ -25,7 +25,7 @@ import { syncWorkspaceSkills } from "./gateway/skills/workspace-sync.js";
 import { createPlatformTransports, connectConfiguredPlatforms } from "./platforms/boot.js";
 import { startScheduler } from "./gateway/scheduler.js";
 import { searchAgentDirectory } from "./gateway/agent-directory.js";
-import { AgentMail, AgentMailError } from "./gateway/agent-mail.js";
+import { AgentMail, AgentMailError, setActiveAgentMail } from "./gateway/agent-mail.js";
 import { startAgentDirectoryRefresh } from "./gateway/agent-directory-refresh.js";
 import { handleCodeChannelIpc } from "./slack/code-channel-kickoff.js";
 import { requestSkillSwap } from "./gateway/skill-runtime.js";
@@ -377,6 +377,7 @@ async function main() {
   // Channel-to-channel agent mail: the daemon owns the gate, the target thread, the turn and the
   // reply's return trip (gateway/agent-mail.js). A refusal is an answer, not an exception.
   const agentMail = new AgentMail({ slack });
+  setActiveAgentMail(agentMail); // the Slack `ask #channel …` directive
   const sendAgentMail = async (body) => {
     try {
       return { ok: true, ...(await agentMail.send(body)) };
