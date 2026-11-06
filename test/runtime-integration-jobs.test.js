@@ -4,6 +4,7 @@
 // restart can only be found again through the backend — its pid belonged to a client process that
 // died with the old daemon.
 import path from "node:path";
+import { randomBytes } from "node:crypto";
 import { mkdirSync, writeFileSync, readFileSync } from "node:fs";
 import test from "node:test";
 import assert from "node:assert/strict";
@@ -190,4 +191,69 @@ test("a container job in Auto mode starts without a card; an unisolated one stil
   assert.equal(hostCard.requiredTier, "admin");
   assert.equal(hostCard.approvalType, "agent");
   assert.match(hostRefusal.error, /run outside every container/);
+});
+
+test("proxy-mode background jobs redact hidden placeholders before persistence and preserve readable config", async () => {
+  const quote = (value) => "'" + value.replace(/'/g, "'\\''") + "'";
+  const backend = createFakeRuntimeBackend({ egress: { active: true, mode: "proxy", network: "none" } });
+  const channelId = "C_JOB_PROXY_REDACT";
+  const { entry, meta } = await autoChannel(channelId, "job-proxy-redact");
+  const hidden = "synthetic-hidden-" + randomBytes(16).toString("hex");
+  const readable = "intentionally-readable-" + randomBytes(8).toString("hex");
+  await saveChannelMeta(entry.slug, { ...meta, env: {
+    QA_HIDDEN_RULED: { provider: "local", value: hidden, exposure: "hidden", hosts: ["example.com"] },
+    QA_READABLE_CONFIG: { provider: "local", value: readable, exposure: "readable" },
+  } });
+  const continuations = [], delivered = [];
+  const jobs = new BackgroundJobs({
+    resolveTarget: (slug, currentMeta) => fakeTarget(backend, slug, currentMeta),
+    runner: async ({ text }) => {
+      continuations.push(text);
+      return { content: "safe fixture summary", engine: "claude" };
+    },
+    deliver: async (_client, { result }) => { delivered.push(result.content); },
+  });
+  // Keep completion pending until its durable log and status have both been inspected.
+  jobs._client = () => null;
+  const source = `const s=process.env.QA_HIDDEN_RULED;
+    process.stdout.write('full '+s+'\\n');
+    process.stdout.write('out '+s.slice(0,12));
+    setTimeout(()=>process.stderr.write('err '+s.slice(0,17)),20);
+    setTimeout(()=>process.stdout.write(s.slice(12)+' end\\n'),40);
+    setTimeout(()=>process.stderr.write(s.slice(17)+' end\\n'),60);
+    setTimeout(()=>process.stdout.write('visible '+process.env.QA_READABLE_CONFIG+'\\n'),80);`;
+  const started = await jobs.start({
+    channelId, authorId: "U_JOB", threadKey: "proxy-redaction", label: "safe synthetic integration",
+    command: "node -e " + quote(source),
+  });
+  assert.equal(started.ok, true, started.error);
+  const rec = jobs.jobs.get(started.id);
+  const spec = backend.calls.spawn.at(-1);
+  const placeholder = spec.env.QA_HIDDEN_RULED;
+  assert.notEqual(placeholder, hidden, "the actual resolver replaces hidden values in proxy mode");
+  assert.match(placeholder, /^cgph_/);
+  assert.equal(spec.env.QA_READABLE_CONFIG, readable);
+  const deadline = Date.now() + 12_000;
+  while (!rec.pendingDelivery && Date.now() < deadline) await new Promise((resolve) => setTimeout(resolve, 25));
+  assert.ok(rec.pendingDelivery, "the actual wrapper must finish and checkpoint completion");
+  const raw = readFileSync(rec.logFile, "utf8");
+  const status = jobs.status(started.id);
+  jobs._client = () => ({ platform: "slack", post: async () => ({ ok: true }) });
+  await jobs._deliver(rec);
+
+  // Check booleans so a failing assertion cannot print the disposable credential or placeholder.
+  for (const text of [raw, status.tail, continuations.join("\n")]) {
+    assert.equal(text.includes(hidden), false, "no real hidden value reaches output");
+    assert.equal(text.includes(placeholder), false, "no hidden placeholder reaches output");
+    assert.equal(text.includes(placeholder.slice(0, 12)), false, "interleaved writes cannot expose a held prefix");
+    assert.equal(text.includes(readable), true, "explicit readable configuration remains shareable");
+    assert.equal((text.match(/\[REDACTED\]/g) || []).length, 3);
+  }
+  assert.ok(spec.args[1].includes('["QA_HIDDEN_RULED"]'), "the wrapper receives the hidden env name");
+  assert.equal(spec.args.join("").includes(hidden) || spec.args.join("").includes(placeholder), false);
+  assert.equal(parseContainerJobExit(raw), 0);
+  assert.equal(continuations.length, 1);
+  assert.deepEqual(delivered, ["safe fixture summary"]);
+  assert.equal(persistedRow(started.id), null, "successful continuation retires the durable row");
+  assert.ok(backend.calls.leases.every((lease) => lease.released));
 });
