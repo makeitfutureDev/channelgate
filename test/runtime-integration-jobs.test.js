@@ -257,3 +257,77 @@ test("proxy-mode background jobs redact hidden placeholders before persistence a
   assert.equal(persistedRow(started.id), null, "successful continuation retires the durable row");
   assert.ok(backend.calls.leases.every((lease) => lease.released));
 });
+
+test("isolated job poller preserves known exit codes in audit and keeps missing markers unknown", async () => {
+  const backend = createFakeRuntimeBackend();
+  let unknownSlug = "";
+  let holdUnknownProbe = true;
+  const probe = backend.probe.bind(backend);
+  backend.probe = async (child) => {
+    // Keep the real poller observing this fixture as live until its marker has been removed.
+    // Slow CI must not finish the job between the wrapper write and the negative-control edit.
+    if (holdUnknownProbe && child?.runtime?.target?.slug === unknownSlug) return true;
+    return probe(child);
+  };
+  const continuations = [], notices = [], delivered = [];
+  const jobs = new BackgroundJobs({
+    resolveTarget: (slug, meta) => fakeTarget(backend, slug, meta),
+    runner: async ({ text, threadKey }) => {
+      continuations.push({ text, threadKey });
+      return { content: "Safe fixture result", engine: "claude" };
+    },
+    deliver: async (_client, payload) => { delivered.push(payload.threadKey); },
+  });
+  jobs._client = () => null;
+  const fixtures = [];
+  for (const expected of [0, 23, null]) {
+    const suffix = expected === null ? "unknown" : String(expected);
+    const channelId = "C_JOB_EXIT_" + suffix;
+    const { entry } = await autoChannel(channelId, "job-exit-" + suffix);
+    if (expected === null) unknownSlug = entry.slug;
+    const started = await jobs.start({
+      channelId, authorId: "U_JOB", threadKey: "exit-" + suffix, label: "safe outcome fixture",
+      command: "printf 'prepared-safe-marker\\n'; exit " + (expected ?? 0),
+    });
+    assert.equal(started.ok, true, started.error);
+    fixtures.push({ expected, rec: jobs.jobs.get(started.id) });
+  }
+  // Simulate an incomplete durable log only after the actual wrapper has written its marker.
+  // This negative control must never turn an unconfirmed result into a fabricated zero exit.
+  const unknown = fixtures.find((fixture) => fixture.expected === null).rec;
+  const markerDeadline = Date.now() + 10_000;
+  let completeLog = "";
+  while (Date.now() < markerDeadline) {
+    try { completeLog = readFileSync(unknown.logFile, "utf8"); } catch {}
+    if (parseContainerJobExit(completeLog) !== null) break;
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  assert.equal(parseContainerJobExit(completeLog), 0, "the real wrapper finished before the fixture truncation");
+  writeFileSync(unknown.logFile, stripContainerJobExit(completeLog));
+  holdUnknownProbe = false;
+  const deadline = Date.now() + 12_000;
+  while (fixtures.some(({ rec }) => !rec.pendingDelivery) && Date.now() < deadline) {
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+  for (const { expected, rec } of fixtures) {
+    assert.ok(rec.pendingDelivery, "the actual poller checkpoints each finished job");
+    assert.equal(parseContainerJobExit(readFileSync(rec.logFile, "utf8")), expected);
+    const event = getDb().prepare("SELECT data FROM events WHERE event = 'bg_finish' ORDER BY id DESC")
+      .all().map(({ data }) => JSON.parse(data)).find((item) => item.id === rec.id);
+    assert.equal(event.exitCode, expected, "structured audit retains exactly the observed exit code");
+    assert.equal(event.ok, expected === null ? null : expected === 0);
+    assert.equal(persistedRow(rec.id).pendingDelivery.outcome.ok, event.ok);
+  }
+  jobs._client = () => ({ platform: "slack", post: async ({ text }) => { notices.push(text); return { ok: true }; } });
+  for (const { rec } of fixtures) await jobs._deliver(rec);
+  assert.equal(continuations.length, 3);
+  assert.equal(delivered.length, 3);
+  for (const text of [...notices, ...continuations.map((item) => item.text)]) {
+    assert.doesNotMatch(text, /exit code|cg-exit:/i, "semantic completion prose remains unchanged");
+  }
+  assert.ok(continuations.some(({ text }) => text.includes("recorded outcome is success")));
+  assert.ok(continuations.some(({ text }) => text.includes("recorded outcome is failure")));
+  assert.ok(continuations.some(({ text }) => text.includes("recorded outcome is unknown")));
+  assert.ok(fixtures.every(({ rec }) => persistedRow(rec.id) === null));
+  assert.ok(backend.calls.leases.every((lease) => lease.released));
+});

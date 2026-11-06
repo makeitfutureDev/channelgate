@@ -4473,7 +4473,9 @@ are retired, bullet by bullet; everything else stands.
   attach and no exit code to read from the child. Output goes to a log under the artifact mount — the
   same absolute path on both sides, so the daemon tails the very file the job writes — and the
   wrapper appends a `[cg-exit:N]` marker as its last act, so a finished job reports a real exit code
-  (a missing marker is "unknown", never 0). The persisted row records `{backend, runId, container}`,
+  in the structured completion audit (a missing marker is "unknown", never 0). Completion notices
+  and engine continuations retain their plain-language outcome. The persisted row records
+  `{backend, runId, container}`,
   so after a daemon restart a recovered job is probed and signalled BY ITS RUN ID through the
   backend, never by the stale pid of a client process that is long gone. The memory reviewer follows
   the same rule: it resolves its own target, takes a `review` lease, and runs in the channel's

@@ -1144,6 +1144,7 @@ export class BackgroundJobs {
         // line of its own log — so a container job reports a real outcome instead of "unknown".
         const exitCode = rec.runtimeChild && !rec.timedOut ? parseContainerJobExit(raw) : null;
         await this._finish(rec, {
+          code: exitCode,
           outcome: rec.timedOut
             ? describeProcessOutcome({ timedOut: true, timeout: fmtDur(Date.now() - rec.startedAt) })
             : exitCode != null

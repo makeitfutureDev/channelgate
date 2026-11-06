@@ -6311,6 +6311,11 @@ structural invariants are automated; rendered navigation and feature claims also
       restart-unknown outcomes; their continuation prompt carries the semantic outcome and output
       tail while structured events retain the raw value/signal. The injected tool/Slack guide also
       instructs agents to report the plain-language outcome rather than an exit status.
+- [x] Container audit fidelity (2026-11-06): `test/runtime-integration-jobs.test.js` starts actual
+      shell wrappers through `BackgroundJobs` and waits for the real poller. Exit 0 and exit 23
+      survive into `bg_finish.exitCode`; a deliberately missing durable marker remains null with
+      unknown outcome. Notice/continuation prose stays semantic, each delivery occurs once and
+      completed rows and leases are released.
 - [x] Claude, Codex, and OpenCode generic failures/cancellation; Claude structured provider errors;
       CLI health; Codex MCP discovery; Drive sync fallback; local voice subprocesses; and
       transactional update commands have focused regressions proving semantic messages while raw
