@@ -12,7 +12,8 @@
   Resolve the executable and require its package files and global prefix to be root-owned and
   unwritable by the channel user. Confirm no Make saved login exists in a fresh HOME.
 - Live Claude and Codex (pending): use separate disposable proxy-mode fixture channels, each
-  with its own least-privilege Make `MAKE_API_KEY` and correct `MAKE_ZONE` explicitly Readable,
+  with its own least-privilege Make `MAKE_API_KEY` kept Hidden/default and only its correct
+  `MAKE_ZONE` explicitly Readable,
   plus an owned team ID. Ask: "Use the installed make-cli to report its version and list scenario
   IDs/names for team <owned-team-id>; do not change anything or print credentials." Require the
   pinned executable in both engines, correct account/team result and no exposed key. Confirm
