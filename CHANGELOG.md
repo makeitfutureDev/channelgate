@@ -9,6 +9,9 @@ release gates. Stable promotion and publication require approval of the exact te
 
 ### Beta development notes
 
+- Revoke pending identity-link proofs for a recovered administrator, preventing an older proof
+  from replacing the new recovery enrollment link. Other administrators' proofs remain valid.
+
 - Fix horizontal overflow in the Users editor caused by stretching the personal-email sending
   checkbox to the full form width.
 
