@@ -870,33 +870,41 @@ inbox). Record the address and the servers; never the password.
   send, delivery and reply; attributed and defanged kickoff; the `agent:<source>` principal with
   `untrustedPrincipal`, the `agent-message` toolset and the `agent_message` origin; the reply
   posted in the target thread and re-injected into the origin thread as a continuation by the
-  requester); every refusal (requester not a member, not authorized, admin without membership,
-  stranger, DM source, target not accepting, hidden, unregistered, self, ambiguous name, oversized,
-  empty, non-thread key, disconnected connector); in-flight, per-pair and per-source caps with the
-  one-hour window; a withheld reply after membership lapsed mid-turn; a failed target turn told to
-  both threads; a delivery re-check refusing before any turn; boot recovery (interrupted → failed
-  closed, answered → redelivered); the durable requester card for both engine MCP contexts with
-  identity bound to the verified capability; refusals for untrusted, API and agent principals; the
-  agent-principal context (no rank, access only while `acceptsMessages` is on); the reduced
-  toolset inventory; the loopback-secret host IPC; the control-plane classification tripwire.
+  requester); every refusal (requester not a member of the target or of the source, not
+  authorized, admin without membership, stranger, unverifiable roster, DM target, disabled target,
+  unregistered, self, ambiguous name, oversized, empty, non-thread key, disconnected connector) and
+  every non-refusal (a DM source, a hidden target, extra readers on either side, apps in the
+  roster); in-flight, per-pair and per-source caps with the one-hour window; a withheld reply after
+  membership lapsed mid-turn; a failed target turn told to both threads; a delivery re-check
+  refusing before any turn; boot recovery (interrupted → failed closed, answered → redelivered);
+  the `ask #channel` directive parser; live membership through the platform directory interface
+  (both rosters, DM target, missing connector, truncated roster, cross-platform → unverifiable);
+  the durable requester card for both engine MCP contexts with identity bound to the verified
+  capability; refusals for untrusted, API and agent principals; the agent-principal context (no
+  rank, scoped to its registered channel); the reduced toolset inventory; the loopback-secret
+  host IPC; the control-plane classification tripwire.
 - [ ] Live **Claude and Codex**, separately: two owned test channels A (source, Worker) and B
-  (target) whose complete rosters match, both containing the tester. In B, a manager runs
-  `set_channel_agent_profile({ description: "Sales pipeline", acceptsMessages: true })` and saves
-  a memory fact (“Q4 pipeline: 12 open deals”). In A, ask “Ask the sales agent what the Q4
-  pipeline is and summarize it for me.” **Pass:** A's agent calls `search_agents` then
-  `send_agent_message`, a card appears in A's thread naming B and the exact text, nothing is posted
-  in B before the click; after the requester's Approve, B gets a new thread “Message from the agent
-  in #A, requested by @tester” with the quoted question, B's agent answers from its memory in that
-  thread, A's thread receives “Reply from the agent in #B arrived” followed by a turn that relays
-  the figure and credits B; `agent_message_sent/delivered/answered/completed` events exist; the
-  B thread's permission cards (if any) read “The agent from #A”. Record channel ids, message id,
-  engine/model and both thread links.
+  (target), the tester a member of both; B's roster may include people and apps A's does not and
+  vice versa. In B, save a memory fact (“Q4 pipeline: 12 open deals”). In A, ask “Ask the sales
+  agent what the Q4 pipeline is and summarize it for me.” **Pass:** A's agent calls
+  `search_agents` (or goes straight to the tool when B is named) then `send_agent_message`, a card
+  appears in A's thread naming B and the exact text, nothing is posted in B before the click; after
+  the requester's Approve, B gets a new thread “Message from the agent in #A, requested by @tester”
+  with the quoted question, B's agent answers from its memory in that thread, A's thread receives
+  “Reply from the agent in #B arrived” followed by a turn that relays the figure and credits B;
+  `agent_message_sent/delivered/answered/completed` events exist; the B thread's permission cards
+  (if any) read “The agent from #A”. Record channel ids, message id, engine/model and both thread
+  links. Then, **engine-independent**, type `@agent ask #B what is the Q4 pipeline?` at A's top
+  level and inside a thread: **Pass:** no card, an immediate “Sent to the agent in #B” reply, the
+  same B thread and return trip; `ask Petru to review this` is answered by the model as a normal
+  prompt.
 - [ ] Live **Claude and Codex** access fixture: (1) from A, target a channel the tester is NOT a
-  member of; (2) target B after a second A member is removed from B; (3) from a public channel
-  target a private B; (4) set B `acceptsMessages: false`; (5) send from a DM; (6) remove the tester
-  from B while B's agent is still answering. **Pass:** 1–5 are refused at the tool with the named
-  check and no post in B; 6 posts the reply in B but A receives “the reply was withheld” and no
-  continuation turn runs; a non-member clicking Approve on A's card is refused (owner tier).
+  member of; (2) target a DM; (3) remove the tester from B while B's agent is still answering;
+  (4) a tester who is a member of both but excluded by B's access policy (`access: admins`,
+  non-admin tester); (5) send from the tester's DM with the bot to B. **Pass:** 1, 2 and 4 are
+  refused at the tool and at the directive with the named check and no post in B; 3 posts the
+  reply in B but A receives “the reply was withheld” and no continuation turn runs; 5 succeeds and
+  the reply lands in the DM; a non-member clicking Approve on A's card is refused (owner tier).
 - [ ] Live **Claude and Codex** guard fixture: send a second message to B from the same A thread
   while the first is in flight; then three more after replies; then from another A thread.
   **Pass:** “still being answered”, then “already sent 3 messages … in the last hour”, the other

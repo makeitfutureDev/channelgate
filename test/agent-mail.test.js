@@ -4,7 +4,7 @@ import { ensureTestEnv } from "./helpers.js";
 
 ensureTestEnv();
 const mail = await import("../src/gateway/agent-mail.js");
-const { AgentMail, AgentMailError, resolveTargetChannel, getAgentMessage, listAgentMessages, MAX_PER_PAIR_PER_WINDOW, MAX_PER_SOURCE_PER_WINDOW, MAX_MESSAGE_CHARS } = mail;
+const { AgentMail, AgentMailError, resolveTargetChannel, parseAskDirective, liveMembership, getAgentMessage, listAgentMessages, MAX_PER_PAIR_PER_WINDOW, MAX_PER_SOURCE_PER_WINDOW, MAX_MESSAGE_CHARS } = mail;
 const { readEvents } = await import("../src/util/logger.js");
 const { getDb } = await import("../src/db/index.js");
 
@@ -17,7 +17,7 @@ let counter = 0;
 function fixture({ clock = { now: 1_800_000_000_000 } } = {}) {
   const entries = new Map();
   const metas = new Map();
-  const visible = new Map();
+  const members = new Map(); // channel → Set of member ids
   const posts = [];
   const runs = [];
   const delivered = [];
@@ -26,10 +26,14 @@ function fixture({ clock = { now: 1_800_000_000_000 } } = {}) {
     const slug = id.toLowerCase();
     entries.set(id, { channelId: id, slug, name: slug.replace(/^c_/, ""), type: "channel", isDM: false, ...entry });
     metas.set(slug, { channelId: id, type: "channel", isDM: false, access: "approved", ...meta });
-    visible.set(id, { visible: true, name: slug, type: "channel", isDM: false, archived: false });
+    members.set(id, new Set([REQUESTER, "U_ADMIN", "U_OTHER_HUMAN", "B_INTEGROMAT"]));
   };
   add(SOURCE);
-  add(TARGET, { agentDirectory: { description: "Sales pipeline", acceptsMessages: true } });
+  add(TARGET, { agentDirectory: { description: "Sales pipeline" } });
+  // The target has readers the source does not, and the source has an app the target does not:
+  // neither matters, only the requester's own membership does.
+  members.get(TARGET).add("U_SALES_ONLY");
+  members.get(TARGET).delete("B_INTEGROMAT");
   let connected = true;
   const client = {
     platform: "slack",
@@ -47,10 +51,12 @@ function fixture({ clock = { now: 1_800_000_000_000 } } = {}) {
     loadEntry: async (id) => entries.get(id) || null,
     loadMeta: async (slug) => metas.get(slug) || null,
     loadUser: async (id) => (id === REQUESTER ? { approved: true, name: "Alex" } : id === "U_ADMIN" ? { approved: true, isAdmin: true } : null),
-    prepareVerifier: async ({ createdBy, channelId }) => {
-      verifierCalls.push({ createdBy, channelId });
-      if (channelId !== SOURCE) return null;
-      return async (entry) => visible.get(entry.channelId) || null;
+    checkMembership: async ({ userId, fromChannelId, toChannelId }) => {
+      verifierCalls.push({ userId, fromChannelId, toChannelId });
+      const from = members.get(fromChannelId);
+      const to = members.get(toChannelId);
+      if (!from || !to) return null;
+      return { inSource: from.has(userId), inTarget: to.has(userId), target: { type: "channel", archived: false } };
     },
     resolveClient: () => (connected ? client : null),
     runner: async (args) => {
@@ -68,7 +74,7 @@ function fixture({ clock = { now: 1_800_000_000_000 } } = {}) {
   const send = (over = {}) => agentMail.send({ channelId: SOURCE, slug: "c_marketing", createdBy: REQUESTER, threadKey: ORIGIN_THREAD, to: TARGET, message: "What is the Q4 pipeline?", origin: "slack_foreground", ...over });
   const settle = async () => { for (let i = 0; i < 20; i += 1) await new Promise((r) => setImmediate(r)); };
   return {
-    agentMail, send, settle, entries, metas, visible, posts, runs, delivered, verifierCalls, clock,
+    agentMail, send, settle, entries, metas, members, posts, runs, delivered, verifierCalls, clock,
     setConnected: (v) => { connected = v; }, setReply: (t) => { replyText = t; }, failTarget: (e) => { failTargetRun = e; },
   };
 }
@@ -110,9 +116,9 @@ test("a complete exchange: gate, target thread, agent-principal turn, reply re-i
   assert.ok(record.toThreadKey);
 
   // The gate ran at send, at delivery and before the reply came home — each time for the requester
-  // from the SOURCE conversation (the audience that reads the reply).
+  // on BOTH conversations.
   assert.equal(f.verifierCalls.length, 3);
-  assert.ok(f.verifierCalls.every((call) => call.createdBy === REQUESTER && call.channelId === SOURCE));
+  assert.ok(f.verifierCalls.every((call) => call.userId === REQUESTER && call.fromChannelId === SOURCE && call.toChannelId === TARGET));
 
   // Kickoff in the target channel: attributed, quoted, no live control sequences from the model.
   const kickoff = f.posts.find((p) => p.conversationId === TARGET && !p.threadKey);
@@ -156,39 +162,56 @@ test("a complete exchange: gate, target thread, agent-principal turn, reply re-i
   }
 });
 
-test("the requester's own access decides where a message may go", async () => {
+test("the requester's own access decides where a message may go, and nothing else does", async () => {
   const f = fixture();
-  // Not a member of the target (or not everyone in the source is): the verifier does not prove it.
-  f.visible.delete(TARGET);
-  await refusal(f.send(), "audience", /current member of #sales/);
-  f.visible.set(TARGET, { visible: true, name: "sales", type: "channel", isDM: false, archived: false });
+  // Not a member of the target.
+  f.members.get(TARGET).delete(REQUESTER);
+  await refusal(f.send(), "membership", /current member of #sales/);
+  f.members.get(TARGET).add(REQUESTER);
+  // Not a member of the source any more (a schedule firing after they left).
+  f.members.get(SOURCE).delete(REQUESTER);
+  await refusal(f.send(), "membership", /member of this conversation/);
+  f.members.get(SOURCE).add(REQUESTER);
   // Not authorized by the target's access policy, even though a member.
   f.metas.get("c_sales").access = "admins";
   await refusal(f.send(), "requester_unauthorized", /not authorized to use the agent in #sales/);
   f.metas.get("c_sales").access = "approved";
   // Admins do not skip membership either.
-  f.visible.delete(TARGET);
-  await refusal(f.send({ createdBy: "U_ADMIN" }), "audience");
-  f.visible.set(TARGET, { visible: true, name: "sales", type: "channel", isDM: false, archived: false });
+  f.members.get(TARGET).delete("U_ADMIN");
+  await refusal(f.send({ createdBy: "U_ADMIN" }), "membership");
+  f.members.get(TARGET).add("U_ADMIN");
   // Unknown person.
   await refusal(f.send({ createdBy: "U_STRANGER" }), undefined, /not authorized in this conversation/);
-  // A DM has no shared audience to prove.
+  // Membership that cannot be verified is a refusal, never an allowance.
+  f.members.delete(TARGET);
+  await refusal(f.send(), "unverifiable");
+  assert.equal(listAgentMessages().length, 0, "a refused send persists nothing");
+  // A DM source is fine: the person is the only reader there.
+  f.members.set(TARGET, new Set([REQUESTER]));
   f.entries.set("D_DM", { channelId: "D_DM", slug: "d_dm", name: "", type: "im", isDM: true });
   f.metas.set("d_dm", { channelId: "D_DM", type: "im", isDM: true, access: "approved" });
-  await refusal(f.send({ channelId: "D_DM", slug: "d_dm" }), undefined, /direct message/);
-  assert.equal(listAgentMessages().length, 0, "a refused send persists nothing");
+  f.members.set("D_DM", new Set([REQUESTER]));
+  const fromDm = await f.send({ channelId: "D_DM", slug: "d_dm" });
+  await f.settle();
+  assert.equal(getAgentMessage(fromDm.id).status, "delivered");
 });
 
-test("the target must have opted in, be eligible and be a single registered channel", async () => {
+test("the target must be a registered, live channel named unambiguously", async () => {
   const f = fixture();
-  f.metas.get("c_sales").agentDirectory.acceptsMessages = false;
-  await refusal(f.send(), "not_accepting", /does not accept messages/);
-  f.metas.get("c_sales").agentDirectory.acceptsMessages = true;
+  f.metas.get("c_sales").disabled = true;
+  await refusal(f.send(), undefined, /disabled or archived/);
+  delete f.metas.get("c_sales").disabled;
+  // Hidden from the directory still answers: discovery and reachability are separate.
   f.metas.get("c_sales").agentDirectory.hidden = true;
-  await refusal(f.send(), undefined, /not available to other agents/);
+  const hidden = await f.send();
+  await f.settle();
+  assert.equal(getAgentMessage(hidden.id).status, "delivered");
   f.metas.get("c_sales").agentDirectory.hidden = false;
   await refusal(f.send({ to: "C_NOPE" }), undefined, /No single registered channel/);
   await refusal(f.send({ to: SOURCE }), undefined, /this conversation's own agent/);
+  f.entries.set("D_TARGET", { channelId: "D_TARGET", slug: "d_target", name: "", type: "im", isDM: true });
+  f.metas.set("d_target", { channelId: "D_TARGET", type: "im", isDM: true, access: "approved" });
+  await refusal(f.send({ to: "D_TARGET" }), undefined, /direct message, not a channel agent/);
   f.entries.set("C_SALES2", { channelId: "C_SALES2", slug: "c_sales2", name: "sales", type: "channel", isDM: false });
   await refusal(f.send({ to: "sales" }), undefined, /No single registered channel/);
   await refusal(f.send({ message: "x".repeat(MAX_MESSAGE_CHARS + 1) }), undefined, /too long/);
@@ -231,7 +254,7 @@ test("a reply is withheld when the requester's access lapsed while the target wo
   const f = fixture();
   const runner = f.agentMail.runner;
   f.agentMail.runner = async (args) => {
-    if (args.origin === "agent_message") f.visible.delete(TARGET); // removed from #sales mid-turn
+    if (args.origin === "agent_message") f.members.get(TARGET).delete(REQUESTER); // removed from #sales mid-turn
     return runner(args);
   };
   const sent = await f.send();
@@ -256,13 +279,13 @@ test("a failed target turn tells both threads and never re-runs", async () => {
   assert.ok(f.posts.some((p) => p.conversationId === TARGET && p.threadKey === record.toThreadKey && /could not answer/.test(p.text)));
 });
 
-test("delivery re-checks the gate: a switch turned off after the send refuses before any turn runs", async () => {
+test("delivery re-checks the gate: access lost right after the send refuses before any turn runs", async () => {
   const f = fixture();
   const loadMeta = f.agentMail.loadMeta;
   let sends = 0;
   f.agentMail.loadMeta = async (slug) => {
     const meta = await loadMeta(slug);
-    if (slug === "c_sales" && sends > 0) return { ...meta, agentDirectory: { ...meta.agentDirectory, acceptsMessages: false } };
+    if (slug === "c_sales" && sends > 0) return { ...meta, access: "admins" };
     return meta;
   };
   const sent = await f.send();
@@ -374,4 +397,31 @@ test("reply delivery gives up after the attempt budget, with a pointer to the ta
 test("listAgentMessages filters by status and bounds its page", () => {
   assert.deepEqual(listAgentMessages({ status: "delivered", limit: 0 }), []);
   assert.equal(getAgentMessage("missing"), null);
+});
+
+test("parseAskDirective recognizes only the anchored verb followed by a #channel", () => {
+  assert.deepEqual(parseAskDirective("ask <#C123|sales> what is the pipeline?"), { to: "C123", message: "what is the pipeline?" });
+  assert.deepEqual(parseAskDirective("Ask #sales: hello"), { to: "sales", message: "hello" });
+  assert.deepEqual(parseAskDirective("ask <#C1>"), { to: "C1", message: "" });
+  assert.equal(parseAskDirective("ask Petru to review"), null);
+  assert.equal(parseAskDirective("ask me anything"), null);
+  assert.equal(parseAskDirective("please ask #sales"), null);
+  assert.equal(parseAskDirective(""), null);
+});
+
+test("liveMembership reads both rosters through the platform's directory interface and fails closed", async () => {
+  const calls = [];
+  const directory = {
+    describeConversation: async ({ conversationId }) => ({ type: conversationId === "C_T" ? "channel" : "im", archived: false }),
+    conversationMembers: async ({ conversationId }) => { calls.push(conversationId); return conversationId === "C_S" ? ["U1", "B1"] : ["U1", "U2"]; },
+  };
+  const connectorFor = () => ({ agentDirectory: directory });
+  const ok = await liveMembership({ userId: "U1", fromChannelId: "C_S", toChannelId: "C_T" }, { connectorFor });
+  assert.deepEqual({ inSource: ok.inSource, inTarget: ok.inTarget }, { inSource: true, inTarget: true });
+  const notThere = await liveMembership({ userId: "U2", fromChannelId: "C_S", toChannelId: "C_T" }, { connectorFor });
+  assert.deepEqual({ inSource: notThere.inSource, inTarget: notThere.inTarget }, { inSource: false, inTarget: true });
+  assert.equal(await liveMembership({ userId: "U1", fromChannelId: "C_S", toChannelId: "D_X" }, { connectorFor }), null, "a DM target is not a channel agent");
+  assert.equal(await liveMembership({ userId: "U1", fromChannelId: "C_S", toChannelId: "C_T" }, { connectorFor: () => null }), null, "no connector → unverifiable");
+  assert.equal(await liveMembership({ userId: "U1", fromChannelId: "C_S", toChannelId: "C_T" }, { connectorFor: () => ({ agentDirectory: { ...directory, conversationMembers: async () => null } }) }), null, "a truncated roster → unverifiable");
+  assert.equal(await liveMembership({ userId: "U1", fromChannelId: "gchat:spaces/X", toChannelId: "C_T" }, { connectorFor }), null, "cross-platform → unverifiable");
 });

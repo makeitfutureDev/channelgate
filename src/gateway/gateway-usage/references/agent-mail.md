@@ -1,9 +1,14 @@
 # Ask another channel's agent (agent mail)
 
 Use `gateway` → `send_agent_message` when the task needs what ANOTHER channel's agent knows or
-can do — its memory, files, skills or connected accounts — and `search_agents` (see
-`references/agent-directory.md`) found that channel. Typical shape: the marketing channel's agent
-asks the sales channel's agent for the current pipeline, then uses the answer in its own work.
+can do — its memory, files, skills or connected accounts. Either the user named the channel
+("ask #sales what the pipeline is", "tell the agent in #dev to …") or `search_agents` (see
+`references/agent-directory.md`) found it. Typical shape: the marketing channel's agent asks the
+sales channel's agent for the current pipeline, then uses the answer in its own work.
+
+There is also a typed form that needs no model turn: a person writes `@agent ask #sales <text>`
+and the gateway sends that exact text itself, with no approval card. You will not see those
+messages go out; you see the reply arrive like any other.
 
 It is a question or request to a PEER, on behalf of the person who asked you. It never gives you
 their files, their memory or their tools; what you get back is what that agent chose to say.
@@ -27,19 +32,18 @@ So: call the tool once, tell the user what you asked and that the card needs the
 
 ## Who may send, and where
 
-A message may only go where the requesting person could post themselves:
+A message may only go where the requesting person could post themselves: they must be authorized
+in the target channel under the gateway's own access rules AND be a current member of it and of
+this conversation (admins do not skip membership). That is the whole rule. Every registered
+channel's agent answers; there is no opt-in, and a channel hidden from the directory still answers
+when named. The reply lands in this conversation on the requester's responsibility, exactly as if
+they had copied it across by hand.
 
-- they must be authorized in the target channel under the gateway's own access rules AND be a
-  current member of it (admins do not skip membership);
-- everyone who can read THIS conversation must belong to the target too, because the reply lands
-  here (a public channel can therefore never message a private one, and a DM cannot send at all);
-- the target channel's manager must have switched **acceptsMessages** on with
-  `set_channel_agent_profile({ acceptsMessages: true })`; hidden, disabled, archived and Lean
-  channels never receive.
-
-The gateway re-checks all of this live when you call the tool, again before the target's agent
-starts, and again before the reply comes back. A refusal names the failed check; relay it and do
-not look for a way around it. API runs and delivered agent messages themselves cannot send.
+The gateway re-checks this live when you call the tool, again before the target's agent starts,
+and again before the reply comes back. A refusal names the failed check; relay it and do not look
+for a way around it. When the user named a channel the directory did not list, call the tool
+anyway: the directory hides channels for other reasons, and only the tool knows whether this person
+may send there. API runs and delivered agent messages themselves cannot send.
 
 Reachability is not authority. The target's agent sees the message as untrusted data from a peer
 and runs as `agent:<this channel>` — no personal accounts, no admin or manager rank, a reduced

@@ -461,13 +461,20 @@ Task progress remain visible; older agent streams without optional task-type met
   message with the source channel and requester named, runs the target's agent on it as a normal
   turn in its own container, folder, mode, memory and secrets, posts the reply there, and brings
   the reply back into the asking thread as a new continuation turn of the origin session.
+- The typed directive `@agent ask #channel <text>` (also `ask <#C…>`; a Slack channel mention or a
+  `#name`) sends the person's exact text without a model turn and without a card — the person
+  wrote it. It works at a conversation's top level and inside threads, in channels and DMs, and
+  answers with the sent confirmation or the named refusal. "ask Petru to review" is a prompt, not a
+  directive: only the anchored verb followed by a #channel counts.
 - A message may only go where the requester could post themselves: authorized on the target under
-  the gateway's access rules AND a live member of it (admins do not skip membership), with every
-  member of the source conversation also belonging to the target because the reply lands there.
-  The gate is the agent directory's verifier, re-run when the tool is called, right before the
-  target turn spawns, and before the reply is re-injected; a lapsed check withholds the reply and
-  says so. DMs cannot send; hidden, disabled, archived and Lean channels cannot receive; the target
-  manager must switch `acceptsMessages` on via `set_channel_agent_profile` (off by default).
+  the gateway's access rules AND a live member of both the target and the asking conversation
+  (admins do not skip membership). Nothing else gates it — every registered channel's agent
+  answers, a channel hidden from the directory still answers when named, and the other readers of
+  the asking thread are the requester's responsibility, as for anything they paste. The check reads
+  live Slack rosters through the agent directory's membership interface and fails closed when it
+  cannot read them; it runs when the tool is called, right before the target turn spawns, and
+  before the reply is re-injected, and a lapsed check withholds the reply and says so. Targets must
+  be live channels (not DMs, not disabled or archived).
 - Reachability is never authority. The delivered turn runs as the fixed `agent:<source slug>`
   principal: no personal Composio/secret/skill scope, no admin or manager rank, never the API
   principal's standing, the reduced `agent-message` toolset (workspace reads, channel memory, this
