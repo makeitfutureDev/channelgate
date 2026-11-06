@@ -69,6 +69,9 @@ under **Enterprise organization controls** in `TEST-PLAN.md`.
   Editable names, message text and run-API attribution cannot establish an email identity.
 - Unchecking Approved in the admin user editor records a manual opt-out from auto-approval;
   checking it clears that opt-out. Removing domains/disabling the policy retains prior approvals.
+- Every policy API request to enable auto-approval requires Enterprise, including a policy
+  already saved as enabled before downgrade. Rejected requests change neither domains nor audit
+  history; disabling the policy and manually approving users remain available.
 - Existing known Slack users can be previewed and explicitly approved, with fresh identity,
   current policy and manual opt-out checks on apply. Up to 500 users per batch; lookup failures
   are reported and grant nothing. Policy changes and automatic approvals are audited.

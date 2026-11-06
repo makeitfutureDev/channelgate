@@ -18,6 +18,7 @@ export function createUserAutoApprovalRouter({ slack } = {}) {
       if (req.body.enabled && !domains.length) throw new TypeError("Add a domain before enabling auto-approval.");
     } catch (error) { return res.status(400).json({ error: error.message }); }
     try {
+      if (req.body.enabled) requireEnterpriseFeature("companyDomainApproval");
       saveSettings({ userAutoApprovalEnabled: req.body.enabled, userAutoApprovalDomains: domains });
       await logEvent("user_auto_approval_policy_changed", { actor: "admin UI", enabled: req.body.enabled, domains });
       res.json(getAutoApprovalPolicy());
