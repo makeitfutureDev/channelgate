@@ -1,5 +1,9 @@
 # ChannelGate — Features
 
+- **Readable background continuation errors.** Failed follow-ups show a bounded provider sentence
+  instead of a nested JSON response. Redacted audit diagnostics retain their detail; structured
+  engine failure facts and the guard against replaying interrupted continuations remain unchanged.
+
 - **Continue after variable server approval in Slack.** Approving a hidden variable’s server automatically queues one continuation in the original thread as the original requester. It waits behind active work, honors queued Stop and current access, records usage and deduplicates repeated clicks. Queued wakeups survive restart; interrupted continuations are reported without replaying unknown actions. Denial and stale approvals do not continue.
 
 The documentation handbook includes its branded favicon in standalone builds and website exports.

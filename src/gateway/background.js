@@ -15,7 +15,7 @@ import { buildShellEnv, serviceSecretValues } from "../engines/child-env.js";
 import { resolveRuntime } from "../runtimes/resolve.js";
 import { newRunId, runtimeSupports } from "../runtimes/contract.js";
 import { killGroup, killTree, processStartTime } from "../util/proc.js";
-import { describeProcessOutcome } from "../util/process-outcome.js";
+import { describeProcessOutcome, plainFailureText } from "../util/process-outcome.js";
 import { appendTail } from "../util/tail.js";
 import { effectiveWorkDir } from "./folders.js";
 import { gatewayRoot } from "../config/paths.js";
@@ -907,8 +907,13 @@ export class BackgroundJobs {
       // Boot recovery redelivers it (up to MAX_DELIVERY_ATTEMPTS).
       const failure = redactSecretValues(err.message, outputSecrets);
       await logEvent("bg_continue_error", { id: rec.id, error: failure });
+      // Decode before the final redaction, and redact before bounding: truncation must never
+      // leave a partial secret that the full-value redactor can no longer recognize.
+      const noticeFailure = redactSecretValues(
+        plainFailureText(failure, Number.MAX_SAFE_INTEGER) || "The continuation failed.", outputSecrets,
+      ).slice(0, 400);
       try {
-        await postNotice(client, { conversationId: rec.channelId, threadKey: rec.threadKey, text: `⚠️ ${what} *${rec.label}* ${status}, but I couldn't continue: ${failure}` });
+        await postNotice(client, { conversationId: rec.channelId, threadKey: rec.threadKey, text: `⚠️ ${what} *${rec.label}* ${status}, but I couldn't continue: ${noticeFailure}` });
       } catch {
         /* ignore */
       }
