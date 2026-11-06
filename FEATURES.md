@@ -3039,8 +3039,12 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
   channel state remain reachable through its authorized tools only.
 - **CLI catalog (`src/config/cli-catalog.js` — Vercel, Supabase, Make.com)**: the deploy CLIs the
   channel runtime image ships, with the environment variable each one accepts instead of a saved
-  login. It feeds the `/secrets` name suggestions (every catalog name, so a channel acting as its
-  own account types `SUPABASE_ACCESS_TOKEN`, not a guess) and the host-sandbox write-deny list for
+  login. Every newly built runtime image includes the official `@makehq/cli` as `make-cli`
+  (spec 1.6.3), pinned in `containers/versions.json` and installed root-owned. Make CLI
+  authentication uses the channel's `MAKE_API_KEY` and `MAKE_ZONE` (for example `eu2.make.com`);
+  the API key remains a destination-bound proxy placeholder and the zone remains routing
+  configuration. Host Make logins are never copied into containers. The catalog feeds the
+  `/secrets` name suggestions (every catalog name, so a channel acting as its own account types `SUPABASE_ACCESS_TOKEN`, not a guess) and the host-sandbox write-deny list for
   saved-login files. **Retired 2026-09-03 (Linux + containers only):** the Settings → Network →
   "CLI integrations" switch, its `cliIntegrations` setting, the live "installed" badges
   (`cli-detect.js` detection) and the read-only linking of the daemon's shared host login
