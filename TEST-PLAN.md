@@ -8700,6 +8700,22 @@ none` for its cases and live gates. Kept as history.
       two surfaces.
 
 ### Scheduling & reminders — time zone, label, acknowledgment + escalation (Slice 8.9)
+- [x] Unit: weekday `7` aliases Sunday after numeric list/range/step expansion; `5-7/2`
+      selects Friday and Sunday, `0-7/2` selects Sunday/Tuesday/Thursday/Saturday, duplicate
+      `0,7` fires once, wildcard and DOM/DOW OR semantics remain intact, and out-of-range or
+      reversed weekdays are rejected. Validation, matching, minimum interval and next-run
+      resolution agree (`test/cron-sunday.test.js`). Schedule-tool creation persists `0 9 * * 7`
+      and creation returns a 09:00 daemon-zone next run; listing preserves the cron and zone
+      (`test/schedule-timezone.test.js`).
+      An isolated scheduler fixture fires Sunday `7` and `0,7` once per schedule, never on
+      Saturday/Monday or twice in one minute (`test/cron-sunday-scheduler.test.js`).
+- [ ] Live (Claude and Codex, separate disposable private test channels): prompt "Create a weekly
+      reminder with cron exactly `0 9 * * 7`, text `Sunday alias QA`, and no notification ping.
+      List it and tell me its next run, including the gateway timezone." Require a persisted cron
+      of `0 9 * * 7` and a Sunday 09:00 next run in the daemon zone, with no invalid-cron refusal.
+      Ask the agent to delete that exact schedule and verify it is absent. Exercise actual firing
+      in an isolated scheduler fixture using Sunday 09:00 local time; pass only when weekday `7`
+      fires once on Sunday and never on Saturday/Monday. Do not alter the production host clock.
 - [x] Unit: `interval_days:14` creates an exact fixed interval, the scheduler runs once when due,
       advances from the planned due time, and does not replay missed periods. `dm-on-match` makes
       no start or routine post, while a `FOUND:` result goes only to the creator's DM

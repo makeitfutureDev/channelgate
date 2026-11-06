@@ -17,7 +17,7 @@ ensureTestEnv();
 const { daemonTimeZone, formatInZone, isUtcZone, zonedStamp } = await import("../src/util/timezone.js");
 const { nextCronRun } = await import("../src/util/cron.js");
 const { register, zoneHint } = await import("../src/mcp/tools/schedules.js");
-const { deleteSchedule } = await import("../src/config/schedules.js");
+const { deleteSchedule, getSchedules } = await import("../src/config/schedules.js");
 
 // The tool registry, reduced to what these tools use: a handler collector and a text responder.
 function registerTools({ channelId = "C_TZ", slug = "tz-test", createdBy = "U_TZ" } = {}) {
@@ -99,4 +99,22 @@ test("zoneHint is silent on a UTC daemon (the sentence would say nothing)", () =
     process.env.TZ = real;
   }
   assert.match(zoneHint(), /Europe\/Bucharest/);
+});
+
+
+test("create_schedule accepts Sunday 7 with a local next fire and listing preserves the cron", async () => {
+  const call = registerTools();
+  const reply = await call("create_schedule", { cron: "0 9 * * 7", prompt: "Sunday QA reminder", notify: "none" });
+  assert.doesNotMatch(reply, /Invalid cron/);
+  const id = reply.match(/id (\S+?)\)/)?.[1];
+  assert.ok(id, reply);
+  try {
+    assert.equal(getSchedules().find((row) => row.id === id).cron, "0 9 * * 7");
+    assert.match(reply, /next run .*09:00 Europe\/Bucharest/);
+    const listed = await call("list_schedules", {});
+    assert.match(listed, /0 9 \* \* 7/);
+    assert.match(listed, /Europe\/Bucharest/);
+  } finally {
+    deleteSchedule(id, "C_TZ");
+  }
 });
