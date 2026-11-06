@@ -12,7 +12,7 @@ const RETENTION_MS = 7 * 24 * 60 * 60 * 1000;
 const CLEANUP_INTERVAL_MS = 60_000;
 const CLEANUP_BATCH = 500;
 
-export function createDurableInbox({ namespace, handle, interrupted = async () => {}, log = console, now = Date.now, concurrencyGroup = "default", conversationKey = null, queuedNamespace = null } = {}) {
+export function createDurableInbox({ namespace, handle, interrupted = async () => {}, log = console, now = Date.now, concurrencyGroup = "default", conversationKey = null, queuedNamespace = null, isReady = null } = {}) {
   if (!namespace || typeof handle !== "function") throw new TypeError("Inbox requires a namespace and handler");
   const owner = randomUUID();
   // Ordinary work shares four slots. Explicit control intake can use a separate bounded group
@@ -50,10 +50,12 @@ export function createDurableInbox({ namespace, handle, interrupted = async () =
   function pump() {
     if (stopped) return;
     if (active.size >= MAX_ACTIVE) return;
-    for (const row of readyRows(MAX_ACTIVE - active.size)) {
+    for (const row of readyRows(isReady ? MAX_PENDING : MAX_ACTIVE - active.size)) {
+      if (active.size >= MAX_ACTIVE) break;
       const key = `${namespace}:${row.event_id}`;
       const conversation = `${namespace}:${row.conversation_id}`;
       if (active.has(key) || activeConversations.has(conversation)) continue;
+      if (isReady && !isReady(row.conversation_id)) continue;
       const wasInterrupted = row.status === "interrupted";
       const claimed = db.prepare("UPDATE inbound_events SET status = 'running', owner = ? WHERE namespace = ? AND event_id = ? AND status = ?")
         .run(owner, namespace, row.event_id, row.status);
@@ -62,11 +64,11 @@ export function createDurableInbox({ namespace, handle, interrupted = async () =
       active.add(key);
       activeConversations.add(conversation);
       Promise.resolve().then(() => wasInterrupted ? interrupted(fromJson(saved.data, {})) : handle(fromJson(saved.data, {})))
-        .then(() => db.prepare("UPDATE inbound_events SET status = 'done', data = '{}' WHERE namespace = ? AND event_id = ? AND owner = ?").run(namespace, row.event_id, owner))
+        .then(() => db.prepare("UPDATE inbound_events SET status = 'done', data = '{}' WHERE namespace = ? AND event_id = ? AND owner = ? AND status = 'running'").run(namespace, row.event_id, owner))
         .catch((error) => {
           // A handler may fail AFTER side effects. Keep an explicit interruption record, never
           // silently turn it back into queued execution. A failed notice waits for reconnect.
-          db.prepare("UPDATE inbound_events SET status = ? WHERE namespace = ? AND event_id = ? AND owner = ?")
+          db.prepare("UPDATE inbound_events SET status = ? WHERE namespace = ? AND event_id = ? AND owner = ? AND status = 'running'")
             .run(wasInterrupted ? "notice_failed" : "interrupted", namespace, row.event_id, owner);
           log.error?.(`[inbox] ${namespace} event interrupted: ${error?.message || error}`);
         })
@@ -79,6 +81,7 @@ export function createDurableInbox({ namespace, handle, interrupted = async () =
   }
 
   return {
+    wake: () => queueMicrotask(pump),
     accept({ id, conversationId, payload }) {
       if (stopped) throw new Error("Inbound transport is stopped; event was not accepted");
       if (!id || !conversationId) throw new Error("Inbound event requires stable event and conversation identifiers");

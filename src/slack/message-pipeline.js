@@ -73,6 +73,7 @@ import { codeChannelReplyTarget, isCodeChannelMeta, syncCodeChannelMeta } from "
 import { refreshCodeChannelDiff } from "./code-channels.js";
 import { busyThreadChoiceBlocks, busyThreadChoices, deliverBusyThreadChoiceLinks, steerActiveRun, BUSY_THREAD_CHOICE_KIND } from "./busy-thread-choice.js";
 import { engineSwitchChoices, engineSwitchChoiceBlocks, engineSwitchChoiceText } from "./engine-switch-choice.js";
+import { cancelSecretHostContinuations } from "../gateway/secret-host-approvals.js";
 
 // In-flight runs by "<slug>::<threadKey>". The queue serializes turns per thread — a second
 // message in the same thread waits FIFO behind the running one instead of racing it in the same
@@ -105,7 +106,7 @@ export function abortRunsInChannel(channelId, slug, byUser, threadKey = null) {
   // durably, so an old button cannot resurrect that message after the active turn was cancelled.
   const pendingChoices = clearPendingRunChoices({ channelId, threadKey });
   const pendingQuestions = cancelPendingQuestions({ channelId, threadKey });
-  const stoppedRuns = [];
+  const stoppedRuns = cancelSecretHostContinuations(channelId, threadKey);
   const stoppedTurns = [];
 
   // Stop every matching engine and terminalize its durable work before the first awaited Slack
@@ -132,7 +133,7 @@ export function abortRunsInChannel(channelId, slug, byUser, threadKey = null) {
     }
     res.active?.controller?.abort(); // kills a cold (keep-alive off) child mid-run — Claude or Codex
     abortPooled(key); // terminates a warm (Claude) session
-    stoppedRuns.push(key.slice(prefix.length));
+    if (!stoppedRuns.includes(key.slice(prefix.length))) stoppedRuns.push(key.slice(prefix.length));
     for (const [state, handles] of [["active", [res.active]], ["queued", res.queued || []]]) {
       for (const handle of handles) {
         if (!handle || handle.stopAccounted) continue;
