@@ -1,5 +1,13 @@
 # ChannelGate — Test Plan
 
+## Documentation favicon
+
+Run `cd documentation && npm run build && npm test`. The output validator requires the
+`/docs/favicon.svg` link on every handbook page and a valid SVG asset in the build. In the exported
+website fixture, require HTTP 200 with SVG content for that URL and repeat desktop/mobile handbook
+navigation, search, themes and menu checks with zero console errors. This website asset is
+engine-independent; source checks alone do not replace browser acceptance.
+
 ## Enterprise organization policy acceptance
 
 Cases EE-POLICY-01 and EE-POLICY-02: for both Claude and Codex, on a disposable Enterprise fixture with Lean mode off set organization instructions and a mandatory skill; verify both appear in a fresh channel run. Downgrade the fixture to Registered and verify the saved policies still apply, while new mandatory grants and changed nonempty organization instructions are rejected with Enterprise guidance. Verify the same rejection via admin UI, HTTP governance/settings routes, MCP org-grant/governance tools and raw settings saves. Mixed governance requests must not partially enable or expose a skill. Explicitly remove the grant and clear instructions; verify subsequent runs omit only those policies and preserve core safety/channel instructions. Re-upgrade and verify new policy writes work. Automated: `test/enterprise-organization-policy.test.js`; live engine acceptance is separate and must not be inferred from unit results.
