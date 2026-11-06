@@ -206,16 +206,40 @@ channel's own Slack thread, delivered by the daemon, with the answer re-injected
 asking thread.** Nothing crosses the container boundary except text and, optionally, a
 daemon-copied attachment. Every hop is visible to the humans of both channels.
 
-### 3.1 Addressing and discovery
+### 3.1 Addressing, discovery and the access rule
 
-- A channel opts in with `meta.agentMail = { enabled, allowFrom: [<slug or "*">], purpose }`.
-  `allowFrom` is an explicit list of sender channels; `purpose` is a one-paragraph description
-  ("Sales pipeline, HubSpot deals, quotes") shown to peers. Managed by whoever passes
-  `canManage()` for that channel, from the channel settings modal (Access tab) and the admin UI.
-- A new gateway tool `list_agent_peers` returns only the channels that admit the CURRENT channel
-  as a sender, with their purpose. DMs never appear as peers.
-- `send_agent_message({ to, message, reply_wanted, attachment? })` addresses a peer by slug or
-  Slack channel name.
+**The access rule (decided 2026-11-06).** An agent acts on a person's behalf, so it may only
+message a channel that person can reach, and the answer may only land where everyone who will
+read it could have read the target themselves. Concretely, a send is admitted only when ALL of:
+
+1. the requesting person passes `isAuthorized()` on the target channel (admin or approved, the
+   target's access policy, a guest grant), AND
+2. the requesting person is a live member of the target conversation (admin status does not skip
+   this; a person who cannot open the target thread may not have an agent write there), AND
+3. every member of the SOURCE conversation is also a member of the target, because the reply is
+   re-injected into the source thread and read by all of them (a public channel can therefore
+   never message a private one), AND
+4. the target channel's manager has switched "accepts agent messages" on.
+
+These are exactly the semantics the specialist agent directory shipped on 2026-10-21
+(`search_agents`, `src/gateway/agent-directory.js`, verifier in `src/slack/agent-directory.js`):
+requester authorization, live chat membership, the source-audience rule, DMs excluded, re-verified
+live rather than from cache. `send_agent_message` reuses that verifier as its gate. The checks run
+at every hop: when the tool is called, again immediately before the target turn spawns (membership
+can change while a message waits in the queue), and again before every reply is re-injected.
+
+- Discovery is `search_agents`; there is no separate peer list. Managers describe or hide their
+  agent with `set_channel_agent_profile`; the new `acceptsMessages` flag sits beside `hidden`.
+  The access rule makes a per-channel sender allowlist redundant, so there is none.
+- `send_agent_message({ to, message, reply_wanted, attachment? })` addresses a channel by the id
+  or name a `search_agents` result returned.
+- The person's access decides REACHABILITY, never AUTHORITY: the delivered turn runs as the fixed
+  `agent:<from-slug>` principal with the requester as attribution only (section 3.2), so a
+  prompt-injected sender can never borrow the requester's personal tokens or admin bypass in the
+  target. This is the split the run API already enforces for its `author` field.
+- Unattended origins: a schedule's send uses the schedule's creator, re-checked live at fire time
+  (as admin status already is); a background agent's send uses its author; an API run cannot
+  send in phase one because its `author` is untrusted attribution.
 
 ### 3.2 Delivery
 
@@ -280,12 +304,13 @@ daemon-copied attachment. Every hop is visible to the humans of both channels.
 | Piece | Location |
 | --- | --- |
 | Envelope, delivery, re-injection, guards | `src/gateway/agent-mail.js` (new) |
-| Tools `list_agent_peers`, `send_agent_message` | `src/mcp/tools/agent-mail.js` (new), registered in `gateway-server.js` behind the capability toolset |
+| Tool `send_agent_message` (discovery stays `search_agents`) | `src/mcp/tools/agent-mail.js` (new), registered in `gateway-server.js` behind the capability toolset |
 | Principal | `src/config/api-principal.js` (add the `agent:<slug>` principal) |
 | Schema | `src/db/migrations.js` migration 32 (`agent_messages`) |
-| Channel setting | `meta.agentMail` in `store.js` + `dead-fields.js`, the Access tab of `src/slack/channel-settings.js`, `routes/channels.js`, admin UI |
+| Channel setting | `acceptsMessages` in the agent profile (`set_channel_agent_profile`, `src/gateway/agent-directory.js`), the Access tab of `src/slack/channel-settings.js`, `routes/channels.js`, admin UI |
+| Access gate | the directory verifier (`src/slack/agent-directory.js`) called at send, delivery and reply time |
 | Guide | `src/gateway/gateway-usage/references/agent-mail.md` (when to use it, the queued-then-end-turn rule) |
-| Tests | `test/agent-mail.test.js`: allowlist, round and depth caps, cycle refusal, principal has no personal scope, re-injection targets the origin thread, refusal messages |
+| Tests | `test/agent-mail.test.js`: requester authorization, live membership, source-audience rule, re-check at delivery and reply, round and depth caps, cycle refusal, principal has no personal scope, re-injection targets the origin thread, refusal messages |
 
 ### 3.6 A zero-code experiment (not the product)
 
