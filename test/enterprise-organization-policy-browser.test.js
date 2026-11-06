@@ -34,8 +34,8 @@ test("organization instruction licensing preserves values, locks editing and sup
   page.on("pageerror", (error) => errors.push(error.message));
   await page.goto(`http://127.0.0.1:${server.address().port}/settings`);
   const field = page.locator("#set-agents-instructions");
-  await page.waitForFunction(() => document.querySelector("#set-agents-instructions")?.value === "Saved organization rule.");
-  await page.waitForFunction(() => document.querySelector("#set-agents-instructions")?.readOnly === true);
+  await page.waitForFunction(() => globalThis.document.querySelector("#set-agents-instructions")?.value === "Saved organization rule.");
+  await page.waitForFunction(() => globalThis.document.querySelector("#set-agents-instructions")?.readOnly === true);
   assert.match(await page.locator("#organization-instructions-entitlement").textContent(), /remain active/);
   await page.locator("#clear-organization-instructions").click();
   assert.equal(await field.inputValue(), "");
@@ -45,7 +45,7 @@ test("organization instruction licensing preserves values, locks editing and sup
   assert.equal(settings.getAgentsInstructions(), "");
   testLicenseEnv({ tier: "enterprise" });
   await page.reload();
-  await page.waitForFunction(() => document.querySelector("#set-agents-instructions")?.readOnly === false);
+  await page.waitForFunction(() => globalThis.document.querySelector("#set-agents-instructions")?.readOnly === false);
   await field.fill("Updated Enterprise policy.");
   const saved = page.waitForResponse(r => r.url().endsWith("/api/settings") && r.request().method() === "PUT");
   await page.locator("#save-settings").click();
