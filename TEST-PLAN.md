@@ -8715,14 +8715,23 @@ none` for its cases and live gates. Kept as history.
       `0,7` fires once, wildcard and DOM/DOW OR semantics remain intact, and out-of-range or
       reversed weekdays are rejected. Validation, matching, minimum interval and next-run
       resolution agree (`test/cron-sunday.test.js`). Schedule-tool creation persists `0 9 * * 7`
-      and creation returns a 09:00 daemon-zone next run; listing preserves the cron and zone
-      (`test/schedule-timezone.test.js`).
-      An isolated scheduler fixture fires Sunday `7` and `0,7` once per schedule, never on
-      Saturday/Monday or twice in one minute (`test/cron-sunday-scheduler.test.js`).
+      and, with Friday 2026-11-06 frozen in Europe/Bucharest, creation plus both list forms
+      agree on Sunday 2026-11-08 09:00 (07:00 UTC). Detail returns derived `nextRun`/
+      `nextRunLocal`; advancing beyond Sunday recomputes the following Sunday without
+      modifying stored state. Disabled/impossible/invalid schedules have no preview; one-time
+      and interval rows retain their saved due times, including overdue times. Other channels
+      cannot read the fixture (`test/schedule-timezone.test.js`).
+      An isolated scheduler fixture persists `7`, `0,7`, `5-7/2` and `0-7/2`: all fire once on
+      Sunday, none on Monday or twice in one minute; only `0-7/2` fires Saturday and only
+      `5-7/2` fires Friday (`test/cron-sunday-scheduler.test.js`).
 - [ ] Live (Claude and Codex, separate disposable private test channels): prompt "Create a weekly
       reminder with cron exactly `0 9 * * 7`, text `Sunday alias QA`, and no notification ping.
       List it and tell me its next run, including the gateway timezone." Require a persisted cron
-      of `0 9 * * 7` and a Sunday 09:00 next run in the daemon zone, with no invalid-cron refusal.
+      of `0 9 * * 7`; creation and independent real `list_schedules` calls (detail and list)
+      must agree on Sunday 09:00 in the daemon zone, with no invalid-cron refusal. Capture exact
+      loaded candidate revision, engine/model, schedule ID and raw tool responses; a derived
+      operator calculation or an agent's text alone does not establish listing output. Disabled
+      rows show no next run; no production host clock changes are allowed.
       Ask the agent to delete that exact schedule and verify it is absent. Exercise actual firing
       in an isolated scheduler fixture using Sunday 09:00 local time; pass only when weekday `7`
       fires once on Sunday and never on Saturday/Monday. Do not alter the production host clock.

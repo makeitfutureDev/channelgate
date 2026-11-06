@@ -2585,6 +2585,11 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
   interrupted rows remain recoverable on boot. → TEST-PLAN: Automation.
 - Recurring cron weekday fields accept both `0` and `7` for Sunday, including lists, ranges and
   steps. Steps apply before Sunday normalization; matching and next-run previews agree.
+- Both `list_schedules` forms show the next nominal due time in the gateway timezone. Detail
+  responses add derived `nextRun` (UTC ISO) and `nextRunLocal` (zone-labelled display) fields;
+  cron previews are recalculated at read time without rewriting the stored expression or state.
+  Disabled or unresolvable schedules have null previews. One-time and interval schedules use
+  their saved due time, including overdue times; previews do not guarantee delivery or admission.
 - One-time ("run at") schedules: `create_schedule` accepts `in_minutes`/`run_at` to fire once and
   auto-delete (e.g. "remind this channel in 2h") alongside recurring cron; recurring crons are held
   to a minimum interval (default 60 min) with per-channel + concurrency caps.
