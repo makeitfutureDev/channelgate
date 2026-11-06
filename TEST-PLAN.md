@@ -12157,6 +12157,17 @@ Enterprise deployment without deleting saved data. Never record a live pass from
   authentication; skill catalog MCP/tokens; organization secrets; Google Drive sync; channel
   skill templates; monthly channel USD spending limits. Enterprise permits authorized changes.
 - Verify saved domain policies do not approve a user after downgrade; manual approvals still work.
+- Domain policy enable API regression (2026-11-06, engine-independent): run
+  `node --test test/user-auto-approval-entitlement.test.js`. In an authenticated disposable
+  Enterprise fixture, enable `example.test`, then downgrade to Free without clearing the policy.
+  PUT `/api/user-auto-approval` with `enabled:true` and either the saved or replacement domains
+  must return 403 `enterprise_required`, preserve all settings and emit no policy-change audit.
+  Matching provider identity must remain unapproved; preview/apply must return 403. Manually
+  approve the user, disable the policy, and upgrade/re-enable: each authorized action succeeds
+  without revoking an existing user's permissions. For exact isolated acceptance also submit
+  controlled Slack intake with exact, subdomain, suffix and text-only email identities; only
+  Enterprise's authoritative exact match auto-approves. No engine process is needed, and this
+  fixture does not establish native Slack delivery or deployed acceptance.
 - Verify a downgraded dedicated-Codex channel refuses the run with an actionable Enterprise
   message and never uses the shared gateway account instead. Shared-login channels still run.
 - Verify existing catalog/user tokens cannot read or mutate through the external MCP endpoint
