@@ -187,3 +187,7 @@ See [license-key behavior](LICENSE-KEYS.md#enterprise-organization-controls).
 channel's recorded spend reaches its configured limit for the current UTC calendar month.
 In-flight and concurrent runs may exceed the limit; it does not reserve provider spend or control
 usage outside this gateway.
+
+### Mandatory organization policies
+
+Enterprise is required to add mandatory organization skill grants or add/edit organization-wide agent instructions. Previously saved policies continue applying after a downgrade so a license change never silently removes protections. Administrators can explicitly remove grants or clear instructions on any tier. Existing Lean-mode exclusions still apply; these policies do not override Lean mode. Personal and channel skill grants, ordinary catalog content maintenance, channel instructions and the built-in safety baseline remain available on all tiers.

@@ -2,6 +2,8 @@
 import { getLicenseStatus } from "./license.js";
 
 export const ENTERPRISE_FEATURES = Object.freeze({
+  mandatoryOrgSkills: "Mandatory organization skills",
+  organizationInstructions: "Organization-wide agent instructions",
   skillModelRouting: "Skill-specific engine and model switching",
   companyDomainApproval: "Company-domain automatic approval",
   channelCodexLogin: "Dedicated channel Codex sign-in",

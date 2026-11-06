@@ -312,6 +312,13 @@ export async function revokeSkillsFromUser(userId, slugs) {
   return { removed: result.removed, stillRequired: result.stillRequired, names: result.names };
 }
 
+// Validate before governance handlers touch any catalog flags or grants.
+export function validateSkillGovernanceChange(skill, { enabled, mandatory } = {}) {
+  if (mandatory !== true) return;
+  if (enabled === false) throw new SkillCatalogError("A mandatory skill cannot be disabled in the same request.", { status: 400 });
+  if (resolveGrantSlugs([skill.slug], sanitizeSkillGrantNames(getOrgAccessGrants().skills || [])).added.length) requireEnterpriseFeature("mandatoryOrgSkills");
+}
+
 // The organization tier: every conversation.
 export function grantSkillsToOrg(slugs) {
   const grants = getOrgAccessGrants();

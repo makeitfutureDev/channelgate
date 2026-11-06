@@ -83,6 +83,8 @@ product overview.
 
 ## Unreleased
 
+- Require Enterprise for new mandatory organization skill grants and organization-wide agent instructions. Saved policies remain active after downgrade; explicit removal remains available.
+
 
 - Use the administrator's Slack email for optional password and Slack-code sign-in. Resolve the
   address through Slack after password verification, retain stable user IDs internally, and

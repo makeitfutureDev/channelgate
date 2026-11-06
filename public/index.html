@@ -736,8 +736,10 @@
                   <h4>Agent instructions</h4>
                   <label class="toggle"><input type="checkbox" id="set-agentsfile" /> Write <code>CLAUDE.md</code> + an <code>AGENTS.md</code> symlink in each channel folder (read by both Claude and Codex — edit <code>CLAUDE.md</code> directly)</label>
                   <label class="field">
-                    <span>Instructions (CLAUDE.md content, applied to all channels)</span>
-                    <textarea id="set-agents-instructions" rows="4" placeholder="e.g. You are Acme's assistant. Be concise and cite sources…"></textarea>
+                    <span>Organization instructions · Enterprise (applied to all channels)</span>
+                    <textarea id="set-agents-instructions" readonly rows="4" placeholder="e.g. You are Acme's assistant. Be concise and cite sources…"></textarea>
+                    <small id="organization-instructions-entitlement"></small>
+                    <button type="button" id="clear-organization-instructions" class="ghost">Clear organization instructions</button>
                   </label>
                   <label class="toggle"><input type="checkbox" id="set-agentmemory" /> <strong>Folder-scoped memory</strong> — each channel gets uncapped Markdown memory, searched on demand through a derived local FTS index. Fresh sessions receive only a compact catalog; the memory body stays in the channel folder. Per-channel override available.</label>
                   <label class="field">

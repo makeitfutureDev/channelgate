@@ -35,6 +35,7 @@ import {
   grantSkillsToUser,
   revokeSkillsFromUser,
   grantSkillsToOrg,
+  validateSkillGovernanceChange,
   revokeSkillsFromOrg,
   proposeSkillChange,
   decideSkillProposal,
@@ -770,6 +771,7 @@ export function register(server, ctx) {
       if (!(await requireAdmin())) return text("Only admins change catalog governance.");
       const skill = getSkill(key);
       if (!skill) return text(`No catalog skill named "${key}".`);
+      validateSkillGovernanceChange(skill, { enabled, mandatory });
       if (enabled === false) {
         revokeSkillsFromOrg([skill.slug]);
         excludeSkill(skill.slug);

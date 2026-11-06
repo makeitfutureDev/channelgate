@@ -407,6 +407,7 @@ export function getLicenseStatus(now = Date.now()) {
       skillModelRouting: enterprise, companyDomainApproval: enterprise,
       channelCodexLogin: enterprise, skillCatalogMcp: enterprise,
       organizationVariables: enterprise, driveSync: enterprise,
+      mandatoryOrgSkills: enterprise, organizationInstructions: enterprise,
       skillTemplates: enterprise, channelSpendingLimits: enterprise,
     },
     hasLicenseKey: hasLicenseKey(),

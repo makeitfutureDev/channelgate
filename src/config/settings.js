@@ -90,6 +90,14 @@ export function saveSettings(patch, { expectVersion = "" } = {}) {
   db.exec("BEGIN IMMEDIATE");
   try {
     const current = getSettings();
+    // Retain existing governance on downgrade: never silently strip instructions or mandatory
+    // grants. New policies require Enterprise; explicit removal remains available to admins.
+    if (typeof patch.agentsInstructions === "string" && patch.agentsInstructions.trim()
+      && patch.agentsInstructions.trim() !== (typeof current.agentsInstructions === "string" ? current.agentsInstructions.trim() : "")) requireEnterpriseFeature("organizationInstructions");
+    if (Array.isArray(patch.accessGrants?.skills)) {
+      const existing = new Set((Array.isArray(current.accessGrants?.skills) ? current.accessGrants.skills : []).map(value => String(value).trim().toLowerCase()));
+      if (patch.accessGrants.skills.some(value => !existing.has(String(value).trim().toLowerCase()))) requireEnterpriseFeature("mandatoryOrgSkills");
+    }
     if (patch.userAutoApprovalEnabled === true && current.userAutoApprovalEnabled !== true) requireEnterpriseFeature("companyDomainApproval");
     for (const [key, value] of Object.entries(patch)) {
       if (key.startsWith("driveSync") && value && JSON.stringify(value) !== JSON.stringify(current[key])) requireEnterpriseFeature("driveSync");

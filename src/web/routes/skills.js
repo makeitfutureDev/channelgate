@@ -44,7 +44,7 @@ import { pluginSummaryFromMetadata } from "../../gateway/skills/plugin-summary.j
 import { resolveSkillProfile, skillGrantContextChange } from "../../gateway/skills/resolve.js";
 import { listTemplateSummaries, previewTemplate, assignTemplateToChannel, templateSummary, templateAssignments, withTemplateSkills, templateOfMeta, channelScopedSkills } from "../../gateway/skills/templates.js";
 import { skillUsageReport } from "../../gateway/skills/usage.js";
-import { createLocalSkill, updateLocalSkill, decideSkillProposal, describeOwner, grantSkillsToChannel, revokeSkillsFromChannel, grantSkillsToOrg, revokeSkillsFromOrg, moveSkillScope } from "../../gateway/skills/authoring.js";
+import { createLocalSkill, updateLocalSkill, decideSkillProposal, describeOwner, grantSkillsToChannel, revokeSkillsFromChannel, grantSkillsToOrg, validateSkillGovernanceChange, revokeSkillsFromOrg, moveSkillScope } from "../../gateway/skills/authoring.js";
 import { importHostSkillFolders } from "../../gateway/skills/import-folder.js";
 import { syncOneSource, runScheduledSkillSync } from "../../gateway/skills/index.js";
 import { parseRepoUrl } from "../../gateway/skills/git-sync.js";
@@ -128,7 +128,7 @@ export function createSkillsRouter() {
   router.get("/skills/overview", guard(async (_req, res) => {
     res.json({
       stats: catalogStats(),
-      features: { skillTemplates: enterpriseFeatureEnabled("skillTemplates") },
+      features: { skillTemplates: enterpriseFeatureEnabled("skillTemplates"), mandatoryOrgSkills: enterpriseFeatureEnabled("mandatoryOrgSkills") },
       sources: listSources(),
       templates: listTemplateSummaries(),
       staged: listStagedRevisions().map(revisionToApi),
@@ -190,6 +190,7 @@ export function createSkillsRouter() {
     const skill = getSkill(req.params.slug);
     if (!skill) return res.status(404).json({ error: "skill not found" });
     const b = req.body || {};
+    validateSkillGovernanceChange(skill, b);
     if (b.enabled === false) {
       revokeSkillsFromOrg([skill.slug]);
       excludeSkill(skill.slug);

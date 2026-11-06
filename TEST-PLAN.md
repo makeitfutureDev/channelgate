@@ -1,5 +1,9 @@
 # ChannelGate — Test Plan
 
+## Enterprise organization policy acceptance
+
+Cases EE-POLICY-01 and EE-POLICY-02: for both Claude and Codex, on a disposable Enterprise fixture with Lean mode off set organization instructions and a mandatory skill; verify both appear in a fresh channel run. Downgrade the fixture to Registered and verify the saved policies still apply, while new mandatory grants and changed nonempty organization instructions are rejected with Enterprise guidance. Verify the same rejection via admin UI, HTTP governance/settings routes, MCP org-grant/governance tools and raw settings saves. Mixed governance requests must not partially enable or expose a skill. Explicitly remove the grant and clear instructions; verify subsequent runs omit only those policies and preserve core safety/channel instructions. Re-upgrade and verify new policy writes work. Automated: `test/enterprise-organization-policy.test.js`; live engine acceptance is separate and must not be inferred from unit results.
+
 ## Official Make.com CLI in every runtime image (spec 1.6.3)
 
 - Automated: `node --test test/container-image.test.js test/cli-catalog.test.js` verifies the

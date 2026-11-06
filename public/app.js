@@ -4452,6 +4452,12 @@ const fmtLicenseTime = (v) => (v ? escapeHtml(new Date(v).toLocaleString()) : "â
 
 function paintLicense(l) {
   document.getElementById("license-state-chip").textContent = LICENSE_STATE_LABEL[l.state] || `Â· ${l.state}`;
+  const instructions = document.getElementById("set-agents-instructions");
+  instructions.readOnly = l.features?.organizationInstructions !== true;
+  document.getElementById("organization-instructions-entitlement").textContent = instructions.readOnly
+    ? "Enterprise is required to add or edit organization instructions. Saved instructions remain active; you can clear them explicitly. Channel instructions and core safety rules remain available."
+    : "Organization defaults follow the existing channel and Lean-mode rules. Saved instructions remain active if the license is downgraded.";
+  document.getElementById("clear-organization-instructions").onclick = () => { instructions.value = ""; instructions.dispatchEvent(new Event("input", { bubbles: true })); };
   document.getElementById("set-composio-mode").dataset.sdkEntitled = String(l.features?.composioSdk === true);
   document.querySelector('#set-composio-mode option[value="sdk"]').disabled = l.features?.composioSdk !== true;
   document.getElementById("set-composio-sdk-key").disabled = l.features?.composioSdk !== true;

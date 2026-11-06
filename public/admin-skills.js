@@ -263,7 +263,7 @@ function renderCatalog() {
       <td>${esc(s.version || "—")}</td>
       <td><label title="Available in the catalog"><input type="checkbox" data-action="skill-enabled" data-slug="${esc(s.slug)}"${s.enabled ? " checked" : ""}/> Enabled</label></td>
       <td><label title="Approved members and agents may find and grant it"><input type="checkbox" data-action="skill-discoverable" data-slug="${esc(s.slug)}"${s.discoverable ? " checked" : ""}${s.mandatory ? " disabled" : ""}/> Discoverable</label></td>
-      <td><label title="Loaded in every conversation"><input type="checkbox" data-action="skill-mandatory" data-slug="${esc(s.slug)}"${s.mandatory ? " checked" : ""}/> Mandatory</label></td>
+      <td><label title="Loaded in every conversation"><input type="checkbox" data-action="skill-mandatory" data-slug="${esc(s.slug)}"${s.mandatory ? " checked" : ""}${!s.mandatory && !state.overview?.features?.mandatoryOrgSkills ? ' disabled title="Mandatory organization skills require Enterprise"' : ""}/> Mandatory · Enterprise</label></td>
       <td class="num">${s.usage30d?.total || 0}</td>
     </tr>`).join("");
   return `
@@ -350,7 +350,7 @@ function renderDetail() {
           <button type="button" class="ghost" data-action="set-scope">Move</button>
         </span>
         ${s.ownerKind === "local" ? `<button type="button" class="ghost" data-action="toggle-visibility">${s.visibility === "personal" ? "Make organization skill" : "Make personal (author only)"}</button>` : ""}
-        ${(state.overview?.orgSkills || []).some((x) => x.toLowerCase() === s.slug.toLowerCase()) ? `<button type="button" class="ghost" data-action="org-revoke">Remove organization-wide grant</button>` : `<button type="button" class="ghost" data-action="org-grant">Grant organization-wide</button>`}
+        ${(state.overview?.orgSkills || []).some((x) => x.toLowerCase() === s.slug.toLowerCase()) ? `<button type="button" class="ghost" data-action="org-revoke">Remove organization-wide grant</button>` : `<button type="button" class="ghost" data-action="org-grant"${state.overview?.features?.mandatoryOrgSkills ? "" : ' disabled title="Mandatory organization skills require Enterprise"'}>Grant organization-wide · Enterprise</button>`}
         ${state.overview?.settings?.publish && s.ownerKind === "local" ? `<button type="button" class="ghost" data-action="publish-now">Publish to Git now</button>` : ""}
         ${s.deleted ? `<button type="button" class="ghost" data-action="restore">Restore</button>` : `<button type="button" class="ghost" data-action="remove">Remove from catalog</button>`}
         <button type="button" class="ghost" data-action="close-detail">Close</button>
@@ -409,7 +409,7 @@ function renderSourceSkills(source) {
   const all = state.sourceSkills;
   const q = state.sourceQuery.trim().toLowerCase();
   const skills = all.filter((skill) => !q || `${skill.slug} ${skill.name} ${skill.description}`.toLowerCase().includes(q));
-  const toggle = (skill, key, label) => `<label class="skills-governance-toggle" title="${key === "mandatory" ? "Load in every conversation" : key === "discoverable" ? "Members and agents across the organization can find and grant this skill" : "Allow this skill to be used"}"><input type="checkbox" role="switch" aria-label="${esc(label)}: ${esc(skill.slug)}" data-action="skill-${key}" data-slug="${esc(skill.slug)}"${skill[key] ? " checked" : ""}${key === "discoverable" && skill.mandatory ? " disabled" : ""}/><span aria-hidden="true">${skill[key] ? "On" : "Off"}</span></label>`;
+  const toggle = (skill, key, label) => `<label class="skills-governance-toggle" title="${key === "mandatory" ? "Enterprise: load in every conversation. Saved policies remain active after downgrade; removal is allowed." : key === "discoverable" ? "Members and agents across the organization can find and grant this skill" : "Allow this skill to be used"}"><input type="checkbox" role="switch" aria-label="${esc(label)}: ${esc(skill.slug)}" data-action="skill-${key}" data-slug="${esc(skill.slug)}"${skill[key] ? " checked" : ""}${(key === "discoverable" && skill.mandatory) || (key === "mandatory" && !skill.mandatory && !state.overview?.features?.mandatoryOrgSkills) ? " disabled" : ""}/><span aria-hidden="true">${skill[key] ? "On" : "Off"}</span></label>`;
   return `<button type="button" class="ghost" data-action="back-to-sources">← All sources</button>
     <div class="skills-source-heading"><div><span class="pill">${esc(source.kind)}</span><h3>${esc(sourceName(source))}</h3><p class="skills-source-url">${esc(source.url)}</p></div><button type="button" class="ghost" data-action="sync-source" data-id="${source.id}">Sync now</button></div>
     <div class="skills-source-stats"><span><b>${all.length}</b> skills</span><span><b>${all.filter((s) => s.enabled).length}</b> enabled</span><span><b>${all.filter((s) => s.discoverable).length}</b> discoverable</span><span><b>${all.filter((s) => s.mandatory).length}</b> mandatory</span></div>
