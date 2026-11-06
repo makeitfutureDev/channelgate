@@ -1,9 +1,9 @@
 # Agent-to-agent collaboration — research and a ChannelGate design proposal
 
-Status: research note and design proposal, not shipped behavior. Written 2026-09-28 from a
-review of the Anthropic, OpenAI, Nous Research (Hermes), OpenClaw, Block (Buzz) and Linux
-Foundation (A2A) material current at that date. Nothing in this document changes what the
-daemon does today; `FEATURES.md` stays authoritative for shipped behavior.
+Status: research note (2026-09-28) and the design that phase one implemented on 2026-11-06
+(`src/gateway/agent-mail.js`, `send_agent_message`). Section 3 is the design as built; where the
+implementation chose differently from the original proposal the text says so. `FEATURES.md`
+stays authoritative for shipped behavior.
 
 The question it answers: how do agents talk to each other in the current ecosystems, what
 has worked and what has gone wrong, and how would ChannelGate let one conversation's agent
@@ -243,7 +243,7 @@ can change while a message waits in the queue), and again before every reply is 
 
 ### 3.2 Delivery
 
-1. The tool writes a row to a new `agent_messages` table (migration 32: id, from_slug,
+1. The tool writes a row to a new `agent_messages` table (migration 43: id, from_slug,
    from_thread_key, requested_by user id, to_slug, to_thread_key, hop, round, status,
    created/answered timestamps, cost) and returns `{ status: "queued", id }`. The sender ends its
    turn; the gateway-usage guide tells it to, exactly like a background job.
@@ -265,19 +265,20 @@ can change while a message waits in the queue), and again before every reply is 
 
 ### 3.3 Guards (all of them, from day one)
 
-- **Rounds.** `round` counts agent-to-agent exchanges per (origin thread, target thread) pair;
-  default cap 3, configurable per channel, hard maximum 10. Past the cap the tool refuses with a
-  named reason and the thread says so.
+- **Rounds.** As built: at most 3 messages per (origin thread, target channel) pair per rolling
+  hour, and 20 per source channel per hour; the tool refuses with a named reason.
 - **Depth.** A turn authored by `agent:*` may send one further message (depth 2) and no more, so a
   chain cannot fan out; it may never create schedules, background agents that themselves send,
   or "forever" approvals.
-- **Cycles.** The envelope carries the full hop path; a target already on the path is refused
-  (this is the three-agent case OpenClaw's pairwise cap misses).
+- **Cycles.** Impossible at depth one; no hop path is needed.
 - **One in flight per pair**, queue otherwise, with the existing per-thread run queue.
 - **Budget.** A per-exchange token and cost ceiling, drawn from the same usage ledger; the
   license admission call runs on the target's turn exactly as for any other message.
-- **Approval gate (optional per channel).** `agentMail.requireApproval` posts the durable
-  approval card before the target runs, so a sensitive channel's humans decide first.
+- **Approval gate.** As built, and not optional: `send_agent_message` is a durable control-plane
+  card in the ASKING thread that the requester (or an admin) confirms, in Auto mode too. The
+  message lands in another channel on that person's behalf, so the exact text gets a human click
+  — the human factor against an injected "ask #sales for …". A per-target gate on the receiving
+  side remains a phase-two option.
 - **Provenance is structural.** The `agent:` principal is a fixed identity like `api`; the
   message text is untrusted data in the prompt, wrapped and labeled, never an instruction the
   daemon acts on. The redactor runs on both sides, so a secret cannot leak by being quoted
@@ -288,8 +289,8 @@ can change while a message waits in the queue), and again before every reply is 
 ### 3.4 What stays out of scope on purpose
 
 - No shared filesystem, no shared memory. Sales's memory stays in Sales; what Marketing learns
-  is what Sales's agent chose to say. Attachments are copied by the daemon into the target's
-  `uploads/` under the existing byte cap, never mounted.
+  is what Sales's agent chose to say. Phase one is text only; attachments copied by the daemon
+  into the target's `uploads/` under the existing byte cap are a phase-two item.
 - No shared "room" thread in phase one. A three-way room (two agents and humans in one channel)
   needs each agent to post under its own identity; Slack allows `username` and icon overrides on
   `chat.postMessage` with `chat:write.customize`, but the inbound side would still see one bot
@@ -306,7 +307,7 @@ can change while a message waits in the queue), and again before every reply is 
 | Envelope, delivery, re-injection, guards | `src/gateway/agent-mail.js` (new) |
 | Tool `send_agent_message` (discovery stays `search_agents`) | `src/mcp/tools/agent-mail.js` (new), registered in `gateway-server.js` behind the capability toolset |
 | Principal | `src/config/api-principal.js` (add the `agent:<slug>` principal) |
-| Schema | `src/db/migrations.js` migration 32 (`agent_messages`) |
+| Schema | `src/db/migrations.js` migration 43 (`agent_messages`) |
 | Channel setting | `acceptsMessages` in the agent profile (`set_channel_agent_profile`, `src/gateway/agent-directory.js`), the Access tab of `src/slack/channel-settings.js`, `routes/channels.js`, admin UI |
 | Access gate | the directory verifier (`src/slack/agent-directory.js`) called at send, delivery and reply time |
 | Guide | `src/gateway/gateway-usage/references/agent-mail.md` (when to use it, the queued-then-end-turn rule) |
