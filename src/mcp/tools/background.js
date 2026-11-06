@@ -166,6 +166,13 @@ export function register(server, ctx) {
     );
   }
 
+  registerPermissionPrompt(server, ctx);
+}
+
+// Claude's --permission-prompt-tool target, on its own so a REDUCED toolset (the delivered agent
+// message, gateway-server.js AGENT_MESSAGE_TOOLSET) can keep approval cards without the job tools.
+export function registerPermissionPrompt(server, ctx) {
+  const { channelId, slug, createdBy, threadKey, text, daemon } = ctx;
   // ── Permission prompt (Claude's --permission-prompt-tool target) ────────────────
   // Claude calls this for any tool that isn't pre-approved (non-bypass runs). We forward the
   // request to the daemon, which posts Slack approval buttons and blocks until someone decides,

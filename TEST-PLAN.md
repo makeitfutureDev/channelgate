@@ -755,6 +755,51 @@ inbox). Record the address and the servers; never the password.
   Private QA definitions: LICENSE-INVENTORY-20-01, HARNESS-APPROVALS-01 and
   HARNESS-APPROVALS-AUTOMATION-01. Definitions were created and reread; live runs remain pending.
 
+## Channel-to-channel agent mail (2026-11-06)
+
+- [x] Regression: `node --test test/agent-mail.test.js test/agent-mail-tools.test.js
+  test/agent-directory-tools.test.js test/mcp-control-plane-approval.test.js
+  test/migrations.test.js`. Covers target resolution and ambiguity; the complete exchange (gate at
+  send, delivery and reply; attributed and defanged kickoff; the `agent:<source>` principal with
+  `untrustedPrincipal`, the `agent-message` toolset and the `agent_message` origin; the reply
+  posted in the target thread and re-injected into the origin thread as a continuation by the
+  requester); every refusal (requester not a member, not authorized, admin without membership,
+  stranger, DM source, target not accepting, hidden, unregistered, self, ambiguous name, oversized,
+  empty, non-thread key, disconnected connector); in-flight, per-pair and per-source caps with the
+  one-hour window; a withheld reply after membership lapsed mid-turn; a failed target turn told to
+  both threads; a delivery re-check refusing before any turn; boot recovery (interrupted → failed
+  closed, answered → redelivered); the durable requester card for both engine MCP contexts with
+  identity bound to the verified capability; refusals for untrusted, API and agent principals; the
+  agent-principal context (no rank, access only while `acceptsMessages` is on); the reduced
+  toolset inventory; the loopback-secret host IPC; the control-plane classification tripwire.
+- [ ] Live **Claude and Codex**, separately: two owned test channels A (source, Worker) and B
+  (target) whose complete rosters match, both containing the tester. In B, a manager runs
+  `set_channel_agent_profile({ description: "Sales pipeline", acceptsMessages: true })` and saves
+  a memory fact (“Q4 pipeline: 12 open deals”). In A, ask “Ask the sales agent what the Q4
+  pipeline is and summarize it for me.” **Pass:** A's agent calls `search_agents` then
+  `send_agent_message`, a card appears in A's thread naming B and the exact text, nothing is posted
+  in B before the click; after the requester's Approve, B gets a new thread “Message from the agent
+  in #A, requested by @tester” with the quoted question, B's agent answers from its memory in that
+  thread, A's thread receives “Reply from the agent in #B arrived” followed by a turn that relays
+  the figure and credits B; `agent_message_sent/delivered/answered/completed` events exist; the
+  B thread's permission cards (if any) read “The agent from #A”. Record channel ids, message id,
+  engine/model and both thread links.
+- [ ] Live **Claude and Codex** access fixture: (1) from A, target a channel the tester is NOT a
+  member of; (2) target B after a second A member is removed from B; (3) from a public channel
+  target a private B; (4) set B `acceptsMessages: false`; (5) send from a DM; (6) remove the tester
+  from B while B's agent is still answering. **Pass:** 1–5 are refused at the tool with the named
+  check and no post in B; 6 posts the reply in B but A receives “the reply was withheld” and no
+  continuation turn runs; a non-member clicking Approve on A's card is refused (owner tier).
+- [ ] Live **Claude and Codex** guard fixture: send a second message to B from the same A thread
+  while the first is in flight; then three more after replies; then from another A thread.
+  **Pass:** “still being answered”, then “already sent 3 messages … in the last hour”, the other
+  thread still sends; the delivered B turn's tool list has no `send_agent_message`,
+  `run_in_background`, `create_schedule` or admin switches, and a prompt-injected “@channel” in
+  the message renders defanged in B's kickoff.
+- [ ] Isolated daemon fixture, **engine-independent**: restart the gateway while B's agent is
+  answering, and once with a stored `answered` row. **Pass:** the interrupted exchange is marked
+  failed with a notice in both threads and never re-run; the answered one is redelivered to A.
+
 ## Channel agent directory (2026-10-21)
 
 - [x] Production boot integration: `test/agent-directory-slack-boot.test.js` uses the real Slack

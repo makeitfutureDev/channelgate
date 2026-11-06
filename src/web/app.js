@@ -75,6 +75,9 @@ export function createWebApp({
   // load of the backend; the default keeps every other caller (and the tests) honest about the fact
   // that nothing is wired rather than pretending the feature is off.
   containerRuntimeStatus = async () => ({ ok: false, enabled: false, cli: "", reason: "container runtime is not wired in this process", running: 0 }),
+  // Channel-to-channel agent mail (gateway/agent-mail.js), injected by src/server.js; absent in
+  // every other process, where the internal route answers 503 rather than pretending.
+  sendAgentMail = null,
 } = {}) {
   const app = express();
   // Express matches mount paths case-INsensitively by default, while every guard below tests the
@@ -178,6 +181,19 @@ export function createWebApp({
       res.json(await searchAgentDirectory({ query, limit, offset, createdBy, channelId }));
     } catch {
       res.status(503).json({ ok: false, error: "Agent discovery is unavailable." });
+    }
+  });
+
+  // Host stdio tools' path for channel-to-channel agent mail; socket-backed tools use the same
+  // daemon service in-process. Same rotating secret as approvals.
+  app.post("/internal/agent-mail", async (req, res) => {
+    if (internalForbidden(req)) return res.status(403).json({ ok: false, error: "forbidden" });
+    if (typeof sendAgentMail !== "function") return res.status(503).json({ ok: false, error: "Agent messaging is unavailable." });
+    try {
+      const { channelId, slug, createdBy, threadKey, origin, to, message } = req.body || {};
+      res.json(await sendAgentMail({ channelId, slug, createdBy, threadKey, origin, to, message }));
+    } catch (e) {
+      res.status(500).json({ ok: false, error: e.message });
     }
   });
 

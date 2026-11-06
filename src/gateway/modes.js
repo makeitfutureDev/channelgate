@@ -155,7 +155,7 @@ export function channelProfile(meta = {}) {
 //    ("none" is dormant: only the explicit allowedUsers grant above gets in — even admins must be
 //    added there.)
 // The HTTP run API's principal (an admin with no personal scope) — see config/api-principal.js.
-export { API_PRINCIPAL, isApiPrincipal } from "../config/api-principal.js";
+export { API_PRINCIPAL, isApiPrincipal, agentPrincipal, isAgentPrincipal, agentPrincipalSlug } from "../config/api-principal.js";
 
 export function isAuthorized(meta, authorId, isDM, { isAdminUser = false, isApprovedUser = false } = {}) {
   if (meta.workspaceLink) isDM = meta.workspaceLink.isDM === true;

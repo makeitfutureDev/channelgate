@@ -21,13 +21,13 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { getChannelMeta, isAdmin, isApproved } from "../config/store.js";
 import { listForChannel } from "../config/schedules.js";
-import { API_PRINCIPAL, canManage, isApiPrincipal, isAuthorized } from "../gateway/modes.js";
+import { API_PRINCIPAL, canManage, isApiPrincipal, isAgentPrincipal, isAuthorized } from "../gateway/modes.js";
 import { getEngine as getDefaultEngine } from "../config/settings.js";
 import { gatewayRoot } from "../config/paths.js";
 import { verifyGatewayCapability } from "../gateway/mcp-capability.js";
 import { register as registerSchedules } from "./tools/schedules.js";
-import { register as registerBackground } from "./tools/background.js";
-import { register as registerChannelAdmin, registerMemoryTool } from "./tools/channel-admin.js";
+import { register as registerBackground, registerPermissionPrompt } from "./tools/background.js";
+import { register as registerChannelAdmin, registerMemoryTool, registerMemoryReadTools } from "./tools/channel-admin.js";
 import { register as registerTokens } from "./tools/tokens.js";
 import { register as registerApiTokens } from "./tools/api-tokens.js";
 import { register as registerSlackNative } from "./tools/slack-native.js";
@@ -37,6 +37,7 @@ import { register as registerChannelDatabase } from "./tools/channel-database.js
 import { register as registerWorkspaceRead } from "./tools/workspace-read.js";
 import { register as registerSkills } from "./tools/skills.js";
 import { register as registerAgentDirectory } from "./tools/agent-directory.js";
+import { register as registerAgentMail } from "./tools/agent-mail.js";
 import { register as registerQuestions } from "./tools/questions.js";
 import { register as registerSshAccess } from "./tools/ssh-access.js";
 import { register as registerEgressHosts } from "./tools/egress-hosts.js";
@@ -55,7 +56,7 @@ export const text = (t) => ({ content: [{ type: "text", text: t }] });
 // a safe restart, start/inspect a channel's Google Drive sync pass (the pass must run in the daemon
 // so it shares the per-channel in-flight guard and outlives the turn). `kind` is also the /internal/<kind> route name, so the two transports stay in
 // lockstep. A tool never learns which one it is using.
-export const DAEMON_IPC_KINDS = Object.freeze(["background", "approval", "restart", "drivesync", "agent-directory", "code-channel", "skill-swap"]);
+export const DAEMON_IPC_KINDS = Object.freeze(["background", "approval", "restart", "drivesync", "agent-directory", "agent-mail", "code-channel", "skill-swap"]);
 
 // Daemon-IPC credentials for the CHILD-PROCESS transport (the /internal/* endpoints). The Claude
 // path forwards CG_APPROVAL_SECRET/CG_PORT via the --mcp-config env; the Codex path can't — its
@@ -124,6 +125,11 @@ const ENGINE_CLAIMS = ["claude", "codex"];
 // conversation taught, so it gets the save tool and nothing else — no schedules, no admin
 // switches, no Slack writes.
 export const SSH_TOOLSET = "ssh";
+// A message another channel's agent sent here (gateway/agent-mail.js), answered as that agent's
+// own principal: the channel's knowledge (workspace reads, memory, this channel's own Slack
+// tools, approval cards) and nothing that reaches beyond the thread — no background work, no
+// schedules, no admin switches, no directory, no further agent messages. Depth one, structurally.
+export const AGENT_MESSAGE_TOOLSET = "agent-message";
 export function normalizeToolset(value) {
   return String(value || "full");
 }
@@ -144,9 +150,13 @@ export function ctxFromClaims(claims = {}, { engine = "", toolset = "", progress
   // channel with no personal scope. A capability that names any other author without vouching for
   // it (principalTrusted false) maps there too, so a named id is never authority. Runs that API
   // work later spawns (a schedule, a background agent) carry the principal as their author.
-  const apiPrincipal = claims.principalTrusted !== true || isApiPrincipal(claimedAuthor);
-  const principalTrusted = !apiPrincipal;
-  const createdBy = apiPrincipal ? (claimedAuthor ? API_PRINCIPAL : "") : claimedAuthor;
+  // A delivered agent message (gateway/agent-mail.js) runs as `agent:<source slug>`: no person, no
+  // rank — never the API principal's admin standing, never a member's. It keeps its own id so the
+  // audit trail names the source channel, and every personal/admin/manager check refuses it.
+  const agentPrincipal = isAgentPrincipal(claimedAuthor);
+  const apiPrincipal = !agentPrincipal && (claims.principalTrusted !== true || isApiPrincipal(claimedAuthor));
+  const principalTrusted = !apiPrincipal && !agentPrincipal;
+  const createdBy = agentPrincipal ? claimedAuthor : apiPrincipal ? (claimedAuthor ? API_PRINCIPAL : "") : claimedAuthor;
   const claimedEngine = ENGINE_CLAIMS.includes(claims.engine) ? claims.engine : "";
   const activeEngine = claimedEngine || (ENGINE_CLAIMS.includes(engine) ? engine : getDefaultEngine());
 
@@ -157,9 +167,9 @@ export function ctxFromClaims(claims = {}, { engine = "", toolset = "", progress
   // member / listed manager. The author comes only from the verified run capability.
   // The HTTP run API principal ranks as an admin: its key is an admin credential. Control-plane
   // changes still need a human click on their approval card, exactly as for an admin's message.
-  const requireAdmin = async () => Boolean(createdBy) && (apiPrincipal || (await isAdmin(createdBy)));
+  const requireAdmin = async () => Boolean(createdBy) && !agentPrincipal && (apiPrincipal || (await isAdmin(createdBy)));
   const requireManage = async () => {
-    if (!createdBy) return false;
+    if (!createdBy || agentPrincipal) return false;
     if (apiPrincipal) return true;
     const meta = await loadMeta();
     return canManage(meta || {}, {
@@ -173,6 +183,9 @@ export function ctxFromClaims(claims = {}, { engine = "", toolset = "", progress
     if (!createdBy) return false;
     // The API key was accepted as this channel's caller; the capability is scoped to it.
     if (apiPrincipal) return Boolean(await loadMeta());
+    // The daemon admitted the agent message against the channel's CURRENT opt-in; it stays valid
+    // only while that switch is on.
+    if (agentPrincipal) return (await loadMeta())?.agentDirectory?.acceptsMessages === true;
     const meta = await loadMeta();
     return Boolean(meta) && isAuthorized(meta, createdBy, meta.isDM, {
       isAdminUser: await isAdmin(createdBy), isApprovedUser: await isApproved(createdBy),
@@ -191,6 +204,7 @@ export function ctxFromClaims(claims = {}, { engine = "", toolset = "", progress
     activeEngine,
     principalTrusted,
     apiPrincipal,
+    agentPrincipal,
     // A NON-EMPTY signed toolset wins (only the daemon can mint one, and every value but "full"
     // reduces); a blank/absent one falls back to the reader's own environment, which is how the
     // stdio entry has always learned it. Neither direction can widen: "full" IS the default.
@@ -410,6 +424,12 @@ export function buildControlPlane({ loadMeta, createdBy, principalTrusted, chann
           : "a task branch in a git worktree when the folder is a repository, else this channel's own files";
       return `Open a Slack code channel${name ? ` "${summarize(name)}"` : ""} for: ${summarize(task)}\nFiles: ${files}. Members of this channel may join it; the agent starts working there once approved.`;
     } }],
+    // Agent mail (gateway/agent-mail.js): the message lands in ANOTHER channel, attributed to the
+    // requester and answered on their access, so the requester (or an admin) confirms the exact text
+    // on a card first. The daemon re-runs the access gate itself; the click is the human factor
+    // against an injected "ask #sales for …" — never auto-approved, in Auto mode too.
+    ["send_agent_message", { authz: "any", tier: "owner", details: ({ to, message }) =>
+      `Send a message to the agent in ${summarize(String(to || ""))} on your behalf:\n${summarize(String(message || ""), 1200)}\nIts reply will be posted back into this thread.` }],
     ["archive_code_channel", { authz: "any", tier: "", details: ({ summary }) => `Archive this code channel${summary ? " after posting the wrap-up" : ""}. History and artifact tabs stay readable and searchable; the task branch stays on disk.` }],
   ]);
 }
@@ -572,11 +592,19 @@ export function createGatewayMcpServer(ctx) {
     registerLicense(server, ctx);
     registerSkills(server, ctx);
     registerAgentDirectory(server, ctx);
+    registerAgentMail(server, ctx);
     registerQuestions(server, ctx);
     registerSshAccess(server, ctx);
     registerFileSharing(server, ctx);
     registerEmail(server, ctx);
     registerCodeChannels(server, ctx);
+  } else if (ctx.toolset === AGENT_MESSAGE_TOOLSET) {
+    registerWorkspaceRead(server, ctx);
+    registerMemoryReadTools(server, ctx);
+    registerMemoryTool(server, ctx);
+    registerSlackNative(server, ctx);
+    registerTeamsNative(server, ctx);
+    registerPermissionPrompt(server, ctx);
   } else {
     registerMemoryTool(server, ctx);
   }
