@@ -3725,6 +3725,9 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
   `run_config` event records `networkEnforced` and `egress` beside `networkPolicy` so an operator
   reading it after an incident cannot mistake one for the other. `NETWORK_POLICY_ENFORCED` in
   `src/engines/network-policy.js` is now `true`; every surface asks `networkEnforcedFor(target)`.
+  The shared `set_channel_network` tool description also explicitly distinguishes ordinary
+  proxy-mode enforcement from legacy bridge/raw-socket policy and `/sudo` direct-host policy,
+  which has no OS-level egress cutoff. This description does not change runtime enforcement.
   → TEST-PLAN: Sandbox boundaries; Egress proxy, placeholders and `--network none`.
 - **Retired 2026-09-03 (Linux + containers only):** nothing replaces it — with no host sandbox there is no user namespace for AppArmor to restrict,
   and rootless Podman brings its own uid mapping (`--userns=keep-id`, `/etc/subuid`). **Linux hosts keep their Bash sandbox under Ubuntu's AppArmor userns restriction**: Ubuntu 23.10+
