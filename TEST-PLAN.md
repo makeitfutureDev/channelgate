@@ -308,6 +308,13 @@ Running label acceptance (Claude and Codex): in a Slack agent thread with chat:w
 
 ## User-linked dashboard access (2026-10-25)
 
+- Secret reveal identity regression (engine-independent): run `node --test test/secret-reveal.test.js`
+  against its scratch store and actual admin router. A linked administrator's fresh session reveals
+  a synthetic allowed setting, requests a forbidden setting, then repeats after six minutes.
+  Require statuses 200/400/403 and exactly one respective `secret_revealed`,
+  `secret_reveal_rejected`, or `secret_reveal_denied` event with the account actor and canonical
+  `userId`. Forged request-body user IDs, secrets, passwords and session cookies never enter audit
+  metadata. Unlinked/bootstrap audit behavior remains covered separately; no live secrets are used.
 - Automated acceptance uses scratch databases and Chromium virtual resident authenticators:
   legacy-key identity linking preserves credentials; initial setup requires proof when admins
   exist; existing Users drawer invites another admin; non-admin/API identities cannot enroll;

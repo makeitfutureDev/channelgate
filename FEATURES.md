@@ -188,6 +188,9 @@ Slack’s native running/Stop label shows the resolved model and explicitly conf
 
 ## User-linked dashboard passkeys
 
+- Secret reveal audit events retain the administrator account actor and include its canonical
+  linked user ID for successful, denied and rejected requests. They never include secret values,
+  submitted passwords or caller-supplied identity claims.
 - The existing **Users** directory and its admin role govern dashboard access. Each credential
   container links to one stable user ID; there is no separate dashboard user directory. Users →
   an admin's details issues a 15-minute single-use enrollment link or revokes sessions. Removing
