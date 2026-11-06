@@ -16,6 +16,8 @@ test("channel login method starts ChatGPT sign-in, copies its code, and hides sh
   await saveChannelMeta(entry.slug, defaultChannelMeta({ channelId: id, name: entry.name, type: "channel", isDM: false }));
   const app = express();
   app.use(express.json());
+  // This focused router fixture represents an authenticated admin; real login is tested separately.
+  app.get("/api/auth/me", (_req, res) => res.json({ bootstrap: false, linkRequired: false, fresh: true, account: { userId: "U_BROWSER_ADMIN" }, passkeys: [] }));
   const publicDir = fileURLToPath(new URL("../public", import.meta.url));
   app.use("/api", createAdminRouter({ slack: { getClient: () => null, snapshot: () => ({ status: "disconnected" }) } }));
   app.use(express.static(publicDir, { dotfiles: "allow" }));
