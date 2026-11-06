@@ -33,6 +33,7 @@ import { BackgroundJobs, setActiveBackgroundJobs } from "./gateway/background.js
 import { requestApproval, setDurableApprovalExecutor } from "./slack/approvals.js";
 import { executeInstructionApproval, INSTRUCTION_ACTION } from "./gateway/instruction-approvals.js";
 import { executeSecretHostApproval, SECRET_HOST_ACTION, setSecretHostApprovalRequester } from "./gateway/secret-host-approvals.js";
+import { createSecretHostContinuation } from "./gateway/secret-host-continuation.js";
 import { CONTROL_PLANE_ACTION, executeControlPlaneApproval, setControlPlaneInvoker } from "./gateway/control-plane-approvals.js";
 import { createDirectDaemonIpc, createGatewayMcpServer, ctxFromClaims } from "./mcp/gateway-server.js";
 import { startMcpSocketServer, stopMcpSocketServer, mcpSocketStatus } from "./mcp/socket-server.js";
@@ -339,10 +340,12 @@ async function main() {
   // job rows have been re-tracked, or the first API/approval-triggered job would rewrite bg_jobs
   // from a still-empty map and wipe every unrecovered row.
   backgroundJobs.armRecovery();
+  const secretHostContinuation = createSecretHostContinuation({ slack });
+  secretHostContinuation.start();
   setDurableApprovalExecutor((record) => record.action?.kind === INSTRUCTION_ACTION
     ? executeInstructionApproval(record)
     : record.action?.kind === SECRET_HOST_ACTION
-      ? executeSecretHostApproval(record)
+      ? executeSecretHostApproval(record, { enqueueContinuation: (saved) => secretHostContinuation.enqueue(saved) })
       : record.action?.kind === CONTROL_PLANE_ACTION
         ? executeControlPlaneApproval(record)
         : backgroundJobs.startApproved(record));

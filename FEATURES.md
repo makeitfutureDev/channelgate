@@ -1,5 +1,7 @@
 # ChannelGate — Features
 
+- **Continue after variable server approval in Slack.** Approving a hidden variable’s server automatically queues one continuation in the original thread as the original requester. It waits behind active work, honors queued Stop and current access, records usage and deduplicates repeated clicks. Queued wakeups survive restart; interrupted continuations are reported without replaying unknown actions. Denial and stale approvals do not continue.
+
 The documentation handbook includes its branded favicon in standalone builds and website exports.
 The build validator checks that every handbook page references the shipped SVG asset.
 

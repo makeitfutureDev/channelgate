@@ -12,6 +12,8 @@ release gates. Stable promotion and publication require approval of the exact te
 - Restore the agent directory refresh to 03:00 local time after a spring-forward clock change
   instead of retaining the transition day’s normalized 04:00 hour.
 
+- Automatically continue the original agent thread after approving a server for a hidden variable; no manual “continue” message is needed.
+
 - Clarify that the network tool's policy is advisory in `/sudo` direct-host threads, with no
   OS-level egress cutoff. Ordinary proxy-mode container enforcement is unchanged.
 

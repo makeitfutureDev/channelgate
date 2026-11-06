@@ -1,5 +1,20 @@
 # ChannelGate — Test Plan
 
+## Automatic continuation after variable server approval
+
+Automated: `node --test test/secret-host-continuation.test.js test/egress-secret-approval.test.js test/durable-approvals.test.js test/approval-links.test.js`.
+Live SECRET-HOST-CONTINUE-01: run separately in Claude and Codex worker fixtures with network ON,
+Lean OFF, an approved requester and a disposable hidden HTTPS token for an operator-controlled
+public endpoint with no approved hosts. Ask to check the endpoint without printing the token.
+After secret-refused, click Allow on server without sending continue. Require one automatic retry
+and result in the original thread/session as the original requester, including a different admin
+approving an organization token. Repeat with a personal owner approval, while the source turn is
+active, after it ends, and with a pending card across restart. Require serialized runs and usage
+for every continuation. Duplicate clicks, denial, stale/rotated tokens, unauthorized approval,
+revoked requester access and Stop while queued must cause no additional execution. Queued wakeups
+survive restart; an interrupted running wakeup produces a notice without replaying unknown effects.
+Never expose token values. Live engine acceptance remains separate from automated regression.
+
 ## Network tool description and direct-host policy
 
 Run `node --test test/channel-policy-audit.test.js test/network-policy.test.js
