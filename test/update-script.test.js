@@ -25,11 +25,11 @@ test("runner retains targeted systemd service support and has no launchd path le
 });
 
 test("runner preflight enforces the real runtime floor and gates candidates on the full check set", () => {
-  // package.json engines.node / src/start.js require >= 22.13 (node:sqlite is stable there); a
+  // package.json engines.node / src/start.js require >= 24.0.0; a
   // preflight that only refused < 20 would happily update a deployment onto a runtime the daemon
   // then refuses to boot on.
-  assert.match(runner, /nodeMajor < 22 \|\| \(nodeMajor === 22 && nodeMinor < 13\)/);
-  assert.match(runner, /Node\.js >=22\.13 is required/);
+  assert.match(runner, /nodeMajor < 24/);
+  assert.match(runner, /Node\.js >=24\.0\.0 is required/);
   assert.doesNotMatch(runner, /nodeMajor < 20/);
   // A candidate is only accepted after the same verification set CI runs, not `npm test` alone.
   assert.match(runner, /"run", "check:static"/);

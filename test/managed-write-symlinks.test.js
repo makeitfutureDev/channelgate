@@ -468,7 +468,7 @@ test("Slack attachments stream to disk in chunks — the file is complete and ne
 
 test("a streamed body that turns out to be Slack's HTML sign-in page is refused before it is committed", async (t) => {
   const { cwd } = await scratch(t);
-  stubFetch(t, async () => slackResponse(Buffer.from("<!DOCTYPE html><html><body>sign in</body></html>"), { contentType: "application/octet-stream" }));
+  stubFetch(t, async () => slackResponse(Buffer.from("<!DOCTYPE html><html><head><title>Sign in | Slack</title></head><body>sign in</body></html>"), { contentType: "application/octet-stream" }));
 
   const [saved] = await pipeline.downloadSlackFiles(
     [{ id: "F013", name: "report.pdf", url_private_download: "https://files.slack.test/F013" }],

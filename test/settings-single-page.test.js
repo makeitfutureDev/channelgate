@@ -17,7 +17,7 @@ const html = readFileSync(new URL("../public/index.html", import.meta.url), "utf
 const app = readFileSync(new URL("../public/app.js", import.meta.url), "utf8");
 const css = readFileSync(new URL("../public/styles.css", import.meta.url), "utf8");
 
-const SECTIONS = ["connection", "agent", "templates", "integrations", "license", "access", "system"];
+const SECTIONS = ["connection", "agent", "templates", "integrations", "license", "access", "admin-access", "system"];
 
 // ── The pure matcher ─────────────────────────────────────────────────────────────
 test("query normalization folds the typography the admin markup actually uses", () => {
@@ -188,7 +188,7 @@ test("real settings text is searchable: representative queries land in the right
   assert.ok(sectionsFor("container runtime").includes("access"));
   assert.ok(sectionsFor("trusted bot apps").includes("access"));
   assert.ok(sectionsFor("license").includes("license"));
-  assert.ok(sectionsFor("admin password").includes("system"));
+  assert.ok(sectionsFor("passkeys").includes("admin-access"));
 
   // Secrets are never part of the index: only the input's markup is, never a typed/stored value.
   assert.ok(!index.some((entry) => /xoxb-[a-z0-9]{6,}/i.test(entry.text)));

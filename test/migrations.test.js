@@ -129,3 +129,29 @@ test("v8 repairs duplicate channel slugs and enforces uniqueness", () => {
     db.close();
   }
 });
+
+test("v37 preserves existing credential bytes and handles without guessing owner identity", () => {
+  const db = memoryDb();
+  try {
+    for (const migration of migrations.filter(item => item.version <= 36)) {
+      migration.up(db);
+      db.exec(`PRAGMA user_version = ${migration.version}`);
+    }
+    db.prepare("INSERT INTO users(user_id,data) VALUES(?,?)").run("U_EXISTING", JSON.stringify({ name: "Same label", isAdmin: true }));
+    db.prepare("INSERT INTO admin_accounts(id,username,display_name,user_handle,auth_version,created_ms) VALUES(?,?,?,?,?,?)")
+      .run("legacy", "same-label", "Same label", "opaque-existing-handle", 9, 1);
+    db.prepare("INSERT INTO admin_passkeys(id,account_id,public_key,counter,transports,device_type,backed_up,name,created_ms) VALUES(?,?,?,?,?,?,?,?,?)")
+      .run("credential-kept", "legacy", Buffer.from([1, 7, 9]), 12, '["internal"]', "multiDevice", 1, "Physical key", 2);
+    db.prepare("INSERT INTO admin_enrollment_tokens(digest,account_id,auth_version,expires_ms) VALUES(?,?,?,?)")
+      .run("old-invite-digest", "legacy", 9, Date.now() + 60_000);
+    const credential = db.prepare("SELECT * FROM admin_passkeys").get();
+    runMigrations(db);
+    const account = db.prepare("SELECT * FROM admin_accounts").get();
+    assert.equal(account.user_id, null, "matching names cannot establish ownership");
+    assert.equal(account.user_handle, "opaque-existing-handle");
+    assert.equal(account.auth_version, 10);
+    assert.deepEqual(db.prepare("SELECT * FROM admin_passkeys").get(), credential);
+    assert.equal(db.prepare("SELECT count(*) AS n FROM admin_enrollment_tokens").get().n, 0);
+    assert.equal(db.prepare("SELECT count(*) AS n FROM admin_identity_links").get().n, 0);
+  } finally { db.close(); }
+});

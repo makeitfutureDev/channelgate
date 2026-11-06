@@ -211,7 +211,7 @@ test("Agent holds this thread's and the channel's runtime rows, the mode and the
   assert.ok(threadRow > 0 && threadRow < channelRow);
   assert.equal(byActionId(view, "cg_channel_settings_access_field_mode").type, "static_select", "mode is a dropdown in the same style");
   assert.equal(byActionId(view, "cg_channel_settings_access_field_flags").type, "checkboxes");
-  assert.deepEqual(byActionId(view, "cg_channel_settings_access_field_flags").options.map((entry) => entry.text.text), ["Auto-approve", "Lean", "Internet"]);
+  assert.deepEqual(byActionId(view, "cg_channel_settings_access_field_flags").options.map((entry) => entry.text.text), ["Auto-approve", "Lean", "Internet", "Skill model swap"]);
   // `vpn` absent = a provisioned service still being read; an unprovisioned one is one plain line.
   assert.match(text, /VPN\* — Checking status/);
   assert.match(rendered(buildChannelSettingsView({ ...snapshot, vpn: { configured: false, state: "unconfigured" } }, state, { tab: "agent" })), /VPN · Not configured/);
@@ -502,6 +502,7 @@ test("credential snapshots retain only a safe tail", () => {
 });
 
 test("Settings and secrets admit authorized members and guests, but Cloud MCP requires a current admin", async () => {
+  const { saveSettings } = await import("../src/config/settings.js");
   await store.ensureRoot();
   const entry = await store.upsertChannelEntry("C_SETTINGS_AUTH", {
     name: "settings-auth",
@@ -544,10 +545,16 @@ test("Settings and secrets admit authorized members and guests, but Cloud MCP re
     assert.equal((await secretsContext(memberClient, args)).mayEdit, true);
     // A non-admin may edit this channel's own secrets in every mode, but never the organization's:
     // that scope reaches every conversation in the deployment.
+    // The runtime pickers follow the gateway's model-change policy (default: admins only), the
+    // same rule `/model` applies — a member gets them only under the "users" policy.
     assert.deepEqual(channelSettingsEditOptions({ ...base, ...flags }, false), {
-      canEnableAdmin: false, canApproveHarnesses: false, canEditRuntime: true, canEditSecrets: true, canEditOrgSecrets: false, canManageCloudMcp: false, canManageVpn: false,
+      canEnableAdmin: false, canApproveHarnesses: false, canEditRuntime: false, canEditSecrets: true, canEditOrgSecrets: false, canManageCloudMcp: false, canManageVpn: false,
       canManageCustomMcp: false, canEditAccess: false,
     });
+    saveSettings({ modelChangeAccess: "users" });
+    assert.equal(channelSettingsEditOptions({ ...base, ...flags }, false).canEditRuntime, true);
+    saveSettings({ modelChangeAccess: "admins" });
+    assert.equal(channelSettingsEditOptions({ ...base, ...flags }, true).canEditRuntime, true);
     assert.equal(channelSettingsEditOptions({ ...base, ...flags }, true).canEditOrgSecrets, true);
   }
   await store.setUser(args.userId, { approved: false });
@@ -594,7 +601,7 @@ test("DM Settings has a mode dropdown (Admin only for admins) and independent Au
   assert.deepEqual(mode.options.map((entry) => entry.text.text), ["Read-only", "Worker", "Admin"]);
   assert.equal(mode.initial_option.value, "admin");
   const flags = byActionId(admin, "cg_channel_settings_dm_flags");
-  assert.deepEqual(flags.options.map((entry) => entry.value), ["autoMode", "cleanMode"]);
+  assert.deepEqual(flags.options.map((entry) => entry.value), ["autoMode", "cleanMode", "skillRuntimeSwap"]);
   assert.deepEqual(flags.initial_options.map((entry) => entry.value), ["autoMode", "cleanMode"]);
   const member = buildChannelSettingsView({ ...data, mode: { autoMode: true } }, state, { tab: "agent", canEnableAdmin: false });
   assert.equal(byActionId(member, "cg_channel_settings_dm_mode").options.some((entry) => entry.value === "admin"), false);
@@ -839,4 +846,12 @@ test("native You and MCP pages show the scoped account list beneath Composio and
   assert.equal(editing.submit.text, "Save");
   assert.equal(elements(editing).some((element) => element.action_id === COMPOSIO_INVENTORY_ACTION_ID), false);
   assert.doesNotMatch(rendered(editing), /viewer@example.test/);
+});
+
+
+test("Skills page names each channel skill's preferred model", () => {
+  const view = buildChannelSettingsView({ ...snapshot, skills: { ...(snapshot.skills || {}), additional: ["triage", "plain"], channel: ["triage", "plain"], organization: [], templates: [], models: { triage: "gpt-6.1-sol" } } }, state, { tab: "skills" });
+  const text = rendered(view);
+  assert.match(text, /Preferred models: `triage` _\(gpt-6\.1-sol\)_/);
+  assert.doesNotMatch(text, /`plain` _\(/);
 });

@@ -7,9 +7,9 @@
 //
 // engines.node is advisory (npm only warns) and `git pull` + restart never re-runs install.sh's
 // check, so this is the only gate a live deploy actually hits.
-const [major, minor] = process.versions.node.split(".").map(Number);
-if (major < 22 || (major === 22 && minor < 13)) {
-  console.error(`ChannelGate requires Node >= 22.13 (node:sqlite); running on ${process.versions.node}. Upgrade Node and restart.`);
+const major = Number(process.versions.node.split(".")[0]);
+if (!Number.isInteger(major) || major < 24) {
+  console.error(`ChannelGate requires Node >= 24.0.0; running on ${process.versions.node}. Upgrade Node and restart.`);
   process.exit(1);
 }
 

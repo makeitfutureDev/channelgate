@@ -10,11 +10,13 @@ import { effectiveWorkDir } from "../gateway/folders.js";
 import { resolveRuntime } from "../runtimes/resolve.js";
 import { buildResumeCommand } from "../slack/footer.js";
 import { effectiveMeta } from "../gateway/run.js";
-import { listChannels } from "../config/store.js";
+import { listChannels, getUser } from "../config/store.js";
 import { createAdminRouter } from "./routes/admin.js";
 import { mountSkillsPublicRoutes } from "./skills-mcp.js";
 import { triggerSourceSync } from "../gateway/skills/index.js";
 import { createRunsRouter } from "./routes/runs.js";
+import { automationTarget, postDirectMessage, asConnector } from "../platforms/notify.js";
+import { liveConnector } from "../platforms/live.js";
 import { platformOfConversation } from "../platforms/ids.js";
 import { platformOr } from "../platforms/registry.js";
 import { createFileEditorRouter } from "./file-editor.js";
@@ -27,8 +29,9 @@ import { getSessionMap, getSessionRuntime, getSessionEngine } from "../gateway/s
 import { poolStats } from "../engines/session-pool.js";
 import { getEngine, isEngineEnabled } from "../config/settings.js";
 import { resumeCommandFor } from "../engines/registry.js";
-import { authMiddleware, noPasswordLockdown, handleLogin, handleLogout, authEnabled, isAuthenticated } from "./auth.js";
-import { isLoopbackHost, hostAllowed } from "./security.js";
+import { createAdminAuthRouter } from "./admin-auth.js";
+import { authMiddleware, noPasswordLockdown, handleLogin, handleLogout, authEnabled, isAuthenticated, isApiPath } from "./auth.js";
+import { isLoopbackHost, hostAllowed, timingSafeEqualStr } from "./security.js";
 import { dropCounts } from "../util/drops.js";
 import { fileExplorerContext, requestApproval } from "../slack/app.js";
 import { canEditChannelFiles } from "../slack/file-explorer.js";
@@ -36,9 +39,10 @@ import { ADMIN_CONVERSATION_PATH_RE, ADMIN_VIEW_PATHS } from "../../public/admin
 import { runUpdateSmoke } from "../gateway/update-smoke.js";
 import { runningRevision, startUpdate } from "../gateway/updater.js";
 import { publicUpdateState, readUpdateStatus } from "../gateway/update-state.js";
-import { renderShell } from "./assets.js";
+import { renderShell, shellContentSecurityPolicy } from "./assets.js";
 import { handleDriveSyncIpc } from "../gateway/drivesync.js";
 import { searchAgentDirectory } from "../gateway/agent-directory.js";
+import { requestSkillSwap } from "../gateway/skill-runtime.js";
 
 const escapeHtml = (s) =>
   String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -61,6 +65,8 @@ function slackLiveness(slack) {
 export function createWebApp({
   slack,
   transports = null,
+  adminIdentityDelivery = null,
+  adminSlackIdentityLookup = null,
   backgroundJobs,
   restartCoordinator,
   updateSmoke = runUpdateSmoke,
@@ -69,8 +75,25 @@ export function createWebApp({
   // load of the backend; the default keeps every other caller (and the tests) honest about the fact
   // that nothing is wired rather than pretending the feature is off.
   containerRuntimeStatus = async () => ({ ok: false, enabled: false, cli: "", reason: "container runtime is not wired in this process", running: 0 }),
+  // Channel-to-channel agent mail (gateway/agent-mail.js), injected by src/server.js; absent in
+  // every other process, where the internal route answers 503 rather than pretending.
+  sendAgentMail = null,
 } = {}) {
   const app = express();
+  // Express matches mount paths case-INsensitively by default, while every guard below tests the
+  // literal path: "/API/settings" would reach the /api router having skipped the Host/Origin guard,
+  // the no-password lockdown and the 401 branch. Case-sensitive routing makes a case variant a plain
+  // 404, and the guards lowercase on their own as a second layer (src/web/auth.js isApiPath).
+  app.set("case sensitive routing", true);
+  // Baseline response headers for everything this process serves. Pages that need a stricter or
+  // different policy (the grant pages, /approve) set their own on top; the admin shell and the
+  // login page get a Content-Security-Policy in their handlers below.
+  app.use((_req, res, next) => {
+    res.setHeader("X-Content-Type-Options", "nosniff");
+    res.setHeader("X-Frame-Options", "DENY");
+    res.setHeader("Referrer-Policy", "same-origin");
+    next();
+  });
   // Identifies this exact daemon process. The update UI compares the value returned by the old
   // process with /api/health while polling, so a restart is observable even when it happens
   // entirely between two health requests (and the browser never sees a failed request).
@@ -83,7 +106,8 @@ export function createWebApp({
   mountSkillsPublicRoutes(app, { triggerSync: (id) => triggerSourceSync(id) });
 
   const jsonParser = express.json({ limit: "1mb" });
-  app.use((req, res, next) => (req.path.startsWith("/api/runs") || req.path.startsWith("/file-download") || req.path.startsWith("/file-editor") || req.path.startsWith("/file-upload") || req.path.startsWith('/conversation-settings') || req.path.startsWith("/approve/") || req.path.startsWith("/f/") || req.path === "/api/skills/webhook/github" || req.path === "/mcp/skills" ? next() : jsonParser(req, res, next)));
+  const parsesOwnBody = (p) => p.startsWith("/api/runs") || p.startsWith("/file-download") || p.startsWith("/file-editor") || p.startsWith("/file-upload") || p.startsWith("/conversation-settings") || p.startsWith("/approve/") || p.startsWith("/f/") || p === "/api/skills/webhook/github" || p === "/mcp/skills";
+  app.use((req, res, next) => (parsesOwnBody(req.path.toLowerCase()) ? next() : jsonParser(req, res, next)));
 
   // Auth: login/logout are always reachable; everything else is gated when ADMIN_PASSWORD is set.
   app.post("/api/login", handleLogin);
@@ -94,7 +118,7 @@ export function createWebApp({
   // deliberately non-loopback bind these endpoints never serve network callers.
   const internalForbidden = (req) => {
     const secret = process.env.CG_APPROVAL_SECRET || "";
-    if (!secret || req.headers["x-cg-secret"] !== secret) return true;
+    if (!secret || !timingSafeEqualStr(String(req.headers["x-cg-secret"] || ""), secret)) return true;
     return !isLoopbackHost(req.socket?.remoteAddress);
   };
 
@@ -136,6 +160,19 @@ export function createWebApp({
     }
   });
 
+  // The gateway MCP server's use_skill tool on the host stdio path: ask the LIVE turn for this
+  // thread how to honor a skill's preferred model (src/gateway/skill-runtime.js). Container runs
+  // reach the same service in-process through the socket server.
+  app.post("/internal/skill-swap", async (req, res) => {
+    if (internalForbidden(req)) return res.status(403).json({ ok: false, error: "forbidden" });
+    try {
+      const { slug, threadKey, name } = req.body || {};
+      res.json(await requestSkillSwap({ slug, threadKey, name }));
+    } catch (e) {
+      res.json({ ok: false, error: e.message });
+    }
+  });
+
   // Live connector reads for host stdio tools. Socket-backed tools use the same daemon service.
   app.post("/internal/agent-directory", async (req, res) => {
     if (internalForbidden(req)) return res.status(403).json({ ok: false, error: "forbidden" });
@@ -144,6 +181,19 @@ export function createWebApp({
       res.json(await searchAgentDirectory({ query, limit, offset, createdBy, channelId }));
     } catch {
       res.status(503).json({ ok: false, error: "Agent discovery is unavailable." });
+    }
+  });
+
+  // Host stdio tools' path for channel-to-channel agent mail; socket-backed tools use the same
+  // daemon service in-process. Same rotating secret as approvals.
+  app.post("/internal/agent-mail", async (req, res) => {
+    if (internalForbidden(req)) return res.status(403).json({ ok: false, error: "forbidden" });
+    if (typeof sendAgentMail !== "function") return res.status(503).json({ ok: false, error: "Agent messaging is unavailable." });
+    try {
+      const { channelId, slug, createdBy, threadKey, origin, to, message } = req.body || {};
+      res.json(await sendAgentMail({ channelId, slug, createdBy, threadKey, origin, to, message }));
+    } catch (e) {
+      res.status(500).json({ ok: false, error: e.message });
     }
   });
 
@@ -310,7 +360,7 @@ export function createWebApp({
   // CG_ALLOWED_HOSTS). Ahead of auth: this holds even on a passwordless install, which is exactly
   // the case with no session cookie to be missing.
   app.use((req, res, next) => {
-    if (!req.path.startsWith("/api/")) return next();
+    if (!isApiPath(req.path)) return next();
     if (hostAllowed(req)) return next();
     // A machine-readable code, because the admin UI has to recognise THIS refusal specifically:
     // it is the one 403 the operator can fix, and the page that fixes it is behind the same guard.
@@ -323,6 +373,29 @@ export function createWebApp({
         "set its hostname as `publicUrl` in settings (or CG_ALLOWED_HOSTS).",
     });
   });
+
+  app.use("/api/auth", createAdminAuthRouter({ adminSlackIdentityLookup: adminSlackIdentityLookup || (async email => {
+    const client = slack?.getClient?.();
+    if (!client?.users?.lookupByEmail) throw new Error('Slack identity lookup is unavailable.');
+    const result = await client.users.lookupByEmail({ email });
+    return result?.user;
+  }), adminIdentityDelivery: adminIdentityDelivery || (async (userId, text) => {
+    const user = await getUser(userId);
+    if (!user || user.isAdmin !== true) throw new Error('Administrator is unavailable.');
+    let target = null; let recipient = userId; let platform = '';
+    // Stable native IDs/mappings only. An email or unknown string never defaults to Slack,
+    // and private verification never falls back to a public conversation.
+    if (/^[UW][A-Z0-9]{8,}$/.test(userId)) { platform = 'slack'; target = automationTarget(slack, userId); }
+    else if (/^29:[^\s]{1,512}$/.test(userId)) { platform = 'msteams'; target = liveConnector(platform); }
+    else {
+      const resource = user.googleChatUserName || (/^users\/[A-Za-z0-9_-]+$/.test(userId) ? userId : '');
+      if (/^users\/[A-Za-z0-9_-]+$/.test(resource)) { platform = 'googlechat'; target = liveConnector(platform); recipient = resource; }
+    }
+    if (!target || asConnector(target)?.platform !== platform || target.ready?.() === false) throw new Error('Private chat delivery is unavailable.');
+    const result = await postDirectMessage(target, { userId: recipient, text });
+    if (!result?.messageId) throw new Error('Private chat delivery did not complete.');
+    return result;
+  }) }));
 
   app.use(noPasswordLockdown); // no admin password → privileged API refused on every bind (see auth.js)
   app.use(authMiddleware);
@@ -381,6 +454,9 @@ export function createWebApp({
   // Resume helper: the footer's "resume" link points here. Shows the terminal command to
   // resume the session and copies it to the clipboard on click. Renders text only (no exec).
   app.get("/resume", async (req, res) => {
+    // Names the channel's absolute work directory and runtime command: admin detail, so it needs
+    // the admin session like the rest of the UI (the /api lockdown does not cover this path).
+    if (!isAuthenticated(req)) return res.redirect("/login.html");
     const slug = String(req.query.slug || "").replace(/[^a-zA-Z0-9._-]/g, "");
     const session = String(req.query.session || "").replace(/[^a-zA-Z0-9-]/g, "");
     if (!slug || !session) return res.status(400).send("missing slug/session");
@@ -429,8 +505,16 @@ export function createWebApp({
   // and refreshes; app.js restores the matching view and manages in-page browser history.
   const sendAdminShell = (_req, res) => {
     res.setHeader("Cache-Control", "no-cache");
+    res.setHeader("Content-Security-Policy", shellContentSecurityPolicy(publicDir));
     res.type("html").send(renderShell(publicDir, adminShell));
   };
+  // Stamp login dependencies with the same content version as their HTML. Edge/browser caches
+  // must never pair the current form with an older script expecting removed fields.
+  app.get("/login.html", (_req, res) => {
+    res.setHeader("Content-Security-Policy", shellContentSecurityPolicy(publicDir, { inlineScriptHashes: [] }));
+    res.setHeader("Cache-Control", "no-store");
+    res.type("html").send(renderShell(publicDir, "login.html"));
+  });
   // "/" and "/index.html" are handled here too, ahead of express.static: static would serve the
   // shell straight off disk with its `{{ASSET_V}}` placeholders unsubstituted and no import map,
   // i.e. an unversioned module graph on the one entry point most people actually type.
@@ -451,5 +535,20 @@ export function createWebApp({
       },
     })
   );
+  // The one error handler. Without it Express's default answers an unexpected throw with the
+  // stack trace (absolute paths, the OS account) unless NODE_ENV says production — on public
+  // routes like /approve and /api/runs. Client errors keep their status and the message the
+  // middleware marked as exposable (a malformed JSON body stays a 400 that says so); anything
+  // else is logged here and answered with a bare 500.
+  // eslint-disable-next-line no-unused-vars
+  app.use((err, req, res, _next) => {
+    const status = Number(err?.status || err?.statusCode) >= 400 && Number(err?.status || err?.statusCode) < 600 ? Number(err?.status || err?.statusCode) : 500;
+    if (status >= 500) console.error(`[web] ${req.method} ${req.path} failed:`, err?.stack || err);
+    if (res.headersSent) return res.end();
+    const message = status < 500 && err?.expose ? String(err.message || "bad request") : status < 500 ? "bad request" : "internal error";
+    res.status(status);
+    if (isApiPath(req.path) || /\bjson\b/.test(String(req.headers.accept || ""))) return res.json({ error: message });
+    return res.type("text").send(message);
+  });
   return app;
 }

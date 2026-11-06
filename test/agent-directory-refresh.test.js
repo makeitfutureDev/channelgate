@@ -1,5 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
 import { ensureTestEnv } from "./helpers.js";
 ensureTestEnv();
 const {
@@ -159,4 +160,38 @@ test("local-calendar 03:00 deadline is strictly future, including at the boundar
   const boundary = new Date(2026, 9, 21, 3).getTime();
   const tomorrow = new Date(2026, 9, 22, 3).getTime();
   assert.equal(nextAgentDirectoryRefreshDelay(boundary), tomorrow - boundary);
+});
+
+
+test("local 03:00 refresh returns to 03:00 after the spring DST gap without autumn drift", () => {
+  const moduleUrl = new URL("../src/gateway/agent-directory-refresh.js", import.meta.url).href;
+  const script = `
+    const { nextAgentDirectoryRefreshDelay } = await import(${JSON.stringify(moduleUrl)});
+    const inputs = [
+      "2026-02-10T02:59:59+02:00",
+      "2026-03-28T03:00:00+02:00",
+      "2026-03-29T02:59:59+02:00",
+      "2026-03-29T04:00:00+03:00",
+      "2026-03-29T12:00:00+03:00",
+      "2026-10-24T03:00:00+03:00",
+      "2026-10-25T03:00:00+03:00",
+    ];
+    console.log(JSON.stringify(inputs.map(input => {
+      const at = Date.parse(input);
+      return new Date(at + nextAgentDirectoryRefreshDelay(at)).toISOString();
+    })));
+  `;
+  const result = spawnSync(process.execPath, ["--input-type=module", "-e", script], {
+    env: { ...process.env, TZ: "Europe/Bucharest" }, encoding: "utf8", timeout: 10_000,
+  });
+  assert.equal(result.status, 0, result.stderr);
+  assert.deepEqual(JSON.parse(result.stdout.trim()), [
+    "2026-02-10T01:00:00.000Z",
+    "2026-03-29T01:00:00.000Z", // Missing local 03:00 normalizes to the first valid 04:00.
+    "2026-03-29T01:00:00.000Z",
+    "2026-03-30T00:00:00.000Z", // The next ordinary day must return to local 03:00.
+    "2026-03-30T00:00:00.000Z",
+    "2026-10-25T00:00:00.000Z",
+    "2026-10-26T01:00:00.000Z", // One deadline per local day across the repeated hour.
+  ]);
 });

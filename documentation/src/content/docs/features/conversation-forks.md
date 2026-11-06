@@ -13,7 +13,7 @@ Inside the source Slack thread, send:
 @ChannelGate /fork Explore an alternative using a queue-based import worker.
 ```
 
-ChannelGate uses the selected engine's native fork command, creates a new top-level Slack message linking to the source, posts the new request in that thread, and runs it with a distinct child session ID. The source thread receives a backlink.
+ChannelGate uses the selected engine's native fork command, creates a new top-level Slack message showing your new request above the `↪️ Fork of this thread` source link, posts the new request in that thread, and runs it with a distinct child session ID. The source thread receives a backlink.
 
 The source retains its own session ID and history. Engine, model, effort, and thread Clean pins carry into the branch. Subsequent requests in either thread continue their respective sessions.
 

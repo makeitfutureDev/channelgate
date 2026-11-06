@@ -1,5 +1,10 @@
 # Release acceptance packet
 
+Current candidate: **0.6.5**, prepared 2026-11-06. See [the candidate record](releases/0.6.5.md).
+Current-candidate execution is pending; the historical evidence and deferrals below apply only
+to their named revisions. They are not passes or waivers for 0.6.5. Human-only checks are
+assigned in the private QA handoff; this public packet contains no private actor identities.
+
 0.5.1 live evidence (2026-09-21, owner-approved release without the full campaign): on the exact
 candidate tree, a live Claude turn used the Read tool and returned the probe file's bytes; a live
 Qwen turn with no model configured answered from QwenCloud with real tokens and no dollar cost.

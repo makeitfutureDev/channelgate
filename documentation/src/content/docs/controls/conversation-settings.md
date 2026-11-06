@@ -264,3 +264,11 @@ Example arguments:
 - [Drive sync](/docs/features/drive-sync)
 - [Updates and rollback](/docs/features/updates)
 - [Restart and recovery](/docs/features/restart-and-recovery)
+
+## set_channel_skill_swap
+
+**Required:** `enabled` (boolean).
+
+**Scope and result:** Enables or disables preferred engine/model selection from a skill's `model:` field in this conversation. Default is off. When enabled, a skill can resume the same session on a model of the current engine or delegate to a background agent on another engine. A person's `/model` pin takes precedence. Effective on the next `use_skill` call.
+
+**Restrictions:** Requires a channel manager or administrator and an already configured conversation. Does not change other conversations.

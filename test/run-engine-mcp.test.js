@@ -66,11 +66,12 @@ test("warm MCP fingerprint ignores capability nonce but retains scoped authority
   assert.notEqual(first.gatewayCapability, second.gatewayCapability, "each run still gets a fresh signed grant");
   assert.equal(first.mcpConfigFingerprint, second.mcpConfigFingerprint, "nonce alone must not tear down a warm process");
 
+  const otherAdmission = await buildEngineMcpRuntime({ ...input, admissionThreadKey: "visible-parent" });
   const otherAuthor = await buildEngineMcpRuntime({ ...input, authorId: "U_OTHER" });
   const otherOrigin = await buildEngineMcpRuntime({ ...input, origin: "recovery" });
   const untrusted = await buildEngineMcpRuntime({ ...input, principalTrusted: false });
   const renewed = await buildEngineMcpRuntime({ ...input, fingerprintNow: 6 * 60 * 60 * 1000 });
-  for (const runtime of [otherAuthor, otherOrigin, untrusted, renewed]) {
+  for (const runtime of [otherAdmission, otherAuthor, otherOrigin, untrusted, renewed]) {
     assert.notEqual(runtime.mcpConfigFingerprint, first.mcpConfigFingerprint);
   }
 });

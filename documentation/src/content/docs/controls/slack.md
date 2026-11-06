@@ -235,3 +235,27 @@ These tools use the gateway’s Slack bot token and trusted current conversation
 **Scope and result:** Asks Slack for a file descriptor, proves sharing in the current conversation, and downloads into this thread’s uploads folder. Returns a local path, MIME type when available, and size. A existing confined download is reused.
 
 **Limits:** At most 500 MiB per attachment. The bot must have file access and Slack must report the file shared here. It returns no private URL/token. Download refusals and unavailable metadata do not count as content inspection.
+
+## open_code_channel
+
+**Required:** `task` (3–2,000 characters). **Optional:** `name` (up to 80 characters), `mode` (`auto`, `worktree`, `in_place`; default `auto`), `private` (boolean; defaults to origin channel visibility).
+
+**Scope and result:** Requests a dedicated Slack code channel for an explicitly requested task. A human must approve the card before creation. It inherits the origin's folder, access, secrets and skills; `auto` uses a task branch in a git worktree when the folder is a repository, otherwise its own files. Returns the channel and work location; starts the first turn when available.
+
+**Limits:** Starts from a live message in a regular channel, never a DM, another code channel, scheduled run or background run. The Code tab shows the task diff; teammates can join the dedicated channel.
+
+## update_code_channel
+
+**Optional:** `title` (up to 200 characters), `context_items` (up to five objects with `key` up to 64, `label` up to 128, optional `icon` and `url`), `view`, `refresh_diff` (boolean). Supply at least one change.
+
+**Scope and result:** Updates the current code channel's title, context bar, artifact tab or Code diff. `view.type` is `html`, `block_kit`, `canvas` or `pull_request`; optional `key` (up to 255 characters) identifies a replaceable tab and `name` (up to 80) labels it. Supply `content` for a self-contained HTML preview, `blocks` (up to 50) for Block Kit, `canvas_id` for a canvas, or `pr_url` for an HTTPS pull request. Returns per-change success or error messages.
+
+**Limits:** Only an active code channel. Context items merge with defaults, with up to five items total. HTML renders sandboxed. Diff refresh normally happens after each turn; `refresh_diff:true` forces a refresh.
+
+## archive_code_channel
+
+**Optional:** `summary` (up to 3,900 characters).
+
+**Scope and result:** After the requester agrees and a human approves the card, posts the wrap-up, shares it to the origin thread, closes the session and archives the current code channel.
+
+**Limits:** Only a code channel. History and artifact tabs remain readable and searchable; the task branch remains on disk. An already archived channel returns a notice.

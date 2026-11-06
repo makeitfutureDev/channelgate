@@ -7,6 +7,7 @@ import { getUser } from "../config/store.js";
 import { getNoResponseReminderHours, userNudgesEnabled } from "../config/settings.js";
 import { logEvent } from "../util/logger.js";
 import { postNotice } from "../platforms/notify.js";
+import { threadHasCompletionReaction } from "./thread-completion.js";
 
 const threads = new Map(); // "<slug>::<threadKey>" -> { channelId, slug, threadKey, userId, lastBotTs, awaitingUser, reminded }
 const key = (slug, threadKey) => `${slug}::${threadKey}`;
@@ -61,6 +62,14 @@ export async function sweepNudges(slack, {
       user = null;
     }
     if (!userNudgesEnabled(user)) continue;
+    try {
+      if (await threadHasCompletionReaction(c, rec.channelId, rec.threadKey)) continue;
+    } catch {
+      // Unknown completion state: defer until the next sweep rather than remind a closed thread.
+      continue;
+    }
+    // A user message/new bot reply may have replaced this entry while Slack was being read.
+    if (map.get(key(rec.slug, rec.threadKey)) !== rec) continue;
     rec.reminded = true;
     rec.awaitingUser = false;
     try {

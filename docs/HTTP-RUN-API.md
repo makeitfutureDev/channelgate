@@ -1,8 +1,33 @@
-# HTTP run API conversations
+# HTTP run API
 
-Authenticate `POST /api/runs` with `X-API-Key` or `Authorization: Bearer` using the run API key
-generated in Settings. An authenticated admin session also works. The Admin UI's HTTP run API
-page documents message/file inputs, engine overrides, polling, stopping and completion webhooks.
+## Authentication: channel tokens
+
+Authenticate `POST /api/runs` with `X-API-Key: <token>` or `Authorization: Bearer <token>`.
+The credential to use is a **channel token**: inside a conversation, anyone who may talk to the
+agent asks it to `create_api_token` (and `list_api_tokens`, `revoke_api_token`; admins also see
+and revoke every token on the Admin UI → API page). A channel token:
+
+- belongs to **one conversation** — a run it starts is posted there as a thread; `channel` may be
+  omitted or must name that conversation, otherwise the request answers 403;
+- belongs to **one person** — the run acts as its creator with their *current* role: an admin's
+  token has what an admin's Slack message has (Admin-mode bypass in an Admin channel, admin-only
+  tools), a member's token is a member. Their channel authorization is re-checked at every run
+  (403 when they lost access), and their personal connections, secrets and skills apply exactly as
+  in Slack. The body's `author` field is ignored; attribution is the creator;
+- is shown **once**, stored only as a hash, and stops working the moment it is revoked (401);
+- can read the status of, list, and stop only the runs of its own conversation.
+
+### Deprecated: the organization-wide key
+
+The single run API key under Settings → HTTP run API still works for existing automations. It is
+deprecated: it acts as a fixed admin principal in *any* conversation with no person behind it,
+and every use logs a deprecation warning (one per hour). Replace it with channel tokens and clear
+it. An authenticated admin session also works from the browser.
+
+The Admin UI's HTTP run API page documents message/file inputs, engine overrides, polling,
+stopping and completion webhooks.
+
+## Conversations
 
 To keep separate events from an external conversation in the same Slack thread:
 

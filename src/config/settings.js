@@ -7,7 +7,7 @@ import path from "node:path";
 import { settingsFile } from "./paths.js";
 import { writeSecretFile } from "./harden.js";
 import { getDb } from "../db/index.js";
-import { ENGINE_IDS, adapterOr } from "../engines/registry.js";
+import { ENGINE_IDS, adapterOr, modelsForEngine } from "../engines/registry.js";
 // Value-only import (the default endpoint constant). qwen.js reads settings LAZILY, so this
 // direction carries no cycle.
 import { QWEN_PROVIDERS, qwenProvider } from "../engines/qwen.js";
@@ -15,6 +15,7 @@ import { QWEN_PROVIDERS, qwenProvider } from "../engines/qwen.js";
 // transactional updater can name the same image without importing this file's database layer.
 import { CONTAINER_DEFAULT_IMAGE } from "../runtimes/container/image.js";
 import { modelShortcutsFromSettings } from "./model-shortcuts.js";
+import { enterpriseFeatureEnabled, requireEnterpriseFeature } from "../ee/feature-entitlements.js";
 // Dependency-free reaction normalization keeps reserved Teams controls out of activation lists.
 import { teamsReactionKey, teamsActivationFingerprint, DEFAULT_TEAMS_ACTIVATION_REACTIONS } from "../platforms/msteams/reactions.js";
 
@@ -89,12 +90,32 @@ export function saveSettings(patch, { expectVersion = "" } = {}) {
   db.exec("BEGIN IMMEDIATE");
   try {
     const current = getSettings();
+    // Retain existing governance on downgrade: never silently strip instructions or mandatory
+    // grants. New policies require Enterprise; explicit removal remains available to admins.
+    if (typeof patch.agentsInstructions === "string" && patch.agentsInstructions.trim()
+      && patch.agentsInstructions.trim() !== (typeof current.agentsInstructions === "string" ? current.agentsInstructions.trim() : "")) requireEnterpriseFeature("organizationInstructions");
+    if (Array.isArray(patch.accessGrants?.skills)) {
+      const existing = new Set((Array.isArray(current.accessGrants?.skills) ? current.accessGrants.skills : []).map(value => String(value).trim().toLowerCase()));
+      if (patch.accessGrants.skills.some(value => !existing.has(String(value).trim().toLowerCase()))) requireEnterpriseFeature("mandatoryOrgSkills");
+    }
+    if (patch.userAutoApprovalEnabled === true && current.userAutoApprovalEnabled !== true) requireEnterpriseFeature("companyDomainApproval");
+    for (const [key, value] of Object.entries(patch)) {
+      if (key.startsWith("driveSync") && value && JSON.stringify(value) !== JSON.stringify(current[key])) requireEnterpriseFeature("driveSync");
+    }
+    for (const [scope, template] of Object.entries(patch.dmTemplates || {})) {
+      if (template?.skillTemplate && template.skillTemplate !== current.dmTemplates?.[scope]?.skillTemplate) requireEnterpriseFeature("skillTemplates");
+    }
+    if (patch.channelTemplate?.skillTemplate && patch.channelTemplate.skillTemplate !== current.channelTemplate?.skillTemplate) requireEnterpriseFeature("skillTemplates");
     const currentVersion = String(Number.isFinite(Number(current.settingsRev)) && Number(current.settingsRev) >= 0 ? Math.floor(Number(current.settingsRev)) : 0);
     if (expectVersion !== "" && String(expectVersion) !== currentVersion) throw new SettingsVersionConflict(currentVersion);
     const next = { ...current };
     for (const [k, v] of Object.entries(patch)) {
       if (v === undefined) continue;
       next[k] = k === "publicUrl" ? normalizePublicUrl(v) : v;
+    }
+    // A disable/re-enable or password rotation must never resurrect alternate-login proofs.
+    if (next.adminPasswordSlackEnabled !== current.adminPasswordSlackEnabled || next.adminPassword !== current.adminPassword) {
+      next.adminPasswordSlackVersion = (Number(current.adminPasswordSlackVersion) || 0) + 1;
     }
     // Persist every effective Teams activation change, even A → B → A between Graph
     // refreshes. The comparison and monotonic stamp share the settings write lock.
@@ -262,6 +283,25 @@ export function getApprovalLinks() {
   return APPROVAL_LINK_MODES.includes(v) ? v : "auto";
 }
 
+// Which forwarded-client header the login and approval-link backoff may believe. "" trusts
+// nothing (the socket address is the client); "cloudflare" reads `CF-Connecting-IP`, which
+// cloudflared overwrites on every request; "xff" reads the LAST hop of `X-Forwarded-For` — the one
+// the trusted proxy appended — never the first, which the client typed. The legacy truthy
+// CG_TRUST_PROXY=1 meant "there is a proxy" and maps onto "xff". Settings win over the env.
+export const TRUST_PROXY_MODES = ["", "cloudflare", "xff"];
+export function normalizeTrustProxy(value) {
+  const v = String(value ?? "").trim().toLowerCase();
+  if (v === "" || v === "0" || v === "false" || v === "no" || v === "off" || v === "none") return "";
+  if (v === "cloudflare" || v === "cf") return "cloudflare";
+  if (v === "xff" || v === "x-forwarded-for" || v === "1" || v === "true" || v === "yes" || v === "on") return "xff";
+  return null; // not a mode
+}
+export function getTrustProxy() {
+  const s = getSettings();
+  if (typeof s.trustProxy === "string") return normalizeTrustProxy(s.trustProxy) ?? "";
+  return normalizeTrustProxy(process.env.CG_TRUST_PROXY) ?? "";
+}
+
 // Opt-in recipients of supplemental Slack button links. Missing/invalid legacy values fail closed.
 export const AI_TESTING_USER_ID_RE = /^[UW][A-Z0-9]+$/;
 export function getAiTestingUsers() {
@@ -334,8 +374,16 @@ export function getDefaultModel(engine) {
   return typeof v === "string" ? v.trim() : "";
 }
 
+// Blank preserves the CLI default; stale or hand-edited values never reach a runner.
+export function getDefaultEffort(engine) {
+  const adapter = adapterOr(engine);
+  const raw = getSettings()[adapter.defaultEffortKey];
+  const effort = typeof raw === "string" ? raw.trim().toLowerCase() : "";
+  return adapter.efforts.includes(effort) ? effort : "";
+}
+
 export function getModelShortcuts() {
-  return modelShortcutsFromSettings(getSettings());
+  return modelShortcutsFromSettings(getSettings(), { claude: modelsForEngine("claude"), codex: modelsForEngine("codex") });
 }
 
 // Who may use Slack's /model wizard in a CHANNEL (both channel-wide and thread-scoped picks).
@@ -493,12 +541,14 @@ export function qwenProviderSettings() {
       apiKeyField: entry.settings.apiKey,
       baseUrlField: entry.settings.baseUrl,
       defaultModelField: entry.defaultModelKey,
+      defaultEffortField: entry.defaultEffortKey,
       hasApiKey: Boolean(config.apiKey),
       apiKeyLast4: last4(config.apiKey),
       // The STORED endpoint, so an empty box means "still on the shipped default" rather than
       // silently re-saving a default the operator never chose.
       baseUrl: typeof getSettings()[entry.settings.baseUrl] === "string" ? getSettings()[entry.settings.baseUrl].trim() : "",
       defaultModel: getDefaultModel(entry.id),
+      defaultEffort: getDefaultEffort(entry.id),
     };
   });
 }
@@ -625,13 +675,15 @@ export function getCodexRatePer1MTokens() {
 // Per-model Codex $/1M-token rates for the cost ESTIMATE (input / cached-input / output).
 // Defaults verified against OpenAI's STANDARD API pricing table on 2026-09-13, and the GPT-6 Sol /
 // GPT-6 Luna rows on 2026-09-24 (their 2026-09-22 launch prices), and GPT-6.1 Sol on
-// 2026-10-22 (its 2026-09-29 launch price); admins can adjust
+// 2026-10-22 (its 2026-09-29 launch price), and GPT-6.1 Terra on
+// 2026-11-01 (its 2026-10-26 launch price); admins can adjust
 // them in Settings → Integrations. `cachedInput` prices the cached_input_tokens subset of input.
 // Editable values are merged OVER these defaults, so a pricing change only needs the changed cell;
 // the model list itself is fixed and intentionally small.
 export const DEFAULT_CODEX_RATES = {
   "gpt-6-astra": { input: 10, cachedInput: 1, output: 50 },
   "gpt-6.1-sol": { input: 2, cachedInput: 0.1, output: 10 },
+  "gpt-6.1-terra": { input: 1, cachedInput: 0.05, output: 5 },
   "gpt-6-sol": { input: 2, cachedInput: 0.2, output: 10 },
   "gpt-6-luna": { input: 0.1, cachedInput: 0.01, output: 0.5 },
   "gpt-5.6-sol": { input: 4, cachedInput: 0.4, output: 20 },
@@ -1021,7 +1073,11 @@ export function applyChannelTemplate(meta) {
   if (meta?.isDM) return meta;
   // Templates store canonical flags, not a profile label. Removing the base record's explicit
   // "read" marker lets channelProfile() derive the selected profile from the copied flags.
-  return { ...meta, ...getChannelTemplate(), profile: undefined };
+  const template = getChannelTemplate();
+  // Retain the saved default while omitting its inactive Enterprise skill assignment for new
+  // Free channels. Otherwise the store would refuse ordinary channel registration on downgrade.
+  if (!enterpriseFeatureEnabled("skillTemplates")) template.skillTemplate = "";
+  return { ...meta, ...template, profile: undefined };
 }
 export function getDmTemplates() {
   const t = getSettings().dmTemplates || {};
@@ -1095,6 +1151,7 @@ export function settingsForApi() {
     composioMcpUrl: s.composioMcpUrl ?? process.env.COMPOSIO_MCP_URL ?? "https://connect.composio.dev/mcp",
     toolboxMcpUrl: s.toolboxMcpUrl ?? process.env.TOOLBOX_MCP_URL ?? "https://www.skillsmanager.uk/toolbox",
     publicUrl: getPublicUrl(),
+    trustProxy: getTrustProxy(),
     approvalLinks: getApprovalLinks(),
     aiTestingUsers: getAiTestingUsers(),
     progressView: getProgressView(),
@@ -1153,6 +1210,7 @@ export function settingsForApi() {
     engine: getEngine(),
     defaultClaudeModel: getDefaultModel("claude"),
     defaultCodexModel: getDefaultModel("codex"),
+    ...Object.fromEntries(ENGINES.map((id) => [adapterOr(id).defaultEffortKey, getDefaultEffort(id)])),
     // One entry per Anthropic-compatible provider, so the admin UI renders a card per harness
     // instead of carrying a hard-coded copy of the table.
     qwenProviders: qwenProviderSettings(),

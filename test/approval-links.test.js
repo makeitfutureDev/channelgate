@@ -427,10 +427,12 @@ test("bad tokens are rate-limited per IP; a valid one is never slowed down", asy
   await pending;
 });
 
-test("the backoff counts the forwarded client, not the loopback proxy hop everyone shares", async () => {
+test("the backoff counts the client named by the DECLARED proxy header; an undeclared header is just a claim", async () => {
   // The daemon binds 127.0.0.1 and is reached through cloudflared, so `req.ip` is loopback for
   // every caller on earth: keyed on that, a handful of bad tokens from anywhere locks out every
-  // legitimate approval link — including one opened from the same machine.
+  // legitimate approval link. The fix is the operator declaring WHICH proxy header names the
+  // client (`trustProxy`); a loopback socket on its own is not evidence of a proxy, so before the
+  // declaration a forwarded header must not let a caller pick a fresh bucket per request.
   const proxied = express();
   proxied.use("/approve", createApprovalLinkRouter({ slack: { getClient: () => client }, limiter: createLoginLimiter({ freeAttempts: 2, baseDelayMs: 60_000, maxDelayMs: 60_000 }) }));
   const listener = await new Promise((resolve) => {
@@ -438,26 +440,47 @@ test("the backoff counts the forwarded client, not the loopback proxy hop everyo
   });
   after(() => listener.close());
   const url = (token) => `http://127.0.0.1:${listener.address().port}/approve/${token}`;
-  const from = (ip, token, init = {}) => fetch(url(token), { ...init, headers: { "X-Forwarded-For": ip, ...(init.headers || {}) } });
+  const from = (ip, token, init = {}) => fetch(url(token), { ...init, headers: { "CF-Connecting-IP": ip, ...(init.headers || {}) } });
 
-  for (let i = 0; i < 2; i++) assert.equal((await from("203.0.113.5", `bogus-a${i}`)).status, 404);
-  assert.equal((await from("203.0.113.5", "bogus-a9")).status, 429, "that client is backing off");
-  assert.equal((await from("203.0.113.6", "bogus-b0")).status, 404, "a different client through the same tunnel is untouched");
-  // CF-Connecting-IP is written by cloudflared and cannot be prepended to, so it outranks a
-  // client-supplied X-Forwarded-For — here one naming the address that IS backing off.
-  assert.equal((await from("203.0.113.5", "bogus-c0", { headers: { "CF-Connecting-IP": "198.51.100.7" } })).status, 404);
+  try {
+    saveSettings({ trustProxy: "cloudflare" });
+    for (let i = 0; i < 2; i++) assert.equal((await from("203.0.113.5", `bogus-a${i}`)).status, 404);
+    assert.equal((await from("203.0.113.5", "bogus-a9")).status, 429, "that client is backing off");
+    assert.equal((await from("203.0.113.6", "bogus-b0")).status, 404, "a different client through the same tunnel is untouched");
+    // X-Forwarded-For is not Cloudflare's header: a client cannot shed its backoff by writing one.
+    assert.equal((await from("203.0.113.5", "bogus-c0", { headers: { "X-Forwarded-For": "198.51.100.7" } })).status, 429);
 
-  // …and a real link still works from an address that never failed, which is the whole point.
-  const { pending } = await raise("3.310");
-  const good = findLink("Deny").split("/approve/")[1];
-  assert.equal((await from("203.0.113.6", good)).status, 200, "GET renders the page");
-  assert.equal((await from("203.0.113.6", good, { method: "POST" })).status, 200);
-  assert.equal((await pending).allow, false);
+    // …and a real link still works from an address that never failed, which is the whole point.
+    const { pending } = await raise("3.310");
+    const good = findLink("Deny").split("/approve/")[1];
+    assert.equal((await from("203.0.113.6", good)).status, 200, "GET renders the page");
+    assert.equal((await from("203.0.113.6", good, { method: "POST" })).status, 200);
+    assert.equal((await pending).allow, false);
 
-  // A non-loopback socket is a client, not a proxy hop, so its header is just a claim — asserted on
-  // the helper itself, since a hermetic test cannot open a non-loopback socket to this server.
-  assert.equal(clientKey({ socket: { remoteAddress: "198.51.100.9" }, headers: { "x-forwarded-for": "203.0.113.5" } }), "198.51.100.9");
-  assert.equal(clientKey({ socket: { remoteAddress: "127.0.0.1" }, headers: { "x-forwarded-for": "203.0.113.5" } }), "203.0.113.5");
+    // Nothing declared: every caller through the loopback hop is ONE bucket again, and the
+    // forwarded headers — however many distinct addresses they name — buy no fresh attempts.
+    saveSettings({ trustProxy: "" });
+    const fresh = express();
+    fresh.use("/approve", createApprovalLinkRouter({ slack: { getClient: () => client }, limiter: createLoginLimiter({ freeAttempts: 2, baseDelayMs: 60_000, maxDelayMs: 60_000 }) }));
+    const freshListener = await new Promise((resolve) => {
+      const instance = fresh.listen(0, "127.0.0.1", () => resolve(instance));
+    });
+    after(() => freshListener.close());
+    const freshUrl = (token) => `http://127.0.0.1:${freshListener.address().port}/approve/${token}`;
+    for (let i = 0; i < 2; i++) {
+      assert.equal((await fetch(freshUrl(`bogus-d${i}`), { headers: { "CF-Connecting-IP": `203.0.113.${10 + i}`, "X-Forwarded-For": `198.51.100.${10 + i}` } })).status, 404);
+    }
+    assert.equal((await fetch(freshUrl("bogus-d9"), { headers: { "CF-Connecting-IP": "203.0.113.99", "X-Forwarded-For": "198.51.100.99" } })).status, 429,
+      "a never-seen forwarded address does not open a new bucket when no proxy is declared");
+  } finally {
+    saveSettings({ trustProxy: "" });
+  }
+
+  // On the helper itself: a non-loopback socket honours the declared header too (a proxy on another
+  // host), and with nothing declared both sockets ignore every header.
+  assert.equal(clientKey({ socket: { remoteAddress: "198.51.100.9" }, headers: { "x-forwarded-for": "203.0.113.5" } }, "xff"), "203.0.113.5");
+  assert.equal(clientKey({ socket: { remoteAddress: "198.51.100.9" }, headers: { "x-forwarded-for": "203.0.113.5" } }, ""), "198.51.100.9");
+  assert.equal(clientKey({ socket: { remoteAddress: "127.0.0.1" }, headers: { "x-forwarded-for": "203.0.113.5" } }, ""), "127.0.0.1");
 });
 
 // ── The setting ─────────────────────────────────────────────────────────────────

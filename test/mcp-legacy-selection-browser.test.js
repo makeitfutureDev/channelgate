@@ -24,6 +24,8 @@ test("unrelated admin saves retain unavailable MCP selections and removals canno
   saveSettings({ engineEnabled: { claude: true, codex: true }, engineFallback: false });
   const app = express();
   app.use(express.json());
+  // This focused router fixture represents an authenticated admin; real login is tested separately.
+  app.get("/api/auth/me", (_req, res) => res.json({ bootstrap: false, linkRequired: false, fresh: true, account: { userId: "U_BROWSER_ADMIN" }, passkeys: [] }));
   app.get("/api/mcp/available", (req, res) => res.json({ servers: req.query.engine === "claude" ? catalog : [] }));
   app.get("/api/health", (_req, res) => res.json({ slack: { connected: false }, engines: {} }));
   app.use("/api", createAdminRouter({ slack: { getClient: () => null, snapshot: () => ({ connected: false }) } }));

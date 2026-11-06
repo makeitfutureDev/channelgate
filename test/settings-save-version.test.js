@@ -191,3 +191,27 @@ test("Testing with AI defaults closed and validates, deduplicates, persists and 
   assert.deepEqual(settings.getAiTestingUsers(), ["UTEST123"]);
   settings.saveSettings({ aiTestingUsers: [] });
 });
+
+test("Behind a reverse proxy (trustProxy) validates, persists, round-trips and defaults to trusting nothing", async () => {
+  assert.equal((await getSettings()).trustProxy, "");
+  for (const [value, stored] of [["cloudflare", "cloudflare"], ["xff", "xff"], ["1", "xff"], ["", ""], ["none", ""]]) {
+    const saved = await putSettings({ trustProxy: value });
+    assert.equal(saved.status, 200, value);
+    assert.equal(saved.body.trustProxy, stored, value);
+    assert.equal(settings.getTrustProxy(), stored);
+  }
+  settings.saveSettings({ trustProxy: "xff" });
+  for (const value of ["bogus", "127.0.0.1", "cloudflare; nginx"]) {
+    const refused = await putSettings({ trustProxy: value });
+    assert.equal(refused.status, 400, value);
+    assert.match(refused.body.error, /none, cloudflare, xff/);
+    assert.equal(settings.getTrustProxy(), "xff", "a refused value writes nothing");
+  }
+  settings.saveSettings({ trustProxy: "" });
+  // The Settings page paints and saves the select like every other connection field.
+  const ui = readFileSync(new URL("../public/app.js", import.meta.url), "utf8");
+  assert.match(ui, /trustProxy: document\.getElementById\("set-trust-proxy"\)\.value/);
+  assert.match(ui, /document\.getElementById\("set-trust-proxy"\)\.value = s\.trustProxy \|\| ""/);
+  const html = readFileSync(new URL("../public/index.html", import.meta.url), "utf8");
+  assert.match(html, /<select id="set-trust-proxy">[\s\S]*value="cloudflare"[\s\S]*value="xff"/);
+});

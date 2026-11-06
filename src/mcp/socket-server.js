@@ -61,6 +61,7 @@ import { chmodSync, mkdirSync, rmSync } from "node:fs";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { runtimeSocketDir, runtimeSocketFile } from "../config/paths.js";
 import { verifyGatewayCapability } from "../gateway/mcp-capability.js";
+import { withCapabilityLiveness } from "../gateway/capability-liveness.js";
 import { createDirectDaemonIpc, createGatewayMcpServer, ctxFromClaims } from "./gateway-server.js";
 import { runBridge } from "../ee/composio-sdk-bridge.js";
 import { authorizeRemoteMcp, retainRemoteMcps } from "./remote-mcp-registry.js";
@@ -195,8 +196,12 @@ export function serveMcpConnection(socket, { handlers = {}, secret = () => proce
     }
 
     const cap = typeof frame.cap === "string" ? frame.cap : "";
-    const verify = () => verifyGatewayCapability(cap, { secret: secret() });
-    const checked = verify();
+    // Signature and expiry, THEN liveness: a validly signed capability is authority only while
+    // its conversation has live work (gateway/capability-liveness.js). Re-run on every tool call
+    // and every relayed request, so a token copied out of the container stops working when the
+    // turn, job, review or SSH session that minted it is over.
+    const verify = withCapabilityLiveness(() => verifyGatewayCapability(cap, { secret: secret() }));
+    const checked = verify({ tool: "hello" });
     if (!checked.ok) return refuse(socket, `capability rejected (${checked.reason})`);
 
     // remote-mcp is authorized BEFORE anything is dialled, and refused with one fixed sentence that

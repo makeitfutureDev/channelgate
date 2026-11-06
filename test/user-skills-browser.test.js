@@ -17,6 +17,7 @@ test("user skill counts survive edits and the editor fits desktop and narrow scr
   await setUser("U_SKILLS", { name: "Skills User", approved: true, skills: ["alpha", "offline-skill"] });
   const app = express();
   app.use(express.json());
+  app.get("/api/auth/me", (_req, res) => res.json({ bootstrap: false, linkRequired: false, fresh: true, account: { userId: "U_BROWSER_ADMIN" }, passkeys: [] }));
   app.get("/api/skills", (_req, res) => res.json({ skills: ["alpha", "beta", ...Array.from({ length: 30 }, (_, i) => `long-skill-name-for-layout-check-${i}`)] }));
   app.get("/api/mcp/available", (_req, res) => res.json({ servers: [] }));
   app.get("/api/health", (_req, res) => res.json({ slack: { connected: false, status: "off" }, engines: {} }));
@@ -26,7 +27,7 @@ test("user skill counts survive edits and the editor fits desktop and narrow scr
   app.get("/users", (_req, res) => res.sendFile(path.join(publicDir, "index.html"), { dotfiles: "allow" }));
   const server = await new Promise((resolve) => { const s = app.listen(0, "127.0.0.1", () => resolve(s)); });
   t.after(() => new Promise((resolve) => { server.closeAllConnections(); server.close(resolve); }));
-  const browser = await chromium.launch({ headless: true, args: ["--no-sandbox"] });
+  const browser = await chromium.launch({ headless: true, executablePath: process.env.CG_BROWSER_EXECUTABLE, args: ["--no-sandbox"] });
   t.after(() => browser.close());
   const page = await browser.newPage({ viewport: { width: 1600, height: 1000 } });
   page.setDefaultTimeout(10000);

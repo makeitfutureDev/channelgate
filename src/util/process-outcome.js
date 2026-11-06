@@ -3,6 +3,7 @@
 // and every other non-zero value is application-specific. Keep the raw code/signal in structured
 // logs or error.details while surfaces shown to people use these semantic summaries.
 
+import { resourceSnapshotFacts } from "../runtimes/resource-snapshot.js";
 import { redactLogValue } from "./redact.js";
 
 const SIGNAL_SUMMARIES = Object.freeze({
@@ -219,6 +220,9 @@ export function runFailureDiagnostics(error) {
     processEnded: d.processEnded === true,
     explicitStop: d.explicitStop === true,
     providerError: d.providerError === true,
+    ...(d.errorCode === "ENGINE_RESOURCE_EXHAUSTED" ? {
+      errorCode: d.errorCode, resourceSnapshot: resourceSnapshotFacts(d.resourceSnapshot),
+    } : {}),
     runtime: typeof d.runtime === "string" ? d.runtime.slice(0, 80) : null,
     ...(d.killedDuringTool === true ? midToolKillDetails({ code: d.exitCode, signal: d.signal, pendingToolNames: d.pendingToolNames }) : {}),
   };

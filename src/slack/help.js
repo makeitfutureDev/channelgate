@@ -22,7 +22,7 @@ export const HELP_TEXT =
   "• `/menu` — show only the Files, Variables, and Settings buttons; use `@agent /menu` inside a channel thread\n" +
   "• `/help` — show this guide\n" +
   "• `/clear` — start a fresh session in this thread\n" +
-  "• `/fork [:model-shortcut] <new message>` — branch from a completed Claude or Codex container session into a linked new Slack thread; same-engine shortcuts fork the session, other-engine shortcuts start a new session with Slack history (after the current turn finishes)\n" +
+  "• `/fork [:model-shortcut] <new message>` — branch from a completed Claude or Codex container session into a linked new Slack thread; same-engine shortcuts fork the session, other-engine shortcuts start a new session with Slack history (busy threads queue the fork automatically)\n" +
   "• `/delete` — delete this thread's messages (admin; irreversible—everyone's if an admin user token is set in Settings, otherwise mine only)\n" +
   "• `/secrets` — open Variables for this channel, your personal scope, and (admins) the organization. Listings show names and masked values; add/replace follows your permissions. Channel values override personal values, then organization values. Hidden secrets work only on approved servers; a new server can require an admin approval. Passwords and connection strings stay usable by programs. Stored values are never shown in this console\n" +
   "• `/context` — token usage of the last turn\n" +
@@ -33,6 +33,6 @@ export const HELP_TEXT =
   "• `/mode [read|worker|admin]` — show or set this channel's base mode; `bash` is an alias for Worker. Managers may change Read-only/Worker; Admin requires an organization admin. Set Auto and Lean separately in Settings\n" +
   "• `/sudo [on|off|status]` — typed in-thread, organization-admin-only direct host execution; use `@agent /sudo` in channels; `/sudo` means on\n" +
   "• `/next <message>` — queue after the current run without showing the steer-or-queue choice\n" +
-  "• `/status` — show active work and schedules in this conversation (top-level Slack command)\n" +
+  "• `/status` (or `/status-cg` where an app registers it under that name) — show active work and schedules in this conversation (top-level Slack command)\n" +
   "• `/stop` — stop every active run in this conversation (top-level; for one thread use `@agent stop`, `stop` in a DM, or 🛑)\n" +
   "• `/update` — update the gateway to the latest version and restart (admin)";

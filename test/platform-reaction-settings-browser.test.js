@@ -13,6 +13,8 @@ test("platform activation lists save independently and repaint after reload", { 
   const settings = await import("../src/config/settings.js");
   const app = express();
   app.use(express.json());
+  // This focused router fixture represents an authenticated admin; real login is tested separately.
+  app.get("/api/auth/me", (_req, res) => res.json({ bootstrap: false, linkRequired: false, fresh: true, account: { userId: "U_BROWSER_ADMIN" }, passkeys: [] }));
   app.get("/api/skills", (_req, res) => res.json({ skills: [] }));
   app.get("/api/mcp/available", (_req, res) => res.json({ servers: [] }));
   app.get("/api/health", (_req, res) => res.json({ slack: { connected: false, status: "off" }, engines: {} }));
@@ -36,7 +38,8 @@ test("platform activation lists save independently and repaint after reload", { 
   assert.equal(await teams.inputValue(), "hearteyesrobot, alien, like, smilerobot");
   assert.equal(await google.inputValue(), "🤖");
   const card = teams.locator("xpath=../..");
-  assert.match(await card.textContent(), /does not receive reaction events/);
+  assert.match(await card.textContent(), /Teams event delivery/);
+  assert.match(await card.textContent(), /Google Chat Reaction events topic/);
   await slack.fill("rocket");
   await teams.fill(":ALIEN:");
   await google.fill("🚀");

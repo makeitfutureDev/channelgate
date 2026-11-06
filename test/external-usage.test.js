@@ -358,7 +358,7 @@ test("the tracking floor keeps pre-cutoff hours out, and the dashboard reports w
       buckets: [
         // Before the floor: unverifiable, so it must not be counted at all.
         { bucket: bucketAt(10), model: "claude-opus-5", requests: 1, turns: 1, usage: { input_tokens: 1e6, cached_input_tokens: 0, cache_write_5m_tokens: 0, cache_write_1h_tokens: 0, output_tokens: 0 } },
-        { bucket: bucketAt(1), model: "claude-opus-5", requests: 2, turns: 1, usage: { input_tokens: 1e6, cached_input_tokens: 0, cache_write_5m_tokens: 0, cache_write_1h_tokens: 0, output_tokens: 0 } },
+        { bucket: bucketAt(0), model: "claude-opus-5", requests: 2, turns: 1, usage: { input_tokens: 1e6, cached_input_tokens: 0, cache_write_5m_tokens: 0, cache_write_1h_tokens: 0, output_tokens: 0 } },
       ],
     }],
   });

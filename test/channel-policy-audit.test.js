@@ -147,6 +147,20 @@ test("an environment-secret change stays in its own name-only audit and never du
 
 // ── The MCP twins ─────────────────────────────────────────────────────────────────────────────
 
+test("the network tool description distinguishes proxy enforcement from direct-host policy", () => {
+  const definitions = new Map();
+  const ctx = ctxFromClaims({ channelId: CHANNEL_ID, slug: entry.slug, authorId: ADMIN_ID, threadKey: "1700000000.000100", principalTrusted: true, engine: "claude" });
+  registerChannelAdmin({ registerTool: (name, definition) => definitions.set(name, definition) }, ctx);
+  const description = definitions.get("set_channel_network").description;
+  assert.match(description, /ordinary proxy-mode containers/i);
+  assert.match(description, /\/sudo direct-host.*advisory.*no OS-level egress cutoff/i);
+  assert.match(description, /legacy open-bridge.*raw sockets.*advisory/i);
+  assert.match(description, /any public host.*no domain allowlist/i);
+  assert.match(description, /off limits.*engine endpoints.*selected connectors/i);
+  assert.match(description, /Private, loopback and cloud-metadata.*never reachable through the proxy/);
+  assert.match(description, /no host credential files or mounts/);
+});
+
 test("the MCP set_channel_network handler logs the change with the Slack author", async () => {
   const tools = new Map();
   const ctx = ctxFromClaims({ channelId: CHANNEL_ID, slug: entry.slug, authorId: ADMIN_ID, threadKey: "1700000000.000100", principalTrusted: true, engine: "claude" });

@@ -1,3 +1,4 @@
+import { assertChannelBudget } from "./channel-budget.js";
 // ── Post-reply background memory review ───────────────────────────────────────
 // The backstop for the memory system's weakest link: the model deciding, right before its last
 // reply, to save what the conversation taught. Hermes solved it with a post-turn fork — after the
@@ -148,6 +149,11 @@ export async function runMemoryReview({
   run = runClaude,
 } = {}) {
   meta = (await getChannelMeta(slug)) ?? meta;
+  try { await assertChannelBudget(channelId, slug); }
+  catch (error) {
+    if (error.code === "channel_spending_limit") return { skipped: "channel-spending-limit", saved: 0 };
+    throw error;
+  }
   if (!isChannelEngineApproved(meta, "claude")) return { skipped: "harness-not-approved", saved: 0 };
   const cwd = effectiveWorkDir(slug, meta);
   const snapshot = await readMemorySnapshot(cwd, meta);
@@ -210,6 +216,11 @@ export async function runMemoryReview({
   try {
     await target.runtime.ensureUp(target, { announce: () => {}, lease });
     if (!isChannelEngineApproved((await getChannelMeta(slug)) ?? meta, "claude")) return { skipped: "harness-not-approved", saved: 0 };
+    try { await assertChannelBudget(channelId, slug); }
+    catch (error) {
+      if (error.code === "channel_spending_limit") return { skipped: "channel-spending-limit", saved: 0 };
+      throw error;
+    }
     const result = await run({
       cwd,
       prompt,

@@ -4,13 +4,16 @@
 // columns (ts, channel_id, author_id) make the per-day/week/month/channel/user rollups the Audit
 // view and future dashboards need cheap. Daemon-side only (never inside a channel cwd).
 //
-// No cap is enforced — this is for understanding + the Audit view, per the product decision.
+// Free installations expose the most recent month of cost history; Enterprise exposes all history.
+import { costHistoryStart } from "../ee/cost-history.js";
+export { costHistoryStart } from "../ee/cost-history.js";
 import { getDb } from "../db/index.js";
 import { getSettings, getCodexModelRates, getAssumedModels } from "../config/settings.js";
 import { countDrop } from "../util/drops.js";
 import { resolveCurrentModel, modelDisplayLabel } from "./model-info.js";
 import { engineSupports, engineCostRateKey } from "../engines/registry.js";
 import { normalizeCodexTokenUsage } from "../engines/codex-usage.js";
+import { claudeCumulativeSnapshot, claudeSessionDelta, latestClaudeSnapshot } from "../db/claude-session-usage.js";
 
 // Codex reports no dollar cost — derive an ESTIMATE from the per-model $/1M rates in Settings
 // (input / cached-input / output; OpenAI's cached_input_tokens is a SUBSET of input_tokens, so
@@ -18,8 +21,8 @@ import { normalizeCodexTokenUsage } from "../engines/codex-usage.js";
 // exact key → official dated-snapshot prefix. Empty/`codex` is a CLI sentinel, not an official API
 // model id, so it stays unpriced until the runtime model is resolved. The legacy blended rate is
 // retained only as an explicit admin fallback for an unknown non-empty runtime model.
-export const CODEX_PRICING_BASIS = "openai-standard-effective-dates-2026-10-22";
-const LONG_CONTEXT_RATE_KEYS = new Set(["gpt-6-astra", "gpt-6.1-sol", "gpt-6-sol", "gpt-6-luna", "gpt-5.6-sol", "gpt-5.6", "gpt-5.6-terra", "gpt-5.6-luna", "gpt-5.5", "gpt-5.4"]);
+export const CODEX_PRICING_BASIS = "openai-standard-terra-2026-11-01";
+const LONG_CONTEXT_RATE_KEYS = new Set(["gpt-6.1-terra", "gpt-6-astra", "gpt-6.1-sol", "gpt-6-sol", "gpt-6-luna", "gpt-5.6-sol", "gpt-5.6", "gpt-5.6-terra", "gpt-5.6-luna", "gpt-5.5", "gpt-5.4"]);
 function codexRateKey(rates, model) {
   const m = String(model || "").toLowerCase();
   if (!m || m === "codex") return "";
@@ -145,6 +148,37 @@ export function componentRow(accounting, { sourceKind = "root", parentSourceId =
   };
 }
 
+// One `usage_components` row per model a Claude run spent on, from the run's `modelUsage` DELTA
+// (see ../db/claude-session-usage.js). The CLI prices each model itself, so the row carries its
+// reported cost rather than an estimate; the primary (answering) model heads the run, every other
+// model — a Sonnet subagent under an Opus turn, the Haiku helper — is an auxiliary slice.
+export function claudeModelComponent(slice, { usageId, sessionId, primaryModel = "", startedTs = "", endedTs = "", durationMs = null } = {}) {
+  const isRoot = Boolean(primaryModel) && slice.model === primaryModel;
+  return {
+    sourceKey: `claude-model:${sessionId}:${usageId}:${slice.model}`,
+    sourceKind: isRoot ? "root" : "auxiliary",
+    providerSessionId: String(sessionId || ""),
+    parentProviderSessionId: "",
+    providerTurnId: `claude-turn:${sessionId}:${usageId}`,
+    startedTs,
+    endedTs,
+    model: slice.model,
+    usage: normalizeCodexTokenUsage({
+      input_tokens: slice.input + slice.cacheRead + slice.cacheWrite,
+      cached_input_tokens: slice.cacheRead,
+      cache_write_input_tokens: slice.cacheWrite,
+      output_tokens: slice.output,
+    }),
+    requests: [],
+    costUSD: slice.costUSD,
+    costEstimated: false,
+    pricingBasis: slice.costUSD === null ? "unpriced" : "claude-cli-reported",
+    provenance: "claude-model-usage-delta",
+    confidence: "verified-total",
+    durationMs: isRoot ? durationMs : null,
+  };
+}
+
 export function insertComponent(db, usageId, component) {
   if (!component.sourceKey) return;
   db.prepare(
@@ -207,37 +241,65 @@ export function insertComponent(db, usageId, component) {
 export async function recordUsage({ channelId, slug, authorId, engine, model, taskKind = "interactive", result = {} } = {}) {
   try {
     const normalizedResult = { ...result, engine: engine || result.engine || "", model: result.model || model || "" };
-    const { inTok, outTok, costUSD, estimated } = normalizeUsage(normalizedResult);
+    const resolvedEngine = normalizedResult.engine;
+    const sessionId = String(result.sessionId || "");
     const currentModel = resolveCurrentModel(normalizedResult);
     const db = getDb();
+    let settledFigures = normalizeUsage(normalizedResult);
     db.exec("BEGIN IMMEDIATE");
     try {
+      // Claude reports the SESSION's cumulative cost and per-model usage, and `usage` without the
+      // subagents. Difference against this session's last recorded cumulative so the row carries
+      // only THIS run — and the whole tree of it, with one priced component per model. Read under
+      // the write lock: the baseline is the last row this very transaction can see.
+      const claudeCumulative = resolvedEngine === "claude" ? claudeCumulativeSnapshot(result.raw) : null;
+      const claudeDelta = claudeCumulative ? claudeSessionDelta(claudeCumulative, latestClaudeSnapshot(db, sessionId)) : null;
+      if (claudeDelta) settledFigures = normalizeUsage({ ...normalizedResult, costUSD: claudeDelta.costUSD });
+      const { inTok, outTok, costUSD, estimated } = settledFigures;
+      const claudeTokens = claudeDelta?.models.length ? { inTok: claudeDelta.tokensIn, outTok: claudeDelta.tokensOut } : null;
       const info = db.prepare(
         `INSERT INTO usage(ts, channel_id, slug, author_id, engine, model, task_kind, tokens_in, tokens_out,
-           cost_usd, cost_estimated, duration_ms, runtime_model, accounting_status, session_id)
+           cost_usd, cost_estimated, duration_ms, runtime_model, accounting_status, session_id,
+           provider_cost_cumulative, provider_model_usage)
          VALUES(@ts, @channel_id, @slug, @author_id, @engine, @model, @task_kind, @tokens_in, @tokens_out,
-           @cost_usd, @cost_estimated, @duration_ms, @runtime_model, @accounting_status, @session_id)`
+           @cost_usd, @cost_estimated, @duration_ms, @runtime_model, @accounting_status, @session_id,
+           @provider_cost_cumulative, @provider_model_usage)`
       ).run({
         ts: new Date().toISOString(),
         channel_id: channelId || "",
         slug: slug || "",
         author_id: authorId || "",
-        engine: engine || result.engine || "",
+        engine: resolvedEngine,
         model: currentModel,
         task_kind: taskKind,
-        tokens_in: inTok,
-        tokens_out: outTok,
+        tokens_in: claudeTokens?.inTok ?? inTok,
+        tokens_out: claudeTokens?.outTok ?? outTok,
         cost_usd: costUSD,
         cost_estimated: estimated ? 1 : 0,
         duration_ms: result.durationMs ?? null,
         runtime_model: currentModel,
-        accounting_status: normalizedResult.usageAccounting?.root ? "verified" : (engineSupports(engine || result.engine, "realCost") ? "provider-reported" : "unverified"),
+        accounting_status: normalizedResult.usageAccounting?.root || claudeDelta?.models.length
+          ? "verified"
+          : (engineSupports(resolvedEngine, "realCost") ? "provider-reported" : "unverified"),
         // The ENGINE session this run spent tokens in. Recorded so external-usage.js can tell a
         // transcript the gateway wrote from one a person drove by hand: without it, the two are
         // indistinguishable on disk and outside spend can only be guessed at.
-        session_id: String(result.sessionId || ""),
+        session_id: sessionId,
+        // The CLI's cumulative figures as reported, kept verbatim: the next run of this session
+        // differences against them, and a historical repair can always recover the original.
+        provider_cost_cumulative: claudeCumulative ? claudeCumulative.costUSD : null,
+        provider_model_usage: claudeCumulative ? JSON.stringify(claudeCumulative.models) : "",
       });
       const usageId = Number(info.lastInsertRowid);
+      if (claudeDelta?.models.length) {
+        const endedTs = new Date().toISOString();
+        const startedTs = Number.isFinite(Number(result.durationMs)) ? new Date(Date.now() - Number(result.durationMs)).toISOString() : "";
+        for (const slice of claudeDelta.models) {
+          insertComponent(db, usageId, claudeModelComponent(slice, {
+            usageId, sessionId, primaryModel: currentModel, startedTs, endedTs, durationMs: result.durationMs ?? null,
+          }));
+        }
+      }
       if (normalizedResult.usageAccounting?.root) {
         const root = componentRow(normalizedResult.usageAccounting.root, { fallbackModel: currentModel, durationMs: result.durationMs ?? null });
         insertComponent(db, usageId, root);
@@ -275,7 +337,7 @@ export async function recordUsage({ channelId, slug, authorId, engine, model, ta
       try { db.exec("ROLLBACK"); } catch { /* transaction already gone */ }
       throw error;
     }
-    return { costUSD, costEstimated: estimated, tokensIn: inTok, tokensOut: outTok };
+    return { costUSD: settledFigures.costUSD, costEstimated: settledFigures.estimated, tokensIn: settledFigures.inTok, tokensOut: settledFigures.outTok };
   } catch (err) {
     countDrop("usage", err); // ledger is best-effort, but a silent drop diverges the spend numbers
     return null;
@@ -317,6 +379,18 @@ const CANONICAL_CTE = `WITH component_rollup AS (
          CASE WHEN c.component_count > 0 THEN c.cost_estimated ELSE u.cost_estimated END AS canonical_cost_estimated
     FROM usage u LEFT JOIN component_rollup c ON c.usage_id = u.id
 )`;
+
+// Budget admission uses the complete ledger, independent of UI history retention and row limits.
+export function monthlyChannelSpend(channelId, now = Date.now()) {
+  const date = new Date(now);
+  const start = new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), 1)).toISOString();
+  const end = new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth() + 1, 1)).toISOString();
+  const row = getDb().prepare(`${CANONICAL_CTE}
+    SELECT COALESCE(SUM(canonical_cost_usd), 0) AS spent,
+           COALESCE(SUM(CASE WHEN canonical_cost_usd IS NULL THEN 1 ELSE 0 END), 0) AS unpriced
+      FROM canonical_usage WHERE channel_id = ? AND ts >= ? AND ts < ?`).get(channelId, start, end);
+  return { month: start.slice(0, 7), spentUSD: Number(row.spent.toFixed(6)), unpricedRuns: Number(row.unpriced) };
+}
 
 // Per-MODEL attribution over the same ledger. A run is one row with one `model`, but a Codex run
 // with component accounting can have spent on SEVERAL models (a gpt-5.6-sol turn whose subagent ran
@@ -390,9 +464,13 @@ const MODEL_ATTRIBUTION_CTE = `WITH component_priced AS (
 
 // Read ledger records (newest-first), optionally filtered. `month` is "YYYY-MM" (default: all).
 // Used by the Audit view. Caps at `limit` records.
-export async function readUsage({ month = "", channelId = "", authorId = "", limit = 500 } = {}) {
+export async function readUsage({ month = "", channelId = "", authorId = "", limit = 500, historyStart = costHistoryStart() } = {}) {
   const where = [];
   const params = {};
+  if (historyStart) {
+    where.push("ts >= @historyStart");
+    params.historyStart = historyStart.toISOString();
+  }
   if (month) {
     where.push("substr(ts, 1, 7) = @month");
     params.month = month;
@@ -419,8 +497,8 @@ export async function readUsage({ month = "", channelId = "", authorId = "", lim
 
 // Aggregate rollups over the ledger (per channel + per author) for a month. Powers the Audit
 // summary table.
-export async function usageSummary({ month = "" } = {}) {
-  const recs = await readUsage({ month, limit: 100_000 });
+export async function usageSummary({ month = "", historyStart = costHistoryStart() } = {}) {
+  const recs = await readUsage({ month, limit: 100_000, historyStart });
   const byChannel = new Map();
   const byAuthor = new Map();
   let totalCost = 0;
@@ -511,8 +589,14 @@ export function usageDashboard({ range = "last30", harness = "all", source = "al
   const withGateway = selectedSource !== "external";
   const withExternal = selectedSource !== "gateway";
   const now = new Date();
-  const { start, end, unit } = resolveRange(r, now);
-  const { bucketStart, bucketEnd } = bucketWindow(start, end);
+  let { start, end, unit } = resolveRange(r, now);
+  const historyStart = costHistoryStart(now);
+  if (historyStart && start < historyStart) start = historyStart;
+  let { bucketStart, bucketEnd } = bucketWindow(start, end);
+  // External records are hourly aggregates: exclude a partial hour straddling the cutoff.
+  if (historyStart && start.getTime() === historyStart.getTime()) {
+    bucketStart = new Date(Math.ceil(start.getTime() / 3600000) * 3600000).toISOString().slice(0, 13);
+  }
   // node:sqlite rejects a named parameter the statement does not use, so the two halves carry their
   // own bindings: the ledger filters on the ISO timestamp, `external_usage` on its hour-bucket key.
   const harnessBinding = selectedHarness === "all" ? {} : { harness: selectedHarness };
@@ -626,7 +710,12 @@ export function usageDashboard({ range = "last30", harness = "all", source = "al
   externalModelBuckets.forEach(addModelBucket);
 
   const series = [];
-  for (let d = start; d < end; d = stepBucket(d, unit)) {
+  // SQL keeps the exact history cutoff, but gap filling walks calendar buckets. A
+  // cutoff midway through a day must still include the current day's partial bucket.
+  const seriesStart = unit === "month" ? utcMonthStart(start)
+    : unit === "day" ? utcDayStart(start)
+    : new Date(Math.floor(start.getTime() / 3600000) * 3600000);
+  for (let d = seriesStart; start < end && d < end; d = stepBucket(d, unit)) {
     const key = bucketKey(d, unit);
     const row = totalsByBucket.get(key);
     const models = {};
@@ -818,6 +907,7 @@ export function usageDashboard({ range = "last30", harness = "all", source = "al
   const externalCost = Number(extTotals?.cost || 0);
   return {
     range: r,
+    historyDays: historyStart ? 30 : null,
     harness: selectedHarness,
     source: selectedSource,
     unit,

@@ -6,7 +6,7 @@ description: >-
   a skill", "turn this procedure into a skill", "add a skill to the library", "improve the X
   skill", or when a task has become a repeatable procedure worth keeping.
 category: Skills
-version: 1.1.0
+version: 1.1.1
 tags:
   - skills
   - authoring
@@ -15,9 +15,15 @@ tags:
 # Authoring skills
 
 Skills are folders with a `SKILL.md` (YAML frontmatter + Markdown body) plus optional
-`references/`, `scripts/` and `assets/` files. The gateway keeps them in its local catalog and
+`references/`, `scripts/` and `assets/` files. The gateway keeps them in its gateway catalog and
 materializes them into every conversation that is granted them — Claude and Codex both discover
 them natively by their frontmatter `name` and `description`.
+
+## Where agents must save skills
+
+Create and grant skills through the ChannelGate catalog using `create_skill` and the gateway grant tools. Do not install active skills by writing directly into `.claude/skills`, `.agents/skills`, or engine HOME skill folders: gateway reconciliation replaces managed copies and archives unmanaged workspace entries. An on-disk export is only an export, not a durable active channel skill. This rule overrides a generic skill creator's local-folder default.
+
+Repository-synced skills can be used read-only without a write token. To create or modify a skill in an external source repository, first verify that an available token or authenticated connection has write access to that exact repository and tracked branch. A token name or successful read does not prove write access. Only then edit, commit, push and sync the source; verify the effective revision. Without write access, treat the source as read-only and create any additions as a catalog companion skill. Do not add an external repository as the writable home for a new skill unless write access is established. Never request or paste a token in chat; use the gateway secret/connection flow. Do not bypass this by editing materialized files or pinning a catalog override.
 
 ## The SKILL.md contract
 
@@ -32,6 +38,7 @@ version: 1.0.0
 tags: [crm, hubspot]
 requires: [makeitfuture-organization]   # other catalog skills this one loads (auto-granted with it)
 allowed-tools: Read Grep         # optional: tools the skill needs
+model: sonnet                    # optional: the model this skill works best with (engine derived)
 ---
 
 # Customer record
@@ -39,6 +46,15 @@ allowed-tools: Read Grep         # optional: tools the skill needs
 Step-by-step instructions. Keep the body focused; put long material in `references/*.md` and
 point to it ("read `references/ids.md` for the field map").
 ```
+
+`model:` is optional and only worth setting when the skill clearly runs better or cheaper on a
+particular model (email triage on a small fast model, deck generation on the strongest one). Any
+model one of the gateway's engines knows (`sonnet`, `claude-opus-5-5`, `gpt-6.1-sol`, …) works;
+don't name an engine, it follows from the model. When a conversation allows skill engine/model
+swapping, using the skill resumes the same session on that model (or delegates to a background
+agent on the other engine); otherwise the line is simply ignored. `create_skill` and
+`update_skill` take a `model` argument that writes this line for you — ask the user only when
+they mentioned a model or a cost/quality preference; never add one unprompted.
 
 Rules for a description that actually fires:
 - Say the **trigger** ("Use when …", "Use whenever a request mentions …"), not just the topic.

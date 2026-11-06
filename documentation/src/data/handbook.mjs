@@ -731,6 +731,11 @@ export const featureGroups = [
 ];
 export const configurationPages = [
   {
+    "slug": "vps-sizing",
+    "label": "VPS sizing and hosting",
+    "description": "Choose server resources, concurrency, storage, and backups for your team."
+  },
+  {
     "slug": "gateway-settings",
     "label": "Gateway settings",
     "description": "Connections, agent defaults, runtime, and organization settings."

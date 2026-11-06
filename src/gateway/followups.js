@@ -26,6 +26,7 @@ import {
 import { logEvent } from "../util/logger.js";
 import { getDb, toJson, fromJson, metaGet, metaSet } from "../db/index.js";
 import { postDirectMessage } from "../platforms/notify.js";
+import { threadHasCompletionReaction } from "./thread-completion.js";
 
 export const FOLLOWUP_RETENTION_MS = 14 * 24 * 60 * 60 * 1000;
 const MAX_DIGEST_LINES = 25; // cap one DM digest (oldest-waiting first)
@@ -350,8 +351,23 @@ const permalinkVia = (c) => async (channelId, threadTs) =>
 // On-demand version of the digest (the `/pending` in-thread command): the caller's LIVE pending
 // list, formatted exactly like the scheduled DM. Empty list → a short friendly note instead of
 // silence (unlike the digest, the user explicitly asked).
+async function verifiedPending(c, userId, botUserId) {
+  const pending = [];
+  let unverified = 0;
+  for (const rec of pendingForUser(userId, botUserId)) {
+    try {
+      if (!await threadHasCompletionReaction(c, rec.channelId, rec.threadTs)) pending.push(rec);
+    } catch {
+      // Defer unverifiable threads; do not persist a dismissal on a transient API failure.
+      unverified++;
+    }
+  }
+  return { pending, unverified };
+}
+
 export async function buildPendingReportForUser(c, userId, botUserId, nowMs = Date.now()) {
-  const pending = pendingForUser(userId, botUserId);
+  const { pending, unverified } = await verifiedPending(c, userId, botUserId);
+  if (unverified) return "I couldn’t verify completion reactions for every thread. Please try again shortly.";
   if (!pending.length) return "✅ Nothing pending — I'm not waiting on your decision in any thread.";
   const body = await formatPendingReport(pending, nowMs, permalinkVia(c));
   return body + `\n\n_Reply in a thread to answer — it clears automatically once you do. Or react ✅ to dismiss it._`;
@@ -360,7 +376,7 @@ export async function buildPendingReportForUser(c, userId, botUserId, nowMs = Da
 // Build and DM one user's digest of threads the AI is waiting on them for. Returns the count
 // (0 → nothing sent).
 export async function sendDigest(c, userId, botUserId, nowMs) {
-  const pending = pendingForUser(userId, botUserId);
+  const { pending } = await verifiedPending(c, userId, botUserId);
   if (!pending.length) return 0;
 
   const text =

@@ -3,6 +3,9 @@ title: Google Drive workspace sync
 description: Link a Drive folder to a conversation workspace with scheduled and on-demand two-way synchronization.
 ---
 
+**Enterprise availability.** Google Drive workspace sync requires an effective Enterprise license, for both scheduled and on-demand passes. Saved configuration and files survive expiry; synchronization does not continue without Enterprise.
+
+
 Drive sync keeps a conversation's working folder synchronized with a selected Google Drive folder. It uses the installation's Workspace service account and `rclone bisync`, separately from an agent's personal/shared Composio Drive tools.
 
 ## Configure the installation

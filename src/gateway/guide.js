@@ -270,3 +270,14 @@ export async function readGatewayGuide({ file } = {}) {
     .map(([rel, { overridden }]) => ({ file: rel, overridden }));
   return { files: list, overridden: await guideIsOverridden() };
 }
+
+// A shared folder has one stable guide. Cross-platform followers receive their actual surface
+// capabilities in the prompt rather than racing to replace the owner's files.
+export async function linkedWorkspaceGuidePreamble(meta, target) {
+  if (!meta?.workspaceLink || platformOr(meta.workspaceLink.platform).id === platformOr(meta.platform).id) return "";
+  const adapter = platformOr(meta.platform);
+  const files = await resolvedGuideFiles(adapter.id);
+  const source = files.get("references/platform.md");
+  const content = source ? substitutePlatform(await readFile(source.src, "utf8"), adapter, target) : "";
+  return `\n[Actual chat surface for this linked-folder turn: ${adapter.label}. The folder's guide belongs to its source conversation; use these surface capabilities for this reply.]\n${content}\n[End actual chat surface]\n`;
+}

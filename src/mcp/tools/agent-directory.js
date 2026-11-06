@@ -28,18 +28,19 @@ export function register(server, ctx) {
   });
 
   server.registerTool("set_channel_agent_profile", {
-    description: "CHANNEL MANAGERS / ADMINS. Describe THIS channel's agent for specialist recommendations: a short purpose, example tasks, and whether to hide it from discovery. Omitted fields stay unchanged; empty text/array clears that field. Does not publish private channels to a wider audience or change skills/access. Announce the saved profile in your reply.",
+    description: "CHANNEL MANAGERS / ADMINS. Describe THIS channel's agent for specialist recommendations: a short purpose, example tasks, whether to hide it from discovery, and whether other channels' agents may send it messages (acceptsMessages, off by default — see send_agent_message). Omitted fields stay unchanged; empty text/array clears that field. Does not publish private channels to a wider audience or change skills/access. Announce the saved profile in your reply.",
     inputSchema: {
       description: z.string().max(600).optional(),
       examples: z.array(z.string().max(160)).max(6).optional(),
       hidden: z.boolean().optional(),
+      acceptsMessages: z.boolean().optional(),
     },
   }, async (args) => {
     if (ctx.principalTrusted !== true || ctx.apiPrincipal || !(await ctx.requireChannelAccess()) || !(await ctx.requireManage())) {
       return ctx.text("Only this channel's authenticated managers or admins with current channel access can edit its agent profile.");
     }
     const changes = Object.fromEntries(Object.entries(args).filter(([, value]) => value !== undefined));
-    if (!Object.keys(changes).length) return ctx.text("Supply a description, examples, or hidden setting. Nothing was changed.");
+    if (!Object.keys(changes).length) return ctx.text("Supply a description, examples, hidden or acceptsMessages. Nothing was changed.");
     const next = await patchChannelMeta(ctx.slug, (meta) => meta
       ? { agentDirectory: sanitizeAgentDirectoryProfile({ ...meta.agentDirectory, ...changes }) }
       : null);

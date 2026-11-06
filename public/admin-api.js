@@ -7,6 +7,9 @@ export async function api(url, options = {}) {
   });
   const body = await res.json().catch(() => ({}));
   if (!res.ok) {
+    // A temporary operator's shell may already be open when the first chat admin appears.
+    // Re-enter through the identity gate rather than leave a stale dashboard over the remedy.
+    if (body.code === "identity_link_required" && typeof window !== "undefined" && typeof window.location?.reload === "function") window.location.reload();
     // Keep the status and the server's code on the error: a caller that can offer a real remedy
     // (the Host/Origin guard is the one refusal the operator can act on) must be able to tell
     // this failure apart from a generic one, and prose matching would break on a reworded message.

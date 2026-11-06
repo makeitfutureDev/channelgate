@@ -1,3 +1,4 @@
+import { enterpriseFeatureEnabled, requireEnterpriseFeature } from "../../ee/feature-entitlements.js";
 // Skills platform admin routes (mounted by createAdminRouter under /api): the catalog, its
 // revisions and files, sources and their sync, templates (preview/apply per conversation),
 // channel profiles, usage, and proposals. Every listing returns metadata only; a file's bytes
@@ -43,7 +44,7 @@ import { pluginSummaryFromMetadata } from "../../gateway/skills/plugin-summary.j
 import { resolveSkillProfile, skillGrantContextChange } from "../../gateway/skills/resolve.js";
 import { listTemplateSummaries, previewTemplate, assignTemplateToChannel, templateSummary, templateAssignments, withTemplateSkills, templateOfMeta, channelScopedSkills } from "../../gateway/skills/templates.js";
 import { skillUsageReport } from "../../gateway/skills/usage.js";
-import { createLocalSkill, updateLocalSkill, decideSkillProposal, describeOwner, grantSkillsToChannel, revokeSkillsFromChannel, grantSkillsToOrg, revokeSkillsFromOrg, moveSkillScope } from "../../gateway/skills/authoring.js";
+import { createLocalSkill, updateLocalSkill, decideSkillProposal, describeOwner, grantSkillsToChannel, revokeSkillsFromChannel, grantSkillsToOrg, validateSkillGovernanceChange, revokeSkillsFromOrg, moveSkillScope } from "../../gateway/skills/authoring.js";
 import { importHostSkillFolders } from "../../gateway/skills/import-folder.js";
 import { syncOneSource, runScheduledSkillSync } from "../../gateway/skills/index.js";
 import { parseRepoUrl } from "../../gateway/skills/git-sync.js";
@@ -52,10 +53,12 @@ import { createAccessToken, listAccessTokens, revokeAccessToken, deleteAccessTok
 import { resolveAccessGrants } from "../../gateway/access-grants.js";
 import { getOrgAccessGrants, getSkillsContextWarnTokens, getSkillsSyncIntervalMinutes, getSkillsPublishGithubToken, getSkillsWebhookSecret, getPublicUrl } from "../../config/settings.js";
 import { ADMIN_UI_ACTOR } from "../../config/channel-audit.js";
-import { getChannelMeta, listChannels } from "../../config/store.js";
+import { getUsers, getChannelMeta, listChannels } from "../../config/store.js";
+import { listSkillFolderIssues } from "../../gateway/skills/folder-issues.js";
 import { skillSourceDirs } from "../../gateway/folders.js";
 import { logEvent } from "../../util/logger.js";
 import { syncWorkspaceSkillsOrThrow } from "../../gateway/skills/workspace-sync.js";
+import { skillModelPreference } from "../../gateway/skill-runtime.js";
 
 // The one spelling of the admin-UI principal across the whole audit trail (config/channel-audit.js).
 const ADMIN_UI = ADMIN_UI_ACTOR;
@@ -82,6 +85,8 @@ function skillToApi(skill, usage = null) {
   return {
     ...skill,
     meta: undefined,
+    // The skill's declared preferred model (src/gateway/skill-runtime.js), "" when none.
+    model: skillModelPreference(skill)?.model || "",
     plugin: pluginSummaryFromMetadata(skill.meta),
     owner: describeOwner(skill),
     enabled: !skill.deleted,
@@ -123,6 +128,7 @@ export function createSkillsRouter() {
   router.get("/skills/overview", guard(async (_req, res) => {
     res.json({
       stats: catalogStats(),
+      features: { skillTemplates: enterpriseFeatureEnabled("skillTemplates"), mandatoryOrgSkills: enterpriseFeatureEnabled("mandatoryOrgSkills") },
       sources: listSources(),
       templates: listTemplateSummaries(),
       staged: listStagedRevisions().map(revisionToApi),
@@ -158,6 +164,20 @@ export function createSkillsRouter() {
       category: typeof req.query.category === "string" ? req.query.category : "",
       query: typeof req.query.q === "string" ? req.query.q : "",
     }).map((skill) => ({ ...skillToApi(skill, usage), assigned: assignments.has(skill.slug.toLowerCase()) }));
+    const users = await getUsers();
+    const issues = await listSkillFolderIssues(skillSourceDirs());
+    for (const issue of issues) {
+      if (req.query.owner && req.query.owner !== "folder") continue;
+      if (req.query.source || req.query.category) continue;
+      const grantedTo = Object.entries(users).filter(([, user]) => (user.skills || []).some((name) => String(name).toLowerCase() === issue.slug.toLowerCase()))
+        .map(([id, user]) => ({ id, name: user.name || id }));
+      const description = `Folder has no SKILL.md. ${issue.folderPaths.join(", ")}${grantedTo.length ? ` — Personal grants: ${grantedTo.map((user) => user.name).join(", ")}` : ""}`;
+      if (req.query.q && !`${issue.slug} ${description}`.toLowerCase().includes(String(req.query.q).toLowerCase())) continue;
+      skills.push({ ...issue, description, owner: "Host folder", ownerKind: "folder", category: "", enabled: false, discoverable: false, mandatory: false,
+        assigned: assignments.has(issue.slug.toLowerCase()) || grantedTo.length > 0, grantedTo, usage30d: { total: 0 } });
+    }
+    const missingSkillMd = queryBoolean(req.query.missingSkillMd);
+    if (missingSkillMd != null) skills = skills.filter((skill) => Boolean(skill.missingSkillMd) === missingSkillMd);
     if (enabled != null) skills = skills.filter((skill) => skill.enabled === enabled);
     if (discoverable != null) skills = skills.filter((skill) => skill.discoverable === discoverable);
     if (mandatory != null) skills = skills.filter((skill) => skill.mandatory === mandatory);
@@ -170,6 +190,7 @@ export function createSkillsRouter() {
     const skill = getSkill(req.params.slug);
     if (!skill) return res.status(404).json({ error: "skill not found" });
     const b = req.body || {};
+    validateSkillGovernanceChange(skill, b);
     if (b.enabled === false) {
       revokeSkillsFromOrg([skill.slug]);
       excludeSkill(skill.slug);
@@ -340,6 +361,7 @@ export function createSkillsRouter() {
   }));
 
   router.post("/skills/templates", guard(async (req, res) => {
+    requireEnterpriseFeature("skillTemplates");
     const b = req.body || {};
     const existing = b.slug ? getTemplate(b.slug) : null;
     const t = upsertTemplate({ slug: b.slug, name: b.name, description: b.description || "", skills: b.skills || [], categories: [], builtin: existing ? existing.builtin : false });

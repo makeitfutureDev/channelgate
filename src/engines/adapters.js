@@ -59,7 +59,7 @@ const baseCompile = (engine, request = {}, supportedModes = ["off"]) => {
 const claude = validateEngineAdapter({
   pluginCapabilities: { manifest: "claude", components: ["skills", "commands", "agents", "hooks", "mcpServers"] },
   resolveOptionalMcpConfig: resolveClaudeMcpConfig,
-  id: "claude", label: "Claude", cli: "claude", defaultModelKey: "defaultClaudeModel", mcpMetaKey: "allowedMcps",
+  id: "claude", label: "Claude", cli: "claude", defaultModelKey: "defaultClaudeModel", defaultEffortKey: "defaultClaudeEffort", mcpMetaKey: "allowedMcps",
   instructionFile: "CLAUDE.md", skillsDir: ".claude/skills", mcpTransport: "file", contextWindow: 200_000,
   efforts: ["low", "medium", "high", "xhigh"], models: [
     { label: "Opus 5.5", value: "claude-opus-5-5", description: "Current Opus model for most coding and knowledge work." },
@@ -205,7 +205,7 @@ const claude = validateEngineAdapter({
 const makeQwenAdapter = (entry) => validateEngineAdapter({
   pluginCapabilities: { manifest: "claude", components: ["skills", "commands", "agents", "hooks", "mcpServers"] },
   resolveOptionalMcpConfig: resolveClaudeMcpConfig,
-  id: entry.id, label: entry.label, cli: "claude", defaultModelKey: entry.defaultModelKey,
+  id: entry.id, label: entry.label, cli: "claude", defaultModelKey: entry.defaultModelKey, defaultEffortKey: entry.defaultEffortKey,
   // The shared model-ID vocabulary these harnesses draw from (Qwen/GLM/DeepSeek/Kimi/MiniMax).
   // Declared so the admin UI can recognise a provider harness's model without a hard-coded engine
   // id — a provider added to the table would otherwise have its saved model silently dropped from
@@ -312,7 +312,7 @@ const codex = validateEngineAdapter({
     }
     return { servers, rejected };
   },
-  id: "codex", label: "Codex", cli: "codex", defaultModelKey: "defaultCodexModel", mcpMetaKey: "allowedCodexMcps",
+  id: "codex", label: "Codex", cli: "codex", defaultModelKey: "defaultCodexModel", defaultEffortKey: "defaultCodexEffort", mcpMetaKey: "allowedCodexMcps",
   // Codex reports no dollar cost, so the ledger prices it from this configured rate (Settings →
   // Audit). Declared here so no other engine inherits OpenAI's rates by falling through.
   costRateKey: "codexRatePer1MTokens",
@@ -375,7 +375,7 @@ const codex = validateEngineAdapter({
 });
 
 const opencode = validateEngineAdapter({
-  id: "opencode", label: "OpenCode (read-only)", cli: "opencode", defaultModelKey: "defaultOpenCodeModel",
+  id: "opencode", label: "OpenCode (read-only)", cli: "opencode", defaultModelKey: "defaultOpenCodeModel", defaultEffortKey: "defaultOpenCodeEffort",
   mcpMetaKey: "allowedOpenCodeMcps", instructionFile: "AGENTS.md", skillsDir: ".opencode/skills",
   mcpTransport: "none", contextWindow: 200_000, efforts: ["low", "medium", "high"], models: [],
   mintsOwnSessionId: true,

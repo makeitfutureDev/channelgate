@@ -54,7 +54,7 @@ function fakeSlack() {
 }
 
 async function setup(threadKey) {
-  saveSettings({ engine: "claude", composioMode: "personal" });
+  saveSettings({ engine: "claude", composioMode: "personal", memoryReviewEvery: 0 });
   await setUser(USER, { name: "Question User", approved: true, isAdmin: false });
   const entry = await upsertChannelEntry(CHANNEL, { name: "question-continuation", type: "im", isDM: true, platform: "slack" });
   await saveChannelMeta(entry.slug, { ...defaultChannelMeta({ channelId: CHANNEL, name: entry.name, type: "im", isDM: true, platform: "slack" }), dmUserId: USER });

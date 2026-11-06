@@ -92,7 +92,9 @@ export function createTeamsControls({ connector, now = Date.now, authorize = tea
   async function fileDetails(state, relative, context, stateId, signal) {
     signal?.throwIfAborted();
     const target = await resolveVisiblePath(context.root, relative, { kind: 'file' });
-    const opened = await openConfinedFile(context.root, target.relative);
+    // An in-conversation PREVIEW for an authorized requester, not an export: protected names stay
+    // viewable here exactly as in the Slack explorer.
+    const opened = await openConfinedFile(context.root, target.relative, { protectedNames: false });
     const isDocx = /\.docx$/i.test(target.relative);
     let bytes, documentText = null;
     try {

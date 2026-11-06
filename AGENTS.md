@@ -64,7 +64,7 @@ post/edit the reply in the thread (degraded to the surface's capabilities) → u
 ## Where things live
 
 - `src/start.js` + `src/platform-gate.js` + `src/server.js` — entry and boot. `start.js` checks the
-  Node floor (≥ 22.13, `node:sqlite`) with NO static imports, the gate refuses every non-Linux
+  Node floor (≥ 24.0.0, `node:sqlite`) with NO static imports, the gate refuses every non-Linux
   host with one plain line, then `server.js` boots in this order: `.env`, the legacy-layout
   migration FIRST, the runtime root + database + singleton lock, settings over env, the skills
   catalog, hardening, the container CLI probe (FATAL without one), the MCP socket, Express,
@@ -249,7 +249,7 @@ post/edit the reply in the thread (degraded to the surface's capabilities) → u
   idle reaper), exec (session-leader helpers so a later exec can signal the whole tree),
   credentials, the per-channel HOME volume and the mounts, the operator's VS Code lease
   (`npm run vscode -- <channel>`).
-- `containers/` — the runtime image: `Containerfile` (`node:22-bookworm-slim`, the `agent` user
+- `containers/` — the runtime image: `Containerfile` (`node:24-bookworm-slim`, the `agent` user
   at the daemon's real uid/gid, tini, a root-owned toolchain under `/opt/channelgate`),
   `versions.json` (`imageSpecVersion` + every pin: Claude Code, Codex, `mcp-remote`, `vercel`,
   `supabase`, Playwright + `agent-browser` with Chromium, Python with OpenCV and faster-whisper;

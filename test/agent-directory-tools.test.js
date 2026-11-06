@@ -55,7 +55,7 @@ test("profile edits are current-channel-only, preserve omitted fields and audit 
     const result = bodyText(await client.callTool({ name: "set_channel_agent_profile", arguments: { description: "Presentation specialist", slug: "other-channel" } }));
     assert.match(result, /profile saved/i);
     const meta = await getChannelMeta(slug);
-    assert.deepEqual(meta.agentDirectory, { description: "Presentation specialist", examples: ["Original task"], hidden: false });
+    assert.deepEqual(meta.agentDirectory, { description: "Presentation specialist", examples: ["Original task"], hidden: false, acceptsMessages: false });
     assert.deepEqual(meta.skills, ["unchanged"]);
     const audit = readEvents().find((entry) => entry.event === "agent_directory_profile_changed");
     assert.equal(audit.channel, channel);
@@ -63,7 +63,7 @@ test("profile edits are current-channel-only, preserve omitted fields and audit 
     assert.deepEqual(audit.keys, ["description"]);
     assert.doesNotMatch(JSON.stringify(audit), /Presentation specialist/);
     await client.callTool({ name: "set_channel_agent_profile", arguments: { description: "", examples: [], hidden: true } });
-    assert.deepEqual((await getChannelMeta(slug)).agentDirectory, { description: "", examples: [], hidden: true });
+    assert.deepEqual((await getChannelMeta(slug)).agentDirectory, { description: "", examples: [], hidden: true, acceptsMessages: false });
   });
 });
 

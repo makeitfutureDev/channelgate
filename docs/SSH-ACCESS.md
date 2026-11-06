@@ -1,8 +1,9 @@
 # SSH access to channel containers
 
 Developers can open a real SSH session — terminal, VS Code Remote-SSH, sftp, port forwards —
-inside a channel's own container, the same box the assistant works in, without any account on
-the gateway host and without any container ever listening on a port. One key per person,
+inside the channel container selected for their current role, matching their own ordinary chat
+turns, without any account on the gateway host and without any container ever listening on a
+port. One key per person,
 registered once from chat; users enable their own access per channel without manager or admin
 approval; the container stays up for as long as a session is open.
 
@@ -105,7 +106,17 @@ machine settings — merge-only, and never over a value you set yourself.
 
 Inside, you are user `agent` in the channel's work folder (an interactive login starts there;
 image spec 1.5.1), with the same environment an engine turn gets and the channel's persistent
-`/home/agent` (installed tools, `gh`/`vercel`/`supabase` logins, Claude and Codex history).
+`/home/agent` for their runtime scope (installed tools, `gh`/`vercel`/`supabase` logins, Claude and
+Codex history). Current organization admins use the admin container and legacy HOME (`cg-…`);
+members and guests use the separate project container and HOME (`cgp2-…`). The work folder is
+shared, but native engine history and CLI logins are separate. "Show SSH access" names the
+requester's scope. SSH rechecks roles while connected; a scope change disconnects the session
+before preparing more credentials, and reconnecting selects the current scope. The existing
+Admin-mode + `containerFullAccessHome` refusal still applies to everyone.
+
+An upgrade correcting SSH scope selection can return an admin to their existing `cg-…` history.
+Sessions created in the project's `cgp2-…` HOME stay there; no history is deleted or automatically
+copied across the boundary. Ordinary members continue to use project history.
 Codex uses the channel's selected login (a proxy placeholder in proxy mode, a host file mount in
 legacy bridge mode), and `codex` in a session gets what a chat turn's Codex gets:
 the gateway tools, your own Composio accounts as `composio-user`, the channel's as
@@ -146,10 +157,11 @@ session gets:
   account" with the operator's organization and email, `/usage` shows the plan's windows, and the
   default model is the plan's. It is the operator's login (the same one every turn uses): your
   session's usage counts against it. Claude reads the login from an access-only file the daemon
-  writes and refreshes; it holds no refresh token and is removed when the channel's last session
+  writes and refreshes; it holds no refresh token and is removed when the container's last session
   ends. Behind the egress proxy its access token is the channel's relay placeholder (the plan,
   expiry and rate tier beside it are the real login's — they are facts, not secrets), so the file
-  is useless outside the container. `claude -r <session id>` resumes a thread's own session.
+  is useless outside the container. `claude -r <session id>` resumes a native session stored in
+  the same runtime scope; admin, project and `/sudo` host histories are separate.
 
 Codex over SSH uses the same selected login as a channel turn. "show SSH access" in the
 channel prints what a session gets. If a part could not be prepared — no Claude login on the
@@ -204,7 +216,7 @@ egress proxy (image spec 1.6.0). An SSH session is inside that container, so the
   client downloads the server and copies it in over the session.
 - **The editor token file.** `<artifacts>/vscode/claude-token` (read by the `claude` wrapper
   outside an SSH session, e.g. a `podman exec` shell or an operator's `npm run vscode` window) holds
-  the same relay placeholder, and is removed when the channel's last session ends as well as when
+  the same relay placeholder, and is removed when the container's last session ends as well as when
   the `npm run vscode` launcher exits. An open `npm run vscode` window counts as live work for the
   channel's own and organization secrets and the Claude login, never for anyone's personal ones.
 
@@ -271,7 +283,7 @@ ended); `show_channel_ssh` lists the live ones.
 | `/etc/ssh/sshd_config.d/channelgate.conf` | the Match block for the login account, plus an `AllowUsers`/`AllowGroups` line when the host restricts logins |
 | `<artifacts>/<platform>/<slug>/ssh/` | `sshd_config` (its one `SetEnv` carries the container env + the proxy set), `authorized_keys`, `host_key` for the container (identical path inside) |
 | `<artifacts>/<platform>/<slug>/ssh/users/<id>/` | one developer's `env` (proxy set first, then secrets — placeholders behind the proxy), `session.md`, `settings.json`, `mcp.json`, Codex's `codex-args.sh` + `codex-secrets.json` (the capability only) |
-| `<artifacts>/<platform>/<slug>/vscode/claude-token` | the Claude login the wrapper reads outside an SSH session (the relay placeholder behind the proxy); removed with the channel's last session |
+| `<artifacts>/<platform>/<slug>/vscode/claude-token` | the Claude login the wrapper reads outside an SSH session (the relay placeholder behind the proxy); removed with the container's last session |
 | `gateway.db` → `ssh_keys`, `ssh_sessions`, `events` | keys, sessions, audit |
 
 - *`channelgate-ssh@…: Permission denied (publickey)`* straight away, with nothing in the daemon
@@ -321,4 +333,11 @@ ended); `show_channel_ssh` lists the live ones.
   network-off …`* — outbound SSH needs *Allow network* on; any other host must be a declared raw
   host. `kex_exchange_identification: Connection closed` right after it is ssh's own echo of that.
 - *Connection drops on daemon restart* — expected; reconnect.
+- *History differs from another person's Slack session* — compare runtime scopes first. Admin
+  and project users share the work folder, but not HOME or native history. Your own ordinary
+  chat turns and SSH use the same scope at your current role.
+- *Host-key warning after a scope change* — each scope keeps its own key at
+  `<artifactDir>/ssh/host_key`. Ordinary container rebuilds preserve that file. Ask an operator
+  to verify the selected scope's fingerprint before updating the matching known-host entry;
+  a changed key by itself is not proof of a harmless rebuild.
 - `journalctl -u channelgate | grep '\[ssh\]'` shows binds, sessions and relay refresh failures.

@@ -112,6 +112,38 @@ if [ "$cancel" = "yes" ]; then
   esac
   exec sleep 30
 fi
+# Runtime process creation fails, optionally after prior work or followed by recovery.
+case "$*" in
+  *CODEX_STUB_RESOURCE_*)
+    printf '%s\n' '{"type":"thread.started","thread_id":"stub-resource-session"}'
+    case "$*" in *AFTER_TOOL*) printf '%s\n' '{"type":"item.started","item":{"id":"effect","type":"command_execution","command":"fixture effect"}}' ;; esac
+    resource_at=$(date -u +%Y-%m-%dT%H:%M:%S.%3NZ)
+    case "$*" in *REORDER*)
+      printf '%s\n' '{"type":"item.completed","item":{"id":"recovered","type":"command_execution","exit_code":0}}'
+      sleep 0.03 ;;
+    esac
+    resource_format="%s %s\n"
+    case "$*" in *NO_NEWLINE*) resource_format="%s %s" ;; esac
+    printf "$resource_format" "$resource_at" 'ERROR codex_core::tools::router: error=exec_command failed: CreateProcess { message: "Rejected(\"Failed to create unified exec process: Resource temporarily unavailable (os error 11)\")" }' >&2
+    case "$*" in
+      *RECOVER*|*REORDER*)
+        sleep 0.03
+        printf '%s\n' '{"type":"item.completed","item":{"id":"recovered","type":"command_execution","exit_code":0}}'
+        sleep 0.2
+        printf '%s\n' '{"type":"turn.completed","usage":{"input_tokens":12,"output_tokens":3}}'
+        printf '%s' 'Recovered successfully' > "$out"
+        exit 0 ;;
+      *EXIT*) exit 1 ;;
+    esac
+    printf '%s\n' '{"type":"turn.failed","error":{"message":"tool process unavailable"},"usage":{"input_tokens":12,"output_tokens":3}}'
+    while :; do
+      case "$*" in *NO_NEWLINE*) : ;; *) printf '%s\n' 'retrying tool process' >&2 ;; esac
+      printf '%s\n' '{"type":"item.completed","item":{"id":"failed","type":"command_execution","exit_code":1}}'
+      sleep 0.05
+    done
+    ;;
+esac
+
 # Credential lost mid-flight: Codex says so on stderr and then keeps waiting instead of exiting.
 # This is the shape that used to heartbeat until a human pressed stop.
 if [ "$auth_hang" = "yes" ]; then

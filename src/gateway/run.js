@@ -1,3 +1,6 @@
+import { assertChannelBudget, budgetRefusal } from "./channel-budget.js";
+import { requireEnterpriseFeature } from "../ee/feature-entitlements.js";
+import { effectiveMeta } from "./effective-meta.js";
 // Orchestrates a single authorized message end-to-end: provision the gated folder, resolve
 // the thread session, build the per-run MCP config, decide admin escalation, and run the
 // headless Claude subprocess. Mention-gating and allowedUsers authorization happen upstream
@@ -24,28 +27,31 @@ import { abortPooled } from "../engines/session-pool.js";
 import { DEFAULT_SILENCE_WINDOWS } from "../engines/watchdog.js";
 import { mintsOwnSessionId, usesMcpConfigFile, engineSupports, requireAdapter, fallbackTargets, engineLabel, engineCredentialState, engineTransientKinds, modelsForEngine } from "../engines/registry.js";
 import { validateRunContext } from "../engines/contract.js";
-import { getEngine, getDefaultModel, getDmTemplate, getEngineFallback, isEngineEnabled, getEnabledEngines, ENGINES, getOrgAccessGrants } from "../config/settings.js";
+import { getEngine, getDefaultModel, getDefaultEffort, getEngineFallback, isEngineEnabled, getEnabledEngines, ENGINES, getOrgAccessGrants } from "../config/settings.js";
 import { claudeTokenFingerprint, resolveContainerClaudeToken } from "./claude-token-relay.js";
 import { installNestedClaudeLogin } from "./nested-claude-login.js";
 import { installPerplexityResearchLogin, perplexityResearchPreamble } from "./perplexity-research.js";
 import { getPerplexityResearchConfig } from "../config/settings.js";
 import { resolveRuntime } from "../runtimes/resolve.js";
 import { newRunId, runtimeSupports } from "../runtimes/contract.js";
-import { getThreadEngine, getThreadClean, getThreadModel, getThreadEffort, getThreadSudo } from "./thread-engine.js";
+import { getThreadEngine, getThreadClean, getThreadModel, getThreadEffort, getThreadSudo, getThreadSkillModel, setThreadSkillModel } from "./thread-engine.js";
+import { decideSkillSwap, registerSkillSwapHandler, skillSwapKey, skillSwapReply } from "./skill-runtime.js";
 import { authorizedSudoSchedule } from "./schedule-sudo.js";
 import { hasSudoRuntimeAuthority } from "../runtimes/sudo-authority.js";
-import { PROFILE_FLAGS, normalizeModeMeta, authorModeMeta, sudoModeMeta, isApiPrincipal } from "./modes.js";
+import { PROFILE_FLAGS, authorModeMeta, sudoModeMeta, isApiPrincipal } from "./modes.js";
 import { networkEnforcedFor } from "../engines/network-policy.js";
 import { containerClaudeCredential, resolveEgressRunEnv } from "./egress/grants.js";
 import { markLive } from "./egress/liveness.js";
 import { mcpConfigUrls, noteChannelMcpHosts } from "./egress/service.js";
 import { resolveCurrentModel } from "./model-info.js";
+import { linkedWorkspaceGuidePreamble } from "./guide.js";
 import { runtimeIdentityPreamble } from "./runtime-identity.js";
 import { runtimeAccessPreamble } from "./runtime-access.js";
 import { channelCredentialsPreamble } from "./channel-credentials.js";
+import { codeChannelPreamble, syncCodeChannelMeta } from "./code-channels.js";
 import { resolveRunIntegrations } from "./run-integrations.js";
 import { customMcpTokens } from "./custom-mcps.js";
-import { modelBelongsToEngine, effortBelongsToEngine } from "../engines/registry.js";
+import { modelBelongsToEngine, effortBelongsToModel } from "../engines/registry.js";
 import { writeFile, rm, mkdir } from "node:fs/promises";
 import path from "node:path";
 import { gatewayRoot, runTmpDir, workspaceRoot } from "../config/paths.js";
@@ -66,35 +72,8 @@ import { browserNamespaceFor } from "./browser-env.js";
 import { serviceSecretValues } from "../engines/child-env.js";
 import { createSecretRedactor, redactSecretValues, redactSecretFields } from "../util/redact.js";
 
-// For a DM that selected an org template (user/admin), overlay the template's knobs onto its
-// meta. "custom" DMs and regular channels use their own meta unchanged. Engine/model/effort are
-// the exception: a runtime pick made IN the DM (the /model wizard writes meta.engine/model/effort)
-// wins over the template's — otherwise the wizard would be a silent no-op in every template-managed
-// DM. Empty = inherit the template, as before. Model/effort are engine-specific, so each resolves
-// to the first candidate (own, then template) that actually belongs to the resolved engine — a
-// stale value written under the other harness (own or template) is skipped, not spawned.
-export function effectiveMeta(meta) {
-  if (meta?.isDM && (meta.template === "user" || meta.template === "admin")) {
-    const t = getDmTemplate(meta.template);
-    const engine = (ENGINES.includes(meta.engine) ? meta.engine : "") || (ENGINES.includes(t.engine) ? t.engine : "") || getEngine() || "claude";
-    return normalizeModeMeta({
-      ...meta,
-      skills: t.skills,
-      skillTemplate: typeof t.skillTemplate === "string" ? t.skillTemplate : "",
-      allowedMcps: t.allowedMcps,
-      allowedCodexMcps: t.allowedCodexMcps,
-      model: [meta.model, t.model].find((m) => m && modelBelongsToEngine(m, engine)) || "",
-      effort: [meta.effort, t.effort].find((e) => e && effortBelongsToEngine(e, engine)) || "",
-      adminMode: t.adminMode,
-      allowBash: t.allowBash,
-      allowNetwork: t.allowNetwork,
-      autoMode: t.autoMode,
-      cleanMode: t.cleanMode,
-      engine: meta.engine || t.engine,
-    });
-  }
-  return normalizeModeMeta(meta);
-}
+// Kept as an export for existing settings and tool callers.
+export { effectiveMeta } from "./effective-meta.js";
 
 // True when an engine error means "the session you tried to resume no longer exists" (vs. a real
 // failure) — so we can transparently start a fresh session instead of erroring out. Claude prints
@@ -167,6 +146,10 @@ function capacityContinuationModel(current, pinned) {
   return alternatives[0] || current;
 }
 
+// The turn the orchestrator starts after a skill's preferred model took over (skill-runtime.js):
+// the previous attempt in this SAME session stopped on purpose when `use_skill` answered "swap".
+const SKILL_SWAP_CONTINUATION_PROMPT =
+  "This session was just switched to you, the model the skill in use prefers; the previous attempt stopped on purpose right after calling use_skill. Continue the latest user request from the work already recorded in this session: do not start over, do not call use_skill again for the same skill, and do not repeat completed tool actions. Check the current state before any action that might have side effects. If the recorded work already contains the complete final answer, give that answer as your reply.";
 const CAPACITY_CONTINUATION_PROMPT =
   "The previous turn in this same session stopped because its selected model was at capacity. " +
   "Continue the latest user request from the work already recorded in this session. " +
@@ -687,11 +670,18 @@ export async function runMessage(args) {
   try {
     if (question?.sessionThreadKey) await args.verifyQuestionAccess?.();
     return await runMessageImpl({ ...args, threadKey: sessionKey,
+      admissionThreadKey: question?.threadKey ?? args.admissionThreadKey ?? args.threadKey,
       ...(question?.sessionThreadKey ? { questionThreadKey: question.threadKey, scheduledQuestion: question } : {}) });
+  } catch (error) {
+    if (error.code === "channel_spending_limit") {
+      const entry = await getChannelEntry(args.channelId);
+      return budgetRefusal(error.budget, { slug: entry?.slug });
+    }
+    throw error;
   } finally { release?.(); }
 }
 
-async function runMessageImpl({ channelId, authorId, workspaceId = "", text, threadKey, attachments = [], signal = null, onDelta, onEvent, onRuntimeResolved, onForkSessionResolved, sessionId: presetSessionId = "", forkSourceSessionId = "", overrides = null, getFallbackContext = null, preferCold = false, progressReport = false, untrustedPrincipal = false, origin = "", fallbackPolicy = "", sudoSourceThreadKey = "", sudoScheduleId = "", questionThreadKey, scheduledQuestion = null }) {
+async function runMessageImpl({ channelId, authorId, workspaceId = "", text, threadKey, admissionThreadKey = threadKey, attachments = [], signal = null, onDelta, onEvent, onRuntimeResolved, onForkSessionResolved, sessionId: presetSessionId = "", forkSourceSessionId = "", overrides = null, getFallbackContext = null, preferCold = false, progressReport = false, untrustedPrincipal = false, origin = "", fallbackPolicy = "", sudoSourceThreadKey = "", sudoScheduleId = "", questionThreadKey, scheduledQuestion = null, toolset = "" }) {
   // Fail closed before anything else: a run with no declared origin is a programming error, not a
   // default-to-interactive.
   if (!RUN_ORIGINS.includes(origin)) throw new Error(`runMessage requires a valid origin (got ${JSON.stringify(origin)}); one of: ${RUN_ORIGINS.join(", ")}`);
@@ -716,10 +706,12 @@ async function runMessageImpl({ channelId, authorId, workspaceId = "", text, thr
 
   // The channel tier is the assigned skill template's CURRENT skills plus the conversation's own
   // additions (skills/templates.js) — resolved live, so a template edit reaches every follower.
-  const channelMeta = withTemplateSkills(effectiveMeta(
+  // A code channel's policy, secrets, skills and folder are its ORIGIN channel's, re-projected
+  // at every spawn so a change there (a rotated secret, a narrowed access) reaches this run.
+  const channelMeta = withTemplateSkills(effectiveMeta(await syncCodeChannelMeta(entry.slug,
     (await getChannelMeta(entry.slug)) ??
       defaultChannelMeta({ channelId, name: entry.name, type: entry.type, isDM: entry.isDM })
-  ));
+  )));
 
   // Resolve the durable org+channel baseline separately from this run's trusted user tier. The
   // HTTP run API authenticates only its API key; its caller-supplied Slack author id must never
@@ -772,6 +764,7 @@ async function runMessageImpl({ channelId, authorId, workspaceId = "", text, thr
   // engine, then the global default. For an EXISTING thread this is only the requested engine:
   // the session's own engine can still outrank a channel/global value (see decideThreadEngine).
   const channelCodexLocked = meta.codexAuthSource === "channel";
+  if (channelCodexLocked) requireEnterpriseFeature("channelCodexLogin");
   const threadEngine = channelCodexLocked || (overrides?.engine && ENGINES.includes(overrides.engine)) ? "" : await getThreadEngine(entry.slug, threadKey);
   const channelEngine = channelCodexLocked ? "codex" : ENGINES.includes(meta.engine) ? meta.engine : "";
   let engine = channelCodexLocked ? "codex" : threadEngine || channelEngine || getEngine();
@@ -847,6 +840,8 @@ async function runMessageImpl({ channelId, authorId, workspaceId = "", text, thr
     };
   }
 
+  await assertChannelBudget(channelId, entry.slug);
+
   // ── License admission (src/ee/limits.js) ────────────────────────────────────────────────────
   // The last gate before this turn has ANY side effect: the folder is not provisioned, no session
   // is minted or reset, no engine is spawned, and nothing is billed. It sits here rather than
@@ -862,7 +857,7 @@ async function runMessageImpl({ channelId, authorId, workspaceId = "", text, thr
   // The 80% warning rides on an ADMITTED turn: it is prefixed to the answer the user is already
   // getting, the same way the cross-engine failover note is, so it costs no extra message and
   // cannot be missed.
-  const admission = licenseAdmission({ conversationId: channelId, origin });
+  const admission = licenseAdmission({ conversationId: channelId, threadKey: admissionThreadKey, origin });
   if (!admission.allowed) {
     await logEvent("license_run_refused", {
       channel: channelId,
@@ -1119,7 +1114,7 @@ async function runMessageImpl({ channelId, authorId, workspaceId = "", text, thr
   // Egress (src/gateway/egress/grants.js): when the proxy is this container's network, every name
   // with a swap rule arrives as its PLACEHOLDER — stable per key, swapped for the live value only
   // on its declared hosts — and a name without one arrives raw and is flagged unprotected (or is
-  // withheld under egressSecretsStrict). `realValues` is every real value, for the redactor.
+  // withheld under egressSecretsStrict). `redactionValues` carries hidden values for the redactor.
   const egressRunEnv = await resolveEgressRunEnv({
     meta, channelId, authorId, untrustedPrincipal, clean, target,
   });
@@ -1144,12 +1139,9 @@ async function runMessageImpl({ channelId, authorId, workspaceId = "", text, thr
   // a failing CLI will echo a token into its error line. Redact the values out of everything this
   // turn says, in the stream (holdback, so a value split across two deltas still matches) and in
   // the final content. Both must use the same values or finalize()'s streamed-prefix check breaks.
-  // The REAL values, not the placeholders the container may hold: a real value must never appear in
-  // a reply however it got there (defense in depth — the proxy also scrubs response bodies).
-  const placeholderValues = new Set(Object.values(egressRunEnv.placeholders));
+  // Hidden REAL values, not placeholders; readable variables remain shareable in output.
   const outputSecrets = [...new Set([
-    ...Object.values(channelEnv).filter((value) => !placeholderValues.has(value)),
-    ...egressRunEnv.realValues,
+    ...egressRunEnv.redactionValues,
     ...serviceSecretValues(),
     getPerplexityResearchConfig().sessionToken,
   ])];
@@ -1226,11 +1218,14 @@ async function runMessageImpl({ channelId, authorId, workspaceId = "", text, thr
     clean,
     composioUserEndpoint, composioEndpoint, composioUserToken, composioToken,
     toolboxToken, makeToolboxUrl, makeToolboxKey, customMcps,
-    channelId, slug: entry.slug, authorId, threadKey, origin,
+    channelId, slug: entry.slug, authorId, threadKey, admissionThreadKey, origin,
     questionThreadKey, sudoSchedule: sudoSchedule || sudoQuestion,
     progressReport: progressReportEnabled,
     principalTrusted: !untrustedPrincipal,
     gatewayFsRoot, gatewayWorkspaceRoot,
+    // A caller-chosen REDUCED gateway tool surface (gateway-server.js toolsets); blank is "full".
+    // Signed into the capability, so a run can never widen it from its own environment.
+    toolset,
   };
   // Minted LAZILY — after the run slot is admitted, never here. The gateway capability is a signed
   // grant with a six-hour TTL, and the queue ahead of this turn is unbounded: a turn parked behind
@@ -1313,20 +1308,25 @@ async function runMessageImpl({ channelId, authorId, workspaceId = "", text, thr
   // admin's interactive terminal `/model` changes the CLI default. An explicit per-run API
   // override (already merged into meta above) beats the thread override — it's the most specific
   // ask — so the thread values are skipped when one was passed.
-  const [threadModel, threadEffort] = await Promise.all([
+  const [threadModel, threadEffort, threadSkillModel] = await Promise.all([
     overrides?.model ? "" : getThreadModel(entry.slug, threadKey),
     overrides?.effort ? "" : getThreadEffort(entry.slug, threadKey),
+    // A skill's preferred model that took this thread over earlier (skill-runtime.js): below the
+    // person's pin, above the channel default, and never a pin itself (see modelPinnedByUser).
+    overrides?.model ? "" : getThreadSkillModel(entry.slug, threadKey),
   ]);
   // Spawn-time compatibility gate: whichever layer produced a value (thread override, channel
   // meta, template overlay, a stale legacy write), a model/effort that belongs to the OTHER
   // harness must never reach the CLI flags — it would break every turn. The first candidate in
   // precedence order that actually belongs to this engine wins; none → "" (the CLI's own default).
   const gatewayDefaultModel = getDefaultModel(engine);
-  let model = [threadModel, meta.model, gatewayDefaultModel].find((m) => m && modelBelongsToEngine(m, engine)) || "";
-  const effort = [threadEffort, meta.effort].find((e) => e && effortBelongsToEngine(e, engine)) || "";
+  let model = [threadModel, threadSkillModel, meta.model, gatewayDefaultModel].find((m) => m && modelBelongsToEngine(m, engine)) || "";
+  const gatewayDefaultEffort = getDefaultEffort(engine);
+  const effortForModel = (selectedModel) => [threadEffort, meta.effort, gatewayDefaultEffort]
+    .find((e) => e && effortBelongsToModel(e, engine, selectedModel)) || "";
   // Dashboard-only lifecycle signal: by this point the exact spawn engine/model are known. Keep it
   // best-effort so a display-layer callback can never prevent an engine run.
-  try { onRuntimeResolved?.({ engine, model, ...runtimeSignal }); } catch { /* non-fatal */ }
+  try { onRuntimeResolved?.({ engine, model, effort: effortForModel(model), ...runtimeSignal }); } catch { /* non-fatal */ }
   const timeoutMs = parseTimeoutMs(process.env.COMMAND_TIMEOUT);
   // How long a turn may stay SILENT in total before we treat it as wedged. COMMAND_TIMEOUT is now
   // only how often a quiet turn REPORTS itself (see engines/watchdog.js); this is the give-up
@@ -1471,7 +1471,7 @@ async function runMessageImpl({ channelId, authorId, workspaceId = "", text, thr
   if (homeGuarded && needsClaudeSettings && !grantArtifacts.settingsFile) throw new Error("this channel mounts the operator home but no home-guard settings were generated; refusing to run a non-admin turn unguarded");
   const runSettingsFile = grantArtifacts.settingsFile || sharedRunSettingsFile;
   const skillWarning = grantArtifacts.missingSkills.length
-    ? `⚠️ Some granted skills could not be loaded: ${grantArtifacts.missingSkills.join(", ")}. Continuing with the available skills.\n\n`
+    ? `⚠️ Some granted skills could not be loaded: ${grantArtifacts.missingSkills.map((name) => grantArtifacts.invalidSkillFolders.includes(name) ? `${name} (skill folder has no regular SKILL.md)` : name).join(", ")}. Continuing with the available skills.\n\n`
     : "";
   const runWarning = licenseWarning + skillWarning;
   const grantFingerprint = JSON.stringify({
@@ -1500,17 +1500,21 @@ async function runMessageImpl({ channelId, authorId, workspaceId = "", text, thr
     }
     if (sudoQuestion && !(await isAdmin(authorId))) throw new Error("Sudo task authorization was revoked before the engine could start.");
   };
+  const linkedGuidePrefix = await linkedWorkspaceGuidePreamble(meta, target);
   const runOnce = async (sid, fresh, promptOverride = null, modelOverride = model) => {
+    const effort = effortForModel(modelOverride);
     assertRuntimeCanStart();
     await assertScheduledSudoAuthority();
     assertChannelEngineApproved((await getChannelMeta(entry.slug)) ?? channelMeta, engine);
     // The runtime facts belong to THIS attempt, including a model retry or session heal. Keep
     // them per-prompt even in clean mode: they expose no memory, optional skills or connectors.
-    const prompt = (fresh && !forkSourceSessionId ? memoryPrefix : "") + composioIdentityPrefix + channelCredentialsPrefix
+    const prompt = (fresh && !forkSourceSessionId ? memoryPrefix : "") + composioIdentityPrefix + channelCredentialsPrefix + linkedGuidePrefix
       + runtimeIdentityPreamble({ engine, model: modelOverride, effort, fresh })
       + runtimeAccessPreamble(target, { clean, allowNetwork: Boolean(meta.allowNetwork), dangerouslySkip })
       + perplexityResearchPreamble(target, { clean })
+      + codeChannelPreamble(meta)
       + (promptOverride ?? turnText);
+    await assertChannelBudget(channelId, entry.slug);
     engineStarted = true;
     return adapter.run(validateRunContext({
       principal: { kind: untrustedPrincipal ? "daemon" : PRINCIPAL_KIND_BY_ORIGIN[origin] || "daemon", id: authorId },
@@ -1550,6 +1554,7 @@ async function runMessageImpl({ channelId, authorId, workspaceId = "", text, thr
   // finally). Declared here because the retry pause hands both back for its length.
   let releaseRunSlot = null;
   let runtimeLease = null;
+  let unregisterSkillSwap = null;
   let releaseEgressLive = null;
   // A retry pause is idle time: nothing is spawned, nothing streams. Give the slot and the lease
   // back for its length so other channels' turns are not queued behind a sleeping one, then queue
@@ -1587,6 +1592,7 @@ async function runMessageImpl({ channelId, authorId, workspaceId = "", text, thr
         const out = await attempt();
         return retries && out && typeof out === "object" ? { ...out, transientRetries: retries } : out;
       } catch (err) {
+        if (err.code === "channel_spending_limit") throw err;
         const kind = transientProviderFailure(err, engineName);
         if (!kind || retries >= maxAttempts || signal?.aborted) {
           if (retries) {
@@ -1725,7 +1731,8 @@ async function runMessageImpl({ channelId, authorId, workspaceId = "", text, thr
     const fallbackGatewayDefaultModel = getDefaultModel(fallbackEngine);
     let fallbackModel = meta.model && modelBelongsToEngine(meta.model, fallbackEngine) ? meta.model : fallbackGatewayDefaultModel;
     let fallbackModelNote = "";
-    try { onRuntimeResolved?.({ engine: fallbackEngine, model: fallbackModel, ...runtimeSignal }); } catch { /* non-fatal */ }
+    const fallbackDefaultEffort = getDefaultEffort(fallbackEngine);
+    try { onRuntimeResolved?.({ engine: fallbackEngine, model: fallbackModel, effort: effortBelongsToModel(fallbackDefaultEffort, fallbackEngine, fallbackModel) ? fallbackDefaultEffort : "", ...runtimeSignal }); } catch { /* non-fatal */ }
     const fallbackConfinement = fallbackAdapter.compileConfinement({ allowNetwork: Boolean(meta.allowNetwork), writable: codexWritable });
     if (!fallbackConfinement.supported) throw new Error(`${fallbackConfinement.reason}. ${fallbackAdapter.label} fallback was refused.`);
     // Failing over TO Claude needs Claude's credential, which the primary turn never resolved when
@@ -1746,15 +1753,17 @@ async function runMessageImpl({ channelId, authorId, workspaceId = "", text, thr
     if (note) announceAnswerNote(note);
     if (fbMcpDropNote) announceAnswerNote(fbMcpDropNote);
     const exec = async (fbSid, fbFresh, modelOverride = fallbackModel) => {
+      const effort = effortBelongsToModel(fallbackDefaultEffort, fallbackEngine, modelOverride) ? fallbackDefaultEffort : "";
       assertRuntimeCanStart();
       await assertScheduledSudoAuthority();
       assertChannelEngineApproved((await getChannelMeta(entry.slug)) ?? channelMeta, fallbackEngine);
+      await assertChannelBudget(channelId, entry.slug);
       engineStarted = true;
       return fallbackAdapter.run(validateRunContext({
         principal: { kind: untrustedPrincipal ? "daemon" : PRINCIPAL_KIND_BY_ORIGIN[origin] || "daemon", id: authorId }, origin, cwd,
-        prompt: (fbFresh ? memoryPrefix : "") + composioIdentityPrefix + channelCredentialsPrefix
-          + runtimeIdentityPreamble({ engine: fallbackEngine, model: modelOverride, effort: "", fresh: fbFresh })
-          + runtimeAccessPreamble(target, { clean, allowNetwork: Boolean(meta.allowNetwork), dangerouslySkip }) + perplexityResearchPreamble(target, { clean }) + fbPrompt,
+        prompt: (fbFresh ? memoryPrefix : "") + composioIdentityPrefix + channelCredentialsPrefix + linkedGuidePrefix
+          + runtimeIdentityPreamble({ engine: fallbackEngine, model: modelOverride, effort, fresh: fbFresh })
+          + runtimeAccessPreamble(target, { clean, allowNetwork: Boolean(meta.allowNetwork), dangerouslySkip }) + perplexityResearchPreamble(target, { clean }) + codeChannelPreamble(meta) + fbPrompt,
         session: { id: fbSid, fresh: fbFresh }, policy: fallbackConfinement,
         // The SAME runtime target: failing over to the other harness changes which CLI runs, not
         // which machine boundary the channel runs behind.
@@ -1769,7 +1778,7 @@ async function runMessageImpl({ channelId, authorId, workspaceId = "", text, thr
           settingsFile: runSettingsFile, permissionPromptTool,
           writable: codexWritable, autoApprove: codexAutoApprove, clean, composioUserEndpoint, composioEndpoint,
           composioUserToken, composioToken, toolboxToken, makeToolboxUrl, makeToolboxKey, customMcps,
-          gatewayCapability: fallbackMcpRuntime.gatewayCapability, gatewayFsRoot, gatewayWorkspaceRoot, progressReport: progressReportEnabled, model: modelOverride, effort: "",
+          gatewayCapability: fallbackMcpRuntime.gatewayCapability, gatewayFsRoot, gatewayWorkspaceRoot, progressReport: progressReportEnabled, model: modelOverride, effort,
           attachments, signal, timeoutMs, maxSilenceMs, onDelta: scopedOnDelta, onEvent: scopedOnEvent,
           onSessionResolved: sessionResolved(fbKey, fallbackEngine),
           channelEnv, channelEnvFingerprint: channelEnvFp, browserNamespace,
@@ -1818,7 +1827,7 @@ async function runMessageImpl({ channelId, authorId, workspaceId = "", text, thr
         toModel: defaultModel,
         crossEngineFallback: true,
       });
-      try { onRuntimeResolved?.({ engine: fallbackEngine, model: defaultModel, ...runtimeSignal }); } catch { /* non-fatal */ }
+      try { onRuntimeResolved?.({ engine: fallbackEngine, model: defaultModel, effort: effortBelongsToModel(fallbackDefaultEffort, fallbackEngine, defaultModel) ? fallbackDefaultEffort : "", ...runtimeSignal }); } catch { /* non-fatal */ }
       // Told to the delivery layer BEFORE the retry spawns, because a Slack answer is written from
       // the live stream: a note added to the finished `content` below never reaches the message a
       // streamed turn produced. Nothing has streamed yet (the rejection landed before generation),
@@ -1830,7 +1839,7 @@ async function runMessageImpl({ channelId, authorId, workspaceId = "", text, thr
         fallbackModel = defaultModel;
         fallbackModelNote = gatewayDefaultModelNote(rejectedModel, defaultModel);
       } catch (defaultModelError) {
-        if (defaultModelError?.details?.incompleteTurn && !defaultModelError.details.replaySafe) throw defaultModelError;
+        if (defaultModelError?.code === "channel_spending_limit" || (defaultModelError?.details?.incompleteTurn && !defaultModelError.details.replaySafe)) throw defaultModelError;
         console.warn(`[gateway] gateway-default fallback model ${defaultModel} also failed (${defaultModelError.message}) — preserving the original model error`);
         err.details = { ...(err.details || {}), defaultModel, defaultModelError: defaultModelError.message };
         throw err;
@@ -1971,6 +1980,34 @@ async function runMessageImpl({ channelId, authorId, workspaceId = "", text, thr
     let fresh = isNew;
     let result;
     let capacityContinuationNote = "";
+    // ── Skill model swap (skill-runtime.js) ──────────────────────────────────────────────────
+    // The `use_skill` tool reaches THIS turn through the daemon by its thread key. The handler
+    // decides with the turn's own facts (its live engine/model, the person's pin, the channel's
+    // CURRENT switch) and, for an inline swap, parks the request: the model is told to end its
+    // turn, and the loop after the main attempt resumes the SAME session with the new model.
+    let pendingSkillSwap = null;
+    let skillSwapNote = "";
+    let skillSwapped = false;
+    unregisterSkillSwap = registerSkillSwapHandler(skillSwapKey(entry.slug, threadKey), async ({ name }) => {
+      const skill = getSkill(name) || null;
+      // The same ask repeated while its swap is pending gets the same answer: stop, the resume is coming.
+      if (pendingSkillSwap && skill && pendingSkillSwap.slug === skill.slug) {
+        return { ...pendingSkillSwap, reply: skillSwapReply(pendingSkillSwap, { engineLabel, currentModel: model }) };
+      }
+      const liveMeta = (await getChannelMeta(entry.slug).catch(() => null)) ?? channelMeta;
+      const decision = decideSkillSwap({
+        meta: { skillRuntimeSwap: Boolean(liveMeta?.skillRuntimeSwap ?? meta.skillRuntimeSwap) },
+        engine, model, pinned: runtimePinned, skill, swapped: skillSwapped || Boolean(pendingSkillSwap),
+        engineAvailable: (id) => isEngineEnabled(id) && isChannelEngineApproved(liveMeta || channelMeta, id),
+      });
+      if (decision.action === "inline" && !signal?.aborted) pendingSkillSwap = decision;
+      await logEvent("run_skill_swap_decision", {
+        channel: channelId, author: authorId, slug: entry.slug, threadKey, origin, engine,
+        skill: decision.slug || String(name || ""), action: decision.action, reason: decision.reason,
+        fromModel: model, toModel: decision.model || "", toEngine: decision.engine || "",
+      });
+      return { ...decision, reply: skillSwapReply(decision, { engineLabel, currentModel: model }) };
+    });
     // A FRESH session is created by its id (`claude --session-id <sid>`), and the attempt that just
     // failed already wrote that id's transcript — the CLI refuses to create it twice ("Session ID …
     // is already in use"), so a retried fresh turn runs under a new id (persisted, so a concurrent
@@ -1989,6 +2026,7 @@ async function runMessageImpl({ channelId, authorId, workspaceId = "", text, thr
       // continues the conversation instead of starting amnesiac.
       result = await withTransientRetry(engine, () => runOnce(sid, fresh, initialPromptOverride), { beforeRetry: remintFreshSession });
     } catch (err) {
+      if (err.code === "channel_spending_limit") throw err;
       if (codexCapacityContinuation(err) && !signal?.aborted) {
         // This is a new turn in the SAME Codex session, not a replay of the user message. Its
         // transcript contains the completed tools, so the model can continue from their results.
@@ -2013,7 +2051,7 @@ async function runMessageImpl({ channelId, authorId, workspaceId = "", text, thr
         await sleepUnlessAborted(delayMs, signal);
         if (signal?.aborted) throw err;
         if (yielded) await resumeFromRetry();
-        try { onRuntimeResolved?.({ engine, model: continuationModel, ...runtimeSignal }); } catch { /* display only */ }
+        try { onRuntimeResolved?.({ engine, model: continuationModel, effort: effortForModel(continuationModel), ...runtimeSignal }); } catch { /* display only */ }
         announceAnswerNote(note);
         try {
           result = await runOnce(continuationId, false, CAPACITY_CONTINUATION_PROMPT, continuationModel);
@@ -2044,7 +2082,7 @@ async function runMessageImpl({ channelId, authorId, workspaceId = "", text, thr
             fromModel: rejectedModel,
             toModel: defaultModel,
           });
-          try { onRuntimeResolved?.({ engine, model: defaultModel, ...runtimeSignal }); } catch { /* non-fatal */ }
+          try { onRuntimeResolved?.({ engine, model: defaultModel, effort: effortForModel(defaultModel), ...runtimeSignal }); } catch { /* non-fatal */ }
           // Same reason as the cross-engine path above: the answer the reader gets is STREAMED, so
           // the substitution has to be announced before the retry writes its first token — a prefix
           // on the finished content is only ever seen by a surface that renders that content.
@@ -2059,7 +2097,7 @@ async function runMessageImpl({ channelId, authorId, workspaceId = "", text, thr
               content: `${gatewayDefaultModelNote(rejectedModel, defaultModel)}${result.content || ""}`,
             };
           } catch (defaultModelError) {
-            if (defaultModelError?.details?.incompleteTurn && !defaultModelError.details.replaySafe) throw defaultModelError;
+            if (defaultModelError?.code === "channel_spending_limit" || (defaultModelError?.details?.incompleteTurn && !defaultModelError.details.replaySafe)) throw defaultModelError;
             console.warn(`[gateway] gateway-default model ${defaultModel} also failed (${defaultModelError.message}) — preserving the original model error`);
             err.details = { ...(err.details || {}), defaultModel, defaultModelError: defaultModelError.message };
             throw err;
@@ -2105,7 +2143,7 @@ async function runMessageImpl({ channelId, authorId, workspaceId = "", text, thr
                     : "it hit a usage limit before any tool call",
               );
             } catch (fallbackError) {
-              if (fallbackError?.details?.incompleteTurn) throw fallbackError;
+              if (fallbackError?.code === "channel_spending_limit" || fallbackError?.details?.incompleteTurn) throw fallbackError;
               // Both harnesses failed. Keep the original error authoritative (its details drive every
               // consumer), but say the whole story in one sentence, and — when a person is watching —
               // hand it back as a choice (try either harness again) instead of a dead end.
@@ -2138,6 +2176,47 @@ async function runMessageImpl({ channelId, authorId, workspaceId = "", text, thr
       throw new Error(`${engineLabel(engine)} did not return a distinct fork session id`);
     }
 
+    // A skill asked for its preferred model and the model ended its turn as told: resume the SAME
+    // session with that model and let it continue the user's request from the transcript. The
+    // abandoned attempt's spend is banked on its own model first (for Claude that also seeds the
+    // session's cumulative baseline, so the continuation is charged its delta). Bounded: a second
+    // skill in the continuation is answered with the subagent advice, never another inline swap.
+    if (pendingSkillSwap && !result.interrupted && !signal?.aborted) {
+      const swap = pendingSkillSwap;
+      pendingSkillSwap = null;
+      skillSwapped = true;
+      const fromModel = model;
+      const resumeId = (mintsOwnSessionId(engine) && result.sessionId) || sid;
+      const note = `🔁 _Switched this thread to ${swap.model} for the ${swap.slug} skill._\n\n`;
+      console.log(`[gateway] skill ${swap.slug} switched ${entry.slug} from ${fromModel || "CLI default"} to ${swap.model} — resuming session ${resumeId}`);
+      await logEvent("run_skill_swap", {
+        channel: channelId, author: authorId, slug: entry.slug, threadKey, origin, engine,
+        skill: swap.slug, fromModel, toModel: swap.model, toolUseCount: Number(result.toolUseCount) || 0,
+      });
+      try {
+        const taskKind = origin === "schedule" ? "scheduled" : origin === "background_agent" ? "background-agent" : origin === "agent_message" ? "agent-message" : "interactive";
+        await recordUsage({ channelId, slug: entry.slug, authorId, engine, model: fromModel, taskKind, result: { ...result, engine, model: fromModel } });
+      } catch { /* accounting must never block the swap */ }
+      if (mintsOwnSessionId(engine) && result.sessionId && result.sessionId !== sid) {
+        await saveSession(entry.slug, threadKey, result.sessionId, engine, sessionGen, runtimeStamp);
+      }
+      await setThreadSkillModel(entry.slug, threadKey, swap.model);
+      try { onEvent?.({ kind: "notice", scope: "gateway", text: `Switching to ${swap.model} for the ${swap.slug} skill — resuming the same session` }); } catch { /* status only */ }
+      try { onRuntimeResolved?.({ engine, model: swap.model, effort: effortForModel(swap.model), ...runtimeSignal }); } catch { /* display only */ }
+      announceAnswerNote(note);
+      try {
+        result = await withTransientRetry(engine, () => runOnce(resumeId, false, SKILL_SWAP_CONTINUATION_PROMPT, swap.model));
+      } catch (swapError) {
+        swapError.details = { ...(swapError.details || {}), skillSwap: true, skill: swap.slug, fromModel, toModel: swap.model };
+        throw swapError;
+      }
+      assertCompletedTurn(result, engine, resumeId);
+      sid = resumeId;
+      fresh = false;
+      model = swap.model;
+      skillSwapNote = note;
+    }
+
     // A RESUME that returns an empty result (0 tokens, no output) is a broken session state — most
     // often a turn SIGKILLed mid-write by a stop/restart, leaving a dangling tool_use in the
     // transcript. Functionally identical to isSessionNotFound: the old conversation is unusable.
@@ -2152,6 +2231,13 @@ async function runMessageImpl({ channelId, authorId, workspaceId = "", text, thr
     // the session is healthy, and a newer message is already queued to resume it with this turn's
     // context. Healing it would needlessly evict the warm session and re-run the abandoned message.
     if (!fresh && !result.interrupted && isEmptyResult(result)) {
+      if (skillSwapNote) {
+        // Same posture as the capacity continuation: the first attempt's work is in the session,
+        // and a fresh-session heal would replay the request from scratch on top of it.
+        throw Object.assign(new Error(`The ${model} continuation after the skill model swap returned no output; the earlier work remains in its session.`), {
+          details: { engine, sessionId: sid, incompleteTurn: true, replaySafe: false, skillSwap: true },
+        });
+      }
       if (capacityContinuationNote) {
         // The original turn already ran tools. A broken resume must not fall through to the
         // ordinary fresh-session heal, which would replay the original request from scratch.
@@ -2202,7 +2288,7 @@ async function runMessageImpl({ channelId, authorId, workspaceId = "", text, thr
       try {
         return await runFallbackEngine(`⚠️ _${engineLabel(engine)} hit its usage limit — answered with ${engineLabel(fallbackEngine)}._\n\n`);
       } catch (e) {
-        if (e?.details?.incompleteTurn) throw e;
+        if (e?.code === "channel_spending_limit" || e?.details?.incompleteTurn) throw e;
         console.warn(`[gateway] ${fallbackEngine} fallback failed (${e.message}) — returning the limit notice`);
         // fall through to return the limited engine's own notice
       }
@@ -2238,6 +2324,9 @@ async function runMessageImpl({ channelId, authorId, workspaceId = "", text, thr
     result = transientRetryNote(engine, result);
     if (capacityContinuationNote && !result.interrupted) {
       result = { ...result, content: `${capacityContinuationNote}${result.content || ""}` };
+    }
+    if (skillSwapNote && !result.interrupted) {
+      result = { ...result, content: `${skillSwapNote}${result.content || ""}` };
     }
 
     const finalSessionId = mintsOwnSessionId(engine) || forkSourceSessionId ? result.sessionId ?? sid : sid;
@@ -2294,7 +2383,7 @@ async function runMessageImpl({ channelId, authorId, workspaceId = "", text, thr
       const details = error.details;
       const failedEngine = details.engine || engine;
       const failedResult = details.result || { usage: details.usage, costUSD: details.costUSD, durationMs: details.durationMs, engine: failedEngine };
-      const taskKind = origin === "schedule" ? "scheduled" : origin === "background_agent" ? "background-agent" : "interactive";
+      const taskKind = origin === "schedule" ? "scheduled" : origin === "background_agent" ? "background-agent" : origin === "agent_message" ? "agent-message" : "interactive";
       await recordUsage({ channelId, slug: entry.slug, authorId, engine: failedEngine, model: failedResult.model || (failedEngine === engine ? model : getDefaultModel(failedEngine)), taskKind, result: failedResult });
       details.usageRecorded = true;
     }
@@ -2310,6 +2399,7 @@ async function runMessageImpl({ channelId, authorId, workspaceId = "", text, thr
     // The turn no longer needs the run environment up. Releasing is also the activity stamp the
     // idle reaper counts from, so it must happen on every exit — answer, error, or stop.
     try { runtimeLease?.release(); } catch { /* a lease that cannot be released must not mask the turn's outcome */ }
+    try { unregisterSkillSwap?.(); } catch { /* registry bookkeeping must not mask the turn's outcome */ }
     try { releaseEgressLive?.(); } catch { /* liveness bookkeeping must not mask the turn's outcome */ }
     releaseRunSlot?.();
     // Best-effort: the config file only matters at spawn time. A leftover from a daemon crash

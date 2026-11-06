@@ -35,6 +35,21 @@ These gateway MCP tools use the signed current-run conversation and author conte
 
 **Limits:** The agent starts without the parent conversation transcript, so task scope, inputs, and deliverable must be explicit. End the launching turn immediately. The maximum agent run is one week. Successful reports use the normal sanitized, chunked message delivery. Restarted unfinished agents are recorded as interrupted; they are not a promise of uninterrupted process survival.
 
+## send_agent_message
+
+**Required:** `to` (string, the `channelId` or exact name a `search_agents` result returned), `message` (string, a self-contained question or request of up to 8,000 characters).
+
+```json
+{
+  "to": "C0123456789",
+  "message": "What deployment steps does your channel use for the staging environment? A short ordered list is enough."
+}
+```
+
+**Scope and result:** Sends a question or request to another channel's agent on behalf of the requesting person, after [search_agents](/docs/controls/knowledge-and-instructions/#search_agents) found a suitable target. The call posts a confirmation card in the current thread; when the requesting person approves it, the daemon delivers the text as a new thread in the target channel, that channel's agent answers there with its own tools and permissions, and the reply is posted back into the originating thread as a new turn. Returns a sent acknowledgement (or a refusal naming the gate that failed).
+
+**Limits:** Only an authenticated conversation member with current channel access can send; API runs and messages delivered by another agent are refused. The requester must be authorized and a current member of the target channel, everyone who can read the originating conversation must belong to it too, and the target's manager must have switched `acceptsMessages` on (see [set_channel_agent_profile](/docs/controls/conversation-settings/#set_channel_agent_profile)). Text only; one message in flight per thread and channel, rate-limited per hour. The sending agent ends its turn after the call instead of waiting for the reply.
+
 ## request_approval
 
 **Required:** `details` (string). **Optional:** `title` (defaults to “Approval requested”), `approve_label` (defaults to “Approve”), `deny_label` (defaults to “Deny”).

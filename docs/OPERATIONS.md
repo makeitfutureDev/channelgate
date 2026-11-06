@@ -1,5 +1,52 @@
 # Operations runbook
 
+## Dashboard users, passkeys and recovery
+
+Use the existing **Users** list. Give the intended person the **Admin** role, open their details,
+and choose **Invite to dashboard**. Share the generated single-use setup link privately; it expires
+in 15 minutes and grants only passkey registration. Once registered, the user signs in with
+**Sign in with a passkey**, without entering a username or password. Settings → Admin access
+manages the signed-in user's keys. Add a spare authenticator before losing the primary device.
+
+Existing passkeys are preserved. On first use after migration, select the owning admin from the
+existing directory and request a private verification code. Enter it in the same browser within
+five minutes. This binds the existing credential to that user's stable ID without replacing it.
+The code is delivered only through the user's native private chat, never a public channel or API
+response. Google Chat users need a previously learned native user resource for private delivery;
+missing delivery configuration fails closed. Unlinked users must finish verification before using
+ordinary dashboard APIs. Names and matching email labels never silently assign credentials.
+
+Before the first passkey, **First-time setup** accepts the existing operator password. If known
+admins exist, their private-code identity proof is required before enrollment. A fresh install
+without known admins can configure its first connection temporarily; once admins exist, identity
+linking is required. First enrollment permanently disables shared-password login and revokes its
+sessions. Setup/recovery cannot restore password fallback.
+
+Configure the final HTTPS **Public URL before enrollment**. Keys belong to that origin/hostname;
+changing domains does not transfer them. Only explicit loopback origins permit local development
+without HTTPS. Public URL changes require recent passkey verification after enrollment.
+
+Removing a person's admin role revokes dashboard authority immediately, including existing sessions,
+setup links and pending authenticator results. Restoring the role requires a new sign-in; old
+sessions remain invalid. Deleting their user record also denies access. Role removal is allowed
+for the last enrolled admin, so keep another enrolled admin or host recovery available. Revoke
+sessions in the user's details when needed. Your final own key cannot be deleted normally.
+
+For lost keys, run **on the gateway host as its daemon OS user**, from the checkout:
+
+```sh
+npm run admin:recover -- --user <existing-user-id>
+```
+
+The target must currently be an admin. Recovery revokes all its keys/sessions and prints one
+registration-only URL valid for 15 minutes. Open privately at the configured HTTPS URL and enroll
+a replacement. Treat that URL as a credential. The legacy `--username` option is reserved for
+unlinked migration/bootstrap accounts; it cannot substitute for a known linked user's role.
+
+Sessions clear on restart and expire after 30 minutes idle or 12 hours total. Sensitive mutations,
+new authenticators and secret reveal require passkey verification within five minutes. The run
+API bearer key remains scoped automation access and cannot enroll keys or log into the dashboard.
+
 ## Backup and restore
 
 Stop the daemon before restoring. Interactive restores require typing `RESTORE`; unattended
@@ -96,26 +143,29 @@ allowed past the DNS-rebinding guard (extra names go in `CG_ALLOWED_HOSTS`).
 **Client addresses behind that hop.** Every request then arrives on a loopback socket, so
 `req.ip` — and Express's idea of the client — is `127.0.0.1` for every caller on earth. Two things
 count failures per address: the admin login backoff and the approval-link token backoff. Keyed on
-the socket they would share ONE bucket, and a handful of bad tokens or passwords from anywhere
-would lock out every legitimate admin and every valid approval link. So both read the real client
-through one helper (`clientKey` in `src/web/security.js`): `CF-Connecting-IP` first, then the first
-hop of `X-Forwarded-For`, and **only when the socket itself is loopback** — from a non-loopback
-socket those headers are whatever the client typed and are ignored. A value that is not a valid IP
-address is ignored too.
+the socket they share ONE bucket, and a handful of bad tokens or passwords from anywhere delays
+every legitimate admin and every valid approval link. So **declare the proxy** in *Settings →
+Connection → Behind a reverse proxy* (`trustProxy` in settings.json, or `CG_TRUST_PROXY` in
+`.env`; the setting wins): `cloudflare` makes both limiters key on `CF-Connecting-IP`, which
+cloudflared overwrites on every request; `xff` keys on the **last** hop of `X-Forwarded-For`, the
+one your nginx/caddy appended (never the first, which the client typed). Without it, all remote
+logins share one backoff bucket. A loopback socket on its own is deliberately NOT taken as proof
+of a proxy — any process on the host or any tunnel opens one — so an undeclared header is ignored,
+and a value that is not a valid IP address is ignored too. Independently of the key, more than 50
+failed attempts in ten minutes across all clients puts every login on the maximum delay until the
+window drains, which bounds guessing even where a header is misdeclared.
 
 Notes for operators:
 
 - Express's app-wide `trust proxy` is deliberately NOT enabled: it would also re-point
   `req.secure` / `req.protocol` / `req.hostname` at client-supplied headers (the Host/Origin guard
   and the session cookie's `Secure` flag read those headers themselves, deliberately), and it knows
-  nothing about `CF-Connecting-IP`.
-- If your proxy runs on ANOTHER host, the socket is not loopback and the headers are ignored by
-  default. Set `CG_TRUST_PROXY=1` in `.env` to honour `X-Forwarded-For` there — only do this when a
-  proxy you control rewrites that header, or clients can pick their own limiter bucket.
-- Make the proxy set `X-Forwarded-For` rather than append to a client-supplied one. Where it
-  appends (Cloudflare does), `CF-Connecting-IP` is the unforgeable value and is preferred here; a
-  caller who spoofs the first XFF hop can only shed its own backoff, never push someone else into
-  one.
+  nothing about `CF-Connecting-IP`. The `Secure` cookie decision still reads `x-forwarded-proto`
+  on its own; that only ever makes the cookie stricter.
+- Only declare a proxy you control and that sets the header on EVERY request. If clients can reach
+  the daemon's port directly (a LAN bind) while `xff` is declared, a caller could append its own
+  hop; keep the bind on loopback or firewall the port, as the rest of this guide assumes.
+- The legacy `CG_TRUST_PROXY=1` still works and means `xff`.
 
 ## The ChannelGate rename migration
 
@@ -358,7 +408,7 @@ image until idle. A manual `git pull` still needs a matching image rebuild.
 | Claude token for container runs | the output of `claude setup-token` on the gateway host — write-only |
 | Full-access channels see the gateway home | off by default; on = current admin authors in Admin channels mount the gateway user's home; members keep a separate project container (see below) |
 | Legacy open network (no egress proxy) | off by default (`containerEgressMode = "proxy"`); on (`"bridge"`) = the pre-proxy behavior: the open bridge network and raw secret values (see **Network** below) |
-| Withhold readable variables | `containerEgressSecretsStrict`: ON for a new install, OFF for an install that existed before this default (stored once at boot; your choice is never changed); on = a secret with no egress rule is not given to proxy-mode containers at all, off = it is injected raw and listed as unprotected |
+| Withhold automatically readable variables | `containerEgressSecretsStrict`: ON for a new install, OFF for an install that existed before this default (stored once at boot; your choice is never changed); on = a secret with no egress rule is withheld unless its stored choice is explicitly `readable`, off = it is injected raw and listed as unprotected |
 
 Values that would reach the container CLI's argv are validated at the boundary: a flag, a space or a
 shell metacharacter in the image/memory/cpu fields is rejected with an error, not silently cleaned.
@@ -396,7 +446,10 @@ channel's policy to every request:
 - **Raw sockets** (`ssh`, `psql`) get a plain CONNECT tunnel only while the network is on and only
   to `github.com:22` plus the hosts an admin lists in the channel's `egressRawHosts` (admin API:
   `PUT /api/channels/<id>/meta` with `{"egressRawHosts":["db.example.com"]}`), on ports 22, 5432
-  and 6543. A client has to be pointed at the proxy for that (a `ProxyCommand`); nothing else
+  and 6543. An agent may request one exact public host using `allow_channel_ssh_host`: its durable
+  card can be approved by any currently authorized channel member with write access, even in Auto
+  mode. Approval appends rather than replaces hosts; Network must be on, and private-address
+  checks still apply on every connection. Admins retain the direct API path. A client has to be pointed at the proxy for that (a `ProxyCommand`); nothing else
   leaves the container.
 - A channel that genuinely needs arbitrary raw sockets can be given the open bridge BESIDE the
   proxy: `{"rawNetwork": true}` on the same admin API. The proxy env stays set, so proxy-aware
@@ -429,11 +482,17 @@ as the useless string it is. When declaring **Used on hosts**, avoid multi-tenan
 deployment too, and a container could have the real value swapped into a request to a site it
 controls. Rotation is live (the proxy
 resolves the current value per request); removing a secret revokes its placeholder, and re-adding
-mints a new one. A secret with no rule is withheld entirely while *Withhold readable variables*
-is on (the default on a new install; the run's credential note names it as withheld), or injected
+mints a new one. An automatically readable secret with no rule is withheld entirely while
+*Withhold automatically readable variables* is on (the default on a new install; the run's
+credential note names it as withheld), or injected
 raw and listed as **unprotected** in the admin UI and the run's own credential note while it is
 off. Either way `list_secrets` ends with a **Finding** naming each such secret; declare its *Used on
-hosts* (or `hosts` with `set_secret`) to give containers a placeholder instead.
+hosts* (or `hosts` with `set_secret`) to give containers a placeholder instead. If a CLI or another
+program needs the raw value, explicitly choose `set_secret_mode` with `mode: "readable"` in the
+owning conversation and scope, then approve its durable card. That stored choice permits raw
+injection even with strict mode on; no other secret receives an exception. `list_secrets` reports
+these separately as **Explicit readable**. Only a new process receives the change. Returning to
+`auto` or `hidden` restores normal classification and strict withholding when no rule applies.
 **A secret with no rule is decided by its kind.** One that looks like a web API token is
 **hidden**: containers get a placeholder the proxy swaps in a credential-like header or query parameter (Authorization, x-api-key, `api_key=`, `token=`…), but only
 on servers an admin approved for it. The first time a program sends it to a new server, the proxy
@@ -449,7 +508,7 @@ a mail or database password, a connection string, a signing key — or that is c
 `…_ID`, `…_REPO`, `…_REGION`) stays **readable** (raw, listed unprotected). `set_secret_mode`
 overrides the decision either way.
 `SUPABASE_DB_PASSWORD` and other raw-protocol passwords can never be swapped: they stay raw
-(withheld under strict).
+(withheld under strict unless explicitly made readable).
 
 **What the proxy refuses on the way.** Inside a tunnel the request target must be a path (an
 absolute-form `GET https://other/…` line is `400 absolute-form-in-tunnel`); a `Host` header naming
@@ -556,6 +615,35 @@ them only with the channel, like the HOME volume.
 and isolated database extractor without granting tunnel privileges to ordinary channel containers.
 See [CHANNEL-VPN.md](CHANNEL-VPN.md) for protected profiles, channel Secrets, systemd persistence,
 database-only routing and live acceptance requirements.
+
+**Make.com CLI in every runtime image (spec 1.6.3).** `make-cli` is the official
+[`@makehq/cli`](https://github.com/integromat/make-cli), pinned in
+`containers/versions.json` and installed root-owned by the default image build. New deployments
+receive it with the image; existing deployments rebuild with `npm run build:image` and let the
+normal image-ID lifecycle recreate their containers. This is the Make automation CLI, separate
+from the GNU build tool.
+
+Set `MAKE_API_KEY` in the channel's Secrets and `MAKE_ZONE` to its actual API zone (for example
+`eu2.make.com`). Set the zone's mode to **Readable** when strict secret handling requires an
+explicit configuration grant. Use `make-cli --version`, `make-cli --help` and a read-only command
+such as `make-cli scenarios list --team-id=<owned-team-id>` to verify setup. The upstream CLI
+reads these names, not the older `MAKE_API` or `MAKE_API_TOKEN` names: no automatic credential
+alias or host-account fallback is supplied. The API key's placeholder is swapped only on Make
+hosts; the routing zone must remain a real hostname. Existing `MAKE_API_TOKEN` API integrations
+retain their egress rule.
+
+A deliberate interactive `make-cli login` saves credentials only under that channel's HOME at
+`~/.config/make-cli/config.json`; a host's saved login is never imported. Prefer channel Secrets
+for headless automation so credentials retain their egress protection. Saved login state, like
+other per-channel HOME data, survives a recreate.
+
+**Node runtime prerequisite.** The daemon, installer, updater and documentation build require
+Node 24.0.0 or newer; use the current Node 24 LTS patch on the host. This baseline satisfies the
+Composio SDK and agent-browser requirements. The default container base is
+`node:24-bookworm-slim`, and its resolved Node version is verified during image acceptance.
+Upgrade the host Node installation before updating an older deployment, retain its previous
+runtime for rollback, and restart the daemon safely. Rebuilding the container alone does not
+upgrade the host Node installation.
 
 **Installing tools in a channel.** An agent can install whatever it needs, and it stays installed —
 everything below writes inside the per-channel HOME volume:
@@ -1007,3 +1095,63 @@ editor. Disabling the policy or removing a domain does not revoke existing acces
 Preview existing Slack users before applying a batch (up to 500 known users). Apply fetches fresh
 profiles and rechecks the current policy and manual opt-outs. Lookup failures grant no access and
 are counted in the result. Non-Slack users are checked on their next authenticated message.
+
+## Rootless Podman system-service upgrades
+
+The system-service installer writes only its managed
+`~/.config/containers/containers.conf.d/99-channelgate-system-service.conf` for the dedicated
+service account. It sets `cgroup_manager="cgroupfs"`: container processes stay beneath the
+system unit's `Delegate=yes` hierarchy, so `podman exec` does not cross into a different
+systemd ownership subtree. Some rootless cgroupfs versions do not create a per-container
+subgroup at all; successful execution does not imply resource-limit enforcement.
+A systemd-manager container created beneath `user@UID.service` can start
+successfully yet reject every exec from a daemon in `/system.slice/channelgate.service`.
+The installer checks the effective manager and refuses a conflicting later configuration;
+it preserves the operator's main `containers.conf` and other snippets.
+
+The unit bind-mounts service-owned mode-0700 `service-tmp` and `service-var-tmp` directories
+under the service HOME onto `/tmp` and `/var/tmp`. This keeps temporary files private while
+preserving their backing paths when Podman's rootless pause namespace outlives a daemon
+restart. `PrivateTmp` is disabled because its backing directories are deleted on stop.
+Existing temporary contents are retained; there is no automatic deletion or pruning.
+
+Changing those settings does not repair an existing stale pause namespace or migrate
+containers already created with another cgroup manager. For an **existing installation**, an
+operator first arranges an idle maintenance window (no turns, background jobs, SSH/editor
+sessions or other users of that account's Podman store), then:
+
+1. Stop the gateway service. Confirm the service username, HOME and UID from the unit rather
+   than assuming the fresh-install defaults.
+2. As that service account, from a traversable working directory and with its own `HOME` and
+   `XDG_RUNTIME_DIR=/run/user/<uid>`, inspect its named containers. Remove only stopped gateway
+   containers that must be recreated after the manager change, by exact name with `podman rm`
+   (without volume-removal options). Retain every channel HOME/tmp/var-tmp named volume.
+3. Run `podman system migrate` as that account while its containers are stopped. This resets
+   the account's shared pause namespace and affects its entire container store. If it reports
+   a stale conmon exit, inspect the named container's state; do not proceed as if migration
+   succeeded. Reconcile only the identified stopped containers, then rerun migration until it
+   exits successfully. Do not put this operation in an unconditional `ExecStartPre`.
+4. Run `sudo bash scripts/install-systemd.sh --no-start` from the intended installed revision
+   to install the managed configuration and persistent temp mounts without starting the daemon.
+   Remove any operator-added unconditional `podman system migrate` startup drop-in only after
+   the idle migration succeeded; keep unrelated overrides. Start the service and verify
+   `podman exec` through an actual gateway turn, then restart
+   while idle and repeat. Require normal file access inside `/home/agent`, accurate resource-limit
+   status (including the unenforced warning where applicable), and no `cgroup.procs` permission
+   or deleted-namespace/pasta error. Source/image changes
+   and per-channel state follow the normal deployment rules.
+
+The resource-limit probe uses `--network none --pull never`: it needs neither pasta nor
+registry access and never downloads a missing image. Missing image, mount namespace, timeout
+and other launch failures are reported as **unverified limits**, separately from a positively
+identified cgroup delegation failure. Probe diagnostics omit raw runtime output.
+
+A zero exit from `podman run --memory ...` or matching `podman inspect` settings is not proof
+of enforcement. In particular, rootless `cgroupfs` without an explicitly prepared cgroup parent
+can accept CPU/memory/pids flags yet leave processes in the service's unrestricted cgroup. The
+probe now requires actual kernel values for all three limits, inside the test container. An
+unenforced or unreadable configuration disables advertised per-container limits and produces
+an explicit warning; the gateway follows its existing run-without-limits fallback policy. This
+installer fixes container execution but does not add a delegated-parent cgroup supervisor.
+Operators requiring enforced per-container limits must use a correctly delegated configuration
+and verify the probe succeeds; configured values alone are insufficient.

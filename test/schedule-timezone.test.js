@@ -17,7 +17,7 @@ ensureTestEnv();
 const { daemonTimeZone, formatInZone, isUtcZone, zonedStamp } = await import("../src/util/timezone.js");
 const { nextCronRun } = await import("../src/util/cron.js");
 const { register, zoneHint } = await import("../src/mcp/tools/schedules.js");
-const { deleteSchedule } = await import("../src/config/schedules.js");
+const { deleteSchedule, getSchedules } = await import("../src/config/schedules.js");
 
 // The tool registry, reduced to what these tools use: a handler collector and a text responder.
 function registerTools({ channelId = "C_TZ", slug = "tz-test", createdBy = "U_TZ" } = {}) {
@@ -99,4 +99,74 @@ test("zoneHint is silent on a UTC daemon (the sentence would say nothing)", () =
     process.env.TZ = real;
   }
   assert.match(zoneHint(), /Europe\/Bucharest/);
+});
+
+
+test("create_schedule accepts Sunday 7 with a local next fire and listing preserves the cron", async () => {
+  const call = registerTools();
+  const reply = await call("create_schedule", { cron: "0 9 * * 7", prompt: "Sunday QA reminder", notify: "none" });
+  assert.doesNotMatch(reply, /Invalid cron/);
+  const id = reply.match(/id (\S+?)\)/)?.[1];
+  assert.ok(id, reply);
+  try {
+    assert.equal(getSchedules().find((row) => row.id === id).cron, "0 9 * * 7");
+    assert.match(reply, /next run .*09:00 Europe\/Bucharest/);
+    const listed = await call("list_schedules", {});
+    assert.match(listed, /0 9 \* \* 7/);
+    assert.match(listed, /Europe\/Bucharest/);
+  } finally {
+    deleteSchedule(id, "C_TZ");
+  }
+});
+
+test("Sunday creation and both listings agree on a derived next run without changing stored state", async (t) => {
+  t.mock.timers.enable({ apis: ["Date"], now: new Date("2026-11-06T16:00:00Z") });
+  const call = registerTools();
+  const reply = await call("create_schedule", { cron: "0 9 * * 7", prompt: "Sunday listing fixture", notify: "none" });
+  const id = reply.match(/id (\S+?)\)/)[1];
+  try {
+    const stored = getSchedules().find(row => row.id === id);
+    const detail = JSON.parse(await call("list_schedules", { id }));
+    const listed = await call("list_schedules");
+    assert.equal(detail.cron, "0 9 * * 7");
+    assert.equal(detail.nextRun, "2026-11-08T07:00:00.000Z");
+    assert.equal(detail.nextRunLocal, "2026-11-08 09:00 Europe/Bucharest (07:00 UTC)");
+    assert.ok(reply.includes(detail.nextRunLocal));
+    assert.ok(listed.includes(detail.nextRunLocal));
+    assert.deepEqual(getSchedules().find(row => row.id === id), stored, "listing does not persist its derived preview");
+    assert.equal(await registerTools({ channelId: "C_OTHER_TZ" })("list_schedules", { id }), "No schedule in this channel.");
+    assert.equal(await registerTools({ channelId: "C_OTHER_TZ" })("list_schedules"), "No schedules in this channel.");
+    t.mock.timers.setTime(new Date("2026-11-08T07:00:01Z").getTime());
+    const later = JSON.parse(await call("list_schedules", { id }));
+    assert.equal(later.nextRun, "2026-11-15T07:00:00.000Z");
+    assert.ok((await call("list_schedules")).includes(later.nextRunLocal));
+    assert.deepEqual(getSchedules().find(row => row.id === id), stored);
+  } finally { deleteSchedule(id, "C_TZ"); }
+});
+
+test("listing previews respect disabled, one-time, interval and impossible schedules", async (t) => {
+  t.mock.timers.enable({ apis: ["Date"], now: new Date("2026-11-06T16:00:00Z") });
+  const { addSchedule, updateSchedule } = await import("../src/config/schedules.js");
+  const call = registerTools();
+  const rows = [
+    addSchedule({ channelId: "C_TZ", cron: "0 9 * * 7", prompt: "disabled" }),
+    addSchedule({ channelId: "C_TZ", once: true, runAt: "2026-11-06T17:00:00Z", prompt: "once" }),
+    addSchedule({ channelId: "C_TZ", intervalDays: 2, runAt: "2026-11-08T16:00:00Z", prompt: "interval" }),
+    addSchedule({ channelId: "C_TZ", cron: "0 0 30 2 *", prompt: "impossible" }),
+    addSchedule({ channelId: "C_TZ", once: true, runAt: "invalid", prompt: "invalid" }),
+    addSchedule({ channelId: "C_TZ", once: true, runAt: "2026-11-06T15:00:00Z", prompt: "overdue" }),
+  ];
+  try {
+    updateSchedule(rows[0].id, { enabled: false });
+    const expected = [null, "2026-11-06T17:00:00.000Z", "2026-11-08T16:00:00.000Z", null, null, "2026-11-06T15:00:00.000Z"];
+    for (const [i, row] of rows.entries()) {
+      const before = getSchedules().find(s => s.id === row.id);
+      const detail = JSON.parse(await call("list_schedules", { id: row.id }));
+      assert.equal(detail.nextRun, expected[i]);
+      assert.equal(detail.nextRunLocal, expected[i] ? zonedStamp(new Date(expected[i])) : null);
+      const line = (await call("list_schedules")).split("\n").find(s => s.includes(row.id));
+      assert.ok(line.includes(expected[i] ? detail.nextRunLocal : "next run unavailable"));
+      assert.deepEqual(getSchedules().find(s => s.id === row.id), before);
+    }
+  } finally { for (const row of rows) deleteSchedule(row.id, "C_TZ"); }
 });

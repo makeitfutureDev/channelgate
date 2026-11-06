@@ -24,11 +24,11 @@ with the production audit command above and record any accepted exception in thi
 
 | Advisory | Severity | Applicability | Owner | Next review |
 |---|---|---|---|---|
-| None | — | The committed production lockfile has no reported vulnerabilities in the 2026-09-07 npm audit. Re-run the audit for each candidate; this is not a future guarantee. | Gateway maintainers | Next dependency update |
+| None | — | The committed production lockfile has no reported vulnerabilities in the 2026-11-06 npm audit. Re-run the audit for each candidate; this is not a future guarantee. | Gateway maintainers | Next dependency update |
 
-`@composio/core` remains at `0.14.0`: the proposed `0.18.0` requires Node >=22.22.3,
-above this project's supported Node 22.13 floor. Review that update independently with a runtime
-compatibility decision; a green test on Node 24 alone is insufficient.
+The supported runtime is Node 24.0.0 or newer. The current Composio SDK and other locked
+dependencies are validated against this baseline; package engine declarations are checked
+separately from exercised API compatibility. Re-run the production audit for every candidate.
 
 ## Reporting
 

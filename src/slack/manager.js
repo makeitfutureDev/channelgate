@@ -13,6 +13,13 @@ import { startSlack } from "./app.js";
 
 export function createSlackManager({ start = startSlack } = {}) {
   const connectedListeners = new Set();
+  const disconnectedListeners = new Set();
+  function notifyDisconnected() {
+    for (const listener of disconnectedListeners) {
+      try { Promise.resolve(listener()).catch((err) => console.error("[slack] disconnect listener failed:", err.message)); }
+      catch (err) { console.error("[slack] disconnect listener failed:", err.message); }
+    }
+  }
   let detachSocket = () => {};
   let current = null; // { app, botUserId, user, team, teamId }
   let status = "disconnected"; // disconnected | connecting | connected | error
@@ -54,6 +61,7 @@ export function createSlackManager({ start = startSlack } = {}) {
   // Teardown always runs, even when a newer transition has already superseded it: stopping is
   // idempotent and can only ever leave LESS running, never an orphan.
   function disconnect() {
+    notifyDisconnected();
     return transition(async () => {
       detachSocket();
       const app = current?.app;
@@ -68,6 +76,7 @@ export function createSlackManager({ start = startSlack } = {}) {
   // (Re)connect with the given config. Tears down any existing connection first. Never throws —
   // failures are captured in the status snapshot so the UI can show them.
   function connect(config) {
+    notifyDisconnected();
     return transition(async (gen) => {
       // Superseded while queued: a newer connect/disconnect already owns the manager, so don't
       // start an app it would immediately have to tear down again. That transition also owns the
@@ -91,9 +100,25 @@ export function createSlackManager({ start = startSlack } = {}) {
         current = started;
         status = "connected";
         const socket = started.app?.receiver?.client;
-        const reconnected = () => { if (current === started) notifyConnected(); };
+        const reconnected = () => {
+          if (current !== started) return;
+          notifyDisconnected(); // discard membership evidence even if a disconnect event was missed
+          status = "connected";
+          notifyConnected();
+        };
+        const disconnected = () => {
+          if (current !== started) return;
+          status = "connecting";
+          notifyDisconnected();
+        };
         socket?.on?.("connected", reconnected);
-        detachSocket = () => socket?.off?.("connected", reconnected);
+        socket?.on?.("disconnected", disconnected);
+        socket?.on?.("reconnecting", disconnected);
+        detachSocket = () => {
+          socket?.off?.("connected", reconnected);
+          socket?.off?.("disconnected", disconnected);
+          socket?.off?.("reconnecting", disconnected);
+        };
         notifyConnected();
       } catch (err) {
         console.error("[slack] connect failed:", err.message);
@@ -128,5 +153,9 @@ export function createSlackManager({ start = startSlack } = {}) {
     return () => connectedListeners.delete(listener);
   }
 
-  return { connect, disconnect, snapshot, getClient, onConnected };
+  function onDisconnected(listener) {
+    disconnectedListeners.add(listener);
+    return () => disconnectedListeners.delete(listener);
+  }
+  return { connect, disconnect, snapshot, getClient, onConnected, onDisconnected };
 }

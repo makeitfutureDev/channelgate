@@ -1,3 +1,4 @@
+import { enterpriseFeatureEnabled } from "../ee/feature-entitlements.js";
 // Channel Settings modal for Slack. It mirrors the web conversation editor's safe channel-level
 // controls while keeping credential values write-only and re-authorizing every interaction in the
 // controller. Dangerous gateway-wide/admin-only settings remain in the web admin UI.
@@ -676,23 +677,26 @@ function runtimeRow(scope, data = {}, state, { editable = true, codexLocked = fa
 }
 
 const MODE_LABELS = Object.freeze({ read: "Read-only", worker: "Worker", admin: "Admin" });
-const FLAG_LABELS = Object.freeze({ autoMode: "Auto-approve", cleanMode: "Lean", allowNetwork: "Internet" });
+const FLAG_LABELS = Object.freeze({ autoMode: "Auto-approve", cleanMode: "Lean", allowNetwork: "Internet", skillRuntimeSwap: "Skill model swap" });
 
 function modeRows(snapshot, state, { canEditAccess = false, canEnableAdmin = false } = {}) {
   const mode = snapshot.mode || {};
   const current = channelMode(mode);
   const dm = Boolean(snapshot.isDM);
-  const flags = dm ? ["autoMode", "cleanMode"] : ["autoMode", "cleanMode", "allowNetwork"];
+  const flags = dm ? ["autoMode", "cleanMode", "skillRuntimeSwap"] : ["autoMode", "cleanMode", "allowNetwork", "skillRuntimeSwap"];
   if (!dm && !canEditAccess) {
     const on = flags.filter((flag) => mode[flag]).map((flag) => FLAG_LABELS[flag]);
     return [context(`*Mode* · ${MODE_LABELS[current] || modeLabel(mode)}${on.length ? ` · ${on.join(" · ")}` : ""}`), context("🔒 Managers and admins change the mode.")];
   }
-  const modes = ["read", "worker", ...(dm ? (canEnableAdmin || current === "admin" ? ["admin"] : []) : ["admin"])];
+  // "Admin" is offered only to someone who may enable it (an organization admin) or when it is
+  // already the current mode, so a manager's view shows the truth and can still leave Admin.
+  const modes = ["read", "worker", ...(canEnableAdmin || current === "admin" ? ["admin"] : [])];
   const modeOptions = modes.map((value) => option(MODE_LABELS[value], value));
-  const flagOptions = flags.map((flag) => option(FLAG_LABELS[flag], flag));
+  const skillRoutingEnabled = enterpriseFeatureEnabled("skillModelRouting");
+  const flagOptions = flags.filter(flag => flag !== "skillRuntimeSwap" || skillRoutingEnabled || mode.skillRuntimeSwap).map((flag) => option(FLAG_LABELS[flag] + (flag === "skillRuntimeSwap" && !skillRoutingEnabled ? " (Enterprise required; turn off to clear)" : ""), flag));
   const chosen = flagOptions.filter((entry) => mode[entry.value]);
   return [
-    context("*Mode*"),
+    context("*Mode*" + (!skillRoutingEnabled ? " · Skill model swap requires Enterprise" : "")),
     { type: "actions", block_id: "cg_mode_row", elements: [{
       type: "static_select",
       action_id: dm ? CHANNEL_SETTINGS_DM_MODE_ACTION_ID : `${ACCESS_FIELD_PREFIX}mode`,
@@ -763,10 +767,10 @@ function agentPage(snapshot, state, opts) {
     ...(editable ? [] : [context("🔒 The gateway's policy limits engine changes to admins.")]),
     ...harnessRows(runtime, opts),
     { type: "divider" },
-    ...modeRows(snapshot, state, opts),
+    ...(snapshot.workspaceLink ? [context("Mode, Auto, Lean and network follow the source conversation.")] : modeRows(snapshot, state, opts)),
     // No service provisioned: one line, no controls. A provisioned one (or one still being read —
     // `vpn` absent until the hydration pass fills it in) gets its state and controls.
-    ...(vpn && vpn.configured === false ? [context("VPN · Not configured")] : vpnRows(snapshot, state, { canManageVpn: opts.canManageVpn })),
+    ...(snapshot.workspaceLink ? [] : vpn && vpn.configured === false ? [context("VPN · Not configured")] : vpnRows(snapshot, state, { canManageVpn: opts.canManageVpn })),
     ...(resume.inThread && resume.command ? [
       { type: "divider" },
       { type: "section", text: mrkdwn(`*Resume in a terminal*\n\`\`\`${escapeMrkdwn(resume.command)}\`\`\``) },
@@ -995,7 +999,7 @@ function variableRows(snapshot, state, letter, { editable = false } = {}) {
 function variablesPage(snapshot, state, opts) {
   return [
     header(`Channel · ${(snapshot.secrets || []).length}`),
-    ...variableRows(snapshot, state, "c", { editable: Boolean(opts.canEditSecrets) }),
+    ...variableRows(snapshot, state, "c", { editable: !snapshot.workspaceLink && Boolean(opts.canEditSecrets) }),
     header(`Organization · ${(snapshot.orgSecrets || []).length}`),
     ...variableRows(snapshot, state, "o", { editable: Boolean(opts.canEditOrgSecrets) }),
     ...(opts.canEditOrgSecrets ? [] : [context("🔒 Admins manage organization variables.")]),
@@ -1020,7 +1024,10 @@ function skillsPage(snapshot, state) {
   const direct = new Set((skills.additional || []).map((value) => String(value).toLowerCase()));
   const fromTemplate = (skills.channel || []).filter((value) => !direct.has(String(value).toLowerCase()));
   const org = skills.organization || [];
-  const short = (list) => `${list.slice(0, 6).map(inlineCode).join(" ")}${list.length > 6 ? ` +${list.length - 6} more` : ""}`;
+  const models = skills.models || {};
+  const named = (value) => `${inlineCode(value)}${models[String(value).toLowerCase()] ? ` _(${escapeMrkdwn(models[String(value).toLowerCase()])})_` : ""}`;
+  const short = (list) => `${list.slice(0, 6).map(named).join(" ")}${list.length > 6 ? ` +${list.length - 6} more` : ""}`;
+  const preferring = [...direct].filter((value) => models[value]);
   return [
     templates.length
       ? selectRow({
@@ -1031,6 +1038,7 @@ function skillsPage(snapshot, state) {
       : fieldBlock("Template", "_none defined_"),
     context(`*Channel skills* · ${direct.size}`),
     ...skillPicker(CHANNEL_SETTINGS_SKILLS_SELECT_ACTION_ID, snapshot.skillPicker, "Add a skill…"),
+    ...(preferring.length ? [context(`Preferred models: ${preferring.slice(0, 8).map(named).join(" ")}`)] : []),
     ...(fromTemplate.length ? [context(`From the *${escapeMrkdwn(skills.template || "template")}* template: ${short(fromTemplate)}`)] : []),
     ...(org.length ? [context(`Always on from the organization (${org.length}): ${short(org)}`)] : []),
   ];
@@ -1096,12 +1104,15 @@ export function buildChannelSettingsView(snapshot = {}, state = {}, {
   const wanted = normalizeTab(tab);
   const active = pages.includes(wanted) ? wanted : pages[0];
   const opts = { canApproveHarnesses, canEditRuntime, canEnableAdmin, canEditSecrets, canEditOrgSecrets, canManageCloudMcp, canManageCustomMcp, canEditAccess, canManageVpn };
-  const content = {
+  const content = snapshot.workspaceLink && ["access", "mcp", "skills"].includes(active)
+    ? [context("These shared settings are managed in the source conversation. Your personal settings remain under You.")]
+    : {
     agent: agentPage, access: accessPage, mcp: mcpPage, variables: variablesPage,
     skills: skillsPage, schedules: scheduleRows, you: youPage,
   }[active](snapshot, state, opts);
   let blocks = [
     pageNav(state, active, { isDM: snapshot.isDM }),
+    ...(snapshot.workspaceLink ? [context(`↔ Shared setup linked to *${escapeMrkdwn(snapshot.workspaceLink.name)}*. Edit skills, memory, access, connectors, secrets, mode and network in the source conversation. Harness, model and effort remain independent.`)] : []),
     ...(notice ? [{ type: "section", text: mrkdwn(notice) }] : []),
     { type: "divider" },
     ...content,

@@ -19,6 +19,11 @@ test("an automation post's unbound menu opens for any clicker (their own authori
   assert.equal(canOpenMenuButton({ ownerId: "", clickerId: "" }), false);
 });
 
+test("all shared menu buttons allow a current admin override with an actual clicker", () => {
+  assert.equal(canOpenMenuButton({ ownerId: "U_OWNER", clickerId: "U_ADMIN", clickerIsAdmin: true }), true);
+  assert.equal(canOpenMenuButton({ ownerId: "U_OWNER", clickerId: "", clickerIsAdmin: true }), false);
+});
+
 test("file-button notices stay in the thread encoded by the clicked button", () => {
   assert.deepEqual(fileButtonNoticePayload(
     { channel: { id: "C1" }, message: { ts: "reply.2", thread_ts: "root.1" } },

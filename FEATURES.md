@@ -1,5 +1,73 @@
 # ChannelGate — Features
 
+- **Readable background continuation errors.** Failed follow-ups show a bounded provider sentence
+  instead of a nested JSON response. Redacted audit diagnostics retain their detail; structured
+  engine failure facts and the guard against replaying interrupted continuations remain unchanged.
+
+- **Continue after variable server approval in Slack.** Approving a hidden variable’s server automatically queues one continuation in the original thread as the original requester. It waits behind active work, honors queued Stop and current access, records usage and deduplicates repeated clicks. Queued wakeups survive restart; interrupted continuations are reported without replaying unknown actions. Denial and stale approvals do not continue.
+
+The documentation handbook includes its branded favicon in standalone builds and website exports.
+The build validator checks that every handbook page references the shipped SVG asset.
+
+## Organization policy licensing
+
+Mandatory organization skill grants and organization-wide agent instructions require Enterprise to add or change. All HTTP, MCP and raw settings writers share the settings boundary. Saved policies continue applying after downgrade; admins can explicitly remove grants or clear instructions. Existing Lean-mode exclusions still apply; these policies do not override Lean mode. Personal/channel grants, skill content maintenance, channel instructions and core safety rules remain available on every tier.
+
+- **Monthly channel budget management.** The admin UI shows this UTC month's recorded spend with the Enterprise spending limit (channel Runtime pane or DM detail), unlimited by default. Limits remain local to each conversation; saves, code-channel synchronization and shared DM templates preserve them. Queued runs, retries, fallback attempts and memory reviews recheck the current cap immediately before spawning and deliver an actionable refusal. Active/concurrent runs can overshoot; unpriced usage refuses new runs until repaired, and external charges are outside the channel ledger.
+
+## Enterprise organization controls
+
+The following capabilities require an effective Enterprise license (including use of previously
+saved configuration after downgrade or expiry):
+
+- Skill preferred-model switching: opt a conversation into honoring a skill's engine/model preference.
+- Exact company email-domain auto-approval for new users and policy application to existing users.
+- A dedicated Codex login per conversation, separate from the gateway login.
+- The external skill-catalog MCP endpoint and its catalog/user access tokens.
+- Organization environment variables shared across conversations.
+- Google Drive workspace synchronization, both scheduled and on demand.
+- Channel skill templates and their inherited skill grants.
+- Per-channel monthly USD spending limits.
+
+Other tiers retain ordinary skills, channel/personal environment variables, the shared gateway
+Codex login, manual user approval and standard chat connectors. Stored Enterprise configuration
+is preserved when an entitlement expires; it does not activate Enterprise behavior. A channel
+configured with a dedicated Codex login is refused rather than silently switched to another account.
+
+A spending limit is an admission control against the channel's recorded spend in the current UTC
+calendar month. It is not a provider billing limit: an in-flight run can take recorded spend above
+the cap, concurrent runs can overshoot, and provider-side costs are not reserved in advance.
+`monthlySpendingLimitUSD: null` means no cap; a configured cap is a positive finite USD amount.
+A current-month usage row with unknown cost refuses new runs until pricing is repaired or an
+admin clears the cap. A saved cap also refuses new runs after downgrade; an admin can clear it
+without Enterprise, so the safety control never silently disappears.
+See [license keys](docs/LICENSE-KEYS.md#enterprise-organization-controls) and the regression checks
+under **Enterprise organization controls** in `TEST-PLAN.md`.
+
+
+- **SSH engine status bars.** Prepared SSH sessions give Claude a coloured footer with the live model, reasoning effort, context used percentage/window size, folder, Git branch, session cost and available 5h/7d quota usage. Missing context stays `--%` until reported; context uses the current input/cache snapshot, never cumulative tokens. Codex uses its native footer for model with reasoning, context used percentage, folder, branch and available quotas. Model/effort changes follow native live state. Settings are session-scoped, refreshed on SSH preparation; no image rebuild is needed. Reopen Claude/Codex after reconnecting to load the change.
+
+- **Consistent DM network policy.** The egress proxy resolves the same current organization DM template policy as engine turns. User/admin template edits take effect on the next request, including OFF overriding a stale saved ON; custom DMs and linked workspaces retain their own resolved policy. The resolver is shared without importing the run orchestrator into the proxy.
+
+- **HTML attachments.** Slack HTML uploads and identical HTML renamed to text download normally. The downloader rejects recognizable Slack authentication/error pages and authentication landing URLs with an access diagnostic, rather than treating all HTML as proof of a missing scope. Inspection is bounded and streamed; byte caps, channel scope and no-follow publication remain enforced.
+
+
+- **Skill publication recovery.** Failed repository updates carry an explicit publication recovery pin, released after a successful publish retry or update (including identical-byte retries). Source sync cannot discard the protected edit; recovery resumes at the published revision. Manual, legacy and approved source-override pins remain intentional. Skill metadata reports current/effective revisions and the pin reason; the library labels publication recovery separately.
+
+- **Model-specific skills.** A skill may declare the model it works best with in its SKILL.md frontmatter (`model: gpt-6.1-sol`, `model: sonnet`); the engine is derived from the model and nothing else is declared. Every materialized copy of such a skill carries one instruction line asking the model to call the gateway tool `use_skill` when it starts FOLLOWING the skill (reading or comparing skills switches nothing). The live turn decides: with the per-channel switch **Allow skill engine and model swapping** (`skillRuntimeSwap`, off by default; admin UI Runtime pane, Slack Settings mode ticks, `set_channel_skill_swap` for managers, audited) on and no person's pin on the thread, a model of the SAME engine resumes the SAME session with the preferred model (the previous attempt ends on request, its spend is banked on its own model, the reply carries a "Switched this thread to …" note and the footer names the new model) and sticks on the thread as a skill preference below the `/model` pin and above the channel default; a preferred model on the OTHER engine is delegated through `run_agent_in_background`, which now accepts `engine`/`model` overrides validated against the enabled, channel-approved engines; a second skill with another model in the same turn is advised to use a subagent. A pin, the switch being off, an unavailable engine or an unknown model all answer "continue with the current model". Thread runtime reset clears the preference with the pin. Events `run_skill_swap_decision` / `run_skill_swap`. Authoring: `create_skill` and `update_skill` take an optional `model` argument that writes (or, with `""`, clears) the `model:` frontmatter line — a model-only update needs no files — refusing a model no engine recognizes; the skill-authoring guide documents the key, and the library's skill detail and table, `/api/skills`, `list_skills` / `get_skill_info` / `show_channel_skills`, and the Slack Settings → Skills page show the preferred model. Microsoft Teams settings (Access rows, channels and DMs) and Google Chat (`/settings skillswap on|off`) expose the same switch through the shared guarded settings action.
+
+- SSH egress approval accepts exact public IPv4 and IPv6 addresses as well as DNS hostnames. Approved literals are retained by the proxy’s raw-tunnel filter; private/loopback/metadata addresses remain blocked, and secret-host declarations remain DNS-only.
+
+- The admin skill library includes read-only diagnostics for host folders without a root `SKILL.md`, including folder paths and personal grant owners. Skill file status filters isolate missing files. Native plugins remain valid, and diagnostic rows cannot be enabled or assigned as catalog skills.
+
+- `allow_channel_ssh_host` posts a durable approval for one public SSH destination. Any currently authorized channel member with write access can approve it; no admin or `/sudo` is needed. Approval appends to this channel’s `egressRawHosts` without replacing other entries. Cards disclose supported TCP ports 22, 5432 and 6543; Auto never approves them, and network-off/private-address protections remain enforced.
+
+- Invalid legacy skill-folder grants are omitted from Claude plugins and the Codex personal catalog. The reply names folders missing a regular `SKILL.md`; remaining skills continue loading and source folders/grants remain intact.
+
+## Skill ownership terminology
+
+- Skills managed directly in the catalog are labelled **Gateway-owned** in the Skills catalog, owner filter, creation form, assignment picker and MCP guidance. Personal/channel/organization scope remains independent; internal `ownerKind: "local"` values remain compatible.
+
 ## Company email domain auto-approval
 
 - Admin UI → Users → Auto-approval accepts exact company email domains, disabled by default.
@@ -10,17 +78,350 @@
   Editable names, message text and run-API attribution cannot establish an email identity.
 - Unchecking Approved in the admin user editor records a manual opt-out from auto-approval;
   checking it clears that opt-out. Removing domains/disabling the policy retains prior approvals.
+- Every policy API request to enable auto-approval requires Enterprise, including a policy
+  already saved as enabled before downgrade. Rejected requests change neither domains nor audit
+  history; disabling the policy and manually approving users remain available.
 - Existing known Slack users can be previewed and explicitly approved, with fresh identity,
   current policy and manual opt-out checks on apply. Up to 500 users per batch; lookup failures
   are reported and grant nothing. Policy changes and automatic approvals are audited.
+## User-level skill catalog tokens
+
+- **Two kinds of token for `POST /mcp/skills`.** A **catalog** token (minted by an admin in the
+  admin UI, as before) is the library for other systems and peer gateways: organization and
+  channel skills, with the existing read/propose/manage/sync scopes, and it never lists, reads,
+  exports or edits a personal skill. A **user** token is minted by a person for themselves with the
+  gateway tools `create_my_skill_token` / `list_my_skill_tokens` / `revoke_my_skill_token` (an
+  approved person's own Slack message; never the HTTP API principal; up to five active per person;
+  the value is shown once with the endpoint and a Claude Code example). It acts as that person,
+  resolved live on every request from the stores: organization skills (granted org-wide or
+  discoverable), the skills of every channel whose access policy admits them right now (the
+  channel's own grants, its template, its section), and their own personal skills — never another
+  person's personal skill, never an unauthorized channel's section skill. Its scopes are fixed to
+  read, propose and manage, never sync; edits follow the chat rules (a personal skill is its
+  author's, a channel skill its members', the organization tier an admin's); creation makes a
+  personal skill by default, a channel skill when `channel_id` names an admitting channel, an
+  organization skill only for an admin. The skill records the person, not the token, as author. A
+  token whose owner is no longer approved answers 403 and acts on nothing.
+- **Endpoint hygiene.** The bearer is verified before the 20 MB body is parsed, invalid tokens back
+  off per client with the login limiter (429 + Retry-After), and `library_whoami` reports the kind
+  and owner. The admin UI's token table shows both kinds with the owner of a user token; admins
+  revoke any token there. Migration 39 adds `kind` and `owner_id` to `skill_access_tokens`.
+## Channel-level user API tokens
+
+- **A token per conversation and per person.** Anyone authorized in a conversation asks the agent
+  for `create_api_token` (gateway tools `create_api_token`, `list_api_tokens`,
+  `revoke_api_token`; `src/gateway/api-tokens.js`, table `api_tokens`, migration 39). The value
+  (`cgk_…`, 192 random bits) is returned once inside the tool result with a curl example and is
+  stored only as a sha256 hash with a prefix and last four characters. A channel manager or admin
+  lists and revokes every token of the conversation; others see and revoke their own. The Admin
+  UI → API page lists every token across conversations with a Revoke button
+  (`GET /api/api-tokens`, `POST /api/api-tokens/:id/revoke`, admin session only, never a value).
+- **A run acts as the token's creator.** `POST /api/runs` with a channel token is bound to the
+  token's conversation (`channel` may be omitted or must match, else 403), authored by the creator
+  as a trusted principal: their role is read live from the user store, `isAuthorized()` is
+  re-checked at every run (403 once they lose access), Admin-mode bypass follows the same rule as
+  a Slack message of theirs (admin author + Admin-mode channel), personal connections and skills
+  apply as in Slack, the reply menu is theirs, and work the run spawns (background jobs,
+  schedules, the memory review) carries them as author. The body's `author` is ignored. Status,
+  list and stop answer only for runs of that conversation. A revoked token answers 401.
+- **The organization-wide key is deprecated, not removed.** It keeps working unchanged for
+  existing automations (fixed admin principal, any conversation) and logs one deprecation warning
+  per hour when used; the Settings card and the API page say so.
+## Run capability liveness
+
+- **A run's control-socket capability is authority only while its conversation has live work.**
+  The signed capability a container run holds (`src/gateway/mcp-capability.js`) used to stay valid
+  for its whole TTL (6 h for a turn, 12 h for an SSH session) after the turn that minted it ended.
+  The daemon's MCP socket now re-checks the egress liveness registry (`src/gateway/egress/liveness.js`:
+  live turns, background jobs and agents, memory reviews, SSH sessions, any author) on the hello and
+  on every tool call and relayed request (`src/gateway/capability-liveness.js`): a validly signed,
+  unexpired capability whose channel has nothing live is refused with the fixed sentence "This run's
+  gateway capability is no longer active: its conversation has no live work." and an audit event
+  `capability_refused_idle` (channel, token id, tool name — never the token; one row per token and
+  tool per minute).
+- **Grace and scope.** A call within 30 seconds of the channel's last release is still honoured,
+  which covers the engine's final tool call racing the daemon's release of the turn. The check is
+  per channel, not per token: the registry has no per-token entries, every spawn path already
+  registers its channel (foreground, API, scheduled, loop/follow-up/nudge and diagnosis turns
+  through `run.js`; background jobs and agents for their whole life including recovery; memory
+  reviews; the update smoke turn; SSH sessions through the broker), and the warm engine pool keeps
+  one process and one capability across turns, so the check refuses calls BETWEEN turns and never
+  kills the process. Residual: a copied token works while some work is live in that same channel,
+  which is the container's own trust domain. The jti-bound remote-MCP relay registry is unchanged.
+  The daemon-spawned stdio control server used by host (`/sudo`) turns is not covered: that run
+  already executes as the daemon account with the signing secret in reach, so liveness adds nothing
+  there.
+
+## Catalog-first skill authoring
+
+Gateway and bundled authoring instructions require catalog creation and grants. Direct engine skill-folder writes are not durable channel installations. External sources remain usable read-only; authoring in them requires verified repository and branch write access, otherwise additions live in a catalog companion skill.
+
+## Generated skill dependency warnings
+
+Generated `gateway-usage` and `channel-memory` guides satisfy shared and personal skill dependencies when their manifests are copied into the run. Missing or rejected generated sources and unrelated unavailable skills still produce the warning.
+
+## Environment output visibility
+
+- Reply streams, final replies, structured events and background-job logs honor the effective Hidden/Readable variable setting across organization, personal and channel scopes. Readable configuration such as public URLs remains shareable; hidden credentials and engine/service tokens remain redacted. A hidden value stays protected when another scope has a readable entry with identical bytes.
+
+## Public VPS sizing guide
+
+- GitHub and public hosting guides include Contabo as a budget option, with sourced plan specs, shared/dedicated CPU guidance, conservative starting concurrency, and current-pricing links.
+- Official docs include `/docs/configuration/vps-sizing`, linked from installation, deployment, and the sidebar, with production/pilot/busy tiers, concurrency, monitoring, storage, and recovery guidance.
+
+
+Codex estimates include GPT-6.1 Terra ($1 / $0.05 / $5 per million input / cached / output tokens), request-level long-context pricing, an October 26, 2026 launch boundary, and a backed-up automatic historical refresh on upgrade.
+
+
+## Linked working-folder setup
+
+- Source access exclusions and conversation policy also govern linked DMs. Shared changes notify follower SSH/egress sessions immediately. Separating a follower or moving the source retains source-section skill grants; detached DMs keep their effective setup as Custom instead of reapplying a DM preset. A promoted owner remains stable when an older conversation later joins.
+
+- Conversations assigned to an existing folder follow its established owner live: skills/template and scoped catalog skills, memory, instructions, access, connectors/channel secrets, VPN service metadata, mode/Auto/Lean/network and Drive setup. Shared edits direct users to the source; harness/model/effort/authentication and personal grants remain independent.
+- Admin and Slack settings identify the source; the folder picker explains linking. Durable files use owner identity/platform; cross-platform turns receive actual surface capabilities separately. Drive sync has one owner. Unlinking retains the effective setup; owner departure promotes a remaining conversation with its saved setup.
+
+
+Slack’s native running/Stop label shows the resolved model and explicitly configured effort, plus compact live phases (Thinking, Using tools, Writing, Waiting, Queued, Coordinating agents). Engine fallback replaces both model and effort; unset effort is omitted rather than guessed.
+
+Claude task lifecycle messages distinguish shell work from subagents: explicit non-agent tasks,
+including foreground and background `local_bash`, never create agent activity rows or the
+Coordinating agents phase. Their later untyped lifecycle messages retain that classification,
+including tool-use aliases. Ordinary Bash tool events and genuine local/remote Agent or legacy
+Task progress remain visible; older agent streams without optional task-type metadata still work.
+
+## Optional password and Slack code sign-in
+
+- Settings → Admin access can enable an alternative to passkeys: the configured admin password
+  and the administrator’s Slack email address, followed by an eight-digit code delivered
+  privately to that existing Slack administrator. Email lookup uses the configured gateway Slack
+  app and requires `users:read.email`; user-entered or editable stored email never grants access.
+  Slack IDs remain the internal identity, and passkey selection is unchanged.
+  The option is off by default; password alone never grants dashboard access. Existing passkeys
+  remain available. A recently verified, identity-linked initial setup can enable this option
+  without first registering a passkey.
+- Codes expire after five minutes, are bound to the requesting browser, accept at most five
+  guesses and are single-use. Delivery failures, role revocation, password changes and disabling
+  the option invalidate pending authority. Sensitive actions can repeat password and Slack
+  verification. Sessions retain the normal idle/absolute expiry and current-role checks.
+
+## User-linked dashboard passkeys
+
+- Secret reveal audit events retain the administrator account actor and include its canonical
+  linked user ID for successful, denied and rejected requests. They never include secret values,
+  submitted passwords or caller-supplied identity claims.
+- The existing **Users** directory and its admin role govern dashboard access. Each credential
+  container links to one stable user ID; there is no separate dashboard user directory. Users →
+  an admin's details issues a 15-minute single-use enrollment link or revokes sessions. Removing
+  the admin role immediately invalidates sessions, invitations and pending authenticator results;
+  restoring the role does not revive old authority. Non-admin and synthetic API users cannot enroll.
+- Sign-in needs only a saved passkey, with required device PIN/biometric verification. The gateway
+  checks signatures, exact configured HTTPS origin/RP ID, single-use five-minute challenges,
+  browser/session/ceremony binding and credential counters. Public options disclose no credential
+  directory. Sessions expire after 30 minutes idle or 12 hours total. Sensitive changes require
+  passkey authentication within five minutes; Settings → Admin access manages your own keys.
+- Existing keys remain intact during migration. Their owner selects an existing admin and proves
+  control using an eight-digit private chat code, valid five minutes and bound to that browser
+  session, with five attempts maximum. Matching names never assign ownership. Unlinked accounts
+  can complete this verification but cannot use ordinary admin APIs once known admins exist.
+  Initial password setup follows the same proof before enrollment; fresh installs without known
+  admins retain temporary operator setup. First enrollment retires the password-only bootstrap path; the optional password plus Slack code flow requires explicit enablement.
+- Host operators recover a known admin with `npm run admin:recover -- --user <user-id>`.
+  Recovery revokes its keys/sessions and every pending identity proof targeting that user,
+  including proofs issued from another unlinked credential container. Other users' proofs remain
+  valid. It prints a short-lived registration-only link; it never
+  restores password login. Private keys remain with authenticators; SQLite stores public keys
+  and verification metadata. Your final own passkey cannot be deleted through ordinary management.
+
+## Sign-in assets before authentication
+
+- Login HTML is not cached and versions both classic scripts with a shared content hash, preventing stale edge/browser scripts from expecting fields removed by a deployment.
+
+- The signed-out admin page serves its login script, favicon and three Poppins font files without
+  a session. These exact public paths prevent authentication redirects from replacing JavaScript
+  and fonts with login HTML; other dashboard assets and privileged APIs remain session-gated.
+
+## Work-folder boundary and protected export names (security audit batch 2)
+
+- **Sensitive roots are never a work folder.** Whatever the allowlisted `fsRoot` admits, a channel's
+  custom work folder may not be the gateway account's home directory itself, the gateway runtime
+  root or anything inside it (database, config, secrets), `~/.ssh`, `~/.claude`, `~/.codex`, the
+  container engine's configuration or storage, the hidden runtime artifact trees, the
+  `~/ChannelGate` workspace root or one of its platform folders, another conversation's DEFAULT
+  folder (`~/ChannelGate/<platform>/<slug>`, which carries that channel's uploads, memory and
+  lockdown file), or a parent of any of those (`src/gateway/workdir-boundary.js`). Another
+  conversation's custom folder, its parent and its subfolders stay allowed: two channels pointed
+  at one repository by their admins is an explicit, legitimate choice. A channel's own folders are
+  always allowed. Enforced at every door with a named reason: the
+  `set_channel_workdir` tool, the admin UI's Working folder field, and the runtime resolver, which
+  refuses to spawn a turn, background job, schedule or review for an already-stored forbidden value
+  and names the remedy (`set_channel_workdir` / Settings → Working folder / `clear_channel_workdir`).
+  Folder provisioning falls back to the default folder rather than writing into such a tree, and
+  the daemon logs one warning per offending channel at boot.
+- **Protected names never leave the channel.** One export door (`openConfinedFile`) serves every
+  way bytes leave the folder, at two strengths. The strict form guards the UNAUTHENTICATED
+  destination — `create_public_file_link` (both purposes) and the public-link fetch route — and
+  refuses a hidden file or directory anywhere in the path (`.env`, `.claude/…`, `.git/…`,
+  `.github/…`), the managed `CLAUDE.md`/`AGENTS.md`/`MEMORY.md` and `.claude` tree, and every
+  credential-shaped or secret-mentioning name (`*.pem`, `*.key`, `id_rsa`, `credentials.json`,
+  `*token*`, `*secret*`, …). The lenient form guards the doors an authorized person drives into a
+  place they already reach — `slack_share_file` into the thread, the Slack footer file download
+  to their browser, `stage_file_for_composio` and mail attachments through their own account —
+  and refuses every hidden path and credential-shaped file (`.env`, `.claude/…`, `*.pem`,
+  `credentials.json`, `id_rsa`, …) while letting the channel's instruction/memory files and a
+  report that merely mentions a token through. Both the requested path and the physical path of
+  the opened descriptor are checked, so an internal symlinked directory cannot launder one, and a
+  link minted for such a file before the rule stops serving.
+  Browsing, reading and editing inside the channel are unchanged (`.env` stays editable in the
+  file explorer; it simply cannot be exported), and the Teams and Google Chat file windows keep
+  previewing every contained file for the authorized requester.
+## Access policy and runtime controls consistency (security audit batch 4)
+
+- **"Admins only" and "Locked" lock the channel the moment they are saved.** Under the default
+  "Approved members" policy every approved member is seeded into the channel's guest list so the
+  Access page can show them; the run gate honours that list before the policy. Narrowing the
+  policy — from the Slack Access control or the admin UI's channel save — now evicts those seeded
+  (approved, non-admin) users from the list inside the same metadata transaction and keeps the
+  explicit guests (un-approved users), which remain the one deliberate way into a restricted
+  channel, and the admins (admitted by role under "Admins only"; under "Locked" the admin who
+  locks the channel keeps their own grant instead of locking themselves out of its controls). The
+  Slack save notice reports how many members were removed, an audit event
+  (`channel_access_members_evicted`) records the count only, and widening the policy back does not
+  re-admit anyone by itself (seeding resumes on the next message). The org-wide access reset still
+  clears the whole list.
+- **Settings runtime controls follow the model-change policy.** The channel engine / model / effort
+  pickers, thread pins and the thread reset in Slack Settings apply the gateway's model-change
+  access exactly like `/model`, the wizard, the shortcuts and the platform controls: a DM owner may
+  always set them; elsewhere a non-admin may only under the "users" policy. Someone who may not
+  change them sees the current values and the 🔒 policy line instead of pickers, and a crafted
+  payload is refused with the same message and writes nothing.
+## Login backoff behind a reverse proxy (security audit batch 3)
+
+- The admin login backoff and the approval-link token backoff key each client on the header of
+  the proxy the operator DECLARED, never on a header a loopback socket happened to carry. Settings
+  → Connection → *Behind a reverse proxy* (`trustProxy` in settings.json, `CG_TRUST_PROXY` in
+  `.env`; the setting wins) takes `""` (none: the connecting address is the client),
+  `cloudflare` (`CF-Connecting-IP`, which cloudflared overwrites on every request) or `xff` (the
+  LAST `X-Forwarded-For` hop, the one the trusted proxy appended, never the first, which the client
+  typed). The legacy `CG_TRUST_PROXY=1` means `xff`. An unknown value trusts nothing; the admin API
+  refuses it with 400.
+- A global failure cap bounds guessing independently of the key: more than 50 failed attempts in
+  ten minutes across all clients puts every login on the maximum delay until the window drains, so
+  a caller who can mint fresh buckets (a botnet, or a forged header behind a misdeclared proxy) is
+  still bounded, and so is the scrypt work an unauthenticated caller can cause.
+- Documented in `docs/OPERATIONS.md` → Reverse proxies and tunnels and in INSTALL.md: without the
+  setting, all remote logins behind a proxy share one backoff bucket.
+## Web and Slack surface hardening (security audit batch 1)
+
+- **Admin mode is admin-only on every surface.** The Slack Settings mode control refuses to switch
+  a channel into Admin mode unless the clicker is a current organization admin, the same rule
+  `/mode admin` and the `set_channel_admin_mode` tool already enforce. A channel manager keeps
+  every other control in a channel that is already in Admin mode (changing Auto, Lean or the
+  network switch leaves the mode alone) and may step the channel down to Worker or Read-only; the
+  "Admin" option is listed only for someone who may enable it or when it is the current mode.
+- **Case-variant URLs never reach the admin router.** Express case-sensitive routing is on, and the
+  Host/Origin guard, the no-password lockdown, the 401 branch and the run-API key gate all compare
+  lowercased paths, so `/API/settings` is refused exactly like `/api/settings` instead of slipping
+  past them into the router.
+- **Security headers.** Every response carries `X-Content-Type-Options: nosniff`,
+  `X-Frame-Options: DENY` and `Referrer-Policy: same-origin`. The admin shell and the login page are
+  served with a Content-Security-Policy that admits same-origin scripts only plus the import map
+  by content hash (no inline script anywhere; the login handler lives in `public/login.js`),
+  same-origin styles with inline attributes, same-origin fonts, images and connections,
+  `frame-ancestors 'none'`, `object-src 'none'`.
+- **No stack traces.** One Express error handler answers unexpected failures with a bare 500 (logged
+  server-side) and keeps exposable client errors such as a malformed JSON body as their 4xx with
+  the message only; the systemd unit also sets `NODE_ENV=production`. `/resume` requires the admin
+  session; the `/internal/*` IPC secret is compared in constant time.
+- **Background-job status button.** "Check status" on a background job card runs through the same
+  authorization gate as `/status` (admin, approved, or an explicit guest of that channel) and only
+  reports a job that belongs to that channel; the log-tail fallback reads the channel's own log.
+- **File explorer exports re-prove the file.** Share, Send to me, Preview and Edit open the resolved
+  file `O_NOFOLLOW` and re-resolve the kernel descriptor through `/proc/self/fd`, refusing a file
+  that no longer sits under the channel root, which closes the symlink-swap race the agent-side
+  export tools already closed.
+- **License card.** The organization, tier and limit values from the licensing platform are
+  HTML-escaped before rendering.
+- **Dependencies.** `npm audit fix` applied: undici, zod, hono, fast-uri, body-parser and
+  ip-address moved to their patched releases; `npm audit --omit=dev` reports no vulnerabilities.
+
+## Slack code channels (2026-10-25)
+
+- **A code channel is a dedicated Slack channel for one task**, opened by the agent through
+  Slack's code-channel API (`agents.conversations.*`, manifest `features.code_channels`, scope
+  `code_channels:manage`). The whole channel is one agent session: people talk to the agent there
+  without @-mentioning, replies are top-level channel messages (or stay in a thread a person
+  started), Slack shows a channel-wide **Stop** button, a **Code** tab with the task branch's diff,
+  up to five artifact tabs and a context bar (folder, branch, repository, pull request).
+- **Only on explicit request, behind a human click.** The agent calls `open_code_channel` only
+  when the requester asks for a code channel; the call posts a durable approval card in the origin
+  thread that the requester (or an admin) confirms. Nothing is created before the click. On approval
+  the daemon creates the channel linked to the origin message (members of the origin channel may
+  join; privacy follows the origin unless forced), registers it, sets the session active, pins the
+  context bar and starts the first turn there itself with the task as the brief and the origin
+  thread as context. Scheduled and background runs, DMs and code channels themselves cannot open
+  one. Slack's eligibility refusals (`feature_disabled`, `user_not_enabled`, `restricted_action`,
+  a missing scope, a Slack Connect or DM origin) are reported by name with the remedy.
+- **A child of the channel it came from.** The code channel inherits the origin channel's work
+  folder, access policy and guest list, environment secrets, skills and template, engine, model and
+  every mode switch — re-projected from the origin's current meta on every inbound message and
+  every spawn, so a rotated secret or a narrowed policy in the origin reaches the code channel at
+  once. It keeps its own Slack identity, sessions, container and HOME volume; it mounts the same
+  host folder. The origin's gateway-owned default folder is accepted as its folder regardless of
+  the allowlisted filesystem root; a custom origin folder still passes containment.
+- **Files: a task branch by default.** When the origin folder is a git repository the daemon
+  creates branch `code/<slug>` in a worktree at `.worktrees/<slug>` inside it (from the checkout's
+  upstream, else its exact HEAD commit; `.worktrees/` is added to `info/exclude`; a taken branch
+  name gets a numeric suffix), and the run preamble tells the agent to work only there. A folder
+  that is not a repository works in place. The requester can force either (`mode`:
+  `worktree` / `in_place`). After every turn the daemon publishes the worktree's unified diff
+  against the base to the Code tab (committed and uncommitted tracked changes; the gateway's own
+  managed instruction block in CLAUDE.md/AGENTS.md is left out; capped under Slack's 1 MB).
+  Archiving never deletes the worktree.
+- **Artifacts from inside the channel.** `update_code_channel` publishes or replaces a tab by key
+  (`html` self-contained document, `block_kit` view, `canvas` by id, `pull_request` by URL — which
+  also adds a Pull request link to the context bar), adds context-bar items (five in total), renames
+  the session, or forces a Code-tab refresh. It refuses outside a code channel and in an archived one.
+- **Finishing.** `archive_code_channel` posts the wrap-up (shared back into the origin thread by
+  Slack), closes the session and archives the channel behind an approval card anyone working in the
+  channel can confirm; the row records `archivedAt`. The native Stop button without a thread
+  timestamp stops everything running in a code channel; outside one such an event is ignored.
+- **`/status-cg` alias.** Slack rejects `/status` in some app manifests because it is a built-in
+  Slack command; the gateway registers the same status report under `/status-cg` as well, so a
+  shipped manifest registers `/status-cg` and supplies explicit HTTPS placeholder URLs
+  for Socket Mode imports. `/model` replaces the retired `/engine` and `/effort` commands.
+- **Surfaces and declarations.** `codeChannels` is a Slack-only platform capability; the tools do
+  not register on other surfaces. The `gateway-usage` guide gains a Slack-only
+  `references/code-channels.md` and a routing row. Memory review runs for threaded code-channel
+  turns only; channel-level status writes skip the legacy thread bridge.
+  → TEST-PLAN: Slack code channels.
+
+## Admin access to Slack controls
+
+- Current organization admins can open Files, Variables, Settings and legacy menu Resume controls
+  on another requester's message or `/menu` card. Each new settings/file/variable view belongs to
+  the admin who clicked; personal credentials, connections and skills use that viewer's identity.
+  Current channel authorization and membership are checked, and ordinary members remain bound to
+  their own controls. Private modal navigation and submissions remain bound to their viewer.
+- Admins can open, answer, page, submit and cancel another requester's pending question cards and
+  forms. Both people must retain channel access and membership, and the responder must remain an
+  admin. Revision checks and single submission still apply. Continuations retain the original
+  requester's runtime identity and credentials; audit records identify the responding admin
+  without storing their answer text.
+- Admins can also resolve shared busy-thread Steer/Queue/Cancel and engine-switch/retry cards
+  after current rank, membership and channel access checks. The stored incoming event retains its
+  author, credentials and runtime permissions; accepted decisions audit the responding admin.
+  Expiration, duplicate claims and the cross-author automatic steering guard still apply.
+
 
 ## Registered inventory limits and Enterprise harness approvals
 
-- Non-Enterprise installs allow at most 20 registered channels (including DMs and the API
-  conversation) and 20 stored human users, including unapproved accounts. Registration checks
+- Non-Enterprise installs allow at most 10 registered channels (including DMs and the API
+  conversation) and 10 stored human users, including unapproved accounts. Registration checks
   are atomic; existing records remain editable and usable when an install is already over its cap.
-  Legacy free-license payloads cannot bypass these caps. The no-key monthly one-conversation
-  limit and Registered 500-message monthly limit remain. Enterprise defaults to unlimited.
+  Legacy free-license payloads cannot bypass these caps. The no-key monthly one-active-channel
+  evaluation remains. Free allows 100 active chat threads per channel per UTC month, with
+  500 AI runs shared by that channel each month. Enterprise defaults to unlimited. Thread
+  tracking starts with post-upgrade activity; existing AI-run accounting is retained.
 - Enterprise organization admins can approve one or more harnesses per channel through the
   admin editor or Slack Settings → Agent. Unrestricted is the default. Pins, saved sessions,
   API overrides, automation and fallback cannot launch outside the approved set; queued work
@@ -39,7 +440,9 @@
   recommends a channel without sending messages, delegating or transferring files. Organization
   skills can supply company terminology; no company directory is hardcoded in the product skill.
 - Built-in reconciliation refreshes channel metadata at startup and nightly at 03:00 in the host
-  local timezone without an engine turn or user schedule. Metadata caches narrow keyword searches;
+  local timezone without an engine turn or user schedule. A missing spring-forward 03:00 runs at
+  the first valid local time and the next day returns to 03:00; autumn runs once per local day.
+  Metadata caches narrow keyword searches;
   returned recommendations still verify live metadata/membership and fresh gateway access.
   The daemon registers its existing Slack lifecycle manager in the live connector registry;
   disconnects fail closed and reconnects resolve the current client without retaining old readers.
@@ -48,6 +451,34 @@
   sources; other results require the whole current source roster to belong to the destination.
   A one-to-one bot DM uses its requester's access. Admin status never substitutes for membership.
   Slack supplies the membership interface; unsupported/disconnected platforms fail closed.
+
+## Channel-to-channel agent mail
+
+- `send_agent_message` lets one channel's agent ask another channel's agent a question on the
+  requesting person's behalf (`src/gateway/agent-mail.js`). Calling it posts a durable
+  control-plane card in the asking thread; the requester (or an admin) confirms the exact text, in
+  Auto mode too. On the click the daemon opens a new thread in the target channel quoting the
+  message with the source channel and requester named, runs the target's agent on it as a normal
+  turn in its own container, folder, mode, memory and secrets, posts the reply there, and brings
+  the reply back into the asking thread as a new continuation turn of the origin session.
+- A message may only go where the requester could post themselves: authorized on the target under
+  the gateway's access rules AND a live member of it (admins do not skip membership), with every
+  member of the source conversation also belonging to the target because the reply lands there.
+  The gate is the agent directory's verifier, re-run when the tool is called, right before the
+  target turn spawns, and before the reply is re-injected; a lapsed check withholds the reply and
+  says so. DMs cannot send; hidden, disabled, archived and Lean channels cannot receive; the target
+  manager must switch `acceptsMessages` on via `set_channel_agent_profile` (off by default).
+- Reachability is never authority. The delivered turn runs as the fixed `agent:<source slug>`
+  principal: no personal Composio/secret/skill scope, no admin or manager rank, never the API
+  principal's standing, the reduced `agent-message` toolset (workspace reads, channel memory, this
+  channel's Slack tools, permission cards) and no further `send_agent_message`, `search_agents`,
+  background work, schedules, questions or admin switches. API runs and delivered agent turns
+  cannot send. Permission cards name "The agent from #<source>" and mint no personal links.
+- Guards: one message in flight per asking thread and target channel, at most 3 per pair per hour
+  and 20 per source channel per hour, text only (≤ 8000 characters) with Slack control sequences
+  defanged in the quoted message, a 30-minute ceiling on the target turn, redaction at both ends,
+  `agent_messages` rows (migration 43) and `agent_message_*` audit events. A gateway restart fails
+  interrupted exchanges closed in both threads (never re-runs them) and redelivers answered ones.
 
 ## Composio connection visibility
 
@@ -82,11 +513,13 @@
 - Container and host runtime connections, including SDK sessions, traverse the same daemon check.
   Denial, timeout, unavailable approval, cancellation, disconnect or expired/revoked authority
   prevents forwarding. Ordinary structured reads and writes continue.
-- Opaque Composio workbench/bash/proxy/API executors are refused because arbitrary persistent
-  code can hide a membership change. Use structured connector actions instead. This enforcement
-  covers managed Composio; independently supplied credentials, custom MCPs and browser sessions
-  remain outside that boundary. The always-loaded guide forbids bypass through any route and
-  treats sharing/posting requests as separate from permission to join or change the sender.
+- Composio Remote Workbench and Remote Bash are allowed for remote result processing and bulk app calls, with
+  code/commands and workflow session references forwarded unchanged. Code and app calls inside them are
+  outside the structured membership gate; the guide requires structured actions and human
+  approval for membership changes. Other generic connector proxy/API executors remain
+  refused. Independently supplied credentials, custom MCPs and browser sessions also remain
+  outside that gate. The always-loaded guide forbids bypass through any route and treats
+  sharing/posting requests as separate from permission to join or change the sender.
 
 ## Google Chat native conversation controls
 
@@ -628,6 +1061,9 @@ control-plane status.
   The operational audit distinguishes Graph callback receipt, validation, authenticated target
   acceptance, rejection and retryable failures using bounded metadata. Credentials, validation
   tokens, message bodies and untrusted resource identifiers are excluded.
+  Graph subscription JSON uses literal Teams channel/chat identifiers; HTTP message-fetch paths
+  encode individual path segments. The subscription store records the registered selector without
+  changing activation cutoffs or event identities.
 
 ## Claude login for nested commands
 
@@ -647,6 +1083,14 @@ control-plane status.
   when the operator has configured none, or add gateway accounting/MCP context to a bare child CLI.
 
 ## Gateway model shortcuts
+
+New installations inherit `:astra`, `:sol`, `:terra`, `:fable`, `:opus` and `:sonet` from the
+engine model catalogs. Each resolves to the numerically newest stable version of its family,
+including Sonnet 5.5 and GPT-6.1 Sol when offered by the catalog. Live Codex discovery can advance
+these defaults; Claude uses the curated supported catalog shipped with the gateway. Missing
+families are omitted instead of guessed. A stored shortcut map, including an intentionally empty
+map, is preserved exactly. Saving unrelated settings keeps inherited defaults; editing the shortcut
+list makes it an explicit set of pins. Existing thread pins never follow catalog updates.
 
 Admins can add gateway-wide model shortcuts in Settings → Access & security → Model shortcuts. Each name selects an engine and model. In Slack, `@agent :astra task` pins that engine and model to the current thread and runs the task; `@agent :astra` switches the thread without starting an agent turn. Slack's automatically inserted space after the mention is accepted. Changing a mapping affects later shortcut selections, while threads already pinned keep their selected model. Channel runtime-change access and dedicated Codex-login restrictions apply.
 
@@ -899,11 +1343,7 @@ revocation removes future runtime grants. Source path/symlink/size validation re
 revisions on failed sync. Details and compatibility limits: `docs/SKILLS.md`.
 
 
-- **Slack reports shared-folder conflicts:** an authorized mention or typed command that cannot
-  start because channels share a folder with conflicting skills or memory settings gets a reply
-  in its triggering thread. The reply asks an admin to assign separate folders or align settings,
-  then retry. It exposes no other channel names or filesystem paths. The conflict still blocks
-  workspace writes and engine startup. → TEST-PLAN: Slack shared-folder conflict replies.
+- **Shared-folder conversations link automatically:** incompatible initial skills/memory adopt the established source setup. Settings identify the source, and divergent metadata edits explain where to edit. Engine/model choices stay local. → TEST-PLAN: Linked working-folder setup acceptance.
 
 - **Read/search account routing:** unrestricted information requests may search either or both
   available Composio identities without an account-selection interruption. Explicit account and
@@ -1127,7 +1567,8 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
   pending product decision, not shipped).
 - **Secret handling:** masked dialogs collect password proof. Known credential values are redacted
   from primary/fallback replies, stream events, errors and background delivery checkpoints. Shell
-  jobs also redact injected channel secrets inside their detached container process before stdout
+  jobs also redact injected channel secrets and their hidden proxy placeholders inside their
+  detached container process before stdout
   or stderr reaches the durable artifact log. Independent stream buffers protect split values,
   and the wrapper survives the daemon while preserving the command's terminal status. The wrapper
   receives secret names only; jobs do not inherit engine service credentials. Existing historical
@@ -1281,7 +1722,7 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
   memory body. `search_channel_memory` rebuilds and queries a derived SQLite FTS5 index and
   `read_channel_memory` loads one validated source; both handlers return through the injected MCP
   response formatter. Writes no longer fail on a character budget. The index is optional per
-  engine build: a Node whose SQLite lacks FTS5 (22.13, the floor) still boots, and search falls
+  engine build: a supported SQLite build without FTS5 still boots, and search falls
   back to a plain scan with the same AND semantics and excerpts until the index exists.
   → TEST-PLAN: Conversation settings + on-demand memory.
 
@@ -2078,9 +2519,8 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
   `/delete` (org-admin only: wipe THIS thread — replies first, parent last — hard-scoped to the
   triggering channel+thread; the bot token deletes the bot's own messages, and when an optional
   Admin User Token (xoxp) is set in Settings → Slack credentials, everyone else's are deleted via a
-  per-call token override too — workspace prefs permitting; anything Slack refuses is tallied +
-  reported in the ephemeral summary, which also says how to enable full deletion when no user token
-  is set; refuses non-admin authors, mid-run threads, and top-level use; a deleted bot-owned root
+  per-call token override too — workspace prefs permitting; anything Slack refuses is tallied in the audit log; completed deletion posts no summary
+  (neither ephemeral nor regular), including partial deletion; refuses non-admin authors, mid-run threads, and top-level use; a deleted bot-owned root
   also drops the session like `/clear`), and `/update` (admin-only — git pull + install + restart, detached).
   → TEST-PLAN: In-thread commands.
 - Stop an in-flight run four ways: Slack's **native Stop button** on the thread (the agent session's
@@ -2166,6 +2606,13 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
   Shutdown then performs its existing bounded drain and sweeps every tracked cold and warm process
   group (with a final hard-kill fallback). Completed rows are cleared before exit while genuinely
   interrupted rows remain recoverable on boot. → TEST-PLAN: Automation.
+- Recurring cron weekday fields accept both `0` and `7` for Sunday, including lists, ranges and
+  steps. Steps apply before Sunday normalization; matching and next-run previews agree.
+- Both `list_schedules` forms show the next nominal due time in the gateway timezone. Detail
+  responses add derived `nextRun` (UTC ISO) and `nextRunLocal` (zone-labelled display) fields;
+  cron previews are recalculated at read time without rewriting the stored expression or state.
+  Disabled or unresolvable schedules have null previews. One-time and interval schedules use
+  their saved due time, including overdue times; previews do not guarantee delivery or admission.
 - One-time ("run at") schedules: `create_schedule` accepts `in_minutes`/`run_at` to fire once and
   auto-delete (e.g. "remind this channel in 2h") alongside recurring cron; recurring crons are held
   to a minimum interval (default 60 min) with per-channel + concurrency caps.
@@ -2217,6 +2664,11 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
   Pending acks persist in `config/acks.json` so the chain survives a daemon restart. The renderer
   owns the "⏰ *Reminder:*" label: one leading "Reminder:" the author already wrote is stripped from
   the posted message, the 2nd notice and the DM, so the line never stutters.
+- Slack thread completion: no-response nudges, scheduled follow-up digests and on-demand
+  pending reports check current reactions before delivery. A `white_check_mark` (✅) on the
+  root or latest reply suppresses the thread for all recipients; 👍 does not. Root checks remain
+  effective after newer replies. Reply checks apply while that reply is latest. Long threads are
+  paginated; unreadable reaction state defers notifications until a later attempt.
 - Personal no-response nudge: each user chooses whether the bot posts one gentle reminder addressed
   to them when their last agent reply has gone quiet past a window (default 24h). The live user
   preference follows them across channels and DMs and is self-service in Slack App Home; admins can
@@ -2253,7 +2705,10 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
   can spin up a tasklist (default **Name** + **Status** New/In progress/Done, or `todo_mode`/custom
   columns) and read/add/update rows. Composio has no Lists coverage, so these call the Slack Web API
   (`slackLists.*`) directly with the workspace bot token (needs `lists:read`/`lists:write`); text cells
-  are wrapped as rich text and select values accept the option label. `list_id` accepts a raw F-id or a
+  are wrapped as rich text and select values accept the option label. Message columns accept source
+  permalinks as native clickable references, attachment columns accept existing Slack file IDs, and
+  link columns accept URLs or labeled link objects; reads retain their URLs and file IDs. Empty arrays
+  clear these typed fields. `list_id` accepts a raw F-id or a
   pasted List URL. A newly created standalone List is immediately granted write access to the current
   conversation, so members can see and edit it; sharing failure is reported instead of returning an
   invisible tracker. Available to any allowed user (no admin gate). → TEST-PLAN: Slack Lists.
@@ -2431,7 +2886,8 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
   resume the old one's conversation), and replays the Slack thread context into it so the new
   engine continues the conversation instead of starting blind.
 - Slack `@agent /fork <new message>` branches a completed Claude or Codex container session using
-  the engine's native fork command. The bot posts a new top-level message linking to the source,
+  the engine's native fork command. The bot posts a new top-level message with the user’s new request first and the
+  `↪️ Fork of this thread` source link underneath,
   posts the new request in that thread, links back from the source, and runs the request in the
   forked session. The source session keeps its ID and history; the new Slack `thread_ts` maps to
   the engine's distinct child ID. Engine, model, effort and clean-mode pins carry into the branch.
@@ -2440,11 +2896,17 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
   access policy as ordinary shortcuts. A shortcut for a different engine starts a fresh session
   in the linked child thread and replays the source's Slack messages through the existing bounded
   context handoff. It does not transfer the old engine's native transcript/tool state. The fork
-  command and later source messages are excluded; unavailable Slack history is refused before
+  command and later source requests are excluded; queued cross-engine forks include bot replies completed while waiting; unavailable Slack history is refused before
   creating the child. Clean threads stay bare without history replay. Dedicated channel Codex
   logins stay on Codex. Unknown, disabled or invalid targets and missing request text are refused
   before a child thread is posted.
-  A running or sudo/source-host session is refused until it can be forked safely.
+  A running source queues the fork automatically, acknowledges it explicitly, and starts it after preceding work finishes. Stop cancels queued forks. Admission and session state are rechecked at promotion; queued forks survive restart through active-run recovery. Sudo/source-host sessions remain refused.
+- Gateway-wide **default effort** beside each harness's default model (Settings → Agent defaults →
+  Engine & runtime, including each Qwen provider card). Choices follow the selected model's
+  supported effort levels; saves validate the model/effort pair atomically. Per-request, thread
+  and channel/DM-template effort overrides take precedence. Inherited fresh and resumed turns use
+  the harness default; blank preserves the CLI default. Failover uses the destination harness's
+  own default effort, and model retries recheck compatibility before passing an effort flag.
 - Gateway-wide **default model** per engine (Settings → Engine & runtime, validated like `/model`):
   when a thread/channel/DM-template sets no model, the run gets the gateway default as an explicit
   `--model`/`-m` — so the admin's interactive terminal `/model` choice (written to
@@ -2642,8 +3104,12 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
   channel state remain reachable through its authorized tools only.
 - **CLI catalog (`src/config/cli-catalog.js` — Vercel, Supabase, Make.com)**: the deploy CLIs the
   channel runtime image ships, with the environment variable each one accepts instead of a saved
-  login. It feeds the `/secrets` name suggestions (every catalog name, so a channel acting as its
-  own account types `SUPABASE_ACCESS_TOKEN`, not a guess) and the host-sandbox write-deny list for
+  login. Every newly built runtime image includes the official `@makehq/cli` as `make-cli`
+  (spec 1.6.3), pinned in `containers/versions.json` and installed root-owned. Make CLI
+  authentication uses the channel's `MAKE_API_KEY` and `MAKE_ZONE` (for example `eu2.make.com`);
+  the API key remains a destination-bound proxy placeholder and the zone remains routing
+  configuration. Host Make logins are never copied into containers. The catalog feeds the
+  `/secrets` name suggestions (every catalog name, so a channel acting as its own account types `SUPABASE_ACCESS_TOKEN`, not a guess) and the host-sandbox write-deny list for
   saved-login files. **Retired 2026-09-03 (Linux + containers only):** the Settings → Network →
   "CLI integrations" switch, its `cliIntegrations` setting, the live "installed" badges
   (`cli-detect.js` detection) and the read-only linking of the daemon's shared host login
@@ -3009,7 +3475,7 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
   application-code change is needed.
   → TEST-PLAN: ChannelGate skill package.
 - **Trustworthy release gate** (the macOS leg retired 2026-09-03 — Linux only): every pull request
-  runs the complete coverage-gated suite on Ubuntu at the exact Node 22.13 minimum and Node 24, plus dependency-free syntax /
+  runs the complete coverage-gated suite on Ubuntu at the exact Node 24.0.0 minimum and current Node 24, plus dependency-free syntax /
   whitespace checks, tracked-file secret scanning, production dependency audit, and independent
   coverage floors for authorization, access-grant isolation, sandbox policy, secret handling, and
   updater state. Claude
@@ -3274,6 +3740,9 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
   `run_config` event records `networkEnforced` and `egress` beside `networkPolicy` so an operator
   reading it after an incident cannot mistake one for the other. `NETWORK_POLICY_ENFORCED` in
   `src/engines/network-policy.js` is now `true`; every surface asks `networkEnforcedFor(target)`.
+  The shared `set_channel_network` tool description also explicitly distinguishes ordinary
+  proxy-mode enforcement from legacy bridge/raw-socket policy and `/sudo` direct-host policy,
+  which has no OS-level egress cutoff. This description does not change runtime enforcement.
   → TEST-PLAN: Sandbox boundaries; Egress proxy, placeholders and `--network none`.
 - **Retired 2026-09-03 (Linux + containers only):** nothing replaces it — with no host sandbox there is no user namespace for AppArmor to restrict,
   and rootless Podman brings its own uid mapping (`--userns=keep-id`, `/etc/subuid`). **Linux hosts keep their Bash sandbox under Ubuntu's AppArmor userns restriction**: Ubuntu 23.10+
@@ -3463,6 +3932,14 @@ are retired, bullet by bullet; everything else stands.
   a gateway run. Closing the window removes the live token and lease; the wrapper itself is inert.
   The lease record itself lives in daemon-owned metadata under the gateway root, never in the
   agent-writable artifact directory. → TEST-PLAN: Container runtime (v0.8 P1).
+- **SSH uses the developer's current-role history scope:** organization admins connect to the
+  admin container/HOME and members or guests to the project container/HOME, matching ordinary
+  chat turns by that person. The broker rechecks rank on refresh and disconnects on scope
+  changes before preparing credentials. Per-user session files, held MCP relays and last-session
+  login cleanup stay within the selected container. The existing Admin + operator-home SSH
+  refusal stays enforced, with a second check on the resolved target. Connection guidance names
+  the requester's scope; no history migration or deletion is performed.
+  → TEST-PLAN: SSH runtime scope and history parity.
 - **Developers SSH into a channel container, not into the host** (`docs/SSH-ACCESS.md`). A person
   registers ONE public key once from chat (`add_my_ssh_key`, bound to the identity that pasted it,
   fingerprinted like `ssh-keygen -lf`, private keys and DSA refused, RSA under 2048 bits refused);
@@ -3825,7 +4302,14 @@ are retired, bullet by bullet; everything else stands.
   configuration (…_ID, _REPO, _ORG, _REGION, _USER, _URL…), or its value is a URL or a file path;
   otherwise HIDDEN — STRIPE_SECRET_KEY, API_SECRET and *_CLIENT_SECRET included. A readable name is
   injected raw and flagged `unprotected` — or withheld under `containerEgressSecretsStrict`
-  ("Withhold readable variables"). A hidden one gets a placeholder behind an **approval rule**: a
+  ("Withhold automatically readable variables"). An explicit stored `exposure: readable` choice
+  permits raw injection even in strict mode, only for the winning scope's entry. Automatic or
+  hidden password classification does not grant this exception. `list_secrets` separates explicit
+  readable entries from automatic withholding and respects conversation → personal → organization
+  precedence in its summary; listings never reveal values. Readable output follows the existing
+  visibility policy. Returning to hidden/auto takes effect at the
+  next spawn. Existing scope authorization and readable approval cards still apply.
+  → TEST-PLAN: Explicit readable secrets in strict mode. A hidden one gets a placeholder behind an **approval rule**: a
   credential-like header or query parameter (the known auth headers, or a name with auth, token, key,
   secret, session, signature…), the bearer/raw/Basic positions, and only the servers an admin
   approved for that secret (`approvedHosts` on its entry, kept across a rotation). Presented to any
@@ -3941,8 +4425,9 @@ are retired, bullet by bullet; everything else stands.
   this release (read before the first-boot password is saved), so an upgrade never silently
   withholds a secret a working channel uses; a stored choice is never changed. `list_secrets` ends
   with a **Finding** line naming every listed secret that has no egress rule and what happens to it
-  (withheld under strict, raw otherwise, raw today under the legacy bridge) and how to declare its
-  hosts; the settings UI says the same. → TEST-PLAN: Codex login relay, strict secrets, static check
+  (withheld under strict unless explicitly made readable, raw otherwise, raw today under the legacy
+  bridge) and how to declare its hosts; explicit readable entries are reported separately and the
+  settings UI explains the exception. → TEST-PLAN: Codex login relay, strict secrets, static check
   (container-secrets P4).
 - **A static check keeps secrets out of the artifact dir (container-secrets P4).**
   `npm run check:static` runs `scripts/static-secret-writes.mjs` over `src/`: a `writeFile*` /
@@ -3998,7 +4483,9 @@ are retired, bullet by bullet; everything else stands.
   attach and no exit code to read from the child. Output goes to a log under the artifact mount — the
   same absolute path on both sides, so the daemon tails the very file the job writes — and the
   wrapper appends a `[cg-exit:N]` marker as its last act, so a finished job reports a real exit code
-  (a missing marker is "unknown", never 0). The persisted row records `{backend, runId, container}`,
+  in the structured completion audit (a missing marker is "unknown", never 0). Completion notices
+  and engine continuations retain their plain-language outcome. The persisted row records
+  `{backend, runId, container}`,
   so after a daemon restart a recovered job is probed and signalled BY ITS RUN ID through the
   backend, never by the stale pid of a client process that is long gone. The memory reviewer follows
   the same rule: it resolves its own target, takes a `review` lease, and runs in the channel's
@@ -4241,6 +4728,7 @@ are retired, bullet by bullet; everything else stands.
   from the server-filtered table so conversation access editors never inherit a search subset;
   out-of-order responses are ignored and filtering out the selected row closes its drawer.
   Skills counts match saved personal grants, including unavailable saved skills, and refresh after Save.
+  Personal email and secret checkboxes retain their natural width so their labels fit the drawer.
   → TEST-PLAN: Admin UI (redesign).
 - Channel **Instructions** sub-tab: edit the channel's `CLAUDE.md` from the admin UI. Stored as a
   per-channel instruction override (`meta.instructions`) that the folder provisioner regenerates
@@ -4733,10 +5221,13 @@ are retired, bullet by bullet; everything else stands.
   air-gapped promise true: an offline payload is stamped as verified at read time, so an expired one
   routed through grace would have looked freshly checked forever. A response whose signature does
   not verify changes nothing in either direction. An in-process event fires on every state change.
-- **Two enforcement points**, both in `licenseAdmission()` (`src/ee/limits.js`), called from the
+- **Monthly enforcement**, in `licenseAdmission()` (`src/ee/limits.js`), called from the
   run orchestrator before a turn provisions a folder, mints a session, or spawns an engine:
-  conversation admission (the month's first N distinct conversations are the allowed set,
-  persisted in `license_usage`) and the per-conversation monthly cap, counted AT SPAWN for every
+  legacy active-channel admission and channel AI-run counts (persisted in `license_usage`), plus
+  100 active chat threads per channel per UTC month (`conversationsPerChannelPerMonth`).
+  Existing threads retain admission through a stricter limit or downgrade for that month; new
+  threads reset with the next UTC month. Thread activity starts tracking on upgrade, without
+  inventing historical usage. AI runs are counted AT SPAWN for every
   origin except memory-review runs, with a one-time 80 % warning prefixed to the answer the user
   is already getting. A refused turn returns a short, platform-degraded reply carrying the sign-up
   link — never an exception, never silence, and no run starts.
@@ -4835,6 +5326,23 @@ are retired, bullet by bullet; everything else stands.
   beyond the last batch's cutoff (backup first; a batch is recorded even on zero matches so settled
   history is never rescanned) — updating + restarting another gateway recalculates its history with
   no manual command.
+- **Claude turns are charged their own delta, whole tree, per model.** Claude Code's terminal
+  result reports the provider SESSION's cumulative `total_cost_usd` and `modelUsage` (CLI ≥
+  2.1.277 restores a resumed session's earlier spend) while `usage` covers the main loop only,
+  without subagents. The ledger (`src/db/claude-session-usage.js`, applied inside `recordUsage`
+  for every call site — interactive, warm pool, scheduled, background, API, memory review)
+  differences each run against the same session's last recorded cumulative, so a resumed thread
+  is never charged its history again; records one `usage_components` row per model the run spent
+  on (the answering model as `root`, a Sonnet subagent or the Haiku helper as `auxiliary`) with
+  the CLI's own per-model cost (`pricing_basis = claude-cli-reported`), so the Models chart and
+  the per-model split show subagent spend under the model that incurred it; and keeps the raw
+  cumulative figures beside the row (`provider_cost_cumulative`, `provider_model_usage`) as the
+  next run's baseline. A cumulative that goes DOWN (a CLI that restarted its totals) is taken at
+  face value and never recorded negative; a per-model split that does not reconcile with the
+  run's cost delta is dropped as a whole rather than charted inconsistently. Migration 41
+  re-differences the Claude rows recorded since the image first pinned a cumulative-reporting CLI
+  (2026-09-24) losslessly: each row's original figure survives in `provider_cost_cumulative`, and
+  the repair is idempotent. → TEST-PLAN: Per-model dashboard stacking.
 - **Per-model Codex Standard API-equivalent rates** (Settings → Behavior): Codex reports no dollar
   cost, so the ledger and reply footer estimate attribution value from an editable $/1M table —
   input / cached-input / output per model (GPT-6 Astra/Sol/Luna, GPT-6.1 Sol, GPT-5.6
@@ -5166,12 +5674,8 @@ are retired, bullet by bullet; everything else stands.
   mirror remains current. Bundled source skills live in `src/gateway/skills/bundled/`.
 - Skills admin saves refresh existing workspaces immediately. Boot and a five-second daemon
   reconciliation pass refresh changed catalog/template/grant state, including MCP changes. Failed
-  writes are reported and retried; conflicting selections for a shared folder are reported.
-- The Admin UI makes shared-folder assignments visible before they break a run. Every channel or
-  DM whose effective working folder is assigned to another conversation gets a red warning row in
-  Conversations. The working-folder browser shows a red, named warning whenever the directory being
-  viewed is already assigned elsewhere, before **Use this folder** can create another shared
-  assignment. Both views use the runtime's resolved path logic rather than raw string comparison.
+  writes are reported and retried; shared folders follow one linked owner setup.
+- The Admin UI shows shared-folder conversations with a linked marker. The folder picker names existing assignments and explains inheritance; the editor opens the source conversation and locks inherited settings. Both views use the runtime's resolved path logic rather than raw strings.
 - Runtime settings provide **Reset to default** beside **Browse**. It clears only the custom
   working folder through the normal Save/Discard flow; the default remains
   `~/ChannelGate/<platform>/<slug>/`. Existing files stay in their original location.
@@ -5257,3 +5761,41 @@ schemas, selected identities/accounts, independent multi-execute batches, persis
 workbench scripts, pagination and resumable checkpoints. Local file staging, protected credentials
 and operator overrides retain their existing rules. This is agent guidance, not a local Composio
 sandbox or a new runtime tool.
+
+- Slack bot removal archives the registered channel, displays Archived in the conversation list/detail, blocks admin changes and new runtime launches, and skips skill/configuration and Drive sync propagation. Re-inviting the bot resumes synchronization without deleting workspace files or sessions. Shared folders can still change through another active conversation that uses the same folder.
+- Free cost history exposes the last 30 days in audit, summaries and dashboard (gateway and external usage); Enterprise exposes all history. Stored accounting and monthly admission counters remain intact. Verify both engines at the 30-day boundary and after upgrade/downgrade.
+
+- Free cost-history visibility applies to structured costs in Audit events, HTTP run-job views and schedule telemetry as well as the ledger/dashboard. Operational records and answer text remain available; stored accounting is not deleted.
+
+- Conversation admission identity stays separate from engine-session identity: background/nested agents, known scheduled delivery threads and scheduled question continuations share the existing parent slot. An automation fire without a chat anchor uses its own stable logical conversation identity.
+- Slack archival survives delayed join delivery and concurrent access/runtime resets. Join restoration requires current membership; whole-record settings saves preserve lifecycle admission state. At startup and Socket Mode reconnect, configuration propagation and new runtime launches wait for a complete calling-bot membership snapshot. Missing removal/rejoin events are reconciled from all paginated public/private/group-DM memberships, with periodic reconciliation and retry on incomplete/error responses. A membership API failure pauses verification without falsely archiving channels.
+
+## Slack Connect streaming and terminal session cleanup (2026-11-03)
+
+Streaming uses the requesting user's workspace (`user_team`, otherwise a verified cached user lookup) rather than the bot installation's workspace. A completed reply reasserts native `active` after stream finalization or classic fallback. Compatibility status clears precede native completion, and session writes are serialized with producer ownership checks so a delayed clear cannot override the next turn.
+
+## Rootless Podman in system services (2026-11-05)
+
+System-service installs add a managed per-account `cgroupfs` configuration without replacing operator settings, verify the effective manager, and bind persistent private temporary directories into the unit. The daemon's restart no longer deletes the backing paths retained by a rootless pause namespace. Limits probes use no network and never pull images; actual kernel memory/CPU/pids values must match before support is advertised. Silently ignored flags, missing images, namespace failures, timeouts and generic launch errors are distinguished from delegation failures. Existing-store recovery is an explicit idle operator procedure; startup never globally migrates or prunes containers.
+
+
+### Codex process creation resource failures
+
+Codex's own router diagnostic for a failed unified tool-process creation starts a 15-second
+recovery window. A successful command or completed turn cancels it, including timestamped older
+stderr delivered after successful stdout. Persistent failure ends with `ENGINE_RESOURCE_EXHAUSTED`
+and an actionable process/thread-limit message, retains partial usage, and is never automatically
+replayed on another engine. Generic EAGAIN or tool output does not trigger this path.
+
+A best-effort runtime-local snapshot records process/thread counts, process soft/hard limits and
+leaf cgroup PID current/max/event counts. Leaf counts do not establish effective ancestor limits.
+The probe never reconfigures/recreates the runtime, retries, reads argv/environment/credentials or
+extends the recovery deadline; unavailable probes remain explicitly unavailable. Bounded snapshot
+facts are retained with the run-error event. No container image rebuild is needed for this reducer.
+
+## Node 24 runtime baseline
+
+The daemon, installer, transactional updater and documentation build require Node 24.0.0 or
+newer. The runtime image and release workflow use Node 24; CI exercises both the exact minimum
+and the current 24.x release. `.nvmrc` selects the Node 24 development line. Existing operators
+upgrade host Node before updating; rebuilding the image alone does not upgrade the daemon.
