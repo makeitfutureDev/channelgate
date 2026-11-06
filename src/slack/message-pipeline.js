@@ -1303,8 +1303,8 @@ export async function processMessageEvent(event, client, { botUserId = "", teamI
         if (!ask.message) { await reply("Use `ask #channel <your question or request>`."); return; }
         try {
           const sent = await mail.send({ channelId: event.channel, slug: entry.slug, createdBy: event.user, threadKey, to: ask.to, message: ask.message, origin: "slack_foreground" });
-          const target = sent.to?.name ? `#${sent.to.name}` : sent.to?.slug || ask.to;
-          await reply(`📨 Sent to the agent in ${target} (message ${sent.id}). Its reply will be posted in this thread when it arrives.`);
+          const target = sent.to?.name ? `#${String(sent.to.name).replace(/^#+/, "")}` : sent.to?.slug || ask.to;
+          await reply(`💬 Asked the ${target} agent — its replies land here.`);
         } catch (error) {
           if (!(error instanceof AgentMailError)) throw error;
           await logEvent("agent_message_refused", { channel: event.channel, author: event.user, slug: entry.slug, to: ask.to, reason: error.message, directive: true }).catch(() => {});

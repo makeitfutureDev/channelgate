@@ -380,6 +380,7 @@ async function main() {
   setActiveAgentMail(agentMail); // the Slack `ask #channel …` directive
   const sendAgentMail = async (body) => {
     try {
+      if (body?.action === "continue") return { ok: true, ...(await agentMail.requestContinue(body)) };
       return { ok: true, ...(await agentMail.send(body)) };
     } catch (error) {
       if (error instanceof AgentMailError) return { ok: false, code: error.code, error: error.message };

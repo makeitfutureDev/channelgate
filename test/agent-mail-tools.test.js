@@ -72,8 +72,8 @@ for (const engine of ["claude", "codex"]) {
       // The click: the daemon replays the saved call through the same handler, as the requester.
       const applied = await server.invokeApproved("send_agent_message", approvals[0].durableAction.args);
       assert.equal(applied.ok, true);
-      assert.match(applied.text, /Sent to the agent in #sales \(message m1\)/);
-      assert.match(applied.text, /posted in this thread as a new turn/);
+      assert.match(applied.text, /Asked the #sales agent/);
+      assert.match(applied.text, /replies land in this thread/);
       assert.equal(sends.length, 1);
       assert.equal(sends[0].createdBy, actor);
       assert.equal(sends[0].channelId, channel);
@@ -168,6 +168,9 @@ test("host HTTP agent-mail IPC requires the loopback secret and answers 503 when
     assert.equal(sent.ok, true);
     assert.equal(sent.id, "m9");
     assert.deepEqual(calls, [{ channelId: channel, slug, createdBy: actor, threadKey: thread, origin: "slack_foreground", to: "C_SALES", message: "hi" }]);
+    const picked = await ipc.call("agent-mail", { action: "continue", channelId: channel, slug, createdBy: actor, threadKey: thread, message: "more" });
+    assert.equal(picked.ok, true);
+    assert.deepEqual(calls[1], { action: "continue", channelId: channel, slug, createdBy: actor, threadKey: thread, message: "more" });
     const absent = createHttpDaemonIpc({ secret: () => "agent-mail-ipc-test", port: () => bareServer.address().port });
     assert.match((await absent.call("agent-mail", {})).error, /unavailable/);
   } finally {
@@ -176,4 +179,27 @@ test("host HTTP agent-mail IPC requires the loopback secret and answers 503 when
     if (previous === undefined) delete process.env.CG_APPROVAL_SECRET;
     else process.env.CG_APPROVAL_SECRET = previous;
   }
+});
+
+test("continue_agent_conversation is open (no card), identity-bound, and refused for API and agent principals", async () => {
+  const calls = [];
+  const handlers = { "agent-mail": (body) => { calls.push(body); return body.message ? { ok: true, mode: "sent", to: "#sales" } : { ok: true, mode: "flag", to: "#sales" }; } };
+  await withClient("claude", async (client) => {
+    const flag = bodyText(await client.callTool({ name: "continue_agent_conversation", arguments: { createdBy: "U_FORGED", threadKey: "9.9" } }));
+    assert.match(flag, /delivered to the #sales agent when this turn ends/);
+    const sent = bodyText(await client.callTool({ name: "continue_agent_conversation", arguments: { message: "ten slides" } }));
+    assert.match(sent, /Delivered to the #sales agent/);
+    assert.equal(calls.length, 2);
+    assert.deepEqual(calls[0], { action: "continue", channelId: channel, slug, createdBy: actor, threadKey: thread, message: "" });
+    assert.equal(calls[1].message, "ten slides");
+  }, { handlers });
+  for (const claims of [{ authorId: "api" }, { authorId: "agent:sales", principalTrusted: false, origin: "agent_message" }]) {
+    await withClient("claude", async (client) => {
+      assert.match(bodyText(await client.callTool({ name: "continue_agent_conversation", arguments: {} })), /authenticated person/);
+    }, { claims, handlers });
+  }
+  assert.equal(calls.length, 2);
+  await withClient("claude", async (client) => {
+    assert.match(bodyText(await client.callTool({ name: "continue_agent_conversation", arguments: {} })), /🚫 no conversation/);
+  }, { handlers: { "agent-mail": () => ({ ok: false, error: "no conversation" }) } });
 });

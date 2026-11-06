@@ -190,8 +190,8 @@ export function createWebApp({
     if (internalForbidden(req)) return res.status(403).json({ ok: false, error: "forbidden" });
     if (typeof sendAgentMail !== "function") return res.status(503).json({ ok: false, error: "Agent messaging is unavailable." });
     try {
-      const { channelId, slug, createdBy, threadKey, origin, to, message } = req.body || {};
-      res.json(await sendAgentMail({ channelId, slug, createdBy, threadKey, origin, to, message }));
+      const { action, channelId, slug, createdBy, threadKey, origin, to, message } = req.body || {};
+      res.json(await sendAgentMail({ ...(action ? { action } : {}), channelId, slug, createdBy, threadKey, ...(origin !== undefined ? { origin } : {}), ...(to !== undefined ? { to } : {}), message }));
     } catch (e) {
       res.status(500).json({ ok: false, error: e.message });
     }
