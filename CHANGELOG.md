@@ -9,6 +9,9 @@ release gates. Stable promotion and publication require approval of the exact te
 
 ### Beta development notes
 
+- Preserve parsed container background-job exit codes in the structured completion audit, while
+  keeping completion messages in plain language and unconfirmed outcomes unknown.
+
 - Restore the agent directory refresh to 03:00 local time after a spring-forward clock change
   instead of retaining the transition day’s normalized 04:00 hour.
 
