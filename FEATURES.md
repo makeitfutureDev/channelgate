@@ -2580,6 +2580,8 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
   Shutdown then performs its existing bounded drain and sweeps every tracked cold and warm process
   group (with a final hard-kill fallback). Completed rows are cleared before exit while genuinely
   interrupted rows remain recoverable on boot. → TEST-PLAN: Automation.
+- Recurring cron weekday fields accept both `0` and `7` for Sunday, including lists, ranges and
+  steps. Steps apply before Sunday normalization; matching and next-run previews agree.
 - One-time ("run at") schedules: `create_schedule` accepts `in_minutes`/`run_at` to fire once and
   auto-delete (e.g. "remind this channel in 2h") alongside recurring cron; recurring crons are held
   to a minimum interval (default 60 min) with per-channel + concurrency caps.
