@@ -11,11 +11,13 @@ const { setUser } = await import("../src/config/store.js");
 const password = "disposable-passkey-bootstrap-password";
 
 async function api(page, route, body, method = "POST") {
-  return page.evaluate(async ({ route, body, method }) => {
-    const response = await fetch(route, { method, headers: { "Content-Type": "application/json", "X-CG-Request": "1" },
-      ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
-    return { status: response.status, retryAfter: Number(response.headers.get("Retry-After") || 0), body: await response.json() };
-  }, { route, body, method });
+  // Deliberate authorization probes may coincide with the dashboard reloading into its
+  // identity-link gate. Share the browser's cookies without depending on its page context.
+  const response = await page.context().request.fetch(new URL(route, page.url()).href, {
+    method, headers: { "Content-Type": "application/json", "X-CG-Request": "1" },
+    ...(body === undefined ? {} : { data: body }),
+  });
+  return { status: response.status(), retryAfter: Number(response.headers()["retry-after"] || 0), body: await response.json() };
 }
 
 test("real WebAuthn signatures protect named admin login, enrollment, revocation and recovery", { skip: !process.env.CG_BROWSER_MODULE }, async (t) => {
@@ -93,13 +95,16 @@ test("real WebAuthn signatures protect named admin login, enrollment, revocation
 
   await t.test("legacy key links to an existing admin by private code without replacing credentials", async () => {
     const before = (await api(admin.page, "/api/auth/me", undefined, "GET")).body;
+    // Leave the dashboard before changing authorization state. The sign-in page keeps the
+    // cookie but has no admin API polling that could trigger a competing reload.
+    await admin.page.goto(`${base}/login.html`);
     await setUser("UOWNER", { name: "Primary operator", isAdmin: true });
     await setUser("USECOND", { name: "Second operator", isAdmin: true });
     await setUser("UMEMBER", { name: "Member", isAdmin: false });
     assert.equal((await api(admin.page, "/api/settings", undefined, "GET")).body.code, "identity_link_required");
     const choices = await api(admin.page, "/api/auth/link/users", undefined, "GET");
     assert.ok(choices.body.users?.some(u => u.id === "UOWNER"), JSON.stringify(choices));
-    await admin.page.reload();
+    await admin.page.goto(`${base}/settings#set-admin-access`);
     await admin.page.locator('[data-access="link-user"]').selectOption("UOWNER");
     await admin.page.locator('[data-access="link-send"]').click();
     await admin.page.locator('[data-access="link-code"]').waitFor({ state: "visible" });
