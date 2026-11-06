@@ -1,5 +1,10 @@
 # Changelog — ChannelGate
 
+- Include the official Make.com `make-cli` in every new runtime image, with per-channel
+  `MAKE_API_KEY` / `MAKE_ZONE` setup and destination-bound API-key protection. Refresh pinned
+  Claude Code, MCP remote, Vercel, Supabase and Playwright CLI versions. Existing deployments
+  adopt the toolchain after rebuilding the image; no host Make login is copied.
+
 - Detect Codex tool-process creation exhaustion after a short recovery window, preserve partial
   usage without automatic replay, and record bounded runtime process/thread-limit diagnostics.
 

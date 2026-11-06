@@ -1,5 +1,25 @@
 # ChannelGate — Test Plan
 
+## Official Make.com CLI in every runtime image (spec 1.6.3)
+
+- Automated: `node --test test/container-image.test.js test/cli-catalog.test.js` verifies the
+  exact Make package pin, build argument, root-owned install before `USER agent`, default setup
+  image build, official environment names, channel HOME credential location, Make-only API-key
+  swap rule, legacy API-token compatibility and unmodified routing-zone classification.
+- Image acceptance (engine-independent, pending until candidate build): build the candidate
+  with `npm run build:image -- --tag <candidate-image>`. As the non-root image user run
+  `make-cli --version` and `bash -lc 'make-cli --version'`; both must match the exact package pin.
+  Resolve the executable and require its package files and global prefix to be root-owned and
+  unwritable by the channel user. Confirm no Make saved login exists in a fresh HOME.
+- Live Claude and Codex (pending): use separate disposable proxy-mode fixture channels, each
+  with its own least-privilege Make `MAKE_API_KEY` and correct `MAKE_ZONE` explicitly Readable,
+  plus an owned team ID. Ask: "Use the installed make-cli to report its version and list scenario
+  IDs/names for team <owned-team-id>; do not change anything or print credentials." Require the
+  pinned executable in both engines, correct account/team result and no exposed key. Confirm
+  Make API requests receive authorized data through the proxy while the API key in the container
+  remains a placeholder. Repeat after image recreate to verify the default CLI remains available.
+  Missing credentials or unavailable Make fixtures are blocked live acceptance, never a pass.
+
 
 ## Monthly channel USD budget management
 

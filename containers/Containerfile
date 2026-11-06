@@ -20,6 +20,7 @@ ARG GID=1000
 ARG CLAUDE_VERSION
 ARG CODEX_VERSION
 ARG MCP_REMOTE_VERSION
+ARG MAKE_CLI_VERSION
 ARG VERCEL_VERSION
 ARG SUPABASE_VERSION
 ARG PLAYWRIGHT_VERSION
@@ -85,6 +86,7 @@ RUN npm install -g --no-fund --no-audit \
       "@anthropic-ai/claude-code@${CLAUDE_VERSION}" \
       "@openai/codex@${CODEX_VERSION}" \
       "mcp-remote@${MCP_REMOTE_VERSION}" \
+      "@makehq/cli@${MAKE_CLI_VERSION}" \
       "vercel@${VERCEL_VERSION}" \
       "supabase@${SUPABASE_VERSION}" \
  && npm cache clean --force

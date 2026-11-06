@@ -616,6 +616,27 @@ and isolated database extractor without granting tunnel privileges to ordinary c
 See [CHANNEL-VPN.md](CHANNEL-VPN.md) for protected profiles, channel Secrets, systemd persistence,
 database-only routing and live acceptance requirements.
 
+**Make.com CLI in every runtime image (spec 1.6.3).** `make-cli` is the official
+[`@makehq/cli`](https://github.com/integromat/make-cli), pinned in
+`containers/versions.json` and installed root-owned by the default image build. New deployments
+receive it with the image; existing deployments rebuild with `npm run build:image` and let the
+normal image-ID lifecycle recreate their containers. This is the Make automation CLI, separate
+from the GNU build tool.
+
+Set `MAKE_API_KEY` in the channel's Secrets and `MAKE_ZONE` to its actual API zone (for example
+`eu2.make.com`). Set the zone's mode to **Readable** when strict secret handling requires an
+explicit configuration grant. Use `make-cli --version`, `make-cli --help` and a read-only command
+such as `make-cli scenarios list --team-id=<owned-team-id>` to verify setup. The upstream CLI
+reads these names, not the older `MAKE_API` or `MAKE_API_TOKEN` names: no automatic credential
+alias or host-account fallback is supplied. The API key's placeholder is swapped only on Make
+hosts; the routing zone must remain a real hostname. Existing `MAKE_API_TOKEN` API integrations
+retain their egress rule.
+
+A deliberate interactive `make-cli login` saves credentials only under that channel's HOME at
+`~/.config/make-cli/config.json`; a host's saved login is never imported. Prefer channel Secrets
+for headless automation so credentials retain their egress protection. Saved login state, like
+other per-channel HOME data, survives a recreate.
+
 **Installing tools in a channel.** An agent can install whatever it needs, and it stays installed —
 everything below writes inside the per-channel HOME volume:
 
