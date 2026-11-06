@@ -118,3 +118,55 @@ test("create_schedule accepts Sunday 7 with a local next fire and listing preser
     deleteSchedule(id, "C_TZ");
   }
 });
+
+test("Sunday creation and both listings agree on a derived next run without changing stored state", async (t) => {
+  t.mock.timers.enable({ apis: ["Date"], now: new Date("2026-11-06T16:00:00Z") });
+  const call = registerTools();
+  const reply = await call("create_schedule", { cron: "0 9 * * 7", prompt: "Sunday listing fixture", notify: "none" });
+  const id = reply.match(/id (\S+?)\)/)[1];
+  try {
+    const stored = getSchedules().find(row => row.id === id);
+    const detail = JSON.parse(await call("list_schedules", { id }));
+    const listed = await call("list_schedules");
+    assert.equal(detail.cron, "0 9 * * 7");
+    assert.equal(detail.nextRun, "2026-11-08T07:00:00.000Z");
+    assert.equal(detail.nextRunLocal, "2026-11-08 09:00 Europe/Bucharest (07:00 UTC)");
+    assert.ok(reply.includes(detail.nextRunLocal));
+    assert.ok(listed.includes(detail.nextRunLocal));
+    assert.deepEqual(getSchedules().find(row => row.id === id), stored, "listing does not persist its derived preview");
+    assert.equal(await registerTools({ channelId: "C_OTHER_TZ" })("list_schedules", { id }), "No schedule in this channel.");
+    assert.equal(await registerTools({ channelId: "C_OTHER_TZ" })("list_schedules"), "No schedules in this channel.");
+    t.mock.timers.setTime(new Date("2026-11-08T07:00:01Z").getTime());
+    const later = JSON.parse(await call("list_schedules", { id }));
+    assert.equal(later.nextRun, "2026-11-15T07:00:00.000Z");
+    assert.ok((await call("list_schedules")).includes(later.nextRunLocal));
+    assert.deepEqual(getSchedules().find(row => row.id === id), stored);
+  } finally { deleteSchedule(id, "C_TZ"); }
+});
+
+test("listing previews respect disabled, one-time, interval and impossible schedules", async (t) => {
+  t.mock.timers.enable({ apis: ["Date"], now: new Date("2026-11-06T16:00:00Z") });
+  const { addSchedule, updateSchedule } = await import("../src/config/schedules.js");
+  const call = registerTools();
+  const rows = [
+    addSchedule({ channelId: "C_TZ", cron: "0 9 * * 7", prompt: "disabled" }),
+    addSchedule({ channelId: "C_TZ", once: true, runAt: "2026-11-06T17:00:00Z", prompt: "once" }),
+    addSchedule({ channelId: "C_TZ", intervalDays: 2, runAt: "2026-11-08T16:00:00Z", prompt: "interval" }),
+    addSchedule({ channelId: "C_TZ", cron: "0 0 30 2 *", prompt: "impossible" }),
+    addSchedule({ channelId: "C_TZ", once: true, runAt: "invalid", prompt: "invalid" }),
+    addSchedule({ channelId: "C_TZ", once: true, runAt: "2026-11-06T15:00:00Z", prompt: "overdue" }),
+  ];
+  try {
+    updateSchedule(rows[0].id, { enabled: false });
+    const expected = [null, "2026-11-06T17:00:00.000Z", "2026-11-08T16:00:00.000Z", null, null, "2026-11-06T15:00:00.000Z"];
+    for (const [i, row] of rows.entries()) {
+      const before = getSchedules().find(s => s.id === row.id);
+      const detail = JSON.parse(await call("list_schedules", { id: row.id }));
+      assert.equal(detail.nextRun, expected[i]);
+      assert.equal(detail.nextRunLocal, expected[i] ? zonedStamp(new Date(expected[i])) : null);
+      const line = (await call("list_schedules")).split("\n").find(s => s.includes(row.id));
+      assert.ok(line.includes(expected[i] ? detail.nextRunLocal : "next run unavailable"));
+      assert.deepEqual(getSchedules().find(s => s.id === row.id), before);
+    }
+  } finally { for (const row of rows) deleteSchedule(row.id, "C_TZ"); }
+});

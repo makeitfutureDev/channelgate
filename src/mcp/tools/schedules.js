@@ -24,6 +24,17 @@ export function zoneHint() {
   return ` (Times are the gateway's local zone, ${tz} — say the zone when you tell the user, and don't convert it.)`;
 }
 
+// A read-time preview, never a new persisted scheduling field. Cron uses the same daemon
+// clock/helper as creation; one-time/interval rows retain their stored due time, even if overdue.
+// This describes nominal eligibility, not a guarantee of immediate delivery or engine admission.
+function scheduleNextRun(schedule, now) {
+  if (!schedule.enabled) return null;
+  const next = schedule.once || schedule.intervalDays
+    ? new Date(schedule.runAt)
+    : nextCronRun(schedule.cron, now);
+  return next && Number.isFinite(next.getTime()) ? next : null;
+}
+
 export function register(server, ctx) {
   const { channelId, slug, createdBy, text } = ctx;
 
@@ -158,19 +169,26 @@ export function register(server, ctx) {
 
   server.registerTool(
     "list_schedules",
-    { description: "List the scheduled tasks in this channel. Pass id to read one task's complete prompt and configuration before updating it.", inputSchema: { id: z.string().optional() } },
+    { description: "List the scheduled tasks in this channel, with read-time next-run previews in the gateway timezone. Pass id to read one task's complete prompt and configuration before updating it; nextRun (UTC ISO) and nextRunLocal are derived, not stored. Disabled or unresolvable schedules have null previews; one-time/interval previews retain the stored due time, including overdue times. A preview is not a delivery guarantee.", inputSchema: { id: z.string().optional() } },
     async ({ id } = {}) => {
       const list = listForChannel(channelId);
+      const now = new Date();
       if (id) {
         const schedule = list.find((s) => s.id === id);
         if (!schedule) return text("No schedule in this channel.");
         const keys = ["id", "prompt", "description", "createdBy", "kind", "cron", "runAt", "once", "intervalDays", "enabled", "notify", "notifyUserId", "delivery", "deliveryThread", "executionVisibility", "resultPolicy", "failureNotify", "matchPrefix", "loop", "sudo"];
-        return text(JSON.stringify(Object.fromEntries(keys.map((key) => [key, schedule[key]]))));
+        const next = scheduleNextRun(schedule, now);
+        return text(JSON.stringify({ ...Object.fromEntries(keys.map((key) => [key, schedule[key]])),
+          nextRun: next?.toISOString() ?? null, nextRunLocal: next ? zonedStamp(next) : null }));
       }
       if (!list.length) return text("No schedules in this channel.");
       return text(
         list
-          .map((s) => `• ${s.id} [${s.enabled ? "on" : "off"}]${s.sudo ? " [sudo · gateway host]" : ""} ${s.intervalDays ? `every ${s.intervalDays} days · next ${zonedStamp(new Date(s.runAt))}` : `cron \`${s.cron}\``} — ${s.description || s.prompt} (${s.executionVisibility || "visible"}; ${s.resultPolicy || "always"}; last ${s.lastStatus || "not run"}; ${s.delivery === "dm-on-match" ? `DM creator only on ${JSON.stringify(s.matchPrefix)}` : `notifies ${s.notify === "user" ? `<@${s.notifyUserId}>` : s.notify || "channel"}${s.delivery === "daily-thread" ? ", one thread/day" : s.delivery === "channel" ? ", direct in channel" : ""}`})`)
+          .map((s) => {
+            const next = scheduleNextRun(s, now);
+            const cadence = s.intervalDays ? `every ${s.intervalDays} days` : s.once ? "one-time" : `cron \`${s.cron}\``;
+            return `• ${s.id} [${s.enabled ? "on" : "off"}]${s.sudo ? " [sudo · gateway host]" : ""} ${cadence} · next run ${next ? zonedStamp(next) : "unavailable"} — ${s.description || s.prompt} (${s.executionVisibility || "visible"}; ${s.resultPolicy || "always"}; last ${s.lastStatus || "not run"}; ${s.delivery === "dm-on-match" ? `DM creator only on ${JSON.stringify(s.matchPrefix)}` : `notifies ${s.notify === "user" ? `<@${s.notifyUserId}>` : s.notify || "channel"}${s.delivery === "daily-thread" ? ", one thread/day" : s.delivery === "channel" ? ", direct in channel" : ""}`})`;
+          })
           .join("\n") + (zoneHint() ? `\n${zoneHint().trim()}` : "")
       );
     }

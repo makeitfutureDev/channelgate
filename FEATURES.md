@@ -69,6 +69,9 @@ under **Enterprise organization controls** in `TEST-PLAN.md`.
   Editable names, message text and run-API attribution cannot establish an email identity.
 - Unchecking Approved in the admin user editor records a manual opt-out from auto-approval;
   checking it clears that opt-out. Removing domains/disabling the policy retains prior approvals.
+- Every policy API request to enable auto-approval requires Enterprise, including a policy
+  already saved as enabled before downgrade. Rejected requests change neither domains nor audit
+  history; disabling the policy and manually approving users remain available.
 - Existing known Slack users can be previewed and explicitly approved, with fresh identity,
   current policy and manual opt-out checks on apply. Up to 500 users per batch; lookup failures
   are reported and grant nothing. Policy changes and automatic approvals are audited.
@@ -2585,6 +2588,11 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
   interrupted rows remain recoverable on boot. → TEST-PLAN: Automation.
 - Recurring cron weekday fields accept both `0` and `7` for Sunday, including lists, ranges and
   steps. Steps apply before Sunday normalization; matching and next-run previews agree.
+- Both `list_schedules` forms show the next nominal due time in the gateway timezone. Detail
+  responses add derived `nextRun` (UTC ISO) and `nextRunLocal` (zone-labelled display) fields;
+  cron previews are recalculated at read time without rewriting the stored expression or state.
+  Disabled or unresolvable schedules have null previews. One-time and interval schedules use
+  their saved due time, including overdue times; previews do not guarantee delivery or admission.
 - One-time ("run at") schedules: `create_schedule` accepts `in_minutes`/`run_at` to fire once and
   auto-delete (e.g. "remind this channel in 2h") alongside recurring cron; recurring crons are held
   to a minimum interval (default 60 min) with per-channel + concurrency caps.
