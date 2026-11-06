@@ -2,6 +2,9 @@
 
 ## 0.6.5 — candidate, pending approval
 
+- Show readable, redacted provider errors when a background job's automatic follow-up fails,
+  preserving diagnostic audit detail and protection against replaying interrupted work.
+
 Prepared 2026-11-06 from integrated beta development. This is not a publication date.
 Requires Node.js 24.0.0 or newer and runtime image spec 1.6.3. See
 [the candidate record](docs/releases/0.6.5.md) for scope, excluded unfinished work and
