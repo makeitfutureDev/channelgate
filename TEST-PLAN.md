@@ -1,5 +1,17 @@
 # ChannelGate — Test Plan
 
+## Network tool description and direct-host policy
+
+Run `node --test test/channel-policy-audit.test.js test/network-policy.test.js
+test/runtime-access-facts.test.js`. The registered `set_channel_network` description must distinguish
+ordinary proxy-mode enforcement from advisory legacy bridge/raw sockets and `/sudo` direct-host
+execution with no OS-level egress cutoff. Preserve public internet without a domain allowlist,
+OFF access to engine endpoints and selected connectors, proxy denial of private/loopback/metadata
+addresses, and no grant of host credentials or mounts. The schema regression does not exercise
+or change network enforcement. Live MCP-DESCRIPTIONS-01 acceptance remains separate for Claude
+and Codex: inspect the actual delivered tool description and resolved runtime facts without
+changing the fixture's network setting or entering `/sudo`.
+
 ## Documentation favicon
 
 Run `cd documentation && npm run build && npm test`. The output validator requires the

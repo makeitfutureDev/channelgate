@@ -214,10 +214,12 @@ export function register(server, ctx) {
     "set_channel_network",
     {
       description:
-        "ADMIN ONLY. Set this channel's allowed network policy. On permits internet use (any public host, " +
+        "ADMIN ONLY. Set this channel's allowed network policy. For ordinary proxy-mode containers, " +
+        "on permits internet use (any public host, " +
         "no domain allowlist); off limits the channel to the engine endpoints and its selected connectors. " +
-        "Enforced by the gateway's egress proxy (the container has no network of its own) unless the gateway " +
-        "runs the legacy open-bridge egress mode or this channel was given raw sockets — then it is advisory. " +
+        "The gateway's egress proxy enforces this policy; the container has no network of its own. " +
+        "Legacy open-bridge egress or raw sockets make the policy advisory. In /sudo direct-host threads " +
+        "it is advisory, with no OS-level egress cutoff. " +
         "Private, loopback and cloud-metadata addresses are never reachable through the proxy. It grants no " +
         "host credential files or mounts. Takes effect on the next request.",
       inputSchema: { enabled: z.boolean() },
