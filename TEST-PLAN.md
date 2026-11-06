@@ -5,7 +5,8 @@
 `node --test test/background-continuation-errors.test.js test/process-outcome.test.js`
 executes BackgroundJobs through runMessage and the real Claude/Codex parsers, with a spawned
 fixture CLI emitting each engine's nested provider-error event. Assert readable notices without
-JSON, secret redaction in notices and audit, preserved provider facts and diagnostic codes,
+JSON, secret redaction in notices and audit, no partial secret at the 400-character boundary,
+redaction after JSON escape decoding, preserved provider facts and diagnostic codes,
 released runtime leases, and no second spawn when delivery resumes after the failed continuation.
 The runtime backend and Slack delivery boundary are fixtures, not live provider/client acceptance.
 Private REL-RUNTIME-07 remains the per-engine acceptance gate: reproduce the nested provider

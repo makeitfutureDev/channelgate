@@ -907,8 +907,11 @@ export class BackgroundJobs {
       // Boot recovery redelivers it (up to MAX_DELIVERY_ATTEMPTS).
       const failure = redactSecretValues(err.message, outputSecrets);
       await logEvent("bg_continue_error", { id: rec.id, error: failure });
-      // Keep diagnostic detail in the audit, but show a bounded sentence at the chat boundary.
-      const noticeFailure = redactSecretValues(plainFailureText(err.message) || "The continuation failed.", outputSecrets);
+      // Decode before the final redaction, and redact before bounding: truncation must never
+      // leave a partial secret that the full-value redactor can no longer recognize.
+      const noticeFailure = redactSecretValues(
+        plainFailureText(failure, Number.MAX_SAFE_INTEGER) || "The continuation failed.", outputSecrets,
+      ).slice(0, 400);
       try {
         await postNotice(client, { conversationId: rec.channelId, threadKey: rec.threadKey, text: `⚠️ ${what} *${rec.label}* ${status}, but I couldn't continue: ${noticeFailure}` });
       } catch {
