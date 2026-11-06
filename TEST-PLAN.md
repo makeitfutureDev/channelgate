@@ -862,6 +862,12 @@ inbox). Record the address and the servers; never the password.
 
 ## Channel agent directory (2026-10-21)
 
+- [x] DST rearm regression (2026-11-06): `test/agent-directory-refresh.test.js` runs in an
+  explicit `Europe/Bucharest` subprocess. Ordinary dates retain 03:00, the missing spring 03:00
+  normalizes to 04:00, the following day returns to 03:00 without drift, and the repeated autumn
+  hour produces only one refresh per local day. Disposable lifecycle acceptance also observes
+  the actual timer rearm across the spring gap; this does not claim a deployed overnight run.
+
 - [x] Production boot integration: `test/agent-directory-slack-boot.test.js` uses the real Slack
   manager and `createPlatformTransports({ slack })` with a scratch store and simulated provider.
   Search uses its default verifier (no directory/connector override), returns the current channel

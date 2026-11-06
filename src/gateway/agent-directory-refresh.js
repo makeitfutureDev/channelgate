@@ -122,7 +122,11 @@ export async function verifyDirectoryChannel({ entry, createdBy, channelId }, de
 export function nextAgentDirectoryRefreshDelay(at = Date.now()) {
   const next = new Date(at);
   next.setHours(3, 0, 0, 0);
-  if (next.getTime() <= at) next.setDate(next.getDate() + 1);
+  if (next.getTime() <= at) {
+    next.setDate(next.getDate() + 1);
+    // A missing 03:00 can normalize to 04:00; restore the intended hour on the next date.
+    next.setHours(3, 0, 0, 0);
+  }
   return next.getTime() - at;
 }
 

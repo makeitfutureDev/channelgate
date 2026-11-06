@@ -9,6 +9,9 @@ release gates. Stable promotion and publication require approval of the exact te
 
 ### Beta development notes
 
+- Restore the agent directory refresh to 03:00 local time after a spring-forward clock change
+  instead of retaining the transition day’s normalized 04:00 hour.
+
 - Clarify that the network tool's policy is advisory in `/sudo` direct-host threads, with no
   OS-level egress cutoff. Ordinary proxy-mode container enforcement is unchanged.
 
