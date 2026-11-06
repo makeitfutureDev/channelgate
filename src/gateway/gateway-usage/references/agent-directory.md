@@ -34,12 +34,16 @@ Do not copy a directory into a shared skill, organization reference, memory topi
 artifact: the next reader may have a different audience. Re-query for each task. Recommending a
 channel does not authorize posting there, delegating, granting access, inviting people/the bot,
 or transferring the user's messages or files. Those actions require their own authorization.
+The one sanctioned way to ASK that agent something is `send_agent_message`
+(`references/agent-mail.md`): the same access proof, re-checked live, plus the target's
+`acceptsMessages` switch and the requester's own approval click.
 
 ## Describe this channel's agent
 
 Managers/admins can call `set_channel_agent_profile` with `description` (up to 600 characters),
-`examples` (up to six task examples, 160 characters each), and/or `hidden` (boolean). Only THIS
-channel changes. Omitted fields stay unchanged; an empty description/examples clears that field.
+`examples` (up to six task examples, 160 characters each), `hidden` (boolean), and/or
+`acceptsMessages` (boolean, off by default: may other channels' agents send this agent messages —
+`references/agent-mail.md`). Only THIS channel changes. Omitted fields stay unchanged; an empty description/examples clears that field.
 Announce the saved change. Hiding an agent removes it from discovery without removing the channel.
 The profile never widens access. Without a curated description, Slack purpose/topic supplies it.
 

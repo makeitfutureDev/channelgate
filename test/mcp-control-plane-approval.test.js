@@ -572,6 +572,7 @@ test("every registered gateway tool is consciously classified as gated or open (
     "set_license_key", "clear_license_key", // gateway-wide licensing state (src/ee/)
     // SSH grants for OTHER people retain the manager approval; own changes return null details.
     "grant_channel_ssh", "revoke_channel_ssh", "set_channel_agent_profile",
+    "send_agent_message", // lands in another channel on the requester's behalf: the requester confirms the exact text
     // skills platform: the ORGANIZATION tier (admin decisions, org grants, sources, governance,
     // moving a skill in or out of the shared library) and Git publishing keep their card
     "decide_skill_proposal", "sync_skill_sources",

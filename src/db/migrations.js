@@ -1167,4 +1167,33 @@ export const migrations = [
       db.exec("ALTER TABLE skills ADD COLUMN pin_reason TEXT NOT NULL DEFAULT 'manual'");
     },
   },
+  {
+    // Channel-to-channel agent mail (src/gateway/agent-mail.js): one row per message a channel's
+    // agent sent to another channel's agent, from the send until its reply landed back in the
+    // asking thread. Durable so a daemon restart can tell both threads what happened instead of
+    // losing the exchange. `data` carries the message, the reply and the delivery facts; the typed
+    // columns are what the guards (in-flight per pair, per-hour counts) and the audit queries read.
+    version: 43,
+    up(db) {
+      db.exec(`
+        CREATE TABLE agent_messages (
+          id TEXT PRIMARY KEY,
+          from_channel_id TEXT NOT NULL,
+          from_slug TEXT NOT NULL,
+          from_thread_key TEXT NOT NULL,
+          requested_by TEXT NOT NULL,
+          to_channel_id TEXT NOT NULL,
+          to_slug TEXT NOT NULL,
+          to_thread_key TEXT NOT NULL DEFAULT '',
+          status TEXT NOT NULL,
+          created_ms INTEGER NOT NULL,
+          updated_ms INTEGER NOT NULL,
+          data TEXT NOT NULL DEFAULT '{}'
+        );
+        CREATE INDEX idx_agent_messages_pair ON agent_messages(from_thread_key, to_channel_id, created_ms);
+        CREATE INDEX idx_agent_messages_source ON agent_messages(from_channel_id, created_ms);
+        CREATE INDEX idx_agent_messages_status ON agent_messages(status);
+      `);
+    },
+  },
 ];

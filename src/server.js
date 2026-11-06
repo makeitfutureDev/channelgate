@@ -25,6 +25,7 @@ import { syncWorkspaceSkills } from "./gateway/skills/workspace-sync.js";
 import { createPlatformTransports, connectConfiguredPlatforms } from "./platforms/boot.js";
 import { startScheduler } from "./gateway/scheduler.js";
 import { searchAgentDirectory } from "./gateway/agent-directory.js";
+import { AgentMail, AgentMailError } from "./gateway/agent-mail.js";
 import { startAgentDirectoryRefresh } from "./gateway/agent-directory-refresh.js";
 import { handleCodeChannelIpc } from "./slack/code-channel-kickoff.js";
 import { requestSkillSwap } from "./gateway/skill-runtime.js";
@@ -370,16 +371,28 @@ async function main() {
       await postNotice(slack.getClient?.(), { conversationId: channelId, threadKey, text });
     },
   });
+  // Channel-to-channel agent mail: the daemon owns the gate, the target thread, the turn and the
+  // reply's return trip (gateway/agent-mail.js). A refusal is an answer, not an exception.
+  const agentMail = new AgentMail({ slack });
+  const sendAgentMail = async (body) => {
+    try {
+      return { ok: true, ...(await agentMail.send(body)) };
+    } catch (error) {
+      if (error instanceof AgentMailError) return { ok: false, code: error.code, error: error.message };
+      throw error;
+    }
+  };
   Object.assign(daemonHandlers, {
     background: (body) => backgroundJobs.start(body),
     approval: (body) => requestApproval(slack, body),
     restart: (body) => restartCoordinator.request(body),
     drivesync: (body) => handleDriveSyncIpc(body),
     "agent-directory": (body) => searchAgentDirectory(body),
+    "agent-mail": sendAgentMail,
     "code-channel": (body) => handleCodeChannelIpc(body, { slack }),
     "skill-swap": (body) => requestSkillSwap(body),
   });
-  const app = createWebApp({ slack, transports, backgroundJobs, restartCoordinator, containerRuntimeStatus: containerRuntimeHealth });
+  const app = createWebApp({ slack, transports, backgroundJobs, restartCoordinator, containerRuntimeStatus: containerRuntimeHealth, sendAgentMail });
   const server = app.listen(PORT, HOST);
   await new Promise((resolve, reject) => {
     server.once("listening", resolve);
@@ -421,6 +434,9 @@ async function main() {
   // Recover background jobs that were in-flight when the daemon last stopped: re-attach to ones
   // still running, or post an "interrupted by restart" continuation for ones that already exited.
   await backgroundJobs.recover().catch((e) => console.error("[gateway] bg recover failed:", e?.message || e));
+  await agentMail.recover().then((r) => {
+    if (r.interrupted || r.redelivered) console.log(`[gateway] agent mail recovery: ${r.interrupted} interrupted, ${r.redelivered} replies redelivered`);
+  }).catch((e) => console.error("[gateway] agent mail recover failed:", e?.message || e));
 
   // Auto re-run interactive Slack turns that were interrupted mid-flight by the restart — resumes
   // the same thread/session and posts the answer. Runs after Slack is connected so it can post.

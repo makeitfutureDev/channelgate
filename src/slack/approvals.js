@@ -9,7 +9,7 @@ import { randomUUID } from "node:crypto";
 import { logEvent } from "../util/logger.js";
 import { getChannelMeta, patchChannelMeta, isAdmin, isAdminPrincipal, isApproved } from "../config/store.js";
 import { effectiveMeta } from "../gateway/run.js";
-import { canManage, isApiPrincipal, isAuthorized } from "../gateway/modes.js";
+import { canManage, isApiPrincipal, isAgentPrincipal, agentPrincipalSlug, isAuthorized } from "../gateway/modes.js";
 import { CONTROL_PLANE_ACTION, splitControlPlaneSecrets, stashControlPlaneSecrets } from "../gateway/control-plane-approvals.js";
 import { toolTarget } from "../engines/stream.js";
 import {
@@ -119,8 +119,12 @@ import { isSlackTs, slackThreadFor } from "./thread-keys.js";
 
 // Who a card credits with the request. The HTTP run API principal is not a Slack user, so a raw
 // `<@api>` would render as broken markup; name the API instead.
+// A delivered agent message's turn (gateway/agent-mail.js) is another channel's agent — also no
+// Slack user; name the channel it came from.
 function requesterLabel(authorId) {
-  return isApiPrincipal(authorId) ? "An HTTP API run" : `<@${authorId}>`;
+  if (isApiPrincipal(authorId)) return "An HTTP API run";
+  if (isAgentPrincipal(authorId)) return `The agent from #${agentPrincipalSlug(authorId)}`;
+  return `<@${authorId}>`;
 }
 
 // The authority a card needs, stated ON the card: a member who could only ever Deny must learn
@@ -149,7 +153,7 @@ function approvalBlocks(id, toolName, target, authorId, { approvalType = "permis
     ];
   }
   return [
-    { type: "section", text: { type: "mrkdwn", text: `🔒 *Permission needed* — \`${toolName}\`${preview}\n${isApiPrincipal(authorId) ? "An HTTP API run" : `<@${authorId}>'s request`} wants to do this. Approve?` } },
+    { type: "section", text: { type: "mrkdwn", text: `🔒 *Permission needed* — \`${toolName}\`${preview}\n${isApiPrincipal(authorId) || isAgentPrincipal(authorId) ? requesterLabel(authorId) : `<@${authorId}>'s request`} wants to do this. Approve?` } },
     {
       type: "actions",
       elements: [
@@ -227,7 +231,7 @@ async function deliverApprovalLinks(client, entry, { id, threadKey, durable = fa
   if (client?.approvalDelivery?.supportsPrivateLinks === false) return [];
   // A link is minted FOR a person and decides as them; the HTTP run API principal is no person to
   // deliver one to (and could never pass canResolveApproval as a requester). Its card's buttons stay.
-  if (isApiPrincipal(entry.authorId)) return [];
+  if (isApiPrincipal(entry.authorId) || isAgentPrincipal(entry.authorId)) return [];
   try {
     const baseUrl = approvalLinkBase({ capabilities: client?.approvalDelivery?.capabilities || slackAdapter.capabilities, requester: entry.authorId });
     if (!baseUrl || !client) return [];

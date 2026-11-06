@@ -681,7 +681,7 @@ export async function runMessage(args) {
   } finally { release?.(); }
 }
 
-async function runMessageImpl({ channelId, authorId, workspaceId = "", text, threadKey, admissionThreadKey = threadKey, attachments = [], signal = null, onDelta, onEvent, onRuntimeResolved, onForkSessionResolved, sessionId: presetSessionId = "", forkSourceSessionId = "", overrides = null, getFallbackContext = null, preferCold = false, progressReport = false, untrustedPrincipal = false, origin = "", fallbackPolicy = "", sudoSourceThreadKey = "", sudoScheduleId = "", questionThreadKey, scheduledQuestion = null }) {
+async function runMessageImpl({ channelId, authorId, workspaceId = "", text, threadKey, admissionThreadKey = threadKey, attachments = [], signal = null, onDelta, onEvent, onRuntimeResolved, onForkSessionResolved, sessionId: presetSessionId = "", forkSourceSessionId = "", overrides = null, getFallbackContext = null, preferCold = false, progressReport = false, untrustedPrincipal = false, origin = "", fallbackPolicy = "", sudoSourceThreadKey = "", sudoScheduleId = "", questionThreadKey, scheduledQuestion = null, toolset = "" }) {
   // Fail closed before anything else: a run with no declared origin is a programming error, not a
   // default-to-interactive.
   if (!RUN_ORIGINS.includes(origin)) throw new Error(`runMessage requires a valid origin (got ${JSON.stringify(origin)}); one of: ${RUN_ORIGINS.join(", ")}`);
@@ -1223,6 +1223,9 @@ async function runMessageImpl({ channelId, authorId, workspaceId = "", text, thr
     progressReport: progressReportEnabled,
     principalTrusted: !untrustedPrincipal,
     gatewayFsRoot, gatewayWorkspaceRoot,
+    // A caller-chosen REDUCED gateway tool surface (gateway-server.js toolsets); blank is "full".
+    // Signed into the capability, so a run can never widen it from its own environment.
+    toolset,
   };
   // Minted LAZILY — after the run slot is admitted, never here. The gateway capability is a signed
   // grant with a six-hour TTL, and the queue ahead of this turn is unbounded: a turn parked behind
@@ -2191,7 +2194,7 @@ async function runMessageImpl({ channelId, authorId, workspaceId = "", text, thr
         skill: swap.slug, fromModel, toModel: swap.model, toolUseCount: Number(result.toolUseCount) || 0,
       });
       try {
-        const taskKind = origin === "schedule" ? "scheduled" : origin === "background_agent" ? "background-agent" : "interactive";
+        const taskKind = origin === "schedule" ? "scheduled" : origin === "background_agent" ? "background-agent" : origin === "agent_message" ? "agent-message" : "interactive";
         await recordUsage({ channelId, slug: entry.slug, authorId, engine, model: fromModel, taskKind, result: { ...result, engine, model: fromModel } });
       } catch { /* accounting must never block the swap */ }
       if (mintsOwnSessionId(engine) && result.sessionId && result.sessionId !== sid) {
@@ -2380,7 +2383,7 @@ async function runMessageImpl({ channelId, authorId, workspaceId = "", text, thr
       const details = error.details;
       const failedEngine = details.engine || engine;
       const failedResult = details.result || { usage: details.usage, costUSD: details.costUSD, durationMs: details.durationMs, engine: failedEngine };
-      const taskKind = origin === "schedule" ? "scheduled" : origin === "background_agent" ? "background-agent" : "interactive";
+      const taskKind = origin === "schedule" ? "scheduled" : origin === "background_agent" ? "background-agent" : origin === "agent_message" ? "agent-message" : "interactive";
       await recordUsage({ channelId, slug: entry.slug, authorId, engine: failedEngine, model: failedResult.model || (failedEngine === engine ? model : getDefaultModel(failedEngine)), taskKind, result: failedResult });
       details.usageRecorded = true;
     }

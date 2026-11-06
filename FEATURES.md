@@ -423,6 +423,34 @@ Slack’s native running/Stop label shows the resolved model and explicitly conf
   A one-to-one bot DM uses its requester's access. Admin status never substitutes for membership.
   Slack supplies the membership interface; unsupported/disconnected platforms fail closed.
 
+## Channel-to-channel agent mail
+
+- `send_agent_message` lets one channel's agent ask another channel's agent a question on the
+  requesting person's behalf (`src/gateway/agent-mail.js`). Calling it posts a durable
+  control-plane card in the asking thread; the requester (or an admin) confirms the exact text, in
+  Auto mode too. On the click the daemon opens a new thread in the target channel quoting the
+  message with the source channel and requester named, runs the target's agent on it as a normal
+  turn in its own container, folder, mode, memory and secrets, posts the reply there, and brings
+  the reply back into the asking thread as a new continuation turn of the origin session.
+- A message may only go where the requester could post themselves: authorized on the target under
+  the gateway's access rules AND a live member of it (admins do not skip membership), with every
+  member of the source conversation also belonging to the target because the reply lands there.
+  The gate is the agent directory's verifier, re-run when the tool is called, right before the
+  target turn spawns, and before the reply is re-injected; a lapsed check withholds the reply and
+  says so. DMs cannot send; hidden, disabled, archived and Lean channels cannot receive; the target
+  manager must switch `acceptsMessages` on via `set_channel_agent_profile` (off by default).
+- Reachability is never authority. The delivered turn runs as the fixed `agent:<source slug>`
+  principal: no personal Composio/secret/skill scope, no admin or manager rank, never the API
+  principal's standing, the reduced `agent-message` toolset (workspace reads, channel memory, this
+  channel's Slack tools, permission cards) and no further `send_agent_message`, `search_agents`,
+  background work, schedules, questions or admin switches. API runs and delivered agent turns
+  cannot send. Permission cards name "The agent from #<source>" and mint no personal links.
+- Guards: one message in flight per asking thread and target channel, at most 3 per pair per hour
+  and 20 per source channel per hour, text only (≤ 8000 characters) with Slack control sequences
+  defanged in the quoted message, a 30-minute ceiling on the target turn, redaction at both ends,
+  `agent_messages` rows (migration 43) and `agent_message_*` audit events. A gateway restart fails
+  interrupted exchanges closed in both threads (never re-runs them) and redelivers answered ones.
+
 ## Composio connection visibility
 
 - Slack Settings → **You** shows the viewer's personal connected Composio applications and
