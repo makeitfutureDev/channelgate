@@ -4692,6 +4692,7 @@ are retired, bullet by bullet; everything else stands.
   from the server-filtered table so conversation access editors never inherit a search subset;
   out-of-order responses are ignored and filtering out the selected row closes its drawer.
   Skills counts match saved personal grants, including unavailable saved skills, and refresh after Save.
+  Personal email and secret checkboxes retain their natural width so their labels fit the drawer.
   → TEST-PLAN: Admin UI (redesign).
 - Channel **Instructions** sub-tab: edit the channel's `CLAUDE.md` from the admin UI. Stored as a
   per-channel instruction override (`meta.instructions`) that the folder provisioner regenerates
