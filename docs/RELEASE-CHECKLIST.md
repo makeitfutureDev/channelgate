@@ -1,4 +1,4 @@
-> **0.7.0 candidate preparation (2026-11-06):** see [the candidate record](releases/0.7.0.md).
+> **0.6.5 candidate preparation (2026-11-06):** see [the candidate record](releases/0.6.5.md).
 > Stable promotion is pending exact-candidate automated and live acceptance evidence and
 > organization-admin approval. Historical approvals and deferrals below do not authorize this
 > candidate. No release tag or publication is authorized by preparation alone.

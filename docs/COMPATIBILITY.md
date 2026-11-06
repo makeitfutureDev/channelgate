@@ -1,6 +1,6 @@
 # Compatibility matrix
 
-Next release: **0.7.0**, prepared from `beta`. Stable promotion awaits full testing and
+Next release: **0.6.5**, prepared from `beta`. Stable promotion awaits full testing and
 explicit organization-admin approval of the exact candidate.
 The component matrix below describes this candidate.
 

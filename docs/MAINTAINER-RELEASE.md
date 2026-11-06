@@ -5,6 +5,12 @@ Use [RELEASE-CHECKLIST.md](RELEASE-CHECKLIST.md) for mandatory gates and
 and evidence; maintainers own production access, private acceptance fixtures and release signing.
 Keep private account aliases and test-channel identifiers in deployment-owned records.
 
+## Release version selection
+
+Keep releases on **0.6.x**. Advance to **0.7** only when the project owner explicitly requests
+that minor-version change; feature scope alone does not authorize it. The current candidate is
+**0.6.5**.
+
 ## Candidate evidence
 
 The release workflow accepts only the package version's exact tag on main. It checks the lockfile,
