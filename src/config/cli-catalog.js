@@ -53,14 +53,16 @@ export const CLI_INTEGRATIONS = {
   },
   make: {
     label: "Make.com",
-    bins: [], // API-only — no local CLI to detect
-    desc: "Make.com API calls (scenarios, blueprints) — token comes from env/config, not a home file",
+    bins: ["make-cli"],
+    desc: "Official Make.com CLI (scenarios, executions, blueprints); authenticate with per-channel environment variables",
     domains: ["make.com", "*.make.com"],
-    envKeys: ["MAKE_API_TOKEN"],
+    envKeys: ["MAKE_API_KEY", "MAKE_ZONE"],
     // Make sends `Authorization: Token <key>` (the proxy's "bearer" position: any scheme word, and
     // only the placeholder is replaced, so the prefix survives) or the bare key in x-api-key (raw).
+    // MAKE_ZONE is routing configuration, never a credential placeholder. Keep legacy API token
+    // rules for existing integrations; the official CLI reads MAKE_API_KEY, not MAKE_API_TOKEN.
     swap: { names: ["MAKE_API_TOKEN", /^MAKE_API_(TOKEN|KEY)[A-Z0-9_]*$/], hosts: ["*.make.com", "make.com"], headers: ["authorization", "x-api-key"], format: ["bearer", "raw"] },
-    credentialHomePaths: [],
+    credentialHomePaths: [".config/make-cli"],
   },
 };
 

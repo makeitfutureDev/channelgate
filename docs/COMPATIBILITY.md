@@ -27,7 +27,7 @@ definitions are in `TEST-PLAN.md` and `docs/RELEASE-ACCEPTANCE.md`.
 | Component | Supported | Release gate |
 | --- | --- | --- |
 | Operating system | Linux (systemd) with rootless Podman; Ubuntu 24.04 tested | CI on Ubuntu |
-| Node.js | 22.13 minimum; 24 LTS. SQLite FTS5 (channel-memory search index) is present from the later 22.x builds and 24; on a build without it the daemon boots and memory search uses a plain scan | Full matrix CI |
+| Node.js | 24.0.0 minimum; current Node 24 LTS recommended for host and container. The exact minimum and latest 24.x run in CI. The optional SQLite FTS5 index still degrades to a plain scan if absent | Full matrix CI |
 | Claude Code | Pinned nightly target `2.1.306` (official installer) | Real CLI surface + stub transport |
 | Codex CLI | Pinned nightly target `0.162.1`. The container login relay relies on three behaviors verified on 0.156.1 (2026-09-26 spike, `TEST-PLAN.md` P4): a turn runs on an `auth.json` with an access token and an empty refresh token; a valid access token is not refreshed because of `last_refresh` age; `login status` and a turn accept a JWT whose signature segment is a placeholder. `codex exec` needs a closed stdin. Re-run the spike on a Codex bump | Real CLI surface + stub transport; the relay spike before promotion |
 | SQLite | Built-in `node:sqlite` | Migrations + backup/restore quick-check |

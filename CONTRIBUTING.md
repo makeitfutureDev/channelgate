@@ -11,8 +11,8 @@ trailer on each commit *is* that acceptance (CLA Section 7). Participation is go
 
 ## Set up
 
-Requirements: Node **>= 22.13** (the floor is exact — `node:sqlite` is stable from 22.13 and the
-daemon refuses to boot below it), Git, and Linux — the daemon refuses to boot anywhere else.
+Requirements: Node **>= 24.0.0** (use the current Node 24 LTS release; `nvm use` reads
+the repository's `.nvmrc`), Git, Linux, and the container runtime described in [INSTALL.md](./INSTALL.md).
 
 ```bash
 git clone <your fork> && cd <checkout>
@@ -66,7 +66,7 @@ Tests must leave no scratch directories behind. Create temp directories with `te
 exit-handler cleanup, and `npm test` also runs `scripts/test-scratch-sweep.mjs` first to sweep
 anything a crashed run left in the system temp dir.
 
-Every one of these must pass before you open a pull request. CI runs the suite on Node 22.13 and 24
+Every one of these must pass before you open a pull request. CI runs the suite on the exact Node 24.0.0 minimum and current Node 24
 on ubuntu-latest.
 
 ## Branches and review

@@ -34,7 +34,7 @@ test("search rebuilds the derived index so hand-edited Markdown is immediately c
 });
 
 test("without FTS5 in the engine, the database still opens and search answers the same shape from a plain scan", async (t) => {
-  // Node 22.13 — the documented floor — ships a SQLite without FTS5. Simulate that engine by
+  // Older Node 22.13 builds shipped a SQLite without FTS5. Simulate that engine by
   // dropping the derived table: the migration is written to skip it, and the scan must carry
   // the same AND semantics, diacritic folding and bracketed excerpts as the indexed path.
   const { getDb } = await import("../src/db/index.js");

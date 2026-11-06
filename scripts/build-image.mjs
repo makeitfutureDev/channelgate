@@ -199,6 +199,7 @@ function main() {
     "--build-arg", `CLAUDE_VERSION=${npmPins["@anthropic-ai/claude-code"]}`,
     "--build-arg", `CODEX_VERSION=${npmPins["@openai/codex"]}`,
     "--build-arg", `MCP_REMOTE_VERSION=${npmPins["mcp-remote"]}`,
+    "--build-arg", `MAKE_CLI_VERSION=${npmPins["@makehq/cli"]}`,
     "--build-arg", `VERCEL_VERSION=${npmPins.vercel}`,
     "--build-arg", `SUPABASE_VERSION=${npmPins.supabase}`,
     "--build-arg", `PLAYWRIGHT_VERSION=${npmPins.playwright}`,

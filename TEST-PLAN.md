@@ -1,5 +1,26 @@
 # ChannelGate — Test Plan
 
+## Official Make.com CLI in every runtime image (spec 1.6.3)
+
+- Automated: `node --test test/container-image.test.js test/cli-catalog.test.js` verifies the
+  exact Make package pin, build argument, root-owned install before `USER agent`, default setup
+  image build, official environment names, channel HOME credential location, Make-only API-key
+  swap rule, legacy API-token compatibility and unmodified routing-zone classification.
+- Image acceptance (engine-independent, pending until candidate build): build the candidate
+  with `npm run build:image -- --tag <candidate-image>`. As the non-root image user run
+  `make-cli --version` and `bash -lc 'make-cli --version'`; both must match the exact package pin.
+  Resolve the executable and require its package files and global prefix to be root-owned and
+  unwritable by the channel user. Confirm no Make saved login exists in a fresh HOME.
+- Live Claude and Codex (pending): use separate disposable proxy-mode fixture channels, each
+  with its own least-privilege Make `MAKE_API_KEY` kept Hidden/default and only its correct
+  `MAKE_ZONE` explicitly Readable,
+  plus an owned team ID. Ask: "Use the installed make-cli to report its version and list scenario
+  IDs/names for team <owned-team-id>; do not change anything or print credentials." Require the
+  pinned executable in both engines, correct account/team result and no exposed key. Confirm
+  Make API requests receive authorized data through the proxy while the API key in the container
+  remains a placeholder. Repeat after image recreate to verify the default CLI remains available.
+  Missing credentials or unavailable Make fixtures are blocked live acceptance, never a pass.
+
 
 ## Monthly channel USD budget management
 
@@ -6029,7 +6050,7 @@ exercise the `qwen-eu` adapter itself, in a scratch runtime root (no production 
 
 ## How to run
 
-1. `node --version` (≥ 22.13), `claude --version` (must be authenticated).
+1. `node --version` (≥ 24.0.0), `claude --version` (must be authenticated).
 2. Copy `.env.example` → `.env`, fill Slack tokens. `npm install`.
 3. `npm start`. Watch logs; hit `GET /api/health`.
 
@@ -6060,7 +6081,7 @@ exercise the `qwen-eu` adapter itself, in a scratch runtime root (no production 
       dependency-free static/format gate; repo-wide ESLint/typed-JS adoption remains a future
       ratchet rather than a permanently red flag-day check.
 - [x] `npm run test:coverage`: full-suite coverage floors remain 67% lines / 67% branches / 66%
-      functions on Linux at Node 22.13 and 24 (the macOS leg retired 2026-09-03 — Linux only).
+      functions on Linux at Node 24.0.0 and current 24.x (the macOS leg retired 2026-09-03 — Linux only).
 - [x] `npm run test:security-coverage`: independent floors prevent unrelated code from masking
       regressions in authorization (95/95/95), access grants and engine-scope isolation
       (95/75/70), sandbox policy (90/90/80), secrets (90/80/65), and transactional updater state
@@ -12136,3 +12157,12 @@ Enterprise deployment without deleting saved data. Never record a live pass from
   bounded numeric/limit fields and explicit leaf-only scope, never command names/argv/environment.
   In `cg-testing-claude-bash`, run a normal command and confirm ordinary success/accounting and no
   Codex resource classification. These definitions do not claim live execution or acceptance.
+
+## Node 24 runtime alignment
+
+- Automated startup-gate checks reject Node 22/23 before importing the server and accept Node
+  24.0.0 and newer. Installer, updater, package engines and documentation advertise the same floor.
+- CI runs the full regression suite at 24.0.0 and current 24.x; release evidence uses Node 24.
+- Reuse the dependency-refresh CLI and dual-engine acceptance definitions for runtime adoption;
+  pending provider-account checks remain pending. After a safe restart, verify the actual service
+  process executable is Node 24 and the health endpoint responds.

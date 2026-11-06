@@ -120,7 +120,7 @@ test("badge URLs are well-formed and the CI badge names a workflow that exists",
     shields.some((url) => url.includes("/badge/license-Sustainable%20Use%20License%201.4-")),
     "the license badge must name Sustainable Use License 1.4, URL-encoded",
   );
-  assert.ok(shields.some((url) => url.includes("/badge/node-%E2%89%A5%2022.13-")), "Node floor badge");
+  assert.ok(shields.some((url) => url.includes("/badge/node-%E2%89%A5%2024.0.0-")), "Node floor badge");
   assert.ok(shields.some((url) => /\/badge\/platforms-Slack.*Teams.*Google%20Chat-/.test(url)), "platforms badge");
   assert.ok(shields.some((url) => /\/badge\/engines-Claude%20Code.*Codex.*OpenCode-/.test(url)), "engines badge");
 

@@ -2,15 +2,12 @@
 // server, and (if Slack tokens are present) start the Socket Mode gateway. Built up across
 // slices — Slice 1 wires the root + web server; Slack is wired in Slice 4.
 
-// Refuse to boot below the node:sqlite floor. The AUTHORITATIVE gate lives in src/start.js
-// (the real entry point): ESM hoisting evaluates this module's static imports before this
-// statement, so on a runtime without node:sqlite (< 22.5) the import graph explodes before this
-// check can run. It stays here as a second line for direct `node src/server.js` invocations on
-// 22.5–22.12, where the imports load but db/index.js suppresses the sqlite Experimental warning
-// — silently-running-anyway would be extra misleading there.
-const [major, minor] = process.versions.node.split(".").map(Number);
-if (major < 22 || (major === 22 && minor < 13)) {
-  console.error(`ChannelGate requires Node >= 22.13 (node:sqlite); running on ${process.versions.node}. Upgrade Node and restart.`);
+// Require the supported Node 24 baseline. The authoritative gate in src/start.js runs before
+// the import graph; this second gate also rejects direct server.js invocations on older Node
+// versions whose builtins happen to load successfully.
+const major = Number(process.versions.node.split(".")[0]);
+if (!Number.isInteger(major) || major < 24) {
+  console.error(`ChannelGate requires Node >= 24.0.0; running on ${process.versions.node}. Upgrade Node and restart.`);
   process.exit(1);
 }
 

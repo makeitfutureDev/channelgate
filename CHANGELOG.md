@@ -2,6 +2,16 @@
 
 - Add channel-to-channel agent mail: `send_agent_message` asks another channel's agent a question on the requester's behalf, gated on the requester's own access (authorization, live membership and the whole source audience, re-checked at send, delivery and reply), the target's new `acceptsMessages` profile switch and the requester's approval card. The target answers in its own channel as the rank-less `agent:<source>` principal with a reduced toolset, and the reply returns to the asking thread as a new turn; one in flight per pair, hourly caps, restart recovery and audit events.
 
+- Require Node 24.0.0 or newer consistently for the daemon, installer, updater and documentation
+  build. Align release CI and setup guidance with the Node 24 runtime image; upgrade the host
+  Node runtime before updating older deployments. Refresh Astro and Starlight documentation
+  dependencies within their current major versions.
+
+- Include the official Make.com `make-cli` in every new runtime image, with per-channel
+  `MAKE_API_KEY` / `MAKE_ZONE` setup and destination-bound API-key protection. Refresh pinned
+  Claude Code, MCP remote, Vercel, Supabase and Playwright CLI versions. Existing deployments
+  adopt the toolchain after rebuilding the image; no host Make login is copied.
+
 - Detect Codex tool-process creation exhaustion after a short recovery window, preserve partial
   usage without automatic replay, and record bounded runtime process/thread-limit diagnostics.
 

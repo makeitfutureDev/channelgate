@@ -4,7 +4,7 @@
 
 [![License: Sustainable Use License 1.4](https://img.shields.io/badge/license-Sustainable%20Use%20License%201.4-2f6f4e)](./LICENSE.md)
 [![CI](https://github.com/makeitfutureDev/channelgate/actions/workflows/ci.yml/badge.svg)](https://github.com/makeitfutureDev/channelgate/actions/workflows/ci.yml)
-[![Node.js minimum version](https://img.shields.io/badge/node-%E2%89%A5%2022.13-3c873a)](./docs/COMPATIBILITY.md)
+[![Node.js minimum version](https://img.shields.io/badge/node-%E2%89%A5%2024.0.0-3c873a)](./docs/COMPATIBILITY.md)
 [![Chat platforms and support status](https://img.shields.io/badge/platforms-Slack%20%C2%B7%20Teams%20%C2%B7%20Google%20Chat-4a154b)](#supported-platforms-and-ai-engines)
 [![AI engines and support status](https://img.shields.io/badge/engines-Claude%20Code%20%C2%B7%20Codex%20%C2%B7%20OpenCode-8a3ffc)](#supported-platforms-and-ai-engines)
 
@@ -40,7 +40,7 @@ Formerly Claude Gateway for Slack.
 
 ## Getting started
 
-**Requirements:** Linux, Node.js ≥ 22.13, rootless Podman, and credentials for the engine you will
+**Requirements:** Linux, Node.js ≥ 24.0.0, rootless Podman, and credentials for the engine you will
 use. The default Claude setup uses the daemon user's host login, a configured setup token or
 `ANTHROPIC_API_KEY`; Codex requires its own authentication. See the
 [installation guide](./INSTALL.md) for prerequisites and service-account setup.
