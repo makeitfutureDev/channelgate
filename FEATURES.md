@@ -1,5 +1,7 @@
 # ChannelGate — Features
 
+Reaction subscription tokens include `chat.bot` for Workspace Events API access alongside the admin-approved `chat.app.messages.readonly`; ordinary messaging tokens remain separate.
+
 ## Company email domain auto-approval
 
 - Admin UI → Users → Auto-approval accepts exact company email domains, disabled by default.
