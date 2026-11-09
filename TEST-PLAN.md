@@ -1,5 +1,7 @@
 # ChannelGate — Test Plan
 
+Google Chat reaction token regression (engine-independent): verify signed OAuth assertions include both `chat.bot` and `chat.app.messages.readonly`, while ordinary auth excludes the admin-approved scope. With approved app credentials, list reaction subscriptions must return HTTP 200; reconnect and verify subscriptions become active. Live emoji delivery remains a separate end-to-end check.
+
 ## Shell tasks versus subagent progress (2026-11-06)
 
 Run `node --test test/progress-report.test.js test/slack-progress.test.js test/codex-message-to-reply-e2e.test.js`.

@@ -12,6 +12,8 @@ release gates. Stable promotion and publication require approval of the exact te
 
 ### Beta development notes
 
+- Fix Google Chat reaction subscription authorization by including the required `chat.bot` scope in the separate Workspace Events token.
+
 - Keep Claude shell-task lifecycle updates out of subagent progress rows and the Coordinating
   agents label, while preserving ordinary tool progress and genuine agent activity.
 

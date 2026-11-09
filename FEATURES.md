@@ -1,5 +1,7 @@
 # ChannelGate — Features
 
+Reaction subscription tokens include `chat.bot` for Workspace Events API access alongside the admin-approved `chat.app.messages.readonly`; ordinary messaging tokens remain separate.
+
 - **Readable background continuation errors.** Failed follow-ups show a bounded provider sentence
   instead of a nested JSON response. Redacted audit diagnostics retain their detail; structured
   engine failure facts and the guard against replaying interrupted continuations remain unchanged.
