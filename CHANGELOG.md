@@ -18,6 +18,8 @@ product overview.
 
 ## Unreleased
 
+- Fix Google Chat reaction subscription authorization by including the required `chat.bot` scope in the separate Workspace Events token.
+
 - Bring the Google Chat `/settings` card in line with Slack's Settings: the pages are now
   **Agent, Access, MCP, Variables, Skills, Schedules, Diagnostics** and **You**, picked from one
   **Section** dropdown that switches page on change. Access is its own page (hidden in a direct
