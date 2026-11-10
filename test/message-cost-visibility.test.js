@@ -11,6 +11,7 @@ const { footerText } = await import("../src/slack/app.js");
 const result = {
   engine: "claude",
   model: "claude-opus-4-8",
+  effort: "high",
   durationMs: 14_400,
   usage: { input_tokens: 36_800, output_tokens: 192 },
   costUSD: 0.31,
@@ -35,9 +36,20 @@ test("the global setting hides only cost from the shared Slack footer", () => {
 
   assert.doesNotMatch(hidden, /\$/);
   assert.match(hidden, /Opus 4\.8/);
-  assert.match(hidden, /14s/);
+  assert.match(hidden, /Opus 4\.8 · high · 14s/);
   assert.match(hidden, /36\.8k\/192/);
   assert.match(hidden, /18%/);
+});
+
+
+test("the shared footer puts configured effort after the model and omits unknown effort", () => {
+  settings.saveSettings({ showMessageCost: false });
+  const codex = { engine: "codex", model: "gpt-6.1-terra", durationMs: 26_000,
+    usage: { input_tokens: 314_900, output_tokens: 562 } };
+  assert.match(footerText({ ...codex, effort: "low" }), /^gpt-6\.1-terra · low · 26s · 314\.9k\/562 · \d+%$/);
+  for (const effort of [undefined, null, ""]) {
+    assert.match(footerText({ ...codex, effort }), /^gpt-6\.1-terra · 26s/);
+  }
 });
 
 test("a resumed Codex footer shows only the current message delta", () => {

@@ -1519,7 +1519,7 @@ async function runMessageImpl({ channelId, authorId, workspaceId = "", text, thr
       + (promptOverride ?? turnText);
     await assertChannelBudget(channelId, entry.slug);
     engineStarted = true;
-    return adapter.run(validateRunContext({
+    const attemptResult = await adapter.run(validateRunContext({
       principal: { kind: untrustedPrincipal ? "daemon" : PRINCIPAL_KIND_BY_ORIGIN[origin] || "daemon", id: authorId },
       origin, cwd, prompt, session: { id: sid, fresh }, policy: confinement,
       // WHERE the runner spawns: it calls target.runtime.spawn/probe/signal instead of
@@ -1551,6 +1551,7 @@ async function runMessageImpl({ channelId, authorId, workspaceId = "", text, thr
         attachments,
       },
     }));
+    return { ...attemptResult, effort };
   };
 
   // The global run slot and the container lease this turn holds (acquired below, released in the
@@ -1762,7 +1763,7 @@ async function runMessageImpl({ channelId, authorId, workspaceId = "", text, thr
       assertChannelEngineApproved((await getChannelMeta(entry.slug)) ?? channelMeta, fallbackEngine);
       await assertChannelBudget(channelId, entry.slug);
       engineStarted = true;
-      return fallbackAdapter.run(validateRunContext({
+      const attemptResult = await fallbackAdapter.run(validateRunContext({
         principal: { kind: untrustedPrincipal ? "daemon" : PRINCIPAL_KIND_BY_ORIGIN[origin] || "daemon", id: authorId }, origin, cwd,
         prompt: (fbFresh ? memoryPrefix : "") + composioIdentityPrefix + channelCredentialsPrefix + linkedGuidePrefix
           + runtimeIdentityPreamble({ engine: fallbackEngine, model: modelOverride, effort, fresh: fbFresh })
@@ -1798,6 +1799,7 @@ async function runMessageImpl({ channelId, authorId, workspaceId = "", text, thr
           managedMcpServers: fallbackMcpRuntime.managedServers || [],
           grantFingerprint },
       }));
+      return { ...attemptResult, effort };
     };
     const execWithSessionHeal = async (modelOverride) => {
       try {
