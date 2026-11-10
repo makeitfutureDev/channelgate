@@ -9,7 +9,8 @@ import { assertNewMcpSelections } from "../../gateway/mcp-selection.js";
 // instructions (CLAUDE.md). Split from admin.js; mounted by createAdminRouter so every URL is
 // unchanged.
 import { Router } from "express";
-import { getTemplate } from "../../gateway/skills/catalog.js";
+import { getSkill, getTemplate } from "../../gateway/skills/catalog.js";
+import { foreignPersonalSkillError, newForeignPersonalSkillGrants } from "../../gateway/access-grants.js";
 import { createHash } from "node:crypto";
 import { readdir, stat } from "node:fs/promises";
 import path from "node:path";
@@ -334,7 +335,11 @@ export function createChannelsRouter({
       if (Object.hasOwn(body, "monthlySpendingLimitUSD")) next_.monthlySpendingLimitUSD = body.monthlySpendingLimitUSD;
       if (Object.hasOwn(body, "approvedEngines")) next_.approvedEngines = assertApprovedEnginesUpdate(current, body.approvedEngines);
       if (["user", "admin", "custom"].includes(body.template)) next_.template = body.template;
-      if (Array.isArray(body.skills)) next_.skills = body.skills;
+      if (Array.isArray(body.skills)) {
+        const foreign = newForeignPersonalSkillGrants(body.skills, current.skills, { lookupSkill: getSkill });
+        if (foreign.length) return res.status(400).json({ error: foreignPersonalSkillError(foreign, { tier: "shared" }) });
+        next_.skills = body.skills;
+      }
       if (typeof body.skillTemplate === "string") {
         const key = body.skillTemplate.trim();
         if (key && key !== current.skillTemplate) requireEnterpriseFeature("skillTemplates");
@@ -437,6 +442,11 @@ export function createChannelsRouter({
       const body = req.body ?? {};
       const badModel = invalidModelOrEffort(body);
       if (badModel) return res.status(400).json({ error: badModel });
+      // A channel is a shared tier: it may not newly grant anybody's personal skill.
+      if (Array.isArray(body.skills)) {
+        const foreign = newForeignPersonalSkillGrants(body.skills, (await getChannelMeta(entry.slug))?.skills, { lookupSkill: getSkill });
+        if (foreign.length) return res.status(400).json({ error: foreignPersonalSkillError(foreign, { tier: "shared" }) });
+      }
       if (body.engine) {
         const current = await getChannelMeta(entry.slug);
         if (body.engine !== current?.engine) {

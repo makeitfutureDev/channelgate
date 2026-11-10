@@ -13,6 +13,8 @@ import os from "node:os";
 import path from "node:path";
 import { allowedFsRoot, resolveWithinRoot, pathWithin, hashPassword, verifyPassword } from "../security.js";
 import { listAvailableSkills } from "../../gateway/folders.js";
+import { getSkill, listSkills as listCatalogSkills } from "../../gateway/skills/catalog.js";
+import { foreignPersonalSkillError, newForeignPersonalSkillGrants } from "../../gateway/access-grants.js";
 import { workspaceAssignmentsAtPath } from "../../gateway/workspace-assignments.js";
 import { listChannels, getChannelsIndex } from "../../config/store.js";
 import { requireAdapter, modelBelongsToEngine, effortBelongsToModel } from "../../engines/registry.js";
@@ -662,6 +664,16 @@ export function createSettingsRouter({
         if (patch.dmTemplates) for (const name of ["user", "admin"])
           await assertNewMcpSelections("claude", patch.dmTemplates[name].allowedMcps, getDmTemplates()[name].allowedMcps);
       } catch (error) { return res.status(400).json({ error: error.message }); }
+      // A personal skill belongs to its author's own tier: none of these shared tiers may newly
+      // grant one (grants stored before this check are left alone).
+      {
+        const foreign = [
+          ...(patch.accessGrants ? newForeignPersonalSkillGrants(patch.accessGrants.skills, getOrgAccessGrants().skills, { lookupSkill: getSkill }) : []),
+          ...(patch.channelTemplate ? newForeignPersonalSkillGrants(patch.channelTemplate.skills, getChannelTemplate().skills, { lookupSkill: getSkill }) : []),
+          ...(patch.dmTemplates ? ["user", "admin"].flatMap((name) => newForeignPersonalSkillGrants(patch.dmTemplates[name].skills, getDmTemplates()[name].skills, { lookupSkill: getSkill })) : []),
+        ];
+        if (foreign.length) return res.status(400).json({ error: foreignPersonalSkillError([...new Set(foreign)], { tier: "shared" }) });
+      }
       // Compare-and-swap when the client echoed the version it loaded: a save that would otherwise
       // revert somebody else's change (another admin, the skills sync, a license write, the
       // first-boot password upgrade) is refused rather than applied. A client that sends no
@@ -891,7 +903,14 @@ export function createSettingsRouter({
   // ── Reference data for the UI ───────────────────────────────────────────────
   router.get("/skills", async (_req, res, next) => {
     try {
-      res.json({ skills: await listAvailableSkills() });
+      // `skills` stays the list every shared picker offers (organization grants, conversation and
+      // DM templates, channel skills); personal skills are listed apart with their author, so the
+      // Users editor offers a person only their OWN personal skills and can flag a stored grant of
+      // someone else's (src/gateway/access-grants.js skips those at run time).
+      const personal = listCatalogSkills().filter((skill) => skill.visibility === "personal" && !skill.deleted)
+        .map((skill) => ({ slug: skill.slug, createdBy: skill.createdBy || "" }));
+      const personalKeys = new Set(personal.map((skill) => skill.slug.toLowerCase()));
+      res.json({ skills: (await listAvailableSkills()).filter((name) => !personalKeys.has(name.toLowerCase())), personalSkills: personal });
     } catch (e) {
       next(e);
     }

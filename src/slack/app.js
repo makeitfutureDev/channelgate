@@ -42,7 +42,7 @@ import { listForChannel, deleteSchedule, updateSchedule, countEnabledForChannel 
 import { resolveAccessGrants } from "../gateway/access-grants.js";
 import { assignTemplateToChannel, channelScopedSkills, channelSkillGrants, channelSkillsOff, listTemplateSummaries, templateOfMeta } from "../gateway/skills/templates.js";
 import { canSeeSkill, grantSkillsToChannel, grantSkillsToUser, revokeSkillsFromChannel, revokeSkillsFromUser } from "../gateway/skills/authoring.js";
-import { sanitizeSkillGrantNames } from "../gateway/access-grants.js";
+import { isForeignPersonalSkill, sanitizeSkillGrantNames } from "../gateway/access-grants.js";
 import { toolboxUrl } from "../gateway/mcp-catalog.js";
 import { revokeRemoteMcpsForAuthor } from "../mcp/remote-mcp-registry.js";
 import { listSkills, getSkill } from "../gateway/skills/catalog.js";
@@ -836,12 +836,18 @@ function channelSkillPicker(meta, { userId, userIsAdmin }) {
 
 // The viewer's own skill grants: every catalog skill they can see, their personal ones included.
 async function mySkillPicker(userId, userIsAdmin) {
-  const mine = new Set(sanitizeSkillGrantNames((await getUser(userId))?.skills || []).map((slug) => slug.toLowerCase()));
+  const stored = sanitizeSkillGrantNames((await getUser(userId))?.skills || []);
+  const mine = new Set(stored.map((slug) => slug.toLowerCase()));
   const rows = listSkills({ viewer: userIsAdmin ? "*" : userId })
     .filter((skill) => canSeeSkill(skill, { userId, isAdmin: userIsAdmin, active: mine.has(skill.slug.toLowerCase()) }) && (skill.visibility !== "personal" || skill.createdBy === userId));
+  // Stored grants of someone else's personal skill are never offered; they are named so the
+  // person knows why they are not loaded (the run skips them — src/gateway/access-grants.js).
+  const offered = new Set(rows.map((skill) => skill.slug.toLowerCase()));
+  const foreign = stored.filter((slug) => !offered.has(slug.toLowerCase()) && isForeignPersonalSkill(getSkill(slug), userId));
   return {
     options: rows.map((skill) => ({ key: skill.slug, label: skill.slug, description: skill.description || "" })),
     selected: rows.filter((skill) => mine.has(skill.slug.toLowerCase())).map((skill) => skill.slug),
+    foreign,
   };
 }
 

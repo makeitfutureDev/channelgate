@@ -5,6 +5,7 @@
 import { conversationKindForChannel, conversationRouteForPath, pathForConversation, pathForView, titleForView, viewForPath } from "./admin-routes.js";
 import {
   accessGrantSkillOptions,
+  accessGrantSkillSelection,
   captureGrantMcpSelection,
   conversationChannelName,
   matchesConversationSource,
@@ -35,6 +36,8 @@ const ICON_FOLDER = `<svg viewBox="0 0 16 16" width="14" height="14" fill="none"
 
 // ── Reference data / state ──────────────────────────────────────────────────────
 let SKILLS = [];
+// Personal catalog skills with their author ({ slug, createdBy }): offered only to that person.
+let PERSONAL_SKILLS = [];
 let SKILL_TEMPLATES = []; // { slug, name, description, skills, categories, resolved, channels }
 let AVAILABLE_MCPS = { claude: null, codex: null }; // engine → catalog (null until loaded)
 const MCP_CATALOG_LOADS = {}; // engine → in-flight Promise (dedupe open channel/template editors)
@@ -1799,7 +1802,7 @@ function wireGrantTierNavigation(select, currentTier) {
 // Skills/connectors share one editor at each tier. Its MCP state keeps independent Claude/Codex
 // selections while the engine dropdown switches the visible catalog; OpenCode deliberately has
 // no MCP editor because its restricted proof profile rejects that capability.
-function buildAccessGrantsEditor(cfg = {}, { tier = "organization" } = {}) {
+function buildAccessGrantsEditor(cfg = {}, { tier = "organization", ownerId = "" } = {}) {
   const el = document.createElement("div");
   el.className = "access-grants-editor";
   el.innerHTML = `
@@ -1832,7 +1835,8 @@ function buildAccessGrantsEditor(cfg = {}, { tier = "organization" } = {}) {
   });
   const skillsBox = el.querySelector(".grant-skills");
   skillsBox.dataset.kind = "s";
-  checkboxList(skillsBox, accessGrantSkillOptions(SKILLS, cfg.skills || []), cfg.skills || []);
+  const skillOptions = accessGrantSkillOptions(SKILLS, cfg.skills || [], { personal: PERSONAL_SKILLS, ownerId: tier === "user" ? ownerId : "" });
+  checkboxList(skillsBox, skillOptions, accessGrantSkillSelection(skillOptions, cfg.skills || []));
   wireChecksTools(mcpsBox, el.querySelector(".grant-mcps-filter"), mcpsCount);
   wireChecksTools(skillsBox, el.querySelector(".grant-skills-filter"), el.querySelector(".grant-skills-count"));
   mcpsBox.addEventListener("change", () => captureMcpSelection(mcpsBox));
@@ -2789,7 +2793,8 @@ function buildConfigEditor(cfg = {}) {
     claude: cfg.allowedMcps || [],
     codex: cfg.allowedCodexMcps || [],
   });
-  checkboxList(skillsBox, accessGrantSkillOptions(SKILLS, cfg.skills || []), cfg.skills || []);
+  const skillOptions = accessGrantSkillOptions(SKILLS, cfg.skills || [], { personal: PERSONAL_SKILLS });
+  checkboxList(skillsBox, skillOptions, accessGrantSkillSelection(skillOptions, cfg.skills || []));
   wireChecksTools(mcpsBox, el.querySelector(".cfg-mcps-filter"), mcpsCount);
   mcpsBox.addEventListener("change", () => captureMcpSelection(mcpsBox));
   wireChecksTools(skillsBox, el.querySelector(".cfg-skills-filter"), el.querySelector(".cfg-skills-count"));
@@ -3512,6 +3517,10 @@ function renderUsersTable() {
     const role = u.isAdmin
       ? `<span class="rolechip admin">Admin</span>`
       : u.approved ? `<span class="rolechip appr">Approved</span>` : `<span class="rolechip none">No access</span>`;
+    // Count only grants that load: another person's personal skill is skipped at run time.
+    const skillOptions = accessGrantSkillOptions([], u.skills || [], { personal: PERSONAL_SKILLS, ownerId: id });
+    const foreignSkills = skillOptions.filter((option) => option.foreign).length;
+    const loadedSkills = accessGrantSkillSelection(skillOptions, u.skills || []).length;
     const tok =
       `<span class="tokdots">` +
       `<i class="${u.hasComposioToken ? "set" : ""}" title="Composio">C</i>` +
@@ -3520,7 +3529,7 @@ function renderUsersTable() {
       <td>${escapeHtml(u.name || id)}</td>
       <td class="mono">${escapeHtml(id)}</td>
       <td>${role}</td>
-      <td class="user-skills-count" title="Skills enabled for this user (personal grants)">${accessGrantSkillOptions([], u.skills || []).length}</td>
+      <td class="user-skills-count" title="Skills enabled for this user (personal grants)${foreignSkills ? ` — ${foreignSkills} not loaded: another person's personal skill` : ""}">${loadedSkills}${foreignSkills ? ' <span class="pill" title="Another person\'s personal skill is granted here and is skipped at run time. Open the user to remove it.">⚠</span>' : ""}</td>
       <td>${u.nudges ? "On" : "Off"}</td>
       <td>${tok}</td>
     </tr>`;
@@ -3551,7 +3560,7 @@ function openUserDrawer(id) {
   node.querySelector(".ud-approved").checked = !!u.approved;
   node.querySelector(".ud-admin").checked = !!u.isAdmin;
   node.querySelector(".ud-nudges").checked = !!u.nudges;
-  const userGrantsEditor = buildAccessGrantsEditor(u, { tier: "user" });
+  const userGrantsEditor = buildAccessGrantsEditor(u, { tier: "user", ownerId: id });
   const userGrantsHost = node.querySelector(".ud-grants");
   userGrantsHost.innerHTML = `<label class="field"><span>Grant tier</span><select class="ud-grant-tier"><option value="organization">Organization — applies everywhere</option><option value="channel">Channel</option><option value="user" selected>This user</option></select><em class="state">The effective run gets the live union of all three tiers.</em></label>`;
   userGrantsHost.appendChild(userGrantsEditor.el);
@@ -5437,13 +5446,14 @@ async function init() {
       if (box && box.dataset.mcpCodexKey === "codex") void renderMcpBoxForEngine(box, "codex", document.querySelector("#channel-detail .ch-mcps-count"));
     },
   });
-  const { skills } = await api("/api/skills");
+  const { skills, personalSkills = [] } = await api("/api/skills");
   try {
     SKILL_TEMPLATES = (await api("/api/skills/templates")).templates || [];
   } catch {
     SKILL_TEMPLATES = [];
   }
   SKILLS = skills;
+  PERSONAL_SKILLS = Array.isArray(personalSkills) ? personalSkills : [];
   await loadSettings();
   await loadUsers(); // populate USERS for the channel user pickers (+ render the Users view)
   await loadConversations(); // default view: render the unified list (light); details render on click
@@ -5555,7 +5565,8 @@ function renderSkillTemplateEditor(mount, slug) {
     </div>`;
   const box = mount.querySelector(".tpl-skills");
   box.dataset.kind = "s";
-  checkboxList(box, accessGrantSkillOptions(SKILLS, t.skills || []), t.skills || []);
+  const skillOptions = accessGrantSkillOptions(SKILLS, t.skills || [], { personal: PERSONAL_SKILLS });
+  checkboxList(box, skillOptions, accessGrantSkillSelection(skillOptions, t.skills || []));
   wireChecksTools(box, mount.querySelector(".tpl-skills-filter"), mount.querySelector(".tpl-skills-count"));
   const status = mount.querySelector(".tpl-status");
   mount.querySelector(".tpl-cancel").addEventListener("click", () => { skillTplEditing = null; renderSkillTemplatesSettings(); });

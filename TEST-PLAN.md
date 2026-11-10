@@ -2,6 +2,28 @@
 
 Google Chat reaction token regression (engine-independent): verify signed OAuth assertions include both `chat.bot` and `chat.app.messages.readonly`, while ordinary auth excludes the admin-approved scope. With approved app credentials, list reaction subscriptions must return HTTP 200; reconnect and verify subscriptions become active. Live emoji delivery remains a separate end-to-end check.
 
+## Foreign personal skill grants (2026-11-10)
+
+Run `node --test test/access-grants.test.js test/personal-skill-grants-routes.test.js test/slack-settings-redesign.test.js`.
+Resolution tests: a direct foreign personal grant, and a grant whose `requires:` chain reaches one,
+are dropped from the user and effective tiers and reported in `skippedSkills`. The author keeps
+their own personal skill. A removed own dependency still fails materialization. Route tests: the
+Users PUT refuses another person's personal skill with 400 and no change, but accepts the author's
+own. A stored foreign grant does not block an unrelated save, and unticking it removes it. The
+skill template POST refuses personal skills. Picker tests: the user editor offers only the
+person's own personal skills and leaves stored foreign grants unchecked. Shared tiers offer no
+personal skill. The Slack You page names foreign grants as not loaded.
+
+Live acceptance (Claude and Codex), on a disposable fixture: author A creates a personal skill
+`fx-private`. An admin stores it in member B's user record directly (simulating a pre-fix grant).
+B sends "Say OK" in a DM, once with each engine. Pass: both answer OK, and the reply starts with
+"⚠️ Skipped a skill in your personal grants: fx-private". Neither engine's transcript shows
+`fx-private` loaded (no SKILL.md under the run's plugin/catalog). Then open the admin Users drawer
+for B. Pass: `fx-private` is unchecked with "another person's personal skill — not loaded; removed
+on save", and the Users table shows ⚠. Save, and the grant is gone. Try to tick A's skill for B
+through `PUT /api/users/B`. Pass: 400 naming `fx-private`. Slack Settings → You for B before the
+save: the warning line names `fx-private`, and it is not offered in the picker.
+
 ## Shell tasks versus subagent progress (2026-11-06)
 
 Run `node --test test/progress-report.test.js test/slack-progress.test.js test/codex-message-to-reply-e2e.test.js`.

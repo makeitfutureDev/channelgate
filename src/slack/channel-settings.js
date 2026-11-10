@@ -1096,6 +1096,9 @@ function youPage(snapshot, state, opts) {
     ...variableRows(snapshot, state, "p", { editable: true }),
     header("Skills"),
     ...skillPicker(CHANNEL_SETTINGS_MY_SKILLS_SELECT_ACTION_ID, snapshot.mySkillPicker, "Add a skill for your runs…"),
+    ...((snapshot.mySkillPicker?.foreign || []).length
+      ? [context(`⚠️ Not loaded: ${snapshot.mySkillPicker.foreign.map((slug) => `\`${escapeMrkdwn(slug)}\``).join(", ")} — another person's personal skill. Only its author can use it; ask them to make it an organization skill. Your next skill change here removes it.`)]
+      : []),
   ];
 }
 

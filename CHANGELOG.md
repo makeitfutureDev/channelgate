@@ -12,6 +12,11 @@ release gates. Stable promotion and publication require approval of the exact te
 
 ### Beta development notes
 
+- A stored grant of another person's personal skill no longer fails every one of that user's
+  messages. The run skips it and says which skill and how to fix it. The admin Users editor, the
+  shared grant/template pickers and Slack Settings → You no longer offer someone else's personal
+  skill, and every save path refuses one.
+
 - Custom MCP connections now support Composio consumer-key authentication alongside Bearer
   tokens in both the admin UI and Slack Settings. Add another Composio identity under a distinct
   name without replacing the built-in connection. Existing servers retain Bearer authentication.
