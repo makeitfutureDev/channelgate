@@ -5351,7 +5351,12 @@ document.getElementById("fs-modal").addEventListener("click", (e) => {
     e.preventDefault();
     const id = idInput.value.trim();
     if (!id) return;
-    await api(`/api/users/${encodeURIComponent(id)}`, { method: "PUT", body: JSON.stringify({ name: id }) });
+    try {
+      await api(`/api/users/${encodeURIComponent(id)}`, { method: "PUT", body: JSON.stringify({ name: id }) });
+    } catch (error) {
+      await infoDialog({ title: "Couldn't add user", body: error.message || "The user could not be added. Try again." });
+      return;
+    }
     idInput.value = "";
     form.hidden = true;
     const search = document.getElementById("users-search");

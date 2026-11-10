@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { ensureTestEnv } from "./helpers.js";
+import { ensureTestEnv, testLicenseEnv } from "./helpers.js";
 
 // The test runner gives this file its own process/database: known administrators must exist
 // before the first credential, independently of the legacy-unlinked migration browser fixture.
@@ -8,7 +8,7 @@ ensureTestEnv();
 delete process.env.ADMIN_PASSWORD;
 const { saveSettings } = await import("../src/config/settings.js");
 const { hashPassword } = await import("../src/web/security.js");
-const { setUser } = await import("../src/config/store.js");
+const { setUser, getUser, getUsers } = await import("../src/config/store.js");
 const { createWebApp } = await import("../src/web/app.js");
 const password = "disposable-known-admin-bootstrap-password";
 
@@ -113,5 +113,39 @@ test("initial setup verifies an existing admin privately before its first real p
   assert.equal(signedIn.account.userId, "UKNOWNOWNER");
   assert.equal(signedIn.passkeys[0].id, enrolled.passkeys[0].id);
   assert.equal((await api(page, "/api/settings", undefined, "GET")).status, 200);
+  // The real form must present registration failures and preserve input for a retry.
+  // The synthetic API principal does not consume a human registration slot.
+  testLicenseEnv({ tier: "free" });
+  for (let i = 0; i < 7; i++) await setUser(`UINVENTORY${i}`, { approved: i % 2 === 0 });
+  const humanCount = async () => Object.keys(await getUsers()).filter(id => id !== "api").length;
+  assert.equal(await humanCount(), 9);
+  await page.goto(`${base}/users`);
+  await page.locator("#add-user-toggle").click();
+  await page.locator("#add-user-id").fill("UTENTH");
+  const added = page.waitForResponse(response => response.url().endsWith("/api/users/UTENTH") && response.request().method() === "PUT");
+  await page.locator('#add-user button[type="submit"]').click();
+  assert.equal((await added).status(), 200);
+  assert.equal(await humanCount(), 10);
+  await page.goto(`${base}/users`);
+  await page.locator("#add-user-toggle").click();
+  await page.locator("#add-user-id").fill("UELEVENTH");
+  const refused = page.waitForResponse(response => response.url().endsWith("/api/users/UELEVENTH") && response.request().method() === "PUT");
+  await page.locator('#add-user button[type="submit"]').click();
+  const refusal = await refused;
+  assert.equal(refusal.status(), 403);
+  assert.equal((await refusal.json()).code, "license_registration_limit");
+  await page.getByText(/limit of 10 registered users/).waitFor({ timeout: 3000 });
+  assert.equal(await getUser("UELEVENTH"), null);
+  assert.equal(await humanCount(), 10);
+  assert.equal(await page.locator("#add-user-id").inputValue(), "UELEVENTH");
+  assert.equal(await page.locator("#add-user").isVisible(), true);
+  await page.getByRole("button", { name: "OK", exact: true }).click();
+  testLicenseEnv({ tier: "enterprise" });
+  const retried = page.waitForResponse(response => response.url().endsWith("/api/users/UELEVENTH") && response.request().method() === "PUT");
+  await page.locator('#add-user button[type="submit"]').click();
+  assert.equal((await retried).status(), 200);
+  await page.waitForFunction(() => document.getElementById("add-user").hidden);
+  assert.equal(await humanCount(), 11);
+  assert.equal(await page.locator("#add-user-id").inputValue(), "");
   assert.deepEqual(errors, []);
 });
