@@ -83,12 +83,12 @@ function fixture({ clock = { now: 1_800_000_000_000 } } = {}) {
     deliver: async (_client, payload) => { delivered.push(payload); },
     setStatus: async (_client, channelId, threadTs, phrase, loading, opts) => { statusCalls.push({ channelId, threadTs, phrase, loading, username: opts?.username || "" }); return true; },
     progress: async (args) => {
-      const entry = { ...args, deltas: 0, events: 0, stopped: 0 };
+      const entry = { ...args, deltas: 0, events: 0, stopped: 0, notes: [] };
       progressCalls.push(entry);
       return {
         ownsFinal,
         onDelta: () => { entry.deltas += 1; },
-        onEvent: () => { entry.events += 1; },
+        onEvent: (ev) => { entry.events += 1; if (ev?.kind === "answer_note") entry.notes.push(ev.text); },
         stop: async () => { entry.stopped += 1; },
         finalize: async (result) => { finalized.push({ channelId: args.channelId, content: result.content }); },
       };
@@ -171,6 +171,7 @@ test("a complete exchange: gate, target thread, agent-principal turn, reply re-i
   // then the origin's own turn runs as the requester with the reply as quoted data.
   assert.equal(f.delivered[0].channel, TARGET);
   assert.equal(f.delivered[0].threadKey, record.toThreadKey);
+  assert.equal(f.delivered[0].trustedPrefix, "💬 *#sales agent:* ", "the target's own answer is labeled too");
   assert.equal(f.delivered[1].channel, SOURCE);
   assert.equal(f.delivered[1].trustedPrefix, "💬 *#sales agent:* ");
   assert.equal(f.delivered[1].result.content, "Pipeline: 12 open deals, €340k weighted.");
@@ -184,7 +185,10 @@ test("a complete exchange: gate, target thread, agent-principal turn, reply re-i
   assert.match(continuation.text, /continue_agent_conversation/);
   assert.equal(f.delivered[2].channel, SOURCE);
   assert.equal(f.delivered[2].threadKey, ORIGIN_THREAD);
+  assert.equal(f.delivered[2].trustedPrefix, "💬 *#marketing agent:* ", "the origin's own answer is labeled too");
   assert.equal(f.delivered.length, 3);
+  assert.match(targetRun.text, /do not number, title or sign your messages/);
+  assert.match(continuation.text, /do not number, title or sign it/);
   // No "sent" / "arrived" chatter in the origin thread: the words are the only thing posted.
   assert.equal(f.posts.filter((p) => p.conversationId === SOURCE).length, 0);
   assert.deepEqual(record.messages.map((m) => m.from), ["origin", "target"]);
@@ -474,6 +478,9 @@ test("both turns show the live progress stream: the target thread's run and the 
   assert.equal(origin.channelId, SOURCE);
   assert.equal(origin.threadKey, ORIGIN_THREAD);
   assert.equal(origin.menuOwnerId, REQUESTER, "the reply turn at home is the requester's own");
+  // Under native streaming the persona heads the live message as a gateway answer note.
+  assert.deepEqual(target.notes, ["💬 **#sales agent:** "]);
+  assert.deepEqual(origin.notes, ["💬 **#marketing agent:** "]);
   // Without native streaming the stream stops and the reply is posted; the runner received the
   // stream's callbacks and the progress-report flag.
   assert.equal(target.stopped, 1);
@@ -546,10 +553,10 @@ test("a conversation: the target asks back, the origin answers and continues, un
   // What each thread shows, in order: the origin's answer copied into the target thread under
   // the origin's persona, the target's words at home under its persona.
   const inTarget = f.delivered.filter((d) => d.channel === TARGET);
-  assert.deepEqual(inTarget.map((d) => d.trustedPrefix || ""), ["", "💬 *#marketing agent:* ", ""]);
+  assert.deepEqual(inTarget.map((d) => d.trustedPrefix || ""), ["💬 *#sales agent:* ", "💬 *#marketing agent:* ", "💬 *#sales agent:* "]);
   assert.equal(inTarget[1].result.content, "Q4, EMEA only.");
   const atHome = f.delivered.filter((d) => d.channel === SOURCE);
-  assert.deepEqual(atHome.map((d) => d.trustedPrefix || ""), ["💬 *#sales agent:* ", "", "💬 *#sales agent:* ", ""]);
+  assert.deepEqual(atHome.map((d) => d.trustedPrefix || ""), ["💬 *#sales agent:* ", "💬 *#marketing agent:* ", "💬 *#sales agent:* ", "💬 *#marketing agent:* "]);
   // The gate ran at every hop: send, delivery, each reply home, each continue.
   assert.equal(f.verifierCalls.length, 4);
   const events = (await readEvents({ limit: 60 })).map((e) => e.event);

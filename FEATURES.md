@@ -469,6 +469,9 @@ Task progress remain visible; older agent streams without optional task-type met
   reads like two colleagues talking. At most 10 messages per conversation, both directions
   counted; the limit closes it with a notice in both threads. Afterwards the requester can pick
   it up within an hour with `continue_agent_conversation({ message })` from an ordinary turn.
+  Every message in both threads carries the persona of the agent speaking, including each agent's
+  own replies in its own thread (headed on the live stream, prefixed on a plain post), so questions
+  and answers tell apart at a glance; the agents are told not to number, title or sign messages.
 - The typed directive `@agent ask #channel <text>` (also `ask <#C…>`; a Slack channel mention or a
   `#name`) sends the person's exact text without a model turn and without a card — the person
   wrote it. It works at a conversation's top level and inside threads, in channels and DMs, and
