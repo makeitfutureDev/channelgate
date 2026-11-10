@@ -1,3 +1,4 @@
+import { runAdmissionRefusalKind } from "./run-admission-result.js";
 // Daemon-side background job runner. The headless `claude -p` subprocess is one-shot: it exits
 // the moment it posts its reply, so anything it backgrounds with `nohup … &` outlives it with
 // nobody left to react when the work finishes. This module moves ownership of long-running shell
@@ -104,6 +105,7 @@ export function shellJobRuntimeNotice({ isolated = false, image = "" } = {}) {
 export function backgroundCompletionNotice({ what = "Background job", label = "job", outcome } = {}) {
   const resolved = outcome || describeProcessOutcome();
   const icon = resolved.ok === true ? "✅" : "⚠️";
+  if (resolved.kind === "blocked") return `${icon} ${what} *${label}* ${resolved.summary}.`;
   const continuation = resolved.ok === true
     ? "Continuing…"
     : "Continuing so I can review what happened…";
@@ -673,7 +675,10 @@ export class BackgroundJobs {
         } catch {
           /* accounting is best-effort */
         }
-        await this._finish(rec, { outcome: describeProcessOutcome({ code: 0 }) });
+        const refusal = runAdmissionRefusalKind(result);
+        await this._finish(rec, { outcome: refusal
+          ? { ok: false, kind: "blocked", summary: result.engineStarted ? "was blocked before further work could start" : "was not started because admission was refused", reason: refusal }
+          : describeProcessOutcome({ code: 0 }) });
       })
       .catch(async (err) => {
         clearTimeout(timer);
@@ -816,7 +821,9 @@ export class BackgroundJobs {
     try {
       // Heads-up so the thread shows the job fired before the (possibly slow) continuation turn runs.
       try {
-        await postNotice(client, {
+        // A refusal's own actionable notice is its entire completion payload. Do not first
+        // announce success or promise a continuation for work that never started.
+        if (!(isAgent && resolvedOutcome.kind === "blocked")) await postNotice(client, {
           conversationId: rec.channelId,
           threadKey: rec.threadKey,
           text: backgroundCompletionNotice({ what, label: rec.label, outcome: resolvedOutcome }),
@@ -846,7 +853,14 @@ export class BackgroundJobs {
             `${resolvedOutcome.ok === true ? "success" : resolvedOutcome.ok === false ? "failure" : "unknown"}. ` +
             `Proceed only on confirmed success; otherwise diagnose from the output above. Do not re-launch the same job.`);
 
-      if (isAgent && report && resolvedOutcome.ok === true) {
+      if (isAgent && resolvedOutcome.kind === "blocked") {
+        // Persisted outcome + report suffice after restart; never retry the refused work or
+        // spend another engine turn interpreting a gateway admission notice.
+        await this.deliver(client, {
+          channel: rec.channelId, threadKey: rec.threadKey,
+          result: { content: report || backgroundCompletionNotice({ what, label: rec.label, outcome: resolvedOutcome }), engine: rec.result?.engine || "" },
+        });
+      } else if (isAgent && report && resolvedOutcome.ok === true) {
         // The background-agent prompt requires a complete, self-contained final report. Deliver
         // that report directly instead of asking the launching thread's model to paraphrase it in
         // a SECOND engine turn. Besides wasting time/tokens, that dependency stranded completed

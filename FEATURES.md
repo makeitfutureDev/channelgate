@@ -1,5 +1,15 @@
 # ChannelGate — Features
 
+## Refused unattended work (2026-11-11)
+
+Background agents report admission refusals (spending limits, unpriced usage, access, license or
+engine restrictions) as blocked, never as successful completion. The actionable refusal is delivered
+directly without a continuation engine turn; a pending delivery survives restart with the same blocked
+outcome. Schedule history likewise records refused work as engine not started and task blocked,
+including both spending-limit refusal flags. A refusal after an earlier engine attempt keeps that
+attempt visible as failed/blocked rather than claiming no engine started. Successful agent reports and failed/partial work retain
+their existing delivery paths. This does not cancel already admitted work or guarantee a hard billing cap.
+
 - Reply statistics show configured effort immediately after the model (for example,
   `gpt-6.1-terra · low · 26s · 314.9k/562 · 66%`). The value comes from the answering
   attempt, including retries and engine fallback; unspecified effort is omitted.

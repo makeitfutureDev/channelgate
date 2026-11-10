@@ -1,13 +1,15 @@
 // Exercise the common run admission path rather than only the arithmetic helper. A budget
 // refusal must not provision a runtime or reach an engine, regardless of who launched the work.
 import test from "node:test";
+import path from "node:path";
 import assert from "node:assert/strict";
 import { ensureTestEnv } from "./helpers.js";
 ensureTestEnv();
 const { getDb } = await import("../src/db/index.js");
 const { defaultChannelMeta, upsertChannelEntry, saveChannelMeta, setUser } = await import("../src/config/store.js");
 const { saveSettings } = await import("../src/config/settings.js");
-const { runMessage, setRuntimeResolver } = await import("../src/gateway/run.js");
+const { runMessage, setRuntimeResolver, resetEngineCooldowns } = await import("../src/gateway/run.js");
+const { BackgroundJobs } = await import("../src/gateway/background.js");
 const { runMemoryReview } = await import("../src/gateway/memory-review.js");
 const { ensureChannelFolder } = await import("../src/gateway/folders.js");
 const { isDiagnosableRunError } = await import("../src/gateway/diagnosis.js");
@@ -124,3 +126,83 @@ test("memory reviewer skips exhausted channels before transcript fetch and reche
   assert.equal(b.spawns, 0);
   assert.ok(b.runtime.calls.leases.every(lease => lease.released));
 });
+
+for (const engine of ["claude", "codex"]) {
+  for (const cost of [5, null]) {
+    test(`actual ${engine} background admission ${cost === null ? "unpriced" : "exhausted"} is blocked without success or continuation`, async () => {
+      const c = await channel(engine), b = backend();
+      spend(c.channelId, cost);
+      const posts = [], delivered = [];
+      const client = { chat: { postMessage: async payload => { posts.push(payload.text); return { ok: true, ts: "1.1" }; } } };
+      const jobs = new BackgroundJobs({ slack: { snapshot: () => ({ connected: true }), getClient: () => client },
+        runner: async () => assert.fail("refused work must not launch a continuation"),
+        deliver: async (_client, { result }) => delivered.push(result.content) });
+      const started = await jobs.start({ channelId: c.channelId, authorId: "U_BUDGET_ADMISSION", threadKey: `bg-budget-${sequence}`,
+        kind: "agent", task: "Check the requested data", label: "Budget blocked" });
+      assert.equal(started.ok, true);
+      for (let i = 0; i < 200 && jobs.jobs.has(started.id); i++) await new Promise(resolve => setTimeout(resolve, 10));
+      assert.equal(jobs.jobs.has(started.id), false, "refusal delivery is terminal");
+      assert.equal(b.spawns, 0);
+      assert.equal(b.resolutions, 0);
+      assert.equal(posts.some(text => /completed successfully|✅|Continuing/.test(text)), false, JSON.stringify(posts));
+      assert.equal(delivered.length, 1);
+      assert.match(delivered[0], cost === null ? /no price/ : /reached.*spending limit/);
+      const event = db.prepare("SELECT data FROM events WHERE event = 'bg_finish' ORDER BY rowid DESC LIMIT 1").get();
+      const data = JSON.parse(event.data);
+      assert.equal(data.ok, false);
+      assert.equal(data.outcome, "blocked");
+      assert.equal(db.prepare("SELECT count(*) AS n FROM bg_jobs WHERE id = ?").get(started.id).n, 0);
+    });
+  }
+}
+
+for (const engine of ["claude", "codex"]) {
+  test(`${engine} blocked agent delivery survives restart without rerunning or interpreting the refusal`, async () => {
+    const c = await channel(engine), b = backend();
+    spend(c.channelId);
+    const offline = new BackgroundJobs({ slack: { snapshot: () => ({ connected: false }), getClient: () => null } });
+    const started = await offline.start({ channelId: c.channelId, authorId: "U_BUDGET_ADMISSION", threadKey: `offline-budget-${sequence}`,
+      kind: "agent", task: "Check the requested data", label: "Budget blocked" });
+    assert.equal(started.ok, true);
+    for (let i = 0; i < 200 && !offline.jobs.get(started.id)?.pendingDelivery; i++) await new Promise(resolve => setTimeout(resolve, 10));
+    const saved = JSON.parse(db.prepare("SELECT data FROM bg_jobs WHERE id = ?").get(started.id).data);
+    assert.equal(saved.pendingDelivery.outcome.kind, "blocked");
+    assert.match(saved.pendingDelivery.report, /reached.*spending limit/);
+    const posts = [], delivered = [];
+    const client = { chat: { postMessage: async payload => { posts.push(payload.text); return { ok: true, ts: "1.1" }; } } };
+    const recovered = new BackgroundJobs({ slack: { snapshot: () => ({ connected: true }), getClient: () => client },
+      runner: async () => assert.fail("recovery must not launch a continuation"),
+      deliver: async (_client, { result }) => delivered.push(result.content) });
+    await recovered.recover();
+    assert.equal(recovered.jobs.has(started.id), false);
+    assert.deepEqual(delivered, [saved.pendingDelivery.report]);
+    assert.equal(posts.length, 0, "the actionable refusal is the only completion message");
+    assert.equal(b.spawns, 0);
+    assert.equal(b.resolutions, 0);
+    assert.equal(db.prepare("SELECT count(*) AS n FROM bg_jobs WHERE id = ?").get(started.id).n, 0);
+    await recovered.recover();
+    assert.equal(delivered.length, 1, "terminal delivery is not replayed on another recovery");
+  });
+}
+
+for (const engine of ["claude", "codex"]) {
+  test(`${engine} budget refusal before fallback preserves the already-started attempt fact`, async () => {
+    resetEngineCooldowns();
+    const c = await channel(engine);
+    await saveChannelMeta(c.entry.slug, { ...c.meta, model: "", cleanMode: true });
+    const runtime = createFakeRuntimeBackend();
+    const spawn = runtime.spawn.bind(runtime);
+    let spawns = 0;
+    runtime.spawn = (target, spec) => { spawns++; spend(c.channelId); return spawn(target, spec); };
+    setRuntimeResolver((slug, meta, options) => fakeTarget(runtime, slug, meta, options));
+    const originalPath = process.env.PATH;
+    process.env.PATH = path.join(import.meta.dirname, "fixtures") + path.delimiter + originalPath;
+    try {
+      const result = await runMessage({ ...args(c, "background_agent"), text: `${engine.toUpperCase()}_STUB_LIMIT_FAIL_SAFE` });
+      assert.equal(spawns, 1, "the primary really started; the fallback must not start");
+      assert.equal(result.spendingRefused, true);
+      assert.equal(result.engineStarted, true, "a later refusal cannot erase the primary attempt");
+      assert.equal(db.prepare("SELECT count(*) AS n FROM usage WHERE channel_id = ?").get(c.channelId).n, 1, "previously recorded usage remains intact");
+    } finally { process.env.PATH = originalPath; resetEngineCooldowns(); }
+  });
+}

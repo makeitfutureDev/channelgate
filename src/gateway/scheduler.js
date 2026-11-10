@@ -1,3 +1,4 @@
+import { runAdmissionRefusalKind } from "./run-admission-result.js";
 // Daemon-side cron runner. Every minute it reads the schedule store (which the scheduler MCP
 // server may have just written from a gated AI run) and fires any enabled schedule whose cron
 // matches the current minute: it runs the saved prompt as a fresh Claude session in that channel
@@ -409,8 +410,8 @@ function recordTaskOutcome(id, result) {
   const previous = getScheduleRun(id);
   const o = result.automationOutcome || { status: "unreported", summary: "Task outcome not reported.", connections: [], source: "unreported" };
   const usage = normalizeUsage(result);
-  const refused = result.licenseRefused || result.accessRefused || result.engineRefused;
-  updateScheduleRun(id, { status: o.status, taskStatus: o.status, engineStatus: refused ? "not-started" : result.interrupted ? "interrupted" : result.engineError || result.completed === false ? "failed" : "completed",
+  const refused = runAdmissionRefusalKind(result);
+  updateScheduleRun(id, { status: o.status, taskStatus: o.status, engineStatus: refused ? (result.engineStarted ? "failed" : "not-started") : result.interrupted ? "interrupted" : result.engineError || result.completed === false ? "failed" : "completed",
     summary: o.summary, connections: o.connections, outcomeSource: o.source, engine: result.engine || "", model: result.runtimeModel || result.model || "",
     durationMs: result.durationMs || 0, tokensIn: usage.inTok, tokensOut: usage.outTok, costUsd: usage.costUSD, costEstimated: usage.estimated,
     toolUseCount: Number(result.toolUseCount) || 0, completedAt: previous?.completedAt || new Date().toISOString(), ...(o.errorKind ? { errorKind: o.errorKind } : {}) });
