@@ -533,6 +533,7 @@ export async function recoverRuns(stale, {
         text: rec.text,
         threadKey: rec.threadKey,
         forkSourceSessionId: await recoveryForkSessionId(rec),
+        overrides: rec.runtimeOverrides || null,
         attachments: Array.isArray(rec.attachments) ? rec.attachments : [],
         ...(rec.questionSubmissionId ? { questionSubmissionId: rec.questionSubmissionId,
           verifyQuestionAccess: () => assertQuestionAccess(rec, client) } : {}),

@@ -48,8 +48,13 @@ export function modelShortcutsFromSettings(settings, catalogs = {}) {
 }
 
 // Slack gives the bot mention as <@ID>; stripMentions leaves the colon at the start.
-// Require a separating space before the task, so ":astraight" never selects ":astra".
+// An optional second colon selects effort; otherwise the remainder is the task.
 export function parseModelShortcut(text) {
-  const match = /^:\s*([a-z][a-z0-9_-]{0,23})(?=\s|$)\s*([\s\S]*)$/i.exec(String(text || "").trim());
-  return match ? { name: match[1].toLowerCase(), task: match[2].trim() } : null;
+  const match = /^:\s*([a-z][a-z0-9_-]{0,23})(?=\s|:|$)\s*([\s\S]*)$/i.exec(String(text || "").trim());
+  if (!match) return null;
+  const name = match[1].toLowerCase();
+  const task = match[2].trim();
+  if (!task.startsWith(":")) return { name, task };
+  const effort = /^:\s*(\S*)(?:\s+([\s\S]*))?$/.exec(task);
+  return { name, effort: effort[1].toLowerCase(), task: (effort[2] || "").trim() };
 }

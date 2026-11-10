@@ -2460,6 +2460,36 @@ Record blocked fixtures and unexecuted gates explicitly for both engines.
 
 ## Model shortcuts acceptance (2026-10-06)
 
+### Optional effort suffix (2026-11-10)
+
+- [x] Automated: `test/model-shortcuts.test.js`, `test/model-shortcut-pipeline.test.js` and
+      `test/slack-fork.test.js`, `test/recovery-queue.test.js`, `test/queued-fork-recovery.test.js`,
+      `test/run-escalation.test.js`, `test/runtime-identity-preamble.test.js` and
+      `test/active-runs.test.js` pass 87/87 with spawned fixture CLIs and recovery runners. Cover spaced/adjacent
+      colons, case normalization, multiline task preservation, selector-only acknowledgements
+      without a spawn, actual Claude/Codex effort flags on new/resumed/retried turns, prefix
+      stripping, omitted-effort clearing, invalid/model-incompatible efforts preserving pins,
+      explicit fork effort with unchanged source pins, queued low/omitted/high effort isolation on
+      both engines, durable snapshots, and restart recovery. These fixtures are not live acceptance.
+- [ ] Live Claude and Codex separately: use an owned private Slack Auto fixture, an authorized
+      admin author, and a configured shortcut for a currently offered model. Record the exact
+      candidate, mapping, catalog efforts and initial thread settings. Send `@agent :sonet :low`
+      (Claude) or `@agent :sol :low` (Codex): acknowledgement names model and effort, with no
+      engine turn. Then send the same shortcut with `:high Reply exactly EFFORT_SHORTCUT_OK`,
+      followed by `Reply exactly EFFORT_RESUME_OK` without selectors. Pass only with exact replies,
+      requested model/high effort in runtime evidence on both turns, and retained thread pins.
+      Queue separate low/omitted/high shortcut tasks behind an active turn: each keeps its own
+      model/effort and omitted effort follows channel/defaults. Restart with accepted tasks waiting:
+      recovered tasks retain those selections. Send an invalid effort (`:bogus`) and a catalog-incompatible effort: explanatory rejection,
+      no engine turn, and unchanged engine/model/effort pins. Select the model without effort:
+      previous effort pin clears. Exercise a runtime-card retry: selectors stay out of the task.
+- [ ] Live fork, both engines: from a completed owned source thread with known model/effort,
+      send `@agent /fork :shortcut :low Repeat our token and explore another approach`. Pass:
+      linked child uses the mapped model/low effort and excludes selectors from its task; source
+      settings/session are unchanged; follow-up retains child choices. Invalid effort creates
+      no child root. In a channel restricted to admins, an approved non-admin's explicit-effort shortcut/fork is
+      refused before pins/spawns change. Restore owned fixture settings after execution.
+
 - [x] Automated: fresh settings without `modelShortcuts` inherit the six catalog families. Numeric
       ordering selects 6.10 over 6.9 and Sonnet 5.10 over 5.5 independent of catalog order;
       aliases/previews and missing families never invent targets. Newer catalogs update inherited

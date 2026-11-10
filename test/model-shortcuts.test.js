@@ -67,6 +67,18 @@ test("mention suffix parses a shortcut and preserves the task", () => {
   assert.equal(parseModelShortcut(":astra, build this"), null);
 });
 
+test("shortcut effort accepts spaced or adjacent colons and preserves task text", () => {
+  for (const prefix of [":sol :HIGH", ":sol:high", ": SOL : high"]) {
+    assert.deepEqual(parseModelShortcut(`${prefix} Build this\nthen review :low`), {
+      name: "sol", effort: "high", task: "Build this\nthen review :low",
+    });
+  }
+  assert.deepEqual(parseModelShortcut(":sol :low"), { name: "sol", effort: "low", task: "" });
+  assert.deepEqual(parseModelShortcut(":sol :"), { name: "sol", effort: "", task: "" });
+  assert.deepEqual(parseModelShortcut(":sol :unknown task"), { name: "sol", effort: "unknown", task: "task" });
+  assert.deepEqual(parseModelShortcut(":sol explain :high"), { name: "sol", task: "explain :high" });
+});
+
 test("settings save and expose valid engine/model mappings", async () => {
   await put({ astra: { engine: "codex", model: "gpt-6-astra" }, opus: { engine: "claude", model: "claude-opus-5-5" } });
   assert.deepEqual(getModelShortcuts(), {

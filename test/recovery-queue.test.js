@@ -69,6 +69,18 @@ test("multiple recovered turns in the same thread retain FIFO order", async () =
   s.recovery.unsubscribe();
 });
 
+test("recovered shortcut tasks pass their saved model and effort to each runner", async () => {
+  const records = ["low", "", "high"].map((effort, index) => ({ ...rec(`shortcut-${index}`, "shortcut"),
+    runtimeOverrides: { engine: "codex", model: "gpt-6.1-sol", effort } }));
+  const seen = [];
+  const s = setup(records, async ({ overrides }) => { seen.push(overrides); return answer; });
+  await s.connect();
+  assert.deepEqual(seen, records.map(row => row.runtimeOverrides));
+  assert.equal(runQueue.count(key(records[0])), 0);
+  assert.equal(listActiveRuns().some(row => row.threadKey === "shortcut"), false);
+  s.recovery.unsubscribe();
+});
+
 test("stop before reconnect cancels the reserved replay without resurrecting its durable row", async () => {
   const r = rec("stopped"); let calls = 0;
   const s = setup([r], async () => { calls++; return answer; });

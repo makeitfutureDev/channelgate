@@ -12,6 +12,10 @@ release gates. Stable promotion and publication require approval of the exact te
 
 ### Beta development notes
 
+- Slack model shortcuts accept an optional reasoning effort: `@agent :sol :high task` or
+  `@agent :sol :low`. Both choices persist for the thread, unsupported efforts are refused
+  without changing settings, and `/fork` accepts the same suffix for the new thread.
+
 - Reply footers show configured effort beside the model, using the attempt that answered,
   including retries and engine fallback.
 

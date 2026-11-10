@@ -14,6 +14,8 @@ const { setUser, upsertChannelEntry, saveChannelMeta } = await import("../src/co
 const { saveSettings, getModelShortcuts, getDefaultModel, getEngine } = await import("../src/config/settings.js");
 const { getThreadEngine, getThreadModel, getThreadEffort, setThreadEffort } = await import("../src/gateway/thread-engine.js");
 const { processMessageEvent } = await import("../src/slack/message-pipeline.js");
+const { runQueue } = await import("../src/slack/message-lifecycle.js");
+const { listActiveRuns } = await import("../src/gateway/active-runs.js");
 const { stripMentions } = await import("../src/slack/message-normalize.js");
 const { parseModelShortcut } = await import("../src/config/model-shortcuts.js");
 
@@ -74,6 +76,89 @@ test("unknown shortcut cannot change the thread", async () => {
   await processMessageEvent({ type: "message", channel: CHANNEL, channel_type: "im", user: USER, text: `<@${BOT}> :unknown`, ts: "123.002" }, client, { botUserId: BOT });
   assert.equal(await getThreadEngine(entry.slug, "123.002"), "");
   assert.match(messages.at(-1).text, /Unknown model shortcut/);
+});
+
+test("explicit shortcut efforts reach both engines, resume, and strip prefixes on retries", async () => {
+  const entry = await upsertChannelEntry(CHANNEL, { name: "shortcut-dm", type: "im", isDM: true });
+  saveSettings({ modelShortcuts: { sol: { engine: "codex", model: "gpt-6.1-sol" }, opus: { engine: "claude", model: "claude-opus-5-5" } } });
+  for (const [index, name] of ["sol", "opus"].entries()) {
+    const engine = name === "sol" ? "codex" : "claude";
+    const root = `126.00${index}`;
+    const send = (text, ts, extra = {}) => processMessageEvent({ type: "message", channel: CHANNEL, channel_type: "im", user: USER, text, ts, thread_ts: root }, client, { botUserId: BOT, ...extra });
+    const before = runtime.calls.spawn.length;
+    await send(`<@${BOT}> :${name} :LOW`, root);
+    assert.equal(runtime.calls.spawn.length, before, "selector-only messages do not start an engine");
+    assert.equal(await getThreadEffort(entry.slug, root), "low");
+    assert.match(messages.at(-1).text, /`low`/);
+    for (const [step, text, extra] of [
+      [1, `<@${BOT}> :${name} :HIGH effort task`, {}],
+      [2, "continue effort task", {}],
+      [3, `<@${BOT}> :${name} :HIGH retry effort task`, { engineChoice: engine }],
+    ]) {
+      await send(text, `${root}${step}`, extra);
+      const spawn = runtime.calls.spawn.at(-1);
+      if (engine === "codex") assert.ok(spawn.args.includes('model_reasoning_effort="high"'));
+      else assert.equal(spawn.args[spawn.args.indexOf("--effort") + 1], "high");
+      const prompt = spawn.args.find(arg => arg.includes("effort task"));
+      assert.ok(prompt);
+      assert.doesNotMatch(prompt, new RegExp(`:${name}|:HIGH`));
+      assert.equal(await getThreadEffort(entry.slug, root), "high");
+    }
+    await send(`<@${BOT}> :${name}`, `${root}4`);
+    assert.equal(await getThreadEffort(entry.slug, root), "", "omitting effort still clears the old pin");
+  }
+});
+
+test("invalid and model-incompatible efforts preserve all pins without starting a turn", async () => {
+  const entry = await upsertChannelEntry(CHANNEL, { name: "shortcut-dm", type: "im", isDM: true });
+  saveSettings({ modelShortcuts: { sol: { engine: "codex", model: "gpt-6.1-sol" }, opus: { engine: "claude", model: "claude-opus-5-5" } } });
+  const root = "127.001";
+  const send = (suffix, ts) => processMessageEvent({ type: "message", channel: CHANNEL, channel_type: "im", user: USER, text: `<@${BOT}> ${suffix}`, ts, thread_ts: root }, client, { botUserId: BOT });
+  await send(":sol :low", root);
+  for (const [index, suffix] of [":sol :bogus task", ":opus :ultra task", ":sol :"].entries()) {
+    const before = runtime.calls.spawn.length;
+    await send(suffix, `127.00${index + 2}`);
+    assert.match(messages.at(-1).text, /Invalid effort.*Choose/);
+    assert.equal(runtime.calls.spawn.length, before);
+    assert.equal(await getThreadEngine(entry.slug, root), "codex");
+    assert.equal(await getThreadModel(entry.slug, root), "gpt-6.1-sol");
+    assert.equal(await getThreadEffort(entry.slug, root), "low");
+  }
+});
+
+test("queued shortcut tasks retain their own runtime selections and durable snapshots", async () => {
+  const entry = await upsertChannelEntry(CHANNEL, { name: "shortcut-dm", type: "im", isDM: true });
+  await saveChannelMeta(entry.slug, { channelId: CHANNEL, name: entry.name, type: "im", isDM: true, template: "custom", engine: "claude", effort: "medium" });
+  saveSettings({ modelShortcuts: { sol: { engine: "codex", model: "gpt-6.1-sol" }, opus: { engine: "claude", model: "claude-opus-5-5" } } });
+  for (const [index, name] of ["sol", "opus"].entries()) {
+    const root = `128.00${index}`;
+    const key = `${entry.slug}::${root}`;
+    const blocker = { aborted: false, controller: new AbortController(), authorId: USER, runId: `${key}::blocker` };
+    await runQueue.acquire(key, blocker);
+    const pending = [];
+    try {
+      for (const [step, effort] of ["low", "", "high"].entries()) {
+        pending.push(processMessageEvent({ type: "message", channel: CHANNEL, channel_type: "im", user: USER,
+          text: `<@${BOT}> :${name} ${effort ? `:${effort} ` : ""}queued-${name}-${step}`,
+          ts: `${root}${step + 1}`, thread_ts: root }, client, { botUserId: BOT }));
+        for (let tries = 0; runQueue.count(key) < step + 2 && tries < 100; tries++) await new Promise(resolve => setTimeout(resolve, 10));
+        assert.equal(runQueue.count(key), step + 2);
+        const stored = listActiveRuns().find(row => row.id === `${key}::${root}${step + 1}`);
+        assert.deepEqual(stored.runtimeOverrides, { engine: name === "sol" ? "codex" : "claude",
+          model: name === "sol" ? "gpt-6.1-sol" : "claude-opus-5-5", effort });
+      }
+    } finally {
+      runQueue.release(key, blocker);
+      await Promise.all(pending);
+    }
+    for (const [step, effort] of ["low", "medium", "high"].entries()) {
+      const spawn = runtime.calls.spawn.find(call => call.args.some(arg => arg.includes(`queued-${name}-${step}`)));
+      assert.ok(spawn);
+      if (name === "sol") assert.ok(spawn.args.includes(`model_reasoning_effort="${effort}"`));
+      else assert.equal(spawn.args[spawn.args.indexOf("--effort") + 1], effort);
+    }
+  }
+  await saveChannelMeta(entry.slug, { channelId: CHANNEL, name: entry.name, type: "im", isDM: true, template: "custom", engine: "claude" });
 });
 
 test("shortcut tasks start and resume the mapped model, switch engines, and strip the prefix on card retries", async () => {
