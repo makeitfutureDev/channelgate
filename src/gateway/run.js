@@ -2115,10 +2115,9 @@ async function runMessageImpl({ channelId, authorId, workspaceId = "", text, thr
           // spent). Same rule for both — nothing of the turn ran — so the other harness may answer.
           const switchKind = replaySafeFallbackKind(err, engine) || (err?.details?.transientRetries ? transientProviderFailure(err, engine) : "");
           const fallbackKind = fallbackOn ? switchKind : "";
-          // The failure WOULD have been failed over, and wasn't, because the user pinned this
-          // runtime. Say so on the error rather than leaving a bare provider message that looks
-          // like the gateway simply forgot to fail over.
-          if (!fallbackKind && runtimePinned && switchKind) {
+          // A pinned provider failure still needs the manual move/repin remedy when it is not
+          // replay-safe. This is diagnostic metadata only: it must not authorize a fallback.
+          if (!fallbackKind && runtimePinned && (switchKind || err?.details?.providerError === true)) {
             err.details = { ...(err.details || {}), runtimePinned: true, pinnedEngine: engine, pinnedModel: model || "" };
           }
           // Ask mode: hand the decision to the person watching the thread. No cooldown is written —

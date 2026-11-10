@@ -271,7 +271,7 @@ export function engineIdAlternation(ids = ENGINE_IDS) {
 export function engineSwitchHint(err, { engines = ENGINE_IDS } = {}) {
   const details = err?.details || {};
   if (details.providerError !== true) return "";
-  if (details.providerKind !== "usage_limit" && details.providerKind !== "authentication") return "";
+  if (!details.runtimePinned && details.providerKind !== "usage_limit" && details.providerKind !== "authentication") return "";
   const other = engines.filter((id) => id !== details.engine);
   if (!other.length) return "";
   const names = other.map((id) => `\`${id}\``).join(" or ");
