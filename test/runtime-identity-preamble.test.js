@@ -359,3 +359,37 @@ test("failover and its model retry use the destination harness default effort", 
   assert.deepEqual(calls.map((call) => metadata(call).configured_effort), ["medium", "xhigh", "xhigh"]);
   assert.equal(result.effort, "xhigh", "footer uses the fallback attempt effort");
 });
+
+for (const engine of ["claude", "codex"]) {
+  test(`${engine}: nullable effort inherits the thread while an empty snapshot clears it`, async () => {
+    const model = engine === "claude" ? "sonnet" : "gpt-5.6-sol";
+    const context = await fixture(`NULLABLE_EFFORT_${engine}`, engine, model, { effort: "low" });
+    await setThreadEffort(context.entry.slug, context.threadKey, "high");
+    // API admission leaves optional keys undefined in memory; persistence drops those keys.
+    // Queued shortcuts intentionally store an empty string to bypass a later thread pin.
+    const apiOverrides = { model, engine: undefined, effort: undefined, mode: undefined };
+    const cases = [
+      [{ model }, "high"],
+      [apiOverrides, "high"],
+      [JSON.parse(JSON.stringify(apiOverrides)), "high"],
+      [{ model, effort: null }, "high"],
+      [{ model, effort: "" }, "low"],
+      [JSON.parse(JSON.stringify({ model, effort: "" })), "low"],
+      [{ model, effort: "medium" }, "medium"],
+    ];
+    const start = backend.calls.spawn.length;
+    const results = [];
+    for (const [overrides] of cases) {
+      results.push(await runMessage({ ...context, text: "Report the configured effort.", overrides }));
+    }
+    const calls = attempts(start);
+    assert.equal(calls.length, cases.length);
+    const expected = cases.map(([, effort]) => effort);
+    assert.deepEqual(calls.map((call) => metadata(call).configured_effort), expected);
+    assert.deepEqual(results.map((result) => result.effort), expected);
+    calls.forEach((call, i) => {
+      if (engine === "claude") assert.equal(call.args[call.args.indexOf("--effort") + 1], expected[i]);
+      else assert.ok(call.args.includes(`model_reasoning_effort="${expected[i]}"`));
+    });
+  });
+}

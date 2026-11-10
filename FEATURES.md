@@ -2498,8 +2498,9 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
   Keyed session/resume fields are null until completion. → TEST-PLAN: HTTP run API conversations.
 - HTTP run API (`POST /api/runs`) for automations: accepts message/file input, optional target
   Slack channel, per-run engine/model/effort/mode overrides, idempotency keys, status polling,
-  stop, and completion webhooks. Channel-backed API runs post the full request in Slack and use the
-  same visible progress/streaming path as interactive turns; headless API runs stay silent and
+  stop, and completion webhooks. Requests overriding only engine, model or mode retain the
+  thread effort pin; omitted, null and empty API effort values also inherit that pin. Channel-backed
+  API runs post the full request in Slack and use the same visible progress/streaming path as interactive turns; headless API runs stay silent and
   finish through status/webhook. A job whose run was in flight at a daemon restart is marked
   `interrupted` and never run again (its external actions are unknown); a result that was already
   saved is still delivered and its webhook still fires. Every settled run
