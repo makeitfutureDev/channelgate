@@ -1,9 +1,11 @@
 # Release acceptance packet
 
-Current candidate: **0.6.5**, prepared 2026-11-06. See [the candidate record](releases/0.6.5.md).
-Current-candidate execution is pending; the historical evidence and deferrals below apply only
-to their named revisions. They are not passes or waivers for 0.6.5. Human-only checks are
-assigned in the private QA handoff; this public packet contains no private actor identities.
+Current candidate: **0.6.5**, refreshed 2026-11-10 through beta `e55a12cd`. See
+[the candidate record](releases/0.6.5.md); the promotion PR head identifies the exact tested SHA.
+Current-candidate execution is pending; earlier automated and live evidence applies only to its
+actual revisions. The ten previously assigned human/device-only subchecks remain explicitly
+deferred, not passed. Other historical deferrals below do not waive this candidate's gates.
+The private QA handoff preserves ownership; this public packet contains no private actor identities.
 
 0.5.1 live evidence (2026-09-21, owner-approved release without the full campaign): on the exact
 candidate tree, a live Claude turn used the Read tool and returned the probe file's bytes; a live
