@@ -489,6 +489,9 @@ Task progress remain visible; older agent streams without optional task-type met
   channel's Slack tools, permission cards) and no further `send_agent_message`, `search_agents`,
   background work, schedules, questions or admin switches. API runs and delivered agent turns
   cannot send. Permission cards name "The agent from #<source>" and mint no personal links.
+- While the other channel's agent has the floor, the asking thread shows Slack's native working
+  status labeled with that agent's persona ("#sales agent is working"), cleared when its words
+  arrive or the exchange ends, so the thread never looks idle mid-conversation.
 - Both turns show the normal live feedback: the target thread's run and the reply turn at home
   carry the same progress stream a Slack message does (the native assistant status, the Stop
   button, the streamed answer and the reply menu). The target run holds that thread's per-thread

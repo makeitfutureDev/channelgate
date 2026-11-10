@@ -35,7 +35,7 @@ import { platformSupports } from "../platforms/registry.js";
 import { parseConversationId } from "../platforms/ids.js";
 import { runMessage } from "./run.js";
 import { deliverResult } from "../slack/deliver.js";
-import { startProgress } from "../slack/progress.js";
+import { startProgress, setAssistantStatus } from "../slack/progress.js";
 import { getDirectory } from "../slack/directory.js";
 import { getProgressView } from "../config/settings.js";
 import { runQueue } from "../slack/message-lifecycle.js";
@@ -186,6 +186,7 @@ export class AgentMail {
     loadUser = getUser,
     resolveClient = null,
     progress = null,
+    setStatus = setAssistantStatus,
     turnMaxMs = DEFAULT_TURN_MAX_MS,
     now = Date.now,
   } = {}) {
@@ -202,6 +203,10 @@ export class AgentMail {
     // streamed answer): both the delivered turn in the target thread and the reply turn in the
     // origin thread get one, so an exchange never looks dead while an engine works. Null where the
     // connector has no Slack chat API (another surface, tests).
+    // The asking thread's "working" status while the OTHER side's agent has the floor: Slack's
+    // native assistant status, labeled with the other agent's persona, cleared when its reply
+    // arrives (the origin's own turn then shows its own status) or when the exchange ends.
+    this.setStatus = setStatus;
     this.progress = progress || (({ client, channelId, threadKey, authorId, menuOwnerId }) => this._startProgress({ client, channelId, threadKey, authorId, menuOwnerId }));
     this.turnMaxMs = turnMaxMs;
     this.now = now;
@@ -214,6 +219,18 @@ export class AgentMail {
     return startProgress(getProgressView(), client, channelId, threadKey, {
       isDM: false, authorId, teamId: this.slack?.snapshot?.().teamId || null, dir, menuOwnerId,
     });
+  }
+
+  async _waiting(record, on) {
+    const client = this.resolveClient(record.fromChannelId);
+    const threadTs = slackThreadFor(record.fromThreadKey);
+    if (!client || !threadTs) return;
+    const toRef = channelRef({ name: record.toName, slug: record.toSlug });
+    try {
+      await this.setStatus(client, record.fromChannelId, threadTs, on ? `waiting for the ${toRef} agent…` : "",
+        on ? [`Asked the ${toRef} agent`, `${toRef} agent is thinking…`, "Its reply lands here"] : [],
+        { username: on ? `${toRef} agent` : "" });
+    } catch { /* a status is a courtesy */ }
   }
 
   _teamId() {
@@ -352,6 +369,7 @@ export class AgentMail {
     try { status = await this.progress({ client, channelId: record.toChannelId, threadKey: record.toThreadKey, authorId: record.requestedBy, menuOwnerId: "" }); } catch { status = null; }
     const stopProgressOnAbort = () => { void status?.stop?.().catch(() => {}); };
     controller.signal.addEventListener("abort", stopProgressOnAbort, { once: true });
+    await this._waiting(record, true);
     let result = null;
     let failure = "";
     try {
@@ -379,6 +397,7 @@ export class AgentMail {
       controller.signal.removeEventListener("abort", stopProgressOnAbort);
       this.active.delete(record.id);
       runQueue.release(runKey, handle);
+      await this._waiting(record, false);
     }
     if (!result) {
       await status?.stop?.().catch(() => {});
