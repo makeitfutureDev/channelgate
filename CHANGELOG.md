@@ -12,6 +12,9 @@ release gates. Stable promotion and publication require approval of the exact te
 
 ### Beta development notes
 
+- Reply footers show configured effort beside the model, using the attempt that answered,
+  including retries and engine fallback.
+
 - Messages sent while a Slack thread is busy now queue automatically and run after preceding
   work finishes. Waiting messages offer Steer Conversation and Cancel Request; no Add to Queue
   click is needed. Cancel removes only that waiting message, and stale controls cannot stop a

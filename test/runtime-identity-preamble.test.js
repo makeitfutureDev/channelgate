@@ -318,22 +318,24 @@ for (const engine of ["claude", "codex"]) {
     const key = engine === "claude" ? "defaultClaudeEffort" : "defaultCodexEffort";
     saveSettings({ [key]: "low" });
     const start = backend.calls.spawn.length;
-    await runMessage({ ...context, text: "Report your configured effort." });
+    const results = [];
+    results.push(await runMessage({ ...context, text: "Report your configured effort." }));
     saveSettings({ [key]: "high" });
-    await runMessage({ ...context, text: "And now?" });
+    results.push(await runMessage({ ...context, text: "And now?" }));
     await patchChannelMeta(context.entry.slug, { effort: "medium" });
-    await runMessage({ ...context, text: "Use the channel setting." });
+    results.push(await runMessage({ ...context, text: "Use the channel setting." }));
     await setThreadEffort(context.entry.slug, context.threadKey, "low");
-    await runMessage({ ...context, text: "Use the thread setting." });
-    await runMessage({ ...context, text: "Use this request setting.", overrides: { effort: "high" } });
+    results.push(await runMessage({ ...context, text: "Use the thread setting." }));
+    results.push(await runMessage({ ...context, text: "Use this request setting.", overrides: { effort: "high" } }));
     await setThreadEffort(context.entry.slug, context.threadKey, "");
     await patchChannelMeta(context.entry.slug, { effort: "" });
     saveSettings({ [key]: "" });
-    await runMessage({ ...context, text: "Use the CLI default." });
+    results.push(await runMessage({ ...context, text: "Use the CLI default." }));
     const calls = attempts(start);
     assert.equal(calls.length, 6);
     const expected = ["low", "high", "medium", "low", "high", null];
     assert.deepEqual(calls.map((call) => metadata(call).configured_effort), expected);
+    assert.deepEqual(results.map((result) => result.effort || null), expected, "reply results retain each attempt effort");
     for (let i = 0; i < calls.length; i++) {
       const call = calls[i];
       if (engine === "claude") {
@@ -352,7 +354,8 @@ test("failover and its model retry use the destination harness default effort", 
   const context = await fixture("DEFAULT_EFFORT_FAILOVER", "claude", "gpt-5.6", { effort: "medium", cleanMode: true });
   saveSettings({ defaultClaudeEffort: "low", defaultCodexEffort: "xhigh" });
   const start = backend.calls.spawn.length;
-  await runMessage({ ...context, text: "CLAUDE_STUB_LIMIT_FAIL_SAFE CODEX_STUB_REJECT_MODEL" });
+  const result = await runMessage({ ...context, text: "CLAUDE_STUB_LIMIT_FAIL_SAFE CODEX_STUB_REJECT_MODEL" });
   const calls = attempts(start);
   assert.deepEqual(calls.map((call) => metadata(call).configured_effort), ["medium", "xhigh", "xhigh"]);
+  assert.equal(result.effort, "xhigh", "footer uses the fallback attempt effort");
 });

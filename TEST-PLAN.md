@@ -1,5 +1,20 @@
 # ChannelGate — Test Plan
 
+## Reply footer effort (2026-11-10)
+
+Regression: `node --test test/message-cost-visibility.test.js test/runtime-identity-preamble.test.js test/runtime-integration-surfaces.test.js test/platform-run-details.test.js test/skill-runtime.test.js`.
+Confirm effort follows the model with cost shown or hidden, unknown effort is omitted, fresh/resumed
+results preserve every override layer, and failover/model retries retain the answering attempt's effort.
+
+Live acceptance, separately for Claude and Codex: in a disposable Slack Worker fixture, select a
+compatible model and Low effort via `/model` for this thread. Send "Reply OK", then resume with
+"Reply OK again". Pass: both footers begin `model · low · duration`, followed by existing tokens,
+optional cost and context usage. Change thread effort to High and repeat; the next footer says
+`high`, earlier footers retain `low`. Clear all gateway/channel/thread effort choices on the fixture;
+pass: an unspecified CLI default does not invent an effort label. Restore fixture settings.
+Inspect both streamed and classic reply paths; the same shared formatter supplies unattended replies.
+Live execution is separate from the automated regression and is not implied by it.
+
 Google Chat reaction token regression (engine-independent): verify signed OAuth assertions include both `chat.bot` and `chat.app.messages.readonly`, while ordinary auth excludes the admin-approved scope. With approved app credentials, list reaction subscriptions must return HTTP 200; reconnect and verify subscriptions become active. Live emoji delivery remains a separate end-to-end check.
 
 ## Foreign personal skill grants (2026-11-10)
