@@ -438,6 +438,9 @@ Task progress remain visible; older agent streams without optional task-type met
   evaluation remains. Free allows 100 active chat threads per channel per UTC month, with
   500 AI runs shared by that channel each month. Enterprise defaults to unlimited. Thread
   tracking starts with post-upgrade activity; existing AI-run accounting is retained.
+- Admin UI → Users → Add user presents a readable error dialog when registration is refused,
+  including the inventory limit. The form and entered user ID stay available for correction or
+  retry; a refused request does not create a user or open a success drawer.
 - Enterprise organization admins can approve one or more harnesses per channel through the
   admin editor or Slack Settings → Agent. Unrestricted is the default. Pins, saved sessions,
   API overrides, automation and fallback cannot launch outside the approved set; queued work
