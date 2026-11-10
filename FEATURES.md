@@ -834,12 +834,20 @@ control-plane status.
   What remains is the 🔒 line shown where the viewer cannot edit something.
   → TEST-PLAN: Slack Settings redesign.
 
-## Custom MCP connections (Bearer token)
+## Custom MCP connections (Bearer token or Composio consumer key)
 
-- An admin can add a remote MCP server by **name, HTTPS URL and Bearer token** to a conversation
+- An admin can add a remote MCP server by **name, HTTPS URL, authentication type and token** to a conversation
   (admin UI → conversation → Connections → *Custom MCP servers*) or to one person (Users → the
   person → *Personal MCP servers*). Each scope holds at most five. OAuth-only servers are out of
   scope and go through Composio.
+- **Authentication:** choose Bearer token (the default, including old records) or Composio consumer
+  key (`x-consumer-api-key`). Channel and personal editors in the admin UI and Slack preserve
+  the selected type on edits. A token left blank on an update keeps the saved credential; an API
+  update omitting `authType` also keeps its saved type. Unsupported types are rejected. A second
+  Composio consumer identity can be added at `https://connect.composio.dev/mcp` under a distinct
+  name alongside the built-in Composio connection. This is an independent custom server: built-in
+  Composio inventory, connection-management policy and file-staging identity helpers remain tied
+  to the built-in personal/shared slots.
 - **In Slack too:** ⚙️ Settings → **MCP** lists the conversation's servers; **You** lists the
   viewer's own. Both are masked like the admin UI (server name, URL and last four token characters)
   and edited in place. The conversation's servers can be changed only by the channel's managers and
@@ -858,7 +866,7 @@ control-plane status.
   Like the Make toolbox, the daemon relays the server whatever the conversation's network switch
   says.
 - **The token never enters the container.** As with the Make toolbox, the daemon registers URL +
-  `Authorization: Bearer …` in the in-memory relay registry, and the container gets only the
+  `Authorization: Bearer …` or `x-consumer-api-key: …` in the in-memory relay registry, and the container gets only the
   socket bridge and signed capability. Codex's container bundle holds only the capability. A
   direct-host `/sudo` turn dials the server itself (Claude: header in the 0600 MCP config; Codex:
   a headers helper reading the 0600 bundle).

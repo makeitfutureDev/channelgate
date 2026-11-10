@@ -45,6 +45,7 @@ import { createCodexUsageReader, subtractCodexTokenUsage } from "./codex-usage.j
 import { MCP_STARTUP_TIMEOUT_SECONDS } from "./mcp-timeouts.js";
 import { gatewayRoot, runTmpDir, runtimeSocketFile } from "../config/paths.js";
 import { readCodexAuthState, describeCodexAuth } from "./codex-auth.js";
+import { customMcpAuthentication } from "../gateway/custom-mcp-auth.js";
 import { channelCodexHome } from "../gateway/channel-codex-paths.js";
 import { remoteMcpServerProblem } from "../mcp/remote-mcp-registry.js";
 import { CODEX_NO_TELEMETRY } from "./codex-telemetry.js";
@@ -891,7 +892,8 @@ export function buildCodexArgs({ prompt, sessionId, isNewSession, forkSourceSess
   // TOML keys by construction. Relayed by the daemon in a container exactly like the toolboxes.
   for (const [name, entry] of Object.entries(clean ? {} : customMcps || {})) {
     if (!entry?.url || !entry?.token || !BARE_TOML_KEY.test(name)) continue;
-    addSecretRemote(name, entry.url, customMcpSecretName(name), "Authorization", "Bearer ", { Authorization: `Bearer ${entry.token}` });
+    const { headerName, prefix } = customMcpAuthentication(entry.authType);
+    addSecretRemote(name, entry.url, customMcpSecretName(name), headerName, prefix, { [headerName]: `${prefix}${entry.token}` });
   }
 
   // Prompt must come before image flags: Codex's `-i/--image <FILE>...` option is variadic, so any

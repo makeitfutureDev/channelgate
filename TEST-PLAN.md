@@ -1648,6 +1648,42 @@ action timestamps, redacted native UI captures and tool/result evidence; never r
 These native UI actions and real engine turns are release gates. Mocked Slack transports,
 Chromium rendering of a local fixture and successful code tests do not satisfy them.
 
+## Custom MCP Composio authentication (2026-11-10)
+
+- Automated regression: `test/custom-mcps.test.js` covers legacy Bearer defaults, Composio
+  persistence and masked listings, omitted auth on partial updates, invalid auth rejection,
+  channel/personal isolation, exact headers for Claude/Codex relay and host configuration,
+  warm-process digest changes, and absence of credentials from container artifacts/arguments.
+- Web and Slack editors offer Bearer token / Composio consumer key, restore saved selection,
+  retain an existing key when the token box is blank, and show the saved authentication type.
+  Slack form regression includes old open forms without the new selector.
+
+### Live acceptance — Claude AND Codex (not executed by unit tests)
+
+Fixture: disposable private Slack Worker conversation, Lean off, approved QA author, a public
+HTTPS MCP fixture with a harmless identity/read tool and two independent test credentials:
+one accepts only Bearer, the other accepts only `x-consumer-api-key`. Keep a built-in Composio
+connection configured. Use existing private QA custom-MCP fixtures recorded in Airtable; never
+place a real key in a prompt, evidence artifact or test result.
+
+- [ ] For each engine, add channel `qa-bearer` with Bearer and `qa-composio` with Composio consumer
+  key through the admin UI. Ask: “List the tools for custom-qa-bearer and custom-qa-composio and
+  call each harmless identity tool.” Pass: both tools succeed against the expected credential,
+  the fixture receives exactly the selected authentication header, and the built-in Composio
+  connection remains available. A valid authorized Composio consumer key against
+  `https://connect.composio.dev/mcp` may supplement the fixture for provider acceptance.
+- [ ] Repeat saving/editing in Slack Settings → MCP; verify the stored selector survives an
+  edit with a blank token and changing the URL. Repeat in the user drawer and Slack → You as
+  personal `qa-personal`; only the author sees `my-qa-personal`. A second approved author and
+  an API run naming that author must not receive the personal server.
+- [ ] An old Bearer record without `authType` still works; an API update omitting `authType`
+  preserves Composio. Unknown types are refused without changing the existing record.
+- [ ] During an active turn, change auth type/rotate/remove the custom connection: its old relay
+  grant is revoked, other connections keep working, and the next turn reflects the change.
+- [ ] Pass confidentiality: masked UI/listings show only token suffixes; no test key in engine
+  arguments, container config/bundle, thread replies, or channel artifact files. Public-only URL
+  validation and Lean omission remain in force for both authentication types.
+
 ## Custom MCP connections (2026-10-01)
 
 ### Regression

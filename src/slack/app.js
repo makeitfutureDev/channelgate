@@ -83,7 +83,7 @@ import {
   CHANNEL_SETTINGS_CLEAR_MAKE_ACTION_ID, CHANNEL_SETTINGS_CLEAR_TOOLBOX_ACTION_ID,
   CHANNEL_SETTINGS_CLOUD_ENGINE_PREFIX, CHANNEL_SETTINGS_CLOUD_MANAGE_ACTION_ID,
   CHANNEL_SETTINGS_CUSTOM_MCP_ADD_ACTION_ID, CHANNEL_SETTINGS_CUSTOM_MCP_REMOVE_ACTION_ID, CHANNEL_SETTINGS_CUSTOM_MCP_CALLBACK_ID,
-  CUSTOM_MCP_NAME_BLOCK_ID, CUSTOM_MCP_URL_BLOCK_ID, CUSTOM_MCP_TOKEN_BLOCK_ID,
+  CUSTOM_MCP_NAME_BLOCK_ID, CUSTOM_MCP_URL_BLOCK_ID, CUSTOM_MCP_TOKEN_BLOCK_ID, CUSTOM_MCP_AUTH_BLOCK_ID,
   buildCustomMcpEditorView, buildCustomMcpStatusView, readCustomMcpForm, customMcpScope,
   CHANNEL_SETTINGS_ROOT_CALLBACK_ID, CHANNEL_SETTINGS_FORM_OPEN_ACTION_ID, CHANNEL_SETTINGS_FORM_CANCEL_ACTION_ID,
   CHANNEL_SETTINGS_FORM_REMOVE_ACTION_ID, CHANNEL_SETTINGS_VAR_MENU_ACTION_ID, CHANNEL_SETTINGS_SCHEDULE_MENU_ACTION_ID,
@@ -625,7 +625,8 @@ function assertCustomMcpManager(meta, who) {
 // Which form field a custom MCP refusal belongs under (src/gateway/custom-mcps.js messages).
 export function customMcpErrorBlock(message = "") {
   const text = String(message);
-  if (/^Token|Bearer token/.test(text)) return CUSTOM_MCP_TOKEN_BLOCK_ID;
+  if (/^Authentication/.test(text)) return CUSTOM_MCP_AUTH_BLOCK_ID;
+  if (/^Token|token is required|Bearer token|consumer key/i.test(text)) return CUSTOM_MCP_TOKEN_BLOCK_ID;
   if (/^URL/.test(text)) return CUSTOM_MCP_URL_BLOCK_ID;
   return CUSTOM_MCP_NAME_BLOCK_ID;
 }
@@ -1077,7 +1078,7 @@ export async function saveSettingsForm(key, values, ctx) {
     return { notice: "✅ Saved the Make toolbox." };
   }
   if (kind === "cm-add" || kind === "cm") {
-    const input = { name: kind === "cm" ? name : values.name, url: values.url, token };
+    const input = { name: kind === "cm" ? name : values.name, url: values.url, token, ...(values.authType !== undefined ? { authType: values.authType } : {}) };
     try {
       // `authorize` re-checks the editor's current authority after the DNS check, right before the write.
       const options = { actor: scope === "c" ? `<@${clicker}>` : clicker, ...(ctx.authorize ? { authorize: ctx.authorize } : {}) };
@@ -1087,7 +1088,7 @@ export async function saveSettingsForm(key, values, ctx) {
       const saved = servers.find((item) => item.name === String(input.name).trim().toLowerCase());
       return { notice: `✅ Saved ${inlineMcpName(saved?.serverName || input.name)}. Its tools reach the next run.` };
     } catch (error) {
-      return refuse(fieldForError(error.message, kind === "cm" ? ["url", "token"] : ["name", "url", "token"], kind === "cm" ? "url" : "name"), error.message);
+      return refuse(/^Authentication/.test(error.message) ? "authType" : fieldForError(error.message, kind === "cm" ? ["url", "token"] : ["name", "url", "token"], kind === "cm" ? "url" : "name"), error.message);
     }
   }
   if (isEmailForm(kind)) {

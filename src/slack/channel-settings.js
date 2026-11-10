@@ -45,6 +45,7 @@ export const CHANNEL_SETTINGS_CUSTOM_MCP_REMOVE_ACTION_ID = "cg_channel_settings
 export const CHANNEL_SETTINGS_CUSTOM_MCP_CALLBACK_ID = "cg_channel_settings_custom_mcp_form";
 export const CUSTOM_MCP_NAME_BLOCK_ID = "cg_custom_mcp_name";
 export const CUSTOM_MCP_URL_BLOCK_ID = "cg_custom_mcp_url";
+export const CUSTOM_MCP_AUTH_BLOCK_ID = "cg_custom_mcp_auth";
 export const CUSTOM_MCP_TOKEN_BLOCK_ID = "cg_custom_mcp_token";
 const CUSTOM_MCP_INPUT_ACTION_ID = "value";
 export const CHANNEL_SETTINGS_CLOUD_ENGINE_PREFIX = "cg_channel_settings_cloud_engine_";
@@ -430,7 +431,7 @@ export const SETTINGS_FIELD_ACTION_ID = "v";
 // reopened form and never echoed in an error or a notice.
 export const SETTINGS_SECRET_FIELDS = Object.freeze(["token", "value", "imapPassword", "smtpPassword"]);
 // The fields a reopened form may be refilled with — every field a form reads, minus the secrets.
-export const SETTINGS_DRAFT_FIELDS = Object.freeze(["label", "url", "name", "hosts", "address", "displayName", "imapHost", "imapPort", "imapUser", "smtpHost", "smtpPort", "smtpUser"]);
+export const SETTINGS_DRAFT_FIELDS = Object.freeze(["label", "url", "name", "authType", "hosts", "address", "displayName", "imapHost", "imapPort", "imapUser", "smtpHost", "smtpPort", "smtpUser"]);
 export function settingsFieldBlockId(form, field, secretId = "") {
   // Slack preserves typed values when both input identities survive views.update. A refused
   // async save rotates only write-only inputs; labels, URLs and other draft fields stay put.
@@ -478,7 +479,8 @@ export function settingsFormSpec(key, snapshot = {}) {
       fields: [
         { name: "name", label: "Name", placeholder: "e.g. linear", maxLength: 32, hint: `Tools appear as ${scope === "c" ? "custom" : "my"}-<name>` },
         { name: "url", label: "Server URL", placeholder: "https://mcp.example.com/mcp", maxLength: 2048 },
-        { name: "token", label: "Bearer token", placeholder: "Stored write-only" },
+        customMcpAuthField(),
+        { name: "token", label: "Token or consumer key", placeholder: "Stored write-only" },
       ],
     };
   }
@@ -490,7 +492,8 @@ export function settingsFormSpec(key, snapshot = {}) {
       key, title: entry.serverName, removable: true,
       fields: [
         { name: "url", label: "Server URL", initial: entry.url, maxLength: 2048 },
-        token("Bearer token", true),
+        customMcpAuthField(entry.authType || "bearer"),
+        token("Token or consumer key", true),
       ],
     };
   }
@@ -560,16 +563,20 @@ function emailAccountFields({ scope, entry = null } = {}) {
   ];
 }
 
+function customMcpAuthField(initial = "bearer") {
+  return { name: "authType", label: "Authentication type", type: "select", initial, options: [option("Bearer token", "bearer"), option("Composio consumer key", "composio")] };
+}
+
 // The values a submitted form carries, by field name, read from the root view's state.
 export function readSettingsForm(view = {}, key, secretId = "") {
   const values = view?.state?.values || {};
   const out = {};
-  for (const field of ["label", "token", "url", "name", "value", "hosts", "secret", "address", "displayName", "imapHost", "imapPort", "imapUser", "imapPassword", "smtpHost", "smtpPort", "smtpUser", "smtpPassword"]) {
+  for (const field of ["label", "token", "url", "name", "authType", "value", "hosts", "secret", "address", "displayName", "imapHost", "imapPort", "imapUser", "imapPassword", "smtpHost", "smtpPort", "smtpUser", "smtpPassword"]) {
     const entry = values[settingsFieldBlockId(key, field, secretId)]?.[SETTINGS_FIELD_ACTION_ID];
     if (!entry) continue;
     out[field] = field === "secret"
       ? (entry.selected_options || []).some((choice) => choice?.value === "secret")
-      : String(entry.value || "").trim();
+      : String((field === "authType" ? entry.selected_option?.value : entry.value) || "").trim();
   }
   return out;
 }
@@ -584,6 +591,15 @@ function formBlocks(spec, state) {
   for (const raw of spec.fields) {
     const field = Object.hasOwn(draft, raw.name) && !SETTINGS_SECRET_FIELDS.includes(raw.name) ? { ...raw, initial: draft[raw.name] } : raw;
     const blockId = settingsFieldBlockId(spec.key, field.name, state.formSecretId);
+    if (field.type === "select") {
+      blocks.push({
+        type: "input", block_id: blockId, optional: Boolean(field.optional), label: plain(field.label),
+        element: { type: "static_select", action_id: SETTINGS_FIELD_ACTION_ID, options: field.options,
+          initial_option: field.options.find((entry) => entry.value === field.initial) || field.options[0] },
+      });
+      if (error && error.field === field.name) blocks.push(context(`⚠️ ${escapeMrkdwn(error.error)}`));
+      continue;
+    }
     if (field.type === "checkbox") {
       const choice = option(field.label, "secret", field.option || "");
       blocks.push({
@@ -887,7 +903,7 @@ function connectionRows(snapshot, state, scope, opts) {
   const editable = scope === "p" || Boolean(opts.canManageCustomMcp);
   for (const entry of list) {
     const form = `cm:${scope}:${entry.name}`;
-    const row = editableRow(`${inlineCode(entry.serverName)} ${escapeMrkdwn(String(entry.url || "").replace(/^https:\/\//, "").slice(0, 200))} ${inlineCode(`••${entry.tokenLast4 || ""}`)}`, form, state, { editable });
+    const row = editableRow(`${inlineCode(entry.serverName)} ${escapeMrkdwn(String(entry.url || "").replace(/^https:\/\//, "").slice(0, 200))} ${inlineCode(`••${entry.tokenLast4 || ""}`)} · ${entry.authType === "composio" ? "Composio consumer key" : "Bearer token"}`, form, state, { editable });
     blocks.push(...withForm(row, form, snapshot, state));
   }
   const addKey = `cm-add:${scope}`;
@@ -1268,10 +1284,17 @@ export function buildCustomMcpEditorView(state = {}, { scope = "user", channelNa
         element: { type: "plain_text_input", action_id: CUSTOM_MCP_INPUT_ACTION_ID, placeholder: plain("https://mcp.example.com/mcp"), max_length: 2048 },
         hint: plain("HTTPS, on a public address."),
       },
+      {
+        type: "input", block_id: CUSTOM_MCP_AUTH_BLOCK_ID, optional: true, label: plain("Authentication type"),
+        element: { type: "static_select", action_id: CUSTOM_MCP_INPUT_ACTION_ID,
+          options: [option("Keep current (Bearer for new)", "preserve"), option("Bearer token", "bearer"), option("Composio consumer key", "composio")],
+          initial_option: option("Keep current (Bearer for new)", "preserve") },
+        hint: plain("Composio sends x-consumer-api-key. Leave unchanged to preserve an existing server's authentication."),
+      },
       optionalTextInput({
         blockId: CUSTOM_MCP_TOKEN_BLOCK_ID,
         actionId: CUSTOM_MCP_INPUT_ACTION_ID,
-        label: "Bearer token",
+        label: "Token or consumer key",
         placeholder: "Required for a new server",
         maxLength: 3000,
         hint: "Stored write-only and never shown again. Leave blank when updating an existing server to keep its token.",
@@ -1299,7 +1322,8 @@ export function buildCustomMcpStatusView(state, { scope, message, retry = false 
 export function readCustomMcpForm(view = {}) {
   const values = view?.state?.values || {};
   const text = (blockId) => String(values[blockId]?.[CUSTOM_MCP_INPUT_ACTION_ID]?.value || "").trim();
-  return { name: text(CUSTOM_MCP_NAME_BLOCK_ID), url: text(CUSTOM_MCP_URL_BLOCK_ID), token: text(CUSTOM_MCP_TOKEN_BLOCK_ID) };
+  const authType = values[CUSTOM_MCP_AUTH_BLOCK_ID]?.[CUSTOM_MCP_INPUT_ACTION_ID]?.selected_option?.value;
+  return { name: text(CUSTOM_MCP_NAME_BLOCK_ID), url: text(CUSTOM_MCP_URL_BLOCK_ID), token: text(CUSTOM_MCP_TOKEN_BLOCK_ID), ...(authType && authType !== "preserve" ? { authType } : {}) };
 }
 
 export function readConnectionsForm(view = {}) {

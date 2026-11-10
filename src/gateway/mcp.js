@@ -150,7 +150,7 @@ export async function buildMcpRuntimePayload({ composioUserEndpoint = null, comp
   if (sharedRemote) httpRemotes["composio-agent"] = sharedRemote;
   if (toolboxToken) httpRemotes["makeitfuture-toolbox"] = { url: toolboxUrl(), headers: { Authorization: `Bearer ${toolboxToken}` } };
   if (makeToolboxUrl && makeToolboxKey) httpRemotes["make-toolbox"] = { url: makeToolboxUrl, headers: { Authorization: `Bearer ${makeToolboxKey}` } };
-  // Custom MCP connections (src/gateway/custom-mcps.js): `custom-<name>` / `my-<name>`, Bearer
+  // Custom MCP connections (src/gateway/custom-mcps.js): `custom-<name>` / `my-<name>`, selected authentication
   // header, `publicOnly` so the relay re-checks the destination on every dial. The prefixes keep
   // them from ever replacing one of the built-in entries above.
   for (const [name, remote] of Object.entries(customMcpRemotes(customMcps))) {

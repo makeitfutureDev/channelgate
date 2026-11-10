@@ -1,7 +1,7 @@
 // One custom MCP connection editor, shared by the conversation scope (channel card → Connections)
 // and the personal scope (user drawer) — see src/gateway/custom-mcps.js.
 //
-// A custom MCP is a remote server URL plus a Bearer token. The token is write-only like an
+// A custom MCP is a remote server URL plus a Bearer token or Composio consumer key. The token is write-only like an
 // environment secret: the list shows name, the server name the agent sees, the URL and the last
 // four characters, there is no reveal call, and the token box is cleared the moment it is stored.
 // Saving an existing name with the token box empty keeps the stored token (a URL change).
@@ -25,8 +25,16 @@ export function mountCustomMcpEditor({
   const nameInput = root.querySelector(".cmcp-name");
   const urlInput = root.querySelector(".cmcp-url");
   const tokenInput = root.querySelector(".cmcp-token");
+  const authInput = root.querySelector(".cmcp-auth");
   const saveButton = root.querySelector(".cmcp-save");
   let current = Array.isArray(servers) ? servers : [];
+
+  const authLabel = (authType) => authType === "composio" ? "Composio consumer key" : "Bearer token";
+  const tokenPlaceholder = () => {
+    tokenInput.placeholder = current.some((entry) => entry.name === nameInput.value.trim().toLowerCase())
+      ? "leave blank to keep the current token"
+      : `${authLabel(authInput.value)} — stored, never shown again`;
+  };
 
   const render = () => {
     if (state) state.textContent = current.length ? `${current.length} set` : "none";
@@ -43,7 +51,7 @@ export function mountCustomMcpEditor({
     const table = document.createElement("table");
     table.className = "vars-table";
     const head = table.createTHead().insertRow();
-    for (const label of ["Server", "URL", "Token", "Updated", ""]) {
+    for (const label of ["Server", "URL", "Authentication", "Token", "Updated", ""]) {
       const th = document.createElement("th");
       th.textContent = label;
       head.appendChild(th);
@@ -62,7 +70,8 @@ export function mountCustomMcpEditor({
       name.textContent = entry.serverName;
       cell(name, { title: `Stored as "${entry.name}"` });
       cell(entry.url, { className: "cmcp-url-cell", title: entry.url });
-      cell(`••••${entry.tokenLast4 || ""}`, { className: "state", title: "Bearer token (write-only)" });
+      cell(authLabel(entry.authType), { className: "state" });
+      cell(`••••${entry.tokenLast4 || ""}`, { className: "state", title: `${authLabel(entry.authType)} (write-only)` });
       // Who set it rides in the tooltip: the card is narrow, and the URL needs the room.
       const who = String(entry.setBy || "");
       const id = /^<@([A-Z0-9]+)>$/.exec(who)?.[1] || (/^[UW][A-Z0-9]+$/.test(who) ? who : "");
@@ -77,6 +86,7 @@ export function mountCustomMcpEditor({
       edit.addEventListener("click", () => {
         nameInput.value = entry.name;
         urlInput.value = entry.url;
+        authInput.value = entry.authType || "bearer";
         tokenInput.value = "";
         tokenInput.placeholder = "leave blank to keep the current token";
         hint.textContent = `Editing ${entry.serverName}.`;
@@ -112,10 +122,12 @@ export function mountCustomMcpEditor({
   nameInput.addEventListener("input", () => {
     const folded = nameInput.value.toLowerCase();
     if (folded !== nameInput.value) nameInput.value = folded;
-    tokenInput.placeholder = current.some((entry) => entry.name === folded.trim())
-      ? "leave blank to keep the current token"
-      : "Bearer token — stored, never shown again";
+    const existing = current.find((entry) => entry.name === folded.trim());
+    if (existing) authInput.value = existing.authType || "bearer";
+    tokenPlaceholder();
   });
+
+  authInput.addEventListener("change", tokenPlaceholder);
 
   saveButton.addEventListener("click", async () => {
     const name = nameInput.value.trim().toLowerCase();
@@ -129,13 +141,14 @@ export function mountCustomMcpEditor({
     saveButton.disabled = true;
     hint.textContent = "checking and saving…";
     try {
-      const result = await api(endpoint(name), { method: "PUT", body: JSON.stringify({ url, ...(token ? { token } : {}) }) });
+      const result = await api(endpoint(name), { method: "PUT", body: JSON.stringify({ url, authType: authInput.value, ...(token ? { token } : {}) }) });
       current = result.servers || [];
       const saved = current.find((entry) => entry.name === name);
       nameInput.value = "";
       urlInput.value = "";
       tokenInput.value = "";
-      tokenInput.placeholder = "Bearer token — stored, never shown again";
+      authInput.value = "bearer";
+      tokenPlaceholder();
       hint.textContent = savedText(saved?.serverName || name);
       render();
     } catch (e) {
@@ -156,6 +169,10 @@ export function customMcpEditorMarkup() {
     <div class="secret-add cmcp-add">
       <input class="cmcp-name" type="text" autocomplete="off" spellcheck="false" placeholder="name — e.g. linear" maxlength="32" />
       <input class="cmcp-url" type="url" autocomplete="off" spellcheck="false" placeholder="https://mcp.example.com/mcp" />
+      <select class="cmcp-auth" aria-label="Authentication type">
+        <option value="bearer">Bearer token</option>
+        <option value="composio">Composio consumer key</option>
+      </select>
       <input class="cmcp-token" type="password" placeholder="Bearer token — stored, never shown again" autocomplete="new-password" />
       <button type="button" class="ghost cmcp-save">Save server</button>
     </div>

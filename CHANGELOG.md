@@ -12,6 +12,10 @@ release gates. Stable promotion and publication require approval of the exact te
 
 ### Beta development notes
 
+- Custom MCP connections now support Composio consumer-key authentication alongside Bearer
+  tokens in both the admin UI and Slack Settings. Add another Composio identity under a distinct
+  name without replacing the built-in connection. Existing servers retain Bearer authentication.
+
 - Fix Google Chat reaction subscription authorization by including the required `chat.bot` scope in the separate Workspace Events token.
 
 - Keep Claude shell-task lifecycle updates out of subagent progress rows and the Coordinating

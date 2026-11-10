@@ -705,12 +705,12 @@ button.clear-tok.armed { background: rgba(229, 96, 77, .14); border-color: rgba(
 .emac-add .emac-send-label { display: inline-flex; align-items: center; gap: 6px; color: var(--muted); font-size: 12px; }
 .vars-table td.emac-address-cell { max-width: 260px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .secret-add { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
-.secret-add input { flex: 1 1 220px; min-width: 0; box-sizing: border-box; background: var(--panel-2); border: 1px solid var(--line); color: var(--ink); padding: 9px 12px; border-radius: 8px; font: inherit; }
+.secret-add input, .cmcp-add select { flex: 1 1 220px; min-width: 0; box-sizing: border-box; background: var(--panel-2); border: 1px solid var(--line); color: var(--ink); padding: 9px 12px; border-radius: 8px; font: inherit; }
 .secret-add .secret-save { flex: none; }
 /* In the user drawer the editor sits directly under the full-width token fields, so it stacks to
    match them — same control, same width, instead of two narrow boxes sharing a row. */
 .drawer .secret-add { flex-direction: column; align-items: stretch; gap: 8px; }
-.drawer .secret-add input { flex: none; width: 100%; }
+.drawer .secret-add input, .drawer .cmcp-add select { flex: none; width: 100%; }
 /* Checkbox labels share the row with their text; only text fields fill the drawer. */
 .drawer .secret-add input[type="checkbox"] { width: auto; }
 .drawer .secret-add .secret-save { align-self: flex-start; }

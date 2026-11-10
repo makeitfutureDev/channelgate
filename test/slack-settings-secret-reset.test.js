@@ -26,6 +26,7 @@ function modal(form, snapshot = {}) {
     for (const block of view.blocks.filter((b) => b.type === "input")) {
       if (!retained.has(identity(block))) retained.set(identity(block), block.element.type === "checkboxes"
         ? { selected_options: block.element.initial_options || [] }
+        : block.element.type === "static_select" ? { selected_option: block.element.initial_option || null }
         : { value: block.element.initial_value || "" });
     }
   }
@@ -85,8 +86,8 @@ for (const scope of ["c", "p"]) {
   test(`blank custom MCP edit after an async refusal keeps the stored token (${scope})`, async () => {
     const name = `existing-${scope}`;
     const original = "dummy-saved-token";
-    await saveSettingsForm(`cm-add:${scope}`, { name, url: "https://93.184.215.14/mcp", token: original }, await context());
-    const ui = modal(`cm:${scope}:${name}`, { customMcps: { [scope === "c" ? "channel" : "personal"]: [{ name, serverName: name, url: "https://93.184.215.14/mcp" }] } });
+    await saveSettingsForm(`cm-add:${scope}`, { name, url: "https://93.184.215.14/mcp", token: original, authType: "composio" }, await context());
+    const ui = modal(`cm:${scope}:${name}`, { customMcps: { [scope === "c" ? "channel" : "personal"]: [{ name, serverName: name, url: "https://93.184.215.14/mcp", authType: "composio" }] } });
     ui.type("token", "dummy-rejected-replacement");
     const staleId = ui.input("token").block_id;
     await ui.submit(async () => ({ field: "url", error: "URL resolved to a loopback address." }));
@@ -98,6 +99,7 @@ for (const scope of ["c", "p"]) {
     }, { [staleId]: { v: { value: "dummy-rejected-replacement" } } });
     const saved = scope === "c" ? await store.getChannelMeta(entry.slug) : await store.getUser("U_EDITOR");
     assert.equal(saved.customMcps.find((row) => row.name === name).token, original);
+    assert.equal(saved.customMcps.find((row) => row.name === name).authType, "composio");
     assert.equal(saved.customMcps.find((row) => row.name === name).url, "https://93.184.215.14/v2");
     assert.equal(parseSettingsMetadata(ui.view().private_metadata).form, "");
   });

@@ -873,6 +873,7 @@ export function createChannelsRouter({
           name: req.params.name,
           url: typeof req.body?.url === "string" ? req.body.url : "",
           token: typeof req.body?.token === "string" ? req.body.token : "",
+          authType: req.body?.authType,
         }, { actor: WEB_ADMIN_ACTOR });
       } catch (e) {
         return res.status(400).json({ error: e.message });

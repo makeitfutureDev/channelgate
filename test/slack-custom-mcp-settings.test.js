@@ -18,6 +18,9 @@ const {
   CUSTOM_MCP_NAME_BLOCK_ID,
   CUSTOM_MCP_URL_BLOCK_ID,
   CUSTOM_MCP_TOKEN_BLOCK_ID,
+  CUSTOM_MCP_AUTH_BLOCK_ID,
+  readSettingsForm,
+  settingsFieldBlockId,
   settingsCommand,
 } = await import("../src/slack/channel-settings.js");
 const { applyCustomMcpAction, channelSettingsEditOptions, customMcpErrorBlock, handleCustomMcpFormSubmission, handleCustomMcpSettingsAction } = await import("../src/slack/app.js");
@@ -51,7 +54,7 @@ test("the form is never prefilled, names the scope, and parses only what was typ
   assert.equal(parseEditorMetadata(view.private_metadata).view, "custom_mcp_c");
   assert.equal(parseEditorMetadata(buildCustomMcpEditorView(state, { scope: "user" }).private_metadata).view, "custom_mcp_p");
   assert.deepEqual(view.blocks.filter((b) => b.type === "input").map((b) => [b.block_id, Boolean(b.optional)]), [
-    [CUSTOM_MCP_NAME_BLOCK_ID, false], [CUSTOM_MCP_URL_BLOCK_ID, false], [CUSTOM_MCP_TOKEN_BLOCK_ID, true],
+    [CUSTOM_MCP_NAME_BLOCK_ID, false], [CUSTOM_MCP_URL_BLOCK_ID, false], [CUSTOM_MCP_AUTH_BLOCK_ID, true], [CUSTOM_MCP_TOKEN_BLOCK_ID, true],
   ]);
   assert.ok(view.blocks.every((b) => !b.element?.initial_value), "nothing is prefilled");
   assert.match(flat(view), /linear/, "the hint names the existing servers so one can be updated");
@@ -389,8 +392,33 @@ test("the MCP page lists the conversation's servers and You lists the viewer's, 
   const editing = buildChannelSettingsView({ customMcps: masked }, { ...state, tab: "mcp", form: "cm:c:linear" }, { tab: "mcp", canManageCustomMcp: true });
   assert.equal(editing.submit.text, "Save");
   const inputs = editing.blocks.filter((block) => block.type === "input");
-  assert.deepEqual(inputs.map((block) => block.label.text), ["Server URL", "Bearer token"]);
+  assert.deepEqual(inputs.map((block) => block.label.text), ["Server URL", "Authentication type", "Token or consumer key"]);
   assert.equal(inputs[0].element.initial_value, "https://mcp.linear.app/mcp");
-  assert.equal(inputs[1].element.initial_value, undefined);
+  assert.equal(inputs[1].element.initial_option.value, "bearer");
+  assert.equal(inputs[2].element.initial_value, undefined);
   assert.ok(buttons(editing, "cg_channel_settings_form_remove")[0].confirm, "Remove asks first");
+});
+
+test("Composio authentication is editable and retained in Slack drafts without exposing keys", () => {
+  const snapshot = { customMcps: { channel: [{ ...masked.channel[0], authType: "composio" }] } };
+  const form = "cm:c:linear";
+  const view = buildChannelSettingsView(snapshot, { ...state, tab: "mcp", form }, { tab: "mcp", canManageCustomMcp: true });
+  const auth = view.blocks.find((block) => block.block_id === settingsFieldBlockId(form, "authType"));
+  assert.equal(auth.element.initial_option.value, "composio");
+  assert.match(flat(view), /Composio consumer key/);
+  assert.deepEqual(readSettingsForm({ state: { values: { [auth.block_id]: { v: { selected_option: { value: "bearer" } } } } } }, form), { authType: "bearer" });
+  const draft = buildChannelSettingsView(snapshot, { ...state, tab: "mcp", form, formDraft: { authType: "bearer" }, formError: { field: "token", error: "Enter a key" } }, { tab: "mcp", canManageCustomMcp: true });
+  assert.equal(draft.blocks.find((block) => block.block_id === auth.block_id).element.initial_option.value, "bearer");
+  assert.equal(customMcpErrorBlock("Authentication type must be bearer or composio"), CUSTOM_MCP_AUTH_BLOCK_ID);
+  assert.equal(customMcpErrorBlock("A token is required for a new custom MCP"), CUSTOM_MCP_TOKEN_BLOCK_ID);
+});
+
+test("legacy custom MCP forms explicitly select Composio and preserve authentication when omitted", () => {
+  const view = buildCustomMcpEditorView(state);
+  assert.equal(view.blocks.find((block) => block.block_id === CUSTOM_MCP_AUTH_BLOCK_ID).element.initial_option.value, "preserve");
+  const values = formValues({ name: "second", url: PUBLIC_URL });
+  values[CUSTOM_MCP_AUTH_BLOCK_ID] = { value: { selected_option: { value: "composio" } } };
+  assert.equal(readCustomMcpForm({ state: { values } }).authType, "composio");
+  values[CUSTOM_MCP_AUTH_BLOCK_ID].value.selected_option.value = "preserve";
+  assert.equal(Object.hasOwn(readCustomMcpForm({ state: { values } }), "authType"), false);
 });

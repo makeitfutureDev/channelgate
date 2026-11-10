@@ -1,10 +1,10 @@
 // Custom MCP connections: a remote MCP server a channel manager (for the conversation) or a person
-// (for themselves) adds by URL + Bearer token. Bearer only — servers that need an OAuth flow go
+// (for themselves) adds by URL + a Bearer token or Composio consumer key. Servers that need an OAuth flow go
 // through Composio. One home for the record shape, its validation, the masked listing every
 // surface returns, and what a run receives.
 //
 // Stored as a list on the channel's meta (`meta.customMcps`) or the person's user record
-// (`user.customMcps`): `{ name, url, token, setBy, setAt }`. The token is WRITE-ONLY, like a
+// (`user.customMcps`): `{ name, url, token, authType, setBy, setAt }`. The token is WRITE-ONLY, like a
 // channel's environment secrets: every surface lists name + server name + URL + last4 + who/when,
 // and there is no reveal path — replace it by entering a new one.
 //
@@ -19,6 +19,8 @@
 // to the vetted addresses (src/mcp/public-fetch.js) — the daemon sits outside the egress proxy, so
 // without it a custom URL would be a way into the host's loopback, private network or cloud
 // metadata. A save is refused up front for the same reason (assertPublicCustomMcpUrl).
+import { customMcpAuthentication, normalizeCustomMcpAuthType } from "./custom-mcp-auth.js";
+export { normalizeCustomMcpAuthType } from "./custom-mcp-auth.js";
 import { resolvePublicHttpUrl } from "../web/security.js";
 
 export const CUSTOM_MCP_LIMIT = 5;
@@ -82,9 +84,11 @@ export async function assertPublicCustomMcpUrl(value, { lookup } = {}) {
   return href;
 }
 
-/** The trimmed token, or a throw. A leading "Bearer " is accepted and dropped. */
-export function normalizeCustomMcpToken(value) {
-  const token = String(value ?? "").trim().replace(/^bearer\s+/i, "");
+/** Trim the credential; accept a pasted Bearer prefix only for Bearer authentication. */
+export function normalizeCustomMcpToken(value, authType) {
+  const { prefix } = customMcpAuthentication(authType);
+  const trimmed = String(value ?? "").trim();
+  const token = prefix ? trimmed.replace(/^bearer\s+/i, "") : trimmed;
   if (token.length < MIN_TOKEN_LENGTH) throw new Error(`Token must be at least ${MIN_TOKEN_LENGTH} characters`);
   if (Buffer.byteLength(token) > MAX_TOKEN_BYTES) throw new Error("Token is too long (8 KB at most)");
   if (!TOKEN_RE.test(token)) throw new Error("Token must not contain spaces, line breaks or control characters");
@@ -100,6 +104,7 @@ function cleanEntries(list) {
     const name = typeof entry.name === "string" ? entry.name : "";
     if (!NAME_RE.test(name) || seen.has(name)) continue;
     if (typeof entry.url !== "string" || typeof entry.token !== "string" || !entry.token) continue;
+    try { normalizeCustomMcpAuthType(entry.authType); } catch { continue; }
     seen.add(name);
     out.push(entry);
   }
@@ -122,13 +127,15 @@ export function patchCustomMcps(list, { set = null, remove = null, actor = "", n
   const name = normalizeCustomMcpName(set.name);
   const url = normalizeCustomMcpUrl(set.url);
   const existing = current.find((entry) => entry.name === name);
-  const suppliedToken = typeof set.token === "string" && set.token.trim() ? normalizeCustomMcpToken(set.token) : "";
-  if (!existing && !suppliedToken) throw new Error("A Bearer token is required for a new custom MCP");
+  const authType = normalizeCustomMcpAuthType(set.authType === undefined ? existing?.authType : set.authType);
+  const suppliedToken = typeof set.token === "string" && set.token.trim() ? normalizeCustomMcpToken(set.token, authType) : "";
+  if (!existing && !suppliedToken) throw new Error("A token is required for a new custom MCP");
   if (!existing && current.length >= CUSTOM_MCP_LIMIT) throw new Error(`At most ${CUSTOM_MCP_LIMIT} custom MCP servers here — remove one first`);
   const entry = {
     name,
     url,
-    token: suppliedToken || existing.token,
+    token: suppliedToken || normalizeCustomMcpToken(existing.token, authType),
+    authType,
     setBy: String(actor || ""),
     setAt: (now instanceof Date ? now : new Date(now)).toISOString(),
   };
@@ -142,6 +149,7 @@ export function listCustomMcps(list, scope) {
     name: entry.name,
     serverName: customMcpServerName(scope, entry.name),
     url: entry.url,
+    authType: normalizeCustomMcpAuthType(entry.authType),
     hasToken: true,
     tokenLast4: entry.token.slice(-4),
     setBy: typeof entry.setBy === "string" ? entry.setBy : "",
@@ -150,7 +158,7 @@ export function listCustomMcps(list, scope) {
 }
 
 /**
- * What ONE run receives: `{ [serverName]: { url, token } }`. Lean (clean) gets nothing; the
+ * What ONE run receives: `{ [serverName]: { url, token, authType } }`. Lean (clean) gets nothing; the
  * personal list only when the run's author is trusted (the HTTP run API names an author it never
  * authenticated, so it gets no personal scope — the same rule as composio-user). An entry whose URL
  * no longer parses is skipped rather than failing the turn.
@@ -162,7 +170,7 @@ export function resolveCustomMcpsForRun({ channelList = [], userList = [], clean
     for (const entry of cleanEntries(list)) {
       let url;
       try { url = normalizeCustomMcpUrl(entry.url); } catch { continue; }
-      out[customMcpServerName(scope, entry.name)] = { url, token: entry.token };
+      out[customMcpServerName(scope, entry.name)] = { url, token: entry.token, authType: normalizeCustomMcpAuthType(entry.authType) };
     }
   };
   add("channel", channelList);
@@ -170,12 +178,13 @@ export function resolveCustomMcpsForRun({ channelList = [], userList = [], clean
   return out;
 }
 
-/** The relay/remote shape mcp.js registers: Bearer header + the per-dial public-address check. */
+/** The relay/remote shape mcp.js registers: selected authentication header + the per-dial public-address check. */
 export function customMcpRemotes(customMcps = {}) {
   const out = {};
-  for (const [name, { url, token } = {}] of Object.entries(customMcps || {})) {
+  for (const [name, { url, token, authType } = {}] of Object.entries(customMcps || {})) {
     if (!url || !token) continue;
-    out[name] = { url, headers: { Authorization: `Bearer ${token}` }, publicOnly: true };
+    const { headerName, prefix } = customMcpAuthentication(authType);
+    out[name] = { url, headers: { [headerName]: `${prefix}${token}` }, publicOnly: true };
   }
   return out;
 }
