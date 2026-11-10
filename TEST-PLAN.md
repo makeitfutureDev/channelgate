@@ -7168,6 +7168,18 @@ session continuation with fixture engines. Public instructions: `docs/HTTP-RUN-A
   collisions, failed admission retry, and POST/GET/list thread fields with nullable permalinks.
 - [x] Automated: actual driver serializes shared-thread runs and continues its saved session;
   legacy no-key channel/headless behavior and scratch migration upgrade still pass.
+- [x] Automated: Claude and Codex API model-only, mode-only and engine-only requests in a reused
+  conversation retain its effort pin; null/empty API effort also inherits, while a defined effort
+  applies only to that request. Real runner tests distinguish omitted/undefined/null inheritance
+  from an internal queued shortcut's explicit empty effort snapshot, before/after JSON persistence.
+- [ ] **API-CONV-EFFORT — inherited effort.** On each engine's fixture below, configure channel
+  effort `low`, start a keyed API conversation, then pin its thread effort to `high`. Submit
+  `message:"Reply EFFORT_CHECK"` with the same key, first overriding only a compatible model,
+  then only `mode:"read"`, then only the same engine, then model plus `effort:null` or `effort:""`.
+  Pass: every turn uses `high` in the actual CLI arguments and runtime metadata. Repeat with
+  `effort:"medium"`: that turn uses `medium`, and the next request without effort returns to
+  `high`. Restore the fixture's channel and thread selections. This requires both native engines;
+  the automated fake-runtime regression does not constitute live acceptance.
 
 Live acceptance — run each case separately for **Claude and Codex**, using Worker + Auto Slack
 fixtures `qa-api-conversations-claude` and `qa-api-conversations-codex`, plus a second registered

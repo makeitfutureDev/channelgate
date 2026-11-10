@@ -14,12 +14,13 @@ process.env.PATH = `${path.join(root, "test", "fixtures")}${path.delimiter}${pro
 process.env.SESSION_KEEPALIVE = "0";
 process.env.CG_WORKSPACE_DIR = path.join(scratch, "conversation-driver-workspaces");
 
-const { upsertChannelEntry, saveChannelMeta } = await import("../src/config/store.js");
+const { upsertChannelEntry, saveChannelMeta, patchChannelMeta } = await import("../src/config/store.js");
 const { saveSettings } = await import("../src/config/settings.js");
 const { setRuntimeResolver } = await import("../src/gateway/run.js");
 const { resolveRuntime } = await import("../src/runtimes/resolve.js");
 const { startApiRun, getApiJob } = await import("../src/gateway/api-runs.js");
 const { createRunsRouter } = await import("../src/web/routes/runs.js");
+const { setThreadEffort, getThreadEffort } = await import("../src/gateway/thread-engine.js");
 const { runQueue } = await import("../src/slack/message-lifecycle.js");
 const { createFakeRuntimeBackend, fakeTarget } = await import("./runtime-fake.js");
 
@@ -208,3 +209,34 @@ test("a keyed Codex conversation resumes the provider-minted session on its next
   assert.ok(replies.some((p) => /resume=no/.test(p.text)));
   assert.ok(replies.some((p) => /resume=yes/.test(p.text)), "both Codex results are delivered in the same Slack thread");
 });
+
+for (const engine of ["claude", "codex"]) {
+  test(`${engine}: API model and mode overrides preserve a reused conversation's effort pin`, async () => {
+    const f = await fixture(engine);
+    const model = engine === "claude" ? "sonnet" : "gpt-5.6-sol";
+    await patchChannelMeta(f.entry.slug, { model, effort: "low" });
+    const backend = createFakeRuntimeBackend();
+    setRuntimeResolver((slug, meta, options) => fakeTarget(backend, slug, meta, options));
+    const input = { channel: f.id, conversationKey: "effort:inheritance", slack: f.slack, queueMemoryReview: () => null };
+    const first = await startApiRun({ ...input, message: "Start this conversation" });
+    assert.equal(first.ok, true);
+    assert.equal((await settled(first.jobId)).status, "completed");
+    await setThreadEffort(f.entry.slug, first.threadTs, "high");
+    const cases = [
+      { model }, { mode: "read" }, { engine }, { model, effort: null },
+      { model, effort: "" }, { model, effort: "medium" }, {},
+    ];
+    for (const overrides of cases) {
+      const next = await startApiRun({ ...input, ...overrides, message: "Continue with this request's settings" });
+      assert.equal(next.ok, true);
+      assert.equal(next.threadTs, first.threadTs);
+      const job = await settled(next.jobId);
+      assert.equal(job.status, "completed", job.error || "");
+      const expected = overrides.effort || "high";
+      const call = backend.calls.spawn.at(-1);
+      if (engine === "claude") assert.equal(call.args[call.args.indexOf("--effort") + 1], expected);
+      else assert.ok(call.args.includes(`model_reasoning_effort="${expected}"`));
+      assert.equal(await getThreadEffort(f.entry.slug, first.threadTs), "high", "per-request overrides never mutate the thread pin");
+    }
+  });
+}
