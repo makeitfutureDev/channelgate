@@ -144,7 +144,7 @@ test("initial setup verifies an existing admin privately before its first real p
   const retried = page.waitForResponse(response => response.url().endsWith("/api/users/UELEVENTH") && response.request().method() === "PUT");
   await page.locator('#add-user button[type="submit"]').click();
   assert.equal((await retried).status(), 200);
-  await page.waitForFunction(() => document.getElementById("add-user").hidden);
+  await page.locator("#add-user").waitFor({ state: "hidden" });
   assert.equal(await humanCount(), 11);
   assert.equal(await page.locator("#add-user-id").inputValue(), "");
   assert.deepEqual(errors, []);
