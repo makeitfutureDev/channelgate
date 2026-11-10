@@ -935,6 +935,22 @@ inbox). Record the address and the servers; never the password.
   Private QA definitions: LICENSE-INVENTORY-20-01, HARNESS-APPROVALS-01 and
   HARNESS-APPROVALS-AUTOMATION-01. Definitions were created and reread; live runs remain pending.
 
+### Admin user registration refusal feedback (2026-11-10)
+
+- Automated browser regression: `test/admin-user-bootstrap-browser.test.js` authenticates with
+  a real disposable passkey, seeds nine human users plus the excluded synthetic API principal,
+  adds the tenth through the Users form and attempts an eleventh. Require HTTP 403 with the
+  registration-limit code **and a visible readable error dialog**, unchanged count, absent new
+  user, retained input/form and no unhandled browser rejection. Dismiss the dialog, change only
+  the disposable license to Enterprise and retry the same input; require one created user and
+  the normal successful form reset. `test/license-registration.test.js` and
+  `test/license-limits.test.js` retain the atomic inventory and signed-license enforcement gates.
+- Exact-candidate LICENSE-INVENTORY-20-01 acceptance must repeat the complete stored rule for
+  Claude and Codex in disposable isolated fixtures. Capture the browser dialog, request/response
+  and stored counts alongside independent races, signed limits, downgrade preservation, actual
+  selected-adapter launches and zero-spawn refusals. An HTTP error visible only in developer
+  tools does not satisfy the Admin UI feedback requirement. Preserve prior failed attempts.
+
 ## Channel-to-channel agent mail (2026-11-06)
 
 - Message ceiling regression (2026-11-10): `test/agent-mail.test.js` counts the actual stored
