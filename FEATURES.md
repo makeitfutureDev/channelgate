@@ -5146,7 +5146,14 @@ are retired, bullet by bullet; everything else stands.
   `preview_skill_template` (open); `add_channel_skills`, `remove_channel_skills`,
   `set_channel_skill_template` (any member, no card — a grant answers with the conversation's
   resulting always-on cost and any warning it crossed, e.g. the context soft cap, so the person who
-  caused it hears about it); `create_skill`, `update_skill`, `delete_skill` (tiered ownership, no
+  caused it hears about it). Personal `add_my_skills` / `remove_my_skills` mutations also persist a
+  `user_skills_updated` audit event with the verified owner/author, originating conversation and
+  actual added/removed skill names. Unchanged retries and denied requests do not claim a mutation;
+  skill contents and credentials never enter that event. Admin `remove_org_skills` records an
+  actual removal as `skill_revoked` with organization scope, verified author, originating
+  conversation and removed names; denied or unchanged calls emit no mutation receipt. Removing
+  organization grants remains automatic for a verified admin. `create_skill`, `update_skill`,
+  `delete_skill` (tiered ownership, no
   card — see *Skill ownership without approvals*; partial files merge over the current revision),
   `propose_skill_change` (`change` with files, `promote`, `delete`, `feedback`),
   `list_skill_proposals` / `decide_skill_proposal` (admins; an approved change on a source-owned

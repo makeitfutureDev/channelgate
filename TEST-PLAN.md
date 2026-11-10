@@ -10766,6 +10766,34 @@ Operator decision 2026-09-27: personal and channel skills need nobody's approval
 only the organization tier; a catalog delete is an admin's; read-only sources are extended with a
 companion skill; every change is announced in the reply.
 
+- [x] Personal grant audit regression (`test/mcp-control-plane-approval.test.js`): actual signed
+      gateway MCP subprocesses in Claude and Codex contexts add and remove an approved member's
+      personal grants. Each changed call persists exactly one `user_skills_updated` event with
+      trusted owner/author, originating channel/slug, `gateway-mcp` source and actual added/removed
+      names. Duplicate additions, absent removals, foreign-personal additions and unapproved
+      additions create no mutation receipt. Stored grants match each delta; events exclude skill
+      contents; personal grants stay self-service with no approval request.
+- [x] Organization removal audit regression (same signed MCP suite, both engine contexts): a
+      demoted admin cannot remove the stored grant or emit a mutation receipt. After restoring
+      admin authority, removal records exactly one `skill_revoked` event with organization scope,
+      verified actor, originating channel/slug and actual removed names, without skill contents.
+      Duplicate input and absent retries produce no extra removal event. No approval card is
+      introduced for removal; restore the initial organization grants after the test.
+- [ ] Live engine-independent personal grant audit: use an approved member and owned disposable
+      catalog skills in a private fixture. Capture initial personal grants and audit cursor; call
+      `add_my_skills`, repeat it, then `remove_my_skills` and repeat. Require one durable event per
+      real change and none for unchanged calls; match verified author/owner, channel/slug and
+      exact names against stored grants. Refused foreign-personal/unapproved additions must leave
+      state and mutation audit unchanged. Restore initial grants. Exercise signed Claude/Codex
+      tool contexts where available; this checks gateway mutations, not model output. Keep native
+      UI and organization approval/replay acceptance separate; source tests do not certify them.
+- [ ] In the same owned audit fixture, grant a harmless skill organization-wide through its real
+      approval flow; then remove it as a verified admin. Require the stored organization grant
+      delta and one scoped `skill_revoked` receipt with the actual author and names. Repeat the
+      removal and require no extra receipt; repeat after admin revocation and require unchanged
+      grants and no removal event. Preserve the addition's original approval history and restore
+      only owned fixture changes. Removal must stay automatic, without a new approval card.
+
 - [x] Automated (both engine contexts, `test/mcp-control-plane-approval.test.js`): an admin's
       `create_skill` with no scope makes a channel skill of the current channel, `scope:
       "organization"` a library skill granted here, `personal: true` a personal skill; the admin

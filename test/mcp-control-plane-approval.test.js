@@ -93,6 +93,108 @@ const resultText = (r) => r.content?.map((i) => i.text || "").join("\n") || "";
 const approvalReceipt = /Human approval was received before this tool executed/;
 const awaitingCard = /awaiting approval \(request .*\)\. The exact change is saved with no deadline/;
 
+test("organization skill removal audits actual changes with trusted admin identity and no approval card", async () => {
+  const { putSkillRevision } = await import("../src/gateway/skills/catalog.js");
+  const { grantSkillsToOrg } = await import("../src/gateway/skills/authoring.js");
+  const { getOrgAccessGrants } = await import("../src/config/settings.js");
+  const { readEvents } = await import("../src/util/logger.js");
+  const original = getOrgAccessGrants();
+  try {
+    for (const engine of ["claude", "codex"]) {
+      const author = `U_ORG_AUDIT_${engine.toUpperCase()}`;
+      const name = `audit-org-remove-${engine}`;
+      await setUser(author, { approved: true, isAdmin: true });
+      putSkillRevision({ slug: name, ownerKind: "local", visibility: "org", createdBy: author,
+        files: [{ path: "SKILL.md", content: `---\nname: ${name}\ndescription: Audit fixture\n---\nPRIVATE_ORG_BODY_NOT_AUDIT_DATA\n` }] });
+      grantSkillsToOrg([name]);
+      const receipts = () => readEvents({ limit: 1000 }).filter((e) => e.event === "skill_revoked" && e.author === author);
+      approvalRequests.length = 0;
+      await withGateway({ author, engine }, async (client) => {
+        const remove = () => client.callTool({ name: "remove_org_skills", arguments: { slugs: [name, name, "absent-org-audit"] } });
+        await setUser(author, { isAdmin: false });
+        assert.match(resultText(await remove()), /Only admins/);
+        assert.ok(getOrgAccessGrants().skills.includes(name));
+        assert.equal(receipts().length, 0);
+        await setUser(author, { isAdmin: true });
+        await remove();
+        assert.ok(!getOrgAccessGrants().skills.includes(name));
+        const events = receipts();
+        assert.equal(events.length, 1, "persisted organization removal must have a durable audit receipt");
+        assert.deepEqual(events[0].skills, [name]);
+        assert.equal(events[0].scope, "organization");
+        assert.equal(events[0].author, author);
+        assert.equal(events[0].channel, CHANNEL);
+        assert.equal(events[0].slug, SLUG);
+        assert.equal(events[0].source, "gateway-mcp");
+        assert.ok(!JSON.stringify(events).includes("PRIVATE_ORG_BODY_NOT_AUDIT_DATA"));
+        await remove();
+        assert.equal(receipts().length, 1, "absent organization grants are not audited as a new removal");
+        assert.equal(approvalRequests.length, 0, "organization removal remains automatic for a verified admin");
+      });
+    }
+  } finally {
+    saveSettings({ accessGrants: original });
+  }
+});
+
+test("personal skill grant mutations leave one trusted audit receipt, excluding no-ops and denials", async () => {
+  const { putSkillRevision } = await import("../src/gateway/skills/catalog.js");
+  const { getUser } = await import("../src/config/store.js");
+  const { readEvents } = await import("../src/util/logger.js");
+  const contentMarker = "PRIVATE_SKILL_BODY_NOT_AUDIT_DATA";
+  for (const engine of ["claude", "codex"]) {
+    const author = `U_PERSONAL_AUDIT_${engine.toUpperCase()}`;
+    const names = [`audit-personal-one-${engine}`, `audit-personal-two-${engine}`];
+    const foreign = `audit-foreign-${engine}`;
+    await setUser(author, { approved: true, isAdmin: false, skills: [] });
+    for (const name of [...names, foreign]) putSkillRevision({
+      slug: name, ownerKind: "local", visibility: name === foreign ? "personal" : "org",
+      createdBy: name === foreign ? "U_OTHER_OWNER" : "U_CTRL_ADMIN",
+      files: [{ path: "SKILL.md", content: `---\nname: ${name}\ndescription: Audit fixture\n---\n${contentMarker}\n` }],
+    });
+    const receipts = () => readEvents({ limit: 1000 }).filter((e) => e.event === "user_skills_updated" && e.user === author);
+    approvalRequests.length = 0;
+    await withGateway({ author, engine }, async (client) => {
+      const call = (name, slugs) => client.callTool({ name, arguments: { slugs } });
+      await call("add_my_skills", [...names, names[0]]);
+      assert.deepEqual((await getUser(author)).skills, names);
+      let events = receipts();
+      assert.equal(events.length, 1, "persisted personal grant must have a durable audit receipt");
+      assert.deepEqual(events[0].added, names);
+      assert.deepEqual(events[0].removed, []);
+      await call("add_my_skills", [names[0]]);
+      await call("add_my_skills", [foreign]);
+      assert.equal(receipts().length, 1, "duplicate and foreign-scope requests do not claim a mutation");
+      assert.deepEqual((await getUser(author)).skills, names);
+      await call("remove_my_skills", [names[0], "unknown-audit-skill"]);
+      assert.deepEqual((await getUser(author)).skills, [names[1]]);
+      events = receipts();
+      assert.equal(events.length, 2);
+      assert.deepEqual(events[0].added, []);
+      assert.deepEqual(events[0].removed, [names[0]]);
+      await call("remove_my_skills", [names[0]]);
+      assert.equal(receipts().length, 2, "removing an absent grant is not audited as a change");
+      await setUser(author, { approved: false });
+      assert.match(resultText(await call("add_my_skills", [names[0]])), /Only approved members/);
+      assert.equal(receipts().length, 2);
+      await setUser(author, { approved: true });
+      await call("remove_my_skills", [names[1]]);
+      assert.deepEqual((await getUser(author)).skills, []);
+      events = receipts();
+      assert.equal(events.length, 3);
+      for (const event of events) {
+        assert.equal(event.author, author);
+        assert.equal(event.user, author);
+        assert.equal(event.channel, CHANNEL);
+        assert.equal(event.slug, SLUG);
+        assert.equal(event.source, "gateway-mcp");
+      }
+      assert.ok(!JSON.stringify(events).includes(contentMarker), "audit contains grant names, never skill contents");
+      assert.equal(approvalRequests.length, 0, "personal grants remain self-service");
+    });
+  }
+});
+
 test("both engines keep ordinary schedules automatic and persist sudo work only after an admin approval", async () => {
   const { listForChannel } = await import("../src/config/schedules.js");
   for (const engine of ["claude", "codex"]) {
