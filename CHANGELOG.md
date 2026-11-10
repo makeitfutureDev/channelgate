@@ -12,6 +12,11 @@ release gates. Stable promotion and publication require approval of the exact te
 
 ### Beta development notes
 
+- Messages sent while a Slack thread is busy now queue automatically and run after preceding
+  work finishes. Waiting messages offer Steer Conversation and Cancel Request; no Add to Queue
+  click is needed. Cancel removes only that waiting message, and stale controls cannot stop a
+  message that has already started.
+
 - Custom MCP connections support multiple named headers and query parameters with write-only
   values, alongside existing Bearer and Composio presets. Both web and Slack editors retain,
   replace or remove fields. Custom connections now use the daemon relay on host turns too,

@@ -1,3 +1,5 @@
+import { runQueue } from "./message-lifecycle.js";
+import { pooledBusy, interruptPooled } from "../engines/session-pool.js";
 import { randomUUID } from "node:crypto";
 import { retireApprovalLinkTokens } from "../gateway/approval-link-tokens.js";
 import { approvalLinkBase, approvalLinksMessage, buildApprovalLinks } from "../web/approval-links.js";
@@ -14,6 +16,7 @@ import {
   getPendingRunChoice,
   listPendingRunChoices,
   recordPendingRunChoice,
+  prioritizeActiveRun,
 } from "../gateway/active-runs.js";
 
 export const BUSY_THREAD_STEER_ACTION = "cg_busy_thread_steer";
@@ -38,7 +41,7 @@ export function createBusyThreadChoiceStore({ ttlMs = 10 * 60 * 1000, maxEntries
   const sweep = () => {
     const cutoff = now() - ttlMs;
     for (const record of mine()) {
-      if ((record.choiceCreatedAt || 0) > cutoff) continue;
+      if (record.queuedRunId || (record.choiceCreatedAt || 0) > cutoff) continue;
       clearPendingRunChoice(record.id);
       claimed.delete(record.id);
     }
@@ -155,13 +158,15 @@ export function auditRunChoiceAdmin(record, responderId, choiceId, choice) {
     author: responderId, requesterId: record.event?.user, choiceId, kind: kindOf(record), choice });
 }
 
-export function busyThreadChoiceBlocks(id) {
+export function busyThreadChoiceBlocks(id, { queued = false, position = 1 } = {}) {
   return [
     {
       type: "section",
       text: {
         type: "mrkdwn",
-        text: "This thread is already running. Should I interrupt it with your new message, add your message to the queue, or drop the new message?",
+        text: queued
+          ? `⏳ Your message is queued (position ${position}). I’ll pick it up automatically. You can steer the conversation or cancel this queued message while it waits.`
+          : "This thread is already running. Should I interrupt it with your new message, add your message to the queue, or drop the new message?",
       },
     },
     {
@@ -174,12 +179,12 @@ export function busyThreadChoiceBlocks(id) {
           text: { type: "plain_text", text: "Steer Conversation" },
           value: id,
         },
-        {
+        ...(!queued ? [{
           type: "button",
           action_id: BUSY_THREAD_QUEUE_ACTION,
           text: { type: "plain_text", text: "Add to Queue" },
           value: id,
-        },
+        }] : []),
         // Cancel discards ONLY the message waiting on this card. The turn already running keeps
         // going — stopping that is what `stop` / 🛑 is for.
         {
@@ -199,7 +204,7 @@ export function busyThreadChoiceBlocks(id) {
 // surface without working buttons has no other way to answer, and automation cannot click. The
 // card's own ownership rule ("only the sender of THAT message may choose") is preserved by
 // construction — the links are minted for, and delivered only to, that sender.
-export async function deliverBusyThreadChoiceLinks(client, choiceId, { channelId, threadTs = "", userId } = {}) {
+export async function deliverBusyThreadChoiceLinks(client, choiceId, { channelId, threadTs = "", userId, queued = false } = {}) {
   try {
     const baseUrl = approvalLinkBase({ capabilities: slackAdapter.capabilities, requester: userId });
     if (!baseUrl || !client || !userId) return [];
@@ -210,7 +215,7 @@ export async function deliverBusyThreadChoiceLinks(client, choiceId, { channelId
       requester: userId,
       choices: [
         { action: "steer", scope: "", label: "Steer Conversation" },
-        { action: "queue", scope: "", label: "Add to Queue" },
+        ...(!queued ? [{ action: "queue", scope: "", label: "Add to Queue" }] : []),
         { action: "cancel", scope: "", label: "Cancel Request" },
       ],
     });
@@ -271,6 +276,9 @@ export async function handleBusyThreadChoice({ ack, body, action, client }, { pr
 // pipeline with the exact stored event. Whoever calls this has already claimed the card through
 // the store (take / takeAsAdmin), which is what makes a double resolution impossible.
 export async function applyBusyThreadChoice({ choiceId, record, choice, client, channel = "", messageTs = "", processMessage, responderId = "" }) {
+  if (record.queuedRunId) {
+    return applyQueuedMessageChoice({ choiceId, record, choice, client, channel, messageTs, responderId });
+  }
   // The card is being answered, so every unused LINK for it dies with it — whichever surface
   // answered (a button, the admin API, or one of the links themselves).
   try {
@@ -341,4 +349,90 @@ export function steerActiveRun(runQueue, runKey, { expectedRunId = "", requester
   if (interruptWarm()) return "interrupted";
   active.controller?.abort();
   return "aborted";
+}
+
+// New cards control a turn that is ALREADY accepted, rather than re-entering the pipeline.
+// Legacy pending cards keep the old applier above so deployment does not strand existing choices.
+export async function postQueuedMessageControls(client, { event, runKey, runId, targetRunId, threadTs }) {
+  let id;
+  try {
+    id = busyThreadChoices.create({ event, runKey, queuedRunId: runId, targetRunId });
+    const card = await client.chat.postMessage({
+      channel: event.channel,
+      ...(threadTs ? { thread_ts: threadTs } : {}),
+      text: "Your message is queued and will run automatically. Steer or cancel it while it waits.",
+      blocks: busyThreadChoiceBlocks(id, { queued: true, position: runQueue.count(runKey) - 1 }),
+    });
+    // Stop may have retired the record during the Slack write. Do not resurrect its controls.
+    if (!busyThreadChoices.noteCard(id, card.ts) || !runQueue.isQueued(runKey, runId)) {
+      busyThreadChoices.discard(id);
+      await client.chat.delete?.({ channel: event.channel, ts: card.ts }).catch(() => {});
+    } else {
+      await deliverBusyThreadChoiceLinks(client, id, { channelId: event.channel, threadTs, userId: event.user, queued: true });
+    }
+  } catch {
+    if (id) busyThreadChoices.discard(id);
+  }
+}
+
+export async function retireQueuedMessageControls(runId, client) {
+  const records = listPendingRunChoices().filter((record) => record.queuedRunId === runId);
+  for (const record of records) {
+    busyThreadChoices.discard(record.id);
+    try { retireApprovalLinkTokens(record.id); } catch { /* best-effort */ }
+    if (record.choiceMessageTs) {
+      await client?.chat?.delete?.({ channel: record.channelId, ts: record.choiceMessageTs }).catch(() => {});
+    }
+  }
+}
+
+async function applyQueuedMessageChoice({ choiceId, record, choice, client, channel, messageTs, responderId }) {
+  const key = record.runKey;
+  const runId = record.queuedRunId;
+  // No awaits between checking/mutating the waiting slot and terminalizing its durable record.
+  // An expired click can never cancel a promoted run or interrupt a different thread owner.
+  if (choice === "queue") {
+    busyThreadChoices.release(choiceId);
+    return { ok: true, choice, accepted: true };
+  }
+  let text;
+  let changed = false;
+  if (choice === "cancel") {
+    changed = runQueue.cancelQueued(key, runId);
+    if (changed) clearActiveRun(runId);
+    if (changed) text = "🚫 Queued message cancelled. The run already in progress is still going.";
+  } else if (choice === "steer" && runQueue.isQueued(key, runId)) {
+    const active = runQueue.activeHandle(key);
+    // Check before reordering: another person's work or a newer run must keep its original order.
+    if ((record.targetRunId && active?.runId !== record.targetRunId) ||
+        (active?.authorId && active.authorId !== record.authorId)) {
+      text = "⏳ The active run changed or belongs to another person. Your message remains queued and will run automatically.";
+    } else {
+      changed = runQueue.prioritizeQueued(key, runId);
+      if (changed) prioritizeActiveRun(runId);
+      if (changed) steerActiveRun(runQueue, key, {
+        expectedRunId: record.targetRunId,
+        requesterAuthorId: record.authorId,
+        interruptWarm: () => pooledBusy(key) && interruptPooled(key),
+      });
+      text = "↪️ Steering — interrupting the current run to pick up your queued message next…";
+    }
+  }
+  const stillQueued = !changed && runQueue.isQueued(key, runId);
+  if (stillQueued) busyThreadChoices.release(choiceId);
+  else {
+    busyThreadChoices.discard(choiceId);
+    try { retireApprovalLinkTokens(choiceId); } catch { /* best-effort */ }
+  }
+  await auditRunChoiceAdmin(record, responderId, choiceId, choice);
+  if (client?.chat?.update && channel && messageTs) {
+    await client.chat.update({ channel, ts: messageTs,
+      text: text || "This message has already started or is no longer queued.",
+      blocks: stillQueued ? [
+        { type: "section", text: { type: "mrkdwn", text } },
+        busyThreadChoiceBlocks(choiceId, { queued: true })[1],
+      ] : [],
+    }).catch(() => {});
+  }
+  return { ok: changed, choice, accepted: changed, cancelled: choice === "cancel" && changed };
 }
