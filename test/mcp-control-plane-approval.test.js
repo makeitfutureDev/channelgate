@@ -93,6 +93,50 @@ const resultText = (r) => r.content?.map((i) => i.text || "").join("\n") || "";
 const approvalReceipt = /Human approval was received before this tool executed/;
 const awaitingCard = /awaiting approval \(request .*\)\. The exact change is saved with no deadline/;
 
+test("organization skill removal audits actual changes with trusted admin identity and no approval card", async () => {
+  const { putSkillRevision } = await import("../src/gateway/skills/catalog.js");
+  const { grantSkillsToOrg } = await import("../src/gateway/skills/authoring.js");
+  const { getOrgAccessGrants } = await import("../src/config/settings.js");
+  const { readEvents } = await import("../src/util/logger.js");
+  const original = getOrgAccessGrants();
+  try {
+    for (const engine of ["claude", "codex"]) {
+      const author = `U_ORG_AUDIT_${engine.toUpperCase()}`;
+      const name = `audit-org-remove-${engine}`;
+      await setUser(author, { approved: true, isAdmin: true });
+      putSkillRevision({ slug: name, ownerKind: "local", visibility: "org", createdBy: author,
+        files: [{ path: "SKILL.md", content: `---\nname: ${name}\ndescription: Audit fixture\n---\nPRIVATE_ORG_BODY_NOT_AUDIT_DATA\n` }] });
+      grantSkillsToOrg([name]);
+      const receipts = () => readEvents({ limit: 1000 }).filter((e) => e.event === "skill_revoked" && e.author === author);
+      approvalRequests.length = 0;
+      await withGateway({ author, engine }, async (client) => {
+        const remove = () => client.callTool({ name: "remove_org_skills", arguments: { slugs: [name, name, "absent-org-audit"] } });
+        await setUser(author, { isAdmin: false });
+        assert.match(resultText(await remove()), /Only admins/);
+        assert.ok(getOrgAccessGrants().skills.includes(name));
+        assert.equal(receipts().length, 0);
+        await setUser(author, { isAdmin: true });
+        await remove();
+        assert.ok(!getOrgAccessGrants().skills.includes(name));
+        const events = receipts();
+        assert.equal(events.length, 1, "persisted organization removal must have a durable audit receipt");
+        assert.deepEqual(events[0].skills, [name]);
+        assert.equal(events[0].scope, "organization");
+        assert.equal(events[0].author, author);
+        assert.equal(events[0].channel, CHANNEL);
+        assert.equal(events[0].slug, SLUG);
+        assert.equal(events[0].source, "gateway-mcp");
+        assert.ok(!JSON.stringify(events).includes("PRIVATE_ORG_BODY_NOT_AUDIT_DATA"));
+        await remove();
+        assert.equal(receipts().length, 1, "absent organization grants are not audited as a new removal");
+        assert.equal(approvalRequests.length, 0, "organization removal remains automatic for a verified admin");
+      });
+    }
+  } finally {
+    saveSettings({ accessGrants: original });
+  }
+});
+
 test("personal skill grant mutations leave one trusted audit receipt, excluding no-ops and denials", async () => {
   const { putSkillRevision } = await import("../src/gateway/skills/catalog.js");
   const { getUser } = await import("../src/config/store.js");
