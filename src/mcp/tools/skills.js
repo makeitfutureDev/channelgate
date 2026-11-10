@@ -764,6 +764,7 @@ export function register(server, ctx) {
     async ({ slugs }) => {
       if (!(await requireAdmin())) return text("Only admins change the organization tier.");
       const r = revokeSkillsFromOrg(slugs);
+      if (r.removed.length) await logEvent("skill_revoked", { scope: "organization", author: createdBy, channel: channelId, slug, source: "gateway-mcp", skills: r.removed });
       return text(`🗑️ Removed ${r.removed.length} organization grant(s)${r.removed.length ? `: ${r.removed.join(", ")}` : ""}. Organization-wide now: ${r.names.join(", ") || "(none)"}.${stillRequiredLine(r.stillRequired)}`);
     },
   );

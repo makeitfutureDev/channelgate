@@ -5149,7 +5149,10 @@ are retired, bullet by bullet; everything else stands.
   caused it hears about it). Personal `add_my_skills` / `remove_my_skills` mutations also persist a
   `user_skills_updated` audit event with the verified owner/author, originating conversation and
   actual added/removed skill names. Unchanged retries and denied requests do not claim a mutation;
-  skill contents and credentials never enter that event. `create_skill`, `update_skill`,
+  skill contents and credentials never enter that event. Admin `remove_org_skills` records an
+  actual removal as `skill_revoked` with organization scope, verified author, originating
+  conversation and removed names; denied or unchanged calls emit no mutation receipt. Removing
+  organization grants remains automatic for a verified admin. `create_skill`, `update_skill`,
   `delete_skill` (tiered ownership, no
   card — see *Skill ownership without approvals*; partial files merge over the current revision),
   `propose_skill_change` (`change` with files, `promote`, `delete`, `feedback`),
