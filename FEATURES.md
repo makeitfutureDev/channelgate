@@ -1057,6 +1057,13 @@ control-plane status.
   continues with a note that names the skipped skill and the fix: an admin removes it under Users,
   or its author makes it an organization skill. Before this change, one such grant failed every
   message from that person with "Personal skill grant is not available to this author".
+- **A personal skill loads only from its author's own grants.** One granted to the organization, a
+  channel, a DM or a skill template (stored before save paths refused them, or edited in directly)
+  is never copied into the conversation's folder and never reaches a run, the author's included.
+  The same applies to a shared grant whose `requires:` reaches a personal skill. The run note names
+  each one and its tier. The dashboard's channel skill list, Slack Settings → Skills, the Teams
+  skill list and `show_channel_skills` all mark it "not loaded". Re-grant it under the author's own
+  skills to use it.
 - **Pickers offer personal skills only to their author.** `GET /api/skills` lists personal skills
   separately, with their author. The admin Users editor offers a person their own personal skills
   only. The organization grant, conversation and DM template, and channel pickers offer none. A

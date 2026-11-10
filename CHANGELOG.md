@@ -17,6 +17,9 @@ release gates. Stable promotion and publication require approval of the exact te
   replace or remove fields. Custom connections now use the daemon relay on host turns too,
   keeping query credentials out of engine configuration and command lines.
 
+- A personal skill granted to the organization, a channel or a template no longer loads for
+  everyone in the conversation; it loads only from its author's own grants, and the run and the
+  settings pages say it was skipped.
 - A stored grant of another person's personal skill no longer fails every one of that user's
   messages. The run skips it and says which skill and how to fix it. The admin Users editor, the
   shared grant/template pickers and Slack Settings → You no longer offer someone else's personal

@@ -4,6 +4,15 @@ Google Chat reaction token regression (engine-independent): verify signed OAuth 
 
 ## Foreign personal skill grants (2026-11-10)
 
+Shared tiers: `node --test test/access-grants.test.js test/run-grant-isolation.test.js`. A personal
+skill granted to the organization or a channel, or a shared grant whose `requires:` reaches one, is
+skipped for every author, its own author included. It is labelled with its tier in `skippedSkills`.
+`ensureChannelFolder` never writes it under `.claude/skills/`. Live (Claude and Codex): store author
+A's personal `fx-private` directly in a channel's `skills`, then have members A and B each send "Say
+OK". Pass: both answer, the reply carries "Skipped a skill in this conversation's skills:
+fx-private", and the channel folder has no `.claude/skills/fx-private`. Settings → Skills (Slack),
+the dashboard channel skill list, and `show_channel_skills` mark it not loaded.
+
 Run `node --test test/access-grants.test.js test/personal-skill-grants-routes.test.js test/slack-settings-redesign.test.js`.
 Resolution tests: a direct foreign personal grant, and a grant whose `requires:` chain reaches one,
 are dropped from the user and effective tiers and reported in `skippedSkills`. The author keeps

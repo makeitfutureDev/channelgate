@@ -16,7 +16,7 @@ import { readFileSync } from "node:fs";
 import { getUser, isAdminPrincipal, isApproved, getChannelMeta, getChannelEntry } from "../../config/store.js";
 import { getOrgAccessGrants, getSkillsContextWarnTokens, getSkillsPublish, getEngine, getPublicUrl } from "../../config/settings.js";
 import { createUserAccessToken, listUserAccessTokens, revokeUserAccessToken } from "../../gateway/skills/tokens.js";
-import { isForeignPersonalSkill, resolveAccessGrants } from "../../gateway/access-grants.js";
+import { isForeignPersonalSkill, resolveAccessGrants, resolveRunAccessGrants } from "../../gateway/access-grants.js";
 import { getSkill, listSkills, listCategories, skillBundle, revisionFile, listProposals, listSources, addSource, updateSource, removeSource, excludeSkill, restoreSkill, effectiveRevisionFor, listRevisions, usageCountsBySlug, setSkillDiscoverable, getTemplate, SOURCE_KINDS, SOURCE_MODES } from "../../gateway/skills/catalog.js";
 import { resolveSkillProfile, checkCompatibility, skillGrantContextChange } from "../../gateway/skills/resolve.js";
 import { listTemplateSummaries, previewTemplate, assignTemplateToChannel, withTemplateSkills, templateOfMeta, channelScopedSkills } from "../../gateway/skills/templates.js";
@@ -185,8 +185,8 @@ export function register(server, ctx) {
     const meta = withTemplateSkills(stored);
     const template = templateOfMeta(stored);
     const user = createdBy ? (await getUser(createdBy)) || {} : {};
-    const shared = resolveAccessGrants({ organization: getOrgAccessGrants(), channel: meta });
-    const effective = resolveAccessGrants({ organization: getOrgAccessGrants(), channel: meta, user });
+    // The same resolution a run uses, so personal skills that would be skipped are not shown active.
+    const { shared, effective, skippedSkills } = await resolveRunAccessGrants({ organization: getOrgAccessGrants(), channel: meta, authorId: createdBy, loadUser: async () => user, lookupSkill: getSkill });
     const warnTokens = getSkillsContextWarnTokens();
     return {
       meta,
@@ -194,6 +194,7 @@ export function register(server, ctx) {
       user,
       shared,
       effective,
+      skippedSkills,
       profile: resolveSkillProfile(effective.skills, { warnTokens }),
       sharedProfile: resolveSkillProfile(shared.skills, { warnTokens }),
       orgSkills: new Set((getOrgAccessGrants().skills || []).map((s) => String(s).toLowerCase())),
@@ -255,7 +256,7 @@ export function register(server, ctx) {
     "show_channel_skills",
     { description: "Show the skills active in this conversation: grants by tier (organization / this channel / your personal), dependencies pulled in automatically, anything missing or awaiting review, compatibility notes, and the estimated always-on context cost.", inputSchema: {} },
     async () => {
-      const { meta, template, profile, orgSkills, channelSkills, templateSkills, sectionSkills, effective } = await channelProfile();
+      const { meta, template, profile, orgSkills, channelSkills, templateSkills, sectionSkills, effective, skippedSkills } = await channelProfile();
       if (!effective.skills.length) return text("No skills are granted here yet. A manager can assign a template (list_skill_templates → set_channel_skill_template) or add skills by slug (add_channel_skills); you can add skills for your own runs with add_my_skills.");
       const tier = (e) => {
         const k = e.slug.toLowerCase();
@@ -268,6 +269,7 @@ export function register(server, ctx) {
       };
       const lines = profile.active.map((e) => `• \`${e.slug}\` — ${tier(e)}${e.revision?.version ? `, v${e.revision.version}` : ""}${skillModelPreference(e.skill) ? `, prefers ${skillModelPreference(e.skill).model}` : ""} (~${e.tokens} tokens)`);
       const extra = [];
+      if (skippedSkills.length) extra.push(`Not loaded — a personal skill loads only for its author: ${skippedSkills.map((s) => `\`${s.name}\` (${s.tier === "user" ? "your personal grant" : s.tier}${s.dependency ? `, requires ${s.dependency}` : ""})`).join(", ")}. Remove it from that tier, or have the author make it an organization skill.`);
       if (profile.unknown.length) extra.push(`Not in the catalog (materialized from a host folder if one exists): ${profile.unknown.map((s) => `\`${s}\``).join(", ")}`);
       if (profile.staged.length) extra.push(`Awaiting admin review, not active yet: ${profile.staged.map((s) => `\`${s.slug}\``).join(", ")}`);
       if (profile.removed.length) extra.push(`Removed from their source (tombstoned): ${profile.removed.map((s) => `\`${s.slug}\``).join(", ")}`);

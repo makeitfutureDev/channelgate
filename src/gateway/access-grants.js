@@ -78,7 +78,7 @@ export function isForeignPersonalSkill(skill, ownerId = "") {
 // The names in `next` that were not already in `current` and resolve to someone else's personal
 // skill. Save paths refuse these: a personal skill belongs to its author's own tier only. Grants
 // that were stored before this check stay untouched, so an unrelated save never fails on them; the
-// run skips them (currentUserSkillGrants) and the admin UI offers them for removal.
+// run skips them (filterSkillGrants) and the admin UI offers them for removal.
 export function newForeignPersonalSkillGrants(next, current = [], { ownerId = "", lookupSkill = () => null } = {}) {
   const had = new Set(sanitizeSkillGrantNames(current).map((name) => name.toLowerCase()));
   return sanitizeSkillGrantNames(next).filter((name) => !had.has(name.toLowerCase()) && isForeignPersonalSkill(lookupSkill(name), ownerId));
@@ -98,16 +98,20 @@ export function foreignPersonalSkillError(names, { tier = "user" } = {}) {
 // A grant that names another person's personal skill — directly or through `requires:` — is
 // SKIPPED, never loaded, and reported in `skipped` so the run can say so; it does not fail the
 // turn, because one bad stored grant would otherwise lock the person out of every message.
-function currentUserSkillGrants(names, authorId, lookupSkill) {
+//
+// The same rule applies to the SHARED tiers (organization, channel, its template): there the
+// owner is "" and EVERY personal skill is foreign — a personal skill loads only from its author's
+// own grants, never for everyone in a conversation. `tier` labels each skipped entry.
+function filterSkillGrants(names, authorId, lookupSkill, tier = "user") {
   const skipped = [];
   const retained = [];
   for (const name of sanitizeSkillGrantNames(names)) {
     const skill = lookupSkill(name);
     if (isForeignPersonalSkill(skill, authorId)) {
-      skipped.push({ name, reason: "foreign-personal" });
+      skipped.push({ name, tier, reason: "foreign-personal" });
       continue;
     }
-    if (skill?.deleted && skill.ownerKind === "local" && skill.visibility === "personal") continue;
+    if (authorId && skill?.deleted && skill.ownerKind === "local" && skill.visibility === "personal") continue;
     // Walk this grant's dependency closure; a foreign personal skill anywhere in it means the
     // grant cannot be materialized without exposing that skill, so the whole grant is skipped.
     const visited = new Set();
@@ -124,7 +128,7 @@ function currentUserSkillGrants(names, authorId, lookupSkill) {
     visited.add(name.toLowerCase());
     if (skill && !skill.deleted) for (const dependency of skill.requires || []) visit(dependency);
     if (blockedBy) {
-      skipped.push({ name, reason: "foreign-personal-dependency", dependency: blockedBy });
+      skipped.push({ name, tier, reason: "foreign-personal-dependency", dependency: blockedBy });
       continue;
     }
     retained.push(name);
@@ -132,13 +136,33 @@ function currentUserSkillGrants(names, authorId, lookupSkill) {
   return { names: retained, skipped };
 }
 
-// The one-line note a run carries when stored personal grants were skipped.
+// The organization + channel skill names that may materialize for everyone in a conversation:
+// personal skills (and grants that require one) are dropped. folders.js applies this to the
+// durable workspace, run.js to the per-run grants, so neither path can load one.
+export function sharedSkillGrants({ organization = [], channel = [], lookupSkill = () => null } = {}) {
+  const org = filterSkillGrants(organization, "", lookupSkill, "organization");
+  const chan = filterSkillGrants(channel, "", lookupSkill, "channel");
+  return { organization: org.names, channel: chan.names, skipped: [...org.skipped, ...chan.skipped] };
+}
+
+// The note a run carries when grants were skipped. Personal-tier skips are the author's own
+// grants; shared-tier skips are a channel/organization setting an admin must fix.
 export function skippedSkillGrantsWarning(skipped = []) {
   if (!skipped.length) return "";
-  const items = skipped.map((entry) => entry.reason === "foreign-personal-dependency"
-    ? `${entry.name} (requires ${entry.dependency})`
-    : entry.name);
-  return `⚠️ Skipped ${skipped.length === 1 ? "a skill" : `${skipped.length} skills`} in your personal grants: ${items.join(", ")} — ${skipped.length === 1 ? "it is" : "they are"} another person's personal skill. An admin can remove ${skipped.length === 1 ? "it" : "them"} under Users, or the author can make ${skipped.length === 1 ? "it" : "them"} an organization skill. Continuing without ${skipped.length === 1 ? "it" : "them"}.\n\n`;
+  const item = (entry) => entry.reason === "foreign-personal-dependency" ? `${entry.name} (requires ${entry.dependency})` : entry.name;
+  const it = (n) => (n === 1 ? "it" : "them");
+  const lines = [];
+  const mine = skipped.filter((entry) => (entry.tier || "user") === "user");
+  if (mine.length) {
+    lines.push(`⚠️ Skipped ${mine.length === 1 ? "a skill" : `${mine.length} skills`} in your personal grants: ${mine.map(item).join(", ")} — ${mine.length === 1 ? "it is" : "they are"} another person's personal skill. An admin can remove ${it(mine.length)} under Users, or the author can make ${it(mine.length)} an organization skill. Continuing without ${it(mine.length)}.`);
+  }
+  for (const tier of ["channel", "organization"]) {
+    const shared = skipped.filter((entry) => entry.tier === tier);
+    if (!shared.length) continue;
+    const where = tier === "channel" ? "this conversation's skills" : "the organization's skills";
+    lines.push(`⚠️ Skipped ${shared.length === 1 ? "a skill" : `${shared.length} skills`} in ${where}: ${shared.map(item).join(", ")} — a personal skill loads only for its author. An admin can remove ${it(shared.length)} in ${tier === "channel" ? "this conversation's settings" : "Settings → organization grants"}, or the author can make ${it(shared.length)} an organization skill. Continuing without ${it(shared.length)}.`);
+  }
+  return `${lines.join("\n")}\n\n`;
 }
 
 // Resolve the durable (organization + channel) grants separately from the active principal's
@@ -154,13 +178,16 @@ export async function resolveRunAccessGrants({
   lookupSkill = () => null,
 } = {}) {
   const storedUser = untrustedPrincipal ? {} : ((await loadUser(authorId)) || {});
-  const userSkills = currentUserSkillGrants(storedUser.skills, authorId, lookupSkill);
+  const userSkills = filterSkillGrants(storedUser.skills, authorId, lookupSkill, "user");
   const user = { ...storedUser, skills: userSkills.names };
+  const shared = sharedSkillGrants({ organization: organization?.skills, channel: channel?.skills, lookupSkill });
+  const org = { ...organization, skills: shared.organization };
+  const chan = { ...channel, skills: shared.channel };
   return {
-    shared: resolveAccessGrants({ organization, channel }),
-    effective: resolveAccessGrants({ organization, channel, user }),
+    shared: resolveAccessGrants({ organization: org, channel: chan }),
+    effective: resolveAccessGrants({ organization: org, channel: chan, user }),
     user: resolveAccessGrants({ user }),
-    skippedSkills: userSkills.skipped,
+    skippedSkills: [...shared.skipped, ...userSkills.skipped],
   };
 }
 
