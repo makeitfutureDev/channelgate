@@ -1083,6 +1083,9 @@ function skillsPage(snapshot, state) {
     ...(preferring.length ? [context(`Preferred models: ${preferring.slice(0, 8).map(named).join(" ")}`)] : []),
     ...(fromTemplate.length ? [context(`From the *${escapeMrkdwn(skills.template || "template")}* template: ${short(fromTemplate)}`)] : []),
     ...(org.length ? [context(`Always on from the organization (${org.length}): ${short(org)}`)] : []),
+    ...((skills.notLoaded || []).length
+      ? [context(`⚠️ Not loaded: ${skills.notLoaded.map((entry) => `\`${escapeMrkdwn(entry.name)}\`${entry.tier === "organization" ? " (organization)" : ""}`).join(", ")} — a personal skill loads only for its author. Remove it here, or ask the author to make it an organization skill.`)]
+      : []),
   ];
 }
 

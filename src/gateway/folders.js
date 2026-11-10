@@ -82,14 +82,14 @@ import { getAgentsFile, getAgentsInstructions, getComposioMode, getOrgAccessGran
 import { memoryEnabled, MEM_FILE, applyChannelMemory } from "./channel-memory.js";
 import { isLibraryStub, splitFavorites, ensureCodexSkillsLink, pruneLegacyLibraryStubs } from "./library-skills.js";
 import { MANAGED_SKILL_MARKER, materializeSkill, pruneManagedSkills } from "./skills/materialize.js";
-import { listSkills as listCatalogSkills } from "./skills/catalog.js";
+import { getSkill as getCatalogSkill, listSkills as listCatalogSkills } from "./skills/catalog.js";
 import { withDependencies } from "./skills/resolve.js";
 import { channelSkillGrants } from "./skills/templates.js";
 import { archiveWorkspaceEntry } from "./skills/workspace-backup.js";
 import { readSkillDirectory } from "./skills/import-folder.js";
 import { normalizeSkillFiles, hashSkillFiles } from "./skills/files.js";
 import { acquireKeyedLock } from "../util/keyed-lock.js";
-import { sanitizeSkillGrantNames } from "./access-grants.js";
+import { sanitizeSkillGrantNames, sharedSkillGrants } from "./access-grants.js";
 import { readNoFollow, writeNoFollow, ensureRealDir } from "./safe-fs.js";
 // Capability reads only — never the registry or the resolver (resolve.js imports THIS module for
 // effectiveWorkDir, so the dependency has to stay one-way). contract.js imports nothing but
@@ -803,7 +803,11 @@ export async function ensureChannelFolder(slug, meta, { runMeta = meta, target =
   // The durable workspace always reflects organization+channel grants. A run-specific clean/mode
   // override may select a different cwd, but must not prune or rewrite this shared baseline.
   // The channel tier: the assigned skill template's current skills plus the conversation's own.
-  const channelSkills = sanitizeSkillGrantNames([...(getOrgAccessGrants().skills || []), ...channelSkillGrants(meta)]);
+  // A personal skill (or a grant requiring one) never materializes here: this folder is every
+  // member's, and a personal skill loads only from its author's own grants (access-grants.js).
+  const sharedGrants = sharedSkillGrants({ organization: getOrgAccessGrants().skills || [], channel: channelSkillGrants(meta), lookupSkill: getCatalogSkill });
+  if (sharedGrants.skipped.length) console.warn(`[skills] ${slug}: skipped personal skills granted to a shared tier: ${sharedGrants.skipped.map((entry) => `${entry.name} (${entry.tier})`).join(", ")}`);
+  const channelSkills = sanitizeSkillGrantNames([...sharedGrants.organization, ...sharedGrants.channel]);
   const ownerMeta = workspaceSetup(meta.workspaceLink ? await getChannelMeta(meta.workspaceLink.slug) : meta);
   const durableMeta = { ...(ownerMeta || meta), workDir: effectiveWorkDir(slug, { ...meta, cleanMode: false }), cleanMode: false };
   const durableCwd = effectiveWorkDir(slug, { ...meta, cleanMode: false });

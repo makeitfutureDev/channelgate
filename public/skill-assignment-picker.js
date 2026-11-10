@@ -51,7 +51,9 @@ export function mountSkillAssignmentPicker(root, options) {
     const q = query.value.trim().toLowerCase();
     const matches = (s) => (!q || `${s.name || ""} ${s.slug} ${s.description || ""}`.toLowerCase().includes(q)) && (!source.value || sourceKey(s) === source.value);
     const row = (s, action) => {
-      const status = s.unavailable ? "Not in the current catalog · saved selection kept"
+      // A personal skill never loads for a whole conversation (src/gateway/access-grants.js).
+      const status = s.visibility === "personal" ? "Personal skill · not loaded here — only its author can use it; remove it"
+        : s.unavailable ? "Not in the current catalog · saved selection kept"
         : s.deleted || s.enabled === false ? "Disabled · saved selection kept"
         : s.currentRevisionId == null && s.pinnedRevisionId == null ? "Awaiting approval" : sourceLabel(s);
       return `<div class="skill-assignment-row" data-skill="${esc(s.slug)}">

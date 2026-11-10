@@ -301,7 +301,7 @@ test("every page, in every role and with every inline form open, passes Block Ki
     secrets: [{ name: long, last4: "beef", protected: true, hosts: ["a.example", "b.example"] }, { name: "GMAIL_APP_PASSWORD", last4: "rzhb", protected: false }],
     orgSecrets: [{ name: "ORG_KEY", last4: "o123", protected: true, approval: true, hosts: [] }],
     personalSecrets: [{ name: "MY_TOKEN", last4: "p123", protected: true, approval: true, hosts: [] }],
-    skills: { template: "Development", templateSlug: "development", templates: [{ slug: "development", name: "Development" }], additional: ["pdf"], channel: ["pdf", "review"], organization: ["gateway-usage"] },
+    skills: { template: "Development", templateSlug: "development", templates: [{ slug: "development", name: "Development" }], additional: ["pdf"], channel: ["pdf", "review"], organization: ["gateway-usage"], notLoaded: [{ name: "private-one", tier: "channel" }, { name: "private-two", tier: "organization" }] },
     skillPicker: { options: Array.from({ length: 130 }, (_, i) => ({ key: `skill-${i}`, label: `skill-${i}`, description: "d".repeat(200) })), selected: ["skill-3"] },
     mySkillPicker: { options: [{ key: "email-triage", label: "email-triage" }], selected: [], foreign: ["someone-elses-skill"] },
     automations: [
@@ -359,4 +359,9 @@ test("generic custom MCP forms save, preserve, replace and clear headers and que
   await saveSettingsForm("cm:p:generic", { url, headers: "[]" }, await ctx());
   assert.deepEqual((await saved()).headers, []);
   await removeSettingsForm("cm:p:generic", await ctx());
+});
+
+test("the Skills page names personal skills granted to the conversation or organization as not loaded", () => {
+  const view = buildChannelSettingsView({ skills: { channel: ["mine"], additional: ["mine"], organization: [], notLoaded: [{ name: "shay-private", tier: "channel" }, { name: "org-private", tier: "organization" }] } }, { channelId: "C_SK", slug: "sk", threadTs: "", ownerId: "U1" }, { tab: "skills" });
+  assert.match(JSON.stringify(view.blocks), /Not loaded: `shay-private`, `org-private` \(organization\) — a personal skill loads only for its author/);
 });

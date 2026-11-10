@@ -10,6 +10,7 @@ import {
   skippedSkillGrantsWarning,
   resolveRunUserIdentity,
   sanitizeSkillGrantNames,
+  sharedSkillGrants,
   unionGrantEntries,
   userOnlySkillGrants,
 } from "../src/gateway/access-grants.js";
@@ -32,7 +33,8 @@ test("untrusted caller-supplied principals never load or inherit stored user gra
     authorId: "U_PUBLIC_ID",
     untrustedPrincipal: true,
     loadUser,
-    lookupSkill: () => { throw new Error("untrusted principal must not consult the skill catalog"); },
+    // Shared-tier names are checked for personal skills; the caller's stored grants never are.
+    lookupSkill: (name) => { if (name === "private-skill") throw new Error("untrusted principal must not consult its claimed user's grants"); return null; },
   });
 
   assert.equal(loads, 0, "stored user lookup must be skipped completely");
@@ -74,12 +76,12 @@ test("another person's personal skill is skipped, never loaded, and never fails 
       const grants = await resolveRunAccessGrants({ authorId, organization: { skills: ["org"] }, loadUser: async () => ({ skills: ["foreign", "shared"] }), lookupSkill: lookup });
       assert.deepEqual(grants.user.skills, ["shared"], "the foreign personal grant is dropped from the user tier");
       assert.deepEqual(grants.effective.skills, ["org", "shared"], "and from the effective union");
-      assert.deepEqual(grants.skippedSkills, [{ name: "foreign", reason: "foreign-personal" }]);
+      assert.deepEqual(grants.skippedSkills, [{ name: "foreign", tier: "user", reason: "foreign-personal" }]);
     }
     const skills = { foreign, parent: { slug: "parent", visibility: "org", requires: ["middle"] }, middle: { slug: "middle", visibility: "org", requires: ["foreign"] }, ok: { slug: "ok", visibility: "org" } };
     const viaDependency = await resolveRunAccessGrants({ authorId: "owner", loadUser: async () => ({ skills: ["parent", "ok"] }), lookupSkill: (name) => skills[name] || null });
     assert.deepEqual(viaDependency.user.skills, ["ok"], "a grant whose requires: closure reaches a foreign personal skill is skipped whole");
-    assert.deepEqual(viaDependency.skippedSkills, [{ name: "parent", reason: "foreign-personal-dependency", dependency: "foreign" }]);
+    assert.deepEqual(viaDependency.skippedSkills, [{ name: "parent", tier: "user", reason: "foreign-personal-dependency", dependency: "foreign" }]);
   }
   const own = { slug: "mine", ownerKind: "local", visibility: "personal", createdBy: "owner" };
   const ownGrants = await resolveRunAccessGrants({ authorId: "owner", loadUser: async () => ({ skills: ["mine"] }), lookupSkill: () => own });
@@ -89,6 +91,35 @@ test("another person's personal skill is skipped, never loaded, and never fails 
   const parent = { slug: "parent", visibility: "org", requires: ["parent", "removed"] };
   const grants = await resolveRunAccessGrants({ authorId: "owner", loadUser: async () => ({ skills: ["parent"] }), lookupSkill: (name) => name === "parent" ? parent : dependency });
   assert.deepEqual(grants.user.skills, ["parent"], "a removed required dependency is not silently excised from an active parent; materialization still fails");
+});
+
+test("personal skills granted to the organization or a channel are skipped for everyone, the author included", async () => {
+  const catalog = {
+    personal: { slug: "personal", ownerKind: "local", visibility: "personal", createdBy: "author" },
+    needsPersonal: { slug: "needsPersonal", visibility: "org", requires: ["personal"] },
+    shared: { slug: "shared", visibility: "org" },
+    gone: { slug: "gone", visibility: "org", deleted: true },
+  };
+  const lookupSkill = (name) => catalog[name] || null;
+  for (const authorId of ["author", "someone"]) {
+    const grants = await resolveRunAccessGrants({
+      organization: { skills: ["shared", "needsPersonal"] },
+      channel: { skills: ["personal", "gone", "unknown"] },
+      authorId, loadUser: async () => ({ skills: [] }), lookupSkill,
+    });
+    assert.deepEqual(grants.shared.skills, ["shared", "gone", "unknown"], "shared tombstones and unknown names keep their visible failure path");
+    assert.deepEqual(grants.effective.skills, ["shared", "gone", "unknown"]);
+    assert.deepEqual(grants.skippedSkills, [
+      { name: "needsPersonal", tier: "organization", reason: "foreign-personal-dependency", dependency: "personal" },
+      { name: "personal", tier: "channel", reason: "foreign-personal" },
+    ]);
+  }
+  const own = await resolveRunAccessGrants({ channel: { skills: [] }, authorId: "author", loadUser: async () => ({ skills: ["personal"] }), lookupSkill });
+  assert.deepEqual(own.effective.skills, ["personal"], "the author's OWN tier is where a personal skill loads");
+  assert.deepEqual(sharedSkillGrants({ organization: ["personal"], channel: ["shared"], lookupSkill }).organization, []);
+  const note = skippedSkillGrantsWarning([{ name: "personal", tier: "channel", reason: "foreign-personal" }, { name: "x", tier: "organization", reason: "foreign-personal" }]);
+  assert.match(note, /Skipped a skill in this conversation's skills: personal — a personal skill loads only for its author/);
+  assert.match(note, /\n⚠️ Skipped a skill in the organization's skills: x/);
 });
 
 test("the skipped-grant note names each skill and says the run continues", () => {

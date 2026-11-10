@@ -1475,7 +1475,7 @@ async function runMessageImpl({ channelId, authorId, workspaceId = "", text, thr
   // A stored personal grant naming someone else's personal skill is skipped, not fatal
   // (access-grants.js); the person is told which one so an admin can clean it up.
   const skippedGrantWarning = clean ? "" : skippedSkillGrantsWarning(runGrants.skippedSkills);
-  if (runGrants.skippedSkills.length) console.warn(`[gateway] skipped foreign personal skill grants for ${authorId}: ${runGrants.skippedSkills.map((entry) => entry.name).join(", ")}`);
+  if (runGrants.skippedSkills.length) console.warn(`[gateway] skipped personal skill grants for ${authorId || "(no author)"}: ${runGrants.skippedSkills.map((entry) => `${entry.name} (${entry.tier})`).join(", ")}`);
   const runWarning = licenseWarning + skippedGrantWarning + skillWarning;
   const grantFingerprint = JSON.stringify({
     allowedMcps: clean ? [] : runGrants.effective.allowedMcps,

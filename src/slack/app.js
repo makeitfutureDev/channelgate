@@ -42,7 +42,7 @@ import { listForChannel, deleteSchedule, updateSchedule, countEnabledForChannel 
 import { resolveAccessGrants } from "../gateway/access-grants.js";
 import { assignTemplateToChannel, channelScopedSkills, channelSkillGrants, channelSkillsOff, listTemplateSummaries, templateOfMeta } from "../gateway/skills/templates.js";
 import { canSeeSkill, grantSkillsToChannel, grantSkillsToUser, revokeSkillsFromChannel, revokeSkillsFromUser } from "../gateway/skills/authoring.js";
-import { isForeignPersonalSkill, sanitizeSkillGrantNames } from "../gateway/access-grants.js";
+import { isForeignPersonalSkill, sanitizeSkillGrantNames, sharedSkillGrants } from "../gateway/access-grants.js";
 import { toolboxUrl } from "../gateway/mcp-catalog.js";
 import { revokeRemoteMcpsForAuthor } from "../mcp/remote-mcp-registry.js";
 import { listSkills, getSkill } from "../gateway/skills/catalog.js";
@@ -1294,6 +1294,9 @@ function channelSettingsSnapshot(meta = {}) {
       channel: channelTier.skills || [],
       organization: organization.skills || [],
       effective: shared.skills || [],
+      // Personal skills granted to this conversation or the organization: never loaded here
+      // (access-grants.js sharedSkillGrants), so the page names them for removal.
+      notLoaded: sharedSkillGrants({ organization: organization.skills || [], channel: channelTier.skills || [], lookupSkill: getSkill }).skipped,
       // Skill slug → preferred model, for the Skills page (only skills that declare one).
       models: Object.fromEntries((shared.skills || []).map((name) => [String(name).toLowerCase(), skillModelPreference(getSkill(name))?.model || ""]).filter(([, model]) => model)),
     },

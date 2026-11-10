@@ -663,3 +663,24 @@ test("a parent folder grant without SKILL.md warns without breaking either engin
   }
   assert.equal(await readFile(path.join(source, "synced", "nested-skill", "SKILL.md"), "utf8"), "# Nested skill\n", "source folder is preserved");
 });
+
+test("a personal skill granted to a channel or the organization never materializes in the shared folder", async () => {
+  const { putSkillRevision } = await import("../src/gateway/skills/catalog.js");
+  const { saveSettings, getOrgAccessGrants } = await import("../src/config/settings.js");
+  const md = (name) => [{ path: "SKILL.md", content: `---\nname: ${name}\ndescription: ${name} fixture\n---\nBody\n` }];
+  putSkillRevision({ files: md("Shared Tier Private"), ownerKind: "local", createdBy: "U_AUTHOR", visibility: "personal" });
+  putSkillRevision({ files: md("Shared Tier Org Private"), ownerKind: "local", createdBy: "U_AUTHOR", visibility: "personal" });
+  putSkillRevision({ files: md("Shared Tier Public"), ownerKind: "local" });
+  const before = getOrgAccessGrants();
+  saveSettings({ accessGrants: { ...before, skills: [...(before.skills || []), "shared-tier-org-private"] } });
+  try {
+    const slug = `shared-tier-personal-${Date.now()}`;
+    const { cwd } = await ensureChannelFolder(slug, { skills: ["shared-tier-private", "shared-tier-public"] });
+    const skillsDir = path.join(cwd, ".claude", "skills");
+    assert.ok(!(await absent(path.join(skillsDir, "shared-tier-public", "SKILL.md"))), "the organization-visible grant materializes");
+    assert.ok(await absent(path.join(skillsDir, "shared-tier-private")), "a channel-granted personal skill is never copied into the channel folder");
+    assert.ok(await absent(path.join(skillsDir, "shared-tier-org-private")), "nor an organization-granted one");
+  } finally {
+    saveSettings({ accessGrants: before });
+  }
+});
