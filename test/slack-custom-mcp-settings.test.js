@@ -18,7 +18,7 @@ const {
   CUSTOM_MCP_NAME_BLOCK_ID,
   CUSTOM_MCP_URL_BLOCK_ID,
   CUSTOM_MCP_TOKEN_BLOCK_ID,
-  CUSTOM_MCP_AUTH_BLOCK_ID,
+  CUSTOM_MCP_AUTH_BLOCK_ID, CUSTOM_MCP_HEADERS_BLOCK_ID, CUSTOM_MCP_QUERY_BLOCK_ID, parseCustomMcpPairs, SETTINGS_SECRET_FIELDS, SETTINGS_DRAFT_FIELDS,
   readSettingsForm,
   settingsFieldBlockId,
   settingsCommand,
@@ -54,7 +54,7 @@ test("the form is never prefilled, names the scope, and parses only what was typ
   assert.equal(parseEditorMetadata(view.private_metadata).view, "custom_mcp_c");
   assert.equal(parseEditorMetadata(buildCustomMcpEditorView(state, { scope: "user" }).private_metadata).view, "custom_mcp_p");
   assert.deepEqual(view.blocks.filter((b) => b.type === "input").map((b) => [b.block_id, Boolean(b.optional)]), [
-    [CUSTOM_MCP_NAME_BLOCK_ID, false], [CUSTOM_MCP_URL_BLOCK_ID, false], [CUSTOM_MCP_AUTH_BLOCK_ID, true], [CUSTOM_MCP_TOKEN_BLOCK_ID, true],
+    [CUSTOM_MCP_NAME_BLOCK_ID, false], [CUSTOM_MCP_URL_BLOCK_ID, false], [CUSTOM_MCP_AUTH_BLOCK_ID, true], [CUSTOM_MCP_TOKEN_BLOCK_ID, true], [CUSTOM_MCP_HEADERS_BLOCK_ID, true], [CUSTOM_MCP_QUERY_BLOCK_ID, true],
   ]);
   assert.ok(view.blocks.every((b) => !b.element?.initial_value), "nothing is prefilled");
   assert.match(flat(view), /linear/, "the hint names the existing servers so one can be updated");
@@ -392,7 +392,7 @@ test("the MCP page lists the conversation's servers and You lists the viewer's, 
   const editing = buildChannelSettingsView({ customMcps: masked }, { ...state, tab: "mcp", form: "cm:c:linear" }, { tab: "mcp", canManageCustomMcp: true });
   assert.equal(editing.submit.text, "Save");
   const inputs = editing.blocks.filter((block) => block.type === "input");
-  assert.deepEqual(inputs.map((block) => block.label.text), ["Server URL", "Authentication type", "Token or consumer key"]);
+  assert.deepEqual(inputs.map((block) => block.label.text), ["Server URL", "Authentication type", "Token or consumer key", "Headers (one name=value per line)", "Query parameters (one name=value per line)"]);
   assert.equal(inputs[0].element.initial_value, "https://mcp.linear.app/mcp");
   assert.equal(inputs[1].element.initial_option.value, "bearer");
   assert.equal(inputs[2].element.initial_value, undefined);
@@ -421,4 +421,45 @@ test("legacy custom MCP forms explicitly select Composio and preserve authentica
   assert.equal(readCustomMcpForm({ state: { values } }).authType, "composio");
   values[CUSTOM_MCP_AUTH_BLOCK_ID].value.selected_option.value = "preserve";
   assert.equal(Object.hasOwn(readCustomMcpForm({ state: { values } }), "authType"), false);
+});
+
+
+test("generic Slack authentication preserves, replaces and clears pairs without secret drafts", () => {
+  assert.equal(parseCustomMcpPairs("", "Headers"), undefined);
+  assert.deepEqual(parseCustomMcpPairs("[]", "Headers"), []);
+  assert.deepEqual(parseCustomMcpPairs("x-key=secret=value\nx-existing=", "Headers"), [{ name: "x-key", value: "secret=value" }, { name: "x-existing" }]);
+  assert.throws(() => parseCustomMcpPairs("missing separator", "Headers"), /name=value/);
+  for (const field of ["headers", "queryParams"]) {
+    assert.ok(SETTINGS_SECRET_FIELDS.includes(field));
+    assert.ok(!SETTINGS_DRAFT_FIELDS.includes(field));
+    assert.notEqual(settingsFieldBlockId("cm:c:second", field, "first"), settingsFieldBlockId("cm:c:second", field, "retry"));
+  }
+  const entry = { name: "second", serverName: "custom-second", url: PUBLIC_URL, authType: "custom", headers: [{ name: "x-key", hasValue: true, valueLast4: "abcd" }] };
+  const form = "cm:c:second";
+  const view = buildChannelSettingsView({ customMcps: { channel: [entry] } }, { ...state, tab: "mcp", form, formDraft: { headers: "x-key=must-never-refill", queryParams: "api_key=must-never-refill" } }, { tab: "mcp", canManageCustomMcp: true });
+  assert.match(flat(view), /Saved: x-key/);
+  assert.doesNotMatch(flat(view), /must-never-refill/);
+  assert.equal(view.blocks.find((b) => b.block_id === settingsFieldBlockId(form, "headers")).element.initial_value, undefined);
+  assert.equal(customMcpErrorBlock("Headers must use name=value"), CUSTOM_MCP_HEADERS_BLOCK_ID);
+  assert.equal(customMcpErrorBlock("Query parameters are invalid"), CUSTOM_MCP_QUERY_BLOCK_ID);
+});
+
+test("Slack header and query readers preserve exact trailing spaces in secret values", () => {
+  const query = "api_key= secret with trailing spaces  ";
+  assert.deepEqual(parseCustomMcpPairs(query, "Query parameters"), [{ name: "api_key", value: " secret with trailing spaces  " }]);
+  const form = "cm:p:second";
+  const inline = readSettingsForm({ state: { values: { [settingsFieldBlockId(form, "queryParams")]: { v: { value: query } }, [settingsFieldBlockId(form, "headers")]: { v: { value: "x-key=header  " } } } } }, form);
+  assert.equal(inline.queryParams, query);
+  assert.equal(inline.headers, "x-key=header  ");
+  const legacy = readCustomMcpForm({ state: { values: { [CUSTOM_MCP_QUERY_BLOCK_ID]: { value: { value: query } }, [CUSTOM_MCP_HEADERS_BLOCK_ID]: { value: { value: "x-key=header  " } } } } });
+  assert.equal(legacy.queryParams[0].value, " secret with trailing spaces  ");
+  assert.equal(legacy.headers[0].value, "header  ");
+});
+
+test("Slack connection summaries stay bounded with maximum length header and query names", () => {
+  const names = Array.from({ length: 16 }, (_, index) => ({ name: `${index}${"&".repeat(126)}`, hasValue: true, valueLast4: "abcd" }));
+  const entry = { name: "second", serverName: "custom-second", url: PUBLIC_URL, authType: "custom", headers: names, queryParams: names };
+  const view = buildChannelSettingsView({ customMcps: { channel: [entry] } }, { ...state, tab: "mcp" }, { tab: "mcp", canManageCustomMcp: true });
+  for (const block of view.blocks) if (block.type === "section") assert.ok((block.text?.text || "").length <= 3000);
+  assert.match(flat(view), /Headers: 16 set/);
 });

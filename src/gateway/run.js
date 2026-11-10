@@ -1457,10 +1457,9 @@ async function runMessageImpl({ channelId, authorId, workspaceId = "", text, thr
     needsClaudeSettings,
     // This run's custom MCP connections must be on the Claude lockdown's server allowlist, or the
     // CLI drops them before connecting (src/gateway/custom-mcps.js). Per run: the personal ones
-    // belong to this author only. The URL is listed only for a host turn, which dials it itself;
-    // a container's entry is the relay bridge, matched by name, and a URL may carry a query-string
-    // key that has no business in a file the container can read.
-    customMcpServers: Object.entries(customMcps).map(([name, { url }]) => ({ name, ...(target?.backend === "host" ? { url } : {}) })),
+    // belong to this author only. Every custom server uses a relay bridge matched by name,
+    // including host turns; query credentials must never reach a settings artifact.
+    customMcpServers: Object.keys(customMcps).map((name) => ({ name })),
     allowBypass: dangerouslySkip,
     homeGuard: homeGuarded,
     // Decides both WHERE the artifacts land and WHICH of them exist: an isolated runtime gets no

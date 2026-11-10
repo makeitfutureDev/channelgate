@@ -340,3 +340,23 @@ test("the You page names stored grants of another person's personal skill as not
   const clean = buildChannelSettingsView({ personalSecrets: [], mySkillPicker: { options: [{ key: "mine", label: "mine" }], selected: [] } }, { channelId: "C_YOU", slug: "you", threadTs: "", ownerId: "U_SHAKED" }, { tab: "you" });
   assert.doesNotMatch(JSON.stringify(clean.blocks), /Not loaded/);
 });
+
+test("generic custom MCP forms save, preserve, replace and clear headers and query parameters", async () => {
+  const url = "https://93.184.215.14/mcp";
+  const added = await saveSettingsForm("cm-add:p", { name: "generic", url, authType: "custom", headers: "x-key=first-secret\nx-extra=second-secret", queryParams: "api_key=query-secret" }, await ctx());
+  assert.match(added.notice, /my-generic/);
+  const saved = async () => (await store.getUser("U_MEMBER")).customMcps.find((row) => row.name === "generic");
+  assert.deepEqual((await saved()).headers, [{ name: "x-key", value: "first-secret" }, { name: "x-extra", value: "second-secret" }]);
+  await saveSettingsForm("cm:p:generic", { url, headers: "x-key=", queryParams: "" }, await ctx());
+  assert.deepEqual((await saved()).headers, [{ name: "x-key", value: "first-secret" }], "missing row removes it; blank row value preserves saved value");
+  assert.equal((await saved()).queryParams[0].value, "query-secret", "blank collection preserves");
+  await saveSettingsForm("cm:p:generic", { url, headers: "x-key=replacement", queryParams: "[]" }, await ctx());
+  assert.equal((await saved()).headers[0].value, "replacement");
+  assert.deepEqual((await saved()).queryParams, []);
+  const bad = await saveSettingsForm("cm:p:generic", { url, headers: "invalid" }, await ctx());
+  assert.equal(bad.field, "headers");
+  assert.equal((await saved()).headers[0].value, "replacement");
+  await saveSettingsForm("cm:p:generic", { url, headers: "[]" }, await ctx());
+  assert.deepEqual((await saved()).headers, []);
+  await removeSettingsForm("cm:p:generic", await ctx());
+});

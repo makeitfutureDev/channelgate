@@ -1313,3 +1313,8 @@ button.clear-tok.armed { background: rgba(229, 96, 77, .14); border-color: rgba(
 .composio-table th, .composio-table td:first-child, .composio-table td:last-child { white-space: nowrap; }
 .composio-table small { color: var(--muted); }
 .ud-composio-inventory .card-foot, .ch-composio-inventory .card-foot { flex-wrap: wrap; gap: 8px; }
+
+.cmcp-extra { margin-top: 10px; }
+.cmcp-pair { display: flex; gap: 8px; margin: 8px 0; flex-wrap: wrap; }
+.cmcp-pair input { flex: 1 1 180px; min-width: 0; padding: 9px 12px; border-radius: 8px; background: var(--panel-2); border: 1px solid var(--line); color: var(--ink); font: inherit; }
+.cmcp-extra > button { margin: 4px 8px 4px 0; }

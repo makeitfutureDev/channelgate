@@ -834,20 +834,30 @@ control-plane status.
   What remains is the 🔒 line shown where the viewer cannot edit something.
   → TEST-PLAN: Slack Settings redesign.
 
-## Custom MCP connections (Bearer token or Composio consumer key)
+## Custom MCP connections (headers and query parameters)
 
-- An admin can add a remote MCP server by **name, HTTPS URL, authentication type and token** to a conversation
+- An admin can add a remote MCP server by **name, HTTPS URL and request credentials** to a conversation
   (admin UI → conversation → Connections → *Custom MCP servers*) or to one person (Users → the
   person → *Personal MCP servers*). Each scope holds at most five. OAuth-only servers are out of
   scope and go through Composio.
-- **Authentication:** choose Bearer token (the default, including old records) or Composio consumer
-  key (`x-consumer-api-key`). Channel and personal editors in the admin UI and Slack preserve
-  the selected type on edits. A token left blank on an update keeps the saved credential; an API
+- **Authentication:** choose Bearer token (the default, including old records), Composio consumer
+  key (`x-consumer-api-key`), or custom headers and query parameters. Custom mode needs no preset
+  token: enter names such as `Authorization`, `x-api-key`, or `x-consumer-api-key` and their full
+  values, plus named URL query parameters. Extra fields can also accompany either preset.
+  Channel and personal editors in the admin UI and Slack preserve the selected type on edits.
+  A token left blank on an update keeps the saved credential; an API
   update omitting `authType` also keeps its saved type. Unsupported types are rejected. A second
   Composio consumer identity can be added at `https://connect.composio.dev/mcp` under a distinct
   name alongside the built-in Composio connection. This is an independent custom server: built-in
   Composio inventory, connection-management policy and file-staging identity helpers remain tied
   to the built-in personal/shared slots.
+- **Write-only request fields:** up to 16 headers (including a preset) and 16 query parameters.
+  Saved rows show names and masked values only; values of four characters or fewer have no visible
+  suffix. Blank values retain the matching saved field, omitted arrays retain all existing rows,
+  explicit empty arrays clear them, and a supplied array replaces its rows. Query values use URL
+  encoding only when the daemon dials the server. Header names are case-insensitively unique;
+  duplicates, transport/MCP-reserved headers, control characters and overlong fields/URLs are
+  rejected. Secret inputs reset after both success and refusal, including Slack retries.
 - **In Slack too:** ⚙️ Settings → **MCP** lists the conversation's servers; **You** lists the
   viewer's own. Both are masked like the admin UI (server name, URL and last four token characters)
   and edited in place. The conversation's servers can be changed only by the channel's managers and
@@ -860,16 +870,16 @@ control-plane status.
   Claude and Codex turns (fresh, resumed, cross-engine fallback) and in SSH sessions. The prefixes
   keep them apart from each other, the built-in servers and Cloud MCP selections. Lean injects
   none. The HTTP run API, whose author is not authenticated, gets the conversation's servers but
-  never a personal one. Claude's per-run lockdown admits each server by name and URL and
-  pre-approves its tools, as for the other gateway-injected remotes. A container run's settings list
-  the name only. The URL is listed only for a host turn, because a URL may carry a query-string key.
+  never a personal one. Claude's per-run lockdown admits each server by name and
+  pre-approves its tools, as for the other gateway-injected remotes. Settings list the name only
+  on both container and host turns, because a URL may carry a query-string key.
   Like the Make toolbox, the daemon relays the server whatever the conversation's network switch
   says.
-- **The token never enters the container.** As with the Make toolbox, the daemon registers URL +
-  `Authorization: Bearer …` or `x-consumer-api-key: …` in the in-memory relay registry, and the container gets only the
-  socket bridge and signed capability. Codex's container bundle holds only the capability. A
-  direct-host `/sudo` turn dials the server itself (Claude: header in the 0600 MCP config; Codex:
-  a headers helper reading the 0600 bundle).
+- **Credentials stay in the daemon.** The daemon registers the effective URL and headers in its
+  in-memory relay registry. Both container and direct-host `/sudo` turns receive only the socket
+  bridge and signed capability for custom MCPs. Custom credentials appear in neither engine's
+  configuration, command line, nor Codex's secret bundle. Raw and URL-encoded values are included
+  in output redaction.
 - **Public addresses only, checked twice.** A save refuses non-HTTPS URLs, embedded credentials,
   fragments, and any host that resolves to loopback, private, link-local or metadata addresses.
   The daemon relay sits outside the egress proxy, so each dial repeats the check and pins the

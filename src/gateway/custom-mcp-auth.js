@@ -1,13 +1,14 @@
-// Fixed custom MCP authentication schemes, shared by daemon relay and engine configuration.
+// Custom MCP authentication presets; custom request fields are assembled only by the daemon.
 /** Missing authType is the legacy Bearer format; unknown values must never pick a header. */
 export function normalizeCustomMcpAuthType(value = "bearer") {
-  if (value !== "bearer" && value !== "composio") throw new Error("Authentication type must be bearer or composio");
+  if (value !== "bearer" && value !== "composio" && value !== "custom") throw new Error("Authentication type must be bearer, composio or custom");
   return value;
 }
 
-/** The fixed authentication headers supported by custom connections (no arbitrary header names). */
+/** Preset authentication header, or no implicit header for custom request fields. */
 export function customMcpAuthentication(authType) {
-  return normalizeCustomMcpAuthType(authType) === "composio"
+  if (normalizeCustomMcpAuthType(authType) === "custom") return { headerName: null, prefix: "" };
+  return authType === "composio"
     ? { headerName: "x-consumer-api-key", prefix: "" }
     : { headerName: "Authorization", prefix: "Bearer " };
 }

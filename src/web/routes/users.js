@@ -202,6 +202,8 @@ export function createUsersRouter({ slack, composioInventory = loadComposioInven
           url: typeof req.body?.url === "string" ? req.body.url : "",
           token: typeof req.body?.token === "string" ? req.body.token : "",
           authType: req.body?.authType,
+          headers: req.body?.headers,
+          queryParams: req.body?.queryParams,
         }, { actor: USER_SECRET_ACTOR });
       } catch (e) {
         return res.status(400).json({ error: e.message });

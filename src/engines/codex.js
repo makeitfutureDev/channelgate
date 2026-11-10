@@ -45,7 +45,6 @@ import { createCodexUsageReader, subtractCodexTokenUsage } from "./codex-usage.j
 import { MCP_STARTUP_TIMEOUT_SECONDS } from "./mcp-timeouts.js";
 import { gatewayRoot, runTmpDir, runtimeSocketFile } from "../config/paths.js";
 import { readCodexAuthState, describeCodexAuth } from "./codex-auth.js";
-import { customMcpAuthentication } from "../gateway/custom-mcp-auth.js";
 import { channelCodexHome } from "../gateway/channel-codex-paths.js";
 import { remoteMcpServerProblem } from "../mcp/remote-mcp-registry.js";
 import { CODEX_NO_TELEMETRY } from "./codex-telemetry.js";
@@ -113,16 +112,8 @@ process.stdout.write(JSON.stringify({ [HEADER]: PREFIX + value }));
 // headers helpers read.
 export function codexSecretBundle({ isolated = false, gatewayCapability = "", composioUserToken = "", composioToken = "", toolboxToken = "", makeToolboxKey = "", customMcps = {} } = {}) {
   if (isolated) return { gatewayCapability };
-  const bundle = { gatewayCapability, composioUserToken, composioToken, toolboxToken, makeToolboxKey };
-  for (const [name, entry] of Object.entries(customMcps || {})) {
-    if (entry?.token) bundle[customMcpSecretName(name)] = entry.token;
-  }
-  return bundle;
-}
-
-// The bundle key a custom MCP's token is stored under for its headers helper (a sudo-host turn).
-export function customMcpSecretName(serverName) {
-  return `customMcp:${serverName}`;
+  // Custom servers always use the daemon relay, even on the host: no custom values in artifacts.
+  return { gatewayCapability, composioUserToken, composioToken, toolboxToken, makeToolboxKey };
 }
 
 // Names that can ride in a `-c` dotted key path. TOML bare keys are exactly [A-Za-z0-9_-]; anything
@@ -891,9 +882,10 @@ export function buildCodexArgs({ prompt, sessionId, isNewSession, forkSourceSess
   // Custom MCP connections (src/gateway/custom-mcps.js): `custom-<name>` / `my-<name>`, both bare
   // TOML keys by construction. Relayed by the daemon in a container exactly like the toolboxes.
   for (const [name, entry] of Object.entries(clean ? {} : customMcps || {})) {
-    if (!entry?.url || !entry?.token || !BARE_TOML_KEY.test(name)) continue;
-    const { headerName, prefix } = customMcpAuthentication(entry.authType);
-    addSecretRemote(name, entry.url, customMcpSecretName(name), headerName, prefix, { [headerName]: `${prefix}${entry.token}` });
+    if (!secretBundlePath || !entry?.url || !BARE_TOML_KEY.test(name)) continue;
+    // Headers and query values are materialized only in the daemon's registration. A host turn
+    // also gets a bridge, keeping credentials out of argv, MCP config and helper files.
+    if (!remoteMcpServerProblem({ url: entry.url, headers: {} })) addRelayedRemote(name);
   }
 
   // Prompt must come before image flags: Codex's `-i/--image <FILE>...` option is variadic, so any

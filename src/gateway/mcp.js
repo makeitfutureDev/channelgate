@@ -141,7 +141,7 @@ export async function buildMcpRuntimePayload({ composioUserEndpoint = null, comp
   // Same predicate the prompt's identity line is built from — one answer to "which identities does
   // this run have?", never two that can drift apart.
   const identities = composioIdentitiesForRun({ principalTrusted, composioUserEndpoint, composioUserToken, composioEndpoint, composioToken });
-  // Composio is always relayed. Other remotes are relayed on isolated targets only. Relayed
+  // Composio and custom MCPs are always relayed. Other remotes use the relay in containers. Relayed
   // names go into the signed claim and their URL + headers into the daemon registry.
   const httpRemotes = {};
   const userRemote = identities.user ? composioHttpTarget(composioUserEndpoint, composioUserToken) : null;
@@ -153,7 +153,9 @@ export async function buildMcpRuntimePayload({ composioUserEndpoint = null, comp
   // Custom MCP connections (src/gateway/custom-mcps.js): `custom-<name>` / `my-<name>`, selected authentication
   // header, `publicOnly` so the relay re-checks the destination on every dial. The prefixes keep
   // them from ever replacing one of the built-in entries above.
-  for (const [name, remote] of Object.entries(customMcpRemotes(customMcps))) {
+  const customRemotes = customMcpRemotes(customMcps);
+  const alwaysRelayed = (name) => ["composio-user", "composio-agent"].includes(name) || Object.hasOwn(customRemotes, name);
+  for (const [name, remote] of Object.entries(customRemotes)) {
     if (!Object.hasOwn(httpRemotes, name)) httpRemotes[name] = remote;
   }
   // Each server is checked on its own before anything is registered. The relay dials https only
@@ -164,13 +166,13 @@ export async function buildMcpRuntimePayload({ composioUserEndpoint = null, comp
   // rejected-MCP note an unadmittable catalog selection gets; the rest of the turn is unaffected.
   const rejectedRemotes = [];
   for (const name of Object.keys(httpRemotes)) {
-    if (!isolated && !["composio-user", "composio-agent"].includes(name)) continue;
+    if (!isolated && !alwaysRelayed(name)) continue;
     const problem = remoteMcpServerProblem(httpRemotes[name]);
     if (!problem) continue;
     delete httpRemotes[name];
     rejectedRemotes.push({ name, reason: problem });
   }
-  const relayedMcps = Object.keys(httpRemotes).filter((name) => isolated || ["composio-user", "composio-agent"].includes(name));
+  const relayedMcps = Object.keys(httpRemotes).filter((name) => isolated || alwaysRelayed(name));
   const jti = randomUUID();
   const gatewayCapability = mintGatewayCapability({
     secret: process.env.CG_APPROVAL_SECRET || "",
@@ -267,9 +269,9 @@ export async function buildMcpRuntimePayload({ composioUserEndpoint = null, comp
     const entry = httpRemotes[name] ? relayServer(name) : composioServer(endpoint, composioOpts);
     if (entry) servers[name] = entry;
   }
-  for (const name of ["makeitfuture-toolbox", "make-toolbox", ...Object.keys(customMcpRemotes(customMcps))]) {
+  for (const name of ["makeitfuture-toolbox", "make-toolbox", ...Object.keys(customRemotes)]) {
     const remote = httpRemotes[name];
-    if (remote && !servers[name]) servers[name] = isolated ? relayServer(name) : { type: "http", url: remote.url, headers: remote.headers };
+    if (remote && !servers[name]) servers[name] = isolated || alwaysRelayed(name) ? relayServer(name) : { type: "http", url: remote.url, headers: remote.headers };
   }
   return { configJson: JSON.stringify({ mcpServers: servers }), relayDigest, gatewayCapability, relayedMcps, relayJti: relayedMcps.length ? jti : "", rejectedRemotes };
 }

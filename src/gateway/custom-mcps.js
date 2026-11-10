@@ -1,10 +1,11 @@
 // Custom MCP connections: a remote MCP server a channel manager (for the conversation) or a person
-// (for themselves) adds by URL + a Bearer token or Composio consumer key. Servers that need an OAuth flow go
+// (for themselves) adds by URL with optional authentication presets, headers and query parameters.
+// Servers that need an OAuth flow go
 // through Composio. One home for the record shape, its validation, the masked listing every
 // surface returns, and what a run receives.
 //
 // Stored as a list on the channel's meta (`meta.customMcps`) or the person's user record
-// (`user.customMcps`): `{ name, url, token, authType, setBy, setAt }`. The token is WRITE-ONLY, like a
+// (`user.customMcps`): `{ name, url, token, authType, headers?, queryParams?, setBy, setAt }`. Values are WRITE-ONLY, like a
 // channel's environment secrets: every surface lists name + server name + URL + last4 + who/when,
 // and there is no reveal path — replace it by entering a new one.
 //
@@ -14,7 +15,7 @@
 // names themselves (`mcp__custom-linear__…`, `mcp__my-linear__…`) say whose connection it is.
 //
 // A run reaches them exactly like the other header-bearing remotes (src/gateway/mcp.js): in a
-// container the DAEMON relays them, so the token never enters the container; `publicOnly` makes
+// container or on the host the DAEMON relays them, so values never enter engine configuration; `publicOnly` makes
 // that relay re-check the destination against the SSRF policy on every dial and pin the connection
 // to the vetted addresses (src/mcp/public-fetch.js) — the daemon sits outside the egress proxy, so
 // without it a custom URL would be a way into the host's loopback, private network or cloud
@@ -95,6 +96,53 @@ export function normalizeCustomMcpToken(value, authType) {
   return token;
 }
 
+const MAX_FIELDS = 16;
+const FIELD_NAME_RE = /^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/;
+const CONTROL_RE = /[\x00-\x1f\x7f-\x9f]/u;
+const RESERVED_HEADERS = new Set(["host", "content-length", "connection", "transfer-encoding", "te", "trailer", "upgrade", "expect", "accept", "content-type", "mcp-session-id", "mcp-protocol-version", "last-event-id"]);
+
+/** Validate and merge write-only fields. An explicit list replaces the rows; blank values retain by name. */
+function mergeFields(input, saved, kind, authType) {
+  if (input === undefined && saved === undefined) return undefined;
+  const rows = input === undefined ? saved : input;
+  if (!Array.isArray(rows) || rows.length > MAX_FIELDS) throw new Error(`${kind} must be an array of at most 16 entries`);
+  const seen = new Set();
+  const preset = customMcpAuthentication(authType).headerName?.toLowerCase();
+  if (kind === "Headers" && preset && rows.length >= MAX_FIELDS) throw new Error("At most 16 headers including authentication are allowed");
+  return rows.map((row) => {
+    if (!row || typeof row !== "object" || typeof row.name !== "string") throw new Error(`${kind} entries require a name`);
+    const name = row.name;
+    if (!name || name.length > 128) throw new Error(`${kind} names must contain 1-128 characters`);
+    const key = kind === "Headers" ? name.toLowerCase() : name;
+    if (kind === "Headers") {
+      if (!FIELD_NAME_RE.test(name)) throw new Error("Header names must be valid HTTP tokens");
+      if (RESERVED_HEADERS.has(key) || key.startsWith("proxy-")) throw new Error("Header name is reserved for the HTTP or MCP transport");
+      if (key === preset) throw new Error("Header duplicates the selected authentication header");
+    } else if (!name.isWellFormed() || CONTROL_RE.test(name) || /[&=#]/u.test(name)) throw new Error("Query parameter names must not contain controls or &=#");
+    if (seen.has(key)) throw new Error(`${kind} names must be unique`);
+    seen.add(key);
+    if (row.value !== undefined && typeof row.value !== "string") throw new Error(`${kind} values must be strings`);
+    const previous = Array.isArray(saved) ? saved.find((item) => (kind === "Headers" ? item?.name?.toLowerCase() : item?.name) === key) : null;
+    const value = row.value === undefined || row.value === "" ? previous?.value : row.value;
+    if (typeof value !== "string" || !value) throw new Error(`${kind} values are required for new entries`);
+    if (Buffer.byteLength(value) > 8192) throw new Error(`${kind} values must be at most 8 KB`);
+    if (CONTROL_RE.test(value) || (kind === "Headers" && /[^\x20-\x7e\xa0-\xff]/u.test(value))) throw new Error(`${kind} values must not contain controls or unsupported characters`);
+    // URLSearchParams replaces unpaired surrogates; reject these so the saved and sent secrets match.
+    if (kind !== "Headers" && !value.isWellFormed()) throw new Error("Query parameter values must be well-formed Unicode");
+    return { name, value };
+  });
+}
+
+function materializeUrl(url, queryParams) {
+  const effective = new URL(url);
+  for (const { name, value } of queryParams || []) {
+    if (effective.searchParams.has(name)) throw new Error("Query parameter duplicates a parameter in the URL");
+    effective.searchParams.append(name, value);
+  }
+  if (effective.href.length > MAX_URL_LENGTH) throw new Error("URL including query parameters must be at most 2048 characters");
+  return effective.href;
+}
+
 function cleanEntries(list) {
   if (!Array.isArray(list)) return [];
   const out = [];
@@ -103,8 +151,15 @@ function cleanEntries(list) {
     if (!entry || typeof entry !== "object") continue;
     const name = typeof entry.name === "string" ? entry.name : "";
     if (!NAME_RE.test(name) || seen.has(name)) continue;
-    if (typeof entry.url !== "string" || typeof entry.token !== "string" || !entry.token) continue;
-    try { normalizeCustomMcpAuthType(entry.authType); } catch { continue; }
+    try {
+      const authType = normalizeCustomMcpAuthType(entry.authType);
+      const url = normalizeCustomMcpUrl(entry.url);
+      if (authType !== "custom") normalizeCustomMcpToken(entry.token, authType);
+      else if (entry.token) throw new Error("Custom authentication uses named headers or query parameters");
+      mergeFields(entry.headers, undefined, "Headers", authType);
+      const queryParams = mergeFields(entry.queryParams, undefined, "Query parameters", authType);
+      materializeUrl(url, queryParams);
+    } catch { continue; }
     seen.add(name);
     out.push(entry);
   }
@@ -113,7 +168,7 @@ function cleanEntries(list) {
 
 /**
  * Add, update or remove one entry; returns the NEW list (the input is not mutated). `set` upserts
- * by name: an update may omit `token` to keep the stored one, a new entry must carry it. The URL
+ * by name: an update may omit `token` to keep the stored one; preset authentication requires it. The URL
  * must already have passed assertPublicCustomMcpUrl when it came from a caller.
  */
 export function patchCustomMcps(list, { set = null, remove = null, actor = "", now = new Date() } = {}) {
@@ -128,18 +183,29 @@ export function patchCustomMcps(list, { set = null, remove = null, actor = "", n
   const url = normalizeCustomMcpUrl(set.url);
   const existing = current.find((entry) => entry.name === name);
   const authType = normalizeCustomMcpAuthType(set.authType === undefined ? existing?.authType : set.authType);
-  const suppliedToken = typeof set.token === "string" && set.token.trim() ? normalizeCustomMcpToken(set.token, authType) : "";
-  if (!existing && !suppliedToken) throw new Error("A token is required for a new custom MCP");
+  const suppliedToken = authType === "custom" ? "" : typeof set.token === "string" && set.token.trim() ? normalizeCustomMcpToken(set.token, authType) : "";
+  if (authType !== "custom" && !existing && !suppliedToken) throw new Error("A token is required for a new custom MCP");
   if (!existing && current.length >= CUSTOM_MCP_LIMIT) throw new Error(`At most ${CUSTOM_MCP_LIMIT} custom MCP servers here — remove one first`);
   const entry = {
     name,
     url,
-    token: suppliedToken || normalizeCustomMcpToken(existing.token, authType),
+    token: authType === "custom" ? "" : suppliedToken || normalizeCustomMcpToken(existing?.token, authType),
     authType,
     setBy: String(actor || ""),
     setAt: (now instanceof Date ? now : new Date(now)).toISOString(),
   };
+  for (const [field, label] of [["headers", "Headers"], ["queryParams", "Query parameters"]]) {
+    const rows = mergeFields(set[field], existing?.[field], label, authType);
+    if (rows !== undefined) entry[field] = rows;
+  }
+  materializeUrl(url, entry.queryParams);
   return existing ? current.map((item) => (item.name === name ? entry : item)) : [...current, entry];
+}
+
+function maskedFields(entry) {
+  return Object.fromEntries(["headers", "queryParams"].filter((field) => entry[field] !== undefined).map((field) => [field,
+    entry[field].map(({ name, value }) => ({ name, hasValue: true, valueLast4: value.length > 4 ? value.slice(-4) : "" })),
+  ]));
 }
 
 /** The masked shape — the ONLY form a custom MCP list may leave the process in. */
@@ -150,8 +216,9 @@ export function listCustomMcps(list, scope) {
     serverName: customMcpServerName(scope, entry.name),
     url: entry.url,
     authType: normalizeCustomMcpAuthType(entry.authType),
-    hasToken: true,
-    tokenLast4: entry.token.slice(-4),
+    hasToken: Boolean(entry.token),
+    tokenLast4: entry.token?.length > 4 ? entry.token.slice(-4) : "",
+    ...maskedFields(entry),
     setBy: typeof entry.setBy === "string" ? entry.setBy : "",
     setAt: typeof entry.setAt === "string" ? entry.setAt : "",
   }));
@@ -170,7 +237,10 @@ export function resolveCustomMcpsForRun({ channelList = [], userList = [], clean
     for (const entry of cleanEntries(list)) {
       let url;
       try { url = normalizeCustomMcpUrl(entry.url); } catch { continue; }
-      out[customMcpServerName(scope, entry.name)] = { url, token: entry.token, authType: normalizeCustomMcpAuthType(entry.authType) };
+      out[customMcpServerName(scope, entry.name)] = { url, token: entry.token, authType: normalizeCustomMcpAuthType(entry.authType),
+        ...(entry.headers !== undefined ? { headers: entry.headers.map((row) => ({ ...row })) } : {}),
+        ...(entry.queryParams !== undefined ? { queryParams: entry.queryParams.map((row) => ({ ...row })) } : {}),
+      };
     }
   };
   add("channel", channelList);
@@ -181,17 +251,30 @@ export function resolveCustomMcpsForRun({ channelList = [], userList = [], clean
 /** The relay/remote shape mcp.js registers: selected authentication header + the per-dial public-address check. */
 export function customMcpRemotes(customMcps = {}) {
   const out = {};
-  for (const [name, { url, token, authType } = {}] of Object.entries(customMcps || {})) {
-    if (!url || !token) continue;
-    const { headerName, prefix } = customMcpAuthentication(authType);
-    out[name] = { url, headers: { [headerName]: `${prefix}${token}` }, publicOnly: true };
+  for (const [name, entry] of Object.entries(customMcps || {})) {
+    if (!entry?.url) continue;
+    // Apply the same fail-closed validation to direct callers as stored records.
+    if (!cleanEntries([{ ...entry, name: "remote" }]).length) continue;
+    const { headerName, prefix } = customMcpAuthentication(entry.authType);
+    const headers = Object.fromEntries((entry.headers || []).map(({ name: key, value }) => [key, value]));
+    if (headerName) headers[headerName] = `${prefix}${entry.token}`;
+    out[name] = { url: materializeUrl(entry.url, entry.queryParams), headers, publicOnly: true };
   }
   return out;
 }
 
 /** The tokens a run must redact from everything it posts. */
 export function customMcpTokens(customMcps = {}) {
-  return Object.values(customMcps || {}).map((entry) => entry?.token || "").filter(Boolean);
+  const values = [];
+  for (const entry of Object.values(customMcps || {})) {
+    if (entry?.token) values.push(entry.token);
+    for (const { value } of [...(entry?.headers || []), ...(entry?.queryParams || [])]) {
+      if (value) values.push(value);
+    }
+    // Legacy URLs can already contain query credentials, which need the same protection.
+    try { for (const value of new URL(entry?.url).searchParams.values()) if (value) values.push(value); } catch { /* invalid entries are ignored */ }
+  }
+  return [...new Set(values.flatMap((value) => [value, encodeURIComponent(value), new URLSearchParams({ v: value }).toString().slice(2)]))];
 }
 
 /**

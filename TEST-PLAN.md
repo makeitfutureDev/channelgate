@@ -1670,6 +1670,52 @@ action timestamps, redacted native UI captures and tool/result evidence; never r
 These native UI actions and real engine turns are release gates. Mocked Slack transports,
 Chromium rendering of a local fixture and successful code tests do not satisfy them.
 
+## Custom MCP headers and query parameters (2026-11-10)
+
+- Regression: `test/custom-mcps.test.js` and `test/custom-mcp-request-config.test.js` cover
+  validated/masked header and query arrays, blank/omitted preservation, explicit clearing/removal,
+  custom mode with no preset token, legacy Bearer/Composio behavior, transport-header refusal,
+  duplicate names, control characters, Unicode encoding and effective URL limits.
+- Real local HTTP MCP fixture (transport-level, not a live engine acceptance run): initialize,
+  list tools and call a harmless identity tool with two headers and a query credential containing
+  spaces, slash, plus, question mark and Unicode. Every request must receive both exact headers
+  and the correctly decoded query value.
+- Both engine configurations, on container and host targets, must carry a relay bridge and no
+  custom value in argv, MCP JSON, listings or Codex bundle. The daemon registry alone holds the
+  materialized request; output redaction includes raw and encoded values.
+- Web/Slack regression covers named row editing, keeping masked existing values, replacement,
+  removal, clearing, and secret reset after refusal. Old open forms omit arrays and preserve them.
+
+- Browser smoke passed (2026-11-10, Chromium, disposable local editor + real model validation):
+  add a generic connection with one header and one query field, verify masked readback, reopen
+  with empty password boxes and preserved authentication/names, then remove the query while
+  preserving the header. This is UI evidence, not provider or live-engine acceptance.
+
+### Live acceptance — Claude AND Codex (unexecuted until recorded)
+
+Fixture: the private custom-MCP QA conversations documented in Airtable, Worker mode, Lean off,
+network on; disposable public HTTPS MCP fixture exposing a harmless identity tool. Configure
+fixture credentials synthetically: two custom headers plus a query credential requiring encoding.
+Keep a built-in Composio connection and one old Bearer entry available.
+
+- [ ] Each engine: admin UI add channel `qa-generic`, select custom headers/query parameters,
+  enter the two header names/values and query name/value, save. Ask: “List the tools for
+  custom-qa-generic and call its harmless identity tool.” Pass: correct fixture identity and
+  server-observed headers/decoded query; built-in Composio and legacy Bearer tools still work.
+- [ ] Edit in web and Slack → MCP: change a header, retain another via blank value, remove a row,
+  clear all query fields, then restore them. Pass: exact changes in fixture receipt and masked
+  readback; omitted fields survive and cleared fields disappear. Neither editor refills secrets.
+- [ ] Personal `qa-generic-personal`: repeat via Users and Slack → You. Only that author receives
+  `my-qa-generic-personal`; another approved author and the HTTP API principal do not.
+- [ ] Reject Host/Content-Length/MCP protocol overrides, duplicates, newline injection, invalid
+  values and oversized effective URLs without saving or echoing secret values. Refused Slack
+  saves reset credential inputs and retain non-secret draft state.
+- [ ] Change/rotate/remove while a turn is active: the old relay binding refuses its next
+  request, other servers remain available, and the next turn sees exactly the new settings.
+- [ ] Both engines, including an authorized host `/sudo` fixture: no raw or encoded custom field
+  value in generated config, argv, artifacts or chat output. Both use daemon relay registrations.
+  Public-address validation and Lean omission remain effective.
+
 ## Custom MCP Composio authentication (2026-11-10)
 
 - Automated regression: `test/custom-mcps.test.js` covers legacy Bearer defaults, Composio

@@ -12,6 +12,11 @@ release gates. Stable promotion and publication require approval of the exact te
 
 ### Beta development notes
 
+- Custom MCP connections support multiple named headers and query parameters with write-only
+  values, alongside existing Bearer and Composio presets. Both web and Slack editors retain,
+  replace or remove fields. Custom connections now use the daemon relay on host turns too,
+  keeping query credentials out of engine configuration and command lines.
+
 - A stored grant of another person's personal skill no longer fails every one of that user's
   messages. The run skips it and says which skill and how to fix it. The admin Users editor, the
   shared grant/template pickers and Slack Settings → You no longer offer someone else's personal

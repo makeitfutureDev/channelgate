@@ -83,7 +83,7 @@ import {
   CHANNEL_SETTINGS_CLEAR_MAKE_ACTION_ID, CHANNEL_SETTINGS_CLEAR_TOOLBOX_ACTION_ID,
   CHANNEL_SETTINGS_CLOUD_ENGINE_PREFIX, CHANNEL_SETTINGS_CLOUD_MANAGE_ACTION_ID,
   CHANNEL_SETTINGS_CUSTOM_MCP_ADD_ACTION_ID, CHANNEL_SETTINGS_CUSTOM_MCP_REMOVE_ACTION_ID, CHANNEL_SETTINGS_CUSTOM_MCP_CALLBACK_ID,
-  CUSTOM_MCP_NAME_BLOCK_ID, CUSTOM_MCP_URL_BLOCK_ID, CUSTOM_MCP_TOKEN_BLOCK_ID, CUSTOM_MCP_AUTH_BLOCK_ID,
+  CUSTOM_MCP_NAME_BLOCK_ID, CUSTOM_MCP_URL_BLOCK_ID, CUSTOM_MCP_TOKEN_BLOCK_ID, CUSTOM_MCP_AUTH_BLOCK_ID, CUSTOM_MCP_HEADERS_BLOCK_ID, CUSTOM_MCP_QUERY_BLOCK_ID, parseCustomMcpPairs,
   buildCustomMcpEditorView, buildCustomMcpStatusView, readCustomMcpForm, customMcpScope,
   CHANNEL_SETTINGS_ROOT_CALLBACK_ID, CHANNEL_SETTINGS_FORM_OPEN_ACTION_ID, CHANNEL_SETTINGS_FORM_CANCEL_ACTION_ID,
   CHANNEL_SETTINGS_FORM_REMOVE_ACTION_ID, CHANNEL_SETTINGS_VAR_MENU_ACTION_ID, CHANNEL_SETTINGS_SCHEDULE_MENU_ACTION_ID,
@@ -625,6 +625,8 @@ function assertCustomMcpManager(meta, who) {
 // Which form field a custom MCP refusal belongs under (src/gateway/custom-mcps.js messages).
 export function customMcpErrorBlock(message = "") {
   const text = String(message);
+  if (/^Headers|^Header/i.test(text)) return CUSTOM_MCP_HEADERS_BLOCK_ID;
+  if (/^Query/i.test(text)) return CUSTOM_MCP_QUERY_BLOCK_ID;
   if (/^Authentication/.test(text)) return CUSTOM_MCP_AUTH_BLOCK_ID;
   if (/^Token|token is required|Bearer token|consumer key/i.test(text)) return CUSTOM_MCP_TOKEN_BLOCK_ID;
   if (/^URL/.test(text)) return CUSTOM_MCP_URL_BLOCK_ID;
@@ -716,6 +718,8 @@ export async function handleCustomMcpFormSubmission({ ack, body, view, client },
     // No remote roster lookup yet: this checks current local admission, scope and field syntax.
     let current = await context(client, { ...request, verifyMembership: false });
     admit(current);
+    // Generic fields contain secrets too: remove the submitted native view before parsing.
+    if (view?.state?.values?.[CUSTOM_MCP_HEADERS_BLOCK_ID] || view?.state?.values?.[CUSTOM_MCP_QUERY_BLOCK_ID]) await navigation.show(buildCustomMcpStatusView(state, { scope }));
     const form = readCustomMcpForm(view);
     patchCustomMcps(scope === "channel" ? current.meta.customMcps : (await getUser(clicker))?.customMcps, { set: form });
 
@@ -754,7 +758,7 @@ export async function handleCustomMcpFormSubmission({ ack, body, view, client },
       await navigation.show(buildCustomMcpStatusView(state, {
         scope, retry: !saved,
         message: saved ? "The server was saved, but Settings could not refresh. Reopen Settings to check it."
-          : `${message} Reopen the form to retry; the token draft has been cleared.`,
+          : `${message} Reopen the form to retry; the credential drafts have been cleared.`,
       }));
       return;
     }
@@ -993,6 +997,11 @@ export async function handleSettingsFormSubmission({ ack, body, view, client }, 
     assertSettingsFormAllowed(state.form, { ...local, clicker });
     const problem = localSettingsFormProblem(state.form, values);
     if (problem) {
+      if (values.headers !== undefined || values.queryParams !== undefined) {
+        const draft = Object.fromEntries(Object.entries(values).filter(([field]) => SETTINGS_DRAFT_FIELDS.includes(field)));
+        await ack({ response_action: "update", view: await rootView(local.entry, local.meta, { ...state, formSecretId: randomUUID(), formError: problem, formDraft: draft }, local.userIsAdmin, {}) });
+        return;
+      }
       await ack({ response_action: "errors", errors: { [settingsFieldBlockId(state.form, problem.field, state.formSecretId)]: problem.error } });
       return;
     }
@@ -1084,7 +1093,14 @@ export async function saveSettingsForm(key, values, ctx) {
     return { notice: "✅ Saved the Make toolbox." };
   }
   if (kind === "cm-add" || kind === "cm") {
-    const input = { name: kind === "cm" ? name : values.name, url: values.url, token, ...(values.authType !== undefined ? { authType: values.authType } : {}) };
+    let input;
+    try {
+      input = { name: kind === "cm" ? name : values.name, url: values.url, token, ...(values.authType !== undefined ? { authType: values.authType } : {}) };
+      for (const field of ["headers", "queryParams"]) {
+        const pairs = parseCustomMcpPairs(values[field], field === "headers" ? "Headers" : "Query parameters");
+        if (pairs !== undefined) input[field] = pairs;
+      }
+    } catch (error) { return refuse(/^Headers/.test(error.message) ? "headers" : "queryParams", error.message); }
     try {
       // `authorize` re-checks the editor's current authority after the DNS check, right before the write.
       const options = { actor: scope === "c" ? `<@${clicker}>` : clicker, ...(ctx.authorize ? { authorize: ctx.authorize } : {}) };
@@ -1094,7 +1110,7 @@ export async function saveSettingsForm(key, values, ctx) {
       const saved = servers.find((item) => item.name === String(input.name).trim().toLowerCase());
       return { notice: `✅ Saved ${inlineMcpName(saved?.serverName || input.name)}. Its tools reach the next run.` };
     } catch (error) {
-      return refuse(/^Authentication/.test(error.message) ? "authType" : fieldForError(error.message, kind === "cm" ? ["url", "token"] : ["name", "url", "token"], kind === "cm" ? "url" : "name"), error.message);
+      return refuse(/^Headers?|^Header/i.test(error.message) ? "headers" : /^Query/i.test(error.message) ? "queryParams" : /^Authentication/.test(error.message) ? "authType" : fieldForError(error.message, kind === "cm" ? ["url", "token"] : ["name", "url", "token"], kind === "cm" ? "url" : "name"), error.message);
     }
   }
   if (isEmailForm(kind)) {

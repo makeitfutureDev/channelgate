@@ -105,7 +105,7 @@ for (const scope of ["c", "p"]) {
   });
 }
 
-test("local token validation after an async refusal targets the new visible input", async () => {
+test("local validation after an async refusal clears every credential input", async () => {
   const ui = modal("cm-add:p");
   ui.type("name", "example");
   ui.type("url", "https://mcp.example.com/mcp");
@@ -114,9 +114,10 @@ test("local token validation after an async refusal targets the new visible inpu
   ui.type("token", "short");
   const visibleId = ui.input("token").block_id;
   const acks = await ui.submit(async () => assert.fail("local validation must prevent saving"));
-  assert.equal(acks[0].response_action, "errors");
-  assert.deepEqual(Object.keys(acks[0].errors), [visibleId]);
-  assert.match(acks[0].errors[visibleId], /valid token/);
+  assert.equal(acks[0].response_action, "update");
+  assert.notEqual(ui.input("token").block_id, visibleId);
+  assert.equal(ui.input("token").element.initial_value, undefined);
+  assert.match(JSON.stringify(acks[0].view), /valid token/);
 });
 
 test("a duplicate variable refusal clears the native value but retains non-secret fields", async () => {
@@ -129,4 +130,28 @@ test("a duplicate variable refusal clears the native value but retains non-secre
   assert.equal(ui.value("name"), "EXISTING_KEY");
   assert.equal(ui.value("hosts"), "api.example.com");
   assert.equal(JSON.stringify(ui.view()).includes("dummy-rejected-value"), false);
+});
+
+test("generic MCP multiline secrets rotate and disappear after every refused save", async () => {
+  const ui = modal("cm-add:p");
+  ui.type("name", "generic");
+  ui.type("url", "https://mcp.example.com/mcp");
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const header = `x-key=dummy-header-secret-${attempt}`;
+    const query = `api_key=dummy-query-secret-${attempt}`;
+    ui.type("headers", header);
+    ui.type("queryParams", query);
+    const ids = [ui.input("headers").block_id, ui.input("queryParams").block_id];
+    await ui.submit(async (_key, values) => {
+      assert.equal(values.headers, header);
+      assert.equal(values.queryParams, query);
+      return { field: "headers", error: "Header rejected." };
+    });
+    assert.equal(ui.value("headers"), "");
+    assert.equal(ui.value("queryParams"), "");
+    assert.notEqual(ui.input("headers").block_id, ids[0]);
+    assert.notEqual(ui.input("queryParams").block_id, ids[1]);
+    assert.ok(!JSON.stringify(ui.view()).includes(header));
+    assert.ok(!JSON.stringify(ui.view()).includes(query));
+  }
 });
