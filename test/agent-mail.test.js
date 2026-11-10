@@ -52,6 +52,7 @@ function fixture({ clock = { now: 1_800_000_000_000 } } = {}) {
   // Scripted origin behavior: a function (hop → text|null); returning null means "present and
   // stop"; a string means "answer and continue" (the runner calls requestContinue like the tool).
   let originScript = () => null;
+  const statusCalls = [];
   const agentMail = new AgentMail({
     loadChannels: async () => [...entries.values()],
     loadEntry: async (id) => entries.get(id) || null,
@@ -80,6 +81,7 @@ function fixture({ clock = { now: 1_800_000_000_000 } } = {}) {
       return { content: `Relayed: ${args.text.length} chars`, engine: "claude", costUSD: 0.002 };
     },
     deliver: async (_client, payload) => { delivered.push(payload); },
+    setStatus: async (_client, channelId, threadTs, phrase, loading, opts) => { statusCalls.push({ channelId, threadTs, phrase, loading, username: opts?.username || "" }); return true; },
     progress: async (args) => {
       const entry = { ...args, deltas: 0, events: 0, stopped: 0 };
       progressCalls.push(entry);
@@ -97,7 +99,7 @@ function fixture({ clock = { now: 1_800_000_000_000 } } = {}) {
   const send = (over = {}) => agentMail.send({ channelId: SOURCE, slug: "c_marketing", createdBy: REQUESTER, threadKey: ORIGIN_THREAD, to: TARGET, message: "What is the Q4 pipeline?", origin: "slack_foreground", ...over });
   const settle = async () => { for (let i = 0; i < 600; i += 1) await new Promise((r) => setImmediate(r)); };
   return {
-    agentMail, send, settle, entries, metas, members, posts, runs, delivered, verifierCalls, clock, progressCalls, finalized,
+    agentMail, send, settle, entries, metas, members, posts, runs, delivered, verifierCalls, clock, progressCalls, finalized, statusCalls,
     setOwnsFinal: (v) => { ownsFinal = v; },
     setConnected: (v) => { connected = v; }, setReply: (t) => { replyText = t; }, failTarget: (e) => { failTargetRun = e; },
     setOriginScript: (fn) => { originScript = fn; },
@@ -592,4 +594,27 @@ test("continue_agent_conversation: a flag while answering, a message from an ord
   // Too old to pick up again.
   f.clock.now += 60 * 60_000 + 1;
   await refusal(f.agentMail.requestContinue({ channelId: SOURCE, threadKey: ORIGIN_THREAD, createdBy: REQUESTER, message: "again?" }), undefined, /more than an hour old/);
+});
+
+test("the asking thread shows a waiting status while the other agent has the floor, cleared when its words arrive", async () => {
+  const f = fixture();
+  f.setReply((n) => (n === 1 ? "Which region?" : "EMEA: 12 deals."));
+  f.setOriginScript((hop) => (hop === 1 ? "EMEA." : null));
+  const sent = await f.send();
+  await f.settle();
+  assert.equal(getAgentMessage(sent.id).status, "delivered");
+  // One on/off pair per target turn, all on the ORIGIN thread, labeled with the target's persona.
+  assert.deepEqual(f.statusCalls.map((c) => [c.channelId, c.threadTs, c.phrase, c.username]), [
+    [SOURCE, ORIGIN_THREAD, "waiting for the #sales agent…", "#sales agent"],
+    [SOURCE, ORIGIN_THREAD, "", ""],
+    [SOURCE, ORIGIN_THREAD, "waiting for the #sales agent…", "#sales agent"],
+    [SOURCE, ORIGIN_THREAD, "", ""],
+  ]);
+  assert.deepEqual(f.statusCalls[0].loading, ["Asked the #sales agent", "#sales agent is thinking…", "Its reply lands here"]);
+  // A failed target turn clears it too.
+  const g = fixture();
+  g.failTarget(new Error("boom"));
+  await g.send();
+  await g.settle();
+  assert.deepEqual(g.statusCalls.map((c) => c.phrase), ["waiting for the #sales agent…", ""]);
 });
