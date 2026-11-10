@@ -59,6 +59,18 @@ export const WINDOW_MS = 60 * 60_000;
 export const DEFAULT_TURN_MAX_MS = 30 * 60_000;
 // Messages per conversation, both directions counted (the opener is the first).
 export const MAX_TURNS = 10;
+// `turns` in persisted conversations counts origin/target rounds, not messages. Keep that
+// historical field intact; the transcript is authoritative for the two-direction message cap.
+// Pre-conversation one-shot records have no transcript, so retain their opener and answer when
+// resumed rather than resetting their budget (or dropping those messages from the transcript).
+function conversationMessages(record) {
+  if (record.messages?.length) return record.messages;
+  const messages = [{ from: "origin", text: record.message, ms: record.createdMs }];
+  if (record.answeredMs || record.reply || ["answered", "awaiting_origin", "delivered"].includes(record.status)) {
+    messages.push({ from: "target", text: record.reply || "", ms: record.answeredMs });
+  }
+  return messages;
+}
 const MAX_DELIVERY_ATTEMPTS = 3;
 const STATUSES = Object.freeze(["queued", "running", "answered", "awaiting_origin", "delivered", "failed", "refused"]);
 
@@ -423,7 +435,7 @@ export class AgentMail {
     } catch (err) {
       await logEvent("agent_message_error", { id: record.id, stage: "target-post", error: err?.message || String(err) }).catch(() => {});
     }
-    const messages = [...(record.messages || []), { from: "target", text: reply, ms: this.now() }];
+    const messages = [...conversationMessages(record), { from: "target", text: reply, ms: this.now() }];
     update(record, { status: "answered", reply, messages, answeredMs: this.now(), deliveryAttempts: 0, engine: result.engine || "", costUSD: (record.costUSD || 0) + (result.costUSD || 0) });
     await logEvent("agent_message_answered", { id: record.id, to: record.toChannelId, chars: reply.length, engine: result.engine || "", turn: record.turns });
     await this._originTurn(record);
@@ -465,7 +477,7 @@ export class AgentMail {
         await this.deliver(client, { channel: record.fromChannelId, threadKey: slackThreadFor(record.fromThreadKey), result: { content: latest }, trustedPrefix: personaPost(toRef) });
       } catch { /* the turn below still carries the text */ }
       update(record, { status: "awaiting_origin", continueRequested: false });
-      const turnsLeft = MAX_TURNS - (record.turns || 1);
+      const turnsLeft = MAX_TURNS - conversationMessages(record).length;
       const continuation =
         `[agent conversation] You are talking with the ${toRef} agent on behalf of <@${record.requestedBy}>, who asked: "${text(record.message, 600)}"\n` +
         `The ${toRef} agent just said:\n--- ${toRef} agent ---\n${latest || "(no text)"}\n--- end ---\n\n` +
@@ -510,16 +522,16 @@ export class AgentMail {
       }
       const answer = String(result.content || "").trim();
       const fresh = getAgentMessage(record.id) || record; // the tool may have flagged it meanwhile
+      if (conversationMessages(record).length >= MAX_TURNS) {
+        update(record, { status: "delivered", continueRequested: false, deliveredMs: this.now() });
+        await logEvent("agent_message_completed", { id: record.id, from: record.fromChannelId, to: record.toChannelId, turns: record.turns, reason: "turn-limit" });
+        await this._notice(client, record.fromChannelId, record.fromThreadKey, `⏹ The conversation with the ${toRef} agent reached its ${MAX_TURNS}-message limit and is closed. Ask again to start a new one.`);
+        const target = this.resolveClient(record.toChannelId);
+        if (target) await this._notice(target, record.toChannelId, record.toThreadKey, `⏹ This conversation reached its ${MAX_TURNS}-message limit and is closed.`);
+        return;
+      }
       if (fresh.continueRequested && answer) {
         Object.assign(record, { continueRequested: true });
-        if ((record.turns || 1) >= MAX_TURNS) {
-          update(record, { status: "delivered", continueRequested: false, deliveredMs: this.now() });
-          await logEvent("agent_message_completed", { id: record.id, from: record.fromChannelId, to: record.toChannelId, turns: record.turns, reason: "turn-limit" });
-          await this._notice(client, record.fromChannelId, record.fromThreadKey, `⏹ The conversation with the ${toRef} agent reached its ${MAX_TURNS}-message limit and is closed. Ask again to start a new one.`);
-          const target = this.resolveClient(record.toChannelId);
-          if (target) await this._notice(target, record.toChannelId, record.toThreadKey, `⏹ This conversation reached its ${MAX_TURNS}-message limit and is closed.`);
-          return;
-        }
         // The next hop runs after this thread's queue is released below: the reply it brings
         // back takes the queue again for the following origin turn.
         next = answer;
@@ -540,11 +552,27 @@ export class AgentMail {
 
   // The origin side's next message: shown in the target thread under the origin's persona, then
   // the target's agent takes another turn.
-  async _continue(record, facts, answer) {
+  _continue(record, facts, answer) {
+    // Authorization can await a live roster. Two ordinary continuations may have read the
+    // same closed conversation before either check finished; claim exactly one next exchange
+    // synchronously, before any post or engine call, and reject the stale caller.
+    const current = getAgentMessage(record.id);
+    if (!current || !["delivered", "awaiting_origin"].includes(current.status) || current.status !== record.status ||
+        conversationMessages(current).length !== conversationMessages(record).length) {
+      throw new AgentMailError("That conversation changed while checking access. Wait for its reply before continuing it.");
+    }
+    if (conversationMessages(current).length + 2 > MAX_TURNS) {
+      throw new AgentMailError(`That conversation reached its ${MAX_TURNS}-message limit. Start a new one with \`ask ${channelRef(facts.target)} …\`.`);
+    }
+    Object.assign(record, current);
+    const messages = [...conversationMessages(record), { from: "origin", text: answer, ms: this.now() }];
+    update(record, { status: "running", continueRequested: false, messages, turns: (record.turns || 1) + 1 });
+    return this._deliverContinuation(record, facts, answer);
+  }
+
+  async _deliverContinuation(record, facts, answer) {
     const client = this.resolveClient(record.toChannelId);
     if (!client) return this._fail(record, "The conversation connector disconnected mid-conversation.");
-    const messages = [...(record.messages || []), { from: "origin", text: answer, ms: this.now() }];
-    update(record, { status: "running", continueRequested: false, messages, turns: (record.turns || 1) + 1 });
     try {
       await this.deliver(client, { channel: record.toChannelId, threadKey: record.toThreadKey, result: { content: answer }, trustedPrefix: personaPost(channelRef(facts.source)) });
     } catch (err) {
@@ -572,7 +600,7 @@ export class AgentMail {
     const body = text(message, MAX_MESSAGE_CHARS + 1);
     if (!body) throw new AgentMailError(`That conversation with the ${toRef} agent is closed. Pass the message you want to send to continue it.`);
     if (body.length > MAX_MESSAGE_CHARS) throw new AgentMailError(`The message is too long (${body.length} characters; the limit is ${MAX_MESSAGE_CHARS}).`);
-    if ((open.turns || 1) >= MAX_TURNS) throw new AgentMailError(`That conversation reached its ${MAX_TURNS}-message limit. Start a new one with \`ask ${toRef} …\`.`);
+    if (conversationMessages(open).length + 2 > MAX_TURNS) throw new AgentMailError(`That conversation reached its ${MAX_TURNS}-message limit. Start a new one with \`ask ${toRef} …\`.`);
     if (this.now() - (open.deliveredMs || open.answeredMs || open.createdMs || 0) > WINDOW_MS) throw new AgentMailError(`That conversation is more than an hour old. Start a new one with \`ask ${toRef} …\`.`);
     const facts = await this.authorize({ fromChannelId: open.fromChannelId, requestedBy: open.requestedBy, toChannelId: open.toChannelId });
     this._continue(open, facts, body).catch((err) => logEvent("agent_message_error", { id: open.id, error: err?.message || String(err) }).catch(() => {}));
