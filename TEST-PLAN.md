@@ -1,5 +1,30 @@
 # ChannelGate — Test Plan
 
+## Unattended admission refusal outcomes (2026-11-11)
+
+Regression: `node --test test/channel-spending-admission.test.js test/automation-health.test.js
+ test/bg-agent-jobs.test.js test/background-continuation-errors.test.js test/runtime-integration-jobs.test.js`.
+The actual `BackgroundJobs.start(kind: "agent")` path must refuse exhausted and unpriced usage for
+Claude and Codex with zero engine starts, no success announcement, one actionable refusal, a blocked
+`bg_finish` event and terminal delivery cleanup. Disconnect delivery, recover the persisted job through
+a new `BackgroundJobs` instance, and verify the refusal is delivered once without rerunning the agent
+or starting a continuation. Schedule history must record budget/access/license/engine refusals as
+`engineStatus: not-started`, `taskStatus: blocked`; a refusal cannot be relabelled by a claimed no-op.
+If a primary engine has already run before a newly exhausted cap refuses fallback, retain its started
+fact and existing usage; schedule history is failed/blocked, never not-started.
+Existing successful reports, failed/partial continuation, redaction and shell lifecycle regressions stay green.
+
+Acceptance, separately for Claude and Codex in an owned disposable channel: with an exhausted current
+UTC-month cap, then with unpriced current-month usage, launch a background agent and a due schedule.
+Capture actual engine spawn counts, native thread delivery, `bg_finish` and durable schedule history.
+Pass: zero spawns, no successful-completion notice or continuation claim; the background refusal is
+terminal and the schedule is blocked/not-started with its actionable refusal visible. Repeat a
+background refusal with delivery disconnected, restore delivery and restart the isolated gateway:
+only its saved refusal is delivered, no engine/continuation is launched and the durable job clears.
+Keep active/concurrent-run and partial-spend checks: already started work may finish and its real usage
+must remain recorded. Restore the cap, usage fixtures and transport. Isolated automated evidence does
+not imply native-client or deployed-runtime acceptance.
+
 ## Reply footer effort (2026-11-10)
 
 Regression: `node --test test/message-cost-visibility.test.js test/runtime-identity-preamble.test.js test/runtime-integration-surfaces.test.js test/platform-run-details.test.js test/skill-runtime.test.js`.
