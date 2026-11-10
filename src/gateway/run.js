@@ -1310,7 +1310,9 @@ async function runMessageImpl({ channelId, authorId, workspaceId = "", text, thr
   // ask — so the thread values are skipped when one was passed.
   const [threadModel, threadEffort, threadSkillModel] = await Promise.all([
     overrides?.model ? "" : getThreadModel(entry.slug, threadKey),
-    Object.hasOwn(overrides || {}, "effort") ? "" : getThreadEffort(entry.slug, threadKey),
+    // Optional API fields may be undefined/null; they inherit the thread pin. A queued
+    // shortcut's explicit empty string instead snapshots clearing that pin.
+    overrides?.effort != null ? "" : getThreadEffort(entry.slug, threadKey),
     // A skill's preferred model that took this thread over earlier (skill-runtime.js): below the
     // person's pin, above the channel default, and never a pin itself (see modelPinnedByUser).
     overrides?.model ? "" : getThreadSkillModel(entry.slug, threadKey),
