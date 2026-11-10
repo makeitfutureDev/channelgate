@@ -8249,24 +8249,30 @@ none` for its cases and live gates. Kept as history.
 - [ ] Stopped-request replay: stopping request 1 in a thread does not create replay context; stopping
       request 2+ records only that stopped user request, then the next message in the same Slack
       thread consumes it once before the current message.
-- [ ] Busy-thread choice: send a second message while a turn is actively generating → the message
-      does not run yet; an owner-only card offers *Steer Conversation*, *Add to Queue*, and *Cancel
-      Request*. Choose Steer and Queue in turn: the temporary card disappears after the valid click,
-      leaving only the user's original follow-up visible, and the message executes exactly once.
-      Restart the daemon before clicking: the card still works and is not auto-run by boot recovery.
-- [ ] Redelivered message never raises a second card: while a long turn runs, kill the daemon so Slack
-      redelivers the unacked message envelope. On boot, recovery replays that message and the
-      redelivered copy is dropped silently — it does not raise a card for a message nobody
-      re-sent, and the thread is answered exactly once (either recovery or the copy owns it, never
-      both). A genuinely new message sent after the restart still gets its card.
-- [ ] Steer Conversation: choose it during a warm Claude, cold Claude, and Codex turn. The active
-      turn stops quietly without dumping half-finished output or a false error, the chosen message
-      runs next, and an immediate daemon restart cannot replay the abandoned turn. A different
-      author's selection queues instead of interrupting the active owner's work.
-- [ ] Add to Queue: choose it while any engine runs → the active process is not interrupted and the
-      selected message runs FIFO after it. `/next <task>` remains the direct no-click shortcut.
-- [ ] Cancel Request: choose it while a turn runs → the paused message never runs, the card is
-      replaced by a cancelled notice, and the active run continues.
+- [x] Automated (`test/busy-thread-choice.test.js`, `test/util.test.js`,
+      `test/recovery-queue.test.js`): automatic pickup without a click, exact-message dedupe,
+      waiting-only cancellation, stale clicks, steering with Claude/Codex child fixtures,
+      queue reordering, controls beyond ten minutes, recovery FIFO and explicit steering order,
+      legacy pending-card compatibility. Fixtures use fake engines; this is not live acceptance.
+- [ ] Automatic busy-thread queue (repeat in Claude and Codex Worker fixtures; warm and cold
+      Claude for interrupt behavior): start `Run sleep 30 then reply ACTIVE`; send `Reply A`,
+      then `Reply B` while running. Without clicks, both show queued controls with only Steer
+      Conversation and Cancel Request and run exactly once in FIFO order after ACTIVE. `/next`
+      remains a queue alias. Hold hydration so two requests initially see idle; the actual waiter
+      must still receive controls. A failed card delivery must not lose the accepted message.
+- [ ] Cancel a queued message: repeat with A and B, cancel A while waiting. ACTIVE and B finish;
+      A never launches, including after an isolated restart. A foreign/wrong-channel actor cannot
+      cancel it. Stop still cancels active work and every waiting message.
+- [ ] Steer a queued message: select B while A waits. B runs next and interrupts only the original
+      same-author active turn, quietly on warm/cold Claude and Codex, without a false error or
+      duplicate dispatch. A remains queued. A changed/cross-author owner cannot be interrupted;
+      Cancel remains usable on the rejected-steer card. Restart preserves explicit steering order.
+- [ ] Queue lifetime and recovery: leave a message queued beyond ten minutes, then use Cancel or
+      Steer. Restart an isolated runtime before pickup: accepted messages resume automatically in
+      order. Redelivered events produce no second card/run. Controls retire when a message starts;
+      a late Cancel/Steer cannot stop it or a newer run. Legacy pre-upgrade pending cards still
+      accept their original Queue/Steer/Cancel choices once. Record exact roots, active/waiting
+      run IDs, selected engine, process outcomes, and terminal replies for every live case.
 - [ ] Mention-by-reaction: 🤖 on a new top-level message, existing-session thread, or sessionless
       reminder thread rooted by this gateway engages the bot as the reactor; the first reminder
       turn understands the root and preceding replies. 🤖 in another agent's thread remains ignored.

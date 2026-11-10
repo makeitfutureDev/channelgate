@@ -2619,18 +2619,20 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
   the gateway stores only that stopped user request and prepends it once to the next turn in the same
   thread. This fills the missing request after a killed Codex turn while leaving first-message stops
   alone (the next turn can rely on Slack thread context). → TEST-PLAN: In-thread commands.
-- Busy-thread steer-or-queue choice: a message sent while the thread is mid-turn pauses behind an
-  owner-only, single-use card with **Steer Conversation**, **Add to Queue**, and **Cancel Request**.
-  After a valid Steer or Queue selection, the temporary bot card is deleted so the thread retains
-  only the user's original follow-up message. Cancel drops only the paused message and deliberately
-  leaves the run in progress going. Steering interrupts warm Claude in-protocol and cleanly
-  terminates a cold Claude or Codex child; queuing leaves the active run untouched and preserves
-  FIFO order. Outstanding cards survive daemon restarts, while expired/replayed/foreign clicks
-  cannot duplicate or hijack the message. Slack redeliveries are matched by exact run id and
-  dropped silently rather than raising a second card; boot recovery skips a row a redelivered copy
-  already picked up, so the same message is never answered twice.
-  Prefix **`/next`** to queue directly without the choice.
-  → TEST-PLAN: In-thread commands.
+- Busy-thread messages **queue automatically**: sending another task while a thread is running
+  accepts it durably and runs it FIFO when preceding work finishes, without a button click.
+  A temporary card offers **Steer Conversation** and **Cancel Request** while that message waits.
+  Steer moves the selected waiting message next and interrupts its original same-author active
+  run (warm Claude in-protocol; cold Claude/Codex via abort). A newer or different author's run
+  is left untouched, with Cancel still available. Cancel removes only that waiting message,
+  leaving active work and other waiters intact. Controls retire on pickup and remain usable for
+  waits longer than ten minutes; stale, repeated and foreign clicks cannot change started work.
+  Accepted messages and explicit steering order survive restarts; cancelled messages never replay.
+  Exact-message dedupe prevents a Slack redelivery from creating a second turn. Old pending
+  Steer/Queue/Cancel cards remain resolvable after an upgrade. `/next <task>` remains an alias for
+  queuing. Admin API and selected private browser links use the same waiting-turn controls.
+  → TEST-PLAN: In-thread commands; `test/busy-thread-choice.test.js`, `test/util.test.js`,
+  `test/recovery-queue.test.js`.
 - Mention-by-reaction: react with a configured emoji (default 🤖 `robot_face`) on a message to treat
   it as an `@bot` mention. Scoped to the bot's own surface (a DM, a brand-new top-level message, a
   thread with an existing gateway session, or a sessionless thread this gateway bot has posted in —

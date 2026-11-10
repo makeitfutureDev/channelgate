@@ -138,3 +138,33 @@ test("a reconnect does not replay attempted work when both delivery and its erro
   assert.equal(runQueue.count(key(r)), 0);
   clearActiveRun(r.id);
 });
+
+test("restart preserves a steered successor ahead of earlier ordinary waiters", async () => {
+  const records = [rec("normal-a", "steered"), { ...rec("steered-b", "steered"), queuePriorityAt: 12345 }, rec("normal-c", "steered")];
+  const order = [];
+  const s = setup(records, async ({ text }) => { order.push(text); return answer; });
+  await s.connect();
+  assert.deepEqual(order, ["steered-b", "normal-a", "normal-c"]);
+  s.recovery.unsubscribe();
+});
+
+test("Cancel on recovered waiting work prevents replay while its active predecessor continues", async () => {
+  const { busyThreadChoices, applyBusyThreadChoice } = await import("../src/slack/busy-thread-choice.js");
+  const active = rec("recovered-active", "cancel-control");
+  const queued = rec("recovered-waiting", "cancel-control");
+  const release = deferred(); const entered = deferred(); const order = [];
+  const s = setup([active, queued], async ({ text }) => {
+    order.push(text); entered.resolve(); await release.promise; return answer;
+  });
+  const event = { channel: active.channelId, user: active.authorId, thread_ts: active.threadKey, ts: "recovered-waiting" };
+  const id = busyThreadChoices.create({ event, runKey: key(active), queuedRunId: queued.id, targetRunId: active.id });
+  const connecting = s.connect(); await entered.promise;
+  const claimed = busyThreadChoices.take(id, active.authorId);
+  const result = await applyBusyThreadChoice({ choiceId: id, record: claimed.record, choice: "cancel", client: null });
+  assert.equal(result.cancelled, true);
+  assert.equal(runQueue.activeHandle(key(active)).controller.signal.aborted, false);
+  release.resolve(); await connecting;
+  assert.deepEqual(order, ["recovered-active"]);
+  assert.equal(listActiveRuns().some((r) => r.id === queued.id), false);
+  s.recovery.unsubscribe();
+});

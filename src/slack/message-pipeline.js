@@ -72,7 +72,7 @@ import { setAssistantStatus, startProgress } from "./progress.js";
 import { renameAgentSession } from "./agent-sessions.js";
 import { codeChannelReplyTarget, isCodeChannelMeta, syncCodeChannelMeta } from "../gateway/code-channels.js";
 import { refreshCodeChannelDiff } from "./code-channels.js";
-import { busyThreadChoiceBlocks, busyThreadChoices, deliverBusyThreadChoiceLinks, steerActiveRun, BUSY_THREAD_CHOICE_KIND } from "./busy-thread-choice.js";
+import { busyThreadChoices, steerActiveRun, postQueuedMessageControls, retireQueuedMessageControls, BUSY_THREAD_CHOICE_KIND } from "./busy-thread-choice.js";
 import { engineSwitchChoices, engineSwitchChoiceBlocks, engineSwitchChoiceText } from "./engine-switch-choice.js";
 import { cancelSecretHostContinuations } from "../gateway/secret-host-approvals.js";
 
@@ -1125,13 +1125,10 @@ export async function processMessageEvent(event, client, { botUserId = "", teamI
       return;
     }
 
-    // /next remains the no-click queue shortcut. Parse it before any sticky engine/clean-mode
-    // mutation, then pause an ordinary busy-thread message until its author makes a choice.
-    let forceQueue = false;
+    // /next remains an explicit queue alias, parsed before sticky engine/clean-mode changes.
     {
       const nm = parseNextCommand(prompt);
       if (nm) {
-        forceQueue = true;
         prompt = nm.task;
         if (!prompt && files.length === 0) {
           await client.chat.postMessage({ channel: event.channel, ...threadOpts, text: "Add the task after `/next` — e.g. `/next summarize the thread once you're done`." });
@@ -1139,50 +1136,9 @@ export async function processMessageEvent(event, client, { botUserId = "", teamI
         }
       }
     }
-    // A normal follow-up does not choose steering on the user's behalf. Hold the canonical Slack
-    // event in a bounded, expiring durable store and ask its author what to do. The action handler
-    // re-enters this pipeline with busyChoice="steer" or "queue". No persistent thread setting
-    // changes and no attachment download happens until that choice is made.
-    // A harness-choice re-entry never asks again: if the thread got busy meanwhile, it queues.
-    const busyTarget = !busyChoice && !forceQueue && !engineChoiceId && !questionSubmissionId ? runQueue.activeHandle(runKey) : null;
-    if (busyTarget) {
-      // Never ask about a message the gateway is ALREADY handling. Slack redelivers envelopes it
-      // never saw acked — after a restart both in-memory dedupes (event id, message trigger) are
-      // gone, so the copy arrives while boot recovery is replaying that very message. Answering
-      // it with a steer card is the "why is it asking me this, I didn't type anything" bug: the
-      // question refers to a message the user sent minutes ago and never re-sent. Run ids encode
-      // the triggering message ts, so identity is exact — drop the duplicate silently.
-      if (runQueue.hasRun(runKey, `${runKey}::${event.ts}`)) {
-        console.log(`[slack] duplicate delivery of ${event.channel}/${event.ts} — already running in ${runKey}; ignoring`);
-        return;
-      }
-      if (busyThreadChoices.pendingFor(event.channel, event.ts)) {
-        console.log(`[slack] duplicate delivery of ${event.channel}/${event.ts} — a busy-thread card is already pending; ignoring`);
-        return;
-      }
-      const choiceId = busyThreadChoices.create({
-        event,
-        options: { botUserId, teamId, bypassMention, activeViewContext, busyTargetRunId: busyTarget.runId || "" },
-      });
-      try {
-        const card = await client.chat.postMessage({
-          channel: event.channel,
-          ...threadOpts,
-          text: "This thread is already running. Choose whether to steer the conversation or add your message to the queue.",
-          blocks: busyThreadChoiceBlocks(choiceId),
-        });
-        // Remember the card's message so a decision that does NOT come from a click on it — the
-        // admin approvals API, or one of the links below — can still retire it instead of leaving
-        // a dead card in the thread.
-        if (card?.ts) busyThreadChoices.noteCard(choiceId, card.ts);
-        // The same three answers as signed, single-use links, privately to the person waiting.
-        await deliverBusyThreadChoiceLinks(client, choiceId, { channelId: event.channel, threadTs: threadKey, userId: event.user });
-      } catch (error) {
-        busyThreadChoices.discard(choiceId);
-        throw error;
-      }
-      return;
-    }
+    // Busy follow-ups are accepted automatically. Keep exact-message dedupe ahead of hydration:
+    // an unacked Slack redelivery must not create another paid turn after recovery or reconnect.
+    if (runQueue.hasRun(runKey, `${runKey}::${event.ts}`) || (!busyChoice && busyThreadChoices.pendingFor(event.channel, event.ts))) return;
 
     // Set true when this turn switches the thread to a different engine (see the gate below,
     // which replays thread context so the freshly-started engine isn't blind). Fed by TWO
@@ -1558,6 +1514,8 @@ export async function processMessageEvent(event, client, { botUserId = "", teamI
       const accepted = onEngineChoiceAccepted?.({ runId, rec: acceptedRun });
       if (!accepted) throw new Error("This harness choice is no longer available. Send the message again if it still needs attention.");
     } else {
+      // Hydration can yield long enough for a duplicate event to overtake this one.
+      if (runQueue.hasRun(runKey, runId)) return;
       recordActiveRun(runId, acceptedRun);
     }
 
@@ -1592,17 +1550,24 @@ export async function processMessageEvent(event, client, { botUserId = "", teamI
       // Claim queue ownership synchronously before any Slack write. A concurrent stop can now see
       // and discard this accepted successor; there is no durable-row-only gap while we post the
       // steering acknowledgement.
-      const acquisition = runQueue.acquire(runKey, handle, didSteer || steerTargetChanged || steerOtherAuthor ? undefined : ({ position }) => {
+      const queueTarget = !busyChoice ? runQueue.activeHandle(runKey) : null;
+      const acquisition = runQueue.acquire(runKey, handle, queueTarget || didSteer || steerTargetChanged || steerOtherAuthor ? undefined : ({ position }) => {
         // Position, not just "queued": a number that falls is what shows the line is moving.
         const ahead = position > 1 ? ` (${position} ahead of it)` : "";
         client.chat
           .postMessage({ channel: event.channel, ...threadOpts, text: `⏳ Queued behind the previous message in this thread${ahead} — I'll take it up as soon as that finishes.` })
           .catch(() => {});
       }).then((waited) => ({ waited }), (error) => ({ error }));
+      // The run is already durable and owns a queue slot before publishing optional controls.
+      // Slack delivery failure never loses the accepted turn or prevents automatic pickup.
+      if (queueTarget && runQueue.isQueued(runKey, runId)) {
+        await postQueuedMessageControls(client, { event, runKey, runId, targetRunId: queueTarget.runId || "", threadTs: replyTs });
+      }
       if (steerNotice) {
         await client.chat.postMessage({ channel: event.channel, ...threadOpts, text: steerNotice }).catch(() => {});
       }
       const acquired = await acquisition;
+      if (!isForceStopping() || handle.aborted) await retireQueuedMessageControls(runId, client);
       if (acquired.error) throw acquired.error;
     } catch (e) {
       // The thread's queue is full. Every queued turn eventually spawns a real engine run, so
