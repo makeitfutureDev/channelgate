@@ -467,7 +467,10 @@ Task progress remain visible; older agent streams without optional task-type met
   the target thread under the origin persona and the target answers again; if it presents the
   result and calls nothing, the conversation closes. Each side's session resumes per hop, so it
   reads like two colleagues talking. At most 10 messages per conversation, both directions
-  counted; the limit closes it with a notice in both threads. Afterwards the requester can pick
+  counted (the opener plus every exchanged reply, not 10 round trips); the limit closes it with a
+  notice in both threads, even when the origin simply summarizes the final answer. Resuming an
+  older conversation preserves its used message budget, and simultaneous continuations cannot
+  claim the same remaining exchange. Before reaching the limit the requester can pick
   it up within an hour with `continue_agent_conversation({ message })` from an ordinary turn.
   Every message in both threads carries the persona of the agent speaking, including each agent's
   own replies in its own thread (headed on the live stream, prefixed on a plain post), so questions

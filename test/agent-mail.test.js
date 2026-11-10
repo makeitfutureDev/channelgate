@@ -571,10 +571,15 @@ test("a conversation closes at the message limit, telling both threads", async (
   await f.settle();
   const record = getAgentMessage(sent.id);
   assert.equal(record.status, "delivered");
-  assert.equal(record.turns, mail.MAX_TURNS);
+  assert.equal(record.messages.length, mail.MAX_TURNS, "the opener and every reply count toward the ceiling");
+  assert.equal(record.messages.filter((m) => m.from === "origin").length, 5);
+  assert.equal(record.messages.filter((m) => m.from === "target").length, 5);
   assert.ok(f.posts.some((p) => p.conversationId === SOURCE && /reached its 10-message limit/.test(p.text)));
   assert.ok(f.posts.some((p) => p.conversationId === TARGET && /reached its 10-message limit/.test(p.text)));
-  assert.equal(f.runs.filter((r) => r.origin === "agent_message").length, mail.MAX_TURNS);
+  assert.equal(f.runs.filter((r) => r.origin === "agent_message").length, 5);
+  await refusal(f.agentMail.requestContinue({ channelId: SOURCE, threadKey: ORIGIN_THREAD, createdBy: REQUESTER, message: "One more?" }), undefined, /10-message limit/);
+  await f.settle();
+  assert.equal(getAgentMessage(sent.id).messages.length, 10, "no eleventh message after an ordinary continuation");
 });
 
 test("continue_agent_conversation: a flag while answering, a message from an ordinary turn, and its refusals", async () => {
@@ -601,6 +606,90 @@ test("continue_agent_conversation: a flag while answering, a message from an ord
   // Too old to pick up again.
   f.clock.now += 60 * 60_000 + 1;
   await refusal(f.agentMail.requestContinue({ channelId: SOURCE, threadKey: ORIGIN_THREAD, createdBy: REQUESTER, message: "again?" }), undefined, /more than an hour old/);
+});
+
+test("the tenth exchanged message closes with notices even when the origin presents the result", async () => {
+  const f = fixture();
+  f.setOriginScript((hop) => hop < 5 ? "More." : null);
+  const sent = await f.send();
+  await f.settle();
+  assert.equal(getAgentMessage(sent.id).messages.length, 10);
+  assert.equal(f.posts.filter((p) => /reached its 10-message limit/.test(p.text)).length, 2);
+  const finalPrompt = f.runs.filter((r) => r.origin === "continuation").at(-1).text;
+  assert.match(finalPrompt, /This is the last exchange/);
+});
+
+test("persisted round counts cannot reopen a ten-message conversation, including answered recovery", async () => {
+  const f = fixture();
+  const sent = await f.send();
+  await f.settle();
+  const data = JSON.parse(getDb().prepare("SELECT data FROM agent_messages WHERE id = ?").get(sent.id).data);
+  data.messages = Array.from({ length: 10 }, (_, i) => ({ from: i % 2 ? "target" : "origin", text: `old-${i}`, ms: f.clock.now }));
+  data.turns = 5; // The pre-fix counter counted rounds, so it appeared to have five left.
+  getDb().prepare("UPDATE agent_messages SET data = ? WHERE id = ?").run(JSON.stringify(data), sent.id);
+  const before = f.runs.length;
+  await refusal(f.agentMail.requestContinue({ channelId: SOURCE, threadKey: ORIGIN_THREAD, createdBy: REQUESTER, message: "Eleventh?" }), undefined, /10-message limit/);
+  assert.equal(f.runs.length, before);
+  const overLimit = { ...data, turns: 10, messages: [...data.messages, ...data.messages] };
+  getDb().prepare("UPDATE agent_messages SET data = ? WHERE id = ?").run(JSON.stringify(overLimit), sent.id);
+  await refusal(f.agentMail.requestContinue({ channelId: SOURCE, threadKey: ORIGIN_THREAD, createdBy: REQUESTER, message: "Twenty-first?" }), undefined, /10-message limit/);
+  assert.equal(f.runs.length, before, "an already-over-limit legacy conversation cannot dispatch again");
+  getDb().prepare("UPDATE agent_messages SET data = ? WHERE id = ?").run(JSON.stringify(data), sent.id);
+  getDb().prepare("UPDATE agent_messages SET status = 'answered' WHERE id = ?").run(sent.id);
+  f.setOriginScript(() => "More.");
+  await f.agentMail.recover();
+  await f.settle();
+  assert.equal(getAgentMessage(sent.id).messages.length, 10);
+  assert.equal(getAgentMessage(sent.id).status, "delivered");
+  assert.equal(f.runs.filter((r) => r.origin === "agent_message").length, 1, "recovery may summarize, but never asks the target again");
+  assert.equal(f.posts.filter((p) => /reached its 10-message limit/.test(p.text)).length, 2);
+});
+
+test("a resumed one-shot record retains its opener and reply in the message budget", async () => {
+  const f = fixture();
+  const sent = await f.send();
+  await f.settle();
+  const data = JSON.parse(getDb().prepare("SELECT data FROM agent_messages WHERE id = ?").get(sent.id).data);
+  delete data.messages;
+  delete data.turns;
+  getDb().prepare("UPDATE agent_messages SET data = ? WHERE id = ?").run(JSON.stringify(data), sent.id);
+  for (let i = 0; i < 4; i += 1) {
+    await f.agentMail.requestContinue({ channelId: SOURCE, threadKey: ORIGIN_THREAD, createdBy: REQUESTER, message: `Next ${i}` });
+    await f.settle();
+  }
+  const record = getAgentMessage(sent.id);
+  assert.equal(record.messages.length, 10);
+  assert.equal(record.messages[0].text, data.message);
+  assert.equal(record.messages[1].text, data.reply);
+  await refusal(f.agentMail.requestContinue({ channelId: SOURCE, threadKey: ORIGIN_THREAD, createdBy: REQUESTER, message: "More?" }), undefined, /10-message limit/);
+});
+
+test("two continuations awaiting membership cannot both claim the last exchange", async () => {
+  const f = fixture();
+  const sent = await f.send();
+  await f.settle();
+  const data = JSON.parse(getDb().prepare("SELECT data FROM agent_messages WHERE id = ?").get(sent.id).data);
+  data.messages = Array.from({ length: 8 }, (_, i) => ({ from: i % 2 ? "target" : "origin", text: `old-${i}`, ms: f.clock.now }));
+  data.turns = 4;
+  getDb().prepare("UPDATE agent_messages SET data = ? WHERE id = ?").run(JSON.stringify(data), sent.id);
+  const authorize = f.agentMail.authorize.bind(f.agentMail);
+  let release;
+  const gate = new Promise((resolve) => { release = resolve; });
+  let checks = 0;
+  f.agentMail.authorize = async (args) => {
+    const facts = await authorize(args);
+    checks += 1;
+    if (checks === 2) release();
+    if (checks <= 2) await gate;
+    return facts;
+  };
+  const results = await Promise.allSettled(["First", "Second"].map((message) => f.agentMail.requestContinue({ channelId: SOURCE, threadKey: ORIGIN_THREAD, createdBy: REQUESTER, message })));
+  await f.settle();
+  assert.equal(results.filter((r) => r.status === "fulfilled").length, 1);
+  assert.equal(results.filter((r) => r.status === "rejected").length, 1);
+  assert.match(results.find((r) => r.status === "rejected").reason.message, /conversation changed/);
+  assert.equal(getAgentMessage(sent.id).messages.length, 10);
+  assert.equal(f.runs.filter((r) => r.origin === "agent_message").length, 2, "only one new target run");
 });
 
 test("the asking thread shows a waiting status while the other agent has the floor, cleared when its words arrive", async () => {
