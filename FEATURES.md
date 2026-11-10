@@ -1040,8 +1040,25 @@ control-plane status.
   turn. Available skills still load into the isolated per-run plugin/catalog; missing, awaiting-review
   and removed entries stay out. A warning names unavailable skills in streamed and final replies,
   including either cross-engine fallback. Shared-skill omissions use the same warning path.
-  Stored grants remain unchanged so restoring a source can reactivate it. Personal ownership,
-  runtime artifact and confinement errors still reject the run.
+  Stored grants remain unchanged so restoring a source can reactivate it. Runtime artifact and
+  confinement errors still reject the run.
+- **Another person's personal skill is skipped, not fatal.** A stored personal grant that names
+  someone else's personal skill — directly or through `requires:` — is never loaded. The turn
+  continues with a note that names the skipped skill and the fix: an admin removes it under Users,
+  or its author makes it an organization skill. Before this change, one such grant failed every
+  message from that person with "Personal skill grant is not available to this author".
+- **Pickers offer personal skills only to their author.** `GET /api/skills` lists personal skills
+  separately, with their author. The admin Users editor offers a person their own personal skills
+  only. The organization grant, conversation and DM template, and channel pickers offer none. A
+  stored foreign grant is listed unchecked with a "not loaded; removed on save" label, and the
+  Users table shows ⚠ beside the count. Slack Settings → You leaves such grants out of the picker
+  and names them as not loaded; the next skill change there removes them. The Teams channel skill
+  list labels a stored personal grant and offers to deactivate it. Google Chat has no skill picker.
+  `add_my_skills` no longer lets an admin add someone else's personal skill.
+- **Save paths refuse a NEW foreign personal grant** with HTTP 400 naming the skill: the user
+  save (another person's personal skill), plus the organization grant, conversation and DM
+  template, channel and DM meta, and skill template saves (any personal skill). Grants stored
+  before this check never block an unrelated save. → TEST-PLAN: Foreign personal skill grants.
 
 ## Microsoft Teams help guide
 
@@ -1435,7 +1452,8 @@ revisions on failed sync. Details and compatibility limits: `docs/SKILLS.md`.
   tombstones for that author's locally created personal skills. Stored grants and revision history
   remain intact for restoration; restored skills become active again on the next turn. Unknown,
   unavailable and unapproved grants still fail visibly when materialized. Foreign personal skills,
-  including dependencies, are refused rather than exposed or treated as the author's deletions.
+  including dependencies, are skipped with a note rather than exposed or treated as the author's
+  deletions.
   → TEST-PLAN: Deleted personal skill grants.
 
 - **Skill approval cards describe the requested ownership and grants:** personal creation

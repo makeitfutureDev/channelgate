@@ -2,8 +2,12 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import {
+  foreignPersonalSkillError,
+  isForeignPersonalSkill,
+  newForeignPersonalSkillGrants,
   resolveAccessGrants,
   resolveRunAccessGrants,
+  skippedSkillGrantsWarning,
   resolveRunUserIdentity,
   sanitizeSkillGrantNames,
   unionGrantEntries,
@@ -12,6 +16,7 @@ import {
 import { cleanAccessGrants } from "../src/web/routes/helpers.js";
 import {
   accessGrantSkillOptions,
+  accessGrantSkillSelection,
   captureGrantMcpSelection,
 } from "../public/admin-state.js";
 
@@ -60,19 +65,56 @@ test("personal tombstones are inactive without erasing grants or ignoring broken
   await assert.rejects(resolveRunAccessGrants({ authorId: "owner", loadUser: async () => stored, lookupSkill: () => { throw new Error("catalog unavailable"); } }), /catalog unavailable/);
 });
 
-test("personal ownership stays closed for live, removed and dependency grants", async () => {
+test("another person's personal skill is skipped, never loaded, and never fails the run", async () => {
   for (const deleted of [false, true]) {
     const foreign = { slug: "foreign", ownerKind: "local", visibility: "personal", createdBy: "other", deleted };
+    const shared = { slug: "shared", visibility: "org" };
+    const lookup = (name) => ({ foreign, shared })[name] || null;
     for (const authorId of ["owner", ""]) {
-      await assert.rejects(resolveRunAccessGrants({ authorId, loadUser: async () => ({ skills: ["foreign"] }), lookupSkill: () => foreign }), /not available to this author/);
+      const grants = await resolveRunAccessGrants({ authorId, organization: { skills: ["org"] }, loadUser: async () => ({ skills: ["foreign", "shared"] }), lookupSkill: lookup });
+      assert.deepEqual(grants.user.skills, ["shared"], "the foreign personal grant is dropped from the user tier");
+      assert.deepEqual(grants.effective.skills, ["org", "shared"], "and from the effective union");
+      assert.deepEqual(grants.skippedSkills, [{ name: "foreign", reason: "foreign-personal" }]);
     }
-    const skills = { foreign, parent: { slug: "parent", visibility: "org", requires: ["foreign"] } };
-    await assert.rejects(resolveRunAccessGrants({ authorId: "owner", loadUser: async () => ({ skills: ["parent"] }), lookupSkill: (name) => skills[name] }), /not available to this author/);
+    const skills = { foreign, parent: { slug: "parent", visibility: "org", requires: ["middle"] }, middle: { slug: "middle", visibility: "org", requires: ["foreign"] }, ok: { slug: "ok", visibility: "org" } };
+    const viaDependency = await resolveRunAccessGrants({ authorId: "owner", loadUser: async () => ({ skills: ["parent", "ok"] }), lookupSkill: (name) => skills[name] || null });
+    assert.deepEqual(viaDependency.user.skills, ["ok"], "a grant whose requires: closure reaches a foreign personal skill is skipped whole");
+    assert.deepEqual(viaDependency.skippedSkills, [{ name: "parent", reason: "foreign-personal-dependency", dependency: "foreign" }]);
   }
+  const own = { slug: "mine", ownerKind: "local", visibility: "personal", createdBy: "owner" };
+  const ownGrants = await resolveRunAccessGrants({ authorId: "owner", loadUser: async () => ({ skills: ["mine"] }), lookupSkill: () => own });
+  assert.deepEqual(ownGrants.user.skills, ["mine"], "the author keeps their own personal skill");
+  assert.deepEqual(ownGrants.skippedSkills, []);
   const dependency = { slug: "removed", ownerKind: "local", visibility: "personal", createdBy: "owner", deleted: true };
   const parent = { slug: "parent", visibility: "org", requires: ["parent", "removed"] };
   const grants = await resolveRunAccessGrants({ authorId: "owner", loadUser: async () => ({ skills: ["parent"] }), lookupSkill: (name) => name === "parent" ? parent : dependency });
   assert.deepEqual(grants.user.skills, ["parent"], "a removed required dependency is not silently excised from an active parent; materialization still fails");
+});
+
+test("the skipped-grant note names each skill and says the run continues", () => {
+  assert.equal(skippedSkillGrantsWarning([]), "");
+  const one = skippedSkillGrantsWarning([{ name: "callbox-form", reason: "foreign-personal" }]);
+  assert.match(one, /^⚠️ Skipped a skill in your personal grants: callbox-form — it is another person's personal skill/);
+  assert.match(one, /Continuing without it\.\n\n$/);
+  const two = skippedSkillGrantsWarning([{ name: "a", reason: "foreign-personal" }, { name: "b", reason: "foreign-personal-dependency", dependency: "a" }]);
+  assert.match(two, /Skipped 2 skills in your personal grants: a, b \(requires a\) — they are/);
+});
+
+test("save paths refuse NEW foreign personal grants and leave stored ones alone", () => {
+  const catalog = {
+    mine: { slug: "mine", visibility: "personal", createdBy: "U1" },
+    theirs: { slug: "theirs", visibility: "personal", createdBy: "U2" },
+    shared: { slug: "shared", visibility: "org" },
+  };
+  const lookupSkill = (name) => catalog[name] || null;
+  assert.equal(isForeignPersonalSkill(catalog.mine, "U1"), false);
+  assert.equal(isForeignPersonalSkill(catalog.mine, ""), true, "a shared tier owns no personal skill");
+  assert.equal(isForeignPersonalSkill(catalog.shared, ""), false);
+  assert.deepEqual(newForeignPersonalSkillGrants(["mine", "theirs", "shared", "unknown"], [], { ownerId: "U1", lookupSkill }), ["theirs"]);
+  assert.deepEqual(newForeignPersonalSkillGrants(["mine", "shared"], [], { lookupSkill }), ["mine"], "organization/channel/template tiers refuse every personal skill");
+  assert.deepEqual(newForeignPersonalSkillGrants(["theirs", "shared"], ["Theirs"], { ownerId: "U1", lookupSkill }), [], "an already-stored grant never blocks an unrelated save");
+  assert.match(foreignPersonalSkillError(["theirs"]), /"theirs" is another person's personal skill/);
+  assert.match(foreignPersonalSkillError(["a", "b"], { tier: "shared" }), /"a", "b" are personal skills and cannot be granted here/);
 });
 
 test("untrusted caller-supplied principals never load personal tokens or role state", async () => {
@@ -208,6 +250,21 @@ test("frontend skill options preserve saved names missing from discovery", () =>
   );
 });
 
+test("frontend skill options offer a person only their own personal skills", () => {
+  const personal = [{ slug: "mine", createdBy: "U1" }, { slug: "theirs", createdBy: "U2" }];
+  const forUser = accessGrantSkillOptions(["shared"], ["theirs", "shared"], { personal, ownerId: "U1" });
+  assert.deepEqual(forUser, [
+    { value: "shared", label: "shared", enabled: true },
+    { value: "mine", label: "mine · personal", enabled: false },
+    { value: "theirs", label: "theirs · another person's personal skill — not loaded; removed on save", foreign: true },
+  ]);
+  assert.deepEqual(accessGrantSkillSelection(forUser, ["theirs", "shared"]), ["shared"], "a foreign grant is listed unchecked so the next save removes it");
+  const shared = accessGrantSkillOptions(["shared"], ["mine"], { personal });
+  assert.deepEqual(shared.map((option) => option.value), ["shared", "mine"], "a shared tier offers no personal skill");
+  assert.equal(shared[1].foreign, true);
+  assert.equal(accessGrantSkillOptions(["shared"], [], { personal, ownerId: "U2" }).some((option) => option.value === "mine"), false);
+});
+
 test("conversation tool categories are first-class channel pages", () => {
   const html = readFileSync(new URL("../public/index.html", import.meta.url), "utf8");
   const client = readFileSync(new URL("../public/app.js", import.meta.url), "utf8");
@@ -221,6 +278,8 @@ test("conversation tool categories are first-class channel pages", () => {
   assert.match(client, /captureGrantMcpSelection\(/, "the executable loading-state helper must drive the editor");
   assert.match(client, /box\.dataset\.mcpLoading === engine/, "loading discovery must be explicit at the DOM boundary");
   assert.match(client, /accessGrantSkillOptions\(SKILLS,/, "all grant editors must preserve saved-only skills");
+  assert.match(client, /buildAccessGrantsEditor\(u, \{ tier: "user", ownerId: id \}\)/, "the user editor knows whose personal skills it may offer");
+  assert.equal((client.match(/checkboxList\([a-zA-Z]+, skillOptions, accessGrantSkillSelection\(skillOptions,/g) || []).length, 3, "every skill grant editor leaves foreign personal grants unchecked");
   assert.match(client, /accessGrants:\s*orgGrantsEditor\?\.getValues\(\)/);
   assert.match(client, /accessGrants:\s*userGrantsEditor\.getValues\(\)/);
 });

@@ -50,7 +50,7 @@ import { syncOneSource, runScheduledSkillSync } from "../../gateway/skills/index
 import { parseRepoUrl } from "../../gateway/skills/git-sync.js";
 import { publishRevision, publishTarget, publishSource } from "../../gateway/skills/publish.js";
 import { createAccessToken, listAccessTokens, revokeAccessToken, deleteAccessToken, TOKEN_SCOPES } from "../../gateway/skills/tokens.js";
-import { resolveAccessGrants } from "../../gateway/access-grants.js";
+import { foreignPersonalSkillError, newForeignPersonalSkillGrants, resolveAccessGrants } from "../../gateway/access-grants.js";
 import { getOrgAccessGrants, getSkillsContextWarnTokens, getSkillsSyncIntervalMinutes, getSkillsPublishGithubToken, getSkillsWebhookSecret, getPublicUrl } from "../../config/settings.js";
 import { ADMIN_UI_ACTOR } from "../../config/channel-audit.js";
 import { getUsers, getChannelMeta, listChannels } from "../../config/store.js";
@@ -364,6 +364,9 @@ export function createSkillsRouter() {
     requireEnterpriseFeature("skillTemplates");
     const b = req.body || {};
     const existing = b.slug ? getTemplate(b.slug) : null;
+    // A template feeds every channel that follows it, so it never names a personal skill.
+    const foreign = newForeignPersonalSkillGrants(Array.isArray(b.skills) ? b.skills : [], existing?.skills || [], { lookupSkill: getSkill });
+    if (foreign.length) return res.status(400).json({ error: foreignPersonalSkillError(foreign, { tier: "shared" }) });
     const t = upsertTemplate({ slug: b.slug, name: b.name, description: b.description || "", skills: b.skills || [], categories: [], builtin: existing ? existing.builtin : false });
     res.json(await synced({ ok: true, template: templateSummary(t) }));
   }));

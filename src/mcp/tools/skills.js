@@ -16,7 +16,7 @@ import { readFileSync } from "node:fs";
 import { getUser, isAdminPrincipal, isApproved, getChannelMeta, getChannelEntry } from "../../config/store.js";
 import { getOrgAccessGrants, getSkillsContextWarnTokens, getSkillsPublish, getEngine, getPublicUrl } from "../../config/settings.js";
 import { createUserAccessToken, listUserAccessTokens, revokeUserAccessToken } from "../../gateway/skills/tokens.js";
-import { resolveAccessGrants } from "../../gateway/access-grants.js";
+import { isForeignPersonalSkill, resolveAccessGrants } from "../../gateway/access-grants.js";
 import { getSkill, listSkills, listCategories, skillBundle, revisionFile, listProposals, listSources, addSource, updateSource, removeSource, excludeSkill, restoreSkill, effectiveRevisionFor, listRevisions, usageCountsBySlug, setSkillDiscoverable, getTemplate, SOURCE_KINDS, SOURCE_MODES } from "../../gateway/skills/catalog.js";
 import { resolveSkillProfile, checkCompatibility, skillGrantContextChange } from "../../gateway/skills/resolve.js";
 import { listTemplateSummaries, previewTemplate, assignTemplateToChannel, withTemplateSkills, templateOfMeta, channelScopedSkills } from "../../gateway/skills/templates.js";
@@ -364,10 +364,11 @@ export function register(server, ctx) {
       const unknown = [];
       for (const s of slugs) {
         const skill = await visibleSkill(s);
-        if (skill && !skill.deleted) known.push(skill.slug);
+        // An admin can SEE everyone's personal skills, but may only hold their own.
+        if (skill && !skill.deleted && !isForeignPersonalSkill(skill, createdBy)) known.push(skill.slug);
         else unknown.push(s);
       }
-      if (!known.length) return text(`None of those are catalog skills you can see: ${unknown.join(", ")}.`);
+      if (!known.length) return text(`None of those are catalog skills you can add: ${unknown.join(", ")}. Another person's personal skill must be made an organization skill first.`);
       const r = await grantSkillsToUser(createdBy, known);
       return text(`✅ Added to your skills: ${r.added.map((s) => `\`${s}\``).join(", ") || "(nothing new)"}${dependencyLine(r.dependencies)}${unknown.length ? `\nUnknown (ignored): ${unknown.join(", ")}` : ""}\nYours now (${r.names.length}): ${r.names.join(", ")}. Active on your next message.`);
     },

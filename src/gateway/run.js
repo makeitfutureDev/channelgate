@@ -58,7 +58,7 @@ import { gatewayRoot, runTmpDir, workspaceRoot } from "../config/paths.js";
 import { randomUUID } from "node:crypto";
 import { createSemaphore } from "../util/semaphore.js";
 import { logEvent } from "../util/logger.js";
-import { resolveRunAccessGrants, userOnlySkillGrants } from "./access-grants.js";
+import { resolveRunAccessGrants, skippedSkillGrantsWarning, userOnlySkillGrants } from "./access-grants.js";
 import { getSkill } from "./skills/catalog.js";
 import { assertUserSkillOverlaySupported, createRunGrantArtifacts, refreshRuntimeReadPaths } from "./run-grant-artifacts.js";
 import { isForceStopping } from "./shutdown.js";
@@ -1473,7 +1473,11 @@ async function runMessageImpl({ channelId, authorId, workspaceId = "", text, thr
   const skillWarning = grantArtifacts.missingSkills.length
     ? `⚠️ Some granted skills could not be loaded: ${grantArtifacts.missingSkills.map((name) => grantArtifacts.invalidSkillFolders.includes(name) ? `${name} (skill folder has no regular SKILL.md)` : name).join(", ")}. Continuing with the available skills.\n\n`
     : "";
-  const runWarning = licenseWarning + skillWarning;
+  // A stored personal grant naming someone else's personal skill is skipped, not fatal
+  // (access-grants.js); the person is told which one so an admin can clean it up.
+  const skippedGrantWarning = clean ? "" : skippedSkillGrantsWarning(runGrants.skippedSkills);
+  if (runGrants.skippedSkills.length) console.warn(`[gateway] skipped foreign personal skill grants for ${authorId}: ${runGrants.skippedSkills.map((entry) => entry.name).join(", ")}`);
+  const runWarning = licenseWarning + skippedGrantWarning + skillWarning;
   const grantFingerprint = JSON.stringify({
     allowedMcps: clean ? [] : runGrants.effective.allowedMcps,
     userSkills,

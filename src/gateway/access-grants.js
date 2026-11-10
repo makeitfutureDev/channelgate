@@ -68,33 +68,77 @@ export function resolveAccessGrants({ organization = {}, channel = {}, user = {}
   );
 }
 
+// Is `skill` another person's personal skill, as seen by `ownerId`? An empty owner (the
+// organization tier, a channel, a template) owns no personal skill, so every personal one is
+// foreign to it.
+export function isForeignPersonalSkill(skill, ownerId = "") {
+  return skill?.visibility === "personal" && (!ownerId || skill.createdBy !== ownerId);
+}
+
+// The names in `next` that were not already in `current` and resolve to someone else's personal
+// skill. Save paths refuse these: a personal skill belongs to its author's own tier only. Grants
+// that were stored before this check stay untouched, so an unrelated save never fails on them; the
+// run skips them (currentUserSkillGrants) and the admin UI offers them for removal.
+export function newForeignPersonalSkillGrants(next, current = [], { ownerId = "", lookupSkill = () => null } = {}) {
+  const had = new Set(sanitizeSkillGrantNames(current).map((name) => name.toLowerCase()));
+  return sanitizeSkillGrantNames(next).filter((name) => !had.has(name.toLowerCase()) && isForeignPersonalSkill(lookupSkill(name), ownerId));
+}
+
+export function foreignPersonalSkillError(names, { tier = "user" } = {}) {
+  const list = names.map((name) => `"${name}"`).join(", ");
+  return tier === "user"
+    ? `${list} ${names.length === 1 ? "is" : "are"} another person's personal skill${names.length === 1 ? "" : "s"}. Only its author can use a personal skill; make it an organization skill first to share it.`
+    : `${list} ${names.length === 1 ? "is a personal skill" : "are personal skills"} and cannot be granted here. Make ${names.length === 1 ? "it" : "them"} an organization skill first.`;
+}
+
 // Tombstones preserve grants for catalog history/restoration, but an author's deleted personal
 // skill is no longer an active instruction. Omit only that proven state, never an unknown or
 // unavailable source. Check ownership before considering deletion, including dependencies, so
 // a stale or forged grant cannot turn another author's private skill into a readable overlay.
+// A grant that names another person's personal skill — directly or through `requires:` — is
+// SKIPPED, never loaded, and reported in `skipped` so the run can say so; it does not fail the
+// turn, because one bad stored grant would otherwise lock the person out of every message.
 function currentUserSkillGrants(names, authorId, lookupSkill) {
-  const lookup = (name) => {
+  const skipped = [];
+  const retained = [];
+  for (const name of sanitizeSkillGrantNames(names)) {
     const skill = lookupSkill(name);
-    if (skill?.visibility === "personal" && (!authorId || skill.createdBy !== authorId)) {
-      throw new Error("Personal skill grant is not available to this author");
+    if (isForeignPersonalSkill(skill, authorId)) {
+      skipped.push({ name, reason: "foreign-personal" });
+      continue;
     }
-    return skill;
-  };
-  const retained = sanitizeSkillGrantNames(names).filter((name) => {
-    const skill = lookup(name);
-    return !(skill?.deleted && skill.ownerKind === "local" && skill.visibility === "personal");
-  });
-  const visited = new Set();
-  const visit = (name) => {
-    const key = String(name).toLowerCase();
-    if (visited.has(key)) return;
-    visited.add(key);
-    const skill = lookup(name);
-    if (!skill || skill.deleted) return;
-    for (const dependency of skill.requires || []) visit(dependency);
-  };
-  for (const name of retained) visit(name);
-  return retained;
+    if (skill?.deleted && skill.ownerKind === "local" && skill.visibility === "personal") continue;
+    // Walk this grant's dependency closure; a foreign personal skill anywhere in it means the
+    // grant cannot be materialized without exposing that skill, so the whole grant is skipped.
+    const visited = new Set();
+    let blockedBy = "";
+    const visit = (dependencyName) => {
+      const key = String(dependencyName).toLowerCase();
+      if (blockedBy || visited.has(key)) return;
+      visited.add(key);
+      const dependency = lookupSkill(dependencyName);
+      if (isForeignPersonalSkill(dependency, authorId)) { blockedBy = String(dependencyName); return; }
+      if (!dependency || dependency.deleted) return;
+      for (const next of dependency.requires || []) visit(next);
+    };
+    visited.add(name.toLowerCase());
+    if (skill && !skill.deleted) for (const dependency of skill.requires || []) visit(dependency);
+    if (blockedBy) {
+      skipped.push({ name, reason: "foreign-personal-dependency", dependency: blockedBy });
+      continue;
+    }
+    retained.push(name);
+  }
+  return { names: retained, skipped };
+}
+
+// The one-line note a run carries when stored personal grants were skipped.
+export function skippedSkillGrantsWarning(skipped = []) {
+  if (!skipped.length) return "";
+  const items = skipped.map((entry) => entry.reason === "foreign-personal-dependency"
+    ? `${entry.name} (requires ${entry.dependency})`
+    : entry.name);
+  return `⚠️ Skipped ${skipped.length === 1 ? "a skill" : `${skipped.length} skills`} in your personal grants: ${items.join(", ")} — ${skipped.length === 1 ? "it is" : "they are"} another person's personal skill. An admin can remove ${skipped.length === 1 ? "it" : "them"} under Users, or the author can make ${skipped.length === 1 ? "it" : "them"} an organization skill. Continuing without ${skipped.length === 1 ? "it" : "them"}.\n\n`;
 }
 
 // Resolve the durable (organization + channel) grants separately from the active principal's
@@ -110,11 +154,13 @@ export async function resolveRunAccessGrants({
   lookupSkill = () => null,
 } = {}) {
   const storedUser = untrustedPrincipal ? {} : ((await loadUser(authorId)) || {});
-  const user = { ...storedUser, skills: currentUserSkillGrants(storedUser.skills, authorId, lookupSkill) };
+  const userSkills = currentUserSkillGrants(storedUser.skills, authorId, lookupSkill);
+  const user = { ...storedUser, skills: userSkills.names };
   return {
     shared: resolveAccessGrants({ organization, channel }),
     effective: resolveAccessGrants({ organization, channel, user }),
     user: resolveAccessGrants({ user }),
+    skippedSkills: userSkills.skipped,
   };
 }
 

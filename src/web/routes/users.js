@@ -8,6 +8,8 @@ import { getUsers, getUser, setUser } from "../../config/store.js";
 import { getDefaultNudges, userNudgesEnabled } from "../../config/settings.js";
 import { logEvent } from "../../util/logger.js";
 import { cleanAccessGrants } from "./helpers.js";
+import { foreignPersonalSkillError, newForeignPersonalSkillGrants } from "../../gateway/access-grants.js";
+import { getSkill } from "../../gateway/skills/catalog.js";
 import { revokeRemoteMcpsForAuthor } from "../../mcp/remote-mcp-registry.js";
 // A person's OWN environment secrets (config/scoped-env.js). Same write-only contract as a
 // channel's: listUserEnv's masked shape is the only thing that may leave the process.
@@ -292,6 +294,12 @@ export function createUsersRouter({ slack, composioInventory = loadComposioInven
       if (body.accessGrants && typeof body.accessGrants === "object" && !Array.isArray(body.accessGrants))
         Object.assign(patch, cleanAccessGrants(body.accessGrants));
 
+      // A person may hold only their OWN personal skills. Refuse adding someone else's; a stored
+      // one (from before this check) is left for the admin to untick and is skipped at run time.
+      if (patch.skills) {
+        const foreign = newForeignPersonalSkillGrants(patch.skills, (await getUser(userId))?.skills, { ownerId: userId, lookupSkill: getSkill });
+        if (foreign.length) return res.status(400).json({ error: foreignPersonalSkillError(foreign) });
+      }
       if (patch.allowedMcps) {
         const current = await getUser(userId);
         try { await validateMcpSelections("claude", patch.allowedMcps, current?.allowedMcps); }

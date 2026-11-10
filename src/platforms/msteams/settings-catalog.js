@@ -11,7 +11,7 @@ import { resolveMakeToolboxUpdate } from '../../gateway/make-toolbox.js';
 import { selectionFieldForEngine, persistedSelectionForEngine } from '../../gateway/mcp-discovery.js';
 import { assertNewMcpSelections } from '../../gateway/mcp-selection.js';
 import { requireAdapter } from '../../engines/registry.js';
-import { listSkills } from '../../gateway/skills/catalog.js';
+import { getSkill, listSkills } from '../../gateway/skills/catalog.js';
 import { canSeeSkill, grantSkillsToChannel, revokeSkillsFromChannel } from '../../gateway/skills/authoring.js';
 import { assignTemplateToChannel, channelSkillGrants, listTemplateSummaries, templateOfMeta } from '../../gateway/skills/templates.js';
 import { ensureChannelFolder } from '../../gateway/folders.js';
@@ -61,7 +61,7 @@ function skillItems(ctx) {
     rows.set(key, { key: skill.slug, name: skill.name || skill.slug, description: skill.description || '', active, inherited: org.has(key), direct: direct.has(key) });
   }
   // Preserve removal controls for legacy grants whose source disappeared.
-  for (const key of ctx.meta.skills || []) if (!rows.has(key.toLowerCase())) rows.set(key.toLowerCase(), { key, name: key, description: 'Unavailable in catalog', direct: true, active: true, inherited: org.has(key.toLowerCase()) });
+  for (const key of ctx.meta.skills || []) if (!rows.has(key.toLowerCase())) rows.set(key.toLowerCase(), { key, name: key, description: getSkill(key)?.visibility === 'personal' ? 'Personal skill (author only) — cannot be granted to a channel; deactivate to remove' : 'Unavailable in catalog', direct: true, active: true, inherited: org.has(key.toLowerCase()) });
   return [...rows.values()].sort((a, b) => Number(b.active) - Number(a.active) || a.name.localeCompare(b.name));
 }
 async function cloudItems(ctx, engine) {

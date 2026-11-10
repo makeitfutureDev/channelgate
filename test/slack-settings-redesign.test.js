@@ -303,7 +303,7 @@ test("every page, in every role and with every inline form open, passes Block Ki
     personalSecrets: [{ name: "MY_TOKEN", last4: "p123", protected: true, approval: true, hosts: [] }],
     skills: { template: "Development", templateSlug: "development", templates: [{ slug: "development", name: "Development" }], additional: ["pdf"], channel: ["pdf", "review"], organization: ["gateway-usage"] },
     skillPicker: { options: Array.from({ length: 130 }, (_, i) => ({ key: `skill-${i}`, label: `skill-${i}`, description: "d".repeat(200) })), selected: ["skill-3"] },
-    mySkillPicker: { options: [{ key: "email-triage", label: "email-triage" }], selected: [] },
+    mySkillPicker: { options: [{ key: "email-triage", label: "email-triage" }], selected: [], foreign: ["someone-elses-skill"] },
     automations: [
       { id: "rec1", cron: "0 9 * * 1-5", description: "Daily", enabled: true, kind: "task", lastStatus: "ok" },
       { id: "once1", once: true, runAt: "2026-10-01T07:30:00.000Z", description: "Ping", enabled: true, kind: "reminder" },
@@ -331,4 +331,12 @@ test("every page, in every role and with every inline form open, passes Block Ki
   }
   // A DM, too.
   assert.deepEqual(blockKitProblems(buildChannelSettingsView({ ...snapshot, isDM: true, mode: { adminMode: true } }, state, { tab: "agent", canEnableAdmin: true })), []);
+});
+
+test("the You page names stored grants of another person's personal skill as not loaded", () => {
+  const view = buildChannelSettingsView({ personalSecrets: [], mySkillPicker: { options: [{ key: "mine", label: "mine" }], selected: [], foreign: ["callbox-form"] } }, { channelId: "C_YOU", slug: "you", threadTs: "", ownerId: "U_SHAKED" }, { tab: "you" });
+  const text = JSON.stringify(view.blocks);
+  assert.match(text, /Not loaded: `callbox-form` — another person's personal skill/);
+  const clean = buildChannelSettingsView({ personalSecrets: [], mySkillPicker: { options: [{ key: "mine", label: "mine" }], selected: [] } }, { channelId: "C_YOU", slug: "you", threadTs: "", ownerId: "U_SHAKED" }, { tab: "you" });
+  assert.doesNotMatch(JSON.stringify(clean.blocks), /Not loaded/);
 });
