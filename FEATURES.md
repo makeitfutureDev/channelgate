@@ -1,5 +1,9 @@
 # ChannelGate — Features
 
+- Reply statistics show configured effort immediately after the model (for example,
+  `gpt-6.1-terra · low · 26s · 314.9k/562 · 66%`). The value comes from the answering
+  attempt, including retries and engine fallback; unspecified effort is omitted.
+
 Reaction subscription tokens include `chat.bot` for Workspace Events API access alongside the admin-approved `chat.app.messages.readonly`; ordinary messaging tokens remain separate.
 
 - **Readable background continuation errors.** Failed follow-ups show a bounded provider sentence

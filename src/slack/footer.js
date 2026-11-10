@@ -1,4 +1,4 @@
-// Reply-footer cluster: the run-stats line ("Opus 4.8 1M · 14.4s · 36.8k/192 · $0.31 · 18%"),
+// Reply-footer cluster: the run-stats line ("Opus 4.8 1M · high · 14.4s · 36.8k/192 · $0.31 · 18%"),
 // its Block Kit form, and the reply menu (📂 Files / 🔑 Variables / ⚙️ Settings) that rides under it.
 // Extracted from slack/app.js (the 2026-08 restructure notes (internal repo) Phase 2.4) so
 // unattended delivery (slack/deliver.js) and the Bolt wiring share one implementation without

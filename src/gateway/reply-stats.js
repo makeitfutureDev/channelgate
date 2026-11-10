@@ -12,7 +12,7 @@ function fmtTok(n) {
 }
 
 // Run stats, as SHORT as possible (width-conscious by user request; no icons — user preference):
-// "Opus 4.8 1M · 14.4s · 36.8k/192 · $0.31 · 18%" — model · duration · tokens in/out ·
+// "Opus 4.8 1M · high · 14.4s · 36.8k/192 · $0.31 · 18%" — model · configured effort (when known) · duration · tokens in/out ·
 // cost (2 decimals, no ~/est. markers) · context% against the MODEL's own window
 // (contextWindowFor). The resume command never rides here as text — it lives in Channel Settings
 // → Resume Session and `/resume`.
@@ -26,6 +26,7 @@ export function footerText(result) {
   const est = result.costUSD == null ? normalizeUsage(result) : null;
   const usd = result.costUSD ?? est?.costUSD;
   const parts = [modelLabel(result)];
+  if (result.effort) parts.push(result.effort);
   if (result.durationMs != null) {
     const s = result.durationMs / 1000;
     parts.push(s < 10 ? `${s.toFixed(1)}s` : `${Math.round(s)}s`);
