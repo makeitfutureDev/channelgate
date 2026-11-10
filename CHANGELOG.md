@@ -7,6 +7,7 @@
 
 Prepared 2026-11-06 from integrated beta development. This is not a publication date.
 Refreshed 2026-11-10 to include the 20 subsequent beta commits through `e55a12cd`.
+Expanded later the same day through beta `bdd8e3c8` with footer effort display and model-plus-effort shortcuts.
 Requires Node.js 24.0.0 or newer and runtime image spec 1.6.3. See
 [the candidate record](docs/releases/0.6.5.md) for scope, excluded unfinished work and
 release gates. Stable promotion and publication require approval of the exact tested candidate.

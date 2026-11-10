@@ -1,6 +1,7 @@
 # Release acceptance packet
 
-Current candidate: **0.6.5**, refreshed 2026-11-10 through beta `e55a12cd`. See
+Current candidate: **0.6.5**, expanded 2026-11-10 through beta `bdd8e3c8`, including reply-footer
+effort and model-plus-effort shortcuts. See
 [the candidate record](releases/0.6.5.md); the promotion PR head identifies the exact tested SHA.
 Current-candidate execution is pending; earlier automated and live evidence applies only to its
 actual revisions. The ten previously assigned human/device-only subchecks remain explicitly

@@ -1,5 +1,7 @@
 > **0.6.5 candidate refresh (2026-11-10):** includes the 20 beta commits through `e55a12cd`;
 > see [the candidate record](releases/0.6.5.md). Previous checks are not inherited as passes.
+> Expanded through beta `bdd8e3c8` to include configured effort in reply footers and model-plus-effort
+> shortcuts, including queued/recovered turns and forks. Fresh exact-candidate validation is required.
 > Stable promotion is pending exact-candidate automated and live acceptance evidence and
 > organization-admin approval. Historical approvals and deferrals below do not authorize this
 > candidate. The ten assigned human/device-only subchecks remain explicitly deferred, not passed;
