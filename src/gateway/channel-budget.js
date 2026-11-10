@@ -15,8 +15,8 @@ export function channelBudgetStatus(channelId, meta = {}, now = new Date()) {
     allowed: admission.allowed, notice: admission.notice || "" };
 }
 
-export function budgetRefusal(status, { slug = "", engine = "" } = {}) {
-  return { slug, cwd: "", model: "", engine, budgetRefused: true, spendingRefused: true, budget: status,
+export function budgetRefusal(status, { slug = "", engine = "", engineStarted = false } = {}) {
+  return { slug, cwd: "", model: "", engine, engineStarted, budgetRefused: true, spendingRefused: true, budget: status,
     content: status.notice,
     sessionId: null, isNew: false, usage: {}, costUSD: 0, durationMs: 0 };
 }

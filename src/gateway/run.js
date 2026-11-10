@@ -675,7 +675,7 @@ export async function runMessage(args) {
   } catch (error) {
     if (error.code === "channel_spending_limit") {
       const entry = await getChannelEntry(args.channelId);
-      return budgetRefusal(error.budget, { slug: entry?.slug });
+      return budgetRefusal(error.budget, { slug: entry?.slug, engine: error.engine || "", engineStarted: error.engineStarted === true });
     }
     throw error;
   } finally { release?.(); }
@@ -2374,6 +2374,12 @@ async function runMessageImpl({ channelId, authorId, workspaceId = "", text, thr
       model: model || resolveCurrentModel(finalResult),
     };
   } catch (error) {
+    // A retry/fallback can hit a newly exhausted cap after a primary attempt. Preserve that
+    // fact when the outer admission wrapper turns the exception into a deliverable notice.
+    if (error?.code === "channel_spending_limit") {
+      error.engineStarted = engineStarted;
+      error.engine = engine;
+    }
     // Died before the engine started (credential gate, lease, warm-up): the row minted for this
     // turn is dropped so the next message is a true first turn again.
     await dropUnusedSession();
