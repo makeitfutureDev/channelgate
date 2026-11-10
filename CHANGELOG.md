@@ -12,6 +12,10 @@ release gates. Stable promotion and publication require approval of the exact te
 
 ### Beta development notes
 
+- Slack model shortcuts accept an optional reasoning effort: `@agent :sol :high task` or
+  `@agent :sol :low`. Both choices persist for the thread, unsupported efforts are refused
+  without changing settings, and `/fork` accepts the same suffix for the new thread.
+
 - Messages sent while a Slack thread is busy now queue automatically and run after preceding
   work finishes. Waiting messages offer Steer Conversation and Cancel Request; no Add to Queue
   click is needed. Cancel removes only that waiting message, and stale controls cannot stop a

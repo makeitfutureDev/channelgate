@@ -50,7 +50,7 @@ import { answerImageBlocks, shareAnswerImageFiles } from "./images.js";
 import { appendSlackTables, extractSlackTables, formatSlackTables } from "./block-content.js";
 import { hydrateSlackMessage } from "./attachments.js";
 import { QUEUE_FULL, neutralizeSentinels, postChunkedReply } from "./util.js";
-import { modelBelongsToEngine, effortBelongsToEngine } from "../engines/registry.js";
+import { modelBelongsToEngine, effortBelongsToEngine, effortBelongsToModel, effortsForModel } from "../engines/registry.js";
 import { getDirectory } from "./directory.js";
 import { listConversationMemberIds } from "./members.js";
 
@@ -831,6 +831,9 @@ export async function processMessageEvent(event, client, { botUserId = "", teamI
             if (!isEngineEnabled(forkTarget.engine) || !modelBelongsToEngine(forkTarget.model, forkTarget.engine)) {
               await reply(`Model shortcut \`:${forkShortcut.name}\` needs an enabled engine and valid model. Update it in Settings.`); return;
             }
+            if (forkShortcut.effort !== undefined && (!forkShortcut.effort || !effortBelongsToModel(forkShortcut.effort, forkTarget.engine, forkTarget.model))) {
+              await reply(`Invalid effort \`:${forkShortcut.effort}\` for \`${forkTarget.model}\`. Choose ${effortsForModel(forkTarget.engine, forkTarget.model).map(value => `\`:${value}\``).join(", ")}.`); return;
+            }
             if (meta.codexAuthSource === "channel" && forkTarget.engine !== "codex") {
               await reply("This channel uses its own Codex login, so its engine stays Codex."); return;
             }
@@ -860,8 +863,8 @@ export async function processMessageEvent(event, client, { botUserId = "", teamI
           try {
             await setThreadEngine(entry.slug, forkKey, childEngine);
             await setThreadModel(entry.slug, forkKey, forkTarget ? forkTarget.model : await getThreadModel(entry.slug, threadKey));
-            // Like ordinary shortcuts, a new model clears the inherited model-specific effort.
-            await setThreadEffort(entry.slug, forkKey, forkTarget ? "" : await getThreadEffort(entry.slug, threadKey));
+            // Like ordinary shortcuts, only an explicit effort survives a new model choice.
+            await setThreadEffort(entry.slug, forkKey, forkTarget ? (forkShortcut.effort || "") : await getThreadEffort(entry.slug, threadKey));
             await setThreadClean(entry.slug, forkKey, sourceClean);
             const request = await client.chat.postMessage({ channel: event.channel, thread_ts: forkKey, text: `*New request from <@${event.user}>:* ${task}` });
             if (!request?.ts) throw new Error("Slack did not return a message timestamp for the fork request.");
@@ -1146,6 +1149,7 @@ export async function processMessageEvent(event, client, { botUserId = "", teamI
     // stamp), and the session-stamp comparison after the directive blocks (covers switches made
     // out-of-band — the /model wizard, the admin UI, a flipped gateway default).
     let engineSwitched = false;
+    let shortcutRuntimeOverrides = null;
     // A colon immediately after the bot mention selects a configured model shortcut. The
     // setting is read for each message, so admins can repoint names without restarting Slack.
     // Persist the resolved target on this thread; later edits to the shortcut affect new picks.
@@ -1168,19 +1172,25 @@ export async function processMessageEvent(event, client, { botUserId = "", teamI
         await client.chat.postMessage({ channel: event.channel, ...threadOpts, text: `Model shortcut \`:${shortcut.name}\` needs an enabled engine and valid model. Update it in Settings.` });
         return;
       }
+      if (shortcut.effort !== undefined && (!shortcut.effort || !effortBelongsToModel(shortcut.effort, target.engine, target.model))) {
+        await client.chat.postMessage({ channel: event.channel, ...threadOpts, text: `Invalid effort \`:${shortcut.effort}\` for \`${target.model}\`. Choose ${effortsForModel(target.engine, target.model).map(value => `\`:${value}\``).join(", ")}.` });
+        return;
+      }
       if (meta.codexAuthSource === "channel" && target.engine !== "codex") {
         await client.chat.postMessage({ channel: event.channel, ...threadOpts, text: "This channel uses its own Codex login, so its engine stays Codex." });
         return;
       }
       await assertEngineSelectable(target.engine);
+      // Each accepted task keeps its selection even if later queued messages change the pins.
+      shortcutRuntimeOverrides = { engine: target.engine, model: target.model, effort: shortcut.effort || "" };
       engineSwitched = (await getThreadEngine(entry.slug, threadKey)) !== target.engine;
       await setThreadEngine(entry.slug, threadKey, target.engine);
       await setThreadModel(entry.slug, threadKey, target.model);
       // Effort is model-specific. A prior thread pin must not leak into a new shortcut.
-      await setThreadEffort(entry.slug, threadKey, "");
+      await setThreadEffort(entry.slug, threadKey, shortcut.effort || "");
       prompt = shortcut.task;
       if (!prompt && files.length === 0) {
-        await client.chat.postMessage({ channel: event.channel, ...threadOpts, text: `✅ This thread now uses *${engineLabel(target.engine)}* · \`${target.model}\`.` });
+        await client.chat.postMessage({ channel: event.channel, ...threadOpts, text: `✅ This thread now uses *${engineLabel(target.engine)}* · \`${target.model}\`${shortcut.effort ? ` · \`${shortcut.effort}\`` : ""}.` });
         return;
       }
     }
@@ -1501,6 +1511,7 @@ export async function processMessageEvent(event, client, { botUserId = "", teamI
       ...(questionSubmissionId ? { questionSubmissionId } : {}),
       text: provenance + (syntheticFork?.threadContext || "") + promptForClaude,
       ...(syntheticFork?.sourceSessionId ? { forkSourceSessionId: syntheticFork.sourceSessionId } : {}),
+      ...(shortcutRuntimeOverrides ? { runtimeOverrides: shortcutRuntimeOverrides } : {}),
       attachments: attachmentPaths,
       startedAt: Date.now(),
     };
@@ -1697,6 +1708,7 @@ export async function processMessageEvent(event, client, { botUserId = "", teamI
         ...(continuationQuestionId ? { questionSubmissionId: continuationQuestionId } : {}),
         text: textForRun,
         ...(syntheticFork?.sourceSessionId ? { forkSourceSessionId: syntheticFork.sourceSessionId } : {}),
+        ...(shortcutRuntimeOverrides ? { runtimeOverrides: shortcutRuntimeOverrides } : {}),
         attachments: attachmentPaths,
         startedAt: Date.now(),
       };
@@ -1718,6 +1730,7 @@ export async function processMessageEvent(event, client, { botUserId = "", teamI
         fallbackPolicy: getEngineFallbackMode(),
 
         text: textForRun,
+        overrides: shortcutRuntimeOverrides,
         threadKey,
         ...(syntheticFork?.sourceSessionId ? { forkSourceSessionId: syntheticFork.sourceSessionId } : {}),
         onForkSessionResolved: syntheticFork?.sourceSessionId ? () => {

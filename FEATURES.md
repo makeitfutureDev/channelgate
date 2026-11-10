@@ -1165,6 +1165,16 @@ list makes it an explicit set of pins. Existing thread pins never follow catalog
 
 Admins can add gateway-wide model shortcuts in Settings → Access & security → Model shortcuts. Each name selects an engine and model. In Slack, `@agent :astra task` pins that engine and model to the current thread and runs the task; `@agent :astra` switches the thread without starting an agent turn. Slack's automatically inserted space after the mention is accepted. Changing a mapping affects later shortcut selections, while threads already pinned keep their selected model. Channel runtime-change access and dedicated Codex-login restrictions apply.
 
+Add an optional effort after the model shortcut: `@agent :sol :high task` selects and pins
+both model and reasoning effort; `@agent :sol :low` updates the thread without starting a turn.
+Adjacent colons (`:sol:high`) and uppercase names/efforts are accepted. Effort must be offered
+by the selected model's catalog; invalid values are refused before any runtime pins change.
+Without an effort suffix, the shortcut clears the previous effort pin as before. The same
+optional effort works with `/fork :model-shortcut :effort <new message>`, setting the child's
+effort while preserving the source thread's choices. Runtime retries strip both selectors from
+the task and retain their established runtime-choice behavior. Queued shortcut tasks retain their
+accepted model/effort independently of later selections, including across restart recovery.
+
 ## Public documentation website
 
 - `documentation/` builds a static Astro/Starlight documentation section for

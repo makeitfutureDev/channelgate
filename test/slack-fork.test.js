@@ -97,13 +97,13 @@ test("/fork without a completed source session refuses before posting a new Slac
   assert.equal(client.posted.some((m) => !m.thread_ts), false);
 });
 
-for (const engine of ["claude", "codex"]) {
-  test(`${engine} /fork :shortcut selects the child's model and preserves the source pins`, async () => {
+for (const engine of ["claude", "codex"]) for (const effort of ["", "low"]) {
+  test(`${engine} /fork :shortcut ${effort || "without effort"} selects the child's model and preserves the source pins`, async () => {
     const model = engine === "claude" ? "claude-opus-5-5" : "gpt-6-astra";
     const sourceModel = engine === "claude" ? "claude-sonnet-4-6" : "gpt-6.1-sol";
     saveSettings({ engine, modelShortcuts: { branch: { engine, model } }, engineEnabled: { claude: true, codex: true } });
-    const user = `U_FORK_MODEL_${engine}`;
-    const channel = `D_FORK_MODEL_${engine}`;
+    const user = `U_FORK_MODEL_${engine}_${effort}`;
+    const channel = `D_FORK_MODEL_${engine}_${effort}`;
     await setUser(user, { name: "Fork User", approved: true });
     const client = slack();
     const event = { type: "message", channel, channel_type: "im", user, ts: "6000.001", text: "Source task" };
@@ -113,12 +113,12 @@ for (const engine of ["claude", "codex"]) {
     await setThreadModel(entry.slug, event.ts, sourceModel);
     await setThreadEffort(entry.slug, event.ts, "high");
     const before = runtime.calls.spawn.length;
-    await processMessageEvent({ ...event, ts: "6000.002", thread_ts: event.ts, text: "<@UBOT> /fork :BRANCH Explore another solution" }, client, { botUserId: "UBOT" });
+    await processMessageEvent({ ...event, ts: "6000.002", thread_ts: event.ts, text: `<@UBOT> /fork :BRANCH ${effort ? ":LOW " : ""}Explore another solution` }, client, { botUserId: "UBOT" });
     const childTs = client.posted.find((m) => /New request from/.test(m.text || ""))?.thread_ts;
     assert.ok(childTs);
     assert.equal(await getThreadEngine(entry.slug, childTs), engine);
     assert.equal(await getThreadModel(entry.slug, childTs), model);
-    assert.equal(await getThreadEffort(entry.slug, childTs), "");
+    assert.equal(await getThreadEffort(entry.slug, childTs), effort);
     assert.equal(await getThreadModel(entry.slug, event.ts), sourceModel);
     assert.equal(await getThreadEffort(entry.slug, event.ts), "high");
     assert.equal(await getSession(entry.slug, event.ts), sourceId);
@@ -126,6 +126,9 @@ for (const engine of ["claude", "codex"]) {
     const spawn = runtime.calls.spawn.slice(before).find((call) => call.args.includes(engine === "claude" ? "--fork-session" : "fork"));
     assert.ok(spawn, "selected model still uses native fork");
     assert.ok(spawn.args.includes(model), "fork CLI receives the shortcut model");
+    if (effort && engine === "codex") assert.ok(spawn.args.includes('model_reasoning_effort="low"'));
+    if (effort && engine === "claude") assert.equal(spawn.args[spawn.args.indexOf("--effort") + 1], "low");
+    assert.ok(spawn.args.every(arg => !arg.includes(":LOW")), "effort selector is removed from the engine request");
     assert.ok(spawn.args.some((arg) => arg.includes("Explore another solution")));
     assert.ok(spawn.args.every((arg) => !arg.includes(":BRANCH")), "shortcut is removed from the engine request");
     assert.ok(client.posted.some((m) => m.thread_ts === childTs && /stub .*reply/i.test(m.text || "")));
@@ -150,6 +153,7 @@ test("fork shortcut failures create no child thread or engine turn", async () =>
   assert.ok(sourceId);
   await setThreadModel(entry.slug, event.ts, "gpt-6.1-sol");
   const cases = [
+    { settings: { modelShortcuts: { branch: { engine: "codex", model: "gpt-6-astra" } } }, text: ":branch :bogus New task", expected: /Invalid effort/ },
     { settings: { modelShortcuts: {} }, text: ":unknown New task", expected: /Unknown model shortcut/ },
     { settings: { modelShortcuts: { branch: { engine: "codex", model: "invalid" } } }, text: ":branch New task", expected: /enabled engine and valid model/ },
     { settings: { modelShortcuts: { branch: { engine: "codex", model: "gpt-6-astra" } }, engineEnabled: { claude: true, codex: false } }, text: ":branch New task", expected: /enabled engine and valid model/ },
