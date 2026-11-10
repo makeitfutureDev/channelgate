@@ -372,6 +372,9 @@ export function register(server, ctx) {
       }
       if (!known.length) return text(`None of those are catalog skills you can add: ${unknown.join(", ")}. Another person's personal skill must be made an organization skill first.`);
       const r = await grantSkillsToUser(createdBy, known);
+      // Match the personal picker audit: verified owner and actual grant delta only, never
+      // skill contents or caller-supplied identity. Retries that change nothing add no receipt.
+      if (r.added.length) await logEvent("user_skills_updated", { user: createdBy, author: createdBy, channel: channelId, slug, source: "gateway-mcp", added: r.added, removed: [] });
       return text(`✅ Added to your skills: ${r.added.map((s) => `\`${s}\``).join(", ") || "(nothing new)"}${dependencyLine(r.dependencies)}${unknown.length ? `\nUnknown (ignored): ${unknown.join(", ")}` : ""}\nYours now (${r.names.length}): ${r.names.join(", ")}. Active on your next message.`);
     },
   );
@@ -382,6 +385,7 @@ export function register(server, ctx) {
     async ({ slugs }) => {
       if (!createdBy || ctx.apiPrincipal) return text("No verified user context — personal skill grants can only be changed from your own Slack message.");
       const r = await revokeSkillsFromUser(createdBy, slugs);
+      if (r.removed.length) await logEvent("user_skills_updated", { user: createdBy, author: createdBy, channel: channelId, slug, source: "gateway-mcp", added: [], removed: r.removed });
       return text(`🗑️ Removed ${r.removed.length} of your grant(s)${r.removed.length ? `: ${r.removed.join(", ")}` : ""}. Yours now: ${r.names.join(", ") || "(none)"}.${stillRequiredLine(r.stillRequired)}`);
     },
   );
