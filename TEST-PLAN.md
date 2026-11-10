@@ -7784,6 +7784,12 @@ placeholders and `--network none`).
 - [x] Unit: the switch hint names the pin (harness + model) for a pinned failure and drops the
       "unavailable right now" outage phrasing, while still offering the manual move
       (`test/engine-failover.test.js`).
+- [x] Integration: an unclassified provider rejection from an actual spawned Claude/Codex process
+      retains the thread/model pin and adds the readable manual switch/repin remedy. Each run
+      spawns only its selected adapter; the same unpinned rejection remains an ordinary error,
+      non-provider errors gain no switch hint, and resumable interruptions retain Continue
+      (`test/pinned-provider-guidance.test.js`). Exact-candidate EN-03 acceptance repeats the full
+      stored rule for both adapters; original failed attempts remain immutable.
 - [x] Unit: replay safety is judged against the engine that actually ran the turn — an error
       carrying another engine's id never authorizes a replay — and the failover graph is
       bidirectional while the read-only engine remains a non-source (`test/engine-failover.test.js`,

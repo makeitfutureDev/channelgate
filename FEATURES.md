@@ -3123,6 +3123,9 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
   one-line explanation above it. Channel and gateway defaults are NOT pins — failover is exactly
   what they are for — and neither is a stale thread model belonging to the other harness (it never
   reaches the CLI, so it must not silently disable failover either). → TEST-PLAN: Engines.
+- A pinned provider rejection that is not eligible for automatic replay still includes the manual
+  switch/repin hint. Adding this guidance does not retry the request or change fallback eligibility;
+  ordinary unpinned errors and resumable interruptions keep their existing remedies.
 - **Claude runs on the operator's OWN subscription — one login, resolved in one place.** The gateway
   authenticates Claude with the `claude` sign-in of the user the daemon runs as
   (`$CLAUDE_CONFIG_DIR`, else `~/.claude`): the login that person keeps alive in their own shell. It
