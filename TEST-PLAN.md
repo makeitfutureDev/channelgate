@@ -897,6 +897,25 @@ inbox). Record the address and the servers; never the password.
 
 ## Channel-to-channel agent mail (2026-11-06)
 
+- Message ceiling regression (2026-11-10): `test/agent-mail.test.js` counts the actual stored
+  messages in both directions: five origin messages (including the opener) and five target
+  replies, with no eleventh message. It covers final-summary closure without another continue
+  call, refusal after the limit, pre-fix persisted round counters, answered-reply recovery,
+  one-shot records without a transcript, and two continuations awaiting membership at the last
+  exchange. A fake runner establishes these boundaries; it does not establish live acceptance.
+- [ ] Live **Claude and Codex**, each as source and target in the owned A/B Worker fixtures below:
+  prepare B to ask one harmless follow-up question per response; ask A, "Ask #B to work through
+  the prepared checklist, answering its follow-up questions until the conversation limit."
+  Capture exact candidate, both channel/thread IDs, selected engines/models and each exchanged
+  message. **Pass:** opener plus exchanged replies stop at ten total (five each way); both
+  threads receive the limit notice, A can summarize the final reply, and no eleventh message or
+  sixth target run occurs. In the same source thread ask "Tell #B one more item"; it refuses
+  continuation without dispatch. Separately end after eight messages, then continue normally:
+  only the final pair is exchanged. On an isolated persisted pre-fix eight-message/four-round
+  fixture, race two same-owner continuations across delayed membership checks: exactly one claims
+  the final pair, the other refuses, with no duplicate target turn. Preserve previous failures;
+  authorized runtime/audit evidence is required for restart and dispatch assertions.
+
 - [x] Regression: `node --test test/agent-mail.test.js test/agent-mail-tools.test.js
   test/agent-directory-tools.test.js test/mcp-control-plane-approval.test.js
   test/migrations.test.js`. Covers target resolution and ambiguity; the complete exchange (gate at
