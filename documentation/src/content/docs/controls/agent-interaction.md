@@ -3,7 +3,7 @@ title: Agent interaction controls
 description: Reference for background work, plan approval, progress, permission prompts, and questions.
 ---
 
-These gateway MCP tools use the signed current-run conversation and author context. They do not accept a destination channel ID. Availability depends on the toolset and origin; effective Clean turns omit the control MCP. Background work is separate from an engine's in-turn subagents. See [agent teams](/docs/features/subagents), [background work](/docs/features/background-jobs), and [interactive questions](/docs/features/interactive-questions).
+These gateway MCP tools use the signed current-run conversation and author context. Most act only in the current conversation; `send_agent_message` accepts a target channel. Availability depends on the toolset and origin; effective Clean turns omit the control MCP. Background work is separate from an engine's in-turn subagents. See [agent teams](/docs/features/subagents), [background work](/docs/features/background-jobs), and [interactive questions](/docs/features/interactive-questions).
 
 ## run_in_background
 
@@ -46,9 +46,23 @@ These gateway MCP tools use the signed current-run conversation and author conte
 }
 ```
 
-**Scope and result:** Sends a question or request to another channel's agent on behalf of the requesting person, after [search_agents](/docs/controls/knowledge-and-instructions/#search_agents) found a suitable target. The call posts a confirmation card in the current thread; when the requesting person approves it, the daemon delivers the text as a new thread in the target channel, that channel's agent answers there with its own tools and permissions, and the reply is posted back into the originating thread as a new turn. Returns a sent acknowledgement (or a refusal naming the gate that failed).
+**Scope and result:** Sends a question or request to another channel's agent on behalf of the requesting person, when the user names a channel or [search_agents](/docs/controls/knowledge-and-instructions/#search_agents) finds a suitable target. A named channel can accept a message even when the directory did not list it. The call posts a confirmation card in the current thread; when the requesting person approves it, the daemon delivers the text as a new thread in the target channel, that channel's agent answers there with its own tools and permissions, and the reply is posted back into the originating thread as a new turn. Returns a sent acknowledgement (or a refusal naming the gate that failed).
 
-**Limits:** Only an authenticated conversation member with current channel access can send; API runs and messages delivered by another agent are refused. The requester must be authorized and a current member of the target channel, everyone who can read the originating conversation must belong to it too, and the target's manager must have switched `acceptsMessages` on (see [set_channel_agent_profile](/docs/controls/conversation-settings/#set_channel_agent_profile)). Text only; one message in flight per thread and channel, rate-limited per hour. The sending agent ends its turn after the call instead of waiting for the reply.
+**Limits:** Only an authenticated conversation member with current channel access can send; API runs and messages delivered by another agent are refused. The requester must be authorized and a current member of both the originating conversation and the target channel; the daemon checks this live. The target must be a registered, enabled channel, not a direct message. Text only; one conversation in flight per originating thread and target channel, at most three new conversations for that pair and twenty from the originating channel per hour. The sending agent ends its turn after the call instead of waiting for the reply.
+
+## continue_agent_conversation
+
+**Optional:** `message` (string). Omit it while answering the other agent; from an ordinary user turn, supply a nonblank message of up to 8,000 characters.
+
+```json
+{
+  "message": "Please include the rollback steps too."
+}
+```
+
+**Scope and result:** Continues the agent conversation associated with this thread and its original requester, without another approval card. During a turn that begins with `[agent conversation] … just said`, call with `{}` to mark the final reply for delivery to the other agent when the turn ends. Write only what that agent should read. When the other agent has delivered the final result, present it to the user without calling this tool. From an ordinary turn, `message` starts the next exchange immediately; the answer returns here as a new turn. Returns a delivery acknowledgement or a refusal.
+
+**Limits:** Requires the authenticated original requester and current channel access; API and untrusted agent principals are refused. A message argument is refused while answering the other agent. An ordinary-turn continuation rechecks the requester's authorization and membership in both conversations, refuses an exchange at its ten-message limit, and requires activity within the last hour. End the turn after sending instead of polling for a reply.
 
 ## request_approval
 
