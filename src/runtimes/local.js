@@ -1,6 +1,7 @@
 // The daemon's internal process spawner. This is NOT the registered `/sudo` host backend: it exists
 // for the transactional updater's Claude smoke probe and direct-runner tests, has no engine helper
 // catalog, and cannot be selected by a channel turn. Direct host turns use ./host.js instead.
+import { collectResourceSnapshot } from "./resource-snapshot.js";
 import { spawn } from "node:child_process";
 import { killTree } from "../util/proc.js";
 import { pidAlive } from "../engines/watchdog.js";
@@ -30,6 +31,10 @@ export const localRuntime = Object.freeze({
       detached: spec.detached !== false,
     });
     return attachRuntime(child, { backend: localRuntime, runId: spec.runId, target, kind: spec.kind });
+  },
+
+  async inspectResources(target, { pid } = {}) {
+    return collectResourceSnapshot({ pid });
   },
 
   async probe(child) {

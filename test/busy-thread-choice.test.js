@@ -76,7 +76,16 @@ function fakeSlack() {
   return client;
 }
 
-test("a busy-thread follow-up gets a choice card, then Steer removes the card and interrupts", async () => {
+async function waitForCard(client, thread = THREAD) {
+  for (let attempt = 0; attempt < 200; attempt++) {
+    const card = client.posted.find((m) => m.thread_ts === thread && m.blocks?.some((b) => b.elements?.some((el) => el.action_id === BUSY_THREAD_STEER_ACTION)));
+    if (card) return card;
+    await delay(10);
+  }
+  assert.fail("Queued message controls did not arrive");
+}
+
+test("a busy-thread follow-up queues automatically, then Steer interrupts without dispatching it twice", async () => {
   await setUser(USER, { name: "Busy User", approved: true });
   const client = fakeSlack();
   const active = { aborted: false, controller: new AbortController(), authorId: USER };
@@ -92,8 +101,8 @@ test("a busy-thread follow-up gets a choice card, then Steer removes the card an
     ts: "3000.002",
   };
 
-  await processMessageEvent(event, client, { botUserId: "U_BOT", teamId: "T_BUSY" });
-  const card = client.posted.find((message) => Array.isArray(message.blocks));
+  const followup = processMessageEvent(event, client, { botUserId: "U_BOT", teamId: "T_BUSY" });
+  const card = await waitForCard(client);
   const steer = card?.blocks.flatMap((block) => block.elements || []).find((button) => button.action_id === BUSY_THREAD_STEER_ACTION);
   assert.ok(steer, `expected a steering card, got ${JSON.stringify(client.posted)}`);
 
@@ -107,11 +116,12 @@ test("a busy-thread follow-up gets a choice card, then Steer removes the card an
     for (let attempt = 0; attempt < 100 && !active.steered; attempt++) await delay(10);
     assert.equal(active.steered, true);
     assert.equal(active.controller.signal.aborted, true);
-    assert.deepEqual(client.deleted, [{ channel: CHANNEL, ts: "bot.choice" }]);
+    assert.equal(client.updated.some((m) => /Steering/.test(m.text)), true);
     assert.equal(client.updated.some((message) => /Steer selected/.test(String(message.text || ""))), false);
   } finally {
     runQueue.release(runKey, active);
     await selected;
+    await followup;
   }
 });
 
@@ -480,8 +490,8 @@ test("Steer Conversation interrupts a cold Claude child quietly and runs the sel
   assert.equal(runQueue.isActive(runKey), true);
 
   const followUp = { ...root, text: "replacement Claude task", thread_ts: root.ts, ts: "3085.002" };
-  await processMessageEvent(followUp, client, { botUserId: "U_BOT", teamId: "T_BUSY" });
-  const card = client.posted.find((message) => Array.isArray(message.blocks));
+  const successor = processMessageEvent(followUp, client, { botUserId: "U_BOT", teamId: "T_BUSY" });
+  const card = await waitForCard(client, root.ts);
   const steer = card?.blocks.flatMap((block) => block.elements || []).find((button) => button.action_id === BUSY_THREAD_STEER_ACTION);
   assert.ok(steer);
   await handleBusyThreadChoice({
@@ -490,9 +500,9 @@ test("Steer Conversation interrupts a cold Claude child quietly and runs the sel
     action: steer,
     client,
   }, { processMessage: processMessageEvent });
-  await first;
+  await Promise.all([first, successor]);
 
-  assert.deepEqual(client.deleted, [{ channel: CHANNEL, ts: "bot.choice" }]);
+  assert.equal(client.updated.some((m) => /Steering/.test(m.text)), true);
   assert.equal(client.posted.some((message) => /Something went wrong/.test(String(message.text || ""))), false);
   assert.equal(client.posted.filter((message) => /Stub engine reply/.test(String(message.text || ""))).length, 1);
   assert.equal(runQueue.isActive(runKey), false);
@@ -517,8 +527,8 @@ test("Steer Conversation interrupts Codex quietly and runs the selected message 
   assert.equal(runQueue.isActive(runKey), true, "Codex turn should be running before the follow-up arrives");
 
   const followUp = { ...root, text: "replacement task", thread_ts: root.ts, ts: "3100.002" };
-  await processMessageEvent(followUp, client, { botUserId: "U_BOT", teamId: "T_BUSY" });
-  const card = client.posted.find((message) => Array.isArray(message.blocks));
+  const successor = processMessageEvent(followUp, client, { botUserId: "U_BOT", teamId: "T_BUSY" });
+  const card = await waitForCard(client, root.ts);
   const steer = card?.blocks.flatMap((block) => block.elements || []).find((button) => button.action_id === BUSY_THREAD_STEER_ACTION);
   assert.ok(steer, `expected steer button, got ${JSON.stringify(client.posted)}`);
   await handleBusyThreadChoice({
@@ -527,10 +537,138 @@ test("Steer Conversation interrupts Codex quietly and runs the selected message 
     action: steer,
     client,
   }, { processMessage: processMessageEvent });
-  await first;
+  await Promise.all([first, successor]);
 
-  assert.deepEqual(client.deleted, [{ channel: CHANNEL, ts: "bot.choice" }]);
+  assert.equal(client.updated.some((m) => /Steering/.test(m.text)), true);
   assert.equal(client.posted.some((message) => /Something went wrong/.test(String(message.text || ""))), false);
   assert.equal(client.posted.filter((message) => /Codex stub reply/.test(String(message.text || ""))).length, 1);
   assert.equal(runQueue.isActive(runKey), false);
+});
+
+for (const choice of ["automatic", "cancel", "stale"]) {
+  test(`auto-queued message: ${choice} preserves the active run and cannot replay`, async () => {
+    process.env.PATH = `${path.join(projectRoot, "test", "fixtures", "prompt-echo")}${path.delimiter}${process.env.PATH || ""}`;
+    saveSettings({ engine: "claude", composioMode: "personal" });
+    await setUser(USER, { name: "Busy User", approved: true });
+    const client = fakeSlack();
+    const thread = `auto-${choice}`;
+    const runKey = `dm-u_busy_choice::${thread}`;
+    const active = { runId: `${runKey}::original`, aborted: false, controller: new AbortController(), authorId: USER };
+    await runQueue.acquire(runKey, active);
+    const event = { type: "message", channel: CHANNEL, channel_type: "im", user: USER, text: `AUTO-QUEUE-${choice}`, thread_ts: thread, ts: `${thread}.2` };
+    const successor = processMessageEvent(event, client, { botUserId: "U_BOT", teamId: "T_BUSY" });
+    const card = await waitForCard(client, thread);
+    const buttons = card.blocks.flatMap((b) => b.elements || []);
+    assert.deepEqual(buttons.map((b) => b.action_id), [BUSY_THREAD_STEER_ACTION, BUSY_THREAD_CANCEL_ACTION]);
+    assert.equal(runQueue.count(runKey), 2);
+    assert.equal(active.controller.signal.aborted, false);
+    const runId = `${runKey}::${event.ts}`;
+    assert.equal(listActiveRuns().some((r) => r.id === runId), true);
+    await processMessageEvent(event, client, { botUserId: "U_BOT", teamId: "T_BUSY" });
+    assert.equal(runQueue.count(runKey), 2, "redelivery must not enqueue twice");
+    const click = (action) => handleBusyThreadChoice({ ack: async () => {},
+      body: { user: { id: USER }, channel: { id: CHANNEL }, message: { ts: "bot.control", thread_ts: thread } },
+      action, client }, { processMessage: processMessageEvent });
+    if (choice === "cancel") {
+      const cancelled = await click(buttons[1]);
+      assert.equal(cancelled.cancelled, true);
+      assert.equal(runQueue.count(runKey), 1);
+      assert.equal(listActiveRuns().some((r) => r.id === runId), false);
+      assert.equal(active.controller.signal.aborted, false);
+      await successor;
+    }
+    runQueue.release(runKey, active);
+    await successor;
+    const answer = client.posted.filter((m) => String(m.text).includes(`AUTO-QUEUE-${choice}`));
+    assert.equal(answer.length, choice === "cancel" ? 0 : 1);
+    const stale = await click(buttons[1]);
+    assert.equal(stale.ok, false);
+    assert.equal(runQueue.count(runKey), 0);
+    assert.equal(busyThreadChoices.list().some((r) => r.queuedRunId === runId), false);
+  });
+}
+
+test("queue controls remain available after ten minutes", () => {
+  let time = 1000;
+  const store = createBusyThreadChoiceStore({ now: () => time });
+  const event = { channel: CHANNEL, user: USER, ts: "queue-long", thread_ts: "queue-long" };
+  const id = store.create({ event, queuedRunId: "long-queue-run" });
+  time += 11 * 60 * 1000;
+  assert.equal(store.take(id, USER).ok, true);
+  store.discard(id);
+});
+
+for (const changedOwner of [false, true]) {
+  test(`rejected queued Steer keeps Cancel usable (${changedOwner ? "new run" : "other author"})`, async () => {
+    const client = fakeSlack();
+    const thread = `reject-${changedOwner}`;
+    const key = `dm-u_busy_choice::${thread}`;
+    const active = { runId: "active-new", authorId: changedOwner ? USER : "OTHER", controller: new AbortController() };
+    const queued = { runId: `${key}::queued`, authorId: USER };
+    await runQueue.acquire(key, active);
+    const waiting = runQueue.acquire(key, queued);
+    recordActiveRun(queued.runId, { channelId: CHANNEL, slug: "dm-u_busy_choice", threadKey: thread, authorId: USER, text: "queued" });
+    const id = busyThreadChoices.create({ event: { channel: CHANNEL, user: USER, thread_ts: thread, ts: `${thread}.2` },
+      runKey: key, queuedRunId: queued.runId, targetRunId: changedOwner ? "old-run" : active.runId });
+    const click = (action_id, user = USER) => handleBusyThreadChoice({ ack: async () => {}, client,
+      body: { user: { id: user }, channel: { id: CHANNEL }, message: { ts: "bot.card", thread_ts: thread } },
+      action: { action_id, value: id } }, { processMessage: () => assert.fail("must not re-enter pipeline") });
+    try {
+      assert.equal((await click(BUSY_THREAD_CANCEL_ACTION, "OUTSIDER")).ok, false);
+      assert.equal((await click(BUSY_THREAD_STEER_ACTION)).accepted, false);
+      assert.equal(active.controller.signal.aborted, false);
+      assert.equal(busyThreadChoices.list().some((r) => r.id === id), true);
+      assert.equal(client.updated.at(-1).blocks[1].elements.length, 2);
+      assert.equal((await click(BUSY_THREAD_CANCEL_ACTION)).cancelled, true);
+      assert.equal(queued.aborted, true);
+      assert.equal(listActiveRuns().some((r) => r.id === queued.runId), false);
+      assert.equal(active.controller.signal.aborted, false);
+    } finally {
+      runQueue.release(key, active);
+      await waiting;
+      busyThreadChoices.discard(id);
+      clearActiveRun(queued.runId);
+    }
+  });
+}
+
+test("failed queued-card delivery still runs the accepted message automatically", async () => {
+  const client = fakeSlack();
+  const post = client.chat.postMessage;
+  client.chat.postMessage = async (m) => {
+    if (m.blocks?.some((b) => b.elements?.some((el) => el.action_id === BUSY_THREAD_STEER_ACTION))) throw new Error("Slack unavailable");
+    return post(m);
+  };
+  const thread = "no-card";
+  const key = `dm-u_busy_choice::${thread}`;
+  const active = { runId: `${key}::first`, authorId: USER };
+  await runQueue.acquire(key, active);
+  const successor = processMessageEvent({ type: "message", channel: CHANNEL, channel_type: "im", user: USER,
+    text: "CARD-FAILED-PICKUP", thread_ts: thread, ts: `${thread}.2` }, client, { botUserId: "U_BOT", teamId: "T_BUSY" });
+  for (let attempt = 0; attempt < 200 && runQueue.count(key) < 2; attempt++) await delay(10);
+  assert.equal(runQueue.count(key), 2);
+  runQueue.release(key, active);
+  await successor;
+  assert.equal(client.posted.filter((m) => String(m.text).includes("CARD-FAILED-PICKUP")).length, 1);
+});
+
+
+test("a queued Cancel racing promotion reports already started without stopping executing work", async () => {
+  const client = fakeSlack();
+  const key = "stale-promoted::thread";
+  const active = { runId: "promoted", authorId: USER, controller: new AbortController() };
+  await runQueue.acquire(key, active);
+  const id = busyThreadChoices.create({ event: { channel: CHANNEL, user: USER, ts: "promoted", thread_ts: "thread" },
+    runKey: key, queuedRunId: active.runId, targetRunId: "predecessor" });
+  try {
+    const result = await handleBusyThreadChoice({ ack: async () => {}, client,
+      body: { user: { id: USER }, channel: { id: CHANNEL }, message: { ts: "bot.promoted", thread_ts: "thread" } },
+      action: { action_id: BUSY_THREAD_CANCEL_ACTION, value: id } }, { processMessage: () => assert.fail("no replay") });
+    assert.equal(result.cancelled, false);
+    assert.match(client.updated.at(-1).text, /already started/);
+    assert.equal(active.controller.signal.aborted, false);
+  } finally {
+    runQueue.release(key, active);
+    busyThreadChoices.discard(id);
+  }
 });

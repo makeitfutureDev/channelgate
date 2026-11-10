@@ -6,7 +6,7 @@
 // traversal, and verify the resolved target still lives under the root. Names are not filtered.
 import path from "node:path";
 import { spawn } from "node:child_process";
-import { chmod, mkdir, open, readFile, readdir, realpath, rename, rm, stat, writeFile } from "node:fs/promises";
+import { chmod, constants, mkdir, open, readFile, readdir, realpath, rename, rm, stat, writeFile } from "node:fs/promises";
 import { createHash, randomUUID } from "node:crypto";
 import { MAX_FILE_UPLOAD_BYTES } from "./upload.js";
 
@@ -174,6 +174,35 @@ export function isProtectedWritePath(relative = "") {
   const clean = normalizeRelativePath(relative);
   if (isManagedClaudePath(clean)) return true;
   return clean.split("/").filter(Boolean).some((part) => isProtectedName(part));
+}
+
+// EXPORT policy: what may leave the channel through a public link, a Slack file post or a Composio
+// staging. Stricter than the write policy on purpose — a hidden file or directory anywhere in the
+// path (`.env`, `.claude/settings.json`, `.git/config`, `.aws/credentials`, `.github/…`) is
+// refused along with every protected/credential-shaped name, because the folder is where the
+// channel's own credentials live and an export cannot be taken back. Browsing and in-channel
+// reading are untouched: this is about bytes going OUT.
+//
+// Two strengths. `strict` (the default) is for an UNAUTHENTICATED destination — a public link —
+// and also refuses the managed `CLAUDE.md`/`AGENTS.md`/`MEMORY.md` and any name that merely
+// mentions a secret/token/credential. The lenient form is for doors an authorized person drives
+// into a place they already reach — the Slack thread, their own browser download, their own
+// Composio or mail account — where a report called `token-usage.csv` or the channel's `MEMORY.md`
+// is a legitimate thing to send; it still refuses every hidden path and every credential-shaped
+// file, which is what a prompt-injected turn would try to push out.
+const CREDENTIAL_EXACT = new Set(["credentials.json", "secrets.json", "token.json", "tokens.json", "id_rsa", "id_ed25519", "id_ecdsa", "id_dsa"]);
+export function isProtectedExportPath(relative = "", { strict = true } = {}) {
+  let clean;
+  try {
+    clean = normalizeRelativePath(relative);
+  } catch {
+    return true;
+  }
+  if (!clean) return true;
+  if (strict && isManagedClaudePath(clean)) return true;
+  return clean.split("/").filter(Boolean).some((part) =>
+    part.startsWith(".") ||
+    (strict ? isProtectedName(part) : CREDENTIAL_EXACT.has(part) || PROTECTED_EXTENSIONS.has(path.extname(part).toLowerCase())));
 }
 
 function isProtectedResolvedPath(resolved) {
@@ -735,12 +764,30 @@ export async function saveBrowserUploadedFile(root, baseRelative, uploadRelative
   return { ...(await writeUploadedBytes(directory, name, bytes)), overwritten: false, sourceRelative: clean };
 }
 
+// Open a file `resolveVisiblePath` just proved, without trusting that proof past the open: the
+// folder is writable by the channel's own container between the lookup and the open, so the
+// final component is opened O_NOFOLLOW and the kernel-held descriptor is re-resolved through
+// /proc/self/fd and required to still sit under the root. The caller owns the returned handle.
+// (src/gateway/confined-file.js does the same for the export paths; it imports this module, so
+// the helper lives here rather than the other way round.)
+async function openVisibleFile(file) {
+  const handle = await open(file.path, constants.O_RDONLY | constants.O_NOFOLLOW);
+  try {
+    const [openedReal, info] = await Promise.all([realpath(`/proc/self/fd/${handle.fd}`), handle.stat()]);
+    if (!info.isFile() || !isWithin(file.rootReal, openedReal)) throw new Error("That file moved outside this channel's working folder.");
+    return handle;
+  } catch (error) {
+    await handle.close().catch(() => {});
+    throw error;
+  }
+}
+
 export async function readFilePreview(root, relative) {
   const file = await resolveVisiblePath(root, relative, { kind: "file" });
   const length = Math.min(PREVIEW_BYTES, file.stat.size);
   const bytes = Buffer.alloc(length);
   if (length) {
-    const handle = await open(file.path, "r");
+    const handle = await openVisibleFile(file);
     try {
       await handle.read(bytes, 0, length, 0);
     } finally {
@@ -769,7 +816,13 @@ export async function readEditableFile(root, relative, options = {}) {
   const file = await resolveVisiblePath(root, relative, { kind: "file" });
   if (isProtectedResolvedPath(file)) throw new Error("Protected/internal files are read-only in this explorer.");
   if (file.stat.size > maxBytes) throw new Error(`${label} is limited to ${maxChars.toLocaleString()} characters and ${maxBytes.toLocaleString()} bytes.`);
-  const bytes = await readFile(file.path);
+  const handle = await openVisibleFile(file);
+  let bytes;
+  try {
+    bytes = await handle.readFile();
+  } finally {
+    await handle.close();
+  }
   if (bytes.length > maxBytes) throw new Error(`${label} is limited to ${maxChars.toLocaleString()} characters and ${maxBytes.toLocaleString()} bytes.`);
   if (bytes.includes(0)) throw new Error("This file contains NUL bytes, so it can't be edited as text.");
   let text;

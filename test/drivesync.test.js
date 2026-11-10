@@ -133,6 +133,7 @@ test("selectSyncChannels keeps only channels with a parseable link, carrying met
   const metaA = { syncDriveFolder: "https://drive.google.com/drive/folders/FID1", workDir: "/custom/a" };
   const picked = selectSyncChannels([
     { slug: "a", channelId: "C1", name: "a", meta: metaA },
+    { slug: "follower", channelId: "C6", meta: { ...metaA, workspaceLink: { slug: "a" } } },
     { slug: "b", channelId: "C2", name: "b", meta: { syncDriveFolder: "" } }, // off
     { slug: "c", channelId: "C3", name: "c", meta: { syncDriveFolder: "garbage" } }, // unparseable
     { slug: "d", channelId: "C4", name: "d", meta: {} }, // no field

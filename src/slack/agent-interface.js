@@ -16,6 +16,7 @@ export function registerAgentInterfaceHandlers(app, {
   authorizedControlEntry,
   stopRunsInChannel,
   setAssistantStatus,
+  isCodeChannel = async () => false,
 } = {}) {
   // Native Stop: Slack halts the in-progress streams itself (`streaming_message_ts`) and tells us
   // which thread's session the user stopped. The stop is scoped to that one thread and passes the
@@ -26,15 +27,19 @@ export function registerAgentInterfaceHandlers(app, {
     try {
       const target = stoppedSessionTarget(event);
       if (!target || target.user === botUserId) return;
+      // No thread means a code channel's one session: the press stops everything running there.
+      // Anywhere else a thread-less stop names no session the gateway drives, so it is ignored.
+      const channelWide = !target.threadTs;
+      if (channelWide && !(await isCodeChannel(target.channel))) return;
       const eventKey = body?.event_id || `agent-stop:${target.channel}:${target.threadTs}:${event?.event_ts || ""}`;
       if (seenEvents && !seenEvents.add(eventKey)) return;
       const entry = await authorizedControlEntry(target.channel, target.user);
       let stopped = 0;
-      if (entry) stopped = await stopRunsInChannel(client, target.channel, entry.slug, target.user, target.threadTs);
+      if (entry) stopped = await stopRunsInChannel(client, target.channel, entry.slug, target.user, channelWide ? null : target.threadTs);
       // A stopped run clears its own session. An authorized press that found nothing running
       // (a stale session) still has to move it off `processing`, or the loading UX stays up for
       // an hour. An unauthorized press changes nothing: the run it could not stop goes on.
-      if (entry && !stopped) void setAssistantStatus?.(client, target.channel, target.threadTs, "");
+      if (entry && !stopped) void setAssistantStatus?.(client, target.channel, target.threadTs, "", [], { channelSession: channelWide });
       void logEvent("agent_session_stopped", {
         channel: target.channel,
         threadKey: target.threadTs,

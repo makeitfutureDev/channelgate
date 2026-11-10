@@ -23,6 +23,21 @@ Each selection saves immediately. **Back** navigates to an earlier step; it does
 
 A dedicated conversation Codex login fixes the harness to Codex, so that flow skips the engine choice and offers Codex models and effort.
 
+## Select with a mention shortcut
+
+For a configured model shortcut, append an optional effort to select both in one message:
+
+```text
+@ChannelGate :sol :high Review this change
+@ChannelGate :sonet :low
+```
+
+Both choices persist for the current thread. A message with only the selectors confirms the
+change without starting an agent turn. Effort choices come from the selected model's catalog;
+an unsupported effort is refused without changing the thread. Omitting effort clears the old
+thread effort selection. The same suffix works in `/fork :sol :high <new message>` for the child
+thread, preserving the source thread's settings.
+
 ## Keep explicit selections during recovery
 
 An eligible Codex provider-capacity refusal after partial work can produce one bounded continuation of the existing session. A user-pinned model remains pinned; an unpinned task may use the engine catalog’s alternate recovery choice. This is separate from the cross-engine failover policy.

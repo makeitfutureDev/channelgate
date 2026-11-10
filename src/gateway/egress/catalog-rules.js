@@ -15,8 +15,11 @@
 // list (bearer = `<scheme> <token>`, raw = the whole value, basic-password / basic-user = one half
 // of `Basic base64(user:password)`).
 //
-// PURE: imports only the CLI catalog, so the config layer can derive "protected: yes/no" for a
+// PURE: no database or network I/O, so the config layer can derive "protected: yes/no" for a
 // listing without importing the proxy or the database.
+import { isIP } from "node:net";
+import { classifyAddress } from "../../web/ip-policy.js";
+import { normalizeHost } from "./rules.js";
 import { CLI_INTEGRATIONS } from "../../config/cli-catalog.js";
 import { PERPLEXITY_HOST, PERPLEXITY_RELAY_SECRET_NAME, PERPLEXITY_SESSION_COOKIE } from "../perplexity-research-contract.js";
 
@@ -152,15 +155,23 @@ export function assertValidSwapRuleFields({ hosts, headers, format } = {}) {
   return out;
 }
 
-// The channel meta's `egressRawHosts` (admin-set): hosts whose ports 22/5432/6543 get a raw CONNECT
+// The channel meta's `egressRawHosts` (admin API or approved worker request): destinations whose
+// ports 22/5432/6543 get a raw CONNECT
 // tunnel through the proxy (SSH, Postgres) while the channel's network is on. Strict, for the
 // admin API; the proxy's policy re-filters tolerantly on read.
+// Raw tunnels carry SSH/PostgreSQL bytes, not credential substitutions. Public IP literals
+// are valid here without widening the DNS-only secret-host rule above.
+export function isValidRawHost(value) {
+  const host = normalizeHost(value);
+  return isIP(host) ? !host.includes("%") && classifyAddress(host) === "" : isValidRuleHost(host);
+}
+
 export const MAX_RAW_HOSTS = 16;
 export function assertValidEgressRawHosts(value) {
-  const list = [...new Set(listOf(value).map(normalizeRuleHost))];
+  const list = [...new Set(listOf(value).map(normalizeHost))];
   if (list.length > MAX_RAW_HOSTS) throw new Error(`At most ${MAX_RAW_HOSTS} raw hosts per channel.`);
-  const bad = list.find((host) => !isValidRuleHost(host));
-  if (bad) throw new Error(`"${bad}" is not a host name — use a DNS name like db.example.com or a wildcard like *.pooler.supabase.com.`);
+  const bad = list.find((host) => !isValidRawHost(host));
+  if (bad) throw new Error(`"${bad}" is not a raw destination — use a DNS name, a public IPv4/IPv6 address, or a DNS wildcard.`);
   return list;
 }
 

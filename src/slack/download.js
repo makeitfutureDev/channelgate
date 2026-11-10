@@ -21,7 +21,47 @@ import { botApiCall } from "./read.js";
 // tell the gateway is fetching their file rather than sitting idle.
 export const ANNOUNCE_DOWNLOAD_BYTES = 8 * 1024 * 1024;
 
-const HTML_HEAD = "Slack returned HTML instead of the file — the bot is missing the files:read scope (update the app manifest and reinstall)";
+const HTML_HEAD = "Slack returned a sign-in or error page instead of the file — check the bot's file access and files:read scope";
+const HTML_INSPECT_BYTES = 16 * 1024;
+
+function isSlackAuthUrl(value) {
+  try {
+    const url = new URL(value);
+    return /(^|\.)slack\.com$/i.test(url.hostname)
+      && /^\/(?:signin|sign_in|login|auth|ssb|checkcookie)(?:[/.]|$)/i.test(url.pathname);
+  } catch { return false; }
+}
+
+function slackHtmlError() {
+  const error = new Error(HTML_HEAD);
+  error.code = "EHTMLBODY";
+  return error;
+}
+
+// HTML is a supported attachment format, including HTML uploaded as .txt. Detect Slack's
+// authentication/error document, not the MIME type or the opening HTML tag. Inspect a bounded
+// prefix across stream chunks; the no-follow writer publishes nothing until the stream succeeds.
+function inspectSlackDownload(res) {
+  let prefix = Buffer.alloc(0);
+  const body = res.body.pipeThrough(new TransformStream({
+    transform(chunk, controller) {
+      if (prefix.length < HTML_INSPECT_BYTES) {
+        prefix = Buffer.concat([prefix, Buffer.from(chunk.buffer, chunk.byteOffset, Math.min(chunk.byteLength, HTML_INSPECT_BYTES - prefix.length))]);
+        const html = prefix.toString("utf8");
+        if (/<(?:!doctype\s+html|html)\b/i.test(html)) {
+          const title = html.match(/<title[^>]*>([^<]*)<\/title\s*>/i)?.[1] || "";
+          const slackTitle = /\bslack\b/i.test(title);
+          const authTitle = /^(?:(?:sign[ -]?in|log[ -]?in)(?: to)?(?:\s*[-|]\s*|\s+)slack|slack\s*[-|]\s*(?:sign[ -]?in|log[ -]?in|file not found|access denied|error|not authorized))\s*$/i.test(title.trim());
+          const authForm = /<form\b[^>]*\b(?:id=["']signin_form["']|action=["'](?:https:\/\/(?:[a-z0-9-]+\.)?slack\.com)?\/(?:signin|ssb)(?:[/?"']))/i.test(html);
+          const slackError = slackTitle && /\bclass=["'][^"']*\bp-error_page\b/i.test(html);
+          if (authTitle || authForm || slackError) throw slackHtmlError();
+        }
+      }
+      controller.enqueue(chunk);
+    },
+  }));
+  return { headers: res.headers, body };
+}
 
 // On-disk name for one Slack attachment: the Slack file id (globally unique) in front of the
 // sanitized original name. Two messages in the same thread that attach "report.pdf" would
@@ -107,11 +147,8 @@ export async function downloadSlackFiles(files, botToken, { root, sub, maxBytes 
         saved.push({ name: f.name, skipped: `HTTP ${res.status}` });
         continue;
       }
-      // Slack hands back an HTML sign-in/redirect page (not the file bytes) when the bot lacks
-      // the files:read scope or can't access the file. Detect it via content-type AND a byte
-      // sniff of the first chunk so we never save bogus markup and let the model "read" a web page.
-      const ct = res.headers.get("content-type") || "";
-      if (ct.includes("text/html")) {
+      // Fetch follows Slack redirects; an authentication landing URL is never a file.
+      if (isSlackAuthUrl(res.url)) {
         await res.body?.cancel?.().catch(() => {});
         saved.push({ name: f.name, skipped: HTML_HEAD });
         continue;
@@ -119,17 +156,8 @@ export async function downloadSlackFiles(files, botToken, { root, sub, maxBytes 
       const safeName = attachmentFileName(f);
       destDir ||= await ensureRealDir(root, "uploads", sub);
       const dest = path.join(destDir, safeName);
-      const { bytes } = await writeStreamNoFollow(dest, res, {
-        maxBytes,
-        inspect(head) {
-          const text = head.toString("latin1").trimStart().toLowerCase();
-          if (text.startsWith("<!doctype") || text.startsWith("<html")) {
-            const err = new Error(HTML_HEAD);
-            err.code = "EHTMLBODY";
-            throw err;
-          }
-        },
-      });
+      const source = res.body?.pipeThrough ? inspectSlackDownload(res) : res;
+      const { bytes } = await writeStreamNoFollow(dest, source, { maxBytes });
       if (bytes > 0) {
         const history = await ensureRealDir(root, "uploads", sub, ".downloaded");
         await writeNoFollow(path.join(history, safeName), "delivered\n");

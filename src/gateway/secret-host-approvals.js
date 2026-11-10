@@ -20,8 +20,24 @@ import { engineHostsFor } from "./egress/engine-hosts.js";
 import { hostMatches, normalizeHost } from "./egress/rules.js";
 import { isValidRuleHost } from "./egress/catalog-rules.js";
 import { liveTurnIn } from "./egress/liveness.js";
+import { getDb, fromJson } from "../db/index.js";
 
 export const SECRET_HOST_ACTION = "secret_host";
+
+// Stop/clear must retire accepted wakeups even before the inbox can dispatch them (offline or
+// capacity-bound). Running handlers are also aborted through the ordinary per-thread queue.
+export function cancelSecretHostContinuations(channelId, threadKey = null) {
+  const db = getDb();
+  const rows = db.prepare("SELECT event_id, data FROM inbound_events WHERE namespace = 'secret-host-continuation' AND conversation_id = ? AND status IN ('queued', 'running', 'interrupted', 'notice_failed')").all(channelId);
+  const threads = new Set();
+  for (const row of rows) {
+    const action = fromJson(row.data, {});
+    if (threadKey && action.threadKey !== threadKey) continue;
+    db.prepare("UPDATE inbound_events SET status = 'done', data = '{}' WHERE namespace = 'secret-host-continuation' AND event_id = ?").run(row.event_id);
+    if (action.threadKey) threads.add(action.threadKey);
+  }
+  return [...threads];
+}
 // The approval tier a secret's scope carries (mirrored by gateway-server.js secretCardTier).
 export function secretHostTier(scope) {
   return scope === "organization" ? "admin" : scope === "personal" ? "owner" : "";
@@ -123,7 +139,7 @@ export async function requestSecretHostApprovals(refusals, { channelId, slug, ho
 }
 
 // The durable executor (server.js setDurableApprovalExecutor) for a SECRET_HOST_ACTION row.
-export async function executeSecretHostApproval(record) {
+export async function executeSecretHostApproval(record, { enqueueContinuation } = {}) {
   const action = record?.action;
   try {
     if (record?.status !== "executing" || action?.kind !== SECRET_HOST_ACTION || action.channelId !== record.channelId || action.slug !== record.slug
@@ -151,7 +167,15 @@ export async function executeSecretHostApproval(record) {
     if (!entry) throw new Error(`${action.secretName} no longer exists.`);
     if ((Number(entry.setAt) || 0) !== action.entrySetAt) throw new Error(`${action.secretName} was changed after this approval was requested. Retry the request to get a fresh card.`);
     await patchSecretEntry({ scope: action.scope, slug: action.slug, userId: action.ownerId, name: action.secretName, addApprovedHost: host });
-    return { ok: true, completed: true, label: "secret server approval", message: `${action.secretName} may now be used on ${host}. Retry the request.` };
+    let continuation = "Retry the request.";
+    if (enqueueContinuation && action.authorId && action.threadKey) {
+      try {
+        if (enqueueContinuation(record)) continuation = "The agent will continue automatically in this thread.";
+      } catch {
+        continuation = "The server was approved, but automatic continuation could not be queued. Say continue to retry.";
+      }
+    }
+    return { ok: true, completed: true, label: "secret server approval", message: `${action.secretName} may now be used on ${host}. ${continuation}` };
   } catch (error) {
     return { ok: false, error: error.message };
   }

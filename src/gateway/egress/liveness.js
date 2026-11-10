@@ -20,6 +20,13 @@ import { liveSshSessions } from "../ssh-broker.js";
 export const LIVE_KINDS = Object.freeze(["turn", "job", "ssh", "review"]);
 
 const live = new Map(); // key → { channelId, ownerId, kind, id, since }
+// channel → when its LAST live entry was released. The run-capability check (capability-liveness.js)
+// allows a short grace after that moment: the engine's final tool call and the daemon's release of
+// the turn are not ordered by a lock, so a call that was in flight when the turn ended must still
+// land. Bounded: pruned on read, never consulted by the egress proxy (a swap after the turn is the
+// thing the proxy exists to refuse).
+const recentlyReleased = new Map();
+const RECENT_KEEP_MS = 10 * 60 * 1000;
 let sshSource = () => liveSshSessions();
 
 // → release(). Idempotent: a second call does nothing, so a finally block and an error path may
@@ -35,7 +42,23 @@ export function markLive({ channelId, ownerId = "", kind, id = "" } = {}) {
     if (released) return;
     released = true;
     live.delete(key);
+    recentlyReleased.set(channel, Date.now());
+    if (recentlyReleased.size > 512) {
+      const cutoff = Date.now() - RECENT_KEEP_MS;
+      for (const [id, at] of recentlyReleased) if (at < cutoff) recentlyReleased.delete(id);
+    }
   };
+}
+
+// When the channel's most recent live entry was released (ms epoch), or 0 when none was released
+// within the retention window. Read by the run-capability liveness check only.
+export function lastReleasedAt(channelId) {
+  const at = recentlyReleased.get(String(channelId || "")) || 0;
+  if (at && Date.now() - at > RECENT_KEEP_MS) {
+    recentlyReleased.delete(String(channelId || ""));
+    return 0;
+  }
+  return at;
 }
 
 function sshSessionsIn(channelId) {
@@ -100,5 +123,6 @@ export function __setSshSessionSource(fn) {
 }
 export function __resetLiveness() {
   live.clear();
+  recentlyReleased.clear();
   sshSource = () => liveSshSessions();
 }

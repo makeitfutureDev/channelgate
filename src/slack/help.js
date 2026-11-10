@@ -3,6 +3,7 @@
 export const HELP_TEXT =
   "*How to use me*\n" +
   "In a DM, just send your request. In a channel, write `@agent your request`; keep follow-ups in the thread and @mention me again there. For typed commands in a channel, use forms such as `@agent /help`. The registered `/menu`, `/secrets`, `/model`, `/status`, and `/stop` Slack commands run at conversation top level without a mention.\n\n" +
+  "• *Ask another channel's agent:* `@agent ask #sales what is the Q4 pipeline?` sends your exact text to that channel's agent; it answers in a thread there and the reply comes back here. You must be a member of both channels.\n" +
   "• *Act on a message:* react with a configured activation emoji (default 🤖) to a new top-level message or a message in one of my threads. Administrators choose Slack’s own list in Settings → Agent defaults → Message activation reactions. In another bot's thread, @mention me instead.\n" +
   "• *Voice prompts:* attach a voice clip. In channels, @mention me or react 🤖 to start; DMs keep their normal behavior. When enabled and installed, audio is transcribed locally with Whisper large-v3-turbo; otherwise I use a completed Slack transcript. If none exists, click *Generate transcript* and trigger me again. Typed text stays as instructions, and raw audio is never sent to Claude or Codex.\n" +
   "• *Control a live run:* press Slack's native *Stop* button on the thread, send `@agent stop` in a channel thread (a bare `stop` needs no mention only in a DM), or react 🛑 to stop just that run. `/stop` at top level stops every active run in this channel. If you send another message while I work, choose *Steer Conversation*, *Add to Queue*, or *Cancel Request*; the choice card disappears after a valid selection. `/next <message>` queues directly without asking.\n" +
@@ -22,7 +23,7 @@ export const HELP_TEXT =
   "• `/menu` — show only the Files, Variables, and Settings buttons; use `@agent /menu` inside a channel thread\n" +
   "• `/help` — show this guide\n" +
   "• `/clear` — start a fresh session in this thread\n" +
-  "• `/fork [:model-shortcut] <new message>` — branch from a completed Claude or Codex container session into a linked new Slack thread; same-engine shortcuts fork the session, other-engine shortcuts start a new session with Slack history (after the current turn finishes)\n" +
+  "• `/fork [:model-shortcut] <new message>` — branch from a completed Claude or Codex container session into a linked new Slack thread; same-engine shortcuts fork the session, other-engine shortcuts start a new session with Slack history (busy threads queue the fork automatically)\n" +
   "• `/delete` — delete this thread's messages (admin; irreversible—everyone's if an admin user token is set in Settings, otherwise mine only)\n" +
   "• `/secrets` — open Variables for this channel, your personal scope, and (admins) the organization. Listings show names and masked values; add/replace follows your permissions. Channel values override personal values, then organization values. Hidden secrets work only on approved servers; a new server can require an admin approval. Passwords and connection strings stay usable by programs. Stored values are never shown in this console\n" +
   "• `/context` — token usage of the last turn\n" +
@@ -33,6 +34,6 @@ export const HELP_TEXT =
   "• `/mode [read|worker|admin]` — show or set this channel's base mode; `bash` is an alias for Worker. Managers may change Read-only/Worker; Admin requires an organization admin. Set Auto and Lean separately in Settings\n" +
   "• `/sudo [on|off|status]` — typed in-thread, organization-admin-only direct host execution; use `@agent /sudo` in channels; `/sudo` means on\n" +
   "• `/next <message>` — queue after the current run without showing the steer-or-queue choice\n" +
-  "• `/status` — show active work and schedules in this conversation (top-level Slack command)\n" +
+  "• `/status` (or `/status-cg` where an app registers it under that name) — show active work and schedules in this conversation (top-level Slack command)\n" +
   "• `/stop` — stop every active run in this conversation (top-level; for one thread use `@agent stop`, `stop` in a DM, or 🛑)\n" +
   "• `/update` — update the gateway to the latest version and restart (admin)";

@@ -95,10 +95,24 @@ test("pins: the image installs the same mcp-remote the daemon depends on, and ev
   }
   assert.equal(versions.whisperModel, "small");
   assert.match(String(versions.imageSpecVersion), /^\d+\.\d+\.\d+$/);
-  for (const arg of ["UID", "GID", "CLAUDE_VERSION", "CODEX_VERSION", "MCP_REMOTE_VERSION", "VERCEL_VERSION", "SUPABASE_VERSION", "OPENCV_VERSION", "FASTER_WHISPER_VERSION", "WHISPER_MODEL", "PLAYWRIGHT_VERSION", "AGENT_BROWSER_VERSION", "VSCODE_SERVERS", "IMAGE_SPEC_VERSION"]) {
+  for (const arg of ["UID", "GID", "CLAUDE_VERSION", "CODEX_VERSION", "MCP_REMOTE_VERSION", "MAKE_CLI_VERSION", "VERCEL_VERSION", "SUPABASE_VERSION", "OPENCV_VERSION", "FASTER_WHISPER_VERSION", "WHISPER_MODEL", "PLAYWRIGHT_VERSION", "AGENT_BROWSER_VERSION", "VSCODE_SERVERS", "IMAGE_SPEC_VERSION"]) {
     assert.ok(new RegExp(`ARG ${arg}\\b`).test(containerfile), `containers/Containerfile is missing ARG ${arg}`);
     assert.ok(buildScript.includes(`${arg}=`), `scripts/build-image.mjs never passes --build-arg ${arg}`);
   }
+});
+
+test("the default channel image uses the Node 24 LTS base declared by its pins", () => {
+  assert.equal(versions.base, "node:24-bookworm-slim");
+  assert.match(containerfile, new RegExp(`^FROM ${versions.base}$`, "m"));
+});
+
+test("every channel image includes the pinned official Make CLI before switching to the agent user", () => {
+  assert.match(versions.npm["@makehq/cli"], /^\d+\.\d+\.\d+$/);
+  assert.match(buildScript, /MAKE_CLI_VERSION=\$\{npmPins\["@makehq\/cli"\]\}/);
+  const install = containerfile.indexOf('"@makehq/cli@${MAKE_CLI_VERSION}"');
+  assert.ok(install > containerfile.indexOf("RUN npm install -g --no-fund --no-audit"));
+  assert.ok(install < containerfile.indexOf("USER agent"), "the shared CLI must be root-owned");
+  assert.doesNotMatch(containerfile, /make-cli login|MAKE_API_KEY=/, "the image never embeds or inherits a login");
 });
 
 // Shared VS Code servers (spec 1.5.0). Every channel someone opened an editor in used to hold its
@@ -448,4 +462,10 @@ test("cg-init removes a pre-relay Codex login (one with a refresh token) under t
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
+});
+
+
+test("fresh HOME has agent-owned XDG state parents for CLI logins", () => {
+  const ownership = containerfile.indexOf('RUN install -d -o agent -g agent -m 0755 /home/agent/.local /home/agent/.local/share');
+  assert.ok(ownership >= 0 && ownership < containerfile.indexOf('\nUSER agent\n'));
 });

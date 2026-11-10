@@ -1,3 +1,4 @@
+import { enterpriseFeatureEnabled, requireEnterpriseFeature } from "../ee/feature-entitlements.js";
 // The catalog's own MCP endpoint (`POST /mcp/skills`, Streamable HTTP, stateless) and the GitHub
 // webhook (`POST /api/skills/webhook/github`). Both sit OUTSIDE the admin session: the MCP
 // endpoint authenticates a bearer ACCESS TOKEN minted in the admin UI (skills/tokens.js — hashed,
@@ -13,6 +14,8 @@ import { z } from "zod";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { verifyAccessToken, tokenHasScope } from "../gateway/skills/tokens.js";
+import { resolveTokenScope } from "../gateway/skills/token-scope.js";
+import { clientKey, createLoginLimiter } from "./security.js";
 import { getSkill, listSkills, listCategories, skillBundle, revisionFile, revisionFiles, effectiveRevisionFor, listSources } from "../gateway/skills/catalog.js";
 import { fileToApi } from "../gateway/skills/files.js";
 import { listTemplateSummaries } from "../gateway/skills/templates.js";
@@ -45,11 +48,21 @@ function summary(skill) {
   };
 }
 
-// One McpServer per request, scoped to the token that authenticated it.
-export function buildSkillsMcpServer(token) {
+// One McpServer per request, scoped to the token that authenticated it and to what that token
+// may reach (skills/token-scope.js): a catalog token sees the library and never a personal skill;
+// a user token is the person who minted it, resolved live.
+export function buildSkillsMcpServer(token, reach = null) {
+  requireEnterpriseFeature("skillCatalogMcp");
   const server = new McpServer({ name: "channelgate-skills", version: "1.0.0" });
   const need = (scope) => (tokenHasScope(token, scope) ? null : text(`This token lacks the "${scope}" scope.`));
-  const viewer = `token:${token.id}`;
+  const scope = reach || { kind: "catalog", ownerId: "", admin: false, viewer: "", canRead: (s) => Boolean(s) && !s.deleted && s.visibility !== "personal" && Boolean(s.discoverable), canExport: (s) => Boolean(s) && !s.deleted && s.visibility !== "personal", canManage: (s) => Boolean(s) && !s.deleted && s.visibility !== "personal", createOptions: () => ({ personal: false, channelId: "" }) };
+  // Who authored what through this token: a user token acts as its owner (their personal skills
+  // are theirs, their proposals carry their name); a catalog token is itself.
+  const viewer = scope.kind === "user" ? scope.ownerId : `token:${token.id}`;
+  const readable = (key) => {
+    const skill = getSkill(key);
+    return skill && scope.canRead(skill) ? skill : null;
+  };
 
   server.registerTool(
     "library_search_skills",
@@ -60,7 +73,7 @@ export function buildSkillsMcpServer(token) {
       const sources = listSources();
       const sourceRow = source ? sources.find((s) => String(s.id) === source || s.label.toLowerCase() === source.toLowerCase()) : null;
       if (source && !sourceRow) return json({ total: 0, count: 0, offset, has_more: false, next_offset: null, items: [], facets: { categories: [], sources: sources.map((s) => ({ id: s.id, name: s.label || s.url })) } });
-      const all = listSkills({ query, category, sourceId: sourceRow?.id ?? null, viewer, discoverable: true }).map(summary);
+      const all = listSkills({ query, category, sourceId: sourceRow?.id ?? null, viewer: scope.viewer, ...(scope.kind === "user" ? {} : { discoverable: true }) }).filter((skill) => scope.canRead(skill)).map(summary);
       const items = all.slice(offset, offset + limit);
       return json({ total: all.length, count: items.length, offset, has_more: offset + items.length < all.length, next_offset: offset + items.length < all.length ? offset + items.length : null, items, facets: { categories: listCategories().map((c) => ({ name: c.category, count: c.count })), sources: sources.map((s) => ({ id: s.id, name: s.label || s.url })) } });
     },
@@ -72,8 +85,8 @@ export function buildSkillsMcpServer(token) {
     async ({ name }) => {
       const denied = need("read");
       if (denied) return denied;
-      const skill = getSkill(name);
-      if (!skill || skill.deleted || !skill.discoverable || (skill.visibility === "personal")) return text(`Unknown skill "${name}".`);
+      const skill = readable(name);
+      if (!skill) return text(`Unknown skill "${name}".`);
       const rev = effectiveRevisionFor(skill);
       return json({ ...summary(skill), revision: rev?.revisionNo ?? null, files: rev ? revisionFiles(rev.id).map((f) => f.path) : [] });
     },
@@ -85,8 +98,8 @@ export function buildSkillsMcpServer(token) {
     async ({ name, file = "SKILL.md" }) => {
       const denied = need("read");
       if (denied) return denied;
-      const skill = getSkill(name);
-      if (!skill || skill.deleted || !skill.discoverable || skill.visibility === "personal") return text(`Unknown skill "${name}".`);
+      const skill = readable(name);
+      if (!skill) return text(`Unknown skill "${name}".`);
       const bundle = skillBundle(skill);
       if (!bundle) return text(`"${skill.slug}" has no approved revision yet.`);
       const f = revisionFile(bundle.revision.id, file);
@@ -109,7 +122,7 @@ export function buildSkillsMcpServer(token) {
   server.registerTool(
     "library_whoami",
     { description: "The access token this session authenticated with and its scopes.", inputSchema: {} },
-    async () => json({ authenticated: true, token: { id: token.id, name: token.name, scopes: token.scopes, created_at: token.createdAt } }),
+    async () => json({ authenticated: true, token: { id: token.id, name: token.name, kind: scope.kind, owner: scope.kind === "user" ? scope.ownerId : null, admin: scope.kind === "user" ? scope.admin : undefined, scopes: token.scopes, created_at: token.createdAt } }),
   );
 
   const FILE_INPUT = z.object({ path: z.string(), content: z.string(), encoding: z.enum(["utf8", "base64"]).optional() });
@@ -120,6 +133,7 @@ export function buildSkillsMcpServer(token) {
     async ({ name, note, files = [] }) => {
       const denied = need("propose");
       if (denied) return denied;
+      if (!readable(name)) return text(`Unknown skill "${name}".`);
       try {
         const { proposal } = proposeSkillChange({ skill: name, kind: files.length ? "change" : "feedback", files, note, proposedBy: viewer });
         return json({ ok: true, proposal_id: proposal.id, status: proposal.status });
@@ -131,12 +145,13 @@ export function buildSkillsMcpServer(token) {
 
   server.registerTool(
     "library_create_skill",
-    { description: "Create a new local skill in the catalog from files (SKILL.md required).", inputSchema: { slug: z.string().optional(), files: z.array(FILE_INPUT).min(1), note: z.string().optional() } },
-    async ({ slug = "", files, note = "" }) => {
+    { description: "Create a new gateway-owned skill in the catalog from files (SKILL.md required). A catalog token creates a library skill; a user token creates a PERSONAL skill by default, a channel skill when channel_id names a channel that admits you, an organization skill only for an admin (organization: true).", inputSchema: { slug: z.string().optional(), files: z.array(FILE_INPUT).min(1), note: z.string().optional(), channel_id: z.string().optional(), organization: z.boolean().optional() } },
+    async ({ slug = "", files, note = "", channel_id = "", organization = false }) => {
       const denied = need("manage");
       if (denied) return denied;
       try {
-        const r = await createLocalSkill({ slug, files, note, createdBy: viewer });
+        const where = scope.createOptions({ channelId: channel_id, organization });
+        const r = await createLocalSkill({ slug, files, note, createdBy: viewer, personal: where.personal, channelId: where.channelId });
         return json({ ok: true, name: r.skill.slug, revision: r.revision.revisionNo, published: r.published?.published || false });
       } catch (err) {
         return text(`Could not create the skill: ${err?.message || err}`);
@@ -146,12 +161,13 @@ export function buildSkillsMcpServer(token) {
 
   server.registerTool(
     "library_update_skill",
-    { description: "Publish a new revision of a local skill from partial files (unnamed files are kept).", inputSchema: { name: z.string(), files: z.array(FILE_INPUT).min(1), remove: z.array(z.string()).optional(), note: z.string().optional() } },
+    { description: "Publish a new revision of a gateway-owned skill or a skill in the gateway's writable publishing repository from partial files (unnamed files are kept).", inputSchema: { name: z.string(), files: z.array(FILE_INPUT).min(1), remove: z.array(z.string()).optional(), note: z.string().optional() } },
     async ({ name, files, remove = [], note = "" }) => {
       const denied = need("manage");
       if (denied) return denied;
-      const skill = getSkill(name);
-      if (!skill || skill.deleted) return text(`Unknown skill "${name}".`);
+      const skill = readable(name);
+      if (!skill) return text(`Unknown skill "${name}".`);
+      if (!scope.canManage(skill)) return text(`This token cannot change "${skill.slug}": ${skill.visibility === "personal" ? "a personal skill is its author's" : skill.channelScope ? "a channel skill is its members'" : "organization skills are changed by admins"} — propose the change with library_suggest_skill_change.`);
       try {
         const r = await updateLocalSkill({ skill, files, remove, note, createdBy: viewer });
         return json({ ok: true, name: skill.slug, changed: r.changed, revision: r.revision?.revisionNo ?? null, published: r.published?.published || false });
@@ -169,7 +185,9 @@ export function buildSkillsMcpServer(token) {
       const denied = need("sync");
       if (denied) return denied;
       const items = [];
-      for (const skill of listSkills({ viewer: "" })) {
+      // The library only: `viewer: ""` lists no personal skill, and a user token (never `sync`)
+      // cannot get here at all.
+      for (const skill of listSkills({ viewer: "" }).filter((skill) => scope.canExport(skill))) {
         const rev = effectiveRevisionFor(skill);
         if (!rev) continue;
         items.push({ slug: skill.slug, name: skill.name, description: skill.description, revision: rev.revisionNo, hash: rev.contentHash, version: rev.version, category: skill.category, source_path: skill.sourcePath });
@@ -185,7 +203,7 @@ export function buildSkillsMcpServer(token) {
       const denied = need("sync");
       if (denied) return denied;
       const skill = getSkill(name);
-      if (!skill || skill.deleted || skill.visibility === "personal") return text(`Unknown skill "${name}".`);
+      if (!skill || !scope.canExport(skill)) return text(`Unknown skill "${name}".`);
       const bundle = skillBundle(skill);
       if (!bundle) return text(`"${skill.slug}" has no approved revision.`);
       return json({ slug: skill.slug, revision: bundle.revision.revisionNo, hash: bundle.revision.contentHash, files: bundle.files.map((f) => ({ path: f.path, content: f.content.toString("base64"), executable: Boolean(f.executable) })) });
@@ -195,15 +213,51 @@ export function buildSkillsMcpServer(token) {
   return server;
 }
 
+// Bearer verification runs BEFORE the body is parsed (the endpoint accepts 20 MB), so an
+// unauthenticated caller costs a hash lookup and nothing more; bad tokens back off per client with
+// the same limiter the login uses. A USER token whose owner can no longer use the catalog
+// (de-approved, deleted) answers 403 with the reason instead of acting.
+export function skillsMcpAuthGate({ limiter = createLoginLimiter({ freeAttempts: 5, baseDelayMs: 1_000, maxDelayMs: 60_000 }) } = {}) {
+  return async (req, res, next) => {
+    if (!enterpriseFeatureEnabled("skillCatalogMcp")) return res.status(403).json({ error: "Skill catalog MCP requires Enterprise.", code: "enterprise_required" });
+    const key = clientKey(req);
+    const wait = limiter.retryAfterMs(key);
+    if (wait > 0) {
+      res.setHeader("Retry-After", String(Math.ceil(wait / 1000)));
+      return res.status(429).json({ error: "too many invalid tokens; try again later" });
+    }
+    const token = verifyAccessToken(bearer(req));
+    if (!token) {
+      limiter.recordFailure(key);
+      return res.status(401).json({ error: "a valid skills access token is required (Authorization: Bearer …)" });
+    }
+    const reach = await resolveTokenScope(token);
+    if (!reach) {
+      limiter.recordFailure(key);
+      return res.status(403).json({ error: "this user token's owner can no longer use the catalog (not an approved user); the token is dead" });
+    }
+    limiter.recordSuccess(key);
+    req.skillsToken = token;
+    req.skillsScope = reach;
+    next();
+  };
+}
+
 // Express handler for the MCP endpoint. Stateless: one server + transport per request.
 export function skillsMcpHandler() {
   return async (req, res) => {
-    const token = verifyAccessToken(bearer(req));
+    if (!enterpriseFeatureEnabled("skillCatalogMcp")) return res.status(403).json({ error: "Skill catalog MCP requires Enterprise.", code: "enterprise_required" });
+    const token = req.skillsToken || verifyAccessToken(bearer(req));
     if (!token) {
       res.status(401).json({ error: "a valid skills access token is required (Authorization: Bearer …)" });
       return;
     }
-    const server = buildSkillsMcpServer(token);
+    const reach = req.skillsScope || (await resolveTokenScope(token));
+    if (!reach) {
+      res.status(403).json({ error: "this user token's owner can no longer use the catalog (not an approved user); the token is dead" });
+      return;
+    }
+    const server = buildSkillsMcpServer(token, reach);
     const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined, enableJsonResponse: true });
     res.on("close", () => {
       transport.close().catch(() => {});
@@ -255,7 +309,7 @@ export function skillsWebhookHandler({ triggerSync }) {
 // Mount both routes on an Express app BEFORE the admin auth middleware.
 export function mountSkillsPublicRoutes(app, { triggerSync }) {
   app.post("/api/skills/webhook/github", express.raw({ type: "*/*", limit: "2mb" }), skillsWebhookHandler({ triggerSync }));
-  app.post("/mcp/skills", express.json({ limit: "20mb" }), skillsMcpHandler());
+  app.post("/mcp/skills", skillsMcpAuthGate(), express.json({ limit: "20mb" }), skillsMcpHandler());
   app.get("/mcp/skills", (_req, res) => res.status(405).json({ error: "POST only (stateless Streamable HTTP)" }));
   app.delete("/mcp/skills", (_req, res) => res.status(405).json({ error: "stateless endpoint" }));
 }

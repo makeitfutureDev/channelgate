@@ -5,7 +5,7 @@
 // key issued by the Licensor. See src/ee/LICENSE-EE.md and LICENSE.md §3.2 / §4.5.
 // ─────────────────────────────────────────────────────────────────────────────────────────────
 //
-// The two enforcement points, and the usage report.
+// Channel admission, monthly channel run caps, per-channel thread admission, and usage reporting.
 //
 //  (a) CONVERSATION ADMISSION. For a `conversations` limit of N, the first N distinct conversation
 //      ids that receive an AI message in the current UTC month are that month's allowed set. The
@@ -46,29 +46,29 @@ export const WARN_AT = 0.8;
 export function conversationLimitNotice({ limit, licensed, site = signupUrl() }) {
   if (!licensed) {
     return (
-      `This ChannelGate install is limited to ${limit} conversation${limit === 1 ? "" : "s"} without a license key — ` +
-      `get a free key at ${site} for up to 20 registered channels and 20 users.`
+      `This ChannelGate install is limited to ${limit} active channel${limit === 1 ? "" : "s"} without a license key — ` +
+      `get a free key at ${site} for up to 10 registered channels and 10 users.`
     );
   }
   return (
-    `This ChannelGate license covers ${limit} conversation${limit === 1 ? "" : "s"} per month and this month's ` +
-    `allowance is already in use by other conversations — raise the limit at ${site}.`
+    `This ChannelGate license covers ${limit} active channel${limit === 1 ? "" : "s"} per month and this month's ` +
+    `allowance is already in use by other channels — raise the limit at ${site}.`
   );
 }
 
 export function monthlyCapNotice({ cap, month, licensed, site = signupUrl() }) {
   return (
-    `This conversation has used all ${cap} AI messages for ${month} (UTC) on this ChannelGate install. ` +
+    `This channel has used all ${cap} AI messages for ${month} (UTC) on this ChannelGate install. ` +
     `The counter resets at the start of the next UTC month` +
     (licensed
       ? ` — an Enterprise License removes the limit: ${site}.`
-      : ` — a free key at ${site} allows up to 20 registered channels and 20 users, and an Enterprise License removes these limits.`)
+      : ` — a free key at ${site} allows up to 10 registered channels and 10 users, and an Enterprise License removes these limits.`)
   );
 }
 
 export function warningNotice({ used, cap, month }) {
   return (
-    `⚠️ _Heads up: this conversation has used ${used} of its ${cap} AI messages for ${month} (UTC). ` +
+    `⚠️ _Heads up: this channel has used ${used} of its ${cap} AI messages for ${month} (UTC). ` +
     `At the limit ChannelGate replies with a notice instead of starting a run._`
   );
 }
@@ -98,13 +98,21 @@ function ensureRow(month, conversationId, ts) {
     .run(month, conversationId, ts, ts);
 }
 
-// Read-only view for the admin card and the MCP tool: this month's conversations, busiest first.
+export function threadLimitNotice({ limit, month, site = signupUrl() }) {
+  return `This channel has reached its limit of ${limit} active conversation threads for ${month} (UTC). ` +
+    `Existing threads remain available; new threads become available next UTC month. An Enterprise License removes this limit: ${site}.`;
+}
+
+// Read-only view for the admin card and MCP tool: monthly channel usage, busiest first.
 export function conversationUsage({ month = utcMonth(), limit = 20 } = {}) {
   const rows = getDb()
-    .prepare("SELECT conversation_id, runs, admitted, warned, first_ts, last_ts FROM license_usage WHERE month = ? ORDER BY runs DESC, conversation_id ASC LIMIT ?")
+    .prepare(`SELECT conversation_id, runs, admitted, warned, first_ts, last_ts,
+      (SELECT COUNT(*) FROM license_thread_usage t WHERE t.month = license_usage.month AND t.channel_id = license_usage.conversation_id) AS active_conversations
+      FROM license_usage WHERE month = ? ORDER BY runs DESC, conversation_id ASC LIMIT ?`)
     .all(month, Math.max(1, Math.min(500, Number(limit) || 20)));
   return rows.map((r) => ({
     conversationId: r.conversation_id,
+    activeConversations: Number(r.active_conversations) || 0,
     runs: Number(r.runs) || 0,
     admitted: Boolean(r.admitted),
     warned: Boolean(r.warned),
@@ -117,16 +125,27 @@ export function usageTotals({ month = utcMonth() } = {}) {
   const r = getDb()
     .prepare("SELECT COUNT(*) AS conversations, COALESCE(SUM(runs),0) AS runs, COALESCE(SUM(admitted),0) AS admitted FROM license_usage WHERE month = ?")
     .get(month);
-  return { month, conversations: Number(r?.conversations || 0), runs: Number(r?.runs || 0), admitted: Number(r?.admitted || 0) };
+  const activeConversations = Number(getDb().prepare("SELECT COUNT(*) AS n FROM license_thread_usage WHERE month = ?").get(month).n);
+  return { month, activeConversations, conversations: Number(r?.conversations || 0), runs: Number(r?.runs || 0), admitted: Number(r?.admitted || 0) };
 }
 
 // Test seam / operator escape hatch: forget a month's ledger.
 export function resetLicenseUsage({ month = "" } = {}) {
-  if (month) getDb().prepare("DELETE FROM license_usage WHERE month = ?").run(month);
-  else getDb().exec("DELETE FROM license_usage");
+  const db = getDb();
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    for (const table of ["license_usage", "license_thread_usage"]) {
+      if (month) db.prepare(`DELETE FROM ${table} WHERE month = ?`).run(month);
+      else db.exec(`DELETE FROM ${table}`);
+    }
+    db.exec("COMMIT");
+  } catch (error) {
+    db.exec("ROLLBACK");
+    throw error;
+  }
 }
 
-// ── (a) + (b): the admission gate ─────────────────────────────────────────────────────────────
+// ── Channel, run, and thread admission gate ─────────────────────────────────────────────────────────────
 // Called from the run orchestrator's admission path, before ANY side effect of the turn (folder
 // provisioning, session mint, spawn). Returns:
 //
@@ -136,8 +155,9 @@ export function resetLicenseUsage({ month = "" } = {}) {
 // The whole read-modify-write runs inside one IMMEDIATE transaction: the daemon and the spawned
 // MCP server share this database, and two turns admitted concurrently from the same conversation
 // must not both read `runs = 499`.
-export function licenseAdmission({ conversationId, origin = "", now = Date.now(), toolset = process.env.CG_TOOLSET } = {}) {
+export function licenseAdmission({ conversationId, threadKey = "", origin = "", now = Date.now(), toolset = process.env.CG_TOOLSET } = {}) {
   const id = String(conversationId || "");
+  const thread = String(threadKey ?? "");
   const month = utcMonth(now);
   const limits = getEffectiveLimits(now);
   const licensed = isLicensed(now);
@@ -188,6 +208,21 @@ export function licenseAdmission({ conversationId, origin = "", now = Date.now()
         runs: used,
         notice: degradeNotice(monthlyCapNotice({ cap, month, licensed }), id),
       };
+    }
+
+    // A channel's run cap is checked first: a refused run must never claim a thread slot.
+    // Missing legacy/direct caller identities share one stable slot, never one slot per run.
+    const existingThread = db.prepare("SELECT 1 FROM license_thread_usage WHERE month = ? AND channel_id = ? AND thread_key = ?").get(month, id, thread);
+    if (!existingThread) {
+      const threadLimit = limits.conversationsPerChannelPerMonth;
+      const threads = Number(db.prepare("SELECT COUNT(*) AS n FROM license_thread_usage WHERE month = ? AND channel_id = ?").get(month, id).n);
+      if (threadLimit !== null && threads >= threadLimit) {
+        db.exec("COMMIT");
+        return { ...base, allowed: false, reason: "channel_conversation_limit", runs: used,
+          notice: degradeNotice(threadLimitNotice({ limit: threadLimit, month }), id) };
+      }
+      // Enterprise admissions are tracked too, so existing threads survive a later downgrade.
+      db.prepare("INSERT INTO license_thread_usage(month, channel_id, thread_key, first_ts) VALUES(?, ?, ?, ?)").run(month, id, thread, ts);
     }
 
     const runs = used + 1;

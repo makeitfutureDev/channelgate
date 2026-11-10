@@ -9,8 +9,20 @@ ensureTestEnv();
 
 test("company domain policy persists, previews safely and respects manual revocation in the browser", { skip: !process.env.CG_BROWSER_MODULE }, async t => {
   const { chromium } = await import(process.env.CG_BROWSER_MODULE);
+  const { createAdminAuthRouter } = await import("../src/web/admin-auth.js");
+  const { createAdminSession, authMiddleware } = await import("../src/web/auth.js");
+  const { ensureUserAdminAccount } = await import("../src/config/admin-accounts.js");
+  const { saveSettings } = await import("../src/config/settings.js");
+  const { hashPassword } = await import("../src/web/security.js");
   const { createAdminRouter } = await import("../src/web/routes/admin.js");
   const { setUser, getUser } = await import("../src/config/store.js");
+  saveSettings({ adminPassword: await hashPassword("disposable-auto-approval-browser-password") });
+  // Use a real linked administrator session for the shared admin shell's authentication gate.
+  // This already-approved fixture must never appear among the policy preview candidates.
+  await setUser("UBROWSERADMIN", { name: "Fixture administrator", isAdmin: true, approved: true });
+  const account = ensureUserAdminAccount("UBROWSERADMIN");
+  let sessionCookie;
+  createAdminSession({ headers: {} }, { setHeader: (_name, value) => { sessionCookie = value.split(";")[0]; } }, account);
   await setUser("UBROWSER1", { name: "Company member" });
   const slack = {
     snapshot: () => ({ connected: false, status: "off" }),
@@ -18,6 +30,8 @@ test("company domain policy persists, previews safely and respects manual revoca
   };
   const app = express();
   app.use(express.json());
+  app.use("/api/auth", createAdminAuthRouter());
+  app.use(authMiddleware);
   app.get("/api/skills", (_req, res) => res.json({ skills: [] }));
   app.get("/api/mcp/available", (_req, res) => res.json({ servers: [] }));
   app.get("/api/health", (_req, res) => res.json({ slack: slack.snapshot(), engines: {} }));
@@ -27,13 +41,16 @@ test("company domain policy persists, previews safely and respects manual revoca
   app.get("/users", (_req, res) => res.sendFile(path.join(publicDir, "index.html"), { dotfiles: "allow" }));
   const server = await new Promise(resolve => { const s = app.listen(0, "127.0.0.1", () => resolve(s)); });
   t.after(() => new Promise(resolve => { server.closeAllConnections(); server.close(resolve); }));
-  const browser = await chromium.launch({ headless: true, args: ["--no-sandbox"] });
+  const browser = await chromium.launch({ headless: true, ...(process.env.CG_BROWSER_EXECUTABLE ? { executablePath: process.env.CG_BROWSER_EXECUTABLE } : {}), args: ["--no-sandbox"] });
   t.after(() => browser.close());
   const page = await browser.newPage({ viewport: { width: 1440, height: 1000 } });
   page.setDefaultTimeout(12000);
   const errors = [];
   page.on("pageerror", error => errors.push(error.message));
-  await page.goto(`http://127.0.0.1:${server.address().port}/users`);
+  const base = `http://127.0.0.1:${server.address().port}`;
+  const [cookieName, cookieValue] = sessionCookie.split("=");
+  await page.context().addCookies([{ name: cookieName, value: cookieValue, url: base }]);
+  await page.goto(`${base}/users`);
   await page.locator('#users tr[data-id="UBROWSER1"]').waitFor();
   await page.locator("#user-auto-approval summary").click();
   await page.locator("#user-auto-approval-enabled").check();

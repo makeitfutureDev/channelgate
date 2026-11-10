@@ -9,7 +9,7 @@ description: >-
   headless MCP configuration, or server sizing and hosting-provider choice for a deployment. Do not
   use for ordinary work merely performed through ChannelGate.
 metadata:
-  version: 3.3.0
+  version: 3.6.0
   category: claude-code
   complexity: advanced
   tags: channelgate, containers, claude-code, codex, mcp, skills, memory, security
@@ -39,6 +39,13 @@ Read only the references needed for the request:
 - Finding an existing specialist channel agent: use the injected `gateway-usage` guide's
   `references/agent-directory.md` and `search_agents`. The live directory owns channel links,
   purposes and active shared skills; organization skills supply company-specific terminology.
+- Asking another channel's agent a question (agent mail): the guide's `references/agent-mail.md`
+  and `send_agent_message`, or the typed `@agent ask #channel <text>` directive (no card: the
+  person wrote the exact text). A message may only go where the requesting person is authorized
+  and a current member of both channels; nothing else gates it. The delivered turn runs as
+  `agent:<source>` with no rank and a reduced toolset; replies return to the asking thread as new
+  turns, each side's words shown under its channel persona, and the origin agent keeps the
+  conversation going with `continue_agent_conversation` until the result is in (10 messages max).
 - Persistent facts, standing rules, compact catalog recall, search/read, writes, or the background
   reviewer: [channel memory](references/channel-memory.md).
 - Background agents/jobs, schedules, attachments, chat-platform behavior, progress, or operational

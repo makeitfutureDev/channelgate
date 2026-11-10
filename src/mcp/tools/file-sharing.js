@@ -131,7 +131,9 @@ export function register(server, ctx) {
         // blaming the user's key.
         let opened;
         try {
-          opened = await openConfinedFile(workspaceFor(slug, meta), relative);
+          // The requester's own Composio account is the destination: lenient export policy (hidden
+          // and credential-shaped files never leave; a report or MEMORY.md may).
+          opened = await openConfinedFile(workspaceFor(slug, meta), relative, { protectedNames: "lenient" });
         } catch (error) {
           return text(`Staging refused: ${clean(error)}`);
         }

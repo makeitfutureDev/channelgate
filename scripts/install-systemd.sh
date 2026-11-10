@@ -1,6 +1,11 @@
 #!/usr/bin/env bash
 # Install a hardened system service. Run as root; the daemon itself runs as a dedicated account.
 set -euo pipefail
+START_SERVICE=1
+if [ "$#" -gt 0 ]; then
+  [ "$#" -eq 1 ] && [ "$1" = "--no-start" ] || { echo "Usage: install-systemd.sh [--no-start]"; exit 2; }
+  START_SERVICE=0
+fi
 [ "$(uname -s)" = "Linux" ] || { echo "systemd packaging is Linux-only"; exit 2; }
 [ "$(id -u)" -eq 0 ] || { echo "Run as root: sudo bash scripts/install-systemd.sh"; exit 1; }
 for required in systemctl loginctl podman newuidmap newgidmap runuser flock; do
@@ -137,6 +142,12 @@ if ! CG_RCLONE_INSTALL_DIR=/usr/local/bin bash "$APP_DIR/scripts/install-rclone.
   echo "⚠ rclone setup failed — the gateway can start, but Google Drive sync stays dormant."
   echo "  Install it manually and set its absolute path under Settings → Google Drive sync."
 fi
+# A system unit cannot exec into rootless scopes created under user@. Keep cgroups local
+# to Delegate=yes, without replacing an operator's containers.conf or touching container state.
+run_as_service "$NODE_BIN" "$APP_DIR/scripts/configure-service-podman.mjs" "$SERVICE_HOME"
+[ "$(run_as_service podman info --format '{{.Host.CgroupManager}}')" = "cgroupfs" ] || {
+  echo "Podman must use cgroupfs for this system service; check later containers.conf overrides."; exit 1;
+}
 run_as_service podman info --format '{{.Host.Security.Rootless}}' | grep -qx true || {
   echo "Rootless Podman is not usable as $SERVICE_USER"; exit 1;
 }
@@ -166,6 +177,7 @@ Group=$SERVICE_USER
 WorkingDirectory=$APP_DIR
 Environment=CHANNELGATE_DIR=$SERVICE_HOME
 Environment=HOME=$SERVICE_HOME
+Environment=NODE_ENV=production
 Environment=PATH=$SERVICE_PATH
 Environment=XDG_RUNTIME_DIR=$SERVICE_RUNTIME_DIR
 Environment=DBUS_SESSION_BUS_ADDRESS=unix:path=$SERVICE_RUNTIME_DIR/bus
@@ -181,10 +193,13 @@ UMask=0077
 # still independently applies no-new-privileges to all engine processes.
 NoNewPrivileges=false
 Delegate=yes
-PrivateTmp=true
+# Preserve private temporary backing across service restarts: Podman's pause namespace may
+# outlive the daemon. PrivateTmp deletes its backing paths on stop and breaks pasta later.
+PrivateTmp=false
+BindPaths=$SERVICE_HOME/service-tmp:/tmp $SERVICE_HOME/service-var-tmp:/var/tmp
 ProtectSystem=strict
 ProtectHome=read-only
-ReadWritePaths=$SERVICE_HOME $APP_DIR $SERVICE_RUNTIME_DIR
+ReadWritePaths=$SERVICE_HOME $APP_DIR $SERVICE_RUNTIME_DIR /tmp /var/tmp
 LockPersonality=true
 RestrictSUIDSGID=false
 
@@ -192,5 +207,8 @@ RestrictSUIDSGID=false
 WantedBy=multi-user.target
 EOF
 systemctl daemon-reload
-systemctl enable --now "$UNIT_NAME"
+systemctl enable "$UNIT_NAME"
+if [ "$START_SERVICE" -eq 1 ]; then systemctl start "$UNIT_NAME"; fi
+echo "Existing deployments: configuration changes do not recreate old containers or reset a stale pause namespace."
+echo "See docs/OPERATIONS.md (Rootless Podman system-service upgrades) for the idle maintenance procedure."
 echo "✅ Installed $UNIT_NAME as $SERVICE_USER (runtime $SERVICE_HOME)"

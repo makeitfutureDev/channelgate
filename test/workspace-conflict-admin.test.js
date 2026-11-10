@@ -91,7 +91,7 @@ test("folder browser reports existing assignments before the folder is selected"
   assert.deepEqual(clear.json.assignedConversations, []);
 });
 
-test("admin UI paints duplicate conversations and the folder warning in red", async () => {
+test("admin UI identifies linked conversations and explains inherited folder setup", async () => {
   const [html, client, css] = await Promise.all([
     readFile(new URL("../public/index.html", import.meta.url), "utf8"),
     readFile(new URL("../public/app.js", import.meta.url), "utf8"),
@@ -100,8 +100,8 @@ test("admin UI paints duplicate conversations and the folder warning in red", as
   assert.match(html, /id="fs-conflict" class="fs-conflict" role="alert" hidden/);
   assert.match(client, /workDirConflictSummary/);
   assert.match(client, /className = "list-item conv-item" \+ \(conflictText \? " workdir-conflict"/);
-  assert.match(client, /Already assigned to .*Selecting it here will share one working folder between conversations/);
+  assert.match(client, /Already assigned to .*Selecting it links this conversation to the existing folder setup/);
   assert.match(client, /if \(!\(await refreshConversationRows\(\)\)\) renderConvList\(\)/);
-  assert.match(css, /\.conv-item\.workdir-conflict[^}]*rgba\(229, 96, 77/);
-  assert.match(css, /\.fs-conflict[^}]*color: var\(--danger\)/);
+  assert.match(css, /\.conv-item\.workdir-conflict[^}]*rgba\(91, 155, 213/);
+  assert.match(css, /\.fs-conflict[^}]*color: var\(--accent\)/);
 });

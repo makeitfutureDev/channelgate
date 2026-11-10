@@ -21,7 +21,7 @@ test("all shipped engines are registered with the facts callers depend on", () =
   for (const id of ENGINE_IDS) {
     const a = adapterFor(id);
     assert.equal(a.id, id);
-    for (const field of ["label", "cli", "defaultModelKey", "mcpMetaKey", "instructionFile", "skillsDir", "mcpTransport"]) {
+    for (const field of ["label", "cli", "defaultModelKey", "defaultEffortKey", "mcpMetaKey", "instructionFile", "skillsDir", "mcpTransport"]) {
       assert.ok(a[field], `${id} must declare ${field}`);
     }
     assert.equal(typeof a.contextWindow, "number");

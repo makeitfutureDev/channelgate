@@ -90,6 +90,12 @@ test("the session is prepared like a turn: lockdown, MCP payload signed for THIS
   assert.equal(statSync(dir).mode & 0o777, 0o700);
   // The lockdown is the channel's own.
   assert.deepEqual(JSON.parse(readFileSync(path.join(dir, "settings.json"), "utf8")).slug, entry.slug);
+  const status = JSON.parse(readFileSync(path.join(dir, "settings.json"), "utf8")).statusLine;
+  assert.equal(status.type, "command");
+  assert.equal(statSync(path.join(dir, "statusline.mjs")).mode & 0o777, 0o600);
+  const footer = execFileSync("sh", ["-c", status.command], { input: JSON.stringify({ model: { display_name: "Opus" }, effort: { level: "high" }, context_window: { used_percentage: 23 } }), encoding: "utf8", env: { ...process.env, NO_COLOR: "1" } });
+  assert.match(footer, /Opus · effort high · ctx 23%/);
+  assert.match(readFileSync(path.join(dir, "codex-args.sh"), "utf8"), /tui.status_line=.*model-with-reasoning.*context-used/);
   // The MCP payload: the gateway control server over the image bridge with a capability naming the
   // developer, the ssh toolset, the ssh_session origin and a session-length TTL.
   const mcp = JSON.parse(readFileSync(path.join(dir, "mcp.json"), "utf8")).mcpServers;
@@ -413,6 +419,39 @@ test("a refresh releases the previous relay grant unless a running process holds
   await session.releaseSshSession({ target: t, entry: sessionEntry, user, cliBin: "podman", lastForUser: true, lastInChannel: false, log: { log() {} } }, { runCommand: async () => {} });
   assert.ok(!hasRemoteMcps(claudeSecond) && !hasRemoteMcps(codexSecond));
   stillRunning();
+});
+
+test("MCP grants and session notes stay in the user's runtime during an overlapping role change", async () => {
+  const { hasRemoteMcps, retainRemoteMcps } = await import("../src/mcp/remote-mcp-registry.js");
+  const sessionEntry = { slug: "ssh-scope-relays", channelId: "C_SCOPE_RELAYS" };
+  const project = { ...target("ssh-scope-project"), slug: sessionEntry.slug, runtimeScope: "project" };
+  const admin = { ...target("ssh-scope-admin"), slug: sessionEntry.slug, runtimeScope: "admin" };
+  const prepare = async (t) => {
+    const { deps } = fakes();
+    await session.prepareSshSession({ target: t, entry: sessionEntry, meta: {}, user, cliBin: "podman", log: { warn() {} } }, deps);
+    const dir = session.sshUserDir(t, user.id);
+    assert.ok(readFileSync(path.join(dir, "session.md"), "utf8").includes(`runtime/history scope is **${t.runtimeScope}**`));
+    const mcp = JSON.parse(readFileSync(path.join(dir, "mcp.json"), "utf8")).mcpServers;
+    const bundle = JSON.parse(readFileSync(path.join(dir, "codex-secrets.json"), "utf8"));
+    return [mcp.gateway.env.CG_GATEWAY_CAPABILITY, bundle.gatewayCapability].map(cap => verifyGatewayCapability(cap, { secret: SECRET }).claims.jti);
+  };
+  const first = await prepare(project);
+  const releaseHeld = retainRemoteMcps(first[0]);
+  const refreshed = await prepare(project);
+  const other = await prepare(admin);
+  try {
+    assert.ok(hasRemoteMcps(first[0]), "held earlier grant stays live until its runtime ends");
+    assert.ok(refreshed.every(jti => hasRemoteMcps(jti)), "preparing another runtime must not release this runtime's current grants");
+    await session.releaseSshSession({ target: project, entry: sessionEntry, user, cliBin: "podman", lastForUser: true }, { runCommand: async () => {} });
+    assert.ok([...first, ...refreshed].every(jti => !hasRemoteMcps(jti)), "all old-runtime grants are revoked, including held ones");
+    assert.ok(other.every(jti => hasRemoteMcps(jti)), "same user's new-runtime grants remain usable");
+    assert.ok(existsSync(session.sshUserDir(admin, user.id)), "new-runtime session files remain");
+  } finally {
+    releaseHeld();
+    await session.releaseSshSession({ target: project, entry: sessionEntry, user, cliBin: "podman", lastForUser: true }, { runCommand: async () => {} });
+    await session.releaseSshSession({ target: admin, entry: sessionEntry, user, cliBin: "podman", lastForUser: true }, { runCommand: async () => {} });
+  }
+  assert.ok(other.every(jti => !hasRemoteMcps(jti)));
 });
 
 // ── Container-secrets P3: a session on placeholders ────────────────────────────────────────────

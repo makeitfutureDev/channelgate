@@ -18,10 +18,10 @@ const server = await new Promise((resolve) => {
 const base = `http://127.0.0.1:${server.address().port}`;
 after(() => server.close());
 
-const reveal = async (body) => {
+const reveal = async (body, cookie = "") => {
   const response = await fetch(`${base}/secrets/reveal`, {
     method: "POST",
-    headers: { "content-type": "application/json" },
+    headers: { "content-type": "application/json", Cookie: cookie },
     body: JSON.stringify(body),
   });
   return { response, json: await response.json() };
@@ -172,4 +172,45 @@ test("a wrong-password reveal is audited with the principal too", async () => {
   } finally {
     saveSettings({ adminPassword: "" }); // leave the shared scratch env as it was found
   }
+});
+
+test("linked administrator reveal outcomes audit the canonical user without credential material", async () => {
+  const { setUser } = await import("../src/config/store.js");
+  const { ensureUserAdminAccount, saveAdminPasskey } = await import("../src/config/admin-accounts.js");
+  const { createAdminSession } = await import("../src/web/auth.js");
+  const userId = "U_REVEAL_AUDIT";
+  await setUser(userId, { name: "Reveal audit fixture", isAdmin: true });
+  const account = ensureUserAdminAccount(userId);
+  // Storage-only credential: the browser suite separately verifies real WebAuthn signatures.
+  const linked = saveAdminPasskey({ accountId: account.id, authVersion: account.authVersion,
+    credential: { id: "cmV2ZWFsLWF1ZGl0LWZpeHR1cmU", publicKey: new Uint8Array([1]), counter: 0, transports: ["internal"] },
+    deviceType: "multiDevice", backedUp: true, name: "Audit fixture key" });
+  let cookie;
+  createAdminSession({ headers: {} }, { setHeader: (_name, value) => { cookie = value.split(";")[0]; } }, linked);
+  const secret = "xoxb-disposable-reveal-audit";
+  const attemptedPassword = "disposable-password-never-audited";
+  saveSettings({ slackBotToken: secret });
+  const realNow = Date.now;
+  try {
+    for (const [kind, field, status, elapsed] of [
+      ["secret_revealed", "slackBotToken", 200, 0],
+      ["secret_reveal_rejected", "adminPassword", 400, 0],
+      ["secret_reveal_denied", "slackBotToken", 403, 6 * 60_000],
+    ]) {
+      Date.now = () => realNow() + elapsed;
+      const before = revealEvents(kind).length;
+      const result = await reveal({ scope: "settings", field, password: attemptedPassword, userId: "U_FORGED" }, cookie);
+      assert.equal(result.response.status, status);
+      const rows = revealEvents(kind);
+      assert.equal(rows.length, before + 1);
+      assert.equal(rows[0].actor, `admin:${linked.id}`);
+      assert.equal(rows[0].author, `admin:${linked.id}`);
+      assert.equal(rows[0].userId, userId, `${kind} names the canonical linked user`);
+      assert.equal(rows[0].field, field);
+      for (const value of [secret, attemptedPassword, "U_FORGED", cookie]) {
+        assert.ok(!JSON.stringify(rows[0]).includes(value), "audit contains only trusted identity and requested names");
+      }
+      assert.equal("value" in rows[0], false);
+    }
+  } finally { Date.now = realNow; }
 });

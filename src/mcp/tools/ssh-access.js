@@ -98,7 +98,7 @@ export function register(server, ctx) {
     {
       description:
         "Enable YOUR OWN SSH access into THIS channel's container immediately, without manager or admin approval. Omit user or pass your own id/mention. This gives a full shell as the channel (its files, its CLI logins, Claude and Codex), "
-        + "the same box the assistant works in. You must already be allowed in this channel; connecting requires your own registered key (add_my_ssh_key). "
+        + "the same runtime/history scope as your own ordinary chat turns (admin or project, based on your current role). You must already be allowed in this channel; connecting requires your own registered key (add_my_ssh_key). "
         + "Granting another person access requires a channel manager/admin and their approval. Pass that person's user id or @mention.",
       inputSchema: { user: z.string().optional() },
     },
@@ -157,10 +157,14 @@ export function register(server, ctx) {
       if (!meta) return text("Channel isn't set up yet — send a normal message first.");
       const setup = sshAccessState();
       const granted = sshUsersOf(meta);
+      const requester = principalTrusted && createdBy ? await getUser(createdBy) : null;
       const lines = [`**SSH access for this channel** (\`${slug}\`)`];
       lines.push(setup.configured
         ? `• Gateway endpoint: \`${setup.endpoint.user}@${setup.endpoint.host}${setup.endpoint.port !== 22 ? `:${setup.endpoint.port}` : ""}\``
         : `• Gateway endpoint: **not set up** — an operator runs \`sudo bash scripts/install-ssh-access.sh\` on the gateway host (${setup.reason}).`);
+      if (requester) {
+        lines.push(`• Your SSH history scope: **${requester.isAdmin ? "admin" : "project"}** — the same HOME and native Claude/Codex history as your ordinary chat turns at your current role. Admin and project histories stay separate; the project folder is shared.`);
+      }
       if (sshBlockedByHomeGrant(meta, getContainerRuntime())) {
         lines.push("• ⚠️ Connections are REFUSED right now: this channel is in Admin mode while the gateway's `containerFullAccessHome` switch is on (its container would expose the operator's whole home). Turn one of them off.");
       }
@@ -186,7 +190,7 @@ export function register(server, ctx) {
       if (setup.configured) {
         lines.push("", "Once granted, add this to `~/.ssh/config` on your laptop (your usual key; nothing per channel), then `ssh " + slug + "` or open it with VS Code Remote-SSH:", "```", connectSnippet({ endpoint: setup.endpoint, channel: slug }), "```",
           `To open VS Code straight on the channel folder: \`code --remote ssh-remote+${slug} ${effectiveWorkDir(slug, meta)}\` (from Remote-SSH's own connect menu, File → Open Folder starts in that folder; press OK).`,
-          "Inside you are user `agent` in the channel's work folder with its `/home/agent`, CLI logins and Codex. `claude` there is this channel's Claude exactly as a message here gets it: the channel's tool policy, the gateway tools (no background jobs or approval cards — no thread to post into), your own Composio accounts as `composio-user`, the channel's as `composio-agent`, the channel's MCP servers and its secrets by name — signed in as the gateway's own account, whose usage it counts against. `codex` gets the same gateway tools, Composio accounts, channel MCP servers and secrets, and starts in the channel folder so its AGENTS.md applies; `with-secrets <command>` runs any other command with your channel secrets. Where the gateway's egress proxy is the container's network, those secrets (and the Claude login) are placeholders that only work from inside the box through the proxy, on their declared hosts; your personal ones pause while another person has a session open there; `git@github.com` works through the proxy (Allow network on), and your own `ssh` needs `-o ProxyCommand='/opt/channelgate/bin/cg-egress-connect %h %p'`. Everyone in the box shares that one user; set your git identity per session. A daemon restart drops sessions — just reconnect.");
+          "Inside you are user `agent` in the channel's work folder with your runtime scope's `/home/agent`, CLI logins and native engine history. Only sessions stored in that scope can be resumed; a role change requires reconnecting. `claude` receives: the channel's tool policy, the gateway tools (no background jobs or approval cards — no thread to post into), your own Composio accounts as `composio-user`, the channel's as `composio-agent`, the channel's MCP servers and its secrets by name — signed in as the gateway's own account, whose usage it counts against. `codex` gets the same gateway tools, Composio accounts, channel MCP servers and secrets, and starts in the channel folder so its AGENTS.md applies; `with-secrets <command>` runs any other command with your channel secrets. Where the gateway's egress proxy is the container's network, those secrets (and the Claude login) are placeholders that only work from inside the box through the proxy, on their declared hosts; your personal ones pause while another person has a session open there; `git@github.com` works through the proxy (Allow network on), and your own `ssh` needs `-o ProxyCommand='/opt/channelgate/bin/cg-egress-connect %h %p'`. Everyone in the box shares that one user; set your git identity per session. A daemon restart drops sessions — just reconnect.");
       }
       return text(lines.join("\n"));
     },

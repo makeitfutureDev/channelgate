@@ -10,6 +10,7 @@ const {
   CODEX_SOL_PRICE_CUTOVER,
   CODEX_TERRA_LUNA_PRICE_CUTOVER,
   CODEX_61_SOL_LAUNCH,
+  CODEX_61_TERRA_LAUNCH,
   applyCodexPricingRefresh,
   autoRefreshCodexPricing,
   buildCodexPricingRefresh,
@@ -124,19 +125,16 @@ test("after manual approval boot refresh catches stale rows, backs up once, then
   db.close();
 });
 
-test("boot defers the new basis without writes or backups until explicit manual apply", async () => {
-  for (const appliedBasis of ["", "openai-standard-effective-dates-2026-09-14"]) {
+test("upgrades from previous bases back up and repair history automatically once", async () => {
+  for (const appliedBasis of ["", "openai-standard-effective-dates-2026-09-14", "openai-standard-effective-dates-2026-10-22"]) {
     const db = fixture();
     if (appliedBasis) db.prepare("INSERT INTO _meta(key, value) VALUES('codex_usage_pricing_basis', ?)").run(appliedBasis);
-    const snapshot = () => ["usage", "usage_components", "usage_requests", "_meta"]
-      .map((table) => db.prepare(`SELECT * FROM ${table}`).all());
-    const before = snapshot();
-    assert.deepEqual(await autoRefreshCodexPricing({ db,
-      makeBackup: async () => assert.fail("deferred refresh must not back up"), log: { log() {} },
-    }), { applied: false, deferred: true, basis: CODEX_PRICING_BASIS });
-    assert.deepEqual(snapshot(), before);
-    assert.equal(pendingCodexPricingRefresh(db).pending, true);
-    applyCodexPricingRefresh(db, buildCodexPricingRefresh({ db }));
+    let backups = 0;
+    const result = await autoRefreshCodexPricing({ db,
+      makeBackup: async () => { backups += 1; return "upgrade-backup"; }, log: { log() {} },
+    });
+    assert.equal(result.applied, true);
+    assert.equal(backups, 1);
     assert.equal(buildCodexPricingRefresh({ db }).delta, 0);
     assert.deepEqual(await autoRefreshCodexPricing({ db }), { applied: false, basis: CODEX_PRICING_BASIS });
     db.close();
@@ -208,9 +206,9 @@ test("dated rates preserve genuine admin overrides and retire old saved defaults
   const previous = getSettings().codexModelRates || {};
   const db = fixture();
   try {
-    const ids = ["gpt-5.6-terra", "gpt-5.6-luna", "gpt-6.1-sol"].map((model) =>
+    const ids = ["gpt-5.6-terra", "gpt-5.6-luna", "gpt-6.1-sol", "gpt-6.1-terra"].map((model) =>
       addPricingEvidence(db, "2026-07-29T23:59:59.999Z", model));
-    saveSettings({ codexModelRates: Object.fromEntries(["gpt-5.6-terra", "gpt-5.6-luna", "gpt-6.1-sol"]
+    saveSettings({ codexModelRates: Object.fromEntries(["gpt-5.6-terra", "gpt-5.6-luna", "gpt-6.1-sol", "gpt-6.1-terra"]
       .map((model) => [model, { input: 3, cachedInput: 0.3, output: 9 }])) });
     const plan = buildCodexPricingRefresh({ db });
     for (const id of ids) assert.equal(plan.componentUpdates.find((row) => row.id === id).costUSD, 0.2625);
@@ -228,4 +226,25 @@ test("dated rates preserve genuine admin overrides and retire old saved defaults
     saveSettings({ codexModelRates: previous });
     db.close();
   }
+});
+
+test("GPT-6.1 Terra launch, snapshots and request-level long-context rates repair unpriced history", async () => {
+  const db = fixture();
+  const before = addPricingEvidence(db, "2026-10-25T23:59:59.999Z", "gpt-6.1-terra");
+  const launch = addPricingEvidence(db, CODEX_61_TERRA_LAUNCH, "gpt-6.1-terra");
+  const snapshot = addPricingEvidence(db, CODEX_61_TERRA_LAUNCH, "gpt-6.1-terra-2026-10-26");
+  const long = addPricingEvidence(db, CODEX_61_TERRA_LAUNCH, "gpt-6.1-terra", { input: 272_001 });
+  const plan = buildCodexPricingRefresh({ db });
+  const cost = (id) => plan.componentUpdates.find((row) => row.id === id).costUSD;
+  assert.equal(cost(before), null);
+  assert.equal(cost(launch), 0.0885);
+  assert.equal(cost(snapshot), 0.0885);
+  assert.equal(cost(long), 0.518502);
+  const usage = { input_tokens: 272_000, cached_input_tokens: 20_000, cache_write_input_tokens: 10_000, output_tokens: 1_000 };
+  assert.equal(estimateCodexCost(usage, "gpt-6.1-terra", [{ usage }]).costUSD, 0.2605);
+  assert.equal(estimateCodexCost({ ...usage, input_tokens: 272_001 }, "gpt-6.1-terra").costUSD, 0.260501);
+  await autoRefreshCodexPricing({ db, makeBackup: async () => "backup", log: { log() {} } });
+  assert.equal(buildCodexPricingRefresh({ db }).delta, 0);
+  assert.equal(pendingCodexPricingRefresh(db).pending, false);
+  db.close();
 });

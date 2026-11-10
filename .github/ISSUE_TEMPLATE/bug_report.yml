@@ -50,7 +50,7 @@ body:
     id: node
     attributes:
       label: Node version
-      description: Output of `node --version`. The supported minimum is 22.13.
+      description: Output of `node --version`. The supported minimum is 24.0.0.
     validations:
       required: true
   - type: dropdown
@@ -93,5 +93,5 @@ body:
           required: true
         - label: This is not a security vulnerability.
           required: true
-        - label: I am running a supported Node version (>= 22.13) on Linux (systemd + rootless Podman).
+        - label: I am running a supported Node version (>= 24.0.0) on Linux (systemd + rootless Podman).
           required: true

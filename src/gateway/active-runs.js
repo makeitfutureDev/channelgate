@@ -118,6 +118,13 @@ export function updateActiveRunRuntime(id, { engine = "", model = "" } = {}) {
   }
 }
 
+// Preserve explicit steering order if the daemon restarts before the successor can spawn.
+export function prioritizeActiveRun(id) {
+  const row = getDb().prepare("SELECT data FROM active_runs WHERE id = ?").get(id);
+  const rec = row ? fromJson(row.data, null) : null;
+  if (rec) recordActiveRun(id, { ...rec, queuePriorityAt: Date.now() });
+}
+
 // Clear the in-flight marker when a turn finishes (success, error, or user-stop). Called from the
 // run's finally, so a normally-completed turn leaves no row → it is never re-run.
 export function clearActiveRun(id) {
@@ -319,7 +326,7 @@ const MAX_RECOVER_ATTEMPTS = 2;
 // steer/queue contract instead of overtaking an older recovery that has not entered the queue yet.
 export function reserveRecoveryRuns(stale = []) {
   const reservations = [];
-  for (const rec of stale) {
+  for (const rec of [...stale].sort((a, b) => (b.queuePriorityAt || 0) - (a.queuePriorityAt || 0))) {
     if (rec?.awaitingChoice || !rec?.channelId || !rec?.threadKey) continue;
     const id = rec.id || `${rec.slug}::${rec.threadKey}`;
     const runKey = `${rec.slug || rec.channelId}::${rec.threadKey}`;
@@ -447,6 +454,29 @@ export async function recoverRuns(stale, {
     try {
       if (handle.aborted) { markTerminal(); return; }
       if (forceStopping()) return;
+      // A queued /fork is a gateway command, not an engine prompt. Re-enter the Slack
+      // command path only after its source reservation is acquired, so it snapshots the
+      // completed source turn and rechecks the author's current access before forking.
+      if (rec.queuedFork) {
+        const queueError = await acquired;
+        if (queueError) throw queueError;
+        if (handle.aborted || handle.controller.signal.aborted) { markTerminal(); return; }
+        if (forceStopping()) return;
+        recordActiveRun(id, { ...rec, id, attempts, recoveryPending: undefined });
+        await logEvent("run_recover", { slug: rec.slug, channel: rec.channelId, threadKey: rec.threadKey, attempts });
+        const { processMessageEvent } = await import("../slack/message-pipeline.js");
+        if (handle.aborted || handle.controller.signal.aborted) { markTerminal(); return; }
+        if (forceStopping()) return;
+        await processMessageEvent(rec.queuedFork.event, client, {
+          botUserId: rec.queuedFork.botUserId || "",
+          teamId: rec.queuedFork.teamId || rec.workspaceId || process.env.CG_SLACK_TEAM_ID || "",
+          bypassMention: true,
+          queuedForkHandle: handle,
+        });
+        if (forceStopping()) return;
+        markTerminal();
+        return;
+      }
       // A recovered turn is still an interactive Slack turn. Reconnect it to the same two native
       // surfaces as a foreground run whenever the Slack SDK supports native streaming. Older SDKs
       // and test clients retain the safe final-only delivery path instead of losing the recovery.
@@ -473,6 +503,8 @@ export async function recoverRuns(stale, {
       }
       status?.onEvent?.({ kind: "engine_note", text: "waiting to resume after gateway restart" });
       const queueError = await acquired;
+      const { retireQueuedMessageControls } = await import("../slack/busy-thread-choice.js");
+      if (!forceStopping() || handle.aborted || terminal) await retireQueuedMessageControls(id, client);
       if (queueError) throw queueError;
       // Submitting a form authenticates the requester at that instant. A restart (or its queue
       // wait) can outlive that grant, so never replay their answers under stale access rights.
@@ -501,6 +533,7 @@ export async function recoverRuns(stale, {
         text: rec.text,
         threadKey: rec.threadKey,
         forkSourceSessionId: await recoveryForkSessionId(rec),
+        overrides: rec.runtimeOverrides || null,
         attachments: Array.isArray(rec.attachments) ? rec.attachments : [],
         ...(rec.questionSubmissionId ? { questionSubmissionId: rec.questionSubmissionId,
           verifyQuestionAccess: () => assertQuestionAccess(rec, client) } : {}),
@@ -588,6 +621,8 @@ export async function recoverRuns(stale, {
       else keepRow = true; // already attempted: reconnect must not replay uncertain side effects
     } finally {
       await stopStatus();
+      const { retireQueuedMessageControls } = await import("../slack/busy-thread-choice.js");
+      if (!forceStopping() || handle.aborted || terminal) await retireQueuedMessageControls(id, client);
       runQueue.release(runKey, handle);
       if (!keepRow && shouldClearActiveRun({ terminal, forceStopping: forceStopping() })) clearActiveRun(id);
     }

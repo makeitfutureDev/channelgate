@@ -79,6 +79,8 @@ export const OPTIONAL_METHODS = Object.freeze([
   // MCP argument; args contain state paths/session counters only. Return minimized usage/identity,
   // never raw transcripts. Called while the run lease holds; no lifecycle reconfiguration.
   "inspectUsage",
+  // inspectResources(target, { pid, runId }) → bounded process/thread/cgroup counts; no secrets.
+  "inspectResources",
   // writeHomeFile(target, { file, body, mode = 0o600 }) → Promise<void> — place ONE private file in
   // the runtime's persistent HOME (the relayed Codex auth.json, src/gateway/codex-token-relay.js):
   // written 0600 (0700 for a launcher) and RENAMED into place, never through a mount.

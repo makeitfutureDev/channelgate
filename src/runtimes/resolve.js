@@ -5,7 +5,9 @@
 // Clean mode keeps the same backend: the bare clean workspace is mounted next to the workdir.
 // Background jobs, memory-review runs and scheduled runs resolve through here at THEIR OWN spawn
 // time — they outlive the turn that created them.
+import { assertChannelMembership } from "../gateway/channel-membership.js";
 import { effectiveWorkDir } from "../gateway/folders.js";
+import { forbiddenWorkDirMessage, forbiddenWorkDirReason } from "../gateway/workdir-boundary.js";
 import { cleanWorkspaceFolder } from "../config/paths.js";
 import { getContainerRuntime } from "../config/settings.js";
 import { platformOr } from "../platforms/registry.js";
@@ -29,12 +31,23 @@ export function decideRuntimeBackend(meta = {}) {
  * @param {object} [options.settings]   the container-runtime settings snapshot
  */
 export function resolveRuntime(slug, meta = {}, { settings = getContainerRuntime(), backend: forced = "", isAdminAuthor = false } = {}) {
+  if (meta?.archived) throw Object.assign(new Error("This channel is archived. Re-invite the bot before starting work."), { code: "channel_archived" });
+  assertChannelMembership(meta);
   const platform = platformOr(meta?.platform).id;
   const decided = decideRuntimeBackend(meta);
   const { backend: id, reason } = isRuntimeBackendId(forced)
     ? { backend: forced, reason: "session-carry" }
     : decided;
   const backend = runtimeBackend(id);
+  // A stored custom work folder that is one of the daemon's own trees, or another conversation's
+  // folder, is never mounted: the spawn fails closed with the remedy instead of handing that
+  // directory to a container (src/gateway/workdir-boundary.js). Checked at every spawn — turns,
+  // background jobs, schedules and reviews all come through here.
+  const stored = String(meta?.workDir || "").trim();
+  if (stored) {
+    const reason = forbiddenWorkDirReason(stored, { slug, allowSharedFolder: Boolean(meta.workspaceLink), sharedFolderOwner: meta.workspaceOrigin?.slug || "" });
+    if (reason) throw new Error(forbiddenWorkDirMessage(slug, stored, reason));
+  }
   const cwd = effectiveWorkDir(slug, meta);
   const workDir = meta?.cleanMode ? effectiveWorkDir(slug, { ...meta, cleanMode: false }) : cwd;
   const base = {

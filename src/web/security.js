@@ -9,7 +9,7 @@ import { realpathSync } from "node:fs";
 import { isIP } from "node:net";
 import { classifyAddress } from "./ip-policy.js";
 export { classifyAddress } from "./ip-policy.js";
-import { getSettings } from "../config/settings.js";
+import { getSettings, getTrustProxy } from "../config/settings.js";
 
 // ── Bind address ────────────────────────────────────────────────────────────────
 // The address the admin web server listens on. Loopback by default — LAN exposure must be a
@@ -277,14 +277,24 @@ function normalizeAddress(value) {
   return isIP(host) ? host.toLowerCase() : "";
 }
 
-export function clientKey(req) {
+// The identity a per-client limiter buckets on. A forwarded-client header is believed ONLY when
+// the operator declared which proxy sets it (Settings → Connection → "Behind a reverse proxy",
+// `trustProxy` / CG_TRUST_PROXY): "cloudflare" reads CF-Connecting-IP (cloudflared overwrites it
+// on every request); "xff" reads the LAST hop of X-Forwarded-For, the one the proxy appended —
+// the FIRST hop is whatever the client typed. With nothing declared the socket address is the
+// client, whatever headers arrive: a loopback socket is NOT evidence of a proxy (any process on
+// the host, or any tunnel, opens one), and trusting it let a caller pick a fresh backoff bucket
+// per request by writing its own header.
+export function clientKey(req, mode = getTrustProxy()) {
   const socketIp = String(req?.socket?.remoteAddress || "");
   const fallback = socketIp || String(req?.ip || "") || "unknown";
-  if (!isLoopbackHost(socketIp) && !process.env.CG_TRUST_PROXY) return fallback;
   const headers = req?.headers || {};
-  const forwarded =
-    normalizeAddress(headers["cf-connecting-ip"]) || normalizeAddress(String(headers["x-forwarded-for"] || "").split(",")[0]);
-  return forwarded || fallback;
+  if (mode === "cloudflare") return normalizeAddress(headers["cf-connecting-ip"]) || fallback;
+  if (mode === "xff") {
+    const hops = String(headers["x-forwarded-for"] || "").split(",").map((hop) => hop.trim()).filter(Boolean);
+    return (hops.length ? normalizeAddress(hops[hops.length - 1]) : "") || fallback;
+  }
+  return fallback;
 }
 
 // ── Login backoff ───────────────────────────────────────────────────────────────
@@ -293,25 +303,45 @@ export function clientKey(req) {
 // a TTL sweep — state resets on restart, like the admin session set. `now` is injectable for tests.
 // The caller decides what an "IP" is; both callers use clientKey() above, so the bucket is the real
 // client rather than the loopback proxy hop every remote request shares.
-export function createLoginLimiter({ freeAttempts = 3, baseDelayMs = 2_000, maxDelayMs = 300_000, ttlMs = 3_600_000 } = {}) {
+//
+// A second, key-independent bound: once `globalMaxFailures` failures land within `globalWindowMs`
+// across ALL keys, every attempt waits `maxDelayMs` until the window drains. Per-key buckets stop
+// one client guessing fast; this stops a caller that can mint a fresh bucket per request (a
+// botnet, or a forged header where a proxy is misdeclared) from turning that into unlimited
+// online guessing — and bounds the scrypt work an unauthenticated caller can make the daemon do.
+export function createLoginLimiter({
+  freeAttempts = 3, baseDelayMs = 2_000, maxDelayMs = 300_000, ttlMs = 3_600_000,
+  globalMaxFailures = 50, globalWindowMs = 600_000,
+} = {}) {
   const perIp = new Map(); // ip → { fails, last }
+  const recent = []; // timestamps of every failure inside the global window, oldest first
   const prune = (now) => {
     for (const [ip, e] of perIp) if (now - e.last > ttlMs) perIp.delete(ip);
+    while (recent.length && now - recent[0] >= globalWindowMs) recent.shift();
   };
   return {
     // Milliseconds this IP must still wait before its next attempt (0 = allowed now).
     retryAfterMs(ip, now = Date.now()) {
       prune(now);
+      let wait = 0;
+      if (globalMaxFailures > 0 && recent.length >= globalMaxFailures) {
+        // Hold until enough of the window has drained for the count to drop back under the cap,
+        // never longer than the per-key maximum delay.
+        const releaseAt = recent[recent.length - globalMaxFailures] + globalWindowMs;
+        wait = Math.min(maxDelayMs, Math.max(0, releaseAt - now));
+      }
       const e = perIp.get(ip);
-      if (!e || e.fails < freeAttempts) return 0;
+      if (!e || e.fails < freeAttempts) return wait;
       const delay = Math.min(baseDelayMs * 2 ** (e.fails - freeAttempts), maxDelayMs);
-      return Math.max(0, e.last + delay - now);
+      return Math.max(wait, e.last + delay - now);
     },
     recordFailure(ip, now = Date.now()) {
       const e = perIp.get(ip) ?? { fails: 0, last: now };
       e.fails += 1;
       e.last = now;
       perIp.set(ip, e);
+      recent.push(now);
+      if (recent.length > Math.max(globalMaxFailures, 1) * 4) recent.splice(0, recent.length - Math.max(globalMaxFailures, 1) * 4);
     },
     recordSuccess(ip) {
       perIp.delete(ip);

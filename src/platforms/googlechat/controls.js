@@ -22,7 +22,7 @@ import { handleGeneral } from '../msteams/settings-general.js';
 import { verifyMenuAction } from './reply-menu.js';
 import { handlePlatformApproval } from '../../slack/approvals.js';
 
-const FORMS = /^(?:(?:channel|thread)_(?:engine|model|effort)|access_(?:mode|access|manageAccess|autoMode|cleanMode|allowNetwork|allowedUsers|managers)|skillTemplate|resumeCommand|scope|comment)$/;
+const FORMS = /^(?:(?:channel|thread)_(?:engine|model|effort)|access_(?:mode|access|manageAccess|autoMode|cleanMode|allowNetwork|skillRuntimeSwap|allowedUsers|managers)|skillTemplate|resumeCommand|scope|comment)$/;
 export function googleChatActionData(event) {
   const fn = event.action?.function;
   if (typeof fn !== 'string' || !/^[a-z][a-z0-9_.-]{0,79}$/.test(fn)) throw new Error('Invalid card action.');
@@ -87,7 +87,9 @@ export function createGoogleChatControls({ connector, authorize = googleChatWork
   }
   async function preview(state, id, context) {
     const target = await resolveVisiblePath(context.root, normalizeRelativePath(state.relative), { kind: 'file' });
-    const opened = await openConfinedFile(context.root, target.relative);
+    // An in-conversation PREVIEW for an authorized requester, not an export: protected names stay
+    // viewable here exactly as in the Slack explorer.
+    const opened = await openConfinedFile(context.root, target.relative, { protectedNames: false });
     let bytes, document = null;
     try {
       const wholeDoc = /\.docx$/i.test(target.relative) && opened.stat.size <= DOCX_MAX_FILE_BYTES;

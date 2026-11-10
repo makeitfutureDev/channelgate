@@ -5,6 +5,7 @@
 import { conversationKindForChannel, conversationRouteForPath, pathForConversation, pathForView, titleForView, viewForPath } from "./admin-routes.js";
 import {
   accessGrantSkillOptions,
+  accessGrantSkillSelection,
   captureGrantMcpSelection,
   conversationChannelName,
   matchesConversationSource,
@@ -18,7 +19,8 @@ import {
 import { activeSectionFor, filterSettings } from "./admin-settings-search.js";
 import { api } from "./admin-api.js";
 import { setSystemHealthActive } from "./admin-system-health.js";
-import { attachReveal, confirmDialog, escapeHtml, infoDialog, openDialog, paintReveal, passwordDialog, revealSecret, tokenValue } from "./admin-view.js";
+import { attachReveal, confirmDialog, escapeHtml, infoDialog, openDialog, paintReveal, revealSecret, tokenValue } from "./admin-view.js";
+import { freshAdminAuth, mountAdminAccess, mountUserDashboardAccess } from "./admin-access.js";
 import { loadSkills } from "./admin-skills.js";
 import { mountSkillAssignmentPicker } from "./skill-assignment-picker.js";
 import { mountUserPicker } from "./admin-user-picker.js";
@@ -34,6 +36,8 @@ const ICON_FOLDER = `<svg viewBox="0 0 16 16" width="14" height="14" fill="none"
 
 // ── Reference data / state ──────────────────────────────────────────────────────
 let SKILLS = [];
+// Personal catalog skills with their author ({ slug, createdBy }): offered only to that person.
+let PERSONAL_SKILLS = [];
 let SKILL_TEMPLATES = []; // { slug, name, description, skills, categories, resolved, channels }
 let AVAILABLE_MCPS = { claude: null, codex: null }; // engine → catalog (null until loaded)
 const MCP_CATALOG_LOADS = {}; // engine → in-flight Promise (dedupe open channel/template editors)
@@ -71,7 +75,7 @@ let detailDirty = false; // whether the open conversation detail has unsaved edi
 // Controls that save through their OWN request are never part of a card's "Unsaved changes" state.
 // Environment secrets and VPN control have independent writes and must never round-trip through
 // the card's Save or tell the admin the card has edits waiting.
-const SELF_SAVING_CONTROLS = ".channel-env-card, .ch-vpn-controls, .ch-codex-login";
+const SELF_SAVING_CONTROLS = ".channel-env-card, .ch-vpn-controls, .ch-codex-login, .admin-access-card";
 const viewLoaded = {};
 
 const EFFORT_OPTIONS = {
@@ -128,14 +132,14 @@ function engineOptionsHtml({ includeDefault = false } = {}) {
     selectableEngines().map((m) => `<option value="${escapeHtml(m.id)}">${escapeHtml(m.label)}</option>`).join("");
 }
 
-function syncEffortOptions({ engineSelect, modelSelect, effortSelect, label, value }) {
-  const engine = effectiveEngine(engineSelect?.value || "");
+function syncEffortOptions({ engineSelect, modelSelect, effortSelect, label, value, engine: pinnedEngine, blankLabel = "default" }) {
+  const engine = pinnedEngine || effectiveEngine(engineSelect?.value || "");
   const modelEfforts = MODEL_EFFORT_OPTIONS[engine]?.[modelSelect?.value || ""];
   const options = modelEfforts?.length
     ? [["", "default"], ...modelEfforts.map((effort) => [effort, effort])]
     : EFFORT_OPTIONS[engine] || EFFORT_OPTIONS.claude;
   const current = value !== undefined ? value : effortSelect.value;
-  effortSelect.innerHTML = options.map(([v, text]) => `<option value="${escapeHtml(v)}">${escapeHtml(text)}</option>`).join("");
+  effortSelect.innerHTML = options.map(([v, text]) => `<option value="${escapeHtml(v)}">${escapeHtml(v ? text : blankLabel)}</option>`).join("");
   effortSelect.value = options.some(([v]) => v === current) ? current : "";
   if (label) label.textContent = `Effort (${ENGINE_MANIFESTS.find((m) => m.id === engine)?.label || engine})`;
 }
@@ -185,6 +189,12 @@ function syncModelOptions({ engineSelect, modelSelect, value, engine, blankLabel
   if (current && modelMatchesEngine(current, eng) && !options.some(([v]) => v === current)) options.push([current, current]);
   modelSelect.innerHTML = options.map(([v, text]) => `<option value="${escapeHtml(v)}">${escapeHtml(text)}</option>`).join("");
   modelSelect.value = options.some(([v]) => v === current) ? current : "";
+}
+
+function syncDefaultEffort(modelSelect, effortSelect, engine, value) {
+  const sync = (next) => syncEffortOptions({ modelSelect, effortSelect, engine, value: next, blankLabel: "CLI default" });
+  sync(value || "");
+  modelSelect.onchange = () => sync(effortSelect.value);
 }
 
 function addModelShortcutRow(name = "", target = {}) {
@@ -342,11 +352,16 @@ function capLabelOf(m = {}) {
 }
 
 // ── View switching + URL history ────────────────────────────────────────────────
-function loadView(name) {
+function loadView(name, { refreshIdentity = true } = {}) {
   if (name === "system-health") setSystemHealthActive(true);
   if (name === "channels" && !viewLoaded.channels) { viewLoaded.channels = true; loadConversations().catch(() => {}); }
   if (name === "users" && !viewLoaded.users) { viewLoaded.users = true; loadUsers().catch(() => {}); }
-  if (name === "settings" && !viewLoaded.settings) { viewLoaded.settings = true; loadSettings().catch(() => {}); }
+  if (name === "settings") {
+    if (!viewLoaded.settings) { viewLoaded.settings = true; loadSettings().catch(() => {}); }
+    // The self-saving identity card can change when chat discovers the first admin or a user
+    // role changes. Refresh it independently so existing unsaved Settings edits stay intact.
+    else if (refreshIdentity) mountAdminAccess(document.getElementById("admin-access"), { confirm: confirmDialog }).catch(() => {});
+  }
   if (name === "api" && !viewLoaded.api) { viewLoaded.api = true; loadApiDocs().catch(() => {}); }
   if (name === "skills") loadSkills().catch(() => {}); // always refresh
   if (name === "schedules") loadSchedules().catch(() => {}); // always refresh
@@ -399,11 +414,48 @@ async function loadApiDocs() {
   if (note) {
     note.textContent =
       hasKey === true
-        ? "A token is set. Reveal, copy, or regenerate it under Settings → HTTP run API."
-        : hasKey === false
-        ? "No token generated yet — create one under Settings → HTTP run API."
-        : "Generate one under Settings → HTTP run API.";
-    note.classList.toggle("apidoc-note-warn", hasKey === false);
+        ? "Channel tokens: ask the agent in a conversation for create_api_token. A deprecated organization-wide key is also set under Settings → HTTP run API."
+        : "Channel tokens: ask the agent in a conversation for create_api_token (listed below). No organization-wide key is set — good.";
+    note.classList.toggle("apidoc-note-warn", hasKey === true);
+  }
+  await paintApiTokens();
+}
+
+// Every channel token across conversations — names, conversation, creator, dates, last four
+// characters — and a revoke. Values never reach this page (they exist once, in the minting reply).
+async function paintApiTokens() {
+  const rows = document.getElementById("apitok-rows");
+  if (!rows) return;
+  let tokens = [];
+  try {
+    tokens = (await api("/api/api-tokens")).tokens || [];
+  } catch {
+    rows.innerHTML = `<tr><td colspan="6" class="hint">Sign in to see channel tokens.</td></tr>`;
+    return;
+  }
+  const when = (v) => (v ? escapeHtml(String(v).slice(0, 16).replace("T", " ")) : "never");
+  rows.innerHTML = tokens.length
+    ? tokens.map((t) => `<tr${t.revoked ? ' class="muted"' : ""}>
+        <td><code>${escapeHtml(t.prefix)}…${escapeHtml(t.last4)}</code> ${escapeHtml(t.name)}${t.revoked ? " <em>(revoked)</em>" : ""}</td>
+        <td>${escapeHtml(t.channelName || t.slug)}</td>
+        <td><code>${escapeHtml(t.createdBy)}</code></td>
+        <td>${when(t.createdAt)}</td>
+        <td>${when(t.lastUsedAt)}</td>
+        <td>${t.revoked ? "" : `<button type="button" class="ghost apitok-revoke" data-id="${escapeHtml(String(t.id))}">Revoke</button>`}</td>
+      </tr>`).join("")
+    : `<tr><td colspan="6" class="hint">No channel tokens yet. In a conversation, ask the agent: “create an API token for this channel”.</td></tr>`;
+  for (const btn of rows.querySelectorAll(".apitok-revoke")) {
+    btn.addEventListener("click", async () => {
+      btn.disabled = true;
+      try {
+        await api(`/api/api-tokens/${encodeURIComponent(btn.dataset.id)}/revoke`, { method: "POST", body: "{}" });
+      } catch (e) {
+        btn.disabled = false;
+        alert(`Could not revoke: ${e?.message || e}`);
+        return;
+      }
+      await paintApiTokens();
+    });
   }
 }
 
@@ -1223,6 +1275,7 @@ async function loadDashboard() {
     </div>`;
 
   body.innerHTML = `
+    ${d.historyDays ? `<p class="hint">Free cost-tracking history covers the last ${fmtNum(d.historyDays)} days. Enterprise includes unlimited history.</p>` : ""}
     <div class="kpi-row">${kpiHtml}</div>
     <div id="dash-approvals"></div>
     <div class="dash-legend">${modelLegend(keys)}</div>
@@ -1447,7 +1500,7 @@ function workDirConflictSummary(conflict) {
   const names = others.map((item) => item.isDM || item.type === "im"
     ? (item.name || item.slug)
     : hashName(item.name || item.slug));
-  return `Working folder is also assigned to ${names.join(", ")}`;
+  return `Working folder setup is linked with ${names.join(", ")}`;
 }
 
 function convRow(key, color, name, sub, cost, conflict = null) {
@@ -1459,10 +1512,10 @@ function convRow(key, color, name, sub, cost, conflict = null) {
   // Compact whole-dollar 30-day cost (skip sub-$1 rows so the list stays quiet).
   const dollars = cost == null ? null : Math.round(cost);
   const costHtml = dollars && dollars >= 1 ? `<span class="conv-cost">$${escapeHtml(dollars.toLocaleString())}</span>` : "";
-  const conflictHtml = conflictText ? '<span class="conv-conflict-mark" aria-label="Working folder conflict">!</span>' : "";
+  const conflictHtml = conflictText ? '<span class="conv-conflict-mark" aria-label="Linked working folder">↔</span>' : "";
   el.innerHTML =
     `<span class="capdot" style="background:${color}"></span>` +
-    `<span class="conv-nm"><b>${escapeHtml(name)}</b>${sub ? `<small>${escapeHtml(sub)}</small>` : ""}${conflictText ? '<small class="conv-conflict-text">Shared working folder</small>' : ""}</span>` +
+    `<span class="conv-nm"><b>${escapeHtml(name)}</b>${sub ? `<small>${escapeHtml(sub)}</small>` : ""}${conflictText ? '<small class="conv-conflict-text">Linked folder setup</small>' : ""}</span>` +
     conflictHtml +
     costHtml;
   el.addEventListener("click", (e) => {
@@ -1499,7 +1552,7 @@ function renderConvList() {
       e.textContent = CHANNELS.length ? "No channels match." : "No channels yet — invite the bot and send a message.";
       list.appendChild(e);
     } else {
-      for (const c of chans) list.appendChild(convRow("ch:" + c.channelId, capColorOf(c.meta || {}), conversationChannelName(c), capLabelOf(c.meta || {}), costFor(c.channelId, c.slug), c.workDirConflict));
+      for (const c of chans) list.appendChild(convRow("ch:" + c.channelId, capColorOf(c.meta || {}), conversationChannelName(c), c.meta?.archived ? "Archived" : capLabelOf(c.meta || {}), costFor(c.channelId, c.slug), c.workDirConflict));
     }
   }
 
@@ -1749,7 +1802,7 @@ function wireGrantTierNavigation(select, currentTier) {
 // Skills/connectors share one editor at each tier. Its MCP state keeps independent Claude/Codex
 // selections while the engine dropdown switches the visible catalog; OpenCode deliberately has
 // no MCP editor because its restricted proof profile rejects that capability.
-function buildAccessGrantsEditor(cfg = {}, { tier = "organization" } = {}) {
+function buildAccessGrantsEditor(cfg = {}, { tier = "organization", ownerId = "" } = {}) {
   const el = document.createElement("div");
   el.className = "access-grants-editor";
   el.innerHTML = `
@@ -1782,7 +1835,8 @@ function buildAccessGrantsEditor(cfg = {}, { tier = "organization" } = {}) {
   });
   const skillsBox = el.querySelector(".grant-skills");
   skillsBox.dataset.kind = "s";
-  checkboxList(skillsBox, accessGrantSkillOptions(SKILLS, cfg.skills || []), cfg.skills || []);
+  const skillOptions = accessGrantSkillOptions(SKILLS, cfg.skills || [], { personal: PERSONAL_SKILLS, ownerId: tier === "user" ? ownerId : "" });
+  checkboxList(skillsBox, skillOptions, accessGrantSkillSelection(skillOptions, cfg.skills || []));
   wireChecksTools(mcpsBox, el.querySelector(".grant-mcps-filter"), mcpsCount);
   wireChecksTools(skillsBox, el.querySelector(".grant-skills-filter"), el.querySelector(".grant-skills-count"));
   mcpsBox.addEventListener("change", () => captureMcpSelection(mcpsBox));
@@ -2005,12 +2059,12 @@ function renderChannelDetail(ch) {
   const node = document.getElementById("channel-card").content.cloneNode(true);
   const card = node.querySelector(".conv-detail");
   card.querySelector(".ch-name").textContent = conversationChannelName(ch);
-  card.querySelector(".ch-type").textContent = ch.type + (ch.isDM ? " · DM" : "");
+  card.querySelector(".ch-type").textContent = ch.type + (ch.isDM ? " · DM" : "") + (meta.archived ? " · Archived — re-invite the bot to resume configuration updates" : "");
   card.querySelector(".ch-slug").textContent = ch.slug;
 
   // Header capability pill — colored by the live mode; kept in sync as flags change.
   const modePill = card.querySelector(".ch-mode");
-  const paintModePill = (m) => { modePill.textContent = capLabelOf(m); modePill.setAttribute("style", capPillStyle(m)); };
+  const paintModePill = (m) => { modePill.textContent = meta.archived ? "Archived" : capLabelOf(m); modePill.setAttribute("style", capPillStyle(m)); };
   paintModePill(meta);
 
   // ── Dirty tracking / savebar ──────────────────────────────────────────────────
@@ -2086,7 +2140,7 @@ function renderChannelDetail(ch) {
     }
     const inherited = () => {
       const template = SKILL_TEMPLATES.find((t) => t.slug === templateSelect.value);
-      const section = catalog.skills.filter((s) => s.channelScope === ch.channelId && !s.deleted && s.visibility !== "personal").map((s) => s.slug);
+      const section = catalog.skills.filter((s) => s.channelScope === (meta.workspaceLink?.channelId || ch.channelId) && !s.deleted && s.visibility !== "personal").map((s) => s.slug);
       return [
         { id: "organization", label: "Organization skills", slugs: overview.orgSkills || [], note: "Managed organization-wide." },
         { id: "template", label: "Template skills", slugs: template?.resolved || [], note: template ? `Included by ${template.name}. Edit the template in Skills → Templates.` : "Choose a template above to include its skills." },
@@ -2094,7 +2148,8 @@ function renderChannelDetail(ch) {
       ];
     };
     skillsPicker = mountSkillAssignmentPicker(skillsBox, { skills: catalog.skills, sources: catalog.sources, selected: meta.skills || [], inherited: inherited(), onChange: markDirty });
-    templateSelect.disabled = false;
+    templateSelect.disabled = !!meta.workspaceLink;
+    if (meta.workspaceLink) for (const input of skillsBox.querySelectorAll("input,button,select")) input.disabled = true;
     templateSelect.addEventListener("change", () => skillsPicker.update({ inherited: inherited() }));
   }).catch((error) => {
     if (!skillsBox.isConnected) return;
@@ -2114,6 +2169,7 @@ function renderChannelDetail(ch) {
   flagEls.cleanMode.checked = !!meta.cleanMode;
   const networkBox = card.querySelector(".ch-network");
   networkBox.checked = !!meta.allowNetwork;
+  showBudgetStatus(card.querySelector(".ch-budget-status"), ch.channelId);
 
   // Capability radio cards drive the hidden <select class="ch-profile"> (what the save reads).
   // Picking a base preserves the independent Auto/Lean controls.
@@ -2163,8 +2219,35 @@ function renderChannelDetail(ch) {
 
   card.querySelector(".ch-memory").checked = meta.memory !== false; // default on (global default is on)
   card.querySelector(".ch-nodefaulttokens").checked = !!meta.noDefaultTokens;
+  card.querySelector(".ch-skillswap").checked = !!meta.skillRuntimeSwap;
   const workdirInput = card.querySelector(".ch-workdir");
   workdirInput.value = meta.workDir || "";
+  if (meta.workspaceLink) {
+    const notice = document.createElement("p");
+    notice.className = "hint";
+    notice.textContent = `Linked folder setup: ${meta.workspaceLink.name}. Skills, templates, memory, instructions, mode, network and Drive sync follow this source. Edit shared settings there; choose a separate folder to unlink. Harness and model remain independent.`;
+    const source = document.createElement("button");
+    source.type = "button";
+    source.textContent = "Open source conversation";
+    source.addEventListener("click", () => {
+      const id = meta.workspaceLink.channelId;
+      selectConv((DMS.some((d) => d.channelId === id) ? "dm:" : "ch:") + id);
+    });
+    for (const cap of capCards) { cap.style.pointerEvents = "none"; cap.setAttribute("aria-disabled", "true"); }
+    for (const pane of card.querySelectorAll('.subpane[data-pane="access"], .subpane[data-pane="connections"], .subpane[data-pane="mcps"], .subpane[data-pane="environment"], .subpane[data-pane="skills"]')) {
+      const locked = document.createElement("fieldset");
+      locked.disabled = true;
+      locked.style.cssText = "border:0;padding:0;margin:0;min-width:0";
+      while (pane.firstChild) locked.appendChild(pane.firstChild);
+      pane.appendChild(locked);
+    }
+    notice.appendChild(source);
+    card.querySelector(".dhead").after(notice);
+    for (const selector of [".ch-memory", ".ch-syncdrive", ".ch-synctest", ".ch-profile", ".ch-network", ".ch-admin", ".ch-bash", ".ch-auto", ".ch-clean", ".ch-skillswap"]) {
+      const input = card.querySelector(selector);
+      if (input) { input.disabled = true; input.title = "Edit this shared setting in the source conversation"; }
+    }
+  }
   card.querySelector(".ch-browse").addEventListener("click", () => openFolderPicker(workdirInput));
   card.querySelector(".ch-workdir-reset").addEventListener("click", () => {
     if (!workdirInput.value) return;
@@ -2248,6 +2331,21 @@ function renderChannelDetail(ch) {
   paintHarnessPolicy();
   void api("/api/license").then((license) => {
     if (!harnessPolicy.isConnected) return;
+    for (const [selector, key] of [[".ch-skillswap", "skillModelRouting"], [".ch-skill-template", "skillTemplates"], [".ch-syncdrive", "driveSync"]]) {
+      const control = card.querySelector(selector);
+      if (control) {
+        const entitled = license.features?.[key] === true;
+        control.title = entitled ? "" : "Requires Enterprise; existing configuration can be cleared";
+        if (control.type === "checkbox") control.disabled = !entitled && !control.checked;
+        else if (control.tagName === "SELECT") for (const option of control.options) option.disabled = !entitled && Boolean(option.value);
+        else control.readOnly = !entitled && !control.value;
+      }
+    }
+    const dedicatedOption = card.querySelector('.ch-codex-auth-source option[value="channel"]');
+    if (dedicatedOption) dedicatedOption.disabled = license.features?.channelCodexLogin !== true;
+    if (license.features?.channelCodexLogin !== true) {
+      card.querySelectorAll(".ch-auth-channel-panel input, .ch-auth-channel-panel select, .ch-auth-channel-panel button:not(.ch-codex-device-cancel)").forEach((control) => { control.disabled = true; });
+    }
     harnessPolicy.disabled = license.features?.channelHarnessPolicy !== true;
     harnessHelp.textContent = harnessPolicy.disabled
       ? "Enterprise is required to change approvals. Any saved restriction remains enforced."
@@ -2255,6 +2353,8 @@ function renderChannelDetail(ch) {
   }).catch(() => { harnessHelp.textContent = "Could not verify Enterprise access. Reopen this channel to retry; saved approvals are preserved."; });
 
   const authSource = card.querySelector(".ch-codex-auth-source");
+  const spendingLimitInput = card.querySelector(".ch-monthly-spending-limit");
+  spendingLimitInput.value = meta.monthlySpendingLimitUSD ?? "";
   const channelPanel = card.querySelector(".ch-auth-channel-panel");
   const modelSelect = card.querySelector(".ch-model");
   const effortSelect = card.querySelector(".ch-effort");
@@ -2417,7 +2517,7 @@ function renderChannelDetail(ch) {
       }
       const result = await api(`/api/channels/${encodeURIComponent(ch.channelId)}/meta`, {
         method: "PUT",
-        body: JSON.stringify({
+        body: JSON.stringify(Object.fromEntries(Object.entries({
           ...(harnessPolicyDirty ? { approvedEngines: approvals } : {}),
           ...channelGuestSavePatch(usersBox.dataset.ready === "1", explicitCheckedValues(usersBox), usersBox.dataset.changed === "1"),
           allowedMcps: selectedMcpEntries(mcpsBox, "claude")
@@ -2439,10 +2539,13 @@ function renderChannelDetail(ch) {
           allowNetwork: card.querySelector(".ch-network").checked,
           autoMode: card.querySelector(".ch-auto").checked,
           cleanMode: card.querySelector(".ch-clean").checked,
+          skillRuntimeSwap: card.querySelector(".ch-skillswap").checked,
           memory: card.querySelector(".ch-memory").checked,
           noDefaultTokens: card.querySelector(".ch-nodefaulttokens").checked,
           engine: engineSelect.value,
           codexAuthSource: card.querySelector(".ch-codex-auth-source").value,
+          ...(spendingLimitInput.value !== String(ch.meta?.monthlySpendingLimitUSD ?? "")
+            ? { monthlySpendingLimitUSD: spendingLimitInput.value.trim() ? Number(spendingLimitInput.value) : null } : {}),
           workDir: card.querySelector(".ch-workdir").value,
           syncDriveFolder: card.querySelector(".ch-syncdrive").value,
           model: card.querySelector(".ch-model").value,
@@ -2455,11 +2558,12 @@ function renderChannelDetail(ch) {
           makeToolboxUrl: makeToolboxUrlInput.value,
           ...(makeToolboxKey ? { makeToolboxKey } : {}),
           ...(clearMakeToolbox ? { clearMakeToolbox: true } : {}),
-        }),
+        }).filter(([key]) => !meta.workspaceLink?.fields?.includes(key)))),
       });
       // The server response is the validated, committed record. Reconcile the cached channel from
       // that whole record so a later SPA re-render cannot resurrect stale MCP/skill selections.
       ch.meta = reconcileChannelMeta(ch.meta, result.meta);
+      showBudgetStatus(card.querySelector(".ch-budget-status"), ch.channelId);
       harnessPolicyDirty = false;
       if (composioTok || previousNoDefaultTokens !== Boolean(ch.meta.noDefaultTokens)) void loadComposioConnections(true);
       initializeMcpBox(mcpsBox, { claude: ch.meta.allowedMcps || [], codex: ch.meta.allowedCodexMcps || [] });
@@ -2487,6 +2591,10 @@ function renderChannelDetail(ch) {
       // conversation collections from the authoritative server rather than repainting stale flags.
       if (!(await refreshConversationRows())) renderConvList();
       detailDirty = false;
+      if (meta.workspaceLink?.slug !== ch.meta.workspaceLink?.slug) {
+        renderChannelDetail(ch);
+        return;
+      }
       savebarMsg.textContent = "Saved";
       savebarMsg.classList.add("clean");
       setTimeout(() => { if (!detailDirty) savebar.hidden = true; }, 1500);
@@ -2614,6 +2722,9 @@ function renderChannelDetail(ch) {
   }
 
   detail.innerHTML = "";
+  if (meta.archived) {
+    for (const control of card.querySelectorAll("input, select, textarea, button:not(.subtab)")) control.disabled = true;
+  }
   detail.appendChild(node);
   const refreshVpn = mountChannelVpnControls(card, ch.channelId);
 }
@@ -2682,7 +2793,8 @@ function buildConfigEditor(cfg = {}) {
     claude: cfg.allowedMcps || [],
     codex: cfg.allowedCodexMcps || [],
   });
-  checkboxList(skillsBox, accessGrantSkillOptions(SKILLS, cfg.skills || []), cfg.skills || []);
+  const skillOptions = accessGrantSkillOptions(SKILLS, cfg.skills || [], { personal: PERSONAL_SKILLS });
+  checkboxList(skillsBox, skillOptions, accessGrantSkillSelection(skillOptions, cfg.skills || []));
   wireChecksTools(mcpsBox, el.querySelector(".cfg-mcps-filter"), mcpsCount);
   mcpsBox.addEventListener("change", () => captureMcpSelection(mcpsBox));
   wireChecksTools(skillsBox, el.querySelector(".cfg-skills-filter"), el.querySelector(".cfg-skills-count"));
@@ -2787,6 +2899,17 @@ function buildConfigEditor(cfg = {}) {
   return { el, getValues };
 }
 
+// Budgets are conversation-local and administered here, outside shared workspace/template policy.
+function readBudgetInput(input) {
+  if (!input.checkValidity()) throw new Error("Enter a positive monthly USD budget, or leave it blank for unlimited.");
+  return input.value === "" ? null : Number(input.value);
+}
+function showBudgetStatus(element, channelId) {
+  api(`/api/channels/${encodeURIComponent(channelId)}/budget`).then((budget) => {
+    element.textContent = `${budget.month} UTC: $${budget.spentUSD.toFixed(2)} recorded${budget.limitUSD === null ? " · Unlimited" : ` of $${budget.limitUSD.toFixed(2)}${!budget.allowed ? " · New agent runs paused" : ""}`}${budget.unpricedRuns ? ` · ${budget.unpricedRuns} unpriced run(s)${budget.limitUSD === null ? "" : "; repair pricing to resume"}` : ""}`;
+  }).catch(() => { element.textContent = "Budget usage unavailable. Reopen this conversation to retry."; });
+}
+
 // ── Shared savebar (DM + template details) ────────────────────────────────────────
 function buildSavebar() {
   const bar = document.createElement("div");
@@ -2870,8 +2993,21 @@ function renderDmDetail(id) {
     <select class="dm-template"><option value="user">User template</option><option value="admin">Admin template</option><option value="custom">Custom</option></select>`;
   card.appendChild(tplField);
   const tplSel = tplField.querySelector(".dm-template");
-  tplSel.value = dm.template;
+  tplSel.value = dm.meta?.workspaceLink ? "custom" : dm.template;
+  if (dm.meta?.workspaceLink) {
+    tplSel.disabled = true;
+    const linked = document.createElement("p");
+    linked.className = "hint";
+    linked.textContent = `Shared setup linked to ${dm.meta.workspaceLink.name}. Edit shared settings in that source conversation; harness, model and effort remain independent.`;
+    head.after(linked);
+  }
 
+  const budgetField = document.createElement("label");
+  budgetField.className = "field";
+  budgetField.innerHTML = `<span>Monthly budget (USD) · Enterprise</span><input type="number" class="dm-budget" min="0.01" step="any" placeholder="Unlimited" /><em class="state">Blank = unlimited. Resets monthly at 00:00 UTC. Active runs may exceed the limit; unpriced usage pauses new runs until pricing is repaired. External service charges are excluded.</em><em class="state dm-budget-status" role="status"></em>`;
+  budgetField.querySelector("input").value = dm.meta?.monthlySpendingLimitUSD ?? "";
+  card.appendChild(budgetField);
+  showBudgetStatus(budgetField.querySelector(".dm-budget-status"), dm.channelId);
   const customBox = document.createElement("div");
   customBox.className = "dm-custom";
   card.appendChild(customBox);
@@ -2879,7 +3015,13 @@ function renderDmDetail(id) {
   const renderCustom = () => {
     customBox.innerHTML = "";
     ed = null;
-    if (tplSel.value === "custom") { ed = buildConfigEditor(dm.meta || {}); customBox.appendChild(ed.el); }
+    if (tplSel.value === "custom") {
+      ed = buildConfigEditor(dm.meta || {});
+      customBox.appendChild(ed.el);
+      if (dm.meta?.workspaceLink) for (const input of ed.el.querySelectorAll("input,select,button")) {
+        if (!input.matches(".cfg-engine,.cfg-model,.cfg-effort")) input.disabled = true;
+      }
+    }
   };
   renderCustom();
   paintCap(tplSel.value);
@@ -2891,9 +3033,12 @@ function renderDmDetail(id) {
     card, bar,
     async () => {
       const tpl = tplSel.value;
-      const body = { template: tpl, ...(tpl === "custom" && ed ? ed.getValues() : {}) };
+      const values = tpl === "custom" && ed ? ed.getValues() : {};
+      const body = { template: tpl, monthlySpendingLimitUSD: readBudgetInput(budgetField.querySelector("input")), ...Object.fromEntries(Object.entries(values).filter(([key]) => !dm.meta?.workspaceLink?.fields?.includes(key))) };
       await api(`/api/dms/${encodeURIComponent(dm.channelId)}`, { method: "PUT", body: JSON.stringify(body) });
+      showBudgetStatus(budgetField.querySelector(".dm-budget-status"), dm.channelId);
       dm.template = tpl;
+      dm.meta = { ...dm.meta, monthlySpendingLimitUSD: body.monthlySpendingLimitUSD };
       renderConvList();
     },
     () => renderDmDetail(id),
@@ -3372,6 +3517,10 @@ function renderUsersTable() {
     const role = u.isAdmin
       ? `<span class="rolechip admin">Admin</span>`
       : u.approved ? `<span class="rolechip appr">Approved</span>` : `<span class="rolechip none">No access</span>`;
+    // Count only grants that load: another person's personal skill is skipped at run time.
+    const skillOptions = accessGrantSkillOptions([], u.skills || [], { personal: PERSONAL_SKILLS, ownerId: id });
+    const foreignSkills = skillOptions.filter((option) => option.foreign).length;
+    const loadedSkills = accessGrantSkillSelection(skillOptions, u.skills || []).length;
     const tok =
       `<span class="tokdots">` +
       `<i class="${u.hasComposioToken ? "set" : ""}" title="Composio">C</i>` +
@@ -3380,7 +3529,7 @@ function renderUsersTable() {
       <td>${escapeHtml(u.name || id)}</td>
       <td class="mono">${escapeHtml(id)}</td>
       <td>${role}</td>
-      <td class="user-skills-count" title="Skills enabled for this user (personal grants)">${accessGrantSkillOptions([], u.skills || []).length}</td>
+      <td class="user-skills-count" title="Skills enabled for this user (personal grants)${foreignSkills ? ` — ${foreignSkills} not loaded: another person's personal skill` : ""}">${loadedSkills}${foreignSkills ? ' <span class="pill" title="Another person\'s personal skill is granted here and is skipped at run time. Open the user to remove it.">⚠</span>' : ""}</td>
       <td>${u.nudges ? "On" : "Off"}</td>
       <td>${tok}</td>
     </tr>`;
@@ -3411,7 +3560,7 @@ function openUserDrawer(id) {
   node.querySelector(".ud-approved").checked = !!u.approved;
   node.querySelector(".ud-admin").checked = !!u.isAdmin;
   node.querySelector(".ud-nudges").checked = !!u.nudges;
-  const userGrantsEditor = buildAccessGrantsEditor(u, { tier: "user" });
+  const userGrantsEditor = buildAccessGrantsEditor(u, { tier: "user", ownerId: id });
   const userGrantsHost = node.querySelector(".ud-grants");
   userGrantsHost.innerHTML = `<label class="field"><span>Grant tier</span><select class="ud-grant-tier"><option value="organization">Organization — applies everywhere</option><option value="channel">Channel</option><option value="user" selected>This user</option></select><em class="state">The effective run gets the live union of all three tiers.</em></label>`;
   userGrantsHost.appendChild(userGrantsEditor.el);
@@ -3424,6 +3573,8 @@ function openUserDrawer(id) {
   drawer.innerHTML = "";
   drawer.hidden = false;
   drawer.appendChild(node);
+
+  mountUserDashboardAccess(drawer.querySelector(".ud-dashboard-access"), id, { confirm: confirmDialog });
 
   // Editable masked token fields — same reveal semantics as before.
   attachReveal(drawer.querySelector(".ud-composio"), { has: u.hasComposioToken, last4: u.composioTokenLast4, fetch: revealSecret("user", "composioToken", id) });
@@ -3838,6 +3989,7 @@ function paintQwenProviders(providers) {
     const keyInput = at("api-key");
     const urlInput = at("base-url");
     const modelSelect = at("default-model");
+    const effortSelect = at("default-effort");
     const clearBtn = at("clear-key");
     // An endpoint the provider ships is a placeholder (blank = keep it); one only the operator can
     // know is not, so the box says so instead of implying a default exists.
@@ -3848,6 +4000,7 @@ function paintQwenProviders(providers) {
     // The button sits inside the field's <label>; preventDefault stops the click focusing the input.
     clearBtn.addEventListener("click", (e) => { e.preventDefault(); toggleClearTok(clearBtn); });
     syncModelOptions({ modelSelect, engine: p.id, value: p.defaultModel || "", blankLabel: "provider default" });
+    syncDefaultEffort(modelSelect, effortSelect, p.id, p.defaultEffort);
     // Say WHERE the list came from: a stale shipped list and a live account list look identical in
     // a picker, and the difference decides whether a missing model is a typo or a missing key.
     const catalog = ENGINE_MANIFESTS.find((m) => m.id === p.id)?.modelCatalog;
@@ -3857,7 +4010,7 @@ function paintQwenProviders(providers) {
         ? "Built-in list — the account's own list could not be read. Check the key and endpoint, then reload."
         : "Built-in list. Save an API key to read the account's own models.");
     tpl.parentNode.insertBefore(card, tpl);
-    QWEN_PROVIDER_CARDS.push({ ...p, keyInput, urlInput, modelSelect, clearBtn });
+    QWEN_PROVIDER_CARDS.push({ ...p, keyInput, urlInput, modelSelect, effortSelect, clearBtn });
   }
 }
 
@@ -3868,6 +4021,7 @@ function collectQwenProviders() {
   for (const card of QWEN_PROVIDER_CARDS) {
     body[card.baseUrlField] = card.urlInput.value;
     body[card.defaultModelField] = card.modelSelect.value;
+    body[card.defaultEffortField] = card.effortSelect.value;
     const typed = tokenValue(card.keyInput);
     if (typed) body[card.apiKeyField] = typed;
     if (card.clearBtn.classList.contains("armed")) body[`clear${card.apiKeyField[0].toUpperCase()}${card.apiKeyField.slice(1)}`] = true;
@@ -3951,6 +4105,7 @@ function readSettingsForm() {
     composioMcpUrl: document.getElementById("set-composio").value,
     toolboxMcpUrl: document.getElementById("set-toolbox").value,
     publicUrl: document.getElementById("set-public-url").value,
+    trustProxy: document.getElementById("set-trust-proxy").value,
     approvalLinks: document.getElementById("set-approval-links").value,
     aiTestingUsers: aiTestingPicker?.getValues() || [],
     ...(document.getElementById("set-gchat-key").value.trim() ? { googleChatServiceAccountJson: document.getElementById("set-gchat-key").value } : {}),
@@ -3974,6 +4129,8 @@ function readSettingsForm() {
     engine: document.getElementById("set-engine").value,
     defaultClaudeModel: document.getElementById("set-default-claude-model").value,
     defaultCodexModel: document.getElementById("set-default-codex-model").value,
+    defaultClaudeEffort: document.getElementById("set-default-claude-effort").value,
+    defaultCodexEffort: document.getElementById("set-default-codex-effort").value,
     ...collectQwenProviders(),
     perplexityResearchEnabled: document.getElementById("set-perplexity-research-enabled").checked,
     ...(document.getElementById("set-perplexity-session-token").value ? { perplexitySessionToken: document.getElementById("set-perplexity-session-token").value } : {}),
@@ -4029,7 +4186,6 @@ function readSettingsForm() {
     ...(dmTplEditors.user && dmTplEditors.admin
       ? { dmTemplates: { user: dmTplEditors.user.getValues(), admin: dmTplEditors.admin.getValues() } }
       : {}),
-    ...(document.getElementById("set-adminpw").value ? { adminPassword: document.getElementById("set-adminpw").value } : {}),
     // HTTP run API token (write-only): send the new value only if edited/generated; the clear
     // toggle removes it. Leaving the field untouched keeps the stored token.
     ...(tokenValue(document.getElementById("set-apikey")) ? { apiKey: tokenValue(document.getElementById("set-apikey")) } : {}),
@@ -4078,6 +4234,7 @@ function paintSettings(s) {
   document.getElementById("set-composio").value = s.composioMcpUrl || "";
   document.getElementById("set-toolbox").value = s.toolboxMcpUrl || "";
   document.getElementById("set-public-url").value = s.publicUrl || "";
+  document.getElementById("set-trust-proxy").value = s.trustProxy || "";
   document.getElementById("set-approval-links").value = s.approvalLinks || "auto";
   aiTestingPicker = mountUserPicker(document.getElementById("set-ai-testing-users"), {
     users: USERS, selected: s.aiTestingUsers || [], onChange: markSettingsDirty,
@@ -4121,6 +4278,9 @@ function paintSettings(s) {
   GLOBAL_ENGINE = s.engine || "claude";
   syncModelOptions({ modelSelect: document.getElementById("set-default-claude-model"), engine: "claude", value: s.defaultClaudeModel || "", blankLabel: "CLI default" });
   syncModelOptions({ modelSelect: document.getElementById("set-default-codex-model"), engine: "codex", value: s.defaultCodexModel || "", blankLabel: "CLI default" });
+  for (const engine of ["claude", "codex"]) {
+    syncDefaultEffort(document.getElementById(`set-default-${engine}-model`), document.getElementById(`set-default-${engine}-effort`), engine, s[`default${engine === "claude" ? "Claude" : "Codex"}Effort`]);
+  }
   document.getElementById("set-model-change-access").value = s.modelChangeAccess || "admins";
   paintModelShortcuts(s.modelShortcuts);
   document.getElementById("set-engine-fallback").checked = s.engineFallback !== false;
@@ -4140,8 +4300,6 @@ function paintSettings(s) {
   document.getElementById("set-container-egress-strict").checked = s.containerEgressSecretsStrict === true;
   document.getElementById("container-token-state").textContent = tokenState(s.hasContainerClaudeOauthToken, s.containerClaudeOauthTokenLast4);
   attachReveal(document.getElementById("set-container-claude-token"), { has: s.hasContainerClaudeOauthToken, last4: s.containerClaudeOauthTokenLast4 || "", fetch: revealSecret("settings", "containerClaudeOauthToken") });
-  document.getElementById("set-adminpw").dataset.hasPassword = String(s.hasAdminPassword === true);
-  document.getElementById("adminpw-state").textContent = s.hasAdminPassword ? "· set" : "· not set (UI open)";
   // HTTP run API key: a revealable field seeded with the stored token (so it can be copied into an
   // automation) plus a set/not-set state. Generated client-side, persisted on Save (write-only).
   attachReveal(document.getElementById("set-apikey"), { has: s.hasApiKey, last4: s.apiKeyLast4, fetch: revealSecret("settings", "apiKey") });
@@ -4218,7 +4376,6 @@ function paintSettings(s) {
   // refused one — to a save that never will. They also have to go before the baseline below, or a
   // pending action would be captured as "already the server's state" and then never sent.
   for (const btn of document.querySelectorAll("#view-settings .clear-tok.armed")) disarmClearTok(btn);
-  document.getElementById("set-adminpw").value = "";
   document.getElementById("set-gchat-key").value = "";
   // Remember what this paint put on the page: Save sends the difference against it, so a field
   // nobody touched here is never re-asserted over another writer's newer value.
@@ -4234,7 +4391,7 @@ async function loadSettings() {
   ]);
   USERS = directory.users || {};
   paintSettings(settings);
-  await Promise.all([loadLicense(), loadOrgSecrets()]);
+  await Promise.all([loadLicense(), loadOrgSecrets(), mountAdminAccess(document.getElementById("admin-access"), { confirm: confirmDialog })]);
 }
 
 // ── Settings: organization-wide environment secrets (config/scoped-env.js) ────────
@@ -4242,24 +4399,30 @@ async function loadSettings() {
 // hand-written has*/last4 echoes, and an arbitrary-name secret bag behind it is exactly the shape
 // that erodes the "resolve a NAMED field" property web/secrets.js depends on.
 let orgSecretEditor = null;
+let orgSecretEntitled = null;
 async function loadOrgSecrets() {
   const host = document.getElementById("org-secrets-editor");
   if (!host) return;
   let vars = [];
+  const license = await api("/api/license").catch(() => ({ features: {} }));
+  const entitled = license.features?.organizationVariables === true;
   try {
     vars = (await api("/api/org-secrets")).vars || [];
   } catch {
     /* an older daemon, or a transient failure: the card renders empty rather than breaking Settings */
   }
-  if (orgSecretEditor) {
+  if (orgSecretEditor && orgSecretEntitled === entitled) {
     orgSecretEditor.setVars(vars);
     return;
   }
   host.textContent = "";
+  orgSecretEntitled = entitled;
   host.appendChild(secretEditorMarkup());
   const card = document.getElementById("org-secrets-card");
   orgSecretEditor = mountSecretEditor({
     root: card,
+    disabled: !entitled,
+    allowRemoval: true,
     vars,
     userName: (id) => USERS[id]?.name || "",
     endpoint: (name) => `/api/org-secrets/${encodeURIComponent(name)}`,
@@ -4293,35 +4456,49 @@ const LICENSE_STATE_LABEL = {
   expired_grace: "· grace expired",
 };
 
-const fmtLicenseLimit = (v) => (v === null || v === undefined ? "unlimited" : String(v));
-const fmtLicenseTime = (v) => (v ? new Date(v).toLocaleString() : "—");
+const fmtLicenseLimit = (v) => (v === null || v === undefined ? "unlimited" : escapeHtml(String(v)));
+const fmtLicenseTime = (v) => (v ? escapeHtml(new Date(v).toLocaleString()) : "—");
 
 function paintLicense(l) {
   document.getElementById("license-state-chip").textContent = LICENSE_STATE_LABEL[l.state] || `· ${l.state}`;
+  const instructions = document.getElementById("set-agents-instructions");
+  instructions.readOnly = l.features?.organizationInstructions !== true;
+  document.getElementById("organization-instructions-entitlement").textContent = instructions.readOnly
+    ? "Enterprise is required to add or edit organization instructions. Saved instructions remain active; you can clear them explicitly. Channel instructions and core safety rules remain available."
+    : "Organization defaults follow the existing channel and Lean-mode rules. Saved instructions remain active if the license is downgraded.";
+  document.getElementById("clear-organization-instructions").onclick = () => { instructions.value = ""; instructions.dispatchEvent(new Event("input", { bubbles: true })); };
   document.getElementById("set-composio-mode").dataset.sdkEntitled = String(l.features?.composioSdk === true);
   document.querySelector('#set-composio-mode option[value="sdk"]').disabled = l.features?.composioSdk !== true;
   document.getElementById("set-composio-sdk-key").disabled = l.features?.composioSdk !== true;
   syncComposioModeUi();
+  document.querySelectorAll('[id^="set-drivesync-"]').forEach((control) => {
+    if ("disabled" in control) { control.disabled = l.features?.driveSync !== true; control.title = control.disabled ? "Google Drive sync requires Enterprise" : ""; }
+  });
+  const domainToggle = document.getElementById("user-auto-approval-enabled");
+  if (domainToggle && !domainToggle.checked) domainToggle.disabled = l.features?.companyDomainApproval !== true;
 
   const banner = document.getElementById("license-banner");
   banner.className = `license-banner ${l.banner?.level || ""}`.trim();
   banner.textContent = l.banner?.text || "";
   banner.hidden = !l.banner;
 
+  // Everything here comes from the licensing platform's response. The key fields are already
+  // escaped below; the free-text ones must be too, because this list is rendered as HTML.
   const facts = [
-    ["Tier", l.tier === "none" ? "no key" : l.tier],
-    ["Organization", l.organization || "—"],
+    ["Tier", l.tier === "none" ? "no key" : escapeHtml(l.tier)],
+    ["Organization", escapeHtml(l.organization || "—")],
     ["Key", l.hasLicenseKey ? `…${escapeHtml(l.licenseKeyLast4)} (from ${escapeHtml(l.licenseKeySource)})` : "none"],
     ["Registered channels", fmtLicenseLimit(l.limits?.channels)],
     ["Registered users", fmtLicenseLimit(l.limits?.users)],
-    ["Active conversations / month", fmtLicenseLimit(l.limits?.conversations)],
-    ["AI messages / conversation / month", fmtLicenseLimit(l.limits?.messagesPerConversationPerMonth)],
+    ["Conversation threads / channel / month", l.limits?.conversationsPerChannelPerMonth === undefined ? "not reported" : fmtLicenseLimit(l.limits.conversationsPerChannelPerMonth)],
+    ["AI messages / channel / month", fmtLicenseLimit(l.limits?.messagesPerConversationPerMonth)],
     ["Last verified", fmtLicenseTime(l.verifiedAt)],
     ["Next check", fmtLicenseTime(l.nextCheckAt)],
     ["Expires", l.expiresAt ? fmtLicenseTime(l.expiresAt) : "—"],
     ["Installation id", `<code>${escapeHtml(l.installationId || "")}</code>`],
     ["Platform", `<code>${escapeHtml(l.platformUrl || "")}</code>`],
   ];
+  if (l.tier !== "free" && l.limits?.conversations !== null) facts.push(["Active channels / month", fmtLicenseLimit(l.limits?.conversations)]);
   if (l.placeholderPublicKey) facts.push(["Signing key", "PLACEHOLDER — this build cannot verify a production key"]);
   document.getElementById("license-facts").innerHTML = facts
     .map(([k, v]) => `<dt>${escapeHtml(k)}</dt><dd>${v}</dd>`)
@@ -4340,17 +4517,17 @@ function paintLicense(l) {
   // instead of every conversation filling the track relative to the busiest one.
   const max = cap === null ? Math.max(1, ...rows.map((r) => r.runs)) : cap;
   const limitLine = cap === null
-    ? `Unlimited AI messages per conversation on this tier — bars are relative to the busiest conversation.`
-    : `Limit: ${cap} AI messages per conversation this month. A conversation is warned once at 80% and refused at the limit.`;
+    ? `Unlimited AI messages per channel on this tier — bars are relative to the busiest channel.`
+    : `Limit: ${cap} AI messages per channel this month. A channel is warned once at 80% and refused at the limit.`;
   host.innerHTML =
     `<p class="license-usage-limit">${escapeHtml(limitLine)}</p>` +
     rows.map((r) => {
       const pct = Math.max(2, Math.min(100, (r.runs / max) * 100));
       const ratio = cap === null ? 0 : r.runs / cap;
       const tone = ratio >= 1 ? "over" : ratio >= 0.8 ? "near" : "";
-      const name = r.conversationId + (r.admitted ? "" : " (not in this month's allowed set)");
+      const name = `${r.conversationId} · ${r.activeConversations ?? 0} active threads` + (r.admitted ? "" : " (not in this month's allowed set)");
       return `<div class="bar-row">
-        <span class="bar-name" title="${escapeHtml(name)}">${escapeHtml(r.conversationId)}</span>
+        <span class="bar-name" title="${escapeHtml(name)}">${escapeHtml(name)}</span>
         <span class="bar-track"><span class="bar-fill ${tone}" style="width:${pct}%${tone ? "" : ";background:var(--orange)"}"></span></span>
         <span class="bar-val">${r.runs}${cap === null ? "" : ` / ${cap}`}</span>
       </div>`;
@@ -4537,32 +4714,24 @@ function bindSettings() {
     try { form = readSettingsForm(); }
     catch (e) { saved.textContent = "✗ " + e.message; return; }
     const patch = diffSettingsPayload(SETTINGS_BASELINE || {}, form);
-    const newPw = form.adminPassword || "";
     // Only (re)connect Slack when a Slack token was actually changed in this save — a normal
     // settings change just persists and takes effect on the next message, no reconnect.
     const slackTokenChanged = !!(form.slackBotToken || form.slackAppToken || form.slackSigningSecret);
     try {
-      const currentAdminPassword = newPw && document.getElementById("set-adminpw").dataset.hasPassword === "true"
-        ? await passwordDialog({ body: "Enter your current admin password to change it." }) : "";
-      if (newPw && document.getElementById("set-adminpw").dataset.hasPassword === "true" && !currentAdminPassword) {
-        saved.textContent = "Password change cancelled";
-        return;
+      if (Object.hasOwn(patch, "publicUrl")) {
+        const me = await api("/api/auth/me");
+        if (!me.bootstrap) await freshAdminAuth();
       }
       const r = await api("/api/settings", {
         method: "PUT",
         body: JSON.stringify({
           ...patch,
-          ...(newPw ? { currentAdminPassword } : {}),
           // Echo the version this page was painted from: the server refuses the save (409) if
           // anything wrote settings in the meantime, instead of landing it on a newer state.
           ...(SETTINGS_VERSION ? { settingsVersion: SETTINGS_VERSION } : {}),
           connectSlack: slackTokenChanged,
         }),
       });
-      if (newPw) await fetch("/api/login", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ password: newPw }) });
-      // Reset only the write-only password box; the token fields are repainted (masked) by the
-      // loadSettings() call below, which re-seeds each reveal field with the freshly stored value.
-      document.getElementById("set-adminpw").value = "";
       for (const id of ["clear-composio-sdk-key", "clear-default-composio", "clear-default-toolbox", "clear-admin-user", "clear-license-key", "clear-gchat-key", "clear-teams-secret", "clear-container-claude-token", "clear-perplexity-session-token"]) disarmClearTok(document.getElementById(id));
       for (const card of QWEN_PROVIDER_CARDS) disarmClearTok(card.clearBtn);
       // A saved key kicks off a fresh verification server-side; repaint so the card shows the new
@@ -4677,7 +4846,7 @@ async function fsBrowse(p) {
     const names = otherAssignments.map((item) => item.isDM || item.type === "im"
       ? (item.name || item.slug)
       : hashName(item.name || item.slug));
-    conflict.textContent = `Already assigned to ${names.join(", ")}. Selecting it here will share one working folder between conversations.`;
+    conflict.textContent = `Already assigned to ${names.join(", ")}. Selecting it links this conversation to the existing folder setup: skills, memory, instructions, mode, network and Drive sync. Harness and model stay independent.`;
     conflict.hidden = false;
   } else {
     conflict.textContent = "";
@@ -5182,7 +5351,12 @@ document.getElementById("fs-modal").addEventListener("click", (e) => {
     e.preventDefault();
     const id = idInput.value.trim();
     if (!id) return;
-    await api(`/api/users/${encodeURIComponent(id)}`, { method: "PUT", body: JSON.stringify({ name: id }) });
+    try {
+      await api(`/api/users/${encodeURIComponent(id)}`, { method: "PUT", body: JSON.stringify({ name: id }) });
+    } catch (error) {
+      await infoDialog({ title: "Couldn't add user", body: error.message || "The user could not be added. Try again." });
+      return;
+    }
     idInput.value = "";
     form.hidden = true;
     const search = document.getElementById("users-search");
@@ -5246,28 +5420,26 @@ document.getElementById("dash-range").addEventListener("change", () => loadDashb
 document.getElementById("dash-harness").addEventListener("change", () => loadDashboard().catch(() => {}));
 document.getElementById("dash-source").addEventListener("change", () => loadDashboard().catch(() => {}));
 
-document.getElementById("remove-password").addEventListener("click", async () => {
-  const ok = await confirmDialog({
-    title: "Remove admin password?",
-    body: "The UI becomes open — anyone who can reach it can administer, with no sign-in.",
-    confirmLabel: "Remove",
-    danger: true,
-  });
-  if (!ok) return;
-  const currentAdminPassword = await passwordDialog({ body: "Enter your current admin password to remove it.", danger: true });
-  if (!currentAdminPassword) return;
-  try {
-    await api("/api/settings", { method: "PUT", body: JSON.stringify({ clearAdminPassword: true, currentAdminPassword, connectSlack: false }) });
-    document.getElementById("daemon-msg").textContent = "✓ password removed";
-    await loadSettings();
-    await loadHealth();
-  } catch (error) {
-    document.getElementById("daemon-msg").textContent = "✗ " + error.message;
-  }
-});
-
 // ── Boot ─────────────────────────────────────────────────────────────────────────
 async function init() {
+  const identity = await api("/api/auth/me", { cache: "no-store" });
+  if (identity.linkRequired || identity.bootstrap) {
+    // Existing unlinked passkeys can authenticate, but ordinary admin APIs stay closed until
+    // their owner proves the existing gateway identity. Keep that remedy reachable on its own.
+    document.querySelector(".app").style.display = "none";
+    const gate = document.createElement("main");
+    gate.className = "identity-link-gate";
+    const card = document.createElement("div");
+    card.className = "setcard identity-link-card";
+    const title = document.createElement("h2");
+    title.textContent = identity.linkRequired ? "Link your gateway admin user" : "Complete dashboard access setup";
+    const access = document.getElementById("admin-access");
+    card.append(title, access);
+    gate.append(card);
+    document.body.append(gate);
+    await mountAdminAccess(access, { confirm: confirmDialog, onLinked: () => window.location.reload() });
+    return;
+  }
   await loadHealth();
   startActiveRunsStream();
   loadUpdateStatus().catch(() => {}); // version chip + update button — off the critical path
@@ -5279,13 +5451,14 @@ async function init() {
       if (box && box.dataset.mcpCodexKey === "codex") void renderMcpBoxForEngine(box, "codex", document.querySelector("#channel-detail .ch-mcps-count"));
     },
   });
-  const { skills } = await api("/api/skills");
+  const { skills, personalSkills = [] } = await api("/api/skills");
   try {
     SKILL_TEMPLATES = (await api("/api/skills/templates")).templates || [];
   } catch {
     SKILL_TEMPLATES = [];
   }
   SKILLS = skills;
+  PERSONAL_SKILLS = Array.isArray(personalSkills) ? personalSkills : [];
   await loadSettings();
   await loadUsers(); // populate USERS for the channel user pickers (+ render the Users view)
   await loadConversations(); // default view: render the unified list (light); details render on click
@@ -5293,7 +5466,7 @@ async function init() {
   viewLoaded.users = true;
   viewLoaded.settings = true;
   if (initialConversationRoute) await selectConv(initialConversationRoute.key, { history: "none", canonicalize: true });
-  loadView(initialView);
+  loadView(initialView, { refreshIdentity: false });
 
   // Warm both catalogs off the critical path; every grant editor shows Claude and Codex together.
   for (const engine of ["claude", "codex"]) loadMcpCatalog(engine).catch(() => {});
@@ -5397,7 +5570,8 @@ function renderSkillTemplateEditor(mount, slug) {
     </div>`;
   const box = mount.querySelector(".tpl-skills");
   box.dataset.kind = "s";
-  checkboxList(box, accessGrantSkillOptions(SKILLS, t.skills || []), t.skills || []);
+  const skillOptions = accessGrantSkillOptions(SKILLS, t.skills || [], { personal: PERSONAL_SKILLS });
+  checkboxList(box, skillOptions, accessGrantSkillSelection(skillOptions, t.skills || []));
   wireChecksTools(box, mount.querySelector(".tpl-skills-filter"), mount.querySelector(".tpl-skills-count"));
   const status = mount.querySelector(".tpl-status");
   mount.querySelector(".tpl-cancel").addEventListener("click", () => { skillTplEditing = null; renderSkillTemplatesSettings(); });

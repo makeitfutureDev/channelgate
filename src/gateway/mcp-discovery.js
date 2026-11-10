@@ -11,7 +11,7 @@ import { spawn } from "node:child_process";
 import { requireAdapter } from "../engines/registry.js";
 import { processFailureMessage } from "../util/process-outcome.js";
 import { codexNoTelemetryArgs } from "../engines/codex-telemetry.js";
-import { channelCodexHome, codexAuthProcessEnv } from "./channel-codex-auth.js";
+import { channelCodexHome, codexAuthProcessEnv } from "./channel-codex-paths.js";
 
 const cache = new Map(); // engine + Codex login source -> { ts, data }
 const refreshing = new Map(); // same key -> in-flight refresh promise
@@ -243,6 +243,10 @@ export async function listCodexRuntimeMcps({
   maxMessageBytes = CODEX_MAX_MESSAGE_BYTES,
   failClosed = true,
 } = {}) {
+  if (channelId) {
+    const { requireEnterpriseFeature } = await import("../ee/feature-entitlements.js");
+    requireEnterpriseFeature("channelCodexLogin");
+  }
   let child;
   let timer;
   let buffer = "";
@@ -429,6 +433,10 @@ function refresh(engine, channelId = "") {
 // immediately and refresh in the background when stale (stale-while-revalidate). Only the very
 // first call (cold cache) waits — and the admin UI loads this off the page's critical path.
 export async function listEngineMcps(engine = "claude", { channelId = "" } = {}) {
+  if (engine === "codex" && channelId) {
+    const { requireEnterpriseFeature } = await import("../ee/feature-entitlements.js");
+    requireEnterpriseFeature("channelCodexLogin");
+  }
   const key = engine === "codex" && channelId ? `codex:${channelId}` : engine;
   const hit = cache.get(key);
   if (hit) {

@@ -12,6 +12,8 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { channelFolder, channelSettingsFile, channelAdminSettingsFile, cleanWorkspaceFolder, workspaceFolder, gatewayRoot } from "../config/paths.js";
 import { allowedFsRoot, resolveWithinRoot } from "../web/security.js";
+import { forbiddenWorkDirReason } from "./workdir-boundary.js";
+import { assertChannelMembership } from "./channel-membership.js";
 
 
 // The directory Claude actually runs in for a channel: a custom meta.workDir when set to a
@@ -30,6 +32,21 @@ export function effectiveWorkDir(slug, meta = {}) {
   // would either leak grants into clean mode or revoke them underneath the regular author.
   if (meta.cleanMode) return cleanWorkspaceFolder(slug, meta.platform);
   const w = (meta.workDir || "").trim();
+  // A code channel works in its ORIGIN channel's folder (gateway/code-channels.js projects it as
+  // workDir). The origin's gateway-owned default folder is allowed on its own terms — it is where
+  // that channel runs — even when the allowlisted root is narrower than the workspace root; a
+  // custom origin folder still passes the containment check below like any other workDir.
+  const origins = [
+    { slug: meta.workspaceOwnerSlug || meta.codeChannel?.originSlug, platform: meta.workspaceLink?.platform || meta.platform },
+    meta.workspaceOrigin,
+  ];
+  if (w && origins.some((origin) => origin?.slug && w === workspaceFolder(origin.slug, origin.platform))) {
+    try {
+      if (statSync(w).isDirectory()) return w;
+    } catch {
+      /* fall through */
+    }
+  }
   if (w && path.isAbsolute(w)) {
     // Read-time containment: the write entry points (admin UI, MCP tool) already validate, but a
     // workDir stored BEFORE the allowlist existed (or before an admin tightened the root) would
@@ -37,10 +54,18 @@ export function effectiveWorkDir(slug, meta = {}) {
     // covers runs, background jobs, lockdown generation, and the memory routes.
     const real = resolveWithinRoot(allowedFsRoot(), w);
     if (real) {
-      try {
-        if (statSync(real).isDirectory()) return real;
-      } catch {
-        /* vanished since resolve — fall back */
+      // The daemon-owned trees (home, gateway root, ~/.ssh, …) are refused even inside the root
+      // (src/gateway/workdir-boundary.js). Only the static roots are checked on this hot path; the
+      // runtime resolver re-checks against other channels' folders and fails the run closed.
+      const forbidden = forbiddenWorkDirReason(real, { slug, channels: [] });
+      if (forbidden) {
+        console.warn(`[workdir] stored workDir ${w} is ${forbidden} — using the default folder for ${slug}`);
+      } else {
+        try {
+          if (statSync(real).isDirectory()) return real;
+        } catch {
+          /* vanished since resolve — fall back */
+        }
       }
     } else {
       console.warn(`[workdir] stored workDir ${w} escapes the allowed root — using the default folder for ${slug}`);
@@ -57,14 +82,14 @@ import { getAgentsFile, getAgentsInstructions, getComposioMode, getOrgAccessGran
 import { memoryEnabled, MEM_FILE, applyChannelMemory } from "./channel-memory.js";
 import { isLibraryStub, splitFavorites, ensureCodexSkillsLink, pruneLegacyLibraryStubs } from "./library-skills.js";
 import { MANAGED_SKILL_MARKER, materializeSkill, pruneManagedSkills } from "./skills/materialize.js";
-import { listSkills as listCatalogSkills } from "./skills/catalog.js";
+import { getSkill as getCatalogSkill, listSkills as listCatalogSkills } from "./skills/catalog.js";
 import { withDependencies } from "./skills/resolve.js";
 import { channelSkillGrants } from "./skills/templates.js";
 import { archiveWorkspaceEntry } from "./skills/workspace-backup.js";
 import { readSkillDirectory } from "./skills/import-folder.js";
 import { normalizeSkillFiles, hashSkillFiles } from "./skills/files.js";
 import { acquireKeyedLock } from "../util/keyed-lock.js";
-import { sanitizeSkillGrantNames } from "./access-grants.js";
+import { sanitizeSkillGrantNames, sharedSkillGrants } from "./access-grants.js";
 import { readNoFollow, writeNoFollow, ensureRealDir } from "./safe-fs.js";
 // Capability reads only — never the registry or the resolver (resolve.js imports THIS module for
 // effectiveWorkDir, so the dependency has to stay one-way). contract.js imports nothing but
@@ -143,6 +168,7 @@ export function channelSwitchesNote(meta = {}) {
     `- Mode: **${mode}** — ${MODE_NOTE[mode]}.`,
     `- Auto: **${meta.autoMode ? "on" : "off"}** — ${meta.autoMode ? "tool requests are automatically approved for every authorized member" : "tools outside the mode allowlist require approval"}.`,
     `- Lean: **${meta.cleanMode ? "on" : "off"}** — ${meta.cleanMode ? "bare model without skills or connectors" : "configured skills and connectors are available"}.`,
+    `- Skill model swap: **${meta.skillRuntimeSwap ? "on" : "off"}**${meta.skillRuntimeSwap ? " — a skill's preferred model takes over when `use_skill` says so" : ""}.`,
     `- Network: ${networkLine}`,
   ].join("\n");
 }
@@ -336,7 +362,7 @@ async function ensureInstructionFiles(cwd, slug, meta) {
   if (!getAgentsFile()) return;
   const agents = path.join(cwd, "AGENTS.md");
   const claude = path.join(cwd, "CLAUDE.md");
-  const isDefault = cwd === workspaceFolder(slug, meta?.platform); // gateway-owned default workspace
+  const isDefault = cwd === workspaceFolder(meta.workspaceLink?.slug || slug, meta.workspaceLink?.platform || meta?.platform); // gateway-owned default workspace
 
   // Migrate the old layout (AGENTS.md real + CLAUDE.md → AGENTS.md) to the new one (CLAUDE.md the
   // real file, AGENTS.md → CLAUDE.md). Only for gateway-owned default folders; a custom project
@@ -429,9 +455,20 @@ export async function channelInstructionsSnapshot(slug, meta) {
   return { cwd, file, cur, fingerprint };
 }
 
+export async function assertChannelNotArchived(slug, meta) {
+  const { getChannelMeta } = await import("../config/store.js");
+  const current = await getChannelMeta(slug);
+  const actual = current ?? meta;
+  if (actual?.archived) {
+    throw Object.assign(new Error("This channel is archived because the bot was removed. Re-invite the bot to resume configuration updates."), { code: "channel_archived", status: 409, statusCode: 409 });
+  }
+  assertChannelMembership(actual);
+}
+
 export async function updateChannelInstructions(slug, meta, options) {
   const release = await acquireKeyedLock("channel-instructions", effectiveWorkDir(slug, meta));
   try {
+    await assertChannelNotArchived(slug, meta);
     return await writeChannelInstructions(slug, meta, options);
   } finally {
     release();
@@ -443,7 +480,7 @@ async function writeChannelInstructions(slug, meta, { text, replace = false, exp
   if (expectedFingerprint && fingerprint !== expectedFingerprint) {
     throw new Error("The channel instructions changed while approval was pending. Submit a fresh request to review the current version.");
   }
-  const isDefault = cwd === workspaceFolder(slug, meta?.platform);
+  const isDefault = cwd === workspaceFolder(meta.workspaceLink?.slug || slug, meta.workspaceLink?.platform || meta?.platform);
   const addition = text.replace(/\s+$/, "");
   let next;
   if (isDefault) {
@@ -694,6 +731,12 @@ async function prepareWorkspaceSkills(cwd, backupDir) {
 
 export async function ensureChannelFolder(slug, meta, { runMeta = meta, target = null } = {}) {
   const { assertWorkspaceSkillsCompatible } = await import("./skills/workspace-sync.js");
+  const { getChannelMeta } = await import("../config/store.js");
+  const { workspaceSetup } = await import("../config/workspace-links.js");
+  await assertChannelNotArchived(slug, meta);
+  const storedMeta = await getChannelMeta(slug);
+  if (storedMeta?.workspaceLink) meta = { ...meta, ...storedMeta };
+  meta = workspaceSetup(meta);
   await assertWorkspaceSkillsCompatible(slug, meta);
   // Every per-channel path is namespaced by the channel's platform; an unknown/missing one
   // resolves to Slack in the registry, which is what keeps pre-multi-platform rows working.
@@ -731,9 +774,10 @@ export async function ensureChannelFolder(slug, meta, { runMeta = meta, target =
     await rm(adminSettingsFile, { force: true });
   }
 
-  const configureWorkspace = async (cwd, workspaceMeta, skills) => {
+  const configureWorkspace = async (cwd, workspaceMeta, skills, workspaceSlug = slug) => {
     const release = await acquireKeyedLock("workspace-skills", cwd);
     try {
+      await assertChannelNotArchived(slug, meta);
       // Recreate the managed skill tree as REAL directories — a symlink swapped in at .claude/ or
       // skills/ would otherwise route every managed write below to wherever the agent pointed it.
       const backupDir = workspaceSkillBackupDir(cwd);
@@ -749,7 +793,7 @@ export async function ensureChannelFolder(slug, meta, { runMeta = meta, target =
       // PLATFORM, so a Teams channel is never told to post a Slack List. Marker-guarded +
       // write-on-change, so a channel that changes surface re-materializes on its next message.
       await applyGatewayGuide(cwd, { platform: workspaceMeta?.platform || DEFAULT_PLATFORM, target });
-      await ensureInstructionFiles(cwd, slug, workspaceMeta);
+      await ensureInstructionFiles(cwd, workspaceSlug, workspaceMeta);
       await applyChannelMemory(cwd, { ...workspaceMeta, _slug: slug });
       if (skillSync.missing.length) console.warn(`[skills] ${slug}: unavailable selected skills: ${skillSync.missing.join(", ")}`);
       return skillSync;
@@ -759,10 +803,15 @@ export async function ensureChannelFolder(slug, meta, { runMeta = meta, target =
   // The durable workspace always reflects organization+channel grants. A run-specific clean/mode
   // override may select a different cwd, but must not prune or rewrite this shared baseline.
   // The channel tier: the assigned skill template's current skills plus the conversation's own.
-  const channelSkills = sanitizeSkillGrantNames([...(getOrgAccessGrants().skills || []), ...channelSkillGrants(meta)]);
-  const durableMeta = { ...meta, cleanMode: false };
-  const durableCwd = effectiveWorkDir(slug, durableMeta);
-  const skillSync = await configureWorkspace(durableCwd, durableMeta, channelSkills);
+  // A personal skill (or a grant requiring one) never materializes here: this folder is every
+  // member's, and a personal skill loads only from its author's own grants (access-grants.js).
+  const sharedGrants = sharedSkillGrants({ organization: getOrgAccessGrants().skills || [], channel: channelSkillGrants(meta), lookupSkill: getCatalogSkill });
+  if (sharedGrants.skipped.length) console.warn(`[skills] ${slug}: skipped personal skills granted to a shared tier: ${sharedGrants.skipped.map((entry) => `${entry.name} (${entry.tier})`).join(", ")}`);
+  const channelSkills = sanitizeSkillGrantNames([...sharedGrants.organization, ...sharedGrants.channel]);
+  const ownerMeta = workspaceSetup(meta.workspaceLink ? await getChannelMeta(meta.workspaceLink.slug) : meta);
+  const durableMeta = { ...(ownerMeta || meta), workDir: effectiveWorkDir(slug, { ...meta, cleanMode: false }), cleanMode: false };
+  const durableCwd = effectiveWorkDir(slug, { ...meta, cleanMode: false });
+  const skillSync = await configureWorkspace(durableCwd, durableMeta, channelSkills, meta.workspaceLink?.slug || slug);
 
   const cwd = effectiveWorkDir(slug, runMeta);
   if (cwd !== durableCwd) {

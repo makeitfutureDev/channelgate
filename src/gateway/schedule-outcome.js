@@ -1,3 +1,4 @@
+import { runAdmissionRefusalKind } from "./run-admission-result.js";
 // Engine completion and task completion are different facts. Only an explicit, validated
 // agent report can describe the task. Missing/ambiguous reports never become empty successes.
 import { redactLogValue } from "../util/redact.js";
@@ -15,8 +16,9 @@ export function classifyScheduleResult(result = {}) {
   const content = typeof result.content === "string" ? result.content : "";
   const fallback = { status: "unreported", summary: "The agent did not provide a valid task outcome.", connections: [], source: "unreported" };
   // Refusal gates do not execute the agent, even though their notices are normal-shaped results.
-  if (result.licenseRefused || result.accessRefused || result.engineRefused) {
-    return { ...result, automationOutcome: { ...fallback, status: "blocked", summary: redactLogValue(content).slice(0, 1000), source: "gateway", errorKind: result.licenseRefused ? "license" : result.accessRefused ? "access" : "engine_disabled" } };
+  const refusal = runAdmissionRefusalKind(result);
+  if (refusal) {
+    return { ...result, automationOutcome: { ...fallback, status: "blocked", summary: redactLogValue(content).slice(0, 1000), source: "gateway", errorKind: refusal } };
   }
   if (result.interrupted || result.engineError || result.completed === false || result.answerless) {
     const status = result.interrupted ? "interrupted" : result.answerless ? "unreported" : "failed";

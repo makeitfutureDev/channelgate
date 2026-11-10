@@ -1,4 +1,4 @@
-// The Skills view of the admin UI: the local skill catalog (browse, read, author, pin/rollback,
+// The Skills view of the admin UI: the gateway skill catalog (browse, read, author, pin/rollback,
 // remove), the review queue (staged source revisions + proposals), sources (GitHub / gateway,
 // sync, settings), templates (edit, preview and apply to a conversation) and usage. Talks to
 // src/web/routes/skills.js. No framework — one delegated click handler per panel.
@@ -26,7 +26,8 @@ const state = {
   sourceSkills: [],
   sourceQuery: "",
   sourceQueryDraft: "",
-  enabled: "1",
+  enabled: "all",
+  missingSkillMd: "all",
   discoverable: "all",
   mandatory: "all",
   assigned: "all",
@@ -51,7 +52,8 @@ const state = {
 
 const body = () => document.getElementById("skills-body");
 const fmtWhen = (ts) => (ts ? String(ts).replace("T", " ").slice(0, 16) : "—");
-const ownerLabel = (s) => (s.ownerKind === "git" ? `git source #${s.sourceId}` : s.ownerKind);
+const ownerKindLabel = (kind) => kind === "local" ? "Gateway-owned" : kind;
+const ownerLabel = (s) => (s.ownerKind === "git" ? `git source #${s.sourceId}` : ownerKindLabel(s.ownerKind));
 
 function setMessage(msg, isError = false) {
   state.message = isError ? "" : msg;
@@ -78,6 +80,7 @@ async function refreshAll() {
     state.source ? `source=${encodeURIComponent(state.source)}` : "",
     state.category ? `category=${encodeURIComponent(state.category)}` : "",
     state.enabled ? `enabled=${state.enabled}` : "",
+    `missingSkillMd=${state.missingSkillMd}`,
     state.discoverable ? `discoverable=${state.discoverable}` : "",
     state.mandatory ? `mandatory=${state.mandatory}` : "",
     state.assigned ? `assigned=${state.assigned}` : "",
@@ -93,6 +96,7 @@ async function refreshAll() {
     ...catalog,
     skills: filterSkillCatalog(catalog.skills, {
       enabled: state.enabled,
+      missingSkillMd: state.missingSkillMd,
       discoverable: state.discoverable,
       mandatory: state.mandatory,
       assigned: state.assigned,
@@ -100,7 +104,7 @@ async function refreshAll() {
       category: state.category,
     }, { overview, profiles: profiles.profiles }),
   };
-  state.catalogAll = catalogAll;
+  state.catalogAll = { ...catalogAll, skills: catalogAll.skills.filter((skill) => !skill.diagnosticOnly) };
   state.profiles = profiles.profiles;
   if (state.sourceSelected) {
     const result = await api(`/api/skills/catalog?source=${encodeURIComponent(state.sourceSelected)}&deleted=1`);
@@ -247,24 +251,28 @@ function renderCatalog() {
     ["1", yes],
     ["0", no],
   ].map(([value, label]) => `<option value="${value}"${value === current ? " selected" : ""}>${label}</option>`).join("");
-  const rows = skills.map((s) => `
+  const rows = skills.map((s) => s.diagnosticOnly ? `
+    <tr data-slug="${esc(s.slug)}"><td><code>${esc(s.slug)}</code> <span class="pill">Missing SKILL.md</span></td>
+      <td class="desc">${esc(s.description)}</td><td>—</td><td>Host folder</td><td>—</td>
+      <td colspan="3" class="muted">Unavailable — fix the folder or remove its grant in Users.</td><td class="num">0</td></tr>` : `
     <tr class="clickable${s.slug === state.selected ? " selected" : ""}" data-action="select" data-slug="${esc(s.slug)}">
-      <td><code>${esc(s.slug)}</code>${pluginBadge(s)}${s.visibility === "personal" ? ' <span class="pill">personal</span>' : ""}${s.excluded ? ' <span class="pill">excluded</span>' : s.deleted ? ' <span class="pill">removed</span>' : ""}${s.channelScope ? ` <span class="pill" title="Kept in this channel's section of the skills repository">${esc(channelLabel(s.channelScope))}</span>` : ""}${s.pinnedRevisionId ? ' <span class="pill">pinned</span>' : ""}${s.stagedCount ? ` <span class="pill">${s.stagedCount} staged</span>` : ""}${s.currentRevisionId == null && !s.deleted ? ' <span class="pill">not active</span>' : ""}</td>
+      <td><code>${esc(s.slug)}</code>${pluginBadge(s)}${s.model ? ` <span class="pill" title="Preferred model">${esc(s.model)}</span>` : ""}${s.visibility === "personal" ? ' <span class="pill">personal</span>' : ""}${s.excluded ? ' <span class="pill">excluded</span>' : s.deleted ? ' <span class="pill">removed</span>' : ""}${s.channelScope ? ` <span class="pill" title="Kept in this channel's section of the skills repository">${esc(channelLabel(s.channelScope))}</span>` : ""}${s.pinnedRevisionId ? `<span class="pill">${s.pinReason === "publication" ? "publication recovery" : "pinned"}</span>` : ""}${s.stagedCount ? ` <span class="pill">${s.stagedCount} staged</span>` : ""}${s.currentRevisionId == null && !s.deleted ? ' <span class="pill">not active</span>' : ""}</td>
       <td class="desc">${esc(s.description)}</td>
       <td>${esc(s.category || "—")}</td>
       <td><span class="muted">${esc(ownerLabel(s))}</span></td>
       <td>${esc(s.version || "—")}</td>
       <td><label title="Available in the catalog"><input type="checkbox" data-action="skill-enabled" data-slug="${esc(s.slug)}"${s.enabled ? " checked" : ""}/> Enabled</label></td>
       <td><label title="Approved members and agents may find and grant it"><input type="checkbox" data-action="skill-discoverable" data-slug="${esc(s.slug)}"${s.discoverable ? " checked" : ""}${s.mandatory ? " disabled" : ""}/> Discoverable</label></td>
-      <td><label title="Loaded in every conversation"><input type="checkbox" data-action="skill-mandatory" data-slug="${esc(s.slug)}"${s.mandatory ? " checked" : ""}/> Mandatory</label></td>
+      <td><label title="Loaded in every conversation"><input type="checkbox" data-action="skill-mandatory" data-slug="${esc(s.slug)}"${s.mandatory ? " checked" : ""}${!s.mandatory && !state.overview?.features?.mandatoryOrgSkills ? ' disabled title="Mandatory organization skills require Enterprise"' : ""}/> Mandatory · Enterprise</label></td>
       <td class="num">${s.usage30d?.total || 0}</td>
     </tr>`).join("");
   return `
     <div class="skills-toolbar">
       ${searchBox("skills-q", { label: "Search the skill catalog", placeholder: "Search slug, name, description, tags…" })}
-      <select id="skills-owner">${owners.map((o) => `<option value="${o}"${o === state.owner ? " selected" : ""}>${o ? esc(o) : "every owner"}</option>`).join("")}</select>
+      <select id="skills-owner">${owners.map((o) => `<option value="${o}"${o === state.owner ? " selected" : ""}>${o ? esc(ownerKindLabel(o)) : "every owner"}</option>`).join("")}</select>
       <select id="skills-source" aria-label="Source"><option value="">Every source</option>${(state.overview?.sources || []).map((source) => `<option value="${source.id}"${String(source.id) === state.source ? " selected" : ""}>${esc(source.label || source.url)}</option>`).join("")}</select>
       <select id="skills-category" aria-label="Category"><option value="">Every category</option>${(state.catalog?.categories || []).map((category) => `<option value="${esc(category.category)}"${category.category === state.category ? " selected" : ""}>${esc(category.category)}</option>`).join("")}</select>
+      <select id="skills-missing-manifest" aria-label="Skill file status">${binaryOptions(state.missingSkillMd, "Every skill file status", "Missing SKILL.md", "Has SKILL.md")}</select>
       <select id="skills-enabled" aria-label="Enabled status">${binaryOptions(state.enabled, "enabled or disabled", "Enabled", "Disabled")}</select>
       <select id="skills-discoverable" aria-label="Discoverability">${binaryOptions(state.discoverable, "discoverable or not", "Discoverable", "Not discoverable")}</select>
       <select id="skills-mandatory" aria-label="Mandatory status">${binaryOptions(state.mandatory, "mandatory or not", "Mandatory", "Not mandatory")}</select>
@@ -283,7 +291,7 @@ function renderCatalog() {
 function renderNewSkillForm() {
   return `
     <div class="card skills-detail">
-      <h3>New local skill</h3>
+      <h3>New gateway-owned skill</h3>
       <div class="skills-form">
         <label class="field"><span>Slug (folder name; empty = from the frontmatter name)</span><input id="ns-slug" placeholder="customer-record" /></label>
         <label class="field"><span>Note</span><input id="ns-note" placeholder="why this skill exists" /></label>
@@ -325,12 +333,12 @@ function renderDetail() {
       <div class="card-head"><h3><code>${esc(s.slug)}</code> ${esc(s.name !== s.slug ? s.name : "")}${pluginBadge(s)}</h3><span class="badge">${esc(s.owner)}</span>${s.excluded ? '<span class="badge" title="Excluded by an admin; stays out across syncs until restored">excluded</span>' : s.deleted ? '<span class="badge" title="Dropped by its source; comes back if the source delivers it again">removed</span>' : ""}</div>
       <p class="skills-note">${esc(s.description)}</p>
       ${pluginSummary(s)}
-      <p class="skills-note">Category: ${esc(s.category || "—")} · Version: ${esc(s.version || "—")} · Tags: ${esc((s.tags || []).join(", ") || "—")} · Requires: ${esc((s.requires || []).join(", ") || "—")}${s.createdBy ? ` · Author: ${esc(s.createdBy)}` : ""}</p>
+      <p class="skills-note">Category: ${esc(s.category || "—")} · Version: ${esc(s.version || "—")} · Tags: ${esc((s.tags || []).join(", ") || "—")} · Requires: ${esc((s.requires || []).join(", ") || "—")} · Preferred model: ${esc(s.model || "—")}${s.createdBy ? ` · Author: ${esc(s.createdBy)}` : ""}</p>
       <p class="skills-note">${esc(usage)}</p>
       <div><strong>Files</strong> (effective revision)</div>
       <div class="files">${files || '<span class="skills-muted">no approved revision yet</span>'}</div>
       ${state.fileView ? `<pre>${esc(state.fileView.content)}</pre>` : ""}
-      <div><strong>Revisions</strong>${s.pinnedRevisionId ? ' — pinned <button type="button" class="ghost" data-action="unpin">follow current</button>' : ""}</div>
+      <div><strong>Revisions</strong>${s.pinnedRevisionId ? ` — ${s.pinReason === "publication" ? "publication recovery (clears after successful publication)" : "pinned"} <button type="button" class="ghost" data-action="unpin">follow current</button>` : ""}</div>
       <div class="revs">${revs}</div>
       <div class="skills-actions">
         <span class="skills-inline">Grant to
@@ -342,7 +350,7 @@ function renderDetail() {
           <button type="button" class="ghost" data-action="set-scope">Move</button>
         </span>
         ${s.ownerKind === "local" ? `<button type="button" class="ghost" data-action="toggle-visibility">${s.visibility === "personal" ? "Make organization skill" : "Make personal (author only)"}</button>` : ""}
-        ${(state.overview?.orgSkills || []).some((x) => x.toLowerCase() === s.slug.toLowerCase()) ? `<button type="button" class="ghost" data-action="org-revoke">Remove organization-wide grant</button>` : `<button type="button" class="ghost" data-action="org-grant">Grant organization-wide</button>`}
+        ${(state.overview?.orgSkills || []).some((x) => x.toLowerCase() === s.slug.toLowerCase()) ? `<button type="button" class="ghost" data-action="org-revoke">Remove organization-wide grant</button>` : `<button type="button" class="ghost" data-action="org-grant"${state.overview?.features?.mandatoryOrgSkills ? "" : ' disabled title="Mandatory organization skills require Enterprise"'}>Grant organization-wide · Enterprise</button>`}
         ${state.overview?.settings?.publish && s.ownerKind === "local" ? `<button type="button" class="ghost" data-action="publish-now">Publish to Git now</button>` : ""}
         ${s.deleted ? `<button type="button" class="ghost" data-action="restore">Restore</button>` : `<button type="button" class="ghost" data-action="remove">Remove from catalog</button>`}
         <button type="button" class="ghost" data-action="close-detail">Close</button>
@@ -357,7 +365,7 @@ function renderReview() {
     <tr>
       <td><code>${esc(r.slug)}</code>${pluginBadge(r)} <span class="muted">${esc(r.skillName || "")}</span>${pluginSummary(r)}</td>
       <td>#${r.revisionNo}${r.version ? ` v${esc(r.version)}` : ""} · ${r.fileCount} file(s)</td>
-      <td class="muted">${esc(r.ownerKind === "git" ? `git source #${r.sourceId}` : r.ownerKind)} · ${esc(r.sourceRef.slice(0, 12))}</td>
+      <td class="muted">${esc(ownerLabel(r))} · ${esc(r.sourceRef.slice(0, 12))}</td>
       <td class="muted">${fmtWhen(r.createdAt)}</td>
       <td><span class="skills-inline"><button type="button" class="ghost" data-action="view-rev" data-id="${r.id}">files</button><button type="button" data-action="approve-rev" data-id="${r.id}">Approve</button><button type="button" class="ghost" data-action="reject-rev" data-id="${r.id}">Reject</button></span></td>
     </tr>`).join("");
@@ -374,7 +382,7 @@ function renderReview() {
     <table class="skills-table"><thead><tr><th>Skill or plugin</th><th>Revision</th><th>From</th><th>Received</th><th></th></tr></thead><tbody>${stagedRows || '<tr><td colspan="5" class="muted">Nothing staged.</td></tr>'}</tbody></table>
     ${state.fileView?.kind === "revision" ? `<div class="card skills-detail"><h3>Revision #${state.fileView.revisionNo} files</h3>${state.fileView.files.map((f) => `<p><strong>${esc(f.path)}</strong> <span class="skills-muted">${f.size} B</span></p>${f.content != null ? `<pre>${esc(f.content)}</pre>` : ""}`).join("")}</div>` : ""}
     <h3 style="margin-top:18px">Proposals</h3>
-    <p class="skills-note">Changes members proposed from chat. Approving a change publishes a revision (pinned as a local override when the skill comes from a source); approving a promotion grants the skill organization-wide.</p>
+    <p class="skills-note">Changes members proposed from chat. Approving a change publishes a revision (pinned as a gateway override when the skill comes from a source); approving a promotion grants the skill organization-wide.</p>
     <table class="skills-table"><thead><tr><th>Proposal</th><th>Note / files</th><th>By</th><th></th></tr></thead><tbody>${proposalRows || '<tr><td colspan="4" class="muted">No pending proposals.</td></tr>'}</tbody></table>
     ${state.fileView?.kind === "proposal" ? `<div class="card skills-detail"><h3>Proposal #${state.fileView.id} files</h3>${state.fileView.files.map((f) => `<p><strong>${esc(f.path)}</strong></p><pre>${esc(f.encoding === "base64" ? "(binary)" : f.content)}</pre>`).join("")}</div>` : ""}`;
 }
@@ -401,7 +409,7 @@ function renderSourceSkills(source) {
   const all = state.sourceSkills;
   const q = state.sourceQuery.trim().toLowerCase();
   const skills = all.filter((skill) => !q || `${skill.slug} ${skill.name} ${skill.description}`.toLowerCase().includes(q));
-  const toggle = (skill, key, label) => `<label class="skills-governance-toggle" title="${key === "mandatory" ? "Load in every conversation" : key === "discoverable" ? "Members and agents across the organization can find and grant this skill" : "Allow this skill to be used"}"><input type="checkbox" role="switch" aria-label="${esc(label)}: ${esc(skill.slug)}" data-action="skill-${key}" data-slug="${esc(skill.slug)}"${skill[key] ? " checked" : ""}${key === "discoverable" && skill.mandatory ? " disabled" : ""}/><span aria-hidden="true">${skill[key] ? "On" : "Off"}</span></label>`;
+  const toggle = (skill, key, label) => `<label class="skills-governance-toggle" title="${key === "mandatory" ? "Enterprise: load in every conversation. Saved policies remain active after downgrade; removal is allowed." : key === "discoverable" ? "Members and agents across the organization can find and grant this skill" : "Allow this skill to be used"}"><input type="checkbox" role="switch" aria-label="${esc(label)}: ${esc(skill.slug)}" data-action="skill-${key}" data-slug="${esc(skill.slug)}"${skill[key] ? " checked" : ""}${(key === "discoverable" && skill.mandatory) || (key === "mandatory" && !skill.mandatory && !state.overview?.features?.mandatoryOrgSkills) ? " disabled" : ""}/><span aria-hidden="true">${skill[key] ? "On" : "Off"}</span></label>`;
   return `<button type="button" class="ghost" data-action="back-to-sources">← All sources</button>
     <div class="skills-source-heading"><div><span class="pill">${esc(source.kind)}</span><h3>${esc(sourceName(source))}</h3><p class="skills-source-url">${esc(source.url)}</p></div><button type="button" class="ghost" data-action="sync-source" data-id="${source.id}">Sync now</button></div>
     <div class="skills-source-stats"><span><b>${all.length}</b> skills</span><span><b>${all.filter((s) => s.enabled).length}</b> enabled</span><span><b>${all.filter((s) => s.discoverable).length}</b> discoverable</span><span><b>${all.filter((s) => s.mandatory).length}</b> mandatory</span></div>
@@ -486,7 +494,7 @@ function renderMcp() {
     <div class="skills-section-head"><div><h3>MCP access</h3><p class="skills-note">Connect external assistants or another ChannelGate to this catalog.</p></div></div>
     <div class="card skills-detail">
       <h3>MCP endpoint &amp; access tokens</h3>
-      <p class="skills-note">Any MCP client — Claude Code on a laptop, Codex, another gateway — can use this catalog at ${settings.mcpUrl ? `<code>${esc(settings.mcpUrl)}</code>` : "<em>&lt;public URL&gt;/mcp/skills</em>"} with a bearer token minted here. Scopes: <strong>read</strong> (search/read), <strong>propose</strong> (suggest changes), <strong>manage</strong> (create/update local skills), <strong>sync</strong> (export, for a peer gateway). The value is shown once.</p>
+      <p class="skills-note">Any MCP client — Claude Code on a laptop, Codex, another gateway — can use this catalog at ${settings.mcpUrl ? `<code>${esc(settings.mcpUrl)}</code>` : "<em>&lt;public URL&gt;/mcp/skills</em>"} with a bearer token. <strong>Catalog</strong> tokens are minted here for other systems and peer gateways: the library (organization and channel skills), never a personal skill. Scopes: <strong>read</strong> (search/read), <strong>propose</strong> (suggest changes), <strong>manage</strong> (create/update library skills), <strong>sync</strong> (export, for a peer gateway). <strong>User</strong> tokens are minted by each person from chat (<code>create_my_skill_token</code>) and act as that person — their organization, channel and personal skills, resolved live; they are listed here and an admin may revoke them. Values are shown once.</p>
       <div class="skills-inline">
         <input id="tok-name" placeholder="token name (e.g. Tiberiu's laptop)" />
         <label><input type="checkbox" class="tok-scope" value="read" checked /> read</label>
@@ -496,11 +504,12 @@ function renderMcp() {
         <button type="button" data-action="create-token">Create token</button>
       </div>
       ${state.newToken ? `<p class="skills-ok">Token <strong>${esc(state.newToken.record.name)}</strong> — copy it now, it will not be shown again:</p><pre>${esc(state.newToken.token)}</pre><pre>claude mcp add --transport http channelgate-skills ${esc(settings.mcpUrl || "<public-url>/mcp/skills")} --header "Authorization: Bearer ${esc(state.newToken.token)}"</pre>` : ""}
-      <table class="skills-table"><thead><tr><th>Token</th><th>Scopes</th><th>Created</th><th>Last used</th><th></th></tr></thead><tbody>${(state.overview?.tokens || []).map((t) => `<tr><td>${esc(t.name)} <span class="muted">${esc(t.prefix)}…</span>${t.revoked ? ' <span class="pill">revoked</span>' : ""}</td><td>${esc(t.scopes.join(", "))}</td><td class="muted">${fmtWhen(t.createdAt)}</td><td class="muted">${fmtWhen(t.lastUsedAt)}</td><td>${t.revoked ? `<button type="button" class="ghost" data-action="delete-token" data-id="${t.id}">delete</button>` : `<button type="button" class="ghost" data-action="revoke-token" data-id="${t.id}">revoke</button>`}</td></tr>`).join("") || '<tr><td colspan="5" class="muted">No tokens yet.</td></tr>'}</tbody></table>
+      <table class="skills-table"><thead><tr><th>Token</th><th>Kind</th><th>Scopes</th><th>Created</th><th>Last used</th><th></th></tr></thead><tbody>${(state.overview?.tokens || []).map((t) => `<tr><td>${esc(t.name)} <span class="muted">${esc(t.prefix)}…</span>${t.revoked ? ' <span class="pill">revoked</span>' : ""}</td><td>${t.kind === "user" ? `user · <span class="muted">${esc(t.ownerId || "")}</span>` : "catalog"}</td><td>${esc((t.scopes || []).join(", "))}</td><td class="muted">${fmtWhen(t.createdAt)}</td><td class="muted">${fmtWhen(t.lastUsedAt)}</td><td>${t.revoked ? `<button type="button" class="ghost" data-action="delete-token" data-id="${t.id}">delete</button>` : `<button type="button" class="ghost" data-action="revoke-token" data-id="${t.id}">revoke</button>`}</td></tr>`).join("") || '<tr><td colspan="6" class="muted">No tokens yet.</td></tr>'}</tbody></table>
     </div>`;
 }
 
 function renderTemplates() {
+  if (!state.overview?.features?.skillTemplates) return `<div class="skills-empty"><h3>Skill templates · Enterprise</h3><p>Channel skill templates require Enterprise. Saved templates and assignments are retained and inactive on Free. You can still grant skills directly to a conversation.</p>${(state.overview?.templates || []).map((template) => `<p>${esc(template.name)} · saved${template.builtin ? " · built-in" : ` <button type="button" class="ghost" data-action="delete-template" data-slug="${esc(template.slug)}">Delete</button>`}</p>`).join("")}</div>`;
   const templates = state.overview?.templates || [];
   const e = state.editTemplate;
   const form = e ? `
@@ -892,12 +901,13 @@ function wire() {
     }
     // Not "skills-q": a search box commits on Enter or its Search button, never on blur. Picking
     // a filter here does apply whatever is currently typed — that click is a deliberate ask too.
-    if (["skills-owner", "skills-source", "skills-category", "skills-enabled", "skills-discoverable", "skills-mandatory", "skills-assigned"].includes(el.id)) {
+    if (["skills-owner", "skills-source", "skills-category", "skills-enabled", "skills-discoverable", "skills-mandatory", "skills-assigned", "skills-missing-manifest"].includes(el.id)) {
       state.query = state.queryDraft = val("skills-q");
       state.owner = val("skills-owner");
       state.source = val("skills-source");
       state.category = val("skills-category");
       state.enabled = val("skills-enabled");
+      state.missingSkillMd = val("skills-missing-manifest");
       state.discoverable = val("skills-discoverable");
       state.mandatory = val("skills-mandatory");
       state.assigned = val("skills-assigned");

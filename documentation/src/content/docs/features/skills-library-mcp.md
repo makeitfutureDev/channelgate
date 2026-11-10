@@ -3,6 +3,9 @@ title: Skills library for external assistants
 description: Expose the governed catalog to laptops and peer gateways through a scoped MCP endpoint.
 ---
 
+**Enterprise availability.** The external skill-catalog MCP endpoint and catalog/user access tokens require an effective Enterprise license. Existing tokens cannot access the endpoint after expiry. Ordinary skill use within channels remains available in other tiers.
+
+
 The skills library endpoint lets an external MCP client reuse this gateway's catalog without an admin browser session. It is separate from the per-run gateway control server and cannot reach the admin API.
 
 ## Connect a client

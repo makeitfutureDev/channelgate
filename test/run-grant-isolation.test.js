@@ -585,3 +585,102 @@ test("available personal instructions survive unavailable revisions and dependen
   const plugin = artifacts.claudePluginDirs.find((dir) => dir.includes("user-grants-plugin"));
   for (const name of [missing, staged, removed]) assert.ok(await absent(path.join(plugin, "skills", name)));
 });
+
+for (const tier of ["sharedSkills", "userSkills"]) {
+  test(`generated protocols satisfy ${tier} dependencies without hiding real omissions`, async (t) => {
+    const { putSkillRevision } = await import("../src/gateway/skills/catalog.js");
+    const name = `generated-dependency-${tier.toLowerCase()}`;
+    const missing = `${name}-absent`;
+    putSkillRevision({ files: [{ path: "SKILL.md", content: `---\nname: ${name}\ndescription: Generated protocol dependency fixture\nrequires: [gateway-usage, channel-memory, ${missing}]\n---\nRead the operating guide.\n` }] });
+    const workspace = await ensureChannelFolder(name, {});
+    const artifacts = await grants({ slug: name, [tier]: [name], workspaceSkillsDir: path.join(workspace.cwd, ".claude", "skills") });
+    t.after(() => artifacts.cleanup());
+    assert.deepEqual(artifacts.missingSkills, [missing]);
+    for (const protocol of ["gateway-usage", "channel-memory"]) {
+      const manifest = path.join(artifacts.claudePluginDirs[0], "skills", protocol, "SKILL.md");
+      assert.ok((await readFile(manifest, "utf8")).length > 0);
+    }
+    if (tier === "userSkills") assert.deepEqual(artifacts.personalSkillCatalog.map((skill) => skill.name), [name]);
+  });
+}
+
+for (const state of ["absent", "no-manifest", "symlink"]) {
+  test(`generated dependency remains missing when its workspace source is ${state}`, async (t) => {
+    const { putSkillRevision } = await import("../src/gateway/skills/catalog.js");
+    const name = `generated-dependency-${state}`;
+    putSkillRevision({ files: [{ path: "SKILL.md", content: `---\nname: ${name}\ndescription: Unavailable generated protocol fixture\nrequires: [gateway-usage]\n---\nRead the operating guide.\n` }] });
+    const workspaceSkillsDir = path.join(gatewayRoot, name);
+    await mkdir(workspaceSkillsDir, { recursive: true });
+    const source = path.join(workspaceSkillsDir, "gateway-usage");
+    if (state === "no-manifest") await mkdir(source);
+    if (state === "symlink") {
+      const outside = path.join(gatewayRoot, `${name}-outside`);
+      await mkdir(outside);
+      await writeFile(path.join(outside, "SKILL.md"), "Untrusted linked protocol");
+      await symlink(outside, source, "dir");
+    }
+    const artifacts = await grants({ slug: name, sharedSkills: [name], workspaceSkillsDir });
+    t.after(() => artifacts.cleanup());
+    assert.deepEqual(artifacts.missingSkills, ["gateway-usage"]);
+    assert.ok(await absent(path.join(artifacts.claudePluginDirs[0], "skills", "gateway-usage", "SKILL.md")));
+  });
+}
+
+
+test("a parent folder grant without SKILL.md warns without breaking either engine's artifacts", async (t) => {
+  const temp = await mkdtemp(path.join(os.tmpdir(), "cg-invalid-grant-"));
+  const previousSources = process.env.GATEWAY_SKILL_SOURCES;
+  t.after(async () => {
+    if (previousSources == null) delete process.env.GATEWAY_SKILL_SOURCES;
+    else process.env.GATEWAY_SKILL_SOURCES = previousSources;
+    await rm(temp, { recursive: true, force: true });
+  });
+  const source = path.join(temp, "sources");
+  await mkdir(path.join(source, "synced", "nested-skill"), { recursive: true });
+  await writeFile(path.join(source, "synced", "nested-skill", "SKILL.md"), "# Nested skill\n");
+  await mkdir(path.join(source, "valid"), { recursive: true });
+  await writeFile(path.join(source, "valid", "SKILL.md"), "# Valid skill\n");
+  process.env.GATEWAY_SKILL_SOURCES = source;
+  for (const tier of ["personal", "shared"]) {
+    for (const valid of [false, true]) {
+      const selected = valid ? ["synced", "valid"] : ["synced"];
+      const artifacts = await grants({
+        slug: `invalid-grant-${tier}-${valid}`,
+        userSkills: tier === "personal" ? selected : [],
+        sharedSkills: tier === "shared" ? selected : [],
+        needsClaudeSettings: true,
+      });
+      t.after(() => artifacts.cleanup());
+      assert.deepEqual(artifacts.invalidSkillFolders, ["synced"]);
+      assert.deepEqual(artifacts.missingSkills, ["synced"]);
+      assert.deepEqual(artifacts.personalSkillCatalog.map((s) => s.name), tier === "personal" && valid ? ["valid"] : []);
+      assert.equal(artifacts.claudePluginDirs.length, valid ? 1 : 0);
+      for (const dir of artifacts.claudePluginDirs) {
+        assert.ok(await absent(path.join(dir, "skills", "synced")), "invalid parent and its nested skills never reach native discovery");
+        assert.equal(await readFile(path.join(dir, "skills", "valid", "SKILL.md"), "utf8"), "# Valid skill\n");
+      }
+    }
+  }
+  assert.equal(await readFile(path.join(source, "synced", "nested-skill", "SKILL.md"), "utf8"), "# Nested skill\n", "source folder is preserved");
+});
+
+test("a personal skill granted to a channel or the organization never materializes in the shared folder", async () => {
+  const { putSkillRevision } = await import("../src/gateway/skills/catalog.js");
+  const { saveSettings, getOrgAccessGrants } = await import("../src/config/settings.js");
+  const md = (name) => [{ path: "SKILL.md", content: `---\nname: ${name}\ndescription: ${name} fixture\n---\nBody\n` }];
+  putSkillRevision({ files: md("Shared Tier Private"), ownerKind: "local", createdBy: "U_AUTHOR", visibility: "personal" });
+  putSkillRevision({ files: md("Shared Tier Org Private"), ownerKind: "local", createdBy: "U_AUTHOR", visibility: "personal" });
+  putSkillRevision({ files: md("Shared Tier Public"), ownerKind: "local" });
+  const before = getOrgAccessGrants();
+  saveSettings({ accessGrants: { ...before, skills: [...(before.skills || []), "shared-tier-org-private"] } });
+  try {
+    const slug = `shared-tier-personal-${Date.now()}`;
+    const { cwd } = await ensureChannelFolder(slug, { skills: ["shared-tier-private", "shared-tier-public"] });
+    const skillsDir = path.join(cwd, ".claude", "skills");
+    assert.ok(!(await absent(path.join(skillsDir, "shared-tier-public", "SKILL.md"))), "the organization-visible grant materializes");
+    assert.ok(await absent(path.join(skillsDir, "shared-tier-private")), "a channel-granted personal skill is never copied into the channel folder");
+    assert.ok(await absent(path.join(skillsDir, "shared-tier-org-private")), "nor an organization-granted one");
+  } finally {
+    saveSettings({ accessGrants: before });
+  }
+});

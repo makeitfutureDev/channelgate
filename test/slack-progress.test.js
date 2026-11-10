@@ -275,7 +275,7 @@ test("persistent toolbox appends immediately restore the temporary assistant sta
   const client = {
     apiCall: async (method, payload) => {
       calls.push(["apiCall", method, payload]);
-      visibleStatus = payload.status;
+      if (method === "assistant.threads.setStatus") visibleStatus = payload.status;
     },
     chatStream: () => streamer,
     chat: { postMessage: async () => {}, update: async () => {} },
@@ -555,7 +555,7 @@ test("answer-stream appends restore the temporary status on a bounded cadence", 
   const client = {
     apiCall: async (method, payload) => {
       calls.push(["apiCall", method, payload]);
-      visibleStatus = payload.status;
+      if (method === "assistant.threads.setStatus") visibleStatus = payload.status;
     },
     chatStream: () => streamer,
     chat: { postMessage: async () => {}, update: async () => {} },
@@ -622,7 +622,7 @@ test("assistant status writes are serialized so the terminal clear is last", asy
   await stopPromise;
 
   assert.equal(maxInFlight, 1, "status requests must not race or apply out of order");
-  assert.equal(applied.at(-1).status, "", "no stale activity update may land after the terminal clear");
+  assert.equal(applied.at(-1).status, "active", "native idle must be the last status write");
   const native = applied.filter((p) => p.method === "agents.sessions.setStatus");
   assert.deepEqual(native.map((p) => [p.status, p.username]), [
     ["processing", "AI agent"], ["active", "GPT-6.1 Sol"],
@@ -1379,7 +1379,7 @@ test("progress-report toolbox writes restore the independent temporary assistant
   let visibleStatus = "";
   const streamWrites = [];
   const client = {
-    apiCall: async (_method, payload) => { visibleStatus = payload.status; },
+    apiCall: async (method, payload) => { if (method === "assistant.threads.setStatus") visibleStatus = payload.status; },
     chatStream: () => ({
       ts: "1720000000.000100",
       append: async (payload) => {
@@ -2766,7 +2766,7 @@ test("a jammed assistant status never holds back the answer, and still clears af
   releaseStatus();
   await new Promise((resolve) => setImmediate(resolve));
   const statuses = calls.filter((call) => call[0] === "apiCall").map((call) => call[2].status);
-  assert.equal(statuses.at(-1), "", "the terminal clear is still attempted once Slack answers");
+  assert.equal(statuses.at(-1), "active", "the terminal native clear is still attempted once Slack answers");
 });
 
 // The other half of the same guard: the status queue holds ONE in-flight write and ONE pending
@@ -3104,3 +3104,92 @@ for (const mode of ["commentary", "no stream", "truncated commentary"]) {
     }
   });
 }
+
+test("native Stop label carries resolved effort and live phases, then clears activity on stop", async () => {
+  const calls = [];
+  const client = {
+    apiCall: async (method, payload) => calls.push([method, payload]),
+    chatStream: () => ({ append: async () => {}, stop: async () => {} }),
+    chat: { postMessage: async () => {} },
+  };
+  const progress = startProgress("stream", client, "C_EFFORT_PHASE", "111.222", { authorId: "U1", teamId: "T1" });
+  progress.onRuntimeResolved({ engine: "codex", model: "gpt-6.1-sol", effort: "low" });
+  progress.onEvent({ kind: "thinking" });
+  await cardReady();
+  progress.onEvent({ kind: "tool_use", name: "Read", target: "README.md" });
+  await cardReady();
+  progress.onDelta("Answer");
+  await cardReady();
+  progress.onRuntimeResolved({ engine: "claude", model: "claude-opus-4-8", effort: "high" });
+  await cardReady();
+  await progress.stop();
+  const native = calls.filter(([method]) => method === "agents.sessions.setStatus").map(([, payload]) => payload);
+  for (const phase of ["Thinking", "Using tools", "Writing"]) {
+    assert.ok(native.some((p) => p.status === "processing" && p.username === `GPT-6.1 Sol (low) · ${phase}`));
+  }
+  assert.equal(native.at(-1).status, "active");
+  assert.equal(native.at(-1).username, "Opus 4.8 (high)");
+});
+
+test("parsed shell tasks keep native tool status while real subagents coordinate", async () => {
+  const { createStreamConsumer } = await import("../src/engines/stream.js");
+  for (const engine of ["claude", "codex"]) {
+    const calls = [];
+    const client = {
+      apiCall: async (method, payload) => calls.push([method, payload]),
+      chatStream: () => ({ append: async () => {}, stop: async () => {} }),
+      chat: { postMessage: async () => {} },
+    };
+    const progress = startProgress("stream", client, `C_TASK_TYPE_${engine}`, "111.223",
+      { authorId: "U1", teamId: "T1" });
+    progress.onRuntimeResolved({ engine, model: engine === "claude" ? "sonnet" : "gpt-6.1-sol" });
+    const consumer = createStreamConsumer({ onEvent: progress.onEvent });
+    try {
+      if (engine === "claude") {
+        consumer.consume({ type: "stream_event", event: { type: "content_block_start", index: 0,
+          content_block: { type: "tool_use", id: "shell", name: "Bash" } } });
+        consumer.consume({ type: "stream_event", event: { type: "content_block_stop", index: 0 } });
+        consumer.consume({ type: "system", subtype: "task_started", task_id: "shell-task",
+          tool_use_id: "shell", task_type: "local_bash", is_backgrounded: false });
+        consumer.consume({ type: "system", subtype: "task_progress", task_id: "shell-task" });
+      } else {
+        progress.onEvent(progressFromCodexEvent({ type: "item.started",
+          item: { id: "shell", type: "command_execution", command: "sleep 1" } }).event);
+      }
+      await cardReady();
+      const native = () => calls.filter(([method]) => method === "agents.sessions.setStatus")
+        .map(([, payload]) => payload.username || "");
+      assert.ok(native().some((name) => name.includes("Using tools")));
+      assert.ok(native().every((name) => !name.includes("Coordinating agents")));
+      if (engine === "claude") {
+        consumer.consume({ type: "system", subtype: "task_started", task_id: "research",
+          task_type: "local_agent", description: "Research files" });
+        await cardReady();
+        assert.ok(native().some((name) => name.includes("Coordinating agents")));
+      }
+    } finally {
+      await progress.stop();
+    }
+  }
+});
+
+test("failed stream fallback clears native processing after delivery", async () => {
+  let actual = "active";
+  const calls = [];
+  const client = {
+    apiCall: async (method, payload) => {
+      calls.push(method);
+      actual = method === "agents.sessions.setStatus" ? payload.status : "processing";
+    },
+    chatStream: () => ({ stop: async () => {
+      actual = "processing";
+      throw Object.assign(new Error("user_not_found"), { data: { error: "user_not_found" } });
+    } }),
+    chat: { postMessage: async () => { calls.push("delivered"); return { ts: "2" }; } },
+  };
+  const progress = startProgress("stream", client, "C_CONNECT_FINAL", "1", { authorId: "U1", teamId: "T1" });
+  await progress.finalize({ content: "Done", durationMs: 1, usage: {} });
+  assert.equal(actual, "active");
+  assert.equal(calls.at(-1), "agents.sessions.setStatus");
+  assert.ok(calls.lastIndexOf("agents.sessions.setStatus") > calls.indexOf("delivered"));
+});

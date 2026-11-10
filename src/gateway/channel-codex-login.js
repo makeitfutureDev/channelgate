@@ -1,3 +1,4 @@
+import { requireEnterpriseFeature } from "../ee/feature-entitlements.js";
 // Admin UI login for a channel or the shared gateway Codex home. The CLI owns auth.json; this module
 // never returns its contents, the API key, or raw CLI output to a browser or log.
 import { spawn } from "node:child_process";
@@ -55,7 +56,10 @@ async function loginStatus(jobKey, home) {
   };
 }
 
-export const channelCodexLoginStatus = (channelId) => loginStatus(`channel:${channelId}`, channelCodexHome(channelId));
+export const channelCodexLoginStatus = (channelId) => {
+  requireEnterpriseFeature("channelCodexLogin");
+  return loginStatus(`channel:${channelId}`, channelCodexHome(channelId));
+};
 export const gatewayCodexLoginStatus = async () => {
   const status = await loginStatus("gateway", gatewayCodexHome());
   // A service-level key is a valid shared fallback when no file login exists. Never return it.
@@ -78,6 +82,7 @@ async function startLogin(jobKey, home, method, { key = "", spawnImpl = spawn, o
     throw Object.assign(new Error("Could not prepare the Codex login directory."), { statusCode: 500 });
   }
   if (jobs.get(jobKey) !== job) return loginStatus(jobKey, home);
+  if (jobKey.startsWith("channel:")) requireEnterpriseFeature("channelCodexLogin");
   const args = ["login", "-c", 'cli_auth_credentials_store="file"', method === "device" ? "--device-auth" : "--with-api-key"];
   let child;
   try {
@@ -123,6 +128,7 @@ async function startLogin(jobKey, home, method, { key = "", spawnImpl = spawn, o
     try {
       const auth = await readCodexAuthState({ codexHome: home, hostCodexHome: home, env: {} });
       if (!auth.authenticated || auth.method !== (method === "device" ? "chatgpt" : "api-key")) throw new Error("credential not saved");
+      if (jobKey.startsWith("channel:")) requireEnterpriseFeature("channelCodexLogin");
       await onAuthenticated();
       invalidateEngineMcps("codex", { channelId: jobKey.startsWith("channel:") ? jobKey.slice(8) : "" });
       job.phase = "complete";
@@ -135,6 +141,7 @@ async function startLogin(jobKey, home, method, { key = "", spawnImpl = spawn, o
 }
 
 export function startChannelCodexLogin(channelId, method, options) {
+  requireEnterpriseFeature("channelCodexLogin");
   if (!channelId) throw Object.assign(new Error("unknown channel"), { statusCode: 404 });
   return startLogin(`channel:${channelId}`, channelCodexHome(channelId), method, options);
 }

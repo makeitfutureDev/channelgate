@@ -113,11 +113,44 @@ function noteFallback(surface, error) {
 // means the session is `processing`, an empty one `active`. `loadingMessages` are the prominent
 // loading copy (already normalized by the caller). Resolves true when Slack accepted the write on
 // at least one surface, false when this thread can carry no status at all.
-export async function setAgentSessionStatus(client, { channel, threadTs, phrase = "", loadingMessages = [], status = "", username = "" } = {}) {
-  if (!threadTs) return false;
-  const state = threadState(`${channel}:${threadTs}`);
+// Serialize lifecycle requests per client/session so a slow terminal clear cannot land
+// after a successor's processing request. Obsolete producers are checked again after awaits.
+const statusTails = new WeakMap();
+export function setAgentSessionStatus(client, args = {}) {
+  let tails = statusTails.get(client);
+  if (!tails) { tails = new Map(); statusTails.set(client, tails); }
+  const key = `${args.channel}:${args.threadTs || ""}`;
+  const previous = tails.get(key);
+  const write = () => writeAgentSessionStatus(client, args);
+  const current = previous ? previous.catch(() => {}).then(write) : write();
+  tails.set(key, current);
+  const cleanup = () => { if (tails.get(key) === current) tails.delete(key); };
+  current.then(cleanup, cleanup);
+  return current;
+}
+
+async function writeAgentSessionStatus(client, { channel, threadTs, phrase = "", loadingMessages = [], status = "", username = "", channelSession = false, force = false, isCurrent = () => true } = {}) {
+  // A code channel is one session for the whole channel and is addressed by channel id alone
+  // (Slack refuses a thread_ts there); the legacy per-thread bridge has no such surface.
+  if ((!threadTs && !channelSession) || !isCurrent()) return false;
+  const state = threadState(`${channel}:${threadTs || ""}`);
   const nativeStatus = status || (phrase ? SESSION_STATUS.processing : SESSION_STATUS.active);
   let nativeAccepted = false;
+  let legacyAccepted = false;
+  const writeLegacy = async () => {
+    if (state.legacyOff || channelSession) return;
+    try {
+      await client.apiCall("assistant.threads.setStatus", {
+        channel_id: channel, thread_ts: threadTs, status: phrase,
+        ...(loadingMessages.length ? { loading_messages: loadingMessages } : {}),
+      });
+      legacyAccepted = true;
+    } catch { state.legacyOff = true; }
+  };
+  // The legacy bridge may affect the native lifecycle. A terminal clear must end
+  // with native active, never with a compatibility write after it.
+  if (!phrase) await writeLegacy();
+  if (!isCurrent()) return legacyAccepted;
   if (modes.status === "native" && !state.nativeOff) {
     const now = Date.now();
     const name = [...String(username || "").replace(/[\x00-\x1f\x7f]/g, " ").replace(/\s+/g, " ").trim()].slice(0, 200).join("");
@@ -126,11 +159,11 @@ export async function setAgentSessionStatus(client, { channel, threadTs, phrase 
     const nameChanged = customize && state.username !== name;
     // Asserted on every transition; a steady `processing` is re-asserted on a slow cadence so a
     // long turn never hits the hour expiry, and a steady `active` is never repeated.
-    const due = state.native !== nativeStatus || nameChanged
+    const due = force || state.native !== nativeStatus || nameChanged
       || (nativeStatus === SESSION_STATUS.processing && now - state.nativeAt >= NATIVE_REASSERT_MS);
     if (due) {
       try {
-        const payload = { channel_id: channel, thread_ts: threadTs, status: nativeStatus };
+        const payload = { channel_id: channel, ...(channelSession ? {} : { thread_ts: threadTs }), status: nativeStatus };
         if (customize) {
           try {
             await client.apiCall("agents.sessions.setStatus", { ...payload, username: name });
@@ -166,36 +199,25 @@ export async function setAgentSessionStatus(client, { channel, threadTs, phrase 
       nativeAccepted = true;
     }
   }
-  if (state.legacyOff) return nativeAccepted;
-  try {
-    await client.apiCall("assistant.threads.setStatus", {
-      channel_id: channel,
-      thread_ts: threadTs,
-      status: phrase,
-      ...(loadingMessages.length ? { loading_messages: loadingMessages } : {}),
-    });
-    return true;
-  } catch {
-    state.legacyOff = true;
-    return nativeAccepted;
-  }
+  if (phrase && isCurrent()) await writeLegacy();
+  return nativeAccepted || legacyAccepted;
 }
 
 // What a thread's session is known to be, for tests and the stop handler.
 export function nativeSessionStatus(channel, threadTs) {
-  return threads.get(`${channel}:${threadTs}`)?.native || "";
+  return threads.get(`${channel}:${threadTs || ""}`)?.native || "";
 }
 
 // Name a thread's session. Resolves true when Slack accepted the title.
-export async function renameAgentSession(client, { channel, threadTs, title } = {}) {
+export async function renameAgentSession(client, { channel, threadTs, title, channelSession = false } = {}) {
   const clean = String(title || "").trim().slice(0, 200);
-  if (!threadTs || !clean) return false;
-  if (modes.rename === "native") {
+  if ((!threadTs && !channelSession) || !clean) return false;
+  if (modes.rename === "native" || channelSession) {
     try {
-      await client.apiCall("agents.sessions.rename", { channel_id: channel, thread_ts: threadTs, title: clean });
+      await client.apiCall("agents.sessions.rename", { channel_id: channel, ...(channelSession ? {} : { thread_ts: threadTs }), title: clean });
       return true;
     } catch (error) {
-      if (!fallsBackToLegacy(error)) return false;
+      if (channelSession || !fallsBackToLegacy(error)) return false;
       noteFallback("rename", error);
     }
   }
@@ -207,13 +229,15 @@ export async function renameAgentSession(client, { channel, threadTs, title } = 
   }
 }
 
-// The `agent_session_stopped` event: the user pressed Slack's native Stop button in a thread whose
-// session is `processing`. Returns the thread to stop, or null for a malformed payload.
+// The `agent_session_stopped` event: the user pressed Slack's native Stop button on a session that
+// is `processing`. With a thread_ts it is that thread's session; without one it is a code channel's
+// (the whole channel is one session, and the stop applies to everything running there). Returns the
+// target to stop, or null for a malformed payload.
 export function stoppedSessionTarget(event = {}) {
   const channel = String(event?.channel || "").trim();
   const threadTs = String(event?.thread_ts || "").trim();
   const user = String(event?.user || "").trim();
-  if (!channel || !threadTs) return null;
+  if (!channel) return null;
   return {
     channel,
     threadTs,

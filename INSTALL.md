@@ -5,11 +5,14 @@ A step-by-step guide to get the gateway running on a fresh Linux host. ChannelGa
 Podman container (Ubuntu 24.04 is the tested distribution). For what it does and how it works,
 see [README.md](./README.md).
 
+Before choosing a server, see [VPS sizing and hosting](documentation/src/content/docs/configuration/vps-sizing.md)
+for production and pilot configurations, concurrency, storage, and backups.
+
 ## 1. Prerequisites
 
 - **Linux with systemd** (Ubuntu 24.04 tested). The daemon refuses to start anywhere else.
-- **Node.js ≥ 22.13** — `node -v` (the gateway's SQLite store uses the built-in `node:sqlite`,
-  stable from 22.13). Install from <https://nodejs.org> or your distribution's packages.
+- **Node.js ≥ 24.0.0** — install the current Node 24 LTS release and verify with `node -v`.
+  The daemon and default runtime image use Node 24. Install from <https://nodejs.org> or your distribution's packages.
 - **Claude Code CLI**, installed and signed in on the host as the daemon user. Turns run inside
   the channel containers (the runtime image ships the engine CLIs), and the gateway relays that
   host login's short-lived access token into each container — the credentials file itself is
@@ -90,7 +93,11 @@ builds/probes the image in that user's own rootless Podman store. A foreground `
 setup installs `rclone` into `~/.local/bin` instead. Downloads are checked against the release
 checksum; a failed optional install leaves Drive sync dormant and prints a manual remedy. It writes
 `/etc/systemd/system/channelgate.service`, with `ProtectSystem=strict`, `ProtectHome=read-only`
-and private `/tmp`. The daemon must permit Podman's setuid namespace helpers; every channel
+and persistent private `/tmp`/`/var/tmp` backing under the service HOME. A managed Podman
+configuration keeps container cgroups inside the delegated system service. Existing installations
+need the idle migration checks in `docs/OPERATIONS.md` (Rootless Podman system-service upgrades);
+installing the new unit alone does not repair old containers or a stale pause namespace.
+The daemon must permit Podman's setuid namespace helpers; every channel
 container still uses no-new-privileges and dropped capabilities. API credentials belong in the
 0600 `/var/lib/channelgate/service.env` before starting real turns. Manage it with `systemctl`:
 
@@ -230,8 +237,10 @@ For a shared workflow, start with one dedicated channel and one representative t
    history in the admin UI when reviewing the pilot.
 
 Slack Socket Mode needs no public inbound URL. If operators need the admin UI or approval links
-from outside the host, put a tunnel or reverse proxy in front of the loopback service and set
-**Settings → Connection → Public URL** to its HTTPS origin. See
+from outside the host, put a tunnel or reverse proxy in front of the loopback service, set
+**Settings → Connection → Public URL** to its HTTPS origin, and set **Behind a reverse proxy** to
+the proxy you run (`cloudflare`, or `xff` for nginx/caddy) so the login backoff keys on each real
+client — without it, all remote logins share one backoff bucket. See
 [reverse proxies and tunnels](./docs/OPERATIONS.md#reverse-proxies-and-tunnels).
 
 ## Backup & restore config (encrypted)

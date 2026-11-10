@@ -1,5 +1,13 @@
 # Release acceptance packet
 
+Current candidate: **0.6.5**, expanded 2026-11-10 through beta `bdd8e3c8`, including reply-footer
+effort and model-plus-effort shortcuts. See
+[the candidate record](releases/0.6.5.md); the promotion PR head identifies the exact tested SHA.
+Current-candidate execution is pending; earlier automated and live evidence applies only to its
+actual revisions. The ten previously assigned human/device-only subchecks remain explicitly
+deferred, not passed. Other historical deferrals below do not waive this candidate's gates.
+The private QA handoff preserves ownership; this public packet contains no private actor identities.
+
 0.5.1 live evidence (2026-09-21, owner-approved release without the full campaign): on the exact
 candidate tree, a live Claude turn used the Read tool and returned the probe file's bytes; a live
 Qwen turn with no model configured answered from QwenCloud with real tokens and no dollar cost.

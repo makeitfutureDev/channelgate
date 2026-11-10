@@ -1,3 +1,4 @@
+import { enterpriseFeatureEnabled, requireEnterpriseFeature } from "../../ee/feature-entitlements.js";
 // Channel skill templates: "this channel follows the Development template". A template is data
 // (a row: explicit skill slugs and/or categories) edited under Settings → Access Templates; the
 // four seeded ones exist so a fresh deployment has something to assign, and admins add more.
@@ -63,6 +64,7 @@ export function listTemplateSummaries() {
 
 // The template a conversation follows (by its stored slug), or null.
 export function templateOfMeta(meta) {
+  if (!enterpriseFeatureEnabled("skillTemplates")) return null;
   const key = typeof meta?.skillTemplate === "string" ? meta.skillTemplate.trim() : "";
   return key ? getTemplate(key) : null;
 }
@@ -88,7 +90,7 @@ export function channelSkillsOff(meta = {}) {
 export function channelProvidedSkills(meta = {}) {
   const template = templateOfMeta(meta);
   const fromTemplate = template ? resolveTemplateSkills(template).skills.map((s) => s.slug) : [];
-  return [...fromTemplate, ...channelScopedSkills(meta?.channelId)];
+  return [...fromTemplate, ...channelScopedSkills(meta?.workspaceLink?.channelId || meta?.channelId)];
 }
 
 // The conversation's own tier: the assigned template's CURRENT skills, the skills in the
@@ -98,7 +100,9 @@ export function channelProvidedSkills(meta = {}) {
 export function channelSkillGrants(meta = {}) {
   const own = sanitizeSkillGrantNames(meta?.skills || []);
   const template = templateOfMeta(meta);
-  const scoped = channelScopedSkills(meta?.channelId);
+  // A Slack code channel is a child of the conversation it was opened from: catalog skills scoped
+  // to that ORIGIN channel id are its too (the two share one folder, so their grants must agree).
+  const scoped = channelScopedSkills(meta?.workspaceLink?.channelId || meta?.codeChannel?.originChannelId || meta?.channelId);
   if (!template && !scoped.length) return own;
   const fromTemplate = template ? resolveTemplateSkills(template).skills.map((s) => s.slug) : [];
   const off = channelSkillsOff(meta);
@@ -117,7 +121,7 @@ export function channelSkillGrants(meta = {}) {
 // own). Used wherever a run or a report resolves grants from a stored meta.
 export function withTemplateSkills(meta) {
   if (!meta) return meta;
-  if (!templateOfMeta(meta) && !channelScopedSkills(meta.channelId).length) return meta;
+  if (!templateOfMeta(meta) && !channelScopedSkills(meta.workspaceLink?.channelId || meta.codeChannel?.originChannelId || meta.channelId).length) return meta;
   return { ...meta, skills: channelSkillGrants(meta) };
 }
 
@@ -132,6 +136,7 @@ export function withTemplateSkills(meta) {
 // whatever the template says), and the EFFECTIVE union the conversation actually pays. Reporting
 // the tier alone understated a real conversation by the whole organization tier.
 export function previewTemplate(templateKey, meta = {}, { additions = null, orgSkills = null } = {}) {
+  if (templateKey) requireEnterpriseFeature("skillTemplates");
   const template = templateKey ? getTemplate(templateKey) : null;
   if (templateKey && !template) return null;
   const currentTier = channelSkillGrants(meta);
@@ -169,6 +174,7 @@ export function previewTemplate(templateKey, meta = {}, { additions = null, orgS
 export async function assignTemplateToChannel(channelSlug, templateKey) {
   const key = String(templateKey || "").trim();
   const clearing = !key || key.toLowerCase() === "none";
+  if (!clearing) requireEnterpriseFeature("skillTemplates");
   const template = clearing ? null : getTemplate(key);
   if (!clearing && !template) return null;
   let preview = null;

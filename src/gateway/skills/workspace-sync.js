@@ -1,6 +1,8 @@
+import { enterpriseFeatureEnabled } from "../../ee/feature-entitlements.js";
 // Daemon-owned convergence for durable, locally visible skills. MCP processes only commit
 // catalog/grant changes; the daemon observes them here, so two processes never prune each
 // other's in-progress materialization. Personal grants belong to individual runs, never here.
+import { workspaceSetup } from "../../config/workspace-links.js";
 import { createHash } from "node:crypto";
 import { listChannels, getChannelMeta } from "../../config/store.js";
 import { getOrgAccessGrants } from "../../config/settings.js";
@@ -13,11 +15,12 @@ let lastFingerprint = "";
 let pending = Promise.resolve();
 
 async function snapshot() {
-  const channels = (await listChannels()).filter((channel) => channel.meta);
+  const channels = (await listChannels()).filter((channel) => channel.meta && !channel.meta.archived && channel.meta.botMembership !== "pending");
   const organization = getOrgAccessGrants();
   const fingerprint = createHash("sha256").update(JSON.stringify({
     organization,
     templates: listTemplates(),
+    skillTemplatesEnabled: enterpriseFeatureEnabled("skillTemplates"),
     // No file bytes or private skills are needed to detect effective revision changes.
     catalog: listSkills({ viewer: "", includeDeleted: true }).map((skill) => ({
       slug: skill.slug, revision: skill.currentRevisionId, pinned: skill.pinnedRevisionId,
@@ -33,8 +36,9 @@ async function snapshot() {
 }
 
 function selectionSignature(meta, organization) {
+  meta = workspaceSetup(meta);
   const grants = withDependencies([...(organization.skills || []), ...channelSkillGrants(meta)]).names.sort();
-  return JSON.stringify({ grants, platform: platformFolderName(meta.platform), memory: meta.memory !== false });
+  return JSON.stringify({ grants, platform: platformFolderName(meta.workspaceLink?.platform || meta.platform), memory: meta.memory !== false });
 }
 
 // The same rule applies at every run/save boundary, including after a rejected but persisted
@@ -45,10 +49,10 @@ export async function assertWorkspaceSkillsCompatible(slug, meta) {
   const organization = getOrgAccessGrants();
   const signature = selectionSignature(meta, organization);
   for (const channel of await listChannels()) {
-    if (!channel.meta || channel.slug === slug) continue;
+    if (!channel.meta || channel.meta.archived || channel.slug === slug) continue;
     if (effectiveWorkDir(channel.slug, { ...channel.meta, cleanMode: false }) !== cwd) continue;
     if (selectionSignature(channel.meta, organization) !== signature) {
-      throw Object.assign(new Error("This working folder is assigned to conversations with different shared skill grants or memory settings. Choose separate folders or align their selections."), { code: "workspace_selection_conflict" });
+      throw Object.assign(new Error("The linked working-folder setup could not be resolved. Open the source conversation in Settings and repair its folder assignment."), { code: "workspace_selection_conflict" });
     }
   }
 }
@@ -74,15 +78,20 @@ async function syncPass({ channelSlugs = null, force = true, log = console.warn 
     try {
       // Read again at the write boundary, so a queued UI save uses the committed record.
       const meta = await getChannelMeta(channel.slug);
-      if (!meta) continue;
+      if (!meta || meta.archived) continue;
       const cwd = effectiveWorkDir(channel.slug, { ...meta, cleanMode: false });
       if (destinations.get(cwd)?.size > 1) {
-        throw new Error("This working folder is assigned to conversations with different shared skill grants. Choose separate folders or align their grants.");
+        throw new Error("The linked working-folder setup could not be synchronized. Check the source conversation in Settings.");
       }
       const folder = await ensureChannelFolder(channel.slug, meta);
       if (folder.skillSync?.missing?.length) result.warnings.push({ slug: channel.slug, missing: folder.skillSync.missing });
       result.synced.push(channel.slug);
     } catch (error) {
+      if (["channel_archived", "channel_membership_unverified"].includes(error?.code)) {
+        // Verification can change without a catalog edit; retry this pass after readiness returns.
+        result.deferred = true;
+        continue;
+      }
       result.ok = false;
       const failure = { slug: channel.slug, error: error?.message || String(error) };
       result.failed.push(failure);
@@ -91,7 +100,7 @@ async function syncPass({ channelSlugs = null, force = true, log = console.warn 
   }
   // Failed passes retry even without another catalog change. A targeted pass cannot certify
   // other folders against this fingerprint, and a concurrent change is caught next time.
-  if (result.ok && !selected) lastFingerprint = state.fingerprint;
+  if (result.ok && !result.deferred && !selected) lastFingerprint = state.fingerprint;
   return result;
 }
 

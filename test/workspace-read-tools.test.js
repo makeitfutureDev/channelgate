@@ -5,11 +5,13 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
-import { ensureTestEnv } from "./helpers.js";
+import { ensureTestEnv, tempDir } from "./helpers.js";
 
 const projectRoot = fileURLToPath(new URL("..", import.meta.url));
 const scratch = ensureTestEnv();
-const workspaceRoot = path.join(scratch, "workspace-read-root");
+// Beside the scratch gateway root, not under it: a work folder inside the gateway runtime root is
+// refused by the work-folder boundary (src/gateway/workdir-boundary.js), as in production.
+const workspaceRoot = tempDir("cg-workspace-read-");
 const workdir = path.join(workspaceRoot, "project");
 const outside = path.join(scratch, "outside-secret.txt");
 const slug = "workspace-read";
@@ -34,7 +36,7 @@ async function withGateway(engine, fn, { toolset = "full" } = {}) {
       CHANNELGATE_DB: path.join(scratch, "gateway.db"),
       CG_GATEWAY_CAPABILITY: mintGatewayCapability({ secret, channelId, slug, authorId: "U_WORKSPACE_READ", threadKey: `${engine}.1`, origin: "slack_foreground", engine }),
       CG_APPROVAL_SECRET: secret,
-      CG_FS_ROOT: scratch,
+      CG_FS_ROOT: workspaceRoot,
       CG_WORKSPACE_DIR: workspaceRoot,
       CG_TOOLSET: toolset,
       HOME: path.join(scratch, "isolated-home"),

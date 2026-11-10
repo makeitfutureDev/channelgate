@@ -1,3 +1,4 @@
+import { enterpriseFeatureEnabled } from "../../ee/feature-entitlements.js";
 // Placeholder grants: what a channel container holds instead of a secret, and how the proxy gets
 // back to the real value.
 //
@@ -157,6 +158,8 @@ async function cachedRelayToken(secretName, deps, channelId = "") {
     : (deps.relayToken || resolveContainerClaudeToken);
   const now = Date.now();
   const meta = codexSecret ? await channelMetaFor(channelId, deps) : null;
+  // An existing dedicated-login relay must pause immediately, including warm cached tokens.
+  if (codexSecret && meta?.codexAuthSource === "channel" && !enterpriseFeatureEnabled("channelCodexLogin")) return "";
   const cacheKey = codexSecret ? `${secretName}:${channelId}:${meta?.codexAuthSource || "gateway"}` : secretName;
   let cache = relayCaches.get(cacheKey);
   if (!cache || now - cache.at > RELAY_CACHE_MS) {
@@ -207,6 +210,7 @@ export async function resolveGrantMaterial(row, deps = {}) {
     return { value: await cachedRelayToken(name, deps, row.channelId), entry: null, exists: true };
   }
   if (row.scope === "organization") {
+    if (!enterpriseFeatureEnabled("organizationVariables")) return { value: "", entry: null, exists: false };
     const entry = (deps.orgEntries ? deps.orgEntries() : getOrgEnv())[name] || null;
     const values = await (deps.resolveOrgEnv || resolveOrgEnv)();
     return { value: String(values[name] || ""), entry, exists: Boolean(entry) };
@@ -237,6 +241,8 @@ export async function resolveGrantValue(row, deps = {}) {
 export async function resolveEgressGrant(core, deps = {}) {
   const row = lookupGrant(core);
   if (!row) return null;
+  // Check entitlement before the material cache: downgrade must stop existing placeholders too.
+  if (row.scope === "organization" && !enterpriseFeatureEnabled("organizationVariables")) return null;
   const now = Date.now();
   let material = materialCache.get(row.placeholder);
   if (row.scope === "relay" || !material || now - material.at > MATERIAL_CACHE_MS) {
@@ -278,33 +284,41 @@ function strictSetting(target) {
 // active → exactly resolveRunEnv()'s answer (real values), with empty egress facts. Active → every
 // name WITH a swap rule becomes its placeholder; a name WITHOUT one keeps its real value and is
 // listed `unprotected` — unless the gateway's egressSecretsStrict is on, when it is dropped and
-// listed `withheld`. `realValues` is every real value that exists, for the output redactor (the
-// container should never see one, and a reply must never carry one either way).
+// listed `withheld`. An explicit stored `exposure: "readable"` opts that entry into raw injection
+// even under strict mode; automatic classification never grants this exception.
+// `realValues` inventories all real values; `redactionValues` contains only hidden values
+// for output redaction. Readable variables may appear in replies and job output.
 // `personalPaused` is true when the author holds personal PLACEHOLDERS that the proxy will refuse
 // right now because a DIFFERENT person has an SSH session open in the channel (liveness.js) — the
 // per-attempt credential note says so instead of letting the agent chase a 403. A snapshot at
 // resolve time: the proxy re-checks on every request.
 export async function resolveEgressRunEnv({ meta = {}, channelId = "", authorId = "", untrustedPrincipal = false, clean = false, target = null, deps = {} } = {}) {
-  const empty = { env: {}, scopes: {}, placeholders: {}, hosts: {}, unprotected: [], withheld: [], approval: [], realValues: [], personalPaused: false };
+  const empty = { env: {}, scopes: {}, placeholders: {}, hosts: {}, unprotected: [], withheld: [], approval: [], realValues: [], redactionValues: [], personalPaused: false };
   if (clean) return empty;
   const [org, user, channel] = await Promise.all([
-    (deps.resolveOrgEnv || resolveOrgEnv)(),
+    enterpriseFeatureEnabled("organizationVariables") ? (deps.resolveOrgEnv || resolveOrgEnv)() : {},
     (deps.resolveUserEnv || resolveUserEnv)(authorId, { untrustedPrincipal }),
     (deps.resolveChannelEnv || resolveChannelEnv)(meta),
   ]);
   const merged = mergeRunEnv({ org, user, channel });
   const real = safeSpawnEnv(merged.env);
   const realValues = [...new Set([...Object.values(safeSpawnEnv(org)), ...Object.values(safeSpawnEnv(user)), ...Object.values(safeSpawnEnv(channel))])];
-  if (!egressActive(target)) {
-    return { env: merged.env, scopes: merged.scopes, placeholders: {}, hosts: {}, unprotected: [], withheld: [], approval: [], realValues, personalPaused: false };
-  }
-  const channelKey = String(channelId || meta?.channelId || "");
   const personalOwner = untrustedPrincipal ? "" : String(authorId || "");
   const entries = {
-    organization: deps.orgEntries ? deps.orgEntries() : getOrgEnv(),
+    organization: enterpriseFeatureEnabled("organizationVariables") ? (deps.orgEntries ? deps.orgEntries() : getOrgEnv()) : {},
     personal: personalOwner ? await (deps.userEntries || getUserEnv)(personalOwner) : {},
     channel: normalizeChannelEnv(meta?.env),
   };
+  // Visibility applies to output as well as injection. Classify every scope separately so a
+  // readable override cannot unmask a hidden value from another scope with the same bytes.
+  const redactionValues = [...new Set(Object.entries({ organization: org, personal: user, channel })
+    .flatMap(([scope, values]) => Object.entries(safeSpawnEnv(values))
+      .filter(([name, value]) => rulesFor(name, entries[scope]?.[name] || null, { value }))
+      .map(([, value]) => value)))];
+  if (!egressActive(target)) {
+    return { env: merged.env, scopes: merged.scopes, placeholders: {}, hosts: {}, unprotected: [], withheld: [], approval: [], realValues, redactionValues, personalPaused: false };
+  }
+  const channelKey = String(channelId || meta?.channelId || "");
   // Reconcile first: a secret REMOVED since the last run loses its placeholder now, even if the
   // change listener never saw the write. Keyed by the STORED entry names, never by what resolved: a
   // secret that briefly resolves empty (a provider hiccup) is still a secret, and revoking it would
@@ -325,7 +339,8 @@ export async function resolveEgressRunEnv({ meta = {}, channelId = "", authorId 
   const approval = [];
   for (const name of Object.keys(real).sort()) {
     const scope = merged.scopes[name];
-    const rule = rulesFor(name, entries[scope]?.[name] || null, { value: real[name] });
+    const entry = entries[scope]?.[name] || null;
+    const rule = rulesFor(name, entry, { value: real[name] });
     const bindable = scope === "organization" || (channelKey && (scope !== "personal" || personalOwner));
     if (rule && bindable) {
       const placeholder = placeholderFor({ scope, channelId: channelKey, ownerId: personalOwner, secretName: name });
@@ -336,7 +351,7 @@ export async function resolveEgressRunEnv({ meta = {}, channelId = "", authorId 
       if (rule.approval) approval.push(name);
       continue;
     }
-    if (strict) {
+    if (strict && entry?.exposure !== "readable") {
       withheld.push(name);
       continue;
     }
@@ -354,7 +369,7 @@ export async function resolveEgressRunEnv({ meta = {}, channelId = "", authorId 
     const otherOwnerActive = deps.otherOwnerActive || liveness.otherOwnerActive;
     personalPaused = Boolean(otherSshOpen(channelKey, personalOwner) || otherOwnerActive(channelKey, personalOwner));
   }
-  return { env, scopes, placeholders, hosts, unprotected, withheld, approval, realValues, personalPaused };
+  return { env, scopes, placeholders, hosts, unprotected, withheld, approval, realValues, redactionValues, personalPaused };
 }
 
 // ── The Claude relay ──────────────────────────────────────────────────────────────────────────
