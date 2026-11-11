@@ -14,7 +14,7 @@ release gates. Stable promotion and publication require approval of the exact te
 
 - Private Dashboard/Activity launch links can be opened repeatedly for ten minutes from creation.
   Reopening does not extend link expiry. Opened dashboard sessions keep loading/refreshing for
-  up to twelve hours; private messages explain both lifetimes.
+  up to twelve hours; private messages simply state that the link expires in ten minutes.
 
 - Every Slack reply menu now includes Dashboard beside Settings. It privately opens the clicking
   user's personal Activity page through a fresh private link reusable for ten minutes.
