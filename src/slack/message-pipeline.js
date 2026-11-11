@@ -26,7 +26,7 @@ import { removeRegularFileWithin } from "../gateway/safe-fs.js";
 // A typed `/mode` is a channel POLICY change like any admin-UI save — audited the same way.
 import { logChannelPolicyChange } from "../config/channel-audit.js";
 import { createUsageBank } from "../gateway/usage.js";
-import { contextWindowFor } from "../gateway/model-info.js";
+import { contextUsageFor } from "../gateway/model-info.js";
 
 import { recordActiveRun, acceptQuestionReply, updateActiveRunRuntime, clearActiveRun, clearActiveRunHandles, clearPendingRunChoices, shouldClearActiveRun } from "../gateway/active-runs.js";
 import { trackSlackThread, recordSlackThreadOutcome } from "../gateway/slack-threads.js";
@@ -46,7 +46,7 @@ import { noteBotReply, noteUserActivity } from "../gateway/nudges.js";
 import { applyLoopWakeup, stopLoops, stopThreadLoops } from "../gateway/loops.js";
 import { buildPendingReportForUser } from "../gateway/followups.js";
 
-import { resolveSlackConfig, getProgressView, getContextWindow, getTrustedBotApps, getDefaultChannelAccess, applyChannelTemplate, getDefaultNudges, getSlackAdminUserToken, canChangeChannelRuntime, getWhisperEnabled, getEngineFallbackMode, getModelShortcuts, isEngineEnabled } from "../config/settings.js";
+import { resolveSlackConfig, getProgressView, getTrustedBotApps, getDefaultChannelAccess, applyChannelTemplate, getDefaultNudges, getSlackAdminUserToken, canChangeChannelRuntime, getWhisperEnabled, getEngineFallbackMode, getModelShortcuts, isEngineEnabled } from "../config/settings.js";
 import { parseModelShortcut } from "../config/model-shortcuts.js";
 import { mdToMrkdwn, resolveMentions } from "./format.js";
 import { answerImageBlocks, shareAnswerImageFiles } from "./images.js";
@@ -1000,7 +1000,7 @@ export async function processMessageEvent(event, client, { botUserId = "", teamI
         const c = lastCtx.get(runKey);
         await reply(
           c
-            ? `🧠 Context: ~${c.input.toLocaleString()} tokens (${c.pct}% of ${(c.window || getContextWindow()).toLocaleString()})${c.model ? ` · model ${c.model}` : ""}`
+            ? `🧠 Context: ~${c.input.toLocaleString()} tokens (${c.window ? `${c.pct}% of ${c.window.toLocaleString()}` : "window not reported by the harness"})${c.model ? ` · model ${c.model}` : ""}`
             : "No activity in this thread yet — send a message first."
         );
       } else if (sc.cmd === "resume") {
@@ -1888,11 +1888,10 @@ export async function processMessageEvent(event, client, { botUserId = "", teamI
       markTerminal();
       // A code channel's Code tab shows the task branch's current diff after every turn.
       if (codeChannel) void refreshCodeChannelDiff(meta).catch(() => {});
-      const u = result.usage || {};
-      const inT = (u.input_tokens ?? u.prompt_tokens ?? 0) + (u.cache_read_input_tokens || 0) + (u.cache_creation_input_tokens || 0);
-      // ctx% against the window of the model this run ACTUALLY used (1M variants ≠ 200k default).
-      const ctxWindow = contextWindowFor(result);
-      if (inT > 0) lastCtx.set(runKey, { input: inT, pct: Math.min(100, Math.round((100 * inT) / ctxWindow)), window: ctxWindow, model: result.model || "" });
+      // `/context`: the latest request's input against the harness-reported window (same figure
+      // as the footer), never the run's summed input.
+      const ctxUsage = contextUsageFor(result);
+      if (ctxUsage.tokens) lastCtx.set(runKey, { input: ctxUsage.tokens, pct: ctxUsage.percent, window: ctxUsage.window, model: result.model || "" });
       await logEvent("run_done", {
         channel: event.channel,
         author: event.user,

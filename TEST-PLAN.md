@@ -153,12 +153,33 @@ results preserve every override layer, and failover/model retries retain the ans
 
 Live acceptance, separately for Claude and Codex: in a disposable Slack Worker fixture, select a
 compatible model and Low effort via `/model` for this thread. Send "Reply OK", then resume with
-"Reply OK again". Pass: both footers begin `model · low · duration`, followed by existing tokens,
-optional cost and context usage. Change thread effort to High and repeat; the next footer says
+"Reply OK again". Pass: both footers begin `model · low`, followed by optional cost and the
+`ctx:` segment (see Reply footer context). Change thread effort to High and repeat; the next footer says
 `high`, earlier footers retain `low`. Clear all gateway/channel/thread effort choices on the fixture;
 pass: an unspecified CLI default does not invent an effort label. Restore fixture settings.
 Inspect both streamed and classic reply paths; the same shared formatter supplies unattended replies.
 Live execution is separate from the automated regression and is not implied by it.
+
+## Reply footer context (2026-11-11)
+
+Regression: `node --test test/model-info.test.js test/message-cost-visibility.test.js test/claude-primary-model.test.js test/codex-usage-accounting.test.js test/platform-run-details.test.js`.
+Confirm the footer is `model · effort · [cost ·] ctx: <latest> / <window>, <pct>%` with no duration
+or run token totals; the Claude stream keeps the latest top-level request (subagents excluded) and
+its configured `[1m]` session model; the window comes only from the harness (`modelUsage` exact key,
+then variant-free key; Codex `model_context_window`), with `?` when unreported and no hardcoded
+1M/200k/272k fallback; percentages above 100 are not capped; Codex context survives an unreconciled
+request chain.
+
+Live acceptance, Claude, in a disposable Slack Worker fixture: (1) `/model` → this thread →
+`claude-opus-4-6`, send "Reply OK". Pass: footer `Opus 4.6 · <effort> · ctx: N / 200k, P%`.
+(2) Same with `claude-opus-4-6[1m]`: pass `ctx: N / 1M`. (3) `claude-opus-5-5`: pass `/ 1M`.
+(4) Optional, operator only: run the daemon with `CLAUDE_CODE_DISABLE_1M_CONTEXT=1`, repeat (3):
+pass `/ 200k`; restore. In each case N must be close to `/context`'s total in a terminal resume of
+the same session, and far below the run's summed input on a multi-tool turn.
+Live acceptance, Codex: in a Codex fixture ask for a task that runs several tools. Pass: footer
+`gpt-… · <effort> · ctx: N / W, P%` where W equals the rollout's last `model_context_window` and N
+its last `last_token_usage.input_tokens`; `/context` shows the same N and W. Live execution is
+separate from the automated regression and is not implied by it.
 
 Google Chat reaction token regression (engine-independent): verify signed OAuth assertions include both `chat.bot` and `chat.app.messages.readonly`, while ordinary auth excludes the admin-approved scope. With approved app credentials, list reaction subscriptions must return HTTP 200; reconnect and verify subscriptions become active. Live emoji delivery remains a separate end-to-end check.
 

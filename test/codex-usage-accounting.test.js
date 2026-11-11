@@ -50,6 +50,8 @@ test("root accounting records the serialized turn delta and its request detail",
   assert.equal(accounting.requests.length, 2);
   assert.equal(accounting.exactRequests, true);
   assert.equal(accounting.model, "gpt-5.6-sol");
+  // Context is the LATEST request (150 read), not the turn's summed input (250).
+  assert.deepEqual(accounting.context, { tokens: 150, window: 258400 });
 
   const beforeResume = await snapshotCodexUsage(state, id);
   await appendFile(file, [
@@ -69,6 +71,32 @@ test("root accounting records the serialized turn delta and its request detail",
     { input: resumed.usage.input_tokens, cached: resumed.usage.cached_input_tokens, output: resumed.usage.output_tokens },
     { input: 150, cached: 100, output: 8 },
   );
+});
+
+test("root context survives a request chain that does not reconcile with the terminal counter", async () => {
+  const state = await mkdtemp(path.join(os.tmpdir(), "codex-ctx-"));
+  const sessions = path.join(state, "sessions", "2026", "08", "16");
+  await mkdir(sessions, { recursive: true });
+  const id = "ctx-session";
+  await writeFile(path.join(sessions, `rollout-${id}.jsonl`), [
+    meta(id, "2026-08-16T00:00:00.100Z"),
+    context("2026-08-16T00:00:00.200Z"),
+    task("2026-08-16T00:00:00.300Z", "task_started", "turn-1", 1786838400),
+    tokens("2026-08-16T00:00:01.000Z", 100, 40, 5, 100, 40, 5),
+    tokens("2026-08-16T00:00:02.000Z", 250, 140, 12, 150, 100, 7),
+  ].map(line).join(""));
+  const accounting = await readCodexRootAccounting({
+    stateDir: state,
+    sessionId: id,
+    snapshot: { file: "", total: {} },
+    // A terminal counter the requests cannot explain: per-request pricing is dropped...
+    terminalUsage: { input_tokens: 999, cached_input_tokens: 0, output_tokens: 99 },
+    startedAtMs: 1786838400_000,
+  });
+  assert.equal(accounting.exactRequests, false);
+  assert.deepEqual(accounting.requests, []);
+  // ...but the harness-reported context window and latest request size are kept.
+  assert.deepEqual(accounting.context, { tokens: 150, window: 258400 });
 });
 
 test("child accounting excludes the copied fork prefix at second precision", async () => {

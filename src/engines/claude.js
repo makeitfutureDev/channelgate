@@ -441,6 +441,8 @@ export async function runClaude({
         completed: !engineError,
         toolUseCount: stream.toolUseCount,
         primaryModel: stream.model,
+        sessionModel: stream.sessionModel,
+        contextTokens: stream.contextTokens,
         // On a failed or answerless turn: the CLI's stderr tail is where the real cause of an
         // aborted turn is written, and exit 0 means no error path ever reads it. Redacted and
         // capped by conciseProcessDiagnostic; carried for the log, not for the reply.

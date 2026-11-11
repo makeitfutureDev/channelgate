@@ -1,5 +1,4 @@
-import { getContextWindow } from "../config/settings.js";
-import { adapterFor, engineLabel } from "../engines/registry.js";
+import { engineLabel } from "../engines/registry.js";
 
 function firstNonEmpty(...values) {
   for (const value of values) {
@@ -36,12 +35,24 @@ function dominantModelUsageKey(value) {
   return bestKey || entries[0]?.[0] || "";
 }
 
-function modelUsageContextWindow(raw, model) {
-  if (!raw || typeof raw !== "object" || !model) return null;
-  for (const usageMap of [raw.modelUsage, raw.model_usage]) {
-    const match = modelUsageEntries(usageMap).find(([key]) => key === model);
-    const contextWindow = numberField(match?.[1], "contextWindow", "context_window");
-    if (contextWindow && contextWindow > 0) return contextWindow;
+const variantless = (name) => String(name || "").trim().replace(/\[[^\]]*\]$/, "").toLowerCase();
+
+// The window Claude Code itself reported for the session's main model. The terminal modelUsage is
+// keyed by the CONFIGURED name (`claude-opus-4-6[1m]`) while provider messages drop the variant
+// suffix (`claude-opus-4-6`), so an exact key wins and the variant-free name is the fallback.
+// Helper and subagent models in the same map are never consulted.
+function modelUsageContextWindow(raw, ...models) {
+  if (!raw || typeof raw !== "object") return null;
+  const entries = [raw.modelUsage, raw.model_usage].flatMap((usageMap) => modelUsageEntries(usageMap));
+  const windowOf = (entry) => numberField(entry?.[1], "contextWindow", "context_window");
+  const names = models.map((model) => String(model || "").trim()).filter(Boolean);
+  for (const name of names) {
+    const window = windowOf(entries.find(([key]) => key === name));
+    if (window && window > 0) return window;
+  }
+  for (const name of names) {
+    const window = windowOf(entries.find(([key]) => variantless(key) === variantless(name)));
+    if (window && window > 0) return window;
   }
   return null;
 }
@@ -124,26 +135,34 @@ export function modelDisplayLabel(model, engine = "") {
   return raw;
 }
 
-// Context window for the model a run actually used, not the global settings constant.
+// The context window the HARNESS reported for this run, or null when it reported none. There is
+// deliberately no per-model table and no settings fallback: whether Opus runs at 200k or 1M depends
+// on the variant selected, the plan and CLAUDE_CODE_DISABLE_1M_CONTEXT, and only the CLI knows.
+// A guessed window would print a confident but wrong percentage.
 export function contextWindowFor(result = {}) {
-  const raw = resolveCurrentModel(result);
-  // The [1m] suffix names a CONFIGURED variant the CLI does not echo back (an `opus[1m]` run
-  // reports plain `claude-opus-5`), so it is checked against the configured model as well as the
-  // runtime one, and BEFORE the runtime windows below — those report the family's standard 200k
-  // for a 1M run and would otherwise understate the window fivefold.
-  if (/\[1m\]/i.test(raw) || /\[1m\]/i.test(String(result.model || ""))) return 1_000_000;
-  // These current models have 1M by default; their explicit IDs need no [1m] suffix.
-  if (/^claude-(?:opus-5-5|fable-5-1|sonnet-5(?:-5)?)$/i.test(raw)) return 1_000_000;
-  const runtimeWindow = modelUsageContextWindow(result.raw, raw);
-  if (runtimeWindow) return runtimeWindow;
+  const reported = Number(result.contextWindow);
+  if (reported > 0) return reported;
+  const claudeWindow = modelUsageContextWindow(result.raw, result.sessionModel, resolveCurrentModel(result), result.model);
+  if (claudeWindow) return claudeWindow;
   const requestWindow = Array.isArray(result.usageRequests)
     ? Number(result.usageRequests.findLast((request) => Number(request?.contextWindow) > 0)?.contextWindow)
     : 0;
-  if (requestWindow > 0) return requestWindow;
-  if (/opus|sonnet|haiku|fable|claude/i.test(raw)) return 200_000;
-  // Fall back to the engine's own declared window rather than assuming Claude's.
-  if (/gpt-|codex/i.test(raw)) return 272_000;
-  const declared = adapterFor(result.engine)?.contextWindow;
-  if (declared) return declared;
-  return getContextWindow();
+  return requestWindow > 0 ? requestWindow : null;
+}
+
+// How full the context is: the LATEST top-level request's input (what the model held at once)
+// against the harness-reported window. Never the run's summed input, which counts the same
+// history once per model call. `percent` is uncapped so an over-limit context reads above 100.
+export function contextUsageFor(result = {}) {
+  let tokens = Number(result.contextTokens) > 0 ? Number(result.contextTokens) : 0;
+  if (!tokens && Array.isArray(result.usageRequests)) {
+    const last = result.usageRequests.findLast((request) => Number(request?.usage?.input_tokens) > 0);
+    tokens = Number(last?.usage?.input_tokens) || 0;
+  }
+  const window = contextWindowFor(result);
+  return {
+    tokens: tokens || null,
+    window,
+    percent: tokens && window ? Math.round((100 * tokens) / window) : null,
+  };
 }

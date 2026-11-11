@@ -70,7 +70,8 @@ for (const engine of ["claude", "codex"]) {
     await setUser(`details-${engine}`, { approved: true });
     saveSettings({ showMessageCost: false });
     const result = { content: "Answer.", engine, model: engine === "claude" ? "opus[1m]" : "gpt-6.1-sol", durationMs: 77000,
-      usage: { input_tokens: 920200, output_tokens: 2000 }, costUSD: 0.31, runtime: { image: "channelgate/runtime:latest" } };
+      usage: { input_tokens: 920200, output_tokens: 2000 }, contextTokens: 120_000, contextWindow: 1_000_000,
+      costUSD: 0.31, runtime: { image: "channelgate/runtime:latest" } };
     for (const failEdit of [false, true]) {
       const sent = []; const edited = [];
       const connector = createTeamsConnector({ capabilities: platformOr("msteams").capabilities, api: {
@@ -95,7 +96,8 @@ for (const engine of ["claude", "codex"]) {
       assert.equal(stats.size, "Small");
       assert.equal(stats.isSubtle, true);
       assert.equal(stats.wrap, true);
-      assert.match(stats.text, /77s · 920\.2k\/2k/);
+      assert.match(stats.text, /ctx: 120k \/ 1M, 12%$/);
+      assert.doesNotMatch(stats.text, /77s|920\.2k/);
       assert.doesNotMatch(stats.text, /channelgate\/runtime:latest/);
       assert.doesNotMatch(stats.text, /\$/);
       assert.equal(sent.length, failEdit ? 2 : 1);

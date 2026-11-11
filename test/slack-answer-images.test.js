@@ -186,12 +186,14 @@ test("an image preview does not displace an unattended run footer and menu", asy
     result: {
       content: "![Trend](https://img.example/trend.png)",
       usage: { input_tokens: 3, output_tokens: 2 },
+      contextTokens: 3,
+      contextWindow: 200_000,
     },
   });
 
   assert.equal(posts.length, 1);
   assert.deepEqual(posts[0].blocks.map((block) => block.type), ["section", "image", "context", "actions", "context_actions"]);
-  assert.match(posts[0].blocks[2].elements[0].text, /3\/2/);
+  assert.match(posts[0].blocks[2].elements[0].text, /ctx: 3 \/ 200k/);
   assert.doesNotMatch(JSON.stringify(posts[0].blocks), /resume_cmd_modal/);
 });
 
