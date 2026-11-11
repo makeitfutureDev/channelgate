@@ -29,6 +29,8 @@ import { createUsageBank } from "../gateway/usage.js";
 import { contextWindowFor } from "../gateway/model-info.js";
 
 import { recordActiveRun, acceptQuestionReply, updateActiveRunRuntime, clearActiveRun, clearActiveRunHandles, clearPendingRunChoices, shouldClearActiveRun } from "../gateway/active-runs.js";
+import { trackSlackThread, recordSlackThreadOutcome } from "../gateway/slack-threads.js";
+import { runAdmissionRefusalKind } from "../gateway/run-admission-result.js";
 import { cancelPendingQuestions, listPendingQuestions, getQuestion } from "../gateway/questions.js";
 import { assertQuestionAccess } from "../gateway/question-access.js";
 import { refreshQuestionCard } from "./questions.js";
@@ -1506,6 +1508,7 @@ export async function processMessageEvent(event, client, { botUserId = "", teamI
       slug: entry.slug,
       workspaceId: teamId,
       authorId: event.user,
+      slackThreadTs: replyTs || "",
       threadKey,
       isDM: Boolean(meta.isDM),
       ...(questionSubmissionId ? { questionSubmissionId } : {}),
@@ -1636,6 +1639,11 @@ export async function processMessageEvent(event, client, { botUserId = "", teamI
       stopProgressOnAbort = () => { void status.stop().catch(() => {}); };
       handle.controller.signal.addEventListener("abort", stopProgressOnAbort, { once: true });
       if (handle.controller.signal.aborted) stopProgressOnAbort();
+      // Discovery is optional preflight behind queue ownership and visible progress. A slow
+      // Slack root lookup must not leave a request outside durable Stop/restart handling.
+      if (!questionSubmissionId && !syntheticFork && !queuedForkHandle) {
+        await trackSlackThread(client, { channelId: event.channel, slug: entry.slug, threadKey: replyTs || threadKey, messageTs: event.ts });
+      }
       // First time the bot is EVER pulled into an existing thread → replay its earlier messages
       // for context. Gated on the persistent has-ever-had-a-session marker (not "no current
       // session"), so /clear doesn't re-inject the whole history on the next reply; checked
@@ -1704,6 +1712,7 @@ export async function processMessageEvent(event, client, { botUserId = "", teamI
         workspaceId: teamId,
         authorId: event.user,
         threadKey,
+        slackThreadTs: replyTs || "",
         isDM: Boolean(meta.isDM),
         ...(continuationQuestionId ? { questionSubmissionId: continuationQuestionId } : {}),
         text: textForRun,
@@ -1845,6 +1854,7 @@ export async function processMessageEvent(event, client, { botUserId = "", teamI
       }
       // User-visible delivery is the durable terminal boundary. If force-stop begins while usage
       // bookkeeping finishes, boot must not replay an answer Slack already received.
+      recordSlackThreadOutcome(event.channel, replyTs || threadKey, { error: Boolean(runAdmissionRefusalKind(result) || result.engineError) });
       markTerminal();
       // A code channel's Code tab shows the task branch's current diff after every turn.
       if (codeChannel) void refreshCodeChannelDiff(meta).catch(() => {});
@@ -1906,6 +1916,7 @@ export async function processMessageEvent(event, client, { botUserId = "", teamI
         // replays it instead of surfacing a transient shutdown error.
       } else {
         console.error(`[slack] run failed in ${entry.slug}:`, err.message);
+        recordSlackThreadOutcome(event.channel, replyTs || threadKey, { error: true });
         // A replay-safe provider failure the orchestrator left to the PERSON (Settings →
         // engineFallbackMode = "ask", or both harnesses failed): post the choice card instead of
         // the bare error line. Nothing ran for the message; the click re-runs it.
