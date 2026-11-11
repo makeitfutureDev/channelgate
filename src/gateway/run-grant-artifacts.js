@@ -152,7 +152,7 @@ async function materializePlugin({ pluginDir, name, description, skillNames = []
   // change their content hash on every turn and retire an otherwise reusable warm process.
   // Omit only that generated observation field here; ordinary workspace materialization keeps
   // its real timestamp, and all revision facts, skill bytes and grants remain fingerprinted.
-  const copied = await enableSkills(skillsDir, skillNames, { recordMaterializationTime: false });
+  const copied = await enableSkills(skillsDir, skillNames, { recordMaterializationTime: false, generatedProtocolsFromWorkspace: true });
   // A package is delivered through its own explicit native plugin or per-run catalog. Leaving
   // its wrapper here would let recursive engine discovery activate the unsanitized source tree.
   for (const pkg of grantedPluginPackages(skillNames)) await rm(path.join(skillsDir, pkg.slug), { recursive: true, force: true });
@@ -331,6 +331,7 @@ export async function createRunGrantArtifacts({
         name: "gateway-user-grants",
         description: "Private skill grants for one gateway run",
         skillNames: userSkills,
+        workspaceSkillsDir,
       });
       // An unavailable grant or dependency is a profile warning, not a reason to strand every
       // request by this author. Keep the available instructions isolated and report omissions to
@@ -343,6 +344,7 @@ export async function createRunGrantArtifacts({
         const personalDir = path.join(pluginDir, "skills");
         for (const entry of (await readdir(personalDir, { withFileTypes: true })).sort((a, b) => a.name.localeCompare(b.name))) {
           if (!entry.isDirectory()) continue;
+          if (["gateway-usage", "channel-memory"].includes(entry.name)) continue;
           const file = path.join(personalDir, entry.name, "SKILL.md");
           const metadata = skillMetadata(parseFrontmatter(await readFile(file, "utf8")).data);
           personalSkillCatalog.push({ name: metadata.name || entry.name, description: metadata.description || `Personal skill ${entry.name}`, path: file });

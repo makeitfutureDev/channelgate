@@ -12,6 +12,9 @@ release gates. Stable promotion and publication require approval of the exact te
 
 ### Beta development notes
 
+- Resolve generated `gateway-usage` and `channel-memory` dependencies only from the channel's
+  verified workspace copies, and keep them out of the personal skill catalog.
+
 - Activity navigation avoids repeated historical scans, reuses recent thread evidence and links,
   and verifies visible rows concurrently. Refresh still forces fresh checks; access checks remain live.
 

@@ -878,7 +878,7 @@ async function renameLegacyManagedSkills(skillsDir) {
 // grant that names nothing in the catalog falls back to the pre-catalog host-folder copy so an
 // un-imported folder keeps working. Managed copies whose grant ended are pruned; a project-owned
 // folder of the same name is preserved only for callers that opt out of authoritative mirroring.
-export async function enableSkills(skillsDir, skillNames, { authoritative = false, backupDir = "", recordMaterializationTime = true } = {}) {
+export async function enableSkills(skillsDir, skillNames, { authoritative = false, backupDir = "", recordMaterializationTime = true, generatedProtocolsFromWorkspace = false } = {}) {
   const sources = skillSourceDirs();
   // Defense at the filesystem sink: web writes and run-time grant resolution already normalize
   // names, but legacy/manual config and direct callers must not turn a grant into `../` traversal.
@@ -906,11 +906,14 @@ export async function enableSkills(skillsDir, skillNames, { authoritative = fals
     /* catalog unavailable — materialize the grants as given */
   }
   const enabled = [];
-  const missing = [];
+  // A run plugin must get these generated protocols from its own workspace. A catalog or host
+  // folder copy can be stale or belong to another channel, so report the dependency as missing
+  // until materializePlugin has verified and copied the workspace source.
+  const missing = generatedProtocolsFromWorkspace ? safeSkillNames.filter((name) => reserved.has(name.toLowerCase())) : [];
   const states = {};
 
   for (const name of safeSkillNames) {
-    if (authoritative && reserved.has(name.toLowerCase())) continue;
+    if ((authoritative || generatedProtocolsFromWorkspace) && reserved.has(name.toLowerCase())) continue;
     let result;
     try {
       result = await materializeSkill(skillsDir, name, { authoritative, backupDir, recordMaterializationTime });
