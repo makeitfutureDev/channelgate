@@ -21,6 +21,16 @@ connection, with independent non-overlapping timers, transient-error retry and s
 Disconnecting stops old timers and drains pending writes. Manual Refresh remains available to
 reconcile reaction events missed while offline.
 
+Activity navigation and automatic updates verify the visible page without scanning historical
+sessions or rotating through offscreen threads. An empty index bootstraps history; Refresh and
+Load older threads explicitly scan/reconcile a bounded batch. Thread evidence is cached for up to
+30 seconds per Slack client and invalidated by stored message/completion changes. Immutable
+permalinks are reused; concurrent reads are deduplicated, failures are not cached, and inspection/
+link work shares a four-read budget with bounded caches. Admission, private membership and sudo
+access are still checked afresh for each render, and completion actions still verify their live
+root. Refresh bypasses evidence reuse. History/force options apply to one publication, so subsequent
+automatic updates return to the fast path.
+
 ## Personal Slack thread list (2026-11-11)
 
 Slack App Home → Activity includes **My threads**, a personal paginated list of gateway-engaged
