@@ -155,23 +155,33 @@ export function assertValidSwapRuleFields({ hosts, headers, format } = {}) {
   return out;
 }
 
-// The channel meta's `egressRawHosts` (admin API or approved worker request): destinations whose
-// ports 22/5432/6543 get a raw CONNECT
-// tunnel through the proxy (SSH, Postgres) while the channel's network is on. Strict, for the
-// admin API; the proxy's policy re-filters tolerantly on read.
-// Raw tunnels carry SSH/PostgreSQL bytes, not credential substitutions. Public IP literals
+// The channel meta's `egressRawHosts` (admin API or approved worker request): a host alone gets
+// the legacy SSH/Postgres ports, while an exact `host:1433` entry gets only Azure SQL's port.
+// The proxy's policy re-filters tolerantly on read.
+// Raw tunnels carry SSH/PostgreSQL/Azure SQL bytes, not credential substitutions. Public IP literals
 // are valid here without widening the DNS-only secret-host rule above.
 export function isValidRawHost(value) {
   const host = normalizeHost(value);
   return isIP(host) ? !host.includes("%") && classifyAddress(host) === "" : isValidRuleHost(host);
 }
 
+export function parseRawDestination(value) {
+  const raw = String(value ?? "").trim();
+  const scoped = /^(\[[^\]]+\]|[^:]+):(\d+)$/.exec(raw);
+  const host = normalizeHost(scoped ? scoped[1] : raw);
+  const port = scoped ? Number(scoped[2]) : null;
+  if (!isValidRawHost(host) || (port !== null && (port !== 1433 || host.includes("*")))) return null;
+  return { host, port, value: port === null ? host : `${isIP(host) === 6 ? `[${host}]` : host}:${port}` };
+}
+
 export const MAX_RAW_HOSTS = 16;
 export function assertValidEgressRawHosts(value) {
-  const list = [...new Set(listOf(value).map(normalizeHost))];
+  const inputs = listOf(value);
+  const parsed = inputs.map(parseRawDestination);
+  const badIndex = parsed.findIndex((entry) => entry === null);
+  if (badIndex !== -1) throw new Error(`"${inputs[badIndex]}" is not a raw destination — use a public host or an exact public host:1433 entry.`);
+  const list = [...new Set(parsed.map((entry) => entry.value))];
   if (list.length > MAX_RAW_HOSTS) throw new Error(`At most ${MAX_RAW_HOSTS} raw hosts per channel.`);
-  const bad = list.find((host) => !isValidRawHost(host));
-  if (bad) throw new Error(`"${bad}" is not a raw destination — use a DNS name, a public IPv4/IPv6 address, or a DNS wildcard.`);
   return list;
 }
 

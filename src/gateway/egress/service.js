@@ -38,13 +38,12 @@ import { platformOr } from "../../platforms/registry.js";
 import { egressActive as hookEgressActive, egressModeOf, setEgressProvider } from "../../runtimes/container/egress-hook.js";
 import { loadOrCreateEgressCa } from "./ca.js";
 import { createEgressProxy } from "./proxy.js";
-import { normalizeHost } from "./rules.js";
 import { resolveEgressGrant, revokeMissing } from "./grants.js";
 import { isChannelLive, isOwnerLive, otherOwnerActive, otherSshOpen } from "./liveness.js";
 import { activeEditorLeases } from "../../runtimes/container/editor-lease.js";
 import { containerName } from "../../runtimes/container/names.js";
 import { engineHostsFor, hostOfUrl } from "./engine-hosts.js";
-import { isValidRawHost } from "./catalog-rules.js";
+import { parseRawDestination } from "./catalog-rules.js";
 
 // sockaddr_un.sun_path is 108 bytes including the terminating NUL.
 export const MAX_SOCKET_PATH_BYTES = 107;
@@ -124,9 +123,11 @@ export function rawPassthroughFor(meta = {}) {
   const out = [...ALWAYS_RAW.map((rule) => ({ ...rule }))];
   const declared = Array.isArray(meta?.egressRawHosts) ? meta.egressRawHosts : [];
   for (const raw of declared) {
-    const host = normalizeHost(raw);
-    if (!host || !isValidRawHost(host)) continue;
-    for (const port of RAW_PASSTHROUGH_PORTS) out.push({ host, port });
+    const destination = parseRawDestination(raw);
+    if (!destination) continue;
+    for (const port of destination.port === null ? RAW_PASSTHROUGH_PORTS : [destination.port]) {
+      out.push({ host: destination.host, port });
+    }
   }
   return out;
 }

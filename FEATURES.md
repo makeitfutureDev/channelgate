@@ -4446,7 +4446,8 @@ are retired, bullet by bullet; everything else stands.
   never deferred behind running work. Per request the policy reads the channel's CURRENT
   meta: *Allow network* off admits the engine endpoints (Claude, Codex, a configured Qwen endpoint)
   and the remote MCP hosts this channel's runs were handed; on admits any public destination; raw
-  tunnels go to `github.com:22` and the admin-declared `egressRawHosts` on 22/5432/6543. Audit rows
+  tunnels go to `github.com:22` and the admin-declared `egressRawHosts` on 22/5432/6543; an exact
+  `host:1433` entry grants only that Azure SQL port. Audit rows
   (`egress` events) only for a swap of a channel/organization/personal secret, a refusal, a blocked
   destination or a raw tunnel — the relayed Claude login's swap on every API call is only counted
   (`egressStatus()`, `/api/health` → `containerRuntime.egress`), and so is a request whose only

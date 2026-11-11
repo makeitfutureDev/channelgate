@@ -306,10 +306,11 @@ for (const template of ["user", "admin"]) {
   });
 }
 
-test("raw passthrough: github.com:22 always, plus each declared raw host on 22/5432/6543", () => {
-  assert.deepEqual(service.rawPassthroughFor({ egressRawHosts: ["db.example.com", "not a host"] }), [
+test("raw passthrough: legacy hosts use 22/5432/6543 and a scoped SQL host uses only 1433", () => {
+  assert.deepEqual(service.rawPassthroughFor({ egressRawHosts: ["db.example.com", "sql.example.com:1433", "not a host"] }), [
     { host: "github.com", port: 22 },
     { host: "db.example.com", port: 22 }, { host: "db.example.com", port: 5432 }, { host: "db.example.com", port: 6543 },
+    { host: "sql.example.com", port: 1433 },
   ]);
 });
 

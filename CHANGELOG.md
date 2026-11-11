@@ -15,6 +15,10 @@ release gates. Stable promotion and publication require approval of the exact te
 - Activity navigation avoids repeated historical scans, reuses recent thread evidence and links,
   and verifies visible rows concurrently. Refresh still forces fresh checks; access checks remain live.
 
+- Allow an admin to add an exact Azure SQL `host:1433` raw tunnel for a channel, without opening
+  SQL traffic to its other approved SSH/Postgres hosts. The network switch and public-address
+  checks still apply.
+
 - Fix excessive startup work when many conversations have workspace settings. Channel listings
   reuse one metadata snapshot and resolve folders once per listing; later reads still pick up
   changed linked-folder owners and access policies immediately.
