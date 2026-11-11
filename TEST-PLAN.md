@@ -20,7 +20,8 @@ membership: no usable link. Missing Public URL gives a private Home Activity hin
 native button rendering, private delivery, exact viewer ownership and no administrator access.
 Reopen the SAME private link several times before its original ten-minute deadline: each open
 works and retains viewer isolation. At exactly ten minutes after issuance it fails, including
-after a successful reuse just before the deadline. Verify the private message is exactly “This link expires in 10 minutes.” and the launch failure
+after a successful reuse just before the deadline. Verify the private message says “This link expires in 10 minutes.” followed by a clickable
+Activity link with exactly the same URL as Open my Activity, including in fallback text. The launch failure
 no longer says already used. Repeat after revoking admission: the same link must fail immediately.
 The opened page/API/SSE and authorized completion actions must remain usable beyond one hour
 and at twelve hours minus one millisecond, even after the launch link expires. At exactly twelve

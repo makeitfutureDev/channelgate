@@ -12,6 +12,8 @@ release gates. Stable promotion and publication require approval of the exact te
 
 ### Beta development notes
 
+- Add a copyable Activity hyperlink beside the short expiry notice in private Dashboard replies.
+
 - Private Dashboard/Activity launch links can be opened repeatedly for ten minutes from creation.
   Reopening does not extend link expiry. Opened dashboard sessions keep loading/refreshing for
   up to twelve hours; private messages simply state that the link expires in ten minutes.

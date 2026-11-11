@@ -44,7 +44,9 @@ dashboard path (Secure over HTTPS). The same launch link can be opened repeatedl
 minutes after creation; opening it never extends that deadline, and every exchange rechecks current
 authorization. The browser can continue loading and refreshing after the launch link expires,
 including reloads, until twelve hours after its own exchange; requests never extend that session
-deadline. Its private reply text is simply “This link expires in 10 minutes.” Grants, sessions
+deadline. Its private reply text says “This link expires in 10 minutes.” followed by an
+Activity hyperlink that can be copied; the hyperlink and Open my Activity button share the same
+private launch URL. Grants, sessions
 and streams are bounded per viewer and
 globally, live only in daemon memory and end on restart. No administrator cookie or API key grants
 dashboard access. Origin/Host checks, nonce CSP, no-store/no-referrer headers and CSRF-protected
