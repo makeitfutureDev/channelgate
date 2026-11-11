@@ -136,9 +136,10 @@ import { registerBusyThreadChoiceActions } from "./busy-thread-choice.js";
 import { registerAgentInterfaceHandlers } from "./agent-interface.js";
 import { isCodeChannelMeta } from "../gateway/code-channels.js";
 import { registerEngineSwitchChoiceActions } from "./engine-switch-choice.js";
-import { composioHomeButtons, registerComposioHomeActions } from "./home-composio.js";
-import { nudgeHomeBlocks, registerNudgeHomeActions } from "./home-nudges.js";
-import { homeThreadsSnapshot, homeThreadBlocks, registerHomeThreadActions } from "./home-threads.js";
+import { composioHomeButtons } from "./home-composio.js";
+import { nudgeHomeBlocks } from "./home-nudges.js";
+import { homeThreadsSnapshot, homeThreadBlocks } from "./home-threads.js";
+import { buildHomeTabView, createHomePublisher, registerHomeActions } from "./home-tabs.js";
 import { getSlackThread, updateSlackThreadRootCompletion } from "../gateway/slack-threads.js";
 import { buildMenuCard, buildMenuResumeView, MENU_RESUME_ACTION_ID } from "./menu.js";
 import { resolveResumeSession } from "./resume-session.js";
@@ -3392,113 +3393,81 @@ async function connectAndWire(app) {
     }
   });
 
-  // Rendering the Home tab is its own function because the view is INTERACTIVE: connecting or
-  // disconnecting a Composio key from Home changes the very connection lines it renders, so the
-  // modal/button handlers re-publish through here.
-  async function publishHomeTab(client, userId, threadView = {}) {
+  // Each Home section loads only its own data. A connection save returns to Connections;
+  // thread controls and reminder preferences return to Activity. Every publication resolves
+  // the clicking viewer's current role and content afresh, without shared tab-selection state.
+  const publishHomeTab = createHomePublisher(async (client, userId, homeView = {}) => {
     await ensureUserKnown(client, userId);
     const admin = await isAdmin(userId);
     const approved = await isApproved(userId);
     const role = admin ? "an *admin*" : approved ? "an *approved* user" : "*not yet approved* (an admin can approve you)";
-    const homeUser = (await getUsers())[userId] || {};
-
-    // Connection status distinguishes personal Composio from the shared org fallback. Only
-    // ✅/⚪/❌ is ever rendered — never a token value. A channel token may replace the org source
-    // during an actual channel run, but is not knowable from the global App Home.
-    const [cTok, tTok] = await Promise.all([getComposioToken(userId), getToolboxToken(userId)]);
-    const connLine = (label, mine, fallback, note) =>
-      mine
-        ? `✅ *${label}* — your account`
-        : fallback
-          ? `⚪ *${label}* — using the org default`
-          : `❌ *${label}* — not connected${note ? ` (${note})` : ""}`;
-    const composioMode = getComposioMode();
-    const composioLines = composioMode === "sdk"
-      ? (!hasComposioSdkEntitlement()
-          ? ["❌ *Composio SDK (Enterprise · Beta)* — an active Enterprise license is required"]
-          : getComposioSdkApiKey()
-          ? [
-              "✅ *Composio personal (`composio-user`)* — SDK (Enterprise · Beta) identity created for you at runtime",
-              "✅ *Composio agent (`composio-agent`)* — SDK (Enterprise · Beta) identity created for each channel at runtime",
-            ]
-          : [
-              "❌ *Composio personal (`composio-user`)* — SDK (Enterprise · Beta) mode is on, but its organization API key is missing",
-              "❌ *Composio agent (`composio-agent`)* — SDK (Enterprise · Beta) mode is on, but its organization API key is missing",
-            ])
-      : [
-          connLine("Composio personal (`composio-user`)", cTok, "", "connect it with the button below"),
-          getDefaultComposioToken()
-            ? "⚪ *Composio agent (`composio-agent`)* — organization default (a channel token takes precedence)"
-            : "❌ *Composio agent (`composio-agent`)* — no organization default (a channel may still provide one)",
-        ];
-    const conns = [
-      ...composioLines,
-      connLine("Toolbox", tTok, getDefaultToolboxToken(), "admin tools"),
-      "🛠 *Gateway control* — always on (schedules, channel admin, workdir)",
-    ].join("\n");
-
-    // Your skills: the personal tier of the grant union (skills only your own runs carry) plus the
-    // organization tier everyone gets. Channel grants are per conversation and not knowable here.
-    const personalSkills = Array.isArray(homeUser.skills) ? homeUser.skills : [];
-    const orgSkills = Array.isArray(getOrgAccessGrants().skills) ? getOrgAccessGrants().skills : [];
-    let favLines = personalSkills.length
-      ? personalSkills.slice(0, 8).map((s) => `• *${s}*`).join("\n") + (personalSkills.length > 8 ? `\n_+ ${personalSkills.length - 8} more_` : "")
-      : "_No personal skills yet — ask me \"add the X skill for me\" in any thread, or browse the catalog with \"list skills\"._";
-    if (orgSkills.length) favLines += `\n_Organization-wide: ${orgSkills.length} skill(s) every conversation gets._`;
-
-    // In-thread commands + the active engine / how to switch models.
-    const commands = "`/menu` · `/help` · `/status` · `/clear` · `/context` · `/mode` · `/model` · `/compact` · `/stop` · `/sudo` _(admin, typed in-thread)_ · `/update` _(admin)_";
-    const engineInfo =
-      `• Default engine: *${getEngine()}* · context window ~${Math.round(getContextWindow() / 1000)}k tokens\n` +
-      "• Switch runtime: `/model` — channel or one thread → harness (Claude/Codex) → model → effort _(channel access set in Settings)_";
-
-    const all = await listChannels();
-    const channels = all.filter((c) => !c.isDM && c.type !== "im");
-    const authorized = channels.filter((c) => admin || approved || (c.meta?.allowedUsers || []).includes(userId));
-    // Private channels appear only to their actual Slack members (see homeVisibleChannels) and
-    // the header count reflects what THIS viewer sees — not the gateway's full roster. Only
-    // HOME_CHANNEL_LIST_MAX lines are rendered, so stop probing membership one past that: the
-    // extra entry is what distinguishes an exact count from the "25+" label, and everything
-    // beyond it would be a conversations.members call whose answer is never displayed.
-    const visible = await homeVisibleChannels(client, authorized, userId, { limit: HOME_CHANNEL_LIST_MAX + 1 });
-    const moreThanShown = visible.length > HOME_CHANNEL_LIST_MAX;
-    const visibleCount = moreThanShown ? `${HOME_CHANNEL_LIST_MAX}+` : String(visible.length);
-    const mineList = visible
-      .slice(0, HOME_CHANNEL_LIST_MAX)
-      .map((c) => {
-        const eng = c.meta?.engine ? ` · ${c.meta.engine}` : "";
-        return `• *${c.name}* — ${modeLabel(c.meta || {})}${eng}`;
-      })
-      .join("\n");
-    const port = process.env.PORT || 4747;
-    let myThreads;
-    try { myThreads = homeThreadBlocks(await homeThreadsSnapshot(client, userId, threadView)); }
-    catch { myThreads = [{ type: "section", text: { type: "mrkdwn", text: "*My threads*\nThreads are temporarily unavailable. Reopen Home to try again." } }]; }
-
-    const blocks = [
-      { type: "header", text: { type: "plain_text", text: "ChannelGate", emoji: true } },
-      { type: "section", text: { type: "mrkdwn", text: `Hi <@${userId}> — you're ${role} on this gateway.` } },
-      ...myThreads,
-      { type: "section", text: { type: "mrkdwn", text: "I'm Claude, running self-hosted in per-channel sandboxes. *DM me* (no mention needed) or *@mention me* in a channel. Use `/status` to see what a channel is working on, `/pending` for the threads I'm waiting on you for, or `/help` for all commands." } },
-      ...nudgeHomeBlocks({ enabled: userNudgesEnabled(homeUser) }),
-      { type: "divider" },
-      { type: "section", text: { type: "mrkdwn", text: `*Your connections* — the MCP tools you get when you run me\n${conns}` } },
-      // Personal Composio key, set from a modal — the value never becomes a Slack message. Absent
-      // in SDK mode, where the identity is minted per user at run time and there is nothing to set.
-      ...composioHomeButtons({ hasToken: Boolean(cTok), enabled: composioMode !== "sdk" }),
-      { type: "divider" },
-      { type: "section", text: { type: "mrkdwn", text: `*Your skills*\n${favLines}` } },
-      { type: "divider" },
-      { type: "section", text: { type: "mrkdwn", text: `*Commands* (type in a thread)\n${commands}` } },
-      { type: "section", text: { type: "mrkdwn", text: `*Engine & models*\n${engineInfo}` } },
-      { type: "divider" },
-      { type: "section", text: { type: "mrkdwn", text: `*Channels I work in* (${visibleCount})\n${mineList || "_None yet — add me to a channel and @mention me._"}` } },
-    ];
+    const homeUser = (await getUser(userId)) || {};
     const footer = [`ChannelGate v${GATEWAY_VERSION}`, `engine: ${getEngine()}`];
-    if (admin) footer.push(`⚙️ Admin UI: http://localhost:${port}`);
-    blocks.push({ type: "context", elements: [{ type: "mrkdwn", text: footer.join("  ·  ") }] });
-    await client.views.publish({ user_id: userId, view: { type: "home", blocks } });
-  }
+    if (admin) footer.push(`⚙️ Admin UI: http://localhost:${process.env.PORT || 4747}`);
+    const sections = {
+      activity: async () => {
+        let threads;
+        try { threads = homeThreadBlocks(await homeThreadsSnapshot(client, userId, homeView)); }
+        catch { threads = [{ type: "section", text: { type: "mrkdwn", text: "*My threads*\nThreads are temporarily unavailable. Reopen Home to try again." } }]; }
+        return [
+          ...threads,
+          ...nudgeHomeBlocks({ enabled: userNudgesEnabled(homeUser) }),
+          { type: "divider" },
+          { type: "section", text: { type: "mrkdwn", text: "*DM me* (no mention needed) or *@mention me* in a channel. Use `/status` for current channel work, `/pending` for threads awaiting your reply, or `/help` for all commands." } },
+          { type: "section", text: { type: "mrkdwn", text: "*Commands* (type in a thread)\n`/menu` · `/help` · `/status` · `/clear` · `/context` · `/mode` · `/model` · `/compact` · `/stop` · `/sudo` _(admin)_ · `/update` _(admin)_" } },
+          { type: "section", text: { type: "mrkdwn", text: `*Engine & models*\n• Default engine: *${getEngine()}* · context window ~${Math.round(getContextWindow() / 1000)}k tokens\n• Switch runtime: \`/model\` — channel or one thread → harness → model → effort` } },
+        ];
+      },
+      connections: async () => {
+        const [cTok, tTok] = await Promise.all([getComposioToken(userId), getToolboxToken(userId)]);
+        const connLine = (label, mine, fallback, note) => mine
+          ? `✅ *${label}* — your account`
+          : fallback ? `⚪ *${label}* — using the org default`
+          : `❌ *${label}* — not connected${note ? ` (${note})` : ""}`;
+        const mode = getComposioMode();
+        const composioLines = mode === "sdk"
+          ? (!hasComposioSdkEntitlement()
+              ? ["❌ *Composio SDK (Enterprise · Beta)* — an active Enterprise license is required"]
+              : getComposioSdkApiKey()
+                ? ["✅ *Composio personal (composio-user)* — SDK (Enterprise · Beta) identity created for you at runtime", "✅ *Composio agent (composio-agent)* — SDK (Enterprise · Beta) identity created for each channel at runtime"]
+                : ["❌ *Composio SDK (Enterprise · Beta)* — its organization API key is missing"])
+          : [
+              connLine("Composio personal (composio-user)", cTok, "", "connect it with the button below"),
+              getDefaultComposioToken()
+                ? "⚪ *Composio agent (composio-agent)* — organization default (a channel token takes precedence)"
+                : "❌ *Composio agent (composio-agent)* — no organization default (a channel may still provide one)",
+            ];
+        const conns = [...composioLines, connLine("Toolbox", tTok, getDefaultToolboxToken(), "admin tools"), "🛠 *Gateway control* — always on (schedules, channel admin, workdir)"].join("\n");
+        return [
+          { type: "divider" },
+          { type: "section", text: { type: "mrkdwn", text: `*Your connections* — the MCP tools you get when you run me\n${conns}` } },
+          ...composioHomeButtons({ hasToken: Boolean(cTok), enabled: mode !== "sdk" }),
+        ];
+      },
+      skills: async () => {
+        const personalSkills = Array.isArray(homeUser.skills) ? homeUser.skills : [];
+        const orgSkills = Array.isArray(getOrgAccessGrants().skills) ? getOrgAccessGrants().skills : [];
+        let lines = personalSkills.length
+          ? personalSkills.slice(0, 8).map((name) => `• *${name}*`).join("\n") + (personalSkills.length > 8 ? `\n_+ ${personalSkills.length - 8} more_` : "")
+          : '_No personal skills yet — ask me "add the X skill for me" in any thread, or browse the catalog with "list skills"._';
+        if (orgSkills.length) lines += `\n_Organization-wide: ${orgSkills.length} skill(s) every conversation gets._`;
+        return [{ type: "divider" }, { type: "section", text: { type: "mrkdwn", text: `*Your skills*\n${lines}` } }];
+      },
+      channels: async () => {
+        const all = await listChannels();
+        const authorized = all.filter((c) => !c.isDM && c.type !== "im" &&
+          isAuthorized(c.meta || {}, userId, false, { isAdminUser: admin, isApprovedUser: approved }));
+        const visible = await homeVisibleChannels(client, authorized, userId, { limit: HOME_CHANNEL_LIST_MAX + 1 });
+        const count = visible.length > HOME_CHANNEL_LIST_MAX ? `${HOME_CHANNEL_LIST_MAX}+` : String(visible.length);
+        const lines = visible.slice(0, HOME_CHANNEL_LIST_MAX).map((c) => {
+          const engine = c.meta?.engine ? ` · ${c.meta.engine}` : "";
+          return `• *${c.name}* — ${modeLabel(c.meta || {})}${engine}`;
+        }).join("\n");
+        return [{ type: "divider" }, { type: "section", text: { type: "mrkdwn", text: `*Channels I work in* (${count})\n${lines || "_None yet — add me to a channel and @mention me._"}` } }];
+      },
+    };
+    return buildHomeTabView({ tab: homeView.tab, userId, role, sections, footer });
+  });
 
   // App Home tab: an orientation dashboard — the viewer's access level, the channels the
   // bot manages, and a link to the admin UI. Never shows tokens or secrets.
@@ -3526,9 +3495,7 @@ async function connectAndWire(app) {
     }
   });
 
-  registerComposioHomeActions(app, { publishHome: publishHomeTab });
-  registerNudgeHomeActions(app, { publishHome: publishHomeTab });
-  registerHomeThreadActions(app, { publishHome: publishHomeTab });
+  registerHomeActions(app, { publishHome: publishHomeTab });
 
   // Removing a ✅ re-opens that thread in the reactor's follow-up digest (the inverse of marking
   // it done). Other removed reactions are acknowledged as no-ops.

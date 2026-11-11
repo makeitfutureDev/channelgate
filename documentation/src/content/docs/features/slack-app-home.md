@@ -5,6 +5,19 @@ description: Check your gateway role, personal connections, skills, and visible 
 
 Open the ChannelGate app in Slack and select **Home** for an orientation dashboard. Select **Messages** to talk directly to the bot without mentioning it.
 
+## Choose a Home section
+
+The navigation row inside Home has four sections. The selected section is highlighted:
+
+- **Activity** opens by default, with My threads, reminder preferences and command/runtime guidance.
+- **Connections** shows your personal/shared connection status and personal Composio controls.
+- **Skills** shows your personal grants and the organization-wide skill count.
+- **Channels** lists conversations currently available to you.
+
+Only the selected section loads. Saving or disconnecting a personal connection keeps you on
+Connections. Thread filters, pagination and reminder changes stay on Activity. Opening Home again
+starts at Activity; navigation is personal to the viewing user.
+
 ## Understand your access
 
 Home identifies whether you are an administrator, an approved user, or awaiting approval. It also lists gateway conversations visible to you, with their mode and any configured engine. Private Slack conversations are subject to membership checks; the list is not a directory of every private channel on the gateway.
