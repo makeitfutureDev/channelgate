@@ -943,6 +943,14 @@ export async function enableSkills(skillsDir, skillNames, { authoritative = fals
       if (path.resolve(src) !== path.resolve(dest) && await exists(src)) {
         if (authoritative && (await realpath(src)) === (await realpath(dest).catch(() => path.resolve(dest)))) continue;
         if (authoritative) {
+          // A legacy grant may name a parent folder instead of a skill. Leave its source
+          // and grant intact; the per-run artifacts report the missing manifest. Do not
+          // materialize its children or abort before that warning can reach the reply.
+          const manifest = await lstat(path.join(src, "SKILL.md")).catch((error) => {
+            if (["ENOENT", "ENOTDIR"].includes(error.code)) return null;
+            throw error;
+          });
+          if (!manifest?.isFile()) break;
           const files = normalizeSkillFiles(await readSkillDirectory(src));
           const hash = hashSkillFiles(files);
           const revision = { id: `host:${hash}`, contentHash: hash, revisionNo: 1, version: "" };
