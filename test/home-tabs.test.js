@@ -108,3 +108,110 @@ test("in-flight publications are serialized per viewer and a failed write does n
   assert.equal(await second, true);
   assert.deepEqual(sent, ["activity", "channels"]);
 });
+
+function fakeTimers() {
+  const pending = new Map();
+  return {
+    pending,
+    setTimer(fn, ms) { const timer = { unref() {} }; pending.set(timer, { fn, ms }); return timer; },
+    clearTimer(timer) { pending.delete(timer); },
+    async tick() {
+      const [timer, { fn }] = pending.entries().next().value;
+      pending.delete(timer); await fn();
+    },
+  };
+}
+
+test("Activity refreshes changed state automatically, preserves filter/page, and leaves unchanged pages alone", async () => {
+  const timers = fakeTimers(); let key = "working"; const rendered = []; const sent = [];
+  const publish = createHomePublisher(async (_c, user, state) => { rendered.push({ user, ...state }); return { status: key }; },
+    { ...timers, refreshKey: () => key });
+  const client = { views: { publish: async ({ view }) => sent.push(view.status) } };
+  await publish(client, "U_ONE", { filter: "working", page: 2 });
+  assert.equal([...timers.pending.values()][0].ms, 15000);
+  await timers.tick();
+  assert.equal(rendered.length, 1, "unchanged state does not read history or republish");
+  key = "idle"; await timers.tick();
+  assert.deepEqual(sent, ["working", "idle"]);
+  assert.deepEqual(rendered[1], { user: "U_ONE", filter: "working", page: 2 });
+  assert.equal(timers.pending.size, 1);
+  await publish.stop(); assert.equal(timers.pending.size, 0);
+});
+
+test("navigation during an automatic render discards that render and stops Activity refresh", async () => {
+  const timers = fakeTimers(); const started = deferred(); const finish = deferred(); const sent = []; let key = 1;
+  const publish = createHomePublisher(async (_c, _u, state) => {
+    if (key === 2 && !state.tab) { started.resolve(); await finish.promise; }
+    return { tab: state.tab || "activity" };
+  }, { ...timers, refreshKey: () => key });
+  const client = { views: { publish: async ({ view }) => sent.push(view.tab) } };
+  await publish(client, "U_ONE"); key = 2;
+  const tick = timers.tick(); await started.promise;
+  assert.equal(timers.pending.size, 0, "a slow refresh cannot overlap another timer");
+  await publish(client, "U_ONE", { tab: "help" });
+  finish.resolve(); await tick;
+  assert.deepEqual(sent, ["activity", "help"]);
+  assert.equal(timers.pending.size, 0);
+  await publish.stop();
+});
+
+test("an unavailable Activity snapshot retries unchanged local state until Slack reads recover", async () => {
+  const timers = fakeTimers(); let unavailable = true; let renders = 0; const sent = [];
+  const publish = createHomePublisher(async () => {
+    renders++;
+    let failedSnapshot = false;
+    return buildHomeTabView({ tab: "activity", userId: "U_ONE", role: "approved", needsActivityRetry: () => failedSnapshot,
+      sections: { activity: async () => {
+        failedSnapshot = unavailable;
+        return [{ type: "section", text: { type: "mrkdwn", text: unavailable ? "Unavailable" : "Recovered" } }];
+      } } });
+  }, { ...timers, refreshKey: () => "unchanged local state" });
+  const client = { views: { publish: async ({ view }) => sent.push(view) } };
+  await publish(client, "U_ONE"); await timers.tick();
+  assert.equal(renders, 2, "fallback or partial data does not become a stable baseline");
+  unavailable = false; await timers.tick(); assert.equal(renders, 3);
+  assert.ok(JSON.stringify(sent.at(-1)).includes("Recovered"));
+  await timers.tick(); assert.equal(renders, 3, "successful recovery stops repeated Slack reads");
+  await publish.stop();
+});
+
+test("automatic refresh retries lookup, render and publish failures without accepting stale state", async () => {
+  for (const failure of ["lookup", "render", "publish"]) {
+    const timers = fakeTimers(); let key = 1; let fail = false; const sent = [];
+    const publish = createHomePublisher(async () => {
+      if (fail && failure === "render") { fail = false; throw new Error("temporary render failure"); }
+      return { key };
+    }, { ...timers, refreshKey: () => {
+      if (fail && failure === "lookup") { fail = false; throw new Error("temporary key failure"); }
+      return key;
+    } });
+    const client = { views: { publish: async ({ view }) => {
+      if (fail && failure === "publish") { fail = false; throw new Error("temporary API failure"); }
+      sent.push(view.key);
+    } } };
+    await publish(client, "U_ONE"); key = 2; fail = true;
+    await timers.tick(); assert.equal(timers.pending.size, 1);
+    await timers.tick(); assert.deepEqual(sent, [1, 2]);
+    await publish.stop();
+  }
+});
+
+test("pausing Messages or evicting observers cancels timers and preserves in-flight per-viewer write order", async () => {
+  const timers = fakeTimers(); const started = deferred(); const finish = deferred(); const sent = [];
+  const publish = createHomePublisher(async (_c, user, state) => ({ user, tab: state.tab || "activity" }),
+    { ...timers, maxViewers: 1, refreshKey: () => "state" });
+  const client = { views: { publish: async ({ view }) => {
+    sent.push(view);
+    if (sent.length === 1) { started.resolve(); await finish.promise; }
+  } } };
+  const first = publish(client, "U_ONE"); await started.promise;
+  publish.pause("U_ONE");
+  const second = publish(client, "U_ONE", { tab: "channels" });
+  await Promise.resolve(); assert.equal(sent.length, 1);
+  finish.resolve(); await Promise.all([first, second]);
+  assert.deepEqual(sent.map((v) => v.tab), ["activity", "channels"]);
+  await publish(client, "U_ONE"); assert.equal(timers.pending.size, 1);
+  await publish(client, "U_TWO"); assert.equal(timers.pending.size, 1, "old observer is evicted");
+  publish.pause("U_TWO"); assert.equal(timers.pending.size, 0);
+  await publish.stop(); assert.equal(await publish(client, "U_THREE"), false);
+});

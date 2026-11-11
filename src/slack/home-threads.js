@@ -30,8 +30,10 @@ export function normalizeThreadView(value = {}) {
 async function accessContext(client, userId) {
   const user = await getUser(userId) || {};
   const membership = new Map();
+  let unavailable = false;
   return {
     user,
+    get unavailable() { return unavailable; },
     async allows(entry, threadTs = "") {
       if (!entry || platformOfConversation(entry.channelId) !== "slack") return false;
       const meta = await getChannelMeta(entry.slug);
@@ -41,7 +43,7 @@ async function accessContext(client, userId) {
       if (!["channel", "C"].includes(entry.type)) {
         if (!membership.has(entry.channelId)) {
           try { membership.set(entry.channelId, await listConversationMemberIds(client, entry.channelId)); }
-          catch { membership.set(entry.channelId, []); }
+          catch { unavailable = true; membership.set(entry.channelId, []); }
         }
         if (!membership.get(entry.channelId).includes(userId)) return false;
       }
@@ -174,7 +176,15 @@ export async function homeThreadsSnapshot(client, userId, requested = {}) {
       rows.push({ ...row, url: link.permalink });
     } catch { unavailable = true; break; }
   }
-  return { ...view, page, pages, total: filtered.length, rows, moreHistory, unavailable: unavailable || hiddenChannels.size > 0 };
+  return { ...view, page, pages, total: filtered.length, rows, moreHistory, unavailable: unavailable || access.unavailable || hiddenChannels.size > 0 };
+}
+
+// Only local display state participates: unchanged Activity pages never poll Slack history.
+export function homeThreadsRefreshKey(userId) {
+  const runtime = slackThreadRuntime({ pendingApprovals: listPendingApprovals() });
+  return JSON.stringify(slackThreadsForUser(userId).map((row) => [
+    row.channel_id, row.thread_ts, row.title, row.last_message_ms, slackThreadStatus(row, runtime),
+  ]).sort((a, b) => `${a[0]}:${a[1]}`.localeCompare(`${b[0]}:${b[1]}`)));
 }
 
 export function homeThreadBlocks(snapshot) {

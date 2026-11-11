@@ -49,7 +49,10 @@ running work or decide approvals. Use the explicit **Completed** archive and **R
 an entry. Reopen can override existing reactions; a newer completion reaction closes it again.
 Removing a reaction opens the thread only if no other completion reaction or manual Done remains.
 
-Open Home or use **Refresh** for a current snapshot. Existing gateway sessions and follow-ups are
+Activity checks for tracked changes every 15 seconds and updates automatically, keeping your
+selected filter and page. It pauses when you switch Home sections or open Messages; reopening
+Home resumes it. Manual **Refresh** also reconciles reactions missed while the gateway was offline.
+Existing gateway sessions and follow-ups are
 indexed in small batches; **Load older threads** continues that discovery. Completion reactions are
 also checked in batches so changes made while the gateway was offline can be reconciled. This is a
 list of tracked gateway threads, rather than a search of all Slack history. Bot-started roots and

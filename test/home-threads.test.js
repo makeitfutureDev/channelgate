@@ -7,7 +7,7 @@ const { setUser, upsertChannelEntry, getChannelEntry, saveChannelMeta } = await 
 const { setThreadSudo } = await import("../src/gateway/thread-engine.js");
 const { getSlackThread, indexSlackThread, trackSlackThread, recordSlackThreadOutcome, setSlackThreadDone,
   slackThreadRuntime, slackThreadStatus, updateSlackThreadRootCompletion } = await import("../src/gateway/slack-threads.js");
-const { homeThreadsSnapshot, homeThreadBlocks, registerHomeThreadActions, normalizeThreadView } = await import("../src/slack/home-threads.js");
+const { homeThreadsSnapshot, homeThreadBlocks, registerHomeThreadActions, normalizeThreadView, homeThreadsRefreshKey } = await import("../src/slack/home-threads.js");
 
 let roots;
 let members;
@@ -441,6 +441,39 @@ test("root/reply completion events agree, preserve other markers and honor expli
   setSlackThreadDone(c.channelId, "100.000001", "U_MINE", true);
   await syncThreadCompletionReaction(client, event("101.000001", "thumbsup", "402.000001"));
   assert.equal((await homeThreadsSnapshot(client, "U_MINE")).rows.length, 0, "manual Done survives reaction removal");
+});
+
+test("temporary membership failures hide private rows and request automatic retry until access can be verified", async () => {
+  const c = await channel("G_PRIVATE", "group"); root(c, "100.000001");
+  client.conversations.members = async () => { throw new Error("temporary membership API failure"); };
+  const unavailable = await homeThreadsSnapshot(client, "U_MINE");
+  assert.equal(unavailable.rows.length, 0); assert.equal(unavailable.unavailable, true);
+  client.conversations.members = async () => ({ members: ["U_MINE"] });
+  const recovered = await homeThreadsSnapshot(client, "U_MINE");
+  assert.equal(recovered.rows.length, 1); assert.equal(recovered.unavailable, false);
+  client.conversations.members = async () => ({ members: [] });
+  const revoked = await homeThreadsSnapshot(client, "U_MINE");
+  assert.equal(revoked.rows.length, 0); assert.equal(revoked.unavailable, false, "verified nonmembership stays denied without retry");
+});
+
+test("automatic refresh keys follow owned lifecycle/completion/message state without Slack history calls", async () => {
+  const c = await channel(); root(c, "100.000001");
+  let key = homeThreadsRefreshKey("U_MINE");
+  const change = () => {
+    const next = homeThreadsRefreshKey("U_MINE"); assert.notEqual(next, key); key = next;
+  };
+  getDb().prepare("INSERT INTO active_runs(id,data) VALUES(?,?)").run("refresh-run", toJson({ channelId: c.channelId, threadKey: "100.000001" }));
+  change();
+  getDb().prepare("DELETE FROM active_runs").run(); change();
+  recordSlackThreadOutcome(c.channelId, "100.000001", { error: true }); change();
+  updateSlackThreadRootCompletion(c.channelId, { ts: "100.000001" }, { completed: true }); change();
+  setSlackThreadDone(c.channelId, "100.000001", "U_MINE", false); change();
+  await trackSlackThread(client, { channelId: c.channelId, slug: c.slug, threadKey: "100.000001", messageTs: "200.000001" }); change();
+  root(c, "300.000001", "U_OTHER");
+  assert.equal(homeThreadsRefreshKey("U_MINE"), key, "another owner's threads cannot affect this viewer");
+  getDb().prepare("UPDATE slack_threads SET checked_ms=checked_ms+1").run();
+  assert.equal(homeThreadsRefreshKey("U_MINE"), key, "passive verification does not trigger a refresh loop");
+  assert.equal(reads.length, 0);
 });
 
 test("a stale full inspection cannot undo a newer completion or message-date observation", async () => {

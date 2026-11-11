@@ -138,7 +138,7 @@ import { isCodeChannelMeta } from "../gateway/code-channels.js";
 import { registerEngineSwitchChoiceActions } from "./engine-switch-choice.js";
 import { composioHomeButtons } from "./home-composio.js";
 import { nudgeHomeBlocks } from "./home-nudges.js";
-import { homeThreadsSnapshot, homeThreadBlocks } from "./home-threads.js";
+import { homeThreadsSnapshot, homeThreadBlocks, homeThreadsRefreshKey } from "./home-threads.js";
 import { buildHomeTabView, createHomePublisher, registerHomeActions } from "./home-tabs.js";
 import { getSlackThread, recordSlackThreadMessage } from "../gateway/slack-threads.js";
 import { isCompletionReaction } from "../gateway/completion-reactions.js";
@@ -3405,11 +3405,19 @@ async function connectAndWire(app) {
     const homeUser = (await getUser(userId)) || {};
     const footer = [`ChannelGate v${GATEWAY_VERSION}`, `engine: ${getEngine()}`];
     if (admin) footer.push(`⚙️ Admin UI: http://localhost:${process.env.PORT || 4747}`);
+    let retryActivity = false;
     const sections = {
       activity: async () => {
         let threads;
-        try { threads = homeThreadBlocks(await homeThreadsSnapshot(client, userId, homeView)); }
-        catch { threads = [{ type: "section", text: { type: "mrkdwn", text: "*My threads*\nThreads are temporarily unavailable. Reopen Home to try again." } }]; }
+        try {
+          const snapshot = await homeThreadsSnapshot(client, userId, homeView);
+          retryActivity = snapshot.unavailable;
+          threads = homeThreadBlocks(snapshot);
+        }
+        catch {
+          retryActivity = true;
+          threads = [{ type: "section", text: { type: "mrkdwn", text: "*My threads*\nThreads are temporarily unavailable. Retrying automatically." } }];
+        }
         return threads;
       },
       help: async () => [
@@ -3468,8 +3476,10 @@ async function connectAndWire(app) {
         return [{ type: "divider" }, { type: "section", text: { type: "mrkdwn", text: `*Channels I work in* (${count})\n${lines || "_None yet — add me to a channel and @mention me._"}` } }];
       },
     };
-    return buildHomeTabView({ tab: homeView.tab, userId, role, sections, footer });
-  });
+    return buildHomeTabView({ tab: homeView.tab, userId, role, sections, footer, needsActivityRetry: () => retryActivity });
+  }, { refreshKey: homeThreadsRefreshKey });
+  const stopSlack = app.stop.bind(app);
+  app.stop = async (...args) => { await publishHomeTab.stop(); return stopSlack(...args); };
 
   // App Home tab: an orientation dashboard — the viewer's access level, the channels the
   // bot manages, and a link to the admin UI. Never shows tokens or secrets.
@@ -3479,6 +3489,7 @@ async function connectAndWire(app) {
       // replaces assistant_thread_started. Seed the top-of-tab suggested prompts and stop — there's
       // no Home view to publish for the Messages tab.
       if (event.tab === "messages") {
+        publishHomeTab.pause(event.user);
         // Slack calls this field `context` on app_home_opened. An omitted/empty value means there is
         // no active split view, so record a tombstone instead of retaining stale channel metadata.
         activeAppContexts.update({
