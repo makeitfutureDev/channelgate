@@ -199,7 +199,11 @@ A Slack thread whose current organization admin enabled `/sudo` runs directly as
 daemon OS user instead: host filesystem, process namespace, native HOME, installed commands and
 network are available, and there is no channel-container boundary. Only current organization
 admins may message that thread; a non-admin receives an explicit sudo-thread rejection. `/sudo
-status` reports the state and `/sudo off` restores the container for later turns. Treat host mode
+status` reports the state and `/sudo off` restores the container for later turns.
+To enable sudo and send a request in one message, type `@agent /sudo <message>` in a channel
+(or `/sudo <message>` in a DM); `/sudo on <message>` also works. That request runs on the host
+immediately, and the thread remains in sudo until disabled. This is a typed message control;
+the AI cannot elevate its current run by changing the flag itself. Treat host mode
 as full authority of the daemon account, not as a broader mount. Never infer sudo from Admin mode,
 the operator-home grant, a prior turn, or the existence of a host-looking path.
 

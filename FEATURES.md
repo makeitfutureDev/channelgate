@@ -1375,6 +1375,11 @@ Regression: `test/channel-database.test.js`, `services/vpn-image/test_query.py`,
   subsequent turns execute directly on the gateway host as the daemon OS user. `/sudo status`
   reports the posture and `/sudo off` returns future turns to the channel container. The command
   refuses to cross the boundary while that thread has running or queued work.
+- `/sudo <message>` (or `/sudo on <message>`) enables sudo and sends that same request to the
+  selected engine on the host. Later turns stay in sudo until `/sudo off`. An already enabled
+  thread accepts further inline requests. Prompt newlines/spacing and current or inherited thread
+  attachments are preserved; `off` and `status` remain daemon-only controls and reject extra text.
+  In channels use `@agent /sudo <message>`; in DMs the mention is optional.
 - Sudo is scoped to one thread, not a channel setting. Only current organization admins may
   activate, deactivate, message, or launch background work from it. Non-admin messages are rejected
   before Slack hydration, queueing, attachment reads, or process spawn, and `runMessage` repeats the

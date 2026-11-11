@@ -15,6 +15,9 @@ release gates. Stable promotion and publication require approval of the exact te
 - Audio transcripts appear in the source thread before the agent starts processing. Each clip
   is labelled, long transcripts are split, and the transcript stays visible beside the answer.
 
+- Accept `@agent /sudo <message>` to enable an admin-only host thread and run the request in
+  one message. Existing status/off controls, busy-thread checks and admin enforcement remain.
+
 - Slack Home now has Activity, Connections, Skills and Channels sections. Activity opens by
   default; connection updates return to Connections and each section loads its own content.
 
