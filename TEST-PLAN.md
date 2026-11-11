@@ -4362,7 +4362,20 @@ Automated regression: `test/sudo-thread.test.js`, `test/runtimes-core.test.js`,
 `test/runtime-access-facts.test.js`.
 
 - [x] An organization admin's typed `/sudo` or `/sudo on` enables only the current Slack thread;
-      `/sudo status` is read-only, `/sudo off` clears the row, and invalid arguments are rejected.
+      `/sudo status` is read-only, `/sudo off` clears the row, and extra text after off/status is rejected.
+- [x] `/sudo <message>` and `/sudo on <message>` enable the thread and invoke its selected engine
+      on the host in the same turn. CLI-stub integration covers Claude and Codex through the actual
+      host backend, preserves multiline prompt spacing, and accepts a second request while already on.
+- [x] Inline sudo retains current and inherited attachments; non-admin inline requests with files
+      reject before hydration. Busy container→host changes refuse without queueing or changing state.
+- [ ] Live Claude and Codex: as a current org admin in disposable `cg-testing-claude-admin` and
+      `cg-testing-codex-admin` threads, pin each fixture's engine, start idle with sudo off and send
+      `@agent /sudo Run pwd and report the runtime, then reply SUDO-INLINE-OK`. Require one host
+      turn for that same request and a warning naming this request. Repeat with `/sudo on Report
+      SUDO-SECOND-OK`, a multiline fenced prompt, and a harmless current/inherited attachment.
+      Require exact task/attachment continuity; check status/off invoke no engine, busy boundary
+      changes refuse, and approved non-admin inline requests never hydrate/download/queue/spawn.
+      Restore sudo off. Private reusable case: `SUDO-INLINE-01`; live execution pending.
 - [x] An approved non-admin cannot enable, disable, or query sudo. Once enabled, a non-admin
       message is rejected with “This is a sudo thread” before hydration, attachment reads,
       queueing, engine invocation, or process spawn.

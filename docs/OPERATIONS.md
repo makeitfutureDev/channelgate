@@ -671,6 +671,9 @@ container is running an image built before spec 1.1.0 widened the PATH — rebui
 **Thread `/sudo`: deliberate direct-host execution.** An organization admin may send the typed
 message `@agent /sudo` or `@agent /sudo on` in a Slack channel thread (`/sudo` as message text in a
 DM). This is an in-thread bot control, not the conversation-top-level Slack slash-command surface.
+Use `@agent /sudo <message>` (or `/sudo on <message>`) to enable the thread and run that same
+request immediately, preserving multiline text and attachments. An already enabled thread also
+accepts inline requests. `/sudo off` and `/sudo status` accept no additional message text.
 Subsequent messages in that thread run the selected engine directly
 as the daemon OS user, with its host filesystem, process namespace, native HOME, installed commands
 and network—not inside the channel container. Only current organization admins can change or use
