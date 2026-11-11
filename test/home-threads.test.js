@@ -26,7 +26,7 @@ function root(entry, ts, user = "U_MINE", extra = {}) {
 }
 beforeEach(async () => {
   const db = getDb();
-  for (const table of ["slack_threads", "sessions", "channels", "channel_meta", "active_runs", "bg_jobs", "question_requests", "approval_requests", "followup_threads", "thread_overrides"]) db.exec(`DELETE FROM ${table}`);
+  for (const table of ["slack_threads", "sessions", "channels", "channel_meta", "active_runs", "bg_jobs", "question_requests", "approval_requests", "followup_threads", "followup_done", "thread_overrides"]) db.exec(`DELETE FROM ${table}`);
   await setUser("U_MINE", { approved: true, isAdmin: false });
   await setUser("U_OTHER", { approved: true, isAdmin: false });
   roots = new Map(); members = new Map(); reads = [];
@@ -92,7 +92,7 @@ test("Working includes queued foreground and background, Waiting takes precedenc
   assert.equal(slackThreadStatus(getSlackThread(c.channelId, "104.000001"), slackThreadRuntime()), "idle");
 });
 
-test("Done is durable, root checks are respected, explicit Reopen overrides a root check, and newer work reopens", async () => {
+test("Done is durable, root checks are respected, explicit Reopen overrides a root check, and newer work stays completed", async () => {
   const c = await channel(); root(c, "100.000001");
   setSlackThreadDone(c.channelId, "100.000001", "U_MINE", true, 200000);
   assert.equal((await homeThreadsSnapshot(client, "U_MINE")).rows.length, 0);
@@ -100,6 +100,8 @@ test("Done is durable, root checks are respected, explicit Reopen overrides a ro
   await trackSlackThread(client, { channelId: c.channelId, slug: c.slug, threadKey: "100.000001", messageTs: "150.000001" });
   assert.equal(getSlackThread(c.channelId, "100.000001").done_ms, 200000, "old redelivery cannot reopen");
   await trackSlackThread(client, { channelId: c.channelId, slug: c.slug, threadKey: "100.000001", messageTs: "201.000001" });
+  assert.equal((await homeThreadsSnapshot(client, "U_MINE")).rows.length, 0);
+  setSlackThreadDone(c.channelId, "100.000001", "U_MINE", false, 202000);
   assert.equal((await homeThreadsSnapshot(client, "U_MINE")).rows.length, 1);
   const checked = root(c, "101.000001", "U_MINE", { reactions: [{ name: "white_check_mark", count: 1 }] });
   assert.equal(slackThreadStatus(checked, new Map()), "done");
@@ -120,7 +122,7 @@ test("pagination reaches older rows, clamps stale pages and filters statuses", a
   setSlackThreadDone(c.channelId, first.rows[0].thread_ts, "U_MINE", true);
   assert.equal((await homeThreadsSnapshot(client, "U_MINE", { filter: "done" })).rows.length, 1);
   assert.equal(normalizeThreadView({ filter: "__proto__", page: -2 }).filter, "active");
-  assert.ok(homeThreadBlocks(first).length < 25);
+  assert.ok(homeThreadBlocks(first).length < 45);
   assert.ok(first.rows.every((r) => r.url.startsWith("https://example.slack.com/archives/")));
 });
 
@@ -169,12 +171,13 @@ test("missing ownership evidence and Slack failures do not leak or invent rows",
   assert.equal(view.rows.length, 0); assert.equal(view.unavailable, true);
 });
 
-test("a new prompt persistently reopens a checked root after its successful reply", async () => {
+test("a checked thread stays completed after a newer request and successful reply", async () => {
   const c = await channel();
   root(c, "100.000001", "U_MINE", { reactions: [{ name: "white_check_mark", count: 1 }] });
   await trackSlackThread(client, { channelId: c.channelId, slug: c.slug, threadKey: "100.000001", messageTs: "200.000001" });
   recordSlackThreadOutcome(c.channelId, "100.000001", { at: 201000 });
-  assert.equal((await homeThreadsSnapshot(client, "U_MINE")).rows[0].status, "idle");
+  assert.equal((await homeThreadsSnapshot(client, "U_MINE")).rows.length, 0);
+  assert.equal((await homeThreadsSnapshot(client, "U_MINE", { filter: "done" })).rows[0].status, "done");
 });
 
 test("deleted and bot-started legacy roots cannot starve older history", async () => {
@@ -210,12 +213,12 @@ test("code-channel threaded execution uses the actual Slack reply target for Wor
   assert.equal((await homeThreadsSnapshot(client, "U_MINE")).rows[0].status, "working");
 });
 
-test("a delayed newer request reopens Done even after an older background outcome advanced the clock", async () => {
+test("later messages and background outcomes cannot undo manual Done", async () => {
   const c = await channel(); root(c, "100.000001");
   setSlackThreadDone(c.channelId, "100.000001", "U_MINE", true, 200000);
   recordSlackThreadOutcome(c.channelId, "100.000001", { at: 400000 });
   await trackSlackThread(client, { channelId: c.channelId, slug: c.slug, threadKey: "100.000001", messageTs: "300.000001" });
-  assert.equal((await homeThreadsSnapshot(client, "U_MINE")).rows[0].status, "idle");
+  assert.equal((await homeThreadsSnapshot(client, "U_MINE")).rows.length, 0);
 });
 
 test("deleting the last row of a page rebuilds the clamped page instead of showing an empty list", async () => {
@@ -250,10 +253,10 @@ test("Reopen wins over stale root reaction evidence discovered by the same click
   assert.equal(published.rows[0].status, "idle");
 });
 
-test("passive root reconciliation cannot override an accepted newer prompt", async () => {
+test("passive root reconciliation preserves explicit Reopen until a newer completion event", async () => {
   const c = await channel(); root(c, "100.000001");
   roots.get("C_THREADS:100.000001").reactions = [{ name: "white_check_mark", count: 1 }];
-  await trackSlackThread(client, { channelId: c.channelId, slug: c.slug, threadKey: "100.000001", messageTs: "200.000001" });
+  setSlackThreadDone(c.channelId, "100.000001", "U_MINE", false, 200000);
   assert.equal((await homeThreadsSnapshot(client, "U_MINE")).rows[0].status, "idle");
   updateSlackThreadRootCompletion(c.channelId, { ts: "100.000001", reactions: [] });
   updateSlackThreadRootCompletion(c.channelId, roots.get("C_THREADS:100.000001"), { reactionAt: 300000 });
@@ -297,4 +300,172 @@ test("real persisted questions and approval requests show Waiting until resolved
   updateQuestion(question.id, question.revision, { status: "cancelled" });
   transitionApprovalRequest(approval.id, "pending", "denied");
   assert.equal((await homeThreadsSnapshot(client, "U_MINE", { filter: "waiting" })).rows.length, 0);
+});
+
+for (const marker of ["white_check_mark", "+1", "thumbsup", "+1::skin-tone-3", "activity", "feedback"]) {
+  test(`${marker} completion on a root/reply or in Activity hides active work and suppresses both reminder paths`, async () => {
+    const { noteBotReply, sweepNudges } = await import("../src/gateway/nudges.js");
+    const { recordActivity, sendDigest, buildPendingReportForUser } = await import("../src/gateway/followups.js");
+    const c = await channel(); const row = root(c, "100.000001");
+    const messages = [roots.get("C_THREADS:100.000001"), { ts: "101.000001", user: "BOT", ...(["activity", "feedback"].includes(marker) ? {} : { reactions: [{ name: marker, count: 1 }] }) }, { ts: "102.000001", user: "BOT" }];
+    client.conversations.replies = async () => ({ messages });
+    recordActivity({ channelId: c.channelId, slug: c.slug, threadTs: row.thread_ts, userId: "U_MINE", isBot: false, aiTurn: true, tsMs: 1000 });
+    recordActivity({ channelId: c.channelId, slug: c.slug, threadTs: row.thread_ts, userId: "BOT", isBot: true, aiTurn: true, tsMs: 2000 });
+    if (marker === "activity") {
+      let click;
+      registerHomeThreadActions({ action: (_id, handler) => { click = handler; } }, { publishHome: async () => {} });
+      await click({ ack: async () => {}, body: { user: { id: "U_MINE" } }, client,
+        action: { action_id: "cg_home_threads_done", value: JSON.stringify({ channelId: c.channelId, threadTs: row.thread_ts }) } });
+    }
+    if (marker === "feedback") {
+      const { registerAgentInterfaceHandlers } = await import("../src/slack/agent-interface.js");
+      const { completeThreadFromFeedback } = await import("../src/slack/thread-completion.js");
+      const { feedbackBlocks, REPLY_FEEDBACK_ACTION_ID } = await import("../src/slack/footer.js");
+      const actions = new Map();
+      registerAgentInterfaceHandlers({ event: () => {}, action: (id, fn) => actions.set(id, fn) }, { onPositiveFeedback: completeThreadFromFeedback });
+      const value = feedbackBlocks({ channel: c.channelId, threadTs: row.thread_ts, authorId: "U_MINE" })[0].elements[0].positive_button.value;
+      await actions.get(REPLY_FEEDBACK_ACTION_ID)({ ack: async () => {}, client, action: { value },
+        body: { user: { id: "U_MINE" }, channel: { id: c.channelId }, message: { ts: "101.000001", thread_ts: row.thread_ts } } });
+    }
+    getDb().prepare("INSERT INTO active_runs(id,data) VALUES(?,?)").run("still-running", toJson({ channelId: c.channelId, threadKey: row.thread_ts }));
+    assert.equal((await homeThreadsSnapshot(client, "U_MINE")).rows.length, 0);
+    assert.equal((await homeThreadsSnapshot(client, "U_MINE", { filter: "all" })).rows.length, 0);
+    assert.equal((await homeThreadsSnapshot(client, "U_MINE", { filter: "done" })).rows[0].status, "done");
+    await trackSlackThread(client, { channelId: c.channelId, slug: c.slug, threadKey: row.thread_ts, messageTs: "103.000001" });
+    recordSlackThreadOutcome(c.channelId, row.thread_ts);
+    assert.equal((await homeThreadsSnapshot(client, "U_MINE")).rows.length, 0);
+    const map = new Map(); noteBotReply(c.channelId, c.slug, row.thread_ts, "U_MINE", { map, nowMs: 1000 });
+    let notifications = 0;
+    client.chat.postMessage = async () => { notifications++; return { ts: "999.000001" }; };
+    client.conversations.open = async () => ({ channel: { id: "D_REMINDER" } });
+    await sweepNudges({ snapshot: () => ({ connected: true }), getClient: () => client }, {
+      map, nowMs: 3000, thresholdMs: 10, loadUser: async () => ({ nudges: true }), post: async () => { notifications++; }, log: async () => {},
+    });
+    assert.equal(await sendDigest(client, "U_MINE", "BOT", 3000), 0);
+    assert.match(await buildPendingReportForUser(client, "U_MINE", "BOT", 3000), /Nothing pending/);
+    assert.equal(notifications, 0);
+  });
+}
+
+test("row dividers, separate primary Done and genuine last-message dates survive completion and deleted replies", async () => {
+  const c = await channel(); root(c, "100.000001");
+  let messages = [roots.get("C_THREADS:100.000001"), { ts: "200.000001", user: "BOT" }, { ts: "300.000001", user: "BOT" }];
+  client.conversations.replies = async () => ({ messages });
+  recordSlackThreadOutcome(c.channelId, "100.000001", { at: 900000 });
+  let view = await homeThreadsSnapshot(client, "U_MINE");
+  assert.equal(view.rows[0].last_message_ms, 300000);
+  const blocks = homeThreadBlocks(view);
+  const action = blocks.find((b) => b.type === "actions" && b.elements.some((e) => e.action_id === "cg_home_threads_done"));
+  assert.equal(action.elements.find((e) => e.action_id === "cg_home_threads_done").style, "primary");
+  assert.ok(blocks.some((b) => b.fields?.some((f) => f.text.includes("<!date^300^"))));
+  assert.ok(blocks.filter((b) => b.type === "divider").length >= 2);
+  setSlackThreadDone(c.channelId, "100.000001", "U_MINE", true);
+  messages = messages.slice(0, 2);
+  view = await homeThreadsSnapshot(client, "U_MINE", { filter: "done" });
+  assert.equal(view.rows[0].last_message_ms, 200000, "complete scan corrects a deleted last message; Done/outcome time never becomes the date");
+});
+
+test("last-message date follows a fully paginated Slack transcript", async () => {
+  const c = await channel(); root(c, "100.000001");
+  client.conversations.replies = async ({ cursor }) => cursor
+    ? { messages: [{ ts: "400.000001", user: "BOT" }] }
+    : { messages: [roots.get("C_THREADS:100.000001")], has_more: true, response_metadata: { next_cursor: "page-two" } };
+  const view = await homeThreadsSnapshot(client, "U_MINE");
+  assert.equal(view.rows[0].last_message_ms, 400000);
+});
+
+for (const boundary of ["permalink", "dm-open"]) {
+  test(`Done during digest ${boundary} prevents the notification`, async () => {
+    const { recordActivity, sendDigest } = await import("../src/gateway/followups.js");
+    const c = await channel(); root(c, "100.000001");
+    recordActivity({ channelId: c.channelId, slug: c.slug, threadTs: "100.000001", userId: "U_MINE", isBot: false, aiTurn: true, tsMs: 1000 });
+    recordActivity({ channelId: c.channelId, slug: c.slug, threadTs: "100.000001", userId: "BOT", isBot: true, aiTurn: true, tsMs: 2000 });
+    const complete = () => setSlackThreadDone(c.channelId, "100.000001", "U_MINE", true);
+    let sent = 0;
+    client.chat.postMessage = async () => { sent++; return { ts: "999.000001" }; };
+    client.chat.getPermalink = async () => { if (boundary === "permalink") complete(); return { permalink: "https://example.slack.com/thread" }; };
+    client.conversations.open = async () => { if (boundary === "dm-open") complete(); return { channel: { id: "D_REMINDER" } }; };
+    assert.equal(await sendDigest(client, "U_MINE", "BOT", 3000), 0);
+    assert.equal(sent, 0);
+  });
+}
+
+test("pending verification reconciles a completion reaction removed while offline", async () => {
+  const { recordActivity, buildPendingReportForUser } = await import("../src/gateway/followups.js");
+  const c = await channel(); root(c, "100.000001", "U_MINE", { reactions: [{ name: "+1", count: 1 }] });
+  roots.get("C_THREADS:100.000001").reactions = [];
+  recordActivity({ channelId: c.channelId, slug: c.slug, threadTs: "100.000001", userId: "U_MINE", isBot: false, aiTurn: true, tsMs: 1000 });
+  recordActivity({ channelId: c.channelId, slug: c.slug, threadTs: "100.000001", userId: "BOT", isBot: true, aiTurn: true, tsMs: 2000 });
+  assert.match(await buildPendingReportForUser(client, "U_MINE", "BOT", 3000), /waiting on your decision in 1 thread/);
+});
+
+test("upgrading v44 discards obsolete prompt reopening markers and preserves manual Done", async () => {
+  const { DatabaseSync } = await import("node:sqlite");
+  const { migrations } = await import("../src/db/migrations.js");
+  const old = new DatabaseSync(":memory:");
+  try {
+    old.exec("CREATE TABLE slack_threads(id TEXT,done_ms INTEGER,root_done INTEGER); INSERT INTO slack_threads VALUES('old-prompt',-200000,1),('manual',300000,0)");
+    migrations.find((m) => m.version === 45).up(old);
+    const rows = old.prepare("SELECT * FROM slack_threads ORDER BY id").all();
+    assert.equal(rows.find((r) => r.id === "old-prompt").done_ms, 0);
+    assert.equal(slackThreadStatus(rows.find((r) => r.id === "old-prompt"), new Map()), "done");
+    assert.equal(rows.find((r) => r.id === "manual").done_ms, 300000);
+  } finally { old.close(); }
+});
+
+test("root/reply completion events agree, preserve other markers and honor explicit Reopen", async () => {
+  const { syncThreadCompletionReaction } = await import("../src/slack/thread-completion.js");
+  const c = await channel(); root(c, "100.000001");
+  const messages = [roots.get("C_THREADS:100.000001"), { ts: "101.000001", thread_ts: "100.000001", user: "BOT", reactions: [{ name: "+1", count: 1 }] }];
+  client.conversations.replies = async () => ({ messages });
+  client.reactions = { get: async ({ timestamp }) => ({ message: messages.find((m) => m.ts === timestamp) }) };
+  const event = (ts, reaction, eventTs) => ({ item: { type: "message", channel: c.channelId, ts }, reaction, event_ts: eventTs });
+  await syncThreadCompletionReaction(client, event("101.000001", "+1", "200.000001"), { added: true });
+  assert.equal((await homeThreadsSnapshot(client, "U_MINE")).rows.length, 0);
+  messages[0].reactions = [{ name: "white_check_mark", count: 1 }];
+  messages[1].reactions = [];
+  await syncThreadCompletionReaction(client, event("101.000001", "+1", "201.000001"));
+  assert.equal((await homeThreadsSnapshot(client, "U_MINE")).rows.length, 0, "remaining root check still completes work");
+  setSlackThreadDone(c.channelId, "100.000001", "U_MINE", false, 300000);
+  assert.equal((await homeThreadsSnapshot(client, "U_MINE")).rows.length, 1);
+  messages[1].reactions = [{ name: "thumbsup", count: 1 }];
+  await syncThreadCompletionReaction(client, event("101.000001", "thumbsup", "400.000001"), { added: true });
+  assert.equal((await homeThreadsSnapshot(client, "U_MINE")).rows.length, 0);
+  messages[0].reactions = []; messages[1].reactions = [];
+  await syncThreadCompletionReaction(client, event("100.000001", "white_check_mark", "401.000001"));
+  assert.equal((await homeThreadsSnapshot(client, "U_MINE")).rows.length, 1);
+  setSlackThreadDone(c.channelId, "100.000001", "U_MINE", true);
+  await syncThreadCompletionReaction(client, event("101.000001", "thumbsup", "402.000001"));
+  assert.equal((await homeThreadsSnapshot(client, "U_MINE")).rows.length, 0, "manual Done survives reaction removal");
+});
+
+test("a stale full inspection cannot undo a newer completion or message-date observation", async () => {
+  const c = await channel(); root(c, "100.000001");
+  updateSlackThreadRootCompletion(c.channelId, { ts: "100.000001" }, { completed: true, lastMessageMs: 300000, inspectedAt: 400000 });
+  updateSlackThreadRootCompletion(c.channelId, { ts: "100.000001" }, { completed: false, lastMessageMs: 200000, inspectedAt: 350000 });
+  const row = getSlackThread(c.channelId, "100.000001");
+  assert.equal(row.root_done, 1); assert.equal(row.last_message_ms, 300000);
+  updateSlackThreadRootCompletion(c.channelId, { ts: "100.000001" }, { completed: true, lastMessageMs: 200000, inspectedAt: 500000 });
+  updateSlackThreadRootCompletion(c.channelId, { ts: "100.000001" }, { completed: false, lastMessageMs: 300000, inspectedAt: 450000 });
+  const afterDeletion = getSlackThread(c.channelId, "100.000001");
+  assert.equal(afterDeletion.root_done, 1); assert.equal(afterDeletion.last_message_ms, 200000);
+});
+
+test("native positive feedback cannot forge thread ownership or retain revoked private/sudo access", async () => {
+  const { completeThreadFromFeedback } = await import("../src/slack/thread-completion.js");
+  const c = await channel("G_PRIVATE", "group"); root(c, "100.000001");
+  const body = { user: { id: "U_MINE" }, channel: { id: c.channelId }, message: { ts: "101.000001", thread_ts: "100.000001" } };
+  const parsed = { verdict: "up", channel: c.channelId, threadTs: "100.000001" };
+  members.set(c.channelId, ["U_MINE"]);
+  assert.equal(await completeThreadFromFeedback({ client, body, parsed: { ...parsed, threadTs: "999.000001" } }), false);
+  assert.equal(await completeThreadFromFeedback({ client, body: { ...body, user: { id: "U_OTHER" } }, parsed }), false);
+  members.set(c.channelId, []);
+  assert.equal(await completeThreadFromFeedback({ client, body, parsed }), false);
+  members.set(c.channelId, ["U_MINE"]);
+  await setThreadSudo(c.slug, "100.000001", true);
+  assert.equal(await completeThreadFromFeedback({ client, body, parsed }), false);
+  await setThreadSudo(c.slug, "100.000001", false);
+  assert.equal(await completeThreadFromFeedback({ client, body, parsed: { ...parsed, verdict: "down" } }), false);
+  assert.equal(getSlackThread(c.channelId, "100.000001").done_ms, 0);
+  assert.equal(await completeThreadFromFeedback({ client, body, parsed }), true);
 });

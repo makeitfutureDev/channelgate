@@ -17,6 +17,7 @@ export function registerAgentInterfaceHandlers(app, {
   stopRunsInChannel,
   setAssistantStatus,
   isCodeChannel = async () => false,
+  onPositiveFeedback = null,
 } = {}) {
   // Native Stop: Slack halts the in-progress streams itself (`streaming_message_ts`) and tells us
   // which thread's session the user stopped. The stop is scoped to that one thread and passes the
@@ -86,6 +87,9 @@ export function registerAgentInterfaceHandlers(app, {
         verdict: parsed.verdict,
         requester: parsed.authorId,
       });
+      if (parsed.verdict === "up" && typeof onPositiveFeedback === "function") {
+        await onPositiveFeedback({ client, body, parsed });
+      }
       if (parsed.verdict === "down" && channel && user && typeof client?.chat?.postEphemeral === "function") {
         await client.chat.postEphemeral({
           channel,

@@ -140,7 +140,9 @@ import { composioHomeButtons } from "./home-composio.js";
 import { nudgeHomeBlocks } from "./home-nudges.js";
 import { homeThreadsSnapshot, homeThreadBlocks } from "./home-threads.js";
 import { buildHomeTabView, createHomePublisher, registerHomeActions } from "./home-tabs.js";
-import { getSlackThread, updateSlackThreadRootCompletion } from "../gateway/slack-threads.js";
+import { getSlackThread, recordSlackThreadMessage } from "../gateway/slack-threads.js";
+import { isCompletionReaction } from "../gateway/completion-reactions.js";
+import { completeThreadFromFeedback, syncThreadCompletionReaction } from "./thread-completion.js";
 import { buildMenuCard, buildMenuResumeView, MENU_RESUME_ACTION_ID } from "./menu.js";
 import { resolveResumeSession } from "./resume-session.js";
 import { buildStatusReport } from "./status-controller.js";
@@ -227,11 +229,12 @@ export function followupIdentity(event, botUserId) {
 // last", never as a participant — a thread the bot answered last owes nobody. Never touches DMs.
 async function observeForFollowups(event, botUserId) {
   try {
+    const sub = event.subtype;
+    if (sub && !["file_share", "thread_broadcast", "bot_message", "me_message"].includes(sub)) return;
+    recordSlackThreadMessage(event.channel, event.thread_ts ?? event.ts, event.ts);
     if (!getFollowupRemindersEnabled()) return;
     const type = event.channel_type;
     if (type !== "channel" && type !== "group") return; // public/private channels only — not DMs
-    const sub = event.subtype;
-    if (sub && !["file_share", "thread_broadcast", "bot_message", "me_message"].includes(sub)) return;
     const channelId = event.channel;
     if (!channelId) return;
     const entry = await getChannelEntry(channelId);
@@ -2962,6 +2965,7 @@ async function connectAndWire(app) {
   // buttons in composed replies / data-table rows.
   registerAgentInterfaceHandlers(app, {
     botUserId, seenEvents, authorizedControlEntry, stopRunsInChannel, setAssistantStatus,
+    onPositiveFeedback: completeThreadFromFeedback,
     // A thread-less Stop names a code channel's one session (everything running there).
     isCodeChannel: async (channelId) => {
       const entry = await getChannelEntry(channelId);
@@ -3296,10 +3300,7 @@ async function connectAndWire(app) {
   // emoji (default 🤖) treats the reacted message as if the bot had been mentioned and runs it.
   app.event("reaction_added", async ({ event, client, body }) => {
     try {
-      if (event.reaction === "white_check_mark" && event.item?.type === "message" && getSlackThread(event.item.channel, event.item.ts)) {
-        const res = await client.reactions.get({ channel: event.item.channel, timestamp: event.item.ts, full: true }).catch(() => null);
-        if (res?.message && (!res.message.thread_ts || res.message.thread_ts === res.message.ts)) updateSlackThreadRootCompletion(event.item.channel, res.message, { reactionAt: Math.floor(Number(event.event_ts) * 1000) || 0 });
-      }
+      await syncThreadCompletionReaction(client, event, { added: true }).catch(() => {});
       if (event.user === botUserId) return;
       // Same redelivery guard as the message handler (a repeat would re-run 🤖/stop/ack actions).
       const eventKey = body?.event_id || `rx:${event.event_ts}:${event.user}:${event.reaction}`;
@@ -3322,16 +3323,16 @@ async function connectAndWire(app) {
         return;
       }
 
-      // ✅ on a thread marks it "done" for the reactor — clears it from their follow-up digest
-      // until there's fresh activity. Reacting on the root or any reply resolves the whole thread.
-      if (getFollowupDoneReactions().includes(event.reaction) && event.item?.type === "message") {
+      // Core completion reactions close indexed threads through the shared gate above. Preserve
+      // legacy per-user digest dismissal for other configured reactions or unindexed threads.
+      if ((isCompletionReaction(event.reaction) || getFollowupDoneReactions().includes(event.reaction)) && event.item?.type === "message") {
         // A scheduled DM digest is an aggregate snapshot: its ✅ dismisses every source thread
         // visibly listed in that exact message. Consume it before treating the DM itself as a
         // source thread.
         if (applyDigestDoneReaction(event.user, channelId, event.item.ts)) return;
         const res = await client.reactions.get({ channel: channelId, timestamp: event.item.ts, full: true }).catch(() => null);
         const threadTs = res?.message?.thread_ts ?? event.item.ts;
-        markDone(event.user, channelId, threadTs);
+        if (!isCompletionReaction(event.reaction) || !getSlackThread(channelId, threadTs)) markDone(event.user, channelId, threadTs);
         return;
       }
 
@@ -3501,14 +3502,11 @@ async function connectAndWire(app) {
   // it done). Other removed reactions are acknowledged as no-ops.
   app.event("reaction_removed", async ({ event, client }) => {
     try {
-      if (event.reaction === "white_check_mark" && event.item?.type === "message" && getSlackThread(event.item.channel, event.item.ts)) {
-        const res = await client.reactions.get({ channel: event.item.channel, timestamp: event.item.ts, full: true }).catch(() => null);
-        if (res?.message && (!res.message.thread_ts || res.message.thread_ts === res.message.ts)) updateSlackThreadRootCompletion(event.item.channel, res.message);
-      }
+      await syncThreadCompletionReaction(client, event).catch(() => {});
       if (event.user === botUserId) return;
       const channelId = event.item?.channel;
       if (!channelId || event.item?.type !== "message") return;
-      if (!getFollowupDoneReactions().includes(event.reaction)) return;
+      if (!isCompletionReaction(event.reaction) && !getFollowupDoneReactions().includes(event.reaction)) return;
       // Reopen only done markers still owned by this digest reaction; a newer direct source-thread
       // dismissal survives. Unknown messages fall through to the existing direct-thread behavior.
       if (removeDigestDoneReaction(event.user, channelId, event.item.ts)) return;

@@ -26,19 +26,26 @@ The channel list is bounded. If it shows a count with a plus sign, more eligible
 
 ## Follow your threads
 
-**My threads** lists threads you started with this gateway, with a title, conversation, status and
-link to the original Slack thread. **Active** shows unfinished work first. Choose **All** or a
-specific status and use **Previous** / **Next** to browse ten threads at a time.
+**My threads** lists threads you started with this gateway, with the original link, conversation,
+status and last-message date. Divider lines separate the rows; **Open thread** and the green
+**✓ Done** button sit below each one. Dates come from Slack messages, rather than the time a run
+finished or you clicked Done. Slack displays the date in your local time.
 
-- **Working**: a foreground request is running or queued, or background work is still active.
+**Active** and **All open** hide completed work. Choose a specific open status and use
+**Previous** / **Next** to browse ten threads at a time:
+
+- **Working**: a foreground request is running or queued, or background work is active.
 - **Waiting**: a question, permission/approval card or busy-thread choice needs an answer.
 - **Idle**: no tracked work or decision is active. A finished reply does not declare the task done.
-- **Done**: you marked the work complete, or its root has a ✅ reaction.
-- **Error**: the most recent tracked foreground/recovery or background outcome failed or was refused.
+- **Error**: the latest tracked foreground/recovery or background outcome failed or was refused.
 
-Use **Mark done** or **Reopen** to manage completion. A newer accepted request reopens completed
-work. Active work and pending decisions take precedence over completion; marking Done does not stop
-work or dismiss an approval. A manual Reopen can override a root check without removing the reaction.
+A ✅, ✔️ or 👍 on the root or **any reply**, or **✓ Done** in Activity, completes the thread.
+The thread owner’s native 👍 feedback button below an answer also marks it Done.
+Completed work disappears from open views and stops quiet-thread reminders and pending-response
+digests, even if later messages arrive or work/forms remain active. Marking Done does not cancel
+running work or decide approvals. Use the explicit **Completed** archive and **Reopen** to restore
+an entry. Reopen can override existing reactions; a newer completion reaction closes it again.
+Removing a reaction opens the thread only if no other completion reaction or manual Done remains.
 
 Open Home or use **Refresh** for a current snapshot. Existing gateway sessions and follow-ups are
 indexed in small batches; **Load older threads** continues that discovery. Completion reactions are
