@@ -7,6 +7,7 @@ import { getChannelEntry, getUser } from "../config/store.js";
 import { onConfigChange } from "../config/change-events.js";
 import { getSlackThread, isSlackThreadEligible, setSlackThreadDone } from "../gateway/slack-threads.js";
 import { onThreadChanged } from "../gateway/thread-changes.js";
+import { onActiveRunsChanged } from "../gateway/active-runs.js";
 import { clearDone, markDone } from "../gateway/followups.js";
 import { accessContext, activityThreadSnapshot, homeThreadsRefreshKey } from "../slack/home-threads.js";
 import { createHomeThreadReader } from "../slack/home-thread-reader.js";
@@ -235,6 +236,7 @@ export function createActivityRouter({
     const unthread = onThreadChanged(({ channelId, threadTs }) => {
       if (getSlackThread(channelId, threadTs)?.starter_id === initial.session.ownerId) queue();
     });
+    const unruns = onActiveRunsChanged(queue);
     let checking = false;
     const timer = setInterval(async () => {
       if (checking || closed) return;
@@ -247,7 +249,7 @@ export function createActivityRouter({
       finally { checking = false; }
     }, pollMs);
     timer.unref?.();
-    res.on("close", () => { closed = true; clearInterval(timer); clearTimeout(queued); unthread(); streams.delete(stream); });
+    res.on("close", () => { closed = true; clearInterval(timer); clearTimeout(queued); unthread(); unruns(); streams.delete(stream); });
     void send();
   });
   router.use((_error, _req, res, _next) => unavailable(res, 400));

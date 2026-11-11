@@ -677,3 +677,172 @@ test("thread changes emit scoped invalidations and passive checks do not loop", 
   recordSlackThreadMessage(c.channelId, "100.000001", "400.000001");
   assert.equal(notifications.length, 4);
 });
+
+test("Activity shows live resumed completed work while Home and completion markers remain completed", async () => {
+  const c = await channel(); const thread = root(c, "100.000001");
+  setSlackThreadDone(c.channelId, thread.thread_ts, "U_MINE", true);
+  const initialKey = homeThreadsRefreshKey("U_MINE");
+  const active = getDb().prepare("INSERT INTO active_runs(id,data) VALUES(?,?)");
+  active.run("resumed-completed", toJson({ channelId: c.channelId, slackThreadTs: thread.thread_ts, threadKey: "code-channel", authorId: "U_MINE" }));
+  const workingKey = homeThreadsRefreshKey("U_MINE");
+  assert.notEqual(workingKey, initialKey, "live work invalidates refresh even when Home still considers the thread complete");
+  assert.equal((await activityThreadSnapshot(client, "U_MINE", { filter: "working" })).rows[0]?.status, "working");
+  assert.equal((await homeThreadsSnapshot(client, "U_MINE", { filter: "done" })).rows[0]?.status, "done");
+  assert.equal((await homeThreadsSnapshot(client, "U_MINE", { filter: "active" })).rows.length, 0);
+  getDb().prepare("UPDATE active_runs SET data=? WHERE id=?").run(toJson({ channelId: c.channelId, threadKey: thread.thread_ts, awaitingChoice: true }), "resumed-completed");
+  const waitingKey = homeThreadsRefreshKey("U_MINE");
+  assert.notEqual(waitingKey, workingKey);
+  assert.equal((await activityThreadSnapshot(client, "U_MINE", { filter: "waiting" })).rows[0]?.status, "waiting");
+  getDb().prepare("DELETE FROM active_runs WHERE id=?").run("resumed-completed");
+  assert.notEqual(homeThreadsRefreshKey("U_MINE"), waitingKey);
+  assert.equal((await activityThreadSnapshot(client, "U_MINE", { filter: "done" })).rows[0]?.status, "done");
+  assert.ok(getSlackThread(c.channelId, thread.thread_ts).done_ms > 0, "live display never clears durable completion");
+});
+
+test("Activity repairs missing live roots using the actual human starter rather than the run author", async () => {
+  const c = await channel();
+  roots.set(`${c.channelId}:100.000001`, { ts: "100.000001", user: "U_OTHER", text: "Another person's task" });
+  roots.set(`${c.channelId}:101.000001`, { ts: "101.000001", user: "U_MINE", bot_id: "B_FOREIGN", text: "Foreign bot" });
+  getDb().prepare("INSERT INTO active_runs(id,data) VALUES(?,?)").run("missing-live", toJson({ channelId: c.channelId, slug: c.slug, authorId: "U_MINE", threadKey: "code-channel", slackThreadTs: "100.000001" }));
+  getDb().prepare("INSERT INTO active_runs(id,data) VALUES(?,?)").run("foreign-bot", toJson({ channelId: c.channelId, slug: c.slug, authorId: "U_MINE", threadKey: "101.000001" }));
+  const originalReplies = client.conversations.replies;
+  client.conversations.replies = (request) => { assert.equal(request.limit, 1); return originalReplies(request); };
+  assert.equal((await activityThreadSnapshot(client, "U_MINE")).total, 0);
+  const owned = await activityThreadSnapshot(client, "U_OTHER");
+  assert.equal(owned.rows.length, 1);
+  assert.equal(owned.rows[0].thread_ts, "100.000001");
+  assert.equal(owned.rows[0].status, "working");
+  assert.equal(getSlackThread(c.channelId, "100.000001").starter_id, "U_OTHER");
+  assert.equal(getSlackThread(c.channelId, "101.000001")?.starter_id || "", "", "a bot root can never become the author's personal work");
+});
+
+test("Activity missing-root repair checks current channel, private membership and sudo access before any root fetch", async () => {
+  const privateChannel = await channel("G_PRIVATE", "group");
+  const sudoChannel = await channel("C_SUDO");
+  const deniedChannel = await channel("C_DENIED", "channel", { access: "none" });
+  const insert = getDb().prepare("INSERT INTO active_runs(id,data) VALUES(?,?)");
+  for (const [entry, ts] of [[privateChannel, "100.000001"], [sudoChannel, "101.000001"], [deniedChannel, "102.000001"]]) {
+    roots.set(`${entry.channelId}:${ts}`, { ts, user: "U_MINE", text: "Private work" });
+    insert.run(entry.channelId, toJson({ channelId: entry.channelId, slug: entry.slug, threadKey: ts, authorId: "U_MINE" }));
+  }
+  members.set(privateChannel.channelId, []);
+  await setThreadSudo(sudoChannel.slug, "101.000001", true);
+  assert.equal((await activityThreadSnapshot(client, "U_MINE")).total, 0);
+  assert.equal(reads.length, 0, "unauthorized live roots never trigger Slack content reads");
+  members.set(privateChannel.channelId, ["U_MINE"]);
+  const allowed = await activityThreadSnapshot(client, "U_MINE");
+  assert.deepEqual(allowed.rows.map((row) => row.thread_ts), ["100.000001"]);
+  assert.deepEqual(reads, [`${privateChannel.channelId}:100.000001`]);
+  members.set(privateChannel.channelId, []);
+  assert.equal((await activityThreadSnapshot(client, "U_MINE")).total, 0, "repair never caches authorization");
+});
+
+test("Activity retries transient missing-root failures after fifteen seconds without repeated Slack calls", async () => {
+  const c = await channel(); const ts = "100.000001";
+  roots.set(`${c.channelId}:${ts}`, { ts, user: "U_MINE", text: "A live task" });
+  getDb().prepare("INSERT INTO active_runs(id,data) VALUES(?,?)").run("retry-live", toJson({ channelId: c.channelId, slug: c.slug, threadKey: ts, authorId: "U_MINE" }));
+  let clock = 1_000_000, attempts = 0;
+  const originalReplies = client.conversations.replies;
+  client.conversations.replies = async (request) => {
+    attempts++;
+    if (attempts === 1) throw new Error("temporary Slack failure");
+    return originalReplies(request);
+  };
+  const options = { now: () => clock };
+  assert.equal((await activityThreadSnapshot(client, "U_MINE", {}, options)).total, 0);
+  assert.equal((await activityThreadSnapshot(client, "U_MINE", {}, options)).total, 0);
+  clock += 14_999;
+  assert.equal((await activityThreadSnapshot(client, "U_MINE", {}, options)).total, 0);
+  assert.equal(attempts, 1);
+  clock++;
+  assert.equal((await activityThreadSnapshot(client, "U_MINE", {}, options)).rows[0]?.status, "working");
+  assert.equal(attempts, 2);
+  await activityThreadSnapshot(client, "U_MINE", {}, options);
+  assert.equal(attempts, 2, "an indexed root remains entirely local on refresh");
+});
+
+test("Activity coalesces concurrent missing live root lookups for the same Slack client", async () => {
+  const c = await channel(); const ts = "100.000001";
+  getDb().prepare("INSERT INTO active_runs(id,data) VALUES(?,?)").run("concurrent-live", toJson({ channelId: c.channelId, slug: c.slug, threadKey: ts }));
+  let release, lookups = 0;
+  const gate = new Promise((resolve) => { release = resolve; });
+  client.conversations.replies = async () => { lookups++; await gate; return { messages: [{ ts, user: "U_MINE", text: "Live work" }] }; };
+  const pending = [activityThreadSnapshot(client, "U_MINE"), activityThreadSnapshot(client, "U_MINE")];
+  await new Promise((resolve) => setImmediate(resolve));
+  release();
+  const results = await Promise.all(pending);
+  assert.equal(lookups, 1);
+  assert.ok(results.every((snapshot) => snapshot.rows[0]?.status === "working"));
+});
+
+for (const revoke of ["membership", "admission", "admin"]) {
+  test(`Activity rechecks ${revoke} after a delayed missing-root read`, async () => {
+    const c = await channel("G_PRIVATE", "group"); const ts = "100.000001";
+    members.set(c.channelId, ["U_MINE"]);
+    if (revoke === "admin") {
+      await setUser("U_MINE", { approved: true, isAdmin: true });
+      await setThreadSudo(c.slug, ts, true);
+      await setThreadSudo(c.slug, "99.000001", true);
+    }
+    getDb().prepare("INSERT INTO active_runs(id,data) VALUES(?,?)").run("delayed-live", toJson({ channelId: c.channelId, slug: c.slug, threadKey: ts }));
+    getDb().prepare("INSERT INTO active_runs(id,data) VALUES(?,?)").run("later-live", toJson({ channelId: c.channelId, slug: c.slug, threadKey: "99.000001" }));
+    let rootReads = 0;
+    client.conversations.replies = async () => {
+      rootReads++;
+      if (revoke === "membership") members.set(c.channelId, []);
+      else await setUser("U_MINE", { approved: revoke === "admin", isAdmin: false });
+      return { messages: [{ ts, user: "U_MINE", text: "Revoked private work" }] };
+    };
+    const result = await activityThreadSnapshot(client, "U_MINE");
+    assert.equal(result.total, 0);
+    assert.equal(getSlackThread(c.channelId, ts), null);
+    assert.equal(rootReads, 1, "later roots must not reuse access from before the revocation");
+  });
+}
+
+test("a stalled live-root lookup cannot block indexed rows or start duplicate requests", async () => {
+  const c = await channel(); root(c, "100.000001");
+  const ts = "101.000001";
+  getDb().prepare("INSERT INTO active_runs(id,data) VALUES(?,?)").run("slow-live", toJson({ channelId: c.channelId, slug: c.slug, threadKey: ts }));
+  let release, lookups = 0;
+  const gate = new Promise((resolve) => { release = resolve; });
+  client.conversations.replies = async () => {
+    lookups++; await gate;
+    return { messages: [{ ts, user: "U_MINE", text: "Slow live root" }] };
+  };
+  const options = { rootReadBudgetMs: 10 };
+  for (let n = 0; n < 2; n++) {
+    const snapshot = await activityThreadSnapshot(client, "U_MINE", {}, options);
+    assert.deepEqual(snapshot.rows.map((row) => row.thread_ts), ["100.000001"]);
+    assert.equal(snapshot.unavailable, true);
+  }
+  assert.equal(lookups, 1);
+  release(); await new Promise((resolve) => setImmediate(resolve));
+  const recovered = await activityThreadSnapshot(client, "U_MINE", {}, options);
+  assert.equal(recovered.rows[0].thread_ts, ts);
+  assert.equal(recovered.rows[0].status, "working");
+  assert.equal(lookups, 1, "consume the completed request instead of fetching again");
+});
+
+test("Activity bounds missing live-root repair and discovers agent jobs but never shell-only jobs", async () => {
+  const c = await channel();
+  const insert = getDb().prepare("INSERT INTO bg_jobs(id,data) VALUES(?,?)");
+  for (let n = 0; n < 12; n++) {
+    const ts = `${100 + n}.000001`;
+    roots.set(`${c.channelId}:${ts}`, { ts, user: "U_MINE", text: `Worker ${n}` });
+    insert.run(`agent-${n}`, toJson({ channelId: c.channelId, slug: c.slug, threadKey: `${ts}::agent-${n}`, kind: "agent" }));
+  }
+  const shellTs = "999.000001";
+  roots.set(`${c.channelId}:${shellTs}`, { ts: shellTs, user: "U_MINE", text: "Shell only" });
+  insert.run("shell", toJson({ channelId: c.channelId, slug: c.slug, threadKey: shellTs, kind: "shell" }));
+  const first = await activityThreadSnapshot(client, "U_MINE");
+  assert.equal(reads.length, 10, "one snapshot repairs no more than ten roots");
+  assert.equal(first.rows.length, 10);
+  const second = await activityThreadSnapshot(client, "U_MINE");
+  assert.equal(reads.length, 12);
+  assert.equal(second.rows.length, 12);
+  assert.ok(second.rows.every((row) => row.status === "working"));
+  assert.equal(getSlackThread(c.channelId, shellTs), null);
+  await activityThreadSnapshot(client, "U_MINE");
+  assert.equal(reads.length, 12, "indexed rows and shell-only jobs cause no further Slack reads");
+});

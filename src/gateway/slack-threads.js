@@ -142,6 +142,22 @@ export function slackThreadStatus(row, runtime) {
   return runtime.get(`${row.channel_id}::${row.thread_ts}`) || (row.error_ms ? "error" : "idle");
 }
 
+// Live-only discovery: an accepted/queued turn can precede the ordinary root index write.
+// Shell jobs and historical sessions must not turn unrelated conversations into agent threads.
+export function liveSlackThreadCandidates() {
+  const candidates = new Map();
+  for (const table of ["active_runs", "bg_jobs"]) {
+    for (const row of getDb().prepare(`SELECT data FROM ${table}`).all()) {
+      const rec = fromJson(row.data, {}) || {};
+      if (table === "bg_jobs" && rec.kind !== "agent") continue;
+      const threadTs = slackThreadFor(rec.slackThreadTs || rec.threadKey || rec.threadTs);
+      if (!rec.channelId || !threadTs || getSlackThread(rec.channelId, threadTs)) continue;
+      candidates.set(`${rec.channelId}::${threadTs}`, { channelId: rec.channelId, threadTs });
+    }
+  }
+  return [...candidates.values()].sort((a, b) => Number(b.threadTs) - Number(a.threadTs));
+}
+
 // Observation alone is not participation: ordinary human follow-ups and unrelated bots are
 // recorded too. Only gateway sessions/runs, agent jobs, and the gateway-specific aiInvolved bit
 // establish engagement. The marker survives session clearing and runtime-row cleanup.

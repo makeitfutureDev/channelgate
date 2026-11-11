@@ -9,6 +9,7 @@ const { setUser, upsertChannelEntry, getChannelEntry, saveChannelMeta } = await 
 const { indexSlackThread, getSlackThread, setSlackThreadDone, recordSlackThreadOutcome } = await import("../src/gateway/slack-threads.js");
 const { setThreadSudo } = await import("../src/gateway/thread-engine.js");
 const { activityThreadSnapshot } = await import("../src/slack/home-threads.js");
+const { recordActiveRun, clearActiveRun } = await import("../src/gateway/active-runs.js");
 const { activityHomeBlocks } = await import("../src/slack/home-activity.js");
 const { handleReplyDashboardAction, registerReplyDashboardActions, REPLY_DASHBOARD_ACTION_ID } = await import("../src/slack/reply-dashboard.js");
 const { menuButtons } = await import("../src/slack/footer.js");
@@ -430,6 +431,50 @@ test("SSE publishes local status and completion changes, bounds connections, and
   await nextEvent(reader, "access-ended");
   assert.equal((await reader.read()).done, true);
   assert.equal((await f.request(user.url + "/api/threads", { headers: user.headers })).status, 401);
+});
+
+for (const engine of ["claude", "codex"]) {
+  test(`${engine} durable run events push Working/Waiting and restore completion without polling`, async (t) => {
+    const f = await fixture(t, { pollMs: 60_000, accessRefreshMs: 60_000 });
+    const entry = await f.root();
+    setSlackThreadDone("C_WORK", "100.000001", "U_MINE", true);
+    const doneAt = getSlackThread("C_WORK", "100.000001").done_ms;
+    const user = await f.login(); f.reads.length = 0;
+    const response = await f.request(user.url + "/stream", { headers: user.headers });
+    const reader = response.body.getReader(); t.after(() => reader.cancel());
+    assert.equal((await nextEvent(reader)).rows[0].status, "done");
+    const run = { channelId: "C_WORK", slug: entry.slug, authorId: "U_OTHER", engine,
+      threadKey: "100.000001", slackThreadTs: "100.000001" };
+    recordActiveRun("activity-live", run);
+    assert.equal((await nextEvent(reader)).rows[0].status, "working");
+    recordActiveRun("activity-live", { ...run, awaitingChoice: true });
+    assert.equal((await nextEvent(reader)).rows[0].status, "waiting");
+    clearActiveRun("activity-live");
+    assert.equal((await nextEvent(reader)).rows[0].status, "done");
+    assert.equal(getSlackThread("C_WORK", "100.000001").done_ms, doneAt);
+    setSlackThreadDone("C_WORK", "100.000001", "U_MINE", false);
+    assert.equal((await nextEvent(reader)).rows[0].status, "idle");
+    recordActiveRun("activity-live", run);
+    assert.equal((await nextEvent(reader)).rows[0].status, "working");
+    clearActiveRun("activity-live");
+    assert.equal((await nextEvent(reader)).rows[0].status, "idle");
+    assert.deepEqual(f.reads, []);
+  });
+}
+
+test("accepted run event discovers its missing human root before queue ownership", async (t) => {
+  const f = await fixture(t, { pollMs: 60_000, accessRefreshMs: 60_000 });
+  const entry = await f.root();
+  getDb().exec("DELETE FROM slack_threads");
+  const user = await f.login();
+  const response = await f.request(user.url + "/stream", { headers: user.headers });
+  const reader = response.body.getReader(); t.after(() => reader.cancel());
+  assert.equal((await nextEvent(reader)).rows.length, 0);
+  recordActiveRun("not-indexed", { channelId: "C_WORK", slug: entry.slug,
+    authorId: "U_OTHER", threadKey: "100.000001" });
+  assert.equal((await nextEvent(reader)).rows[0].status, "working");
+  assert.equal(getSlackThread("C_WORK", "100.000001").starter_id, "U_MINE");
+  clearActiveRun("not-indexed");
 });
 
 test("SSE removes revoked private access and rejects admission after user disable or Slack disconnect", async (t) => {

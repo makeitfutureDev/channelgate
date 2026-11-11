@@ -12,6 +12,8 @@ release gates. Stable promotion and publication require approval of the exact te
 
 ### Beta development notes
 
+- Show active/queued workers in browser Activity even on completed threads, push run changes
+  immediately, and repair missing live roots with bounded, access-checked Slack lookups.
 - Add a copyable Activity hyperlink beside the short expiry notice in private Dashboard replies.
 
 - Private Dashboard/Activity launch links can be opened repeatedly for ten minutes from creation.
