@@ -252,8 +252,10 @@ Cases EE-POLICY-01 and EE-POLICY-02: for both Claude and Codex, on a disposable 
 
 ## Invalid skill-folder grants (2026-11-04)
 
+- 2026-11-11 regression: provision the actual shared workspace before constructing run grants. Cover missing and directory root `SKILL.md`, including a previously valid materialized copy; preserve the source/grants, omit parent/nested files, retain a valid sibling, and propagate unrelated malformed-bundle errors.
+
 - Automated: `test/run-grant-isolation.test.js` covers personal/shared parent-folder grants, alone and alongside a valid skill; verifies warnings, source preservation, and exclusion from both Claude plugins and the Codex catalog.
-- Live Claude/Codex acceptance: use Apps in `cg-testing-{claude,codex}-bash` with a disposable personal grant `synced` containing a nested skill but no root `SKILL.md`, alongside a valid marker skill. Send “Reply SKILL_FOLDER_OK.” Require a normal answer plus a warning naming `synced` and the missing `SKILL.md`, no nested skill in delivered artifacts, and the valid skill retained. Repeat with only the invalid grant. Restore fixture grants afterward. Live chat acceptance pending; remote artifact verification is separate from a human-visible engine run.
+- Live Claude/Codex acceptance: use Apps in `cg-testing-{claude,codex}-bash` with a disposable personal grant `synced` containing a nested skill but no root `SKILL.md`, alongside a valid marker skill. Send “Reply SKILL_FOLDER_OK.” Require a normal answer plus a warning naming `synced` and the missing `SKILL.md`, no nested skill in delivered artifacts, and the valid skill retained. Repeat with only the invalid grant, then with the invalid grant at channel/shared scope. Require both engines to start and return the same normal answer/warning, with no provisioning error or nested-skill leakage. Restore fixture grants afterward. Live chat acceptance pending; remote artifact verification is separate from a human-visible engine run.
 
 
 ## Company domain auto-approval (2026-10-28)

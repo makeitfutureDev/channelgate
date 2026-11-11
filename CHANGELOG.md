@@ -12,6 +12,9 @@ release gates. Stable promotion and publication require approval of the exact te
 
 ### Beta development notes
 
+- Shared grants pointing to a folder without a regular root `SKILL.md` now warn and continue,
+  preserving the source and saved grants while excluding invalid nested skills.
+
 - Slack model shortcuts accept an optional reasoning effort: `@agent :sol :high task` or
   `@agent :sol :low`. Both choices persist for the thread, unsupported efforts are refused
   without changing settings, and `/fork` accepts the same suffix for the new thread.

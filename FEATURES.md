@@ -78,7 +78,7 @@ under **Enterprise organization controls** in `TEST-PLAN.md`.
 
 - `allow_channel_ssh_host` posts a durable approval for one public SSH destination. Any currently authorized channel member with write access can approve it; no admin or `/sudo` is needed. Approval appends to this channel’s `egressRawHosts` without replacing other entries. Cards disclose supported TCP ports 22, 5432 and 6543; Auto never approves them, and network-off/private-address protections remain enforced.
 
-- Invalid legacy skill-folder grants are omitted from Claude plugins and the Codex personal catalog. The reply names folders missing a regular `SKILL.md`; remaining skills continue loading and source folders/grants remain intact.
+- Invalid legacy skill-folder grants are omitted from Claude plugins and the Codex personal catalog. The reply names folders missing a regular `SKILL.md`; remaining skills continue loading and source folders/grants remain intact. Shared grants also skip invalid roots during workspace provisioning, so a missing or non-file root manifest cannot abort the message before that warning. Previously materialized invalid copies are removed; unrelated bundle or filesystem errors still fail closed.
 
 ## Skill ownership terminology
 
