@@ -7792,6 +7792,7 @@ placeholders and `--network none`).
       non-provider errors gain no switch hint, and resumable interruptions retain Continue
       (`test/pinned-provider-guidance.test.js`). Exact-candidate EN-03 acceptance repeats the full
       stored rule for both adapters; original failed attempts remain immutable.
+- [x] Integration: remove only the selected engine's owned scratch login and run with an engine pin, model-only pin, and no pin. Both early Claude relay and backend Codex credential gates preserve their own actionable error, add the manual switch/repin hint only for pins, remain runtime configuration errors, and spawn neither engine (`test/pinned-provider-guidance.test.js`). Exact-candidate ENG-04 acceptance remains required for both engines.
 - [x] Unit: replay safety is judged against the engine that actually ran the turn — an error
       carrying another engine's id never authorizes a replay — and the failover graph is
       bidirectional while the read-only engine remains a non-source (`test/engine-failover.test.js`,

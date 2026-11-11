@@ -12,6 +12,7 @@ release gates. Stable promotion and publication require approval of the exact te
 
 ### Beta development notes
 
+- Pinned threads now include manual switch/repin guidance when a missing runtime login blocks the turn before an engine starts.
 - Shared grants pointing to a folder without a regular root `SKILL.md` now warn and continue,
   preserving the source and saved grants while excluding invalid nested skills.
 
