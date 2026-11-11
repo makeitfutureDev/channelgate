@@ -7,7 +7,7 @@ import assert from "node:assert/strict";
 import { generateKeyPairSync } from "node:crypto";
 
 import { ensureTestEnv } from "./helpers.js";
-import { parseServiceAccount, createGoogleAuth } from "../src/platforms/googlechat/auth.js";
+import { parseServiceAccount, createGoogleAuth, CHAT_REACTION_EVENT_SCOPES } from "../src/platforms/googlechat/auth.js";
 import { createChatApi, isSpaceName, isMessageName } from "../src/platforms/googlechat/api.js";
 import { createPubSubPuller, createDedupe, isSubscriptionName } from "../src/platforms/googlechat/pubsub.js";
 import { parseChatEvent, normalizeMessage, normalizeCardEvent, mentionsBot, resolveThreadKey, createSeenThreads } from "../src/platforms/googlechat/events.js";
@@ -93,6 +93,24 @@ test("the signed assertion carries the service account, the scopes, and Google's
   assert.equal(claims.aud, "https://oauth2.googleapis.com/token");
   assert.match(claims.scope, /chat\.bot/);
   assert.match(claims.scope, /pubsub/);
+});
+
+test("reaction token grants subscription management and message reads without widening ordinary auth", async () => {
+  const claimsFor = async (scopes) => {
+    let claims;
+    const auth = createGoogleAuth({ serviceAccount: SA, scopes, fetchImpl: async (_url, init) => {
+      const jwt = new URLSearchParams(init.body).get("assertion");
+      claims = JSON.parse(Buffer.from(jwt.split(".")[1], "base64url").toString("utf8"));
+      return ok({ access_token: "t", expires_in: 3600 });
+    } });
+    await auth.token();
+    return claims.scope.split(" ");
+  };
+  const reaction = await claimsFor(CHAT_REACTION_EVENT_SCOPES);
+  assert.ok(reaction.includes("https://www.googleapis.com/auth/chat.bot"));
+  assert.ok(reaction.includes("https://www.googleapis.com/auth/chat.app.messages.readonly"));
+  const ordinary = await claimsFor(undefined);
+  assert.ok(!ordinary.includes("https://www.googleapis.com/auth/chat.app.messages.readonly"));
 });
 
 // ── Chat REST client ──────────────────────────────────────────────────────────

@@ -14,6 +14,8 @@ import express from "express";
 import { ensureTestEnv, tempDir } from "./helpers.js";
 
 ensureTestEnv();
+// Keep host-folder diagnostics deterministic; never enumerate the operator's skill roots.
+process.env.GATEWAY_SKILL_SOURCES = tempDir("cg-search-host-skills-");
 
 const caret = (page, id) => page.evaluate((elementId) => {
   const el = globalThis.document.getElementById(elementId);

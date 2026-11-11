@@ -120,7 +120,7 @@ test("badge URLs are well-formed and the CI badge names a workflow that exists",
     shields.some((url) => url.includes("/badge/license-Sustainable%20Use%20License%201.4-")),
     "the license badge must name Sustainable Use License 1.4, URL-encoded",
   );
-  assert.ok(shields.some((url) => url.includes("/badge/node-%E2%89%A5%2022.13-")), "Node floor badge");
+  assert.ok(shields.some((url) => url.includes("/badge/node-%E2%89%A5%2024.0.0-")), "Node floor badge");
   assert.ok(shields.some((url) => /\/badge\/platforms-Slack.*Teams.*Google%20Chat-/.test(url)), "platforms badge");
   assert.ok(shields.some((url) => /\/badge\/engines-Claude%20Code.*Codex.*OpenCode-/.test(url)), "engines badge");
 
@@ -147,9 +147,11 @@ test("the licensing section keeps the tier limit and the no-automatic-relicensin
   assert.ok(section.length > 500, "the Licensing & partners section is missing or truncated");
   assert.match(section, /source-available fair-code/i);
   assert.match(section, /not OSI open-source/);
-  assert.match(section, /500 AI messages per conversation per month/);
+  assert.match(section, /500 AI runs per channel per month/);
+  assert.match(section, /100 active conversations \*\*in each\s+channel per UTC month\*\*/);
+  assert.match(section, /one month \(30 days\) of\s+cost-tracking history/);
   assert.match(section, /no version\s+is relicensed automatically/);
-  assert.match(section, /\| \*\*No key\*\* — install and run \| 20 \(one active per month\) \| 20 \| 500 \|/);
+  assert.match(section, /\| \*\*No key\*\* — install and run \| 10 \(one active per month\) \| 10 \| 100 in the active channel \| 500 \|/);
   // The three lanes the release plan sells against.
   for (const lane of [/\*\*Registered — /, /\*\*Partner — /, /\*\*Reseller, white-label, enterprise — /]) {
     assert.match(section, lane);

@@ -88,6 +88,8 @@ export const GATEWAY_TOOL_NAMES = [
   "query_channel_database",
   "set_channel_vpn",
   "set_channel_auto_mode",
+  "set_channel_skill_swap",
+  "use_skill",
   "get_channel_workdir",
   "set_channel_workdir",
   "clear_channel_workdir",
@@ -147,6 +149,9 @@ export const GATEWAY_TOOL_NAMES = [
   "get_skill_info",
   "add_my_skills",
   "remove_my_skills",
+  "create_my_skill_token",
+  "list_my_skill_tokens",
+  "revoke_my_skill_token",
   "delete_skill",
   "publish_skill",
   "add_org_skills",
@@ -173,6 +178,9 @@ export const GATEWAY_TOOL_NAMES = [
   "slack_channel_history",
   "slack_thread_replies",
   "slack_download_file",
+  "open_code_channel",
+  "update_code_channel",
+  "archive_code_channel",
   "permission_prompt",
 ];
 

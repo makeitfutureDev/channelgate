@@ -27,6 +27,19 @@ export function parseSlashCommand(text) {
   return { cmd, arg: parts.slice(1).join(" ").trim() };
 }
 
+// Unlike generic controls, sudo carries a free-form prompt whose whitespace is significant.
+// Reserve off/status for controls; `on` may optionally precede the prompt.
+export function parseSudoCommand(text) {
+  const match = /^\/sudo(?:\s+([\s\S]*))?$/i.exec((text || "").trim());
+  if (!match) return null;
+  const rest = (match[1] || "").trim();
+  const control = /^(on|off|status)(?:\s+([\s\S]*))?$/i.exec(rest);
+  if (!control) return { action: "on", task: rest };
+  const action = control[1].toLowerCase();
+  const task = (control[2] || "").trim();
+  return { action, task, ...(action !== "on" && task ? { invalid: true } : {}) };
+}
+
 export function parseNextCommand(text) {
   const match = /^\/next\b[\s:,.;–—-]*([\s\S]*)$/i.exec((text || "").trim());
   return match ? { task: match[1].trim() } : null;

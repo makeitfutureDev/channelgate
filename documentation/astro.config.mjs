@@ -21,6 +21,7 @@ export default defineConfig({
           { label: 'Welcome', slug: '' },
           { label: 'Your first conversation', slug: 'getting-started' },
           { label: 'Installation', slug: 'installation' },
+          { label: 'VPS sizing and hosting', slug: 'configuration/vps-sizing' },
           { label: 'All features', slug: 'features' },
           { label: 'Functionality map', slug: 'functionality' },
           { label: 'Control reference', slug: 'controls' },

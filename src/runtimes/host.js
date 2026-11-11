@@ -2,6 +2,7 @@
 // or submitted form continuing that schedule; current admin rank is rechecked before execution.
 // The engine is a child of the daemon account: there is no container filesystem or process
 // boundary, and the backend intentionally preserves the host cwd, HOME, PATH and process tree.
+import { collectResourceSnapshot } from "./resource-snapshot.js";
 import { spawn } from "node:child_process";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -43,6 +44,10 @@ export const hostBackend = Object.freeze({
       detached: spec.detached !== false,
     });
     return attachRuntime(child, { backend: hostBackend, runId: spec.runId, target, kind: spec.kind });
+  },
+
+  async inspectResources(target, { pid } = {}) {
+    return collectResourceSnapshot({ pid });
   },
 
   async probe(child) {

@@ -438,7 +438,7 @@ export function createContainerLifecycle({
       ? { pidsLimit: c.limits.pidsLimit, memory: c.limits.memory, cpus: c.limits.cpus }
       : null;
     if (!caps.cgroupLimits && (c.limits.memory || c.limits.cpus || c.limits.pidsLimit)) {
-      log(`[container] cgroup limits are not delegated — ${c.name} runs without pids/memory/cpu caps`);
+      log(`[container] ${/not delegated/.test(caps.reason || "") ? "cgroup limits are not delegated" : "resource limits are not verified"} — ${c.name} runs without pids/memory/cpu caps`);
     }
     const settled = settleCredentialModes(target.settings, env, { egressActive: c.egress?.active === true, meta: target.meta });
     c.credentialMode = settled.modes;

@@ -42,10 +42,11 @@ import { listForChannel, deleteSchedule, updateSchedule, countEnabledForChannel 
 import { resolveAccessGrants } from "../gateway/access-grants.js";
 import { assignTemplateToChannel, channelScopedSkills, channelSkillGrants, channelSkillsOff, listTemplateSummaries, templateOfMeta } from "../gateway/skills/templates.js";
 import { canSeeSkill, grantSkillsToChannel, grantSkillsToUser, revokeSkillsFromChannel, revokeSkillsFromUser } from "../gateway/skills/authoring.js";
-import { sanitizeSkillGrantNames } from "../gateway/access-grants.js";
+import { isForeignPersonalSkill, sanitizeSkillGrantNames, sharedSkillGrants } from "../gateway/access-grants.js";
 import { toolboxUrl } from "../gateway/mcp-catalog.js";
 import { revokeRemoteMcpsForAuthor } from "../mcp/remote-mcp-registry.js";
-import { listSkills } from "../gateway/skills/catalog.js";
+import { listSkills, getSkill } from "../gateway/skills/catalog.js";
+import { skillModelPreference } from "../gateway/skill-runtime.js";
 import { ENGINE_IDS, engineLabel, effortBelongsToModel, effortsForModel, modelBelongsToEngine, modelsForEngine, requireAdapter } from "../engines/registry.js";
 import { persistedSelectionForEngine, selectionFieldForEngine } from "../gateway/mcp-discovery.js";
 import { channelCodexLoginStatus } from "../gateway/channel-codex-login.js";
@@ -57,7 +58,8 @@ import { COMPOSIO_INVENTORY_ACTION_ID } from "./composio-inventory-view.js";
 
 import { createTtlSet } from "./util.js";
 import { refreshDirectory } from "./directory.js";
-import { handleMemberLeftChannel, listConversationMemberIds, filterConversationHumanMemberIds, withChannelMembershipLock } from "./members.js";
+import { readBotMemberships } from "./bot-membership.js";
+import { handleBotJoinedChannel, handleMemberLeftChannel, listConversationMemberIds, filterConversationHumanMemberIds, withChannelMembershipLock } from "./members.js";
 import { checkBotScopes, formatScopeWarning, shouldNotify } from "./scope-check.js";
 import { buildFileEditView, buildFilePreviewView, buildFilesLoadingView, buildFilesView, buildNewFileView, buildNewFolderView, canEditChannelFiles, createVisibleDirectory, createVisibleFile, FILES_ACTION_PATTERN, FILES_NEW_FILE_CONTENT_BLOCK_ID, FILES_NEW_FILE_CONTENT_INPUT_ACTION_ID, FILES_NEW_FILE_NAME_BLOCK_ID, FILES_NEW_FILE_NAME_INPUT_ACTION_ID, FILES_NEW_FOLDER_BLOCK_ID, FILES_NEW_FOLDER_INPUT_ACTION_ID, FILES_SHORTCUT_ID, normalizeNewFileName, normalizeNewFolderName, normalizeRelativePath, parseActionValue as parseFileActionValue, parseExplorerMetadata, resolveVisiblePath, writeEditableFile } from "./file-explorer.js";
 import {
@@ -81,7 +83,7 @@ import {
   CHANNEL_SETTINGS_CLEAR_MAKE_ACTION_ID, CHANNEL_SETTINGS_CLEAR_TOOLBOX_ACTION_ID,
   CHANNEL_SETTINGS_CLOUD_ENGINE_PREFIX, CHANNEL_SETTINGS_CLOUD_MANAGE_ACTION_ID,
   CHANNEL_SETTINGS_CUSTOM_MCP_ADD_ACTION_ID, CHANNEL_SETTINGS_CUSTOM_MCP_REMOVE_ACTION_ID, CHANNEL_SETTINGS_CUSTOM_MCP_CALLBACK_ID,
-  CUSTOM_MCP_NAME_BLOCK_ID, CUSTOM_MCP_URL_BLOCK_ID, CUSTOM_MCP_TOKEN_BLOCK_ID,
+  CUSTOM_MCP_NAME_BLOCK_ID, CUSTOM_MCP_URL_BLOCK_ID, CUSTOM_MCP_TOKEN_BLOCK_ID, CUSTOM_MCP_AUTH_BLOCK_ID, CUSTOM_MCP_HEADERS_BLOCK_ID, CUSTOM_MCP_QUERY_BLOCK_ID, parseCustomMcpPairs,
   buildCustomMcpEditorView, buildCustomMcpStatusView, readCustomMcpForm, customMcpScope,
   CHANNEL_SETTINGS_ROOT_CALLBACK_ID, CHANNEL_SETTINGS_FORM_OPEN_ACTION_ID, CHANNEL_SETTINGS_FORM_CANCEL_ACTION_ID,
   CHANNEL_SETTINGS_FORM_REMOVE_ACTION_ID, CHANNEL_SETTINGS_VAR_MENU_ACTION_ID, CHANNEL_SETTINGS_SCHEDULE_MENU_ACTION_ID,
@@ -104,7 +106,7 @@ import { listCustomMcps, normalizeCustomMcpName, normalizeCustomMcpToken, normal
 import { listUserCustomMcps, removeChannelCustomMcp, removeUserCustomMcp, saveChannelCustomMcp, saveUserCustomMcp } from "../gateway/custom-mcp-store.js";
 import { listEmailAccounts, normalizeEmailAccountInput } from "../gateway/email-accounts.js";
 import { listUserEmailAccounts, removeChannelEmailAccount, removeUserEmailAccount, saveChannelEmailAccount, saveUserEmailAccount } from "../gateway/email-account-store.js";
-import { ACCESS_EDIT_ACTION_ID, ACCESS_CALLBACK_ID, accessFieldTarget, accessSettingsPatch, accessSettingsSnapshot, assertAccessManager, memberAccessForm, memberCanUse, readAccessFieldValue } from "./access-settings.js";
+import { ACCESS_EDIT_ACTION_ID, ACCESS_CALLBACK_ID, accessFieldTarget, accessSettingsPatch, accessSettingsSnapshot, assertAccessManager, memberAccessForm, memberCanUse, readAccessFieldValue, restrictedAccessAllowedUsers } from "./access-settings.js";
 import { assertValidEnvName, assertValidEnvValue, listChannelEnv, patchChannelEnv } from "../config/channel-env.js";
 import { assertValidSwapRuleFields } from "../gateway/egress/catalog-rules.js";
 // The two scopes that are not the channel's (config/scoped-env.js).
@@ -127,14 +129,21 @@ import { setAssistantStatus, startProgress } from "./progress.js";
 // 2026-08 restructure split).
 export { buildResumeCommand, filesButton, secretsButton, settingsButton, menuButtons, menuBlocks, footerButtons, footerText, footerBlocks };
 export { setAssistantStatus, startProgress };
-import { processMessageEvent, runQueue, stopRunsInChannel, mentionsBot, stripMentions, isIgnorable, fetchThreadContext, deleteThreadMessages, ensureRegistered, ensureUserKnown, syncAllowedFromMembers, resolveConversation } from "./message-pipeline.js";
+import { processMessageEvent, runQueue, stopRunsInChannel, abortRunsInChannel, mentionsBot, stripMentions, isIgnorable, fetchThreadContext, deleteThreadMessages, ensureRegistered, ensureUserKnown, syncAllowedFromMembers, resolveConversation } from "./message-pipeline.js";
 import { registerQuestionActions } from "./questions.js";
 import { appContextForMessage, appContextObservedAt, appContextUserId, createAppContextStore } from "./app-context.js";
 import { registerBusyThreadChoiceActions } from "./busy-thread-choice.js";
 import { registerAgentInterfaceHandlers } from "./agent-interface.js";
+import { isCodeChannelMeta } from "../gateway/code-channels.js";
 import { registerEngineSwitchChoiceActions } from "./engine-switch-choice.js";
-import { composioHomeButtons, registerComposioHomeActions } from "./home-composio.js";
-import { nudgeHomeBlocks, registerNudgeHomeActions } from "./home-nudges.js";
+import { composioHomeButtons } from "./home-composio.js";
+import { nudgeHomeBlocks } from "./home-nudges.js";
+import { homeThreadsSnapshot, homeThreadBlocks, homeThreadsRefreshKey } from "./home-threads.js";
+import { createHomeThreadReader } from "./home-thread-reader.js";
+import { buildHomeTabView, createHomePublisher, registerHomeActions } from "./home-tabs.js";
+import { getSlackThread, recordSlackThreadMessage, slackThreadsForUser } from "../gateway/slack-threads.js";
+import { isCompletionReaction } from "../gateway/completion-reactions.js";
+import { completeThreadFromFeedback, syncThreadCompletionReaction } from "./thread-completion.js";
 import { buildMenuCard, buildMenuResumeView, MENU_RESUME_ACTION_ID } from "./menu.js";
 import { resolveResumeSession } from "./resume-session.js";
 import { buildStatusReport } from "./status-controller.js";
@@ -221,11 +230,12 @@ export function followupIdentity(event, botUserId) {
 // last", never as a participant — a thread the bot answered last owes nobody. Never touches DMs.
 async function observeForFollowups(event, botUserId) {
   try {
+    const sub = event.subtype;
+    if (sub && !["file_share", "thread_broadcast", "bot_message", "me_message"].includes(sub)) return;
+    recordSlackThreadMessage(event.channel, event.thread_ts ?? event.ts, event.ts);
     if (!getFollowupRemindersEnabled()) return;
     const type = event.channel_type;
     if (type !== "channel" && type !== "group") return; // public/private channels only — not DMs
-    const sub = event.subtype;
-    if (sub && !["file_share", "thread_broadcast", "bot_message", "me_message"].includes(sub)) return;
     const channelId = event.channel;
     if (!channelId) return;
     const entry = await getChannelEntry(channelId);
@@ -359,7 +369,8 @@ export async function handleMenuResumeAction({ ack, body, action, client }) {
   const userId = body?.user?.id;
   try {
     const value = JSON.parse(action?.value || "{}");
-    if (!userId || value.u !== userId || value.c !== channelId || typeof value.t !== "string") {
+    if (!canOpenMenuButton({ ownerId: value.u, clickerId: userId, clickerIsAdmin: userId ? await isAdmin(userId) : false })
+      || value.c !== channelId || typeof value.t !== "string") {
       throw new Error("This menu isn't yours. Open your own with `/menu`.");
     }
     const context = await fileExplorerContext(client, { channelId, userId, verifyMembership: true });
@@ -370,7 +381,7 @@ export async function handleMenuResumeAction({ ack, body, action, client }) {
   }
 }
 
-async function openFileExplorer(client, triggerId, { channelId, userId, threadTs = "", file = "" } = {}) {
+async function openFileExplorer(client, triggerId, { channelId, userId, threadTs = "", file = "", verifyMembership = false } = {}) {
   if (!(await getChannelEntry(channelId))) {
     await ensureRegistered(client, {
       channel: channelId,
@@ -379,7 +390,7 @@ async function openFileExplorer(client, triggerId, { channelId, userId, threadTs
     });
   }
   await ensureUserKnown(client, userId);
-  const { entry, meta, userIsAdmin, root } = await fileExplorerContext(client, { channelId, userId });
+  const { entry, meta, userIsAdmin, root } = await fileExplorerContext(client, { channelId, userId, verifyMembership });
   const relativeFile = normalizeRelativePath(file || "");
   const parent = relativeFile ? path.posix.dirname(relativeFile) : "";
   const state = { channelId, slug: entry.slug, threadTs, ownerId: userId, relative: parent === "." ? "" : parent, page: 0 };
@@ -429,9 +440,9 @@ export async function secretScopeLists(meta, viewerId) {
   };
 }
 
-async function openSecretsManager(client, triggerId, { channelId, userId, threadTs = "" } = {}) {
+async function openSecretsManager(client, triggerId, { channelId, userId, threadTs = "", verifyMembership = false } = {}) {
   await ensureUserKnown(client, userId);
-  const { entry, meta, mayEdit, userIsAdmin } = await secretsContext(client, { channelId, userId });
+  const { entry, meta, mayEdit, userIsAdmin } = await secretsContext(client, { channelId, userId, verifyMembership });
   const state = { channelId, slug: entry.slug, threadTs, ownerId: userId };
   await client.views.open({
     trigger_id: triggerId,
@@ -457,8 +468,7 @@ export async function handleSecretsAction({ ack, body, action, client }, { conte
   const command = parseSecretActionValue(action?.value);
   try {
     if (command.o === "open") {
-      if (!canOpenMenuButton({ ownerId: command.u, clickerId: clicker }) || !body?.trigger_id) throw new Error("This secrets button isn't for you.");
-      await openSecretsManager(client, body.trigger_id, { channelId: command.c, userId: clicker, threadTs: command.t || "" });
+      await openChannelMenuControl({ body, command, client, kind: "variables" });
       return;
     }
     const state = parseSecretsMetadata(body?.view?.private_metadata);
@@ -622,7 +632,10 @@ function assertCustomMcpManager(meta, who) {
 // Which form field a custom MCP refusal belongs under (src/gateway/custom-mcps.js messages).
 export function customMcpErrorBlock(message = "") {
   const text = String(message);
-  if (/^Token|Bearer token/.test(text)) return CUSTOM_MCP_TOKEN_BLOCK_ID;
+  if (/^Headers|^Header/i.test(text)) return CUSTOM_MCP_HEADERS_BLOCK_ID;
+  if (/^Query/i.test(text)) return CUSTOM_MCP_QUERY_BLOCK_ID;
+  if (/^Authentication/.test(text)) return CUSTOM_MCP_AUTH_BLOCK_ID;
+  if (/^Token|token is required|Bearer token|consumer key/i.test(text)) return CUSTOM_MCP_TOKEN_BLOCK_ID;
   if (/^URL/.test(text)) return CUSTOM_MCP_URL_BLOCK_ID;
   return CUSTOM_MCP_NAME_BLOCK_ID;
 }
@@ -712,6 +725,8 @@ export async function handleCustomMcpFormSubmission({ ack, body, view, client },
     // No remote roster lookup yet: this checks current local admission, scope and field syntax.
     let current = await context(client, { ...request, verifyMembership: false });
     admit(current);
+    // Generic fields contain secrets too: remove the submitted native view before parsing.
+    if (view?.state?.values?.[CUSTOM_MCP_HEADERS_BLOCK_ID] || view?.state?.values?.[CUSTOM_MCP_QUERY_BLOCK_ID]) await navigation.show(buildCustomMcpStatusView(state, { scope }));
     const form = readCustomMcpForm(view);
     patchCustomMcps(scope === "channel" ? current.meta.customMcps : (await getUser(clicker))?.customMcps, { set: form });
 
@@ -750,7 +765,7 @@ export async function handleCustomMcpFormSubmission({ ack, body, view, client },
       await navigation.show(buildCustomMcpStatusView(state, {
         scope, retry: !saved,
         message: saved ? "The server was saved, but Settings could not refresh. Reopen Settings to check it."
-          : `${message} Reopen the form to retry; the token draft has been cleared.`,
+          : `${message} Reopen the form to retry; the credential drafts have been cleared.`,
       }));
       return;
     }
@@ -832,12 +847,18 @@ function channelSkillPicker(meta, { userId, userIsAdmin }) {
 
 // The viewer's own skill grants: every catalog skill they can see, their personal ones included.
 async function mySkillPicker(userId, userIsAdmin) {
-  const mine = new Set(sanitizeSkillGrantNames((await getUser(userId))?.skills || []).map((slug) => slug.toLowerCase()));
+  const stored = sanitizeSkillGrantNames((await getUser(userId))?.skills || []);
+  const mine = new Set(stored.map((slug) => slug.toLowerCase()));
   const rows = listSkills({ viewer: userIsAdmin ? "*" : userId })
     .filter((skill) => canSeeSkill(skill, { userId, isAdmin: userIsAdmin, active: mine.has(skill.slug.toLowerCase()) }) && (skill.visibility !== "personal" || skill.createdBy === userId));
+  // Stored grants of someone else's personal skill are never offered; they are named so the
+  // person knows why they are not loaded (the run skips them — src/gateway/access-grants.js).
+  const offered = new Set(rows.map((skill) => skill.slug.toLowerCase()));
+  const foreign = stored.filter((slug) => !offered.has(slug.toLowerCase()) && isForeignPersonalSkill(getSkill(slug), userId));
   return {
     options: rows.map((skill) => ({ key: skill.slug, label: skill.slug, description: skill.description || "" })),
     selected: rows.filter((skill) => mine.has(skill.slug.toLowerCase())).map((skill) => skill.slug),
+    foreign,
   };
 }
 
@@ -983,6 +1004,11 @@ export async function handleSettingsFormSubmission({ ack, body, view, client }, 
     assertSettingsFormAllowed(state.form, { ...local, clicker });
     const problem = localSettingsFormProblem(state.form, values);
     if (problem) {
+      if (values.headers !== undefined || values.queryParams !== undefined) {
+        const draft = Object.fromEntries(Object.entries(values).filter(([field]) => SETTINGS_DRAFT_FIELDS.includes(field)));
+        await ack({ response_action: "update", view: await rootView(local.entry, local.meta, { ...state, formSecretId: randomUUID(), formError: problem, formDraft: draft }, local.userIsAdmin, {}) });
+        return;
+      }
       await ack({ response_action: "errors", errors: { [settingsFieldBlockId(state.form, problem.field, state.formSecretId)]: problem.error } });
       return;
     }
@@ -1074,7 +1100,14 @@ export async function saveSettingsForm(key, values, ctx) {
     return { notice: "✅ Saved the Make toolbox." };
   }
   if (kind === "cm-add" || kind === "cm") {
-    const input = { name: kind === "cm" ? name : values.name, url: values.url, token };
+    let input;
+    try {
+      input = { name: kind === "cm" ? name : values.name, url: values.url, token, ...(values.authType !== undefined ? { authType: values.authType } : {}) };
+      for (const field of ["headers", "queryParams"]) {
+        const pairs = parseCustomMcpPairs(values[field], field === "headers" ? "Headers" : "Query parameters");
+        if (pairs !== undefined) input[field] = pairs;
+      }
+    } catch (error) { return refuse(/^Headers/.test(error.message) ? "headers" : "queryParams", error.message); }
     try {
       // `authorize` re-checks the editor's current authority after the DNS check, right before the write.
       const options = { actor: scope === "c" ? `<@${clicker}>` : clicker, ...(ctx.authorize ? { authorize: ctx.authorize } : {}) };
@@ -1084,7 +1117,7 @@ export async function saveSettingsForm(key, values, ctx) {
       const saved = servers.find((item) => item.name === String(input.name).trim().toLowerCase());
       return { notice: `✅ Saved ${inlineMcpName(saved?.serverName || input.name)}. Its tools reach the next run.` };
     } catch (error) {
-      return refuse(fieldForError(error.message, kind === "cm" ? ["url", "token"] : ["name", "url", "token"], kind === "cm" ? "url" : "name"), error.message);
+      return refuse(/^Headers?|^Header/i.test(error.message) ? "headers" : /^Query/i.test(error.message) ? "queryParams" : /^Authentication/.test(error.message) ? "authType" : fieldForError(error.message, kind === "cm" ? ["url", "token"] : ["name", "url", "token"], kind === "cm" ? "url" : "name"), error.message);
     }
   }
   if (isEmailForm(kind)) {
@@ -1224,8 +1257,9 @@ function channelSettingsSnapshot(meta = {}) {
   const template = templateOfMeta(effective);
   return {
     isDM: Boolean(meta.isDM),
+    workspaceLink: meta.workspaceLink,
     access: meta,
-    mode: { adminMode: effective.adminMode, allowBash: effective.allowBash, autoMode: effective.autoMode, cleanMode: effective.cleanMode, allowNetwork: effective.allowNetwork },
+    mode: { adminMode: effective.adminMode, allowBash: effective.allowBash, autoMode: effective.autoMode, cleanMode: effective.cleanMode, allowNetwork: effective.allowNetwork, skillRuntimeSwap: Boolean(effective.skillRuntimeSwap) },
     runtime: {
       approvedEngines: meta.approvedEngines ?? null,
       harnessOptions: ENGINE_IDS.map((id) => ({ value: id, label: engineLabel(id) })),
@@ -1267,6 +1301,11 @@ function channelSettingsSnapshot(meta = {}) {
       channel: channelTier.skills || [],
       organization: organization.skills || [],
       effective: shared.skills || [],
+      // Personal skills granted to this conversation or the organization: never loaded here
+      // (access-grants.js sharedSkillGrants), so the page names them for removal.
+      notLoaded: sharedSkillGrants({ organization: organization.skills || [], channel: channelTier.skills || [], lookupSkill: getSkill }).skipped,
+      // Skill slug → preferred model, for the Skills page (only skills that declare one).
+      models: Object.fromEntries((shared.skills || []).map((name) => [String(name).toLowerCase(), skillModelPreference(getSkill(name))?.model || ""]).filter(([, model]) => model)),
     },
     // listChannelEnv is the write-only subsystem's public shape: no value/ref can cross this line.
     secrets: listChannelEnv(meta),
@@ -1277,7 +1316,9 @@ export function channelSettingsEditOptions(meta, userIsAdmin, { authorId = "", i
   return {
     canEnableAdmin: Boolean(userIsAdmin),
     canApproveHarnesses: Boolean(userIsAdmin && getLicenseStatus().features.channelHarnessPolicy),
-    canEditRuntime: true,
+    // The same policy `/model` applies: a DM is always its owner's to set; elsewhere a non-admin
+    // edits the runtime only when the gateway's model-change access is "users".
+    canEditRuntime: Boolean(meta.isDM) || canChangeChannelRuntime(userIsAdmin),
     canEditSecrets: true,
     // Reaches every conversation, so admin-only even for someone who may edit this channel's own.
     canEditOrgSecrets: Boolean(userIsAdmin),
@@ -1564,11 +1605,31 @@ export async function saveAccessSettings(client, state, userId, form) {
     const humans = await filterConversationHumanMemberIds(client, state.channelId, requested);
     if (requested.some((id) => !humans.includes(id))) throw new Error("Named users and managers must be current human members of this channel.");
     const { entry } = await channelSettingsContext(client, args);
-    const [userIsAdmin, userIsApproved] = await Promise.all([isAdmin(userId), isApproved(userId)]);
+    const [userIsAdmin, userIsApproved, users] = await Promise.all([isAdmin(userId), isApproved(userId), getUsers()]);
     const actor = { authorId: userId, isAdminUser: userIsAdmin, isApprovedUser: userIsApproved };
-    const saved = await patchAuditedChannelSettings({ ...entry, channelId: state.channelId }, userId, (current) => accessSettingsPatch(current, form, actor));
-    return { entry, saved, userIsAdmin };
+    // Narrowing the use policy evicts the members seeded under "approved" (see
+    // restrictedAccessAllowedUsers) inside the same transaction, so "Admins only" is true the
+    // moment it is saved rather than after an admin also clears the guest list.
+    let dropped = 0;
+    const saved = await patchAuditedChannelSettings({ ...entry, channelId: state.channelId }, userId, (current) => {
+      const patch = accessSettingsPatch(current, form, actor);
+      const narrowed = restrictedAccessAllowedUsers(current, patch, users);
+      if (narrowed) {
+        patch.allowedUsers = narrowed.allowedUsers;
+        dropped = narrowed.dropped;
+      }
+      return patch;
+    });
+    if (dropped) await logEvent("channel_access_members_evicted", { channel: state.channelId, slug: entry.slug, access: saved.access, count: dropped, author: userId });
+    return { entry, saved, userIsAdmin, dropped };
   });
+}
+
+// The Settings runtime controls (channel engine / model / effort, thread pins and their reset)
+// follow the gateway's model-change policy exactly as `/model`, the wizard, the shortcuts and the
+// platform controls do: a DM is always its owner's; elsewhere a non-admin needs the "users" policy.
+export function assertRuntimeChangeAllowed(meta, userIsAdmin) {
+  if (!meta?.isDM && !canChangeChannelRuntime(userIsAdmin)) throw new Error("Only admins can change the harness, model, or effort in a channel.");
 }
 
 // The one builder for the Settings modal's root view. Thread pins and this thread's session are
@@ -1591,8 +1652,11 @@ async function settingsRootView(entry, meta, state, userIsAdmin, { tab = state.t
   ]);
   snapshot.runtime.scopes = scopes;
   if (snapshot.runtime.channelLogin) {
-    const login = await channelCodexLoginStatus(meta.channelId);
-    snapshot.runtime.channelLoginStatus = login.authenticated
+    const login = await channelCodexLoginStatus(meta.channelId).catch(error => {
+      if (error.code === "enterprise_required") return { enterpriseRequired: true };
+      throw error;
+    });
+    snapshot.runtime.channelLoginStatus = login.enterpriseRequired ? "Dedicated sign-in requires Enterprise; switch to the gateway login in admin Settings to resume runs" : login.authenticated
       ? `Signed in with ${login.method === "chatgpt" ? "ChatGPT" : "an API key"}`
       : login.phase === "pending" ? "ChatGPT sign-in in progress" : "No channel login yet";
   }
@@ -1981,17 +2045,32 @@ async function notifyAdminsScopes(client, missing) {
   await logEvent("scope_check_notified", { admins: sent, missing: missing.join(",") });
 }
 
-// A reply footer belongs to the requester who caused that reply, but gateway admins must still
-// be able to inspect its workspace files. Everyone else remains bound to their own controls.
+// A reply footer belongs to the requester who caused that reply, but current gateway admins
+// can open every shared menu control. Everyone else remains bound to their own controls.
 // An automation post's menu is unbound (no owner): it opens for whoever clicks, under that
 // clicker's own live authorization (footer.js explains the binding).
 export function canOpenMessageFileButton({ ownerId = "", clickerId = "", clickerIsAdmin = false } = {}) {
+  return canOpenMenuButton({ ownerId, clickerId, clickerIsAdmin });
+}
+
+export function canOpenMenuButton({ ownerId = "", clickerId = "", clickerIsAdmin = false } = {}) {
   return Boolean(clickerId && (!ownerId || clickerId === ownerId || clickerIsAdmin));
 }
 
-// The same rule for the other menu buttons, which have no admin override.
-export function canOpenMenuButton({ ownerId = "", clickerId = "" } = {}) {
-  return Boolean(clickerId && (!ownerId || clickerId === ownerId));
+// Always open a new view as the actual clicker. Admin access to someone else's shared button
+// must never turn its original requester into the owner of personal settings or credentials.
+export async function openChannelMenuControl({ body, command, client, kind }) {
+  const clicker = body?.user?.id;
+  const channelId = body?.channel?.id || body?.container?.channel_id;
+  const open = { files: openFileExplorer, variables: openSecretsManager, settings: openChannelSettings }[kind];
+  const clickerIsAdmin = clicker && command.u && command.u !== clicker ? await isAdmin(clicker) : false;
+  if (!open || !command.c || (channelId && command.c !== channelId) || !body?.trigger_id
+    || !canOpenMenuButton({ ownerId: command.u, clickerId: clicker, clickerIsAdmin })) {
+    throw new Error("This menu button isn't for you. Open your own with `/menu`.");
+  }
+  // Recheck membership on every shared message button, just as on later modal interactions.
+  await open(client, body.trigger_id, { channelId: command.c, userId: clicker, threadTs: command.t || "",
+    file: command.o === "open_file" ? command.p || "" : "", verifyMembership: true });
 }
 
 // Slack does not infer the source thread for an ephemeral posted from a Block Kit action. Carry
@@ -2044,16 +2123,7 @@ async function connectAndWire(app) {
     const command = parseFileActionValue(action?.value);
     try {
       if (command.o === "open" || command.o === "open_file") {
-        const clickerIsAdmin = clicker && command.u && command.u !== clicker ? await isAdmin(clicker) : false;
-        if (!canOpenMessageFileButton({ ownerId: command.u, clickerId: clicker, clickerIsAdmin }) || !body?.trigger_id) {
-          throw new Error("This file explorer button isn't for you.");
-        }
-        await openFileExplorer(client, body.trigger_id, {
-          channelId: command.c,
-          userId: clicker,
-          threadTs: command.t || "",
-          file: command.o === "open_file" ? command.p || "" : "",
-        });
+        await openChannelMenuControl({ body, command, client, kind: "files" });
         return;
       }
       const state = parseExplorerMetadata(body?.view?.private_metadata);
@@ -2092,6 +2162,7 @@ async function connectAndWire(app) {
         const name = path.basename(file.relative);
         await uploadLocalFile({
           filePath: file.path,
+          rootPath: file.rootReal, // re-proved through /proc/self/fd at open time (symlink-swap race)
           filename: name,
           title: name,
           channelId: state.channelId,
@@ -2119,6 +2190,7 @@ async function connectAndWire(app) {
         if (!dmChannelId) throw new Error("Slack couldn't open your DM with the bot.");
         await uploadLocalFile({
           filePath: file.path,
+          rootPath: file.rootReal,
           filename: name,
           title: name,
           channelId: dmChannelId,
@@ -2210,12 +2282,7 @@ async function connectAndWire(app) {
     const actionId = String(action?.action_id || "");
     try {
       if (command.o === "open") {
-        if (!canOpenMenuButton({ ownerId: command.u, clickerId: clicker }) || !body?.trigger_id) throw new Error("This settings button isn't for you.");
-        await openChannelSettings(client, body.trigger_id, {
-          channelId: command.c,
-          userId: clicker,
-          threadTs: command.t || "",
-        });
+        await openChannelMenuControl({ body, command, client, kind: "settings" });
         return;
       }
 
@@ -2388,11 +2455,12 @@ async function connectAndWire(app) {
         if (!meta.isDM) throw new Error("This control belongs to a direct message. Reopen Settings.");
         const change = actionId === CHANNEL_SETTINGS_DM_MODE_ACTION_ID
           ? { mode: String(action?.selected_option?.value || "") }
-          : Object.fromEntries(["autoMode", "cleanMode"].map((key) => [key, (action?.selected_options || []).some((entry) => entry.value === key)]));
+          : Object.fromEntries(["autoMode", "cleanMode", "skillRuntimeSwap"].map((key) => [key, (action?.selected_options || []).some((entry) => entry.value === key)]));
         if (change.mode !== undefined && !["read", "worker", "admin"].includes(change.mode)) throw new Error("Unknown mode.");
         meta = await patchAuditedChannelSettings(entry, clicker, (current) => {
           const baseline = effectiveMeta(current);
-          const patch = modeSettingsPatch(baseline, change, { isAdminUser: userIsAdmin });
+          // Skill model swap is an independent switch, not part of the mode preset: carried beside it.
+          const patch = { ...modeSettingsPatch(baseline, change, { isAdminUser: userIsAdmin }), ...(typeof change.skillRuntimeSwap === "boolean" ? { skillRuntimeSwap: change.skillRuntimeSwap } : {}) };
           return current.isDM && ["user", "admin"].includes(current.template) ? { ...baseline, ...patch, template: "custom" } : patch;
         });
         await repaint({ meta }, { notice: "✅ Saved. Applies to the next turn." });
@@ -2417,9 +2485,12 @@ async function connectAndWire(app) {
         const saved = await saveAccessSettings(client, state, clicker, form);
         // Mode and its options live on Agent; who may use and manage the channel on Access.
         const page = ["mode", "flags"].includes(accessField) ? "agent" : normalizeSettingsTab(state.tab) === "access" ? "access" : "agent";
+        const evicted = saved.dropped
+          ? ` ${saved.saved.access === "none" ? "Locked" : "Admins only"}: ${saved.dropped} previously admitted member${saved.dropped === 1 ? "" : "s"} ${saved.dropped === 1 ? "was" : "were"} removed from the guest list.`
+          : "";
         await updateCurrent(await settingsRootView(saved.entry, saved.saved, { ...state, tab: page }, saved.userIsAdmin, {
           tab: page,
-          notice: "✅ Saved.",
+          notice: `✅ Saved.${evicted}`,
         }), { guardHash: false });
         return;
       }
@@ -2470,6 +2541,7 @@ async function connectAndWire(app) {
       const runtimeTarget = runtimeSelectTarget(actionId);
       if (runtimeTarget) {
         const { scope, field } = runtimeTarget;
+        assertRuntimeChangeAllowed(meta, userIsAdmin);
         if (field === "engine" && meta.codexAuthSource === "channel") throw new Error("This channel uses its own Codex login, so its engine is Codex.");
         const value = String(action?.selected_option?.value || SETTINGS_DEFAULT_VALUE);
         let notice;
@@ -2495,6 +2567,7 @@ async function connectAndWire(app) {
       }
 
       if (actionId === CHANNEL_SETTINGS_THREAD_RESET_ACTION_ID) {
+        assertRuntimeChangeAllowed(meta, userIsAdmin);
         await clearThreadRuntime(entry.slug, requireThread(state));
         await logEvent("thread_runtime_updated", { channel: state.channelId, slug: entry.slug, thread: state.threadTs, cleared: true, author: clicker });
         await updateCurrent(await settingsRootView(entry, meta, { ...state, tab: "agent" }, userIsAdmin, {
@@ -2891,7 +2964,15 @@ async function connectAndWire(app) {
   registerEngineSwitchChoiceActions(app, processMessageEvent);
   // Slack's native Stop button, session renames, 👍/👎 answer feedback and the ack-only URL
   // buttons in composed replies / data-table rows.
-  registerAgentInterfaceHandlers(app, { botUserId, seenEvents, authorizedControlEntry, stopRunsInChannel, setAssistantStatus });
+  registerAgentInterfaceHandlers(app, {
+    botUserId, seenEvents, authorizedControlEntry, stopRunsInChannel, setAssistantStatus,
+    onPositiveFeedback: completeThreadFromFeedback,
+    // A thread-less Stop names a code channel's one session (everything running there).
+    isCodeChannel: async (channelId) => {
+      const entry = await getChannelEntry(channelId);
+      return Boolean(entry) && isCodeChannelMeta(await getChannelMeta(entry.slug));
+    },
+  });
   // Indexed ids (`cg_model_pick_2`) are the per-choice buttons; the bare id is the retired
   // static_select, still clickable in Slack history. One pattern covers both.
   app.action(MODEL_PICKER_ACTION_PATTERN, handleModelWizard);
@@ -2954,8 +3035,14 @@ async function connectAndWire(app) {
     if (!channel || !userId) return;
     const threadTs = body?.message?.thread_ts;
     const inThread = threadTs ? { thread_ts: threadTs } : {};
+    // The card is visible to every member of the channel; the status (label + recent output) is
+    // not. Same gate as /status: admin, approved, or an explicit guest of THIS channel — and the
+    // job must belong to this channel, so a job id lifted from another conversation reads nothing.
+    const authorized = await authorizedControlEntry(channel, userId);
+    if (!authorized) return;
     const jobId = String(action?.value || "");
-    const st = getActiveBackgroundJobs?.()?.status(jobId);
+    const live = getActiveBackgroundJobs?.()?.status(jobId);
+    const st = live && live.slug === authorized.slug ? live : null;
     const fmtSpan = (ms) => (ms < 60_000 ? "under a minute" : ms < 3_600_000 ? `${Math.round(ms / 60_000)}m` : ms < 86_400_000 ? `${(ms / 3_600_000).toFixed(1)}h` : `${(ms / 86_400_000).toFixed(1)}d`);
     let text;
     if (!st) {
@@ -2963,8 +3050,7 @@ async function connectAndWire(app) {
       // keep the button useful after completion instead of a bare "not running".
       let tail = "";
       try {
-        const entry = /^[a-f0-9-]{4,40}$/i.test(jobId) ? await getChannelEntry(channel) : null;
-        if (entry) tail = readFileSync(path.join(gatewayRoot(), "logs", "bg", `${entry.slug}__${jobId}.log`), "utf8").trim().slice(-600);
+        if (/^[a-f0-9-]{4,40}$/i.test(jobId)) tail = readFileSync(path.join(gatewayRoot(), "logs", "bg", `${authorized.slug}__${jobId}.log`), "utf8").trim().slice(-600);
       } catch {
         /* no log — fall through to the generic line */
       }
@@ -3136,8 +3222,12 @@ async function connectAndWire(app) {
   app.command("/menu", handleMenuCommand);
   app.action(MENU_RESUME_ACTION_ID, handleMenuResumeAction);
 
-  // /status slash command — reports what the current channel is working on.
-  app.command("/status", async ({ command, ack, respond, client }) => {
+  // /status slash command — reports what the current channel is working on. Slack treats
+  // `/status` as one of its built-in commands and rejects it in some app manifests, so the same
+  // handler is also registered as `/status-cg`; a manifest may declare either (or both).
+  app.command("/status", handleStatusCommand);
+  app.command("/status-cg", handleStatusCommand);
+  async function handleStatusCommand({ command, ack, respond, client }) {
     await ack();
     try {
       const entry = await authorizedControlEntry(command.channel_id, command.user_id);
@@ -3148,7 +3238,7 @@ async function connectAndWire(app) {
       console.error("[slack] /status error:", e.message);
       await respond({ response_type: "ephemeral", text: "Couldn't build the status — check the gateway logs." });
     }
-  });
+  }
 
   // Per-channel environment secrets. Lists what exists (names + last 4), and lets anyone who can
   // run commands here add or replace one. No path in or out of this modal reveals a value.
@@ -3211,6 +3301,7 @@ async function connectAndWire(app) {
   // emoji (default 🤖) treats the reacted message as if the bot had been mentioned and runs it.
   app.event("reaction_added", async ({ event, client, body }) => {
     try {
+      await syncThreadCompletionReaction(client, event, { added: true }).catch(() => {});
       if (event.user === botUserId) return;
       // Same redelivery guard as the message handler (a repeat would re-run 🤖/stop/ack actions).
       const eventKey = body?.event_id || `rx:${event.event_ts}:${event.user}:${event.reaction}`;
@@ -3233,16 +3324,16 @@ async function connectAndWire(app) {
         return;
       }
 
-      // ✅ on a thread marks it "done" for the reactor — clears it from their follow-up digest
-      // until there's fresh activity. Reacting on the root or any reply resolves the whole thread.
-      if (getFollowupDoneReactions().includes(event.reaction) && event.item?.type === "message") {
+      // Core completion reactions close indexed threads through the shared gate above. Preserve
+      // legacy per-user digest dismissal for other configured reactions or unindexed threads.
+      if ((isCompletionReaction(event.reaction) || getFollowupDoneReactions().includes(event.reaction)) && event.item?.type === "message") {
         // A scheduled DM digest is an aggregate snapshot: its ✅ dismisses every source thread
         // visibly listed in that exact message. Consume it before treating the DM itself as a
         // source thread.
         if (applyDigestDoneReaction(event.user, channelId, event.item.ts)) return;
         const res = await client.reactions.get({ channel: channelId, timestamp: event.item.ts, full: true }).catch(() => null);
         const threadTs = res?.message?.thread_ts ?? event.item.ts;
-        markDone(event.user, channelId, threadTs);
+        if (!isCompletionReaction(event.reaction) || !getSlackThread(channelId, threadTs)) markDone(event.user, channelId, threadTs);
         return;
       }
 
@@ -3304,109 +3395,98 @@ async function connectAndWire(app) {
     }
   });
 
-  // Rendering the Home tab is its own function because the view is INTERACTIVE: connecting or
-  // disconnecting a Composio key from Home changes the very connection lines it renders, so the
-  // modal/button handlers re-publish through here.
-  async function publishHomeTab(client, userId) {
+  // Each Home section loads only its own data. A connection save returns to Connections;
+  // thread controls return to Activity and reminder preferences to Help & settings. Every publication resolves
+  // the clicking viewer's current role and content afresh, without shared tab-selection state.
+  const homeThreadReader = createHomeThreadReader();
+  const publishHomeTab = createHomePublisher(async (client, userId, homeView = {}) => {
     await ensureUserKnown(client, userId);
     const admin = await isAdmin(userId);
     const approved = await isApproved(userId);
     const role = admin ? "an *admin*" : approved ? "an *approved* user" : "*not yet approved* (an admin can approve you)";
-    const homeUser = (await getUsers())[userId] || {};
-
-    // Connection status distinguishes personal Composio from the shared org fallback. Only
-    // ✅/⚪/❌ is ever rendered — never a token value. A channel token may replace the org source
-    // during an actual channel run, but is not knowable from the global App Home.
-    const [cTok, tTok] = await Promise.all([getComposioToken(userId), getToolboxToken(userId)]);
-    const connLine = (label, mine, fallback, note) =>
-      mine
-        ? `✅ *${label}* — your account`
-        : fallback
-          ? `⚪ *${label}* — using the org default`
-          : `❌ *${label}* — not connected${note ? ` (${note})` : ""}`;
-    const composioMode = getComposioMode();
-    const composioLines = composioMode === "sdk"
-      ? (!hasComposioSdkEntitlement()
-          ? ["❌ *Composio SDK (Enterprise · Beta)* — an active Enterprise license is required"]
-          : getComposioSdkApiKey()
-          ? [
-              "✅ *Composio personal (`composio-user`)* — SDK (Enterprise · Beta) identity created for you at runtime",
-              "✅ *Composio agent (`composio-agent`)* — SDK (Enterprise · Beta) identity created for each channel at runtime",
-            ]
-          : [
-              "❌ *Composio personal (`composio-user`)* — SDK (Enterprise · Beta) mode is on, but its organization API key is missing",
-              "❌ *Composio agent (`composio-agent`)* — SDK (Enterprise · Beta) mode is on, but its organization API key is missing",
-            ])
-      : [
-          connLine("Composio personal (`composio-user`)", cTok, "", "connect it with the button below"),
-          getDefaultComposioToken()
-            ? "⚪ *Composio agent (`composio-agent`)* — organization default (a channel token takes precedence)"
-            : "❌ *Composio agent (`composio-agent`)* — no organization default (a channel may still provide one)",
-        ];
-    const conns = [
-      ...composioLines,
-      connLine("Toolbox", tTok, getDefaultToolboxToken(), "admin tools"),
-      "🛠 *Gateway control* — always on (schedules, channel admin, workdir)",
-    ].join("\n");
-
-    // Your skills: the personal tier of the grant union (skills only your own runs carry) plus the
-    // organization tier everyone gets. Channel grants are per conversation and not knowable here.
-    const personalSkills = Array.isArray(homeUser.skills) ? homeUser.skills : [];
-    const orgSkills = Array.isArray(getOrgAccessGrants().skills) ? getOrgAccessGrants().skills : [];
-    let favLines = personalSkills.length
-      ? personalSkills.slice(0, 8).map((s) => `• *${s}*`).join("\n") + (personalSkills.length > 8 ? `\n_+ ${personalSkills.length - 8} more_` : "")
-      : "_No personal skills yet — ask me \"add the X skill for me\" in any thread, or browse the catalog with \"list skills\"._";
-    if (orgSkills.length) favLines += `\n_Organization-wide: ${orgSkills.length} skill(s) every conversation gets._`;
-
-    // In-thread commands + the active engine / how to switch models.
-    const commands = "`/menu` · `/help` · `/status` · `/clear` · `/context` · `/mode` · `/model` · `/compact` · `/stop` · `/sudo` _(admin, typed in-thread)_ · `/update` _(admin)_";
-    const engineInfo =
-      `• Default engine: *${getEngine()}* · context window ~${Math.round(getContextWindow() / 1000)}k tokens\n` +
-      "• Switch runtime: `/model` — channel or one thread → harness (Claude/Codex) → model → effort _(channel access set in Settings)_";
-
-    const all = await listChannels();
-    const channels = all.filter((c) => !c.isDM && c.type !== "im");
-    const authorized = channels.filter((c) => admin || approved || (c.meta?.allowedUsers || []).includes(userId));
-    // Private channels appear only to their actual Slack members (see homeVisibleChannels) and
-    // the header count reflects what THIS viewer sees — not the gateway's full roster. Only
-    // HOME_CHANNEL_LIST_MAX lines are rendered, so stop probing membership one past that: the
-    // extra entry is what distinguishes an exact count from the "25+" label, and everything
-    // beyond it would be a conversations.members call whose answer is never displayed.
-    const visible = await homeVisibleChannels(client, authorized, userId, { limit: HOME_CHANNEL_LIST_MAX + 1 });
-    const moreThanShown = visible.length > HOME_CHANNEL_LIST_MAX;
-    const visibleCount = moreThanShown ? `${HOME_CHANNEL_LIST_MAX}+` : String(visible.length);
-    const mineList = visible
-      .slice(0, HOME_CHANNEL_LIST_MAX)
-      .map((c) => {
-        const eng = c.meta?.engine ? ` · ${c.meta.engine}` : "";
-        return `• *${c.name}* — ${modeLabel(c.meta || {})}${eng}`;
-      })
-      .join("\n");
-    const port = process.env.PORT || 4747;
-
-    const blocks = [
-      { type: "header", text: { type: "plain_text", text: "ChannelGate", emoji: true } },
-      { type: "section", text: { type: "mrkdwn", text: `Hi <@${userId}> — you're ${role} on this gateway.` } },
-      { type: "section", text: { type: "mrkdwn", text: "I'm Claude, running self-hosted in per-channel sandboxes. *DM me* (no mention needed) or *@mention me* in a channel. Use `/status` to see what a channel is working on, `/pending` for the threads I'm waiting on you for, or `/help` for all commands." } },
-      ...nudgeHomeBlocks({ enabled: userNudgesEnabled(homeUser) }),
-      { type: "divider" },
-      { type: "section", text: { type: "mrkdwn", text: `*Your connections* — the MCP tools you get when you run me\n${conns}` } },
-      // Personal Composio key, set from a modal — the value never becomes a Slack message. Absent
-      // in SDK mode, where the identity is minted per user at run time and there is nothing to set.
-      ...composioHomeButtons({ hasToken: Boolean(cTok), enabled: composioMode !== "sdk" }),
-      { type: "divider" },
-      { type: "section", text: { type: "mrkdwn", text: `*Your skills*\n${favLines}` } },
-      { type: "divider" },
-      { type: "section", text: { type: "mrkdwn", text: `*Commands* (type in a thread)\n${commands}` } },
-      { type: "section", text: { type: "mrkdwn", text: `*Engine & models*\n${engineInfo}` } },
-      { type: "divider" },
-      { type: "section", text: { type: "mrkdwn", text: `*Channels I work in* (${visibleCount})\n${mineList || "_None yet — add me to a channel and @mention me._"}` } },
-    ];
+    const homeUser = (await getUser(userId)) || {};
     const footer = [`ChannelGate v${GATEWAY_VERSION}`, `engine: ${getEngine()}`];
-    if (admin) footer.push(`⚙️ Admin UI: http://localhost:${port}`);
-    blocks.push({ type: "context", elements: [{ type: "mrkdwn", text: footer.join("  ·  ") }] });
-    await client.views.publish({ user_id: userId, view: { type: "home", blocks } });
-  }
+    if (admin) footer.push(`⚙️ Admin UI: http://localhost:${process.env.PORT || 4747}`);
+    let retryActivity = false;
+    const sections = {
+      activity: async () => {
+        let threads;
+        try {
+          const snapshot = await homeThreadsSnapshot(client, userId, homeView, {
+            reader: homeThreadReader,
+            discover: homeView.discoverThreads === true || !slackThreadsForUser(userId).length,
+            reconcile: homeView.forceThreads === true,
+            force: homeView.forceThreads === true,
+          });
+          retryActivity = snapshot.unavailable;
+          threads = homeThreadBlocks(snapshot);
+        }
+        catch {
+          retryActivity = true;
+          threads = [{ type: "section", text: { type: "mrkdwn", text: "*My threads*\nThreads are temporarily unavailable. Retrying automatically." } }];
+        }
+        return threads;
+      },
+      help: async () => [
+          { type: "divider" },
+          ...nudgeHomeBlocks({ enabled: userNudgesEnabled(homeUser) }),
+          { type: "divider" },
+          { type: "section", text: { type: "mrkdwn", text: "*DM me* (no mention needed) or *@mention me* in a channel. Use `/status` for current channel work, `/pending` for threads awaiting your reply, or `/help` for all commands." } },
+          { type: "section", text: { type: "mrkdwn", text: "*Commands* (type in a thread)\n`/menu` · `/help` · `/status` · `/clear` · `/context` · `/mode` · `/model` · `/compact` · `/stop` · `/sudo` _(admin)_ · `/update` _(admin)_" } },
+          { type: "section", text: { type: "mrkdwn", text: `*Engine & models*\n• Default engine: *${getEngine()}* · context window ~${Math.round(getContextWindow() / 1000)}k tokens\n• Switch runtime: \`/model\` — channel or one thread → harness → model → effort` } },
+        ],
+      connections: async () => {
+        const [cTok, tTok] = await Promise.all([getComposioToken(userId), getToolboxToken(userId)]);
+        const connLine = (label, mine, fallback, note) => mine
+          ? `✅ *${label}* — your account`
+          : fallback ? `⚪ *${label}* — using the org default`
+          : `❌ *${label}* — not connected${note ? ` (${note})` : ""}`;
+        const mode = getComposioMode();
+        const composioLines = mode === "sdk"
+          ? (!hasComposioSdkEntitlement()
+              ? ["❌ *Composio SDK (Enterprise · Beta)* — an active Enterprise license is required"]
+              : getComposioSdkApiKey()
+                ? ["✅ *Composio personal (composio-user)* — SDK (Enterprise · Beta) identity created for you at runtime", "✅ *Composio agent (composio-agent)* — SDK (Enterprise · Beta) identity created for each channel at runtime"]
+                : ["❌ *Composio SDK (Enterprise · Beta)* — its organization API key is missing"])
+          : [
+              connLine("Composio personal (composio-user)", cTok, "", "connect it with the button below"),
+              getDefaultComposioToken()
+                ? "⚪ *Composio agent (composio-agent)* — organization default (a channel token takes precedence)"
+                : "❌ *Composio agent (composio-agent)* — no organization default (a channel may still provide one)",
+            ];
+        const conns = [...composioLines, connLine("Toolbox", tTok, getDefaultToolboxToken(), "admin tools"), "🛠 *Gateway control* — always on (schedules, channel admin, workdir)"].join("\n");
+        return [
+          { type: "divider" },
+          { type: "section", text: { type: "mrkdwn", text: `*Your connections* — the MCP tools you get when you run me\n${conns}` } },
+          ...composioHomeButtons({ hasToken: Boolean(cTok), enabled: mode !== "sdk" }),
+        ];
+      },
+      skills: async () => {
+        const personalSkills = Array.isArray(homeUser.skills) ? homeUser.skills : [];
+        const orgSkills = Array.isArray(getOrgAccessGrants().skills) ? getOrgAccessGrants().skills : [];
+        let lines = personalSkills.length
+          ? personalSkills.slice(0, 8).map((name) => `• *${name}*`).join("\n") + (personalSkills.length > 8 ? `\n_+ ${personalSkills.length - 8} more_` : "")
+          : '_No personal skills yet — ask me "add the X skill for me" in any thread, or browse the catalog with "list skills"._';
+        if (orgSkills.length) lines += `\n_Organization-wide: ${orgSkills.length} skill(s) every conversation gets._`;
+        return [{ type: "divider" }, { type: "section", text: { type: "mrkdwn", text: `*Your skills*\n${lines}` } }];
+      },
+      channels: async () => {
+        const all = await listChannels();
+        const authorized = all.filter((c) => !c.isDM && c.type !== "im" &&
+          isAuthorized(c.meta || {}, userId, false, { isAdminUser: admin, isApprovedUser: approved }));
+        const visible = await homeVisibleChannels(client, authorized, userId, { limit: HOME_CHANNEL_LIST_MAX + 1 });
+        const count = visible.length > HOME_CHANNEL_LIST_MAX ? `${HOME_CHANNEL_LIST_MAX}+` : String(visible.length);
+        const lines = visible.slice(0, HOME_CHANNEL_LIST_MAX).map((c) => {
+          const engine = c.meta?.engine ? ` · ${c.meta.engine}` : "";
+          return `• *${c.name}* — ${modeLabel(c.meta || {})}${engine}`;
+        }).join("\n");
+        return [{ type: "divider" }, { type: "section", text: { type: "mrkdwn", text: `*Channels I work in* (${count})\n${lines || "_None yet — add me to a channel and @mention me._"}` } }];
+      },
+    };
+    return buildHomeTabView({ tab: homeView.tab, userId, role, sections, footer, needsActivityRetry: () => retryActivity });
+  }, { refreshKey: homeThreadsRefreshKey, refreshState: ({ forceThreads: _force, discoverThreads: _discover, ...state }) => state });
+  const stopSlack = app.stop.bind(app);
+  app.stop = async (...args) => { await publishHomeTab.stop(); return stopSlack(...args); };
 
   // App Home tab: an orientation dashboard — the viewer's access level, the channels the
   // bot manages, and a link to the admin UI. Never shows tokens or secrets.
@@ -3416,6 +3496,7 @@ async function connectAndWire(app) {
       // replaces assistant_thread_started. Seed the top-of-tab suggested prompts and stop — there's
       // no Home view to publish for the Messages tab.
       if (event.tab === "messages") {
+        publishHomeTab.pause(event.user);
         // Slack calls this field `context` on app_home_opened. An omitted/empty value means there is
         // no active split view, so record a tombstone instead of retaining stale channel metadata.
         activeAppContexts.update({
@@ -3434,17 +3515,17 @@ async function connectAndWire(app) {
     }
   });
 
-  registerComposioHomeActions(app, { publishHome: publishHomeTab });
-  registerNudgeHomeActions(app, { publishHome: publishHomeTab });
+  registerHomeActions(app, { publishHome: publishHomeTab });
 
   // Removing a ✅ re-opens that thread in the reactor's follow-up digest (the inverse of marking
   // it done). Other removed reactions are acknowledged as no-ops.
   app.event("reaction_removed", async ({ event, client }) => {
     try {
+      await syncThreadCompletionReaction(client, event).catch(() => {});
       if (event.user === botUserId) return;
       const channelId = event.item?.channel;
       if (!channelId || event.item?.type !== "message") return;
-      if (!getFollowupDoneReactions().includes(event.reaction)) return;
+      if (!isCompletionReaction(event.reaction) && !getFollowupDoneReactions().includes(event.reaction)) return;
       // Reopen only done markers still owned by this digest reaction; a newer direct source-thread
       // dismissal survives. Unknown messages fall through to the existing direct-thread behavior.
       if (removeDigestDoneReaction(event.user, channelId, event.item.ts)) return;
@@ -3457,8 +3538,12 @@ async function connectAndWire(app) {
   });
   app.event("member_left_channel", async ({ event }) => {
     try {
-      if (await handleMemberLeftChannel(event)) {
-        console.log(`[slack] removed departed member ${event.user} from ${event.channel} guest access`);
+      if (await handleMemberLeftChannel(event, { botUserId, getChannelEntry, patchChannelMeta, ensureChannelFolder })) {
+        if (event.user === botUserId) {
+          const entry = await getChannelEntry(event.channel);
+          if (entry) abortRunsInChannel(event.channel, entry.slug, event.user);
+        }
+        console.log(`[slack] processed departure of ${event.user} from ${event.channel}`);
       }
     } catch (e) {
       console.error("[slack] member_left_channel error:", e.message);
@@ -3520,22 +3605,24 @@ async function connectAndWire(app) {
   app.event("member_joined_channel", async ({ event, client }) => {
     try {
       if (event.user === botUserId) {
-        // The bot joining is the canonical "join" moment — capture the org default access policy.
-        const info = await resolveConversation(client, { channel: event.channel, channel_type: event.channel_type });
-        const entry = await upsertChannelEntry(event.channel, info);
-        // One transactional patch, not read-modify-write: this branch fires on every reconnect/
-        // rejoin and used to race concurrent admin edits, clobbering them with a stale copy.
-        // Join-time defaults apply ONLY when the channel has no meta yet.
-        const meta = await patchChannelMeta(entry.slug, (current) => {
-          if (current) return {};
-          const fresh = applyChannelTemplate(defaultChannelMeta({ channelId: event.channel, ...info }));
-          if (!fresh.isDM) fresh.access = getDefaultChannelAccess();
-          return fresh;
+        const joined = await handleBotJoinedChannel(event, {
+          patchChannelMeta,
+          initialize: async () => {
+            // A delayed/retried join event is historical evidence. Require current membership
+            // before restoring configuration, including after snapshot recovery of a missed leave.
+            if (!(await readBotMemberships(client)).has(event.channel)) return null;
+            const info = await resolveConversation(client, { channel: event.channel, channel_type: event.channel_type });
+            const entry = await upsertChannelEntry(event.channel, info);
+            const initialMeta = applyChannelTemplate(defaultChannelMeta({ channelId: event.channel, ...info }));
+            if (!initialMeta.isDM) initialMeta.access = getDefaultChannelAccess();
+            return { entry, initialMeta };
+          },
+          provision: async (entry, meta) => {
+            await ensureChannelFolder(entry.slug, meta);
+            await syncAllowedFromMembers(client, event.channel, entry.slug, meta);
+          },
         });
-        await ensureChannelFolder(entry.slug, meta);
-        await syncAllowedFromMembers(client, event.channel, entry.slug, meta);
-        // If a tag pulled us in (Slack's invite-on-mention), answer that pending message.
-        await answerPendingJoinMention(client, event.channel);
+        if (joined) await answerPendingJoinMention(client, event.channel);
       } else {
         const entry = await getChannelEntry(event.channel);
         if (!entry) return;

@@ -32,6 +32,7 @@ for arg in "$@"; do
     *CLAUDE_STUB_LIMIT_ANSWER*) limit_answer=yes ;;
     *CLAUDE_STUB_MEMORY_SAVE*) memory_save=yes ;;
     *CLAUDE_STUB_ANSWERLESS*) answerless=yes ;;
+    *CLAUDE_STUB_WAIT_FOR_GO*) wait_go=yes ;;
   esac
   if [ "$prev" = "--mcp-config" ]; then mcp_path="$arg"; fi
   if [ "$prev" = "--session-id" ]; then session_id="$arg"; fi
@@ -44,6 +45,13 @@ done
 case "$*" in *CLAUDE_STUB_STREAM_TEXT*) stream_text=yes ;; esac
 if [ "$cancel" = "yes" ]; then
   exec sleep 30
+fi
+# A turn that stays "busy" until the test says go (a `.cg-stub-go` file in the run cwd): lets an
+# E2E act on the LIVE turn — the way the gateway's own tools do — before the stub answers.
+if [ "${wait_go:-no}" = "yes" ]; then
+  n=0
+  while [ ! -f .cg-stub-go ] && [ "$n" -lt 200 ]; do sleep 0.05; n=$((n + 1)); done
+  rm -f .cg-stub-go
 fi
 # Keep a copy of the per-run MCP config: it carries the signed gateway capability, which is the
 # only way an E2E can observe WHEN that capability was minted (the real file is deleted as soon as

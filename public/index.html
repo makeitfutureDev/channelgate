@@ -115,7 +115,7 @@
             </div>
           </div>
           <details class="card" id="user-auto-approval">
-            <summary>Auto-approval by company email domain</summary>
+            <summary>Auto-approval by company email domain · Enterprise</summary>
             <p class="hint">Approve members automatically when their platform-provided email matches an exact domain. This grants Approved access, never Admin. Manual revocations prevent automatic reapproval. Removing a domain does not revoke existing approvals.</p>
             <form id="user-auto-approval-form">
               <label><input id="user-auto-approval-enabled" type="checkbox" /> Enable auto-approval</label>
@@ -140,7 +140,7 @@
           </div>
         </section>
 
-        <!-- Skills: the local skill catalog, its sources, the review queue, templates and usage -->
+        <!-- Skills: the gateway skill catalog, its sources, the review queue, templates and usage -->
         <section id="view-skills" class="view full">
           <div class="view-head dash-head">
             <div>
@@ -247,7 +247,12 @@
 
             <div class="setcard">
               <h4>Authentication</h4>
-              <p class="desc">Send the token you generated in Settings as either an <code>X-API-Key</code> header or an <code>Authorization: Bearer</code> header. The token is scoped to <code>/api/runs</code> only — it is <strong>not</strong> a general admin credential and can't read settings, tokens, or the filesystem browser. A logged-in admin session cookie also works from the browser.</p>
+              <p class="desc"><strong>Channel tokens</strong> are the way to authenticate: anyone working in a conversation asks the agent there to <code>create_api_token</code> (or uses <code>list_api_tokens</code> / <code>revoke_api_token</code>). Such a token belongs to that one conversation and to the person who created it: runs it starts are posted there, act with that person's current role and authorization (an admin's token can do what an admin can; a member's token is a member), and stop working the moment the token is revoked or the person loses access. Send it as <code>X-API-Key</code> or <code>Authorization: Bearer</code>. It is scoped to <code>/api/runs</code> and to its conversation only; <code>channel</code> may be omitted or must name that conversation, and <code>author</code> is ignored.</p>
+              <p class="desc"><strong>Deprecated — organization-wide key.</strong> The single key under Settings → HTTP run API still works for existing automations, acts as a fixed admin principal in any conversation, and logs a deprecation warning when used. Replace it with channel tokens and clear it.</p>
+              <table class="utable apidoc-table" id="apitok-table">
+                <thead><tr><th>Token</th><th>Conversation</th><th>Created by</th><th>Created</th><th>Last used</th><th></th></tr></thead>
+                <tbody id="apitok-rows"><tr><td colspan="6" class="hint">Loading…</td></tr></tbody>
+              </table>
             </div>
 
             <div class="setcard">
@@ -436,6 +441,7 @@
                 <a href="#set-integrations" data-sec="integrations">Integrations</a>
                 <a href="#set-license" data-sec="license">License</a>
                 <a href="#set-access" data-sec="access">Access &amp; security</a>
+                <a href="#set-admin-access" data-sec="admin-access">Admin access</a>
                 <a href="#set-system" class="dz" data-sec="system">System</a>
               </nav>
 
@@ -554,6 +560,15 @@
                     <span>Public URL (the daemon's externally-reachable base URL)</span>
                     <input id="set-public-url" type="text" placeholder="https://gateway.makeitfuture.com" />
                   </label>
+                  <label class="field">
+                    <span>Behind a reverse proxy — which header names the real client (login and approval-link backoff)</span>
+                    <select id="set-trust-proxy">
+                      <option value="">None — the connecting address is the client</option>
+                      <option value="cloudflare">Cloudflare tunnel (CF-Connecting-IP)</option>
+                      <option value="xff">nginx / caddy / other (last X-Forwarded-For hop)</option>
+                    </select>
+                  </label>
+                  <p class="desc">Without this, every remote login shares one backoff bucket behind the proxy; with it, each real client gets its own. Only declare a proxy you control: it must set the header on every request.</p>
                 </div>
                 <div class="setcard">
                   <h4>Approval links</h4>
@@ -602,8 +617,18 @@
                     <select id="set-default-claude-model"></select>
                   </label>
                   <label class="field">
+                    <span>Default Claude effort</span>
+                    <select id="set-default-claude-effort"></select>
+                    <em class="state">Used when no thread or conversation effort is set. Blank uses the CLI default.</em>
+                  </label>
+                  <label class="field">
                     <span>Default Codex model</span>
                     <select id="set-default-codex-model"></select>
+                  </label>
+                  <label class="field">
+                    <span>Default Codex effort</span>
+                    <select id="set-default-codex-effort"></select>
+                    <em class="state">Used when no thread or conversation effort is set. Blank uses the CLI default.</em>
                   </label>
                   <div class="ch-codex-login" id="gateway-codex-login">
                     <strong>Default gateway Codex login</strong>
@@ -676,6 +701,11 @@
                       <select data-role="default-model"></select>
                       <em class="state" data-role="catalog-note"></em>
                     </label>
+                    <label class="field">
+                      <span>Default effort</span>
+                      <select data-role="default-effort"></select>
+                      <em class="state">Used when no thread or conversation effort is set. Blank uses the CLI default.</em>
+                    </label>
                   </div>
                 </template>
                 <div class="setcard">
@@ -706,8 +736,10 @@
                   <h4>Agent instructions</h4>
                   <label class="toggle"><input type="checkbox" id="set-agentsfile" /> Write <code>CLAUDE.md</code> + an <code>AGENTS.md</code> symlink in each channel folder (read by both Claude and Codex — edit <code>CLAUDE.md</code> directly)</label>
                   <label class="field">
-                    <span>Instructions (CLAUDE.md content, applied to all channels)</span>
-                    <textarea id="set-agents-instructions" rows="4" placeholder="e.g. You are Acme's assistant. Be concise and cite sources…"></textarea>
+                    <span>Organization instructions · Enterprise (applied to all channels)</span>
+                    <textarea id="set-agents-instructions" readonly rows="4" placeholder="e.g. You are Acme's assistant. Be concise and cite sources…"></textarea>
+                    <small id="organization-instructions-entitlement"></small>
+                    <button type="button" id="clear-organization-instructions" class="ghost">Clear organization instructions</button>
                   </label>
                   <label class="toggle"><input type="checkbox" id="set-agentmemory" /> <strong>Folder-scoped memory</strong> — each channel gets uncapped Markdown memory, searched on demand through a derived local FTS index. Fresh sessions receive only a compact catalog; the memory body stays in the channel folder. Per-channel override available.</label>
                   <label class="field">
@@ -769,7 +801,7 @@
                   <label class="toggle"><input type="checkbox" id="set-public-file-links-enabled" /> <strong>Enable temporary public file links</strong> — off refuses every mint and every outstanding link.</label>
                 </div>
                 <div class="setcard">
-                  <h4>Google Drive sync</h4>
+                  <h4>Google Drive sync · Enterprise</h4>
                   <p class="desc">Two-way sync (scheduled, via <code>rclone bisync</code>) between a per-channel Google Drive folder and that channel's whole working folder — except agent instructions and skills (<code>CLAUDE.md</code>, <code>AGENTS.md</code>, <code>.claude/</code>, …), channel memory, secrets (<code>.env</code>, keys), <code>.git</code> and dependency trees, plus anything listed in the folder's <code>.driveignore</code>. Symlinks are never followed, and rclone runs in a throwaway container that sees only the channel folder. Auth is a Workspace <strong>service account</strong> — drop its JSON key file on this host and point to it below. Set a channel's folder link under Conversations → the channel → Google Drive sync folder. rclone must be installed on this host (<code>apt install rclone</code>, or the official installer from rclone.org).</p>
                   <label class="toggle"><input type="checkbox" id="set-drivesync-enabled" /> <strong>Enable scheduled Drive sync</strong> — off keeps the whole feature dormant even if channels have a folder link set.</label>
                   <label class="field">
@@ -819,7 +851,7 @@
                   <p class="setsec-desc">The capabilities new channels and DMs start from.</p>
                 </header>
                 <div class="setcard" id="skill-templates-card">
-                  <h4>Skill templates <em class="state">· Development, Sales, Marketing, Management, …</em></h4>
+                  <h4>Skill templates · Enterprise <em class="state">· Development, Sales, Marketing, Management, …</em></h4>
                   <p class="desc">A named, explicit set of skills from the catalog. Assign one to a conversation under Conversations → Tools or with <code>set_channel_skill_template</code>; edits reach every conversation that follows it, and channel-specific skills come on top.</p>
                   <div id="skill-templates-editor">Loading…</div>
                 </div>
@@ -847,7 +879,7 @@
                   <p class="setsec-desc">Composio and Toolbox endpoints plus the org-default tokens. Skills come from the gateway's own catalog (Skills view).</p>
                 </header>
                 <div class="setcard" id="org-secrets-card">
-                  <h4>Organization variables <em class="state secret-state"></em></h4>
+                  <h4>Organization variables · Enterprise <em class="state secret-state"></em></h4>
                   <p class="desc">Environment variables passed to <strong>every</strong> conversation's runs &mdash; one credential the whole deployment shares, such as a <code>GH_TOKEN</code> every channel can push with. A conversation's own secret of the same name overrides it there, and a person's own fills names neither defines. Write-only: a stored value is never shown again, here or in Slack. To replace one, set it again.</p>
                   <div id="org-secrets-editor"></div>
                 </div>
@@ -909,7 +941,7 @@
                 </header>
                 <div class="setcard">
                   <h4>License <em class="state" id="license-state-chip"></em></h4>
-                  <p class="desc">Without a key this deployment serves <strong>one conversation</strong> per UTC month. A Registered (free) key supports up to 20 channels and 20 users; an Enterprise License removes these default caps and the message limit. See <code>docs/LICENSE-KEYS.md</code>.</p>
+                  <p class="desc">Without a key this deployment serves <strong>one active channel</strong> per UTC month. A Registered (free) key supports 100 active conversation threads <strong>per channel</strong> per UTC month, up to 10 channels and 10 users, and 30 days of cost history; an Enterprise License removes these default caps and the message limit. See <code>docs/LICENSE-KEYS.md</code>.</p>
                   <div id="license-banner" class="license-banner" hidden></div>
                   <dl class="license-facts" id="license-facts"></dl>
                   <label class="field">
@@ -980,7 +1012,7 @@
                 </div>
                 <div class="setcard">
                   <h4>Model shortcuts</h4>
-                  <p class="desc">Mention the bot, then type a colon and a name after Slack's inserted space, for example <code>@agent :astra review this</code>. The selected engine and model are pinned to that thread. Use the same form without a task to switch an existing thread. Names apply gateway-wide; channel runtime permissions still apply.</p>
+                  <p class="desc">Mention the bot, then type a colon and a name after Slack's inserted space, for example <code>@agent :astra review this</code>. The selected engine and model are pinned to that thread. Use the same form without a task to switch an existing thread. Names apply gateway-wide; channel runtime permissions still apply. New installations include Astra, Sol, Terra, Fable, Opus and <code>:sonet</code> for Sonnet. Until this list is customized, targets follow the newest stable version in each family from the supported model catalog. Saving an edited list keeps those exact choices.</p>
                   <div id="model-shortcuts-editor"></div>
                   <button type="button" class="clear-tok" id="add-model-shortcut" disabled>Add shortcut</button>
                 </div>
@@ -1021,7 +1053,7 @@
                   </label>
                   <label class="toggle"><input type="checkbox" id="set-container-full-access-home" /> <strong>Admin channels can access the host home.</strong> Gives current organization admins in Admin channels read-write access to the gateway user’s home directory: other channel folders and memory, repositories, gateway logs, metadata, and credential stores. Other members keep Worker permissions in a separate project container with isolated HOME, temporary files, artifacts and engine histories. This does not grant host root access. Off keeps Admin channels confined to their own channel folder. Changing it reconciles the admin containers at their next turn.</label>
                   <label class="toggle"><input type="checkbox" id="set-container-egress-bridge" /> <strong>Legacy open network (no egress proxy).</strong> Off (the default): every channel container runs with no network of its own and reaches the internet only through the gateway's egress proxy, which enforces each channel's Allow network switch, blocks private and metadata addresses, and swaps placeholder credentials for real secrets only on their declared hosts. On: containers use the open bridge network and receive raw secret values, as before this release. Changing it recreates containers at their next turn.</label>
-                  <label class="toggle"><input type="checkbox" id="set-container-egress-strict" /> <strong>Withhold readable variables.</strong> On (the default for new installs): a secret with no egress rule — no built-in rule and no “Used on hosts” — is withheld from proxy-mode containers, and the run is told its name was withheld. To give it to containers, add the hosts it is used on (the secret's “Used on hosts” field, or <code>hosts</code> with <code>set_secret</code>): the container then gets a placeholder the proxy swaps on those hosts only. Off: an unruled secret is injected raw and listed as unprotected.</label>
+                  <label class="toggle"><input type="checkbox" id="set-container-egress-strict" /> <strong>Withhold automatically readable variables.</strong> On (the default for new installs): variables without a proxy rule are withheld from containers unless explicitly made readable. For an HTTPS token, set its allowed servers so programs receive a protected stand-in. If a CLI or another program needs the real value, choose Make readable for that variable with the required confirmation; the next run receives its raw value even with this switch on. Off: variables without a proxy rule are injected raw and listed as unprotected.</label>
                   <label class="field">
                     <span>Claude token for container runs <em class="state" id="container-token-state"></em></span>
                     <input id="set-container-claude-token" type="password" placeholder="leave blank to keep current" autocomplete="new-password" />
@@ -1038,22 +1070,23 @@
                 </div>
                 </section>
 
+              <section class="setsec" id="set-admin-access" data-sec="admin-access" aria-labelledby="set-admin-access-h">
+                <header class="setsec-head">
+                  <h3 id="set-admin-access-h">Admin access</h3>
+                  <p class="setsec-desc">Your passkeys and the gateway admin user they belong to. Invite other admins from Users.</p>
+                </header>
+                <div class="setcard admin-access-card" id="admin-access"></div>
+              </section>
+
               <!-- ── System ──────────────────────────────────────────────── -->
               <section class="setsec" id="set-system" data-sec="system" aria-labelledby="set-system-h">
                 <header class="setsec-head">
                   <h3 id="set-system-h">System</h3>
-                  <p class="setsec-desc">Admin UI password, the HTTP run API token, Slack connection controls and the danger zone.</p>
+                  <p class="setsec-desc">The HTTP run API token, Slack connection controls and the danger zone.</p>
                 </header>
                 <div class="setcard">
-                  <h4>Admin UI</h4>
-                  <label class="field">
-                    <span>Admin password (sign-in to this UI) <em class="state" id="adminpw-state"></em></span>
-                    <input id="set-adminpw" type="password" placeholder="leave blank to keep current" autocomplete="new-password" />
-                  </label>
-                </div>
-                <div class="setcard">
-                  <h4>HTTP run API</h4>
-                  <p class="desc">A bearer token that lets automations (Make.com, cron, …) trigger runs via <code>POST /api/runs</code> without an admin login. Send it as an <code>X-API-Key</code> header or <code>Authorization: Bearer</code> — it's scoped to the run API only, not the rest of the admin API. <strong>Generate</strong> one, <strong>Save</strong>, then <strong>Copy</strong> it into your automation.</p>
+                  <h4>HTTP run API — deprecated organization-wide key</h4>
+                  <p class="desc"><strong>Deprecated:</strong> prefer channel tokens (ask the agent in a conversation for <code>create_api_token</code>; listed on the API page). This single key acts as a fixed admin in every conversation. A bearer token that lets automations (Make.com, cron, …) trigger runs via <code>POST /api/runs</code> without an admin login. Send it as an <code>X-API-Key</code> header or <code>Authorization: Bearer</code> — it's scoped to the run API only, not the rest of the admin API. <strong>Generate</strong> one, <strong>Save</strong>, then <strong>Copy</strong> it into your automation.</p>
                   <label class="field">
                     <span>API token <em class="state" id="apikey-state"></em></span>
                     <input id="set-apikey" type="password" placeholder="leave blank to keep current" autocomplete="off" />
@@ -1076,10 +1109,6 @@
                     <span class="t">Reset every channel's access to default<small>Resets who-can-use (→ default) and who-can-manage (→ org admins only) on every channel, and clears custom guest &amp; manager lists. Profiles, skills, connectors and tokens are left untouched. Can't be undone.</small></span>
                     <button type="button" id="reset-access" class="dz-btn">Reset all…</button>
                     <span class="saved" id="reset-access-saved"></span>
-                  </div>
-                  <div class="dz-row">
-                    <span class="t">Remove admin password<small>The UI becomes open — anyone who can reach it can administer.</small></span>
-                    <button type="button" id="remove-password" class="dz-btn">Remove…</button>
                   </div>
                   <div class="dz-row">
                     <span class="t">Restart daemon<small>Choose to wait for ongoing work or force a restart and interrupt active turns and jobs.</small></span>
@@ -1339,7 +1368,7 @@
           </div>
           <div class="setcard custom-mcp-card">
             <h4>Custom MCP servers <em class="state cmcp-state"></em></h4>
-            <p class="desc">Remote MCP servers every run in this conversation receives, each as <code>custom-&lt;name&gt;</code>, authenticated with a Bearer token (servers that need an OAuth sign-in go through Composio). HTTPS only, public addresses only. The gateway connects on the agent's behalf, so the token never enters the conversation's container. Saved and removed immediately; write-only — a stored token is never shown again.</p>
+            <p class="desc">Remote MCP servers every run in this conversation receives, each as <code>custom-&lt;name&gt;</code>, authenticated with a Bearer token, a Composio consumer key, or custom headers and query parameters. HTTPS only, public addresses only. The gateway connects on the agent's behalf, so credentials never enter the conversation's container. Saved and removed immediately; write-only — stored credential values are never shown again.</p>
             <!-- Built by public/admin-custom-mcps.js, shared with the user drawer. -->
             <div class="ch-custom-mcps"></div>
           </div>
@@ -1374,7 +1403,7 @@
         <div class="subpane" data-pane="skills">
           <div class="col tools-col">
             <label class="field">
-              <span>Skill template <em class="state">· included skills follow the template; additional skills stay with this conversation</em></span>
+              <span>Skill template · Enterprise <em class="state">· included skills follow the template; additional skills stay with this conversation</em></span>
               <select class="ch-skill-template"><option value="">none</option></select>
               <em class="state ch-skill-template-state"></em>
             </label>
@@ -1386,7 +1415,7 @@
         <div class="subpane" data-pane="runtime">
           <div class="ch-auth-chooser">
             <label class="field">
-              <span>Which Codex login should this channel use?</span>
+              <span>Which Codex login should this channel use? · Dedicated login requires Enterprise</span>
               <select class="ch-codex-auth-source">
                 <option value="gateway">Default gateway login (shared)</option>
                 <option value="channel">This channel's own login</option>
@@ -1420,6 +1449,11 @@
             <div class="ch-harness-options checks"></div>
             <p class="hint ch-harness-help">Loading license…</p>
           </fieldset>
+          <label class="field">
+            <span>Monthly spending limit (USD) · Enterprise</span>
+            <input type="number" class="ch-monthly-spending-limit" min="0.01" step="any" placeholder="Unlimited" /><em class="state ch-budget-status" role="status"></em>
+            <em class="state">Recorded gateway usage per UTC month. Blank clears the limit. In-flight runs may exceed it; unpriced usage blocks new runs while a limit is configured. External service charges are excluded.</em>
+          </label>
           <div class="grid grid-2">
             <label class="field ch-engine-field">
               <span>Engine (which CLI drives this channel)</span>
@@ -1444,6 +1478,11 @@
               </select>
             </label>
           </div>
+          <label class="togglerow">
+            <input type="checkbox" class="ch-skillswap" />
+            <span class="switch"></span>
+            <span class="t"><b>Allow skill engine and model swapping · Enterprise</b><small>A skill that declares a preferred model (its SKILL.md <code>model:</code> field) switches the turn to it when the skill is used: the same session continues on that model, and a skill preferring the other engine is delegated to a background agent there. A person's /model pin always wins.</small></span>
+          </label>
           <label class="field">
             <span>Working folder (blank = default gateway folder)</span>
             <div class="row">
@@ -1529,6 +1568,8 @@
           <label class="toggle inline"><input type="checkbox" class="ud-nudges" /> Quiet-thread reminders</label>
         </div>
 
+        <div class="ud-row ud-dashboard-access"></div>
+
         <div class="ud-row ud-grants"></div>
 
         <div class="ud-row">
@@ -1548,7 +1589,7 @@
 
         <div class="ud-row ud-custom-mcps-row">
           <label class="fldlab">Personal MCP servers<em class="state cmcp-state"></em></label>
-          <p class="desc">Remote MCP servers injected as <code>my-&lt;name&gt;</code> only into runs <strong>this person</strong> authors, in every conversation they talk in. Bearer token only (OAuth servers go through Composio); HTTPS, public addresses only. Saved and removed immediately, separately from the Save button below. Write-only: a stored token is never shown again.</p>
+          <p class="desc">Remote MCP servers injected as <code>my-&lt;name&gt;</code> only into runs <strong>this person</strong> authors, in every conversation they talk in. Bearer token or Composio consumer key; HTTPS, public addresses only. Saved and removed immediately, separately from the Save button below. Write-only: a stored token is never shown again.</p>
           <div class="ud-custom-mcps"></div>
         </div>
 
@@ -1571,6 +1612,7 @@
       </div>
     </template>
 
+    <script src="/passkeys.js?v={{ASSET_V}}"></script>
     <script type="module" src="/app.js?v={{ASSET_V}}"></script>
   </body>
 </html>

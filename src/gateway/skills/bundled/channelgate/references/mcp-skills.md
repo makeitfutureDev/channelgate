@@ -44,7 +44,7 @@ See [folder and headless configuration](folder-headless.md) for the low-level po
 ## Local governed skill catalog
 
 ChannelGate's SQLite catalog stores exact, content-hashed skill revisions and bundled resources.
-Skills may be bundled, locally authored, imported from reviewed host folders, synchronized from Git
+Skills may be bundled, gateway-owned, imported from reviewed host folders, synchronized from Git
 sources, or synchronized from a peer gateway. Review mode stages source changes; auto mode
 activates them. Excluding a skill is sticky across future syncs; deleting/tombstoning and restoring
 retain revision history.
@@ -60,6 +60,12 @@ Development, Sales, Marketing, and Management templates are seeded and remain li
 a template updates following conversations without removing their additions.
 Resolution reports missing/review-pending skills, cycles, compatibility, and estimated always-on
 description context.
+
+## Where agents must save skills
+
+Create and grant skills through the ChannelGate catalog using `create_skill` and the gateway grant tools. Do not install active skills by writing directly into `.claude/skills`, `.agents/skills`, or engine HOME skill folders: gateway reconciliation replaces managed copies and archives unmanaged workspace entries. An on-disk export is only an export, not a durable active channel skill. This rule overrides a generic skill creator's local-folder default.
+
+Repository-synced skills can be used read-only without a write token. To create or modify a skill in an external source repository, first verify that an available token or authenticated connection has write access to that exact repository and tracked branch. A token name or successful read does not prove write access. Only then edit, commit, push and sync the source; verify the effective revision. Without write access, treat the source as read-only and create any additions as a catalog companion skill. Do not add an external repository as the writable home for a new skill unless write access is established. Never request or paste a token in chat; use the gateway secret/connection flow. Do not bypass this by editing materialized files or pinning a catalog override.
 
 ## Materialization and discovery
 

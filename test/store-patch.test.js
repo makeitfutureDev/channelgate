@@ -4,14 +4,85 @@
 // opens the scratch DB, never the real ~/.claude-gateway one.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import fs, { readFileSync, mkdirSync } from "node:fs";
+import { syncBuiltinESMExports } from "node:module";
 import path from "node:path";
-import { ensureTestEnv } from "./helpers.js";
+import { ensureTestEnv, tempDir } from "./helpers.js";
 
 const dir = ensureTestEnv();
 
-const { saveChannelMeta, getChannelMeta, patchChannelMeta, defaultChannelMeta, getUser, setUser } = await import("../src/config/store.js");
+const { saveChannelMeta, getChannelMeta, patchChannelMeta, defaultChannelMeta, getUser, setUser, listChannels, upsertChannelEntry } = await import("../src/config/store.js");
+const { getDb } = await import("../src/db/index.js");
 const { getProgressView, saveSettings, settingsForApi, getChannelTemplate, applyChannelTemplate, getDmTemplates } = await import("../src/config/settings.js");
+
+test("a shared owner policy update bounds directory work while snapshotting every follower", async (t) => {
+  const root = tempDir("cg-follower-snapshot-scale-");
+  const workDir = path.join(root, "shared-project");
+  mkdirSync(workDir);
+  const previousRoot = process.env.CG_FS_ROOT;
+  process.env.CG_FS_ROOT = root;
+  const db = getDb();
+  const count = 128;
+  for (let n = 0; n < count; n++) {
+    db.prepare("INSERT INTO channel_meta(slug, data) VALUES(?, ?)").run(`snapshot-scale-${n}`, JSON.stringify({
+      channelId: `C_SNAPSHOT_SCALE_${n}`, workDir, access: "approved", allowedUsers: ["U_BEFORE"], model: `local-${n}`,
+    }));
+  }
+  const originalRealpath = fs.realpathSync;
+  let resolutions = 0;
+  t.mock.method(fs, "realpathSync", function (candidate, ...args) {
+    if (path.resolve(String(candidate)) === workDir) resolutions++;
+    return Reflect.apply(originalRealpath, this, [candidate, ...args]);
+  });
+  syncBuiltinESMExports();
+  try {
+    await patchChannelMeta("snapshot-scale-0", { access: "none", allowedUsers: [] });
+    t.diagnostic(`${resolutions} directory resolutions for a ${count}-conversation owner update`);
+    assert.ok(resolutions <= 20 * count, `${resolutions} directory resolutions exceed the linear write budget ${20 * count}`);
+    const follower = await getChannelMeta(`snapshot-scale-${count - 1}`);
+    assert.equal(follower.workspaceLink.slug, "snapshot-scale-0");
+    assert.equal(follower.access, "none");
+    assert.deepEqual(follower.allowedUsers, []);
+    assert.equal(follower.model, `local-${count - 1}`);
+    const raw = JSON.parse(db.prepare("SELECT data FROM channel_meta WHERE slug = ?").get(`snapshot-scale-${count - 1}`).data);
+    assert.equal(raw.access, "none");
+    assert.deepEqual(raw.allowedUsers, []);
+  } finally {
+    t.mock.restoreAll();
+    syncBuiltinESMExports();
+    db.prepare("DELETE FROM channel_meta WHERE slug LIKE ?").run("snapshot-scale-%");
+    if (previousRoot === undefined) delete process.env.CG_FS_ROOT;
+    else process.env.CG_FS_ROOT = previousRoot;
+  }
+});
+
+test("channel listing reads metadata once, preserves missing rows and observes later writes", async (t) => {
+  const entries = [];
+  for (let n = 0; n < 8; n++) {
+    const channelId = `C_LIST_SNAPSHOT_${n}`;
+    const entry = await upsertChannelEntry(channelId, { name: `list-snapshot-${n}`, type: "channel", platform: "slack" });
+    entries.push(entry);
+    if (n !== 7) await saveChannelMeta(entry.slug, { channelId, allowedUsers: ["U_BEFORE"], access: "approved" });
+  }
+  const db = getDb();
+  const prepare = db.prepare;
+  let metadataReads = 0;
+  t.mock.method(db, "prepare", function (sql, ...args) {
+    if (/\bSELECT\b.*\bFROM channel_meta\b/i.test(sql)) metadataReads++;
+    return Reflect.apply(prepare, this, [sql, ...args]);
+  });
+  const first = await listChannels();
+  assert.equal(metadataReads, 1, "a listing takes one snapshot, not one full table scan per channel");
+  assert.equal(first.find((row) => row.slug === entries[7].slug).meta, null);
+  await patchChannelMeta(entries[0].slug, { allowedUsers: [], access: "none" });
+  metadataReads = 0;
+  const second = await listChannels();
+  assert.equal(metadataReads, 1);
+  const changed = second.find((row) => row.slug === entries[0].slug).meta;
+  assert.deepEqual(changed.allowedUsers, []);
+  assert.equal(changed.access, "none");
+  assert.deepEqual(first.find((row) => row.slug === entries[0].slug).meta.allowedUsers, ["U_BEFORE"]);
+});
 
 test("patchChannelMeta merges only the supplied keys", async () => {
   await saveChannelMeta("chan-a", { adminMode: false, allowBash: false, skills: ["a"] });

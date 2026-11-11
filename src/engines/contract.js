@@ -1,7 +1,7 @@
 import { spawn } from "node:child_process";
 import { processFailureMessage } from "../util/process-outcome.js";
 
-export const RUN_ORIGINS = Object.freeze(["slack_foreground", "googlechat_foreground", "msteams_foreground", "api_foreground", "ssh_session", "schedule", "background_agent", "continuation", "recovery", "diagnosis", "memory_review"]);
+export const RUN_ORIGINS = Object.freeze(["slack_foreground", "googlechat_foreground", "msteams_foreground", "api_foreground", "ssh_session", "schedule", "background_agent", "agent_message", "continuation", "recovery", "diagnosis", "memory_review"]);
 export const PRINCIPAL_KINDS = Object.freeze(["user", "daemon"]);
 
 // Which principal kind each origin implies for a TRUSTED author. Explicit per-origin — the old
@@ -22,6 +22,9 @@ export const PRINCIPAL_KIND_BY_ORIGIN = Object.freeze({
   ssh_session: "user",
   schedule: "daemon",
   background_agent: "daemon",
+  // A message another channel's agent sent here (gateway/agent-mail.js), delivered by the daemon
+  // and answered as that agent's own fixed principal — no person, no rank.
+  agent_message: "daemon",
   continuation: "daemon",
   recovery: "daemon",
   memory_review: "daemon",
@@ -49,7 +52,7 @@ export function validateRunContext(context) {
 }
 
 const REQUIRED_METHODS = ["compileConfinement", "run", "interrupt", "discoverMcps", "health"];
-const REQUIRED_MANIFEST = ["id", "label", "cli", "defaultModelKey", "mcpMetaKey", "instructionFile", "skillsDir", "mcpTransport", "contextWindow"];
+const REQUIRED_MANIFEST = ["id", "label", "cli", "defaultModelKey", "defaultEffortKey", "mcpMetaKey", "instructionFile", "skillsDir", "mcpTransport", "contextWindow"];
 
 export function validateEngineAdapter(adapter) {
   if (!adapter || typeof adapter !== "object") throw new TypeError("EngineAdapter must be an object");

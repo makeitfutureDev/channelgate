@@ -76,7 +76,7 @@ Example arguments:
 
 Returns JSON with `summary` and newest-first `runs`, or a single run for `run_id`. For older pages, use the last returned run's ID as `before`. A missing or foreign `run_id` returns an error; an unknown cursor returns an empty list.
 
-History retains completed runs for 90 days, without historical backfill. It includes scheduling delay, execution and delivery status, engine/model, duration, recorded tokens/cost, a bounded summary and connection outcomes. `engineStatus` describes engine completion; `taskStatus` and `outcomeSource` distinguish agent-reported results from gateway facts. A completed engine is not proof that the external task succeeded. Missing or invalid task reports remain `unreported`.
+History retains completed runs for 90 days, without historical backfill. Free structured costs cover only the last 30 days; older costs are hidden, while operational records remain. `summary.costHistoryDays` states the cost window separately from `retentionDays`. It includes scheduling delay, execution and delivery status, engine/model, duration, recorded tokens/cost, a bounded summary and connection outcomes. `engineStatus` describes engine completion; `taskStatus` and `outcomeSource` distinguish agent-reported results from gateway facts. A completed engine is not proof that the external task succeeded. Missing or invalid task reports remain `unreported`.
 
 The bounded event trail records lifecycle events, tool names and completion/failure statuses, with a dropped-event count when truncated. It does not retain tool arguments, raw outputs, reasoning or credential payloads. Deleting a schedule preserves its run history within retention.
 

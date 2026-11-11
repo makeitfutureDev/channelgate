@@ -2,33 +2,38 @@
 // server, and (if Slack tokens are present) start the Socket Mode gateway. Built up across
 // slices — Slice 1 wires the root + web server; Slack is wired in Slice 4.
 
-// Refuse to boot below the node:sqlite floor. The AUTHORITATIVE gate lives in src/start.js
-// (the real entry point): ESM hoisting evaluates this module's static imports before this
-// statement, so on a runtime without node:sqlite (< 22.5) the import graph explodes before this
-// check can run. It stays here as a second line for direct `node src/server.js` invocations on
-// 22.5–22.12, where the imports load but db/index.js suppresses the sqlite Experimental warning
-// — silently-running-anyway would be extra misleading there.
-const [major, minor] = process.versions.node.split(".").map(Number);
-if (major < 22 || (major === 22 && minor < 13)) {
-  console.error(`ChannelGate requires Node >= 22.13 (node:sqlite); running on ${process.versions.node}. Upgrade Node and restart.`);
+// Require the supported Node 24 baseline. The authoritative gate in src/start.js runs before
+// the import graph; this second gate also rejects direct server.js invocations on older Node
+// versions whose builtins happen to load successfully.
+const major = Number(process.versions.node.split(".")[0]);
+if (!Number.isInteger(major) || major < 24) {
+  console.error(`ChannelGate requires Node >= 24.0.0; running on ${process.versions.node}. Upgrade Node and restart.`);
   process.exit(1);
 }
 
-import { ensureRoot } from "./config/store.js";
+import { ensureRoot, listChannels } from "./config/store.js";
+import { forbiddenWorkDirReason } from "./gateway/workdir-boundary.js";
 import { createWebApp } from "./web/app.js";
 import { getEngineHealth } from "./engines/engine-health.js";
 import { refreshEngineModels } from "./engines/registry.js";
 import { applySettingsToEnv, resolveSlackConfig, hasSlackConfig, getAdminPassword, getSettings, saveSettings, getContainerRuntime, pinEgressSecretsStrictDefault } from "./config/settings.js";
 import { getBindHost, hashPassword } from "./web/security.js";
 import { createSlackManager } from "./slack/manager.js";
+import { createBotMembershipRecovery } from "./slack/bot-membership.js";
+import { abortRunsInChannel } from "./slack/message-pipeline.js";
+import { syncWorkspaceSkills } from "./gateway/skills/workspace-sync.js";
 import { createPlatformTransports, connectConfiguredPlatforms } from "./platforms/boot.js";
 import { startScheduler } from "./gateway/scheduler.js";
 import { searchAgentDirectory } from "./gateway/agent-directory.js";
+import { AgentMail, AgentMailError, setActiveAgentMail } from "./gateway/agent-mail.js";
 import { startAgentDirectoryRefresh } from "./gateway/agent-directory-refresh.js";
+import { handleCodeChannelIpc } from "./slack/code-channel-kickoff.js";
+import { requestSkillSwap } from "./gateway/skill-runtime.js";
 import { BackgroundJobs, setActiveBackgroundJobs } from "./gateway/background.js";
 import { requestApproval, setDurableApprovalExecutor } from "./slack/approvals.js";
 import { executeInstructionApproval, INSTRUCTION_ACTION } from "./gateway/instruction-approvals.js";
 import { executeSecretHostApproval, SECRET_HOST_ACTION, setSecretHostApprovalRequester } from "./gateway/secret-host-approvals.js";
+import { createSecretHostContinuation } from "./gateway/secret-host-continuation.js";
 import { CONTROL_PLANE_ACTION, executeControlPlaneApproval, setControlPlaneInvoker } from "./gateway/control-plane-approvals.js";
 import { createDirectDaemonIpc, createGatewayMcpServer, ctxFromClaims } from "./mcp/gateway-server.js";
 import { startMcpSocketServer, stopMcpSocketServer, mcpSocketStatus } from "./mcp/socket-server.js";
@@ -58,6 +63,16 @@ import { postNotice } from "./platforms/notify.js";
 import { startLicenseVerification } from "./ee/license.js";
 import { startUsageReporting } from "./ee/limits.js";
 import { startSystemHealth } from "./gateway/system-health.js";
+
+// One warn line per channel whose stored custom work folder the boundary refuses.
+async function auditStoredWorkDirs() {
+  for (const channel of await listChannels()) {
+    const stored = String(channel.meta?.workDir || "").trim();
+    if (!stored) continue;
+    const reason = forbiddenWorkDirReason(stored, { slug: channel.slug });
+    if (reason) console.warn(`[workdir] ${channel.slug}: stored work folder ${stored} is ${reason} — runs are refused until an admin changes it (set_channel_workdir / Settings → Working folder, or clear_channel_workdir)`);
+  }
+}
 
 installConsoleRedaction();
 
@@ -141,8 +156,10 @@ async function containerRuntimeHealth() {
 // stop its timers alongside the other runtime services.
 let claudeLoginWatch = null;
 let agentDirectoryRefresh = null;
+let membershipRecovery = null;
 
 async function stopRuntimeServices(reason) {
+  membershipRecovery?.stop();
   agentDirectoryRefresh?.stop();
   agentDirectoryRefresh = null;
   try {
@@ -184,9 +201,22 @@ async function main() {
 
   const root = await ensureRoot();
   const lock = acquireSingletonLock(root);
+  // A custom work folder stored before the boundary existed (the home itself, the gateway root,
+  // another channel's folder, …) is refused at every spawn with the remedy; say so once here too,
+  // so the operator sees the list without waiting for someone's turn to fail. Never fatal.
+  await auditStoredWorkDirs().catch((e) => console.warn("[workdir] boot audit skipped:", e?.message || e));
   pruneTerminalApprovalRequests();
   pruneApprovalLinkTokens(); // spent/expired approval-link nonces
   applySettingsToEnv(); // UI-managed settings.json overrides .env
+  membershipRecovery = createBotMembershipRecovery({
+    slack,
+    onArchived: (row) => abortRunsInChannel(row.channelId, row.slug, "bot_removed"),
+    onVerified: () => syncWorkspaceSkills({ force: true }),
+  });
+  slack.onDisconnected(() => membershipRecovery.invalidate());
+  slack.onConnected(() => membershipRecovery.reconcile());
+  // Before catalog boot can touch a workspace: persist the unknown state for MCP children too.
+  await membershipRecovery.invalidate();
   // Skills platform (src/gateway/skills): fill the local catalog from the bundled starter library
   // and the host's skill folders, and seed the built-in channel templates. Never fatal — a turn
   // runs without a catalog exactly as it did before, on host-folder copies.
@@ -310,10 +340,12 @@ async function main() {
   // job rows have been re-tracked, or the first API/approval-triggered job would rewrite bg_jobs
   // from a still-empty map and wipe every unrecovered row.
   backgroundJobs.armRecovery();
+  const secretHostContinuation = createSecretHostContinuation({ slack });
+  secretHostContinuation.start();
   setDurableApprovalExecutor((record) => record.action?.kind === INSTRUCTION_ACTION
     ? executeInstructionApproval(record)
     : record.action?.kind === SECRET_HOST_ACTION
-      ? executeSecretHostApproval(record)
+      ? executeSecretHostApproval(record, { enqueueContinuation: (saved) => secretHostContinuation.enqueue(saved) })
       : record.action?.kind === CONTROL_PLANE_ACTION
         ? executeControlPlaneApproval(record)
         : backgroundJobs.startApproved(record));
@@ -342,14 +374,30 @@ async function main() {
       await postNotice(slack.getClient?.(), { conversationId: channelId, threadKey, text });
     },
   });
+  // Channel-to-channel agent mail: the daemon owns the gate, the target thread, the turn and the
+  // reply's return trip (gateway/agent-mail.js). A refusal is an answer, not an exception.
+  const agentMail = new AgentMail({ slack });
+  setActiveAgentMail(agentMail); // the Slack `ask #channel …` directive
+  const sendAgentMail = async (body) => {
+    try {
+      if (body?.action === "continue") return { ok: true, ...(await agentMail.requestContinue(body)) };
+      return { ok: true, ...(await agentMail.send(body)) };
+    } catch (error) {
+      if (error instanceof AgentMailError) return { ok: false, code: error.code, error: error.message };
+      throw error;
+    }
+  };
   Object.assign(daemonHandlers, {
     background: (body) => backgroundJobs.start(body),
     approval: (body) => requestApproval(slack, body),
     restart: (body) => restartCoordinator.request(body),
     drivesync: (body) => handleDriveSyncIpc(body),
     "agent-directory": (body) => searchAgentDirectory(body),
+    "agent-mail": sendAgentMail,
+    "code-channel": (body) => handleCodeChannelIpc(body, { slack }),
+    "skill-swap": (body) => requestSkillSwap(body),
   });
-  const app = createWebApp({ slack, transports, backgroundJobs, restartCoordinator, containerRuntimeStatus: containerRuntimeHealth });
+  const app = createWebApp({ slack, transports, backgroundJobs, restartCoordinator, containerRuntimeStatus: containerRuntimeHealth, sendAgentMail });
   const server = app.listen(PORT, HOST);
   await new Promise((resolve, reject) => {
     server.once("listening", resolve);
@@ -378,7 +426,10 @@ async function main() {
 
   // Connect Slack if tokens are configured (settings.json or .env). Can also be (re)connected
   // at runtime from the admin Settings page.
-  if (hasSlackConfig()) await slack.connect(resolveSlackConfig());
+  if (hasSlackConfig()) {
+    await slack.connect(resolveSlackConfig());
+    await membershipRecovery.reconcile();
+  }
   else console.log("[gateway] Slack tokens not set — set them in the admin Settings page (admin UI still available).");
 
   // The other surfaces, on the same terms: connect what is configured, and never let a bad
@@ -388,6 +439,9 @@ async function main() {
   // Recover background jobs that were in-flight when the daemon last stopped: re-attach to ones
   // still running, or post an "interrupted by restart" continuation for ones that already exited.
   await backgroundJobs.recover().catch((e) => console.error("[gateway] bg recover failed:", e?.message || e));
+  await agentMail.recover().then((r) => {
+    if (r.interrupted || r.redelivered) console.log(`[gateway] agent mail recovery: ${r.interrupted} interrupted, ${r.redelivered} replies redelivered`);
+  }).catch((e) => console.error("[gateway] agent mail recover failed:", e?.message || e));
 
   // Auto re-run interactive Slack turns that were interrupted mid-flight by the restart — resumes
   // the same thread/session and posts the answer. Runs after Slack is connected so it can post.

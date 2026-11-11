@@ -18,6 +18,7 @@ const {
   customMcpRemotes,
   customMcpTokens,
   listCustomMcps,
+  normalizeCustomMcpAuthType,
   normalizeCustomMcpName,
   normalizeCustomMcpToken,
   normalizeCustomMcpUrl,
@@ -80,7 +81,7 @@ test("the address check refuses loopback, private and metadata destinations", as
 
 test("patch upserts by name, keeps the token on a URL-only update, caps the list and masks every listing", () => {
   let list = patchCustomMcps([], { set: { name: "Linear", url: "https://mcp.linear.app/mcp", token: "lin_secret_1234" }, actor: "<@U1>", now: new Date("2026-10-01T00:00:00Z") });
-  assert.deepEqual(list, [{ name: "linear", url: "https://mcp.linear.app/mcp", token: "lin_secret_1234", setBy: "<@U1>", setAt: "2026-10-01T00:00:00.000Z" }]);
+  assert.deepEqual(list, [{ name: "linear", url: "https://mcp.linear.app/mcp", token: "lin_secret_1234", authType: "bearer", setBy: "<@U1>", setAt: "2026-10-01T00:00:00.000Z" }]);
   list = patchCustomMcps(list, { set: { name: "linear", url: "https://mcp.linear.app/v2" } });
   assert.equal(list[0].token, "lin_secret_1234", "an update without a token keeps the stored one");
   assert.equal(list[0].url, "https://mcp.linear.app/v2");
@@ -94,7 +95,7 @@ test("patch upserts by name, keeps the token on a URL-only update, caps the list
   assert.throws(() => patchCustomMcps(list, { remove: "missing" }), /No custom MCP/);
 
   const masked = listCustomMcps(list, "channel");
-  assert.deepEqual(masked[0], { name: "linear", serverName: "custom-linear", url: "https://mcp.linear.app/v2", hasToken: true, tokenLast4: "1234", setBy: "", setAt: masked[0].setAt });
+  assert.deepEqual(masked[0], { name: "linear", serverName: "custom-linear", url: "https://mcp.linear.app/v2", authType: "bearer", hasToken: true, tokenLast4: "1234", setBy: "", setAt: masked[0].setAt });
   assert.ok(!JSON.stringify(masked).includes("lin_secret"), "the token never leaves in a listing");
   assert.equal(listCustomMcps(list, "user")[0].serverName, "my-linear");
 });
@@ -103,8 +104,8 @@ test("a run gets the channel's servers, plus the author's own only when the auth
   const channelList = [{ name: "linear", url: "https://mcp.linear.app/mcp", token: "chan-token-1" }];
   const userList = [{ name: "notes", url: "https://notes.example.com/mcp", token: "user-token-2" }, { name: "bad", url: "ftp://x", token: "t-bad-12345" }];
   assert.deepEqual(resolveCustomMcpsForRun({ channelList, userList }), {
-    "custom-linear": { url: "https://mcp.linear.app/mcp", token: "chan-token-1" },
-    "my-notes": { url: "https://notes.example.com/mcp", token: "user-token-2" },
+    "custom-linear": { url: "https://mcp.linear.app/mcp", token: "chan-token-1", authType: "bearer" },
+    "my-notes": { url: "https://notes.example.com/mcp", token: "user-token-2", authType: "bearer" },
   });
   assert.deepEqual(Object.keys(resolveCustomMcpsForRun({ channelList, userList, principalTrusted: false })), ["custom-linear"]);
   assert.deepEqual(resolveCustomMcpsForRun({ channelList, userList, clean: true }), {});
@@ -126,9 +127,10 @@ test("a container run relays custom servers through the daemon with the public-o
   assert.ok(payload.relayDigest["my-notes"].startsWith("sha256:"), "a rotated token still retires a warm process");
   clearRemoteMcps(claims.jti);
 
-  // A sudo-host turn dials it itself: a plain http entry with the header.
+  // Host turns use the same daemon relay, keeping all credentials out of artifacts.
   const host = JSON.parse((await buildMcpRuntimePayload({ ...identity, customMcps })).configJson).mcpServers;
-  assert.deepEqual(host["custom-linear"], { type: "http", url: "https://mcp.linear.app/mcp", headers: { Authorization: "Bearer relay-secret-123" } });
+  assert.equal(host["custom-linear"].env.CG_MCP_SERVICE, "remote-mcp");
+  assert.doesNotMatch(JSON.stringify(host), /relay-secret/);
 });
 
 test("the Claude lockdown admits each custom server by name and URL and pre-approves its tools", async () => {
@@ -143,7 +145,7 @@ test("the Claude lockdown admits each custom server by name and URL and pre-appr
   assert.deepEqual(nameOnly.allowedMcpServers, [{ serverName: "custom-q" }], "a container run's settings carry no URL");
 });
 
-test("Codex relays custom servers in a container and uses a headers helper on the sudo host", () => {
+test("Codex relays custom servers in a container and on the sudo host", () => {
   const target = createFakeRuntime().target();
   const customMcps = { "custom-linear": { url: "https://mcp.linear.app/mcp", token: "codex-secret-789" } };
   const bundle = `${target.artifactDir}/run/codex-secrets.json`;
@@ -156,9 +158,9 @@ test("Codex relays custom servers in a container and uses a headers helper on th
   const host = hostBackend.prepareTarget({ slug: "sudo", cwd: "/work", workDir: "/work", cleanWorkDir: "", meta: { sudoMode: true }, settings: {} });
   const helpers = [];
   const hostArgs = buildCodexArgs({ prompt: "x", sessionId: "t", isNewSession: true, cwd: "/work", outFile: "/tmp/o.txt", target: host, customMcps, secretBundlePath: "/tmp/b.json", headerHelpers: helpers });
-  assert.ok(hostArgs.includes(`mcp_servers.custom-linear.url="https://mcp.linear.app/mcp"`));
-  assert.deepEqual(helpers.map(({ secretName, headerName, prefix }) => ({ secretName, headerName, prefix })), [{ secretName: "customMcp:custom-linear", headerName: "Authorization", prefix: "Bearer " }]);
-  assert.equal(codexSecretBundle({ customMcps })["customMcp:custom-linear"], "codex-secret-789");
+  assert.ok(hostArgs.includes(`mcp_servers.custom-linear.env.CG_MCP_SERVICE="remote-mcp"`));
+  assert.deepEqual(helpers, []);
+  assert.equal(codexSecretBundle({ customMcps })["customMcp:custom-linear"], undefined);
   const clean = buildCodexArgs({ prompt: "x", sessionId: "t", isNewSession: true, cwd: "/work", outFile: "/tmp/o.txt", target: host, clean: true, customMcps, secretBundlePath: "/tmp/b.json", headerHelpers: [] });
   assert.ok(!clean.some((arg) => arg.includes("custom-linear")));
 });
@@ -279,4 +281,158 @@ test("user routes keep a person's servers on their record, masked in the user li
   const removed = await call("/users/U_CMCP/custom-mcps/notes", { method: "DELETE" });
   assert.deepEqual(removed.json.servers, []);
   assert.equal((await call("/users/U_CMCP/custom-mcps/notes", { method: "DELETE" })).status, 400);
+});
+
+
+test("Composio authentication persists, survives partial updates and rejects unknown types", () => {
+  assert.equal(normalizeCustomMcpAuthType(), "bearer");
+  for (const authType of [null, "", "oauth", "x-consumer-api-key", {}, ["composio"]]) {
+    assert.throws(() => normalizeCustomMcpAuthType(authType), /Authentication type/);
+  }
+  let list = patchCustomMcps([], { set: { name: "second", url: PUBLIC_URL, token: "ck_second_test_1234", authType: "composio" } });
+  assert.equal(list[0].authType, "composio");
+  list = patchCustomMcps(list, { set: { name: "second", url: `${PUBLIC_URL}/v2` } });
+  assert.equal(list[0].authType, "composio", "omitting authentication preserves the saved type");
+  assert.equal(list[0].token, "ck_second_test_1234");
+  assert.equal(listCustomMcps(list, "channel")[0].authType, "composio");
+  assert.equal(listCustomMcps(list, "user")[0].authType, "composio");
+  assert.throws(() => patchCustomMcps(list, { set: { name: "second", url: PUBLIC_URL, authType: "evil" } }), /Authentication type/);
+  assert.throws(() => normalizeCustomMcpToken("Bearer ck_second_test_1234", "composio"), /spaces/);
+  assert.throws(() => normalizeCustomMcpToken("ck_second\r\nx-evil: foo", "composio"), /spaces|line breaks/);
+  const legacy = [{ name: "legacy", url: PUBLIC_URL, token: "old-test-token-5555" }];
+  assert.equal(listCustomMcps(legacy, "channel")[0].authType, "bearer");
+  assert.deepEqual(resolveCustomMcpsForRun({ channelList: [{ ...list[0], authType: "evil" }] }), {}, "invalid stored authentication is not dialled");
+  list = patchCustomMcps(list, { set: { name: "second", url: PUBLIC_URL, authType: "bearer" } });
+  assert.equal(list[0].token, "ck_second_test_1234", "auth-only edit retains the credential");
+  assert.equal(list[0].authType, "bearer");
+});
+
+test("Composio consumer keys select one header for both engines and stay out of container artifacts", async () => {
+  const channelList = [{ name: "second", url: PUBLIC_URL, token: "ck_channel_test_7777", authType: "composio" }];
+  const userList = [{ name: "personal", url: PUBLIC_URL, token: "ck_personal_test_8888", authType: "composio" }];
+  const customMcps = resolveCustomMcpsForRun({ channelList, userList });
+  const remotes = customMcpRemotes(customMcps);
+  assert.deepEqual(remotes["custom-second"].headers, { "x-consumer-api-key": channelList[0].token });
+  assert.deepEqual(remotes["my-personal"].headers, { "x-consumer-api-key": userList[0].token });
+  assert.equal(remotes["custom-second"].publicOnly, true);
+  const target = createFakeRuntime().target();
+  const payload = await buildMcpRuntimePayload({ ...identity, customMcps, target });
+  assert.doesNotMatch(payload.configJson, /ck_channel|ck_personal|x-consumer-api-key/);
+  const config = JSON.parse(payload.configJson).mcpServers;
+  const claims = verifyGatewayCapability(config.gateway.env.CG_GATEWAY_CAPABILITY, { secret: process.env.CG_APPROVAL_SECRET }).claims;
+  assert.deepEqual(lookupRemoteMcp(claims.jti, "custom-second"), remotes["custom-second"]);
+  clearRemoteMcps(claims.jti);
+  const bearerPayload = await buildMcpRuntimePayload({ ...identity, customMcps: { "custom-second": { ...customMcps["custom-second"], authType: "bearer" } }, target });
+  assert.notEqual(payload.relayDigest["custom-second"], bearerPayload.relayDigest["custom-second"], "auth changes retire the warm process");
+  const bearerClaims = verifyGatewayCapability(JSON.parse(bearerPayload.configJson).mcpServers.gateway.env.CG_GATEWAY_CAPABILITY, { secret: process.env.CG_APPROVAL_SECRET }).claims;
+  clearRemoteMcps(bearerClaims.jti);
+  const host = JSON.parse((await buildMcpRuntimePayload({ ...identity, customMcps })).configJson).mcpServers;
+  assert.equal(host["custom-second"].env.CG_MCP_SERVICE, "remote-mcp");
+  assert.doesNotMatch(JSON.stringify(host), /ck_channel|ck_personal/);
+  for (const runtime of [target, hostBackend.prepareTarget({ slug: "sudo", cwd: "/work", workDir: "/work", cleanWorkDir: "", meta: { sudoMode: true }, settings: {} })]) {
+    const helpers = [];
+    const args = buildCodexArgs({ prompt: "x", sessionId: "t", isNewSession: true, cwd: runtime.cwd || "/work", outFile: "/tmp/out.txt", target: runtime, customMcps, secretBundlePath: "/tmp/test-bundle.json", headerHelpers: helpers });
+    assert.doesNotMatch(JSON.stringify(args), /ck_channel|ck_personal/);
+    if (runtime === target) {
+      assert.deepEqual(helpers, []);
+      assert.deepEqual(codexSecretBundle({ isolated: true, gatewayCapability: "cap", customMcps }), { gatewayCapability: "cap" });
+    } else {
+      assert.deepEqual(helpers, []);
+    }
+  }
+});
+
+test("both admin API scopes accept Composio, preserve auth on partial saves and reject invalid auth", async () => {
+  for (const scopePath of ["/channels/C_CMCP", "/users/U_CMCP"]) {
+    const path = `${scopePath}/custom-mcps/second`;
+    const saved = await call(path, { method: "PUT", body: { url: PUBLIC_URL, token: "ck_api_test_3333", authType: "composio" } });
+    assert.equal(saved.status, 200);
+    assert.equal(saved.json.servers[0].authType, "composio");
+    assert.ok(!JSON.stringify(saved.json).includes("ck_api_test"));
+    const updated = await call(path, { method: "PUT", body: { url: `${PUBLIC_URL}/changed` } });
+    assert.equal(updated.status, 200);
+    assert.equal(updated.json.servers[0].authType, "composio");
+    for (const authType of ["invalid", null, 42]) {
+      const invalid = await call(path, { method: "PUT", body: { url: PUBLIC_URL, authType } });
+      assert.equal(invalid.status, 400);
+      assert.match(invalid.json.error, /Authentication type/);
+    }
+    assert.equal((await call(`${scopePath}/custom-mcps`)).json.servers[0].authType, "composio");
+    await call(path, { method: "DELETE" });
+  }
+});
+
+
+test("custom headers and query fields are write-only, merged by name, cleared explicitly and materialized only by the relay", () => {
+  let list = patchCustomMcps([], { set: { name: "generic", url: PUBLIC_URL, authType: "custom",
+    headers: [{ name: "x-consumer-api-key", value: "second-key-test" }, { name: "X-Tenant", value: "abc" }],
+    queryParams: [{ name: "api_key", value: "private + /&é" }],
+  } });
+  const masked = listCustomMcps(list, "channel")[0];
+  assert.equal(masked.hasToken, false);
+  assert.deepEqual(masked.headers, [{ name: "x-consumer-api-key", hasValue: true, valueLast4: "test" }, { name: "X-Tenant", hasValue: true, valueLast4: "" }]);
+  assert.doesNotMatch(JSON.stringify(masked), /second-key|private|"abc"/);
+  list = patchCustomMcps(list, { set: { name: "generic", url: PUBLIC_URL,
+    headers: [{ name: "X-Consumer-Api-Key", value: "" }], queryParams: [{ name: "api_key" }],
+  } });
+  assert.deepEqual(list[0].headers, [{ name: "X-Consumer-Api-Key", value: "second-key-test" }]);
+  const run = resolveCustomMcpsForRun({ channelList: list });
+  assert.equal(run["custom-generic"].url, PUBLIC_URL, "run map retains the base URL");
+  const remote = customMcpRemotes(run)["custom-generic"];
+  assert.deepEqual(remote.headers, { "X-Consumer-Api-Key": "second-key-test" });
+  assert.equal(remote.url, PUBLIC_URL + "?api_key=private+%2B+%2F%26%C3%A9");
+  const redactions = customMcpTokens(run);
+  for (const value of ["second-key-test", "private + /&é", "private%20%2B%20%2F%26%C3%A9", "private+%2B+%2F%26%C3%A9"]) assert.ok(redactions.includes(value));
+  list = patchCustomMcps(list, { set: { name: "generic", url: PUBLIC_URL } });
+  assert.equal(list[0].headers.length, 1, "omitted arrays retain existing fields");
+  list = patchCustomMcps(list, { set: { name: "generic", url: PUBLIC_URL, headers: [], queryParams: [] } });
+  assert.deepEqual(customMcpRemotes(resolveCustomMcpsForRun({ channelList: list }))["custom-generic"], { url: PUBLIC_URL, headers: {}, publicOnly: true });
+});
+
+test("generic request configuration rejects transport overrides, injection, duplicates and oversized effective URLs without echoing secrets", () => {
+  const baseSet = { name: "generic", url: PUBLIC_URL, authType: "custom" };
+  const patch = (set) => patchCustomMcps([], { set: { ...baseSet, ...set } });
+  for (const name of ["Host", "Content-Length", "Connection", "Transfer-Encoding", "TE", "Trailer", "Upgrade", "Proxy-Authorization", "Expect", "Accept", "Content-Type", "MCP-Session-Id", "MCP-Protocol-Version", "Last-Event-ID", "bad name", "x".repeat(129)]) {
+    assert.throws(() => patch({ headers: [{ name, value: "private-secret-value" }] }), (error) => !error.message.includes("private-secret-value"));
+  }
+  for (const value of ["secret\r\nInjected: 1", "secret\tvalue", "secret\x00value", "secret\x7fvalue", "secret😀", "s".repeat(8193)]) assert.throws(() => patch({ headers: [{ name: "X-Key", value }] }));
+  assert.throws(() => patch({ headers: [{ name: "X-Key", value: "first" }, { name: "x-key", value: "second" }] }), /unique/);
+  assert.throws(() => patch({ headers: [{ name: "X-Key", value: "" }] }), /required/);
+  assert.throws(() => patch({ queryParams: [{ name: "api_key" }] }), /required/);
+  for (const name of ["", "a&b", "a=b", "a#b", "a\nb", "x".repeat(129)]) assert.throws(() => patch({ queryParams: [{ name, value: "private-secret-value" }] }));
+  assert.throws(() => patch({ queryParams: [{ name: "a", value: "x" }, { name: "a", value: "y" }] }), /unique/);
+  assert.throws(() => patch({ url: PUBLIC_URL + "?a=saved", queryParams: [{ name: "a", value: "new" }] }), /duplicates/);
+  assert.throws(() => patch({ queryParams: [{ name: "a", value: "secret\nvalue" }] }), /controls/);
+  assert.throws(() => patch({ queryParams: [{ name: "a", value: "é".repeat(400) }] }), /2048/);
+  assert.throws(() => patch({ headers: Array.from({ length: 17 }, (_, i) => ({ name: `X-${i}`, value: "v" })) }), /16/);
+  assert.throws(() => patch({ queryParams: Array.from({ length: 17 }, (_, i) => ({ name: `k${i}`, value: "v" })) }), /16/);
+  for (const [authType, name] of [["bearer", "authorization"], ["composio", "X-Consumer-Api-Key"]]) {
+    assert.throws(() => patch({ authType, token: "preset-token-test", headers: [{ name, value: "collision" }] }), /duplicates/);
+    assert.throws(() => patch({ authType, token: "preset-token-test", headers: Array.from({ length: 16 }, (_, i) => ({ name: `X-${i}`, value: "v" })) }), /16/);
+  }
+  const bad = { name: "bad", url: PUBLIC_URL, authType: "custom", headers: [{ name: "Host", value: "evil" }] };
+  assert.deepEqual(resolveCustomMcpsForRun({ channelList: [bad] }), {});
+  assert.deepEqual(customMcpRemotes({ bad }), {});
+  const combined = patch({ authType: "composio", token: "preset-token-test", headers: [{ name: "X-Tenant", value: "tenant" }], queryParams: [{ name: "key", value: "secret" }] });
+  assert.deepEqual(customMcpRemotes(resolveCustomMcpsForRun({ channelList: combined }))["custom-generic"].headers, { "X-Tenant": "tenant", "x-consumer-api-key": "preset-token-test" });
+});
+
+test("both API scopes accept generic request fields, mask values and preserve or clear saved fields", async () => {
+  for (const scopePath of ["/channels/C_CMCP", "/users/U_CMCP"]) {
+    const path = `${scopePath}/custom-mcps/generic`;
+    const saved = await call(path, { method: "PUT", body: { url: PUBLIC_URL, authType: "custom", headers: [{ name: "X-Key", value: "api-header-secret" }], queryParams: [{ name: "key", value: "api-query-secret" }] } });
+    assert.equal(saved.status, 200);
+    assert.doesNotMatch(JSON.stringify(saved.json), /api-header|api-query/);
+    const edited = await call(path, { method: "PUT", body: { url: PUBLIC_URL, headers: [{ name: "x-key", value: "" }] } });
+    assert.equal(edited.status, 200);
+    assert.equal(edited.json.servers[0].queryParams[0].hasValue, true);
+    assert.equal(edited.json.servers[0].headers[0].valueLast4, "cret");
+    const invalid = await call(path, { method: "PUT", body: { url: PUBLIC_URL, headers: [{ name: "Connection", value: "api-header-secret" }] } });
+    assert.equal(invalid.status, 400);
+    assert.doesNotMatch(JSON.stringify(invalid.json), /api-header-secret/);
+    const cleared = await call(path, { method: "PUT", body: { url: PUBLIC_URL, headers: [], queryParams: [] } });
+    assert.deepEqual(cleared.json.servers[0].headers, []);
+    assert.deepEqual(cleared.json.servers[0].queryParams, []);
+    await call(path, { method: "DELETE" });
+  }
 });

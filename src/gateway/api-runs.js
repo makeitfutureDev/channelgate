@@ -52,7 +52,8 @@ import { getDirectory } from "../slack/directory.js";
 import { mdToMrkdwn } from "../slack/format.js";
 import { deliverResult, postNoticeWithMenu } from "../slack/deliver.js";
 import { startProgress } from "../slack/progress.js";
-import { PROFILE_FLAGS, API_PRINCIPAL } from "./modes.js";
+import { PROFILE_FLAGS, API_PRINCIPAL, isAuthorized } from "./modes.js";
+import { isAdmin, isApproved } from "../config/store.js";
 import { postNotice, asConnector } from "../platforms/notify.js";
 import { platformOfConversation } from "../platforms/ids.js";
 import { DEFAULT_PLATFORM } from "../platforms/registry.js";
@@ -591,7 +592,22 @@ function releaseStart(idemKey, settle, outcome) {
 
 // The claimed half: everything from here down may await freely, because the idempotency key and the
 // in-flight slot are already held by the caller above.
-async function startClaimedRun({ author, channel, file, fileUrl, fileName, webhook, slack, driver = runInBackground, queueMemoryReview = maybeQueueMemoryReview }, { msg, hasFile, idemKey, overrides, engineOv, conversationKey, conversationEntry }) {
+// A channel token's principal (src/gateway/api-tokens.js, resolved by the route from the
+// credential — never from the body). The run is bound to the token's conversation and acts as the
+// token's creator with their LIVE rank; `author` in the body is ignored for it.
+async function userPrincipalRefusal(principal, entry, meta) {
+  if (!principal) return null;
+  if (entry.channelId !== principal.channelId) {
+    return { ok: false, code: 403, error: `This token belongs to conversation ${principal.slug}; it cannot start runs in "${entry.name || entry.slug}". Omit \`channel\` or create a token in that conversation.` };
+  }
+  const [adminUser, approvedUser] = await Promise.all([isAdmin(principal.createdBy), isApproved(principal.createdBy)]);
+  if (!isAuthorized(meta, principal.createdBy, Boolean(entry.isDM), { isAdminUser: adminUser, isApprovedUser: approvedUser })) {
+    return { ok: false, code: 403, error: "The token's owner is no longer authorized in this conversation; the token is unusable until they are." };
+  }
+  return null;
+}
+
+async function startClaimedRun({ author, channel, file, fileUrl, fileName, webhook, slack, principal = null, driver = runInBackground, queueMemoryReview = maybeQueueMemoryReview }, { msg, hasFile, idemKey, overrides, engineOv, conversationKey, conversationEntry }) {
   if (webhook) {
     // Resolved-address check, not just a scheme check: this POST leaves from inside the host, so
     // an internal target would make the run API a proxy into the private network (including the
@@ -603,13 +619,18 @@ async function startClaimedRun({ author, channel, file, fileUrl, fileName, webho
     }
   }
 
-  const authorId = (String(author || "").replace(/[^A-Za-z0-9._-]/g, "").slice(0, 64)) || API_PRINCIPAL;
+  const authorId = principal ? principal.createdBy : (String(author || "").replace(/[^A-Za-z0-9._-]/g, "").slice(0, 64)) || API_PRINCIPAL;
 
-  // Resolve the target folder.
+  // Resolve the target folder. A channel token's run defaults to — and may only name — its own
+  // conversation.
   let entry;
   if (channel) {
     entry = conversationEntry || await resolveChannel(channel);
     if (!entry) return { ok: false, code: 400, error: `Unknown channel "${channel}". Pass a registered Slack channel id, folder slug, or channel name.` };
+  } else if (principal) {
+    entry = await resolveChannel(principal.channelId);
+    if (!entry) return { ok: false, code: 403, error: "This token's conversation is no longer registered." };
+    channel = principal.channelId;
   } else {
     entry = await ensureApiChannel();
   }
@@ -620,6 +641,8 @@ async function startClaimedRun({ author, channel, file, fileUrl, fileName, webho
   if (conversationKey && !registeredSlack) return { ok: false, code: 503, error: "Slack must be connected to use conversationKey. Retry when Slack is available." };
 
   const meta = effectiveMeta((await getChannelMeta(slug)) ?? defaultChannelMeta({ channelId: entry.channelId, name: entry.name, type: entry.type, isDM: entry.isDM }));
+  const refused = await userPrincipalRefusal(principal, entry, meta);
+  if (refused) return refused;
   // Reject an explicit disallowed override before preparing files or posting a kickoff. Reused
   // conversations resolve their session owner later, under the ordinary run admission guard.
   try {
@@ -687,6 +710,10 @@ async function startClaimedRun({ author, channel, file, fileUrl, fileName, webho
     channelId: entry.channelId,
     threadKey,
     author: authorId,
+    // "user": a channel token's creator, a verified person the run acts AS; "api": the deprecated
+    // organization key's fixed principal (config/api-principal.js).
+    principalKind: principal ? "user" : "api",
+    apiTokenId: principal?.tokenId || null,
     engine,
     sessionId: presetSessionId,
     resumeCommand,
@@ -788,8 +815,9 @@ async function runInBackground(job, { textForRun, attachmentPath, client, teamId
         teamId,
         dir,
         // The caller-named author is attribution, not necessarily a Slack user: the reply menu is
-        // unbound and opens under whoever clicks it (their own authorization applies).
-        menuOwnerId: "",
+        // unbound and opens under whoever clicks it (their own authorization applies). A channel
+        // token's run belongs to its creator, so the menu is theirs like a Slack message's.
+        menuOwnerId: job.principalKind === "user" ? job.author : "",
       });
     }
     const onEvent = (ev) => {
@@ -799,9 +827,12 @@ async function runInBackground(job, { textForRun, attachmentPath, client, teamId
 
     const result = await runMessage({
       channelId: job.channelId,
-      // The run acts as the API principal: the key is an admin credential with no person behind
-      // it. `job.author` (caller-named) labels the kickoff, prompt provenance and usage ledger only.
-      authorId: API_PRINCIPAL,
+      // The deprecated organization key's run acts as the API principal: an admin credential with
+      // no person behind it, where `job.author` (caller-named) labels the kickoff, prompt
+      // provenance and usage ledger only. A channel token's run acts AS its creator — a verified
+      // person whose rank, authorization and personal scope are resolved live, as for a Slack
+      // message of theirs (src/gateway/api-tokens.js).
+      authorId: job.principalKind === "user" ? job.author : API_PRINCIPAL,
       workspaceId: teamId || process.env.CG_SLACK_TEAM_ID || "",
       text: textForRun,
       threadKey: job.threadKey,
@@ -809,11 +840,12 @@ async function runInBackground(job, { textForRun, attachmentPath, client, teamId
       sessionId: job.conversationKey ? "" : job.sessionId,
       overrides,
       signal,
-      // No personal scope: nobody's personal Composio/Toolbox token, secrets or skills — the
-      // channel's (agent) identities only. Admin rank comes from the principal itself
-      // (config/api-principal.js). Recovery never re-enters this driver: it only delivers a saved
-      // result or interruption notice.
-      untrustedPrincipal: true,
+      // Organization key: no personal scope — nobody's personal Composio/Toolbox token, secrets or
+      // skills, the channel's (agent) identities only; admin rank comes from the principal itself
+      // (config/api-principal.js). Channel token: the creator is a trusted principal exactly as in
+      // Slack. Recovery never re-enters this driver: it only delivers a saved result or
+      // interruption notice.
+      untrustedPrincipal: job.principalKind !== "user",
       origin: "api_foreground",
       progressReport: Boolean(status && client),
       onDelta: status?.onDelta,
@@ -882,7 +914,7 @@ async function runInBackground(job, { textForRun, attachmentPath, client, teamId
         channelId: job.channelId,
         slug: job.slug,
         threadKey: job.threadKey,
-        authorId: API_PRINCIPAL,
+        authorId: job.principalKind === "user" ? job.author : API_PRINCIPAL,
         meta: applyRunOverrides(effectiveMeta(stored || {}), overrides),
         userText: job.message || "",
         savedInTurn: memorySaves > 0,

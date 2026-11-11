@@ -1,3 +1,4 @@
+import { enterpriseFeatureEnabled } from "../../ee/feature-entitlements.js";
 // Teams catalog pages share the same credential, grant and catalog stores as Slack Settings.
 // Card state carries identifiers only; stored credentials never become input defaults.
 import { listChannelEnv, patchChannelEnv } from '../../config/channel-env.js';
@@ -10,7 +11,7 @@ import { resolveMakeToolboxUpdate } from '../../gateway/make-toolbox.js';
 import { selectionFieldForEngine, persistedSelectionForEngine } from '../../gateway/mcp-discovery.js';
 import { assertNewMcpSelections } from '../../gateway/mcp-selection.js';
 import { requireAdapter } from '../../engines/registry.js';
-import { listSkills } from '../../gateway/skills/catalog.js';
+import { getSkill, listSkills } from '../../gateway/skills/catalog.js';
 import { canSeeSkill, grantSkillsToChannel, revokeSkillsFromChannel } from '../../gateway/skills/authoring.js';
 import { assignTemplateToChannel, channelSkillGrants, listTemplateSummaries, templateOfMeta } from '../../gateway/skills/templates.js';
 import { ensureChannelFolder } from '../../gateway/folders.js';
@@ -60,7 +61,7 @@ function skillItems(ctx) {
     rows.set(key, { key: skill.slug, name: skill.name || skill.slug, description: skill.description || '', active, inherited: org.has(key), direct: direct.has(key) });
   }
   // Preserve removal controls for legacy grants whose source disappeared.
-  for (const key of ctx.meta.skills || []) if (!rows.has(key.toLowerCase())) rows.set(key.toLowerCase(), { key, name: key, description: 'Unavailable in catalog', direct: true, active: true, inherited: org.has(key.toLowerCase()) });
+  for (const key of ctx.meta.skills || []) if (!rows.has(key.toLowerCase())) rows.set(key.toLowerCase(), { key, name: key, description: getSkill(key)?.visibility === 'personal' ? 'Personal skill — not loaded here (only its author can use it); deactivate to remove' : 'Unavailable in catalog', direct: true, active: true, inherited: org.has(key.toLowerCase()) });
   return [...rows.values()].sort((a, b) => Number(b.active) - Number(a.active) || a.name.localeCompare(b.name));
 }
 async function cloudItems(ctx, engine) {
@@ -109,7 +110,7 @@ export async function renderCatalogPage(page, ctx, ui) {
       actions.push(ui.execute('Open private settings', 'settings.private', { page: 'secrets' }, 'none'), ...pager(ui, page, slice.page, slice.totalPages));
       return { body, actions };
     }
-    const scopes = ctx.isShared ? ['channel'] : SCOPES.filter(value => value !== 'organization' || ctx.userIsAdmin);
+    const scopes = ctx.isShared ? ['channel'] : SCOPES.filter(value => value !== 'organization' || (ctx.userIsAdmin && enterpriseFeatureEnabled('organizationVariables')));
     const scope = scopes.includes(ctx.state.variableScope) ? ctx.state.variableScope : 'channel';
     body.push(ui.heading('Add or update variable'), ui.choice('variableScope', 'Scope', scope, scopes.map(value => ({ title: label(value), value }))),
       ui.input('variableName', 'Name', ctx.state.variableName || ''), ui.input('variableValue', 'New value (never displayed)', ''),
@@ -125,10 +126,14 @@ export async function renderCatalogPage(page, ctx, ui) {
     const templateSlice = pageSlice(templates, ctx.state.templatePage, 20);
     const choices = [...templateSlice.items];
     if (template && !choices.some(item => item.slug === template.slug)) choices.push(template);
-    body.push(ui.heading('Skills'), ui.text(`Template: ${String(template?.name || 'None').slice(0, 100)}\nChannel skills: ${channelSkillGrants(effective).join(', ').slice(0, 800) || 'None'}\nOrganization skills: ${(getOrgAccessGrants().skills || []).join(', ').slice(0, 800) || 'None'}`),
-      ui.choice('skillTemplate', 'Skill template', template?.slug || 'none', [{ title: 'None', value: 'none' }, ...choices.map(item => ({ title: String(item.name || item.slug).slice(0, 100), value: item.slug }))]),
-      ui.buttons([ui.execute('Apply template', 'settings.template')]));
-    if (templateSlice.totalPages > 1) body.push(ui.text(`Templates — page ${templateSlice.page + 1}/${templateSlice.totalPages}`), ui.buttons(pager(ui, page, templateSlice.page, templateSlice.totalPages, { catalog: 'templates' })));
+    body.push(ui.heading('Skills'), ui.text(`Template: ${String(template?.name || 'None').slice(0, 100)}\nChannel skills: ${channelSkillGrants(effective).join(', ').slice(0, 800) || 'None'}\nOrganization skills: ${(getOrgAccessGrants().skills || []).join(', ').slice(0, 800) || 'None'}`));
+    if (enterpriseFeatureEnabled('skillTemplates')) {
+      body.push(ui.choice('skillTemplate', 'Skill template', template?.slug || 'none', [{ title: 'None', value: 'none' }, ...choices.map(item => ({ title: String(item.name || item.slug).slice(0, 100), value: item.slug }))]), ui.buttons([ui.execute('Apply template', 'settings.template')]));
+      if (templateSlice.totalPages > 1) body.push(ui.text(`Templates — page ${templateSlice.page + 1}/${templateSlice.totalPages}`), ui.buttons(pager(ui, page, templateSlice.page, templateSlice.totalPages, { catalog: 'templates' })));
+    } else {
+      body.push(ui.text('Skill templates require Enterprise. Saved assignments are retained and inactive; direct channel skills remain available.'));
+      if (effective.skillTemplate) body.push(ui.choice('skillTemplate', 'Clear saved template', 'none', [{ title: 'None', value: 'none' }]), ui.buttons([ui.execute('Clear template', 'settings.template')]));
+    }
     const all = skillItems(ctx), slice = pageSlice(all, ctx.state.skillPage);
     body.push(ui.text(`${all.length} catalog skills — page ${slice.page + 1}/${slice.totalPages}`));
     for (const item of slice.items) {

@@ -16,12 +16,14 @@ ensureTestEnv();
 test("each provider gets its own settings card, and a key typed in one is saved under that provider", { skip: !process.env.CG_BROWSER_MODULE }, async (t) => {
   const { chromium } = await import(process.env.CG_BROWSER_MODULE);
   const { createAdminRouter } = await import("../src/web/routes/admin.js");
-  const { saveSettings, getQwenConfig, getDefaultModel } = await import("../src/config/settings.js");
+  const { saveSettings, getQwenConfig, getDefaultModel, getDefaultEffort } = await import("../src/config/settings.js");
   const { QWEN_PROVIDERS } = await import("../src/engines/qwen.js");
   saveSettings(Object.fromEntries(QWEN_PROVIDERS.flatMap((e) => [[e.settings.apiKey, ""], [e.settings.baseUrl, ""], [e.defaultModelKey, ""]])));
 
   const app = express();
   app.use(express.json());
+  // This focused router fixture represents an authenticated admin; real login is tested separately.
+  app.get("/api/auth/me", (_req, res) => res.json({ bootstrap: false, linkRequired: false, fresh: true, account: { userId: "U_BROWSER_ADMIN" }, passkeys: [] }));
   app.get("/api/skills", (_req, res) => res.json({ skills: [] }));
   app.get("/api/mcp/available", (_req, res) => res.json({ servers: [] }));
   app.get("/api/health", (_req, res) => res.json({ slack: { connected: false, status: "off" }, engines: {} }));
@@ -79,7 +81,18 @@ test("each provider gets its own settings card, and a key typed in one is saved 
   await eu.locator('[data-role="api-key"]').fill("sk-ws-BROWSER-FIXTURE-5678");
   await eu.locator('[data-role="base-url"]').fill("https://ws-browser.eu-central-1.example/apps/anthropic");
   await eu.locator('[data-role="default-model"]').selectOption(euEntry.models[0].value);
+  await eu.locator('[data-role="default-effort"]').selectOption("medium");
+  await page.locator("#set-default-claude-effort").selectOption("high");
+  await page.locator("#set-default-codex-effort").selectOption("ultra");
   await persist();
+  assert.equal(getDefaultEffort("claude"), "high");
+  assert.equal(getDefaultEffort("codex"), "ultra");
+  assert.equal(getDefaultEffort(euEntry.id), "medium");
+  await page.reload();
+  await cards.first().waitFor();
+  assert.equal(await page.locator("#set-default-claude-effort").inputValue(), "high");
+  assert.equal(await page.locator("#set-default-codex-effort").inputValue(), "ultra");
+  assert.equal(await eu.locator('[data-role="default-effort"]').inputValue(), "medium");
 
   assert.equal(getQwenConfig(euEntry.id).apiKey, "sk-ws-BROWSER-FIXTURE-5678", "the key is stored under the provider it was typed into");
   assert.equal(getQwenConfig(euEntry.id).baseUrl, "https://ws-browser.eu-central-1.example/apps/anthropic");
@@ -97,6 +110,14 @@ test("each provider gets its own settings card, and a key typed in one is saved 
   await persist();
   assert.equal(getQwenConfig(euEntry.id).apiKey, "", "the armed clear removed it");
   assert.equal(await eu.locator('[data-role="key-state"]').textContent(), "not set");
+
+  await page.locator("#set-default-claude-effort").selectOption("");
+  await page.locator("#set-default-codex-effort").selectOption("");
+  await eu.locator('[data-role="default-effort"]').selectOption("");
+  await persist();
+  assert.equal(getDefaultEffort("claude"), "");
+  assert.equal(getDefaultEffort("codex"), "");
+  assert.equal(getDefaultEffort(euEntry.id), "");
 
   // The settings search indexes each card separately — they are siblings, not one wrapped block.
   await page.locator("#settings-search").fill("Model Studio");

@@ -57,12 +57,13 @@ const server = await new Promise((resolve) => {
 const base = `http://127.0.0.1:${server.address().port}`;
 after(() => server.close());
 
-const login = await fetch(`${base}/api/login`, {
-  method: "POST",
-  headers: { "content-type": "application/json" },
-  body: JSON.stringify({ password: PASSWORD }),
-});
-const cookie = login.headers.get("set-cookie").split(";", 1)[0];
+// This suite tests approval parity, not authenticator signatures. Issue a fixture session for
+// the existing admin identity; passkey/browser suites separately verify the login ceremonies.
+const { ensureUserAdminAccount } = await import("../src/config/admin-accounts.js");
+const { createAdminSession } = await import("../src/web/auth.js");
+let sessionHeader;
+createAdminSession({ headers: {} }, { setHeader: (_name, value) => { sessionHeader = value; } }, ensureUserAdminAccount(ADMIN));
+const cookie = sessionHeader.split(";", 1)[0];
 
 const get = (path, headers = {}) => fetch(base + path, { headers });
 const post = (path, body, headers = {}) =>

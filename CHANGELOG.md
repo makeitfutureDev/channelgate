@@ -1,5 +1,188 @@
 # Changelog — ChannelGate
 
+## 0.6.5 — candidate, pending approval
+
+- Show readable, redacted provider errors when a background job's automatic follow-up fails,
+  preserving diagnostic audit detail and protection against replaying interrupted work.
+
+Prepared 2026-11-06 from integrated beta development. This is not a publication date.
+Requires Node.js 24.0.0 or newer and runtime image spec 1.6.3. See
+[the candidate record](docs/releases/0.6.5.md) for scope, excluded unfinished work and
+release gates. Stable promotion and publication require approval of the exact tested candidate.
+
+### Beta development notes
+
+- Resolve generated `gateway-usage` and `channel-memory` dependencies only from the channel's
+  verified workspace copies, and keep them out of the personal skill catalog.
+
+- Activity navigation avoids repeated historical scans, reuses recent thread evidence and links,
+  and verifies visible rows concurrently. Refresh still forces fresh checks; access checks remain live.
+
+- Allow an admin to add an exact Azure SQL `host:1433` raw tunnel for a channel, without opening
+  SQL traffic to its other approved SSH/Postgres hosts. The network switch and public-address
+  checks still apply.
+
+- Fix excessive startup work when many conversations have workspace settings. Channel listings
+  reuse one metadata snapshot and resolve folders once per listing; later reads still pick up
+  changed linked-folder owners and access policies immediately.
+- Bound repeated filesystem work during membership metadata writes and startup folder audits;
+  shared-folder follower snapshots retain the owner's current policy without rescanning every
+  folder for every follower.
+
+- Activity automatically refreshes changed thread status, completion and last-message details
+  every 15 seconds, preserving the selected filter/page and pausing on other Home sections.
+
+- Slack Activity uses compact thread rows with inline status/date and Done on the right.
+  Quiet-thread reminders, command help and gateway details moved to Help & settings.
+
+- Audio transcripts appear in the source thread before the agent starts processing. Each clip
+  is labelled, long transcripts are split, and the transcript stays visible beside the answer.
+
+- Accept `@agent /sudo <message>` to enable an admin-only host thread and run the request in
+  one message. Existing status/off controls, busy-thread checks and admin enforcement remain.
+
+- Activity completion now honors ✅ or 👍 on any root/reply and the Done button consistently:
+  completed threads stay out of open lists and stop quiet-thread/pending reminders until reopened.
+  Rows have divider lines, a separate green Done button and the actual last-message date.
+
+- Slack Home now has Activity, Connections, Skills and Channels sections. Activity opens by
+  default; connection updates return to Connections and each section loads its own content.
+
+- Slack App Home now offers My threads with status filters, pagination, original thread links,
+  Done/Reopen controls and bounded discovery of older tracked threads. Ownership and current
+  conversation access are checked for each viewer; a completed reply stays Idle until marked Done.
+
+- Pinned threads now include manual switch/repin guidance when a missing runtime login blocks the turn before an engine starts.
+- Shared grants pointing to a folder without a regular root `SKILL.md` now warn and continue,
+  preserving the source and saved grants while excluding invalid nested skills.
+
+- Channel Runtime spending-limit help now explains that external service charges are excluded,
+  matching the DM budget help.
+
+- Slack model shortcuts accept an optional reasoning effort: `@agent :sol :high task` or
+  `@agent :sol :low`. Both choices persist for the thread, unsupported efforts are refused
+  without changing settings, and `/fork` accepts the same suffix for the new thread.
+
+- Reply footers show configured effort beside the model, using the attempt that answered,
+  including retries and engine fallback.
+
+- Messages sent while a Slack thread is busy now queue automatically and run after preceding
+  work finishes. Waiting messages offer Steer Conversation and Cancel Request; no Add to Queue
+  click is needed. Cancel removes only that waiting message, and stale controls cannot stop a
+  message that has already started.
+
+- Custom MCP connections support multiple named headers and query parameters with write-only
+  values, alongside existing Bearer and Composio presets. Both web and Slack editors retain,
+  replace or remove fields. Custom connections now use the daemon relay on host turns too,
+  keeping query credentials out of engine configuration and command lines.
+
+- A personal skill granted to the organization, a channel or a template no longer loads for
+  everyone in the conversation; it loads only from its author's own grants, and the run and the
+  settings pages say it was skipped.
+- A stored grant of another person's personal skill no longer fails every one of that user's
+  messages. The run skips it and says which skill and how to fix it. The admin Users editor, the
+  shared grant/template pickers and Slack Settings → You no longer offer someone else's personal
+  skill, and every save path refuses one.
+
+- Custom MCP connections now support Composio consumer-key authentication alongside Bearer
+  tokens in both the admin UI and Slack Settings. Add another Composio identity under a distinct
+  name without replacing the built-in connection. Existing servers retain Bearer authentication.
+
+- Fix Google Chat reaction subscription authorization by including the required `chat.bot` scope in the separate Workspace Events token.
+
+- Keep Claude shell-task lifecycle updates out of subagent progress rows and the Coordinating
+  agents label, while preserving ordinary tool progress and genuine agent activity.
+
+- Preserve parsed container background-job exit codes in the structured completion audit, while
+  keeping completion messages in plain language and unconfirmed outcomes unknown.
+
+- Restore the agent directory refresh to 03:00 local time after a spring-forward clock change
+  instead of retaining the transition day’s normalized 04:00 hour.
+
+- Automatically continue the original agent thread after approving a server for a hidden variable; no manual “continue” message is needed.
+
+- Redact hidden proxy placeholders from detached background-shell logs before persistence,
+  while keeping explicitly Readable configuration visible in job output.
+
+- Clarify that the network tool's policy is advisory in `/sudo` direct-host threads, with no
+  OS-level egress cutoff. Ordinary proxy-mode container enforcement is unchanged.
+
+- Ship the documentation favicon so handbook pages no longer request a missing asset.
+
+- Revoke pending identity-link proofs for a recovered administrator, preventing an older proof
+  from replacing the new recovery enrollment link. Other administrators' proofs remain valid.
+
+- Fix horizontal overflow in the Users editor caused by stretching the personal-email sending
+  checkbox to the full form width.
+
+- Fix Sunday cron expressions using weekday `7`, including lists, ranges and steps, in schedule
+  validation, matching and next-run previews. Sunday `0` remains supported.
+
+- Add channel-to-channel agent mail: `send_agent_message` asks another channel's agent a question on the requester's behalf, gated only on the requester's own access (authorization and live membership of both channels, re-checked at send, delivery and reply) plus the requester's approval card; the typed `@agent ask #channel <text>` directive sends a person's exact text with no card. Every registered channel's agent answers. The target answers in its own channel as the rank-less `agent:<source>` principal with a reduced toolset, and the reply returns to the asking thread as a new turn; one in flight per pair, hourly caps, restart recovery and audit events.
+
+- Require Node 24.0.0 or newer consistently for the daemon, installer, updater and documentation
+  build. Align release CI and setup guidance with the Node 24 runtime image; upgrade the host
+  Node runtime before updating older deployments. Refresh Astro and Starlight documentation
+  dependencies within their current major versions.
+
+- Include the official Make.com `make-cli` in every new runtime image, with per-channel
+  `MAKE_API_KEY` / `MAKE_ZONE` setup and destination-bound API-key protection. Refresh pinned
+  Claude Code, MCP remote, Vercel, Supabase and Playwright CLI versions. Existing deployments
+  adopt the toolchain after rebuilding the image; no host Make login is copied.
+
+- Detect Codex tool-process creation exhaustion after a short recovery window, preserve partial
+  usage without automatic replay, and record bounded runtime process/thread-limit diagnostics.
+
+- Extend Enterprise monthly channel spending limits with recorded-spend display, DM editing, conversation-local preservation and consistent queued/retry/fallback refusal.
+- Require Enterprise for skill preferred-model switching, exact company email-domain auto-approval, dedicated channel Codex logins, external skill-catalog MCP and tokens, organization environment variables, Google Drive sync and channel skill templates. Preserve saved configuration after entitlement loss while disabling Enterprise behavior; dedicated Codex channels never silently switch accounts.
+- Add Enterprise per-channel monthly USD spending limits, enforced at run admission against recorded UTC-month spend. Running and concurrent work can overshoot the cap; this is not a provider billing limit.
+- SSH Claude and Codex sessions now display model, reasoning effort and context usage, with working directory, Git branch and available usage details.
+
+- Show a skill's preferred model in the skills library table, the chat skill listings and Slack Settings → Skills.
+
+- Expose "Skill model swap" in Microsoft Teams settings and as `/settings skillswap on|off` in Google Chat.
+
+- Rename user-facing “local skills” to “gateway-owned skills” across skill management and guidance; stored ownership values and update behavior are unchanged.
+
+- Queue Slack `/fork` automatically while the source thread is busy, with explicit acknowledgement, Stop cancellation and restart recovery.
+
+- Suppress unfinished-thread nudges and follow-up digest entries when the Slack thread root or latest reply has a ✅ reaction; thumbs-up does not close a thread.
+
+- Honor inherited DM network settings in the egress proxy, including live template changes, and allow legitimate HTML Slack attachments without misdiagnosing their content as a missing scope.
+
+
+- Clear automatic skill publication recovery pins after a successful retry, including retries of unchanged edits. Preserve manual/legacy and approved override pins, protect newer edits from late publication attempts, and expose pin reasons in metadata and the library.
+
+- Show the new user request above the fork icon and source link in forked Slack thread roots so their topic is visible in the channel.
+
+- Add an optional `model` argument to `create_skill` / `update_skill` that writes or clears the skill's preferred-model frontmatter line, document it in the skill-authoring guide, and show the preferred model in the skills library.
+
+- Let a skill declare its preferred model (`model:` in SKILL.md): with the new per-channel "Allow skill engine and model swapping" switch on, using the skill resumes the same session on that model (sticky below a `/model` pin), or delegates to a background agent on the other engine; `run_agent_in_background` takes `engine`/`model`.
+
+- Charge each Claude turn only its own spend: a resumed session is no longer re-billed its history on every message, subagent tokens are counted, and every model a turn used (a Sonnet subagent under Opus) gets its own priced slice; migration 41 repairs recorded history losslessly.
+
+- Accept public IPv4/IPv6 destinations in SSH approval cards and raw tunnels, fixing IP-only customer connections.
+
+- Show host skill folders missing `SKILL.md` in the library with an issue badge, path, personal grant owners and a missing-file filter.
+
+- Let authorized channel members with write access approve public SSH destinations on a durable card, enabling container SSH without `/sudo`.
+
+- Skip granted folders without a regular `SKILL.md`, warn with the folder name, and continue with valid skills instead of failing the request.
+
+- Make completed `/delete` commands silent, including partial deletion; retain audit counts without posting a report.
+
+- Clarify catalog-first skill authoring: local skill installs are not durable; external source edits require verified repository write access.
+
+- Allow Composio Remote Bash alongside Remote Workbench for authorized remote processing, retaining current-run authority checks and structured membership approvals.
+GPT-6.1 Terra now has Standard API-equivalent usage rates. Upgrades back up and refresh Codex history with dated rates, including previously unpriced Terra usage from October 26, 2026.
+
+- Fix linked-folder access exclusions and DM authorization, preserve section skills and DM settings on separation, and immediately revoke follower SSH sessions after source changes.
+
+- Automatically link conversations sharing a working folder to one live setup, show the source in settings, and keep harness/model choices independent.
+
+
+- Show configured effort and a compact live activity phase beside the running model in Slack’s native Stop label.
+
 ChannelGate was formerly *Claude Gateway for Slack*; entries below the rename keep their original
 wording. All notable changes to the gateway, newest first. Dates are when the work landed.
 This project brings Claude Code (and optionally OpenAI Codex) into Slack as a self-hosted,
@@ -18,9 +201,148 @@ product overview.
 
 ## Unreleased
 
+- Require Enterprise for new mandatory organization skill grants and organization-wide agent instructions. Saved policies remain active after downgrade; explicit removal remains available.
+
+
+- Use the administrator's Slack email for optional password and Slack-code sign-in. Resolve the
+  address through Slack after password verification, retain stable user IDs internally, and
+  keep sensitive-action reauthentication bound to the signed-in administrator.
+
+- Fix Slack app imports: register `/status-cg` instead of the built-in `/status`, include explicit command URLs, and clarify Socket Mode setup in the installer.
+
 - **Company email auto-approval.** Admins can configure exact email domains in Users, preview
   existing Slack users and approve matching provider identities automatically. Manual revocations
   prevent automatic reapproval; no administrator privileges are granted.
+- User-level skill catalog tokens: a person mints their own bearer for `POST /mcp/skills` from
+  chat (`create_my_skill_token`, `list_my_skill_tokens`, `revoke_my_skill_token`); it acts as that
+  person — organization skills, the skills of channels that admit them, their own personal skills,
+  resolved live, with the chat edit rules and never the library export — and dies with their
+  approval. Admin-minted catalog tokens remain the library for other systems and peer gateways
+  and never reach a personal skill in any scope. The endpoint verifies the bearer before parsing
+  the body and backs off invalid tokens. Migration 39.
+- Channel-level user API tokens: anyone working in a conversation can create a personal run API
+  token for it (`create_api_token` / `list_api_tokens` / `revoke_api_token`); runs it starts are
+  bound to that conversation and act as the creator with their live role and authorization. The
+  Admin UI → API page lists and revokes every token. The organization-wide run API key is
+  deprecated (still works, logs a warning).
+- Security hardening (run capability liveness): the daemon's MCP socket refuses a run's signed
+  capability on the hello and on every tool call or relayed request once its conversation has no
+  live work (no turn, background job or agent, memory review or SSH session, with a 30 s
+  post-release grace), answering a fixed sentence and auditing `capability_refused_idle`; a token
+  copied out of a container no longer works for its remaining 6–12 h TTL.
+
+- Preserve channel archival across delayed Slack joins and concurrent admin resets; reconcile missed removals/rejoins after startup or reconnect, pausing workspace updates until bot membership is verified.
+
+- Fix Slack List message references, attachments and URL fields so agents can populate clickable source links and read them back.
+
+- Fix false unavailable-skill warnings for generated operating and memory guides required by shared or personal skills.
+
+- Honor Readable variable visibility in reply streams, final replies and background-job output so public configuration URLs remain usable; continue redacting hidden credentials.
+
+- Add Contabo to the GitHub and public VPS hosting guides, including shared CPU sizing guidance and links to current provider pricing.
+- Apply Free cost-history visibility to audit events, run API job costs and schedule telemetry, preserving operational records and answers.
+
+- Publish a VPS sizing and hosting guide in the official docs, with server tiers, concurrency, storage, and backup recommendations.
+
+- Archive Slack channels when the bot is removed and stop workspace configuration updates until it is re-invited. Show Archived in the admin UI and reject edits/new work for archived channels.
+- Allow up to 100 active chat conversations in each channel per UTC month on Free, with 10 registered channels, 10 users and one month (30 days) of cost-tracking history. The existing 500 AI runs per channel per month remains. No-key evaluation serves one active channel with the same 100-thread allowance; Enterprise defaults to unlimited. Thread usage starts tracking on upgrade without fabricated history.
+
+- Add an opt-in admin sign-in alternative using the admin password and a private, expiring Slack
+  verification code for existing administrators, including sensitive-action reauthentication.
+
+- Version login-page scripts with their HTML so cached pre-upgrade code cannot reference removed fields.
+
+- Use the existing Users list and admin role for dashboard passkeys and invitations. Existing
+  keys link to their owner through private chat verification; role removal revokes dashboard
+  access immediately. Remove the separate dashboard account directory and retain host recovery.
+
+- Fix SSH and VS Code Remote-SSH selecting project storage for organization admins: connections
+  and refreshes now use the same current-role runtime as ordinary chat turns. Role changes
+  disconnect before credential refresh, login/MCP cleanup is scoped to each container, and
+  connection guidance explains separate admin/project history. Existing operator-home SSH
+  restrictions remain enforced; no history is copied or deleted.
+
+- Simplify admin sign-in to passkey selection without a username field. The selected credential
+  identifies its account; password login stays permanently disabled after first enrollment.
+- Add individual dashboard admin usernames and passkey sign-in, with initial-password migration,
+  account/passkey management, expiring enrollment links, recent-authentication checks and
+  host-operator recovery. Password login stops permanently after first passkey enrollment.
+- Fix signed-out admin login: allow the login script, favicon and required fonts before
+  authentication so a fresh browser can submit the sign-in form.
+- Security hardening (audit batch 2): a channel's custom work folder can no longer be the gateway
+  account's home, the gateway runtime root, `~/.ssh`, `~/.claude`, `~/.codex`, the container
+  engine's storage, the hidden artifact trees, the ChannelGate workspace root or its platform
+  folders, another conversation's default folder, or a parent of any of those (another channel's
+  custom folder stays allowed) — refused with a named reason by the `set_channel_workdir` tool
+  and the admin UI, and failed closed with the remedy at spawn time for an already-stored value
+  (one boot warning per offending channel). Hidden, managed and credential-shaped files (`.env`,
+  `.claude/…`, `*.pem`, `credentials.json`, …) can no longer leave a channel through public file
+  links of either purpose or a previously minted link; `slack_share_file`, the footer download,
+  Composio staging and mail attachments refuse hidden and credential-shaped files but still send
+  the channel's instruction/memory files and ordinary reports; in-channel browsing and editing
+  are unchanged.
+- Security hardening (audit batch 4): switching a channel to "Admins only" or "Locked" now evicts
+  the approved members seeded into its guest list (explicit guests and admins stay) from both the Slack
+  Access control and the admin UI, with the count in the save notice and an audit event; the
+  Slack Settings engine / model / effort pickers, thread pins and thread reset follow the
+  gateway's model-change policy like `/model` does, rendering read-only with the policy line for
+  anyone it excludes.
+- Security hardening (audit batch 3): the login and approval-link backoff key each client on the
+  header of the proxy the operator declares (new Settings → Connection → *Behind a reverse proxy*,
+  `trustProxy` / `CG_TRUST_PROXY`: none, `cloudflare`, `xff`) instead of trusting any forwarded
+  header that arrives on a loopback socket, and a global cap (50 failures per 10 minutes) bounds
+  password guessing from fresh buckets. Deployments behind a proxy should set the new option;
+  without it remote logins share one backoff bucket.
+- Security hardening (audit batch 1): the Slack Settings mode control no longer lets a non-admin
+  channel manager switch a channel into Admin mode (managers keep their other controls in an
+  Admin-mode channel and may step it down); case-variant URLs such as `/API/settings` are refused
+  by the admin guards and never routed; the admin shell and login page carry a no-inline-script
+  Content-Security-Policy and every response carries nosniff, frame-denial and referrer headers;
+  an Express error handler replaces default stack-trace responses and the systemd unit sets
+  `NODE_ENV=production`; `/resume` requires the admin session; the background-job "Check status"
+  button is gated like `/status` and scoped to its channel; file explorer share, send-to-me,
+  preview and edit re-prove the opened file under the channel root; the License card escapes
+  platform-supplied text; the internal IPC secret is compared in constant time; `npm audit fix`
+  moved undici, zod, hono, fast-uri, body-parser and ip-address to patched releases.
+
+- **Slack code channels.** When a requester asks for one, the agent can open a dedicated Slack
+  code channel for the task behind an approval card the requester confirms. The channel inherits
+  the origin channel's folder, access, secrets, skills and mode, runs as one channel-wide session
+  with top-level replies and no @-mention, works on a `code/<slug>` branch in a worktree when the
+  folder is a repository (else in place), publishes the branch's diff to the Code tab after every
+  turn, takes HTML, Block Kit, canvas and pull-request tabs plus context-bar items through
+  `update_code_channel`, honours Slack's channel-wide Stop, and archives behind a card with the
+  wrap-up shared back into the origin thread. The Slack manifest gains `features.code_channels`
+  and the `code_channels:manage` scope (paste and reinstall). `/status-cg` is accepted as an alias
+  of `/status` for apps whose manifest cannot register the built-in name.
+
+- Supply new installations with Astra, Sol, Terra, Fable, Opus and Sonnet (`:sonet`) shortcuts
+  using the newest supported stable family versions. Preserve customized lists and thread pins.
+
+- Add a default effort selector beside each harness's default model, including Qwen providers.
+  Inherited runs use it unless a conversation, thread or request overrides effort; blank keeps
+  the CLI default. Validate model compatibility and use the destination harness's effort on failover.
+
+- Let organization admins use another requester's Slack menu buttons and question forms. Menu
+  views open under the clicking admin's own identity; question answers continue the original
+  requester's session and record which admin responded. Current access, membership and stale-form
+  checks still apply. The same admin access applies to busy-thread and engine-switch/retry cards.
+
+- Restore Composio Remote Workbench for remote data processing and bulk app calls, preserving
+  workflow session and file references. Explicit Slack membership actions still require human
+  approval; Python inside Workbench is outside that structured gate. Other generic connector
+  bash/proxy/API executors remain refused. Clarify local container processing as an option for
+  records returned inline.
+
+
+- **Company email auto-approval.** Admins can configure exact email domains in Users, preview
+  existing Slack users and approve matching provider identities automatically. Manual revocations
+  prevent automatic reapproval; no administrator privileges are granted.
+
+- Respect an explicit readable choice for an individual environment secret in strict egress
+  mode. CLIs that require the raw value can receive it after the existing scoped approval;
+  automatically readable secrets remain withheld. Secret listings now distinguish the two
+  cases and summarize the most specific scope.
 
 - **Email accounts.** Connect an ordinary mailbox — IMAP for reading, SMTP for sending — to a
   conversation or to yourself by entering its server settings once on one form: in the admin UI
@@ -249,6 +571,10 @@ product overview.
 
 - Make Teams reply statistics smaller and add a gap above them, including replies that replace
   the working placeholder and background/scheduled results.
+
+- Register Teams Graph subscriptions with literal conversation identifiers in the JSON resource
+  selector, while retaining URL encoding for message-fetch paths. Record the registered selector
+  separately so a successfully renewed subscription's provider scope is visible to operators.
 
 - Remove container image references from reply statistics in Slack, Teams and Google Chat.
 
@@ -2990,3 +3316,11 @@ copying cross-channel auto-memory.
   injected into `CLAUDE.md`; visible working folders under `~/Slack Agent/<channel>`.
 - Optional **admin-UI password**; one-command installer; encrypted config **backup/restore**;
   **launchd** service with `npm run update`.
+
+### Fixed — Slack Connect running indicator
+
+Use the sender's workspace for streaming replies in shared channels and clear the native running status after delivery, including stream failures, without allowing an older turn to clear its successor.
+
+### Fixed — rootless Podman system-service setup
+
+Keep container cgroups inside the delegated daemon service, preserve private temporary backing across restarts, and run offline resource-limit probes with distinct runtime failure diagnostics. Preserve operator Podman configuration and document idle recovery for existing stores.

@@ -62,17 +62,35 @@ export function captureGrantMcpSelection(current = {}, engine = "", visible = []
 // being upgraded, or a saved config came from another host). Keep it selectable and checked so
 // saving an unrelated setting does not silently revoke it. Available names retain their normal
 // order; saved-only names append once with an explicit offline label.
-export function accessGrantSkillOptions(available = [], saved = []) {
-  const availableNames = [...new Set((available || []).filter((name) => typeof name === "string").map((name) => name.trim()).filter(Boolean))];
-  const savedNames = [...new Set((saved || []).filter((name) => typeof name === "string").map((name) => name.trim()).filter(Boolean))];
+//
+// Personal skills (`personal`: [{ slug, createdBy }]) belong to their author alone. `ownerId` is the
+// person whose grants are edited: their OWN personal skills are offered; everyone else's — and,
+// for a shared tier (no owner), every personal skill — are never offered. A stored grant of one
+// is listed UNCHECKED and marked `foreign`, so the next save removes it (the run already skips it).
+export function accessGrantSkillOptions(available = [], saved = [], { personal = [], ownerId = "" } = {}) {
+  const clean = (values) => [...new Set((values || []).filter((name) => typeof name === "string").map((name) => name.trim()).filter(Boolean))];
+  const personalOwners = new Map((personal || []).filter((skill) => skill && typeof skill.slug === "string").map((skill) => [skill.slug.toLowerCase(), String(skill.createdBy || "")]));
+  const isForeign = (name) => personalOwners.has(name.toLowerCase()) && (!ownerId || personalOwners.get(name.toLowerCase()) !== ownerId);
+  const own = ownerId ? (personal || []).filter((skill) => skill && skill.createdBy === ownerId).map((skill) => skill.slug) : [];
+  const availableNames = clean([...(available || []), ...own]).filter((name) => !isForeign(name));
+  const savedNames = clean(saved);
   const known = new Set(availableNames);
   const enabled = new Set(savedNames);
+  const ownKeys = new Set(own.map((name) => name.toLowerCase()));
   return [
     ...availableNames
-      .map((name) => ({ value: name, label: name, enabled: enabled.has(name) }))
+      .map((name) => ({ value: name, label: ownKeys.has(name.toLowerCase()) ? `${name} · personal` : name, enabled: enabled.has(name) }))
       .sort((a, b) => Number(b.enabled) - Number(a.enabled) || a.label.localeCompare(b.label)),
-    ...savedNames.filter((name) => !known.has(name)).map((name) => ({ value: name, label: `${name} · unavailable` })),
+    ...savedNames.filter((name) => !known.has(name)).map((name) => isForeign(name)
+      ? { value: name, label: `${name} · ${ownerId ? "another person's" : "a"} personal skill — not loaded; removed on save`, foreign: true }
+      : { value: name, label: `${name} · unavailable` }),
   ];
+}
+
+// The saved names to pre-check: everything except a foreign personal grant (see above).
+export function accessGrantSkillSelection(options = [], saved = []) {
+  const foreign = new Set(options.filter((option) => option.foreign).map((option) => option.value));
+  return (saved || []).filter((name) => !foreign.has(typeof name === "string" ? name.trim() : name));
 }
 
 // ── Global settings: send the CHANGE, not the page ────────────────────────────────────────────

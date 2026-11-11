@@ -54,7 +54,7 @@ test("/stop, /status, and the stop reaction all resolve through the authorizatio
   const src = readFileSync(new URL("../src/slack/app.js", import.meta.url), "utf8");
 
   const stopCmd = src.match(/app\.command\("\/stop",[\s\S]*?\n  \}\);/)?.[0] || "";
-  const statusCmd = src.match(/app\.command\("\/status",[\s\S]*?\n  \}\);/)?.[0] || "";
+  const statusCmd = src.match(/async function handleStatusCommand\([\s\S]*?\n  \}/)?.[0] || "";
   const stopReaction = src.match(/if \(STOP_REACTIONS\.has\(event\.reaction\)\) \{[\s\S]*?\n      \}/)?.[0] || "";
 
   for (const [label, handler] of [["/stop", stopCmd], ["/status", statusCmd], ["🛑 reaction", stopReaction]]) {

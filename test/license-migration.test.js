@@ -89,3 +89,25 @@ test("re-running migrations on an already-migrated database is a no-op", () => {
     db.close();
   }
 });
+
+test("migration 38 preserves historical channel accounting without fabricating thread admissions", () => {
+  const db = memoryDb();
+  try {
+    for (const m of migrations.filter(m => m.version <= 37)) {
+      m.up(db);
+      db.exec(`PRAGMA user_version = ${m.version}`);
+    }
+    db.prepare("INSERT INTO license_usage(month, conversation_id, runs, admitted) VALUES('2026-08', 'C_KEEP', 42, 1)").run();
+    runMigrations(db);
+    assert.equal(version(db), latest);
+    assert.equal(db.prepare("SELECT runs FROM license_usage WHERE conversation_id='C_KEEP'").get().runs, 42);
+    assert.equal(db.prepare("SELECT COUNT(*) n FROM license_thread_usage").get().n, 0);
+    const insert = db.prepare("INSERT INTO license_thread_usage(month, channel_id, thread_key, first_ts) VALUES(?, ?, ?, '2026-08-01T00:00:00Z')");
+    insert.run("2026-08", "A", "same");
+    assert.throws(() => insert.run("2026-08", "A", "same"), /UNIQUE|constraint/i);
+    insert.run("2026-08", "B", "same");
+    insert.run("2026-09", "A", "same");
+    runMigrations(db);
+    assert.equal(db.prepare("SELECT COUNT(*) n FROM license_thread_usage").get().n, 3);
+  } finally { db.close(); }
+});

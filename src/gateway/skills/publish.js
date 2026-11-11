@@ -170,14 +170,15 @@ export async function publishRevision({ slug, revisionId = null, message = "", a
     deleted.push(p);
   }
   if (skill.channelScope) lastCommit = (await ensureSectionReadme(fetchImpl, token, target, skill.channelScope, note)) || lastCommit;
-  markRevisionPublished(revision.id, { ref: lastCommit });
+  const completed = markRevisionPublished(revision.id, { ref: lastCommit });
+  if (completed.publicationPinCleared) logEvent("skill_publication_pin_cleared", { skill: skill.slug, revision: revision.revisionNo, author: actor });
   let adopted = false;
   if (source && skill.ownerKind === "local") {
     adoptSkillIntoSource(skill.slug, source.id, { sourcePath: dir, sourceRef: lastCommit });
     adopted = true;
   }
   logEvent("skill_published", { skill: skill.slug, revision: revision.revisionNo, commit: lastCommit, files: written.length, deleted: deleted.length, adopted, author: actor });
-  return { published: true, commit: lastCommit, repo: target.url, branch: target.branch, path: dir, files: written, deleted, adopted };
+  return { published: true, commit: lastCommit, repo: target.url, branch: target.branch, path: dir, files: written, deleted, adopted, publicationPinCleared: completed.publicationPinCleared };
 }
 
 // Move a skill's published files between the library and a channel section: the current

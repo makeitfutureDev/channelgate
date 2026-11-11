@@ -7,19 +7,24 @@
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
+import { setTimeout as delay } from "node:timers/promises";
 import assert from "node:assert/strict";
 import { ensureTestEnv } from "./helpers.js";
 
 const projectRoot = fileURLToPath(new URL("..", import.meta.url));
 process.env.PATH = `${path.join(projectRoot, "test", "fixtures", "prompt-echo")}${path.delimiter}${process.env.PATH || ""}`;
 process.env.SESSION_KEEPALIVE = "0";
+process.env.PROGRESS_VIEW = "shimmer";
 const scratch = ensureTestEnv();
 process.env.CG_WORKSPACE_DIR = path.join(scratch, "workspaces");
 
+const { useFakeRuntime } = await import("./runtime-fake.js");
+await useFakeRuntime();
+
 const { setUser } = await import("../src/config/store.js");
 const { processMessageEvent, runQueue } = await import("../src/slack/message-pipeline.js");
-const { busyThreadChoices } = await import("../src/slack/busy-thread-choice.js");
-const { recoverRuns } = await import("../src/gateway/active-runs.js");
+const { BUSY_THREAD_STEER_ACTION, BUSY_THREAD_CANCEL_ACTION, busyThreadChoices } = await import("../src/slack/busy-thread-choice.js");
+const { listActiveRuns, recoverRuns } = await import("../src/gateway/active-runs.js");
 
 const USER = "U_DUP_DELIVERY";
 const CHANNEL = "D_DUP_DELIVERY";
@@ -38,6 +43,7 @@ function fakeSlack() {
         return { ok: true, ts: `bot.${++seq}` };
       },
       update: ok,
+      delete: ok,
       postEphemeral: ok,
     },
     users: {
@@ -81,22 +87,41 @@ test("a redelivered copy of the message already running never asks the user to s
   }
 });
 
-test("a different message in the same busy thread still gets the choice card", async () => {
+test("a different message in the same busy thread queues once with optional controls", async () => {
+  await setUser(USER, { name: "Dup User", approved: true });
   const client = fakeSlack();
   const event = message("4000.003");
   const runKey = `${SLUG}::${THREAD}`;
+  const runId = `${runKey}::${event.ts}`;
   const active = { aborted: false, controller: new AbortController(), authorId: USER, runId: `${runKey}::4000.002` };
   await runQueue.acquire(runKey, active);
-  let choiceId = "";
+  // Processing now stays pending until the automatic queue picks up the message. Awaiting it
+  // before releasing this synthetic owner would deadlock the fixture, not test a choice card.
+  const followup = processMessageEvent(event, client, { botUserId: "U_BOT", teamId: "T_DUP" });
   try {
+    let card;
+    for (let attempt = 0; attempt < 200 && !card; attempt++) {
+      card = client.posted.find((m) => m.blocks?.some((b) => b.elements?.some((el) => el.action_id === BUSY_THREAD_STEER_ACTION)));
+      if (!card) await delay(10);
+    }
+    assert.ok(card, `a new message must get queued controls, got ${JSON.stringify(client.posted)}`);
+    assert.deepEqual(card.blocks.flatMap((b) => b.elements || []).map((b) => b.action_id),
+      [BUSY_THREAD_STEER_ACTION, BUSY_THREAD_CANCEL_ACTION]);
+    assert.equal(runQueue.isQueued(runKey, runId), true);
+    assert.equal(listActiveRuns().filter((r) => r.id === runId).length, 1, "the successor is durable before any click");
+    const postedBeforeRedelivery = client.posted.length;
     await processMessageEvent(event, client, { botUserId: "U_BOT", teamId: "T_DUP" });
-    const card = client.posted.find((m) => Array.isArray(m.blocks));
-    assert.ok(card, `a genuinely new message must still be asked about, got ${JSON.stringify(client.posted)}`);
-    choiceId = card.blocks.flatMap((b) => b.elements || [])[0]?.value || "";
+    assert.equal(runQueue.count(runKey), 2, "redelivery must not enqueue a second copy");
+    assert.equal(client.posted.length, postedBeforeRedelivery, "redelivery must not post another card");
+    assert.equal(active.controller.signal.aborted, false, "automatic queuing leaves the current owner running");
   } finally {
-    if (choiceId) busyThreadChoices.discard(choiceId);
     runQueue.release(runKey, active);
+    await followup;
   }
+  assert.equal(runQueue.count(runKey), 0, "the successor runs automatically after its owner releases");
+  assert.equal(listActiveRuns().some((r) => r.id === runId), false);
+  assert.equal(busyThreadChoices.pendingFor(CHANNEL, event.ts), null, "automatic pickup retires the controls");
+  assert.equal(client.posted.filter((m) => String(m.text || "").includes(event.text)).length, 1, "one successor answer is delivered");
 });
 
 test("a message already awaiting a choice never gets a second card", async () => {

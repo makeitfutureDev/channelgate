@@ -21,6 +21,7 @@
 // its telemetry batch between turns, and each attempt was a row (241 in 25 minutes across six
 // channels); those refusals are expected, carry no secret a person set, and are still counted.
 // Everything is counted per channel in memory for egressStatus().
+import { effectiveMeta } from "../effective-meta.js";
 import crypto from "node:crypto";
 import net from "node:net";
 import path from "node:path";
@@ -37,13 +38,12 @@ import { platformOr } from "../../platforms/registry.js";
 import { egressActive as hookEgressActive, egressModeOf, setEgressProvider } from "../../runtimes/container/egress-hook.js";
 import { loadOrCreateEgressCa } from "./ca.js";
 import { createEgressProxy } from "./proxy.js";
-import { normalizeHost } from "./rules.js";
 import { resolveEgressGrant, revokeMissing } from "./grants.js";
 import { isChannelLive, isOwnerLive, otherOwnerActive, otherSshOpen } from "./liveness.js";
 import { activeEditorLeases } from "../../runtimes/container/editor-lease.js";
 import { containerName } from "../../runtimes/container/names.js";
 import { engineHostsFor, hostOfUrl } from "./engine-hosts.js";
-import { isValidRuleHost } from "./catalog-rules.js";
+import { parseRawDestination } from "./catalog-rules.js";
 
 // sockaddr_un.sun_path is 108 bytes including the terminating NUL.
 export const MAX_SOCKET_PATH_BYTES = 107;
@@ -123,9 +123,11 @@ export function rawPassthroughFor(meta = {}) {
   const out = [...ALWAYS_RAW.map((rule) => ({ ...rule }))];
   const declared = Array.isArray(meta?.egressRawHosts) ? meta.egressRawHosts : [];
   for (const raw of declared) {
-    const host = normalizeHost(raw);
-    if (!host || !isValidRuleHost(host)) continue;
-    for (const port of RAW_PASSTHROUGH_PORTS) out.push({ host, port });
+    const destination = parseRawDestination(raw);
+    if (!destination) continue;
+    for (const port of destination.port === null ? RAW_PASSTHROUGH_PORTS : [destination.port]) {
+      out.push({ host: destination.host, port });
+    }
   }
   return out;
 }
@@ -212,7 +214,7 @@ export async function egressPolicyFor(ctx) {
 }
 
 async function policyForCtx(ctx) {
-  const meta = (await getChannelMeta(ctx?.slug)) || {};
+  const meta = effectiveMeta((await getChannelMeta(ctx?.slug)) || {});
   const runHosts = [];
   const seen = state?.runHosts.get(channelKey(ctx));
   if (seen) {

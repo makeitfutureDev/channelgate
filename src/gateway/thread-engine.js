@@ -1,3 +1,4 @@
+import { enterpriseFeatureEnabled, requireEnterpriseFeature } from "../ee/feature-entitlements.js";
 // Per-thread engine override. A user can pick the engine for a thread by starting a message with
 // "claude" or "codex" (e.g. "@bot codex build X"), or via the /model wizard's "just this thread"
 // scope; it sticks for the thread until changed. Precedence at run time: thread override >
@@ -97,6 +98,20 @@ export async function setThreadEffort(slug, threadKey, effort) {
   setOverride(slug, threadKey, "effort", String(effort || "").trim());
 }
 
+// ── Per-thread SKILL model preference (src/gateway/skill-runtime.js) ─────────────────────────
+// Written by the orchestrator when a skill's preferred model took over the thread inline. It is
+// NOT a user pin: run.js reads it below the thread model pin and above the channel default, and
+// it never disables failover or holds a capacity continuation on its model. Stored as its own
+// kind so a pin and a preference can never be mistaken for one another.
+export async function getThreadSkillModel(slug, threadKey) {
+  return enterpriseFeatureEnabled("skillModelRouting") ? getOverride(slug, threadKey, "skill_model") : "";
+}
+
+export async function setThreadSkillModel(slug, threadKey, model) {
+  if (String(model || "").trim()) requireEnterpriseFeature("skillModelRouting");
+  setOverride(slug, threadKey, "skill_model", String(model || "").trim());
+}
+
 // One native form saves a complete runtime selection. Keep the triple atomic without touching
 // the thread's independent clean/sudo posture; callers validate model compatibility/authority.
 export function setThreadRuntimeOverrides(slug, threadKey, { engine = "", model = "", effort = "" }, { expected } = {}) {
@@ -162,7 +177,7 @@ export async function clearThreadRuntimeOverrides(slugs) {
   if (!list.length) return 0;
   const placeholders = list.map(() => "?").join(",");
   const result = getDb()
-    .prepare(`DELETE FROM thread_overrides WHERE kind IN ('engine', 'model', 'effort') AND slug IN (${placeholders})`)
+    .prepare(`DELETE FROM thread_overrides WHERE kind IN ('engine', 'model', 'effort', 'skill_model') AND slug IN (${placeholders})`)
     .run(...list);
   return Number(result.changes || 0);
 }

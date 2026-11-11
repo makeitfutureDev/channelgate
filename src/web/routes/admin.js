@@ -21,6 +21,7 @@ import { createChannelsRouter } from "./channels.js";
 import { createUsersRouter } from "./users.js";
 import { createSkillsRouter } from "./skills.js";
 import { createSystemHealthRouter } from "./system-health.js";
+import { createApiTokensRouter } from "./api-tokens.js";
 
 export function createAdminRouter({
   slack,
@@ -40,6 +41,7 @@ export function createAdminRouter({
   router.use(createChannelsRouter({ slack, testMakeToolbox }));
   router.use(createUsersRouter({ slack }));
   router.use(createSkillsRouter());
+  router.use(createApiTokensRouter());
 
   return router;
 }

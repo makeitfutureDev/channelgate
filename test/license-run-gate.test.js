@@ -61,7 +61,7 @@ test("without a key the second conversation is refused with the notice and no ru
   });
   assert.equal(second.licenseRefused, true);
   assert.equal(second.licenseReason, "conversation_limit");
-  assert.match(second.content, /limited to 1 conversation without a license key/);
+  assert.match(second.content, /limited to 1 active channel without a license key/);
   // Deliverable, not an error: content is what every origin's delivery path posts, and the
   // accounting fields are zeroed so a refusal can never be billed.
   assert.equal(second.costUSD, 0);

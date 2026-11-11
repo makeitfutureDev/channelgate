@@ -12,6 +12,7 @@
 // The marker is random per call, so no transcript content can forge a record boundary, and the
 // per-file byte and line caps keep a multi-megabyte transcript from being read back wholesale —
 // the fields adoption needs (`cwd`, the session id) are in the first records.
+import { collectResourceSnapshot } from "../resource-snapshot.js";
 import { randomBytes } from "node:crypto";
 import { shellQuote, shellQuoteGlob } from "./carry.js";
 
@@ -115,5 +116,16 @@ export function createContainerState({ exec, lifecycle, log = () => {} } = {}) {
     catch { throw new Error("runtime usage inspection returned invalid JSON"); }
   }
 
-  return { inspectState, inspectUsage };
+  async function inspectResources(target, { runId = "" } = {}) {
+    // No ensureUp/recreate/retry while an active run holds the lease. Lack of a process slot may
+    // prevent even this probe; the runner records unavailable rather than delaying termination.
+    const source = `(${collectResourceSnapshot.toString()})(${JSON.stringify({ runId })}).then(value => console.log(JSON.stringify(value)))`;
+    const result = await exec.runExec(target, [target.container.name, "node", "--input-type=module", "-e", source], {
+      retry: false, timeoutMs: 2_000,
+    });
+    if (result.code !== 0) throw new Error("runtime resource inspection unavailable");
+    return JSON.parse(result.stdout);
+  }
+
+  return { inspectState, inspectUsage, inspectResources };
 }

@@ -174,6 +174,7 @@ export function createStreamConsumer({ onDelta = null, onEvent = null } = {}) {
   const thinkingBlocks = new Map(); // content-block index → { buf, emittedAt, last }
   const taskAliases = new Map(); // Claude task_id → originating Agent/Task tool_use_id
   const agentIds = new Set(); // stable ids known to represent native subagents
+  const nonAgentTaskIds = new Set(); // explicit Bash/other task identities, including later aliases
   const seenToolUses = new Set();
   let text = "";
   let initialModel = "";
@@ -211,8 +212,20 @@ export function createStreamConsumer({ onDelta = null, onEvent = null } = {}) {
   };
   const emitClaudeTask = (p) => {
     const subtype = String(p?.subtype || "");
+    if (p?.type !== "tool_progress" && (p?.type !== "system" || !subtype.startsWith("task_"))) return false;
+    const id = taskIdFor(p) || (p?.type === "tool_progress"
+      ? String(p.parent_tool_use_id || p.parentToolUseId || "").trim() : "");
+    const identities = [id, p.task_id, p.taskId, p.tool_use_id, p.toolUseId].filter(Boolean).map(String);
+    const taskType = String(p.task_type || p.taskType || "").trim();
+    // SDK task lifecycles also describe foreground/background Bash (local_bash).
+    // Remember that classification: later progress/terminal frames omit task_type and may
+    // introduce a tool-use alias. Missing optional metadata still supports older agent streams.
+    if ((taskType && taskType !== "local_agent" && taskType !== "remote_agent")
+      || identities.some((identity) => nonAgentTaskIds.has(identity))) {
+      for (const identity of identities) nonAgentTaskIds.add(identity);
+      return true;
+    }
     if (p?.type === "tool_progress") {
-      const id = taskIdFor(p) || String(p.parent_tool_use_id || p.parentToolUseId || "").trim();
       if (!id || !agentIds.has(id)) return false;
       const seconds = p.elapsed_time_seconds ?? p.elapsedTimeSeconds;
       onEvent?.({
@@ -225,9 +238,6 @@ export function createStreamConsumer({ onDelta = null, onEvent = null } = {}) {
       });
       return true;
     }
-    if (p?.type !== "system" || !subtype.startsWith("task_")) return false;
-
-    const id = taskIdFor(p);
     if (!id) return true;
     agentIds.add(id);
     const usage = usageFields(p.usage);

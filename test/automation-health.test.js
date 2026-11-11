@@ -80,7 +80,7 @@ test("only one valid explicit outcome can suppress a check", () => {
 });
 
 test("a gateway refusal overrides even a claimed successful outcome", () => {
-  for (const refusal of [{ licenseRefused: true }, { accessRefused: true }, { engineRefused: true }, { engineError: true }, { interrupted: true }, { completed: false }, { answerless: true }]) {
+  for (const refusal of [{ budgetRefused: true }, { spendingRefused: true }, { licenseRefused: true }, { accessRefused: true }, { engineRefused: true }, { engineError: true }, { interrupted: true }, { completed: false }, { answerless: true }]) {
     const result = classifyScheduleResult({ content: report("no-op"), ...refusal });
     assert.notEqual(result.automationOutcome.status, "no-op");
     assert.notEqual(result.automationOutcome.status, "succeeded");
@@ -362,4 +362,33 @@ test("a telemetry write failure before execution releases the schedule's in-flig
   await scheduler.runSchedule(stored(sched.id), options);
   assert.equal(executions, 1, "recovering storage restores execution without restarting the daemon");
   assert.equal(history(sched.id).length, 1);
+});
+
+test("budget refusals remain not-started and blocked in durable schedule history", async () => {
+  for (const engine of ["claude", "codex"]) {
+    for (const flag of ["budgetRefused", "spendingRefused", "accessRefused", "licenseRefused", "engineRefused"]) {
+      const sched = fixture();
+      let delivered = 0;
+      await scheduler.runSchedule(sched, {
+        runner: async () => ({ engine, [flag]: true, content: "Admission refused: configured limit." }),
+        deliver: async () => { delivered++; },
+      });
+      const [run] = history(sched.id);
+      assert.equal(run.engineStatus, "not-started", flag);
+      assert.equal(run.taskStatus, "blocked", flag);
+      assert.equal(run.outcomeSource, "gateway", flag);
+      assert.equal(delivered, 1, "refusal remains visible");
+    }
+  }
+});
+
+test("a refused fallback preserves the prior engine attempt in schedule history", async () => {
+  const sched = fixture();
+  await scheduler.runSchedule(sched, {
+    runner: async () => ({ budgetRefused: true, engineStarted: true, content: "Further work refused by spending limit." }),
+    deliver: async () => {},
+  });
+  const [run] = history(sched.id);
+  assert.equal(run.engineStatus, "failed", "a prior engine attempt is not no-engine admission");
+  assert.equal(run.taskStatus, "blocked");
 });

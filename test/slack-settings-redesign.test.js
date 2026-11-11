@@ -301,9 +301,9 @@ test("every page, in every role and with every inline form open, passes Block Ki
     secrets: [{ name: long, last4: "beef", protected: true, hosts: ["a.example", "b.example"] }, { name: "GMAIL_APP_PASSWORD", last4: "rzhb", protected: false }],
     orgSecrets: [{ name: "ORG_KEY", last4: "o123", protected: true, approval: true, hosts: [] }],
     personalSecrets: [{ name: "MY_TOKEN", last4: "p123", protected: true, approval: true, hosts: [] }],
-    skills: { template: "Development", templateSlug: "development", templates: [{ slug: "development", name: "Development" }], additional: ["pdf"], channel: ["pdf", "review"], organization: ["gateway-usage"] },
+    skills: { template: "Development", templateSlug: "development", templates: [{ slug: "development", name: "Development" }], additional: ["pdf"], channel: ["pdf", "review"], organization: ["gateway-usage"], notLoaded: [{ name: "private-one", tier: "channel" }, { name: "private-two", tier: "organization" }] },
     skillPicker: { options: Array.from({ length: 130 }, (_, i) => ({ key: `skill-${i}`, label: `skill-${i}`, description: "d".repeat(200) })), selected: ["skill-3"] },
-    mySkillPicker: { options: [{ key: "email-triage", label: "email-triage" }], selected: [] },
+    mySkillPicker: { options: [{ key: "email-triage", label: "email-triage" }], selected: [], foreign: ["someone-elses-skill"] },
     automations: [
       { id: "rec1", cron: "0 9 * * 1-5", description: "Daily", enabled: true, kind: "task", lastStatus: "ok" },
       { id: "once1", once: true, runAt: "2026-10-01T07:30:00.000Z", description: "Ping", enabled: true, kind: "reminder" },
@@ -331,4 +331,37 @@ test("every page, in every role and with every inline form open, passes Block Ki
   }
   // A DM, too.
   assert.deepEqual(blockKitProblems(buildChannelSettingsView({ ...snapshot, isDM: true, mode: { adminMode: true } }, state, { tab: "agent", canEnableAdmin: true })), []);
+});
+
+test("the You page names stored grants of another person's personal skill as not loaded", () => {
+  const view = buildChannelSettingsView({ personalSecrets: [], mySkillPicker: { options: [{ key: "mine", label: "mine" }], selected: [], foreign: ["callbox-form"] } }, { channelId: "C_YOU", slug: "you", threadTs: "", ownerId: "U_SHAKED" }, { tab: "you" });
+  const text = JSON.stringify(view.blocks);
+  assert.match(text, /Not loaded: `callbox-form` — another person's personal skill/);
+  const clean = buildChannelSettingsView({ personalSecrets: [], mySkillPicker: { options: [{ key: "mine", label: "mine" }], selected: [] } }, { channelId: "C_YOU", slug: "you", threadTs: "", ownerId: "U_SHAKED" }, { tab: "you" });
+  assert.doesNotMatch(JSON.stringify(clean.blocks), /Not loaded/);
+});
+
+test("generic custom MCP forms save, preserve, replace and clear headers and query parameters", async () => {
+  const url = "https://93.184.215.14/mcp";
+  const added = await saveSettingsForm("cm-add:p", { name: "generic", url, authType: "custom", headers: "x-key=first-secret\nx-extra=second-secret", queryParams: "api_key=query-secret" }, await ctx());
+  assert.match(added.notice, /my-generic/);
+  const saved = async () => (await store.getUser("U_MEMBER")).customMcps.find((row) => row.name === "generic");
+  assert.deepEqual((await saved()).headers, [{ name: "x-key", value: "first-secret" }, { name: "x-extra", value: "second-secret" }]);
+  await saveSettingsForm("cm:p:generic", { url, headers: "x-key=", queryParams: "" }, await ctx());
+  assert.deepEqual((await saved()).headers, [{ name: "x-key", value: "first-secret" }], "missing row removes it; blank row value preserves saved value");
+  assert.equal((await saved()).queryParams[0].value, "query-secret", "blank collection preserves");
+  await saveSettingsForm("cm:p:generic", { url, headers: "x-key=replacement", queryParams: "[]" }, await ctx());
+  assert.equal((await saved()).headers[0].value, "replacement");
+  assert.deepEqual((await saved()).queryParams, []);
+  const bad = await saveSettingsForm("cm:p:generic", { url, headers: "invalid" }, await ctx());
+  assert.equal(bad.field, "headers");
+  assert.equal((await saved()).headers[0].value, "replacement");
+  await saveSettingsForm("cm:p:generic", { url, headers: "[]" }, await ctx());
+  assert.deepEqual((await saved()).headers, []);
+  await removeSettingsForm("cm:p:generic", await ctx());
+});
+
+test("the Skills page names personal skills granted to the conversation or organization as not loaded", () => {
+  const view = buildChannelSettingsView({ skills: { channel: ["mine"], additional: ["mine"], organization: [], notLoaded: [{ name: "shay-private", tier: "channel" }, { name: "org-private", tier: "organization" }] } }, { channelId: "C_SK", slug: "sk", threadTs: "", ownerId: "U1" }, { tab: "skills" });
+  assert.match(JSON.stringify(view.blocks), /Not loaded: `shay-private`, `org-private` \(organization\) — a personal skill loads only for its author/);
 });

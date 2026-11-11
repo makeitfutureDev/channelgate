@@ -9,8 +9,8 @@
 // a participant answers, the bot is no longer the last author and the thread clears itself.
 //
 // Twice a day (08:00 and 14:00 Europe/Bucharest by default) each approved user gets ONE DM digest
-// of the threads the AI is waiting on them for, each line a permalink. Reacting ✅ dismisses a thread;
-// any fresh activity after that re-opens it automatically (its lastTs moves past the done marker).
+// of the threads the AI is waiting on them for, each line a permalink. Source-thread checks/thumbs
+// and Activity Done suppress delivery through the shared completion gate, even after later messages.
 // Nothing is sent to a user with an empty list — no spam. Missed slots CATCH UP: if the machine was
 // asleep at a slot time, the digest fires late on the next tick (durable per-day marker in SQLite
 // `_meta`, so a restart never double-sends).
@@ -25,7 +25,9 @@ import {
 } from "../config/settings.js";
 import { logEvent } from "../util/logger.js";
 import { getDb, toJson, fromJson, metaGet, metaSet } from "../db/index.js";
-import { postDirectMessage } from "../platforms/notify.js";
+import { asConnector, postNotice } from "../platforms/notify.js";
+import { threadIsComplete } from "./thread-completion.js";
+import { getSlackThread, slackThreadIsDone } from "./slack-threads.js";
 
 export const FOLLOWUP_RETENTION_MS = 14 * 24 * 60 * 60 * 1000;
 const MAX_DIGEST_LINES = 25; // cap one DM digest (oldest-waiting first)
@@ -258,6 +260,9 @@ export function clearDone(userId, channelId, threadTs) {
 // replies the bot is no longer the last author, so the thread clears itself. We do NOT remind about
 // human-to-human replies you owe — only about decisions the AI is waiting on from you.
 function aiAwaitsUser(rec, userId, botUserId, doneMap) {
+  // Reaction evidence must remain eligible for live verification: removing a reaction while
+  // the daemon was offline must not strand a thread behind its cached completion state.
+  if (getSlackThread(rec.channelId, rec.threadTs)?.done_ms > 0) return false;
   if (!rec.aiInvolved) return false; // the gateway AI genuinely took part
   if (rec.lastAuthorId !== botUserId) return false; // the AI must have spoken last (waiting on you)
   if (!rec.participants.includes(userId)) return false; // you must have taken part in the thread
@@ -350,29 +355,56 @@ const permalinkVia = (c) => async (channelId, threadTs) =>
 // On-demand version of the digest (the `/pending` in-thread command): the caller's LIVE pending
 // list, formatted exactly like the scheduled DM. Empty list → a short friendly note instead of
 // silence (unlike the digest, the user explicitly asked).
+async function verifiedPending(c, userId, botUserId) {
+  const pending = [];
+  let unverified = 0;
+  for (const rec of pendingForUser(userId, botUserId)) {
+    try {
+      if (!await threadIsComplete(c, rec.channelId, rec.threadTs)) pending.push(rec);
+    } catch {
+      // Defer unverifiable threads; do not persist a dismissal on a transient API failure.
+      unverified++;
+    }
+  }
+  return { pending, unverified };
+}
+
 export async function buildPendingReportForUser(c, userId, botUserId, nowMs = Date.now()) {
-  const pending = pendingForUser(userId, botUserId);
+  const { pending, unverified } = await verifiedPending(c, userId, botUserId);
+  if (unverified) return "I couldn’t verify completion reactions for every thread. Please try again shortly.";
   if (!pending.length) return "✅ Nothing pending — I'm not waiting on your decision in any thread.";
   const body = await formatPendingReport(pending, nowMs, permalinkVia(c));
-  return body + `\n\n_Reply in a thread to answer — it clears automatically once you do. Or react ✅ to dismiss it._`;
+  return body + `\n\n_Reply in a thread to answer — it clears automatically once you do. Or react ✅ or 👍 to complete it._`;
 }
 
 // Build and DM one user's digest of threads the AI is waiting on them for. Returns the count
 // (0 → nothing sent).
 export async function sendDigest(c, userId, botUserId, nowMs) {
-  const pending = pendingForUser(userId, botUserId);
+  let { pending } = await verifiedPending(c, userId, botUserId);
   if (!pending.length) return 0;
 
-  const text =
-    (await formatPendingReport(pending, nowMs, permalinkVia(c))) +
-    `\n\n_Reply in a thread to answer — it clears automatically once you do. Or React ✅ to dismiss all listed threads. I check at the start of your day and again early afternoon._`;
-
   try {
-    // "Open the 1:1 with this person and post there" is a different API on every surface, so the
-    // connector owns it — this module only knows it wants to DM the user.
-    const posted = await postDirectMessage(c, { userId, text });
-    const dm = posted?.conversationId;
+    const links = new Map();
+    const resolveLink = async (channelId, ts) => {
+      const key = tkey(channelId, ts);
+      if (!links.has(key)) links.set(key, await permalinkVia(c)(channelId, ts));
+      return links.get(key);
+    };
+    await formatPendingReport(pending, nowMs, resolveLink);
+    const stillOpen = (rec) => !slackThreadIsDone(getSlackThread(rec.channelId, rec.threadTs));
+    pending = pending.filter(stillOpen);
+    if (!pending.length) return 0;
+    const connector = asConnector(c);
+    if (!connector) return 0;
+    const dm = await connector.openDm(userId);
     if (!dm) return 0;
+    pending = pending.filter(stillOpen);
+    if (!pending.length) return 0;
+    const text = (await formatPendingReport(pending, nowMs, resolveLink)) +
+      `\n\n_Reply in a thread to answer — it clears automatically once you do. Or React ✅ to dismiss all listed threads (👍 also works). I check at the start of your day and again early afternoon._`;
+    if (pending.some((rec) => !stillOpen(rec))) return 0;
+    const posted = await postNotice(connector, { conversationId: dm, text });
+    if (!posted) return 0;
     if (posted?.messageId) {
       saveDigestSnapshot({
         channelId: dm,

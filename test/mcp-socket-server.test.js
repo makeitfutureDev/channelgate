@@ -22,11 +22,15 @@ process.env.CG_APPROVAL_SECRET = "mcp-socket-signing-secret";
 const { setUser, upsertChannelEntry, saveChannelMeta } = await import("../src/config/store.js");
 const { mintGatewayCapability } = await import("../src/gateway/mcp-capability.js");
 const { startMcpSocketServer, stopMcpSocketServer, mcpSocketStatus, relaySlotStats, MAX_RELAYS_PER_GRANT_SERVER } = await import("../src/mcp/socket-server.js");
+const { markLive } = await import("../src/gateway/egress/liveness.js");
 
 const SECRET = "mcp-socket-signing-secret";
 const SLUG = "mcp-socket-test";
 const CHANNEL = "C_MCP_SOCKET";
 const AUTHOR = "U_SOCKET_ADMIN";
+// The socket refuses a capability whose channel has no live work (gateway/capability-liveness.js);
+// these tests exercise everything else, so the fixture channel is live for the whole file.
+markLive({ channelId: CHANNEL, ownerId: AUTHOR, kind: "turn", id: "socket-test-turn" });
 const BRIDGE = fileURLToPath(new URL("../src/mcp/socket-bridge.js", import.meta.url));
 
 const sockDirs = [];

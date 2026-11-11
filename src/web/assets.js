@@ -56,6 +56,36 @@ export function importMapFor(dir) {
   return `<script type="importmap">${json}</script>`;
 }
 
+// The Content-Security-Policy the admin shell and the login page are served with. The UI is
+// build-less and loads only same-origin modules, styles, fonts and images; the one inline script
+// is the import map, admitted by its content hash (recomputed with the asset fingerprint, so a
+// changed module list never leaves the page with a stale hash). Inline `style=""` attributes are
+// used throughout the vanilla UI, so styles keep 'unsafe-inline'; scripts never get it — that is
+// the point: a markup-injection bug cannot run code. `frame-ancestors 'none'` pins clickjacking
+// alongside the X-Frame-Options header the app sets globally.
+export function shellContentSecurityPolicy(dir, { inlineScriptHashes } = {}) {
+  const state = fingerprint(dir);
+  if (!Array.isArray(inlineScriptHashes)) {
+    if (!state.importMapHash) {
+      const json = importMapFor(dir).replace(/^<script type="importmap">/, "").replace(/<\/script>$/, "");
+      state.importMapHash = `'sha256-${createHash("sha256").update(json).digest("base64")}'`;
+    }
+    inlineScriptHashes = [state.importMapHash];
+  }
+  return [
+    "default-src 'self'",
+    `script-src 'self'${inlineScriptHashes.length ? ` ${inlineScriptHashes.join(" ")}` : ""}`,
+    "style-src 'self' 'unsafe-inline'",
+    "img-src 'self' data: blob:",
+    "font-src 'self'",
+    "connect-src 'self'",
+    "frame-ancestors 'none'",
+    "base-uri 'self'",
+    "form-action 'self'",
+    "object-src 'none'",
+  ].join("; ");
+}
+
 // Renders an HTML shell with the stamp substituted and the import map injected. Cached per
 // version, so navigations do not re-read the (large) shell.
 export function renderShell(dir, file) {

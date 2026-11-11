@@ -279,6 +279,28 @@ export function createRunQueue({ waitNoticeMs = 1500, maxQueued = 20 } = {}) {
       if (slot.active?.runId === runId) return true;
       return slot.waiters.some((w) => w.handle?.runId === runId);
     },
+    isQueued(key, runId) {
+      return Boolean(slots.get(key)?.waiters.some((w) => w.handle?.runId === runId && !w.handle.aborted));
+    },
+    // Buttons target an accepted WAITING turn only. Once promoted, a stale Cancel/Steer cannot
+    // affect it or a newer owner. Mutate and wake synchronously so the original pipeline unwinds.
+    cancelQueued(key, runId) {
+      const slot = slots.get(key);
+      const index = slot?.waiters.findIndex((w) => w.handle?.runId === runId) ?? -1;
+      if (index < 0) return false;
+      const [waiter] = slot.waiters.splice(index, 1);
+      waiter.handle.aborted = true;
+      waiter.wake();
+      return true;
+    },
+    prioritizeQueued(key, runId) {
+      const slot = slots.get(key);
+      const index = slot?.waiters.findIndex((w) => w.handle?.runId === runId && !w.handle.aborted) ?? -1;
+      if (index < 0) return false;
+      const [waiter] = slot.waiters.splice(index, 1);
+      slot.waiters.unshift(waiter);
+      return true;
+    },
     // Live turns on a key (active + queued) — for the status report.
     count(key) {
       const slot = slots.get(key);

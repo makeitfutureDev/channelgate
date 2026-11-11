@@ -1,4 +1,9 @@
-# Skills — the local catalog, channel profiles, templates, authoring and sources
+# Skills — the gateway catalog, channel profiles, templates, authoring and sources
+
+**Enterprise:** channel skill templates, the external catalog MCP endpoint/access tokens and
+honoring skill preferred-model switches require an effective Enterprise license. Ordinary local
+skills and authoring remain available in other tiers. Saved Enterprise configuration is retained
+after expiry without activating those behaviors; see [license keys](LICENSE-KEYS.md#enterprise-organization-controls).
 
 ChannelGate keeps its own **skill catalog** in the gateway database and materializes real skill
 folders into every conversation that is granted them. Skills work with no external token and no
@@ -6,6 +11,12 @@ network call at run time; Claude and Codex both discover them natively.
 
 This is the Core (self-hosted) plane of the skills platform. The Enterprise cloud plane (a hosted
 library, fleet sync, a universal Skills MCP) builds on the same catalog and is a separate offering.
+
+## Where agents must save skills
+
+Create and grant skills through the ChannelGate catalog using `create_skill` and the gateway grant tools. Do not install active skills by writing directly into `.claude/skills`, `.agents/skills`, or engine HOME skill folders: gateway reconciliation replaces managed copies and archives unmanaged workspace entries. An on-disk export is only an export, not a durable active channel skill. This rule overrides a generic skill creator's local-folder default.
+
+Repository-synced skills can be used read-only without a write token. To create or modify a skill in an external source repository, first verify that an available token or authenticated connection has write access to that exact repository and tracked branch. A token name or successful read does not prove write access. Only then edit, commit, push and sync the source; verify the effective revision. Without write access, treat the source as read-only and create any additions as a catalog companion skill. Do not add an external repository as the writable home for a new skill unless write access is established. Never request or paste a token in chat; use the gateway secret/connection flow. Do not bypass this by editing materialized files or pinning a catalog override.
 
 ## What a skill is
 
@@ -26,8 +37,22 @@ category: Sales
 version: 1.2.0
 tags: [crm]
 requires: [makeitfuture-organization]   # catalog skills granted together with this one
+model: sonnet                           # optional: the model this skill works best with
 ---
 ```
+
+**`model:` (optional) — model-specific skills.** Name the model the skill works best with
+(`sonnet`, `claude-opus-5-5`, `gpt-6.1-sol`, …); the engine is derived from it. Nothing else is
+declared — the gateway decides how to honor the preference when the skill is actually *used*, not
+when it is read: every materialized copy carries one line asking the model to call the gateway tool
+`use_skill` as it starts following the skill. In a conversation whose **Allow skill engine and
+model swapping** switch is on (off by default; `set_channel_skill_swap`, the admin Runtime pane or
+the Slack Settings ticks), and when nobody pinned the thread with `/model`, a model of the current
+engine resumes the same session on the preferred model and the thread stays there; a model of the
+other engine is delegated to a background agent on that engine. A pin, the switch being off or an
+unavailable engine leave the skill on the conversation's model. `create_skill` and `update_skill`
+take an optional `model` argument that writes (or, with `""`, clears) this line; the library's
+skill detail shows the preferred model.
 
 Every skill has one **owner**:
 
@@ -36,7 +61,9 @@ Every skill has one **owner**:
 | bundled  | shipped in this checkout (`src/gateway/skills/bundled/`), imported at boot     | a new gateway release                            |
 | folder   | the host's `~/.claude/skills`, `~/.agents/skills` or `GATEWAY_SKILL_SOURCES`, imported at boot and re-read by content | edit the folder; the next boot / re-import picks it up |
 | git      | a GitHub source (below)                                                        | the source's next sync; a skill of the gateway's own publish repository also takes `update_skill` (pushed back) |
-| local    | authored from chat (`create_skill`) or the admin UI                            | `update_skill` — see *Who may change what* below  |
+| gateway-owned (`local` internally) | authored from chat (`create_skill`) or the admin UI                            | `update_skill` — see *Who may change what* below  |
+
+**Gateway-owned** means managed directly in this gateway's catalog, independently of whether the skill is personal, channel-scoped or organization-wide. It does not mean an unmanaged file installed in an engine skill folder. Publishing to the configured Git source adopts the skill into that source; it remains editable through `update_skill` when that source is the gateway's writable publishing repository. Internal API/database ownership values remain `local` for compatibility.
 
 A slug is owned by exactly one owner. A sync or an import that finds a slug another owner holds
 reports a **conflict** and writes nothing. A skill whose source this gateway cannot write to
@@ -93,7 +120,7 @@ in every other conversation) and back on with `add_channel_skills`. `set_skill_s
 `POST /api/skills/catalog/:slug/scope` move a skill either way: **promoting** a customer skill to
 the library moves its files in the repository and leaves the channel with an explicit grant, so
 nothing changes there; demoting keeps it for that channel only. Only skills the publish
-repository owns (or unpublished local ones) move — a skill synced from another source stays with
+repository owns (or unpublished gateway-owned ones) move — a skill synced from another source stays with
 its source. Names must be unique across the whole repository (the slug comes from the skill's
 name), so customer skills are prefixed with the customer.
 
@@ -229,10 +256,15 @@ it can never reach the organization tier.
   above). The bundled `skill-authoring` skill teaches the contract and how to write a
   description that triggers.
 - `update_skill` — a new revision. Pass only the files that change; the rest are carried over
-  (`remove` drops files). A local skill is revised in place; a skill synced from the configured
+  (`remove` drops files). A gateway-owned skill is revised in place; a skill synced from the configured
   publish repository is revised and pushed back to its own folder (if the push fails the new
-  revision is pinned, so the next sync cannot revert it). A skill pinned to an older revision is
-  re-pinned to the new one. A non-admin's edit of an organization skill becomes a `change`
+  revision gets a publication recovery pin, so the next sync cannot revert it). A successful
+  retry through `publish_skill` or a later successful update clears that recovery pin and follows
+  the published revision again. Manual pins and approved source overrides retain their reason
+  when advanced to a new edit and are never automatically cleared. Existing pins from before
+  provenance tracking remain manual/legacy; their origin cannot be inferred safely. `get_skill_info`
+  reports current and effective revisions plus an explicit pin reason or "none".
+  A non-admin's edit of an organization skill becomes a `change`
   proposal automatically. Any other source is read-only: `update_skill` explains how to extend
   it with a companion skill.
 - `delete_skill` — a catalog tombstone: an admin, or the author of a personal skill. Anyone else
@@ -242,7 +274,7 @@ it can never reach the organization tier.
   organization skill gets granted everywhere), a catalog delete (`kind: delete`), or feedback.
 - Admins review with `list_skill_proposals` / `decide_skill_proposal` in chat, or in the admin UI
   (Skills → Review). An approved change becomes one revision; when the skill is source-owned the
-  revision is **pinned** as a local override, so the source keeps flowing into later revisions
+  revision is **pinned** as a gateway override, so the source keeps flowing into later revisions
   and the pin holds until an admin unpins. An approved promotion moves a channel skill into the
   library (the channel keeps it as an explicit grant), makes a personal skill an organization
   skill, or adds an organization skill to the organization tier; an approved `delete` tombstones
@@ -272,7 +304,7 @@ publishes it). Any approved member can also carry organization skills in their o
 ## Publishing to Git
 
 Admin UI → Skills → Sync settings → *Publishing to Git*: a GitHub repository, folder and its own
-write-only token. Publishing follows `main`. Every new revision of a local skill — created,
+write-only token. Publishing follows `main`. Every new revision of a gateway-owned skill — created,
 updated, an approved change, an approved promotion — is pushed with the GitHub Contents API, one
 commit per file under `<folder>/<slug>/` (`.` as the folder = the repository root) — or under
 `channels/<channel id>/<slug>/` for a channel-scoped skill, with a README naming the channel — and
@@ -305,7 +337,16 @@ tokens*: random, shown once, stored hashed, revocable, with scopes:
 | sync    | `library_export`, `library_export_skill` (what a peer gateway needs)                    |
 
 Claude Code: `claude mcp add --transport http channelgate-skills <public URL>/mcp/skills --header
-"Authorization: Bearer <token>"`. Personal skills never appear over MCP.
+"Authorization: Bearer <token>"`.
+
+### Two kinds of token
+
+| kind    | minted by                                     | reaches                                                                                               |
+| ------- | --------------------------------------------- | ----------------------------------------------------------------------------------------------------- |
+| catalog | an admin, in the admin UI (scopes above)      | the LIBRARY: organization and channel skills (also non-discoverable ones for `sync`). Never a personal skill — not listed, read, exported or edited. `manage` writes library skills. For other systems and peer gateways. |
+| user    | a person, from chat (`create_my_skill_token`) | that person, resolved LIVE on every call: organization skills (granted or discoverable), the skills of every channel whose access policy admits them right now (own grants, template, section), and their own personal skills. `read`, `propose`, `manage` with the chat rules (personal: author; channel: members; organization: admins); never `sync`. Dies when the owner is no longer approved; up to 5 active per person; the owner lists/revokes theirs, admins see and revoke all in the admin UI. |
+
+The bearer is verified before the request body is parsed, and invalid tokens back off per client.
 
 ## Peer gateways
 
@@ -329,7 +370,7 @@ with the gateway's environment, uses the Skills Manager tokens the old integrati
 3. with `SM_SUPABASE_URL` + `SM_SUPABASE_SERVICE_KEY` (Skills Manager's service role): team
    favorites become templates (Development; Sales & Marketing → sales and marketing; Management;
    Admin), admin exclusions become tombstones, and each token user's personal skills become
-   personal local skills.
+   personal gateway-owned skills.
 
 The script is idempotent and prints what it would do with `--dry-run`. Stub folders the old
 integration left in channel folders are pruned automatically on each channel's next message.

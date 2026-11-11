@@ -1,3 +1,4 @@
+import { requireEnterpriseFeature } from "../../ee/feature-entitlements.js";
 import { assertNewMcpSelections } from "../../gateway/mcp-selection.js";
 // Channel-admin tools for the gateway control MCP server: the channel's MCP allowlist, the
 // mode switches (admin/bash/network/auto), working folder, Google Drive sync link, standing
@@ -35,6 +36,7 @@ function describeDriveSyncStatus(status) {
     : `⚠️ Last sync failed at ${when(last.at)}${first}: ${last.summary || "unknown error"}`;
 }
 import { allowedFsRoot, resolveWithinRoot } from "../../web/security.js";
+import { forbiddenWorkDirReason } from "../../gateway/workdir-boundary.js";
 import { formatUpdateResult, startUpdate } from "../../gateway/updater.js";
 import { updateGatewayGuide, resetGatewayGuide, readGatewayGuide } from "../../gateway/guide.js";
 import { slackThreadFor } from "../../slack/thread-keys.js";
@@ -212,10 +214,12 @@ export function register(server, ctx) {
     "set_channel_network",
     {
       description:
-        "ADMIN ONLY. Set this channel's allowed network policy. On permits internet use (any public host, " +
+        "ADMIN ONLY. Set this channel's allowed network policy. For ordinary proxy-mode containers, " +
+        "on permits internet use (any public host, " +
         "no domain allowlist); off limits the channel to the engine endpoints and its selected connectors. " +
-        "Enforced by the gateway's egress proxy (the container has no network of its own) unless the gateway " +
-        "runs the legacy open-bridge egress mode or this channel was given raw sockets — then it is advisory. " +
+        "The gateway's egress proxy enforces this policy; the container has no network of its own. " +
+        "Legacy open-bridge egress or raw sockets make the policy advisory. In /sudo direct-host threads " +
+        "it is advisory, with no OS-level egress cutoff. " +
         "Private, loopback and cloud-metadata addresses are never reachable through the proxy. It grants no " +
         "host credential files or mounts. Takes effect on the next request.",
       inputSchema: { enabled: z.boolean() },
@@ -255,6 +259,30 @@ export function register(server, ctx) {
         enabled
           ? "✅ Auto mode ON — engine tool prompts auto-approved and workspace writable inside the channel's container. Control-plane sign-offs still require a human decision. Effective next message."
           : "✅ Auto mode OFF — back to asking for approval on tool permissions (effective on the next message)."
+      );
+    }
+  );
+
+  server.registerTool(
+    "set_channel_skill_swap",
+    {
+      description:
+        "ADMINS / CHANNEL MANAGERS. Allow or forbid skill engine and model swapping in this conversation. With it ON, " +
+        "a skill that declares a preferred model (its SKILL.md `model:` field) switches the turn to that model when the " +
+        "skill is used: the same session is resumed on it when the model belongs to the current engine, and a skill " +
+        "preferring the other engine is delegated to a background agent there. A person's /model pin always wins. " +
+        "OFF (the default) leaves every skill on the conversation's configured model. Effective on the next use_skill call.",
+      inputSchema: { enabled: z.boolean() },
+    },
+    async ({ enabled }) => {
+      if (!(await requireManage())) return text("Only this channel's managers (or an admin) can change skill model swapping.");
+      if (!(await patchAuditedMeta((meta) => (meta ? { skillRuntimeSwap: Boolean(enabled) } : null)))) {
+        return text("Channel isn't set up yet — send a normal message first.");
+      }
+      return text(
+        enabled
+          ? "✅ Skill engine/model swapping ON — a skill with a preferred model switches the turn to it when used (a person's pin still wins)."
+          : "✅ Skill engine/model swapping OFF — skills run on the conversation's configured model."
       );
     }
   );
@@ -320,10 +348,15 @@ export function register(server, ctx) {
         isDir = false;
       }
       if (!isDir) return text(`That path is not a directory:\n${real}`);
+      // Never the daemon's own trees or a parent exposing multiple conversations.
+      // Exact workspace sharing is an explicit admin choice and inherits its existing setup.
+      const forbidden = forbiddenWorkDirReason(real, { slug, allowSharedFolder: true });
+      if (forbidden) return text(`Refused: ${real} is ${forbidden}. Choose a project directory instead.`);
       if (!(await patchAuditedMeta((meta) => (meta ? { workDir: real } : null)))) {
         return text("Channel isn't set up yet — send a normal message first.");
       }
-      return text(`✅ This channel now runs in:\n${real}\nActive on the next message. (Dangerous tools still also require admin mode + an admin author.)`);
+      const linked = (await getChannelMeta(slug))?.workspaceLink;
+      return text(`✅ This channel now runs in:\n${real}\n${linked ? `Shared setup is linked to ${linked.name}; edit shared settings there. Harness and model remain independent.\n` : ""}Active on the next message. (Dangerous tools still also require admin mode + an admin author.)`);
     }
   );
 
@@ -450,6 +483,7 @@ export function register(server, ctx) {
     },
     async ({ link }) => {
       if (!(await requireAdmin())) return text("Only admins can set this channel's Google Drive sync folder.");
+      requireEnterpriseFeature("driveSync");
       const raw = (link || "").trim();
       const folderId = parseDriveFolderId(raw);
       if (!folderId) return text("That doesn't look like a Google Drive folder link. Paste the folder URL (…/folders/<id>), an ?id=<id> link, or the bare folder id.");

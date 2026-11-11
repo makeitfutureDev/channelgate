@@ -3,7 +3,8 @@
 // register(server, ctx); the tool contracts are unchanged.
 import { z } from "zod";
 import { addSchedule, listForChannel, updateSchedule, deleteSchedule, countEnabledForChannel } from "../../config/schedules.js";
-import { listScheduleRuns, getScheduleRun, scheduleRunSummary } from "../../gateway/schedule-runs.js";
+import { costHistoryStart } from "../../ee/cost-history.js";
+import { listScheduleRuns, getScheduleRun, scheduleRunSummary, visibleScheduleRun } from "../../gateway/schedule-runs.js";
 import { validateScheduleOptions } from "../../config/schedule-options.js";
 import { isAdmin } from "../../config/store.js";
 import { cronValid, minIntervalMinutes, nextCronRun } from "../../util/cron.js";
@@ -21,6 +22,17 @@ export function zoneHint() {
   const tz = daemonTimeZone();
   if (!tz || isUtcZone(tz)) return "";
   return ` (Times are the gateway's local zone, ${tz} — say the zone when you tell the user, and don't convert it.)`;
+}
+
+// A read-time preview, never a new persisted scheduling field. Cron uses the same daemon
+// clock/helper as creation; one-time/interval rows retain their stored due time, even if overdue.
+// This describes nominal eligibility, not a guarantee of immediate delivery or engine admission.
+function scheduleNextRun(schedule, now) {
+  if (!schedule.enabled) return null;
+  const next = schedule.once || schedule.intervalDays
+    ? new Date(schedule.runAt)
+    : nextCronRun(schedule.cron, now);
+  return next && Number.isFinite(next.getTime()) ? next : null;
 }
 
 export function register(server, ctx) {
@@ -157,19 +169,26 @@ export function register(server, ctx) {
 
   server.registerTool(
     "list_schedules",
-    { description: "List the scheduled tasks in this channel. Pass id to read one task's complete prompt and configuration before updating it.", inputSchema: { id: z.string().optional() } },
+    { description: "List the scheduled tasks in this channel, with read-time next-run previews in the gateway timezone. Pass id to read one task's complete prompt and configuration before updating it; nextRun (UTC ISO) and nextRunLocal are derived, not stored. Disabled or unresolvable schedules have null previews; one-time/interval previews retain the stored due time, including overdue times. A preview is not a delivery guarantee.", inputSchema: { id: z.string().optional() } },
     async ({ id } = {}) => {
       const list = listForChannel(channelId);
+      const now = new Date();
       if (id) {
         const schedule = list.find((s) => s.id === id);
         if (!schedule) return text("No schedule in this channel.");
         const keys = ["id", "prompt", "description", "createdBy", "kind", "cron", "runAt", "once", "intervalDays", "enabled", "notify", "notifyUserId", "delivery", "deliveryThread", "executionVisibility", "resultPolicy", "failureNotify", "matchPrefix", "loop", "sudo"];
-        return text(JSON.stringify(Object.fromEntries(keys.map((key) => [key, schedule[key]]))));
+        const next = scheduleNextRun(schedule, now);
+        return text(JSON.stringify({ ...Object.fromEntries(keys.map((key) => [key, schedule[key]])),
+          nextRun: next?.toISOString() ?? null, nextRunLocal: next ? zonedStamp(next) : null }));
       }
       if (!list.length) return text("No schedules in this channel.");
       return text(
         list
-          .map((s) => `• ${s.id} [${s.enabled ? "on" : "off"}]${s.sudo ? " [sudo · gateway host]" : ""} ${s.intervalDays ? `every ${s.intervalDays} days · next ${zonedStamp(new Date(s.runAt))}` : `cron \`${s.cron}\``} — ${s.description || s.prompt} (${s.executionVisibility || "visible"}; ${s.resultPolicy || "always"}; last ${s.lastStatus || "not run"}; ${s.delivery === "dm-on-match" ? `DM creator only on ${JSON.stringify(s.matchPrefix)}` : `notifies ${s.notify === "user" ? `<@${s.notifyUserId}>` : s.notify || "channel"}${s.delivery === "daily-thread" ? ", one thread/day" : s.delivery === "channel" ? ", direct in channel" : ""}`})`)
+          .map((s) => {
+            const next = scheduleNextRun(s, now);
+            const cadence = s.intervalDays ? `every ${s.intervalDays} days` : s.once ? "one-time" : `cron \`${s.cron}\``;
+            return `• ${s.id} [${s.enabled ? "on" : "off"}]${s.sudo ? " [sudo · gateway host]" : ""} ${cadence} · next run ${next ? zonedStamp(next) : "unavailable"} — ${s.description || s.prompt} (${s.executionVisibility || "visible"}; ${s.resultPolicy || "always"}; last ${s.lastStatus || "not run"}; ${s.delivery === "dm-on-match" ? `DM creator only on ${JSON.stringify(s.matchPrefix)}` : `notifies ${s.notify === "user" ? `<@${s.notifyUserId}>` : s.notify || "channel"}${s.delivery === "daily-thread" ? ", one thread/day" : s.delivery === "channel" ? ", direct in channel" : ""}`})`;
+          })
           .join("\n") + (zoneHint() ? `\n${zoneHint().trim()}` : "")
       );
     }
@@ -177,12 +196,13 @@ export function register(server, ctx) {
 
 
   server.registerTool("get_schedule_runs", {
-    description: "Read this channel's automation health history and logs (including deleted/one-time schedules). Engine facts and agent-reported task/connection outcomes are separate. History is retained for 90 days; no historical backfill.",
+    description: "Read this channel's automation health history and logs (including deleted/one-time schedules). Engine facts and agent-reported task/connection outcomes are separate. Operational history is retained for 90 days; structured costs follow the plan cost-history window. No historical backfill.",
     inputSchema: { schedule_id: z.string().optional(), run_id: z.string().optional(), limit: z.number().int().min(1).max(100).optional(), before: z.string().optional() },
   }, async ({ schedule_id, run_id, limit, before }) => {
     if (!channelId) return text("No channel context.");
-    if (run_id) return text(JSON.stringify(getScheduleRun(run_id, channelId) || { error: "No run in this channel." }));
-    return text(JSON.stringify({ summary: scheduleRunSummary(schedule_id, channelId), runs: listScheduleRuns({ scheduleId: schedule_id, channelId, limit, before }) }));
+    const historyStart = costHistoryStart();
+    if (run_id) return text(JSON.stringify(visibleScheduleRun(getScheduleRun(run_id, channelId), historyStart) || { error: "No run in this channel." }));
+    return text(JSON.stringify({ summary: scheduleRunSummary(schedule_id, channelId, historyStart), runs: listScheduleRuns({ scheduleId: schedule_id, channelId, limit, before }).map((run) => visibleScheduleRun(run, historyStart)) }));
   });
 
   server.registerTool("update_schedule", {

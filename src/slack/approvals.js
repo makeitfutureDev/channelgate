@@ -9,7 +9,7 @@ import { randomUUID } from "node:crypto";
 import { logEvent } from "../util/logger.js";
 import { getChannelMeta, patchChannelMeta, isAdmin, isAdminPrincipal, isApproved } from "../config/store.js";
 import { effectiveMeta } from "../gateway/run.js";
-import { canManage, isApiPrincipal, isAuthorized } from "../gateway/modes.js";
+import { canManage, isApiPrincipal, isAgentPrincipal, agentPrincipalSlug, isAuthorized } from "../gateway/modes.js";
 import { CONTROL_PLANE_ACTION, splitControlPlaneSecrets, stashControlPlaneSecrets } from "../gateway/control-plane-approvals.js";
 import { toolTarget } from "../engines/stream.js";
 import {
@@ -30,6 +30,7 @@ import { platformOfConversation } from "../platforms/ids.js";
 import { platformOr } from "../platforms/registry.js";
 import { postPrivately } from "../platforms/notify.js";
 import { INSTRUCTION_ACTION } from "../gateway/instruction-approvals.js";
+import { isChannelWorker } from "../gateway/egress-hosts.js";
 import { SECRET_HOST_ACTION } from "../gateway/secret-host-approvals.js";
 
 // The live Slack client of the currently-connected app (set from connectAndWire); the approval
@@ -118,13 +119,18 @@ import { isSlackTs, slackThreadFor } from "./thread-keys.js";
 
 // Who a card credits with the request. The HTTP run API principal is not a Slack user, so a raw
 // `<@api>` would render as broken markup; name the API instead.
+// A delivered agent message's turn (gateway/agent-mail.js) is another channel's agent — also no
+// Slack user; name the channel it came from.
 function requesterLabel(authorId) {
-  return isApiPrincipal(authorId) ? "An HTTP API run" : `<@${authorId}>`;
+  if (isApiPrincipal(authorId)) return "An HTTP API run";
+  if (isAgentPrincipal(authorId)) return `The agent from #${agentPrincipalSlug(authorId)}`;
+  return `<@${authorId}>`;
 }
 
 // The authority a card needs, stated ON the card: a member who could only ever Deny must learn
 // that before clicking, not from the ephemeral refusal after (the Symphonia finding of 2026-10-06).
 function tierNotice(requiredTier = "") {
+  if (requiredTier === "worker") return " Any authorized channel member with *write access* may approve this; no admin is required.";
   if (requiredTier === "admin") return " Only a gateway *admin* can approve this; anyone eligible may Deny or Comment.";
   if (requiredTier === "manage") return " Only a channel *manager* (or a gateway admin) can approve this; anyone eligible may Deny or Comment.";
   if (requiredTier === "owner") return " Only the requester (or a gateway admin) can approve this; anyone eligible may Deny or Comment.";
@@ -147,7 +153,7 @@ function approvalBlocks(id, toolName, target, authorId, { approvalType = "permis
     ];
   }
   return [
-    { type: "section", text: { type: "mrkdwn", text: `🔒 *Permission needed* — \`${toolName}\`${preview}\n${isApiPrincipal(authorId) ? "An HTTP API run" : `<@${authorId}>'s request`} wants to do this. Approve?` } },
+    { type: "section", text: { type: "mrkdwn", text: `🔒 *Permission needed* — \`${toolName}\`${preview}\n${isApiPrincipal(authorId) || isAgentPrincipal(authorId) ? requesterLabel(authorId) : `<@${authorId}>'s request`} wants to do this. Approve?` } },
     {
       type: "actions",
       elements: [
@@ -225,7 +231,7 @@ async function deliverApprovalLinks(client, entry, { id, threadKey, durable = fa
   if (client?.approvalDelivery?.supportsPrivateLinks === false) return [];
   // A link is minted FOR a person and decides as them; the HTTP run API principal is no person to
   // deliver one to (and could never pass canResolveApproval as a requester). Its card's buttons stay.
-  if (isApiPrincipal(entry.authorId)) return [];
+  if (isApiPrincipal(entry.authorId) || isAgentPrincipal(entry.authorId)) return [];
   try {
     const baseUrl = approvalLinkBase({ capabilities: client?.approvalDelivery?.capabilities || slackAdapter.capabilities, requester: entry.authorId });
     if (!baseUrl || !client) return [];
@@ -677,7 +683,9 @@ export async function canResolveApproval(entry, clicker) {
   const tier = entry.requiredTier || "";
   const clickerCanManage = clickerIsAdmin || canManage(m || {}, { authorId: clicker, isAdminUser: clickerIsAdmin, isApprovedUser: clickerIsApproved });
   const meetsTier =
-    tier === "admin"
+    tier === "worker"
+      ? await isChannelWorker(entry.channelId, entry.slug, clicker)
+      : tier === "admin"
       ? clickerIsAdmin
       : tier === "manage"
         ? clickerCanManage
@@ -726,7 +734,7 @@ export async function handleApprovalClick({ ack, body, action, client }) {
         channel,
         user: clicker,
         thread_ts: ts,
-        text: `This approval needs ${tier === "admin" ? "a gateway *admin*" : tier === "owner" ? "the requester (or an admin)" : "a channel *manager*"} to click Approve — you can still Deny or Comment.`,
+        text: `This approval needs ${tier === "worker" ? "an authorized channel member with write access" : tier === "admin" ? "a gateway *admin*" : tier === "owner" ? "the requester (or an admin)" : "a channel *manager*"} to click Approve — you can still Deny or Comment.`,
       });
     } catch {
       /* no ephemeral scope — ignore */

@@ -390,3 +390,15 @@ test("tools: the block on Admin + containerFullAccessHome is spelled out on gran
   assert.equal(sshBlockedByHomeGrant(await getChannelMeta(entry.slug), original()), original().fullAccessHome === true);
   await saveChannelMeta(entry.slug, { ...(await getChannelMeta(entry.slug)), adminMode: false });
 });
+
+
+test("show SSH access explains the requester's current-role history scope", async () => {
+  const admin = reply(await toolsFor(ADMIN).get("show_channel_ssh")({}));
+  const member = reply(await toolsFor(DEV).get("show_channel_ssh")({}));
+  assert.match(admin, /Your SSH history scope: \*\*admin\*\*/);
+  assert.match(member, /Your SSH history scope: \*\*project\*\*/);
+  for (const shown of [admin, member]) {
+    assert.match(shown, /Admin and project histories stay separate/);
+    assert.match(shown, /role change requires reconnecting/);
+  }
+});

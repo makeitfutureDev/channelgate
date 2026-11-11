@@ -29,6 +29,8 @@ test("unrelated channel saves preserve undisplayed guests while explicit edits r
   };
   const app = express();
   app.use(express.json());
+  // This focused router fixture represents an authenticated admin; real login is tested separately.
+  app.get("/api/auth/me", (_req, res) => res.json({ bootstrap: false, linkRequired: false, fresh: true, account: { userId: "U_BROWSER_ADMIN" }, passkeys: [] }));
   const payloads = [];
   app.put(`/api/channels/${channelId}/meta`, (req, res, next) => {
     payloads.push(req.body);

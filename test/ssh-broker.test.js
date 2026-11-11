@@ -574,3 +574,220 @@ test("probing a live broker neither refuses, logs nor disturbs it", async () => 
     await broker.stopSshBroker();
   }
 });
+
+// Exercise the real role-sensitive resolver: a fake resolver that ignores isAdminAuthor
+// cannot detect SSH silently opening a different HOME from a chat turn.
+const { resolveRuntime } = await import("../src/runtimes/resolve.js");
+const roleRuntimeSettings = { fullAccessHome: false, idleMinutes: 10 };
+function resolveRoleTarget(slug, meta, options = {}) {
+  const target = resolveRuntime(slug, meta, { ...options, settings: roleRuntimeSettings });
+  return { ...target, runtime }; // Keep the real names, mounts, HOME and artifact paths; fake only I/O.
+}
+async function startRoleBroker(observed, releases) {
+  await broker.stopSshBroker();
+  return broker.startSshBroker({
+    dir: SSH_DIR, log: silent, retryMs: 0, relayRefreshMs: 60_000, authorizeOptions,
+    deps: {
+      ...deps, resolveTarget: resolveRoleTarget,
+      prepareSession: async (session) => {
+        observed.push({ target: session.target, user: session.user.id });
+        return { claude: { relayed: true }, mcpServers: [], secrets: [], problems: [] };
+      },
+      releaseSession: async (session) => releases.push({ container: session.target.container.name, user: session.user.id, lastForUser: session.lastForUser, lastInChannel: session.lastInChannel }),
+    },
+  });
+}
+async function waitForRoleDisconnect() {
+  const deadline = Date.now() + 2000;
+  while (broker.liveSshSessions({ slug: entry.slug }).length) {
+    assert.ok(Date.now() < deadline, "role change did not disconnect the old container");
+    await settle();
+  }
+  await settle();
+}
+
+test("real resolver gives SSH the same scoped HOME and artifacts as chat for admins and members", async () => {
+  const observed = [], releases = [];
+  await startRoleBroker(observed, releases);
+  try {
+    const targets = [];
+    for (const isAdmin of [false, true]) {
+      await setUser(DEV, { name: "Apps", approved: true, isAdmin });
+      const connection = await attach({ v: 1, key: ED25519, channel: entry.slug });
+      assert.equal(connection.line.ok, true, JSON.stringify(connection.line));
+      const expected = resolveRuntime(entry.slug, await getChannelMeta(entry.slug), { settings: roleRuntimeSettings, isAdminAuthor: isAdmin });
+      const actual = observed.at(-1).target;
+      assert.equal(connection.line.container, expected.container.name);
+      assert.equal(actual.container.homeVolume, expected.container.homeVolume);
+      assert.equal(actual.artifactDir, expected.artifactDir);
+      assert.deepEqual(actual.container.mounts, expected.container.mounts);
+      targets.push(actual);
+      connection.socket.end();
+      await waitForRoleDisconnect();
+    }
+    assert.notEqual(targets[0].container.homeVolume, targets[1].container.homeVolume);
+    assert.notEqual(targets[0].artifactDir, targets[1].artifactDir);
+    assert.equal(targets[0].workDir, targets[1].workDir);
+  } finally {
+    await broker.stopSshBroker();
+    await setUser(DEV, { name: "Apps", approved: true, isAdmin: false });
+  }
+});
+
+test("real resolver disconnects promotion and demotion before refreshing credentials in the old scope", async () => {
+  const observed = [], releases = [];
+  await startRoleBroker(observed, releases);
+  try {
+    for (const isAdmin of [false, true]) {
+      await setUser(DEV, { name: "Apps", approved: true, isAdmin });
+      const connection = await attach({ v: 1, key: ED25519, channel: entry.slug });
+      assert.equal(connection.line.ok, true, JSON.stringify(connection.line));
+      const child = children.at(-1);
+      const before = observed.length;
+      await setUser(DEV, { name: "Apps", approved: true, isAdmin: !isAdmin });
+      await waitForRoleDisconnect();
+      assert.equal(observed.length, before, "the old scope receives no credentials after a rank change");
+      assert.equal(child.signalCode, "SIGTERM");
+      assert.equal(reaper.leaseCount(connection.line.container), 0);
+      assert.equal(releases.at(-1).container, connection.line.container);
+      assert.equal(releases.at(-1).lastInChannel, true);
+      connection.socket.destroy();
+    }
+  } finally {
+    await broker.stopSshBroker();
+    await setUser(DEV, { name: "Apps", approved: true, isAdmin: false });
+  }
+});
+
+test("concurrent admin and project SSH sessions clean up login files independently per container", async () => {
+  const observed = [], releases = [];
+  const original = await getChannelMeta(entry.slug);
+  await setUser(DEV, { name: "Apps", approved: true, isAdmin: true });
+  await saveChannelMeta(entry.slug, { ...original, sshUsers: [DEV, STRANGER] });
+  await startRoleBroker(observed, releases);
+  try {
+    const admin = await attach({ v: 1, key: ED25519, channel: entry.slug });
+    const member = await attach({ v: 1, key: ECDSA, channel: entry.slug });
+    assert.equal(admin.line.ok, true, JSON.stringify(admin.line));
+    assert.equal(member.line.ok, true, JSON.stringify(member.line));
+    assert.notEqual(admin.line.container, member.line.container);
+    admin.socket.end();
+    await settle();
+    assert.deepEqual(releases.at(-1), { container: admin.line.container, user: DEV, lastForUser: true, lastInChannel: true });
+    assert.equal(reaper.leaseCount(member.line.container), 1, "the other scope remains attached");
+    member.socket.end();
+    await waitForRoleDisconnect();
+    assert.deepEqual(releases.at(-1), { container: member.line.container, user: STRANGER, lastForUser: true, lastInChannel: true });
+  } finally {
+    await broker.stopSshBroker();
+    await setUser(DEV, { name: "Apps", approved: true, isAdmin: false });
+    await saveChannelMeta(entry.slug, original);
+  }
+});
+
+test("resolved operator-home grants are refused before startup and credential refresh even if authorization saw older settings", async () => {
+  const observed = [], releases = [];
+  const original = await getChannelMeta(entry.slug);
+  await setUser(DEV, { name: "Apps", approved: true, isAdmin: true });
+  await saveChannelMeta(entry.slug, { ...original, adminMode: true });
+  const state = await startRoleBroker(observed, releases);
+  let fullAccessHome = true;
+  state.deps.resolveTarget = (slug, meta, options = {}) => ({
+    ...resolveRuntime(slug, meta, { ...options, settings: { ...roleRuntimeSettings, fullAccessHome } }), runtime,
+  });
+  try {
+    const beforeEnsure = ensured.length, beforeSpawn = children.length;
+    const refused = await attach({ v: 1, key: ED25519, channel: entry.slug });
+    assert.equal(refused.line.ok, false, JSON.stringify(refused.line));
+    assert.match(refused.line.error, /home/i);
+    assert.equal(ensured.length, beforeEnsure, "a forbidden resolved target is never started");
+    assert.equal(children.length, beforeSpawn);
+    assert.equal(observed.length, 0);
+    refused.socket.destroy();
+
+    fullAccessHome = false;
+    const allowed = await attach({ v: 1, key: ED25519, channel: entry.slug });
+    assert.equal(allowed.line.ok, true, JSON.stringify(allowed.line));
+    const beforePrepare = observed.length;
+    fullAccessHome = true;
+    const { emitConfigChange } = await import("../src/config/change-events.js");
+    emitConfigChange("channel-meta", { slug: entry.slug });
+    await waitForRoleDisconnect();
+    assert.equal(observed.length, beforePrepare, "a newly granted operator home ends SSH before credential preparation");
+    assert.equal(children.at(-1).signalCode, "SIGTERM");
+    allowed.socket.destroy();
+  } finally {
+    await broker.stopSshBroker();
+    await setUser(DEV, { name: "Apps", approved: true, isAdmin: false });
+    await saveChannelMeta(entry.slug, original);
+  }
+});
+
+test("one user's overlapping reconnect across a role change releases files in each container independently", async () => {
+  const observed = [], releases = [];
+  await setUser(DEV, { name: "Apps", approved: true, isAdmin: false });
+  const state = await startRoleBroker(observed, releases);
+  try {
+    const member = await attach({ v: 1, key: ED25519, channel: entry.slug });
+    assert.equal(member.line.ok, true, JSON.stringify(member.line));
+    const oldSession = state.sessions.get(member.line.session);
+    // Hold this session's refresh to model an overlap deterministically without depending on
+    // how quickly key materialization finishes relative to the config debounce timer.
+    oldSession.refresh = null;
+    await setUser(DEV, { name: "Apps", approved: true, isAdmin: true });
+    const admin = await attach({ v: 1, key: ED25519, channel: entry.slug });
+    assert.equal(admin.line.ok, true, JSON.stringify(admin.line));
+    assert.notEqual(admin.line.container, member.line.container);
+    // Finish explicitly before the debounced config refresh: both shells can briefly coexist
+    // while a newly promoted user reconnects, but their session files belong to separate HOMEs.
+    assert.ok(state.sessions.has(oldSession.id), "the old scope still has an overlapping shell");
+    await oldSession.finish("reconnected after role change");
+    assert.deepEqual(releases.at(-1), { container: member.line.container, user: DEV, lastForUser: true, lastInChannel: true });
+    assert.equal(reaper.leaseCount(admin.line.container), 1);
+    member.socket.destroy();
+    admin.socket.end();
+    await waitForRoleDisconnect();
+    assert.deepEqual(releases.at(-1), { container: admin.line.container, user: DEV, lastForUser: true, lastInChannel: true });
+  } finally {
+    await broker.stopSshBroker();
+    await setUser(DEV, { name: "Apps", approved: true, isAdmin: false });
+  }
+});
+
+test("source SSH revocation disconnects an attached linked follower without the periodic refresh", async () => {
+  await broker.stopSshBroker();
+  await broker.startSshBroker({ dir: SSH_DIR, log: silent, retryMs: 0, deps, authorizeOptions, relayRefreshMs: 20 * 60_000 });
+  const root = mkdtempSync(path.join(os.tmpdir(), "cgssh-linked-"));
+  trackTempDir(root);
+  const previousRoot = process.env.CG_FS_ROOT;
+  process.env.CG_FS_ROOT = root;
+  const workDir = path.join(root, "project");
+  mkdirSync(workDir);
+  const source = await upsertChannelEntry("C_SSH_LINK_SOURCE", { name: "ssh-link-source", type: "channel", isDM: false });
+  const follower = await upsertChannelEntry("C_SSH_LINK_FOLLOWER", { name: "ssh-link-follower", type: "channel", isDM: false });
+  const { patchChannelMeta } = await import("../src/config/store.js");
+  let socket;
+  try {
+    await saveChannelMeta(source.slug, { ...defaultChannelMeta({ channelId: "C_SSH_LINK_SOURCE", name: "ssh-link-source", type: "channel", isDM: false }), workDir, allowBash: true, sshUsers: [DEV] });
+    await saveChannelMeta(follower.slug, { ...defaultChannelMeta({ channelId: "C_SSH_LINK_FOLLOWER", name: "ssh-link-follower", type: "channel", isDM: false }), workDir });
+    const result = await attach({ v: 1, key: ED25519, channel: follower.slug, client: "linked-revocation" });
+    socket = result.socket;
+    assert.equal(result.line.ok, true);
+    const child = children.at(-1);
+    assert.equal(broker.liveSshSessions({ slug: follower.slug }).length, 1);
+    await patchChannelMeta(source.slug, { sshUsers: [] });
+    const deadline = Date.now() + 2000;
+    while (broker.liveSshSessions({ slug: follower.slug }).length) {
+      assert.ok(Date.now() < deadline, "source revocation did not close follower SSH promptly");
+      await settle();
+    }
+    assert.equal(child.signalCode, "SIGTERM");
+  } finally {
+    socket?.destroy();
+    await broker.stopSshBroker();
+    await patchChannelMeta(follower.slug, { workDir: "" });
+    await patchChannelMeta(source.slug, { workDir: "" });
+    if (previousRoot === undefined) delete process.env.CG_FS_ROOT;
+    else process.env.CG_FS_ROOT = previousRoot;
+  }
+});
