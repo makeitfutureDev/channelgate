@@ -26,10 +26,11 @@ export async function handleReplyDashboardAction({ ack, body, action, client }, 
     }
     const url = createActivityGrantUrl({ ownerId: userId, teamId, baseUrl });
     if (!url) throw new Error("Activity needs a Public URL. Ask an administrator to configure it, or use Activity in Slack Home.");
+    const message = `This link expires in 10 minutes.\n<${url}|Activity link>`;
     await client.chat.postEphemeral({ channel, user: userId, ...(threadTs ? { thread_ts: threadTs } : {}),
-      text: "This link expires in 10 minutes.",
+      text: message,
       blocks: [
-        { type: "section", text: { type: "mrkdwn", text: "This link expires in 10 minutes." } },
+        { type: "section", text: { type: "mrkdwn", text: message } },
         { type: "actions", elements: [{ type: "button", action_id: OPEN_ACTION_ID,
           text: { type: "plain_text", text: "Open my Activity" }, url }] },
       ],

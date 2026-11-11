@@ -44,11 +44,11 @@ test("reply Dashboard privately launches the clicker's Activity from owned, fore
     const post = sent.at(-1);
     assert.equal(post.user, "U_MINE"); assert.equal(post.channel, "C_WORK");
     assert.equal(post.thread_ts, "100.000002");
-    const notice = "This link expires in 10 minutes.";
+    const url = post.blocks[1].elements[0].url;
+    const notice = `This link expires in 10 minutes.\n<${url}|Activity link>`;
     assert.equal(post.text, notice);
     assert.equal(post.blocks[0].text.text, notice);
     assert.doesNotMatch(JSON.stringify(post), /only once|just once|one.use|single.use/i);
-    const url = post.blocks[1].elements[0].url;
     assert.notEqual(url, previousUrl); previousUrl = url;
     const response = await f.exchange(url);
     assert.equal(response.status, 200);

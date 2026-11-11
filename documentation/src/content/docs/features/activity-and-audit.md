@@ -35,7 +35,9 @@ after its launch link expires. Reading data and reconnecting do not extend the s
 current user, workspace, and conversation access checks still apply.
 
 If a launch link expires, click Dashboard again or reopen Activity in Slack Home for a new one.
-Keep these private links to yourself. New private messages say “This link expires in 10 minutes.” Previously sent ephemeral
+Keep these private links to yourself. New private messages say “This link expires in 10 minutes.” and include an Activity hyperlink
+whose address you can copy, alongside the Open my Activity button. Both use the same private link.
+Previously sent ephemeral
 messages retain their old text. A gateway restart ends existing launch links and browser sessions.
 
 ## Related guides
