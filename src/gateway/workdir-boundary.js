@@ -74,6 +74,17 @@ export function otherChannelWorkDirs({ exceptSlug = "" } = {}) {
         return [row.slug, {}];
       }
     }));
+    // Index canonical custom assignments once per lookup, including metadata without an
+    // entry or for exceptSlug: either can keep another conversation's default folder active.
+    const customWorkDirs = new Set();
+    for (const record of metas.values()) {
+      if (!record.workDir) continue;
+      try {
+        customWorkDirs.add(realOrResolved(record.workDir));
+      } catch {
+        // One malformed legacy assignment must not discard other default-folder boundaries.
+      }
+    }
     for (const row of entries) {
       let entry;
       try {
@@ -86,7 +97,7 @@ export function otherChannelWorkDirs({ exceptSlug = "" } = {}) {
       const meta = metas.get(slug) || {};
       const platform = meta.platform || entry.platform;
       const defaultPath = realOrResolved(workspaceFolder(slug, platform));
-      out.push({ slug, path: defaultPath, active: !meta.workDir || realOrResolved(meta.workDir) === defaultPath || [...metas.values()].some((record) => record.workDir && realOrResolved(record.workDir) === defaultPath) });
+      out.push({ slug, path: defaultPath, active: !meta.workDir || realOrResolved(meta.workDir) === defaultPath || customWorkDirs.has(defaultPath) });
     }
   } catch {
     /* no store yet (first boot, tests without a database) — the static roots still apply */

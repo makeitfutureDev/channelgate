@@ -520,6 +520,15 @@ unexecuted; private QA registry remains pending. These automated checks are not 
   integration compares `listChannels()` with `getChannelMeta()` after source edits, including
   linked owner, inherited authorization and local engine/model fields. Counts establish the
   scaling bound independently of wall-clock timing.
+- Write-path regression (`test/store-patch.test.js`): seed 128 conversations sharing an owner,
+  update its access policy and count real filesystem resolutions across the write and follower
+  snapshots. Require at most `20 * N` resolutions, effective and persisted follower policy
+  convergence, and no relaxation of the guard against modifying shared settings on a follower.
+- Startup-audit regression (`test/workdir-boundary.test.js`): audit 24 stored custom workspaces
+  through the complete boundary predicate and count custom-path resolutions. Require at most
+  `2 * N * N` resolutions across all N audits, bounding each audit's metadata canonicalization
+  linearly instead of scanning every custom path for every conversation pair. Preserve
+  default-folder exclusions, custom/symlink aliases and next-call freshness.
 - Freshness regression: between listings change source exclusions/access, DM template settings,
   owner assignment and an injected directory-resolution target. The next read must reflect each
   change without a restart or cache-expiry wait; returned objects must not contaminate later reads.
@@ -533,6 +542,10 @@ unexecuted; private QA registry remains pending. These automated checks are not 
   collector). Record actual timings and readiness evidence; these are
   acceptance budgets, not measured results. This gate precedes engine selection and spawns no
   engine, so one daemon-only execution suffices. Run engine checks separately below.
+  Include the real startup workdir audit and membership reconciliation writes in the timed boot;
+  a fast standalone channel listing does not prove that startup is healthy. In the isolated
+  fixture, apply a membership metadata change and an owner policy edit, then verify follower
+  snapshots and repeat listing/health measurements. Restore the captured fixture state.
 - Live linked-policy gate (pending, Claude and Codex separately): use the linked source/follower
   fixture below, verifying current settings and authors before changes. As an approved member,
   ask “Read the shared test skill and report its revision marker.” Change the source skill and
