@@ -3489,10 +3489,9 @@ async function connectAndWire(app) {
     return buildHomeTabView({ tab: homeView.tab, userId, role, sections, footer, needsActivityRetry: () => retryActivity });
   }, { refreshKey: homeThreadsRefreshKey, refreshState: ({ forceThreads: _force, discoverThreads: _discover, ...state }) => state });
   const stopSlack = app.stop.bind(app);
-  app.action("cg_activity_open", async ({ ack, client, body }) => {
+  app.action("cg_activity_open", async ({ ack }) => {
     await ack();
-    // Rotate the Home launch link for the next visit; the URL being opened is single-use.
-    try { await publishHomeTab(client, body.user.id, { tab: "activity" }); } catch { /* Home can retry on reopen */ }
+    // The same private URL remains reusable until its original ten-minute expiry.
   });
   app.stop = async (...args) => { await publishHomeTab.stop(); return stopSlack(...args); };
 

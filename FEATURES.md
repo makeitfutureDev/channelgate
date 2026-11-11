@@ -38,15 +38,20 @@ Private membership is rechecked on snapshots and at least every 15 seconds while
 Open resolves a cached real Slack permalink after fresh authorization. Disconnected streams retry.
 The snapshot is bounded to 1,000 authorized threads and indicates truncation.
 
-A private Home button carries a ten-minute, single-use bearer grant in a URL fragment. The landing
-page removes it before exchanging it for a one-hour HttpOnly, SameSite cookie scoped to one opaque
-dashboard path (Secure over HTTPS). Grants, sessions and streams are bounded per viewer and
+A private Home button carries a ten-minute, reusable bearer grant in a URL fragment. The landing
+page removes it before exchanging it for a twelve-hour HttpOnly, SameSite cookie scoped to one opaque
+dashboard path (Secure over HTTPS). The same launch link can be opened repeatedly until ten
+minutes after creation; opening it never extends that deadline, and every exchange rechecks current
+authorization. The browser can continue loading and refreshing after the launch link expires,
+including reloads, until twelve hours after its own exchange; requests never extend that session
+deadline. Its private reply text explains both lifetimes. Grants, sessions
+and streams are bounded per viewer and
 globally, live only in daemon memory and end on restart. No administrator cookie or API key grants
 dashboard access. Origin/Host checks, nonce CSP, no-store/no-referrer headers and CSRF-protected
 actions apply. Page/API/stream/action requests recheck current user admission and Slack workspace;
 thread access additionally requires root ownership, gateway access, private/DM membership and sudo
 authority. Expired/revoked access clears browser rows. The existing admin `/activity` stays separate.
-Launch links are credentials: forwarding an unused link grants its holder this limited view until
+Launch links are credentials: forwarding a still-valid link grants its holder this limited view until
 expiry or revocation, so they belong only in the viewer's private Home or an ephemeral reply,
 never a public channel.
 
@@ -1590,7 +1595,7 @@ revisions on failed sync. Details and compatibility limits: `docs/SKILLS.md`.
   a 👎 answers the clicker privately, inviting the correction in the thread. If Slack rejects the
   block on a terminal write, the footer is retried without it (see the tiered recovery under
   *Composed replies*). → TEST-PLAN: Answer feedback.
-- **Dashboard opens the clicker's personal Activity page** via a private, fresh single-use link,
+- **Dashboard opens the clicker's personal Activity page** via a private, fresh link reusable for ten minutes,
   even on somebody else's reply or an author-less automation. The shared button contains no
   credential. Current user, workspace and source-conversation access are checked before issuance;
   the existing Activity session enforces ownership and access on every request. Without a valid

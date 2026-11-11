@@ -44,11 +44,15 @@ test("reply Dashboard privately launches the clicker's Activity from owned, fore
     const post = sent.at(-1);
     assert.equal(post.user, "U_MINE"); assert.equal(post.channel, "C_WORK");
     assert.equal(post.thread_ts, "100.000002");
+    const notice = "Open your personal Activity page. You can reuse this private link for 10 minutes after it was created. Once opened, your dashboard can keep loading and refreshing for up to 12 hours.";
+    assert.equal(post.text, notice);
+    assert.equal(post.blocks[0].text.text, notice);
+    assert.doesNotMatch(JSON.stringify(post), /only once|just once|one.use|single.use/i);
     const url = post.blocks[1].elements[0].url;
     assert.notEqual(url, previousUrl); previousUrl = url;
     const response = await f.exchange(url);
     assert.equal(response.status, 200);
-    assert.equal((await f.exchange(url)).status, 410);
+    assert.equal((await f.exchange(url)).status, 200);
     const { url: sessionUrl } = await response.json();
     const cookie = response.headers.get("set-cookie").split(";")[0];
     const snapshot = await f.request(sessionUrl + "/api/threads", { headers: { cookie } });
@@ -106,8 +110,8 @@ async function fixture(t, options = {}) {
   const request = (url, init = {}) => fetch(base + url, { ...init, redirect: "manual" });
   const grant = (ownerId = "U_MINE", teamId = "T_WORK") => createActivityGrantUrl({ baseUrl: base, ownerId, teamId, now: currentTime });
   const exchange = (url = grant(), init = {}) => request("/activity/exchange", { method: "POST", headers: { Origin: base, "Content-Type": "application/json", ...init.headers }, body: JSON.stringify({ token: new URL(url).hash.slice(1), ...init.body }) });
-  const login = async (ownerId = "U_MINE") => {
-    const response = await exchange(grant(ownerId));
+  const login = async (ownerId = "U_MINE", launchUrl = grant(ownerId)) => {
+    const response = await exchange(launchUrl);
     assert.equal(response.status, 200);
     const { url } = await response.json(), cookie = response.headers.get("set-cookie").split(";")[0];
     const page = await request(url, { headers: { cookie } });
@@ -144,13 +148,14 @@ async function nextEvent(reader, event = "threads") {
   } finally { clearTimeout(timer); }
 }
 
-test("launch fragment is removed before one-use exchange; cookies, origin, replay and expiry fail closed", async (t) => {
+test("launch fragment is removed before reusable exchange; cookies, origin and expiry fail closed", async (t) => {
   const f = await fixture(t), url = f.grant();
   assert.ok(new URL(url).hash);
   const launch = await f.request("/activity/open");
   assert.equal(launch.status, 200);
   assert.equal(launch.headers.get("referrer-policy"), "no-referrer");
   const html = await launch.text(), script = /<script nonce="[^"]+">([\s\S]+?)<\/script>/.exec(html)[1];
+  assert.doesNotMatch(html, /already used/i);
   const calls = [];
   await new Function("location", "history", "fetch", "document", `return ${script}`)(
     { hash: new URL(url).hash, pathname: "/activity/open", replace: (value) => calls.push(value) },
@@ -158,18 +163,157 @@ test("launch fragment is removed before one-use exchange; cookies, origin, repla
     async (path, init) => { assert.equal(calls[0], "cleared"); calls.push(path); return f.request(path, { ...init, headers: { ...init.headers, Origin: f.base } }); },
     { getElementById: () => ({ textContent: "" }) });
   assert.match(calls.at(-1), /^\/activity\/[A-Za-z0-9_-]{16}$/);
-  assert.equal((await f.exchange(url)).status, 410);
+  assert.equal((await f.exchange(url)).status, 200);
   const sessionPath = calls.at(-1);
   assert.equal((await f.request(sessionPath, { headers: { cookie: "cg_admin=forged" } })).status, 401);
   const fresh = f.grant();
   assert.equal((await f.exchange(fresh, { headers: { Origin: "https://evil.example" } })).status, 403);
   const responses = await Promise.all([f.exchange(fresh), f.exchange(fresh)]);
-  assert.deepEqual(responses.map((r) => r.status).sort(), [200, 410]);
+  assert.deepEqual(responses.map((r) => r.status), [200, 200]);
+  const sessionUrls = await Promise.all(responses.map((r) => r.clone().json()));
+  assert.notEqual(sessionUrls[0].url, sessionUrls[1].url, "each launch has its own browser session");
   const cookie = responses.find((r) => r.status === 200).headers.get("set-cookie");
-  assert.match(cookie, /HttpOnly; SameSite=Lax; Path=\/activity\/[A-Za-z0-9_-]{16}; Max-Age=3600/);
+  assert.match(cookie, /HttpOnly; SameSite=Lax; Path=\/activity\/[A-Za-z0-9_-]{16}; Max-Age=43200/);
   const expired = f.grant(); f.advance(ACTIVITY_GRANT_TTL_MS + 1);
   assert.equal((await f.exchange(expired)).status, 410);
   assert.equal(createActivityGrantUrl({ baseUrl: "http://public.example", ownerId: "U_MINE", teamId: "T_WORK" }), "");
+});
+
+test("reusing a launch near expiry does not extend its original ten-minute lifetime", async (t) => {
+  assert.equal(ACTIVITY_GRANT_TTL_MS, 10 * 60_000);
+  const f = await fixture(t), grant = f.grant();
+  assert.equal((await f.exchange(grant)).status, 200);
+  f.advance(ACTIVITY_GRANT_TTL_MS - 1);
+  const last = await f.exchange(grant);
+  assert.equal(last.status, 200);
+  const { url } = await last.json(), cookie = last.headers.get("set-cookie").split(";")[0];
+  f.advance(1);
+  const expired = await f.exchange(grant);
+  assert.equal(expired.status, 410);
+  assert.equal(expired.headers.get("set-cookie"), null);
+  assert.equal((await f.request(url, { headers: { cookie } })).status, 200,
+    "an existing browser session retains its independent session lifetime");
+});
+
+test("opened dashboards load, refresh, reconnect and write for twelve hours without extending their deadline", async (t) => {
+  assert.equal(ACTIVITY_SESSION_TTL_MS, 12 * 60 * 60_000);
+  const f = await fixture(t); await f.root();
+  const grant = f.grant(), user = await f.login("U_MINE", grant);
+  f.advance(ACTIVITY_GRANT_TTL_MS);
+  assert.equal((await f.exchange(grant)).status, 410, "launch expires after its original ten minutes");
+
+  const afterOneHour = 60 * 60_000 + 1;
+  f.advance(afterOneHour - ACTIVITY_GRANT_TTL_MS);
+  for (const suffix of ["", "/api/threads"]) {
+    const response = await f.request(user.url + suffix, { headers: user.headers });
+    assert.equal(response.status, 200, "opened dashboard remains usable beyond one hour");
+    assert.equal(response.headers.get("set-cookie"), null, "refresh does not renew the cookie");
+  }
+  const firstStream = await f.request(user.url + "/stream", { headers: user.headers });
+  assert.equal(firstStream.status, 200);
+  const firstReader = firstStream.body.getReader();
+  t.after(() => firstReader.cancel());
+  assert.equal((await nextEvent(firstReader)).rows.length, 1);
+  await firstReader.cancel();
+
+  f.advance(ACTIVITY_SESSION_TTL_MS - 1 - afterOneHour);
+  for (const suffix of ["", "/api/threads"]) {
+    assert.equal((await f.request(user.url + suffix, { headers: user.headers })).status, 200,
+      "session is usable until the millisecond before twelve hours");
+  }
+  const completion = user.url + "/api/completion";
+  const body = (done) => JSON.stringify({ channelId: "C_WORK", threadTs: "100.000001", done });
+  assert.equal((await f.request(completion, { method: "POST", headers: user.post, body: body(true) })).status, 200);
+  const reconnect = await f.request(user.url + "/stream", { headers: user.headers });
+  assert.equal(reconnect.status, 200);
+  const reader = reconnect.body.getReader();
+  t.after(() => reader.cancel());
+  assert.equal((await nextEvent(reader)).rows[0].status, "done");
+
+  f.advance(1);
+  await nextEvent(reader, "access-ended");
+  assert.equal((await reader.read()).done, true);
+  for (const suffix of ["", "/api/threads", "/stream"]) {
+    assert.equal((await f.request(user.url + suffix, { headers: user.headers })).status, 401,
+      "reads and SSE reconnects cannot extend the original twelve-hour deadline");
+  }
+  assert.equal((await f.request(completion, { method: "POST", headers: user.post, body: body(false) })).status, 401);
+  assert.ok(getSlackThread("C_WORK", "100.000001").done_ms > 0, "expired session cannot write");
+});
+
+test("a launch that expires while authorization awaits cannot mint another session", async (t) => {
+  let expireDuringAuthorization = false;
+  const f = await fixture(t, { getTeamId: () => {
+    // authorize() awaits the user lookup before checking the live workspace.
+    if (expireDuringAuthorization) f.advance(1);
+    return "T_WORK";
+  } });
+  const grant = f.grant();
+  assert.equal((await f.exchange(grant)).status, 200);
+  f.advance(ACTIVITY_GRANT_TTL_MS - 1);
+  expireDuringAuthorization = true;
+  const response = await f.exchange(grant);
+  assert.equal(response.status, 410);
+  assert.equal(response.headers.get("set-cookie"), null);
+});
+
+test("a launch evicted while authorization awaits cannot mint another session", async (t) => {
+  let evictDuringAuthorization = false;
+  const f = await fixture(t, { getTeamId: () => {
+    if (evictDuringAuthorization) for (let i = 0; i < 20; i++) f.grant();
+    return "T_WORK";
+  } });
+  const grant = f.grant();
+  assert.equal((await f.exchange(grant)).status, 200);
+  evictDuringAuthorization = true;
+  const response = await f.exchange(grant);
+  assert.equal(response.status, 410);
+  assert.equal(response.headers.get("set-cookie"), null);
+});
+
+test("user revocation while launch authorization awaits cannot mint a browser session", async (t) => {
+  let revokeDuringAuthorization = false, revoked;
+  const f = await fixture(t, { getTeamId: () => {
+    // The prior user lookup has already resolved; its approved snapshot is now stale.
+    if (revokeDuringAuthorization) revoked = setUser("U_MINE", { approved: false });
+    return "T_WORK";
+  } });
+  const grant = f.grant();
+  assert.equal((await f.exchange(grant)).status, 200);
+  revokeDuringAuthorization = true;
+  const response = await f.exchange(grant);
+  await revoked;
+  assert.equal(response.status, 403);
+  assert.equal(response.headers.get("set-cookie"), null);
+});
+
+test("each reuse checks user revocation, workspace and Slack connectivity", async (t) => {
+  const f = await fixture(t), grant = f.grant();
+  assert.equal((await f.exchange(grant)).status, 200);
+  await setUser("U_MINE", { approved: false });
+  const revoked = await f.exchange(grant);
+  assert.equal(revoked.status, 403); assert.equal(revoked.headers.get("set-cookie"), null);
+  await setUser("U_MINE", { approved: true });
+  assert.equal((await f.exchange(grant)).status, 200);
+  f.setTeam("T_OTHER");
+  assert.equal((await f.exchange(grant)).status, 403);
+  f.setTeam("T_WORK");
+  assert.equal((await f.exchange(grant)).status, 200);
+  f.disconnect();
+  assert.equal((await f.exchange(grant)).status, 403);
+});
+
+test("repeated launches preserve the per-owner browser-session cap", async (t) => {
+  const f = await fixture(t), grant = f.grant(), launches = [];
+  for (let i = 0; i < 11; i++) {
+    const response = await f.exchange(grant);
+    assert.equal(response.status, 200);
+    launches.push({ ...(await response.json()), cookie: response.headers.get("set-cookie").split(";")[0] });
+  }
+  assert.equal(new Set(launches.map((row) => row.url)).size, 11);
+  for (const [i, row] of launches.entries()) {
+    assert.equal((await f.request(row.url, { headers: { cookie: row.cookie } })).status, i === 0 ? 401 : 200);
+  }
 });
 
 test("administrator Activity retains its own auth while private paths enforce Host and secure cookie scope", async (t) => {
