@@ -15,6 +15,9 @@ release gates. Stable promotion and publication require approval of the exact te
 - Fix excessive startup work when many conversations have workspace settings. Channel listings
   reuse one metadata snapshot and resolve folders once per listing; later reads still pick up
   changed linked-folder owners and access policies immediately.
+- Bound repeated filesystem work during membership metadata writes and startup folder audits;
+  shared-folder follower snapshots retain the owner's current policy without rescanning every
+  folder for every follower.
 
 - Activity automatically refreshes changed thread status, completion and last-message details
   every 15 seconds, preserving the selected filter/page and pausing on other Home sections.

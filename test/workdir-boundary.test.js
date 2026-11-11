@@ -7,7 +7,8 @@ import test, { after } from "node:test";
 import assert from "node:assert/strict";
 import express from "express";
 import path from "node:path";
-import { mkdirSync, realpathSync } from "node:fs";
+import fs, { mkdirSync, realpathSync, symlinkSync, unlinkSync } from "node:fs";
+import { syncBuiltinESMExports } from "node:module";
 import { ensureTestEnv, tempDir } from "./helpers.js";
 
 import os from "node:os";
@@ -181,4 +182,81 @@ test("admin selection may link an exact default workspace; raw runtime metadata 
   assert.equal(promoted.workspaceLink, undefined);
   assert.equal(resolveRuntime(mine.slug, promoted, { settings: { fullAccessHome: false, egressMode: "proxy", image: "test" } }).workDir, OTHER_DEFAULT);
   await put({ workDir: "" });
+});
+
+test("auditing stored custom workspaces canonicalizes metadata linearly per boundary check", async (t) => {
+  const { getDb } = await import("../src/db/index.js");
+  const db = getDb();
+  const count = 24;
+  const fixtures = Array.from({ length: count }, (_, i) => ({
+    slug: `wd-audit-scale-${i}`,
+    workDir: ensure(path.join(HOME, "Code", `audit-project-${i}`)),
+  }));
+  for (const fixture of fixtures) {
+    db.prepare("INSERT INTO channels(channel_id, slug, data) VALUES(?, ?, ?)").run(fixture.slug, fixture.slug, JSON.stringify({ slug: fixture.slug, platform: "slack" }));
+    db.prepare("INSERT INTO channel_meta(slug, data) VALUES(?, ?)").run(fixture.slug, JSON.stringify({ workDir: fixture.workDir }));
+  }
+  const customPaths = new Set(fixtures.map(({ workDir }) => workDir));
+  const original = fs.realpathSync;
+  let customPathReads = 0;
+  t.mock.method(fs, "realpathSync", function (candidate, ...args) {
+    if (customPaths.has(candidate)) customPathReads++;
+    return original.call(this, candidate, ...args);
+  });
+  syncBuiltinESMExports();
+  try {
+    // Boot audits each stored custom workspace through the complete boundary predicate.
+    for (const fixture of fixtures) assert.equal(forbiddenWorkDirReason(fixture.workDir, { slug: fixture.slug, home: HOME }), "");
+    assert.ok(customPathReads <= 2 * count * count,
+      `${customPathReads} custom-path canonicalizations for ${count} audits; expected at most ${2 * count * count}`);
+    t.diagnostic(`${customPathReads} custom-path canonicalizations for ${count} stored-workspace audits`);
+  } finally {
+    t.mock.restoreAll();
+    syncBuiltinESMExports();
+    for (const fixture of fixtures) {
+      db.prepare("DELETE FROM channel_meta WHERE slug = ?").run(fixture.slug);
+      db.prepare("DELETE FROM channels WHERE slug = ?").run(fixture.slug);
+    }
+  }
+});
+
+test("default workspace activity follows fresh canonical assignments, including excluded or metadata-only followers", async () => {
+  const { getDb } = await import("../src/db/index.js");
+  const db = getDb();
+  const owner = "wd-audit-owner";
+  const follower = "wd-audit-follower";
+  const ownerDefault = ensure(workspaceFolder(owner, "slack"));
+  const alias = path.join(HOME, "Code", "audit-alias");
+  const writeMeta = (slug, data) => db.prepare("INSERT OR REPLACE INTO channel_meta(slug, data) VALUES(?, ?)").run(slug, data);
+  db.prepare("INSERT INTO channels(channel_id, slug, data) VALUES(?, ?, ?)").run(owner, owner, JSON.stringify({ slug: owner, platform: "slack" }));
+  const active = () => otherChannelWorkDirs({ exceptSlug: follower }).find(({ slug }) => slug === owner)?.active;
+  try {
+    assert.equal(active(), true, "absent metadata uses the default");
+    writeMeta(owner, "{invalid-json");
+    assert.equal(active(), true, "unreadable metadata retains default behavior");
+    writeMeta(follower, JSON.stringify({ workDir: { toString: null } }));
+    assert.equal(active(), true, "a malformed metadata-only path cannot discard default-folder boundaries");
+    assert.match(forbiddenWorkDirReason(ownerDefault, opts), /another conversation/);
+    db.prepare("DELETE FROM channel_meta WHERE slug = ?").run(follower);
+    writeMeta(owner, JSON.stringify({ workDir: path.join(PROJECT, "missing-custom") }));
+    assert.equal(active(), false, "a nonexistent custom assignment still moves the owner away");
+    assert.match(forbiddenWorkDirReason(ownerDefault, { ...opts, allowSharedFolder: true }), /another conversation/);
+    assert.equal(forbiddenWorkDirReason(ownerDefault, { ...opts, sharedFolderOwner: owner }), "", "explicit source-owner hint remains valid");
+    symlinkSync(ownerDefault, alias, "dir");
+    writeMeta(follower, JSON.stringify({ workDir: alias }));
+    assert.equal(active(), true, "a canonical metadata-only follower keeps the default active, even when excluded");
+    assert.equal(forbiddenWorkDirReason(ownerDefault, { ...opts, allowSharedFolder: true }), "");
+    assert.match(forbiddenWorkDirReason(ownerDefault, opts), /another conversation/, "raw metadata still cannot authorize sharing");
+    unlinkSync(alias);
+    symlinkSync(PROJECT, alias, "dir");
+    assert.equal(active(), false, "symlink changes are visible on the next lookup");
+    writeMeta(follower, JSON.stringify({ workDir: ownerDefault }));
+    assert.equal(active(), true, "metadata changes are visible on the next lookup");
+    db.prepare("DELETE FROM channel_meta WHERE slug = ?").run(follower);
+    assert.equal(active(), false, "removing the last follower retires the default immediately");
+  } finally {
+    for (const slug of [owner, follower]) db.prepare("DELETE FROM channel_meta WHERE slug = ?").run(slug);
+    db.prepare("DELETE FROM channels WHERE slug = ?").run(owner);
+    try { unlinkSync(alias); } catch { /* the assertion may precede alias creation */ }
+  }
 });

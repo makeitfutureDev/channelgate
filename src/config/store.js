@@ -335,8 +335,11 @@ function snapshotWorkspaceFollowers(db, slug, current, next, effectiveWorkDir, c
   const oldCwd = effectiveWorkDir(slug, { ...current, cleanMode: false });
   const sameFolder = oldCwd === effectiveWorkDir(slug, { ...next, cleanMode: false });
   const setup = workspaceSetup(sameFolder ? next : current);
+  // Each follower is selected from the same pre-write snapshot, including after an earlier
+  // follower has been saved. Reuse its directory observations without caching next/current.
+  const readFollower = createWorkspaceProjectionReader(rows, effectiveWorkDir);
   for (const row of rows) {
-    if (row.slug === slug || workspaceProjection(row.slug, row.meta, rows, effectiveWorkDir).workspaceLink?.slug !== slug) continue;
+    if (row.slug === slug || readFollower(row.slug).workspaceLink?.slug !== slug) continue;
     const copy = { ...row.meta, workspaceOwnerSlug: slug, workspaceOrigin: current.workspaceOrigin || { slug, platform: current.platform } };
     for (const field of WORKSPACE_FIELDS) {
       if (Object.hasOwn(setup, field)) copy[field] = setup[field];
