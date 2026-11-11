@@ -2,6 +2,22 @@
 
 ## Slack Home section navigation (2026-11-11)
 
+Automatic-refresh regression: fake timers verify changed Activity state republishes within the
+15-second check interval with the same filter/page; unchanged state makes no extra render/history
+calls. Verify independent viewers, the 200-viewer observer cap, non-overlap, retry after key/render/
+publish failures, tab switches during slow renders, Messages pause, pending-write serialization
+across pause/eviction and stopping on disconnect. Local refresh keys follow foreground completion,
+error, reaction/Done/Reopen and last-message changes, ignoring passive verification and other users.
+
+Live engine-independent acceptance: open Activity in the App Home fixture, choose a filter/page,
+then add/remove a completion reaction from another client; the list updates without Refresh.
+Repeat the linked lifecycle cases in disposable Claude and Codex Worker fixtures: Working → Idle,
+Error/retry, Waiting, Done and a new last-message date appear automatically. Switch to Connections
+or Help & settings while a refresh is slow: no snap-back. Native Messages pauses observation;
+reopening Home resumes. Unchanged Activity must not repeatedly call Slack history. Disconnect and
+reconnect Slack: only the new publisher may write. Verify access revoked before a changed-state
+refresh is excluded. Native execution remains pending until observed.
+
 Regression: `node --test test/home-tabs.test.js test/home-threads.test.js
  test/home-composio.test.js test/home-nudges.test.js test/app-home-channels.test.js`.
 Check default Activity, all five labels and selection highlighting, exactly one content loader per

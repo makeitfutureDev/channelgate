@@ -12,6 +12,15 @@ save/disconnect returns to Connections, thread controls stay in Activity, and re
 in Help & settings.
 Navigation uses the authenticated clicking viewer, without a shared selection or new user setting.
 
+Activity automatically checks local thread/runtime state every 15 seconds and republishes when
+status, completion, last-message date, title or the viewer's indexed threads change. The selected
+filter/page are preserved, and every refreshed render rechecks current access. Unchanged pages
+make no repeated Slack history requests. Other Home sections and the native Messages tab pause
+Activity refresh; reopening Home resumes it. At most 200 recent viewers are observed per Slack
+connection, with independent non-overlapping timers, transient-error retry and serialized writes.
+Disconnecting stops old timers and drains pending writes. Manual Refresh remains available to
+reconcile reaction events missed while offline.
+
 ## Personal Slack thread list (2026-11-11)
 
 Slack App Home → Activity includes **My threads**, a personal paginated list of gateway-engaged
