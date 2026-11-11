@@ -1,5 +1,35 @@
 # ChannelGate — Test Plan
 
+## Private live Activity dashboard and agent-only discovery (2026-11-11)
+
+Regression: `node --test test/activity.test.js test/activity-page.test.js test/home-threads.test.js
+test/home-thread-reader.test.js`. Exercise the real Express router against a scratch database:
+fragment removal before exchange, one-use race/replay/expiry, no-cookie and cross-session denial,
+owner spoofing, wrong Origin/Host, workspace replacement/disconnect, user revocation, CSRF, foreign
+roots and fresh root ownership, private/DM membership and sudo demotion. Revoke channel access
+during a delayed snapshot, permalink or final membership check: no private payload, redirect or
+completion may succeed. Preserve the existing administrator `/activity` route. Bound grants,
+sessions and SSE connections per viewer/globally. SSE must push local changes, check fresh access,
+close on expiry, and release listeners/timers; unchanged public snapshots make no Slack history
+or permalink requests. Only clicking Open resolves a real HTTPS Slack permalink.
+
+Execute generated browser scripts for hostile titles/URLs, CSRF, search and filters, serialized
+Done/Reopen, stale fetch/SSE ordering, session expiry and late responses after access ends. In a
+Chromium fixture, follow the actual fragment launch flow and check the cookie, responsive table,
+Working spinner, keyboard access, mobile layout, search, Done, SSE and Open redirect. These local
+fixtures do not establish live Slack acceptance.
+
+Native acceptance records ACTIVITY-WEB-01 through ACTIVITY-WEB-07 and strengthened HOME-THREADS-01
+cover private Home launch, isolation, revocation, rendering, completion, live updates and bounds.
+In the disposable approved-user Slack fixtures, open Home → Activity → Open live dashboard; a
+second viewer must see only their own roots. Test public/private/DM/sudo access and a new browser
+without admin login. Repeat lifecycle/ownership cases with both Claude and Codex Worker tasks:
+Working → Idle, Error/retry, pending form Waiting, root/reply ✅/👍, Done and Reopen must synchronize
+without full page reload and preserve reminder suppression. Ordinary human announcements and
+unrelated-bot threads must never appear, including polluted indexed legacy rows. Clear a genuine
+engine session and restart: durable participation survives. Engine-independent auth/UI cases use
+their special fixtures. Live Slack/engine execution remains pending until observed and recorded.
+
 ## Slack Home section navigation (2026-11-11)
 
 Performance regression: include `test/home-thread-reader.test.js`. Check 30-second expiry, explicit

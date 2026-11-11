@@ -10,7 +10,7 @@ import { clearDone, markDone } from "../gateway/followups.js";
 import { inspectThreadCompletion } from "../gateway/thread-completion.js";
 import {
   getSlackThread, indexSlackThread, skipSlackThreadCandidate, setSlackThreadDone, updateSlackThreadRootCompletion, slackThreadCandidates,
-  slackThreadsForUser, slackThreadRuntime, slackThreadStatus,
+  eligibleSlackThreadsForUser, isSlackThreadEligible, slackThreadRuntime, slackThreadStatus,
 } from "../gateway/slack-threads.js";
 
 export const HOME_THREADS_ACTION = /^cg_home_threads_(filter|page|refresh|history|done|reopen)$/;
@@ -27,7 +27,7 @@ export function normalizeThreadView(value = {}) {
   return { filter: Object.hasOwn(LABELS, value.filter) ? value.filter : "active", page: Number.isSafeInteger(page) && page >= 0 ? Math.min(page, 1000000) : 0 };
 }
 
-async function accessContext(client, userId) {
+export async function accessContext(client, userId) {
   const user = await getUser(userId) || {};
   const membership = new Map();
   let unavailable = false;
@@ -37,7 +37,8 @@ async function accessContext(client, userId) {
     async allows(entry, threadTs = "") {
       if (!entry || platformOfConversation(entry.channelId) !== "slack") return false;
       const meta = await getChannelMeta(entry.slug);
-      if (!meta || !isAuthorized(meta, userId, Boolean(entry.isDM || meta.isDM), { isAdminUser: user.isAdmin === true, isApprovedUser: user.approved === true })) return false;
+      if (!meta || entry.disabled || entry.archived || entry.deleted || meta.disabled || meta.archived || meta.deleted
+        || (meta.botMembership && meta.botMembership !== "member") || !isAuthorized(meta, userId, Boolean(entry.isDM || meta.isDM), { isAdminUser: user.isAdmin === true, isApprovedUser: user.approved === true })) return false;
       // Public channels need gateway admission. Private/group/DM conversation names and content
       // require actual Slack membership even for an organization admin, with no stale cache.
       if (!["channel", "C"].includes(entry.type)) {
@@ -87,7 +88,7 @@ export async function homeThreadsSnapshot(client, userId, requested = {}, { read
     try {
       const root = await rootFor(candidate.channelId, candidate.threadTs);
       if (!humanRoot(root)) skipSlackThreadCandidate(candidate);
-      else indexSlackThread({ channelId: candidate.channelId, slug: candidate.slug, root });
+      else indexSlackThread({ channelId: candidate.channelId, slug: candidate.slug, root, agentEngaged: true });
     } catch (error) {
       if (permanentMissing(error)) skipSlackThreadCandidate(candidate);
       else if (channelUnavailable(error)) hiddenChannels.add(candidate.channelId);
@@ -96,7 +97,7 @@ export async function homeThreadsSnapshot(client, userId, requested = {}, { read
   }
   const runtime = slackThreadRuntime({ pendingApprovals: listPendingApprovals() });
   const eligible = new Map();
-  for (const row of slackThreadsForUser(userId)) {
+  for (const row of eligibleSlackThreadsForUser(userId)) {
     if (hiddenChannels.has(row.channel_id)) continue;
     const entry = byId.get(row.channel_id);
     if (!await access.allows(entry, row.thread_ts)) continue;
@@ -177,10 +178,40 @@ export async function homeThreadsSnapshot(client, userId, requested = {}, { read
   return { ...view, page, pages, total: filtered.length, rows, moreHistory, unavailable: unavailable || access.unavailable || hiddenChannels.size > 0 };
 }
 
+// The web Activity feed reads local state only. Slack membership remains a fresh access check;
+// it never scans conversation history or resolves permalinks on a live refresh. The web Open
+// route resolves a real Slack permalink after rechecking authorization at click time.
+export async function activityThreadSnapshot(client, userId, requested = {}) {
+  const view = requested.filter === "all-statuses" ? { ...normalizeThreadView(requested), filter: "all-statuses" } : normalizeThreadView(requested);
+  const search = String(requested.search || "").trim().slice(0, 200);
+  const size = Number(requested.pageSize);
+  const pageSize = Number.isSafeInteger(size) && size > 0 ? Math.min(size, 1000) : 100;
+  const access = await accessContext(client, userId);
+  const channels = new Map((await listChannels()).map((entry) => [entry.channelId, entry]));
+  const runtime = slackThreadRuntime({ pendingApprovals: listPendingApprovals() });
+  const authorized = [];
+  let truncated = false;
+  for (const row of eligibleSlackThreadsForUser(userId)) {
+    const entry = channels.get(row.channel_id);
+    if (!await access.allows(entry, row.thread_ts)) continue;
+    if (authorized.length === 1000) { truncated = true; break; }
+    authorized.push({ ...row, channelName: entry.name || "Direct message", status: slackThreadStatus(row, runtime) });
+  }
+  const needle = search.toLocaleLowerCase();
+  const filtered = authorized.filter((row) =>
+    (view.filter === "all-statuses" || (["all", "active"].includes(view.filter) ? row.status !== "done" : row.status === view.filter))
+    && (!needle || `${row.title} ${row.channelName}`.toLocaleLowerCase().includes(needle)))
+    .sort((a, b) => RANK[a.status] - RANK[b.status] || b.last_message_ms - a.last_message_ms || Number(b.thread_ts) - Number(a.thread_ts));
+  const pages = Math.max(1, Math.ceil(filtered.length / pageSize));
+  const page = Math.min(view.page, pages - 1);
+  return { ...view, search, pageSize, page, pages, total: filtered.length,
+    rows: filtered.slice(page * pageSize, (page + 1) * pageSize), unavailable: access.unavailable, truncated };
+}
+
 // Only local display state participates: unchanged Activity pages never poll Slack history.
 export function homeThreadsRefreshKey(userId) {
   const runtime = slackThreadRuntime({ pendingApprovals: listPendingApprovals() });
-  return JSON.stringify(slackThreadsForUser(userId).map((row) => [
+  return JSON.stringify(eligibleSlackThreadsForUser(userId).map((row) => [
     row.channel_id, row.thread_ts, row.title, row.last_message_ms, slackThreadStatus(row, runtime),
   ]).sort((a, b) => `${a[0]}:${a[1]}`.localeCompare(`${b[0]}:${b[1]}`)));
 }
@@ -234,7 +265,7 @@ export function registerHomeThreadActions(app, { publishHome } = {}) {
         ...(["refresh", "history"].includes(kind) ? { forceThreads: true, discoverThreads: true } : {}) };
       if (["done", "reopen"].includes(kind)) {
         const row = getSlackThread(String(value.channelId || ""), String(value.threadTs || ""));
-        if (!row || row.starter_id !== userId) return;
+        if (!row || row.starter_id !== userId || !isSlackThreadEligible(row)) return;
         const access = await accessContext(client, userId);
         const entry = await getChannelEntry(row.channel_id);
         if (!await access.allows(entry && { ...entry, channelId: row.channel_id }, row.thread_ts)) return;

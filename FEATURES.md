@@ -1,5 +1,31 @@
 # ChannelGate — Features
 
+## Private live Activity dashboard (2026-11-11)
+
+Slack Home → Activity offers **Open live dashboard** when a Public URL is configured. It opens a
+responsive browser table of the viewer's own agent threads, with search, status filters, Working
+spinners, labeled status colors, last-message dates, Open thread and Done/Reopen. Completed work
+is hidden from open filters; completion uses the same persistent state and reminder suppression
+as Slack. A finished agent response becomes Idle until explicitly completed.
+
+The existing daemon serves the page with vanilla JavaScript and Server-Sent Events, without a new
+service or frontend dependency. Local thread changes push updates; a one-second local fingerprint
+also detects runtime transitions. Refreshes do not scan Slack transcripts or resolve every link.
+Private membership is rechecked on snapshots and at least every 15 seconds while connected;
+Open resolves a cached real Slack permalink after fresh authorization. Disconnected streams retry.
+The snapshot is bounded to 1,000 authorized threads and indicates truncation.
+
+A private Home button carries a ten-minute, single-use bearer grant in a URL fragment. The landing
+page removes it before exchanging it for a one-hour HttpOnly, SameSite cookie scoped to one opaque
+dashboard path (Secure over HTTPS). Grants, sessions and streams are bounded per viewer and
+globally, live only in daemon memory and end on restart. No administrator cookie or API key grants
+dashboard access. Origin/Host checks, nonce CSP, no-store/no-referrer headers and CSRF-protected
+actions apply. Page/API/stream/action requests recheck current user admission and Slack workspace;
+thread access additionally requires root ownership, gateway access, private/DM membership and sudo
+authority. Expired/revoked access clears browser rows. The existing admin `/activity` stays separate.
+Launch links are credentials: forwarding an unused link grants its holder this limited view until
+expiry or revocation, so they belong only in the viewer's private Home, never a public channel.
+
 ## Slack Home sections (2026-11-11)
 
 Slack App Home has Activity, Connections, Skills, Channels and Help & settings navigation, with Activity selected
@@ -40,6 +66,11 @@ button aligned at the right. Each compact entry uses two text lines and no separ
 the linked title opens the original thread. Dates come from observed Slack messages and complete paginated transcript refreshes;
 run completion, inspection and Done clicks do not substitute their timestamps. Complete scans can
 correct the date when the latest reply was deleted.
+
+Both Home and the browser dashboard require positive participation by this gateway: an admitted
+turn, engine session, agent background job or gateway AI follow-up. Passive observation of human
+messages and unrelated bots cannot add a thread. A durable participation marker survives session
+cleanup; legacy evidence promotes genuine roots, while already-indexed human-only entries stay hidden.
 
 ✅, ✔️ and 👍 (`+1`/`thumbsup`, including skin tones) on the root or any reply, or Done in Activity,
 complete the thread. The owner’s native 👍 answer-feedback button also marks it Done, with

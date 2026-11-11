@@ -141,7 +141,8 @@ import { nudgeHomeBlocks } from "./home-nudges.js";
 import { homeThreadsSnapshot, homeThreadBlocks, homeThreadsRefreshKey } from "./home-threads.js";
 import { createHomeThreadReader } from "./home-thread-reader.js";
 import { buildHomeTabView, createHomePublisher, registerHomeActions } from "./home-tabs.js";
-import { getSlackThread, recordSlackThreadMessage, slackThreadsForUser } from "../gateway/slack-threads.js";
+import { getSlackThread, recordSlackThreadMessage, eligibleSlackThreadsForUser } from "../gateway/slack-threads.js";
+import { activityHomeBlocks } from "./home-activity.js";
 import { isCompletionReaction } from "../gateway/completion-reactions.js";
 import { completeThreadFromFeedback, syncThreadCompletionReaction } from "./thread-completion.js";
 import { buildMenuCard, buildMenuResumeView, MENU_RESUME_ACTION_ID } from "./menu.js";
@@ -3414,7 +3415,7 @@ async function connectAndWire(app) {
         try {
           const snapshot = await homeThreadsSnapshot(client, userId, homeView, {
             reader: homeThreadReader,
-            discover: homeView.discoverThreads === true || !slackThreadsForUser(userId).length,
+            discover: homeView.discoverThreads === true || !eligibleSlackThreadsForUser(userId).length,
             reconcile: homeView.forceThreads === true,
             force: homeView.forceThreads === true,
           });
@@ -3425,7 +3426,7 @@ async function connectAndWire(app) {
           retryActivity = true;
           threads = [{ type: "section", text: { type: "mrkdwn", text: "*My threads*\nThreads are temporarily unavailable. Retrying automatically." } }];
         }
-        return threads;
+        return [...activityHomeBlocks({ ownerId: userId, teamId, baseUrl: getPublicUrl(), approved: admin || approved }), ...threads];
       },
       help: async () => [
           { type: "divider" },
@@ -3486,6 +3487,11 @@ async function connectAndWire(app) {
     return buildHomeTabView({ tab: homeView.tab, userId, role, sections, footer, needsActivityRetry: () => retryActivity });
   }, { refreshKey: homeThreadsRefreshKey, refreshState: ({ forceThreads: _force, discoverThreads: _discover, ...state }) => state });
   const stopSlack = app.stop.bind(app);
+  app.action("cg_activity_open", async ({ ack, client, body }) => {
+    await ack();
+    // Rotate the Home launch link for the next visit; the URL being opened is single-use.
+    try { await publishHomeTab(client, body.user.id, { tab: "activity" }); } catch { /* Home can retry on reopen */ }
+  });
   app.stop = async (...args) => { await publishHomeTab.stop(); return stopSlack(...args); };
 
   // App Home tab: an orientation dashboard — the viewer's access level, the channels the

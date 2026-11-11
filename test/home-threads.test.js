@@ -1,13 +1,14 @@
 import { test, beforeEach } from "node:test";
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
 import { ensureTestEnv } from "./helpers.js";
 ensureTestEnv();
 const { getDb, toJson } = await import("../src/db/index.js");
-const { setUser, upsertChannelEntry, getChannelEntry, saveChannelMeta } = await import("../src/config/store.js");
+const { setUser, upsertChannelEntry, getChannelEntry, saveChannelMeta, patchChannelMeta } = await import("../src/config/store.js");
 const { setThreadSudo } = await import("../src/gateway/thread-engine.js");
 const { getSlackThread, indexSlackThread, trackSlackThread, recordSlackThreadOutcome, setSlackThreadDone,
-  slackThreadRuntime, slackThreadStatus, updateSlackThreadRootCompletion } = await import("../src/gateway/slack-threads.js");
-const { homeThreadsSnapshot, homeThreadBlocks, registerHomeThreadActions, normalizeThreadView, homeThreadsRefreshKey } = await import("../src/slack/home-threads.js");
+  slackThreadRuntime, slackThreadStatus, updateSlackThreadRootCompletion, slackThreadCandidates, eligibleSlackThreadsForUser } = await import("../src/gateway/slack-threads.js");
+const { homeThreadsSnapshot, homeThreadBlocks, registerHomeThreadActions, normalizeThreadView, homeThreadsRefreshKey, activityThreadSnapshot } = await import("../src/slack/home-threads.js");
 const { createHomeThreadReader } = await import("../src/slack/home-thread-reader.js");
 
 let roots;
@@ -23,7 +24,8 @@ async function channel(id = "C_THREADS", type = "channel", meta = {}) {
 function root(entry, ts, user = "U_MINE", extra = {}) {
   const message = { ts, user, text: `Task ${ts}`, ...extra };
   roots.set(`${entry.channelId}:${ts}`, message);
-  return indexSlackThread({ channelId: entry.channelId, slug: entry.slug, root: message });
+  // Existing fixtures describe admitted agent tasks; raw observation regressions explicitly omit this marker.
+  return indexSlackThread({ channelId: entry.channelId, slug: entry.slug, root: message, agentEngaged: true });
 }
 beforeEach(async () => {
   const db = getDb();
@@ -555,4 +557,123 @@ test("native positive feedback cannot forge thread ownership or retain revoked p
   assert.equal(await completeThreadFromFeedback({ client, body, parsed: { ...parsed, verdict: "down" } }), false);
   assert.equal(getSlackThread(c.channelId, "100.000001").done_ms, 0);
   assert.equal(await completeThreadFromFeedback({ client, body, parsed }), true);
+});
+
+
+test("ordinary human follow-ups and foreign bots never become agent candidates, even with polluted index rows", async () => {
+  const { recordActivity } = await import("../src/gateway/followups.js");
+  const c = await channel();
+  for (const [ts, isBot] of [["100.000001", false], ["101.000001", true]]) {
+    const message = { ts, user: "U_MINE", text: "Ordinary conversation" };
+    roots.set(`${c.channelId}:${ts}`, message);
+    recordActivity({ channelId: c.channelId, slug: c.slug, threadTs: ts, userId: isBot ? "B_OTHER" : "U_MINE", isBot, aiTurn: false, tsMs: 1000 });
+    indexSlackThread({ channelId: c.channelId, slug: c.slug, root: message });
+  }
+  getDb().prepare("INSERT INTO sessions(slug,thread_key,session_id) VALUES(?,?,?)").run(c.slug, "100.000001", "");
+  // Shell activity and unrelated completion marks are not proof of an agent conversation.
+  getDb().prepare("INSERT INTO bg_jobs(id,data) VALUES(?,?)").run("shell", toJson({ channelId: c.channelId, threadKey: "100.000001", kind: "shell" }));
+  setSlackThreadDone(c.channelId, "101.000001", "U_MINE", true);
+  assert.deepEqual(slackThreadCandidates([c]), []);
+  assert.equal((await homeThreadsSnapshot(client, "U_MINE", { filter: "all" })).total, 0);
+  assert.equal((await activityThreadSnapshot(client, "U_MINE", { filter: "done" })).total, 0);
+  assert.equal(reads.length, 0, "polluted human-only rows do not even trigger Slack root reads");
+  assert.equal(getSlackThread(c.channelId, "100.000001").agent_engaged, 0);
+});
+
+test("genuine gateway evidence repairs legacy index rows and remains durable after evidence cleanup and restart", async () => {
+  const c = await channel();
+  const db = getDb();
+  const timestamps = ["100.000001", "101.000001", "102.000001", "103.000001"];
+  for (const ts of timestamps) indexSlackThread({ channelId: c.channelId, slug: c.slug, root: { ts, user: "U_MINE", text: "Legacy task" } });
+  db.prepare("INSERT INTO sessions(slug,thread_key,session_id) VALUES(?,?,?)").run(c.slug, timestamps[0], "real-session");
+  db.prepare("INSERT INTO followup_threads(thread_key,data) VALUES(?,?)").run("gateway-followup", toJson({ channelId: c.channelId, threadTs: timestamps[1], aiInvolved: true }));
+  db.prepare("INSERT INTO active_runs(id,data) VALUES(?,?)").run("queued", toJson({ channelId: c.channelId, threadKey: "code-channel", slackThreadTs: timestamps[2] }));
+  db.prepare("INSERT INTO bg_jobs(id,data) VALUES(?,?)").run("agent", toJson({ channelId: c.channelId, threadKey: `${timestamps[3]}::agent-one`, kind: "agent" }));
+  assert.equal(eligibleSlackThreadsForUser("U_MINE").length, 4);
+  for (const ts of timestamps) assert.equal(getSlackThread(c.channelId, ts).agent_engaged, 1);
+  for (const table of ["sessions", "followup_threads", "active_runs", "bg_jobs"]) db.exec(`DELETE FROM ${table}`);
+  const output = execFileSync(process.execPath, ["--input-type=module", "-e",
+    'import { eligibleSlackThreadsForUser } from "./src/gateway/slack-threads.js"; process.stdout.write(JSON.stringify(eligibleSlackThreadsForUser("U_MINE").map(r => r.thread_ts)));'],
+  { cwd: new URL("..", import.meta.url), env: process.env, encoding: "utf8" });
+  assert.deepEqual(JSON.parse(output).sort(), timestamps);
+});
+
+test("gateway-only follow-up discovery excludes ordinary history and preserves eligibility after discovery", async () => {
+  const c = await channel();
+  for (const [ts, aiInvolved] of [["100.000001", false], ["101.000001", true]]) {
+    roots.set(`${c.channelId}:${ts}`, { ts, user: "U_MINE", text: "Thread" });
+    getDb().prepare("INSERT INTO followup_threads(thread_key,data) VALUES(?,?)").run(ts, toJson({ channelId: c.channelId, threadTs: ts, aiInvolved }));
+  }
+  assert.deepEqual(slackThreadCandidates([c]).map((row) => row.threadTs), ["101.000001"]);
+  assert.equal((await homeThreadsSnapshot(client, "U_MINE")).rows.length, 1);
+  getDb().exec("DELETE FROM followup_threads");
+  assert.equal((await activityThreadSnapshot(client, "U_MINE")).rows[0].thread_ts, "101.000001");
+});
+
+test("local Activity snapshots paginate and search without any Slack history or permalink calls", async () => {
+  const c = await channel();
+  for (let n = 0; n < 12; n++) root(c, `${100 + n}.000001`, "U_MINE", { text: n < 3 ? `Findable ${n}` : `Task ${n}` });
+  root(c, "200.000001", "U_OTHER");
+  client.conversations.replies = () => { throw new Error("must not read transcript"); };
+  client.chat.getPermalink = () => { throw new Error("must not resolve links"); };
+  const first = await activityThreadSnapshot(client, "U_MINE", { pageSize: 5 });
+  const last = await activityThreadSnapshot(client, "U_MINE", { pageSize: 5, page: 99 });
+  const search = await activityThreadSnapshot(client, "U_MINE", { search: "FINDABLE" });
+  assert.equal(first.total, 12); assert.equal(first.rows.length, 5);
+  assert.equal(last.page, 2); assert.equal(last.rows.length, 2);
+  assert.equal(search.total, 3); assert.equal(search.unavailable, false);
+  assert.ok(first.rows.every((row) => row.channelName && row.last_message_ms && row.status === "idle" && !row.url));
+  setSlackThreadDone(c.channelId, "100.000001", "U_MINE", true);
+  assert.equal((await activityThreadSnapshot(client, "U_MINE", { filter: "done" })).total, 1);
+  assert.equal((await activityThreadSnapshot(client, "U_MINE", { filter: "all-statuses" })).total, 12);
+});
+
+test("local Activity snapshots freshly enforce private membership, user demotion, sudo, and gateway revocation", async () => {
+  const c = await channel("G_PRIVATE", "group"); root(c, "100.000001");
+  await setUser("U_MINE", { isAdmin: true });
+  let snapshot = await activityThreadSnapshot(client, "U_MINE");
+  assert.equal(snapshot.total, 0); assert.equal(snapshot.unavailable, true);
+  members.set(c.channelId, ["U_MINE"]);
+  await setThreadSudo(c.slug, "100.000001", true);
+  assert.equal((await activityThreadSnapshot(client, "U_MINE")).total, 1);
+  await setUser("U_MINE", { isAdmin: false });
+  assert.equal((await activityThreadSnapshot(client, "U_MINE")).total, 0);
+  await setThreadSudo(c.slug, "100.000001", false);
+  assert.equal((await activityThreadSnapshot(client, "U_MINE")).total, 1);
+  members.set(c.channelId, []);
+  assert.equal((await activityThreadSnapshot(client, "U_MINE")).total, 0);
+  members.set(c.channelId, ["U_MINE"]);
+  await saveChannelMeta(c.slug, { access: "none" });
+  assert.equal((await activityThreadSnapshot(client, "U_MINE")).total, 0);
+  await patchChannelMeta(c.slug, { access: "approved", archived: true });
+  assert.equal((await activityThreadSnapshot(client, "U_MINE")).total, 0);
+});
+
+test("local Activity snapshots cap visible data and flag partial results", async () => {
+  const c = await channel();
+  const insert = getDb().prepare("INSERT INTO slack_threads(channel_id,thread_ts,slug,starter_id,title,updated_ms,last_message_ms,agent_engaged) VALUES(?,?,?,?,?,?,?,1)");
+  for (let n = 0; n < 1001; n++) insert.run(c.channelId, `${100 + n}.000001`, c.slug, "U_MINE", "Task", n, n);
+  const snapshot = await activityThreadSnapshot(client, "U_MINE", { pageSize: 10000 });
+  assert.equal(snapshot.total, 1000); assert.equal(snapshot.rows.length, 1000);
+  assert.equal(snapshot.truncated, true); assert.equal(snapshot.pages, 1);
+});
+
+test("thread changes emit scoped invalidations and passive checks do not loop", async () => {
+  const { onThreadChanged } = await import("../src/gateway/thread-changes.js");
+  const { recordSlackThreadMessage } = await import("../src/gateway/slack-threads.js");
+  const c = await channel(); const notifications = [];
+  const unsubscribe = onThreadChanged((event) => notifications.push(event));
+  try {
+    root(c, "100.000001");
+    recordSlackThreadMessage(c.channelId, "100.000001", "101.000001");
+    setSlackThreadDone(c.channelId, "100.000001", "U_MINE", true, 200000);
+    recordSlackThreadOutcome(c.channelId, "100.000001", { at: 300000 });
+    const count = notifications.length;
+    updateSlackThreadRootCompletion(c.channelId, roots.get(`${c.channelId}:100.000001`));
+    assert.equal(notifications.length, count, "checked_ms alone is not a display change");
+    assert.equal(count, 4);
+    assert.ok(notifications.every((event) => event.channelId === c.channelId && event.threadTs === "100.000001"));
+  } finally { unsubscribe(); }
+  recordSlackThreadMessage(c.channelId, "100.000001", "400.000001");
+  assert.equal(notifications.length, 4);
 });

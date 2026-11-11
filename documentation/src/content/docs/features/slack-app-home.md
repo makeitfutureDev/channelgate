@@ -33,6 +33,10 @@ thread, with channel, status and date below it and the green **✓ Done** button
 Dates come from Slack messages, rather than the time a run
 finished or you clicked Done. Slack displays the date in your local time.
 
+Only threads where this gateway took part appear. Ordinary human announcements and threads with
+unrelated bots are excluded, even if the gateway observed them for follow-ups. Genuine agent
+participation is retained when its engine session is cleared.
+
 **Active** and **All open** hide completed work. Choose a specific open status and use
 **Previous** / **Next** to browse ten threads at a time:
 
@@ -66,6 +70,24 @@ Only threads whose original message you posted appear. Current gateway admission
 membership and sudo-thread authority still apply, including for administrators. Stale controls cannot
 change another person's work or keep access after you leave a private conversation. Temporary Slack
 failures can hide entries; the view indicates when verification is incomplete.
+
+## Open the live browser dashboard
+
+Select **Open live dashboard** at the top of Activity for a compact table with live status
+spinners, status colors and labels, search, last-message dates, **Open thread** and **Done/Reopen**.
+Search and filters respond immediately in the browser. Completed work stays hidden in open views.
+Status updates arrive without reloading the page or repeatedly fetching Slack thread histories.
+
+The button appears when an administrator configures the gateway's reachable HTTPS **Public URL**.
+It signs you into your own limited Activity view; administrator login is not required. The private
+launch link expires after ten minutes and can be used once. The browser session lasts one hour;
+reopen Slack Home for a fresh link after expiry or a gateway restart. Do not share unused launch
+links: someone holding one can open this view as you until its session expires or access is revoked.
+
+The dashboard checks your current gateway access, private/DM membership and sudo authority.
+Unverifiable private rows are hidden, and access loss or expiry clears the displayed list. It
+shows at most 1,000 authorized tracked threads and indicates if more exist. Finishing a reply
+changes Working to Idle; explicit Done or a completion reaction closes the thread in both views.
 
 ## Check personal connections
 

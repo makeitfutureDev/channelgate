@@ -25,6 +25,7 @@ import { createPublicFileRouter } from "./public-files.js";
 import { createApprovalLinkRouter } from "./routes/approve.js";
 import { createFileUploadRouter } from "./file-upload.js";
 import { createConversationSettingsRouter } from './conversation-settings.js';
+import { createActivityRouter } from "./activity.js";
 import { getSessionMap, getSessionRuntime, getSessionEngine } from "../gateway/sessions.js";
 import { poolStats } from "../engines/session-pool.js";
 import { getEngine, isEngineEnabled } from "../config/settings.js";
@@ -106,7 +107,7 @@ export function createWebApp({
   mountSkillsPublicRoutes(app, { triggerSync: (id) => triggerSourceSync(id) });
 
   const jsonParser = express.json({ limit: "1mb" });
-  const parsesOwnBody = (p) => p.startsWith("/api/runs") || p.startsWith("/file-download") || p.startsWith("/file-editor") || p.startsWith("/file-upload") || p.startsWith("/conversation-settings") || p.startsWith("/approve/") || p.startsWith("/f/") || p === "/api/skills/webhook/github" || p === "/mcp/skills";
+  const parsesOwnBody = (p) => p.startsWith("/api/runs") || p.startsWith("/file-download") || p.startsWith("/file-editor") || p.startsWith("/file-upload") || p.startsWith("/conversation-settings") || p.startsWith("/activity") || p.startsWith("/approve/") || p.startsWith("/f/") || p === "/api/skills/webhook/github" || p === "/mcp/skills";
   app.use((req, res, next) => (parsesOwnBody(req.path.toLowerCase()) ? next() : jsonParser(req, res, next)));
 
   // Auth: login/logout are always reachable; everything else is gated when ADMIN_PASSWORD is set.
@@ -273,6 +274,7 @@ export function createWebApp({
   // to edit in writable modes; it has its own one-time grant → HttpOnly cookie exchange and repeats
   // the full Slack authorization/membership/mode check on open, page load, and every save.
   app.use('/conversation-settings', createConversationSettingsRouter());
+  app.use("/activity", createActivityRouter({ getClient: () => slack?.getClient?.(), getTeamId: () => slack?.snapshot?.().teamId }));
   app.use("/file-editor", createFileEditorRouter({
     authorize: async (grant) => {
       const adapter = platformOr(platformOfConversation(grant.channelId));

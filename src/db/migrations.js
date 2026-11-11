@@ -1227,4 +1227,10 @@ export const migrations = [
       db.exec("UPDATE slack_threads SET done_ms=0 WHERE done_ms < 0");
     },
   },
+  {
+    version: 46,
+    up(db) {
+      db.exec("ALTER TABLE slack_threads ADD COLUMN agent_engaged INTEGER NOT NULL DEFAULT 0");
+    },
+  },
 ];
