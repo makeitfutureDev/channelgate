@@ -12,8 +12,8 @@ const clientFor = (messages) => ({ conversations: { replies: async () => ({ mess
 for (const [name, messages, expected] of [
   ["checked root", [msg("1", check), msg("2")], true],
   ["checked latest", [msg("1"), msg("2", check)], true],
-  ["checked older reply", [msg("1"), msg("2", check), msg("3")], false],
-  ["thumbs up", [msg("1", [{ name: "+1", count: 1 }])], false],
+  ["checked older reply", [msg("1"), msg("2", check), msg("3")], true],
+  ["thumbs up", [msg("1", [{ name: "+1", count: 1 }])], true],
   ["removed reaction", [msg("1", [{ name: "white_check_mark", count: 0 }])], false],
   ["ordinary text check", [{ ts: "1", text: "✅ done" }], false],
 ]) {
@@ -22,7 +22,7 @@ for (const [name, messages, expected] of [
   });
 }
 
-test("reads every page before deciding which reply is latest", async () => {
+test("checks older replies across every page before deciding completion", async () => {
   const calls = [];
   const client = { conversations: { replies: async (args) => {
     calls.push(args);
@@ -30,7 +30,7 @@ test("reads every page before deciding which reply is latest", async () => {
       messages: [msg("1"), msg("2", check)], has_more: true, response_metadata: { next_cursor: "next" },
     };
   } } };
-  assert.equal(await threadHasCompletionReaction(client, "C", "1"), false);
+  assert.equal(await threadHasCompletionReaction(client, "C", "1"), true);
   assert.equal(calls[1].cursor, "next");
 });
 
@@ -60,7 +60,7 @@ test("nudges defer on checked roots, checked last replies and lookup errors, the
   assert.equal(posts, 0);
   assert.equal(map.get("s::1").reminded, false);
   fail = false;
-  messages = [msg("1"), msg("2", [{ name: "+1", count: 1 }])];
+  messages = [msg("1"), msg("2", [{ name: "eyes", count: 1 }])];
   await sweepNudges(slack, options);
   await sweepNudges(slack, options);
   assert.equal(posts, 1);

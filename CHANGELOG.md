@@ -18,6 +18,10 @@ release gates. Stable promotion and publication require approval of the exact te
 - Accept `@agent /sudo <message>` to enable an admin-only host thread and run the request in
   one message. Existing status/off controls, busy-thread checks and admin enforcement remain.
 
+- Activity completion now honors ✅ or 👍 on any root/reply and the Done button consistently:
+  completed threads stay out of open lists and stop quiet-thread/pending reminders until reopened.
+  Rows have divider lines, a separate green Done button and the actual last-message date.
+
 - Slack Home now has Activity, Connections, Skills and Channels sections. Activity opens by
   default; connection updates return to Connections and each section loads its own content.
 

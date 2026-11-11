@@ -6,6 +6,8 @@ import { getThreadSudo } from "../gateway/thread-engine.js";
 import { platformOfConversation } from "../platforms/ids.js";
 import { listConversationMemberIds } from "./members.js";
 import { listPendingApprovals } from "./approvals.js";
+import { clearDone, markDone } from "../gateway/followups.js";
+import { inspectThreadCompletion } from "../gateway/thread-completion.js";
 import {
   getSlackThread, indexSlackThread, skipSlackThreadCandidate, setSlackThreadDone, updateSlackThreadRootCompletion, slackThreadCandidates,
   slackThreadsForUser, slackThreadRuntime, slackThreadStatus,
@@ -14,7 +16,7 @@ import {
 export const HOME_THREADS_ACTION = /^cg_home_threads_(filter|page|refresh|done|reopen)$/;
 export const HOME_THREADS_PAGE_SIZE = 10;
 const HISTORY_BATCH = 10;
-const LABELS = { active: "Active", all: "All", working: "Working", waiting: "Waiting", idle: "Idle", done: "Done", error: "Error" };
+const LABELS = { active: "Active", all: "All open", working: "Working", waiting: "Waiting", idle: "Idle", done: "Completed", error: "Error" };
 const ICONS = { working: "🟢", waiting: "🟡", idle: "⚪", done: "✅", error: "🔴" };
 const RANK = { working: 0, waiting: 1, error: 2, idle: 3, done: 4 };
 const esc = (value) => String(value || "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/[*_~`]/g, "");
@@ -101,14 +103,15 @@ export async function homeThreadsSnapshot(client, userId, requested = {}) {
   const verified = new Set();
   const verify = async (row) => {
     const key = `${row.channel_id}::${row.thread_ts}`;
-    const root = await rootFor(row.channel_id, row.thread_ts);
+    const inspected = await inspectThreadCompletion(client, row.channel_id, row.thread_ts);
+    const root = inspected.root;
     if (!humanRoot(root) || root.user !== userId) {
       if (humanRoot(root)) indexSlackThread({ channelId: row.channel_id, slug: row.slug, root });
       else skipSlackThreadCandidate({ channelId: row.channel_id, slug: row.slug, threadTs: row.thread_ts });
       eligible.delete(key);
       return false;
     }
-    updateSlackThreadRootCompletion(row.channel_id, root);
+    updateSlackThreadRootCompletion(row.channel_id, root, inspected);
     const current = getSlackThread(row.channel_id, row.thread_ts);
     Object.assign(row, current, { status: slackThreadStatus(current, runtime) });
     verified.add(key);
@@ -130,8 +133,8 @@ export async function homeThreadsSnapshot(client, userId, requested = {}) {
   }
   const selection = () => [...eligible.values()]
     .filter((r) => !hiddenChannels.has(r.channel_id))
-    .filter((r) => view.filter === "all" || (view.filter === "active" ? r.status !== "done" : r.status === view.filter))
-    .sort((a, b) => RANK[a.status] - RANK[b.status] || b.updated_ms - a.updated_ms || Number(b.thread_ts) - Number(a.thread_ts));
+    .filter((r) => ["all", "active"].includes(view.filter) ? r.status !== "done" : r.status === view.filter)
+    .sort((a, b) => RANK[a.status] - RANK[b.status] || b.last_message_ms - a.last_message_ms || Number(b.thread_ts) - Number(a.thread_ts));
   let filtered;
   let pages;
   let page;
@@ -179,7 +182,7 @@ export function homeThreadBlocks(snapshot) {
   const state = { filter, page };
   const blocks = [
     { type: "divider" },
-    { type: "section", text: { type: "mrkdwn", text: "*My threads*\nThreads you started with this gateway. Finished replies stay Idle until you mark the work Done. Open Home or Refresh for current status." } },
+    { type: "section", text: { type: "mrkdwn", text: "*My threads*\n✅, 👍 or Done completes a thread: it disappears from open views and stops thread reminders. Use Completed to reopen it." } },
     { type: "actions", elements: [
       { type: "static_select", action_id: "cg_home_threads_filter", placeholder: { type: "plain_text", text: "Status" },
         initial_option: { text: { type: "plain_text", text: LABELS[filter] }, value: filter },
@@ -189,8 +192,19 @@ export function homeThreadBlocks(snapshot) {
   ];
   if (!rows.length) blocks.push({ type: "section", text: { type: "mrkdwn", text: "_No visible threads in this view._" } });
   for (const row of rows) {
-    blocks.push({ type: "section", text: { type: "mrkdwn", text: `${ICONS[row.status]} *${LABELS[row.status]}* · ${esc(row.channelName)}\n<${row.url}|${esc(row.title) || "Open thread"}>` },
-      accessory: button(row.status === "done" ? "Reopen" : "Mark done", row.status === "done" ? "reopen" : "done", { ...state, channelId: row.channel_id, threadTs: row.thread_ts }) });
+    const at = row.last_message_ms;
+    const date = Number.isFinite(at) && at > 0
+      ? `<!date^${Math.floor(at / 1000)}^{date_short_pretty} at {time}|${new Date(at).toISOString().slice(0, 16).replace("T", " ")} UTC>`
+      : "Unavailable";
+    const done = row.status === "done";
+    blocks.push(
+      { type: "divider" },
+      { type: "section", text: { type: "mrkdwn", text: `*${esc(row.channelName)}*\n<${row.url}|${esc(row.title) || "Open thread"}>` },
+        fields: [{ type: "mrkdwn", text: `*Status*\n${ICONS[row.status]} ${done ? "Done" : LABELS[row.status]}` },
+          { type: "mrkdwn", text: `*Last message*\n${date}` }] },
+      { type: "actions", elements: [{ type: "button", text: { type: "plain_text", text: "Open thread" }, action_id: "cg_home_threads_open", url: row.url },
+        { ...button(done ? "Reopen" : "✓ Done", done ? "reopen" : "done", { ...state, channelId: row.channel_id, threadTs: row.thread_ts }), ...(done ? {} : { style: "primary" }) }] },
+    );
   }
   const navigation = [];
   if (page > 0) navigation.push(button("Previous", "page", { filter, page: page - 1 }));
@@ -202,6 +216,7 @@ export function homeThreadBlocks(snapshot) {
 }
 
 export function registerHomeThreadActions(app, { publishHome } = {}) {
+  app.action("cg_home_threads_open", async ({ ack }) => { await ack(); });
   app.action(HOME_THREADS_ACTION, async ({ ack, body, action, client }) => {
     await ack();
     const userId = body?.user?.id;
@@ -220,6 +235,8 @@ export function registerHomeThreadActions(app, { publishHome } = {}) {
         if (!root || root.user !== userId || root.bot_id) return;
         updateSlackThreadRootCompletion(row.channel_id, root);
         setSlackThreadDone(row.channel_id, row.thread_ts, userId, kind === "done");
+        if (kind === "done") markDone(userId, row.channel_id, row.thread_ts);
+        else clearDone(userId, row.channel_id, row.thread_ts);
       }
       await publishHome(client, userId, view);
     } catch (error) {

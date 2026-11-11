@@ -1218,4 +1218,13 @@ export const migrations = [
       `);
     },
   },
+  {
+    version: 45,
+    up(db) {
+      db.exec("ALTER TABLE slack_threads ADD COLUMN last_message_ms INTEGER NOT NULL DEFAULT 0");
+      // v44 wrote negative overrides for ordinary prompts as well as Reopen. The corrected
+      // completion policy must stop those old prompt markers from defeating existing checks.
+      db.exec("UPDATE slack_threads SET done_ms=0 WHERE done_ms < 0");
+    },
+  },
 ];

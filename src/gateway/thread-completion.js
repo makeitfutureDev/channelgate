@@ -1,23 +1,31 @@
-// Check Slack at delivery time: reaction events may predate tracking or be missed while offline.
-// A root ✅ stays closed; a reply ✅ closes only while that reply remains the latest message.
-const checked = (message) => message?.reactions?.some(
-  (reaction) => reaction.name === "white_check_mark" && reaction.count > 0,
-);
+// Completion is shared by Activity, quiet nudges and pending digests, including reactions on
+// older replies. Later messages do not undo a person's completion choice.
+import { messageHasCompletionReaction } from "./completion-reactions.js";
+import { getSlackThread, slackThreadIsDone, updateSlackThreadRootCompletion } from "./slack-threads.js";
 
-export async function threadHasCompletionReaction(client, channelId, threadTs) {
+export async function inspectThreadCompletion(client, channelId, threadTs) {
+  const inspectedAt = Date.now();
   let cursor;
-  let latest;
+  let root = null;
+  let lastMessageMs = 0;
+  let completed = false;
   const seen = new Set();
   do {
     const page = await client.conversations.replies({
       channel: channelId, ts: threadTs, limit: 100, ...(cursor ? { cursor } : {}),
     });
-    if (page.ok === false || !Array.isArray(page.messages) || !page.messages.length) {
+    if (page.ok === false) throw Object.assign(new Error("Unable to verify thread completion reactions"), { code: page.error || "thread_unavailable" });
+    if (Array.isArray(page.messages) && !page.messages.length && !cursor) {
+      throw Object.assign(new Error("Thread no longer exists"), { code: "thread_not_found" });
+    }
+    if (!Array.isArray(page.messages) || !page.messages.length) {
       throw new Error("Unable to verify thread completion reactions");
     }
     for (const message of page.messages) {
-      if (message.ts === threadTs && checked(message)) return true;
-      if (!latest || Number(message.ts) > Number(latest.ts)) latest = message;
+      if (message.ts === threadTs) root = message;
+      if (messageHasCompletionReaction(message)) completed = true;
+      const at = Math.floor(Number(message.ts) * 1000);
+      if (Number.isFinite(at)) lastMessageMs = Math.max(lastMessageMs, at);
     }
     cursor = page.response_metadata?.next_cursor?.trim();
     if ((page.has_more && !cursor) || (cursor && seen.has(cursor))) {
@@ -25,5 +33,18 @@ export async function threadHasCompletionReaction(client, channelId, threadTs) {
     }
     if (cursor) seen.add(cursor);
   } while (cursor);
-  return Boolean(checked(latest));
+  return { root, completed, lastMessageMs, inspectedAt };
+}
+
+export async function threadHasCompletionReaction(client, channelId, threadTs) {
+  return (await inspectThreadCompletion(client, channelId, threadTs)).completed;
+}
+
+export async function threadIsComplete(client, channelId, threadTs) {
+  const row = getSlackThread(channelId, threadTs);
+  if (row?.done_ms > 0) return true;
+  const inspected = await inspectThreadCompletion(client, channelId, threadTs);
+  if (!row) return inspected.completed;
+  updateSlackThreadRootCompletion(channelId, { ts: threadTs }, inspected);
+  return slackThreadIsDone(getSlackThread(channelId, threadTs));
 }

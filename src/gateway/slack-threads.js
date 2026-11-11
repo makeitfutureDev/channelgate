@@ -3,6 +3,7 @@
 // the bounded root preview and explicit completion/outcome facts across restarts.
 import { getDb, fromJson } from "../db/index.js";
 import { slackThreadFor, isSlackTs } from "../slack/thread-keys.js";
+import { messageHasCompletionReaction } from "./completion-reactions.js";
 
 export function getSlackThread(channelId, threadTs) {
   return getDb().prepare("SELECT * FROM slack_threads WHERE channel_id = ? AND thread_ts = ?").get(channelId, threadTs) || null;
@@ -11,11 +12,13 @@ export function getSlackThread(channelId, threadTs) {
 export function indexSlackThread({ channelId, slug, root }) {
   if (!channelId || !slug || !isSlackTs(root?.ts) || !root.user || root.bot_id || root.subtype === "bot_message") return null;
   const title = String(root.text || "").replace(/<@[A-Z0-9]+>/g, "").replace(/\s+/g, " ").trim().slice(0, 160) || "Conversation with attachments";
-  const rootDone = root.reactions?.some((r) => r.name === "white_check_mark" && r.count > 0) ? 1 : 0;
-  getDb().prepare(`INSERT INTO slack_threads(channel_id,thread_ts,slug,starter_id,title,updated_ms,root_done)
-    VALUES(?,?,?,?,?,?,?) ON CONFLICT(channel_id,thread_ts) DO UPDATE SET
-    starter_id=excluded.starter_id,title=excluded.title,slug=excluded.slug,root_done=excluded.root_done`)
-    .run(channelId, root.ts, slug, root.user, title, Math.floor(Number(root.ts) * 1000), rootDone);
+  const rootDone = messageHasCompletionReaction(root) ? 1 : 0;
+  const lastMessage = Math.floor(Number(root.latest_reply || root.ts) * 1000);
+  getDb().prepare(`INSERT INTO slack_threads(channel_id,thread_ts,slug,starter_id,title,updated_ms,root_done,last_message_ms)
+    VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(channel_id,thread_ts) DO UPDATE SET
+    starter_id=excluded.starter_id,title=excluded.title,slug=excluded.slug,
+    last_message_ms=MAX(last_message_ms,excluded.last_message_ms)`)
+    .run(channelId, root.ts, slug, root.user, title, Math.floor(Number(root.ts) * 1000), rootDone, lastMessage);
   return getSlackThread(channelId, root.ts);
 }
 
@@ -28,12 +31,12 @@ export async function trackSlackThread(client, { channelId, slug, threadKey, mes
       const root = page?.ok !== false && page?.messages?.find((m) => m.ts === threadTs);
       if (!root || !indexSlackThread({ channelId, slug, root })) return;
     }
-    // Out-of-order or replayed messages must not reopen a newer explicit Done choice.
+    // A new message updates activity but does not silently reopen explicitly completed work.
     const at = Math.floor(Number(messageTs) * 1000);
     if (Number.isFinite(at)) getDb().prepare(`UPDATE slack_threads SET updated_ms=MAX(updated_ms,?),
-      done_ms=CASE WHEN ? > ABS(done_ms) THEN -? ELSE done_ms END,
+      last_message_ms=MAX(last_message_ms,?),
       error_ms=CASE WHEN ? > error_ms THEN 0 ELSE error_ms END
-      WHERE channel_id=? AND thread_ts=?`).run(at, at, at, at, channelId, threadTs);
+      WHERE channel_id=? AND thread_ts=?`).run(at, at, at, channelId, threadTs);
   } catch { /* discovery must never break an admitted request */ }
 }
 
@@ -51,14 +54,32 @@ export function setSlackThreadDone(channelId, threadTs, userId, done, at = Date.
     .run(done ? at : -at, at, channelId, threadTs, userId).changes);
 }
 
-export function updateSlackThreadRootCompletion(channelId, root, { reactionAt = 0 } = {}) {
+export function updateSlackThreadRootCompletion(channelId, root, { reactionAt = 0, completed = messageHasCompletionReaction(root), lastMessageMs = 0, inspectedAt = 0 } = {}) {
   if (!root?.ts) return;
-  const done = root.reactions?.some((r) => r.name === "white_check_mark" && r.count > 0) ? 1 : 0;
-  // Passive reads have no reaction timestamp and cannot outrank an explicit Reopen/new prompt.
+  const done = completed ? 1 : 0;
+  const checkedAt = inspectedAt || Date.now();
+  // Passive reads have no reaction timestamp and cannot outrank an explicit Reopen.
   // Keep the actual added-event watermark independently of cached evidence: a Home read may
   // observe the check before its event arrives, and accepted messages may arrive out of order.
   getDb().prepare(`UPDATE slack_threads SET root_reaction_ms=MAX(root_reaction_ms,?),
-    root_done=?,checked_ms=? WHERE channel_id=? AND thread_ts=?`).run(done ? reactionAt : 0, done, Date.now(), channelId, root.ts);
+    root_done=CASE WHEN ?>=checked_ms THEN ? ELSE root_done END,checked_ms=MAX(checked_ms,?),
+    last_message_ms=CASE WHEN ?>0 THEN
+      CASE WHEN ?>=checked_ms AND last_message_ms<=? THEN ? ELSE last_message_ms END
+      ELSE MAX(last_message_ms,?) END
+    WHERE channel_id=? AND thread_ts=?`)
+    .run(done ? reactionAt : 0, checkedAt, done, checkedAt, inspectedAt, checkedAt, inspectedAt, lastMessageMs, lastMessageMs, channelId, root.ts);
+}
+
+export function recordSlackThreadMessage(channelId, threadKey, messageTs) {
+  const threadTs = slackThreadFor(threadKey);
+  const at = Math.floor(Number(messageTs) * 1000);
+  if (!threadTs || !Number.isFinite(at)) return;
+  getDb().prepare("UPDATE slack_threads SET last_message_ms=MAX(last_message_ms,?) WHERE channel_id=? AND thread_ts=?")
+    .run(at, channelId, threadTs);
+}
+
+export function slackThreadIsDone(row) {
+  return Boolean(row && (row.done_ms > 0 || (row.root_done && (row.done_ms >= 0 || row.root_reaction_ms > Math.abs(row.done_ms)))));
 }
 
 // Retain a discovery tombstone so a bot-started/deleted thread cannot starve older history.
@@ -98,8 +119,8 @@ export function slackThreadRuntime({ pendingApprovals = [] } = {}) {
 }
 
 export function slackThreadStatus(row, runtime) {
-  return runtime.get(`${row.channel_id}::${row.thread_ts}`) ||
-    (row.done_ms > 0 || (row.root_done && (row.done_ms >= 0 || row.root_reaction_ms > Math.abs(row.done_ms))) ? "done" : row.error_ms ? "error" : "idle");
+  if (slackThreadIsDone(row)) return "done";
+  return runtime.get(`${row.channel_id}::${row.thread_ts}`) || (row.error_ms ? "error" : "idle");
 }
 
 export function slackThreadCandidates(channels) {

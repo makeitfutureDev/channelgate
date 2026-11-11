@@ -22,31 +22,36 @@ Native rendering acceptance is pending until observed; unit fixtures alone do no
 
 ## Personal Slack thread list (2026-11-11)
 
-Regression: `node --test test/home-threads.test.js test/app-home-channels.test.js
- test/home-nudges.test.js test/active-runs.test.js test/thread-completion.test.js` plus the pipeline,
-restart-recovery and background-job suites. Cover root-owner attribution, other users/bots excluded,
-current channel admission, private/group/DM membership even for admins, sudo demotion, forged/stale
-completion clicks, queued/background Working, question/approval Waiting precedence, ordinary Idle,
-explicit Done/Reopen, root-check reopening and missed reactions, Error/retry, all filters, ten-row
-pagination, original links, bounded legacy indexing and missing/bot-root progress. Code-channel
-threaded work uses its actual reply timestamp for status; top-level channel sessions are excluded.
+Regression: `node --test test/home-threads.test.js test/thread-completion.test.js
+ test/home-tabs.test.js test/app-home-channels.test.js test/home-nudges.test.js
+ test/nudges-ttl.test.js test/followups.test.js` plus pipeline/recovery/background and digest suites.
+Root attribution, current channel membership/admission/sudo checks and stale/forged actions remain
+required. For open threads, test queued/background Working, question/approval Waiting, Idle and
+Error/retry. Done/✅/👍 on roots and older replies must outrank runtime status, disappear from Active
+and All open, survive later messages/outcomes, and suppress both reminder paths. Completed archive
+retains explicit Reopen; removal preserves other reactions and manual Done. Exercise completion
+during permalink lookup and DM opening, missed reaction removal, legacy v44 override migration,
+root/reply event routing and skin-tone aliases. Test the owner’s native positive-feedback button
+and deny forged source/owner, revoked private membership and sudo demotion; negative feedback
+remains feedback only. Rows need dividers and a separate primary Done
+button. Dates use the actual newest Slack message across pages; outcome/Done time is excluded and
+removing the newest reply corrects the date. Preserve pagination/history and all access regressions.
 
-Live acceptance, separately in owned disposable Slack Claude and Codex Worker fixtures: post a
-new task as the approved fixture user, open app Home and verify My threads links to that exact root.
-Observe a long foreground turn, a queued successor, then a background shell/agent job as Working;
-ask the agent to request a question and a permission approval, and verify Waiting until decided.
-Finish normally: Idle. Mark Done, select Done, Reopen, add a root ✅, then submit a newer request:
-it must return to Idle after completion. Trigger a controlled failure and retry: Error then Idle.
-Restart an isolated gateway and verify index/completion persistence and actual recovery status.
-Record native Home controls and exact roots, never infer rendering from an API request alone.
+Live acceptance, separately in owned disposable Claude and Codex Slack Worker fixtures: send a task
+as the approved fixture user, open Home → Activity and follow its original link. For open roots,
+verify foreground/queued/background Working, question/approval Waiting, normal Idle and a controlled
+failure/retry. Complete separate threads using Activity Done, root ✅ and final/older-reply 👍; post
+later messages and leave work/forms pending. None appears in open lists or gets a quiet-thread
+nudge/pending digest, including after restart. Verify Completed and explicit Reopen, then remove one
+of several markers: remaining evidence still closes the thread. Removing all reactions opens it
+unless manual Done remains. Miss reaction events during downtime and verify delivery-time refresh.
+Restore all preferences and fixtures; native Slack/live-engine acceptance remains pending until run.
 
-Engine-independent controls: create at least 23 owned roots plus foreign and bot roots; navigate
-all pages/filters and follow original links. Remove private/group/DM membership and gateway access,
-demote a sudo-thread owner, then click stale/forged controls: no content leak or completion mutation.
-Index historical sessions with missing/bot roots across more than two batches; older owned roots
-remain reachable. Miss root reaction events during downtime: bounded pre-filter checks eventually
-reconcile both adding and removing ✅. Restore fixtures. Live acceptance remains pending until run;
-automated fixtures alone do not establish native Slack rendering or deployed acceptance.
+Engine-independent UI: at least 23 roots plus foreign/bot/missing roots, navigate all open filters,
+pages and Completed. Row boundaries and green Done controls must be obvious. Compare each Last
+message date with the actual Slack message (including page-two replies and deletion of the newest
+reply); clicking Done or finishing a run must not alter the message date. Preserve private/group/DM
+membership, sudo demotion and forged-action denial, bounded history progress and Stop preflight.
 
 ## Unattended admission refusal outcomes (2026-11-11)
 
