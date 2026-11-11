@@ -25,6 +25,7 @@ import { deliverResult } from "../slack/deliver.js";
 import { slackThreadFor } from "../slack/thread-keys.js";
 import { runQueue } from "../slack/message-lifecycle.js";
 import { logEvent } from "../util/logger.js";
+import { recordSlackThreadOutcome } from "./slack-threads.js";
 import { recordUsage, createUsageBank } from "./usage.js";
 import { countDrop } from "../util/drops.js";
 import { getDb, toJson, fromJson } from "../db/index.js";
@@ -769,6 +770,7 @@ export class BackgroundJobs {
       signal: signal || "",
       durMs,
     });
+    recordSlackThreadOutcome(rec.channelId, rec.threadKey, { error: !resolvedOutcome.ok });
     await this._deliver(rec);
   }
 

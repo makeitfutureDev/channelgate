@@ -1,5 +1,33 @@
 # ChannelGate — Test Plan
 
+## Personal Slack thread list (2026-11-11)
+
+Regression: `node --test test/home-threads.test.js test/app-home-channels.test.js
+ test/home-nudges.test.js test/active-runs.test.js test/thread-completion.test.js` plus the pipeline,
+restart-recovery and background-job suites. Cover root-owner attribution, other users/bots excluded,
+current channel admission, private/group/DM membership even for admins, sudo demotion, forged/stale
+completion clicks, queued/background Working, question/approval Waiting precedence, ordinary Idle,
+explicit Done/Reopen, root-check reopening and missed reactions, Error/retry, all filters, ten-row
+pagination, original links, bounded legacy indexing and missing/bot-root progress. Code-channel
+threaded work uses its actual reply timestamp for status; top-level channel sessions are excluded.
+
+Live acceptance, separately in owned disposable Slack Claude and Codex Worker fixtures: post a
+new task as the approved fixture user, open app Home and verify My threads links to that exact root.
+Observe a long foreground turn, a queued successor, then a background shell/agent job as Working;
+ask the agent to request a question and a permission approval, and verify Waiting until decided.
+Finish normally: Idle. Mark Done, select Done, Reopen, add a root ✅, then submit a newer request:
+it must return to Idle after completion. Trigger a controlled failure and retry: Error then Idle.
+Restart an isolated gateway and verify index/completion persistence and actual recovery status.
+Record native Home controls and exact roots, never infer rendering from an API request alone.
+
+Engine-independent controls: create at least 23 owned roots plus foreign and bot roots; navigate
+all pages/filters and follow original links. Remove private/group/DM membership and gateway access,
+demote a sudo-thread owner, then click stale/forged controls: no content leak or completion mutation.
+Index historical sessions with missing/bot roots across more than two batches; older owned roots
+remain reachable. Miss root reaction events during downtime: bounded pre-filter checks eventually
+reconcile both adding and removing ✅. Restore fixtures. Live acceptance remains pending until run;
+automated fixtures alone do not establish native Slack rendering or deployed acceptance.
+
 ## Unattended admission refusal outcomes (2026-11-11)
 
 Regression: `node --test test/channel-spending-admission.test.js test/automation-health.test.js

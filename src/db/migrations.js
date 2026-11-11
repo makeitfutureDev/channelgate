@@ -1196,4 +1196,26 @@ export const migrations = [
       `);
     },
   },
+  {
+    version: 44,
+    up(db) {
+      db.exec(`
+        CREATE TABLE slack_threads (
+          channel_id TEXT NOT NULL,
+          thread_ts TEXT NOT NULL,
+          slug TEXT NOT NULL,
+          starter_id TEXT NOT NULL,
+          title TEXT NOT NULL DEFAULT '',
+          updated_ms INTEGER NOT NULL,
+          done_ms INTEGER NOT NULL DEFAULT 0,
+          root_done INTEGER NOT NULL DEFAULT 0,
+          root_reaction_ms INTEGER NOT NULL DEFAULT 0,
+          checked_ms INTEGER NOT NULL DEFAULT 0,
+          error_ms INTEGER NOT NULL DEFAULT 0,
+          PRIMARY KEY (channel_id, thread_ts)
+        );
+        CREATE INDEX idx_slack_threads_starter ON slack_threads(starter_id, updated_ms DESC);
+      `);
+    },
+  },
 ];

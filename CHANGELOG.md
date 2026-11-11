@@ -12,6 +12,10 @@ release gates. Stable promotion and publication require approval of the exact te
 
 ### Beta development notes
 
+- Slack App Home now offers My threads with status filters, pagination, original thread links,
+  Done/Reopen controls and bounded discovery of older tracked threads. Ownership and current
+  conversation access are checked for each viewer; a completed reply stays Idle until marked Done.
+
 - Pinned threads now include manual switch/repin guidance when a missing runtime login blocks the turn before an engine starts.
 - Shared grants pointing to a folder without a regular root `SKILL.md` now warn and continue,
   preserving the source and saved grants while excluding invalid nested skills.

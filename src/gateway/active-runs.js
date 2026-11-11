@@ -24,6 +24,8 @@ import { isForceStopping } from "./shutdown.js";
 import { postNotice } from "../platforms/notify.js";
 import { assertQuestionAccess } from "./question-access.js";
 import { getUser } from "../config/store.js";
+import { recordSlackThreadOutcome } from "./slack-threads.js";
+import { runAdmissionRefusalKind } from "./run-admission-result.js";
 
 // A queued/recovered fork outlives the author's original rank check. Only a currently admin
 // author may reopen unclassified native state; a member must have a known project-only source.
@@ -400,6 +402,7 @@ export async function recoverRuns(stale, {
     const attempts = (rec.attempts || 0) + 1;
     if (attempts > MAX_RECOVER_ATTEMPTS) {
       // The attempt cap is this turn's explicit terminal failure — only now is its row deleted.
+      recordSlackThreadOutcome(rec.channelId, rec.slackThreadTs || rec.threadKey, { error: true });
       clearActiveRun(id);
       runQueue.release(runKey, handle);
       await logEvent("run_recover_giveup", { slug: rec.slug, channel: rec.channelId, threadKey: rec.threadKey, attempts });
@@ -583,6 +586,7 @@ export async function recoverRuns(stale, {
       }
       // Delivery is the user-visible terminal boundary. Clear the durable row even if shutdown
       // enters its forced phase while bookkeeping finishes, or boot would duplicate it.
+      recordSlackThreadOutcome(rec.channelId, rec.slackThreadTs || rec.threadKey, { error: Boolean(runAdmissionRefusalKind(result) || result.engineError) });
       markTerminal();
     } catch (err) {
       await stopStatus();
@@ -598,6 +602,7 @@ export async function recoverRuns(stale, {
       }
       if (forceStopping()) return; // final sweep interrupted us; keep the row for next boot
       await logEvent("run_recover_error", { slug: rec.slug, error: err.message });
+      recordSlackThreadOutcome(rec.channelId, rec.slackThreadTs || rec.threadKey, { error: true });
       let told = false;
       try {
         await postNoticeWithMenu(client, {

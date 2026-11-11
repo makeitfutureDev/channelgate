@@ -138,6 +138,8 @@ import { isCodeChannelMeta } from "../gateway/code-channels.js";
 import { registerEngineSwitchChoiceActions } from "./engine-switch-choice.js";
 import { composioHomeButtons, registerComposioHomeActions } from "./home-composio.js";
 import { nudgeHomeBlocks, registerNudgeHomeActions } from "./home-nudges.js";
+import { homeThreadsSnapshot, homeThreadBlocks, registerHomeThreadActions } from "./home-threads.js";
+import { getSlackThread, updateSlackThreadRootCompletion } from "../gateway/slack-threads.js";
 import { buildMenuCard, buildMenuResumeView, MENU_RESUME_ACTION_ID } from "./menu.js";
 import { resolveResumeSession } from "./resume-session.js";
 import { buildStatusReport } from "./status-controller.js";
@@ -3293,6 +3295,10 @@ async function connectAndWire(app) {
   // emoji (default 🤖) treats the reacted message as if the bot had been mentioned and runs it.
   app.event("reaction_added", async ({ event, client, body }) => {
     try {
+      if (event.reaction === "white_check_mark" && event.item?.type === "message" && getSlackThread(event.item.channel, event.item.ts)) {
+        const res = await client.reactions.get({ channel: event.item.channel, timestamp: event.item.ts, full: true }).catch(() => null);
+        if (res?.message && (!res.message.thread_ts || res.message.thread_ts === res.message.ts)) updateSlackThreadRootCompletion(event.item.channel, res.message, { reactionAt: Math.floor(Number(event.event_ts) * 1000) || 0 });
+      }
       if (event.user === botUserId) return;
       // Same redelivery guard as the message handler (a repeat would re-run 🤖/stop/ack actions).
       const eventKey = body?.event_id || `rx:${event.event_ts}:${event.user}:${event.reaction}`;
@@ -3389,7 +3395,7 @@ async function connectAndWire(app) {
   // Rendering the Home tab is its own function because the view is INTERACTIVE: connecting or
   // disconnecting a Composio key from Home changes the very connection lines it renders, so the
   // modal/button handlers re-publish through here.
-  async function publishHomeTab(client, userId) {
+  async function publishHomeTab(client, userId, threadView = {}) {
     await ensureUserKnown(client, userId);
     const admin = await isAdmin(userId);
     const approved = await isApproved(userId);
@@ -3465,10 +3471,14 @@ async function connectAndWire(app) {
       })
       .join("\n");
     const port = process.env.PORT || 4747;
+    let myThreads;
+    try { myThreads = homeThreadBlocks(await homeThreadsSnapshot(client, userId, threadView)); }
+    catch { myThreads = [{ type: "section", text: { type: "mrkdwn", text: "*My threads*\nThreads are temporarily unavailable. Reopen Home to try again." } }]; }
 
     const blocks = [
       { type: "header", text: { type: "plain_text", text: "ChannelGate", emoji: true } },
       { type: "section", text: { type: "mrkdwn", text: `Hi <@${userId}> — you're ${role} on this gateway.` } },
+      ...myThreads,
       { type: "section", text: { type: "mrkdwn", text: "I'm Claude, running self-hosted in per-channel sandboxes. *DM me* (no mention needed) or *@mention me* in a channel. Use `/status` to see what a channel is working on, `/pending` for the threads I'm waiting on you for, or `/help` for all commands." } },
       ...nudgeHomeBlocks({ enabled: userNudgesEnabled(homeUser) }),
       { type: "divider" },
@@ -3518,11 +3528,16 @@ async function connectAndWire(app) {
 
   registerComposioHomeActions(app, { publishHome: publishHomeTab });
   registerNudgeHomeActions(app, { publishHome: publishHomeTab });
+  registerHomeThreadActions(app, { publishHome: publishHomeTab });
 
   // Removing a ✅ re-opens that thread in the reactor's follow-up digest (the inverse of marking
   // it done). Other removed reactions are acknowledged as no-ops.
   app.event("reaction_removed", async ({ event, client }) => {
     try {
+      if (event.reaction === "white_check_mark" && event.item?.type === "message" && getSlackThread(event.item.channel, event.item.ts)) {
+        const res = await client.reactions.get({ channel: event.item.channel, timestamp: event.item.ts, full: true }).catch(() => null);
+        if (res?.message && (!res.message.thread_ts || res.message.thread_ts === res.message.ts)) updateSlackThreadRootCompletion(event.item.channel, res.message);
+      }
       if (event.user === botUserId) return;
       const channelId = event.item?.channel;
       if (!channelId || event.item?.type !== "message") return;

@@ -1,5 +1,25 @@
 # ChannelGate — Features
 
+## Personal Slack thread list (2026-11-11)
+
+Slack App Home includes **My threads**: a personal, paginated list of gateway-engaged Slack
+threads whose original message was posted by the viewer, with title, channel, status and original
+thread link. Active is the default filter; All, Working, Waiting, Idle, Done and Error are available.
+Working includes queued foreground turns and background jobs; pending questions, busy choices and
+approval cards take Waiting precedence. A delivered reply becomes Idle, not automatically Done.
+Owners can mark work Done or Reopen it; a root ✅ also marks completion. A newer accepted request
+reopens the work, including a previously checked root. Foreground/recovery and background failures
+retain Error until a later request or successful outcome. No action cancels a run or grants access.
+
+Ownership is verified against the Slack root, never inferred from a participant or run author.
+Every view and completion click rechecks current gateway access, private/group/DM membership and
+sudo-thread authority; inaccessible roots are hidden, including from non-member admins. Completion
+facts persist across restarts. Existing tracked sessions/follow-ups are indexed ten roots per refresh;
+Load older threads continues discovery, and permanent missing/bot roots cannot block older entries.
+Root completion checks rotate in bounded batches before status filtering, reconciling missed events.
+The list refreshes when Home opens or a filter/navigation/Refresh control is used. It does not scan
+all Slack history or include bot-started threads and top-level code-channel sessions without a thread.
+
 ## Refused unattended work (2026-11-11)
 
 Background agents report admission refusals (spending limits, unpriced usage, access, license or

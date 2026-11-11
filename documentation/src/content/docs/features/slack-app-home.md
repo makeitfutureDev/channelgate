@@ -11,6 +11,33 @@ Home identifies whether you are an administrator, an approved user, or awaiting 
 
 The channel list is bounded. If it shows a count with a plus sign, more eligible conversations exist than fit in the view.
 
+## Follow your threads
+
+**My threads** lists threads you started with this gateway, with a title, conversation, status and
+link to the original Slack thread. **Active** shows unfinished work first. Choose **All** or a
+specific status and use **Previous** / **Next** to browse ten threads at a time.
+
+- **Working**: a foreground request is running or queued, or background work is still active.
+- **Waiting**: a question, permission/approval card or busy-thread choice needs an answer.
+- **Idle**: no tracked work or decision is active. A finished reply does not declare the task done.
+- **Done**: you marked the work complete, or its root has a ✅ reaction.
+- **Error**: the most recent tracked foreground/recovery or background outcome failed or was refused.
+
+Use **Mark done** or **Reopen** to manage completion. A newer accepted request reopens completed
+work. Active work and pending decisions take precedence over completion; marking Done does not stop
+work or dismiss an approval. A manual Reopen can override a root check without removing the reaction.
+
+Open Home or use **Refresh** for a current snapshot. Existing gateway sessions and follow-ups are
+indexed in small batches; **Load older threads** continues that discovery. Completion reactions are
+also checked in batches so changes made while the gateway was offline can be reconciled. This is a
+list of tracked gateway threads, rather than a search of all Slack history. Bot-started roots and
+top-level code-channel sessions without a thread are excluded.
+
+Only threads whose original message you posted appear. Current gateway admission, private/group/DM
+membership and sudo-thread authority still apply, including for administrators. Stale controls cannot
+change another person's work or keep access after you leave a private conversation. Temporary Slack
+failures can hide entries; the view indicates when verification is incomplete.
+
 ## Check personal connections
 
 The connection section shows configured status without displaying token values. In Composio token mode, **Connect my Composio key** opens a form for your personal connection; you can replace or disconnect it there. Your personal connection is distinct from a channel or organization connection used by the shared agent.
