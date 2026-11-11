@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { access, chmod, mkdir, mkdtemp, readFile, readdir, rm, stat, symlink, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { ensureTestEnv } from "./helpers.js";
+import { ensureTestEnv, tempDir } from "./helpers.js";
 
 const gatewayRoot = ensureTestEnv();
 const { assertUserSkillOverlaySupported, createRunGrantArtifacts, CONTAINER_AGENT_HOME } = await import("../src/gateway/run-grant-artifacts.js");
@@ -683,4 +683,52 @@ test("a personal skill granted to a channel or the organization never materializ
   } finally {
     saveSettings({ accessGrants: before });
   }
+});
+
+
+test("shared folder provisioning omits invalid manifest roots before constructing run grants", async (t) => {
+  const source = tempDir("shared-invalid-manifest-");
+  const previousSources = process.env.GATEWAY_SKILL_SOURCES;
+  process.env.GATEWAY_SKILL_SOURCES = source;
+  t.after(() => {
+    if (previousSources === undefined) delete process.env.GATEWAY_SKILL_SOURCES;
+    else process.env.GATEWAY_SKILL_SOURCES = previousSources;
+  });
+  await mkdir(path.join(source, "valid"));
+  await writeFile(path.join(source, "valid", "SKILL.md"), "# Valid marker\n");
+  for (const state of ["missing", "directory"]) {
+    const name = `invalid-shared-${state}`;
+    const nested = path.join(source, name, "nested", "SKILL.md");
+    await mkdir(path.dirname(nested), { recursive: true });
+    await writeFile(nested, "# Nested must not load\n");
+    const slug = `shared-manifest-${state}`;
+    const meta = { skills: [name, "valid"] };
+    const before = structuredClone(meta);
+    // Also remove an older materialized copy when its source loses the root manifest.
+    await writeFile(path.join(source, name, "SKILL.md"), "# Previously valid\n");
+    await ensureChannelFolder(slug, meta);
+    await rm(path.join(source, name, "SKILL.md"));
+    if (state === "directory") await mkdir(path.join(source, name, "SKILL.md"));
+    // Exercise the earlier authoritative workspace path, not just the later plugin guard.
+    const workspace = await ensureChannelFolder(slug, meta);
+    const skillsDir = path.join(workspace.cwd, ".claude", "skills");
+    assert.ok(await absent(path.join(skillsDir, name)));
+    assert.match(await readFile(path.join(skillsDir, "valid", "SKILL.md"), "utf8"), /Valid marker/);
+    const artifacts = await grants({ slug, meta, sharedSkills: meta.skills, workspaceSkillsDir: skillsDir });
+    t.after(() => artifacts.cleanup());
+    assert.deepEqual(artifacts.invalidSkillFolders, [name]);
+    assert.deepEqual(artifacts.missingSkills, [name]);
+    for (const plugin of artifacts.claudePluginDirs) {
+      assert.ok(await absent(path.join(plugin, "skills", name)));
+      assert.ok(await absent(path.join(plugin, "skills", "nested")));
+    }
+    assert.deepEqual(artifacts.personalSkillCatalog, []);
+    assert.deepEqual(meta, before);
+    assert.equal(await readFile(nested, "utf8"), "# Nested must not load\n");
+  }
+  // An unrelated malformed file must still fail closed after a regular root manifest passes.
+  await mkdir(path.join(source, "invalid-bundle"));
+  await writeFile(path.join(source, "invalid-bundle", "SKILL.md"), "# Valid root\n");
+  await writeFile(path.join(source, "invalid-bundle", "bad\\name.txt"), "Do not swallow this error");
+  await assert.rejects(ensureChannelFolder("shared-invalid-bundle", { skills: ["invalid-bundle"] }), /forward slashes/);
 });
