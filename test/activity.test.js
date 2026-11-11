@@ -44,7 +44,7 @@ test("reply Dashboard privately launches the clicker's Activity from owned, fore
     const post = sent.at(-1);
     assert.equal(post.user, "U_MINE"); assert.equal(post.channel, "C_WORK");
     assert.equal(post.thread_ts, "100.000002");
-    const notice = "Open your personal Activity page. You can reuse this private link for 10 minutes after it was created. Once opened, your dashboard can keep loading and refreshing for up to 12 hours.";
+    const notice = "This link expires in 10 minutes.";
     assert.equal(post.text, notice);
     assert.equal(post.blocks[0].text.text, notice);
     assert.doesNotMatch(JSON.stringify(post), /only once|just once|one.use|single.use/i);

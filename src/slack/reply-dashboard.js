@@ -27,9 +27,9 @@ export async function handleReplyDashboardAction({ ack, body, action, client }, 
     const url = createActivityGrantUrl({ ownerId: userId, teamId, baseUrl });
     if (!url) throw new Error("Activity needs a Public URL. Ask an administrator to configure it, or use Activity in Slack Home.");
     await client.chat.postEphemeral({ channel, user: userId, ...(threadTs ? { thread_ts: threadTs } : {}),
-      text: "Open your personal Activity page. You can reuse this private link for 10 minutes after it was created. Once opened, your dashboard can keep loading and refreshing for up to 12 hours.",
+      text: "This link expires in 10 minutes.",
       blocks: [
-        { type: "section", text: { type: "mrkdwn", text: "Open your personal Activity page. You can reuse this private link for 10 minutes after it was created. Once opened, your dashboard can keep loading and refreshing for up to 12 hours." } },
+        { type: "section", text: { type: "mrkdwn", text: "This link expires in 10 minutes." } },
         { type: "actions", elements: [{ type: "button", action_id: OPEN_ACTION_ID,
           text: { type: "plain_text", text: "Open my Activity" }, url }] },
       ],
