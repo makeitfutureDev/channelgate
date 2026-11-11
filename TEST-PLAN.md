@@ -1,5 +1,25 @@
 # ChannelGate — Test Plan
 
+## Slack Home section navigation (2026-11-11)
+
+Regression: `node --test test/home-tabs.test.js test/home-threads.test.js
+ test/home-composio.test.js test/home-nudges.test.js test/app-home-channels.test.js`.
+Check default Activity, all four labels and selection highlighting, exactly one content loader per
+view, actor-only navigation, invalid/mismatched tab rejection, stale-render suppression and
+ordered publication across failures, personal Composio save/disconnect
+returning to Connections, reminder changes and thread filters returning to Activity. Keep existing
+root ownership, conversation access and secret-free rendering tests.
+
+Engine-independent live acceptance in the Slack App Home fixture: open Home as an approved user;
+Activity is selected with My threads. Click Connections, Skills and Channels, then Activity, and
+verify only the selected content is shown and the selected control is highlighted. Repeat as a
+second user: content belongs to that viewer and neither user's selection changes the other's view.
+Save then disconnect a disposable personal Composio connection: remain on Connections, never show
+a token. Toggle reminders and change a thread filter/page: remain on Activity. Non-Activity views
+must not initiate My threads history/root scans; non-Channels views must not enumerate the Channels
+roster (Activity still performs its own thread-access checks). Restore the disposable key/preference.
+Native rendering acceptance is pending until observed; unit fixtures alone do not establish it.
+
 ## Personal Slack thread list (2026-11-11)
 
 Regression: `node --test test/home-threads.test.js test/app-home-channels.test.js

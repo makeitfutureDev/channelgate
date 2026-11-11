@@ -12,6 +12,9 @@ release gates. Stable promotion and publication require approval of the exact te
 
 ### Beta development notes
 
+- Slack Home now has Activity, Connections, Skills and Channels sections. Activity opens by
+  default; connection updates return to Connections and each section loads its own content.
+
 - Slack App Home now offers My threads with status filters, pagination, original thread links,
   Done/Reopen controls and bounded discovery of older tracked threads. Ownership and current
   conversation access are checked for each viewer; a completed reply stays Idle until marked Done.

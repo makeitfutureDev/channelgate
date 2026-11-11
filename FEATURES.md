@@ -1,5 +1,15 @@
 # ChannelGate — Features
 
+## Slack Home sections (2026-11-11)
+
+Slack App Home has Activity, Connections, Skills and Channels navigation, with Activity selected
+when Home opens. Each view highlights its selected section and loads only that section's content.
+Activity contains My threads, reminder preferences and command/runtime guidance; Connections shows
+personal/shared connection status and personal Composio controls; Skills shows personal grants and
+organization-wide counts; Channels lists currently authorized visible conversations. Connection
+save/disconnect returns to Connections, while thread controls and reminder changes stay in Activity.
+Navigation uses the authenticated clicking viewer, without a shared selection or new user setting.
+
 ## Personal Slack thread list (2026-11-11)
 
 Slack App Home includes **My threads**: a personal, paginated list of gateway-engaged Slack
