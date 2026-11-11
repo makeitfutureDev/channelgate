@@ -1,7 +1,7 @@
 // Shared compact run statistics for chat replies. Surface-specific controls stay in their adapters.
 import { getShowMessageCost } from "../config/settings.js";
 import { normalizeUsage } from "./usage.js";
-import { contextWindowFor, modelLabel } from "./model-info.js";
+import { contextUsageFor, modelLabel } from "./model-info.js";
 
 // Compact token counts for the footer: 214 → "214", 34799 → "34.8k", 1959778 → "1.96M".
 function fmtTok(n) {
@@ -11,29 +11,30 @@ function fmtTok(n) {
   return String(n);
 }
 
+// "ctx: 167.1k / 475k, 35%" — the LATEST top-level request's input against the window the harness
+// reported (contextUsageFor). An unreported window prints "?" rather than a guessed percentage, and
+// an over-limit context reads above 100%. Empty when the run made no model request.
+export function contextText(result) {
+  const { tokens, window, percent } = contextUsageFor(result);
+  if (!tokens) return "";
+  return window ? `ctx: ${fmtTok(tokens)} / ${fmtTok(window)}, ${percent}%` : `ctx: ${fmtTok(tokens)} / ?`;
+}
+
 // Run stats, as SHORT as possible (width-conscious by user request; no icons — user preference):
-// "Opus 4.8 1M · high · 14.4s · 36.8k/192 · $0.31 · 18%" — model · configured effort (when known) · duration · tokens in/out ·
-// cost (2 decimals, no ~/est. markers) · context% against the MODEL's own window
-// (contextWindowFor). The resume command never rides here as text — it lives in Channel Settings
-// → Resume Session and `/resume`.
+// "gpt-6.1-sol · high · ctx: 167.1k / 475k, 35%" — model · configured effort (when known) · cost
+// (only when the admin enabled it; 2 decimals, no ~/est. markers) · context. No duration and no
+// run token totals: the summed input re-counts the history once per model call and says nothing
+// about how full the context is. The resume command never rides here as text — it lives in
+// Channel Settings → Resume Session and `/resume`.
 export function footerText(result) {
-  const u = result.usage || {};
-  // Tolerate both Claude (input_tokens/…) and Codex (prompt_tokens/…) usage shapes.
-  const inT = (u.input_tokens ?? u.prompt_tokens ?? 0) + (u.cache_read_input_tokens || 0) + (u.cache_creation_input_tokens || 0);
-  const outT = u.output_tokens ?? u.completion_tokens ?? 0;
   // Claude reports a real dollar cost; Codex doesn't — the per-model rate estimate from Settings
   // is shown bare (same figure the usage ledger records).
   const est = result.costUSD == null ? normalizeUsage(result) : null;
   const usd = result.costUSD ?? est?.costUSD;
   const parts = [modelLabel(result)];
   if (result.effort) parts.push(result.effort);
-  if (result.durationMs != null) {
-    const s = result.durationMs / 1000;
-    parts.push(s < 10 ? `${s.toFixed(1)}s` : `${Math.round(s)}s`);
-  }
-  parts.push(`${fmtTok(inT)}/${fmtTok(outT)}`);
   if (getShowMessageCost() && usd != null) parts.push(`$${usd.toFixed(2)}`);
-  // Context window used: this turn's input/cached tokens vs the model's own window.
-  if (inT > 0) parts.push(`${Math.min(100, Math.round((100 * inT) / contextWindowFor(result)))}%`);
+  const ctx = contextText(result);
+  if (ctx) parts.push(ctx);
   return parts.join(" · ");
 }

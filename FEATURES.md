@@ -2016,8 +2016,8 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
   progress edits finish before the final answer replaces the placeholder. Interactive
   permission escalation is not enabled by these text controls.
 - Teams and Google Chat foreground replies carry the same compact statistics as Slack: configured
-  model (provider model only when none is configured), duration, this turn's input/output tokens,
-  optional cost and context use. Container image references are omitted from reply footers.
+  model (provider model only when none is configured), effort, optional cost and context use.
+  Container image references are omitted from reply footers.
   Teams statistics use a small, subtle native footer with an 8-pixel spacer above them, attached
   to the final answer chunk; answer Markdown and mention entities keep their normal rendering.
   Teams shows a temporary “⏳ Agent is working…” message and refreshes its native typing indicator
@@ -2473,6 +2473,18 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
   auto-titling (`assistant.threads.setTitle`) so the Messages-tab timeline reads well.
   → TEST-PLAN: Slack gateway.
 - Auto-registration of any conversation the bot sees (index + default meta + folder).
+- **Reply footer context is harness-reported.** Footers read `model · effort · [cost ·] ctx: 167.1k
+  / 475k, 35%`: no duration and no run input/output totals. `ctx` is the LATEST top-level model
+  request's input (uncached + cache read + cache write for Claude, `last_token_usage.input_tokens`
+  for Codex) — never the run's summed input, which re-counts the history once per model call — over
+  the window the harness itself reported (Claude's terminal `modelUsage[<session model>].contextWindow`,
+  keyed by the configured variant such as `claude-opus-4-6[1m]`; Codex's rollout
+  `model_context_window`). There is no per-model table, no `[1m]` rule and no settings fallback, so
+  Opus 4.6 vs `[1m]` and `CLAUDE_CODE_DISABLE_1M_CONTEXT=1` read exactly as the CLI runs them. An
+  unreported window prints `ctx: 22k / ?`; an over-limit context reads above 100%; a run with no
+  model request has no `ctx`. Codex keeps the window and latest size even when its per-request
+  pricing chain fails to reconcile. `/context` reports the same figures. → TEST-PLAN: Reply footer
+  context.
 - In-thread replies with a placeholder that streams → final answer + token/cost footer. Every
   footer reports only that message's root turn: resumed Codex sessions refresh their settled
   container-volume accounting path before the baseline snapshot, so cumulative provider-session
@@ -2672,7 +2684,7 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
   the skill catalog, channel memory/rules, the automatic gateway skills, reminders/schedules,
   long-running background work, useful status checks, and the complete command reference),
   `/clear` (drop the thread's session — next
-  message starts fresh), `/context` (token usage + % of the context window from the last turn),
+  message starts fresh), `/context` (the last turn's latest-request context + % of the harness-reported window),
   `/resume` (the copyable `cd "…" && claude --resume <id>` terminal command for this thread's
   session — kept out of reply footers; the same command is a tab in Slack Settings → **Resume
   Session** → modal (the 💻 buttons on older `/menu` cards and "🛑 Stopped." messages still open it).

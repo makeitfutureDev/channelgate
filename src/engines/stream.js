@@ -179,6 +179,10 @@ export function createStreamConsumer({ onDelta = null, onEvent = null } = {}) {
   let text = "";
   let initialModel = "";
   let primaryModel = "";
+  // Context occupancy of the LATEST top-level provider request: everything the model read for
+  // that call (uncached + cache read + cache write). Not a run total — each call re-reads the
+  // history, so summing calls measures spend, never how full the window is.
+  let contextTokens = 0;
   let toolUseCount = 0; // any attempted tool means replaying the turn could repeat side effects
   const markToolUse = (id) => {
     const key = String(id || `anonymous-${toolUseCount + 1}`);
@@ -295,7 +299,13 @@ export function createStreamConsumer({ onDelta = null, onEvent = null } = {}) {
     if (primary && p.type === "system" && p.subtype === "init" && typeof p.model === "string") initialModel = p.model.trim();
     const message = p?.type === "assistant" ? p.message : p?.type === "stream_event" && p.event?.type === "message_start" ? p.event.message : null;
     const model = typeof message?.model === "string" ? message.model.trim() : "";
-    if (primary && !p.error && !message?.error && model && model !== "<synthetic>") primaryModel = model;
+    if (primary && !p.error && !message?.error && model && model !== "<synthetic>") {
+      primaryModel = model;
+      const u = message?.usage || {};
+      const read = [u.input_tokens, u.cache_read_input_tokens, u.cache_creation_input_tokens]
+        .reduce((sum, value) => sum + (Number.isFinite(Number(value)) && Number(value) > 0 ? Number(value) : 0), 0);
+      if (read > 0) contextTokens = read;
+    }
     if (emitClaudeTask(p)) return;
     if (p?.type === "assistant") {
       const content = Array.isArray(p?.message?.content) ? p.message.content : (Array.isArray(p?.content) ? p.content : []);
@@ -462,6 +472,14 @@ export function createStreamConsumer({ onDelta = null, onEvent = null } = {}) {
     consume,
     get model() {
       return primaryModel || initialModel;
+    },
+    // The model as the session was configured (`claude-opus-4-6[1m]`). Provider messages drop the
+    // variant suffix; the terminal modelUsage keeps it, so the window lookup needs this name.
+    get sessionModel() {
+      return initialModel;
+    },
+    get contextTokens() {
+      return contextTokens;
     },
     get text() {
       return text;

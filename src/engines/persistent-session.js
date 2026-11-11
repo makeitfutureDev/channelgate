@@ -308,6 +308,8 @@ export class PersistentClaudeSession {
         completed: !engineError && !t.interrupted,
         toolUseCount: t.stream.toolUseCount,
         primaryModel: t.stream.model,
+        sessionModel: t.stream.sessionModel,
+        contextTokens: t.stream.contextTokens,
         // On a failed or answerless turn: on an abort the CLI never exits, so no error path
         // ever reads what it wrote to stderr (redacted + capped by conciseProcessDiagnostic).
         ...(!engineError && (t.stream.text || p.result) ? {} : { diagnostic: conciseProcessDiagnostic((this.stderr || "").slice(t.stderrAt)) }),

@@ -1479,6 +1479,8 @@ export async function runCodex({
           sessionId: resolvedSessionId,
           usage: accounting.usage,
           usageRequests: accounting.requests,
+          contextTokens: accounting.context?.tokens || 0,
+          contextWindow: accounting.context?.window || 0,
           usageAccounting: { root: accounting, children },
           runtimeModel: accounting.model || model || "",
           costUSD: null,
@@ -1639,6 +1641,8 @@ export async function runCodex({
         sessionId: resolvedSessionId,
         usage: accounting.usage,
         usageRequests: accounting.requests,
+        contextTokens: accounting.context?.tokens || 0,
+        contextWindow: accounting.context?.window || 0,
         usageAccounting: { root: accounting, children },
         runtimeModel: accounting.model || model || "",
         costUSD: null, // Codex doesn't report a dollar cost

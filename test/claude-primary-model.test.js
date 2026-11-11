@@ -95,3 +95,16 @@ test("primary stream metadata prefers assistant over init and ignores synthetic 
   assert.equal(stream.model, "claude-sonnet-4-6", "primary provider message takes precedence over init metadata");
   assert.equal(resolveCurrentModel({ primaryModel: stream.model, model: "opus[1m]", raw: terminal }), "claude-sonnet-4-6", "a provider model change is not hidden by the configured alias or auxiliary accounting");
 });
+
+test("the Claude stream keeps the LATEST top-level request's context, never a subagent's or the sum", () => {
+  const stream = createStreamConsumer();
+  const usage = (input, read, write) => ({ input_tokens: input, cache_read_input_tokens: read, cache_creation_input_tokens: write, output_tokens: 1 });
+  stream.consume({ type: "system", subtype: "init", model: "claude-opus-4-6[1m]" });
+  stream.consume({ type: "stream_event", parent_tool_use_id: null, event: { type: "message_start", message: { model: "claude-opus-4-6", usage: usage(3, 14_596, 7_366) } } });
+  assert.equal(stream.contextTokens, 21_965, "matches Claude's own /context total for the same call");
+  stream.consume({ type: "assistant", parent_tool_use_id: null, message: { model: "claude-opus-4-6", usage: usage(2, 30_000, 500), content: [] } });
+  stream.consume({ type: "assistant", parent_tool_use_id: "child", message: { model: "claude-haiku-4-5", usage: usage(1, 900_000, 0), content: [] } });
+  assert.equal(stream.contextTokens, 30_502);
+  assert.equal(stream.sessionModel, "claude-opus-4-6[1m]");
+  assert.equal(stream.model, "claude-opus-4-6");
+});

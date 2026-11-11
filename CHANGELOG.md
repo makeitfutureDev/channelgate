@@ -12,6 +12,11 @@ release gates. Stable promotion and publication require approval of the exact te
 
 ### Beta development notes
 
+- Reply footers now show `model · effort · ctx: 167.1k / 475k, 35%`: context is the latest model
+  request against the window Claude or Codex itself reported (not the run's summed input), shown
+  above 100% when over the limit and as `?` when the harness reports no window. Duration and run
+  token totals are removed, and hardcoded 1M/200k/272k windows no longer override the harness.
+
 - Slack Home → Activity now opens a private live browser dashboard with a compact searchable
   table, status spinners/colors, last-message dates, thread links and shared Done/Reopen controls.
   Private launch links use short-lived, single-use authentication and current access checks.
