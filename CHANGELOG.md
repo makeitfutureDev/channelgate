@@ -12,6 +12,8 @@ release gates. Stable promotion and publication require approval of the exact te
 
 ### Beta development notes
 
+- Pinned threads now include manual switch/repin guidance when a missing runtime login blocks the turn before an engine starts.
+
 - Slack model shortcuts accept an optional reasoning effort: `@agent :sol :high task` or
   `@agent :sol :low`. Both choices persist for the thread, unsupported efforts are refused
   without changing settings, and `/fork` accepts the same suffix for the new thread.

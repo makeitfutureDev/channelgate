@@ -1042,6 +1042,15 @@ async function runMessageImpl({ channelId, authorId, workspaceId = "", text, thr
   try {
     claudeRelay = await claudeCredentialFor(engine);
   } catch (error) {
+    // This relay gate precedes model resolution and the main run try. Preserve a person's
+    // engine/model pin for the reply without reclassifying configuration as provider failure.
+    if (error?.details?.runtimeCredential) {
+      const requestedModel = overrides?.model || await getThreadModel(entry.slug, threadKey);
+      const pinnedModel = requestedModel && modelBelongsToEngine(requestedModel, engine) ? requestedModel : "";
+      if (enginePinnedByUser || pinnedModel) {
+        error.details = { ...error.details, runtimePinned: true, pinnedEngine: engine, pinnedModel };
+      }
+    }
     await dropUnusedSession();
     throw error;
   }
@@ -2373,6 +2382,11 @@ async function runMessageImpl({ channelId, authorId, workspaceId = "", text, thr
       model: model || resolveCurrentModel(finalResult),
     };
   } catch (error) {
+    // Backend credential gates fail before the provider catch. Add only diagnostic pin facts;
+    // keep runtimeCredential classification and the existing no-fallback behavior unchanged.
+    if (error?.details?.runtimeCredential && runtimePinned) {
+      error.details = { ...error.details, runtimePinned: true, pinnedEngine: engine, pinnedModel: model || "" };
+    }
     // A retry/fallback can hit a newly exhausted cap after a primary attempt. Preserve that
     // fact when the outer admission wrapper turns the exception into a deliverable notice.
     if (error?.code === "channel_spending_limit") {

@@ -3125,7 +3125,7 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
   reaches the CLI, so it must not silently disable failover either). → TEST-PLAN: Engines.
 - A pinned provider rejection that is not eligible for automatic replay still includes the manual
   switch/repin hint. Adding this guidance does not retry the request or change fallback eligibility;
-  ordinary unpinned errors and resumable interruptions keep their existing remedies.
+  ordinary unpinned errors and resumable interruptions keep their existing remedies. Missing runtime credentials also retain explicit engine/model pin guidance before spawn; they remain configuration errors and never authorize automatic fallback.
 - **Claude runs on the operator's OWN subscription — one login, resolved in one place.** The gateway
   authenticates Claude with the `claude` sign-in of the user the daemon runs as
   (`$CLAUDE_CONFIG_DIR`, else `~/.claude`): the login that person keeps alive in their own shell. It

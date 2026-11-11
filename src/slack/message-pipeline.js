@@ -270,7 +270,7 @@ export function engineIdAlternation(ids = ENGINE_IDS) {
 
 export function engineSwitchHint(err, { engines = ENGINE_IDS } = {}) {
   const details = err?.details || {};
-  if (details.providerError !== true) return "";
+  if (details.providerError !== true && !(details.runtimeCredential === true && details.runtimePinned)) return "";
   if (!details.runtimePinned && details.providerKind !== "usage_limit" && details.providerKind !== "authentication") return "";
   const other = engines.filter((id) => id !== details.engine);
   if (!other.length) return "";
