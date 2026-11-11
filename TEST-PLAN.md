@@ -20,6 +20,33 @@ membership: no usable link. Missing Public URL gives a private Home Activity hin
 native button rendering, private delivery, exact viewer ownership and no administrator access.
 Live cases remain unexecuted until observed on the deployed candidate.
 
+## Provider subscription usage acceptance (2026-11-11)
+
+Engine-independent control plane: these requests invoke no Claude/Codex turn, but both provider
+credential/payload formats must be exercised. Special fixture: isolated admin browser/test
+gateway with disposable linked administrator, synthetic login reader and provider responses;
+never alter production credentials or send real access tokens to fixture servers.
+
+- Run `node --test test/subscription-usage.test.js test/admin-navigation.test.js` for strict quota
+  normalization, absence versus zero, exact outbound endpoints/headers, redirect refusal, timeout
+  and body cap, sanitized errors, coalescing/cache TTL, changed-account invalidation, stale
+  failure recovery, expiry/API-key handling, escaping and visible-page polling lifecycle.
+- Run `CG_BROWSER_MODULE=<playwright index.mjs> CG_BROWSER_EXECUTABLE=<chromium> node --test
+  test/admin-subscriptions-browser.test.js` for the real app's direct `/subscriptions` entry,
+  sidebar link, refresh, reload, history navigation, labelled progress bars, and 390px viewport.
+  Synthetic provider replies must show Claude 42% (58% remaining) and Codex 91% with reset times;
+  require no page errors or horizontal overflow. Signed-out REST access must return 401.
+- Live admin acceptance: an authorized admin opens Subscriptions and compares each reported
+  quota/reset to that provider's own usage screen for the gateway login. Confirm five-minute
+  cache behavior, independent provider failure, stale timestamps and explicit missing/API-key/
+  expired states using an isolated fixture. Inspect the response for absence of tokens, raw
+  upstream bodies, account IDs, credential paths and fingerprints. The page must never start an
+  engine turn or rotate credentials. Do not record secrets in screenshots or evidence.
+- Private acceptance definitions: `UI-SUBSCRIPTIONS-01` (navigation, quota display, auth/polling)
+  and `UI-SUBSCRIPTIONS-02` (both provider formats, login/errors/cache isolation). Definition
+  registration and offline fixture checks do not claim live provider acceptance.
+
+
 ## Private live Activity dashboard and agent-only discovery (2026-11-11)
 
 Regression: `node --test test/activity.test.js test/activity-page.test.js test/home-threads.test.js

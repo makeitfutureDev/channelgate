@@ -19,6 +19,7 @@ import {
 import { activeSectionFor, filterSettings } from "./admin-settings-search.js";
 import { api } from "./admin-api.js";
 import { setSystemHealthActive } from "./admin-system-health.js";
+import { setSubscriptionsActive } from "./admin-subscriptions.js";
 import { attachReveal, confirmDialog, escapeHtml, infoDialog, openDialog, paintReveal, revealSecret, tokenValue } from "./admin-view.js";
 import { freshAdminAuth, mountAdminAccess, mountUserDashboardAccess } from "./admin-access.js";
 import { loadSkills } from "./admin-skills.js";
@@ -354,6 +355,7 @@ function capLabelOf(m = {}) {
 // ── View switching + URL history ────────────────────────────────────────────────
 function loadView(name, { refreshIdentity = true } = {}) {
   if (name === "system-health") setSystemHealthActive(true);
+  if (name === "subscriptions") setSubscriptionsActive(true);
   if (name === "channels" && !viewLoaded.channels) { viewLoaded.channels = true; loadConversations().catch(() => {}); }
   if (name === "users" && !viewLoaded.users) { viewLoaded.users = true; loadUsers().catch(() => {}); }
   if (name === "settings") {
@@ -385,6 +387,7 @@ function setView(name, { history = "push", load = true } = {}) {
   if (history === "replace") window.history.replaceState({ view }, "", path);
   else if (history === "push" && window.location.pathname !== path) window.history.pushState({ view }, "", path);
   if (view !== "system-health") setSystemHealthActive(false);
+  if (view !== "subscriptions") setSubscriptionsActive(false);
   if (load) loadView(view);
   if (view === "settings") enterSettingsView(hash);
 }

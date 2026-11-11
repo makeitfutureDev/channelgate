@@ -1,5 +1,28 @@
 # ChannelGate — Features
 
+## Provider subscription usage (2026-11-11)
+
+Admin → **Subscriptions** (`/subscriptions`) shows the provider-reported quotas of the Claude
+and Codex logins used by the gateway. Each card displays the known plan, session/weekly/model
+or review limits when reported, percent used/remaining, reset countdown plus local reset time,
+and last successful/check timestamps. These are account-wide provider limits, including usage
+outside ChannelGate; Overview remains the token and estimated API-cost ledger.
+
+The admin-only, no-store `GET /api/subscriptions` reads existing access tokens through the
+canonical login/relay helpers. Fixed HTTPS destinations, redirect refusal, a ten-second timeout,
+a 256 KiB response cap and an allowlisted projection keep credentials and raw provider responses
+out of the browser. It never starts an engine turn, refreshes tokens or changes login files.
+API-key, missing, expired, unsupported and failing-provider states are explicit; missing quotas
+are never fabricated as zero. A failed read may show a clearly stale last successful reading
+for the same login, but a rejected/expired/changed login cannot inherit another account's data.
+
+Five-minute per-provider caches coalesce concurrent checks, include failures and honor longer
+provider Retry-After cooldowns (up to one hour). Manual refresh shares the cache. Browser polling
+stops when the page is hidden or left; direct entry, reload and Back/Forward are supported.
+Provider usage endpoints may change or reject setup-token scopes; the affected card explains
+unavailable data while the other provider remains usable. No additional provider login is stored.
+
+
 ## Private live Activity dashboard (2026-11-11)
 
 Slack Home → Activity offers **Open live dashboard** when a Public URL is configured. It opens a

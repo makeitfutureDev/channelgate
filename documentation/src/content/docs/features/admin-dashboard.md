@@ -22,6 +22,7 @@ Changing the shared password or disabling this option revokes existing password-
 ## Choose the right page
 
 - **[Overview](/docs/features/usage-and-costs):** run, token, cost, model, user, conversation, and skill summaries.
+- **[Subscriptions](/docs/features/usage-and-costs#subscription-limits):** Claude and Codex plan limits, remaining quota, and reset times.
 - **[Conversations](/docs/features/conversation-administration):** work folders, engine settings, access, network, secrets, and grants.
 - **[Users](/docs/features/user-administration):** approvals, admin roles, and user-specific configuration.
 - **[Automations](/docs/features/schedules):** recurring tasks and reminders.

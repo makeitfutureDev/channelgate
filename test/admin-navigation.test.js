@@ -26,6 +26,7 @@ const EXPECTED = {
   api: "/api-docs",
   settings: "/settings",
   "system-health": "/system-health",
+  subscriptions: "/subscriptions",
 };
 
 test("every admin view has a canonical path and round-trips from it", () => {

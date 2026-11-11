@@ -20,6 +20,7 @@
         </div>
         <nav class="nav">
           <a class="nav-item active" data-view="dashboard" href="/overview"><svg viewBox="0 0 16 16" aria-hidden="true"><rect x="1.5" y="1.5" width="5.5" height="5.5" rx="1"/><rect x="9" y="1.5" width="5.5" height="5.5" rx="1"/><rect x="1.5" y="9" width="5.5" height="5.5" rx="1"/><rect x="9" y="9" width="5.5" height="5.5" rx="1"/></svg> Overview</a>
+          <a class="nav-item" data-view="subscriptions" href="/subscriptions"><svg viewBox="0 0 16 16" aria-hidden="true"><rect x="1.5" y="3" width="13" height="10" rx="2"/><path d="M2 6.5h12M4 10h3"/></svg> Subscriptions</a>
           <a class="nav-item" data-view="channels" href="/conversations"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M5.5 1.5 4 14.5M12 1.5l-1.5 13M2 5.5h12.5M1.5 10.5H14"/></svg> Conversations</a>
           <a class="nav-item" data-view="users" href="/users"><svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="5.5" cy="5" r="2.6"/><path d="M1.5 14c0-2.5 1.8-4 4-4s4 1.5 4 4M11 5.6a2.4 2.4 0 1 0 .1-4.7M11.5 9.9c1.9.3 3 1.8 3 4.1"/></svg> Users</a>
           <a class="nav-item" data-view="schedules" href="/automations"><svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="6.3"/><path d="M8 4.5V8l2.4 1.6"/></svg> Automations</a>
@@ -38,6 +39,7 @@
       </aside>
 
       <main class="content">
+        <section id="view-subscriptions" class="view full"></section>
         <section id="view-system-health" class="view full"></section>
         <!-- Dashboard: usage KPIs + charts for a selectable date range (default landing view) -->
         <section id="view-dashboard" class="view full active">
