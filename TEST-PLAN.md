@@ -1,5 +1,25 @@
 # ChannelGate — Test Plan
 
+## Personal Activity from every reply menu (2026-11-11)
+
+Regression: `node --test test/activity.test.js test/menu.test.js test/channel-settings-modal.test.js
+test/slack-progress.test.js test/deliver.test.js test/stop-card-engine.test.js
+test/review-file-buttons.test.js`. The shared row is Files, Variables, Settings, Dashboard,
+followed by referenced files. No shared button contains an Activity grant. Clicking Dashboard
+issues a fresh ephemeral link for the actual clicker; redeem it through the real Activity router
+and assert only that viewer's roots. Check another author's reply, author-less delivery, repeat
+clicks, one-use replay, revoked admission, private membership, wrong source/workspace and missing
+Public URL. Existing requester binding still applies to the other controls.
+
+Live acceptance: in disposable Claude Worker and Codex Worker Slack fixtures, as an approved
+member ask “Reply with Activity footer check.” Check Dashboard immediately after Settings on the
+answer, stop/error notices and `/menu`; repeat on a scheduled/background result. A second approved
+member clicks the first member's Dashboard: only that clicker receives the launch link and their
+own Activity rows in a browser without an admin session. Repeat after revoking admission/private
+membership: no usable link. Missing Public URL gives a private Home Activity hint. Pass requires
+native button rendering, private delivery, exact viewer ownership and no administrator access.
+Live cases remain unexecuted until observed on the deployed candidate.
+
 ## Private live Activity dashboard and agent-only discovery (2026-11-11)
 
 Regression: `node --test test/activity.test.js test/activity-page.test.js test/home-threads.test.js

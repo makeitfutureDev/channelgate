@@ -1,5 +1,5 @@
 // Reply-footer cluster: the run-stats line ("Opus 4.8 1M · high · 14.4s · 36.8k/192 · $0.31 · 18%"),
-// its Block Kit form, and the reply menu (📂 Files / 🔑 Variables / ⚙️ Settings) that rides under it.
+// its Block Kit form, and the reply menu (📂 Files / 🔑 Variables / ⚙️ Settings / 📊 Dashboard) that rides under it.
 // Extracted from slack/app.js (the 2026-08 restructure notes (internal repo) Phase 2.4) so
 // unattended delivery (slack/deliver.js) and the Bolt wiring share one implementation without
 // importing the whole app module.
@@ -11,6 +11,7 @@ export { footerText } from "../gateway/reply-stats.js";
 import { actionValue as fileActionValue, FILES_ACTION_ID } from "./file-explorer.js";
 import { actionValue as secretActionValue, SECRETS_ACTION_ID } from "./secret-explorer.js";
 import { actionValue as settingsActionValue, CHANNEL_SETTINGS_ACTION_ID } from "./channel-settings.js";
+import { REPLY_DASHBOARD_ACTION_ID } from "./reply-dashboard.js";
 
 // The terminal command that reopens a thread's session locally. It `cd`s into the channel's
 // working folder first, because Claude/Codex locate a session by the directory you run them in
@@ -28,7 +29,7 @@ export function buildResumeCommand(cwd, sessionId, engine, target = null) {
   return `cd ${JSON.stringify(cwd)} && ${base}`;
 }
 
-// The reply MENU — 📂 Files · 🔑 Variables · ⚙️ Settings — rides the end of EVERY answer the AI
+// The reply MENU — 📂 Files · 🔑 Variables · ⚙️ Settings · 📊 Dashboard — rides the end of EVERY answer the AI
 // posts into Slack: a streamed or classic reply, an error, a stop, a scheduled/background/API/
 // recovery delivery, and the `/menu` card. It is one fixed set with visible labels, so a reply never
 // shows a partial or icon-only variant of it. The resume command is deliberately NOT here: it lives
@@ -36,6 +37,7 @@ export function buildResumeCommand(cwd, sessionId, engine, target = null) {
 //
 // Binding: a button carries the requester (`u`) when the post has one, and the handlers refuse a
 // different non-admin clicker. Admins open every menu button under their own identity.
+// Dashboard is viewer-specific and always opens the actual clicker's own Activity.
 // An automation post (schedule, background job, API run, restart recovery) has
 // no Slack requester, so its menu is UNBOUND (`u: ""`) and opens for whoever clicks. That grants
 // nothing: every open re-applies the clicker's own live channel authorization, and the modal it
@@ -77,13 +79,26 @@ export function settingsButton(channelId, threadTs, authorId = "", label = "⚙�
   };
 }
 
-// The fixed menu: always all three, in this order, or nothing (no channel to bind to).
+// Dashboard always opens the clicker's own Activity, independently of the reply's requester.
+export function dashboardButton(channelId, threadTs, authorId = "") {
+  if (!channelId) return null;
+  return {
+    type: "button",
+    action_id: REPLY_DASHBOARD_ACTION_ID,
+    text: { type: "plain_text", text: "📊 Dashboard", emoji: true },
+    accessibility_label: "Open your personal Activity page",
+    value: JSON.stringify({ o: "open", c: channelId, t: threadTs || "", u: authorId || "" }),
+  };
+}
+
+// The fixed menu: always all four, in this order, or nothing (no channel to bind to).
 export function menuButtons({ channel = "", threadTs = "", authorId = "" } = {}) {
   if (!channel) return [];
   return [
     filesButton(channel, threadTs, authorId),
     secretsButton(channel, threadTs, authorId),
     settingsButton(channel, threadTs, authorId),
+    dashboardButton(channel, threadTs, authorId),
   ];
 }
 

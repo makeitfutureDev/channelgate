@@ -10,6 +10,8 @@ const { indexSlackThread, getSlackThread, setSlackThreadDone, recordSlackThreadO
 const { setThreadSudo } = await import("../src/gateway/thread-engine.js");
 const { activityThreadSnapshot } = await import("../src/slack/home-threads.js");
 const { activityHomeBlocks } = await import("../src/slack/home-activity.js");
+const { handleReplyDashboardAction, registerReplyDashboardActions, REPLY_DASHBOARD_ACTION_ID } = await import("../src/slack/reply-dashboard.js");
+const { menuButtons } = await import("../src/slack/footer.js");
 const { createActivityRouter, createActivityGrantUrl, resetActivityStateForTests, ACTIVITY_GRANT_TTL_MS, ACTIVITY_SESSION_TTL_MS } = await import("../src/web/activity.js");
 
 beforeEach(async () => {
@@ -17,6 +19,74 @@ beforeEach(async () => {
   for (const table of ["slack_threads", "sessions", "channels", "channel_meta", "active_runs", "bg_jobs", "question_requests", "approval_requests", "followup_threads", "followup_done", "thread_overrides"]) getDb().exec(`DELETE FROM ${table}`);
   await setUser("U_MINE", { approved: true, isAdmin: false });
   await setUser("U_OTHER", { approved: true, isAdmin: false });
+});
+
+test("reply Dashboard privately launches the clicker's Activity from owned, foreign and automation replies", async (t) => {
+  const f = await fixture(t);
+  await f.root("C_WORK", "100.000001", "U_MINE");
+  await f.root("C_WORK", "100.000002", "U_OTHER");
+  const sent = [];
+  f.client.chat.postEphemeral = async (payload) => { sent.push(payload); };
+  f.client.chat.postMessage = async () => assert.fail("a launch credential must never be public");
+  let previousUrl;
+  for (const owner of ["U_MINE", "U_OTHER", ""]) {
+    const buttons = menuButtons({ channel: "C_WORK", threadTs: "100.000002", authorId: owner });
+    const button = buttons.at(-1);
+    assert.equal(button.action_id, REPLY_DASHBOARD_ACTION_ID);
+    assert.equal(buttons.at(-2).text.text, "⚙️ Settings");
+    assert.equal(button.url, undefined);
+    assert.doesNotMatch(JSON.stringify(buttons), /\/activity\/open#/);
+    let acknowledged = false;
+    await handleReplyDashboardAction({ ack: async () => { acknowledged = true; }, client: f.client,
+      body: { user: { id: "U_MINE" }, channel: { id: "C_WORK" }, team: { id: "T_WORK" } },
+      action: button }, { teamId: "T_WORK", baseUrl: f.base });
+    assert.equal(acknowledged, true);
+    const post = sent.at(-1);
+    assert.equal(post.user, "U_MINE"); assert.equal(post.channel, "C_WORK");
+    assert.equal(post.thread_ts, "100.000002");
+    const url = post.blocks[1].elements[0].url;
+    assert.notEqual(url, previousUrl); previousUrl = url;
+    const response = await f.exchange(url);
+    assert.equal(response.status, 200);
+    assert.equal((await f.exchange(url)).status, 410);
+    const { url: sessionUrl } = await response.json();
+    const cookie = response.headers.get("set-cookie").split(";")[0];
+    const snapshot = await f.request(sessionUrl + "/api/threads", { headers: { cookie } });
+    assert.equal(snapshot.status, 200);
+    assert.deepEqual((await snapshot.json()).rows.map((r) => r.threadTs), ["100.000001"]);
+    assert.equal((await f.request("/activity", { headers: { cookie } })).status, 401);
+  }
+});
+
+test("reply Dashboard refuses revoked, inaccessible, malformed and misconfigured launches privately", async (t) => {
+  const f = await fixture(t);
+  const entry = await f.root("G_PRIVATE", "100.000001", "U_MINE", true, "private");
+  f.members.set("G_PRIVATE", ["U_MINE"]);
+  const sent = [];
+  f.client.chat.postEphemeral = async (payload) => { sent.push(payload); };
+  for (const variant of ["revoked", "membership", "channel-access", "channel", "workspace", "missing-workspace", "malformed", "url"]) {
+    await setUser("U_MINE", { approved: variant !== "revoked" });
+    f.members.set("G_PRIVATE", variant === "membership" ? [] : ["U_MINE"]);
+    await saveChannelMeta(entry.slug, { access: variant === "channel-access" ? "admins" : "approved" });
+    const button = menuButtons({ channel: variant === "channel" ? "C_OTHER" : "G_PRIVATE" }).at(-1);
+    if (variant === "malformed") button.value = "{";
+    await handleReplyDashboardAction({ ack: async () => {}, client: f.client,
+      body: { user: { id: "U_MINE" }, channel: { id: "G_PRIVATE" }, team: { id: variant === "workspace" ? "T_OTHER" : "T_WORK" } },
+      action: button }, { teamId: variant === "missing-workspace" ? "" : "T_WORK", baseUrl: variant === "url" ? "" : f.base });
+    assert.equal(sent.at(-1).user, "U_MINE", variant);
+    assert.equal(sent.at(-1).blocks, undefined, variant);
+    assert.doesNotMatch(JSON.stringify(sent.at(-1)), /\/activity\/open#/, variant);
+  }
+  assert.match(sent.at(-1).text, /Public URL/);
+});
+
+test("reply Dashboard and private URL actions are registered and acknowledged", async () => {
+  const handlers = new Map();
+  registerReplyDashboardActions({ action: (id, handler) => handlers.set(id, handler) }, { teamId: "T_WORK" });
+  assert.equal(typeof handlers.get(REPLY_DASHBOARD_ACTION_ID), "function");
+  let acknowledged = false;
+  await handlers.get("cg_reply_dashboard_open")({ ack: async () => { acknowledged = true; } });
+  assert.equal(acknowledged, true);
 });
 const defer = () => { let resolve; const promise = new Promise((r) => { resolve = r; }); return { promise, resolve }; };
 async function fixture(t, options = {}) {

@@ -9,7 +9,7 @@ export const MENU_RESUME_ACTION_ID = "cg_menu_resume";
 
 export function buildMenuCard(channelId, threadTs, authorId) {
   return {
-    text: "Channel menu: Files, Variables, Settings",
+    text: "Channel menu: Files, Variables, Settings, Dashboard",
     blocks: [{ type: "actions", elements: menuButtons({ channel: channelId, threadTs, authorId }) }],
   };
 }
