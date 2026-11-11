@@ -29,7 +29,7 @@ The build validator checks that every handbook page references the shipped SVG a
 
 Mandatory organization skill grants and organization-wide agent instructions require Enterprise to add or change. All HTTP, MCP and raw settings writers share the settings boundary. Saved policies continue applying after downgrade; admins can explicitly remove grants or clear instructions. Existing Lean-mode exclusions still apply; these policies do not override Lean mode. Personal/channel grants, skill content maintenance, channel instructions and core safety rules remain available on every tier.
 
-- **Monthly channel budget management.** The admin UI shows this UTC month's recorded spend with the Enterprise spending limit (channel Runtime pane or DM detail), unlimited by default. Limits remain local to each conversation; saves, code-channel synchronization and shared DM templates preserve them. Queued runs, retries, fallback attempts and memory reviews recheck the current cap immediately before spawning and deliver an actionable refusal. Active/concurrent runs can overshoot; unpriced usage refuses new runs until repaired, and external charges are outside the channel ledger.
+- **Monthly channel budget management.** The admin UI shows this UTC month's recorded spend with the Enterprise spending limit (channel Runtime pane or DM detail), unlimited by default. Limits remain local to each conversation; saves, code-channel synchronization and shared DM templates preserve them. Queued runs, retries, fallback attempts and memory reviews recheck the current cap immediately before spawning and deliver an actionable refusal. Active/concurrent runs can overshoot; unpriced usage refuses new runs until repaired, and external charges are outside the channel ledger. Both channel Runtime and DM budget help explain these limits and the external-service exclusion.
 
 ## Enterprise organization controls
 
@@ -3125,7 +3125,7 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
   reaches the CLI, so it must not silently disable failover either). → TEST-PLAN: Engines.
 - A pinned provider rejection that is not eligible for automatic replay still includes the manual
   switch/repin hint. Adding this guidance does not retry the request or change fallback eligibility;
-  ordinary unpinned errors and resumable interruptions keep their existing remedies.
+  ordinary unpinned errors and resumable interruptions keep their existing remedies. Missing runtime credentials also retain explicit engine/model pin guidance before spawn; they remain configuration errors and never authorize automatic fallback.
 - **Claude runs on the operator's OWN subscription — one login, resolved in one place.** The gateway
   authenticates Claude with the `claude` sign-in of the user the daemon runs as
   (`$CLAUDE_CONFIG_DIR`, else `~/.claude`): the login that person keeps alive in their own shell. It
