@@ -12,6 +12,9 @@ release gates. Stable promotion and publication require approval of the exact te
 
 ### Beta development notes
 
+- Audio transcripts appear in the source thread before the agent starts processing. Each clip
+  is labelled, long transcripts are split, and the transcript stays visible beside the answer.
+
 - Slack Home now has Activity, Connections, Skills and Channels sections. Activity opens by
   default; connection updates return to Connections and each section loads its own content.
 
