@@ -67,6 +67,6 @@
     "acorn-globals": "7.0.1"
   },
   "overrides": {
-    "qs": "6.16.0"
+    "qs": "6.16.1"
   }
 }
