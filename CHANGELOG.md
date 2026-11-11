@@ -12,6 +12,9 @@ release gates. Stable promotion and publication require approval of the exact te
 
 ### Beta development notes
 
+- Every Slack reply menu now includes Dashboard beside Settings. It privately opens the clicking
+  user's personal Activity page through a fresh single-use link.
+
 - Reply footers now show `model · effort · ctx: 167.1k / 475k, 35%`: context is the latest model
   request against the window Claude or Codex itself reported (not the run's summed input), shown
   above 100% when over the limit and as `?` when the harness reports no window. Duration and run

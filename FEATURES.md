@@ -24,7 +24,8 @@ actions apply. Page/API/stream/action requests recheck current user admission an
 thread access additionally requires root ownership, gateway access, private/DM membership and sudo
 authority. Expired/revoked access clears browser rows. The existing admin `/activity` stays separate.
 Launch links are credentials: forwarding an unused link grants its holder this limited view until
-expiry or revocation, so they belong only in the viewer's private Home, never a public channel.
+expiry or revocation, so they belong only in the viewer's private Home or an ephemeral reply,
+never a public channel.
 
 ## Slack Home sections (2026-11-11)
 
@@ -750,8 +751,8 @@ Task progress remain visible; older agent streams without optional task-type met
 
 ## Teams reply menu
 
-- Every Teams answer, error and stop carries the reply menu under its run-stats line, like
-  Slack's footer: **📂 Files**, **🔑 Variables**, **⚙️ Settings**, and one **📄 <file>** button for
+- Every Teams answer, error and stop carries the reply menu under its run-stats line:
+  **📂 Files**, **🔑 Variables**, **⚙️ Settings**, and one **📄 <file>** button for
   each workspace file the answer named in inline code (up to three). Each opens the same private
   Teams window as `/files`, `/secrets`, `/settings` or `/sendfile <path>`.
 - The buttons hold no server-side state, so they keep working on older replies and across
@@ -1550,8 +1551,8 @@ revisions on failed sync. Details and compatibility limits: `docs/SKILLS.md`.
 
 ## Reply menu and standalone Slack menu
 
-- **Every AI reply in Slack ends with the same menu: 📂 Files · 🔑 Variables · ⚙️ Settings**, with
-  visible labels, always all three, in that order. That holds for a streamed or classic answer, a
+- **Every AI reply in Slack ends with the same menu: 📂 Files · 🔑 Variables · ⚙️ Settings · 📊 Dashboard**, with
+  visible labels, always all four, in that order. That holds for a streamed or classic answer, a
   failed turn (the error line carries it), "🛑 Stopped.", an answer after an engine/model switch or
   failover, an HTTP API run into a thread (streamed, fallback delivery or failure), a scheduled
   run and its failure notice, a background job or agent continuation, self-diagnosis, and a turn
@@ -1566,13 +1567,18 @@ revisions on failed sync. Details and compatibility limits: `docs/SKILLS.md`.
   a 👎 answers the clicker privately, inviting the correction in the thread. If Slack rejects the
   block on a terminal write, the footer is retried without it (see the tiered recovery under
   *Composed replies*). → TEST-PLAN: Answer feedback.
-- Binding: a reply with a Slack requester binds the menu to that person (another member's click
-  is refused, as before; admins may still open another user's file button). An automation post
+- **Dashboard opens the clicker's personal Activity page** via a private, fresh single-use link,
+  even on somebody else's reply or an author-less automation. The shared button contains no
+  credential. Current user, workspace and source-conversation access are checked before issuance;
+  the existing Activity session enforces ownership and access on every request. Without a valid
+  Public URL, a private notice directs the viewer to Slack Home Activity. It grants no admin access.
+- Binding: a reply with a Slack requester binds Files, Variables and Settings to that person
+  (another member's click is refused, as before; admins may still open another user's file button). An automation post
   (schedule, background job, API run, restart recovery) has no Slack requester, so its menu opens
   for whoever clicks it. That grants nothing: every open re-applies the clicker's own live channel
   authorization and binds the modal to that clicker.
 - Slack only. Google Chat and Teams receive the plain text of those notices and answers.
-- `/menu` returns only one card with the same **Files, Variables, Settings** buttons, directly
+- `/menu` returns only one card with the same **Files, Variables, Settings, Dashboard** buttons, directly
   from the daemon without starting Claude or Codex. The registered slash command is private to its
   caller; `@agent /menu` inside a channel thread (or `/menu` in a DM message) posts the card in that
   thread. All controls remain available before a session exists and retain their authorization

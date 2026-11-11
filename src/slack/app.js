@@ -143,6 +143,7 @@ import { createHomeThreadReader } from "./home-thread-reader.js";
 import { buildHomeTabView, createHomePublisher, registerHomeActions } from "./home-tabs.js";
 import { getSlackThread, recordSlackThreadMessage, eligibleSlackThreadsForUser } from "../gateway/slack-threads.js";
 import { activityHomeBlocks } from "./home-activity.js";
+import { registerReplyDashboardActions } from "./reply-dashboard.js";
 import { isCompletionReaction } from "../gateway/completion-reactions.js";
 import { completeThreadFromFeedback, syncThreadCompletionReaction } from "./thread-completion.js";
 import { buildMenuCard, buildMenuResumeView, MENU_RESUME_ACTION_ID } from "./menu.js";
@@ -3222,6 +3223,7 @@ async function connectAndWire(app) {
   // Standalone controls, available even before the first engine session.
   app.command("/menu", handleMenuCommand);
   app.action(MENU_RESUME_ACTION_ID, handleMenuResumeAction);
+  registerReplyDashboardActions(app, { teamId });
 
   // /status slash command — reports what the current channel is working on. Slack treats
   // `/status` as one of its built-in commands and rejects it in some app manifests, so the same
