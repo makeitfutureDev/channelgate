@@ -347,7 +347,7 @@ for (const marker of ["white_check_mark", "+1", "thumbsup", "+1::skin-tone-3", "
   });
 }
 
-test("row dividers, separate primary Done and genuine last-message dates survive completion and deleted replies", async () => {
+test("compact linked rows with primary Done and genuine last-message dates survive completion and deleted replies", async () => {
   const c = await channel(); root(c, "100.000001");
   let messages = [roots.get("C_THREADS:100.000001"), { ts: "200.000001", user: "BOT" }, { ts: "300.000001", user: "BOT" }];
   client.conversations.replies = async () => ({ messages });
@@ -355,9 +355,13 @@ test("row dividers, separate primary Done and genuine last-message dates survive
   let view = await homeThreadsSnapshot(client, "U_MINE");
   assert.equal(view.rows[0].last_message_ms, 300000);
   const blocks = homeThreadBlocks(view);
-  const action = blocks.find((b) => b.type === "actions" && b.elements.some((e) => e.action_id === "cg_home_threads_done"));
-  assert.equal(action.elements.find((e) => e.action_id === "cg_home_threads_done").style, "primary");
-  assert.ok(blocks.some((b) => b.fields?.some((f) => f.text.includes("<!date^300^"))));
+  const entry = blocks.find((b) => b.accessory?.action_id === "cg_home_threads_done");
+  assert.equal(entry.accessory.style, "primary");
+  assert.ok(entry.text.text.includes("<!date^300^"));
+  assert.ok(entry.text.text.includes(`<${view.rows[0].url}|`));
+  assert.equal(entry.text.text.split("\n").length, 2);
+  assert.equal(entry.fields, undefined);
+  assert.ok(!blocks.some((b) => b.type === "actions" && b.elements.some((e) => ["cg_home_threads_done", "cg_home_threads_open"].includes(e.action_id))));
   assert.ok(blocks.filter((b) => b.type === "divider").length >= 2);
   setSlackThreadDone(c.channelId, "100.000001", "U_MINE", true);
   messages = messages.slice(0, 2);

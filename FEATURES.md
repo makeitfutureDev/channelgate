@@ -2,20 +2,23 @@
 
 ## Slack Home sections (2026-11-11)
 
-Slack App Home has Activity, Connections, Skills and Channels navigation, with Activity selected
+Slack App Home has Activity, Connections, Skills, Channels and Help & settings navigation, with Activity selected
 when Home opens. Each view highlights its selected section and loads only that section's content.
-Activity contains My threads, reminder preferences and command/runtime guidance; Connections shows
+Activity contains only My threads; Help & settings contains reminder preferences, command/runtime
+guidance and gateway/about information, including the administrator's UI pointer. Connections shows
 personal/shared connection status and personal Composio controls; Skills shows personal grants and
 organization-wide counts; Channels lists currently authorized visible conversations. Connection
-save/disconnect returns to Connections, while thread controls and reminder changes stay in Activity.
+save/disconnect returns to Connections, thread controls stay in Activity, and reminder changes stay
+in Help & settings.
 Navigation uses the authenticated clicking viewer, without a shared selection or new user setting.
 
 ## Personal Slack thread list (2026-11-11)
 
 Slack App Home → Activity includes **My threads**, a personal paginated list of gateway-engaged
 Slack threads whose root was posted by the viewer. Rows have divider lines, the original thread
-link, status and actual last-message date, plus separate Open thread and prominent green Done
-buttons. Dates come from observed Slack messages and complete paginated transcript refreshes;
+link on a shortened title, inline channel/status/actual last-message date, and a prominent green Done
+button aligned at the right. Each compact entry uses two text lines and no separate action row;
+the linked title opens the original thread. Dates come from observed Slack messages and complete paginated transcript refreshes;
 run completion, inspection and Done clicks do not substitute their timestamps. Complete scans can
 correct the date when the latest reply was deleted.
 
