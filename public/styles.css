@@ -1318,3 +1318,31 @@ button.clear-tok.armed { background: rgba(229, 96, 77, .14); border-color: rgba(
 .cmcp-pair { display: flex; gap: 8px; margin: 8px 0; flex-wrap: wrap; }
 .cmcp-pair input { flex: 1 1 180px; min-width: 0; padding: 9px 12px; border-radius: 8px; background: var(--panel-2); border: 1px solid var(--line); color: var(--ink); font: inherit; }
 .cmcp-extra > button { margin: 4px 8px 4px 0; }
+
+/* Provider subscription limits */
+.subscription-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 22px; margin: 24px 0; }
+.subscription-card { min-width: 0; padding: 24px; background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); }
+.subscription-card-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; margin-bottom: 24px; }
+.subscription-card h3 { margin: 0 0 6px; font-size: 22px; }
+.subscription-card-head .hint { margin: 0; text-transform: capitalize; }
+.subscription-status { flex: none; border: 1px solid var(--line); border-radius: 20px; padding: 5px 10px; font-size: 11px; color: var(--muted); }
+.subscription-status.ok { color: var(--ok); }
+.subscription-status.expired { color: var(--danger); }
+.subscription-window { padding: 18px 0; border-top: 1px solid var(--line-soft); }
+.subscription-window-head, .subscription-window-foot { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 8px; }
+.subscription-window-head { font-size: 13px; }
+.subscription-window-head strong { white-space: nowrap; }
+.subscription-window-foot { color: var(--muted); font-size: 11px; margin-top: 10px; line-height: 1.6; }
+.subscription-window progress { display: block; width: 100%; height: 9px; margin: 13px 0 0; border: 0; border-radius: 10px; overflow: hidden; background: var(--panel-2); accent-color: var(--light); }
+.subscription-window progress::-webkit-progress-bar { background: var(--panel-2); border-radius: 10px; }
+.subscription-window progress::-webkit-progress-value { background: var(--light); border-radius: 10px; }
+.subscription-window progress::-moz-progress-bar { background: var(--light); border-radius: 10px; }
+.subscription-window.warning progress { accent-color: var(--warn); }
+.subscription-window.warning progress::-webkit-progress-value { background: var(--warn); }
+.subscription-window.warning progress::-moz-progress-bar { background: var(--warn); }
+.subscription-window.critical progress { accent-color: var(--danger); }
+.subscription-window.critical progress::-webkit-progress-value { background: var(--danger); }
+.subscription-window.critical progress::-moz-progress-bar { background: var(--danger); }
+.subscription-updated { color: var(--muted); font-size: 11px; line-height: 1.8; margin: 22px 0 0; }
+#subscriptions-notice { color: var(--muted); font-size: 13px; }
+@media (max-width: 1000px) { .subscription-grid { grid-template-columns: 1fr; } }

@@ -10,6 +10,7 @@ export const ADMIN_VIEWS = Object.freeze({
   api: Object.freeze({ path: "/api-docs", title: "HTTP run API" }),
   settings: Object.freeze({ path: "/settings", title: "Settings" }),
   "system-health": Object.freeze({ path: "/system-health", title: "System health" }),
+  subscriptions: Object.freeze({ path: "/subscriptions", title: "Subscriptions" }),
 });
 
 export const ADMIN_VIEW_PATHS = Object.freeze(Object.values(ADMIN_VIEWS).map(({ path }) => path));
