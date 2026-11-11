@@ -59,7 +59,7 @@ import { listConversationMemberIds } from "./members.js";
 import { buildMenuCard } from "./menu.js";
 import { HELP_TEXT } from "./help.js";
 import { formatAppContextProvenance } from "./app-context.js";
-import { isIgnorable, isPendingCommand, isStopCommand, mentionsBot, parseNextCommand, parseSlashCommand, SLACK_MENTION_RE, stripMentions } from "./message-normalize.js";
+import { isIgnorable, isPendingCommand, isStopCommand, mentionsBot, parseNextCommand, parseSlashCommand, parseSudoCommand, SLACK_MENTION_RE, stripMentions } from "./message-normalize.js";
 export { isIgnorable, isStopCommand, mentionsBot, parseSlashCommand, stripMentions } from "./message-normalize.js";
 import { claimMessageTrigger, runQueue } from "./message-lifecycle.js";
 export { runQueue } from "./message-lifecycle.js";
@@ -702,6 +702,11 @@ export async function processMessageEvent(event, client, { botUserId = "", teamI
       return;
     }
 
+    if (!syntheticFork && parseSudoCommand(earlyControl) && !authorIsAdmin) {
+      await client.chat.postMessage({ channel: event.channel, ...threadOpts, text: "Only organization admins can use `/sudo`." });
+      return;
+    }
+
     // Only an authorized trigger may spend Slack read/file API calls. Hydrate it from the exact
     // canonical message so omitted/incomplete attachment fields cannot produce a text-only agent
     // prompt, while keeping the original event as a non-fatal fallback.
@@ -715,6 +720,10 @@ export async function processMessageEvent(event, client, { botUserId = "", teamI
         // Engine-native /compact still receives its normal thread context. Other recognized
         // controls must not become agent prompts merely because an earlier message shared a file.
         if (command?.cmd === "compact" && engineSupports(await resolveThreadEngine(entry.slug, event.thread_ts ?? event.ts, meta), "compact")) return true;
+        if (command?.cmd === "sudo") {
+          const sudo = parseSudoCommand(text);
+          if (sudo?.task && !sudo.invalid) return true;
+        }
         if (command || isStopCommand(text) || isPendingCommand(text)) return false;
         // A queued task keeps its attachment context; bare /next needs the usage hint, not an
         // inferred old file masquerading as the missing task. Explicit current files still win.
@@ -740,9 +749,48 @@ export async function processMessageEvent(event, client, { botUserId = "", teamI
     // Keep them for run identity while using an actual cutoff for history/failover context.
     const contextCurrentTs = questionSubmissionId ? Date.now() / 1000 : event.ts;
 
+    // A sudo prefix changes the boundary before this same message enters the normal run path.
+    // Read it from the canonical text, preserve prompt whitespace, and keep controls daemon-only.
+    const sudo = !syntheticFork ? parseSudoCommand(prompt) : null;
+    if (sudo) {
+      const reply = (text) => client.chat.postMessage({ channel: event.channel, ...threadOpts, text });
+      if (!authorIsAdmin) {
+        await reply("Only organization admins can use `/sudo`.");
+        return;
+      }
+      if (sudo.invalid) {
+        await reply("Use `/sudo <message>`, `/sudo on [message]`, `/sudo off`, or `/sudo status`.");
+        return;
+      }
+      const current = await getThreadSudo(entry.slug, threadKey);
+      if (sudo.action === "status") {
+        await reply(current
+          ? "⚠️ Sudo is ON for this thread. Admin messages run directly on the gateway host as the daemon OS user; non-admin messages are rejected."
+          : "Sudo is OFF for this thread. Runs use the channel's normal container runtime.");
+        return;
+      }
+      const next = sudo.action === "on";
+      if (current !== next) {
+        if (runQueue.count(runKey) > 0) {
+          await reply("This thread has running or queued work — stop it or wait for it to finish before changing `/sudo`.");
+          return;
+        }
+        await setThreadSudo(entry.slug, threadKey, next);
+        abortPooled(runKey); // retire an idle process created on the other side of the boundary
+        await logEvent("sudo_thread_changed", { channel: event.channel, author: event.user, slug: entry.slug, threadKey, enabled: next });
+        await reply(next
+          ? `⚠️ *Sudo enabled for this thread.* ${sudo.task ? "This request and later admin messages run" : "From the next message, the agent runs"} directly on the gateway host as the daemon OS user, with the host filesystem, processes, HOME, commands, and network available. There is no channel-container boundary. Only organization admins may message this thread; everyone else is rejected. Use \`/sudo off\` to return to the container.`
+          : "✅ Sudo disabled for this thread. New turns return to the channel's normal container runtime. Only organization admins may have used the thread while sudo was enabled.");
+      } else if (!sudo.task) {
+        await reply(next ? "⚠️ Sudo is already ON for this thread." : "Sudo is already OFF for this thread.");
+      }
+      if (!sudo.task) return;
+      prompt = sudo.task;
+    }
+
     // "stop"/"cancel" interrupts the in-flight run for this thread. Handled here (not via the
     // run path) so it isn't queued behind the very run it's trying to cancel.
-    if (isStopCommand(prompt) && files.length === 0) {
+    if (!sudo && isStopCommand(prompt) && files.length === 0) {
       const stopped = await stopRunsInChannel(client, event.channel, entry.slug, event.user, threadKey);
       if (!stopped) {
         await client.chat.postMessage({ channel: event.channel, ...threadOpts, text: "Nothing is running in this thread right now." });
@@ -757,13 +805,13 @@ export async function processMessageEvent(event, client, { botUserId = "", teamI
     // "pending" / "my followups" — the on-demand version of the twice-daily follow-up digest:
     // the CALLER's own live list of threads the AI is waiting on them for (same shared formatter
     // + permalinks as the DM digest; friendly note when empty). Cheap daemon-side reply — no run.
-    if (files.length === 0 && isPendingCommand(prompt)) {
+    if (!sudo && files.length === 0 && isPendingCommand(prompt)) {
       await client.chat.postMessage({ channel: event.channel, ...threadOpts, text: await buildPendingReportForUser(client, event.user, botUserId) });
       return;
     }
 
     // In-thread control commands (/clear, /model, /effort, /context, /pending, /help, /compact).
-    const sc = !syntheticFork && files.length === 0 ? parseSlashCommand(prompt) : null;
+    const sc = !syntheticFork && !sudo && files.length === 0 ? parseSlashCommand(prompt) : null;
     // /compact is a real command only on engines that declare supports.compact — judged against
     // the THREAD's effective engine (override → session-born → channel → gateway default), never
     // the gateway default alone: a Codex thread under a Claude-default gateway must not receive
@@ -1051,38 +1099,6 @@ export async function processMessageEvent(event, client, { botUserId = "", teamI
         await reply(
           `🚀 Update transaction \`${started.transaction.id}\` started. I’ll run preflight, snapshot, dependency audit/tests, restart, Slack + isolated Claude health checks, and automatic rollback if needed. I’ll report the final result here. Details: \`~/.channelgate/logs/update.log\`.`,
         );
-      } else if (sc.cmd === "sudo") {
-        if (!authorIsAdmin) {
-          await reply("Only organization admins can use `/sudo`.");
-          return;
-        }
-        const arg = (sc.arg || "on").trim().toLowerCase();
-        if (!["on", "off", "status"].includes(arg)) {
-          await reply("Use `/sudo`, `/sudo on`, `/sudo off`, or `/sudo status`.");
-          return;
-        }
-        const current = await getThreadSudo(entry.slug, threadKey);
-        if (arg === "status") {
-          await reply(current
-            ? "⚠️ Sudo is ON for this thread. Admin messages run directly on the gateway host as the daemon OS user; non-admin messages are rejected."
-            : "Sudo is OFF for this thread. Runs use the channel's normal container runtime.");
-          return;
-        }
-        const next = arg === "on";
-        if (current === next) {
-          await reply(next ? "⚠️ Sudo is already ON for this thread." : "Sudo is already OFF for this thread.");
-          return;
-        }
-        if (runQueue.count(runKey) > 0) {
-          await reply("This thread has running or queued work — stop it or wait for it to finish before changing `/sudo`.");
-          return;
-        }
-        await setThreadSudo(entry.slug, threadKey, next);
-        abortPooled(runKey); // retire an idle process created on the other side of the boundary
-        await logEvent("sudo_thread_changed", { channel: event.channel, author: event.user, slug: entry.slug, threadKey, enabled: next });
-        await reply(next
-          ? "⚠️ *Sudo enabled for this thread.* From the next message, the agent runs directly on the gateway host as the daemon OS user, with the host filesystem, processes, HOME, commands, and network available. There is no channel-container boundary. Only organization admins may message this thread; everyone else is rejected. Use `/sudo off` to return to the container."
-          : "✅ Sudo disabled for this thread. New turns return to the channel's normal container runtime. Only organization admins may have used the thread while sudo was enabled.");
       } else if (sc.cmd === "mode") {
         const rawMode = (sc.arg || "").trim().toLowerCase();
         const arg = rawMode === "bash" ? "worker" : rawMode;
@@ -1132,7 +1148,7 @@ export async function processMessageEvent(event, client, { botUserId = "", teamI
 
     // /next remains an explicit queue alias, parsed before sticky engine/clean-mode changes.
     {
-      const nm = parseNextCommand(prompt);
+      const nm = !sudo ? parseNextCommand(prompt) : null;
       if (nm) {
         prompt = nm.task;
         if (!prompt && files.length === 0) {
