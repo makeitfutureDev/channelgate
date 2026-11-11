@@ -62,6 +62,21 @@ never alter production credentials or send real access tokens to fixture servers
 
 ## Private live Activity dashboard and agent-only discovery (2026-11-11)
 
+Active-worker regression (2026-11-12): use real `recordActiveRun`/`clearActiveRun` events and an
+SSE fixture whose polling interval exceeds the test timeout. A completed own root becomes Working,
+then Waiting for a busy choice, then Completed again without losing its durable marker; ordinary
+open work returns to Idle. Home and reminder completion still win. Exercise both engine records.
+For a missing queued root, verify bounded ten-root repair, one-message lookups, true human starter
+ownership, rejection of bot/shell-only roots, coalescing, and fifteen-second retry after failure.
+Stalled reads must return existing rows within a two-second read-wait budget, reuse the pending
+request/result, and flag delayed updates rather than duplicating lookups. The Chromium fixture in
+`test/activity-reuse-browser.test.js` must show mobile Working/Waiting counts for both engine
+records over real SSE without polling, reloads or page errors.
+Revoke private membership, user admission or sudo rank during the content read: no private row is
+indexed or returned. Indexed rows must make no history/permalink calls on updates. Live acceptance
+ACTIVITY-WEB-06 must repeat resumed-completed and not-yet-indexed tasks under Claude and Codex;
+definition updates and local tests do not establish native engine acceptance.
+
 Regression: `node --test test/activity.test.js test/activity-page.test.js test/home-threads.test.js
 test/home-thread-reader.test.js`. Exercise the real Express router against a scratch database:
 fragment removal before exchange, repeated/concurrent redemption within ten minutes, fixed expiry
@@ -71,7 +86,7 @@ roots and fresh root ownership, private/DM membership and sudo demotion. Revoke 
 during a delayed snapshot, permalink or final membership check: no private payload, redirect or
 completion may succeed. Preserve the existing administrator `/activity` route. Bound grants,
 sessions and SSE connections per viewer/globally. SSE must push local changes, check fresh access,
-close on expiry, and release listeners/timers; unchanged public snapshots make no Slack history
+close on expiry, and release thread/run listeners and timers; unchanged indexed public snapshots make no Slack history
 or permalink requests. Only clicking Open resolves a real HTTPS Slack permalink.
 
 Execute generated browser scripts for hostile titles/URLs, CSRF, search and filters, serialized

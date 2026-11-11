@@ -28,12 +28,19 @@ unavailable data while the other provider remains usable. No additional provider
 Slack Home → Activity offers **Open live dashboard** when a Public URL is configured. It opens a
 responsive browser table of the viewer's own agent threads, with search, status filters, Working
 spinners, labeled status colors, last-message dates, Open thread and Done/Reopen. Completed work
-is hidden from open filters; completion uses the same persistent state and reminder suppression
-as Slack. A finished agent response becomes Idle until explicitly completed.
+is hidden from open filters except while that thread is actively Working or Waiting. Live status
+takes priority in the browser, then the previous completion marker returns when work ends;
+Slack Home completion and reminder suppression stay persistent. A finished agent response in an
+open thread becomes Idle until explicitly completed.
 
 The existing daemon serves the page with vanilla JavaScript and Server-Sent Events, without a new
-service or frontend dependency. Local thread changes push updates; a one-second local fingerprint
-also detects runtime transitions. Refreshes do not scan Slack transcripts or resolve every link.
+service or frontend dependency. Local thread and accepted-run changes push updates; a one-second
+local fingerprint also detects runtime transitions, including resumed completed threads. Refreshes
+do not scan Slack history or resolve every link. If a queued/active agent thread lacks an index
+entry, a snapshot repairs at most ten live roots using one-message Slack lookups, coalesced per
+client with a fifteen-second retry delay and a two-second total read-wait budget per snapshot.
+Pending reads/results are reused after a timeout. Each lookup checks current access before and after;
+ownership comes from the human root, never the run author. Indexed roots stay local on refresh.
 Private membership is rechecked on snapshots and at least every 15 seconds while connected;
 Open resolves a cached real Slack permalink after fresh authorization. Disconnected streams retry.
 The snapshot is bounded to 1,000 authorized threads and indicates truncation.
@@ -105,7 +112,8 @@ cleanup; legacy evidence promotes genuine roots, while already-indexed human-onl
 
 ✅, ✔️ and 👍 (`+1`/`thumbsup`, including skin tones) on the root or any reply, or Done in Activity,
 complete the thread. The owner’s native 👍 answer-feedback button also marks it Done, with
-current admission/membership/sudo checks and message-bound ownership validation. Completion takes priority over running/queued work or pending forms, excludes
+current admission/membership/sudo checks and message-bound ownership validation. In Slack Home,
+completion takes priority over running/queued work or pending forms, excludes
 it from Active/All open and suppresses quiet-thread nudges and pending-response digests. Later
 messages/outcomes do not reopen it. Completed is an explicit archive with Reopen controls; Reopen
 can override existing reactions until a newer completion event. Removing a reaction reopens only

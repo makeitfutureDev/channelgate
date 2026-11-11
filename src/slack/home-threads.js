@@ -10,7 +10,7 @@ import { clearDone, markDone } from "../gateway/followups.js";
 import { inspectThreadCompletion } from "../gateway/thread-completion.js";
 import {
   getSlackThread, indexSlackThread, skipSlackThreadCandidate, setSlackThreadDone, updateSlackThreadRootCompletion, slackThreadCandidates,
-  eligibleSlackThreadsForUser, isSlackThreadEligible, slackThreadRuntime, slackThreadStatus,
+  eligibleSlackThreadsForUser, isSlackThreadEligible, slackThreadRuntime, slackThreadStatus, liveSlackThreadCandidates,
 } from "../gateway/slack-threads.js";
 
 export const HOME_THREADS_ACTION = /^cg_home_threads_(filter|page|refresh|history|done|reopen)$/;
@@ -178,16 +178,73 @@ export async function homeThreadsSnapshot(client, userId, requested = {}, { read
   return { ...view, page, pages, total: filtered.length, rows, moreHistory, unavailable: unavailable || access.unavailable || hiddenChannels.size > 0 };
 }
 
-// The web Activity feed reads local state only. Slack membership remains a fresh access check;
-// it never scans conversation history or resolves permalinks on a live refresh. The web Open
-// route resolves a real Slack permalink after rechecking authorization at click time.
-export async function activityThreadSnapshot(client, userId, requested = {}) {
+const liveRootReads = new WeakMap();
+const LIVE_ROOT_RETRY_MS = 15_000;
+const ROOT_READ_TIMED_OUT = Symbol("root read timed out");
+async function awaitLiveRoot(state, timeoutMs) {
+  if (!state.pending) return state.root;
+  let timer;
+  try {
+    return await Promise.race([state.pending, new Promise((resolve) => {
+      timer = setTimeout(() => resolve(ROOT_READ_TIMED_OUT), Math.max(0, timeoutMs));
+    })]);
+  } finally { clearTimeout(timer); }
+}
+// Only missing live roots need a Slack read. Coalesce simultaneous viewers and back off failures;
+// indexed threads never read transcripts or permalinks during an Activity refresh.
+async function discoverLiveRoots(client, userId, access, channels, now, rootReadBudgetMs) {
+  let reads = liveRootReads.get(client);
+  if (!reads) { reads = new Map(); liveRootReads.set(client, reads); }
+  const deadline = Date.now() + rootReadBudgetMs;
+  let attempted = 0, unavailable = false;
+  for (const candidate of liveSlackThreadCandidates()) {
+    const entry = channels.get(candidate.channelId);
+    if (!await access.allows(entry, candidate.threadTs)) continue;
+    const key = `${candidate.channelId}::${candidate.threadTs}`;
+    let state = reads.get(key);
+    if (!state?.pending && !state?.root && state?.retryAt > now()) { unavailable = true; continue; }
+    if (attempted === HISTORY_BATCH) break;
+    attempted++;
+    if (!state?.pending && !state?.root) {
+      // Keep the retry cache bounded without evicting in-flight reads.
+      if (reads.size >= 1000) {
+        const oldest = [...reads].find(([, value]) => !value.pending);
+        if (!oldest) break;
+        reads.delete(oldest[0]);
+      }
+      state = { pending: null, retryAt: 0, root: null };
+      state.pending = readRoot(client, candidate.channelId, candidate.threadTs)
+        .catch(() => null).then((root) => { state.root = root; return root; })
+        .finally(() => { state.pending = null; state.retryAt = now() + LIVE_ROOT_RETRY_MS; });
+      reads.set(key, state);
+    }
+    const root = await awaitLiveRoot(state, deadline - Date.now());
+    // A slow/rate-limited root must not hold existing dashboard rows hostage. Retain the
+    // coalesced request/result for a later snapshot; never start duplicate timed-out reads.
+    if (root === ROOT_READ_TIMED_OUT) { unavailable = true; break; }
+    const currentAccess = await accessContext(client, userId);
+    access = currentAccess;
+    // Root ownership is verified from Slack, never inferred from a queued run's author.
+    if (humanRoot(root) && await currentAccess.allows(entry, candidate.threadTs)) {
+      indexSlackThread({ channelId: entry.channelId, slug: entry.slug, root, agentEngaged: true });
+      reads.delete(key);
+    } else { state.root = null; unavailable = true; }
+  }
+  return { unavailable, attempted };
+}
+
+// The web feed reads local state plus bounded repair of missing live roots. It never scans
+// historical conversations; Open resolves a permalink after fresh click-time authorization.
+export async function activityThreadSnapshot(client, userId, requested = {}, { now = Date.now, rootReadBudgetMs = 2000 } = {}) {
   const view = requested.filter === "all-statuses" ? { ...normalizeThreadView(requested), filter: "all-statuses" } : normalizeThreadView(requested);
   const search = String(requested.search || "").trim().slice(0, 200);
   const size = Number(requested.pageSize);
   const pageSize = Number.isSafeInteger(size) && size > 0 ? Math.min(size, 1000) : 100;
-  const access = await accessContext(client, userId);
+  let access = await accessContext(client, userId);
   const channels = new Map((await listChannels()).map((entry) => [entry.channelId, entry]));
+  const discovery = await discoverLiveRoots(client, userId, access, channels, now, rootReadBudgetMs);
+  // A content read may outlive membership/rank changes. Never render with its pre-read cache.
+  if (discovery.attempted) access = await accessContext(client, userId);
   const runtime = slackThreadRuntime({ pendingApprovals: listPendingApprovals() });
   const authorized = [];
   let truncated = false;
@@ -195,7 +252,10 @@ export async function activityThreadSnapshot(client, userId, requested = {}) {
     const entry = channels.get(row.channel_id);
     if (!await access.allows(entry, row.thread_ts)) continue;
     if (authorized.length === 1000) { truncated = true; break; }
-    authorized.push({ ...row, channelName: entry.name || "Direct message", status: slackThreadStatus(row, runtime) });
+    // Completion continues to suppress reminders/Home. The browser exposes current work until
+    // it ends, then falls back to the same durable completion marker.
+    const status = runtime.get(`${row.channel_id}::${row.thread_ts}`) || slackThreadStatus(row, runtime);
+    authorized.push({ ...row, channelName: entry.name || "Direct message", status });
   }
   const needle = search.toLocaleLowerCase();
   const filtered = authorized.filter((row) =>
@@ -205,7 +265,7 @@ export async function activityThreadSnapshot(client, userId, requested = {}) {
   const pages = Math.max(1, Math.ceil(filtered.length / pageSize));
   const page = Math.min(view.page, pages - 1);
   return { ...view, search, pageSize, page, pages, total: filtered.length,
-    rows: filtered.slice(page * pageSize, (page + 1) * pageSize), unavailable: access.unavailable, truncated };
+    rows: filtered.slice(page * pageSize, (page + 1) * pageSize), unavailable: discovery.unavailable || access.unavailable, truncated };
 }
 
 // Only local display state participates: unchanged Activity pages never poll Slack history.
@@ -213,6 +273,7 @@ export function homeThreadsRefreshKey(userId) {
   const runtime = slackThreadRuntime({ pendingApprovals: listPendingApprovals() });
   return JSON.stringify(eligibleSlackThreadsForUser(userId).map((row) => [
     row.channel_id, row.thread_ts, row.title, row.last_message_ms, slackThreadStatus(row, runtime),
+    runtime.get(`${row.channel_id}::${row.thread_ts}`) || "",
   ]).sort((a, b) => `${a[0]}:${a[1]}`.localeCompare(`${b[0]}:${b[1]}`)));
 }
 

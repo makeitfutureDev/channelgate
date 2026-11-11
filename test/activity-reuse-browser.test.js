@@ -3,7 +3,10 @@ import assert from "node:assert/strict";
 import express from "express";
 import { ensureTestEnv } from "./helpers.js";
 ensureTestEnv();
-const { setUser } = await import("../src/config/store.js");
+const { setUser, upsertChannelEntry, getChannelEntry, saveChannelMeta } = await import("../src/config/store.js");
+const { getDb } = await import("../src/db/index.js");
+const { indexSlackThread, setSlackThreadDone } = await import("../src/gateway/slack-threads.js");
+const { recordActiveRun, clearActiveRun } = await import("../src/gateway/active-runs.js");
 const { createActivityRouter, createActivityGrantUrl, resetActivityStateForTests, ACTIVITY_GRANT_TTL_MS, ACTIVITY_SESSION_TTL_MS } = await import("../src/web/activity.js");
 
 test("browser reopens the same launch within ten minutes and uses its session for twelve hours", { skip: !process.env.CG_BROWSER_MODULE, timeout: 30_000 }, async (t) => {
@@ -41,5 +44,47 @@ test("browser reopens the same launch within ten minutes and uses its session fo
   currentTime = issuedAt + ACTIVITY_SESSION_TTL_MS;
   const expired = await page.reload();
   assert.equal(expired.status(), 401);
+  assert.deepEqual(errors, []);
+});
+
+test("mobile Activity counts reflect durable worker events on completed roots without reload", { skip: !process.env.CG_BROWSER_MODULE, timeout: 30_000 }, async (t) => {
+  resetActivityStateForTests();
+  for (const table of ["slack_threads", "sessions", "channels", "channel_meta", "active_runs", "bg_jobs", "question_requests", "approval_requests", "followup_threads", "followup_done", "thread_overrides"]) getDb().exec(`DELETE FROM ${table}`);
+  await setUser("UACTIVITYBROWSER", { approved: true, isAdmin: false });
+  await upsertChannelEntry("C_ACTIVITY", { name: "Activity fixture", type: "channel" });
+  const entry = await getChannelEntry("C_ACTIVITY");
+  await saveChannelMeta(entry.slug, { access: "approved" });
+  const root = { ts: "100.000001", user: "UACTIVITYBROWSER", text: "Resumed completed task" };
+  indexSlackThread({ channelId: "C_ACTIVITY", slug: entry.slug, root, agentEngaged: true });
+  setSlackThreadDone("C_ACTIVITY", root.ts, root.user, true);
+  let base;
+  const app = express();
+  app.use("/activity", createActivityRouter({ getClient: () => ({}), getTeamId: () => "TFIXTURE", getBaseUrl: () => base,
+    pollMs: 60_000, accessRefreshMs: 60_000 }));
+  const server = await new Promise((resolve) => { const s = app.listen(0, "127.0.0.1", () => resolve(s)); });
+  base = `http://127.0.0.1:${server.address().port}`;
+  t.after(() => new Promise((resolve) => { resetActivityStateForTests(); server.closeAllConnections(); server.close(resolve); }));
+  const { chromium } = await import(process.env.CG_BROWSER_MODULE);
+  const browser = await chromium.launch({ headless: true, executablePath: process.env.CG_BROWSER_EXECUTABLE });
+  t.after(() => browser.close());
+  const page = await browser.newPage({ viewport: { width: 390, height: 844 } }), errors = [];
+  page.on("pageerror", (error) => errors.push(error.message));
+  await page.goto(createActivityGrantUrl({ baseUrl: base, ownerId: root.user, teamId: "TFIXTURE" }));
+  await page.waitForURL(/\/activity\/[A-Za-z0-9_-]{16}$/);
+  await page.locator("#connection-text").filter({ hasText: "Live updates" }).waitFor();
+  const sessionUrl = page.url();
+  for (const engine of ["claude", "codex"]) {
+    const run = { channelId: "C_ACTIVITY", slug: entry.slug, threadKey: root.ts, engine, authorId: root.user };
+    recordActiveRun("mobile-worker", run);
+    await page.locator("#summary").filter({ hasText: "1 open · 1 working · 0 waiting" }).waitFor();
+    assert.equal(await page.locator("tbody tr .pill").innerText(), "Working");
+    recordActiveRun("mobile-worker", { ...run, awaitingChoice: true });
+    await page.locator("#summary").filter({ hasText: "1 open · 0 working · 1 waiting" }).waitFor();
+    assert.equal(await page.locator("tbody tr .pill").innerText(), "Waiting");
+    clearActiveRun("mobile-worker");
+    await page.locator("#summary").filter({ hasText: "0 open · 0 working · 0 waiting" }).waitFor();
+    assert.equal(page.url(), sessionUrl);
+  }
+  assert.equal(await page.evaluate(() => globalThis.document.documentElement.scrollWidth <= globalThis.innerWidth), true);
   assert.deepEqual(errors, []);
 });
