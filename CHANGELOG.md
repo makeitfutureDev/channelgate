@@ -12,6 +12,9 @@ release gates. Stable promotion and publication require approval of the exact te
 
 ### Beta development notes
 
+- Slack Activity uses compact thread rows with inline status/date and Done on the right.
+  Quiet-thread reminders, command help and gateway details moved to Help & settings.
+
 - Audio transcripts appear in the source thread before the agent starts processing. Each clip
   is labelled, long transcripts are split, and the transcript stays visible beside the answer.
 

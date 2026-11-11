@@ -3395,7 +3395,7 @@ async function connectAndWire(app) {
   });
 
   // Each Home section loads only its own data. A connection save returns to Connections;
-  // thread controls and reminder preferences return to Activity. Every publication resolves
+  // thread controls return to Activity and reminder preferences to Help & settings. Every publication resolves
   // the clicking viewer's current role and content afresh, without shared tab-selection state.
   const publishHomeTab = createHomePublisher(async (client, userId, homeView = {}) => {
     await ensureUserKnown(client, userId);
@@ -3410,15 +3410,16 @@ async function connectAndWire(app) {
         let threads;
         try { threads = homeThreadBlocks(await homeThreadsSnapshot(client, userId, homeView)); }
         catch { threads = [{ type: "section", text: { type: "mrkdwn", text: "*My threads*\nThreads are temporarily unavailable. Reopen Home to try again." } }]; }
-        return [
-          ...threads,
+        return threads;
+      },
+      help: async () => [
+          { type: "divider" },
           ...nudgeHomeBlocks({ enabled: userNudgesEnabled(homeUser) }),
           { type: "divider" },
           { type: "section", text: { type: "mrkdwn", text: "*DM me* (no mention needed) or *@mention me* in a channel. Use `/status` for current channel work, `/pending` for threads awaiting your reply, or `/help` for all commands." } },
           { type: "section", text: { type: "mrkdwn", text: "*Commands* (type in a thread)\n`/menu` · `/help` · `/status` · `/clear` · `/context` · `/mode` · `/model` · `/compact` · `/stop` · `/sudo` _(admin)_ · `/update` _(admin)_" } },
           { type: "section", text: { type: "mrkdwn", text: `*Engine & models*\n• Default engine: *${getEngine()}* · context window ~${Math.round(getContextWindow() / 1000)}k tokens\n• Switch runtime: \`/model\` — channel or one thread → harness → model → effort` } },
-        ];
-      },
+        ],
       connections: async () => {
         const [cTok, tTok] = await Promise.all([getComposioToken(userId), getToolboxToken(userId)]);
         const connLine = (label, mine, fallback, note) => mine

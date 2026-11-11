@@ -23,10 +23,11 @@ test("Activity is the default and every section loads only its selected content"
     const expected = Object.hasOwn(HOME_TABS, tab) ? tab : "activity";
     assert.deepEqual(loaded, [expected]);
     const nav = view.blocks.find((block) => block.type === "actions").elements;
-    assert.deepEqual(nav.map((e) => e.text.text), ["Activity", "Connections", "Skills", "Channels"]);
+    assert.deepEqual(nav.map((e) => e.text.text), ["Activity", "Connections", "Skills", "Channels", "Help & settings"]);
     assert.deepEqual(nav.filter((e) => e.style === "primary").map((e) => e.value), [expected]);
     assert.deepEqual(JSON.parse(view.private_metadata), { tab: expected });
     assert.equal(view.blocks.filter((b) => b.text?.text?.startsWith("CONTENT:")).length, 1);
+    assert.equal(view.blocks.some((b) => b.type === "context" && b.elements?.[0]?.text === "version"), expected === "help");
   }
 });
 
@@ -49,7 +50,7 @@ test("tab clicks acknowledge first and publish only for the authenticated clicki
   assert.equal(calls.length, 3, "invalid and mismatched navigation cannot publish");
 });
 
-test("Composio save/disconnect stay on Connections; reminders and thread controls stay on Activity", async () => {
+test("Composio stays on Connections, reminders on Help & settings, and thread controls on Activity", async () => {
   const app = fakeApp(); const calls = [];
   registerHomeActions(app, { publishHome: async (_client, userId, state = {}) => {
     calls.push({ userId, tab: state.tab || "activity", filter: state.filter });
@@ -65,7 +66,7 @@ test("Composio save/disconnect stay on Connections; reminders and thread control
   await app.actionFor(NUDGE_HOME_TOGGLE_ACTION)({ ack: async () => {}, body: { user: { id: "U_TAB_SELF" } }, action: { value: "on" }, client: {} });
   await app.actionFor("cg_home_threads_filter")({ ack: async () => {}, body: { user: { id: "U_TAB_SELF" } },
     action: { action_id: "cg_home_threads_filter", selected_option: { value: "done" } }, client: {} });
-  assert.deepEqual(calls.map((c) => c.tab), ["connections", "connections", "activity", "activity"]);
+  assert.deepEqual(calls.map((c) => c.tab), ["connections", "connections", "help", "activity"]);
   assert.ok(calls.every((c) => c.userId === "U_TAB_SELF"));
   assert.equal(calls.at(-1).filter, "done");
 });

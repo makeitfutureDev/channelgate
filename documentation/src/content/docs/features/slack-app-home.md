@@ -7,15 +7,16 @@ Open the ChannelGate app in Slack and select **Home** for an orientation dashboa
 
 ## Choose a Home section
 
-The navigation row inside Home has four sections. The selected section is highlighted:
+The navigation row inside Home has five sections. The selected section is highlighted:
 
-- **Activity** opens by default, with My threads, reminder preferences and command/runtime guidance.
+- **Activity** opens by default, with My threads.
 - **Connections** shows your personal/shared connection status and personal Composio controls.
 - **Skills** shows your personal grants and the organization-wide skill count.
 - **Channels** lists conversations currently available to you.
+- **Help & settings** contains quiet-thread reminders, command/runtime guidance and gateway information.
 
 Only the selected section loads. Saving or disconnecting a personal connection keeps you on
-Connections. Thread filters, pagination and reminder changes stay on Activity. Opening Home again
+Connections. Thread filters and pagination stay on Activity; reminder changes stay on Help & settings. Opening Home again
 starts at Activity; navigation is personal to the viewing user.
 
 ## Understand your access
@@ -27,8 +28,9 @@ The channel list is bounded. If it shows a count with a plus sign, more eligible
 ## Follow your threads
 
 **My threads** lists threads you started with this gateway, with the original link, conversation,
-status and last-message date. Divider lines separate the rows; **Open thread** and the green
-**✓ Done** button sit below each one. Dates come from Slack messages, rather than the time a run
+status and last-message date. Divider lines separate compact entries: click the title to open the
+thread, with channel, status and date below it and the green **✓ Done** button on the right.
+Dates come from Slack messages, rather than the time a run
 finished or you clicked Done. Slack displays the date in your local time.
 
 **Active** and **All open** hide completed work. Choose a specific open status and use

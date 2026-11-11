@@ -3,8 +3,8 @@
 import { registerComposioHomeActions } from "./home-composio.js";
 import { registerNudgeHomeActions } from "./home-nudges.js";
 import { registerHomeThreadActions } from "./home-threads.js";
-export const HOME_TAB_ACTION = /^cg_home_tab_(activity|connections|skills|channels)$/;
-export const HOME_TABS = Object.freeze({ activity: "Activity", connections: "Connections", skills: "Skills", channels: "Channels" });
+export const HOME_TAB_ACTION = /^cg_home_tab_(activity|connections|skills|channels|help)$/;
+export const HOME_TABS = Object.freeze({ activity: "Activity", connections: "Connections", skills: "Skills", channels: "Channels", help: "Help & settings" });
 
 export const normalizeHomeTab = (tab) => Object.hasOwn(HOME_TABS, tab) ? tab : "activity";
 
@@ -42,7 +42,7 @@ export async function buildHomeTabView({ tab, userId, role, sections, footer = [
         text: { type: "plain_text", text: label }, ...(value === tab ? { style: "primary" } : {}),
       })) },
       ...content,
-      { type: "context", elements: [{ type: "mrkdwn", text: footer.join("  ·  ") }] },
+      ...(tab === "help" && footer.length ? [{ type: "context", elements: [{ type: "mrkdwn", text: footer.join("  ·  ") }] }] : []),
     ],
   };
 }
@@ -61,6 +61,6 @@ export function registerHomeTabActions(app, { publishHome } = {}) {
 export function registerHomeActions(app, { publishHome }) {
   registerHomeTabActions(app, { publishHome });
   registerComposioHomeActions(app, { publishHome: (client, userId) => publishHome(client, userId, { tab: "connections" }) });
-  registerNudgeHomeActions(app, { publishHome });
+  registerNudgeHomeActions(app, { publishHome: (client, userId) => publishHome(client, userId, { tab: "help" }) });
   registerHomeThreadActions(app, { publishHome });
 }

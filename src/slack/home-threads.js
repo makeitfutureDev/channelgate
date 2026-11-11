@@ -182,7 +182,7 @@ export function homeThreadBlocks(snapshot) {
   const state = { filter, page };
   const blocks = [
     { type: "divider" },
-    { type: "section", text: { type: "mrkdwn", text: "*My threads*\n✅, 👍 or Done completes a thread: it disappears from open views and stops thread reminders. Use Completed to reopen it." } },
+    { type: "section", text: { type: "mrkdwn", text: "*My threads* · ✅ / 👍 / Done hides completed work. Reopen from Completed." } },
     { type: "actions", elements: [
       { type: "static_select", action_id: "cg_home_threads_filter", placeholder: { type: "plain_text", text: "Status" },
         initial_option: { text: { type: "plain_text", text: LABELS[filter] }, value: filter },
@@ -192,6 +192,7 @@ export function homeThreadBlocks(snapshot) {
   ];
   if (!rows.length) blocks.push({ type: "section", text: { type: "mrkdwn", text: "_No visible threads in this view._" } });
   for (const row of rows) {
+    const title = String(row.title || "Open thread");
     const at = row.last_message_ms;
     const date = Number.isFinite(at) && at > 0
       ? `<!date^${Math.floor(at / 1000)}^{date_short_pretty} at {time}|${new Date(at).toISOString().slice(0, 16).replace("T", " ")} UTC>`
@@ -199,11 +200,8 @@ export function homeThreadBlocks(snapshot) {
     const done = row.status === "done";
     blocks.push(
       { type: "divider" },
-      { type: "section", text: { type: "mrkdwn", text: `*${esc(row.channelName)}*\n<${row.url}|${esc(row.title) || "Open thread"}>` },
-        fields: [{ type: "mrkdwn", text: `*Status*\n${ICONS[row.status]} ${done ? "Done" : LABELS[row.status]}` },
-          { type: "mrkdwn", text: `*Last message*\n${date}` }] },
-      { type: "actions", elements: [{ type: "button", text: { type: "plain_text", text: "Open thread" }, action_id: "cg_home_threads_open", url: row.url },
-        { ...button(done ? "Reopen" : "✓ Done", done ? "reopen" : "done", { ...state, channelId: row.channel_id, threadTs: row.thread_ts }), ...(done ? {} : { style: "primary" }) }] },
+      { type: "section", text: { type: "mrkdwn", text: `<${row.url}|${esc(title.length > 110 ? title.slice(0, 107) + "…" : title)}>\n${esc(row.channelName)} · ${ICONS[row.status]} ${done ? "Done" : LABELS[row.status]} · Last message ${date}` },
+        accessory: { ...button(done ? "Reopen" : "✓ Done", done ? "reopen" : "done", { ...state, channelId: row.channel_id, threadTs: row.thread_ts }), ...(done ? {} : { style: "primary" }) } },
     );
   }
   const navigation = [];
