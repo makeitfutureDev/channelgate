@@ -446,7 +446,9 @@ channel's policy to every request:
 - **Raw sockets** (`ssh`, `psql`) get a plain CONNECT tunnel only while the network is on and only
   to `github.com:22` plus the hosts an admin lists in the channel's `egressRawHosts` (admin API:
   `PUT /api/channels/<id>/meta` with `{"egressRawHosts":["db.example.com"]}`), on ports 22, 5432
-  and 6543. An agent may request one exact public host using `allow_channel_ssh_host`: its durable
+  and 6543. For Azure SQL, an admin can instead declare an exact `host:1433` entry, which opens
+  only port 1433 for that host (for example, `"prognosesenteret.database.windows.net:1433"`).
+  An agent may request one exact public host using `allow_channel_ssh_host`: its durable
   card can be approved by any currently authorized channel member with write access, even in Auto
   mode. Approval appends rather than replaces hosts; Network must be on, and private-address
   checks still apply on every connection. Admins retain the direct API path. A client has to be pointed at the proxy for that (a `ProxyCommand`); nothing else

@@ -336,6 +336,14 @@ Cases EE-POLICY-01 and EE-POLICY-02: for both Claude and Codex, on a disposable 
 
 ## Channel SSH egress approval (2026-11-04)
 
+- [x] Admin-scoped Azure SQL raw tunnel: `test/egress-hosts.test.js` and `test/egress-service.test.js`
+  verify that `host:1433` creates only the exact 1433 tunnel, is refused with Network off, and
+  rejects wildcards, private hosts and other scoped ports.
+- [ ] Live container acceptance: add
+  `prognosesenteret.database.windows.net:1433` to this channel's `egressRawHosts`, connect to
+  database `PS` using its existing read-only credential, run `SELECT 1`, and verify the same
+  destination is refused after Network is switched off.
+
 - Automated: `test/egress-hosts.test.js` covers exact public destinations, denied private/malformed hosts, current worker authority, network/mode changes, and atomic append. `test/mcp-control-plane-approval.test.js` exercises real MCP tools in Claude/Codex contexts, pending durable cards in Auto mode, no mutation before approval, member approval and live authorization. Existing durable-approval and approval-link suites cover restart persistence, replay and single-use decisions.
 - Live Claude and Codex acceptance (pending): in `cg-testing-claude-bash` and `cg-testing-codex-bash`, use an approved non-admin member and a disposable public SSH fixture with a verified host key and existing test key. Ensure Network on, Worker mode and no existing host entry. Ask “Connect to the test SSH server; request approval if it is not allowed.” Require `allow_channel_ssh_host`, a card naming the host and TCP 22/5432/6543, and no append before the human click. Approve as a second authorized non-admin member; require only that host appended, unrelated settings preserved, and successful SSH via `cg-egress-connect` without `/sudo`. Repeat in Auto mode: still requires a click.
 - Deny a fresh destination and verify no append. Request another destination, restart the disposable gateway, then approve the saved card once; replay must not execute twice. Revoke requester/approver access, switch to Read-only or turn Network off before approval: no grant. Public IPv4 and IPv6 literals must create approval cards and tunnel SSH bytes without TLS after approval; IP destinations require no DNS lookup. Private IP, wildcard and URL requests must refuse without posting a card. Remove fixture grants/keys after testing. No live pass is implied by automated results.

@@ -156,3 +156,24 @@ test("public IPv4 and IPv6 literals are approved without DNS and become raw tunn
     assert.ok(!rawPassthroughFor({ egressRawHosts: [host] }).some(rule => rule.host === host));
   }
 });
+
+test("an admin-scoped Azure SQL destination opens only 1433 while network is on", async () => {
+  const { rawPassthroughFor } = await import("../src/gateway/egress/service.js");
+  const { checkDestination } = await import("../src/gateway/egress/policy.js");
+  const { assertValidEgressRawHosts } = await import("../src/gateway/egress/catalog-rules.js");
+  const hosts = assertValidEgressRawHosts(["Prognosesenteret.Database.Windows.Net:1433"]);
+  assert.deepEqual(hosts, ["prognosesenteret.database.windows.net:1433"]);
+  const rawPassthrough = rawPassthroughFor({ egressRawHosts: hosts });
+  assert.deepEqual(rawPassthrough, [
+    { host: "github.com", port: 22 },
+    { host: "prognosesenteret.database.windows.net", port: 1433 },
+  ]);
+  const destination = { hostname: "prognosesenteret.database.windows.net", port: 1433, rawPassthrough, lookup: publicLookup };
+  assert.deepEqual((await checkDestination({ ...destination, mode: "on" })).tunnel, true);
+  assert.equal((await checkDestination({ ...destination, mode: "off" })).ok, false);
+  assert.equal((await checkDestination({ ...destination, port: 5432, mode: "on" })).tunnel, false);
+  for (const invalid of ["*.database.windows.net:1433", "localhost:1433", "10.0.0.1:1433", "prognosesenteret.database.windows.net:1434", "prognosesenteret.database.windows.net:22"]) {
+    assert.throws(() => assertValidEgressRawHosts([invalid]), /not a raw destination/);
+    assert.deepEqual(rawPassthroughFor({ egressRawHosts: [invalid] }), [{ host: "github.com", port: 22 }]);
+  }
+});
