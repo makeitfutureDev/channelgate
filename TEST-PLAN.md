@@ -339,10 +339,19 @@ Cases EE-POLICY-01 and EE-POLICY-02: for both Claude and Codex, on a disposable 
 - [x] Admin-scoped Azure SQL raw tunnel: `test/egress-hosts.test.js` and `test/egress-service.test.js`
   verify that `host:1433` creates only the exact 1433 tunnel, is refused with Network off, and
   rejects wildcards, private hosts and other scoped ports.
-- [ ] Live container acceptance: add
-  `prognosesenteret.database.windows.net:1433` to this channel's `egressRawHosts`, connect to
-  database `PS` using its existing read-only credential, run `SELECT 1`, and verify the same
-  destination is refused after Network is switched off.
+- [ ] Live Claude and Codex acceptance (SQL-RAW-01): use exclusive disposable equivalents of
+  `cg-testing-claude-bash` and `cg-testing-codex-bash` with Network on and an owned public
+  SQL Server/Azure SQL fixture at `<sql-host>:1433`, a readable database password Secret and
+  a fixture project with the `mssql` driver. As admin append only `<sql-host>:1433` to `egressRawHosts`,
+  preserving other entries. In each ordinary container ask: "Through cg-egress-connect,
+  connect to the prepared SQL fixture using the configured read-only credential and verified
+  server certificate; run SELECT 1 and report success without printing secrets."
+  Require a real read-only result through CONNECT with no `/sudo` or `rawNetwork`.
+  Turn Network off and require a `network-off` refusal on a new connection; restore it,
+  remove only the scoped grant and require that a new connection is no longer a raw tunnel.
+  Exact-host matching, private/mixed DNS refusal and a worker's inability to request port 1433
+  are covered by automated regressions. Restore the fixture's initial settings and record
+  each engine's live evidence separately; automated tests do not establish a live SQL login.
 
 - Automated: `test/egress-hosts.test.js` covers exact public destinations, denied private/malformed hosts, current worker authority, network/mode changes, and atomic append. `test/mcp-control-plane-approval.test.js` exercises real MCP tools in Claude/Codex contexts, pending durable cards in Auto mode, no mutation before approval, member approval and live authorization. Existing durable-approval and approval-link suites cover restart persistence, replay and single-use decisions.
 - Live Claude and Codex acceptance (pending): in `cg-testing-claude-bash` and `cg-testing-codex-bash`, use an approved non-admin member and a disposable public SSH fixture with a verified host key and existing test key. Ensure Network on, Worker mode and no existing host entry. Ask “Connect to the test SSH server; request approval if it is not allowed.” Require `allow_channel_ssh_host`, a card naming the host and TCP 22/5432/6543, and no append before the human click. Approve as a second authorized non-admin member; require only that host appended, unrelated settings preserved, and successful SSH via `cg-egress-connect` without `/sudo`. Repeat in Auto mode: still requires a click.

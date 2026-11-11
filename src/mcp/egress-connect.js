@@ -11,7 +11,7 @@
 // in-container forwarder on 127.0.0.1:3128, which pipes to the daemon's egress proxy. This speaks
 // `CONNECT host:port` to it and, on a 200, pipes stdin/stdout through the tunnel byte for byte. The
 // PROXY decides: a raw tunnel exists only for the host:ports it allows (github.com:22 always, plus
-// the channel's declared raw hosts on 22/5432/6543 or exact host:1433, only with Allow network on). A refusal is
+// the channel's declared raw host/port rules, and only with Allow network on). A refusal is
 // one readable line on stderr and exit 1 — ssh then prints "kex_exchange_identification: Connection
 // closed by remote host", so the line naming the reason is what the developer needs to see. The
 // proxy cannot add an SSH key: the tunnel carries the developer's own authentication, nothing more.
