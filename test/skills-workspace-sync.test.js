@@ -5,7 +5,8 @@ import path from "node:path";
 import { ensureTestEnv, tempDir } from "./helpers.js";
 
 ensureTestEnv();
-const { saveChannelMeta, defaultChannelMeta, upsertChannelEntry, patchChannelMeta, getChannelMeta, setUser } = await import("../src/config/store.js");
+const { saveChannelMeta, defaultChannelMeta, upsertChannelEntry, patchChannelMeta, getChannelMeta, listChannels, setUser } = await import("../src/config/store.js");
+const { createWorkspaceProjectionReader, workspaceProjection } = await import("../src/config/workspace-links.js");
 const { workspaceFolder } = await import("../src/config/paths.js");
 const { createLocalSkill, updateLocalSkill, grantSkillsToChannel, revokeSkillsFromChannel } = await import("../src/gateway/skills/authoring.js");
 const { upsertTemplate } = await import("../src/gateway/skills/catalog.js");
@@ -20,6 +21,96 @@ async function channel(id, patch = {}) {
   await saveChannelMeta(entry.slug, { ...defaultChannelMeta({ channelId: id, name, type: "channel", isDM: false }), ...patch });
   return entry;
 }
+
+test("a full workspace listing resolves each stored directory only once", () => {
+  const rows = Array.from({ length: 256 }, (_, n) => ({
+    slug: `projection-${n}`,
+    meta: { channelId: `C_PROJECTION_${n}`, workDir: `/fixture/project-${Math.floor(n / 4)}`,
+      skills: [`skill-${n}`], allowedUsers: [`U_${n}`], model: `model-${n}`,
+      ...(n % 4 === 3 ? { codeChannel: { originSlug: `projection-${n - 3}` } } : {}) },
+  }));
+  const calls = new Map();
+  const read = createWorkspaceProjectionReader(rows, (slug, meta) => {
+    calls.set(slug, (calls.get(slug) || 0) + 1);
+    assert.equal(meta.cleanMode, false);
+    return meta.workDir;
+  });
+  for (const row of rows) {
+    const expected = workspaceProjection(row.slug, row.meta, rows, (_slug, meta) => meta.workDir);
+    assert.deepEqual(read(row.slug), expected);
+  }
+  assert.equal(calls.size, rows.length);
+  assert.ok([...calls.values()].every((count) => count === 1), "filesystem work grows with channels, not channel pairs");
+  assert.equal(read("missing-channel"), null);
+  assert.equal(calls.size, rows.length);
+});
+
+test("workspace listing results cannot mutate another linked result or its stored snapshot", () => {
+  const rows = [
+    { slug: "owner", meta: { workDir: "/shared", skills: ["shared"], allowedUsers: ["U_OWNER"], env: { FIXTURE: { value: "original" } } } },
+    { slug: "follower", meta: { workDir: "/shared", skills: [], allowedUsers: [] } },
+  ];
+  const read = createWorkspaceProjectionReader(rows, (_slug, meta) => meta.workDir);
+  const follower = read("follower");
+  follower.skills.push("changed");
+  follower.allowedUsers.length = 0;
+  follower.env.FIXTURE.value = "changed";
+  assert.deepEqual(read("owner").skills, ["shared"]);
+  assert.deepEqual(read("follower").allowedUsers, ["U_OWNER"]);
+  assert.equal(read("follower").env.FIXTURE.value, "original");
+  assert.equal(rows[0].meta.env.FIXTURE.value, "original");
+});
+
+test("a new workspace listing observes changed directory resolution and owner authorization", () => {
+  const rows = [
+    { slug: "owner", meta: { workDir: "/shared", access: "approved", allowedUsers: ["U_OWNER"], skills: ["old"] } },
+    { slug: "follower", meta: { workDir: "/alias", access: "none", allowedUsers: [], skills: [] } },
+  ];
+  let aliasTarget = "/shared";
+  const resolve = (_slug, meta) => meta.workDir === "/alias" ? aliasTarget : meta.workDir;
+  assert.equal(createWorkspaceProjectionReader(rows, resolve)("follower").workspaceLink.slug, "owner");
+  const revoked = structuredClone(rows);
+  revoked[0].meta.allowedUsers = [];
+  revoked[0].meta.access = "none";
+  revoked[0].meta.skills = [];
+  const restricted = createWorkspaceProjectionReader(revoked, resolve)("follower");
+  assert.equal(restricted.access, "none");
+  assert.deepEqual(restricted.allowedUsers, []);
+  assert.deepEqual(restricted.skills, []);
+  aliasTarget = "/separate";
+  const detached = createWorkspaceProjectionReader(revoked, resolve)("follower");
+  assert.equal(detached.workspaceLink, undefined);
+  assert.equal(detached.access, "none");
+});
+
+test("fresh listings apply DM template changes and the current preferred owner", async () => {
+  const { getDmTemplates, saveSettings } = await import("../src/config/settings.js");
+  const previous = getDmTemplates();
+  const rows = [
+    { slug: "older-follower", meta: { workDir: "/shared", workspaceOwnerSlug: "dm-owner", skills: ["local"], model: "local-model" } },
+    { slug: "dm-owner", meta: { workDir: "/shared", isDM: true, type: "im", template: "user", allowedUsers: ["U_OWNER"], excludedUsers: ["U_EXCLUDED"] } },
+  ];
+  const read = () => createWorkspaceProjectionReader(rows, (_slug, meta) => meta.workDir)("older-follower");
+  try {
+    saveSettings({ dmTemplates: { ...previous, user: { ...previous.user, skills: ["before"], allowNetwork: true } } });
+    assert.deepEqual(read().skills, ["before"]);
+    saveSettings({ dmTemplates: { ...previous, user: { ...previous.user, skills: ["after"], allowNetwork: false } } });
+    const updated = read();
+    assert.equal(updated.workspaceLink.slug, "dm-owner");
+    assert.equal(updated.workspacePolicyIsDM, true);
+    assert.equal(updated.model, "local-model");
+    assert.deepEqual(updated.skills, ["after"]);
+    assert.equal(updated.allowNetwork, false);
+    assert.deepEqual(updated.excludedUsers, ["U_EXCLUDED"]);
+    const moved = structuredClone(rows);
+    moved[1].meta.workDir = "/elsewhere";
+    const promoted = createWorkspaceProjectionReader(moved, (_slug, meta) => meta.workDir)("older-follower");
+    assert.equal(promoted.workspaceLink, undefined);
+    assert.deepEqual(promoted.skills, ["local"]);
+  } finally {
+    saveSettings({ dmTemplates: previous });
+  }
+});
 
 test("daemon reconciliation writes changed revisions and removes revoked grants without an engine run", async () => {
   const entry = await channel("C_WORKSPACE_SYNC");
@@ -77,6 +168,9 @@ test("shared folders follow the first conversation live and reject divergent sha
     assert.equal((await syncWorkspaceSkills({ log: quiet })).ok, true);
     await patchChannelMeta(a.slug, { memory: false });
     assert.equal((await getChannelMeta(b.slug)).memory, false);
+    const listing = await listChannels();
+    assert.deepEqual(listing.find((row) => row.slug === b.slug).meta, await getChannelMeta(b.slug));
+    assert.equal(listing.find((row) => row.slug === b.slug).meta.memory, false);
     await assert.rejects(patchChannelMeta(b.slug, { memory: true }), { code: "workspace_setting_linked" });
     await patchChannelMeta(b.slug, { model: "other-model" });
     assert.equal((await getChannelMeta(b.slug)).model, "other-model");

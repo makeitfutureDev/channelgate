@@ -25,7 +25,7 @@ import { isApiPrincipal } from "./api-principal.js";
 import { stripDeadFields } from "./dead-fields.js";
 import { emitConfigChange } from "./change-events.js";
 import { DEFAULT_PLATFORM, isPlatformId, platformFolderNames } from "../platforms/registry.js";
-import { workspaceProjection, workspaceSetup, WORKSPACE_FIELDS } from "./workspace-links.js";
+import { createWorkspaceProjectionReader, workspaceProjection, workspaceSetup, WORKSPACE_FIELDS } from "./workspace-links.js";
 const PLATFORM_FOLDER_NAMES = new Set(platformFolderNames());
 
 // `nudges` moved from conversation metadata to user records. Retire this shape-specific key only
@@ -260,8 +260,7 @@ function workspaceRows() {
 
 export async function getChannelMeta(slug) {
   const { effectiveWorkDir } = await import("../gateway/folders.js");
-  const rows = workspaceRows();
-  return workspaceProjection(slug, rows.find((row) => row.slug === slug)?.meta || null, rows, effectiveWorkDir);
+  return createWorkspaceProjectionReader(workspaceRows(), effectiveWorkDir)(slug);
 }
 
 function prepareWorkspaceSave(slug, current, next, effectiveWorkDir, channelScopedSkills) {
@@ -452,10 +451,12 @@ export async function patchChannelMeta(slug, patch) {
 
 // List all known channels by reading the index plus their meta (for the admin UI).
 export async function listChannels() {
+  const { effectiveWorkDir } = await import("../gateway/folders.js");
   const index = await getChannelsIndex();
+  const readWorkspace = createWorkspaceProjectionReader(workspaceRows(), effectiveWorkDir);
   const out = [];
   for (const [channelId, entry] of Object.entries(index)) {
-    const meta = (await getChannelMeta(entry.slug)) ?? null;
+    const meta = readWorkspace(entry.slug);
     out.push({ channelId, ...entry, meta });
   }
   return out;

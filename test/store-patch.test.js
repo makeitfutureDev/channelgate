@@ -10,8 +10,37 @@ import { ensureTestEnv } from "./helpers.js";
 
 const dir = ensureTestEnv();
 
-const { saveChannelMeta, getChannelMeta, patchChannelMeta, defaultChannelMeta, getUser, setUser } = await import("../src/config/store.js");
+const { saveChannelMeta, getChannelMeta, patchChannelMeta, defaultChannelMeta, getUser, setUser, listChannels, upsertChannelEntry } = await import("../src/config/store.js");
+const { getDb } = await import("../src/db/index.js");
 const { getProgressView, saveSettings, settingsForApi, getChannelTemplate, applyChannelTemplate, getDmTemplates } = await import("../src/config/settings.js");
+
+test("channel listing reads metadata once, preserves missing rows and observes later writes", async (t) => {
+  const entries = [];
+  for (let n = 0; n < 8; n++) {
+    const channelId = `C_LIST_SNAPSHOT_${n}`;
+    const entry = await upsertChannelEntry(channelId, { name: `list-snapshot-${n}`, type: "channel", platform: "slack" });
+    entries.push(entry);
+    if (n !== 7) await saveChannelMeta(entry.slug, { channelId, allowedUsers: ["U_BEFORE"], access: "approved" });
+  }
+  const db = getDb();
+  const prepare = db.prepare;
+  let metadataReads = 0;
+  t.mock.method(db, "prepare", function (sql, ...args) {
+    if (/\bSELECT\b.*\bFROM channel_meta\b/i.test(sql)) metadataReads++;
+    return Reflect.apply(prepare, this, [sql, ...args]);
+  });
+  const first = await listChannels();
+  assert.equal(metadataReads, 1, "a listing takes one snapshot, not one full table scan per channel");
+  assert.equal(first.find((row) => row.slug === entries[7].slug).meta, null);
+  await patchChannelMeta(entries[0].slug, { allowedUsers: [], access: "none" });
+  metadataReads = 0;
+  const second = await listChannels();
+  assert.equal(metadataReads, 1);
+  const changed = second.find((row) => row.slug === entries[0].slug).meta;
+  assert.deepEqual(changed.allowedUsers, []);
+  assert.equal(changed.access, "none");
+  assert.deepEqual(first.find((row) => row.slug === entries[0].slug).meta.allowedUsers, ["U_BEFORE"]);
+});
 
 test("patchChannelMeta merges only the supplied keys", async () => {
   await saveChannelMeta("chan-a", { adminMode: false, allowBash: false, skills: ["a"] });
