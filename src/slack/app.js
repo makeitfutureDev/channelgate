@@ -139,8 +139,9 @@ import { registerEngineSwitchChoiceActions } from "./engine-switch-choice.js";
 import { composioHomeButtons } from "./home-composio.js";
 import { nudgeHomeBlocks } from "./home-nudges.js";
 import { homeThreadsSnapshot, homeThreadBlocks, homeThreadsRefreshKey } from "./home-threads.js";
+import { createHomeThreadReader } from "./home-thread-reader.js";
 import { buildHomeTabView, createHomePublisher, registerHomeActions } from "./home-tabs.js";
-import { getSlackThread, recordSlackThreadMessage } from "../gateway/slack-threads.js";
+import { getSlackThread, recordSlackThreadMessage, slackThreadsForUser } from "../gateway/slack-threads.js";
 import { isCompletionReaction } from "../gateway/completion-reactions.js";
 import { completeThreadFromFeedback, syncThreadCompletionReaction } from "./thread-completion.js";
 import { buildMenuCard, buildMenuResumeView, MENU_RESUME_ACTION_ID } from "./menu.js";
@@ -3397,6 +3398,7 @@ async function connectAndWire(app) {
   // Each Home section loads only its own data. A connection save returns to Connections;
   // thread controls return to Activity and reminder preferences to Help & settings. Every publication resolves
   // the clicking viewer's current role and content afresh, without shared tab-selection state.
+  const homeThreadReader = createHomeThreadReader();
   const publishHomeTab = createHomePublisher(async (client, userId, homeView = {}) => {
     await ensureUserKnown(client, userId);
     const admin = await isAdmin(userId);
@@ -3410,7 +3412,12 @@ async function connectAndWire(app) {
       activity: async () => {
         let threads;
         try {
-          const snapshot = await homeThreadsSnapshot(client, userId, homeView);
+          const snapshot = await homeThreadsSnapshot(client, userId, homeView, {
+            reader: homeThreadReader,
+            discover: homeView.discoverThreads === true || !slackThreadsForUser(userId).length,
+            reconcile: homeView.forceThreads === true,
+            force: homeView.forceThreads === true,
+          });
           retryActivity = snapshot.unavailable;
           threads = homeThreadBlocks(snapshot);
         }
@@ -3477,7 +3484,7 @@ async function connectAndWire(app) {
       },
     };
     return buildHomeTabView({ tab: homeView.tab, userId, role, sections, footer, needsActivityRetry: () => retryActivity });
-  }, { refreshKey: homeThreadsRefreshKey });
+  }, { refreshKey: homeThreadsRefreshKey, refreshState: ({ forceThreads: _force, discoverThreads: _discover, ...state }) => state });
   const stopSlack = app.stop.bind(app);
   app.stop = async (...args) => { await publishHomeTab.stop(); return stopSlack(...args); };
 

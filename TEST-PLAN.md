@@ -2,6 +2,21 @@
 
 ## Slack Home section navigation (2026-11-11)
 
+Performance regression: include `test/home-thread-reader.test.js`. Check 30-second expiry, explicit
+Refresh bypass, local message/completion invalidation, concurrent request deduplication, failed-read
+retry, per-client isolation, bounded eviction and a shared four-read limit. An indexed ten-row
+page needs ten inspections and ten links cold, then no transcript/link requests on immediate repeat.
+Ordinary navigation skips historical candidate enumeration and offscreen reconciliation; empty
+indexes bootstrap and explicit Refresh/Load older scan a bounded batch. Verify fresh membership/
+admission with warm evidence, live Done/Reopen proof, and one-shot flags cleared before auto ticks.
+Preserve conservative batch stopping on Slack errors/rate limits and subsequent recovery.
+
+Live performance acceptance in the existing App Home fixture: compare API call counts and render
+duration for the same indexed page before/after, then exercise warm repeat, pagination, filters,
+Refresh and Load older. Check local completion/message changes invalidate evidence immediately,
+expired evidence refreshes, and membership revocation hides private rows even with warm caches.
+Measure native client latency separately; controlled fake-API timings are not a live Slack result.
+
 Automatic-refresh regression: fake timers verify changed Activity state republishes within the
 15-second check interval with the same filter/page; unchanged state makes no extra render/history
 calls. Verify independent viewers, the 200-viewer observer cap, non-overlap, retry after key/render/

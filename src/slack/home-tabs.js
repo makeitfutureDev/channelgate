@@ -12,6 +12,7 @@ export const HOME_REFRESH_MS = 15_000;
 
 export function createHomePublisher(render, {
   refreshKey = null, refreshMs = HOME_REFRESH_MS, maxViewers = 200,
+  refreshState = (state) => state,
   setTimer = setTimeout, clearTimer = clearTimeout,
 } = {}) {
   const viewers = new Map();
@@ -55,7 +56,7 @@ export function createHomePublisher(render, {
     }
     viewers.delete(userId); viewers.set(userId, viewer);
     cancel(viewer);
-    viewer.state = { ...state };
+    viewer.state = { ...refreshState(state) };
     const revision = ++viewer.revision;
     try {
       // Capture before rendering, so a change during a slow Slack inspection is checked again.

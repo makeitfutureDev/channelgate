@@ -8,6 +8,7 @@ const { setThreadSudo } = await import("../src/gateway/thread-engine.js");
 const { getSlackThread, indexSlackThread, trackSlackThread, recordSlackThreadOutcome, setSlackThreadDone,
   slackThreadRuntime, slackThreadStatus, updateSlackThreadRootCompletion } = await import("../src/gateway/slack-threads.js");
 const { homeThreadsSnapshot, homeThreadBlocks, registerHomeThreadActions, normalizeThreadView, homeThreadsRefreshKey } = await import("../src/slack/home-threads.js");
+const { createHomeThreadReader } = await import("../src/slack/home-thread-reader.js");
 
 let roots;
 let members;
@@ -474,6 +475,55 @@ test("automatic refresh keys follow owned lifecycle/completion/message state wit
   getDb().prepare("UPDATE slack_threads SET checked_ms=checked_ms+1").run();
   assert.equal(homeThreadsRefreshKey("U_MINE"), key, "passive verification does not trigger a refresh loop");
   assert.equal(reads.length, 0);
+});
+
+test("cold visible pages verify four rows concurrently and repeated pages need no transcript/link calls", async () => {
+  const c = await channel(); for (let n = 0; n < 10; n++) root(c, `${100+n}.000001`);
+  let active = 0, peak = 0, transcripts = 0, links = 0;
+  const work = async (value) => { active++; peak = Math.max(peak, active); await new Promise((resolve) => setImmediate(resolve)); active--; return value; };
+  client.conversations.replies = ({ channel, ts }) => { transcripts++; return work({ messages: [roots.get(`${channel}:${ts}`)] }); };
+  client.chat.getPermalink = ({ message_ts }) => { links++; return work({ permalink: `https://example.slack.com/${message_ts}` }); };
+  const options = { reader: createHomeThreadReader(), discover: false, reconcile: false };
+  assert.equal((await homeThreadsSnapshot(client, "U_MINE", {}, options)).rows.length, 10);
+  assert.equal(peak, 4); assert.equal(transcripts, 10); assert.equal(links, 10);
+  assert.equal((await homeThreadsSnapshot(client, "U_MINE", {}, options)).rows.length, 10);
+  assert.equal(transcripts, 10); assert.equal(links, 10);
+});
+
+test("fast navigation reuses Slack evidence while checking current membership and gateway access afresh", async () => {
+  const c = await channel("G_PRIVATE", "group"); root(c, "100.000001"); members.set(c.channelId, ["U_MINE"]);
+  const reader = createHomeThreadReader(); const options = { reader, discover: false, reconcile: false };
+  const first = await homeThreadsSnapshot(client, "U_MINE", {}, options);
+  assert.equal(first.rows.length, 1); const count = reads.length;
+  assert.equal((await homeThreadsSnapshot(client, "U_MINE", {}, options)).rows.length, 1);
+  assert.equal(reads.length, count, "repeated navigation does not rescan transcripts");
+  members.set(c.channelId, []);
+  assert.equal((await homeThreadsSnapshot(client, "U_MINE", {}, options)).rows.length, 0);
+  members.set(c.channelId, ["U_MINE"]); await saveChannelMeta(c.slug, { access: "none" });
+  assert.equal((await homeThreadsSnapshot(client, "U_MINE", {}, options)).rows.length, 0);
+});
+
+test("fast navigation skips history discovery and forced Refresh bypasses cached evidence", async () => {
+  const c = await channel(); root(c, "100.000001");
+  getDb().prepare("INSERT INTO sessions(slug,thread_key,session_id,engine,runtime) VALUES(?,?,?,?,?)")
+    .run(c.slug, "200.000001", "historical", "codex", "{}");
+  roots.set(`${c.channelId}:200.000001`, { ts: "200.000001", user: "U_MINE", text: "Older tracked task" });
+  const reader = createHomeThreadReader(); const options = { reader, discover: false, reconcile: false };
+  const first = await homeThreadsSnapshot(client, "U_MINE", {}, options);
+  assert.equal(first.moreHistory, true); assert.equal(first.total, 1);
+  assert.ok(reads.every((key) => key.endsWith("100.000001")));
+  roots.get(`${c.channelId}:100.000001`).reactions = [{ name: "white_check_mark", count: 1 }];
+  const refreshed = await homeThreadsSnapshot(client, "U_MINE", {}, { reader, discover: true, reconcile: true, force: true });
+  assert.equal(refreshed.rows.length, 1); assert.equal(refreshed.rows[0].thread_ts, "200.000001");
+  assert.equal(getSlackThread(c.channelId, "100.000001").root_done, 1);
+});
+
+test("Refresh and Load older request one-shot full reads without changing the selected filter/page", async () => {
+  let handler; const states = [];
+  registerHomeThreadActions({ action: (_id, fn) => { handler = fn; } }, { publishHome: async (_c, _u, state) => states.push(state) });
+  for (const action of ["refresh", "history"]) await handler({ ack: async () => {}, body: { user: { id: "U_MINE" } }, client,
+    action: { action_id: `cg_home_threads_${action}`, value: JSON.stringify({ filter: "idle", page: 2 }) } });
+  assert.ok(states.every((state) => state.forceThreads && state.discoverThreads && state.filter === "idle" && state.page === 2));
 });
 
 test("a stale full inspection cannot undo a newer completion or message-date observation", async () => {

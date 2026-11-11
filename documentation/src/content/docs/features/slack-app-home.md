@@ -52,6 +52,10 @@ Removing a reaction opens the thread only if no other completion reaction or man
 Activity checks for tracked changes every 15 seconds and updates automatically, keeping your
 selected filter and page. It pauses when you switch Home sections or open Messages; reopening
 Home resumes it. Manual **Refresh** also reconciles reactions missed while the gateway was offline.
+Navigation reuses recently verified thread details for up to 30 seconds; tracked message and
+completion changes invalidate that evidence. Conversation access is checked on every view.
+**Refresh** bypasses this reuse. Older-history discovery runs when the index is empty or when you
+choose **Refresh** or **Load older threads**, keeping ordinary page changes quick.
 Existing gateway sessions and follow-ups are
 indexed in small batches; **Load older threads** continues that discovery. Completion reactions are
 also checked in batches so changes made while the gateway was offline can be reconciled. This is a

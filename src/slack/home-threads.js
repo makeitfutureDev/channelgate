@@ -13,7 +13,7 @@ import {
   slackThreadsForUser, slackThreadRuntime, slackThreadStatus,
 } from "../gateway/slack-threads.js";
 
-export const HOME_THREADS_ACTION = /^cg_home_threads_(filter|page|refresh|done|reopen)$/;
+export const HOME_THREADS_ACTION = /^cg_home_threads_(filter|page|refresh|history|done|reopen)$/;
 export const HOME_THREADS_PAGE_SIZE = 10;
 const HISTORY_BATCH = 10;
 const LABELS = { active: "Active", all: "All open", working: "Working", waiting: "Waiting", idle: "Idle", done: "Completed", error: "Error" };
@@ -63,23 +63,23 @@ const permanentMissing = (error) => ["thread_not_found", "message_not_found"].in
 const channelUnavailable = (error) => ["channel_not_found", "not_in_channel", "is_archived"].includes(error?.data?.error || error?.code || error?.message);
 const humanRoot = (root) => root?.user && !root.bot_id && !["bot_message", "tombstone"].includes(root.subtype);
 
-export async function homeThreadsSnapshot(client, userId, requested = {}) {
+export async function homeThreadsSnapshot(client, userId, requested = {}, { reader = null, discover = true, reconcile = true, force = false } = {}) {
   const view = normalizeThreadView(requested);
   const access = await accessContext(client, userId);
   const channels = await listChannels();
   const byId = new Map(channels.map((c) => [c.channelId, c]));
-  const candidates = slackThreadCandidates(channels.filter((c) => platformOfConversation(c.channelId) === "slack"));
+  const candidates = discover ? slackThreadCandidates(channels.filter((c) => platformOfConversation(c.channelId) === "slack")) : [];
   const rootCache = new Map();
   const hiddenChannels = new Set();
   let scanned = 0;
-  let moreHistory = false;
+  let moreHistory = !discover; // Unknown until an explicit history scan; keep its control available.
   let unavailable = false;
   const rootFor = async (channelId, ts) => {
     const key = `${channelId}::${ts}`;
     if (!rootCache.has(key)) rootCache.set(key, await readRoot(client, channelId, ts));
     return rootCache.get(key);
   };
-  for (const candidate of candidates) {
+  for (const candidate of discover ? candidates : []) {
     if (scanned >= HISTORY_BATCH) { moreHistory = true; break; }
     if (hiddenChannels.has(candidate.channelId)) continue;
     if (!await access.allows(byId.get(candidate.channelId), candidate.threadTs)) continue;
@@ -105,7 +105,9 @@ export async function homeThreadsSnapshot(client, userId, requested = {}) {
   const verified = new Set();
   const verify = async (row) => {
     const key = `${row.channel_id}::${row.thread_ts}`;
-    const inspected = await inspectThreadCompletion(client, row.channel_id, row.thread_ts);
+    const inspected = reader
+      ? await reader.inspect(client, row.channel_id, row.thread_ts, { force })
+      : await inspectThreadCompletion(client, row.channel_id, row.thread_ts);
     const root = inspected.root;
     if (!humanRoot(root) || root.user !== userId) {
       if (humanRoot(root)) indexSlackThread({ channelId: row.channel_id, slug: row.slug, root });
@@ -119,20 +121,25 @@ export async function homeThreadsSnapshot(client, userId, requested = {}) {
     verified.add(key);
     return true;
   };
-  // Reconcile completion BEFORE filtering. Rotate through all owned roots so missed reaction
-  // events cannot permanently strand a thread in the opposite filter after an offline interval.
-  for (const row of [...eligible.values()].sort((a, b) => a.checked_ms - b.checked_ms).slice(0, HISTORY_BATCH)) {
-    if (unavailable) break;
-    if (hiddenChannels.has(row.channel_id)) continue;
+  const runBatch = async (items, work) => {
+    let next = 0;
+    await Promise.all(Array.from({ length: Math.min(reader?.concurrency || 1, items.length) }, async () => {
+      while (next < items.length) await work(items[next++]);
+    }));
+  };
+  const verifySafely = async (row) => {
+    if (unavailable || hiddenChannels.has(row.channel_id) || verified.has(`${row.channel_id}::${row.thread_ts}`)) return;
     try { await verify(row); }
     catch (error) {
       if (permanentMissing(error)) {
         skipSlackThreadCandidate({ channelId: row.channel_id, slug: row.slug, threadTs: row.thread_ts });
         eligible.delete(`${row.channel_id}::${row.thread_ts}`);
       } else if (channelUnavailable(error)) hiddenChannels.add(row.channel_id);
-      else { unavailable = true; break; }
+      else unavailable = true;
     }
-  }
+  };
+  // Only explicit reconciliation scans offscreen rows; ordinary navigation verifies its window.
+  if (reconcile) await runBatch([...eligible.values()].sort((a, b) => a.checked_ms - b.checked_ms).slice(0, HISTORY_BATCH), verifySafely);
   const selection = () => [...eligible.values()]
     .filter((r) => !hiddenChannels.has(r.channel_id))
     .filter((r) => ["all", "active"].includes(view.filter) ? r.status !== "done" : r.status === view.filter)
@@ -149,33 +156,24 @@ export async function homeThreadsSnapshot(client, userId, requested = {}) {
     page = Math.min(view.page, pages - 1);
     window = filtered.slice(page * HOME_THREADS_PAGE_SIZE, (page + 1) * HOME_THREADS_PAGE_SIZE);
     const before = window.map((r) => `${r.channel_id}::${r.thread_ts}`).join("|");
-    for (const row of window) {
-      if (unavailable) break;
-      if (verified.has(`${row.channel_id}::${row.thread_ts}`)) continue;
-      try { await verify(row); }
-      catch (error) {
-        if (permanentMissing(error)) {
-          skipSlackThreadCandidate({ channelId: row.channel_id, slug: row.slug, threadTs: row.thread_ts });
-          eligible.delete(`${row.channel_id}::${row.thread_ts}`);
-        } else if (channelUnavailable(error)) hiddenChannels.add(row.channel_id);
-        else { unavailable = true; break; }
-      }
-    }
+    await runBatch(window, verifySafely);
     filtered = selection();
     pages = Math.max(1, Math.ceil(filtered.length / HOME_THREADS_PAGE_SIZE));
     page = Math.min(view.page, pages - 1);
     window = filtered.slice(page * HOME_THREADS_PAGE_SIZE, (page + 1) * HOME_THREADS_PAGE_SIZE);
     if (unavailable || window.map((r) => `${r.channel_id}::${r.thread_ts}`).join("|") === before) break;
   }
-  const rows = [];
-  for (const row of window) {
-    if (!verified.has(`${row.channel_id}::${row.thread_ts}`)) { unavailable = true; continue; }
+  const linked = new Map();
+  await runBatch(window, async (row) => {
+    if (!verified.has(`${row.channel_id}::${row.thread_ts}`)) { unavailable = true; return; }
     try {
-      const link = await client.chat.getPermalink({ channel: row.channel_id, message_ts: row.thread_ts });
-      if (!/^https:\/\//.test(link?.permalink || "")) { unavailable = true; break; }
-      rows.push({ ...row, url: link.permalink });
-    } catch { unavailable = true; break; }
-  }
+      const link = reader ? await reader.permalink(client, row.channel_id, row.thread_ts)
+        : await client.chat.getPermalink({ channel: row.channel_id, message_ts: row.thread_ts });
+      if (!/^https:\/\//.test(link?.permalink || "")) { unavailable = true; return; }
+      linked.set(`${row.channel_id}::${row.thread_ts}`, { ...row, url: link.permalink });
+    } catch { unavailable = true; }
+  });
+  const rows = window.map((row) => linked.get(`${row.channel_id}::${row.thread_ts}`)).filter(Boolean);
   return { ...view, page, pages, total: filtered.length, rows, moreHistory, unavailable: unavailable || access.unavailable || hiddenChannels.size > 0 };
 }
 
@@ -217,7 +215,7 @@ export function homeThreadBlocks(snapshot) {
   const navigation = [];
   if (page > 0) navigation.push(button("Previous", "page", { filter, page: page - 1 }));
   if (page + 1 < pages) navigation.push(button("Next", "page", { filter, page: page + 1 }));
-  if (moreHistory) navigation.push(button("Load older threads", "refresh", state));
+  if (moreHistory) navigation.push(button("Load older threads", "history", state));
   if (navigation.length) blocks.push({ type: "actions", elements: navigation });
   blocks.push({ type: "context", elements: [{ type: "mrkdwn", text: `Page ${page + 1} of ${pages} · ${total} indexed thread${total === 1 ? "" : "s"} in this view${moreHistory ? " · Older tracked threads are indexed in small batches; use Load older threads." : ""}${unavailable ? " · Some threads could not be verified. Refresh later." : ""}` }] });
   return blocks;
@@ -232,7 +230,8 @@ export function registerHomeThreadActions(app, { publishHome } = {}) {
     try {
       const kind = action.action_id?.split("_").at(-1);
       const value = kind === "filter" ? { filter: action.selected_option?.value } : JSON.parse(action.value || "{}");
-      const view = normalizeThreadView(value);
+      const view = { ...normalizeThreadView(value),
+        ...(["refresh", "history"].includes(kind) ? { forceThreads: true, discoverThreads: true } : {}) };
       if (["done", "reopen"].includes(kind)) {
         const row = getSlackThread(String(value.channelId || ""), String(value.threadTs || ""));
         if (!row || row.starter_id !== userId) return;

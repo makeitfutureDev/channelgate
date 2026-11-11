@@ -155,6 +155,19 @@ test("navigation during an automatic render discards that render and stops Activ
   await publish.stop();
 });
 
+test("explicit history/Refresh options are consumed once and never repeated by automatic updates", async () => {
+  const timers = fakeTimers(); let key = 1; const states = [];
+  const publish = createHomePublisher(async (_client, _user, state) => { states.push(state); return {}; }, {
+    ...timers, refreshKey: () => key,
+    refreshState: ({ forceThreads: _force, discoverThreads: _discover, ...state }) => state,
+  });
+  const client = { views: { publish: async () => {} } };
+  await publish(client, "U_ONE", { filter: "idle", page: 1, forceThreads: true, discoverThreads: true });
+  key++; await timers.tick();
+  assert.deepEqual(states[1], { filter: "idle", page: 1 });
+  await publish.stop();
+});
+
 test("an unavailable Activity snapshot retries unchanged local state until Slack reads recover", async () => {
   const timers = fakeTimers(); let unavailable = true; let renders = 0; const sent = [];
   const publish = createHomePublisher(async () => {
