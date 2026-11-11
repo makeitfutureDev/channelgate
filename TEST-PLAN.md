@@ -8,8 +8,8 @@ test/review-file-buttons.test.js`. The shared row is Files, Variables, Settings,
 followed by referenced files. No shared button contains an Activity grant. Clicking Dashboard
 issues a fresh ephemeral link for the actual clicker; redeem it through the real Activity router
 and assert only that viewer's roots. Check another author's reply, author-less delivery, repeat
-clicks, one-use replay, revoked admission, private membership, wrong source/workspace and missing
-Public URL. Existing requester binding still applies to the other controls.
+clicks, repeated use during the original ten-minute lifetime, hard expiry, revoked admission,
+private membership, wrong source/workspace and missing Public URL. Existing requester binding still applies to the other controls.
 
 Live acceptance: in disposable Claude Worker and Codex Worker Slack fixtures, as an approved
 member ask “Reply with Activity footer check.” Check Dashboard immediately after Settings on the
@@ -18,6 +18,19 @@ member clicks the first member's Dashboard: only that clicker receives the launc
 own Activity rows in a browser without an admin session. Repeat after revoking admission/private
 membership: no usable link. Missing Public URL gives a private Home Activity hint. Pass requires
 native button rendering, private delivery, exact viewer ownership and no administrator access.
+Reopen the SAME private link several times before its original ten-minute deadline: each open
+works and retains viewer isolation. At exactly ten minutes after issuance it fails, including
+after a successful reuse just before the deadline. Verify the private message says reusable for
+ten minutes with up to twelve hours of dashboard loading/refreshing, and the launch failure no
+longer says already used. Repeat after revoking admission: the same link must fail immediately.
+The opened page/API/SSE and authorized completion actions must remain usable beyond one hour
+and at twelve hours minus one millisecond, even after the launch link expires. At exactly twelve
+hours after that browser session was issued, page/API/writes fail and SSE sends access-ended.
+Reloads, reads and reconnects must not extend either deadline. Assert cookie Max-Age=43200.
+Browser regression: enable `CG_BROWSER_MODULE` and `CG_BROWSER_EXECUTABLE`, then run
+`node --test test/activity-reuse-browser.test.js` for actual repeated fragment launches, removal
+of the old already-used message, link expiry, and an opened page loading until its twelve-hour
+session deadline with a controlled clock.
 Live cases remain unexecuted until observed on the deployed candidate.
 
 ## Provider subscription usage acceptance (2026-11-11)
@@ -51,7 +64,8 @@ never alter production credentials or send real access tokens to fixture servers
 
 Regression: `node --test test/activity.test.js test/activity-page.test.js test/home-threads.test.js
 test/home-thread-reader.test.js`. Exercise the real Express router against a scratch database:
-fragment removal before exchange, one-use race/replay/expiry, no-cookie and cross-session denial,
+fragment removal before exchange, repeated/concurrent redemption within ten minutes, fixed expiry
+without extension on reuse, expiry/eviction during admission checks, no-cookie and cross-session denial,
 owner spoofing, wrong Origin/Host, workspace replacement/disconnect, user revocation, CSRF, foreign
 roots and fresh root ownership, private/DM membership and sudo demotion. Revoke channel access
 during a delayed snapshot, permalink or final membership check: no private payload, redirect or

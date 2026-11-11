@@ -1,0 +1,45 @@
+import test from "node:test";
+import assert from "node:assert/strict";
+import express from "express";
+import { ensureTestEnv } from "./helpers.js";
+ensureTestEnv();
+const { setUser } = await import("../src/config/store.js");
+const { createActivityRouter, createActivityGrantUrl, resetActivityStateForTests, ACTIVITY_GRANT_TTL_MS, ACTIVITY_SESSION_TTL_MS } = await import("../src/web/activity.js");
+
+test("browser reopens the same launch within ten minutes and uses its session for twelve hours", { skip: !process.env.CG_BROWSER_MODULE, timeout: 30_000 }, async (t) => {
+  resetActivityStateForTests();
+  await setUser("UACTIVITYBROWSER", { approved: true, isAdmin: false });
+  let currentTime = Date.now(), base;
+  const issuedAt = currentTime;
+  const app = express();
+  app.use("/activity", createActivityRouter({ getClient: () => ({}), getTeamId: () => "TFIXTURE", getBaseUrl: () => base,
+    now: () => currentTime, pollMs: 25, snapshot: async () => ({ rows: [], total: 0 }), refreshKey: () => "fixture" }));
+  const server = await new Promise((resolve) => { const s = app.listen(0, "127.0.0.1", () => resolve(s)); });
+  base = `http://127.0.0.1:${server.address().port}`;
+  t.after(() => new Promise((resolve) => { resetActivityStateForTests(); server.closeAllConnections(); server.close(resolve); }));
+  const { chromium } = await import(process.env.CG_BROWSER_MODULE);
+  const browser = await chromium.launch({ headless: true, executablePath: process.env.CG_BROWSER_EXECUTABLE });
+  t.after(() => browser.close());
+  const page = await browser.newPage(), errors = [];
+  page.on("pageerror", (error) => errors.push(error.message));
+  const link = createActivityGrantUrl({ baseUrl: base, ownerId: "UACTIVITYBROWSER", teamId: "TFIXTURE", now: currentTime });
+  await page.goto(link);
+  await page.waitForURL(/\/activity\/[A-Za-z0-9_-]{16}$/);
+  const firstSession = page.url();
+  assert.equal(await page.title(), "My Activity · ChannelGate");
+  await page.goto(link);
+  await page.waitForURL(/\/activity\/[A-Za-z0-9_-]{16}$/);
+  assert.notEqual(page.url(), firstSession);
+  currentTime = issuedAt + ACTIVITY_GRANT_TTL_MS;
+  await page.goto(link);
+  await page.locator("#status").filter({ hasText: /expired or is unavailable/ }).waitFor();
+  assert.doesNotMatch(await page.locator("#status").innerText(), /already used/);
+  currentTime = issuedAt + ACTIVITY_SESSION_TTL_MS - 1;
+  const stillValid = await page.goto(firstSession);
+  assert.equal(stillValid.status(), 200);
+  await page.locator("#connection-text").filter({ hasText: "Live updates" }).waitFor();
+  currentTime = issuedAt + ACTIVITY_SESSION_TTL_MS;
+  const expired = await page.reload();
+  assert.equal(expired.status(), 401);
+  assert.deepEqual(errors, []);
+});

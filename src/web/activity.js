@@ -1,4 +1,4 @@
-// A private user dashboard: one-use Slack launch grant -> path-scoped browser session.
+// A private user dashboard: ten-minute Slack launch grant -> path-scoped browser session.
 // This router deliberately accepts neither administrator cookies nor run API credentials.
 import crypto from "node:crypto";
 import express from "express";
@@ -14,7 +14,7 @@ import { isLoopbackHost, timingSafeEqualStr } from "./security.js";
 import { activityPage } from "./activity-page.js";
 
 export const ACTIVITY_GRANT_TTL_MS = 10 * 60_000;
-export const ACTIVITY_SESSION_TTL_MS = 60 * 60_000;
+export const ACTIVITY_SESSION_TTL_MS = 12 * 60 * 60_000;
 const grants = new Map(), sessions = new Map();
 const streams = new Set();
 let configVersion = 0;
@@ -63,7 +63,7 @@ function unavailable(res, status = 401) {
 }
 function launchPage() {
   const nonce = token(16);
-  return { nonce, html: `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Open My Activity</title><style nonce="${nonce}">body{background:#10151f;color:#e9edf5;font:16px system-ui;margin:0;display:grid;place-items:center;min-height:100vh}main{padding:32px;max-width:480px}p{line-height:1.6}</style></head><body><main><h1>My Activity</h1><p id="status">Opening your private dashboard…</p></main><script nonce="${nonce}">(async()=>{const secret=location.hash.slice(1);history.replaceState(null,"",location.pathname);try{if(!/^[A-Za-z0-9_-]{43}$/.test(secret))throw Error();const response=await fetch("/activity/exchange",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({token:secret})});if(!response.ok)throw Error();const data=await response.json();if(typeof data.url!=="string"||!data.url.startsWith("/activity/")||!/^[A-Za-z0-9_-]{16}$/.test(data.url.slice(10)))throw Error();location.replace(data.url);}catch{document.getElementById("status").textContent="This private link expired or was already used. Open a new dashboard link from Slack Activity."}})();</script></body></html>` };
+  return { nonce, html: `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Open My Activity</title><style nonce="${nonce}">body{background:#10151f;color:#e9edf5;font:16px system-ui;margin:0;display:grid;place-items:center;min-height:100vh}main{padding:32px;max-width:480px}p{line-height:1.6}</style></head><body><main><h1>My Activity</h1><p id="status">Opening your private dashboard…</p></main><script nonce="${nonce}">(async()=>{const secret=location.hash.slice(1);history.replaceState(null,"",location.pathname);try{if(!/^[A-Za-z0-9_-]{43}$/.test(secret))throw Error();const response=await fetch("/activity/exchange",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({token:secret})});if(!response.ok)throw Error();const data=await response.json();if(typeof data.url!=="string"||!data.url.startsWith("/activity/")||!/^[A-Za-z0-9_-]{16}$/.test(data.url.slice(10)))throw Error();location.replace(data.url);}catch{document.getElementById("status").textContent="This private link expired or is unavailable. Open a new dashboard link from Slack Activity."}})();</script></body></html>` };
 }
 
 export function resetActivityStateForTests() {
@@ -141,9 +141,13 @@ export function createActivityRouter({
     const key = hash(req.body.token), grant = grants.get(key);
     if (!grant) return unavailable(res, 410);
     if (grant.origin !== req.activityOrigin) return unavailable(res, 403);
-    grants.delete(key); // Atomic within the daemon, before any await: only one exchange wins.
+    const version = configVersion;
     try {
       await authorize(grant);
+      // A link may be reopened during its ORIGINAL ten-minute lifetime. Recheck after the
+      // asynchronous admission check so expiry, pruning or eviction cannot mint a session.
+      if (grants.get(key) !== grant || grant.expiresAt <= now()) return unavailable(res, 410);
+      if (version !== configVersion) return unavailable(res, 403);
       const id = token(12), secret = token(); capOwner(sessions, grant.ownerId, 10); cap(sessions, 1000);
       const session = { ...grant, cookieHash: hash(secret), csrf: token(), expiresAt: now() + ACTIVITY_SESSION_TTL_MS };
       sessions.set(id, session);
