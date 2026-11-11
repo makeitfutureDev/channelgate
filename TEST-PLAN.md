@@ -6719,6 +6719,26 @@ structural invariants are automated; rendered navigation and feature claims also
       a leave/re-join doesn't resurrect an old mention (window + existing-session guard).
 
 ### Voice prompts (optional local Whisper + Slack fallback)
+- [x] Regression: Slack awaits the transcript post before spawning either Claude or Codex; an
+      unsuccessful post reports the failure and starts no engine. Plain-text blocks suppress Slack
+      mention/link markup, redact credential-shaped text, preserve clip order and Unicode, and split
+      long single-line transcripts under the block cap (`test/slack-voice-delivery.test.js`).
+- [x] Regression: portable ingestion awaits transcript delivery, preserves the source thread, keeps
+      the transcript visible when the final answer replaces a new working placeholder, and starts
+      no engine if transcript delivery fails (`test/platform-voice.test.js`).
+- [ ] Live (Claude and Codex separately): in approved Worker/Auto attachment fixtures, record a
+      short clip saying "Reply with VOICE_DISPLAY_OK" and mention the bot; repeat in a DM and with
+      a 🤖 reaction. With Whisper enabled, verify a labelled transcript is visible in the exact
+      source thread before agent/tool activity and the answer. Disable Whisper and repeat with an
+      already-generated complete Slack transcript; restore the original setting. Attach two clips
+      plus typed instructions, then a transcript longer than 3000 characters: all recognized speech
+      must remain visible in source order without truncation, and the agent must retain the typed
+      instructions. Failed/empty clips must not produce a successful-transcript notice. Confirm the
+      transcript survives the final answer. Capture source/notice/answer timestamps and engine.
+- [ ] Live portable surfaces (held until resumed): repeat the spoken VOICE_DISPLAY_OK request on
+      Google Chat and Teams with each engine. Require transcript delivery before engine processing,
+      the same source thread, and a final answer after the persistent transcript. Inject a connector
+      transcript-delivery failure in a disposable fixture; require an error and no engine start.
 - [x] Unit: audio MIME/extension detection, bounded process timeout/output, shell-free argv handling,
       scratch cleanup, deterministic multi-clip ordering, empty-output failure, and single-job local
       concurrency are covered by `test/whisper-transcribe.test.js`.

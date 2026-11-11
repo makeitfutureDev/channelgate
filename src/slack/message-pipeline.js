@@ -39,6 +39,7 @@ import { isMemorySaveTool } from "../gateway/channel-memory.js";
 import { maybeQueueMemoryReview } from "../gateway/memory-review.js";
 import { maybeDiagnoseRunError } from "../gateway/diagnosis.js";
 import { composeVoicePrompt, isAudioFile, resolveAudioTranscripts } from "../gateway/transcribe.js";
+import { postVoiceTranscripts } from "./voice-transcripts.js";
 import { formatUpdateResult, startUpdate } from "../gateway/updater.js";
 import { isForceStopping } from "../gateway/shutdown.js";
 import { noteBotReply, noteUserActivity } from "../gateway/nudges.js";
@@ -1446,6 +1447,19 @@ export async function processMessageEvent(event, client, { botUserId = "", teamI
             ...threadOpts,
             text: "🎙️ Local voice transcription is disabled or unavailable, and Slack has no completed transcript yet. Click *Generate transcript* on the voice note, then mention me again or react 🤖.",
           });
+          return;
+        }
+        try {
+          // Await every transcript chunk before recording or starting an agent run. Keep this
+          // reply in the source thread even when a code channel puts normal answers top-level.
+          await postVoiceTranscripts(client, {
+            channel: event.channel,
+            thread_ts: event.thread_ts ?? event.ts,
+            transcripts: voice.transcripts,
+          });
+        } catch {
+          await logEvent("voice_transcript_delivery_failed", { channel: event.channel, author: event.user, slug: entry.slug });
+          await client.chat.postMessage({ channel: event.channel, ...threadOpts, text: "⚠️ I couldn’t post the audio transcript, so processing hasn’t started. Please try again." }).catch(() => {});
           return;
         }
         promptForClaude = composeVoicePrompt({ text: prompt, ...voice }) || promptForClaude;

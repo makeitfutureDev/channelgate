@@ -2274,7 +2274,11 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
   stored setting, and disabled mode never downloads raw audio. Typed text remains instructions and
   raw audio is excluded from Claude/Codex. Successfully resolved downloaded audio is removed from
   the channel's `uploads/` folder, including when Slack transcript fallback completes after a local
-  failure; unresolved audio is retained for retry. → TEST-PLAN: Voice prompts.
+  failure; unresolved audio is retained for retry. Successful transcripts are posted in the source
+  thread before Claude/Codex starts processing, for local transcription and Slack fallback alike.
+  Each clip is named, long transcripts are split without truncation, and a delivery failure stops
+  processing. Teams and Google Chat likewise retain transcript replies before the agent answer.
+  → TEST-PLAN: Voice prompts.
 - Native Slack **channel file explorer**: the 📂 reply button opens a Block Kit modal rooted at the channel's
   effective working folder. Its title identifies the authoritative stored Slack channel name, and
   its subtitle shows the full absolute current directory, refreshed on every navigation. The

@@ -12,6 +12,9 @@ release gates. Stable promotion and publication require approval of the exact te
 
 ### Beta development notes
 
+- Audio transcripts appear in the source thread before the agent starts processing. Each clip
+  is labelled, long transcripts are split, and the transcript stays visible beside the answer.
+
 - Accept `@agent /sudo <message>` to enable an admin-only host thread and run the request in
   one message. Existing status/off controls, busy-thread checks and admin enforcement remain.
 

@@ -43,8 +43,41 @@ test('unauthorized authors cannot download, transcribe or call the command hook'
 test('audio-only success becomes a text request with progress before transcription, no raw audio', async () => {
   await setUser('voice-approved', { approved: true });
   const wire = connector(); let seen;
-  const ingest = createIngest({ connector: wire, voice: (message, paths, options) => prepareVoiceAttachments(message, paths, { ...options, enabled: true, transcribe: async () => { assert.match(wire.posts[0].text, /voice transcription/); return { transcripts: [{ name: 'clip.wav', text: 'Say VOICE_OK' }], failed: [] }; } }), run: async (args) => { seen = args; return { content: 'VOICE_OK' }; } });
+  const ingest = createIngest({ connector: wire, voice: (message, paths, options) => prepareVoiceAttachments(message, paths, { ...options, enabled: true, transcribe: async () => { assert.match(wire.posts[0].text, /voice transcription/); return { transcripts: [{ name: 'clip.wav', text: 'Say VOICE_OK' }], failed: [] }; } }), run: async (args) => {
+    assert.match(wire.edits[0].text, /Transcript — clip.wav\n\nSay VOICE_OK/);
+    assert.equal(wire.edits[0].messageId, '1');
+    assert.match(wire.posts[1].text, /Agent is working/);
+    seen = args; return { content: 'VOICE_OK' };
+  } });
   await ingest(inbound()); assert.equal(seen.text, 'Say VOICE_OK'); assert.deepEqual(seen.attachments, []); assert.match(wire.edits.at(-1).text, /^VOICE_OK(?:\n\n_[^\n]+_)?$/, 'transcribed answer may carry the standard engine footer');
+  assert.equal(wire.edits.at(-1).messageId, '2', 'final answer must never overwrite the transcript');
+});
+
+test('portable transcript delivery is awaited and stays in its source thread', async () => {
+  await setUser('voice-approved', { approved: true });
+  const wire = connector(); let calls = 0;
+  let release; const pending = new Promise(resolve => { release = resolve; });
+  let arrived; const posting = new Promise(resolve => { arrived = resolve; });
+  const edit = wire.edit;
+  wire.edit = async p => { if (/Transcript —/.test(p.text)) { arrived(); await pending; } return edit(p); };
+  const ingest = createIngest({ connector: wire, voice: async () => ({ hasVoice: true, hasPrompt: true, paths: [], text: 'hello', transcripts: [{ name: 'clip.wav', text: 'hello' }] }), run: async () => { calls++; return { content: 'done' }; } });
+  const turn = ingest(inbound({ messageId: 'await-post', threadKey: 'source-thread' }));
+  try { await posting; assert.equal(calls, 0); } finally { release(); }
+  await turn;
+  assert.equal(calls, 1); assert.equal(wire.posts[1].threadKey, 'source-thread');
+  assert.match(wire.edits[0].text, /hello/);
+  assert.equal(wire.edits.at(-1).messageId, '2');
+});
+
+test('portable transcript post failure prevents engine processing', async () => {
+  await setUser('voice-approved', { approved: true });
+  const wire = connector();
+  wire.edit = async p => { if (/Transcript —/.test(p.text)) throw new Error('edit unavailable'); };
+  const post = wire.post;
+  wire.post = async p => { if (/Transcript —/.test(p.text)) throw new Error('transcript unavailable'); return post(p); };
+  const ingest = createIngest({ connector: wire, voice: async () => ({ hasVoice: true, hasPrompt: true, paths: [], text: 'hello', transcripts: [{ name: 'clip.wav', text: 'hello' }] }), run: async () => assert.fail('undelivered transcript must not run') });
+  const result = await ingest(inbound({ messageId: 'post-failure' }));
+  assert.match(result.error.message, /transcript unavailable/);
 });
 
 test('standalone failed audio never invokes engine; typed fallback invokes it and reports missing transcript', async () => {

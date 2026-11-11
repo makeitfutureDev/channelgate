@@ -26,6 +26,7 @@ import { getThreadSudo } from "../gateway/thread-engine.js";
 // a SECURITY value there (it decides whether a private channel's name may appear in App Home), so
 // the mapping is explicit rather than a passthrough of whatever a platform calls things.
 import { prepareVoiceAttachments, hasVoiceAttachments } from "./voice.js";
+import { voiceTranscriptReplies } from "../gateway/voice-transcript-replies.js";
 import { createConversationControls } from "./conversation-controls.js";
 
 const STORE_TYPE = { dm: "im", group: "mpim", channel: "channel" };
@@ -192,7 +193,7 @@ export function createIngest({ connector, log = console, run = runMessage, onCom
       log.warn?.(`[${adapter.id}] placeholder post failed: ${err?.message || err}`);
     }
 
-    const progress = createConversationProgress({ connector, message, placeholder, adapter, log });
+    let progress = createConversationProgress({ connector, message, placeholder, adapter, log });
     let result;
     let skipped = [];
     let prepared;
@@ -223,6 +224,23 @@ export function createIngest({ connector, log = console, run = runMessage, onCom
         await deliver(connector, message, placeholder, prepared.failureNotice || 'Could not transcribe this audio. Please send text or ask an administrator to check local Whisper.', rememberReply);
         return { skipped: 'voice-unavailable' };
       }
+      const transcriptReplies = voiceTranscriptReplies(prepared.transcripts);
+      if (transcriptReplies.length) await progress.stop();
+      for (const text of transcriptReplies) {
+        signal.throwIfAborted();
+        // Reuse the original placeholder for the first transcript. Clear our handle before
+        // delivery so a later error/final answer can never overwrite a visible transcript.
+        const transcriptPlaceholder = placeholder;
+        placeholder = null;
+        await deliver(connector, message, transcriptPlaceholder, text, rememberReply, '', null, { resolveNames: false });
+      }
+      if (transcriptReplies.length) {
+        signal.throwIfAborted();
+        placeholder = await connector.post({ conversationId: message.rawConversationId, threadKey: message.threadKey, text: '_⏳ Agent is working…_', signal });
+        rememberReply(placeholder);
+        progress = createConversationProgress({ connector, message, placeholder, adapter, log });
+      }
+      signal.throwIfAborted();
       progress.activity();
       result = await run({
         channelId: message.conversationId,
@@ -267,9 +285,9 @@ export function createIngest({ connector, log = console, run = runMessage, onCom
 // One answer, formatted for the surface, replacing the placeholder where the surface allows it.
 // A long answer is split at the platform's cap; the FIRST chunk edits the placeholder and the rest
 // are posted after it, so the "Working on it…" line never survives next to the real answer.
-async function deliver(connector, message, placeholder, text, rememberReply = () => {}, footer = "", menu = null) {
+async function deliver(connector, message, placeholder, text, rememberReply = () => {}, footer = "", menu = null, { resolveNames = true } = {}) {
   const adapter = platformOr(connector.platform);
-  const directory = await connector.directory?.(message.rawConversationId).catch(() => null);
+  const directory = resolveNames ? await connector.directory?.(message.rawConversationId).catch(() => null) : null;
   const formatted = adapter.formatOutbound(text, {
     directory, capabilities: adapter.capabilities,
     // A completed foreground reply addresses its authenticated requester. Notices and DMs do

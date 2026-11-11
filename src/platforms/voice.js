@@ -48,6 +48,7 @@ export async function prepareVoiceAttachments(message, paths, {
     paths: paths.filter((file) => !audioPaths.has(file)),
     text: composeVoicePrompt({ text: message.text, transcripts, failed }),
     hasVoice,
+    transcripts,
     hasPrompt: Boolean(String(message.text || '').trim() || transcripts.length),
     failed,
     failureNotice: failed.length ? composeVoicePrompt({ failed }) : '',
