@@ -512,6 +512,38 @@ unexecuted; private QA registry remains pending. These automated checks are not 
 - Private QA registry update pending: the requesting user's personal Airtable connection is not
   connected in this run. Do not treat the missing registry or unexecuted live case as passed.
 
+## Workspace projection startup scaling (2026-11-11)
+
+- Automated regression (`test/skills-workspace-sync.test.js`): project 256 metadata rows in
+  four-conversation linked groups and count directory resolutions; require no more than 256
+  resolutions for the listing snapshot. Check returned-object independence. The scratch-store
+  integration compares `listChannels()` with `getChannelMeta()` after source edits, including
+  linked owner, inherited authorization and local engine/model fields. Counts establish the
+  scaling bound independently of wall-clock timing.
+- Freshness regression: between listings change source exclusions/access, DM template settings,
+  owner assignment and an injected directory-resolution target. The next read must reflect each
+  change without a restart or cache-expiry wait; returned objects must not contaminate later reads.
+  Actual disposable directory/symlink changes remain in the pending live gate below.
+- Live startup/list gate (pending, engine-independent): on an isolated Node 24 daemon with at
+  least 156 registered conversations and both distinct and shared folders, capture exact commit,
+  channel count, service start time and CPU samples. An operator-authorized deployment may also
+  exercise its existing population. Require health and Slack connection readiness within 120
+  seconds, then ten authenticated channel-list requests each under five seconds, with concurrent
+  public `/api/health` probes each under two seconds (not the expensive internal runtime-health
+  collector). Record actual timings and readiness evidence; these are
+  acceptance budgets, not measured results. This gate precedes engine selection and spawns no
+  engine, so one daemon-only execution suffices. Run engine checks separately below.
+- Live linked-policy gate (pending, Claude and Codex separately): use the linked source/follower
+  fixture below, verifying current settings and authors before changes. As an approved member,
+  ask “Read the shared test skill and report its revision marker.” Change the source skill and
+  repeat; exclude that member at source and repeat again. Require the new marker on the allowed
+  turn and refusal before engine spawn after exclusion. Restore access, move the source to a
+  second disposable folder and repeat from the promoted follower; verify its last effective
+  policy/skill remains and a newly linked conversation adopts that owner. Change the DM template
+  and retarget a symlink only in owned disposable fixtures; require the next listing to reflect
+  each change. Capture settings, audit/thread evidence and restored fixture state. Automated
+  counts and daemon readiness do not establish a live engine PASS.
+
 ## Linked working-folder setup acceptance
 
 Re-verification (2026-10-26): regression coverage now checks source `excludedUsers` and restricted-channel policy through linked DMs, explicit-unlink/source-departure section-skill retention, DM template preservation, established promoted-owner selection, and immediate follower SSH disconnection after source revocation (20-minute timer disabled as a fallback). `test/skills-workspace-sync.test.js` and `test/ssh-broker.test.js` cover these gaps. Updated full suite: 4,117 passed, 37 skipped, zero failures; Chromium linked-folder fixture passed. Actual Claude and Codex CLI smoke checks read a source-scoped skill from a generated linked workspace and returned its unique marker. Codex used the gateway's Worker/container mode; an initial nested read-only sandbox attempt failed with a bubblewrap capability error. These are CLI smoke checks, not a Slack end-to-end acceptance pass.

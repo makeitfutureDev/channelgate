@@ -18,6 +18,27 @@ export function workspaceSetup(meta) {
   return next;
 }
 
+// A listing projects one stored metadata snapshot. Resolve filesystem paths once per slug,
+// rather than once for every pair of conversations. The reader accepts only captured rows;
+// save-time projections with replacement metadata must not reuse these path observations.
+export function createWorkspaceProjectionReader(rows, effectiveWorkDir) {
+  const bySlug = new Map(rows.map((row) => [row.slug, row.meta]));
+  const directories = new Map();
+  const resolveDirectory = (slug) => {
+    if (!directories.has(slug)) {
+      directories.set(slug, effectiveWorkDir(slug, { ...bySlug.get(slug), cleanMode: false }));
+    }
+    return directories.get(slug);
+  };
+  return (slug) => {
+    const meta = bySlug.get(slug);
+    if (!meta) return null;
+    // Linked results inherit nested owner fields. Keep each result independent, as when
+    // each conversation was read from SQLite separately, without retaining a global cache.
+    return structuredClone(workspaceProjection(slug, meta, rows, resolveDirectory));
+  };
+}
+
 export function workspaceProjection(slug, meta, rows, effectiveWorkDir) {
   if (!meta) return meta;
   const cwd = effectiveWorkDir(slug, { ...meta, cleanMode: false });

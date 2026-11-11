@@ -12,6 +12,10 @@ release gates. Stable promotion and publication require approval of the exact te
 
 ### Beta development notes
 
+- Fix excessive startup work when many conversations have workspace settings. Channel listings
+  reuse one metadata snapshot and resolve folders once per listing; later reads still pick up
+  changed linked-folder owners and access policies immediately.
+
 - Activity automatically refreshes changed thread status, completion and last-message details
   every 15 seconds, preserving the selected filter/page and pausing on other Home sections.
 

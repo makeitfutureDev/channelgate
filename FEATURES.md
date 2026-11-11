@@ -5849,6 +5849,10 @@ are retired, bullet by bullet; everything else stands.
   reconciliation pass refresh changed catalog/template/grant state, including MCP changes. Failed
   writes are reported and retried; shared folders follow one linked owner setup.
 - The Admin UI shows shared-folder conversations with a linked marker. The folder picker names existing assignments and explains inheritance; the editor opens the source conversation and locks inherited settings. Both views use the runtime's resolved path logic rather than raw strings.
+- Channel listings project linked-folder settings from one metadata snapshot and resolve each
+  folder once per listing, avoiding repeated full-store filesystem scans during startup.
+  The snapshot lasts only for that call: subsequent reads observe changed owners, authorization,
+  DM templates and filesystem paths while preserving the linked owner's shared policy.
 - Runtime settings provide **Reset to default** beside **Browse**. It clears only the custom
   working folder through the normal Save/Discard flow; the default remains
   `~/ChannelGate/<platform>/<slug>/`. Existing files stay in their original location.
