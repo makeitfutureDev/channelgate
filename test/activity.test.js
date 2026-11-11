@@ -1,0 +1,235 @@
+import { test, beforeEach } from "node:test";
+import assert from "node:assert/strict";
+import express from "express";
+import { request as httpRequest } from "node:http";
+import { ensureTestEnv } from "./helpers.js";
+ensureTestEnv();
+const { getDb } = await import("../src/db/index.js");
+const { setUser, upsertChannelEntry, getChannelEntry, saveChannelMeta } = await import("../src/config/store.js");
+const { indexSlackThread, getSlackThread, setSlackThreadDone, recordSlackThreadOutcome } = await import("../src/gateway/slack-threads.js");
+const { setThreadSudo } = await import("../src/gateway/thread-engine.js");
+const { activityThreadSnapshot } = await import("../src/slack/home-threads.js");
+const { activityHomeBlocks } = await import("../src/slack/home-activity.js");
+const { createActivityRouter, createActivityGrantUrl, resetActivityStateForTests, ACTIVITY_GRANT_TTL_MS, ACTIVITY_SESSION_TTL_MS } = await import("../src/web/activity.js");
+
+beforeEach(async () => {
+  resetActivityStateForTests();
+  for (const table of ["slack_threads", "sessions", "channels", "channel_meta", "active_runs", "bg_jobs", "question_requests", "approval_requests", "followup_threads", "followup_done", "thread_overrides"]) getDb().exec(`DELETE FROM ${table}`);
+  await setUser("U_MINE", { approved: true, isAdmin: false });
+  await setUser("U_OTHER", { approved: true, isAdmin: false });
+});
+const defer = () => { let resolve; const promise = new Promise((r) => { resolve = r; }); return { promise, resolve }; };
+async function fixture(t, options = {}) {
+  let currentTime = Date.now(), team = "T_WORK", connected = true, base;
+  const roots = new Map(), members = new Map(), reads = [];
+  const client = { conversations: {
+    replies: async ({ channel, ts }) => { reads.push("replies"); return { messages: [roots.get(`${channel}:${ts}`)].filter(Boolean) }; },
+    members: async ({ channel }) => { reads.push("members"); return { members: members.get(channel) || [] }; },
+  }, chat: { getPermalink: async ({ channel, message_ts }) => { reads.push("link"); return { permalink: `https://example.slack.com/archives/${channel}/p${message_ts.replace(".", "")}` }; } } };
+  const app = express();
+  app.use("/activity", createActivityRouter({ getClient: () => connected ? client : null, getTeamId: () => team,
+    getBaseUrl: () => base, now: () => currentTime, pollMs: 20, accessRefreshMs: 40, ...options }));
+  app.get("/activity", (_req, res) => res.status(401).send("administrator login"));
+  const server = await new Promise((resolve) => { const listener = app.listen(0, "127.0.0.1", () => resolve(listener)); });
+  base = `http://127.0.0.1:${server.address().port}`;
+  t.after(async () => { resetActivityStateForTests(); server.closeAllConnections(); await new Promise((resolve) => server.close(resolve)); });
+  const request = (url, init = {}) => fetch(base + url, { ...init, redirect: "manual" });
+  const grant = (ownerId = "U_MINE", teamId = "T_WORK") => createActivityGrantUrl({ baseUrl: base, ownerId, teamId, now: currentTime });
+  const exchange = (url = grant(), init = {}) => request("/activity/exchange", { method: "POST", headers: { Origin: base, "Content-Type": "application/json", ...init.headers }, body: JSON.stringify({ token: new URL(url).hash.slice(1), ...init.body }) });
+  const login = async (ownerId = "U_MINE") => {
+    const response = await exchange(grant(ownerId));
+    assert.equal(response.status, 200);
+    const { url } = await response.json(), cookie = response.headers.get("set-cookie").split(";")[0];
+    const page = await request(url, { headers: { cookie } });
+    assert.equal(page.status, 200);
+    const html = await page.text(), csrf = /"csrf":"([A-Za-z0-9_-]+)"/.exec(html)?.[1];
+    assert.ok(csrf);
+    return { url, cookie, csrf, html, headers: { cookie }, post: { cookie, Origin: base, "Content-Type": "application/json", "X-CG-CSRF": csrf } };
+  };
+  const root = async (id = "C_WORK", ts = "100.000001", owner = "U_MINE", engaged = true, type = "channel") => {
+    await upsertChannelEntry(id, { name: `#${id}`, type, isDM: type === "im" });
+    const entry = await getChannelEntry(id);
+    await saveChannelMeta(entry.slug, { access: "approved", isDM: type === "im" });
+    const message = { ts, user: owner, text: `Build ${ts}` };
+    roots.set(`${id}:${ts}`, message);
+    indexSlackThread({ channelId: id, slug: entry.slug, root: message, agentEngaged: engaged });
+    return entry;
+  };
+  return { base, client, request, grant, exchange, login, root, roots, members, reads,
+    advance: (ms) => { currentTime += ms; }, setTeam: (value) => { team = value; }, disconnect: () => { connected = false; } };
+}
+async function nextEvent(reader, event = "threads") {
+  let buffer = "";
+  const timer = setTimeout(() => reader.cancel(), 2500);
+  try {
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) throw new Error(`SSE ended before ${event}`);
+      buffer += new TextDecoder().decode(value);
+      for (const frame of buffer.split("\n\n").slice(0, -1)) {
+        if (frame.includes(`event: ${event}\n`)) return JSON.parse(frame.split("data: ")[1]);
+      }
+      buffer = buffer.slice(buffer.lastIndexOf("\n\n") + 2);
+    }
+  } finally { clearTimeout(timer); }
+}
+
+test("launch fragment is removed before one-use exchange; cookies, origin, replay and expiry fail closed", async (t) => {
+  const f = await fixture(t), url = f.grant();
+  assert.ok(new URL(url).hash);
+  const launch = await f.request("/activity/open");
+  assert.equal(launch.status, 200);
+  assert.equal(launch.headers.get("referrer-policy"), "no-referrer");
+  const html = await launch.text(), script = /<script nonce="[^"]+">([\s\S]+?)<\/script>/.exec(html)[1];
+  const calls = [];
+  await new Function("location", "history", "fetch", "document", `return ${script}`)(
+    { hash: new URL(url).hash, pathname: "/activity/open", replace: (value) => calls.push(value) },
+    { replaceState: () => calls.push("cleared") },
+    async (path, init) => { assert.equal(calls[0], "cleared"); calls.push(path); return f.request(path, { ...init, headers: { ...init.headers, Origin: f.base } }); },
+    { getElementById: () => ({ textContent: "" }) });
+  assert.match(calls.at(-1), /^\/activity\/[A-Za-z0-9_-]{16}$/);
+  assert.equal((await f.exchange(url)).status, 410);
+  const sessionPath = calls.at(-1);
+  assert.equal((await f.request(sessionPath, { headers: { cookie: "cg_admin=forged" } })).status, 401);
+  const fresh = f.grant();
+  assert.equal((await f.exchange(fresh, { headers: { Origin: "https://evil.example" } })).status, 403);
+  const responses = await Promise.all([f.exchange(fresh), f.exchange(fresh)]);
+  assert.deepEqual(responses.map((r) => r.status).sort(), [200, 410]);
+  const cookie = responses.find((r) => r.status === 200).headers.get("set-cookie");
+  assert.match(cookie, /HttpOnly; SameSite=Lax; Path=\/activity\/[A-Za-z0-9_-]{16}; Max-Age=3600/);
+  const expired = f.grant(); f.advance(ACTIVITY_GRANT_TTL_MS + 1);
+  assert.equal((await f.exchange(expired)).status, 410);
+  assert.equal(createActivityGrantUrl({ baseUrl: "http://public.example", ownerId: "U_MINE", teamId: "T_WORK" }), "");
+});
+
+test("administrator Activity retains its own auth while private paths enforce Host and secure cookie scope", async (t) => {
+  const f = await fixture(t, { getBaseUrl: () => "https://dashboard.example" });
+  assert.equal((await f.request("/activity")).status, 401);
+  assert.equal((await f.request("/activity/open")).status, 403);
+  const grant = createActivityGrantUrl({ baseUrl: "https://dashboard.example", ownerId: "U_MINE", teamId: "T_WORK" });
+  // Raw HTTP preserves a deliberate Host override; fetch derives Host from its target URL.
+  const response = await new Promise((resolve, reject) => {
+    const req = httpRequest(f.base + "/activity/exchange", { method: "POST", headers: { Host: "dashboard.example", Origin: "https://dashboard.example", "Content-Type": "application/json" } }, (res) => { res.resume(); res.on("end", () => resolve(res)); });
+    req.on("error", reject); req.end(JSON.stringify({ token: new URL(grant).hash.slice(1) }));
+  });
+  assert.equal(response.statusCode, 200);
+  assert.match(response.headers["set-cookie"][0], /; Secure$/);
+  assert.equal((await f.request("/activity/exchange", { method: "POST", headers: { Host: "evil.example", Origin: "https://dashboard.example", "Content-Type": "application/json" }, body: JSON.stringify({ token: new URL(grant).hash.slice(1) }) })).status, 403);
+});
+
+test("private Home button and REST expose only the viewer's eligible threads with real-link resolution on click", async (t) => {
+  const f = await fixture(t);
+  const blocks = activityHomeBlocks({ ownerId: "U_MINE", teamId: "T_WORK", baseUrl: f.base, approved: true });
+  assert.equal(blocks[0].elements[0].text.text, "Open live dashboard");
+  assert.equal(activityHomeBlocks({ ownerId: "U_MINE", teamId: "T_WORK", baseUrl: f.base, approved: false }).length, 0);
+  await f.root(); await f.root("C_HUMAN", "101.000001", "U_MINE", false);
+  await f.root("C_OTHER", "102.000001", "U_OTHER");
+  const user = await f.login(), other = await f.login("U_OTHER");
+  f.reads.length = 0;
+  const response = await f.request(user.url + "/api/threads?ownerId=U_OTHER", { headers: user.headers });
+  assert.equal(response.status, 200);
+  const data = await response.json();
+  assert.equal(data.rows.length, 1); assert.equal(data.rows[0].channelId, "C_WORK");
+  assert.deepEqual(f.reads, [], "refresh uses local state without transcript/permalink Slack reads");
+  assert.equal((await f.request(user.url + "/api/threads", { headers: other.headers })).status, 401);
+  const open = await f.request(data.rows[0].url, { headers: user.headers });
+  assert.equal(open.status, 303); assert.match(open.headers.get("location"), /^https:\/\/example.slack.com\/archives\//);
+  assert.equal((await f.request(user.url + "/open/C_OTHER/102.000001", { headers: user.headers })).status, 403);
+  assert.match(user.html, /<table/);
+  f.setTeam("T_DIFFERENT");
+  assert.equal((await f.request(user.url + "/api/threads", { headers: user.headers })).status, 403);
+});
+
+test("Done requires CSRF and fresh root ownership and shares persistent completion with Slack", async (t) => {
+  const f = await fixture(t); await f.root(); await f.root("C_OTHER", "101.000001", "U_OTHER");
+  const user = await f.login(), path = user.url + "/api/completion";
+  const body = JSON.stringify({ channelId: "C_WORK", threadTs: "100.000001", done: true });
+  assert.equal((await f.request(path, { method: "POST", headers: { ...user.post, "X-CG-CSRF": "wrong" }, body })).status, 403);
+  assert.equal(getSlackThread("C_WORK", "100.000001").done_ms, 0);
+  assert.equal((await f.request(path, { method: "POST", headers: user.post, body })).status, 200);
+  assert.ok(getSlackThread("C_WORK", "100.000001").done_ms > 0);
+  assert.equal(getDb().prepare("SELECT count(*) n FROM followup_done WHERE user_id='U_MINE'").get().n, 1);
+  const reopen = JSON.stringify({ channelId: "C_WORK", threadTs: "100.000001", done: false });
+  assert.equal((await f.request(path, { method: "POST", headers: user.post, body: reopen })).status, 200);
+  assert.ok(getSlackThread("C_WORK", "100.000001").done_ms < 0);
+  const foreign = JSON.stringify({ channelId: "C_OTHER", threadTs: "101.000001", done: true, ownerId: "U_OTHER" });
+  assert.equal((await f.request(path, { method: "POST", headers: user.post, body: foreign })).status, 403);
+  f.roots.set("C_WORK:100.000001", { ts: "100.000001", user: "U_OTHER" });
+  assert.equal((await f.request(path, { method: "POST", headers: user.post, body })).status, 403);
+});
+
+test("private membership and sudo access are rechecked after delayed completion or permalink reads", async (t) => {
+  const f = await fixture(t); const entry = await f.root("G_PRIVATE", "100.000001", "U_MINE", true, "group");
+  f.members.set("G_PRIVATE", ["U_MINE"]);
+  const user = await f.login(), parked = defer(), started = defer();
+  f.client.conversations.replies = async () => { started.resolve(); await parked.promise; return { messages: [f.roots.get("G_PRIVATE:100.000001")] }; };
+  const change = f.request(user.url + "/api/completion", { method: "POST", headers: user.post, body: JSON.stringify({ channelId: "G_PRIVATE", threadTs: "100.000001", done: true }) });
+  await started.promise; f.members.set("G_PRIVATE", []); parked.resolve();
+  assert.equal((await change).status, 403);
+  assert.equal(getSlackThread("G_PRIVATE", "100.000001").done_ms, 0);
+  f.members.set("G_PRIVATE", ["U_MINE"]); await setUser("U_MINE", { isAdmin: true });
+  await setThreadSudo(entry.slug, "100.000001", true);
+  const linkGate = defer(), linkStarted = defer();
+  f.client.chat.getPermalink = async () => { linkStarted.resolve(); await linkGate.promise; return { permalink: "https://example.slack.com/archives/G_PRIVATE/p100000001" }; };
+  const open = f.request(user.url + "/open/G_PRIVATE/100.000001", { headers: user.headers });
+  await linkStarted.promise; await setUser("U_MINE", { isAdmin: false }); linkGate.resolve();
+  assert.equal((await open).status, 403);
+});
+
+test("REST refuses a snapshot if channel authority changes while membership reads await", async (t) => {
+  const gate = defer(), started = defer();
+  const f = await fixture(t, { snapshot: async (...args) => { const data = await activityThreadSnapshot(...args); started.resolve(); await gate.promise; return data; } });
+  const entry = await f.root(); const user = await f.login();
+  const pending = f.request(user.url + "/api/threads", { headers: user.headers });
+  await started.promise; await saveChannelMeta(entry.slug, { access: "none" }); gate.resolve();
+  const response = await pending;
+  assert.equal(response.status, 503); assert.doesNotMatch(await response.text(), /Build 100/);
+});
+
+test("revocation during the final membership recheck cannot race a completion write", async (t) => {
+  const f = await fixture(t); const entry = await f.root("G_PRIVATE", "100.000001", "U_MINE", true, "group");
+  const user = await f.login(), gate = defer(), started = defer(); let lookups = 0;
+  f.client.conversations.members = async () => {
+    if (++lookups === 2) { started.resolve(); await gate.promise; }
+    return { members: ["U_MINE"] };
+  };
+  const pending = f.request(user.url + "/api/completion", { method: "POST", headers: user.post, body: JSON.stringify({ channelId: "G_PRIVATE", threadTs: "100.000001", done: true }) });
+  await started.promise; await saveChannelMeta(entry.slug, { access: "none" }); gate.resolve();
+  assert.equal((await pending).status, 403);
+  assert.equal(getSlackThread("G_PRIVATE", "100.000001").done_ms, 0);
+});
+
+test("SSE publishes local status and completion changes, bounds connections, and ends on session expiry", async (t) => {
+  const f = await fixture(t, { maxStreams: 1 }); await f.root();
+  const user = await f.login(); f.reads.length = 0;
+  const response = await f.request(user.url + "/stream", { headers: user.headers });
+  assert.equal(response.status, 200); assert.equal(response.headers.get("x-accel-buffering"), "no");
+  const reader = response.body.getReader(); t.after(() => reader.cancel());
+  assert.equal((await nextEvent(reader)).rows[0].status, "idle");
+  assert.equal((await f.request(user.url + "/stream", { headers: user.headers })).status, 429);
+  recordSlackThreadOutcome("C_WORK", "100.000001", { error: true });
+  assert.equal((await nextEvent(reader)).rows[0].status, "error");
+  setSlackThreadDone("C_WORK", "100.000001", "U_MINE", true);
+  assert.equal((await nextEvent(reader)).rows[0].status, "done");
+  assert.deepEqual(f.reads, []);
+  f.advance(ACTIVITY_SESSION_TTL_MS + 1);
+  await nextEvent(reader, "access-ended");
+  assert.equal((await reader.read()).done, true);
+  assert.equal((await f.request(user.url + "/api/threads", { headers: user.headers })).status, 401);
+});
+
+test("SSE removes revoked private access and rejects admission after user disable or Slack disconnect", async (t) => {
+  const f = await fixture(t); await f.root("G_PRIVATE", "100.000001", "U_MINE", true, "group");
+  f.members.set("G_PRIVATE", ["U_MINE"]);
+  const user = await f.login();
+  const response = await f.request(user.url + "/stream", { headers: user.headers });
+  const reader = response.body.getReader(); t.after(() => reader.cancel());
+  assert.equal((await nextEvent(reader)).rows.length, 1);
+  f.members.set("G_PRIVATE", []); f.advance(100);
+  assert.equal((await nextEvent(reader)).rows.length, 0);
+  await setUser("U_MINE", { approved: false });
+  await nextEvent(reader, "access-ended");
+  assert.equal((await f.exchange()).status, 403);
+  await setUser("U_MINE", { approved: true }); f.disconnect();
+  assert.equal((await f.exchange()).status, 403);
+});

@@ -1,5 +1,22 @@
 # Operations runbook
 
+## Private user Activity dashboard
+
+With the gateway's **Public URL** set to its reachable HTTPS origin, approved Slack users can open
+**Home → Activity → Open live dashboard**. This is served by the existing daemon and does not
+require administrator login, a new service or Slack OAuth setup. HTTP is accepted only on loopback
+for local development. Forward `/activity/*` to the daemon; preserve Host and Origin, disable
+proxy buffering for `/activity/*/stream`, and allow long-lived SSE connections. The bare
+administrator `/activity` history page retains its existing authentication.
+
+The private Home link expires after ten minutes and exchanges once; the scoped browser session
+lasts one hour and ends on daemon restart or current access revocation. Reopen Slack Home to get a
+fresh launch link. Treat unused links as credentials and never publish them in a shared channel.
+No thread history or admin credentials are exposed to the frontend. Private memberships are
+revalidated every snapshot and at least every 15 seconds while connected; transient Slack failures
+hide unverifiable rows. Done/Reopen shares Slack completion/reminder state. Working → Idle means
+the agent finished replying; explicit completion is still required to hide the thread.
+
 ## Dashboard users, passkeys and recovery
 
 Use the existing **Users** list. Give the intended person the **Admin** role, open their details,

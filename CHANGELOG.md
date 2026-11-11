@@ -12,6 +12,12 @@ release gates. Stable promotion and publication require approval of the exact te
 
 ### Beta development notes
 
+- Slack Home → Activity now opens a private live browser dashboard with a compact searchable
+  table, status spinners/colors, last-message dates, thread links and shared Done/Reopen controls.
+  Private launch links use short-lived, single-use authentication and current access checks.
+- Activity excludes ordinary human conversations and unrelated bots, including old polluted
+  entries; genuine agent participation persists after engine sessions are cleared.
+
 - Resolve generated `gateway-usage` and `channel-memory` dependencies only from the channel's
   verified workspace copies, and keep them out of the personal skill catalog.
 
