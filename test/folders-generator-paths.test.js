@@ -50,10 +50,14 @@ test("effectiveWorkDir: clean mode, a contained custom workDir, and an escaping 
   console.warn = (msg) => warnings.push(String(msg));
   try {
     assert.equal(effectiveWorkDir(slug, { workDir: outside }), workspaceFolder(slug, undefined));
+    assert.equal(effectiveWorkDir(slug, { workDir: outside }), workspaceFolder(slug, undefined));
   } finally {
     console.warn = original;
   }
   assert.ok(warnings.some((w) => w.includes("escapes the allowed root")), "the escape is logged, not silent");
+  // Every channel listing resolves every channel through here: the warning is once per channel
+  // and value, not once per lookup.
+  assert.equal(warnings.filter((w) => w.includes("escapes the allowed root")).length, 1, "a stale workDir is reported once, not on every lookup");
   assert.equal(effectiveWorkDir(slug, { workDir: "relative/path" }), workspaceFolder(slug, undefined));
 });
 

@@ -18,6 +18,13 @@ release gates. Stable promotion and publication require approval of the exact te
 
 ### Beta development notes
 
+- Stop the periodic Slack membership check from rebuilding every channel workspace. A routine
+  verification now touches no folder; only a channel the check restored after a re-invite is
+  caught up. Reconnects no longer rebuild unchanged workspaces, a sync pass checks shared-folder
+  conflicts once instead of once per channel, yields between channels, and a stale stored work
+  folder is logged once per channel. Large deployments stopped dropping the Socket Mode
+  connection under their own five-minute rebuild.
+
 - Add optional Codex EU and Claude Bedrock harnesses with independent terminal setup, defaults
   and sessions. Codex EU uses a dedicated Enterprise login; residency follows its workspace.
   Bedrock supports regional bearer API keys. Both stay outside automatic account failover.

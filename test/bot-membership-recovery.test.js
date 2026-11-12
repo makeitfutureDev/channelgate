@@ -248,6 +248,66 @@ test("persisted pending membership blocks real workspace writes until a complete
   assert.match(await readFile(path.join(workspaceFolder(entry.slug), "CLAUDE.md"), "utf8"), /Recovered instructions/);
 });
 
+test("routine verification and reconnects rebuild no unchanged workspace; only a restored channel is caught up", async (t) => {
+  const { upsertChannelEntry, saveChannelMeta, defaultChannelMeta, getChannelMeta, patchChannelMeta } = await import("../src/config/store.js");
+  const { workspaceFolder } = await import("../src/config/paths.js");
+  const { syncWorkspaceSkills, syncRestoredWorkspaces } = await import("../src/gateway/skills/workspace-sync.js");
+  const id = "C_VERIFY_NO_REBUILD";
+  const entry = await upsertChannelEntry(id, { name: "verify-no-rebuild", type: "channel", isDM: false });
+  await saveChannelMeta(entry.slug, { ...defaultChannelMeta({ channelId: id, type: "channel", isDM: false }), instructions: "Verified once" });
+  const verifications = [];
+  const recovery = createBotMembershipRecovery({
+    slack: {
+      getClient: () => ({ users: { conversations: async () => ({ channels: [{ id }] }) } }),
+      snapshot: () => ({ connected: true }),
+    },
+    channels: async () => [{ ...entry, channelId: id, meta: await getChannelMeta(entry.slug) }],
+    patch: patchChannelMeta, log: () => {},
+    onVerified: (result) => { verifications.push(result); return syncRestoredWorkspaces(result); },
+  });
+  t.after(() => recovery.stop());
+  await recovery.invalidate();
+  assert.equal((await recovery.reconcile()).ok, true);
+  // The first pass after verification materializes the folder (its inputs were never applied).
+  const first = await syncWorkspaceSkills({ force: false, log: () => {} });
+  assert.ok(first.synced.includes(entry.slug));
+  const claudeMd = path.join(workspaceFolder(entry.slug), "CLAUDE.md");
+  assert.match(await readFile(claudeMd, "utf8"), /Verified once/);
+
+  // A routine periodic verification restores nothing, so it owes the workspaces nothing.
+  assert.equal((await recovery.reconcile()).ok, true);
+  assert.deepEqual(verifications.at(-1).restored, []);
+  assert.equal((await syncRestoredWorkspaces(verifications.at(-1))).unchanged, true);
+  assert.equal((await syncWorkspaceSkills({ force: false, log: () => {} })).unchanged, true);
+
+  // A Socket Mode hiccup flips every channel pending and back. The pass fingerprint changes twice,
+  // but no folder input did: the non-forced pass must skip the channel rather than rebuild it.
+  await recovery.invalidate();
+  const paused = await syncWorkspaceSkills({ force: false, log: () => {} });
+  assert.equal(paused.synced.includes(entry.slug), false);
+  assert.equal((await recovery.reconcile()).ok, true);
+  const reconnected = await syncWorkspaceSkills({ force: false, log: () => {} });
+  assert.equal(reconnected.ok, true);
+  assert.equal(reconnected.unchanged, false);
+  assert.deepEqual(reconnected.synced, []);
+  assert.ok(reconnected.skipped.includes(entry.slug), "a membership flip alone must not rebuild the workspace");
+  assert.match(await readFile(claudeMd, "utf8"), /Verified once/);
+
+  // A real input change still converges on the next non-forced pass.
+  await patchChannelMeta(entry.slug, { memory: false });
+  const changed = await syncWorkspaceSkills({ force: false, log: () => {} });
+  assert.ok(changed.synced.includes(entry.slug), "a changed workspace input still rebuilds the workspace");
+
+  // A channel the verification RESTORED (re-invited while the gateway could not see it) is the one
+  // case verification itself must catch up, targeted to that channel.
+  await patchChannelMeta(entry.slug, { archived: true, archivedReason: "bot_removed", botMembership: "absent" });
+  const restored = await recovery.reconcile();
+  assert.ok(restored.restored.includes(entry.slug));
+  const caughtUp = await syncRestoredWorkspaces(restored);
+  assert.equal(caughtUp.ok, true);
+  assert.deepEqual(caughtUp.synced, [entry.slug]);
+});
+
 test("a stale delivered join cannot revive a channel absent from a complete live membership list", async (t) => {
   const { readBotMemberships } = await import("../src/slack/bot-membership.js");
   const id = "G_STALE_LIVE_JOIN";
