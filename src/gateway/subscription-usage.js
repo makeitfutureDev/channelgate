@@ -11,12 +11,38 @@ import { getEnabledEngines, getContainerClaudeOauthToken } from "../config/setti
 import { readBoundedBytes } from "../util/bounded-bytes.js";
 
 const ENDPOINTS = Object.freeze({
-  claude: "https://api.anthropic.com/api/oauth/usage",
+  claude: "https://api.anthropic.com/api/oauth/usage?cedar_ember=1&skip_spend=1",
   codex: "https://chatgpt.com/backend-api/wham/usage",
 });
+const CODEX_RESETS_ENDPOINT = "https://chatgpt.com/backend-api/wham/rate-limit-reset-credits";
 const CACHE_MS = 300_000;
 const text = (value) => typeof value === "string" ? value.slice(0, 80) : "";
 const percent = (value) => typeof value === "number" && Number.isFinite(value) && value >= 0 && value <= 100 ? value : null;
+const count = (value) => Number.isSafeInteger(value) && value >= 0 ? value : null;
+
+// The official Claude CLI reads this optional grant projection from the usage response.
+function normalizeClaudeResets(status) {
+  if (!status || !Array.isArray(status.grants)) return null;
+  const available = status.grants.slice(0, 100).filter((grant) => grant && count(grant.resets_left) !== null && grant.resets_left > 0);
+  const total = available.reduce((sum, grant) => sum + grant.resets_left, 0);
+  if (!Number.isSafeInteger(total)) return null;
+  return { available: total, resets: available.map((grant) => {
+    const clears = Array.isArray(grant.clears) ? grant.clears : [];
+    const session = clears.includes("five_hour"), weekly = clears.some((key) => key !== "five_hour");
+    const kind = grant.gives_back_weekly ? "fable" : ["session", "weekly", "full"].includes(grant.type) ? grant.type : session && weekly ? "full" : session ? "session" : weekly ? "weekly" : "unknown";
+    const label = { session: "5-hour reset", weekly: "Weekly reset", full: "Full reset", fable: "Fable reset", unknown: "Usage reset" }[kind];
+    return { label: text(grant.label) || label, expiresAt: iso(grant.ends_at), remaining: grant.resets_left, paused: grant.paused === true, usableNow: grant.usable_now === true };
+  }) };
+}
+
+export function normalizeResetCredits(data) {
+  if (count(data?.available_count) === null) return null;
+  const resets = (Array.isArray(data.credits) ? data.credits : []).slice(0, 100)
+    .filter((credit) => credit?.status === "available")
+    .map((credit) => ({ label: text(credit.title) || (credit.reset_type === "codex_rate_limits" ? "Full reset" : "Usage reset"), expiresAt: iso(credit.expires_at) }));
+  return { available: data.available_count, resets };
+}
+
 function iso(value) {
   if (value == null || value === "") return null;
   const ms = typeof value === "number" ? value * 1000 : Date.parse(value);
@@ -26,10 +52,23 @@ function iso(value) {
 export function normalizeSubscriptionUsage(provider, data) {
   const windows = [];
   if (provider === "claude") {
-    for (const [key, label] of Object.entries({ five_hour: "Current session (5 hours)", seven_day: "Weekly · all models", seven_day_opus: "Weekly · Opus", seven_day_sonnet: "Weekly · Sonnet", seven_day_oauth_apps: "Weekly · OAuth apps", seven_day_cowork: "Weekly · Cowork", seven_day_overage_included: "Weekly · included overage" })) {
+    for (const [key, label] of Object.entries({ five_hour: "Current session (5 hours)", seven_day: "Weekly · all models", seven_day_fable: "Weekly · Fable", seven_day_opus: "Weekly · Opus", seven_day_sonnet: "Weekly · Sonnet", seven_day_oauth_apps: "Weekly · OAuth apps", seven_day_cowork: "Weekly · Cowork", seven_day_overage_included: "Weekly · included overage" })) {
       const window = data?.[key];
       if (percent(window?.utilization) !== null) windows.push({ id: key, label, usedPercent: percent(window.utilization), resetsAt: iso(window.resets_at) });
     }
+    // Current Claude payloads include model-scoped limits here rather than a new flat key.
+    // Project only known window kinds, bounded display names and numeric percentages.
+    const indexed = new Map(windows.map((window) => [window.id, window]));
+    for (const limit of (Array.isArray(data?.limits) ? data.limits : []).slice(0, 50)) {
+      const usedPercent = percent(limit?.percent);
+      if (usedPercent === null) continue;
+      const model = text(limit.scope?.model?.display_name);
+      const scoped = limit.kind === "weekly_scoped" && model;
+      const id = limit.kind === "session" ? "five_hour" : limit.kind === "weekly_all" ? "seven_day" : scoped ? `seven_day_${model.toLowerCase().replace(/[^a-z0-9]+/g, "_")}` : "";
+      if (!id) continue;
+      indexed.set(id, { id, label: scoped ? `Weekly · ${model}` : id === "five_hour" ? "Current session (5 hours)" : "Weekly · all models", usedPercent, resetsAt: iso(limit.resets_at) });
+    }
+    windows.splice(0, windows.length, ...indexed.values());
   } else if (provider === "codex") {
     const groups = [["rate_limit", "", data?.rate_limit], ["code_review_rate_limit", "Code review · ", data?.code_review_rate_limit]];
     if (Array.isArray(data?.additional_rate_limits)) {
@@ -47,7 +86,8 @@ export function normalizeSubscriptionUsage(provider, data) {
       }
     }
   }
-  return { windows, plan: provider === "codex" ? text(data?.plan_type) : "" };
+  const resetCredits = provider === "claude" ? normalizeClaudeResets(data?.cedar_ember) : normalizeResetCredits(data?.rate_limit_reset_credits);
+  return { windows, plan: provider === "codex" ? text(data?.plan_type) : "", ...(resetCredits ? { resetCredits } : {}) };
 }
 
 export function createDaemonSubscriptionCredentials({ resolveClaude = resolveClaudeLogin, readClaude = readDaemonClaudeAccessToken,
@@ -58,7 +98,7 @@ export function createDaemonSubscriptionCredentials({ resolveClaude = resolveCla
       const login = resolveClaude();
       if (login.kind === "api-key" || login.kind === "none") return { kind: login.kind };
       const current = login.kind === "settings" ? { token: claudeToken() } : readClaude(login);
-      return { kind: "subscription", token: current?.token || "", expiresAt: current?.expiresAt || 0, plan: current?.subscriptionType || "", source: login.kind };
+      return { kind: "subscription", token: current?.token || "", expiresAt: current?.expiresAt || 0, plan: current?.subscriptionType === "max" && /max_(5|20)x$/.test(current?.rateLimitTier || "") ? `Max ${current.rateLimitTier.match(/max_(5|20)x$/)[1]}x` : current?.subscriptionType || "", source: login.kind };
     }
     const dedicated = usage.login === "codex-eu";
     const login = resolveCodex(dedicated ? { env: {}, candidates: [path.join(euHome(), "auth.json")] } : {});
@@ -77,13 +117,14 @@ export function createSubscriptionUsageReader({ credentials = daemonCredentials,
     const manifest = adapter(engine);
     const usage = manifest?.subscriptionUsage;
     const provider = usage?.provider;
-    const base = { provider: engine, name: manifest?.label || engine, plan: "", windows: [], checkedAt: null, updatedAt: null, stale: false };
+    const base = { provider: engine, kind: "unsupported", name: manifest?.label || engine, plan: "", windows: [], checkedAt: null, updatedAt: null, stale: false };
     if (!Object.hasOwn(ENDPOINTS, provider || "")) {
       cache.delete(engine);
       return { ...base, status: "unsupported", message: "Subscription quota reporting is not available for this harness. Check its provider dashboard for limits and billing." };
     }
     let credential;
     try { credential = credentials(engine, usage); } catch { return { ...base, status: "unavailable", message: "Could not read the gateway login. Check engine settings." }; }
+    base.kind = credential.kind === "subscription" ? "subscription" : credential.kind === "api-key" ? "api-key" : "none";
     if (credential.kind !== "subscription" || !credential.token) {
       cache.delete(engine);
       return { ...base, status: credential.kind === "api-key" ? "api-key" : "not-connected", message: credential.kind === "api-key" ? "API-key billing has no subscription quota. View token usage and estimated costs on Overview." : "No subscription login is available. Sign in to this engine on the gateway host." };
@@ -123,6 +164,18 @@ export function createSubscriptionUsageReader({ credentials = daemonCredentials,
         } else {
           const bytes = await readBoundedBytes(response, 256 * 1024);
           const normalized = normalizeSubscriptionUsage(provider, JSON.parse(bytes.toString("utf8")));
+          // Reset allowances have a separate read-only endpoint. A failure there must never
+          // hide valid quota windows or leak a response body. Share the main per-harness cache.
+          if (provider === "codex" && normalized.resetCredits?.available > 0) {
+            try {
+              const resetResponse = await fetchImpl(CODEX_RESETS_ENDPOINT, { headers, signal: AbortSignal.timeout(timeoutMs), redirect: "error" });
+              if (resetResponse.ok) {
+                const resetBytes = await readBoundedBytes(resetResponse, 256 * 1024);
+                const details = normalizeResetCredits(JSON.parse(resetBytes.toString("utf8")));
+                if (details) normalized.resetCredits = details;
+              } else await resetResponse.body?.cancel?.();
+            } catch { /* The usage summary still reports the available count. */ }
+          }
           result = { ...base, ...normalized, plan: normalized.plan || base.plan, status: normalized.windows.length ? "ok" : "unavailable", message: normalized.windows.length ? "" : "The provider returned no supported usage windows." };
         }
       } catch {
@@ -135,7 +188,7 @@ export function createSubscriptionUsageReader({ credentials = daemonCredentials,
       } else if (result.status === "expired") {
         entry.good = null;
       } else if (previous && result.status !== "expired") {
-        result = { ...result, windows: previous.windows, plan: previous.plan, updatedAt: previous.updatedAt, stale: true };
+        result = { ...result, windows: previous.windows, plan: previous.plan, ...(previous.resetCredits ? { resetCredits: previous.resetCredits } : {}), updatedAt: previous.updatedAt, stale: true };
       }
       entry.at = now();
       entry.value = result;

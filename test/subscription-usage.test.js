@@ -120,7 +120,7 @@ test("outbound calls use exact fixed endpoints, bearer auth and provider-specifi
     return success(url.includes("anthropic") ? claudeBody() : codexBody());
   } });
   const result = await read();
-  assert.deepEqual(requests.map((row) => row.url), ["https://api.anthropic.com/api/oauth/usage", "https://chatgpt.com/backend-api/wham/usage"]);
+  assert.deepEqual(requests.map((row) => row.url), ["https://api.anthropic.com/api/oauth/usage?cedar_ember=1&skip_spend=1", "https://chatgpt.com/backend-api/wham/usage"]);
   assert.deepEqual(requests[0].options.headers, { Authorization: "Bearer fixture-claude-access", Accept: "application/json", "User-Agent": "ChannelGate/subscription-usage", "anthropic-beta": "oauth-2025-04-20" });
   assert.deepEqual(requests[1].options.headers, { Authorization: "Bearer fixture-codex-access", Accept: "application/json", "User-Agent": "ChannelGate/subscription-usage", "ChatGPT-Account-Id": "fixture-account" });
   for (const { options } of requests) { assert.equal(options.redirect, "error"); assert.ok(options.signal instanceof AbortSignal); assert.equal(options.signal.aborted, false); }
@@ -500,4 +500,69 @@ test("dedicated EU missing, malformed and API-key files cannot read another logi
   assert.equal(credential.plan, "pro_lite");
   assert.equal(credential.token, token);
   assert.doesNotMatch(JSON.stringify(credential), /fixture-unused-refresh/);
+});
+
+test("Claude structured session and scoped model limits replace duplicate legacy windows", () => {
+  const result = normalizeSubscriptionUsage("claude", { seven_day_opus: { utilization: 10 }, limits: [
+    { kind: "session", percent: 0, resets_at: "2026-12-01T12:00:00Z" },
+    { kind: "weekly_all", percent: 56 },
+    { kind: "weekly_scoped", percent: 63, scope: { model: { display_name: "Fable" } } },
+    { kind: "weekly_scoped", percent: 21, scope: { model: { display_name: "Opus" } } },
+    { kind: "unknown", percent: 50 }, { kind: "weekly_scoped", percent: 999, scope: { model: { display_name: "Invalid" } } },
+  ] });
+  assert.deepEqual(result.windows.map((row) => [row.id, row.label, row.usedPercent]), [
+    ["seven_day_opus", "Weekly · Opus", 21], ["five_hour", "Current session (5 hours)", 0], ["seven_day", "Weekly · all models", 56], ["seven_day_fable", "Weekly · Fable", 63],
+  ]);
+});
+
+test("Codex reset allowances include safe counts and expiry details, cache together, and tolerate detail failure", async () => {
+  let requests = [], fail = false, clock = START;
+  const read = createSubscriptionUsageReader({ engines: () => ["codex"], credentials: connected, now: () => clock,
+    fetchImpl: async (url, options) => {
+      requests.push({ url, options });
+      if (url.endsWith("reset-credits")) {
+        if (fail) throw new Error("fixture-secret");
+        return success({ available_count: 2, credits: [
+          { id: "private-credit-id", status: "available", reset_type: "codex_rate_limits", expires_at: "2026-12-01T12:00:00Z", access_token: "private-token" },
+          { status: "redeemed", title: "Do not expose", expires_at: "2026-12-02T12:00:00Z" },
+          { status: "available", title: "Another reset", expires_at: "bad date" },
+        ] });
+      }
+      return success({ ...codexBody(), rate_limit_reset_credits: { available_count: 2 } });
+    } });
+  const first = await read();
+  assert.deepEqual(forProvider(first, "codex").resetCredits, { available: 2, resets: [{ label: "Full reset", expiresAt: "2026-12-01T12:00:00.000Z" }, { label: "Another reset", expiresAt: null }] });
+  assert.equal(forProvider(first, "codex").kind, "subscription");
+  assert.equal(requests.length, 2);
+  assert.equal(requests[1].url, "https://chatgpt.com/backend-api/wham/rate-limit-reset-credits");
+  assert.deepEqual(requests[0].options.headers, requests[1].options.headers);
+  assert.equal(requests[1].options.redirect, "error");
+  await read(); assert.equal(requests.length, 2);
+  assert.doesNotMatch(JSON.stringify(first), /private-credit-id|private-token|Do not expose/);
+  clock += TTL; fail = true;
+  const later = forProvider(await read(), "codex");
+  assert.equal(later.status, "ok");
+  assert.deepEqual(later.resetCredits, { available: 2, resets: [] });
+  assert.equal(requests.length, 4);
+  for (const value of [undefined, null, -1, "2", 1.2]) {
+    assert.equal(normalizeSubscriptionUsage("codex", { rate_limit_reset_credits: { available_count: value } }).resetCredits, undefined);
+  }
+});
+
+test("Claude reset grants preserve banked counts, usability and grant expiry without sensitive identifiers", () => {
+  const result = normalizeSubscriptionUsage("claude", { ...claudeBody(), cedar_ember: {
+    eligible: true, weekly_resets_at: "2026-12-08T00:00:00Z", grants: [
+      { id: "private-reset-id", label: "Session reset", resets_left: 2, paused: false, usable_now: true, ends_at: "2026-12-01T00:00:00Z" },
+      { resets_left: 1, paused: true, usable_now: true, ends_at: "2026-12-02T00:00:00Z" },
+      { resets_left: 1, paused: false, usable_now: false },
+      { resets_left: "5", paused: false, usable_now: true },
+    ] } });
+  assert.deepEqual(result.resetCredits, { available: 4, resets: [
+    { label: "Session reset", expiresAt: "2026-12-01T00:00:00.000Z", remaining: 2, paused: false, usableNow: true },
+    { label: "Usage reset", expiresAt: "2026-12-02T00:00:00.000Z", remaining: 1, paused: true, usableNow: true },
+    { label: "Usage reset", expiresAt: null, remaining: 1, paused: false, usableNow: false },
+  ] });
+  assert.doesNotMatch(JSON.stringify(result), /private-reset-id|2026-12-08/);
+  assert.deepEqual(normalizeSubscriptionUsage("claude", { cedar_ember: { grants: [] } }).resetCredits, { available: 0, resets: [] });
+  assert.equal(normalizeSubscriptionUsage("claude", { cedar_ember: {} }).resetCredits, undefined);
 });

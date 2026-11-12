@@ -2,8 +2,9 @@
 
 ## 0.6.5 — candidate, pending approval
 
-- Show every enabled harness on Subscriptions, including separate Codex EU quotas and explicit
-  unsupported reporting states for harnesses without a subscription quota reader.
+- Add shared subscription usage to user Activity dashboards, with compact summary bars and a
+  Subscriptions page. Simplify the Activity header and reuse compact cards in admin, including
+  separate Codex EU quotas, model-specific Claude limits and available reset-credit expiries.
 - Keep conversations open on Slack 👍 emoji reactions, including skin tones. The native positive
   answer-feedback button still marks work done, as do checkmark reactions and Done controls.
 

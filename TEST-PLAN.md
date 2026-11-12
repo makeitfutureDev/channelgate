@@ -271,6 +271,27 @@ never alter production credentials or send real access tokens to fixture servers
   Codex and Codex EU must send distinct synthetic bearer/account headers, coalesce only their own
   requests, refresh independently, and discard stale data on rotation/disconnect. Dedicated EU
   missing/malformed/API-key files must never borrow the default login or environment API key.
+- Activity subscription viewer acceptance (2026-11-12, engine-independent): special disposable
+  gateway/router with approved non-admin Activity owner, a second owner and anonymous browser;
+  synthetic Claude/Codex/EU quotas plus API-key/unsupported harnesses. Open the private launch
+  link, verify the heading/subtitle are removed and quick bars show only actual subscriptions,
+  name the highest limit shown, and reflect provider percentages. Navigate to Subscriptions and
+  back, direct load/reload the detail URL, test at 390px/desktop, manual refresh and hidden-tab
+  polling. Require no console/CSP errors or horizontal overflow. Model-scoped Fable limits,
+  reset-credit counts, reset countdowns/dates and per-grant expiry/count labels must match fixtures.
+  Missing/unknown billing dates and prices are never inferred. At session expiry/revocation while
+  a request is pending, clear displayed quota and show a new-link message; no late repaint or
+  fetch after pagehide. Anonymous, forged/cross-session/admin/run-key cookies must not grant this
+  endpoint access. Read-only shared quotas expose no login IDs, credentials or raw provider data;
+  no admin API privileges and no access to other users' threads. API cache remains shared with
+  the admin page; opening the viewer cannot trigger an engine or token refresh. Exercise these
+  routes in `test/activity.test.js` plus the generated-browser and Chromium Activity suites.
+- Reset provider fixtures: Claude `limits[]` numeric percentages replace matching flat legacy
+  windows; `cedar_ember.grants[]` preserves held reset counts even when unavailable until the
+  limit is hit, records paused/usable flags separately, and uses `ends_at` for expiry, never the normal weekly reset date. Codex `rate_limit_reset_credits.available_count`
+  is supplemented by the bounded read-only reset-credit detail endpoint with identical account
+  headers. Detail endpoint errors retain valid quota data and summary count; invalid/raw IDs,
+  redeemed grants and secret response fields are excluded. Missing fields remain unknown.
 - Live admin acceptance: an authorized admin opens Subscriptions and compares each reported
   quota/reset to that provider's own usage screen for the gateway login. Confirm five-minute
   cache behavior, independent provider failure, stale timestamps and explicit missing/API-key/
