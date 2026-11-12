@@ -25,6 +25,16 @@ Post the result in this conversation.
 
 Inspect the resulting schedule under **Automations**. Check its conversation, prompt, timing, delivery mode, and enabled status before relying on it. Cron scheduling uses the server's local timezone; ask for an explicit timezone when describing requirements and verify the saved result.
 
+## Personal reply mentions
+
+Automatic reply mentions are separate from quiet-thread reminders. In Slack App Home →
+**Help & settings**, each person can toggle **Mention me in replies**, or ask the agent to turn it
+on or off. Administrators can change the same preference in **Users → [person] → Automatic reply mentions**.
+New users start off; existing users keep on until they opt out. The choice applies to following
+replies across that platform account’s conversations and survives restart. Slack, Teams and
+Google Chat use it for their automatic requester tag; DMs omit that tag. Explicit answer mentions
+remain available.
+
 ## Personal reminder preferences
 
 A user can change quiet-thread reminders in Slack App Home. Administrators can also edit **Users → [person] → Quiet-thread reminders**. Changing the organization default affects newly seen users. **Apply to all…** overwrites existing personal choices with the selected default and cannot be undone.
