@@ -6,6 +6,7 @@
 import { getComposioMode, userNudgesEnabled } from "../config/settings.js";
 import { toolboxUrl } from "./mcp-catalog.js";
 import { getUser, setUser } from "../config/store.js";
+import { userReplyMentionsEnabled } from "../config/user-preferences.js";
 import { MIN_MASKABLE_LENGTH, assertValidEnvName, assertValidEnvValue } from "../config/channel-env.js";
 import { listUserEnv, patchUserEnv } from "../config/scoped-env.js";
 import { revokeRemoteMcpsForAuthor } from "../mcp/remote-mcp-registry.js";
@@ -63,7 +64,7 @@ export async function userSettingsSnapshot(userId) {
   ]);
   return {
     account: { id: userId, name: str(user.name, 120), role: isAdmin ? "admin" : user.approved ? "member" : "guest" },
-    general: { nudges: userNudgesEnabled(user) },
+    general: { nudges: userNudgesEnabled(user), replyMentions: userReplyMentionsEnabled(user) },
     connections: {
       composioMode: getComposioMode() === "sdk" ? "sdk" : "personal",
       composio: { ...masked(user.composioToken), label: str(user.composioTokenLabel, 80) },
@@ -107,6 +108,13 @@ export async function applyUserSettingsChange(userId, input = {}, { authorize = 
       await setUser(userId, { nudges: input.enabled });
       await logEvent("user_nudges_changed", { author: userId, enabled: input.enabled, via: "activity_settings" });
       return { notice: `Quiet-thread reminders are ${input.enabled ? "on" : "off"}.` };
+    }
+    case "replyMentions": {
+      if (typeof input.enabled !== "boolean") fail("Choose on or off.");
+      await authorize();
+      await setUser(userId, { replyMentions: input.enabled });
+      await logEvent("user_reply_mentions_changed", { author: userId, enabled: input.enabled, via: "activity_settings" });
+      return { notice: `Reply mentions are ${input.enabled ? "on" : "off"}.` };
     }
     case "composio.save": {
       if (getComposioMode() === "sdk") fail("Composio runs in SDK mode on this gateway; your session is created automatically.");

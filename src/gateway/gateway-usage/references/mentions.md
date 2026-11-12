@@ -26,3 +26,12 @@ you need to look someone up (their exact display name, or a person in another ch
 `composio-user` (the requester's Slack) or `composio-agent` (your own Slack) following the identity
 rules in `SKILL.md` → “Tool identities”. Otherwise write plain `@Name` and let the gateway
 resolve it.
+
+## Automatic reply mentions
+
+Automatic requester tags follow the person's **Mention me in replies** setting. New users start
+off; existing users retain on until they opt out. Users can toggle this in Slack App Home →
+**Help & settings**, or ask you to use `set_my_reply_mentions` with `enabled: true` or `false`.
+The tool changes only the authenticated requester and persists across conversations; it is a
+personal setting, not a channel instruction or memory fact. Admins can also change it in Users.
+Direct messages never add an automatic tag. Explicit @Name mentions in an answer still work.

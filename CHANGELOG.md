@@ -3,9 +3,13 @@
 ## 0.6.5 — candidate, pending approval
 
 - Add a Settings page to the Activity dashboard. Each person manages their own reminders,
-  theme, passkeys, Composio and Toolbox tokens, email accounts, MCP servers, variables, skills
+  reply mentions, theme, passkeys, Composio and Toolbox tokens, email accounts, MCP servers, variables, skills
   and SSH keys from the browser. Secrets stay write-only, and every change affects only the
   signed-in person.
+
+- Make automatic reply mentions a personal setting. New users start off; existing users keep on
+  until they opt out. Change it in Slack Home → Help & settings, ask the agent, or use admin Users.
+  Slack, Teams and Google Chat delivery follow the setting across conversations.
 
 - Add passkey setup and management from private Activity dashboard links, plus a dedicated
   Activity sign-in page for returning users. Expired links offer passkey sign-in; Activity

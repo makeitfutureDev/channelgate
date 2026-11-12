@@ -13,7 +13,7 @@ The navigation row inside Home has five sections. The selected section is highli
 - **Connections** shows your personal/shared connection status and personal Composio controls.
 - **Skills** shows your personal grants and the organization-wide skill count.
 - **Channels** lists conversations currently available to you.
-- **Help & settings** contains quiet-thread reminders, command/runtime guidance and gateway information.
+- **Help & settings** contains personal reply mentions, quiet-thread reminders, command/runtime guidance and gateway information.
 
 Only the selected section loads. Saving or disconnecting a personal connection keeps you on
 Connections. Thread filters and pagination stay on Activity; reminder changes stay on Help & settings. Opening Home again
@@ -102,6 +102,14 @@ In Enterprise Composio SDK mode, runtime identities replace the personal token s
 Where Slack enables its Agent messaging experience, Messages shows suggested prompts based on selected tools and skills, with practical fallback prompts. New DM threads receive a short automatic title derived from the first request, or a file/new-conversation fallback, so the timeline is easier to browse.
 
 Slack can also report which channel or message is open alongside the Agent DM. ChannelGate uses bounded, sanitized per-user view metadata to understand references such as “this thread.” It does not fetch that view’s messages automatically, prove membership, grant access, or treat the metadata as an instruction. Empty context clears the prior selection; cached context expires and does not survive a daemon restart. The actual task still runs in the DM workspace unless an authorized workflow explicitly targets another conversation.
+
+## Choose automatic reply mentions
+
+In **Help & settings**, use **Mention me in replies** to turn automatic requester tags on or off.
+New users start with this off. Users already registered before this setting was introduced keep it
+on until they opt out. The choice follows your platform user account across conversations and
+survives restart. Direct messages omit automatic tags even when enabled. You can also ask the agent
+to turn your reply mentions on or off. Explicit requested mentions in an answer still work.
 
 ## Review skills and reminders
 

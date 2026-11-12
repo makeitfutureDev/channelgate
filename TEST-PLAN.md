@@ -6,7 +6,8 @@
   while they change. The effect on runs is engine-dependent and is covered by the live cases.
 - Automated: `node --test test/user-settings.test.js test/activity-settings-page.test.js
   test/activity.test.js`. Covers the masked snapshot (no token, variable, MCP or mail password
-  value in any response), owner-only writes with ignored caller owners/roles, Composio/Toolbox
+  value in any response), owner-only writes with ignored caller owners/roles, the reminder and
+  reply-mention preferences (new users off), Composio/Toolbox
   save/label/remove and the SDK-mode refusal, variable validation (reserved and invalid names),
   hidden/readable creation and type-preserving replace, MCP private-URL refusal and token-keeping
   edits, mail-login verification and password keeping, skill availability (foreign personal
@@ -24,9 +25,45 @@
   author only (another approved user's turn in the same channel does not list it) and disappears
   after **Remove**, including for a turn already in progress at its next request.
 - Live **SETTINGS-03**, engine-independent: with two browsers signed in as different people,
-  saving a Composio token, reminder preference or skill in one never changes the other; a CSRF
+  saving a Composio token, reminder or reply-mention preference or skill in one never changes the
+  other; with Mention me in replies on, the next channel reply mentions that person and not the
+  other; a CSRF
   token copied from the other session is refused; revoking the user in admin makes the page
   report the ended session on the next action.
+
+## Personal automatic reply mentions (2026-11-13)
+
+- Automated: `test/user-reply-mentions.test.js` covers new-user defaults, migration 52 from
+  existing rows, preservation of explicit choices, legacy import, rollback and restart persistence.
+  `test/home-reply-mentions.test.js` verifies actor-only self-service, invalid values and UI state;
+  `test/user-reply-mentions-api.test.js` verifies masked admin read/save, boolean validation and
+  unrelated field preservation. `test/user-skills-browser.test.js` exercises the real admin drawer,
+  saving/reloading the checkbox and layouts at desktop and mobile widths when the browser fixture
+  is configured. `test/gateway-mcp-authz.test.js` verifies the personal tool with signed capabilities,
+  schema rejection and refusal of untrusted API attribution and agent principals.
+- Delivery: `test/slack-requester-tag.test.js` covers explicit opt-in/off across streamed, one-shot,
+  long overflow and failed-stream fallback replies, DM exclusion, default-off and explicit @Name
+  resolution. `test/slack-reply-mentions-pipeline.test.js` drives both fake engine CLIs through
+  real Slack intake for new-user off → on → off and DM suppression. `test/agent-mail.test.js`
+  checks author lookup and DM suppression; `test/api-conversations-driver.test.js` checks real
+  API delivery for trusted owner preferences, spoofed attribution and DMs with both fake engines.
+  `test/slack-progress.test.js` retains rollover, idle flushing and footer recovery.
+  `test/platform-ingest.test.js` tests default-off → on → off for each engine and both other
+  surfaces, and `test/platform-run-details.test.js` retains opted-in native Teams mentions.
+- Live Claude and Codex separately: use owned disposable equivalents of the private Claude/Codex
+  auto fixtures, an existing pre-upgrade user and a newly registered approved author. Confirm the
+  selected engine and author first. Ask `Reply exactly MENTION_PREF_OK`; new-user answer must have
+  zero automatic requester tags. In Slack Home → Help & settings, turn **Mention me in replies**
+  on, repeat, and require exactly one native mention at the end of the last answer. Turn it off
+  and repeat in another channel. The old user must retain on after upgrade, while a later opt-out
+  survives restart and unrelated user edits. Repeat with a multi-message answer and in a DM;
+  the DM never gets an automatic tag. Use an owned test-only failing stream client for fallback.
+  Ask for an explicit prepared member mention and require that mention to remain.
+- Verify the admin Users drawer can save/reload each state, invalid string input returns 400,
+  and the personal tool changes only the authenticated author. Capture native Slack text, author,
+  engine and source thread; automated mocks do not establish live notification delivery. Restore
+  fixture preferences. Private QA cases `REPLY-MENTIONS-01` and `REPLY-MENTIONS-02` cover both engines. Teams and Google
+  Chat live testing remains on the existing owner hold; their mocked delivery checks are separate.
 
 ## Activity passkey sign-in (2026-11-13)
 
@@ -7569,7 +7606,7 @@ structural invariants are automated; rendered navigation and feature claims also
       only the answer. Falls back to a plain answer if answer streaming errors.
 - [x] Unit: tool/thinking chunks and Markdown use distinct native streams on one serialized queue;
       the card's first append precedes the answer's first append, neither payload type crosses into
-      the other stream, and both terminal snapshots close without losing footer, requester mention,
+      the other stream, and both terminal snapshots close without losing footer, opted-in requester mention,
       fallback, stop, or rollover behavior (`test/slack-progress.test.js`,
       `test/slack-requester-tag.test.js`).
 - [ ] A small GFM pipe table written in the answer renders as a styled table in native

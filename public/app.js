@@ -3565,6 +3565,7 @@ function openUserDrawer(id) {
   node.querySelector(".ud-approved").checked = !!u.approved;
   node.querySelector(".ud-admin").checked = !!u.isAdmin;
   node.querySelector(".ud-nudges").checked = !!u.nudges;
+  node.querySelector(".ud-reply-mentions").checked = u.replyMentions === true;
   const userGrantsEditor = buildAccessGrantsEditor(u, { tier: "user", ownerId: id });
   const userGrantsHost = node.querySelector(".ud-grants");
   userGrantsHost.innerHTML = `<label class="field"><span>Grant tier</span><select class="ud-grant-tier"><option value="organization">Organization — applies everywhere</option><option value="channel">Channel</option><option value="user" selected>This user</option></select><em class="state">The effective run gets the live union of all three tiers.</em></label>`;
@@ -3647,6 +3648,7 @@ function openUserDrawer(id) {
           isAdmin: drawer.querySelector(".ud-admin").checked,
           approved: drawer.querySelector(".ud-approved").checked,
           nudges: drawer.querySelector(".ud-nudges").checked,
+          replyMentions: drawer.querySelector(".ud-reply-mentions").checked,
           ...(token ? { composioToken: token } : {}),
           ...(toolboxToken ? { toolboxToken } : {}),
           composioTokenLabel,

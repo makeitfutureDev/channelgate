@@ -257,7 +257,7 @@ test("live progress is posted in a separate first message and never splits the a
   assert.ok(calls.indexOf(cardWrites[0]) < calls.indexOf(answerWrites[0]), "the card is posted before answer text");
   assert.equal(answerWrites.some((call) => call[2]?.chunks), false, "task chunks never enter the answer message");
   assert.equal(cardWrites.some((call) => call[2]?.markdown_text), false, "answer Markdown never enters the card message");
-  assert.equal(answerWrites.map((call) => call[2].markdown_text).join(""), "The uninterrupted answer begins and ends here.\n\n<@U1>");
+  assert.equal(answerWrites.map((call) => call[2].markdown_text).join(""), "The uninterrupted answer begins and ends here.");
 });
 
 test("persistent toolbox appends immediately restore the temporary assistant status", async () => {
@@ -2846,7 +2846,7 @@ test("an answer stream Slack ends mid-reply is reseeded into one complete, foote
 
   const survivor = calls.filter((call) => call[0] === "append" && call[2] === 2)
     .map((call) => call[1].markdown_text || "").join("");
-  assert.equal(survivor, `${answer}\n\n<@U1>`, "the replacement message carries the WHOLE answer, deltas included");
+  assert.equal(survivor, answer, "the replacement message carries the WHOLE answer, deltas included");
   const sealed = calls.find((call) => call[0] === "stopStream" && call[2] === 2);
   assert.ok(sealed?.[1]?.blocks?.length, "the footer lands on the surviving message");
   assert.deepEqual(calls.filter((call) => call[0] === "delete").map((call) => call[1].ts), ["1720000000.000101"],
@@ -2890,7 +2890,7 @@ test("a stop that finds the answer stream already ended still lands one footered
 
   const survivor = calls.filter((call) => call[0] === "append" && call[2] === 2)
     .map((call) => call[1].markdown_text || "").join("");
-  assert.equal(survivor, "A complete answer.\n\n<@U1>", "the replacement carries the compiled answer");
+  assert.equal(survivor, "A complete answer.", "the replacement carries the compiled answer");
   const sealed = calls.find((call) => call[0] === "stopStream" && call[2] === 2);
   assert.ok(sealed?.[1]?.blocks?.length, "and receives the footer the dead message could not take");
   assert.deepEqual(calls.filter((call) => call[0] === "delete").map((call) => call[1].ts), ["1720000000.000101"],
@@ -3083,7 +3083,7 @@ for (const mode of ["commentary", "no stream", "truncated commentary"]) {
     const followups = calls.filter(([method]) => method === "postMessage").map(([, payload]) => payload.text || "").join("\n");
     const delivered = native + followups;
     assert.equal(delivered.split("The engine ended without a final message.").length - 1, 1, "authoritative notice is delivered once");
-    assert.equal(delivered.split("<@U_NOTICE>").length - 1, 1, "requester notification belongs to the last message only");
+    assert.equal(delivered.split("<@U_NOTICE>").length - 1, 0, "default replies do not add a requester notification");
     if (mode === "no stream") {
       assert.ok(calls.some(([method, payload]) => method === "stopStream" && payload.blocks?.length), "usage footer still seals the native stream");
     } else {
@@ -3296,7 +3296,7 @@ test("a short answer tail buffered by the SDK is flushed to Slack after a quiet 
   const stops = calls.filter((c) => c[0] === "stopStream");
   assert.equal(stops.length, 1, "one answer message is sealed");
   assert.ok(stops[0][2].text.startsWith("led because the schema drifted."),
-    "the terminal stop carries only the still-buffered remainder (plus the requester tag)");
+    "the terminal stop carries only the still-buffered remainder");
   assert.ok(!stops[0][2].text.includes("The migration fai"), "the flushed tail is not sent twice");
   assert.ok(Array.isArray(stops[0][2].blocks) && stops[0][2].blocks.length, "the footer lands on the sealed answer");
   assert.equal(calls.filter((c) => c[0] === "postMessage").length, 0, "no classic fallback duplicate");

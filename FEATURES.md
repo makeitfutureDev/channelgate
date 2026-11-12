@@ -7,8 +7,9 @@ Activity and Subscriptions) where each person manages everything they can config
 themselves, from a browser, without opening Slack Settings → You:
 
 - **General** — their account (name, role, id), the dashboard theme (Match system / Light /
-  Dark, saved to the account), quiet-thread reminders on/off (the App Home toggle's setting) and
-  a link to passkey management.
+  Dark, saved to the account), quiet-thread reminders and **Mention me in replies** on/off (the
+  same settings as the App Home toggles and `set_my_reply_mentions`) and a link to passkey
+  management.
 - **Connections** — their own Composio account (`composio-user`: token + label, replace, remove;
   informational in Composio SDK mode), their Toolbox token, and their personal email accounts
   (add, edit, remove; IMAP and SMTP logins are verified first, blank passwords keep the stored
@@ -31,6 +32,20 @@ set, requires the Activity session, Origin and CSRF token, changes only the sess
 mail logins) before writing. Its JSON limit is 48 KB so a 16 KB variable value fits; other
 Activity routes keep 8 KB. A refusal returns `{ error, field }` and the page keeps the form and
 what was typed. Losing access clears the page.
+
+## Personal automatic reply mentions (2026-11-13)
+
+Each user controls whether completed replies automatically mention them in shared conversations.
+New users start with mentions **off**; a one-time migration keeps them **on** for existing users,
+preserving any explicit choice. Change **Mention me in replies** in Slack App Home →
+**Help & settings**, ask the agent to turn your reply mentions on or off, or use the admin
+**Users** drawer. The preference follows the person's authenticated platform account across
+conversations and persists after restart. Direct messages omit automatic tags even when enabled.
+
+Slack streaming, one-shot, overflow and fallback delivery respect the preference; Teams and
+Google Chat use it before adding their native requester mention. Explicit mentions written in an
+answer remain available. The `set_my_reply_mentions` tool changes only the verified requester's
+setting; agent principals and untrusted API attribution cannot change another person's preference.
 
 ## Activity passkey sign-in (2026-11-13)
 

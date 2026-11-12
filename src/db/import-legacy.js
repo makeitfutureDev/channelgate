@@ -56,7 +56,9 @@ export function importLegacy(db) {
     const users = readJson(usersFile(), {});
     const insUser = db.prepare("INSERT OR IGNORE INTO users(user_id, data) VALUES(?, ?)");
     for (const [uid, rec] of Object.entries(users)) {
-      insUser.run(uid, JSON.stringify(stripDeadFields(rec)));
+      // Legacy JSON users predate the preference, and import runs after schema migrations.
+      const record = { ...rec, replyMentions: typeof rec?.replyMentions === "boolean" ? rec.replyMentions : true };
+      insUser.run(uid, JSON.stringify(stripDeadFields(record)));
       counts.users++;
     }
 

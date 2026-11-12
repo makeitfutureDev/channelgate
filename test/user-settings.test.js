@@ -21,7 +21,7 @@ after(() => setEmailAccountVerifierForTests(null));
 beforeEach(async () => {
   getDb().exec("DELETE FROM ssh_keys");
   saveSettings({ composioMode: "personal" });
-  await setUser("U_ME", { name: "Me", approved: true, isAdmin: false, composioToken: "", composioTokenLabel: "", toolboxToken: "", customMcps: [], emailAccounts: [], env: {}, skills: [], nudges: false });
+  await setUser("U_ME", { name: "Me", approved: true, isAdmin: false, composioToken: "", composioTokenLabel: "", toolboxToken: "", customMcps: [], emailAccounts: [], env: {}, skills: [], nudges: false, replyMentions: false });
   await setUser("U_OTHER", { name: "Other", approved: true, isAdmin: false, composioToken: "other-token-1234567890", env: {}, skills: [] });
   verified.length = 0;
 });
@@ -68,6 +68,12 @@ test("every change targets only the owner; caller-supplied owners, roles and fie
   assert.equal(me.approved, true);
   assert.equal(other.nudges, undefined);
   await refused({ action: "nudges", enabled: "yes" }, /on or off/);
+  assert.equal((await userSettingsSnapshot("U_ME")).general.replyMentions, false, "new users start with reply mentions off");
+  await change({ action: "replyMentions", enabled: true, userId: "U_OTHER" });
+  assert.equal((await getUser("U_ME")).replyMentions, true);
+  assert.notEqual((await getUser("U_OTHER")).replyMentions, true);
+  assert.equal((await userSettingsSnapshot("U_ME")).general.replyMentions, true);
+  await refused({ action: "replyMentions", enabled: 1 }, /on or off/);
   await refused({ action: "isAdmin", value: true }, /Unknown setting/);
   await refused({}, /Unknown setting/);
   await assert.rejects(applyUserSettingsChange("", { action: "nudges", enabled: true }), (error) => error.status === 403);
@@ -168,6 +174,7 @@ test("authorize runs before every write and a failed recheck writes nothing", as
   const authorize = async () => { throw denied; };
   for (const body of [
     { action: "nudges", enabled: true },
+    { action: "replyMentions", enabled: true },
     { action: "composio.save", token: COMPOSIO },
     { action: "toolbox.save", token: "toolbox-secret-abcdef123456" },
     { action: "variable.save", name: "API_TOKEN", value: "value-123456" },
@@ -177,6 +184,7 @@ test("authorize runs before every write and a failed recheck writes nothing", as
   ]) await assert.rejects(change(body, { authorize }), (error) => error === denied, body.action);
   const me = await getUser("U_ME");
   assert.equal(me.nudges, false);
+  assert.notEqual(me.replyMentions, true);
   assert.equal(me.composioToken, "");
   assert.equal(me.toolboxToken, "");
   assert.deepEqual((await userSettingsSnapshot("U_ME")).variables, []);

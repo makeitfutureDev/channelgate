@@ -195,3 +195,34 @@ test("set_my_composio_token writes only the signed principal's record", async ()
   assert.equal((await getUser("U_MCP_CALLER")).composioToken, "caller-new-secret");
   assert.equal((await getUser("U_MCP_OTHER")).composioToken, "other-unchanged");
 });
+
+test("reply mentions self-service only changes the verified person's preference", async () => {
+  await setUser("U_MCP_CALLER", { replyMentions: false });
+  await setUser("U_MCP_OTHER", { replyMentions: false });
+  await withGateway({ author: "U_MCP_CALLER" }, async (client) => {
+    const result = await client.callTool({ name: "set_my_reply_mentions", arguments: { enabled: true } });
+    assert.match(resultText(result), /now on for you/);
+    const invalid = await client.callTool({ name: "set_my_reply_mentions", arguments: { enabled: "false" } });
+    assert.equal(invalid.isError, true);
+  });
+  assert.equal((await getUser("U_MCP_CALLER")).replyMentions, true);
+  assert.equal((await getUser("U_MCP_OTHER")).replyMentions, false);
+  await withGateway({ author: "U_MCP_CALLER" }, async (client) => {
+    await client.callTool({ name: "set_my_reply_mentions", arguments: { enabled: false } });
+  });
+  assert.equal((await getUser("U_MCP_CALLER")).replyMentions, false);
+});
+
+test("untrusted API authors and agent principals cannot change personal reply mentions", async () => {
+  await setUser("U_MCP_OTHER", { replyMentions: false });
+  for (const [authorId, principalTrusted] of [["U_MCP_OTHER", false], ["agent:source-channel", true]]) {
+    const capability = mintGatewayCapability({ secret: "authz-test-secret", channelId: "C_MCP_CURRENT", slug: "mcp-authz-test",
+      authorId, principalTrusted, threadKey: "1.000", origin: "slack_foreground", engine: "claude" });
+    await withGateway({ capability }, async (client) => {
+      const result = await client.callTool({ name: "set_my_reply_mentions", arguments: { enabled: true } });
+      assert.match(resultText(result), /No verified user context|not available|not allowed|denied/i);
+    });
+  }
+  assert.equal((await getUser("U_MCP_OTHER")).replyMentions, false);
+  assert.equal(await getUser("agent:source-channel"), null);
+});

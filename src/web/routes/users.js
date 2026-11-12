@@ -6,6 +6,7 @@ import { assertNewMcpSelections } from "../../gateway/mcp-selection.js";
 import { Router } from "express";
 import { getUsers, getUser, setUser } from "../../config/store.js";
 import { getDefaultNudges, userNudgesEnabled } from "../../config/settings.js";
+import { userReplyMentionsEnabled } from "../../config/user-preferences.js";
 import { logEvent } from "../../util/logger.js";
 import { cleanAccessGrants } from "./helpers.js";
 import { foreignPersonalSkillError, newForeignPersonalSkillGrants } from "../../gateway/access-grants.js";
@@ -42,6 +43,7 @@ function maskUsers(users) {
       isAdmin: Boolean(u.isAdmin),
       approved: Boolean(u.approved),
       nudges: userNudgesEnabled(u),
+      replyMentions: userReplyMentionsEnabled(u),
       hasComposioToken: Boolean(token),
       composioTokenLast4: token ? token.slice(-4) : "",
       composioTokenLabel: u.composioTokenLabel || "",
@@ -272,6 +274,9 @@ export function createUsersRouter({ slack, composioInventory = loadComposioInven
       const actor = adminSession(req);
       const { userId } = req.params;
       const body = req.body ?? {};
+      if (Object.hasOwn(body, "replyMentions") && typeof body.replyMentions !== "boolean") {
+        return res.status(400).json({ error: "replyMentions must be a boolean" });
+      }
       const patch = {};
       if (typeof body.name === "string") patch.name = body.name;
       if (typeof body.isAdmin === "boolean") patch.isAdmin = body.isAdmin;
@@ -282,6 +287,7 @@ export function createUsersRouter({ slack, composioInventory = loadComposioInven
         patch.approvalDomain = "";
       }
       if (typeof body.nudges === "boolean") patch.nudges = body.nudges;
+      if (typeof body.replyMentions === "boolean") patch.replyMentions = body.replyMentions;
       // Only overwrite tokens when a non-empty value is sent (write-only fields).
       if (typeof body.composioToken === "string" && body.composioToken.length > 0)
         patch.composioToken = body.composioToken;
@@ -327,6 +333,7 @@ export function createUsersRouter({ slack, composioInventory = loadComposioInven
           isAdmin: saved.isAdmin,
           approved: saved.approved,
           nudges: userNudgesEnabled(saved),
+          replyMentions: userReplyMentionsEnabled(saved),
           hasComposioToken: Boolean(saved.composioToken),
           hasToolboxToken: Boolean(saved.toolboxToken),
           ...cleanAccessGrants(saved),

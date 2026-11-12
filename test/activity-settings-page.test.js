@@ -27,7 +27,7 @@ const find = (root, tag, text) => root.all().find((c) => c.tag === tag && c.text
 function snapshot(overrides = {}) {
   return {
     account: { id: "U_ME", name: "<img src=x onerror=alert(1)>", role: "member" },
-    general: { nudges: false },
+    general: { nudges: false, replyMentions: false },
     connections: { composioMode: "personal", composio: { configured: true, last4: "0001", label: "Work" }, toolbox: { configured: false, last4: "" }, toolboxServer: "toolbox.example", email: [] },
     mcps: { limit: 5, servers: [] }, variables: [{ name: "API_TOKEN", exposure: "hidden", hosts: [], last4: "3456", provider: "local", setAt: 0 }],
     skills: { options: [{ key: "writer", label: "writer", description: "Writes" }], selected: [], foreign: [] },
@@ -61,7 +61,7 @@ test("settings view serves one nonce script, no Activity stream and no innerHTML
 test("General renders hostile names as text and saves the reminder preference with CSRF", async () => {
   let data = snapshot();
   const { panel, requests, status } = browser(async (url, options) => {
-    if (options.method === "POST") { data = snapshot({ general: { nudges: true } }); return reply({ notice: "Quiet-thread reminders are on.", settings: data }); }
+    if (options.method === "POST") { data = snapshot({ general: { nudges: true, replyMentions: false } }); return reply({ notice: "Quiet-thread reminders are on.", settings: data }); }
     return reply(data);
   });
   await flush();

@@ -390,6 +390,7 @@ export function buildControlPlane({ loadMeta, createdBy, principalTrusted, chann
     // Connector identity and environment secrets: the caller's own accounts (or, for the
     // organization scope, an admin's). The value is in the caller's own message; a card would
     // only echo its name back. Never a value in a card or a listing.
+    ["set_my_reply_mentions", { authz: "any", details: AUTOMATIC }],
     ["set_my_composio_token", { authz: "any", details: AUTOMATIC }],
     ["clear_my_composio_token", { authz: "any", details: AUTOMATIC }],
     ["set_my_toolbox_token", { authz: "any", details: AUTOMATIC }],

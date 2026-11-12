@@ -1,3 +1,4 @@
+import { userReplyMentionsEnabled } from "../config/user-preferences.js";
 import { resolveStreamRecipientTeam } from "./stream-recipient.js";
 import { autoApproveSlackUser } from "../gateway/user-auto-approval.js";
 import { assertEngineSelectable } from "../engines/selection.js";
@@ -1682,6 +1683,7 @@ export async function processMessageEvent(event, client, { botUserId = "", teamI
       status = startProgress(getProgressView(), client, event.channel, replyTs, {
         isDM: meta.isDM,
         authorId: event.user,
+        replyMentions: userReplyMentionsEnabled(await getUser(event.user)),
         teamId: recipientTeam,
         dir,
         // A code channel's session status is the channel's (no thread), whatever thread the reply uses.
