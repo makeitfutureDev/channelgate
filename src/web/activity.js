@@ -3,7 +3,7 @@
 import crypto from "node:crypto";
 import express from "express";
 import { getPublicUrl } from "../config/settings.js";
-import { getChannelEntry, getUser } from "../config/store.js";
+import { getChannelEntry, getUser, setUser } from "../config/store.js";
 import { onConfigChange } from "../config/change-events.js";
 import { getSlackThread, isSlackThreadEligible, setSlackThreadDone } from "../gateway/slack-threads.js";
 import { onThreadChanged } from "../gateway/thread-changes.js";
@@ -13,6 +13,7 @@ import { accessContext, activityThreadSnapshot, homeThreadsRefreshKey } from "..
 import { createHomeThreadReader } from "../slack/home-thread-reader.js";
 import { isLoopbackHost, timingSafeEqualStr } from "./security.js";
 import { activityPage } from "./activity-page.js";
+import { activityGroupOrder, activityGroupOrderVersion, validActivityGroupOrder } from "./activity-order.js";
 import { ACTIVITY_THEME_CSS, ACTIVITY_BRAND } from "./activity-theme.js";
 
 export const ACTIVITY_GRANT_TTL_MS = 10 * 60_000;
@@ -127,11 +128,13 @@ export function createActivityRouter({
   };
   const browserSnapshot = async (client, session, id) => {
     const data = await snapshot(client, session.ownerId, { filter: "all-statuses", pageSize: 1000 });
+    const user = await getUser(session.ownerId);
     return {
       rows: data.rows.map((row) => ({ channelId: row.channel_id, threadTs: row.thread_ts,
         title: row.title, channelName: row.channelName, status: row.status, lastMessageMs: row.last_message_ms,
         url: `/activity/${id}/open/${encodeURIComponent(row.channel_id)}/${encodeURIComponent(row.thread_ts)}` })),
       unavailable: Boolean(data.unavailable), truncated: Boolean(data.truncated), total: data.total, updatedAt: now(),
+      groupOrder: activityGroupOrder(user?.activityGroupOrder), groupOrderVersion: activityGroupOrderVersion(user?.activityGroupOrderVersion),
     };
   };
   router.get("/open", (_req, res) => {
@@ -184,6 +187,20 @@ export function createActivityRouter({
       await recheckOwned(req, client, session, req.params.channelId, req.params.threadTs);
       return res.redirect(303, target.toString());
     } catch (error) { return unavailable(res, error.status || 403); }
+  });
+  router.post("/:id/api/group-order", async (req, res) => {
+    try {
+      const { session } = await context(req);
+      if (req.headers.origin !== req.activityOrigin || !timingSafeEqualStr(String(req.headers["x-cg-csrf"] || ""), session.csrf)) return unavailable(res, 403);
+      const order = req.body?.groupOrder;
+      if (!validActivityGroupOrder(order)) return unavailable(res, 400);
+      await context(req);
+      // Only the authenticated viewer's display preference can be changed. Never accept a
+      // caller-supplied owner or merge arbitrary request fields into the user record.
+      const user = await setUser(session.ownerId, (current) => ({ activityGroupOrder: [...order],
+        activityGroupOrderVersion: activityGroupOrderVersion(current?.activityGroupOrderVersion) + 1 }));
+      return res.json({ groupOrder: user.activityGroupOrder, groupOrderVersion: user.activityGroupOrderVersion });
+    } catch (error) { return unavailable(res, error.status || 503); }
   });
   router.post("/:id/api/completion", async (req, res) => {
     try {

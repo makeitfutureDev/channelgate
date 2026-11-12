@@ -1,5 +1,29 @@
 # ChannelGate — Test Plan
 
+## Personal Activity group order (2026-11-12)
+
+- Automated: `test/activity-page.test.js`, `test/activity.test.js` and
+  `test/activity-reuse-browser.test.js` (set `CG_BROWSER_MODULE` and `CG_BROWSER_EXECUTABLE` to
+  the installed Playwright module and Chromium binary). Use the isolated Express Activity fixture
+  with fake approved viewers and mixed statuses at desktop 1440×1000 and mobile 390×844.
+  Pass: Error → Waiting → Working → Idle regardless of cross-group timestamps, newest first
+  within each group; live status changes move rows; search/status filters and completion work.
+  Open top-right Group order, move groups, cancel, save and reset; verify unchanged order on cancel,
+  persistence on reload/new session, separate viewer defaults, SSE preference delivery, no horizontal
+  overflow or browser errors. Failure leaves the draft and offers retry. Duplicate saves serialize;
+  malformed, duplicate/missing/unknown statuses, CSRF, foreign Origin, missing cookie and revoked
+  admission cannot change preferences or user authority; forged owner fields are ignored.
+- Live fixture: Slack App Home → personal Activity browser dashboard, authorized author in their
+  own account, with existing indexed Error/Waiting/Working/Idle threads (no new engine turn needed).
+  Verify the default sequence; open Group order at the top right, move Idle first, Save order and
+  refresh/open a fresh dashboard. Pass: Idle first for that viewer only, newest first within groups,
+  live updates keep the preference, keyboard/touch controls work, Cancel discards and Reset plus
+  Save restores the default. Confirm Completed remains available separately. Restore the original
+  preference after acceptance. Private QA definition: ACTIVITY-WEB-10.
+- Engine-independent: ordering, preference authorization/storage and dialog rendering do not invoke
+  Claude or Codex. The isolated browser fixture is executed separately from deployed Slack acceptance;
+  an automated local pass does not claim verification of the running deployment.
+
 ## Slack title synchronization to Activity (2026-11-12)
 
 - Automated: `test/home-threads.test.js`, `test/activity.test.js`, `test/migrations.test.js`,

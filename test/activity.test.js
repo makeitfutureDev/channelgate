@@ -5,7 +5,7 @@ import { request as httpRequest } from "node:http";
 import { ensureTestEnv } from "./helpers.js";
 ensureTestEnv();
 const { getDb } = await import("../src/db/index.js");
-const { setUser, upsertChannelEntry, getChannelEntry, saveChannelMeta } = await import("../src/config/store.js");
+const { setUser, getUser, upsertChannelEntry, getChannelEntry, saveChannelMeta } = await import("../src/config/store.js");
 const { indexSlackThread, getSlackThread, setSlackThreadDone, recordSlackThreadOutcome } = await import("../src/gateway/slack-threads.js");
 const { registerAgentInterfaceHandlers } = await import("../src/slack/agent-interface.js");
 const { setThreadSudo } = await import("../src/gateway/thread-engine.js");
@@ -149,6 +149,45 @@ async function nextEvent(reader, event = "threads") {
     }
   } finally { clearTimeout(timer); }
 }
+
+test("Activity group order persists per viewer across sessions and streams without changing authority", async (t) => {
+  const f = await fixture(t);
+  const mine = await f.login(), other = await f.login("U_OTHER");
+  const endpoint = mine.url + "/api/group-order";
+  const defaults = ["error", "waiting", "working", "idle"], custom = ["idle", "working", "error", "waiting"];
+  const snapshot = async (user) => (await f.request(user.url + "/api/threads", { headers: user.headers })).json();
+  assert.deepEqual((await snapshot(mine)).groupOrder, defaults);
+  const original = await getUser("U_MINE");
+  const result = await f.request(endpoint, { method: "POST", headers: mine.post,
+    body: JSON.stringify({ groupOrder: custom, ownerId: "U_OTHER", approved: false, isAdmin: true }) });
+  assert.equal(result.status, 200);
+  assert.deepEqual((await result.json()).groupOrder, custom);
+  assert.deepEqual(await getUser("U_MINE"), { ...original, activityGroupOrder: custom, activityGroupOrderVersion: 1 });
+  assert.deepEqual((await snapshot(other)).groupOrder, defaults);
+  assert.deepEqual((await snapshot(await f.login())).groupOrder, custom);
+  const stream = await f.request(mine.url + "/stream", { headers: mine.headers });
+  const reader = stream.body.getReader(); t.after(() => reader.cancel());
+  assert.deepEqual((await nextEvent(reader)).groupOrder, custom);
+  assert.equal((await f.request(endpoint, { method: "POST", headers: mine.post, body: JSON.stringify({ groupOrder: defaults }) })).status, 200);
+  assert.deepEqual((await nextEvent(reader)).groupOrder, defaults);
+});
+
+test("Activity group order rejects malformed orders, unauthenticated writes, CSRF and revoked admission", async (t) => {
+  const f = await fixture(t), mine = await f.login();
+  const originalOrder = (await getUser("U_MINE")).activityGroupOrder;
+  const endpoint = mine.url + "/api/group-order", order = ["idle", "working", "waiting", "error"];
+  for (const groupOrder of [null, "error", [], ["error", "waiting", "idle"], ["error", "error", "waiting", "idle"], ["error", "waiting", "working", "done"], [...order, "idle"]]) {
+    assert.equal((await f.request(endpoint, { method: "POST", headers: mine.post, body: JSON.stringify({ groupOrder }) })).status, 400);
+  }
+  const body = JSON.stringify({ groupOrder: order });
+  assert.equal((await f.request(endpoint, { method: "POST", headers: { ...mine.post, cookie: "" }, body })).status, 401);
+  assert.equal((await f.request(endpoint, { method: "POST", headers: { ...mine.post, "X-CG-CSRF": "invalid" }, body })).status, 403);
+  assert.equal((await f.request(endpoint, { method: "POST", headers: { ...mine.post, Origin: "https://other.example" }, body })).status, 403);
+  assert.deepEqual((await getUser("U_MINE")).activityGroupOrder, originalOrder);
+  await setUser("U_MINE", { approved: false, isAdmin: false });
+  assert.equal((await f.request(endpoint, { method: "POST", headers: mine.post, body })).status, 403);
+  assert.deepEqual((await getUser("U_MINE")).activityGroupOrder, originalOrder);
+});
 
 test("launch fragment is removed before reusable exchange; cookies, origin and expiry fail closed", async (t) => {
   const f = await fixture(t), url = f.grant();
