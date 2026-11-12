@@ -69,6 +69,18 @@
   authenticated on the operator's behalf; unit and browser fixtures do not certify provider
   credentials, Enterprise residency or live AWS model access.
 
+## Activity action button spacing (2026-11-12)
+
+- Engine-independent: these controls are rendered by the browser, without calling an engine.
+- Fixture: the isolated Express app in `test/activity-reuse-browser.test.js`, approved owner,
+  one indexed thread and fake Slack client. Open the dashboard at 1440, 768 and 390 pixels wide.
+- Verify Open in Slack, Done and ↗ have visible matching borders and padding; ↗ is a compact
+  square with accessible name `Open in browser: <title>` and tooltip `Open in browser`.
+  Keyboard Tab shows focus on each control; hover preserves button styling. No horizontal overflow.
+  Open in Slack retains its same-tab native handoff; ↗ retains its new-tab HTTPS destination.
+- Automated: run `node --test test/activity-page.test.js test/activity-reuse-browser.test.js` with
+  `CG_BROWSER_MODULE` and `CG_BROWSER_EXECUTABLE` pointing to installed Playwright/Chromium.
+
 ## Activity opens the latest thread message (2026-11-12)
 
 - Direct app routing: title and **Open in Slack** links use the current tab's authorized open

@@ -167,7 +167,7 @@ function activityBrowser(config, browser) {
     const timeCell = node("td", "time-cell"), time = node("time");
     timeCell.append(time);
     const actions = node("td", "actions"), open = node("a", "open-link", "Open in Slack"), toggle = node("button", "toggle");
-    const web = node("a", "open-link", "Browser ↗");
+    const web = node("a", "open-link browser-link", "↗");
     toggle.type = "button";
     toggle.dataset.key = rowKey;
     actions.append(open, toggle, web);
@@ -221,6 +221,7 @@ function activityBrowser(config, browser) {
       link(entry.open, url, app);
       link(entry.web, app ? url + "?browser=1" : url);
       entry.web.setAttribute("aria-label", "Open in browser: " + title);
+      entry.web.title = "Open in browser";
       const busy = pending.has(rowKey);
       entry.toggle.disabled = busy || completingAll || ended;
       entry.toggle.textContent = busy ? "Saving…" : row.status === "done" ? "Reopen" : "Done";
@@ -453,9 +454,11 @@ tbody tr:last-child td{border-bottom:0}tbody tr:hover{background:var(--panel-2)}
 .pill.error{background:rgba(229,96,77,.15);color:#ffb3a9}
 .pill.done{background:rgba(78,199,122,.15);color:#9ce2b6}
 .actions{white-space:nowrap;text-align:right}
-.open-link{font-size:12px;margin-right:14px}
-.toggle{border:1px solid var(--line);background:var(--panel-2);color:var(--ink);font-size:12px;border-radius:7px;padding:6px 12px;min-width:66px}
-.toggle:hover{background:var(--teal);border-color:var(--muted)}
+.open-link,.toggle{display:inline-flex;align-items:center;justify-content:center;vertical-align:middle;border:1px solid var(--line);background:var(--panel-2);color:var(--ink);font-size:12px;line-height:1.5;border-radius:7px;padding:6px 12px;min-height:34px}
+.open-link,.toggle{margin-right:8px}
+.toggle{min-width:66px}
+.browser-link{width:34px;height:34px;padding:6px;margin-right:0;font-size:16px;line-height:1}
+.open-link:hover,.toggle:hover{background:var(--teal);border-color:var(--muted);text-decoration:none}
 .empty{text-align:center;padding:64px 24px}
 .empty-symbol{font-size:26px;color:var(--muted);margin-bottom:12px}
 .empty h2{font-size:16px;margin:0 0 7px}.empty p{color:var(--muted);margin:0;font-size:13px}
@@ -464,7 +467,7 @@ tbody tr:last-child td{border-bottom:0}tbody tr:hover{background:var(--panel-2)}
 .privacy{color:var(--faint);font-size:11px;margin-top:24px}.js-needed{padding:24px;color:#f1ca83}
 @keyframes spin{to{transform:rotate(360deg)}}
 @media(prefers-reduced-motion:reduce){.working .status-dot{animation:none}}
-@media(max-width:1100px){.shell{padding:28px 20px}th,td{padding:15px 12px}.open-link{display:block;margin:0 0 6px}.actions{text-align:center}}
+@media(max-width:1100px){.shell{padding:28px 20px}th,td{padding:15px 12px}.open-link:not(.browser-link){display:flex;width:max-content;margin:0 auto 8px}.actions{text-align:center}}
 @media(max-width:700px){
   .shell{padding:22px 16px}.heading{align-items:flex-start;flex-direction:column;gap:18px;margin:26px 0 20px}h1{font-size:27px}
   .toolbar{align-items:stretch;flex-direction:column-reverse;gap:12px;margin:20px 0 13px}.search-wrap{width:100%;min-width:0}
@@ -473,8 +476,8 @@ tbody tr:last-child td{border-bottom:0}tbody tr:hover{background:var(--panel-2)}
   tbody tr:last-child{border-bottom:0}td{display:block;padding:0;border:0}
   .thread-cell{grid-column:1/-1;grid-row:1}.thread-title{-webkit-line-clamp:3;font-size:14px}
   .channel-cell{grid-column:1;grid-row:2}.status-cell{grid-column:2;grid-row:2/4;align-self:center}.time-cell{grid-column:1;grid-row:3;font-size:11px}
-  .actions{grid-column:1/-1;display:flex;align-items:center;justify-content:space-between;margin-top:5px}
-  .open-link{display:inline;margin:0;padding:7px 0}.toggle{padding:8px 16px}.empty{padding:45px 18px}.footer{font-size:10px}.subtitle{font-size:13px}
+  .actions{grid-column:1/-1;display:flex;align-items:center;justify-content:flex-end;gap:8px;flex-wrap:wrap;margin-top:5px}
+  .open-link,.toggle{margin:0}.open-link:not(.browser-link){display:inline-flex;width:auto;margin:0}.empty{padding:45px 18px}.footer{font-size:10px}.subtitle{font-size:13px}
 }
 </style></head><body><main class="shell">
 ${ACTIVITY_BRAND}
