@@ -236,6 +236,41 @@ test("Claude and Codex keep shared channel sessions across admin and member turn
   }
 });
 
+test("a pre-shared-history thread is reset by its OWN harness even when the channel default moved to one without shared history", async () => {
+  // 2026-11-12: the channel default moved to Codex EU (no shared history) after shared history
+  // shipped. Threads born on plain Codex kept resuming sessions whose rollouts the shared mount
+  // now hid — the history-mode reset had been asked of the channel default, not of the thread.
+  saveSettings({ memoryReviewEvery: 0, composioMode: "personal", engineFallback: false, codexEnabled: true, engineEnabled: { "codex-eu": true } });
+  try {
+    const backend = createFakeRuntimeBackend();
+    setRuntimeResolver((slug, meta, options) => {
+      const target = fakeTarget(backend, slug, meta, options);
+      target.container.sharedHistory = true;
+      return target;
+    });
+    const channelId = "C_SHARED_HISTORY_EU_DEFAULT";
+    const name = "shared-history-eu-default";
+    const { entry, meta } = await channel(channelId, name, { engine: "codex" });
+    await setUser("U_RT", { approved: true, isAdmin: true });
+    const threadKey = "9401.001";
+    // A Codex session minted before shared history existed: its stamp carries no history mode.
+    await saveSession(entry.slug, threadKey, "pre-shared-codex-session", "codex", null, JSON.stringify({ backend: "container", scope: "admin", fingerprint: "old", image: "" }));
+    // The channel default moves to Codex EU, whose sessions are never shared; the thread stays on Codex.
+    await saveChannelMeta(entry.slug, { ...meta, engine: "codex-eu" });
+    const first = await runMessage({ channelId, authorId: "U_RT", text: "continue the thread", threadKey, origin: "slack_foreground", preferCold: true });
+    assert.equal(first.engine, "codex", "a channel default change never moves an existing thread");
+    assert.notEqual(first.sessionId, "pre-shared-codex-session", "the pre-shared session is reset, not resumed from a hidden rollout");
+    assert.equal(await getSessionEngine(entry.slug, threadKey), "codex");
+    assert.equal((await getSessionRuntime(entry.slug, threadKey)).history, "channel-v1", "the stamp records the THREAD harness's history mode");
+    const second = await runMessage({ channelId, authorId: "U_RT", text: "and again", threadKey, origin: "slack_foreground", preferCold: true });
+    assert.equal(second.engine, "codex");
+    assert.equal(second.sessionId, first.sessionId, "a stamped shared session is not reset a second time");
+    assert.equal(backend.calls.spawn.length, 2);
+  } finally {
+    saveSettings({ engineEnabled: undefined });
+  }
+});
+
 test("an isolated turn warms the runtime up, holds a run lease, and releases it", async () => {
   saveSettings({ engine: "claude", memoryReviewEvery: 0, composioMode: "personal" });
   const backend = createFakeRuntimeBackend();

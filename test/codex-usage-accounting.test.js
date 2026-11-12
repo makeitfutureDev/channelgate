@@ -143,3 +143,32 @@ test("normalization supports official nested cache details", () => {
   });
 });
 
+
+test("a stale index row whose rollout is gone falls back to the filename scan, then to an empty baseline", async () => {
+  // 2026-11-12: the shared channel history store mounted over `sessions/` left the admin lane's
+  // Codex index (state_5.sqlite) naming 728 rollouts that were no longer visible. Opening one of
+  // those paths aborted every resume in the channel with "runtime usage inspection failed".
+  const { DatabaseSync } = await import("node:sqlite");
+  const state = await mkdtemp(path.join(os.tmpdir(), "codex-usage-stale-"));
+  const sessions = path.join(state, "sessions", "2026", "11", "12");
+  await mkdir(sessions, { recursive: true });
+  const moved = "01a1ce77-4b4d-70d3-ba91-moved0000001";
+  const gone = "01a1ce77-4b4d-70d3-ba91-gone00000002";
+  const movedFile = path.join(sessions, `rollout-2026-11-12T08-34-46-${moved}.jsonl`);
+  await writeFile(movedFile, line(meta(moved, "2026-11-12T08:34:46.000Z")) + line(context("2026-11-12T08:34:47.000Z")) + line(tokens("2026-11-12T08:35:00.000Z", 900, 600, 40, 900, 600, 40)));
+  const db = new DatabaseSync(path.join(state, "state_5.sqlite"));
+  db.exec("CREATE TABLE threads (id TEXT PRIMARY KEY, rollout_path TEXT)");
+  const insert = db.prepare("INSERT INTO threads (id, rollout_path) VALUES (?, ?)");
+  // Both rows name a day directory that no longer holds the file.
+  insert.run(moved, path.join(state, "sessions", "2026", "11", "11", `rollout-2026-11-11T22-00-00-${moved}.jsonl`));
+  insert.run(gone, path.join(state, "sessions", "2026", "11", "11", `rollout-2026-11-11T22-00-00-${gone}.jsonl`));
+  db.close();
+  const found = await snapshotCodexUsage(state, moved);
+  assert.equal(found.file, movedFile, "a dangling index path is a miss for the scan, never an open() that throws");
+  assert.equal(found.total.input_tokens, 900);
+  assert.equal(found.model, "gpt-5.6-sol");
+  const missing = await snapshotCodexUsage(state, gone);
+  assert.equal(missing.file, "");
+  assert.equal(missing.offset, 0);
+  assert.equal(missing.total.input_tokens, 0, "no rollout anywhere is an empty baseline, the pre-index behavior");
+});

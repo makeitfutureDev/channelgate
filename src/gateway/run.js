@@ -952,11 +952,16 @@ async function runMessageImpl({ channelId, authorId, workspaceId = "", text, thr
   // (live, 2026-09-03: a Codex channel whose thread had started on Claude).
   // The stamp a session row carries so /status and /resume can name the environment it was minted
   // in. Host rows read "host"; a container row remembers the image and the create-time
-  // fingerprint, so a recreated container is visibly a different environment.
-  const runtimeStamp = JSON.stringify({
+  // fingerprint, so a recreated container is visibly a different environment. The history mode is
+  // a fact about the harness that OWNS the row, so the stamp is computed per save with that
+  // harness: a thread that stays on Codex while the channel default moved to a harness without
+  // shared history (Codex EU) must still be stamped — and reset — as a shared Codex session, or
+  // the next turn resumes a session whose rollout the shared mount now hides (2026-11-12).
+  const sharesChannelHistory = (engineId) => target.container?.sharedHistory === true && engineSessionState(engineId)?.channelHistory === true;
+  const runtimeStampFor = (engineId) => JSON.stringify({
     backend: target.backend,
     scope: target.runtimeScope,
-    history: target.container?.sharedHistory === true && engineSessionState(engine)?.channelHistory === true ? "channel-v1" : "",
+    history: sharesChannelHistory(engineId) ? "channel-v1" : "",
     container: target.container?.name || "",
     fingerprint: target.runtime.fingerprint(target),
     image: target.container?.image || "",
@@ -1001,16 +1006,20 @@ async function runMessageImpl({ channelId, authorId, workspaceId = "", text, thr
     }
   }
   if (presetSessionId) {
-    await saveSession(entry.slug, threadKey, presetSessionId, engine, sessionGen, runtimeStamp);
+    await saveSession(entry.slug, threadKey, presetSessionId, engine, sessionGen, runtimeStampFor(engine));
     sessionId = presetSessionId;
     isNew = true;
   } else {
-    ({ sessionId, isNew, engine: sessionEngine, runtime: sessionRuntime } = await resolveSession(entry.slug, threadKey, engine, runtimeStamp));
+    ({ sessionId, isNew, engine: sessionEngine, runtime: sessionRuntime } = await resolveSession(entry.slug, threadKey, engine, runtimeStampFor(engine)));
     if (!isNew && target.backend === "container" && target.runtimeScope) {
       let prior = null;
       try { prior = JSON.parse(sessionRuntime); } catch { /* legacy unclassified state */ }
       const previousScope = prior?.scope || "admin";
-      const sharesHistory = target.container?.sharedHistory === true && engineSessionState(engine)?.channelHistory === true;
+      // The harness that will actually resume this row: a mere channel/global default change does
+      // not move an existing thread (decideThreadEngine below), so the history-mode question is
+      // asked of the row's OWN engine, never of the channel default.
+      const resumingEngine = !engineExplicit && sessionEngine ? sessionEngine : engine;
+      const sharesHistory = sharesChannelHistory(resumingEngine);
       const sharedSource = sharesHistory && prior?.backend === "container"
         && (prior.history === "channel-v1" || prior.scope === "project");
       const historyChanged = sharesHistory && !sharedSource;
@@ -1019,7 +1028,7 @@ async function runMessageImpl({ channelId, authorId, workspaceId = "", text, thr
       }
       if ((previousScope !== target.runtimeScope || historyChanged) && !sharedSource) {
         if (!engineExplicit && sessionEngine && isEngineEnabled(sessionEngine)) engine = sessionEngine;
-        sessionId = await resetSession(entry.slug, threadKey, engine, sessionGen, runtimeStamp);
+        sessionId = await resetSession(entry.slug, threadKey, engine, sessionGen, runtimeStampFor(engine));
         isNew = true;
         switchedEngine = true; // replay the chat-visible context, never privileged native state
         forkSourceSessionId = "";
@@ -1041,7 +1050,7 @@ async function runMessageImpl({ channelId, authorId, workspaceId = "", text, thr
       // actually takes effect (the pool fingerprints on config, not the session id).
       console.warn(`[gateway] ${entry.slug}/${threadKey}: harness switched ${sessionEngine}→${engine} — starting a fresh ${engine} session`);
       abortPooled(`${entry.slug}::${threadKey}`);
-      sessionId = await resetSession(entry.slug, threadKey, engine, sessionGen, runtimeStamp);
+      sessionId = await resetSession(entry.slug, threadKey, engine, sessionGen, runtimeStampFor(engine));
       isNew = true;
       switchedEngine = true;
     } else if (picked.engine !== engine) {
@@ -1128,7 +1137,7 @@ async function runMessageImpl({ channelId, authorId, workspaceId = "", text, thr
       // over the container copy this turn is about to extend — losing exactly the history the carry
       // exists to preserve. `sessionEngine` keeps the row's own engine label untouched; the /clear
       // generation guard still applies, so a clear that lands mid-run wins.
-      await saveSession(entry.slug, threadKey, sessionId, sessionEngine, sessionGen, runtimeStamp);
+      await saveSession(entry.slug, threadKey, sessionId, sessionEngine, sessionGen, runtimeStampFor(sessionEngine));
     }
   }
 
@@ -1532,7 +1541,7 @@ async function runMessageImpl({ channelId, authorId, workspaceId = "", text, thr
   // session before completing a turn. saveSession writes synchronously before its promise
   // returns and retains the same /clear-generation guard as the successful-result path.
   const sessionResolved = (key, owner) => (id) => {
-    void saveSession(entry.slug, key, id, owner, sessionGen, runtimeStamp)
+    void saveSession(entry.slug, key, id, owner, sessionGen, runtimeStampFor(owner))
       .then(() => { if (forkSourceSessionId) onForkSessionResolved?.(id); })
       .catch((error) => console.warn(`[gateway] could not persist announced session: ${error.message}`));
   };
@@ -1892,7 +1901,7 @@ async function runMessageImpl({ channelId, authorId, workspaceId = "", text, thr
       }
     }
     assertCompletedTurn(cx, fallbackEngine, prior || "");
-    if (cx.sessionId) await promoteFallbackSession(entry.slug, threadKey, fallbackEngine, cx.sessionId, sessionGen, runtimeStamp);
+    if (cx.sessionId) await promoteFallbackSession(entry.slug, threadKey, fallbackEngine, cx.sessionId, sessionGen, runtimeStampFor(fallbackEngine));
     cx = transientRetryNote(fallbackEngine, cx);
     // `fellBack`/`fallbackFrom` are the engine-agnostic truth; `fellBackToCodex` is the original
     // Claude→Codex-only flag, still emitted so existing consumers keep working.
@@ -2064,7 +2073,7 @@ async function runMessageImpl({ channelId, authorId, workspaceId = "", text, thr
     const remintFreshSession = async () => {
       if (!fresh || mintsOwnSessionId(engine)) return;
       abortPooled(`${entry.slug}::${threadKey}`);
-      sid = await resetSession(entry.slug, threadKey, engine, sessionGen, runtimeStamp);
+      sid = await resetSession(entry.slug, threadKey, engine, sessionGen, runtimeStampFor(engine));
     };
     const initialPromptOverride = switchedEngine ? await healedPrompt() : null;
     try {
@@ -2223,7 +2232,7 @@ async function runMessageImpl({ channelId, authorId, workspaceId = "", text, thr
             }
           } else if (!fresh && isSessionNotFound(err)) {
             console.warn(`[gateway] session ${sid} not resumable in ${entry.slug} — starting a fresh session`);
-            sid = await resetSession(entry.slug, threadKey, engine, sessionGen, runtimeStamp);
+            sid = await resetSession(entry.slug, threadKey, engine, sessionGen, runtimeStampFor(engine));
             fresh = true;
             // Built once: every attempt replays the SAME turn (a re-fetch could come back empty and
             // silently run the bare text, context-blind).
@@ -2263,7 +2272,7 @@ async function runMessageImpl({ channelId, authorId, workspaceId = "", text, thr
         await recordUsage({ channelId, slug: entry.slug, authorId, engine, model: fromModel, taskKind, result: { ...result, engine, model: fromModel } });
       } catch { /* accounting must never block the swap */ }
       if (mintsOwnSessionId(engine) && result.sessionId && result.sessionId !== sid) {
-        await saveSession(entry.slug, threadKey, result.sessionId, engine, sessionGen, runtimeStamp);
+        await saveSession(entry.slug, threadKey, result.sessionId, engine, sessionGen, runtimeStampFor(engine));
       }
       await setThreadSkillModel(entry.slug, threadKey, swap.model);
       try { onEvent?.({ kind: "notice", scope: "gateway", text: `Switching to ${swap.model} for the ${swap.slug} skill — resuming the same session` }); } catch { /* status only */ }
@@ -2312,7 +2321,7 @@ async function runMessageImpl({ channelId, authorId, workspaceId = "", text, thr
       }
       console.warn(`[gateway] session ${sid} resumed empty in ${entry.slug} — resetting to a fresh session`);
       abortPooled(`${entry.slug}::${threadKey}`);
-      sid = await resetSession(entry.slug, threadKey, engine, sessionGen, runtimeStamp);
+      sid = await resetSession(entry.slug, threadKey, engine, sessionGen, runtimeStampFor(engine));
       fresh = true;
       const healed = await healedPrompt(); // once — see the session-not-found heal above
       result = await withTransientRetry(engine, () => runOnce(sid, fresh, healed), { beforeRetry: remintFreshSession });
@@ -2325,7 +2334,7 @@ async function runMessageImpl({ channelId, authorId, workspaceId = "", text, thr
     // thread. Stamp the row with THIS run's engine: a literal here silently migrates any other
     // self-minting engine's thread onto that engine on its second turn.
     if ((mintsOwnSessionId(engine) || forkSourceSessionId) && result.sessionId && result.sessionId !== sid) {
-      await saveSession(entry.slug, threadKey, result.sessionId, engine, sessionGen, runtimeStamp);
+      await saveSession(entry.slug, threadKey, result.sessionId, engine, sessionGen, runtimeStampFor(engine));
       if (forkSourceSessionId) onForkSessionResolved?.(result.sessionId);
     }
     // A fork that fell back to a fresh session still owes its caller the "source is free" signal:
@@ -2405,8 +2414,8 @@ async function runMessageImpl({ channelId, authorId, workspaceId = "", text, thr
     // also labels a legacy Codex thread whose id round-tripped unchanged. Shared-history turns
     // additionally stamp the current credential lane even when the native session id stays put.
     if (finalSessionId && ((sessionEngine === "" && !fresh)
-      || (target.container?.sharedHistory === true && engineSessionState(engine)?.channelHistory === true))) {
-      await saveSession(entry.slug, threadKey, finalSessionId, engine, sessionGen, runtimeStamp);
+      || sharesChannelHistory(engine))) {
+      await saveSession(entry.slug, threadKey, finalSessionId, engine, sessionGen, runtimeStampFor(engine));
     }
     // A completed turn on the chosen engine supersedes any old fallback-only session. In
     // particular, this prevents a legacy fallback from being adopted after a user clears a

@@ -12981,6 +12981,22 @@ Documentation-only, engine-independent: no gateway runtime or Microsoft grants c
 - Automated: `test/external-usage.test.js` verifies one accounting copy across shared Claude/Codex
   mounts, actual private-vs-shared runtime detection during rollout, incremental bookmarks,
   exact old duplicate cleanup and rollback without repricing unrelated/private or host rows.
+- Automated (2026-11-12, pre-shared threads after a channel default change):
+  `test/runtime-integration-run.test.js` stamps a Codex session without a history mode, moves the
+  channel default to Codex EU, and checks that the next turn answers on Codex with a fresh
+  `channel-v1` session and that the following turn resumes it (two spawns, no second reset).
+  `test/codex-usage-accounting.test.js` builds a `state_5.sqlite` `threads` row whose
+  `rollout_path` is gone and checks the scan finds the moved file and an absent one yields an
+  empty baseline. `test/codex-runtime-usage.test.js` checks each failure category, the exit facts
+  in the message and `details`, the daemon-log line, and that stderr never reaches the message.
+- Live SHARED-HISTORY-RESUME-01 (Claude and Codex; pending): in a container-runtime channel
+  whose default harness is Codex EU, pick a thread that started on plain Codex before shared
+  history activated (its session row has no `history` stamp) and send one message, then a second.
+  Pass: both turns answer on Codex (footer harness unchanged), the gateway log reports a fresh
+  session on the first turn and a resume on the second, the session row carries
+  `history: "channel-v1"`, and no `runtime usage inspection failed` error is posted. Repeat with a
+  Claude-born thread. Engine-independent: with the channel default back on Codex the same thread
+  resumes without a further reset.
 - Offline native probes: Claude 2.1.318 normal interactive resume picker lists the same synthetic
   conversation in two isolated HOMEs; Codex 0.162.1 independent private indexes discover shared
   files live, reconstruct a paginated user/assistant turn, omit shadowed legacy private rows,
