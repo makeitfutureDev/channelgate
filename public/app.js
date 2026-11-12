@@ -150,7 +150,7 @@ function syncEffortOptions({ engineSelect, modelSelect, effortSelect, label, val
 const MODEL_OPTIONS = {
   claude: [
     ["claude-opus-5-5", "Opus 5.5"],
-    ["claude-fable-5-1", "Fable 5.1"],
+    ["claude-fable-5-2", "Fable 5.2"],
     ["claude-sonnet-5-5", "Sonnet 5.5"],
     ["claude-haiku-4-5", "Haiku 4.5"],
   ],

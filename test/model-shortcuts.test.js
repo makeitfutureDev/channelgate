@@ -27,6 +27,7 @@ async function put(modelShortcuts, expectedStatus = 200) {
 test("fresh installs inherit supported family defaults without persisting version pins", () => {
   const defaults = getModelShortcuts();
   assert.deepEqual(Object.keys(defaults).sort(), ["astra", "fable", "opus", "sol", "sonet", "terra"]);
+  assert.deepEqual(defaults.fable, { engine: "claude", model: "claude-fable-5-2" });
   assert.equal(defaults.sonet.engine, "claude");
   assert.match(defaults.sonet.model, /^claude-sonnet-/);
   assert.equal(defaults.sol.engine, "codex");

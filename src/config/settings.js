@@ -734,6 +734,8 @@ export function getCodexModelRates() {
 // the rate is stored outright instead of derived. The 1M context window carries no premium on
 // 4.6-and-later models, so there is no long-context multiplier here.
 export const DEFAULT_CLAUDE_RATES = {
+  // platform.claude.com/docs/en/models/fable-5-2/whats-new-fable-5-2, verified 2026-11-12.
+  "claude-fable-5-2": { input: 8, cacheWrite5m: 10, cacheWrite1h: 16, cacheRead: 0.2, output: 40 },
   "claude-fable-5-1": { input: 10, cacheWrite5m: 12.5, cacheWrite1h: 20, cacheRead: 0.25, output: 50 },
   "claude-mythos-5-1": { input: 10, cacheWrite5m: 12.5, cacheWrite1h: 20, cacheRead: 0.25, output: 50 },
   "claude-fable-5": { input: 10, cacheWrite5m: 12.5, cacheWrite1h: 20, cacheRead: 1, output: 50 },

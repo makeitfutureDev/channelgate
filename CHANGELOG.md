@@ -26,6 +26,9 @@ release gates. Stable promotion and publication require approval of the exact te
 
 ### Beta development notes
 
+- Update the Claude model pickers and inherited `:fable` shortcut to Fable 5.2, with its
+  published cache-aware pricing for external usage. Previously saved model pins remain valid.
+
 - Add Copy command buttons to the Codex EU and Claude Bedrock setup cards, with copy feedback
   and a fallback for HTTP-hosted admin pages.
 
