@@ -2,6 +2,7 @@
 
 ## 0.6.5 — candidate, pending approval
 
+- Show the Activity dashboard's Working status in pink, keeping the existing spinner.
 - Add Fork before Files in Slack reply menus. Enter a new request to open a linked thread with
   recent visible conversation through that reply, excluding later messages. The dialog explains
   history limits, excluded private tool history and shared workspace files; current-session

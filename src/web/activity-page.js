@@ -415,7 +415,7 @@ tbody tr:last-child td{border-bottom:0}tbody tr:hover{background:var(--panel-2)}
 .time-cell{font-size:12px;color:var(--muted);font-variant-numeric:tabular-nums}
 .pill{display:inline-flex;align-items:center;gap:7px;padding:4px 9px;border-radius:100px;font-size:10px;font-weight:600;white-space:nowrap;background:rgba(145,201,206,.1);color:var(--muted)}
 .status-dot{display:inline-block;width:6px;height:6px;border-radius:50%;background:currentColor}
-.pill.working{color:#b5e3e7;background:rgba(49,123,128,.3)}
+.pill.working{color:#f9a8d4;background:rgba(236,72,153,.18)}
 .working .status-dot{width:10px;height:10px;border:1.5px solid currentColor;border-right-color:transparent;background:none;animation:spin .85s linear infinite}
 .pill.waiting{background:rgba(232,176,75,.15);color:#f1ca83}
 .pill.error{background:rgba(229,96,77,.15);color:#ffb3a9}

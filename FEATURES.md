@@ -128,7 +128,8 @@ as other personal Activity actions. No browser storage or engine call is needed.
 Slack Home → Activity offers **Open live dashboard** as the rightmost button in the navigation
 actions row, after **Help & settings**, when a Public URL is configured. It opens a
 responsive browser table of the viewer's own agent threads, with search, status filters, Working
-spinners, labeled status colors, last-message dates, Open thread and Done/Reopen. Completed work
+spinners, labeled status colors (Working pink, Error red, Waiting yellow, Completed green,
+and Idle muted), last-message dates, Open thread and Done/Reopen. Completed work
 is hidden from open filters except while that thread is actively Working or Waiting. Live status
 takes priority in the browser, then the previous completion marker returns when work ends;
 Slack Home completion and reminder suppression stay persistent. A finished agent response in an

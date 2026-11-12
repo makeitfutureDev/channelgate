@@ -253,6 +253,11 @@ views for clear status labels, teal panels, orange selected/focus/title accents,
 page overflow. Reuse the Chromium Activity fixture and ACTIVITY-WEB-04; visual fixture checks do
 not claim native live acceptance.
 
+Status palette (2026-11-12, engine-independent CSS): render Working, Error, Waiting, Completed
+and Idle rows in the Activity browser fixture at 390px and 1440px. Working must have pink text,
+background and spinner; Error stays red, Waiting yellow, Completed green and Idle muted.
+The Working spinner must retain its animation and respect reduced motion.
+
 Active-worker regression (2026-11-12): use real `recordActiveRun`/`clearActiveRun` events and an
 SSE fixture whose polling interval exceeds the test timeout. A completed own root becomes Working,
 then Waiting for a busy choice, then Completed again without losing its durable marker; ordinary
