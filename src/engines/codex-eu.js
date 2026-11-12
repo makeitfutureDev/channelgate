@@ -1,4 +1,4 @@
-// An isolated Enterprise login using the existing Codex runner. Residency remains a workspace
+// An isolated ChatGPT login using the existing Codex runner. Residency remains a workspace
 // policy: selecting this harness never changes or proves the workspace's configured region.
 import { readFile } from "node:fs/promises";
 import path from "node:path";
@@ -11,16 +11,15 @@ export { codexEuLoginHome, codexEuLoginHint } from "../gateway/channel-codex-pat
 export async function codexEuCredentialState({ readFileImpl = readFile } = {}) {
   const home = codexEuLoginHome();
   const state = await readCodexAuthState({ codexHome: home, hostCodexHome: home, env: {}, readFileImpl });
-  const remedy = `run \`${codexEuLoginHint()}\` on the gateway host and choose the Enterprise EU workspace`;
+  const remedy = `run \`${codexEuLoginHint()}\` on the gateway host and choose the intended ChatGPT workspace`;
   if (!state.known || !state.authenticated) return { ...state, authenticated: false, detail: remedy };
-  if (state.method !== "chatgpt") return { ...state, authenticated: false, detail: `Codex EU requires a ChatGPT Enterprise sign-in; ${remedy}` };
+  if (state.method !== "chatgpt") return { ...state, authenticated: false, detail: `Codex EU requires a ChatGPT sign-in; ${remedy}` };
   try {
     const parsed = JSON.parse(await readFileImpl(path.join(home, "auth.json"), "utf8"));
     const claims = JSON.parse(Buffer.from(String(parsed.tokens?.access_token || "").split(".")[1] || "", "base64url").toString("utf8"));
-    const plan = String(claims["https://api.openai.com/auth"]?.chatgpt_plan_type || "").toLowerCase();
-    if (plan !== "enterprise") return { ...state, authenticated: false, detail: `the dedicated login does not identify an Enterprise workspace; ${remedy}` };
+    if (!claims || typeof claims !== "object" || Array.isArray(claims)) throw new Error("invalid access-token claims");
   } catch {
-    return { ...state, authenticated: false, detail: `the dedicated Enterprise login could not be verified; ${remedy}` };
+    return { ...state, authenticated: false, detail: `the dedicated ChatGPT login could not be verified; ${remedy}` };
   }
   return state;
 }

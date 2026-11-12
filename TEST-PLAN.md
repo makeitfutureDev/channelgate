@@ -36,19 +36,24 @@
   both cards and the fallback. This browser-only behavior invokes neither engine.
   Settings → Engine & runtime. Both options start off. Enable either and save before login;
   reload and verify both toggles persist independently. Inspect both setup cards: exact host
-  paths/commands, Enterprise residency caveat and Bedrock API-key-only restriction are visible.
+  paths/commands, workspace residency caveat and Bedrock API-key-only restriction are visible.
   Enter each harness's default model/effort and reload. Pass: values persist, disabled harnesses
-  are absent from pickers, and no credential or token is returned to the browser.
+  are absent from pickers, and no credential or token is returned to the browser. Open `/model`
+  before and after enabling Codex EU without restarting; its introductory text, scope guidance
+  and harness buttons must agree with current toggles and channel approvals. This portion is
+  engine-independent because it only renders control-plane choices.
 - Live definition **HARNESS-TERMINAL-02** (Codex, External Credential Fixture): as the gateway
   service account run the displayed Codex EU device-login command, choose a separately approved
-  Enterprise workspace, and verify its EU residency controls with that workspace administrator.
+  ChatGPT workspace (including Pro Lite), without requiring an Enterprise subscription.
+  Confirm residency separately when available; harness selection is not evidence of EU residency.
   Use the disposable `cg-testing-codex-bash` fixture, temporarily enabling and channel-approving
   `codex-eu`; select it in `/model` and send `Remember nonce EU-<unique>; reply with it.` Send a
   second turn asking for the nonce. Run a normal Codex thread concurrently. Pass: both EU turns
   use `codex-eu`, resume its own transcript, and relay only its dedicated login; normal Codex
   retains its existing account. Missing/expired EU login must give a setup/credential failure,
   without using default or channel Codex credentials. Restore fixture configuration. Product
-  acceptance is unexecuted until the operator supplies this new Enterprise login.
+  acceptance requires a configured dedicated ChatGPT login; automated regressions cover
+  Pro Lite selection, run routing, relay access and logout without borrowing another account.
 - Live definition **HARNESS-TERMINAL-03** (Claude, External Credential Fixture): as the service
   account run the displayed isolated Claude command, type `/setup-bedrock`, select Amazon
   Bedrock API key and the intended AWS region/models. In disposable `cg-testing-claude-bash`,

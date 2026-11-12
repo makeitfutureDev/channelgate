@@ -11,14 +11,15 @@ The options share the installed CLIs and preserve gateway confinement, tools and
 
 The dedicated login is `<gateway runtime root>/engine-state/codex-eu-login`. Run the exact
 `CODEX_HOME=... codex ... login --device-auth` command displayed in Settings. The command selects
-file credential storage so the service can read the intended login. Choose the ChatGPT Enterprise
-workspace with the required EU controls, then verify status under the **same** `CODEX_HOME`.
+file credential storage so the service can read the intended login. Choose the intended ChatGPT
+workspace, including Pro Lite; an Enterprise subscription is not required. Verify status under
+the **same** `CODEX_HOME`.
 The normal gateway Codex login and any channel-specific Codex login remain separate.
 
 Container turns require the egress proxy. Legacy bridge-only containers cannot use this
-dedicated login; no Enterprise refresh-token file is mounted into those containers.
+dedicated login; no real refresh-token file is mounted into those containers.
 
-Codex follows the selected Enterprise workspace's retention and residency settings. The harness
+Codex follows the selected workspace's available retention and residency controls. The harness
 label and isolated directory do not configure or prove EU data or inference residency. Confirm
 those controls with your workspace administrator. See [OpenAI authentication documentation](https://learn.chatgpt.com/docs/auth).
 

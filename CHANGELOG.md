@@ -2,6 +2,10 @@
 
 ## 0.6.5 — candidate, pending approval
 
+- Accept Pro Lite and other ChatGPT subscription logins for Codex EU without an Enterprise-only
+  check. Keep the dedicated account relay and session isolation. Refresh `/model` harness
+  descriptions from current settings and channel approvals after activation.
+
 - Show the Activity dashboard's Working status in pink, keeping the existing spinner.
 - Add Fork before Files in Slack reply menus. Enter a new request to open a linked thread with
   recent visible conversation through that reply, excluding later messages. The dialog explains
@@ -52,7 +56,7 @@ release gates. Stable promotion and publication require approval of the exact te
   connection under their own five-minute rebuild.
 
 - Add optional Codex EU and Claude Bedrock harnesses with independent terminal setup, defaults
-  and sessions. Codex EU uses a dedicated Enterprise login; residency follows its workspace.
+  and sessions. Codex EU uses a dedicated ChatGPT login, including Pro Lite; residency follows its workspace.
   Bedrock supports regional bearer API keys. Both stay outside automatic account failover.
 
 - Open browser Activity threads directly in the Slack app, preserving the latest-reply target.

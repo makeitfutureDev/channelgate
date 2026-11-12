@@ -445,10 +445,10 @@ export async function containerCodexCredential({ target, channelId = "", resolve
   const key = String(channelId || target?.meta?.channelId || "") || (await channelIdOfTarget(target));
   if (!key) return { error: "the run has no channel to bind Codex's relayed sign-in to" };
   const eu = isCodexEu(target?.meta);
-  if (eu && !(await (await import("../../engines/codex-eu.js")).codexEuCredentialState()).authenticated) return { error: "Codex EU requires the dedicated Enterprise sign-in" };
+  if (eu && !(await (await import("../../engines/codex-eu.js")).codexEuCredentialState()).authenticated) return { error: "Codex EU requires the dedicated ChatGPT sign-in" };
   const relay = await resolveRelay({ candidates: codexLoginCandidatesFor(target?.meta) });
   if (!relay?.token) return { error: relay?.error || "the gateway has no Codex sign-in to relay", source: relay?.source || "none" };
-  if (eu && relay.source !== "chatgpt") return { error: "Codex EU requires a ChatGPT Enterprise sign-in" };
+  if (eu && relay.source !== "chatgpt") return { error: "Codex EU requires a ChatGPT sign-in" };
   if (relay.source === "api-key") {
     return {
       authJson: renderContainerCodexApiAuth({ apiKey: codexApiRelayPlaceholderFor({ channelId: key }) }),

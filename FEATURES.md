@@ -34,11 +34,14 @@ the exact host-terminal commands, with a **Copy command** button for each harnes
 default model/effort controls. Copy confirms success, supports HTTP clipboard fallback, and
 shows manual-copy guidance when browser clipboard access is denied. After setup,
 enabled and channel-approved harnesses appear in the existing runtime and `/model` pickers.
+The `/model` introduction and scope guidance refresh their harness list with live settings and
+channel approvals, including toggles changed after gateway startup.
 Each uses its own login and session directory, cold processes, and no automatic failover edge.
 Missing configuration fails with its own setup remedy instead of borrowing another account.
 
-Codex EU reads only its dedicated host `CODEX_HOME`; the operator chooses a ChatGPT Enterprise
-workspace during device sign-in. EU data and inference residency are workspace configuration:
+Codex EU reads only its dedicated host `CODEX_HOME`; the operator chooses the intended ChatGPT
+workspace during device sign-in. ChatGPT subscriptions including Pro Lite are accepted; Enterprise
+is not required. EU data and inference residency depend on the workspace’s available controls and configuration:
 the option's name and separate login do not establish those controls. Container authentication
 uses a distinct access-token relay, keeping it separate from the default and per-channel Codex
 logins, including concurrent threads.

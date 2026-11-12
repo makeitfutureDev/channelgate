@@ -142,8 +142,10 @@ const OFFERED_ENGINE_IDS = (meta = {}) => {
   const enabled = getEnabledEngines().filter((id) => adapterFor(id));
   return (enabled.length ? enabled : ENGINE_IDS).filter(id => isChannelEngineApproved(meta, id));
 };
-const ENGINE_LABELS = () => OFFERED_ENGINE_IDS().map((id) => requireAdapter(id).label).join(" / ");
-export const MODEL_WIZARD_TEXT = `Change the model: pick scope, then harness (${ENGINE_LABELS()}), then model, then effort.`;
+const ENGINE_LABELS = (meta = {}) => OFFERED_ENGINE_IDS(meta).map((id) => requireAdapter(id).label).join(" / ");
+export const modelWizardText = (meta = {}) => meta.codexAuthSource === "channel"
+  ? "Change the Codex model: pick scope, model, then effort."
+  : `Change the model: pick scope, then harness (${ENGINE_LABELS(meta)}), then model, then effort.`;
 
 export const RETIRED_COMMAND_TEXT = (cmd) => `\`${cmd}\` was removed — \`/model\` now does it all: scope (channel or just this thread) → harness (${ENGINE_LABELS()}) → model → effort.`;
 
@@ -179,7 +181,7 @@ export function modelWizardScopeBlocks({ threadTs, meta }) {
       elements: [
         {
           type: "mrkdwn",
-          text: (meta.codexAuthSource === "channel" ? "Step 1 of 3 — scope, then Codex model and effort." : `Step 1 of 4 — scope, then harness (${ENGINE_LABELS()}), model, effort.`) + (threadTs ? " *This channel* covers this thread too." : " To change a single thread, run `/model` inside that thread."),
+          text: (meta.codexAuthSource === "channel" ? "Step 1 of 3 — scope, then Codex model and effort." : `Step 1 of 4 — scope, then harness (${ENGINE_LABELS(meta)}), model, effort.`) + (threadTs ? " *This channel* covers this thread too." : " To change a single thread, run `/model` inside that thread."),
         },
       ],
     },
@@ -275,7 +277,7 @@ export async function postModelWizard(client, { channel, threadTs, meta }) {
   await client.chat.postMessage({
     channel,
     ...(threadTs ? { thread_ts: threadTs } : {}),
-    text: meta.codexAuthSource === "channel" ? "Change the Codex model: pick scope, model, then effort." : MODEL_WIZARD_TEXT,
+    text: modelWizardText(meta),
     blocks: modelWizardScopeBlocks({ threadTs, meta }),
   });
 }
@@ -341,7 +343,7 @@ export async function handleModelWizard({ ack, body, action, client, respond }) 
       return;
     }
 
-    const repaint = (blocks) => updateRuntimePickerMessage({ client, respond, channel, ts, text: codexLocked ? "Change the Codex model: pick scope, model, then effort." : MODEL_WIZARD_TEXT, blocks });
+    const repaint = (blocks) => updateRuntimePickerMessage({ client, respond, channel, ts, text: modelWizardText(meta), blocks });
     // Persist a channel-scope pick AND record who changed what. The replaced record is captured
     // inside the store transaction, so the diff is against what this click really overwrote.
     const patchChannelRuntime = async (patch) => {
