@@ -1747,7 +1747,10 @@ revisions on failed sync. Details and compatibility limits: `docs/SKILLS.md`.
   place, or replaced by the refusal (not authorized, sudo, code channel) with no submit button.
   Only when Slack refuses the open itself (an expired trigger, say) does the clicker get the
   private "Couldn't open Fork. Try the button again." notice, and the daemon records a
-  `reply_fork_open_failed` event carrying Slack's error code — never the payload.
+  `reply_fork_open_failed` event carrying Slack's error code — never the payload. The form's
+  next-request input is capped at 3,000 characters, Slack's documented ceiling for a
+  `plain_text_input` `max_length` (a larger value makes Slack refuse the whole form at the fill
+  step, so every click ended in the retry notice); the submission check shares the same bound.
 - **Native 👍/👎 answer feedback**: the same footer ends with Slack's `context_actions` block
   carrying `feedback_buttons` (`cg_reply_feedback`) on every streamed, classic, unattended and
   fallback answer that carries the stats footer (not on bare notices such as "🛑 Stopped."). Any

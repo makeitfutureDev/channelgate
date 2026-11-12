@@ -9,7 +9,10 @@ export const FORK_ACTION_ID = "cg_reply_fork";
 const SUBMIT_ID = "cg_reply_fork_submit";
 const INPUT_BLOCK = "fork_request";
 const INPUT_ACTION = "message";
-const MAX_REQUEST = 6000;
+// Slack accepts a plain_text_input `max_length` of at most 3000 (its documented ceiling): a larger
+// value makes views.update refuse the whole form with invalid_arguments, which is exactly the
+// "Couldn't open Fork" fill failure. The submission check below shares the same bound.
+export const MAX_REQUEST = 3000;
 const DRAFT_TTL = 15 * 60_000;
 const MAX_DRAFTS = 500;
 const SLACK_TS = /^\d{1,16}\.\d{1,6}$/;

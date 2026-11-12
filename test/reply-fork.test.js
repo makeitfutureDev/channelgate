@@ -6,7 +6,7 @@ ensureTestEnv();
 const { getDb } = await import("../src/db/index.js");
 const { setUser, upsertChannelEntry, saveChannelMeta } = await import("../src/config/store.js");
 const { setThreadSudo } = await import("../src/gateway/thread-engine.js");
-const { FORK_ACTION_ID, registerReplyForkActions } = await import("../src/slack/reply-fork.js");
+const { FORK_ACTION_ID, MAX_REQUEST, registerReplyForkActions } = await import("../src/slack/reply-fork.js");
 
 const OWNER = "U_FORK_OWNER";
 const MEMBER = "U_FORK_MEMBER";
@@ -80,7 +80,10 @@ test("Fork opens a bounded form and dispatches the selected reply's cutoff under
   const view = await h.open();
   assert.equal(view.title.text, "Fork conversation");
   assert.match(view.private_metadata, /^[0-9a-f-]{36}$/);
-  assert.equal(view.blocks[1].element.max_length, 6000);
+  // Slack's documented ceiling for plain_text_input max_length is 3000; a larger value makes
+  // views.update refuse the whole form, which is what the first live Fork clicks ran into.
+  assert.equal(view.blocks[1].element.max_length, MAX_REQUEST);
+  assert.ok(MAX_REQUEST >= 1 && MAX_REQUEST <= 3000);
   assert.equal(view.blocks[1].element.multiline, true);
   assert.match(view.blocks[0].text.text, /recent visible Slack messages through this reply/);
   assert.match(view.blocks[0].text.text, /Later messages and private tool history are excluded/);
@@ -230,7 +233,7 @@ test("a modal cannot be submitted by another user or team and blank input can be
   assert.equal((await h.submit(view, { user: MEMBER })).response_action, "errors");
   assert.equal((await h.submit(view, { teamId: "T_OTHER" })).response_action, "errors");
   assert.equal((await h.submit(view, { message: " \n " })).response_action, "errors");
-  assert.equal((await h.submit(view, { message: "x".repeat(6001) })).response_action, "errors");
+  assert.equal((await h.submit(view, { message: "x".repeat(MAX_REQUEST + 1) })).response_action, "errors");
   assert.equal(h.dispatched.length, 0);
   await h.submit(view);
   assert.equal(h.dispatched.length, 1);
