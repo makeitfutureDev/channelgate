@@ -28,7 +28,11 @@ class Element {
   focus() { this.focused = true; }
   querySelector(selector) { return this.querySelectorAll(selector)[0]; }
   querySelectorAll(selector) { return this.children.flatMap((c) => [...(c.tag === selector ? [c] : []), ...c.querySelectorAll(selector)]); }
-  closest(selector) { return this.tag === "button" && selector.startsWith("button") ? this : this.parent?.closest(selector); }
+  closest(selector) {
+    if (this.tag === "button" && selector.startsWith("button")) return this;
+    if (selector === "a.open-link" && this.tag === "a" && String(this.className).split(" ").includes("open-link")) return this;
+    return this.parent?.closest(selector);
+  }
   fire(type, event = {}) {
     let prevented = false;
     this.listeners[type]?.({ target: this, preventDefault() { prevented = true; }, ...event });
@@ -42,20 +46,20 @@ const response = (data, status = 200) => ({ status, ok: status >= 200 && status 
 function row(status = "working", title = "Fixture thread", url = "/activity/session/open/C1/1.1") {
   return { channelId: "C1", threadTs: "1.1", title, channelName: "Engineering", status, lastMessageMs: 1_800_000_000_000, url };
 }
-function browser(fetchImpl = async () => response({ rows: [] }), csrf = "fixture-csrf", subscriptions = false) {
-  const elements = Object.fromEntries(["load-history", "threads", "search", "filters", "connection", "connection-text", "updated", "notice", "summary", "table", "empty", "empty-title", "empty-copy", "result-count", "group-order", "order-dialog", "order-list", "order-save", "order-cancel", "order-reset", "order-error", "mark-all-done", "all-done-dialog", "all-done-confirm", "all-done-cancel", "all-done-error"].map((id) => [id, new Element()]));
+function browser(fetchImpl = async () => response({ rows: [] }), csrf = "fixture-csrf", subscriptions = false, { prefersLight = false } = {}) {
+  const elements = Object.fromEntries(["theme-toggle", "load-history", "threads", "search", "filters", "connection", "connection-text", "updated", "notice", "summary", "table", "empty", "empty-title", "empty-copy", "result-count", "group-order", "order-dialog", "order-list", "order-save", "order-cancel", "order-reset", "order-error", "mark-all-done", "all-done-dialog", "all-done-confirm", "all-done-cancel", "all-done-error"].map((id) => [id, new Element()]));
   for (const filter of ["active", "working", "waiting", "error", "idle", "later", "done", "open"]) {
     const button = new Element("button"); button.dataset.filter = filter; button.append(new Element("span")); elements.filters.append(button);
   }
   if (subscriptions) for (const id of ["subscriptions-cards", "subscription-quick", "subscriptions-notice", "subscriptions-refresh"]) elements[id] = new Element();
-  const document = { getElementById: (id) => elements[id], createElement: (tag) => new Element(tag), hidden: false, listeners: {}, addEventListener(type, handler) { this.listeners[type] = handler; } };
+  const document = { documentElement: new Element("html"), getElementById: (id) => elements[id], createElement: (tag) => new Element(tag), hidden: false, listeners: {}, addEventListener(type, handler) { this.listeners[type] = handler; } };
   let stream;
   class EventSource extends Element {
     constructor(url) { super(); this.url = url; stream = this; }
     close() { this.closed = true; }
     snapshot(rows, extra = {}) { this.fire("threads", { data: JSON.stringify({ rows, ...extra }) }); }
   }
-  const requests = [], timers = [], timeoutDelays = [], browserListeners = {};
+  const requests = [], timers = [], timeoutDelays = [], browserListeners = {}, opened = [];
   const page = activityPage({ sessionId: "session", csrf });
   const script = /<script nonce="[^"]+">([\s\S]*?)<\/script>/.exec(page.html)?.[1];
   assert.ok(script);
@@ -63,9 +67,10 @@ function browser(fetchImpl = async () => response({ rows: [] }), csrf = "fixture
     document,
     fetch: (url, options) => { requests.push({ url, options }); return fetchImpl(url, options); },
     EventSource, URL, Intl, Date, location: { origin: "https://gateway.example" },
+    open: (...args) => { opened.push(args); }, matchMedia: () => ({ matches: prefersLight, addEventListener() {} }),
     setInterval: (fn) => { timers.push(fn); return 1; }, clearInterval() {}, setTimeout: (fn, delay) => { timers.push(fn); timeoutDelays.push(delay); return timers.length; }, clearTimeout() {}, addEventListener(type, handler) { browserListeners[type] = handler; },
   });
-  return { elements, stream, requests, timers, timeoutDelays, page, document, browserListeners };
+  return { elements, stream, requests, timers, timeoutDelays, page, document, browserListeners, opened };
 }
 
 test("activity browser keeps a newer SSE snapshot when the initial fetch resolves later", async () => {
@@ -99,22 +104,92 @@ test("activity browser safely renders hostile text and restricts links to Slack 
   }
 });
 
-test("Activity app links reuse the current tab and retain an explicit browser alternative", () => {
-  const { elements, stream } = browser(() => new Promise(() => {}));
+test("Activity has one icon Slack button; Ctrl/⌘-click opens the same thread in the browser", () => {
+  const { elements, stream, opened } = browser(() => new Promise(() => {}));
   stream.snapshot([row()]);
   const tr = elements.threads.children[0], title = tr.children[0].children[0];
-  const [app, web] = tr.children[4].children[0].children;
+  const links = tr.children[4].children[0].children;
+  assert.equal(links.length, 1, "the separate browser button is gone");
+  const [app] = links;
   assert.equal(title.target, "_self");
   assert.equal(app.target, "_self");
-  assert.equal(app.textContent, "Open in Slack");
+  assert.equal(app.textContent, "Open in Slack", "the icon keeps an accessible name");
+  assert.equal(app.attrs["aria-label"], "Open in Slack: Fixture thread");
   assert.equal(app.href, title.href);
-  assert.equal(web.href, app.href + "?browser=1");
-  assert.equal(web.target, "_blank");
-  assert.equal(web.rel, "noopener noreferrer");
+  let prevented = elements.threads.fire("click", { target: app });
+  assert.equal(prevented, false, "a plain click opens Slack");
+  assert.equal(opened.length, 0);
+  for (const modifier of [{ ctrlKey: true }, { metaKey: true }]) {
+    prevented = elements.threads.fire("click", { target: app, ...modifier });
+    assert.equal(prevented, true);
+    assert.deepEqual(opened.at(-1), [app.href + "?browser=1", "_blank", "noopener,noreferrer"]);
+  }
+  stream.snapshot([row("working", "Slack permalink", "https://team.slack.com/archives/C1/p11")]);
+  const permalink = elements.threads.children[0].children[4].children[0].children[0];
+  assert.equal(elements.threads.fire("click", { target: permalink, ctrlKey: true }), false, "a Slack permalink keeps the browser default");
   for (const url of ["slack://channel?team=attacker&id=C1", "javascript:alert(1)", "https://attacker.example/"]) {
     stream.snapshot([row("working", "unsafe", url)]);
-    for (const anchor of [title, app, web]) assert.equal(anchor.href, undefined);
+    const anchor = elements.threads.children[0].children[4].children[0].children[0];
+    assert.equal(anchor.href, undefined);
+    assert.equal(elements.threads.fire("click", { target: anchor, ctrlKey: true }), false);
   }
+  assert.equal(opened.length, 2);
+});
+
+test("status groups are labelled on their first row, and running work shows a live clock", () => {
+  const { elements, stream, timers } = browser(() => new Promise(() => {}));
+  const now = Date.now();
+  const rows = [
+    { ...row("working", "run"), threadTs: "1", workingSinceMs: now - 252_000, lastMessageMs: now - 30_000 },
+    { ...row("idle", "old"), threadTs: "2", lastMessageMs: now - 3 * 3_600_000 },
+    { ...row("idle", "older"), threadTs: "3", lastMessageMs: now - 2 * 86_400_000 },
+    { ...row("waiting", "ask"), threadTs: "4", workingSinceMs: now - 1000, lastMessageMs: now - 5 * 60_000 },
+  ];
+  stream.snapshot(rows);
+  const trs = elements.threads.children;
+  assert.deepEqual(trs.map((tr) => tr.children[0].textContent), ["ask", "run", "old", "older"]);
+  assert.deepEqual(trs.map((tr) => tr.dataset.group), ["Waiting · 1", "Working · 1", "Idle · 2", undefined]);
+  assert.deepEqual(trs.map((tr) => tr.className), ["row s-waiting", "row s-working", "row s-idle", "row s-idle"]);
+  const pill = (tr) => tr.children[2].children[0];
+  assert.match(pill(trs[1]).textContent, /^Working4m 1[23]s$/);
+  assert.equal(pill(trs[0]).textContent, "Waiting", "only the agent's own running work carries a clock");
+  assert.deepEqual(trs.map((tr) => tr.children[3].children[0].textContent), ["5m", "now", "3h", "2d"]);
+  assert.equal(trs[1].children[3].children[0].attrs.title, undefined);
+  for (const timer of timers) timer();
+  assert.match(pill(trs[1]).textContent, /^Working4m 1[2-4]s$/);
+  stream.snapshot([{ ...rows[0], status: "idle" }]);
+  assert.equal(elements.threads.children[0].children[2].children[0].textContent, "Idle");
+});
+
+test("theme switch pins the opposite theme, returns to System when it matches the OS, and saves with CSRF", async () => {
+  for (const prefersLight of [false, true]) {
+    const { elements, requests, document } = browser(() => Promise.resolve(response({ rows: [] })), "fixture-csrf", false, { prefersLight });
+    const button = elements["theme-toggle"], root = document.documentElement;
+    const system = prefersLight ? "light" : "dark", other = prefersLight ? "dark" : "light";
+    assert.equal(button.dataset.theme, system);
+    assert.equal(button.attrs["aria-label"], `Switch to ${other} theme`);
+    await button.listeners.click(); await flush();
+    assert.equal(root.dataset.theme, other);
+    assert.equal(button.attrs["aria-label"], `Switch to ${system} theme`);
+    let save = requests.filter((r) => r.url.endsWith("/api/theme")).at(-1);
+    assert.equal(save.options.headers["X-CG-CSRF"], "fixture-csrf");
+    assert.deepEqual(JSON.parse(save.options.body), { theme: other });
+    await button.listeners.click(); await flush();
+    assert.equal(root.dataset.theme, undefined, "matching the OS follows the system again");
+    save = requests.filter((r) => r.url.endsWith("/api/theme")).at(-1);
+    assert.deepEqual(JSON.parse(save.options.body), { theme: "system" });
+  }
+});
+
+test("page shows the agent name safely and pins only a saved explicit theme", () => {
+  const hostile = activityPage({ sessionId: "s", csrf: "c", agent: '<img src=x onerror="alert(1)">Atlas' }).html;
+  assert.match(hostile, /<span class="agent-name">&lt;img src=x onerror=&quot;alert\(1\)&quot;&gt;Atlas<\/span>/);
+  assert.match(hostile, /<span class="agent-mark" aria-hidden="true">&lt;<\/span>/);
+  assert.match(activityPage({ sessionId: "s", csrf: "c", agent: "atlas" }).html, /agent-mark" aria-hidden="true">A</);
+  assert.match(activityPage({ sessionId: "s", csrf: "c" }).html, /agent-name">ChannelGate</);
+  assert.match(activityPage({ sessionId: "s", csrf: "c", theme: "light" }).html, /<html lang="en" data-theme="light">/);
+  assert.match(activityPage({ sessionId: "s", csrf: "c", theme: "dark" }).html, /<html lang="en" data-theme="dark">/);
+  for (const theme of ["system", "blue\"><script>", undefined]) assert.match(activityPage({ sessionId: "s", csrf: "c", theme }).html, /<html lang="en">/);
 });
 
 test("activity browser filters locally and serializes each completion action with CSRF", async () => {
@@ -435,6 +510,11 @@ test("shared subscription UI excludes API, missing and unsupported harnesses fro
   const rows = [subscription(), { name: "API fixture", kind: "api-key", status: "api-key", windows: [] }, { name: "Not connected fixture", kind: "none", status: "not-connected", windows: [] }, { name: "Unsupported fixture", kind: "unsupported", status: "unsupported", windows: [] }];
   const quick = ui.summary(rows);
   assert.match(quick, /Codex EU/);
+  assert.match(quick, /<progress max="100" value="24"/, "a short usage line for wide windows");
+  assert.match(quick, /<circle class="ring-value" cx="10" cy="10" r="7.5" pathLength="100" stroke-dasharray="24 100"\/>/, "a ring for narrow windows");
+  assert.doesNotMatch(quick, /style=/, "no inline style: the page CSP is nonce-only");
+  assert.match(ui.summary([{ ...subscription(), windows: [{ label: "Weekly", usedPercent: 96 }] }]), /subscription-quick critical/);
+  assert.match(ui.summary([{ ...subscription(), windows: [] , status: "ok" }]), /subscription-quick unavailable[^>]*>.*<strong>—<\/strong>/);
   assert.doesNotMatch(quick, /API fixture|Not connected fixture|Unsupported fixture/);
   const card = ui.card({ ...subscription(), resetCredits: { available: 2, resets: [{ label: "Full reset", expiresAt: "2099-01-01T00:00:00Z", remaining: 2, paused: true }] }, expiresAt: "2099-02-01T00:00:00Z" });
   assert.match(card, /2 remaining/);
@@ -463,7 +543,8 @@ test("Later hides postponed work from Active, retains it in All open, and serial
   const b = browser((url) => url.endsWith("/later") ? save.promise : Promise.resolve(response({ rows: [row(status)] })));
   await flush();
   const delay = b.elements.threads.children[0].children[4].children[1].children[1];
-  assert.equal(delay.textContent, "🕒 Later");
+  assert.equal(delay.textContent, "Later");
+  assert.equal(delay.dataset.state, "later");
   b.elements.threads.fire("click", { target: delay });
   b.elements.threads.fire("click", { target: delay });
   assert.equal(delay.disabled, true);
@@ -478,6 +559,7 @@ test("Later hides postponed work from Active, retains it in All open, and serial
   select("later");
   const resume = b.elements.threads.children[0].children[4].children[1].children[1];
   assert.equal(resume.textContent, "Resume");
+  assert.equal(resume.dataset.state, "resume");
   b.elements.threads.fire("click", { target: resume }); await flush();
   assert.deepEqual(JSON.parse(b.requests.filter((r) => r.url.endsWith("/later")).at(-1).options.body), { channelId: "C1", threadTs: "1.1", later: false });
   select("open"); assert.equal(b.elements.threads.children.length, 1);

@@ -12,3 +12,10 @@ export function activityGroupOrder(value) {
 export function activityGroupOrderVersion(value) {
   return Number.isSafeInteger(value) && value >= 0 ? value : 0;
 }
+
+// Activity colour scheme preference: "system" follows the browser, the others pin one theme.
+export const ACTIVITY_THEMES = Object.freeze(["system", "dark", "light"]);
+
+export function activityTheme(value) {
+  return ACTIVITY_THEMES.includes(value) ? value : "system";
+}

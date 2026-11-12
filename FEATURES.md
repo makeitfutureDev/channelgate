@@ -1,5 +1,39 @@
 # ChannelGate — Features
 
+## Compact Activity monitor with dark and light themes (2026-11-13)
+
+The personal Activity dashboard is a compact monitor in the channelgate.dev style (Geist and
+Geist Mono, self-hosted under `public/fonts/`), built to stay readable in a corner of the screen.
+
+- **Header.** The agent's own name and initial, read from the Slack bot's profile (display name,
+  then real name, then the bot handle; cached for an hour per bot user, never blocking the page),
+  so each installation shows its own name. The live-connection state sits under the name. Each
+  connected subscription is a short coloured usage line with its percentage (green, then amber
+  from 75%, red from 90%); below 640 px the lines become small rings. Hovering one shows the window
+  and its reset time. Activity / Subscriptions navigation and a theme switch complete the bar.
+- **Themes.** Dark and light, following the operating system by default. The switch pins the
+  opposite theme, and switching back to the OS's own choice returns to System. The choice is
+  saved to the viewer's account (`POST /activity/:id/api/theme`, CSRF and the same admission as
+  every Activity write; `system`, `dark` or `light` only) and rendered on the `<html>` element
+  before first paint.
+- **Status colours.** One colour per status, used for the dot, the label, the tab dot and the
+  group header: Working blue (with a pulse), Waiting amber, Error red, Idle grey, Later purple,
+  Completed green. Orange is reserved for the brand.
+- **Table.** Single-line rows with Conversation, Channel, Status and Last columns. Each status
+  group is labelled on its first row with its count, in the viewer's saved group order. Working
+  rows show a live running clock in the status label ("Working 4m 12s"), measured from the
+  earliest accepted turn still running in that thread (`workingSinceMs` in the snapshot);
+  waiting turns carry no clock. Last shows relative time ("now", "5m", "3h", "2d", then a short
+  date), with the full date on hover.
+- **Actions.** Three icon buttons with accessible names: the Slack logo opens the thread in the
+  Slack app (Ctrl/⌘-click opens the same thread in the browser instead, replacing the separate ↗
+  button), ✓ marks it done (↺ reopens), ⏸ moves it to Later (▶ resumes). They appear on hover or
+  keyboard focus, stay visible on Waiting and Error rows, and are always visible on touch screens.
+- **Responsive.** Below 980 px the Channel column is dropped. Below 640 px rows become two lines
+  (title and time, then status, channel and actions), the search moves above the tabs, and the
+  navigation moves under the header. Group order, Mark All Done and Load older threads are in the
+  footer.
+
 ## Activity live updates survive large snapshots (2026-11-12)
 
 The personal Activity dashboard's live stream (`GET /activity/:id/stream`) keeps one connection
@@ -12,8 +46,8 @@ seconds (the stream's `retry` hint) and refetched the same snapshot on every rec
 
 ## Postpone conversations in Activity (2026-11-12)
 
-My Activity includes a **🕒 Later** tab and compact **🕒 Later** row buttons. Row actions group
-Open in Slack with its browser arrow, and Done with Later/Resume; both groups wrap within the
+My Activity includes a **Later** tab and compact **Later** row buttons (purple ⏸ icons since
+2026-11-13). Row actions group Open in Slack, and Done with Later/Resume; both groups wrap within the
 cell without clipping, including tablet widths. **Delay for later** moves an owned conversation out of
 Active; **Resume** restores its current Working, Waiting, Error or Idle status. Later remains in
 All open and persists across new messages, history refreshes and gateway restarts. Postponement
@@ -216,8 +250,8 @@ Open resolves a cached real Slack permalink after fresh authorization. Disconnec
 In the personal browser dashboard, **Open in Slack** and the conversation title open the native
 Slack app with `slack://channel`, targeting the latest reply inside its thread pane without
 Slack's web launch page or a new browser tab. The browser may ask permission to open the app.
-The **Open in Slack** link is styled as a padded button matching Done/Reopen. A compact square
-**↗** button retains the HTTPS browser alternative, with an accessible label and hover tooltip.
+The **Open in Slack** control is an icon button with the Slack logo. Ctrl/⌘-click on it opens the
+HTTPS browser alternative in a new tab (the separate ↗ button was removed on 2026-11-13).
 The controls keep consistent spacing and padding on desktop and mobile.
 Both routes use the same fresh access checks. Each click reads the root's live `latest_reply` metadata
 (`conversations.replies`, limit 1), preserves the exact Slack timestamp, and obtains that message's

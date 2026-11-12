@@ -1,5 +1,34 @@
 # ChannelGate — Test Plan
 
+## Compact Activity monitor with dark and light themes (2026-11-13)
+
+- Engine-independent: the dashboard renders gateway state in the browser and calls no engine.
+  The running clock reads `active_runs`/`bg_jobs` start times, which Claude and Codex turns
+  record identically.
+- Automated: `node --test test/activity-page.test.js test/activity.test.js` covers status-group
+  labels, the running clock and relative times, the single Slack button with Ctrl/⌘-click,
+  icon state for Done/Reopen and Later/Resume, the theme switch (System round trip, CSRF), the
+  escaped agent name and pinned theme, the CSP-safe usage line and ring, the theme route
+  (validation, CSRF, origin, per-viewer persistence), the cached and fallback bot name and
+  `workingSinceMs`. With `CG_BROWSER_MODULE` and `CG_BROWSER_EXECUTABLE` set to Playwright and
+  Chromium, `test/activity-reuse-browser.test.js` checks the native and Ctrl-click browser
+  handoffs, Later layout at 320–1920 px without overflow or overlap, and the Geist font.
+- Manual fixture: an approved owner with at least one Waiting, Error, Working (started at least
+  one minute ago), Idle and Later thread, and two connected subscriptions. Open Dashboard from
+  Slack.
+- Expected at 1440, 820 and 380 px, in both themes:
+  - The header shows the bot's Slack display name and initial.
+  - Usage shows as lines at 1440 and 820 px and as rings at 380 px.
+  - Each status uses its own colour; Later is purple.
+  - Each group is labelled once with its count, and the Working clock advances every second.
+  - Hovering a row shows exactly three icon buttons; on touch devices they are always visible.
+  - Plain click on the Slack icon opens the Slack app in the same tab; Ctrl/⌘-click opens the
+    HTTPS thread in a new tab.
+  - Pass rule: no horizontal scroll at any width.
+- Theme: the page follows the OS; the switch pins the other theme and survives reload and a new
+  Dashboard link. Switching back to the OS theme removes the pin (the next page load has no
+  `data-theme`). Another viewer's theme is unaffected.
+
 ## Activity live updates survive large snapshots (2026-11-12)
 
 - Automated: `test/activity.test.js` ("SSE keeps a healthy connection open while a large snapshot
@@ -116,6 +145,9 @@
   credentials, Enterprise residency or live AWS model access.
 
 ## Activity action button spacing (2026-11-12)
+
+Superseded on 2026-11-13 by the compact monitor above: the ↗ button became Ctrl/⌘-click on the
+Slack icon, and the action buttons became icons.
 
 - Engine-independent: these controls are rendered by the browser, without calling an engine.
 - Fixture: the isolated Express app in `test/activity-reuse-browser.test.js`, approved owner,

@@ -13,7 +13,7 @@ import { syncThreadDoneMarker } from "./thread-done-marker.js";
 import { inspectThreadCompletion } from "../gateway/thread-completion.js";
 import {
   getSlackThread, indexSlackThread, skipSlackThreadCandidate, setSlackThreadDone, updateSlackThreadRootCompletion, slackThreadCandidates,
-  eligibleSlackThreadsForUser, isSlackThreadEligible, slackThreadIsDone, slackThreadRuntime, slackThreadStatus, liveSlackThreadCandidates,
+  eligibleSlackThreadsForUser, isSlackThreadEligible, slackThreadIsDone, slackThreadRuntime, slackThreadStatus, slackThreadWorkingSince, liveSlackThreadCandidates,
 } from "../gateway/slack-threads.js";
 
 export const HOME_THREADS_ACTION = /^cg_home_threads_(filter|page|refresh|history|done|reopen|doneall)$/;
@@ -276,6 +276,7 @@ export async function activityThreadSnapshot(client, userId, requested = {}, { n
   // A content read may outlive membership/rank changes. Never render with its pre-read cache.
   if (discovery.attempted) access = await accessContext(client, userId);
   const runtime = slackThreadRuntime({ pendingApprovals: listPendingApprovals() });
+  const workingSince = slackThreadWorkingSince();
   const authorized = [];
   let truncated = false;
   for (const row of eligibleSlackThreadsForUser(userId)) {
@@ -285,7 +286,8 @@ export async function activityThreadSnapshot(client, userId, requested = {}, { n
     // Completion continues to suppress reminders/Home. The browser exposes current work until
     // it ends, then falls back to the same durable completion marker.
     const status = row.later_ms > 0 ? slackThreadStatus(row, runtime) : runtime.get(`${row.channel_id}::${row.thread_ts}`) || slackThreadStatus(row, runtime);
-    authorized.push({ ...row, channelName: entry.name || "Direct message", status });
+    const since = status === "working" ? workingSince.get(`${row.channel_id}::${row.thread_ts}`) : undefined;
+    authorized.push({ ...row, channelName: entry.name || "Direct message", status, ...(since ? { working_since_ms: since } : {}) });
   }
   const needle = search.toLocaleLowerCase();
   const filtered = authorized.filter((row) =>

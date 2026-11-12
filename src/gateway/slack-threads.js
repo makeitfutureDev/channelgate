@@ -167,6 +167,24 @@ export function slackThreadRuntime({ pendingApprovals = [] } = {}) {
   return states;
 }
 
+// Earliest accepted-run start per thread, for Activity's "running for" clock. Waiting turns
+// (awaitingChoice) are excluded: their clock belongs to the person, not the agent.
+export function slackThreadWorkingSince() {
+  const db = getDb();
+  const since = new Map();
+  const add = (rec) => {
+    const thread = slackThreadFor(rec?.slackThreadTs || rec?.threadKey || rec?.threadTs);
+    const at = Number(rec?.startedAt);
+    if (!rec?.channelId || !thread || rec.awaitingChoice || !Number.isSafeInteger(at) || at <= 0) return;
+    const key = `${rec.channelId}::${thread}`;
+    if (!since.has(key) || at < since.get(key)) since.set(key, at);
+  };
+  for (const table of ["active_runs", "bg_jobs"]) {
+    for (const row of db.prepare(`SELECT data FROM ${table}`).all()) add(fromJson(row.data, {}) || {});
+  }
+  return since;
+}
+
 export function slackThreadStatus(row, runtime) {
   if (slackThreadIsDone(row)) return "done";
   if (row.later_ms > 0) return "later";

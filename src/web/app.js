@@ -274,7 +274,8 @@ export function createWebApp({
   // to edit in writable modes; it has its own one-time grant → HttpOnly cookie exchange and repeats
   // the full Slack authorization/membership/mode check on open, page load, and every save.
   app.use('/conversation-settings', createConversationSettingsRouter());
-  app.use("/activity", createActivityRouter({ getClient: () => slack?.getClient?.(), getTeamId: () => slack?.snapshot?.().teamId }));
+  app.use("/activity", createActivityRouter({ getClient: () => slack?.getClient?.(), getTeamId: () => slack?.snapshot?.().teamId,
+    getBotIdentity: () => { const snap = slack?.snapshot?.(); return snap ? { userId: snap.botUserId, handle: snap.user } : null; } }));
   app.use("/file-editor", createFileEditorRouter({
     authorize: async (grant) => {
       const adapter = platformOr(platformOfConversation(grant.channelId));

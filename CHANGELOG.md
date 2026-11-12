@@ -2,6 +2,12 @@
 
 ## 0.6.5 — candidate, pending approval
 
+- Redesign the Activity dashboard as a compact monitor in dark and light themes (following the
+  OS, with a saved switch). It shows the agent's Slack name and compact usage lines that become
+  rings on narrow windows. Statuses get distinct colours (Later is purple), groups are labelled
+  in place, and running threads show a live timer. Slack, Done and Later are icon buttons.
+  Ctrl/⌘-click on the Slack icon replaces the separate browser button.
+
 - Keep the Activity live stream connected when a thread snapshot exceeds the socket buffer: wait
   for it to drain instead of closing, which made the page alternate Reconnecting/Live every 2 s.
 
@@ -14,7 +20,7 @@
 - Add a 🕒 reaction to the main Slack message when its conversation moves to Later. Remove the
   bot's clock on Resume or completion; retry failed marker writes and repair existing Later rows.
 
-- Keep Activity actions inside their column with grouped, wrapping buttons; use 🕒 for Later.
+- Keep Activity actions inside their column with grouped buttons.
 
 - Show the subscription login email and selected workspace on both admin and user quota cards,
   keeping normal Codex and Codex EU identities separate.
@@ -24,7 +30,6 @@
 - Add shared subscription usage to user Activity dashboards, with compact summary bars and a
   Subscriptions page. Simplify the Activity header and reuse compact cards in admin, including
   separate Codex EU quotas, model-specific Claude limits and available reset-credit expiries.
-- Style Activity’s Open in Slack link as a padded button and replace Browser text with a compact ↗ button.
 
 - Keep conversations open on Slack 👍 emoji reactions, including skin tones. The native positive
   answer-feedback button still marks work done, as do checkmark reactions and Done controls.

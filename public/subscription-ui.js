@@ -17,10 +17,14 @@ export function createSubscriptionUi() {
   function meter(window) {
     return `<progress max="100" value="${window.usedPercent}" aria-label="${esc(window.label)} usage">${percent(window.usedPercent)}%</progress><strong>${percent(window.usedPercent)}%</strong>`;
   }
+  // One compact meter per subscription: a short line on wide screens, a ring when narrow. The
+  // ring is SVG attributes (no inline style) so it renders under the page's nonce-only CSP.
   function summary(rows) {
     return rows.filter(isSubscription).map((row) => {
       const strongest = windows(row).sort((a, b) => b.usedPercent - a.usedPercent)[0];
-      return `<div class="subscription-quick ${strongest ? severity(strongest.usedPercent) : ""}${row.stale ? " stale" : ""}"><span class="subscription-quick-name">${esc(row.name)}</span>${strongest ? meter(strongest) : '<span class="subscription-unavailable">Unavailable</span>'}<small>${row.stale ? "Stale · " : ""}${esc(strongest?.label || "Usage unavailable")}</small></div>`;
+      const detail = `${row.stale ? "Stale · " : ""}${strongest ? `${strongest.label} ${percent(strongest.usedPercent)}% · ${reset(strongest.resetsAt)}` : "Usage unavailable"}`;
+      const ring = `<svg class="subscription-ring" viewBox="0 0 20 20" aria-hidden="true"><circle class="ring-track" cx="10" cy="10" r="7.5" pathLength="100"/>${strongest ? `<circle class="ring-value" cx="10" cy="10" r="7.5" pathLength="100" stroke-dasharray="${Math.max(0, Math.min(100, strongest.usedPercent))} 100"/>` : ""}</svg>`;
+      return `<div class="subscription-quick ${strongest ? severity(strongest.usedPercent) : "unavailable"}${row.stale ? " stale" : ""}" title="${esc(row.name)} · ${esc(detail)}"><span class="subscription-quick-name">${esc(row.name)}</span>${strongest ? `<progress max="100" value="${strongest.usedPercent}" aria-label="${esc(row.name)} ${esc(strongest.label)} usage">${percent(strongest.usedPercent)}%</progress>` : ""}${ring}<strong>${strongest ? `${percent(strongest.usedPercent)}%` : "—"}</strong></div>`;
     }).join("");
   }
   function expiry(value) {

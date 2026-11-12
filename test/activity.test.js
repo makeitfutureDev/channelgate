@@ -195,6 +195,62 @@ test("Activity group order rejects malformed orders, unauthenticated writes, CSR
   assert.deepEqual((await getUser("U_MINE")).activityGroupOrder, originalOrder);
 });
 
+test("Activity theme preference is the viewer's own, CSRF-protected and rendered before paint", async (t) => {
+  const f = await fixture(t), mine = await f.login(), other = await f.login("U_OTHER");
+  assert.doesNotMatch(mine.html, /<html lang="en" data-theme=/, "system preference pins nothing");
+  const endpoint = mine.url + "/api/theme";
+  for (const theme of [null, "", "blue", ["dark"], "DARK"]) {
+    assert.equal((await f.request(endpoint, { method: "POST", headers: mine.post, body: JSON.stringify({ theme }) })).status, 400);
+  }
+  const body = JSON.stringify({ theme: "light", ownerId: "U_OTHER", isAdmin: true });
+  assert.equal((await f.request(endpoint, { method: "POST", headers: { ...mine.post, "X-CG-CSRF": "invalid" }, body })).status, 403);
+  assert.equal((await f.request(endpoint, { method: "POST", headers: { ...mine.post, Origin: "https://other.example" }, body })).status, 403);
+  assert.equal((await f.request(endpoint, { method: "POST", headers: { ...mine.post, cookie: "" }, body })).status, 401);
+  const original = await getUser("U_MINE");
+  const saved = await f.request(endpoint, { method: "POST", headers: mine.post, body });
+  assert.equal(saved.status, 200);
+  assert.deepEqual(await saved.json(), { theme: "light" });
+  assert.deepEqual(await getUser("U_MINE"), { ...original, activityTheme: "light" });
+  assert.equal((await getUser("U_OTHER")).activityTheme, undefined);
+  assert.match(await (await f.request(mine.url, { headers: mine.headers })).text(), /<html lang="en" data-theme="light">/);
+  assert.doesNotMatch(await (await f.request(other.url, { headers: other.headers })).text(), /data-theme="light"/);
+  assert.equal((await f.request(endpoint, { method: "POST", headers: mine.post, body: JSON.stringify({ theme: "system" }) })).status, 200);
+  assert.doesNotMatch(await (await f.request(mine.url, { headers: mine.headers })).text(), /<html lang="en" data-theme=/);
+});
+
+test("Activity shows the bot's Slack display name, escaped, cached, and never blocks the page", async (t) => {
+  let calls = 0, name = "Xavier <b>";
+  const f = await fixture(t, { getBotIdentity: () => ({ userId: "B_GATEWAY", handle: "xavier" }) });
+  f.client.users = { info: async ({ user }) => { calls++; assert.equal(user, "B_GATEWAY"); return { user: { profile: { display_name: name } } }; } };
+  const first = await f.login();
+  assert.match(first.html, /<span class="agent-name">Xavier &lt;b&gt;<\/span>/);
+  assert.doesNotMatch(first.html, /Xavier <b>/);
+  name = "Renamed"; await f.login();
+  assert.equal(calls, 1, "the profile lookup is cached");
+  f.advance(61 * 60_000);
+  assert.match((await f.login()).html, /agent-name">Renamed</);
+  f.client.users.info = async () => { throw new Error("rate limited"); };
+  f.advance(61 * 60_000);
+  assert.match((await f.login()).html, /agent-name">xavier</, "a failed lookup falls back to the bot handle");
+});
+
+test("Activity reports when a working thread started so the browser can show its running time", async (t) => {
+  const f = await fixture(t);
+  await f.root("C_WORK", "100.000001"); await f.root("C_WORK", "200.000001");
+  const db = getDb();
+  db.prepare("INSERT INTO active_runs(id,data) VALUES(?,?)").run("run-a", JSON.stringify({ channelId: "C_WORK", threadKey: "100.000001", startedAt: 1_700_000_000_000 }));
+  db.prepare("INSERT INTO active_runs(id,data) VALUES(?,?)").run("run-b", JSON.stringify({ channelId: "C_WORK", threadKey: "100.000001", startedAt: 1_700_000_050_000 }));
+  db.prepare("INSERT INTO active_runs(id,data) VALUES(?,?)").run("run-c", JSON.stringify({ channelId: "C_WORK", threadKey: "200.000001", awaitingChoice: true, startedAt: 1_700_000_000_000 }));
+  t.after(() => db.prepare("DELETE FROM active_runs WHERE id IN ('run-a','run-b','run-c')").run());
+  const mine = await f.login();
+  const rows = (await (await f.request(mine.url + "/api/threads", { headers: mine.headers })).json()).rows;
+  const byTs = Object.fromEntries(rows.map((row) => [row.threadTs, row]));
+  assert.equal(byTs["100.000001"].status, "working");
+  assert.equal(byTs["100.000001"].workingSinceMs, 1_700_000_000_000, "the earliest accepted turn starts the clock");
+  assert.equal(byTs["200.000001"].status, "waiting");
+  assert.equal(byTs["200.000001"].workingSinceMs, undefined, "waiting on a person carries no running clock");
+});
+
 test("launch fragment is removed before reusable exchange; cookies, origin and expiry fail closed", async (t) => {
   const f = await fixture(t), url = f.grant();
   assert.ok(new URL(url).hash);
