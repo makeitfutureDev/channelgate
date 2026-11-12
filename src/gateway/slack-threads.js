@@ -87,9 +87,9 @@ export function setSlackThreadDone(channelId, threadTs, userId, done, at = Date.
 export function setSlackThreadLater(channelId, threadTs, userId, later, at = Date.now()) {
   const changed = Boolean(getDb().prepare(`UPDATE slack_threads SET later_ms=?,
     done_ms=CASE WHEN ? THEN ? ELSE done_ms END,updated_ms=MAX(updated_ms,?),
-    completion_marker_retry_ms=CASE WHEN ? THEN ? ELSE completion_marker_retry_ms END
+    completion_marker_retry_ms=?
     WHERE channel_id=? AND thread_ts=? AND starter_id=?`)
-    .run(later ? at : 0, later ? 1 : 0, -at, at, later ? 1 : 0, at, channelId, threadTs, userId).changes);
+    .run(later ? at : 0, later ? 1 : 0, -at, at, at, channelId, threadTs, userId).changes);
   if (changed) notifyThreadChanged({ channelId, threadTs });
   return changed;
 }
