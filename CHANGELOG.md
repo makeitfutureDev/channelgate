@@ -2,6 +2,9 @@
 
 ## 0.6.5 — candidate, pending approval
 
+- Add a Later section to My Activity with Delay for later and Resume. The conversation owner's
+  native thumbs-down answer feedback also postpones the thread; running work continues.
+
 - Add shared subscription usage to user Activity dashboards, with compact summary bars and a
   Subscriptions page. Simplify the Activity header and reuse compact cards in admin, including
   separate Codex EU quotas, model-specific Claude limits and available reset-credit expiries.

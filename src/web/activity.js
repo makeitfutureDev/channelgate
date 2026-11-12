@@ -5,7 +5,7 @@ import express from "express";
 import { getPublicUrl } from "../config/settings.js";
 import { getChannelEntry, getUser, setUser } from "../config/store.js";
 import { onConfigChange } from "../config/change-events.js";
-import { getSlackThread, isSlackThreadEligible, setSlackThreadDone } from "../gateway/slack-threads.js";
+import { getSlackThread, isSlackThreadEligible, setSlackThreadLater, setSlackThreadDone } from "../gateway/slack-threads.js";
 import { onThreadChanged } from "../gateway/thread-changes.js";
 import { onActiveRunsChanged } from "../gateway/active-runs.js";
 import { syncThreadDoneMarker } from "../slack/thread-done-marker.js";
@@ -286,19 +286,23 @@ export function createActivityRouter({
       return res.json(result);
     } catch (error) { return unavailable(res, error.status || 503); }
   });
-  router.post("/:id/api/completion", async (req, res) => {
+  for (const operation of ["completion", "later"]) router.post(`/:id/api/${operation}`, async (req, res) => {
     try {
       const { session, client } = await context(req);
       if (req.headers.origin !== req.activityOrigin || !timingSafeEqualStr(String(req.headers["x-cg-csrf"] || ""), session.csrf)) return unavailable(res, 403);
-      const { channelId, threadTs, done } = req.body || {};
-      if (typeof channelId !== "string" || typeof threadTs !== "string" || typeof done !== "boolean") return unavailable(res, 400);
+      const { channelId, threadTs } = req.body || {};
+      const value = req.body?.[operation === "later" ? "later" : "done"];
+      if (typeof channelId !== "string" || typeof threadTs !== "string" || typeof value !== "boolean") return unavailable(res, 400);
       await ownedThread(client, session, channelId, threadTs);
       const result = await client.conversations.replies({ channel: channelId, ts: threadTs, limit: 1 });
       const root = result?.ok !== false && result?.messages?.find((row) => row.ts === threadTs);
       if (!root || root.user !== session.ownerId || root.bot_id) return unavailable(res, 403);
       await recheckOwned(req, client, session, channelId, threadTs);
-      if (!setSlackThreadDone(channelId, threadTs, session.ownerId, done)) return unavailable(res, 403);
-      if (done) markDone(session.ownerId, channelId, threadTs); else clearDone(session.ownerId, channelId, threadTs);
+      const change = operation === "later" ? setSlackThreadLater : setSlackThreadDone;
+      if (!change(channelId, threadTs, session.ownerId, value)) return unavailable(res, 403);
+      if (operation === "completion") {
+        if (value) markDone(session.ownerId, channelId, threadTs); else clearDone(session.ownerId, channelId, threadTs);
+      }
       await syncThreadDoneMarker(client, channelId, threadTs);
       return res.json({ ok: true });
     } catch (error) { return unavailable(res, error.status || 403); }

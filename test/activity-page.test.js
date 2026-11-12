@@ -44,7 +44,7 @@ function row(status = "working", title = "Fixture thread", url = "/activity/sess
 }
 function browser(fetchImpl = async () => response({ rows: [] }), csrf = "fixture-csrf", subscriptions = false) {
   const elements = Object.fromEntries(["load-history", "threads", "search", "filters", "connection", "connection-text", "updated", "notice", "summary", "table", "empty", "empty-title", "empty-copy", "result-count", "group-order", "order-dialog", "order-list", "order-save", "order-cancel", "order-reset", "order-error", "mark-all-done", "all-done-dialog", "all-done-confirm", "all-done-cancel", "all-done-error"].map((id) => [id, new Element()]));
-  for (const filter of ["active", "working", "waiting", "error", "idle", "done", "open"]) {
+  for (const filter of ["active", "working", "waiting", "error", "idle", "later", "done", "open"]) {
     const button = new Element("button"); button.dataset.filter = filter; button.append(new Element("span")); elements.filters.append(button);
   }
   if (subscriptions) for (const id of ["subscriptions-cards", "subscription-quick", "subscriptions-notice", "subscriptions-refresh"]) elements[id] = new Element();
@@ -453,4 +453,34 @@ test("Activity pagehide stops late requests from restarting quota polling", asyn
   quota.resolve(response({ subscriptions: [subscription()] })); await flush();
   assert.equal(requests.length, before);
   assert.equal(elements["subscription-quick"].innerHTML, undefined);
+});
+
+
+test("Later hides postponed work from Active, retains it in All open, and serializes Delay/Resume", async () => {
+  let status = "working";
+  const save = deferred();
+  const b = browser((url) => url.endsWith("/later") ? save.promise : Promise.resolve(response({ rows: [row(status)] })));
+  await flush();
+  const delay = b.elements.threads.children[0].children[4].children[3];
+  assert.equal(delay.textContent, "💤 Delay for later");
+  b.elements.threads.fire("click", { target: delay });
+  b.elements.threads.fire("click", { target: delay });
+  assert.equal(delay.disabled, true);
+  const posts = b.requests.filter((r) => r.url.endsWith("/later"));
+  assert.equal(posts.length, 1);
+  assert.equal(posts[0].options.headers["X-CG-CSRF"], "fixture-csrf");
+  assert.deepEqual(JSON.parse(posts[0].options.body), { channelId: "C1", threadTs: "1.1", later: true });
+  status = "later"; save.resolve(response({ ok: true })); await flush();
+  assert.equal(b.elements.threads.children.length, 0);
+  assert.match(b.elements.summary.textContent, /0 active · 1 later/);
+  const select = (filter) => b.elements.filters.fire("click", { target: b.elements.filters.children.find((t) => t.dataset.filter === filter) });
+  select("later");
+  const resume = b.elements.threads.children[0].children[4].children[3];
+  assert.equal(resume.textContent, "Resume");
+  b.elements.threads.fire("click", { target: resume }); await flush();
+  assert.deepEqual(JSON.parse(b.requests.filter((r) => r.url.endsWith("/later")).at(-1).options.body), { channelId: "C1", threadTs: "1.1", later: false });
+  select("open"); assert.equal(b.elements.threads.children.length, 1);
+  b.stream.fire("access-ended");
+  b.elements.threads.fire("click", { target: resume });
+  assert.equal(b.requests.filter((r) => r.url.endsWith("/later")).length, 2);
 });
