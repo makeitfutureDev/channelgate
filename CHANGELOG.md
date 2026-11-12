@@ -2,6 +2,9 @@
 
 ## 0.6.5 — candidate, pending approval
 
+- Add a 🕒 reaction to the main Slack message when its conversation moves to Later. Remove the
+  bot's clock on Resume or completion; retry failed marker writes and repair existing Later rows.
+
 - Keep Activity actions inside their column with grouped, wrapping buttons; use 🕒 for Later.
 
 - Show the subscription login email and selected workspace on both admin and user quota cards,

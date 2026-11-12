@@ -1256,4 +1256,13 @@ export const migrations = [
       db.exec("ALTER TABLE slack_threads ADD COLUMN later_ms INTEGER NOT NULL DEFAULT 0");
     },
   },
+  {
+    version: 50,
+    up(db) {
+      // Remember a possibly installed bot clock before the Slack write, including across crashes.
+      db.exec("ALTER TABLE slack_threads ADD COLUMN later_marker INTEGER NOT NULL DEFAULT 0");
+      // Repair threads postponed before the root clock shipped, once through the bounded worker.
+      db.exec("UPDATE slack_threads SET completion_marker_retry_ms=1 WHERE later_ms>0");
+    },
+  },
 ];

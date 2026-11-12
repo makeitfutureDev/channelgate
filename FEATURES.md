@@ -14,8 +14,11 @@ including an explicitly completed conversation, and privately confirms the chang
 can still leave feedback without changing the owner's list. The existing **👍 feedback → Done**
 behavior is preserved. Button values cannot choose another channel/thread; every mutation checks
 current ownership, conversation admission, private membership and sudo access. Browser changes
-also require the personal Activity session, Origin and CSRF token. Emoji reactions are unchanged;
-🕒 is the suggested visual convention for later on a root or latest reply, not a reaction trigger.
+also require the personal Activity session, Origin and CSRF token. Moving to Later adds the bot's
+🕒 (`clock3`) reaction to the main Slack post, including from an answer's 👎 button. Resume,
+Reopen or completion removes only the bot's clock; human clocks remain. Saved choices survive
+Slack failures and the bounded marker worker retries after restart/reconnect. Previously postponed
+threads receive a clock after upgrade. Clock reactions are display markers, not action triggers.
 
 ## Native fork fallback (2026-11-12)
 

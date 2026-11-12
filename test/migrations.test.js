@@ -179,3 +179,17 @@ test("v47 preserves existing Activity rows and persists explicit Slack session t
     assert.equal(db.prepare("SELECT session_title FROM slack_threads").get().session_title, "Custom title");
   } finally { db.close(); }
 });
+
+test("Later clock upgrade queues existing postponed roots without scanning open work", () => {
+  const db = new DatabaseSync(":memory:");
+  try {
+    db.exec(`CREATE TABLE slack_threads(id TEXT,later_ms INTEGER,completion_marker_retry_ms INTEGER);
+      INSERT INTO slack_threads VALUES('later',1000,0),('active',0,0),('retry',0,77)`);
+    migrations.find((m) => m.version === 50).up(db);
+    const rows = db.prepare("SELECT * FROM slack_threads ORDER BY id").all();
+    assert.equal(rows.find((r) => r.id === "later").completion_marker_retry_ms, 1);
+    assert.equal(rows.find((r) => r.id === "active").completion_marker_retry_ms, 0);
+    assert.equal(rows.find((r) => r.id === "retry").completion_marker_retry_ms, 77);
+    assert.ok(rows.every((r) => r.later_marker === 0));
+  } finally { db.close(); }
+});
