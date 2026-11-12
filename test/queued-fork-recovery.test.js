@@ -198,3 +198,44 @@ test("a repeatedly interrupted queued fork obeys the recovery attempt cap", asyn
   assert.equal(stored(f.row.id), undefined);
   assert.equal(runQueue.count(f.key), 0);
 });
+
+for (const engine of ["claude", "codex"]) {
+  test(`${engine} restart preserves a queued message fork's selected historical cutoff`, async () => {
+    const f = await fixture(`historical_${engine}`, engine);
+    f.row.queuedFork.forkMessageTs = "1000.000002";
+    f.client.conversations.members = async () => ({ members: [f.event.user, "UBOT"], response_metadata: {} });
+    f.client.conversations.replies = async () => ({ messages: [
+      { user: f.event.user, ts: "1000.000001", text: "BEFORE_RECOVERY_CUTOFF" },
+      { user: "UBOT", ts: "1000.000002", text: "SELECTED_RECOVERY_REPLY" },
+      { user: f.event.user, ts: "1000.000003", text: "LATER_RECOVERY_REQUEST" },
+      { user: "UBOT", ts: "1000.000004", text: "LATER_RECOVERY_ANSWER" },
+    ], response_metadata: {} });
+    recordActiveRun(f.row.id, f.row);
+    const before = runtime.calls.spawn.length;
+    await recoverRuns(takeStaleRuns(), options(f.client));
+    assert.equal(roots(f.client).length, 1);
+    const calls = runtime.calls.spawn.slice(before);
+    const args = calls.flatMap(call => call.args);
+    assert.ok(!args.includes("--fork-session") && !args.includes("fork"));
+    const prompt = args.join(" ");
+    assert.match(prompt, /BEFORE_RECOVERY_CUTOFF/);
+    assert.match(prompt, /SELECTED_RECOVERY_REPLY/);
+    assert.doesNotMatch(prompt, /LATER_RECOVERY/);
+    assert.equal(await getSession(f.row.slug, f.row.threadKey), f.sourceId);
+    assert.equal(stored(f.row.id), undefined);
+  });
+}
+
+test("queued historical fork recovery rechecks revoked private Slack membership", async () => {
+  const f = await fixture("historical_membership");
+  f.row.queuedFork.forkMessageTs = "1000.000002";
+  f.client.conversations.members = async () => ({ members: ["UBOT"], response_metadata: {} });
+  f.client.conversations.replies = async () => { assert.fail("revoked member must not read source history"); };
+  recordActiveRun(f.row.id, f.row);
+  const before = runtime.calls.spawn.length;
+  await recoverRuns(takeStaleRuns(), options(f.client));
+  assert.equal(roots(f.client).length, 0);
+  assert.equal(runtime.calls.spawn.length, before);
+  assert.ok(f.client.posted.some(m => /no longer authorized/.test(m.text || "")));
+  assert.equal(stored(f.row.id), undefined);
+});

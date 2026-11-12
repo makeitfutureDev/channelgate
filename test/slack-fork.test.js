@@ -14,12 +14,12 @@ const runtime = await useFakeRuntime();
 const { saveSettings } = await import("../src/config/settings.js");
 const { setUser, getChannelEntry, upsertChannelEntry, saveChannelMeta } = await import("../src/config/store.js");
 const { getThreadEngine, getThreadModel, getThreadEffort, getThreadClean, setThreadModel, setThreadEffort, setThreadClean } = await import("../src/gateway/thread-engine.js");
-const { getSession, getSessionEngine } = await import("../src/gateway/sessions.js");
+const { getSession, getSessionEngine, saveSession } = await import("../src/gateway/sessions.js");
 const { buildClaudeArgs } = await import("../src/engines/claude.js");
 const { buildCodexArgs } = await import("../src/engines/codex.js");
 const { createFakeRuntime } = await import("./fixtures/fake-runtime-backend.js");
 const { parseSlashCommand } = await import("../src/slack/message-normalize.js");
-const { processMessageEvent, runQueue, abortRunsInChannel } = await import("../src/slack/message-pipeline.js");
+const { processMessageEvent, fetchThreadContext, runQueue, abortRunsInChannel } = await import("../src/slack/message-pipeline.js");
 
 function slack() {
   const posted = [];
@@ -351,3 +351,88 @@ test("queued fork rechecks current admission after waiting", async () => {
   assert.ok(client.posted.some((m) => /Sorry/.test(m.text || "")));
   assert.equal(runQueue.count(key), 0);
 });
+
+for (const engine of ["claude", "codex"]) {
+  test(`${engine} message fork includes the clicked reply, excludes all later messages and starts a fresh independent session`, async () => {
+    saveSettings({ engine, composioMode: "personal" });
+    const user = `U_MESSAGE_FORK_${engine}`;
+    const channel = `D_MESSAGE_FORK_${engine}`;
+    await setUser(user, { name: "Fork User", approved: true });
+    const client = slack();
+    const event = { type: "message", channel, channel_type: "im", user, ts: "7000.000001", text: "Remember BEFORE_SELECTED" };
+    await processMessageEvent(event, client, { botUserId: "UBOT" });
+    const entry = await getChannelEntry(channel);
+    // The shell fixture returns one constant ID for all fresh Codex runs. Model a real
+    // existing source ID so this regression can distinguish source from fresh child IDs.
+    const sourceId = `${engine}-historical-source`;
+    await saveSession(entry.slug, event.ts, sourceId, engine, null, JSON.stringify({ backend: "container", scope: "project" }));
+    client.conversations.replies = async () => ({ messages: [
+      event,
+      { user: "UBOT", ts: "7000.000002", text: "SELECTED_REPLY" },
+      { user, ts: "7000.000003", text: "AFTER_SELECTED_USER" },
+      { user: "UBOT", ts: "7000.000004", text: "AFTER_SELECTED_BOT" },
+    ], response_metadata: {} });
+    client.conversations.members = async () => ({ members: [user, "UBOT"], response_metadata: {} });
+    const before = runtime.calls.spawn.length;
+    await processMessageEvent({ ...event, ts: "7001.000001", thread_ts: event.ts, text: "/fork Explore alternative" }, client,
+      { botUserId: "UBOT", bypassMention: true, forkMessageTs: "7000.000002" });
+    const root = client.posted.find(m => !m.thread_ts && /Fork of/.test(m.text || ""));
+    assert.ok(root);
+    assert.match(root.text, /p7000000002/);
+    assert.match(root.text, /visible conversation through this reply/);
+    const childTs = client.posted.find(m => /New request from/.test(m.text || ""))?.thread_ts;
+    assert.ok(childTs);
+    assert.notEqual(await getSession(entry.slug, childTs), sourceId);
+    assert.equal(await getSession(entry.slug, event.ts), sourceId);
+    const calls = runtime.calls.spawn.slice(before);
+    const args = calls.flatMap(call => call.args);
+    assert.ok(!args.includes("--fork-session"));
+    assert.ok(!args.includes("fork"), "historical fork must not clone the current native session");
+    const prompt = args.join(" ");
+    assert.match(prompt, /BEFORE_SELECTED/);
+    assert.match(prompt, /SELECTED_REPLY/);
+    assert.doesNotMatch(prompt, /AFTER_SELECTED/);
+  });
+}
+
+test("message fork cutoff fails closed for a missing or non-bot source reply", async () => {
+  const client = slack();
+  for (const user of ["UOTHER", "UBOT"]) {
+    client.conversations.replies = async () => ({ messages: [{ user, ts: "8000.000001", text: "source" }], response_metadata: {} });
+    assert.equal(await fetchThreadContext(client, { channelId: "C", threadTs: "8000.000001", throughTs: user === "UBOT" ? "8000.000002" : "8000.000001", botUserId: "UBOT" }), "");
+  }
+});
+
+test("message fork pages history and explicitly reports omitted earlier text", async () => {
+  const client = slack();
+  client.conversations.replies = async ({ cursor }) => cursor
+    ? { messages: [{ user: "UBOT", ts: "8000.000002", text: "SELECTED " + "x".repeat(25_000) },
+      { user: "UBOT", ts: "8000.000003", text: "LATER" }], response_metadata: {} }
+    : { messages: [{ user: "UHUMAN", ts: "8000.000001", text: "EARLIER" }], response_metadata: { next_cursor: "page2" } };
+  const context = await fetchThreadContext(client, { channelId: "C", threadTs: "8000.000001", throughTs: "8000.000002", botUserId: "UBOT" });
+  assert.match(context, /SELECTED/);
+  assert.match(context, /omitted/);
+  assert.doesNotMatch(context, /LATER/);
+});
+
+for (const engine of ["claude", "codex"]) {
+  test(`${engine} historical fork refuses channel-level Clean without reading Slack history`, async () => {
+    saveSettings({ engine, composioMode: "personal" });
+    const user = `U_HIST_CLEAN_${engine}`;
+    const channel = `D_HIST_CLEAN_${engine}`;
+    await setUser(user, { approved: true });
+    const client = slack();
+    const event = { type: "message", channel, channel_type: "im", user, ts: "7100.000001", text: "Source task" };
+    await processMessageEvent(event, client, { botUserId: "UBOT" });
+    const entry = await getChannelEntry(channel);
+    await saveChannelMeta(entry.slug, { cleanMode: true });
+    client.conversations.members = async () => ({ members: [user, "UBOT"], response_metadata: {} });
+    client.conversations.replies = async () => { assert.fail("Clean must not read history"); };
+    const before = runtime.calls.spawn.length;
+    await processMessageEvent({ ...event, ts: "7101.000001", thread_ts: event.ts, text: "/fork New path" }, client,
+      { botUserId: "UBOT", bypassMention: true, forkMessageTs: "7100.000002" });
+    assert.ok(client.posted.some(m => /unavailable in Clean mode/.test(m.text || "")));
+    assert.equal(client.posted.filter(m => !m.thread_ts && /Fork of/.test(m.text || "")).length, 0);
+    assert.equal(runtime.calls.spawn.length, before);
+  });
+}

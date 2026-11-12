@@ -2,6 +2,12 @@
 
 ## 0.6.5 — candidate, pending approval
 
+- Add Fork before Files in Slack reply menus. Enter a new request to open a linked thread with
+  recent visible conversation through that reply, excluding later messages. The dialog explains
+  history limits, excluded private tool history and shared workspace files; current-session
+  `/fork` continues using native engine forks.
+
+
 - Show readable, redacted provider errors when a background job's automatic follow-up fails,
   preserving diagnostic audit detail and protection against replaying interrupted work.
 

@@ -1,5 +1,34 @@
 # ChannelGate — Test Plan
 
+## Fork from a selected Slack reply (2026-11-12)
+
+- Automated: `test/reply-fork.test.js`, `test/slack-fork.test.js`,
+  `test/queued-fork-recovery.test.js`, and existing menu/delivery/progress tests. Verify requester,
+  administrator and channel authorization; forged workspace/channel/thread values; revoke before
+  submit; duplicate/expired drafts; exact inclusive historical cutoff; missing/non-bot cutoff;
+  visible truncation marker; independent fresh child sessions under Claude and Codex; unchanged
+  native `/fork`; queued historical cutoff survives recovery.
+- Live, separately in `cg-testing-claude-auto` and `cg-testing-codex-auto`, as an authorized test
+  author with Clean off: ask `Remember EARLY-42 and reply EARLY-42`. After the completed reply,
+  ask `Now remember LATER-99 and reply LATER-99`. Click Fork on the EARLY-42 reply, enter
+  `What token did we discuss? Continue with another approach.` and submit. Pass: Fork precedes
+  Files; dialog explains recent visible history, excluded tool history and shared files/channel memory; new root
+  links the exact EARLY-42 reply, child remembers EARLY-42, copied prompt excludes LATER-99, child
+  has its own session ID and follow-ups resume it; original session remains usable and unchanged.
+- Repeat while source work runs, then in an isolated coordinated restart fixture. Pass: explicit
+  queue acknowledgement; selected historical cutoff remains EARLY-42 after source completion
+  and recovery, with no later human or bot text copied; Stop cancels a queued fork.
+- Negative UI checks: another non-admin clicks an owned footer, a non-member attempts a private
+  channel footer, and an author loses access after opening the dialog. Pass: no child or engine
+  spawn. Administrator clicks an accessible owned footer: fork runs as that administrator, never
+  the original requester. Sudo threads refuse; Clean threads explain why history cannot be copied.
+  Code-channel replies explain the shared-session limitation without starting a child.
+  Blank input remains in dialog; duplicate submit creates at most one child; expired/restarted
+  draft asks to reopen. Delete the clicked reply before submission: no child is created.
+- Live UI/engine acceptance is pending until explicitly executed; registered reusable QA cases
+  cover both engines. This beta slice does not claim live Slack rendering or native historical
+  engine-state cloning.
+
 ## Personal Activity from every reply menu (2026-11-11)
 
 Regression: `node --test test/activity.test.js test/menu.test.js test/channel-settings-modal.test.js

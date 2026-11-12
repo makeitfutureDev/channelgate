@@ -87,7 +87,7 @@ test("deliverResult with footer ends the answer with the run stats and the unbou
   const [post] = client.posts;
   assert.match(post.blocks[0].text.text, /done/);
   assert.match(JSON.stringify(post.blocks), /ctx: 10 \/ 200k, 0%/);
-  assert.deepEqual(menuLabels(post), ["📂 Files", "🔑 Variables", "⚙️ Settings", "📊 Dashboard"]);
+  assert.deepEqual(menuLabels(post), ["Fork", "📂 Files", "🔑 Variables", "⚙️ Settings", "📊 Dashboard"]);
   assert.doesNotMatch(JSON.stringify(post), /channelgate\/runtime:latest/);
   assert.doesNotMatch(JSON.stringify(post.blocks), /resume_cmd_modal/);
   // An unattended post has no Slack requester, so the menu opens for whoever clicks it.
@@ -101,7 +101,7 @@ test("deliverResult without footer still ends the answer with the menu", async (
   await deliverResult(client, { channel: "C1", threadKey: "1.2", result: { content: "scheduled answer" }, dir: null });
   assert.equal(client.posts.length, 1);
   assert.deepEqual(client.posts[0].blocks.map((block) => block.type), ["section", "actions"]);
-  assert.deepEqual(menuLabels(client.posts[0]), ["📂 Files", "🔑 Variables", "⚙️ Settings", "📊 Dashboard"]);
+  assert.deepEqual(menuLabels(client.posts[0]), ["Fork", "📂 Files", "🔑 Variables", "⚙️ Settings", "📊 Dashboard"]);
 });
 
 test("deliverResult puts the menu after the LAST chunk of a long answer", async () => {
@@ -133,7 +133,7 @@ test("postNoticeWithMenu ends an error or stop notice with the requester-bound m
   assert.equal(post.text, "⚠️ The run failed.");
   assert.equal(post.thread_ts, "1.2");
   assert.deepEqual(post.blocks.map((block) => block.type), ["section", "actions"]);
-  assert.deepEqual(menuLabels(post), ["📂 Files", "🔑 Variables", "⚙️ Settings", "📊 Dashboard"]);
+  assert.deepEqual(menuLabels(post), ["Fork", "📂 Files", "🔑 Variables", "⚙️ Settings", "📊 Dashboard"]);
   for (const button of post.blocks[1].elements) assert.equal(JSON.parse(button.value).u, "U1");
 });
 
@@ -144,7 +144,7 @@ test("postNoticeWithMenu never truncates a long notice: text first, menu below",
   assert.equal(client.posts.length, 2);
   assert.equal(client.posts[0].text, text);
   assert.equal(client.posts[0].blocks, undefined);
-  assert.deepEqual(menuLabels(client.posts[1]), ["📂 Files", "🔑 Variables", "⚙️ Settings", "📊 Dashboard"]);
+  assert.deepEqual(menuLabels(client.posts[1]), ["Fork", "📂 Files", "🔑 Variables", "⚙️ Settings", "📊 Dashboard"]);
 });
 
 test("postNoticeWithMenu keeps the notice when Slack rejects the menu blocks", async () => {

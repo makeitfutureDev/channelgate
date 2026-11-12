@@ -1,5 +1,5 @@
 // Reply-footer cluster: the run-stats line ("Opus 4.8 1M · high · 14.4s · 36.8k/192 · $0.31 · 18%"),
-// its Block Kit form, and the reply menu (📂 Files / 🔑 Variables / ⚙️ Settings / 📊 Dashboard) that rides under it.
+// its Block Kit form, and the reply menu (Fork / 📂 Files / 🔑 Variables / ⚙️ Settings / 📊 Dashboard) that rides under it.
 // Extracted from slack/app.js (the 2026-08 restructure notes (internal repo) Phase 2.4) so
 // unattended delivery (slack/deliver.js) and the Bolt wiring share one implementation without
 // importing the whole app module.
@@ -12,6 +12,7 @@ import { actionValue as fileActionValue, FILES_ACTION_ID } from "./file-explorer
 import { actionValue as secretActionValue, SECRETS_ACTION_ID } from "./secret-explorer.js";
 import { actionValue as settingsActionValue, CHANNEL_SETTINGS_ACTION_ID } from "./channel-settings.js";
 import { REPLY_DASHBOARD_ACTION_ID } from "./reply-dashboard.js";
+import { FORK_ACTION_ID } from "./reply-fork.js";
 
 // The terminal command that reopens a thread's session locally. It `cd`s into the channel's
 // working folder first, because Claude/Codex locate a session by the directory you run them in
@@ -29,7 +30,7 @@ export function buildResumeCommand(cwd, sessionId, engine, target = null) {
   return `cd ${JSON.stringify(cwd)} && ${base}`;
 }
 
-// The reply MENU — 📂 Files · 🔑 Variables · ⚙️ Settings · 📊 Dashboard — rides the end of EVERY answer the AI
+// The reply MENU — Fork · 📂 Files · 🔑 Variables · ⚙️ Settings · 📊 Dashboard — rides the end of EVERY answer the AI
 // posts into Slack: a streamed or classic reply, an error, a stop, a scheduled/background/API/
 // recovery delivery, and the `/menu` card. It is one fixed set with visible labels, so a reply never
 // shows a partial or icon-only variant of it. The resume command is deliberately NOT here: it lives
@@ -42,6 +43,17 @@ export function buildResumeCommand(cwd, sessionId, engine, target = null) {
 // no Slack requester, so its menu is UNBOUND (`u: ""`) and opens for whoever clicks. That grants
 // nothing: every open re-applies the clicker's own live channel authorization, and the modal it
 // opens is bound to that clicker.
+export function forkButton(channelId, threadTs, authorId = "") {
+  if (!channelId) return null;
+  return {
+    type: "button",
+    action_id: FORK_ACTION_ID,
+    text: { type: "plain_text", text: "Fork" },
+    accessibility_label: "Fork conversation from this message",
+    value: JSON.stringify({ o: "open", c: channelId, t: threadTs || "", u: authorId || "" }),
+  };
+}
+
 export function filesButton(channelId, threadTs, authorId = "", label = "📂 Files") {
   if (!channelId) return null;
   return {
@@ -91,10 +103,11 @@ export function dashboardButton(channelId, threadTs, authorId = "") {
   };
 }
 
-// The fixed menu: always all four, in this order, or nothing (no channel to bind to).
+// The fixed menu, in this order, or nothing (no channel to bind to).
 export function menuButtons({ channel = "", threadTs = "", authorId = "" } = {}) {
   if (!channel) return [];
   return [
+    forkButton(channel, threadTs, authorId),
     filesButton(channel, threadTs, authorId),
     secretsButton(channel, threadTs, authorId),
     settingsButton(channel, threadTs, authorId),

@@ -87,7 +87,7 @@ test("stopping a first Codex turn keeps the announced native session and ends wi
   assert.ok(stopped, "Stop posts its card");
   // The card ends the turn with the reply menu; the resume command lives in Settings → Resume.
   const menu = stopped.blocks.find((block) => block.type === "actions");
-  assert.deepEqual(menu.elements.map((button) => button.text.text), ["📂 Files", "🔑 Variables", "⚙️ Settings"]);
+  assert.deepEqual(menu.elements.map((button) => button.text.text), ["Fork", "📂 Files", "🔑 Variables", "⚙️ Settings", "📊 Dashboard"]);
   assert.doesNotMatch(JSON.stringify(stopped.blocks), /resume_cmd_modal/);
   const entry = await getChannelEntry(root.channel);
   assert.equal(await getSession(entry.slug, root.ts), "codex-stub-cancel", "the native session survives the stop");
@@ -278,7 +278,7 @@ test("a failed Codex turn still ends with the reply menu under its error", async
   assert.equal(last.thread_ts, root.ts);
   const menu = (last.blocks || []).find((block) => block.type === "actions");
   assert.ok(menu, `the error ends with the menu: ${JSON.stringify(client.posted)}`);
-  assert.deepEqual(menu.elements.map((button) => button.text.text), ["📂 Files", "🔑 Variables", "⚙️ Settings"]);
+  assert.deepEqual(menu.elements.map((button) => button.text.text), ["Fork", "📂 Files", "🔑 Variables", "⚙️ Settings", "📊 Dashboard"]);
   for (const button of menu.elements) assert.equal(JSON.parse(button.value).u, "U_CODEX_FAIL");
   assert.equal(last.blocks[0].type, "section");
   assert.equal(last.blocks[0].text.text, last.text, "the error text itself is still delivered");

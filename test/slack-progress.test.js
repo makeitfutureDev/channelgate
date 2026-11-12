@@ -799,7 +799,7 @@ test("completed-run footer carries the fixed labelled menu: Files, Variables, Se
   assert.equal(stop[1].blocks[2].elements[0].action_id, "cg_reply_feedback");
   const buttons = stop[1].blocks[1].elements;
   // No 💻 control: the resume command lives in Settings → Resume Session, not on every reply.
-  assert.deepEqual(buttons.map((button) => button.text.text), ["📂 Files", "🔑 Variables", "⚙️ Settings", "📊 Dashboard"]);
+  assert.deepEqual(buttons.map((button) => button.text.text), ["Fork", "📂 Files", "🔑 Variables", "⚙️ Settings", "📊 Dashboard"]);
   const settings = buttons.find((button) => button.action_id === "cg_channel_settings");
   assert.deepEqual(JSON.parse(settings.value), { o: "open", c: "C_FILES", t: "111.222", u: "U_REQUESTER" });
   const files = buttons.find((button) => button.text.text === "📂 Files");
@@ -832,8 +832,8 @@ test("completed-run footer adds one direct-preview button per referenced workspa
     usage: { input_tokens: 1, output_tokens: 1 },
   });
   const buttons = calls[0].blocks.find((block) => block.type === "actions").elements;
-  assert.deepEqual(buttons.map((button) => button.text.text), ["📂 Files", "🔑 Variables", "⚙️ Settings", "📊 Dashboard", "📄 review spec.md"]);
-  assert.deepEqual(JSON.parse(buttons[4].value), { o: "open_file", c: "C1", t: "111.222", u: "U1", p: "docs/review spec.md" });
+  assert.deepEqual(buttons.map((button) => button.text.text), ["Fork", "📂 Files", "🔑 Variables", "⚙️ Settings", "📊 Dashboard", "📄 review spec.md"]);
+  assert.deepEqual(JSON.parse(buttons.at(-1).value), { o: "open_file", c: "C1", t: "111.222", u: "U1", p: "docs/review spec.md" });
 });
 
 test("invalid footer blocks finalize the existing stream without duplicating the answer", async () => {
@@ -3092,7 +3092,7 @@ for (const mode of ["commentary", "no stream", "truncated commentary"]) {
       assert.ok(!calls.some(([method, payload]) => method === "stopStream" && payload.blocks?.some((block) => block.type === "actions")), "the streamed head no longer carries the menu");
       const posts = calls.filter(([method]) => method === "postMessage").map(([, payload]) => payload);
       const menu = posts.at(-1)?.blocks?.find((block) => block.type === "actions");
-      assert.deepEqual(menu?.elements.map((button) => button.text.text), ["📂 Files", "🔑 Variables", "⚙️ Settings", "📊 Dashboard"], "the last message carries the menu");
+      assert.deepEqual(menu?.elements.map((button) => button.text.text), ["Fork", "📂 Files", "🔑 Variables", "⚙️ Settings", "📊 Dashboard"], "the last message carries the menu");
     }
     if (mode === "no stream") {
       assert.match(native, /ended without a final message/);

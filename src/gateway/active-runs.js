@@ -475,6 +475,7 @@ export async function recoverRuns(stale, {
           teamId: rec.queuedFork.teamId || rec.workspaceId || process.env.CG_SLACK_TEAM_ID || "",
           bypassMention: true,
           queuedForkHandle: handle,
+          forkMessageTs: rec.queuedFork.forkMessageTs || "",
         });
         if (forceStopping()) return;
         markTerminal();
