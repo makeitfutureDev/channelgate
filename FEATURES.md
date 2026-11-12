@@ -30,7 +30,9 @@ and retry on the next minute as before.
 
 Settings → Engine & runtime includes independent **Codex EU** (`codex-eu`) and **Claude
 Bedrock** (`claude-bedrock`) options, disabled until explicitly enabled. Their setup cards show
-the exact host-terminal commands, with separate default model/effort controls. After setup,
+the exact host-terminal commands, with a **Copy command** button for each harness and separate
+default model/effort controls. Copy confirms success, supports HTTP clipboard fallback, and
+shows manual-copy guidance when browser clipboard access is denied. After setup,
 enabled and channel-approved harnesses appear in the existing runtime and `/model` pickers.
 Each uses its own login and session directory, cold processes, and no automatic failover edge.
 Missing configuration fails with its own setup remedy instead of borrowing another account.

@@ -22,6 +22,9 @@ release gates. Stable promotion and publication require approval of the exact te
 
 ### Beta development notes
 
+- Add Copy command buttons to the Codex EU and Claude Bedrock setup cards, with copy feedback
+  and a fallback for HTTP-hosted admin pages.
+
 - Always show effort beside the model in the Slack live runner and reply footer. When no level
   is explicitly configured, show `default effort`; runtime settings and CLI flags are unchanged.
 

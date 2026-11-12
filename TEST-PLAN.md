@@ -28,6 +28,12 @@
   defaults round-trip, absence of fallback edges, credential-free setup responses, retained
   thread ownership, separate auth/session homes, destination-bound proxy swaps and key rotation.
 - Live definition **HARNESS-TERMINAL-01** (Admin UI; engine-independent control plane): open
+  either harness's setup card and click **Copy command**. Paste into an empty text field; pass:
+  the clipboard matches that card's full displayed command exactly, the other harness command is
+  not substituted, and a success status is announced. Repeat with Clipboard API unavailable to
+  exercise the HTTP fallback; deny both copy methods and verify manual-copy guidance. Automated
+  coverage: `test/terminal-harnesses-browser.test.js` runs real Chromium clipboard checks for
+  both cards and the fallback. This browser-only behavior invokes neither engine.
   Settings → Engine & runtime. Both options start off. Enable either and save before login;
   reload and verify both toggles persist independently. Inspect both setup cards: exact host
   paths/commands, Enterprise residency caveat and Bedrock API-key-only restriction are visible.
