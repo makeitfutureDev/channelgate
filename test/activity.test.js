@@ -777,3 +777,51 @@ test("history cannot index after channel access changes during the final private
   assert.deepEqual(data.rows, []);
   assert.equal(getSlackThread("G_HISTORY", "100.000001"), null);
 });
+
+test("approved Activity viewers can read shared subscription usage without admin access", async (t) => {
+  const payload = { subscriptions: [{ provider: "codex-eu", name: "Codex EU", kind: "subscription", status: "ok", windows: [{ label: "Weekly", usedPercent: 24, resetsAt: "2026-12-01T12:00:00Z" }] }], refreshAfterSeconds: 300 };
+  let calls = 0;
+  const f = await fixture(t, { readSubscriptions: async () => { calls++; return payload; } });
+  const user = await f.login();
+  assert.notEqual((await getUser("U_MINE")).isAdmin, true);
+  for (const suffix of ["/subscriptions", "/api/subscriptions"]) {
+    assert.equal((await f.request(user.url + suffix)).status, 401);
+    assert.equal((await f.request(user.url + suffix, { headers: { cookie: "cg_session=forged", Authorization: "Bearer fake-api-key" } })).status, 401);
+    const response = await f.request(user.url + suffix, { headers: user.headers });
+    assert.equal(response.status, 200);
+    assert.match(response.headers.get("cache-control"), /no-store/);
+    if (suffix.startsWith("/api")) assert.deepEqual(await response.json(), payload);
+    else {
+      assert.match(response.headers.get("content-security-policy"), /script-src 'nonce-/);
+      assert.doesNotMatch(await response.text(), /<h1>My Activity<\/h1>/);
+    }
+  }
+  assert.equal(calls, 1);
+  const other = await f.login("U_OTHER");
+  assert.equal((await f.request(user.url + "/api/subscriptions", { headers: other.headers })).status, 401);
+  assert.equal(calls, 1, "another viewer's session cannot authorize this URL");
+  f.advance(ACTIVITY_SESSION_TTL_MS);
+  assert.equal((await f.request(user.url + "/api/subscriptions", { headers: user.headers })).status, 401);
+  assert.equal(calls, 1, "expired session cannot trigger provider lookup");
+});
+
+test("subscription payload is withheld when Activity access expires, is revoked or changes while reading", async (t) => {
+  for (const cause of ["expiry", "revoked", "team", "disconnected"]) {
+    await t.test(cause, async (t) => {
+      const started = defer(), gate = defer();
+      const f = await fixture(t, { readSubscriptions: async () => { started.resolve(); await gate.promise; return { subscriptions: [{ name: "PRIVATE_QUOTA" }] }; } });
+      await setUser("U_MINE", { approved: true, isAdmin: false });
+      const user = await f.login();
+      const pending = f.request(user.url + "/api/subscriptions", { headers: user.headers });
+      await started.promise;
+      if (cause === "expiry") f.advance(ACTIVITY_SESSION_TTL_MS);
+      if (cause === "revoked") await setUser("U_MINE", { approved: false, isAdmin: false });
+      if (cause === "team") f.setTeam("T_CHANGED");
+      if (cause === "disconnected") f.disconnect();
+      gate.resolve();
+      const response = await pending;
+      assert.ok([401, 403, 503].includes(response.status));
+      assert.doesNotMatch(await response.text(), /PRIVATE_QUOTA/);
+    });
+  }
+});

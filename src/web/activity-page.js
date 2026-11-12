@@ -1,10 +1,11 @@
 // Cookie-authenticated browser dashboard with self-hosted brand assets and no browser storage.
 import crypto from "node:crypto";
 import { ACTIVITY_THEME_CSS, ACTIVITY_BRAND } from "./activity-theme.js";
+import { createSubscriptionUi, SUBSCRIPTION_CSS } from "../../public/subscription-ui.js";
 import { DEFAULT_ACTIVITY_GROUP_ORDER } from "./activity-order.js";
 
 // Kept as an ordinary function so the exact script served to browsers is testable without a bundler.
-function activityBrowser(config, browser) {
+function activityBrowser(config, browser, subscriptionUi) {
   "use strict";
   const { base, csrf, defaultGroupOrder } = config;
   const { document, location, EventSource } = browser;
@@ -22,6 +23,55 @@ function activityBrowser(config, browser) {
   let rows = [], filter = "active", ended = false, loaded = false, stream = null;
   let revision = 0, requestId = 0, lastUpdated = 0, connected = false;
   let unavailable = false, message = "", actionMessage = "";
+  const subscriptionRoot = el("subscriptions-cards"), quickRoot = el("subscription-quick"), subscriptionNotice = el("subscriptions-notice"), subscriptionButton = el("subscriptions-refresh");
+  let subscriptionData = null, subscriptionPending = false, subscriptionGeneration = 0, subscriptionTimer = null, subscriptionPaused = false;
+  function clearSubscriptions() {
+    subscriptionGeneration++;
+    if (subscriptionTimer !== null) browser.clearTimeout(subscriptionTimer);
+    subscriptionTimer = null;
+    subscriptionData = null;
+    if (quickRoot) { quickRoot.innerHTML = ""; quickRoot.hidden = true; }
+    if (subscriptionRoot) subscriptionRoot.innerHTML = "";
+    if (subscriptionNotice) subscriptionNotice.textContent = "";
+    if (subscriptionButton) subscriptionButton.disabled = true;
+  }
+  function paintSubscriptions() {
+    if (!subscriptionData) return;
+    const subscriptions = subscriptionData.subscriptions.filter(subscriptionUi.isSubscription);
+    if (quickRoot) { quickRoot.innerHTML = subscriptionUi.summary(subscriptions); quickRoot.hidden = subscriptions.length === 0; }
+    if (subscriptionRoot) subscriptionRoot.innerHTML = subscriptions.map(subscriptionUi.card).join("");
+    if (subscriptionNotice) subscriptionNotice.textContent = subscriptions.length ? "" : "No subscription accounts connected.";
+  }
+  async function refreshSubscriptions() {
+    if (subscriptionTimer !== null) browser.clearTimeout(subscriptionTimer);
+    subscriptionTimer = null;
+    if (ended || subscriptionPaused || document.hidden || subscriptionPending || !subscriptionRoot && !quickRoot) return;
+    const generation = subscriptionGeneration;
+    subscriptionPending = true;
+    if (subscriptionButton) { subscriptionButton.disabled = true; subscriptionButton.textContent = "Refreshing…"; }
+    try {
+      const response = await fetch(base + "/api/subscriptions", { cache: "no-store", credentials: "same-origin" });
+      if (response.status === 401 || response.status === 403) { endAccess(); return; }
+      if (!response.ok) throw new Error("unavailable");
+      const data = await response.json();
+      if (!ended && !document.hidden && generation === subscriptionGeneration) {
+        if (!Array.isArray(data.subscriptions)) throw new Error("invalid subscriptions");
+        subscriptionData = data; paintSubscriptions();
+      }
+    } catch {
+      if (!ended && !document.hidden && generation === subscriptionGeneration && subscriptionNotice) subscriptionNotice.textContent = subscriptionData
+        ? "Couldn’t refresh. Showing previous usage; limits may have changed." : "Subscription usage is temporarily unavailable.";
+    } finally {
+      subscriptionPending = false;
+      if (!ended && !subscriptionPaused && !document.hidden) {
+        if (generation !== subscriptionGeneration) void refreshSubscriptions();
+        else {
+          if (subscriptionButton) { subscriptionButton.disabled = false; subscriptionButton.textContent = "Refresh"; }
+          subscriptionTimer = browser.setTimeout(refreshSubscriptions, 300_000);
+        }
+      }
+    }
+  }
   const dateFormat = new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
   const timeFormat = new Intl.DateTimeFormat(undefined, { hour: "numeric", minute: "2-digit", second: "2-digit" });
 
@@ -116,13 +166,16 @@ function activityBrowser(config, browser) {
     el("updated").textContent = lastUpdated ? "Updated " + timeFormat.format(lastUpdated) : "Waiting for updates";
   }
   function notice() {
-    const text = ended ? "Your access has ended or this session has expired. Open My Activity again from Slack." :
+    const text = ended ? "Your access has ended or this session has expired. Open Dashboard again from Slack." :
       actionMessage || message || (unavailable ? "Some activity is temporarily unavailable. We’ll keep trying to refresh it." : "");
     el("notice").textContent = text;
     el("notice").hidden = !text;
   }
   function endAccess() {
     ended = true;
+    clearSubscriptions();
+    if (subscriptionNotice) subscriptionNotice.textContent = "Your session has ended. Open Dashboard again from Slack.";
+    if (subscriptionButton) subscriptionButton.textContent = "Refresh";
     connected = false;
     stream?.close();
     rows = [];
@@ -381,7 +434,16 @@ function activityBrowser(config, browser) {
     const button = event.target.closest("button[data-key]");
     if (button) void complete(button.dataset.key);
   });
+  subscriptionButton?.addEventListener("click", () => { void refreshSubscriptions(); });
+  document.addEventListener?.("visibilitychange", () => {
+    if (document.hidden) {
+      subscriptionGeneration++;
+      if (subscriptionTimer !== null) browser.clearTimeout(subscriptionTimer);
+      subscriptionTimer = null;
+    } else void refreshSubscriptions();
+  });
   render();
+  void refreshSubscriptions();
   void refresh();
   stream = new EventSource(base + "/stream");
   stream.addEventListener("open", () => { if (!ended) { connected = true; connection(); } });
@@ -397,17 +459,21 @@ function activityBrowser(config, browser) {
     void refresh(); // Also detects expired cookies: EventSource does not expose HTTP status.
   });
   const timer = setInterval(() => { connection(); if (!ended) void refresh(); }, 60_000);
-  browser.addEventListener("pagehide", () => { stream.close(); clearInterval(timer); });
+  browser.addEventListener("pagehide", () => { subscriptionPaused = true; subscriptionGeneration++; if (subscriptionTimer !== null) browser.clearTimeout(subscriptionTimer); stream.close(); clearInterval(timer); });
   browser.addEventListener("pageshow", (event) => { if (event.persisted) location.reload(); });
 }
 
-export function activityPage({ sessionId, csrf }) {
+export function activityPage({ sessionId, csrf, view = "activity" }) {
+  const subscriptionsView = view === "subscriptions";
+  const base = `/activity/${encodeURIComponent(sessionId)}`;
   const nonce = crypto.randomBytes(16).toString("base64url");
-  const config = JSON.stringify({ base: `/activity/${encodeURIComponent(sessionId)}`, csrf, defaultGroupOrder: DEFAULT_ACTIVITY_GROUP_ORDER }).replaceAll("<", "\\u003c");
+  const config = JSON.stringify({ base, csrf, view, defaultGroupOrder: DEFAULT_ACTIVITY_GROUP_ORDER }).replaceAll("<", "\\u003c");
   return { nonce, html: `<!doctype html>
-<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="color-scheme" content="dark"><title>My Activity · ChannelGate</title><link rel="icon" type="image/svg+xml" href="/favicon.svg">
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="color-scheme" content="dark"><title>${subscriptionsView ? "Subscriptions" : "Activity"} · ChannelGate</title><link rel="icon" type="image/svg+xml" href="/favicon.svg">
 <style nonce="${nonce}">
 ${ACTIVITY_THEME_CSS}
+${SUBSCRIPTION_CSS}
+.page-top{display:flex;align-items:center;justify-content:space-between;gap:20px;flex-wrap:wrap}.page-nav{display:flex;gap:6px}.page-nav a{padding:9px 12px;border-radius:7px;font-size:13px}.page-nav a[aria-current=page]{background:var(--panel-2);color:var(--ink);box-shadow:inset 0 -2px 0 var(--orange)}
 .shell{max-width:1440px;margin:0 auto;padding:36px 32px 20px}
 .heading{display:flex;align-items:center;justify-content:space-between;gap:20px;margin:30px 0 22px}
 .heading-actions{display:flex;align-items:center;justify-content:flex-end;gap:16px;flex-wrap:wrap}
@@ -480,8 +546,10 @@ tbody tr:last-child td{border-bottom:0}tbody tr:hover{background:var(--panel-2)}
   .open-link,.toggle{margin:0}.open-link:not(.browser-link){display:inline-flex;width:auto;margin:0}.empty{padding:45px 18px}.footer{font-size:10px}.subtitle{font-size:13px}
 }
 </style></head><body><main class="shell">
-${ACTIVITY_BRAND}
-<header class="heading"><div><h1>My Activity</h1><p class="subtitle">Your conversations, with the latest status in one place.</p></div><div class="heading-actions"><div id="connection" class="connection reconnecting" role="status"><span id="connection-text">Connecting…</span></div><button id="load-history" class="order-button" type="button" disabled>Load older threads</button><button id="mark-all-done" class="order-button" type="button" aria-haspopup="dialog" disabled>Mark All Done</button><button id="group-order" class="order-button" type="button" aria-haspopup="dialog">⇅ Group order</button></div></header>
+<div class="page-top">${ACTIVITY_BRAND}<nav class="page-nav" aria-label="Dashboard"><a href="${base}"${!subscriptionsView ? ' aria-current="page"' : ''}>Activity</a><a href="${base}/subscriptions"${subscriptionsView ? ' aria-current="page"' : ''}>Subscriptions</a></nav></div>
+${subscriptionsView ? `<section aria-label="Subscriptions"><div class="subscriptions-head"><h1>Subscriptions</h1><button id="subscriptions-refresh" class="order-button" type="button">Refresh</button></div><p class="subscriptions-copy">Account-wide usage · refreshes every 5 minutes.</p><div id="subscriptions-notice" role="status" aria-live="polite"></div><div id="subscriptions-cards" class="subscription-grid"></div></section>` : '<div id="subscription-quick" class="subscription-quick-list" aria-label="Subscription usage" hidden></div><div id="subscriptions-notice" role="status" aria-live="polite"></div>'}
+<div id="activity-view"${subscriptionsView ? " hidden" : ""}>
+<header class="heading"><div class="heading-actions"><div id="connection" class="connection reconnecting" role="status"><span id="connection-text">Connecting…</span></div><button id="load-history" class="order-button" type="button" disabled>Load older threads</button><button id="mark-all-done" class="order-button" type="button" aria-haspopup="dialog" disabled>Mark All Done</button><button id="group-order" class="order-button" type="button" aria-haspopup="dialog">⇅ Group order</button></div></header>
 <dialog id="order-dialog" class="order-dialog" aria-labelledby="order-title" aria-describedby="order-description"><h2 id="order-title">Arrange status groups</h2><p id="order-description">Move groups up or down. Newest conversations appear first within each group. Your order is saved to your account.</p><ol id="order-list" class="order-list"></ol><button id="order-reset" type="button">Reset to default</button><p id="order-error" class="order-error" role="alert"></p><div class="order-footer"><button id="order-cancel" type="button">Cancel</button><button id="order-save" class="order-save" type="button">Save order</button></div></dialog>
 <dialog id="all-done-dialog" class="order-dialog" aria-labelledby="all-done-title" aria-describedby="all-done-description"><h2 id="all-done-title">Mark all your threads done?</h2><p id="all-done-description">This marks all your open tracked agent threads done across all channels, including threads outside the current filter, search, or page. Their main Slack messages get ✅. Running work continues.</p><p id="all-done-error" class="order-error" role="alert"></p><div class="order-footer"><button id="all-done-cancel" type="button" autofocus>Cancel</button><button id="all-done-confirm" class="order-save" type="button">Mark All Done</button></div></dialog>
 <div id="notice" class="notice" role="alert" hidden></div>
@@ -491,6 +559,7 @@ ${ACTIVITY_BRAND}
 <div id="empty" class="empty" role="status"><div class="empty-symbol" aria-hidden="true">◎</div><h2 id="empty-title">Loading your activity…</h2><p id="empty-copy">Your latest conversations will appear here.</p></div>
 <noscript><p class="js-needed">Enable JavaScript to view live activity.</p></noscript></section>
 <footer class="footer"><span id="result-count"></span><span id="updated">Waiting for updates</span></footer>
-<p class="privacy">This view is personal to you. If your session expires, open My Activity again from Slack.</p>
-</main><script nonce="${nonce}">(${activityBrowser.toString()})(${config}, globalThis);</script></body></html>` };
+<p class="privacy">Your conversations are private. If your session expires, open Dashboard again from Slack.</p>
+</div>
+</main><script nonce="${nonce}">(${activityBrowser.toString()})(${config}, globalThis, (${createSubscriptionUi.toString()})());</script></body></html>` };
 }

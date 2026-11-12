@@ -61,6 +61,7 @@ const baseCompile = (engine, request = {}, supportedModes = ["off"]) => {
 const claude = validateEngineAdapter({
   pluginCapabilities: { manifest: "claude", components: ["skills", "commands", "agents", "hooks", "mcpServers"] },
   resolveOptionalMcpConfig: resolveClaudeMcpConfig,
+  subscriptionUsage: { provider: "claude" },
   id: "claude", label: "Claude", cli: "claude", defaultModelKey: "defaultClaudeModel", defaultEffortKey: "defaultClaudeEffort", mcpMetaKey: "allowedMcps",
   instructionFile: "CLAUDE.md", skillsDir: ".claude/skills", mcpTransport: "file", contextWindow: 200_000,
   efforts: ["low", "medium", "high", "xhigh"], models: [
@@ -316,6 +317,7 @@ const codex = validateEngineAdapter({
     }
     return { servers, rejected };
   },
+  subscriptionUsage: { provider: "codex" },
   id: "codex", label: "Codex", cli: "codex", defaultModelKey: "defaultCodexModel", defaultEffortKey: "defaultCodexEffort", mcpMetaKey: "allowedCodexMcps",
   // Codex reports no dollar cost, so the ledger prices it from this configured rate (Settings →
   // Audit). Declared here so no other engine inherits OpenAI's rates by falling through.
