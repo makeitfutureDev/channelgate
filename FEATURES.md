@@ -2705,7 +2705,7 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
   auto-titling (`assistant.threads.setTitle`) so the Messages-tab timeline reads well.
   → TEST-PLAN: Slack gateway.
 - Auto-registration of any conversation the bot sees (index + default meta + folder).
-- **Reply footer context is harness-reported.** Footers read `model · effort · [cost ·] ctx: 167.1k
+- **Reply footer context is harness-reported.** Footers read `model · effort · [cost ·] ctx: 167k
   / 475k, 35%`: no duration and no run input/output totals. `ctx` is the LATEST top-level model
   request's input (uncached + cache read + cache write for Claude, `last_token_usage.input_tokens`
   for Codex) — never the run's summed input, which re-counts the history once per model call — over
@@ -2713,7 +2713,8 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
   keyed by the configured variant such as `claude-opus-4-6[1m]`; Codex's rollout
   `model_context_window`). There is no per-model table, no `[1m]` rule and no settings fallback, so
   Opus 4.6 vs `[1m]` and `CLAUDE_CODE_DISABLE_1M_CONTEXT=1` read exactly as the CLI runs them. An
-  unreported window prints `ctx: 22k / ?`; an over-limit context reads above 100%; a run with no
+  token counts are whole thousands (`167k`, `1M`; a non-zero tenth only above a million,
+  `1.1M`). An unreported window prints `ctx: 22k / ?`; an over-limit context reads above 100%; a run with no
   model request has no `ctx`. Codex keeps the window and latest size even when its per-request
   pricing chain fails to reconcile. `/context` reports the same figures. → TEST-PLAN: Reply footer
   context.

@@ -126,7 +126,7 @@ release gates. Stable promotion and publication require approval of the exact te
   login/error/stale states. Account-wide provider readings use existing logins and a passive
   five-minute cache; Overview continues to show token counts and estimated costs.
 
-- Reply footers now show `model · effort · ctx: 167.1k / 475k, 35%`: context is the latest model
+- Reply footers now show `model · effort · ctx: 167k / 475k, 35%`: context is the latest model
   request against the window Claude or Codex itself reported (not the run's summed input), shown
   above 100% when over the limit and as `?` when the harness reports no window. Duration and run
   token totals are removed, and hardcoded 1M/200k/272k windows no longer override the harness.
