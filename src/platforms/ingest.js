@@ -1,3 +1,4 @@
+import { userReplyMentionsEnabled } from "../config/user-preferences.js";
 import { autoApproveUser } from "../gateway/user-auto-approval.js";
 // From a normalized inbound message to an answered turn, for platforms that are not Slack.
 // Text controls, per-session serialization and conservative progress edits use the same gateway
@@ -292,7 +293,7 @@ async function deliver(connector, message, placeholder, text, rememberReply = ()
     directory, capabilities: adapter.capabilities,
     // A completed foreground reply addresses its authenticated requester. Notices and DMs do
     // not add a notification tag; the surface formatter owns the native mention representation.
-    requester: footer && !message.isDM && message.userId
+    requester: footer && !message.isDM && message.userId && userReplyMentionsEnabled(await getUser(message.userId))
       ? { id: message.userId, name: message.userName || message.userId } : null,
   });
   const chunks = formatted.chunks.length ? formatted.chunks : [{ text, mentions: [] }];

@@ -14,7 +14,7 @@ const flush = async () => { for (let i = 0; i < 12; i++) await Promise.resolve()
 for (const engine of ["claude", "codex"]) {
   test(`Teams ${engine} tags the authenticated requester once after channel/group answers and skips DMs`, async () => {
     const userId = `29:requester-${engine}`;
-    await setUser(userId, { approved: true });
+    await setUser(userId, { approved: true, replyMentions: true });
     for (const kind of ["channel", "group", "dm"]) {
       for (const [failEdit, content] of [[false, "Answer."], [true, "Answer."], [false, "Answer line.\n".repeat(1000)], [true, "Answer line.\n".repeat(1000)]]) {
         const wire = [];
@@ -155,7 +155,7 @@ test("Google Chat quiet progress keeps the model, heartbeat and aliased subagent
 for (const engine of ["claude", "codex"]) {
   test(`Teams ${engine} leaves only answer, requester and footer after a failed placeholder edit`, async () => {
     const userId = `29:clean-${engine}`;
-    await setUser(userId, { approved: true });
+    await setUser(userId, { approved: true, replyMentions: true });
     const visible = new Map(); const calls = []; let sequence = 0;
     const connector = createTeamsConnector({ capabilities: platformOr("msteams").capabilities, api: {
       listMembers: async () => [],
@@ -235,7 +235,7 @@ function googleWire({ failPatch = false } = {}) {
 for (const engine of ["claude", "codex"]) {
   test(`Google Chat ${engine} removes the working line when the final edit fails`, async () => {
     const userId = `clean-${engine}@example.com`;
-    await setUser(userId, { approved: true });
+    await setUser(userId, { approved: true, replyMentions: true });
     const wire = googleWire({ failPatch: true });
     await createIngest({ connector: wire.connector, log: { error() {} }, run: async () => {
       assert.match([...wire.visible.values()][0].text, /Agent is working/);

@@ -1,5 +1,20 @@
 # ChannelGate — Features
 
+## Personal automatic reply mentions (2026-11-13)
+
+Each user controls whether completed replies automatically mention them in shared conversations.
+New users start with mentions **off**; a one-time migration keeps them **on** for existing users,
+preserving any explicit choice. Change **Mention me in replies** in Slack App Home →
+**Help & settings**, ask the agent to turn your reply mentions on or off, or use the admin
+**Users** drawer. The preference follows the person's authenticated platform account across
+conversations and persists after restart. Direct messages omit automatic tags even when enabled.
+
+Slack streaming, one-shot, overflow and fallback delivery respect the preference; Teams and
+Google Chat use it before adding their native requester mention. Explicit mentions written in an
+answer remain available. The `set_my_reply_mentions` tool changes only the verified requester's
+setting; agent principals and untrusted API attribution cannot change another person's preference.
+
+
 ## Activity passkey sign-in (2026-11-13)
 
 Approved Slack users can open their private Dashboard link, choose **Passkeys**, and save a

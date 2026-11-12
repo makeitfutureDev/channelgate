@@ -2,6 +2,10 @@
 
 ## 0.6.5 — candidate, pending approval
 
+- Make automatic reply mentions a personal setting. New users start off; existing users keep on
+  until they opt out. Change it in Slack Home → Help & settings, ask the agent, or use admin Users.
+  Slack, Teams and Google Chat delivery follow the setting across conversations.
+
 - Add passkey setup and management from private Activity dashboard links, plus a dedicated
   Activity sign-in page for returning users. Expired links offer passkey sign-in; Activity
   credentials remain separate from administrator credentials.

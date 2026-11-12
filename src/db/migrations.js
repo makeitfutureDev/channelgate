@@ -1291,4 +1291,18 @@ export const migrations = [
       `);
     },
   },
+  {
+    version: 52,
+    up(db) {
+      // Existing people keep the automatic reply mention; future users explicitly default off.
+      const update = db.prepare("UPDATE users SET data = ? WHERE user_id = ?");
+      for (const row of db.prepare("SELECT user_id, data FROM users").all()) {
+        let record;
+        try { record = JSON.parse(row.data); } catch { continue; }
+        if (!record || typeof record !== "object" || Array.isArray(record)) continue;
+        if (typeof record.replyMentions === "boolean") continue;
+        update.run(JSON.stringify({ ...record, replyMentions: true }), row.user_id);
+      }
+    },
+  },
 ];

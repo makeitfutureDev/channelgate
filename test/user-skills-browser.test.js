@@ -14,7 +14,7 @@ test("user skill counts survive edits and the editor fits desktop and narrow scr
   const { createAdminRouter } = await import("../src/web/routes/admin.js");
   const { setUser, getUsers } = await import("../src/config/store.js");
   await setUser("U_EMPTY", { name: "Empty User", skills: [] });
-  await setUser("U_SKILLS", { name: "Skills User", approved: true, skills: ["alpha", "offline-skill"] });
+  await setUser("U_SKILLS", { name: "Skills User", approved: true, skills: ["alpha", "offline-skill"], replyMentions: true });
   const app = express();
   app.use(express.json());
   app.get("/api/auth/me", (_req, res) => res.json({ bootstrap: false, linkRequired: false, fresh: true, account: { userId: "U_BROWSER_ADMIN" }, passkeys: [] }));
@@ -40,6 +40,8 @@ test("user skill counts survive edits and the editor fits desktop and narrow scr
   assert.equal(await row.locator('.user-skills-count').textContent(), "2");
   await row.click();
   const drawer = page.locator('#user-drawer');
+  assert.equal(await drawer.locator('.ud-reply-mentions').isChecked(), true);
+  await drawer.locator('.ud-reply-mentions').uncheck();
   assert.ok((await drawer.boundingBox()).width >= 600, "desktop editor is substantially wider");
   assert.equal(await drawer.locator('.grant-skills input:checked').count(), 2, "offline saved grant stays counted");
   await drawer.locator('.grant-skills-filter').fill("beta");
@@ -47,10 +49,12 @@ test("user skill counts survive edits and the editor fits desktop and narrow scr
   await drawer.locator('.ud-save').click();
   await page.waitForFunction(() => globalThis.document.querySelector('#users tr[data-id="U_SKILLS"] .user-skills-count')?.textContent === "3");
   assert.deepEqual((await getUsers()).U_SKILLS.skills.sort(), ["alpha", "beta", "offline-skill"]);
+  assert.equal((await getUsers()).U_SKILLS.replyMentions, false);
   await page.reload();
   await row.waitFor();
   assert.equal(await row.locator('.user-skills-count').textContent(), "3");
   await row.click();
+  assert.equal(await drawer.locator('.ud-reply-mentions').isChecked(), false, "the saved preference survives reload");
   if (process.env.CG_UI_SCREENSHOTS) await page.screenshot({ path: path.join(process.env.CG_UI_SCREENSHOTS, "users-desktop.png"), fullPage: true });
   for (const width of [1100, 390]) {
     await page.setViewportSize({ width, height: 1000 });

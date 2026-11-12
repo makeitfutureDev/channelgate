@@ -668,7 +668,7 @@ function createTaskTimeline(push) {
 // All append/stop calls are serialized through a promise chain (the streamer's buffer is not
 // concurrency-safe). Any API failure flips `failed`, and finalize() falls back to a plain
 // postMessage so an answer is never lost if streaming is unavailable (missing scope / not enabled).
-function startStreamingProgress(client, { channel, threadTs, isDM, authorId, teamId, dir, menuOwnerId, stopGraceMs = 1_000, uploadFile, channelSession = false }) {
+function startStreamingProgress(client, { channel, threadTs, isDM, authorId, teamId, dir, menuOwnerId, stopGraceMs = 1_000, uploadFile, channelSession = false, replyMentions = false }) {
   // In a code channel the session status is the channel's: keyed without a thread, whatever
   // thread the reply itself goes into (top-level when the person wrote top-level).
   const statusThreadTs = channelSession ? "" : threadTs;
@@ -678,11 +678,9 @@ function startStreamingProgress(client, { channel, threadTs, isDM, authorId, tea
   // Resolve "@Name" → "<@id>" as the answer streams in; the holdback buffer keeps a mention whole
   // even when it straddles two delta slices (flushed in finalize).
   const mentionStream = createMentionStream(dir);
-  // Ping the requester at the very end of the answer so they get a Slack notification even in a busy
-  // channel thread they aren't actively watching. Skipped in DMs — the peer is already notified of
-  // every message there, and tagging the sole other participant just reads as noise. Guarded on
-  // authorId so an automation post with no user id never yields a broken "<@undefined>".
-  const requesterTag = !isDM && authorId ? `<@${authorId}>` : "";
+  // Automatic reply notifications follow the authenticated author's personal preference.
+  // DMs already notify their peer; author-less automation never produces an empty mention.
+  const requesterTag = replyMentions === true && !isDM && authorId ? `<@${authorId}>` : "";
   const streamArgs = {
     channel,
     // Omitted for a top-level reply: Slack accepts that only where the whole channel is one

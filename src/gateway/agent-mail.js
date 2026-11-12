@@ -1,3 +1,4 @@
+import { userReplyMentionsEnabled } from "../config/user-preferences.js";
 // Channel-to-channel agent mail: one conversation's agent asks another conversation's agent a
 // question, and the answer comes back into the asking thread as a new turn.
 //
@@ -233,8 +234,10 @@ export class AgentMail {
   async _startProgress({ client, channelId, threadKey, authorId, menuOwnerId }) {
     if (!client?.chat?.postMessage) return null;
     const dir = await getDirectory(client).catch(() => null);
+    const entry = await this.loadEntry(channelId);
     return startProgress(getProgressView(), client, channelId, threadKey, {
-      isDM: false, authorId, teamId: this.slack?.snapshot?.().teamId || null, dir, menuOwnerId,
+      isDM: Boolean(entry?.isDM), authorId, teamId: this.slack?.snapshot?.().teamId || null, dir, menuOwnerId,
+      replyMentions: userReplyMentionsEnabled(await this.loadUser(authorId)),
     });
   }
 

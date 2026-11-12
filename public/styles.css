@@ -768,7 +768,7 @@ button.clear-tok.armed { background: rgba(229, 96, 77, .14); border-color: rgba(
 .drawer .ud-close { width: 26px; height: 26px; padding: 0; font-size: 18px; line-height: 1; flex: none; }
 .drawer .ud-row { margin-bottom: 12px; }
 .drawer .fldlab { margin: 0 0 5px; }
-.drawer .ud-toggles { display: flex; gap: 18px; margin: 4px 0 16px; }
+.drawer .ud-toggles { display: flex; flex-wrap: wrap; gap: 18px; margin: 4px 0 16px; }
 .drawer .ud-toggles .toggle { margin: 0; color: var(--ink); }
 /* Only the plain name input needs base styling — the token fields get theirs from .reveal-wrap. */
 .drawer .ud-name { width: 100%; box-sizing: border-box; background: var(--panel-2); border: 1px solid var(--line); color: var(--ink); padding: 9px 12px; border-radius: 8px; font: inherit; }

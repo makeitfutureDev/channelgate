@@ -714,3 +714,27 @@ test("the asking thread shows a waiting status while the other agent has the flo
   await g.settle();
   assert.deepEqual(g.statusCalls.map((c) => c.phrase), ["waiting for the #sales agent…", ""]);
 });
+
+for (const isDM of [false, true]) {
+  for (const enabled of [false, true]) {
+    test(`native agent-mail reply honors author preference ${enabled} with DM=${isDM}`, async () => {
+      const sent = [];
+      const client = {
+        users: { list: async () => ({ ok: true, members: [] }) },
+        apiCall: async () => ({}),
+        chatStream: () => ({ ts: "1700000001.000100", append: async payload => sent.push(payload), stop: async payload => sent.push(payload) }),
+        chat: { postMessage: async payload => { sent.push(payload); return { ts: "1700000001.000100" }; } },
+      };
+      const agentMail = new AgentMail({
+        loadEntry: async id => { assert.equal(id, isDM ? "D_PREF" : "C_PREF"); return { isDM }; },
+        loadUser: async id => { assert.equal(id, "U_PREF"); return { replyMentions: enabled }; },
+      });
+      const progress = await agentMail._startProgress({ client, channelId: isDM ? "D_PREF" : "C_PREF", threadKey: "1700000001.000001", authorId: "U_PREF", menuOwnerId: "U_PREF" });
+      progress.onDelta("MAIL_PREF_OK");
+      await progress.finalize({ content: "MAIL_PREF_OK", durationMs: 1, usage: {} });
+      const text = sent.map(payload => payload?.markdown_text || payload?.text || "").join("");
+      assert.ok(text.includes("MAIL_PREF_OK"));
+      assert.equal(text.includes("<@U_PREF>"), enabled && !isDM);
+    });
+  }
+}

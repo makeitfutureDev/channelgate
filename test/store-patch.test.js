@@ -158,6 +158,7 @@ test("setUser transaction merges field-scoped patches without clearing omitted v
     name: "Ada",
     approved: false,
     isAdmin: false,
+    replyMentions: false,
     composioToken: "kept",
     toolboxToken: "",
     skills: [],
