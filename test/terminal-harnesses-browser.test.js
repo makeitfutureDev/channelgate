@@ -54,7 +54,7 @@ test("optional harness settings expose terminal setup and persist independent ac
   assert.equal(await page.evaluate(() => navigator.clipboard.readText()), await eu.locator('[data-role="command"]').textContent());
   await page.evaluate(() => {
     Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText: () => Promise.reject(new Error("denied")) } });
-    document.execCommand = () => false;
+    globalThis.document.execCommand = () => false;
   });
   await bedrock.locator('[data-role="copy-command"]').click();
   await page.waitForFunction(() => [...document.querySelectorAll('[data-role="copy-state"]')].some((el) => el.textContent.startsWith("Could not copy")));
