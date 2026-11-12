@@ -8,7 +8,7 @@ const { setUser, upsertChannelEntry, getChannelEntry, saveChannelMeta, patchChan
 const { setThreadSudo } = await import("../src/gateway/thread-engine.js");
 const { getSlackThread, indexSlackThread, trackSlackThread, recordSlackThreadOutcome, setSlackThreadDone,
   slackThreadRuntime, slackThreadStatus, updateSlackThreadRootCompletion, slackThreadCandidates, eligibleSlackThreadsForUser, renameSlackThread } = await import("../src/gateway/slack-threads.js");
-const { homeThreadsSnapshot, homeThreadBlocks, registerHomeThreadActions, normalizeThreadView, homeThreadsRefreshKey, activityThreadSnapshot } = await import("../src/slack/home-threads.js");
+const { homeThreadsSnapshot, homeThreadBlocks, registerHomeThreadActions, normalizeThreadView, homeThreadsRefreshKey, activityThreadSnapshot, discoverSlackThreadHistory } = await import("../src/slack/home-threads.js");
 const { createHomeThreadReader } = await import("../src/slack/home-thread-reader.js");
 
 let roots;
@@ -136,19 +136,29 @@ test("pagination reaches older rows, clamps stale pages and filters statuses", a
   assert.ok(first.rows.every((r) => r.url.startsWith("https://example.slack.com/archives/")));
 });
 
-test("history is discovered in bounded batches and verifies roots rather than assuming session authors", async () => {
+test("history indexes 100 newest candidates per action, retains them and verifies real ownership", async () => {
   const c = await channel();
   const db = getDb();
-  for (let n = 1; n <= 23; n++) {
+  for (let n = 1; n <= 123; n++) {
     const ts = `${100 + n}.000001`;
     roots.set(`${c.channelId}:${ts}`, { ts, user: n % 2 ? "U_MINE" : "U_OTHER", text: `Historical ${n}` });
     db.prepare("INSERT INTO sessions(slug,thread_key,session_id,engine,runtime) VALUES(?,?,?,?,?)").run(c.slug, ts, `session-${n}`, "codex", "{}");
   }
-  let view = await homeThreadsSnapshot(client, "U_MINE", { filter: "all" });
-  assert.equal(view.moreHistory, true); assert.equal(db.prepare("SELECT COUNT(*) AS n FROM slack_threads").get().n, 10);
-  await homeThreadsSnapshot(client, "U_MINE", { filter: "all" });
-  view = await homeThreadsSnapshot(client, "U_MINE", { filter: "all" });
-  assert.equal(view.moreHistory, false); assert.equal(view.total, 12);
+  const first = await discoverSlackThreadHistory(client, "U_MINE");
+  assert.equal(first.scanned, 100); assert.equal(first.moreHistory, true);
+  assert.equal(db.prepare("SELECT COUNT(*) AS n FROM slack_threads").get().n, 100);
+  assert.equal(getSlackThread(c.channelId, "123.000001"), null, "oldest candidates wait for the next action");
+  assert.ok(getSlackThread(c.channelId, "124.000001"));
+  const second = await discoverSlackThreadHistory(client, "U_MINE");
+  assert.equal(second.scanned, 23); assert.equal(second.moreHistory, false);
+  assert.equal(db.prepare("SELECT COUNT(*) AS n FROM slack_threads").get().n, 123);
+  reads.length = 0;
+  const again = await discoverSlackThreadHistory(client, "U_MINE");
+  assert.equal(again.scanned, 0); assert.equal(reads.length, 0, "indexed roots are not rediscovered");
+  db.exec("DELETE FROM sessions");
+  assert.equal(eligibleSlackThreadsForUser("U_MINE").length, 62, "index survives legacy session cleanup");
+  const view = await homeThreadsSnapshot(client, "U_MINE", { filter: "all" });
+  assert.equal(view.total, 62);
   assert.ok(view.rows.every((r) => r.starter_id === "U_MINE"));
 });
 
@@ -1081,4 +1091,31 @@ test("simultaneous bulk confirmations serialize and mark each thread only once",
   await releaseRead();
   const results = await Promise.all([first, second]);
   assert.deepEqual(results.map((r) => r.marked), [1, 0]);
+});
+
+
+test("transient membership failure during historical root recheck keeps discovery retryable", async () => {
+  const c = await channel("G_HISTORY", "group");
+  const ts = "100.000001";
+  roots.set(`${c.channelId}:${ts}`, { ts, user: "U_MINE", text: "Old private task" });
+  getDb().prepare("INSERT INTO sessions(slug,thread_key,session_id) VALUES(?,?,?)").run(c.slug, ts, "private-history");
+  let calls = 0;
+  client.conversations.members = async () => {
+    if (++calls === 2) throw new Error("temporarily unavailable");
+    return { members: ["U_MINE"] };
+  };
+  const failed = await discoverSlackThreadHistory(client, "U_MINE");
+  assert.equal(failed.incomplete, true); assert.equal(failed.moreHistory, true);
+  assert.equal(getSlackThread(c.channelId, ts), null);
+  const retried = await discoverSlackThreadHistory(client, "U_MINE");
+  assert.equal(retried.scanned, 1); assert.equal(retried.incomplete, false);
+  assert.equal(getSlackThread(c.channelId, ts).starter_id, "U_MINE");
+});
+
+
+test("initial membership lookup failure cannot report historical indexing exhausted", async () => {
+  const c = await channel("G_HISTORY", "group");
+  getDb().prepare("INSERT INTO sessions(slug,thread_key,session_id) VALUES(?,?,?)").run(c.slug, "100.000001", "private-history");
+  const result = await discoverSlackThreadHistory(client, "U_MINE");
+  assert.equal(result.scanned, 0); assert.equal(result.incomplete, true); assert.equal(result.moreHistory, true);
 });

@@ -10,7 +10,7 @@ import { onThreadChanged } from "../gateway/thread-changes.js";
 import { onActiveRunsChanged } from "../gateway/active-runs.js";
 import { syncThreadDoneMarker } from "../slack/thread-done-marker.js";
 import { clearDone, markDone } from "../gateway/followups.js";
-import { accessContext, activityThreadSnapshot, homeThreadsRefreshKey, markAllSlackThreadsDone } from "../slack/home-threads.js";
+import { accessContext, activityThreadSnapshot, discoverSlackThreadHistory, homeThreadsRefreshKey, markAllSlackThreadsDone } from "../slack/home-threads.js";
 import { createHomeThreadReader } from "../slack/home-thread-reader.js";
 import { isSlackTs } from "../slack/thread-keys.js";
 import { isLoopbackHost, timingSafeEqualStr } from "./security.js";
@@ -201,6 +201,21 @@ export function createActivityRouter({
       await context(req); // A disable/expiry while the snapshot awaited membership cannot publish it.
       if (version !== configVersion) return unavailable(res, 503);
       return res.json(data);
+    } catch (error) { return unavailable(res, error.status || 503); }
+  });
+  router.post("/:id/api/history", async (req, res) => {
+    try {
+      const { session, client } = await context(req);
+      if (req.headers.origin !== req.activityOrigin || !timingSafeEqualStr(String(req.headers["x-cg-csrf"] || ""), session.csrf)) return unavailable(res, 403);
+      const history = await discoverSlackThreadHistory(client, session.ownerId, {
+        beforeWrite: async () => { await context(req); },
+      });
+      await context(req);
+      const version = configVersion;
+      const data = await browserSnapshot(client, session, req.params.id);
+      await context(req);
+      if (version !== configVersion) return unavailable(res, 503);
+      return res.json({ ...data, history: { scanned: history.scanned, moreHistory: history.moreHistory, unavailable: history.incomplete } });
     } catch (error) { return unavailable(res, error.status || 503); }
   });
   router.get("/:id/open/:channelId/:threadTs", async (req, res) => {

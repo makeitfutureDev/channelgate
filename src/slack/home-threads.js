@@ -18,6 +18,7 @@ import {
 
 export const HOME_THREADS_ACTION = /^cg_home_threads_(filter|page|refresh|history|done|reopen|doneall)$/;
 export const HOME_THREADS_PAGE_SIZE = 10;
+const HISTORY_INDEX_BATCH = 100;
 const HISTORY_BATCH = 10;
 const LABELS = { active: "Active", all: "All open", working: "Working", waiting: "Waiting", idle: "Idle", done: "Completed", error: "Error" };
 const ICONS = { working: "🟢", waiting: "🟡", idle: "⚪", done: "✅", error: "🔴" };
@@ -67,37 +68,63 @@ const permanentMissing = (error) => ["thread_not_found", "message_not_found"].in
 const channelUnavailable = (error) => ["channel_not_found", "not_in_channel", "is_archived"].includes(error?.data?.error || error?.code || error?.message);
 const humanRoot = (root) => root?.user && !root.bot_id && !["bot_message", "tombstone"].includes(root.subtype);
 
+// Explicit history actions share one bounded discovery pass. Ordinary browser refreshes stay local.
+export async function discoverSlackThreadHistory(client, userId, { beforeWrite = async () => {} } = {}) {
+  const release = await acquireKeyedLock("slack-thread-history", userId);
+  let version = 0;
+  const unsubscribe = onConfigChange(() => { version++; });
+  try {
+    await beforeWrite();
+    const access = await accessContext(client, userId);
+    const channels = (await listChannels()).filter((c) => platformOfConversation(c.channelId) === "slack");
+    const byId = new Map(channels.map((c) => [c.channelId, c]));
+    const candidates = slackThreadCandidates(channels);
+    const hiddenChannels = new Set();
+    let scanned = 0;
+    let moreHistory = false;
+    let unavailable = false, accessUnavailable = false;
+    const mayWrite = async (candidate) => {
+      const checkedVersion = version;
+      const currentAccess = await accessContext(client, userId);
+      const entry = await getChannelEntry(candidate.channelId);
+      const allowed = await currentAccess.allows(entry && { ...entry, channelId: candidate.channelId }, candidate.threadTs);
+      accessUnavailable ||= currentAccess.unavailable;
+      await beforeWrite();
+      if (checkedVersion !== version) { unavailable = true; return false; }
+      return allowed;
+    };
+    for (const candidate of candidates) {
+      if (scanned >= HISTORY_INDEX_BATCH) { moreHistory = true; break; }
+      if (hiddenChannels.has(candidate.channelId)) continue;
+      if (!await access.allows(byId.get(candidate.channelId), candidate.threadTs)) continue;
+      scanned++;
+      try {
+        const root = await readRoot(client, candidate.channelId, candidate.threadTs);
+        if (!await mayWrite(candidate)) continue;
+        if (!humanRoot(root)) skipSlackThreadCandidate(candidate);
+        else indexSlackThread({ channelId: candidate.channelId, slug: candidate.slug, root, agentEngaged: true });
+      } catch (error) {
+        if (error.status === 401 || error.status === 403) throw error;
+        if (permanentMissing(error)) {
+          if (await mayWrite(candidate)) skipSlackThreadCandidate(candidate);
+        }
+        else if (channelUnavailable(error)) hiddenChannels.add(candidate.channelId);
+        else { unavailable = true; moreHistory = true; break; } // respect transient failures/rate limits
+      }
+    }
+    const incomplete = unavailable || access.unavailable || accessUnavailable || hiddenChannels.size > 0;
+    return { scanned, moreHistory: moreHistory || incomplete, unavailable, incomplete, hiddenChannels };
+  } finally { unsubscribe(); release(); }
+}
+
 export async function homeThreadsSnapshot(client, userId, requested = {}, { reader = null, discover = true, reconcile = true, force = false } = {}) {
   const view = normalizeThreadView(requested);
+  const history = discover ? await discoverSlackThreadHistory(client, userId) : null;
   const access = await accessContext(client, userId);
-  const channels = await listChannels();
-  const byId = new Map(channels.map((c) => [c.channelId, c]));
-  const candidates = discover ? slackThreadCandidates(channels.filter((c) => platformOfConversation(c.channelId) === "slack")) : [];
-  const rootCache = new Map();
-  const hiddenChannels = new Set();
-  let scanned = 0;
-  let moreHistory = !discover; // Unknown until an explicit history scan; keep its control available.
-  let unavailable = false;
-  const rootFor = async (channelId, ts) => {
-    const key = `${channelId}::${ts}`;
-    if (!rootCache.has(key)) rootCache.set(key, await readRoot(client, channelId, ts));
-    return rootCache.get(key);
-  };
-  for (const candidate of discover ? candidates : []) {
-    if (scanned >= HISTORY_BATCH) { moreHistory = true; break; }
-    if (hiddenChannels.has(candidate.channelId)) continue;
-    if (!await access.allows(byId.get(candidate.channelId), candidate.threadTs)) continue;
-    scanned++;
-    try {
-      const root = await rootFor(candidate.channelId, candidate.threadTs);
-      if (!humanRoot(root)) skipSlackThreadCandidate(candidate);
-      else indexSlackThread({ channelId: candidate.channelId, slug: candidate.slug, root, agentEngaged: true });
-    } catch (error) {
-      if (permanentMissing(error)) skipSlackThreadCandidate(candidate);
-      else if (channelUnavailable(error)) hiddenChannels.add(candidate.channelId);
-      else { unavailable = true; moreHistory = true; break; } // respect transient failures/rate limits
-    }
-  }
+  const byId = new Map((await listChannels()).map((c) => [c.channelId, c]));
+  const hiddenChannels = history?.hiddenChannels || new Set();
+  const moreHistory = history?.moreHistory ?? true;
+  let unavailable = history?.unavailable || false;
   const runtime = slackThreadRuntime({ pendingApprovals: listPendingApprovals() });
   const eligible = new Map();
   for (const row of eligibleSlackThreadsForUser(userId)) {
@@ -178,7 +205,7 @@ export async function homeThreadsSnapshot(client, userId, requested = {}, { read
     } catch { unavailable = true; }
   });
   const rows = window.map((row) => linked.get(`${row.channel_id}::${row.thread_ts}`)).filter(Boolean);
-  return { ...view, ...(requested.bulkResult ? { bulkResult: requested.bulkResult } : {}), ...(requested.bulkBusy ? { bulkBusy: true } : {}), page, pages, total: filtered.length, rows, moreHistory, unavailable: unavailable || access.unavailable || hiddenChannels.size > 0 };
+  return { ...view, ...(requested.bulkResult ? { bulkResult: requested.bulkResult } : {}), ...(requested.bulkBusy ? { bulkBusy: true } : {}), page, pages, total: filtered.length, rows, moreHistory, unavailable: unavailable || history?.incomplete || access.unavailable || hiddenChannels.size > 0 };
 }
 
 const liveRootReads = new WeakMap();

@@ -1,5 +1,25 @@
 # ChannelGate — Test Plan
 
+## Activity history indexing and browser button (2026-11-12)
+
+- Automated: `test/home-threads.test.js`, `test/activity.test.js`, `test/activity-page.test.js`,
+  `test/home-tabs.test.js` and `test/home-thread-reader.test.js`. Discover 123 historical roots
+  newest first in batches of 100 and 23; mixed ownership cannot leak rows. Repeat actions do not
+  reread indexed roots; session cleanup and the existing fresh-process regression preserve durable
+  eligibility. Check browser loading/deduplication, exhaustion/retry/expiry, preserved search/filter,
+  Origin/CSRF/session enforcement and revocation during a root lookup. Ordinary browser refreshes
+  stay local; inaccessible channels cannot hide unrelated owned threads.
+- Live acceptance **ACTIVITY-HISTORY-100-01**, engine-independent: use a disposable Slack Home
+  and signed personal browser Activity fixture with 103 gateway-tracked, unindexed roots, mixed
+  ownership and both Claude/Codex session evidence. Click **Load older threads** once in the
+  browser and once in Home. Pass: first action checks at most 100 newest candidates, next continues
+  the remainder, only owned authorized agent threads appear, and no already-indexed root is
+  rediscovered. Reload/restart the disposable gateway and confirm the index remains. Verify
+  Active/Completed and search persist, duplicate clicks cannot start overlapping browser loads,
+  revoked access stops writes and Slack failures permit retry. No engine is spawned by discovery;
+  engine choice cannot affect this control-plane behavior. Private QA definition maintained;
+  live execution remains pending and is not claimed as a pass.
+
 ## Optional terminal-configured provider harnesses (2026-11-12)
 
 - Automated regressions: `test/codex-eu.test.js`, `test/bedrock-engine.test.js` and
