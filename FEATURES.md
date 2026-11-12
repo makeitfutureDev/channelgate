@@ -1,5 +1,17 @@
 # ChannelGate — Features
 
+## Slack thread titles in Activity (2026-11-12)
+
+Renaming an indexed agent thread in Slack updates its title in Slack Home Activity and the live
+browser Activity dashboard, including search. The existing `agent_session_title_changed` event
+updates local state and notifies open dashboards; no history polling, Slack API read or engine
+turn is added. The app must subscribe to this event (included in the supplied manifest).
+Explicit titles survive passive root refreshes and daemon restarts. Duplicate or older events
+cannot replace a newer title; renames leave ownership, completion and last-message dates intact.
+Unknown/unindexed roots are not created from title metadata alone. Changes made before the app
+receives rename events are not backfilled; rename an existing indexed thread again to synchronize it.
+
+
 ## Provider subscription usage (2026-11-11)
 
 Admin → **Subscriptions** (`/subscriptions`) shows the provider-reported quotas of the Claude

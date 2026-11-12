@@ -155,3 +155,27 @@ test("v37 preserves existing credential bytes and handles without guessing owner
     assert.equal(db.prepare("SELECT count(*) AS n FROM admin_identity_links").get().n, 0);
   } finally { db.close(); }
 });
+
+
+test("v47 preserves existing Activity rows and persists explicit Slack session titles", () => {
+  const db = memoryDb();
+  try {
+    for (const migration of migrations.filter((item) => item.version <= 46)) {
+      migration.up(db);
+      db.exec(`PRAGMA user_version = ${migration.version}`);
+    }
+    db.exec("INSERT INTO slack_threads(channel_id,thread_ts,slug,starter_id,title,updated_ms,last_message_ms,done_ms,agent_engaged) VALUES('C1','100.000001','work','U1','Original title',123,456,789,1)");
+    runMigrations(db);
+    const row = db.prepare("SELECT * FROM slack_threads").get();
+    assert.equal(row.title, "Original title");
+    assert.equal(row.starter_id, "U1");
+    assert.equal(row.last_message_ms, 456);
+    assert.equal(row.done_ms, 789);
+    assert.equal(row.agent_engaged, 1);
+    assert.equal(row.session_title, "");
+    assert.equal(row.session_title_ts, 0);
+    db.exec("UPDATE slack_threads SET title='Custom title',session_title='Custom title',session_title_ts=200.000001");
+    runMigrations(db);
+    assert.equal(db.prepare("SELECT session_title FROM slack_threads").get().session_title, "Custom title");
+  } finally { db.close(); }
+});
