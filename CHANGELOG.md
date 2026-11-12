@@ -2,6 +2,9 @@
 
 ## 0.6.5 — candidate, pending approval
 
+- Add ✅ to the exact answer when its conversation owner clicks native 👍 feedback, alongside
+  the existing root check. Reopen still works while the answer keeps its feedback marker.
+
 - Refresh subscription usage every ten minutes through one gateway cache shared by admin and
   Activity viewers, coalescing simultaneous checks and retaining stale readings during rate limits.
 

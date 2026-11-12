@@ -605,7 +605,10 @@ test("native positive feedback cannot forge thread ownership or retain revoked p
   assert.equal(getSlackThread(c.channelId, "100.000001").done_ms, 0);
   assert.equal(markerCalls.length, 0, "rejected feedback must never add a marker");
   assert.equal(await completeThreadFromFeedback({ client, body, parsed }), true);
-  assert.deepEqual(markerCalls, [["add", { channel: c.channelId, timestamp: "100.000001", name: "white_check_mark" }]]);
+  assert.deepEqual(markerCalls, [
+    ["add", { channel: c.channelId, timestamp: "100.000001", name: "white_check_mark" }],
+    ["add", { channel: c.channelId, timestamp: "101.000001", name: "white_check_mark" }],
+  ]);
 });
 
 
@@ -939,7 +942,8 @@ function markerFixture(messages) {
   client.conversations.replies = async () => ({ messages });
   const reaction = (method) => async (args) => {
     markerCalls.push([method, args]);
-    const root = messages[0];
+    const root = messages.find((message) => message.ts === args.timestamp);
+    assert.ok(root, "marker must target an existing message");
     const current = root.reactions?.find((r) => r.name === args.name);
     if (method === "add") {
       if (current?.users?.includes("B_GATEWAY")) throw Object.assign(new Error("duplicate"), { data: { error: "already_reacted" } });
@@ -953,6 +957,56 @@ function markerFixture(messages) {
   client.reactions = { get: async ({ timestamp }) => ({ message: messages.find((m) => m.ts === timestamp) }),
     add: reaction("add"), remove: reaction("remove") };
 }
+
+test("native thumbs-up checks the liked answer once and its decoration cannot re-complete reopened work", async () => {
+  const { completeThreadFromFeedback, syncThreadCompletionReaction } = await import("../src/slack/thread-completion.js");
+  const { threadHasCompletionReaction } = await import("../src/gateway/thread-completion.js");
+  const { syncThreadDoneMarker } = await import("../src/slack/thread-done-marker.js");
+  const c = await channel(); root(c, "100.000001");
+  const messages = [roots.get(`${c.channelId}:100.000001`),
+    { ts: "101.000001", thread_ts: "100.000001", user: "B_GATEWAY" },
+    { ts: "102.000001", thread_ts: "100.000001", user: "B_GATEWAY" }];
+  markerFixture(messages);
+  const input = { client, body: { user: { id: "U_MINE" }, channel: { id: c.channelId }, message: messages[1] },
+    parsed: { verdict: "up", channel: c.channelId, threadTs: "100.000001" } };
+  assert.equal(await completeThreadFromFeedback(input), true);
+  assert.equal(await completeThreadFromFeedback(input), true);
+  for (const message of messages.slice(0, 2)) assert.deepEqual(message.reactions,
+    [{ name: "white_check_mark", count: 1, users: ["B_GATEWAY"] }]);
+  assert.equal(messages[2].reactions, undefined, "unliked answers stay unchanged");
+  setSlackThreadDone(c.channelId, "100.000001", "U_MINE", false);
+  await syncThreadDoneMarker(client, c.channelId, "100.000001");
+  assert.equal(messages[0].reactions[0].count, 0);
+  assert.equal(messages[1].reactions[0].count, 1, "the answer retains its historical feedback marker");
+  assert.equal(await threadHasCompletionReaction(client, c.channelId, "100.000001"), false);
+  await syncThreadCompletionReaction(client, { reaction: "white_check_mark", event_ts: String(Date.now() / 1000),
+    item: { type: "message", channel: c.channelId, ts: "101.000001" } }, { added: true });
+  assert.equal((await homeThreadsSnapshot(client, "U_MINE")).rows[0].status, "idle");
+  messages[1].reactions[0].users.push("U_OTHER"); messages[1].reactions[0].count++;
+  assert.equal(await threadHasCompletionReaction(client, c.channelId, "100.000001"), true, "human checks remain evidence");
+});
+
+for (const errorKind of ["throw", "response"]) test(`liked-answer marker ${errorKind} failure preserves Done and repeated feedback repairs it`, async () => {
+  const { completeThreadFromFeedback } = await import("../src/slack/thread-completion.js");
+  const c = await channel(); root(c, "100.000001");
+  const messages = [roots.get(`${c.channelId}:100.000001`), { ts: "101.000001", thread_ts: "100.000001" }];
+  markerFixture(messages);
+  const add = client.reactions.add;
+  client.reactions.add = async (args) => {
+    if (args.timestamp !== "101.000001") return add(args);
+    if (errorKind === "response") return { ok: false, error: "ratelimited" };
+    throw Object.assign(new Error("rate limited"), { data: { error: "ratelimited" } });
+  };
+  const input = { client, body: { user: { id: "U_MINE" }, channel: { id: c.channelId }, message: messages[1] },
+    parsed: { verdict: "up", channel: c.channelId, threadTs: "100.000001" } };
+  assert.equal(await completeThreadFromFeedback(input), true);
+  assert.ok(getSlackThread(c.channelId, "100.000001").done_ms > 0);
+  assert.equal(messages[0].reactions[0].count, 1);
+  assert.equal(messages[1].reactions, undefined);
+  client.reactions.add = add;
+  assert.equal(await completeThreadFromFeedback(input), true);
+  assert.equal(messages[1].reactions[0].count, 1);
+});
 
 test("reply completion mirrors the root, retries duplicates and removes only the bot check on undo", async () => {
   const { syncThreadCompletionReaction } = await import("../src/slack/thread-completion.js");

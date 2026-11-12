@@ -56,5 +56,17 @@ async function changeThreadFromFeedback({ client, body, parsed }, verdict) {
   const changed = verdict === "down" ? setSlackThreadLater(channelId, threadTs, userId, true)
     : setSlackThreadDone(channelId, threadTs, userId, true);
   if (changed) await syncThreadDoneMarker(client, channelId, threadTs);
+  // The root shows the thread's state; the liked answer also gets visible confirmation.
+  // Only write after the same ownership/access checks, and keep Done if decoration fails.
+  const messageTs = body?.message?.ts;
+  if (changed && verdict === "up" && messageTs && messageTs !== threadTs && getSlackThread(channelId, threadTs)?.completion_mirror_user) {
+    try {
+      const result = await client.reactions.add({ channel: channelId, timestamp: messageTs, name: "white_check_mark" });
+      if (result?.ok === false) throw Object.assign(new Error("Unable to mark liked answer"), { code: result.error });
+    } catch (error) {
+      const code = error.data?.error || error.code;
+      if (code !== "already_reacted") console.error("[slack] liked answer marker failed:", code || "slack_unavailable");
+    }
+  }
   return changed;
 }
