@@ -2,6 +2,8 @@
 
 ## 0.6.5 — candidate, pending approval
 
+- Style Activity’s Open in Slack link as a padded button and replace Browser text with a compact ↗ button.
+
 - Keep conversations open on Slack 👍 emoji reactions, including skin tones. The native positive
   answer-feedback button still marks work done, as do checkmark reactions and Done controls.
 
