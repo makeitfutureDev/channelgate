@@ -59,7 +59,7 @@ export function effectiveWorkDir(slug, meta = {}) {
       // runtime resolver re-checks against other channels' folders and fails the run closed.
       const forbidden = forbiddenWorkDirReason(real, { slug, channels: [] });
       if (forbidden) {
-        console.warn(`[workdir] stored workDir ${w} is ${forbidden} — using the default folder for ${slug}`);
+        warnWorkDirOnce(slug, w, `[workdir] stored workDir ${w} is ${forbidden} — using the default folder for ${slug}`);
       } else {
         try {
           if (statSync(real).isDirectory()) return real;
@@ -68,10 +68,22 @@ export function effectiveWorkDir(slug, meta = {}) {
         }
       }
     } else {
-      console.warn(`[workdir] stored workDir ${w} escapes the allowed root — using the default folder for ${slug}`);
+      warnWorkDirOnce(slug, w, `[workdir] stored workDir ${w} escapes the allowed root — using the default folder for ${slug}`);
     }
   }
   return workspaceFolder(slug, meta.platform);
+}
+
+// effectiveWorkDir is on the hottest path there is (every channel listing resolves every channel
+// through it), so a stale stored workDir is reported once per channel and value, not once per
+// lookup — three such channels in a 140-channel deployment logged ~320 lines a second.
+const warnedWorkDirs = new Set();
+function warnWorkDirOnce(slug, workDir, message) {
+  const key = `${slug}\0${workDir}\0${message}`;
+  if (warnedWorkDirs.has(key)) return;
+  if (warnedWorkDirs.size >= 10_000) warnedWorkDirs.clear();
+  warnedWorkDirs.add(key);
+  console.warn(message);
 }
 import { allowMatchesFor, gatewayToolRefs, namespacesFor } from "./mcp-catalog.js";
 import { applyGatewayGuide } from "./guide.js";
@@ -729,7 +741,10 @@ async function prepareWorkspaceSkills(cwd, backupDir) {
   return skillsDir;
 }
 
-export async function ensureChannelFolder(slug, meta, { runMeta = meta, target = null } = {}) {
+// `workspaceConflictsChecked` is set ONLY by the daemon's own sync pass, which has already checked
+// every destination against every channel once; the per-channel assertion below scans the whole
+// channel list, so running it again per channel makes a full pass quadratic in the deployment.
+export async function ensureChannelFolder(slug, meta, { runMeta = meta, target = null, workspaceConflictsChecked = false } = {}) {
   const { assertWorkspaceSkillsCompatible } = await import("./skills/workspace-sync.js");
   const { getChannelMeta } = await import("../config/store.js");
   const { workspaceSetup } = await import("../config/workspace-links.js");
@@ -737,7 +752,7 @@ export async function ensureChannelFolder(slug, meta, { runMeta = meta, target =
   const storedMeta = await getChannelMeta(slug);
   if (storedMeta?.workspaceLink) meta = { ...meta, ...storedMeta };
   meta = workspaceSetup(meta);
-  await assertWorkspaceSkillsCompatible(slug, meta);
+  if (!workspaceConflictsChecked) await assertWorkspaceSkillsCompatible(slug, meta);
   // Every per-channel path is namespaced by the channel's platform; an unknown/missing one
   // resolves to Slack in the registry, which is what keeps pre-multi-platform rows working.
   const platform = meta?.platform;

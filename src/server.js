@@ -21,7 +21,7 @@ import { getBindHost, hashPassword } from "./web/security.js";
 import { createSlackManager } from "./slack/manager.js";
 import { createBotMembershipRecovery } from "./slack/bot-membership.js";
 import { abortRunsInChannel } from "./slack/message-pipeline.js";
-import { syncWorkspaceSkills } from "./gateway/skills/workspace-sync.js";
+import { syncRestoredWorkspaces } from "./gateway/skills/workspace-sync.js";
 import { createPlatformTransports, connectConfiguredPlatforms } from "./platforms/boot.js";
 import { startScheduler } from "./gateway/scheduler.js";
 import { searchAgentDirectory } from "./gateway/agent-directory.js";
@@ -212,7 +212,9 @@ async function main() {
   membershipRecovery = createBotMembershipRecovery({
     slack,
     onArchived: (row) => abortRunsInChannel(row.channelId, row.slug, "bot_removed"),
-    onVerified: () => syncWorkspaceSkills({ force: true }),
+    // Catch up ONLY the channels this verification restored. The routine five-minute pass must
+    // not rebuild every workspace; the catalog poller already converges unchanged folders cheaply.
+    onVerified: syncRestoredWorkspaces,
   });
   slack.onDisconnected(() => membershipRecovery.invalidate());
   slack.onConnected(() => membershipRecovery.reconcile());
