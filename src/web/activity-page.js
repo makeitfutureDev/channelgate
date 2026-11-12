@@ -8,6 +8,7 @@ import { DEFAULT_ACTIVITY_GROUP_ORDER } from "./activity-order.js";
 function activityBrowser(config, browser, subscriptionUi) {
   "use strict";
   const { base, csrf, defaultGroupOrder } = config;
+  const teamId = typeof config.teamId === "string" && /^[A-Z0-9]{2,32}$/.test(config.teamId) ? config.teamId : "";
   const { document, location, EventSource } = browser;
   const el = (id) => document.getElementById(id);
   const body = el("threads"), search = el("search"), tabs = el("filters");
@@ -160,6 +161,27 @@ function activityBrowser(config, browser, subscriptionUi) {
       anchor.setAttribute("aria-disabled", "true");
     }
   }
+  // The channel name opens the conversation itself in the Slack app (Ctrl/⌘-click: in the browser).
+  // Only a bare Slack team and conversation id are linked; Slack enforces its own access on open.
+  function channelLink(anchor, channelId) {
+    const id = typeof channelId === "string" && /^[CDG][A-Z0-9]{1,32}$/.test(channelId) ? channelId : "";
+    const name = anchor.textContent;
+    if (teamId && id) {
+      anchor.href = "slack://channel?team=" + teamId + "&id=" + id;
+      anchor.target = "_self";
+      anchor.rel = "noopener noreferrer";
+      anchor.dataset.web = "https://app.slack.com/client/" + teamId + "/" + id;
+      anchor.removeAttribute("aria-disabled");
+      anchor.setAttribute("aria-label", "Open " + name + " in Slack");
+      anchor.title = "Open " + name + " in Slack · Ctrl/⌘-click opens it in the browser";
+    } else {
+      anchor.removeAttribute("href");
+      anchor.dataset.web = "";
+      anchor.setAttribute("aria-disabled", "true");
+      anchor.removeAttribute("aria-label");
+      anchor.title = name;
+    }
+  }
   function connection() {
     const stale = lastUpdated && Date.now() - lastUpdated > 90_000;
     el("connection").className = "connection " + (ended ? "offline" : connected && !stale ? "live" : "reconnecting");
@@ -212,7 +234,8 @@ function activityBrowser(config, browser, subscriptionUi) {
     const tr = node("tr");
     const titleCell = node("td", "thread-cell"), title = node("a", "thread-title");
     titleCell.append(title);
-    const channel = node("td", "channel-cell");
+    const channelCell = node("td", "channel-cell"), channel = node("a", "channel-link");
+    channelCell.append(channel);
     const statusCell = node("td", "status-cell"), pill = node("span", "pill");
     const dot = node("span", "status-dot"), statusText = node("span"), elapsed = node("span", "elapsed");
     dot.setAttribute("aria-hidden", "true");
@@ -228,7 +251,7 @@ function activityBrowser(config, browser, subscriptionUi) {
     const links = node("div", "action-links"), state = node("div", "action-state");
     links.append(open); state.append(toggle, delay);
     actions.append(links, state);
-    tr.append(titleCell, channel, statusCell, timeCell, actions);
+    tr.append(titleCell, channelCell, statusCell, timeCell, actions);
     return { tr, title, channel, pill, statusText, elapsed, time, open, toggle, delay, since: 0, stamp: 0 };
   }
   function matches(row) {
@@ -298,7 +321,7 @@ function activityBrowser(config, browser, subscriptionUi) {
       entry.title.title = title;
       link(entry.title, url, app);
       entry.channel.textContent = String(row.channelName || "Conversation");
-      entry.channel.title = entry.channel.textContent;
+      channelLink(entry.channel, row.channelId);
       entry.tr.className = "row s-" + row.status;
       // Status groups are labelled on their first row, so every tbody child stays a conversation.
       if (index === 0 || shown[index - 1].status !== row.status) entry.tr.dataset.group = states[row.status] + " · " + groupSize[row.status];
@@ -486,6 +509,12 @@ function activityBrowser(config, browser, subscriptionUi) {
     if (anchor?.href && anchor.dataset.app === "1" && (event.metaKey || event.ctrlKey)) {
       event.preventDefault();
       browser.open?.(anchor.href + "?browser=1", "_blank", "noopener,noreferrer");
+      return;
+    }
+    const channelAnchor = event.target.closest?.("a.channel-link");
+    if (channelAnchor?.href && channelAnchor.dataset.web && (event.metaKey || event.ctrlKey)) {
+      event.preventDefault();
+      browser.open?.(channelAnchor.dataset.web, "_blank", "noopener,noreferrer");
     }
   });
   const themeButton = el("theme-toggle"), root = document.documentElement, scheme = browser.matchMedia?.("(prefers-color-scheme: light)");
@@ -564,15 +593,16 @@ const LIGHT = `color-scheme:light;
   --orange:#f0531c;--orange-soft:rgba(240,83,28,.16);--brand-ink:#fff;--teal:#eaeee8;
   --s-working:#1f6fd6;--s-waiting:#a8690a;--s-error:#d33434;--s-idle:#6f7d79;--s-later:#8a3fd1;--s-done:#23874d;
   --ok:#23874d;--warn:#c07c10;--danger:#d33434;--tint:11%;--shadow:rgba(16,32,28,.18);`;
+// The ChannelGate gate mark (as on channelgate.dev), inline so it needs no extra request or CSP source.
+const CHANNELGATE_LOGO = `<svg viewBox="0 0 48 48" focusable="false"><rect width="48" height="48" rx="12" fill="#ff642f"/><g transform="translate(6 6)" fill="#18382b"><path d="M3 30V15a15 15 0 0 1 30 0v15h-7V15a8 8 0 0 0-16 0v15Z"/><path d="M14 30V15a4 4 0 0 1 8 0v15Z"/></g></svg>`;
 const escapeHtml = (value) => String(value ?? "").replace(/[&<>"']/g, (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[char]);
 
-export function activityPage({ sessionId, csrf, view = "activity", agent = "", theme = "system" }) {
+export function activityPage({ sessionId, csrf, view = "activity", agent = "", theme = "system", teamId = "" }) {
   const subscriptionsView = view === "subscriptions";
   const base = `/activity/${encodeURIComponent(sessionId)}`;
   const nonce = crypto.randomBytes(16).toString("base64url");
-  const config = JSON.stringify({ base, csrf, view, defaultGroupOrder: DEFAULT_ACTIVITY_GROUP_ORDER }).replaceAll("<", "\\u003c");
+  const config = JSON.stringify({ base, csrf, view, teamId: /^[A-Z0-9]{2,32}$/.test(String(teamId)) ? String(teamId) : "", defaultGroupOrder: DEFAULT_ACTIVITY_GROUP_ORDER }).replaceAll("<", "\\u003c");
   const agentName = String(agent || "").trim() || "ChannelGate";
-  const initial = Array.from(agentName)[0]?.toLocaleUpperCase() || "#";
   const pinned = theme === "dark" || theme === "light" ? ` data-theme="${theme}"` : "";
   const filters = [["active", "Active"], ["working", "Working"], ["waiting", "Waiting"], ["error", "Error"], ["idle", "Idle"], ["later", "Later"], ["done", "Completed"], ["open", "All open"]];
   return { nonce, html: `<!doctype html>
@@ -591,7 +621,7 @@ a:hover{text-decoration:none}
 .s-working,.pill.working{--c:var(--s-working)}.s-waiting,.pill.waiting{--c:var(--s-waiting)}.s-error,.pill.error{--c:var(--s-error)}.s-idle,.pill.idle{--c:var(--s-idle)}.s-later,.pill.later{--c:var(--s-later)}.s-done,.pill.done{--c:var(--s-done)}
 .top{position:sticky;top:0;z-index:5;display:flex;align-items:center;flex-wrap:wrap;gap:8px 14px;min-height:52px;padding:8px 16px;background:color-mix(in srgb,var(--bg) 92%,transparent);backdrop-filter:blur(8px);border-bottom:1px solid var(--line)}
 .agent{display:flex;align-items:center;gap:10px;min-width:0;margin-right:auto}
-.agent-mark{position:relative;display:grid;place-items:center;flex:none;width:28px;height:28px;border-radius:8px;background:var(--orange);color:var(--brand-ink);font-weight:700;font-size:14px}
+.agent-mark{display:block;flex:none;width:28px;height:28px}.agent-mark svg{display:block;width:100%;height:100%}
 .agent-name{display:block;font-size:14px;font-weight:600;line-height:1.15;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:220px}
 .connection{display:flex;align-items:center;gap:6px;white-space:nowrap;font-family:var(--mono);font-size:10px;letter-spacing:.06em;text-transform:uppercase;color:var(--faint)}
 .connection::before{content:"";width:6px;height:6px;background:var(--warn);border-radius:50%}
@@ -635,10 +665,10 @@ input::placeholder{color:var(--faint)}
 .notice{margin:10px 14px 0;padding:9px 12px;border:1px solid color-mix(in srgb,var(--warn) 40%,transparent);background:color-mix(in srgb,var(--warn) 12%,transparent);color:var(--ink);border-radius:8px;font-size:12.5px}
 table{display:block;width:100%;border-collapse:collapse}
 thead,tbody{display:block}
-thead tr,tbody tr{display:grid;grid-template-columns:minmax(0,1fr) minmax(120px,190px) 132px 56px 104px;align-items:center;column-gap:14px;padding:0 16px}
+thead tr,tbody tr{display:grid;grid-template-columns:minmax(0,1fr) minmax(120px,190px) 124px 44px 104px;align-items:center;column-gap:12px;padding:0 16px}
 thead tr{height:30px;border-bottom:1px solid var(--line)}
 th{padding:0;font:400 10px var(--mono);letter-spacing:.12em;text-transform:uppercase;color:var(--faint);text-align:left}
-th:nth-child(4){text-align:right}
+th:last-child{text-align:right}
 td{display:block;padding:0;border:0;min-width:0}
 tbody tr{min-height:40px;border-bottom:1px solid var(--line-soft);background-image:linear-gradient(90deg,var(--c) 0 3px,transparent 3px)}
 tbody tr:nth-child(even){background-color:var(--band)}
@@ -650,13 +680,15 @@ tbody tr.s-waiting[data-group]::before,tbody tr.s-error[data-group]::before{colo
 .s-idle .thread-title,.s-later .thread-title,.s-done .thread-title{color:var(--ink-2)}
 .thread-title:hover{color:var(--ink);text-decoration:underline}
 .channel-cell{font:11px var(--mono);color:var(--faint);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.channel-link{color:inherit}
+.channel-link[href]:hover{color:var(--ink);text-decoration:underline}
 .status-cell{min-width:0}
 .pill{display:inline-flex;align-items:center;gap:6px;max-width:100%;height:22px;padding:0 9px;border-radius:999px;font-size:11.5px;font-weight:500;white-space:nowrap;color:var(--c);background:color-mix(in srgb,var(--c) var(--tint),transparent);border:1px solid color-mix(in srgb,var(--c) 28%,transparent)}
 .status-dot{flex:none;width:6px;height:6px;border-radius:50%;background:currentColor}
 .pill.working .status-dot{animation:pulse 1.6s infinite}
-.elapsed{font:10.5px var(--mono);opacity:.9}
+.elapsed{font:10px var(--mono);opacity:.9}
 @keyframes pulse{0%{box-shadow:0 0 0 0 color-mix(in srgb,var(--c) 60%,transparent)}100%{box-shadow:0 0 0 6px transparent}}
-.time-cell{font:11px var(--mono);color:var(--muted);text-align:right;white-space:nowrap}
+.time-cell{font:11px var(--mono);color:var(--muted);text-align:left;white-space:nowrap}
 .actions{display:flex;justify-content:flex-end;gap:4px;opacity:0;transition:opacity .12s}
 tbody tr:hover .actions,tbody tr:focus-within .actions,.s-waiting .actions,.s-error .actions{opacity:1}
 .action-links,.action-state{display:flex;gap:4px;margin:0}
@@ -692,7 +724,7 @@ tbody tr:hover .actions,tbody tr:focus-within .actions,.s-waiting .actions,.s-er
 @media(prefers-reduced-motion:reduce){.pill.working .status-dot{animation:none}.actions{transition:none}}
 @media(hover:none){.actions{opacity:1}}
 @media(max-width:980px){
-  thead tr,tbody tr{grid-template-columns:minmax(0,1fr) 128px 48px 104px}
+  thead tr,tbody tr{grid-template-columns:minmax(0,1fr) 124px 44px 104px}
   .channel-cell,th:nth-child(2){display:none}
 }
 @media(max-width:640px){
@@ -710,7 +742,7 @@ tbody tr:hover .actions,tbody tr:focus-within .actions,.s-waiting .actions,.s-er
   tbody tr[data-group]::before{margin:-9px -12px 4px;padding:0 12px}
   .thread-cell{grid-column:1/3;grid-row:2;padding:0}
   tbody tr[data-group] .thread-cell{grid-row:2}
-  .time-cell{grid-column:3;grid-row:2}
+  .time-cell{grid-column:3;grid-row:2;text-align:right}
   .status-cell{grid-column:1;grid-row:3}
   .channel-cell{display:block;grid-column:2;grid-row:3}
   .actions{grid-column:3;grid-row:3}
@@ -720,7 +752,7 @@ tbody tr:hover .actions,tbody tr:focus-within .actions,.s-waiting .actions,.s-er
   .open-link,.toggle{width:32px;height:32px}
 }
 </style></head><body>
-<header class="top"><div class="agent"><span class="agent-mark" aria-hidden="true">${escapeHtml(initial)}</span><div><span class="agent-name">${escapeHtml(agentName)}</span><div id="connection" class="connection reconnecting" role="status"><span id="connection-text">Connecting…</span></div></div></div>
+<header class="top"><div class="agent"><span class="agent-mark" aria-hidden="true">${CHANNELGATE_LOGO}</span><div><span class="agent-name">${escapeHtml(agentName)}</span><div id="connection" class="connection reconnecting" role="status"><span id="connection-text">Connecting…</span></div></div></div>
 ${subscriptionsView ? "" : '<div id="subscription-quick" class="subscription-quick-list" aria-label="Subscription usage" hidden></div><div id="subscriptions-notice" role="status" aria-live="polite"></div>'}
 <nav class="page-nav" aria-label="Dashboard"><a href="${base}"${!subscriptionsView ? ' aria-current="page"' : ''}>Activity</a><a href="${base}/subscriptions"${subscriptionsView ? ' aria-current="page"' : ''}>Subscriptions</a></nav>
 <button id="theme-toggle" class="icon-button" type="button" aria-label="Switch theme" title="Switch theme"></button></header>
@@ -732,7 +764,7 @@ ${subscriptionsView ? `<section class="subscriptions-page" aria-label="Subscript
 <section aria-label="Conversations"><div class="bar"><div id="filters" class="filters" role="group" aria-label="Filter by status">${filters.map(([value, label]) => `<button type="button" class="s-${value}" data-filter="${value}" aria-pressed="${value === "active"}">${["working", "waiting", "error", "idle", "later", "done"].includes(value) ? '<i aria-hidden="true"></i>' : ""}${label}<span>0</span></button>`).join("")}</div>
 <div class="search-wrap"><label class="search-label" for="search">Search conversations or channels</label><input type="search" id="search" placeholder="Filter threads…" autocomplete="off" maxlength="300"></div></div>
 <div id="notice" class="notice" role="alert" hidden></div>
-<table id="table" hidden><thead><tr><th scope="col">Conversation</th><th scope="col">Channel</th><th scope="col">Status</th><th scope="col">Last</th><th scope="col"><span class="search-label">Actions</span></th></tr></thead><tbody id="threads"></tbody></table>
+<table id="table" hidden><thead><tr><th scope="col">Conversation</th><th scope="col">Channel</th><th scope="col">Status</th><th scope="col">Last</th><th scope="col">Actions</th></tr></thead><tbody id="threads"></tbody></table>
 <div id="empty" class="empty" role="status"><div class="empty-symbol" aria-hidden="true">◎</div><h2 id="empty-title">Loading your activity…</h2><p id="empty-copy">Your latest conversations will appear here.</p></div>
 <noscript><p class="js-needed">Enable JavaScript to view live activity.</p></noscript></section>
 <footer class="footer"><div class="footer-actions"><span id="summary" class="summary">Loading activity…</span><button id="group-order" class="link-button" type="button" aria-haspopup="dialog">⇅ Group order</button><button id="mark-all-done" class="link-button" type="button" aria-haspopup="dialog" disabled>✓ Mark All Done</button><button id="load-history" class="link-button" type="button" disabled>Load older threads</button></div><div class="footer-actions"><span id="result-count"></span><span id="updated">Waiting for updates</span></div></footer>
