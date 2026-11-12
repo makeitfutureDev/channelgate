@@ -34,18 +34,24 @@ function harness({ processMessage, botUserId = BOT } = {}) {
   const actions = new Map();
   const views = new Map();
   const opened = [];
+  const updated = [];
   const ephemeral = [];
   const dispatched = [];
   const members = new Set([OWNER, MEMBER]);
   const client = {
-    views: { open: async (request) => { opened.push(request); return { ok: true }; } },
+    views: {
+      open: async (request) => { opened.push(request); return { ok: true, view: { id: `V${opened.length}`, hash: "h1" } }; },
+      update: async (request) => { updated.push(request); return { ok: true, view: { id: request.view_id } }; },
+    },
     chat: { postEphemeral: async (request) => { ephemeral.push(request); return { ok: true }; } },
     conversations: { members: async () => ({ members: [...members], response_metadata: {} }) },
   };
   registerReplyForkActions({ action: (id, handler) => actions.set(id, handler), view: (id, handler) => views.set(id, handler) },
     processMessage || (async (...args) => { dispatched.push(args); }), { botUserId, teamId: TEAM });
   return {
-    actions, views, opened, ephemeral, dispatched, client, members,
+    actions, views, opened, updated, ephemeral, dispatched, client, members,
+    // The modal a clicker sees last: the filled form, or the refusal that replaced the loading view.
+    shown: () => updated.at(-1)?.view,
     async open({ user = OWNER, channel = CHANNEL, owner = OWNER, mutate = () => {} } = {}) {
       let acknowledgements = 0;
       const body = { user: { id: user }, team: { id: TEAM }, channel: { id: channel },
@@ -55,7 +61,8 @@ function harness({ processMessage, botUserId = BOT } = {}) {
       mutate(body, action);
       await actions.get(FORK_ACTION_ID)({ ack: async () => { acknowledgements++; }, body, action, client });
       assert.equal(acknowledgements, 1);
-      return opened.at(-1)?.view;
+      const shown = updated.at(-1)?.view;
+      return shown?.callback_id ? shown : undefined;
     },
     async submit(view, { user = OWNER, teamId = TEAM, message = "Take another approach" } = {}) {
       const acknowledgements = [];
@@ -89,7 +96,9 @@ test("Fork opens a bounded form and dispatches the selected reply's cutoff under
 test("reply owner binding rejects other members and permits an authorized admin as themselves", async () => {
   const h = harness();
   assert.equal(await h.open({ user: MEMBER }), undefined);
-  assert.match(h.ephemeral[0].text, /not authorized/);
+  assert.match(h.shown().blocks[0].text.text, /not authorized/);
+  assert.equal(h.shown().submit, undefined);
+  assert.equal(h.ephemeral.length, 0);
   const view = await h.open({ user: ADMIN });
   await h.submit(view, { user: ADMIN });
   assert.equal(h.dispatched[0][0].user, ADMIN);
@@ -133,8 +142,9 @@ test("code-channel buttons give an explicit refusal for top-level and threaded r
         action.value = JSON.stringify({ c: channel, t: "", u: OWNER });
       }
     } });
-    assert.equal(h.opened.length, 0);
-    assert.match(h.ephemeral[0].text, /Code channels share one session/);
+    assert.equal(h.opened.length, 1);
+    assert.match(h.shown().blocks[0].text.text, /Code channels share one session/);
+    assert.equal(h.shown().submit, undefined);
     assert.equal(h.dispatched.length, 0);
   }
 });
@@ -169,7 +179,8 @@ test("private Slack membership is checked for members and admins", async () => {
   h.members.clear();
   assert.equal(await h.open({ channel }), undefined);
   assert.equal(await h.open({ channel, user: ADMIN }), undefined);
-  assert.equal(h.opened.length, 0);
+  assert.equal(h.opened.length, 2);
+  assert.match(h.shown().blocks[0].text.text, /not authorized/);
   h.members.add(OWNER);
   const view = await h.open({ channel });
   await h.submit(view);
@@ -204,7 +215,7 @@ test("sudo sources are refused for admins on both opening and submission", async
   const h = harness();
   await setThreadSudo(slug, THREAD, true);
   assert.equal(await h.open({ user: ADMIN }), undefined);
-  assert.match(h.ephemeral.at(-1).text, /sudo thread cannot be forked/);
+  assert.match(h.shown().blocks[0].text.text, /sudo thread cannot be forked/);
   await setThreadSudo(slug, THREAD, false);
   const view = await h.open({ user: ADMIN });
   await setThreadSudo(slug, THREAD, true);
@@ -247,20 +258,57 @@ test("abandoned forms are bounded to 500 and evict the oldest token", async () =
   const oldest = await h.open();
   for (let i = 0; i < 500; i++) await h.open();
   assert.equal((await h.submit(oldest)).response_action, "errors");
-  await h.submit(h.opened.at(-1).view);
+  await h.submit(h.shown());
   assert.equal(h.dispatched.length, 1);
 });
 
-test("a failed modal open invalidates its draft and hides the underlying error", async () => {
+test("a failed modal open stores no draft, hides the underlying error and logs only Slack's code", async () => {
   const h = harness();
   h.client.views.open = async (request) => {
     h.opened.push(request);
-    throw new Error("private-trigger-and-api-key");
+    throw Object.assign(new Error("private-trigger-and-api-key"), { code: "slack_webapi_platform_error", data: { error: "expired_trigger_id" } });
   };
-  const view = await h.open();
-  assert.equal((await h.submit(view)).response_action, "errors");
+  assert.equal(await h.open(), undefined);
+  assert.equal(h.updated.length, 0);
   assert.match(h.ephemeral[0].text, /Couldn't open Fork/);
   assert.doesNotMatch(h.ephemeral[0].text, /private-trigger-and-api-key/);
+  const event = getDb().prepare("SELECT data FROM events WHERE event = 'reply_fork_open_failed' ORDER BY id DESC LIMIT 1").get();
+  assert.deepEqual(JSON.parse(event.data), { stage: "open", error: "expired_trigger_id" });
+});
+
+test("the trigger is consumed by a loading modal before any store or Slack read, then filled in place", async () => {
+  const h = harness();
+  const order = [];
+  h.client.conversations.members = async () => { order.push("members"); return { members: [OWNER], response_metadata: {} }; };
+  const open = h.client.views.open;
+  h.client.views.open = async (request) => { order.push("open"); return open(request); };
+  const channel = "G_FORK_ORDER";
+  const entry = await upsertChannelEntry(channel, { name: "order", type: "group" });
+  await saveChannelMeta(entry.slug, { channelId: channel, type: "group", access: "approved" });
+  const view = await h.open({ channel });
+  assert.deepEqual(order, ["open", "members"]);
+  assert.equal(h.opened[0].trigger_id, "trigger");
+  assert.equal(h.opened[0].view.submit, undefined);
+  assert.match(h.opened[0].view.blocks[0].text.text, /Checking your access/);
+  assert.deepEqual(h.updated.map((u) => [u.view_id, u.hash]), [["V1", "h1"]]);
+  assert.equal(view.callback_id, "cg_reply_fork_submit");
+  await h.submit(view);
+  assert.equal(h.dispatched.length, 1);
+});
+
+test("a failed form fill invalidates its draft and replaces the modal with a retry notice", async () => {
+  const h = harness();
+  const calls = [];
+  h.client.views.update = async (request) => {
+    calls.push(request.view.blocks[0].text.text);
+    if (calls.length === 1) throw Object.assign(new Error("private-payload"), { data: { error: "view_update_failed" } });
+    return { ok: true };
+  };
+  assert.equal(await h.open(), undefined);
+  assert.match(calls[1], /Couldn't open Fork/);
+  assert.match(h.ephemeral[0].text, /Couldn't open Fork/);
+  assert.doesNotMatch(h.ephemeral[0].text, /private-payload/);
+  assert.equal(h.opened[0].view.private_metadata, undefined);
 });
 
 test("failed dispatches report a fixed error without exposing API payloads", async () => {
