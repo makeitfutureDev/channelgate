@@ -2,6 +2,8 @@
 
 ## 0.6.5 — candidate, pending approval
 
+- Show the subscription login email and selected workspace on both admin and user quota cards,
+  keeping normal Codex and Codex EU identities separate.
 - Add a Later section to My Activity with Delay for later and Resume. The conversation owner's
   native thumbs-down answer feedback also postpones the thread; running work continues.
 

@@ -30,6 +30,9 @@ export function createSubscriptionUi() {
   function card(row) {
     const labels = { ok: "Connected", expired: "Login expired", "not-connected": "Not connected", "api-key": "API billing", unavailable: "Usage unavailable", unsupported: "Not supported" };
     const status = Object.hasOwn(labels, row.status) ? row.status : "unavailable";
+    const email = typeof row.account?.email === "string" ? row.account.email : "";
+    const workspace = typeof row.account?.workspace === "string" ? row.account.workspace : "";
+    const account = isSubscription(row) ? `<div class="subscription-account"><span>${email ? esc(email) : "Account unavailable"}</span>${workspace ? `<span class="subscription-workspace">${esc(workspace)}</span>` : ""}</div>` : "";
     const limits = windows(row).map((window) => `<div class="subscription-window ${severity(window.usedPercent)}"><div class="subscription-window-head"><span>${esc(window.label)}</span>${meter(window)}</div><div class="subscription-window-foot">${esc(reset(window.resetsAt))}</div></div>`).join("");
     const credits = row.resetCredits;
     const creditRows = (Array.isArray(credits?.resets) ? credits.resets : []).filter((item) => item && typeof item === "object");
@@ -43,7 +46,7 @@ export function createSubscriptionUi() {
     const resets = credits && Number.isSafeInteger(credits.available) && credits.available >= 0
       ? `<div class="subscription-resets"><div><span>Usage limit resets</span><strong>${credits.available} ${banked ? "remaining" : "available"}</strong></div>${resetRows}${credits.available > 0 && creditRows.length === 0 ? "<p>Reset expiry unavailable</p>" : ""}</div>` : "";
     const subscriptionExpiry = row.expiresAt && Number.isFinite(Date.parse(row.expiresAt)) ? `<p class="subscription-expiry">Subscription expires ${esc(expiry(row.expiresAt))}</p>` : "";
-    return `<article class="subscription-card${row.stale ? " stale" : ""}"><div class="subscription-card-head"><h3>${esc(row.name)}</h3><span class="subscription-plan">${esc(row.plan || labels[status])}</span></div>${row.stale || status !== "ok" ? `<p class="subscription-status ${status}">${row.stale ? "Stale data · " : ""}${labels[status]}</p>` : ""}${row.message ? `<p class="subscription-message">${esc(row.message)}</p>` : ""}${limits || '<p class="subscription-message">No subscription usage data available.</p>'}${resets}${subscriptionExpiry}<p class="subscription-updated">Updated ${esc(stamp(row.updatedAt))}${row.stale ? ` · Last check ${esc(stamp(row.checkedAt))}` : ""}</p></article>`;
+    return `<article class="subscription-card${row.stale ? " stale" : ""}"><div class="subscription-card-head"><h3>${esc(row.name)}</h3><span class="subscription-plan">${esc(row.plan || labels[status])}</span></div>${account}${row.stale || status !== "ok" ? `<p class="subscription-status ${status}">${row.stale ? "Stale data · " : ""}${labels[status]}</p>` : ""}${row.message ? `<p class="subscription-message">${esc(row.message)}</p>` : ""}${limits || '<p class="subscription-message">No subscription usage data available.</p>'}${resets}${subscriptionExpiry}<p class="subscription-updated">Updated ${esc(stamp(row.updatedAt))}${row.stale ? ` · Last check ${esc(stamp(row.checkedAt))}` : ""}</p></article>`;
   }
   return { card, summary, reset, isSubscription };
 }
@@ -52,6 +55,7 @@ export const SUBSCRIPTION_CSS = `
 .subscription-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,310px),1fr));gap:14px;margin:20px 0;align-items:start}
 .subscription-card{min-width:0;padding:16px 18px;background:var(--panel);border:1px solid var(--line);border-radius:10px}
 .subscription-card-head{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:12px}.subscription-card h3{font-size:15px;line-height:1.4;margin:0;font-weight:600}
+.subscription-account{display:flex;flex-direction:column;gap:2px;margin:-5px 0 12px;color:var(--muted);font-size:11px;overflow-wrap:anywhere}.subscription-workspace{font-size:10px;opacity:.8}
 .subscription-plan{color:var(--muted);font-size:10px;border:1px solid var(--line);border-radius:20px;padding:2px 8px;max-width:60%;overflow-wrap:anywhere;text-transform:capitalize}
 .subscription-status,.subscription-message{color:var(--muted);font-size:11px;margin:8px 0}.subscription-status.expired{color:var(--danger)}
 .subscription-window{margin-top:12px}.subscription-window-head{display:grid;grid-template-columns:minmax(80px,1fr) minmax(55px,1fr) auto;align-items:center;gap:10px;font-size:12px;color:var(--muted)}

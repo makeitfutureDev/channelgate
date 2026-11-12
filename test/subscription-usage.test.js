@@ -10,7 +10,7 @@ ensureTestEnv();
 // reader before restoring normal fetch for the local HTTP client below.
 const localFetch = globalThis.fetch;
 globalThis.fetch = async () => { throw new Error("Provider networking is disabled in this fixture"); };
-const { createSubscriptionUsageReader: createReader, createDaemonSubscriptionCredentials, normalizeSubscriptionUsage } = await import("../src/gateway/subscription-usage.js");
+const { createSubscriptionUsageReader: createReader, createDaemonSubscriptionCredentials, codexSubscriptionAccount, codexSubscriptionWorkspace, normalizeSubscriptionUsage } = await import("../src/gateway/subscription-usage.js");
 globalThis.fetch = localFetch;
 const { createSubscriptionsRouter } = await import("../src/web/routes/subscriptions.js");
 const { createSubscriptionPoller, subscriptionCard, subscriptionReset } = await import("../public/admin-subscriptions.js");
@@ -565,4 +565,63 @@ test("Claude reset grants preserve banked counts, usability and grant expiry wit
   assert.doesNotMatch(JSON.stringify(result), /private-reset-id|2026-12-08/);
   assert.deepEqual(normalizeSubscriptionUsage("claude", { cedar_ember: { grants: [] } }).resetCredits, { available: 0, resets: [] });
   assert.equal(normalizeSubscriptionUsage("claude", { cedar_ember: {} }).resetCredits, undefined);
+});
+
+test("Codex identity comes from its own token and only the exact selected workspace", () => {
+  const jwt = (claims) => `header.${Buffer.from(JSON.stringify(claims)).toString("base64url")}.signature`;
+  const auth = "https://api.openai.com/auth";
+  const token = jwt({ sub: "fixture-user", "https://api.openai.com/profile": { email: "selected@example.com" }, [auth]: { chatgpt_account_id: "selected" } });
+  const idToken = jwt({ sub: "fixture-user", email: "fallback@example.com", [auth]: { chatgpt_account_id: "selected", organizations: [{ id: "other", is_default: true, title: "Unrelated workspace" }, { id: "selected", title: "Selected workspace" }] } });
+  assert.deepEqual(codexSubscriptionAccount({ token, idToken, accountId: "selected" }), { email: "selected@example.com", workspace: "Selected workspace" });
+  assert.deepEqual(codexSubscriptionAccount({ token, idToken, accountId: "different" }), { email: "selected@example.com", workspace: "" });
+  assert.deepEqual(codexSubscriptionAccount({ token: "invalid", idToken }), { email: "", workspace: "" });
+  assert.equal(codexSubscriptionWorkspace({ accounts: [{ id: "other", name: "Wrong" }, { id: "selected", name: "Right" }] }, "selected"), "Right");
+  assert.equal(codexSubscriptionWorkspace({ accounts: { selected: { account: { account_id: "wrong", name: "Wrong" } }, other: { account: { account_id: "selected", name: "Right" } } } }, "selected"), "Right");
+  assert.equal(codexSubscriptionWorkspace({ accounts: [{ id: "selected", name: "A" }, { id: "selected", name: "B" }] }, "selected"), "");
+  assert.equal(codexSubscriptionWorkspace({ accounts: [{ id: "other", is_default: true, name: "Wrong" }] }, "selected"), "");
+});
+
+test("subscription cards get only allowlisted profile email/workspace from the same login", async () => {
+  const requests = [];
+  const read = createSubscriptionUsageReader({ engines: () => ["claude", "codex", "codex-eu"], now: () => START,
+    credentials(engine) { return { ...connected(engine), profile: engine === "claude" ? "claude" : "codex", accountId: engine }; },
+    async fetchImpl(url, options) {
+      const engine = options.headers["ChatGPT-Account-Id"];
+      requests.push({ url, options });
+      if (url.endsWith("/profile")) return success({ account: { email: "claude@example.com", uuid: "private-claude-id", token: "private-token" }, organization: { name: "Claude workspace", uuid: "private-org-id" } });
+      if (url.endsWith("/accounts/check")) return success({ accounts: [{ id: "other", name: "Do not select" }, { id: engine, name: `${engine} workspace`, api_key: "private-key" }] });
+      return success(url.includes("anthropic") ? claudeBody() : { ...codexBody(), email: `${engine}@example.com`, account_id: "private-account-id", user_id: "private-user-id" });
+    } });
+  const result = await read();
+  assert.deepEqual(result.subscriptions.map((row) => row.account), [
+    { email: "claude@example.com", workspace: "Claude workspace" },
+    { email: "codex@example.com", workspace: "codex workspace" },
+    { email: "codex-eu@example.com", workspace: "codex-eu workspace" },
+  ]);
+  assert.equal(requests.length, 6);
+  for (const request of requests.filter((row) => /profile|accounts\/check/.test(row.url))) {
+    assert.equal(request.options.redirect, "error");
+    assert.equal(request.options.headers.Authorization, `Bearer fixture-${request.url.includes("anthropic") ? "claude" : request.options.headers["ChatGPT-Account-Id"]}-access`);
+  }
+  assert.doesNotMatch(JSON.stringify(result), /private-|fixture-.*access|Do not select|account_id|uuid|Authorization/);
+  await read(); assert.equal(requests.length, 6, "profile reads share the quota cache");
+});
+
+test("profile failures leave quota usable and identity changes invalidate cached labels without leaking old identities", async () => {
+  let email = "first@example.com", disconnected = false, calls = 0;
+  const read = createSubscriptionUsageReader({ engines: () => ["codex"], now: () => START,
+    credentials() { return { ...connected("codex"), kind: disconnected ? "none" : "subscription", profile: "codex", account: { email, workspace: "" } }; },
+    async fetchImpl(url) { calls++; if (url.endsWith("/accounts/check")) throw Error("private-profile-secret"); return success(codexBody()); } });
+  assert.deepEqual(forProvider(await read(), "codex").account, { email: "first@example.com", workspace: "" });
+  email = "second@example.com";
+  const changed = forProvider(await read(), "codex");
+  assert.equal(changed.status, "ok");
+  assert.equal(changed.account.email, email);
+  assert.equal(calls, 4);
+  disconnected = true;
+  assert.deepEqual(forProvider(await read(), "codex").account, { email: "", workspace: "" });
+  const html = subscriptionCard({ ...changed, account: { email: '<img src=x onerror="alert(1)">', workspace: '<script>alert(1)</script>' } });
+  assert.doesNotMatch(html, /<img|<script>/);
+  assert.match(html, /&lt;img/);
+  assert.match(subscriptionCard({ ...changed, account: {} }), /Account unavailable/);
 });
