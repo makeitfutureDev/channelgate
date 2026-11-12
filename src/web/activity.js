@@ -16,7 +16,7 @@ import { isSlackTs } from "../slack/thread-keys.js";
 import { isLoopbackHost, timingSafeEqualStr } from "./security.js";
 import { readSubscriptionUsage } from "../gateway/subscription-usage.js";
 import { activityPage } from "./activity-page.js";
-import { activityGroupOrder, activityGroupOrderVersion, validActivityGroupOrder } from "./activity-order.js";
+import { activityGroupOrder, activityGroupOrderVersion, validActivityGroupOrder, ACTIVITY_THEMES, activityTheme } from "./activity-order.js";
 import { ACTIVITY_THEME_CSS, ACTIVITY_BRAND } from "./activity-theme.js";
 
 export const ACTIVITY_GRANT_TTL_MS = 10 * 60_000;
@@ -102,7 +102,7 @@ export function resetActivityStateForTests() {
 }
 
 export function createActivityRouter({
-  getClient, getTeamId, getBaseUrl = getPublicUrl,
+  getClient, getTeamId, getBaseUrl = getPublicUrl, getBotIdentity = () => null,
   snapshot = activityThreadSnapshot, refreshKey = homeThreadsRefreshKey, readSubscriptions = readSubscriptionUsage,
   now = Date.now, pollMs = 1000, accessRefreshMs = 15_000, maxStreams = 100, drainTimeoutMs = 30_000,
 } = {}) {
@@ -159,6 +159,7 @@ export function createActivityRouter({
     return {
       rows: data.rows.map((row) => ({ channelId: row.channel_id, threadTs: row.thread_ts,
         title: row.title, channelName: row.channelName, status: row.status, lastMessageMs: row.last_message_ms,
+        ...(Number.isSafeInteger(row.working_since_ms) ? { workingSinceMs: row.working_since_ms } : {}),
         url: `/activity/${id}/open/${encodeURIComponent(row.channel_id)}/${encodeURIComponent(row.thread_ts)}` })),
       unavailable: Boolean(data.unavailable), truncated: Boolean(data.truncated), total: data.total, updatedAt: now(),
       groupOrder: activityGroupOrder(user?.activityGroupOrder), groupOrderVersion: activityGroupOrderVersion(user?.activityGroupOrderVersion),
@@ -187,10 +188,35 @@ export function createActivityRouter({
       return res.json({ url: `/activity/${id}` });
     } catch (error) { return unavailable(res, error.status || 403); }
   });
+  // The agent's display name comes from the bot's own Slack profile, so every install shows
+  // its own name. Cached per bot user; a slow or failing lookup never delays the page.
+  let agentCache = { key: "", name: "", at: 0 };
+  const agentName = async (client) => {
+    const identity = getBotIdentity() || {};
+    const userId = typeof identity.userId === "string" ? identity.userId : "";
+    const handle = typeof identity.handle === "string" ? identity.handle : "";
+    const key = `${userId}:${handle}`;
+    if (agentCache.key === key && agentCache.name && now() - agentCache.at < 60 * 60_000) return agentCache.name;
+    let name = handle;
+    if (userId && typeof client?.users?.info === "function") {
+      let timer;
+      try {
+        const info = await Promise.race([client.users.info({ user: userId }),
+          new Promise((resolve) => { timer = setTimeout(() => resolve(null), 1500); })]);
+        const profile = info?.user?.profile || {};
+        name = profile.display_name || profile.real_name || info?.user?.real_name || handle;
+      } catch { /* fall back to the handle */ } finally { clearTimeout(timer); }
+    }
+    name = String(name || "").replace(/[\u0000-\u001f\u007f]/g, "").trim().slice(0, 60);
+    if (name) agentCache = { key, name, at: now() };
+    return name;
+  };
   const serveDashboard = async (req, res) => {
     try {
-      const { session } = await context(req);
-      const page = activityPage({ sessionId: req.params.id, csrf: session.csrf, view: req.path.endsWith("/subscriptions") ? "subscriptions" : "activity" });
+      const { session, client } = await context(req);
+      const agent = await agentName(client).catch(() => "");
+      const theme = activityTheme((await getUser(session.ownerId))?.activityTheme);
+      const page = activityPage({ sessionId: req.params.id, csrf: session.csrf, agent, theme, view: req.path.endsWith("/subscriptions") ? "subscriptions" : "activity" });
       headers(res, page.nonce); return res.type("html").send(page.html);
     } catch (error) { return unavailable(res, error.status || 403); }
   };
@@ -271,6 +297,18 @@ export function createActivityRouter({
       const user = await setUser(session.ownerId, (current) => ({ activityGroupOrder: [...order],
         activityGroupOrderVersion: activityGroupOrderVersion(current?.activityGroupOrderVersion) + 1 }));
       return res.json({ groupOrder: user.activityGroupOrder, groupOrderVersion: user.activityGroupOrderVersion });
+    } catch (error) { return unavailable(res, error.status || 503); }
+  });
+  router.post("/:id/api/theme", async (req, res) => {
+    try {
+      const { session } = await context(req);
+      if (req.headers.origin !== req.activityOrigin || !timingSafeEqualStr(String(req.headers["x-cg-csrf"] || ""), session.csrf)) return unavailable(res, 403);
+      const theme = req.body?.theme;
+      if (!ACTIVITY_THEMES.includes(theme)) return unavailable(res, 400);
+      await context(req);
+      // The viewer's own display preference only; never a caller-supplied owner or field.
+      const user = await setUser(session.ownerId, () => ({ activityTheme: theme }));
+      return res.json({ theme: activityTheme(user?.activityTheme) });
     } catch (error) { return unavailable(res, error.status || 503); }
   });
   router.post("/:id/api/completion-all", async (req, res) => {

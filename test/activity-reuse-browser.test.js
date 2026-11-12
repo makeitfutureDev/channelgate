@@ -15,7 +15,7 @@ function serveBrandAssets(app) {
   app.get("/favicon.svg", (_req, res) => res.sendFile("favicon.svg", { root: fileURLToPath(new URL("../public", import.meta.url)) }));
 }
 
-test("Activity hands off to native Slack without a new tab and keeps a browser alternative", { skip: !process.env.CG_BROWSER_MODULE, timeout: 30_000 }, async (t) => {
+test("Activity hands off to native Slack without a new tab; Ctrl/⌘-click opens the browser alternative", { skip: !process.env.CG_BROWSER_MODULE, timeout: 30_000 }, async (t) => {
   resetActivityStateForTests();
   const ownerId = "UACTIVITYAPP", channelId = "C_ACTIVITY_APP";
   await setUser(ownerId, { approved: true });
@@ -29,8 +29,13 @@ test("Activity hands off to native Slack without a new tab and keeps a browser a
   let base;
   const app = express(); serveBrandAssets(app);
   let onHandoff;
+  let onBrowser;
   app.use((req, res, next) => {
-    res.on("finish", () => { if (req.path.includes("/open/C_ACTIVITY_APP/")) onHandoff?.({ status: res.statusCode, location: res.getHeader("Location") }); });
+    res.on("finish", () => {
+      if (!req.path.includes("/open/C_ACTIVITY_APP/")) return;
+      if (req.query.browser === "1") onBrowser?.({ status: res.statusCode, location: res.getHeader("Location") });
+      else onHandoff?.({ status: res.statusCode, location: res.getHeader("Location") });
+    });
     next();
   });
   app.use("/activity", createActivityRouter({ getClient: () => client, getTeamId: () => "TAPP", getBaseUrl: () => base,
@@ -47,21 +52,28 @@ test("Activity hands off to native Slack without a new tab and keeps a browser a
   // No native handler exists in headless Chromium. Verify the actual HTTP/protocol handoff
   // and surviving dashboard, separately from the live installed-Slack acceptance gate.
   await page.goto(createActivityGrantUrl({ baseUrl: base, ownerId, teamId: "TAPP" }));
-  await page.getByRole("link", { name: "Open in Slack", exact: true }).waitFor();
+  const slack = page.getByRole("link", { name: "Open in Slack: " + root.text, exact: true });
+  await slack.waitFor();
   const dashboard = page.url();
   for (const width of [1440, 390]) {
     await page.setViewportSize({ width, height: 900 });
     assert.equal(await page.evaluate(() => globalThis.document.documentElement.scrollWidth <= globalThis.innerWidth), true);
-    for (const name of ["Open in Slack", root.text]) {
-      assert.equal(await page.getByRole("link", { name, exact: true }).getAttribute("target"), "_self");
-    }
-    const web = page.getByRole("link", { name: "Open in browser: " + root.text, exact: true });
-    assert.equal(await web.getAttribute("target"), "_blank");
-    assert.equal(new URL(await web.getAttribute("href"), base).searchParams.get("browser"), "1");
+    for (const link of [slack, page.getByRole("link", { name: root.text, exact: true })]) assert.equal(await link.getAttribute("target"), "_self");
+    assert.equal(await page.locator("#threads tr a.open-link").count(), 1, "one icon button, no separate browser link");
   }
+  // Ctrl/⌘-click is the browser alternative: a new tab on the HTTPS permalink, dashboard untouched.
+  const browserOpen = new Promise((resolve) => { onBrowser = resolve; });
+  const popup = context.waitForEvent("page");
+  await slack.click({ modifiers: [process.platform === "darwin" ? "Meta" : "Control"] });
+  await popup;
+  const web = await browserOpen;
+  assert.equal(web.status, 303);
+  assert.equal(new URL(web.location).protocol, "https:");
+  assert.equal(page.url(), dashboard);
+  for (const extra of context.pages().filter((item) => item !== page)) await extra.close();
   // Exercise the native handoff last: a missing OS handler leaves a pending navigation.
   const response = new Promise((resolve) => { onHandoff = resolve; });
-  await page.getByRole("link", { name: "Open in Slack", exact: true }).click();
+  await slack.click();
   const handoff = await response;
   assert.equal(handoff.status, 303);
   const target = new URL(handoff.location);
@@ -197,7 +209,7 @@ test("mobile Activity counts reflect durable worker events on completed roots wi
   const sessionUrl = page.url();
   assert.equal(await page.evaluate(async () => {
     await globalThis.document.fonts.ready;
-    return globalThis.document.fonts.check("14px Poppins");
+    return globalThis.document.fonts.check("13px Geist");
   }), true);
   for (const engine of ["claude", "codex"]) {
     const run = { channelId: "C_ACTIVITY", slug: entry.slug, threadKey: root.ts, engine, authorId: root.user };
@@ -404,7 +416,7 @@ test("Later controls work in a real browser at desktop and mobile widths", { ski
       const a = layout.controls[i], c = layout.controls[j];
       assert.ok(a.right <= c.left + 1 || c.right <= a.left + 1 || a.bottom <= c.top + 1 || c.bottom <= a.top + 1, `${width}: ${a.text} overlaps ${c.text}`);
     }
-    assert.equal(await page.getByRole("button", { name: "Delay for later: Postpone this conversation", exact: true }).innerText(), "🕒 Later");
+    assert.equal(await page.getByRole("button", { name: "Delay for later: Postpone this conversation", exact: true }).innerText(), "Later");
     if (process.env.CG_LATER_LAYOUT_SCREENSHOT && [390, 768, 1440].includes(width)) {
       await page.screenshot({ path: process.env.CG_LATER_LAYOUT_SCREENSHOT.replace(".png", `-${width}.png`), fullPage: true });
     }
