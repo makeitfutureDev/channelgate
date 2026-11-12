@@ -140,9 +140,9 @@ import { composioHomeButtons } from "./home-composio.js";
 import { nudgeHomeBlocks } from "./home-nudges.js";
 import { homeThreadsSnapshot, homeThreadBlocks, homeThreadsRefreshKey } from "./home-threads.js";
 import { createHomeThreadReader } from "./home-thread-reader.js";
-import { buildHomeTabView, createHomePublisher, registerHomeActions } from "./home-tabs.js";
+import { buildHomeTabView, createHomePublisher, normalizeHomeTab, registerHomeActions } from "./home-tabs.js";
 import { getSlackThread, recordSlackThreadMessage, eligibleSlackThreadsForUser } from "../gateway/slack-threads.js";
-import { activityHomeBlocks } from "./home-activity.js";
+import { activityHomeActions } from "./home-activity.js";
 import { registerReplyDashboardActions } from "./reply-dashboard.js";
 import { registerReplyForkActions } from "./reply-fork.js";
 import { isCompletionReaction } from "../gateway/completion-reactions.js";
@@ -3430,7 +3430,7 @@ async function connectAndWire(app) {
           retryActivity = true;
           threads = [{ type: "section", text: { type: "mrkdwn", text: "*My threads*\nThreads are temporarily unavailable. Retrying automatically." } }];
         }
-        return [...activityHomeBlocks({ ownerId: userId, teamId, baseUrl: getPublicUrl(), approved: admin || approved }), ...threads];
+        return threads;
       },
       help: async () => [
           { type: "divider" },
@@ -3488,7 +3488,11 @@ async function connectAndWire(app) {
         return [{ type: "divider" }, { type: "section", text: { type: "mrkdwn", text: `*Channels I work in* (${count})\n${lines || "_None yet — add me to a channel and @mention me._"}` } }];
       },
     };
-    return buildHomeTabView({ tab: homeView.tab, userId, role, sections, footer, needsActivityRetry: () => retryActivity });
+    return buildHomeTabView({ tab: homeView.tab, userId, role, sections, footer,
+      activityActions: normalizeHomeTab(homeView.tab) === "activity"
+        ? activityHomeActions({ ownerId: userId, teamId, baseUrl: getPublicUrl(), approved: admin || approved })
+        : [],
+      needsActivityRetry: () => retryActivity });
   }, { refreshKey: homeThreadsRefreshKey, refreshState: ({ forceThreads: _force, discoverThreads: _discover, ...state }) => state });
   const stopSlack = app.stop.bind(app);
   app.action("cg_activity_open", async ({ ack }) => {

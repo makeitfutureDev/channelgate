@@ -18,6 +18,8 @@ release gates. Stable promotion and publication require approval of the exact te
 
 ### Beta development notes
 
+- Place Open live dashboard after Help & settings in the Slack Home Activity navigation row.
+
 - Add Mark All Done with confirmation to Slack Home Activity and the personal Activity page.
   Complete the viewer's accessible open indexed threads across pages/filters, queue root ✅
   markers and report partial failures while preserving ownership and access checks.
