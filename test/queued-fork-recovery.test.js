@@ -64,7 +64,7 @@ function options(client, extra = {}) {
   };
 }
 const stored = (id) => getDb().prepare("SELECT data FROM active_runs WHERE id=?").get(id);
-const roots = (client) => client.posted.filter((m) => !m.thread_ts && /Fork of/.test(m.text || ""));
+const roots = (client) => client.posted.filter((m) => !m.thread_ts && /Fork:/.test(m.text || ""));
 
 for (const engine of ["claude", "codex"]) {
   test(`${engine} restart replays queued fork after source recovery, with a new child session`, async () => {
@@ -87,7 +87,7 @@ for (const engine of ["claude", "codex"]) {
     const spawn = runtime.calls.spawn.slice(before).find((call) => call.args.includes(engine === "claude" ? "--fork-session" : "fork"));
     assert.ok(spawn, "recovery uses the real native fork command");
     assert.ok(spawn.args.includes(f.sourceId));
-    const child = f.client.posted.find((m) => /New request from/.test(m.text || ""));
+    const child = f.client.posted.find((m) => /↪️ Fork of/.test(m.text || ""));
     const childId = await getSession(f.row.slug, child.thread_ts);
     assert.ok(childId);
     assert.notEqual(childId, f.sourceId);
@@ -123,7 +123,7 @@ test("queued fork recovery preserves its accepted command when the Slack message
   await recoverRuns(takeStaleRuns(), options(f.client));
   assert.equal(requestHydrations, 0, "accepted fork events must not become ordinary source turns through rehydration");
   assert.equal(roots(f.client).length, 1);
-  assert.match(roots(f.client)[0].text, /^Explore recovered branch/);
+  assert.match(roots(f.client)[0].text, /^↪️ <@U_RECOVER_FORK_edited> Fork: Explore recovered branch$/);
   assert.equal(stored(f.row.id), undefined);
   assert.equal(runQueue.count(f.key), 0);
 });

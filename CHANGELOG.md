@@ -2,6 +2,9 @@
 
 ## 0.6.5 — candidate, pending approval
 
+- Compact Slack fork roots to `↪️ {User} Fork: {message}`. Move the source link and engine
+  handoff note into the first thread reply, disable previews, and omit the repeated request.
+
 - Keep the Activity live stream connected when a thread snapshot exceeds the socket buffer: wait
   for it to drain instead of closing, which made the page alternate Reconnecting/Live every 2 s.
 

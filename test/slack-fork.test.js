@@ -68,13 +68,20 @@ for (const engine of ["claude", "codex"]) {
     const sourceId = await getSession(entry.slug, sourceTs);
     assert.ok(sourceId);
     await processMessageEvent({ ...event, ts: `${sourceTs.slice(0, 4)}.002`, thread_ts: sourceTs, text: "/fork Explore another solution" }, client, { botUserId: "UBOT", teamId: "T_FORK" });
-    const root = client.posted.find((m) => !m.thread_ts && /Fork of/.test(m.text || ""));
+    const root = client.posted.find((m) => !m.thread_ts && /Fork:/.test(m.text || ""));
     assert.ok(root, "fork gets a new top-level Slack message");
-    assert.match(root.text, /^Explore another solution\n\n↪️ Fork of </, "channel preview leads with the user request");
+    assert.equal(root.text, `↪️ <@${user}> Fork: Explore another solution`);
+    assert.equal(root.unfurl_links, false);
+    assert.equal(root.unfurl_media, false);
+    assert.ok(!root.text.includes("https://"), "channel root has no source link preview");
     const forkTs = client.posted.find((m) => m.thread_ts === sourceTs && /Fork started/.test(m.text || ""))?.text.match(/p(\d+)/)?.[1];
     assert.ok(forkTs, "source thread links to child");
     const childTs = `${forkTs.slice(0, -3)}.${forkTs.slice(-3)}`;
-    assert.ok(client.posted.some((m) => m.thread_ts === childTs && /New request from/.test(m.text || "") && /Explore another solution/.test(m.text || "")));
+    const firstReply = client.posted.find((m) => m.thread_ts === childTs);
+    assert.equal(firstReply.text, `↪️ Fork of <https://slack.test/archives/${channel}/p${sourceTs.replace(".", "")}|this thread>`);
+    assert.equal(firstReply.unfurl_links, false);
+    assert.equal(firstReply.unfurl_media, false);
+    assert.ok(!client.posted.some((m) => /New request from/.test(m.text || "")), "request is not duplicated in replies");
     const childId = await getSession(entry.slug, childTs);
     assert.ok(childId);
     assert.notEqual(childId, sourceId, "fork must not resume or overwrite the original session");
@@ -114,7 +121,7 @@ for (const engine of ["claude", "codex"]) for (const effort of ["", "low"]) {
     await setThreadEffort(entry.slug, event.ts, "high");
     const before = runtime.calls.spawn.length;
     await processMessageEvent({ ...event, ts: "6000.002", thread_ts: event.ts, text: `<@UBOT> /fork :BRANCH ${effort ? ":LOW " : ""}Explore another solution` }, client, { botUserId: "UBOT" });
-    const childTs = client.posted.find((m) => /New request from/.test(m.text || ""))?.thread_ts;
+    const childTs = client.posted.find((m) => /↪️ Fork of/.test(m.text || ""))?.thread_ts;
     assert.ok(childTs);
     assert.equal(await getThreadEngine(entry.slug, childTs), engine);
     assert.equal(await getThreadModel(entry.slug, childTs), model);
@@ -203,9 +210,10 @@ for (const sourceEngine of ["claude", "codex"]) {
     };
     const before = runtime.calls.spawn.length;
     await processMessageEvent({ ...event, ts: "8000.003", thread_ts: event.ts, text: "<@UBOT> /fork :other Continue the decision" }, client, { botUserId: "UBOT" });
-    const childTs = client.posted.find((m) => /New request from/.test(m.text || ""))?.thread_ts;
+    const childTs = client.posted.find((m) => /↪️ Fork of/.test(m.text || ""))?.thread_ts;
     assert.ok(childTs);
-    assert.ok(client.posted.some((m) => !m.thread_ts && /^Continue the decision\n\n↪️ Fork of <.*from Slack history/.test(m.text || "")));
+    assert.ok(client.posted.some((m) => !m.thread_ts && m.text === `↪️ <@${user}> Fork: Continue the decision`));
+    assert.ok(client.posted.some((m) => m.thread_ts && /^↪️ Fork of <.*from Slack history/.test(m.text || "")));
     assert.equal(await getSessionEngine(entry.slug, childTs), childEngine);
     assert.equal(await getThreadModel(entry.slug, childTs), model);
     assert.equal(await getThreadEffort(entry.slug, childTs), "");
@@ -251,7 +259,7 @@ test("another-engine fork respects clean mode and a dedicated channel Codex logi
   };
   const before = runtime.calls.spawn.length;
   await processMessageEvent({ ...event, ts: "8100.002", thread_ts: event.ts, text: "/fork :other Clean alternative" }, client, { botUserId: "UBOT" });
-  const childTs = client.posted.find((m) => /New request from/.test(m.text || ""))?.thread_ts;
+  const childTs = client.posted.find((m) => /↪️ Fork of/.test(m.text || ""))?.thread_ts;
   assert.ok(childTs);
   assert.equal(await getThreadClean(entry.slug, childTs), true);
   assert.ok(client.posted.some((m) => /clean session; no history replay/.test(m.text || "")));
@@ -296,16 +304,16 @@ for (const engine of ["claude", "codex"]) {
       await until(() => client.posted.some((m) => /Fork queued/.test(m.text || "")));
       assert.equal(runQueue.count(key), 2);
       assert.equal(runtime.calls.spawn.length, before);
-      assert.equal(client.posted.some((m) => !m.thread_ts && /Fork of/.test(m.text || "")), false);
+      assert.equal(client.posted.some((m) => !m.thread_ts && /Fork:/.test(m.text || "")), false);
     } finally {
       runQueue.release(key, source);
     }
     await fork;
-    const childTs = client.posted.find((m) => /New request from/.test(m.text || ""))?.thread_ts;
+    const childTs = client.posted.find((m) => /↪️ Fork of/.test(m.text || ""))?.thread_ts;
     assert.ok(childTs);
     assert.notEqual(await getSession(entry.slug, childTs), sourceId);
     assert.equal(await getSession(entry.slug, event.ts), sourceId);
-    assert.equal(client.posted.filter((m) => !m.thread_ts && /Fork of/.test(m.text || "")).length, 1);
+    assert.equal(client.posted.filter((m) => !m.thread_ts && /Fork:/.test(m.text || "")).length, 1);
     assert.equal(runQueue.count(key), 0);
   });
 }
@@ -326,7 +334,7 @@ test("Stop cancels queued forks before they can create a child", async () => {
     await until(() => client.posted.some((m) => /Fork queued/.test(m.text || "")));
     abortRunsInChannel(channel, entry.slug, user, event.ts);
     await fork;
-    assert.equal(client.posted.some((m) => !m.thread_ts && /Fork of/.test(m.text || "")), false);
+    assert.equal(client.posted.some((m) => !m.thread_ts && /Fork:/.test(m.text || "")), false);
   } finally { runQueue.release(key, source); }
 });
 
@@ -347,7 +355,7 @@ test("queued fork rechecks current admission after waiting", async () => {
   await setUser(user, { approved: false, isAdmin: false });
   runQueue.release(key, source);
   await fork;
-  assert.equal(client.posted.some((m) => !m.thread_ts && /Fork of/.test(m.text || "")), false);
+  assert.equal(client.posted.some((m) => !m.thread_ts && /Fork:/.test(m.text || "")), false);
   assert.ok(client.posted.some((m) => /Sorry/.test(m.text || "")));
   assert.equal(runQueue.count(key), 0);
 });
@@ -380,7 +388,7 @@ test("a Codex native fork the engine refuses falls back to a fresh session on th
   };
   const before = runtime.calls.spawn.length;
   await processMessageEvent({ ...event, ts: "7000.002", thread_ts: event.ts, text: "<@UBOT> /fork CODEX_STUB_FORK_UNAVAILABLE Explore another solution" }, client, { botUserId: "UBOT" });
-  const childTs = client.posted.find((m) => /New request from/.test(m.text || ""))?.thread_ts;
+  const childTs = client.posted.find((m) => /↪️ Fork of/.test(m.text || ""))?.thread_ts;
   assert.ok(childTs, "the child thread is still created");
   const attempts = runtime.calls.spawn.slice(before);
   const forkAttempt = attempts.find((call) => call.args.includes("fork"));

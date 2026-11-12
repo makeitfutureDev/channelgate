@@ -929,7 +929,7 @@ export async function processMessageEvent(event, client, { botUserId = "", teamI
             : null;
           const handoffNote = nativeFork ? "" : ` · continuing with ${engineLabel(childEngine)}${sourceClean ? " (clean session; no history replay)" : " from Slack history"}`;
           if (queuedForkHandle?.aborted || queuedForkHandle?.controller.signal.aborted || isForceStopping()) return;
-          const root = await client.chat.postMessage({ channel: event.channel, text: `${task}\n\n↪️ Fork of <${sourceUrl}|this thread>${handoffNote}` });
+          const root = await client.chat.postMessage({ channel: event.channel, text: `↪️ <@${event.user}> Fork: ${task}`, unfurl_links: false, unfurl_media: false });
           if (!root?.ts) throw new Error("Slack did not return a thread timestamp for the fork.");
           const forkKey = String(root.ts);
           const pendingKey = `${entry.slug}::${forkKey}`;
@@ -940,7 +940,7 @@ export async function processMessageEvent(event, client, { botUserId = "", teamI
             // Like ordinary shortcuts, only an explicit effort survives a new model choice.
             await setThreadEffort(entry.slug, forkKey, forkTarget ? (forkShortcut.effort || "") : await getThreadEffort(entry.slug, threadKey));
             await setThreadClean(entry.slug, forkKey, sourceClean);
-            const request = await client.chat.postMessage({ channel: event.channel, thread_ts: forkKey, text: `*New request from <@${event.user}>:* ${task}` });
+            const request = await client.chat.postMessage({ channel: event.channel, thread_ts: forkKey, text: `↪️ Fork of <${sourceUrl}|this thread>${handoffNote}`, unfurl_links: false, unfurl_media: false });
             if (!request?.ts) throw new Error("Slack did not return a message timestamp for the fork request.");
             const forkUrl = await slackPermalink(client, event.channel, forkKey);
             await reply(`↪️ Fork started in <${forkUrl}|a new thread>.`);

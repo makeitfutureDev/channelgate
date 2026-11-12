@@ -3354,9 +3354,10 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
   resume the old one's conversation), and replays the Slack thread context into it so the new
   engine continues the conversation instead of starting blind.
 - Slack `@agent /fork <new message>` branches a completed Claude or Codex container session using
-  the engine's native fork command. The bot posts a new top-level message with the user’s new request first and the
-  `↪️ Fork of this thread` source link underneath,
-  posts the new request in that thread, links back from the source, and runs the request in the
+  the engine's native fork command. The bot posts a compact top-level `↪️ {User} Fork: {new message}` root.
+  Its first thread reply is `↪️ Fork of this thread` with the source link and any engine-handoff
+  note. Both posts disable link/media previews; the request is not duplicated in a reply.
+  It links back from the source and runs the request in the
   forked session. The source session keeps its ID and history; the new Slack `thread_ts` maps to
   the engine's distinct child ID. Engine, model, effort and clean-mode pins carry into the branch.
   `@agent /fork :model-shortcut <new message>` selects a configured model for the child and
