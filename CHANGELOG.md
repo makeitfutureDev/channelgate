@@ -22,6 +22,10 @@ release gates. Stable promotion and publication require approval of the exact te
 
 ### Beta development notes
 
+- Load up to 100 older tracked threads per indexing action in Slack Home and add **Load older
+  threads** to the personal browser Activity page. Indexed history persists across reloads and
+  restarts; automatic updates retain their local-only history behavior.
+
 - Continue a fork the engine refuses to clone natively. When Codex answers `exec fork` with a
   rollout lineage error before running anything, the child thread now continues in a fresh
   session on the source thread's Slack history (read lazily, same cutoffs), says so in the thread,

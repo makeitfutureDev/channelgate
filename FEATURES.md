@@ -157,6 +157,13 @@ without dashboard reload; no-reply roots still open with explicit thread context
 changed owners, malformed metadata or incomplete pagination do not redirect; current access is
 rechecked after the Slack lookups. Refreshes add no Slack reads.
 The snapshot is bounded to 1,000 authorized threads and indicates truncation.
+The browser's **Load older threads** button runs the same explicit 100-candidate discovery as
+Slack Home, then refreshes the current view without resetting search or the selected filter. It
+shows loading, exhaustion and retry states; duplicate clicks are suppressed and the same viewer's
+history actions serialize. The index is persisted in SQLite across reloads/restarts, independent
+of retained engine sessions. Completion and current access still determine which rows are shown.
+Only the authenticated viewer can request discovery, with Origin/CSRF/session checks and access
+revalidation after Slack reads. Automatic browser snapshots and SSE never scan historical sessions.
 
 Activity and its private-link landing page use the ChannelGate admin brand: dark teal surfaces,
 light teal supporting text, self-hosted Poppins, the existing #makeitfuture. wordmark and ChannelGate
@@ -205,8 +212,9 @@ reconcile reaction events missed while offline.
 
 Activity navigation and automatic updates verify the visible page without scanning historical
 sessions or rotating through offscreen threads. An empty index bootstraps history; Refresh and
-Load older threads explicitly scan/reconcile a bounded batch. Thread evidence is cached for up to
-30 seconds per Slack client and invalidated by stored message/completion changes. Immutable
+Load older threads explicitly index up to 100 unindexed historical candidates per action,
+newest first across accessible channels; reconciliation of indexed threads remains separately
+bounded. Thread evidence is cached for up to 30 seconds per Slack client and invalidated by stored message/completion changes. Immutable
 permalinks are reused; concurrent reads are deduplicated, failures are not cached, and inspection/
 link work shares a four-read budget with bounded caches. Admission, private membership and sudo
 access are still checked afresh for each render, and completion actions still verify their live

@@ -42,7 +42,7 @@ function row(status = "working", title = "Fixture thread", url = "/activity/sess
   return { channelId: "C1", threadTs: "1.1", title, channelName: "Engineering", status, lastMessageMs: 1_800_000_000_000, url };
 }
 function browser(fetchImpl = async () => response({ rows: [] }), csrf = "fixture-csrf") {
-  const elements = Object.fromEntries(["threads", "search", "filters", "connection", "connection-text", "updated", "notice", "summary", "table", "empty", "empty-title", "empty-copy", "result-count", "group-order", "order-dialog", "order-list", "order-save", "order-cancel", "order-reset", "order-error", "mark-all-done", "all-done-dialog", "all-done-confirm", "all-done-cancel", "all-done-error"].map((id) => [id, new Element()]));
+  const elements = Object.fromEntries(["load-history", "threads", "search", "filters", "connection", "connection-text", "updated", "notice", "summary", "table", "empty", "empty-title", "empty-copy", "result-count", "group-order", "order-dialog", "order-list", "order-save", "order-cancel", "order-reset", "order-error", "mark-all-done", "all-done-dialog", "all-done-confirm", "all-done-cancel", "all-done-error"].map((id) => [id, new Element()]));
   for (const filter of ["active", "working", "waiting", "error", "idle", "done", "open"]) {
     const button = new Element("button"); button.dataset.filter = filter; button.append(new Element("span")); elements.filters.append(button);
   }
@@ -344,5 +344,43 @@ test("Mark All Done authorization failures end access, and access loss rejects l
     assert.match(elements.notice.textContent, /access has ended/);
     assert.ok(!elements.notice.textContent.includes("17"));
     assert.equal(stream.closed, true);
+  }
+});
+
+
+test("browser history action is explicit, deduplicated, refreshes rows and preserves filters", async () => {
+  const pending = deferred();
+  const b = browser(async (url) => url.endsWith("/api/history") ? pending.promise : response({ rows: [row("idle")] }));
+  await flush();
+  const idle = b.elements.filters.children.find((item) => item.dataset.filter === "idle");
+  b.elements.filters.fire("click", { target: idle });
+  b.elements.search.value = "Fixture";
+  const button = b.elements["load-history"];
+  button.fire("click"); button.fire("click");
+  assert.equal(button.disabled, true);
+  assert.equal(button.textContent, "Loading older threads…");
+  assert.equal(b.requests.filter((r) => r.url.endsWith("/api/history")).length, 1);
+  const req = b.requests.at(-1);
+  assert.equal(req.options.method, "POST");
+  assert.equal(req.options.headers["X-CG-CSRF"], "fixture-csrf");
+  pending.resolve(response({ rows: [], history: { scanned: 100, moreHistory: true, unavailable: false } }));
+  await flush();
+  assert.equal(button.disabled, false);
+  assert.equal(b.elements.search.value, "Fixture");
+  assert.equal(idle.attrs["aria-pressed"], "true");
+  assert.equal(b.elements.threads.children.length, 1, "fresh snapshot beats history response rows");
+});
+
+test("history exhaustion, retryable failure and session expiry have distinct browser states", async () => {
+  for (const status of [200, 503, 401]) {
+    const b = browser(async (url) => url.endsWith("/api/history")
+      ? response({ history: { scanned: 0, moreHistory: false } }, status) : response({ rows: [row()] }));
+    await flush();
+    b.elements["load-history"].fire("click");
+    await flush();
+    assert.equal(b.elements["load-history"].disabled, status !== 503);
+    if (status === 200) assert.equal(b.elements["load-history"].textContent, "History loaded");
+    if (status === 503) assert.match(b.elements.notice.textContent, /try again/);
+    if (status === 401) assert.equal(b.elements.threads.children.length, 0);
   }
 });

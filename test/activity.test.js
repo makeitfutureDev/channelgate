@@ -707,3 +707,73 @@ test("browser Mark All Done stops when its session expires during a Slack root r
   const response = await f.request(user.url + "/api/completion-all", { method: "POST", headers: user.post, body: JSON.stringify({ confirmed: true }) });
   assert.equal(response.status, 401); assert.equal(getSlackThread("C_WORK", "100.000001").done_ms, 0);
 });
+
+
+test("browser history explicitly indexes 100 candidates, continues older rows and reuses the durable index", async (t) => {
+  const f = await fixture(t);
+  const c = await f.root();
+  getDb().exec("DELETE FROM slack_threads");
+  for (let n = 1; n <= 103; n++) {
+    const ts = `${100+n}.000001`;
+    f.roots.set(`C_WORK:${ts}`, { ts, user: n % 2 ? "U_MINE" : "U_OTHER", text: `Old ${n}` });
+    getDb().prepare("INSERT INTO sessions(slug,thread_key,session_id) VALUES(?,?,?)").run(c.slug, ts, `old-${n}`);
+  }
+  const session = await f.login();
+  const snapshot = await f.request(session.url + "/api/threads", { headers: session.headers });
+  assert.equal((await snapshot.json()).rows.length, 0, "ordinary refresh never indexes legacy history");
+  for (const [scanned, moreHistory] of [[100, true], [3, false], [0, false]]) {
+    f.reads.length = 0;
+    const result = await f.request(session.url + "/api/history", { method: "POST", headers: session.post, body: JSON.stringify({ ownerId: "U_OTHER" }) });
+    assert.equal(result.status, 200);
+    const data = await result.json();
+    assert.equal(data.history.scanned, scanned); assert.equal(data.history.moreHistory, moreHistory);
+    assert.ok(data.rows.every((r) => Number(r.threadTs.split(".")[0]) % 2 === 1));
+    if (!scanned) assert.equal(f.reads.length, 0);
+  }
+  getDb().exec("DELETE FROM sessions");
+  const result = await f.request(session.url + "/api/threads", { headers: session.headers });
+  assert.equal((await result.json()).rows.length, 52);
+});
+
+test("history requires session, origin and CSRF and aborts indexing on mid-read revocation", async (t) => {
+  const f = await fixture(t);
+  const c = await f.root();
+  getDb().exec("DELETE FROM slack_threads");
+  getDb().prepare("INSERT INTO sessions(slug,thread_key,session_id) VALUES(?,?,?)").run(c.slug, "100.000001", "legacy");
+  const session = await f.login();
+  for (const headers of [session.headers, { ...session.post, "X-CG-CSRF": "bad" }, { ...session.post, Origin: "https://evil.example" }, { Origin: f.base, "X-CG-CSRF": session.csrf }]) {
+    const result = await f.request(session.url + "/api/history", { method: "POST", headers, body: "{}" });
+    assert.ok([401, 403].includes(result.status));
+    assert.equal(getSlackThread("C_WORK", "100.000001"), null);
+  }
+  const replies = f.client.conversations.replies;
+  f.client.conversations.replies = async (args) => {
+    const result = await replies(args);
+    await setUser("U_MINE", { approved: false });
+    return result;
+  };
+  const revoked = await f.request(session.url + "/api/history", { method: "POST", headers: session.post, body: "{}" });
+  assert.equal(revoked.status, 403);
+  assert.equal(getSlackThread("C_WORK", "100.000001"), null);
+});
+
+
+test("history cannot index after channel access changes during the final private membership read", async (t) => {
+  const f = await fixture(t);
+  const c = await f.root("G_HISTORY", "100.000001", "U_MINE", true, "group");
+  f.members.set("G_HISTORY", ["U_MINE"]);
+  getDb().exec("DELETE FROM slack_threads");
+  getDb().prepare("INSERT INTO sessions(slug,thread_key,session_id) VALUES(?,?,?)").run(c.slug, "100.000001", "private-history");
+  const session = await f.login();
+  let checks = 0;
+  f.client.conversations.members = async () => {
+    if (++checks === 2) await saveChannelMeta(c.slug, { access: "none" });
+    return { members: ["U_MINE"] };
+  };
+  const result = await f.request(session.url + "/api/history", { method: "POST", headers: session.post, body: "{}" });
+  assert.equal(result.status, 200);
+  const data = await result.json();
+  assert.equal(data.history.unavailable, true); assert.equal(data.history.moreHistory, true);
+  assert.deepEqual(data.rows, []);
+  assert.equal(getSlackThread("G_HISTORY", "100.000001"), null);
+});
