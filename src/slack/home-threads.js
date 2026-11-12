@@ -312,7 +312,7 @@ export function homeThreadBlocks(snapshot) {
   const state = { filter, page };
   const blocks = [
     { type: "divider" },
-    { type: "section", text: { type: "mrkdwn", text: "*My threads* · ✅ / 👍 / Done hides completed work. Reopen from Completed." } },
+    { type: "section", text: { type: "mrkdwn", text: "*My threads* · ✅ / Done / answer-feedback 👍 hides completed work. Emoji 👍 reactions leave work open. Reopen from Completed." } },
     { type: "actions", elements: [
       { type: "static_select", action_id: "cg_home_threads_filter", placeholder: { type: "plain_text", text: "Status" },
         initial_option: { text: { type: "plain_text", text: LABELS[filter] }, value: filter },

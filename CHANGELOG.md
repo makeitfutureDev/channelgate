@@ -2,6 +2,9 @@
 
 ## 0.6.5 — candidate, pending approval
 
+- Keep conversations open on Slack 👍 emoji reactions, including skin tones. The native positive
+  answer-feedback button still marks work done, as do checkmark reactions and Done controls.
+
 - Accept Pro Lite and other ChatGPT subscription logins for Codex EU without an Enterprise-only
   check. Keep the dedicated account relay and session isolation. Refresh `/model` harness
   descriptions from current settings and channel approvals after activation.

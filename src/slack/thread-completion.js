@@ -8,7 +8,7 @@ import { syncThreadDoneMarker } from "./thread-done-marker.js";
 import { listConversationMemberIds } from "./members.js";
 
 // Root and reply reactions use the same durable completion evidence. On removal inspect the
-// whole thread, since a second check/thumb on another message may still keep it complete.
+// whole thread, since a second check on another message may still keep it complete.
 export async function syncThreadCompletionReaction(client, event, { added = false } = {}) {
   if (!isCompletionReaction(event?.reaction) || event.item?.type !== "message") return;
   const channelId = event.item.channel;
