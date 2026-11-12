@@ -3,15 +3,17 @@ import { getShowMessageCost } from "../config/settings.js";
 import { normalizeUsage } from "./usage.js";
 import { contextUsageFor, effortLabel, modelLabel } from "./model-info.js";
 
-// Compact token counts for the footer: 214 → "214", 34799 → "34.8k", 1959778 → "1.96M".
+// Compact token counts for the footer, whole thousands by user request: 214 → "214",
+// 21965 → "22k", 167149 → "167k", 999600 → "1M". Millions keep one decimal only when it is not
+// zero (1_000_000 → "1M", 1_100_000 → "1.1M") so an over-limit 1M context stays distinguishable.
 function fmtTok(n) {
   if (!Number.isFinite(n) || n <= 0) return "0";
-  if (n >= 1e6) return `${(n / 1e6).toFixed(2).replace(/\.?0+$/, "")}M`;
-  if (n >= 1000) return `${(n / 1000).toFixed(1).replace(/\.0$/, "")}k`;
-  return String(n);
+  if (Math.round(n / 1000) >= 1000) return `${(n / 1e6).toFixed(1).replace(/\.0$/, "")}M`;
+  if (n >= 1000) return `${Math.round(n / 1000)}k`;
+  return String(Math.round(n));
 }
 
-// "ctx: 167.1k / 475k, 35%" — the LATEST top-level request's input against the window the harness
+// "ctx: 167k / 475k, 35%" — the LATEST top-level request's input against the window the harness
 // reported (contextUsageFor). An unreported window prints "?" rather than a guessed percentage, and
 // an over-limit context reads above 100%. Empty when the run made no model request.
 export function contextText(result) {
@@ -21,7 +23,7 @@ export function contextText(result) {
 }
 
 // Run stats, as SHORT as possible (width-conscious by user request; no icons — user preference):
-// "gpt-6.1-sol · high · ctx: 167.1k / 475k, 35%" — model · effort (or "default effort") · cost
+// "gpt-6.1-sol · high · ctx: 167k / 475k, 35%" — model · effort (or "default effort") · cost
 // (only when the admin enabled it; 2 decimals, no ~/est. markers) · context. No duration and no
 // run token totals: the summed input re-counts the history once per model call and says nothing
 // about how full the context is. The resume command never rides here as text — it lives in

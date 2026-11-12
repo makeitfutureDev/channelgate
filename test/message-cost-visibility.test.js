@@ -38,7 +38,7 @@ test("the global setting hides only cost from the shared Slack footer", () => {
 
   assert.doesNotMatch(hidden, /\$/);
   assert.match(hidden, /Opus 4\.8/);
-  assert.equal(hidden, "Opus 4.8 · high · ctx: 36.8k / 200k, 18%");
+  assert.equal(hidden, "Opus 4.8 · high · ctx: 37k / 200k, 18%");
 });
 
 
@@ -69,12 +69,18 @@ test("the footer drops duration and run token totals and shows the latest contex
     contextTokens: 167_149,
     contextWindow: 475_000,
   });
-  assert.equal(audited, "gpt-6.1-sol · high · ctx: 167.1k / 475k, 35%");
+  assert.equal(audited, "gpt-6.1-sol · high · ctx: 167k / 475k, 35%");
   assert.doesNotMatch(audited, /482s|3\.7M|16\.4k|100%/);
   // Over the window reads above 100%; an unreported window is "?", never a guess.
   assert.equal(footerText({ engine: "claude", model: "claude-opus-4-6", primaryModel: "claude-opus-4-6", contextTokens: 230_000,
     raw: { modelUsage: { "claude-opus-4-6": { contextWindow: 200_000 } } } }), "Opus 4.6 · default effort · ctx: 230k / 200k, 115%");
   assert.equal(footerText({ engine: "claude", model: "claude-opus-5-5", contextTokens: 21_965 }), "Opus 5.5 · default effort · ctx: 22k / ?");
+  // Whole thousands, no decimals; millions keep a decimal only when it is not zero.
+  const ctxOf = (contextTokens, contextWindow) => footerText({ engine: "codex", model: "m", effort: "low", contextTokens, contextWindow });
+  assert.equal(ctxOf(150_400, 167_600), "m · low · ctx: 150k / 168k, 90%");
+  assert.equal(ctxOf(999_600, 1_000_000), "m · low · ctx: 1M / 1M, 100%");
+  assert.equal(ctxOf(1_100_000, 1_000_000), "m · low · ctx: 1.1M / 1M, 110%");
+  assert.equal(ctxOf(640, 200_000), "m · low · ctx: 640 / 200k, 0%");
   // No model request (a run that failed first): no ctx segment at all.
   assert.equal(footerText({ engine: "codex", model: "gpt-6.1-sol", usage: {} }), "gpt-6.1-sol · default effort");
 });
