@@ -109,14 +109,20 @@ image spec 1.5.1), with the same environment an engine turn gets and the channel
 `/home/agent` for their runtime scope (installed tools, `gh`/`vercel`/`supabase` logins, Claude and
 Codex history). Current organization admins use the admin container and legacy HOME (`cg-…`);
 members and guests use the separate project container and HOME (`cgp2-…`). The work folder is
-shared, but native engine history and CLI logins are separate. "Show SSH access" names the
+shared, and Claude/Codex conversation files are shared across both roles. CLI logins, settings,
+MCP payloads and native background-job databases stay separate. "Show SSH access" names the
 requester's scope. SSH rechecks roles while connected; a scope change disconnects the session
 before preparing more credentials, and reconnecting selects the current scope. The existing
 Admin-mode + `containerFullAccessHome` refusal still applies to everyone.
 
-An upgrade correcting SSH scope selection can return an admin to their existing `cg-…` history.
-Sessions created in the project's `cgp2-…` HOME stay there; no history is deleted or automatically
-copied across the boundary. Ordinary members continue to use project history.
+The shared transcript directories live under `~/ChannelGate/.runtime-history/<installId>/<platform>/<slug>/`
+(or beside the configured runtime artifact root). Both containers mount them into
+`/home/agent/.claude/projects`, `.codex/sessions` and
+`.codex/archived_sessions`. They contain no login files, file-backup snapshots or native SQLite job state.
+The first use copies legacy project history additively, after project writers finish, without
+changing the original HOME. Divergent files or unsafe links stop migration without overwriting.
+Legacy admin history remains in its original HOME for a reviewed import: older versions could
+copy host `/sudo` transcripts there, so it cannot safely be published wholesale.
 Codex uses the channel's selected login (a proxy placeholder in proxy mode, a host file mount in
 legacy bridge mode), and `codex` in a session gets what a chat turn's Codex gets:
 the gateway tools, your own Composio accounts as `composio-user`, the channel's as
@@ -161,7 +167,8 @@ session gets:
   ends. Behind the egress proxy its access token is the channel's relay placeholder (the plan,
   expiry and rate tier beside it are the real login's — they are facts, not secrets), so the file
   is useless outside the container. `claude -r <session id>` resumes a native session stored in
-  the same runtime scope; admin, project and `/sudo` host histories are separate.
+  the shared channel history, including ordinary conversations created by the other role.
+  Host `/sudo` history stays separate; it is never copied back into shared channel history.
 
 Codex over SSH uses the same selected login as a channel turn. "show SSH access" in the
 channel prints what a session gets. If a part could not be prepared — no Claude login on the
@@ -333,9 +340,10 @@ ended); `show_channel_ssh` lists the live ones.
   network-off …`* — outbound SSH needs *Allow network* on; any other host must be a declared raw
   host. `kex_exchange_identification: Connection closed` right after it is ssh's own echo of that.
 - *Connection drops on daemon restart* — expected; reconnect.
-- *History differs from another person's Slack session* — compare runtime scopes first. Admin
-  and project users share the work folder, but not HOME or native history. Your own ordinary
-  chat turns and SSH use the same scope at your current role.
+- *History differs from another person's Slack session* — ordinary Claude/Codex channel histories
+  share the same transcript mounts across roles. Compare the channel/install identity and check
+  whether first-use project migration has completed. HOME credentials and private host `/sudo`
+  sessions remain separate. Old admin-native transcripts require a reviewed import.
 - *Host-key warning after a scope change* — each scope keeps its own key at
   `<artifactDir>/ssh/host_key`. Ordinary container rebuilds preserve that file. Ask an operator
   to verify the selected scope's fingerprint before updating the matching known-host entry;

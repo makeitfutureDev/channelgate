@@ -160,7 +160,7 @@ export function renderSessionNote({ slug, userId, envFile, egress = null, runtim
     `Secrets change while a session is open. \`list_secrets\` is live, but a process keeps the environment it started with — this one included. The session's CURRENT environment is rewritten within a moment of any change at \`${envFile}\` (also \`$CG_SESSION_ENV\`). When a command needs a credential added after this process started, source that file in the SAME command: \`. "$CG_SESSION_ENV"; <command>\`. Never print a value; refer to secrets by name. A newly selected MCP server needs a new \`claude\`.`,
   ];
   if (runtimeScope === "admin" || runtimeScope === "project") {
-    lines.push(`Your runtime/history scope is **${runtimeScope}**. This HOME and native engine history match this developer's ordinary chat turns at their current role. Admin and project histories are separate; a different scope's session ID cannot be resumed here. The project work folder is shared.`);
+    lines.push(`Your credential/runtime scope is **${runtimeScope}**. Claude and Codex conversation files are shared with authorized people working in this channel, across admin and project runtimes. HOME configuration, logins, personal connections and host /sudo history remain separate. Each launch uses this developer's current permissions.`);
   }
   if (egress?.active) {
     // Names and rules only — never a value, never a placeholder string.

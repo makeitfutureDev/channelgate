@@ -79,6 +79,9 @@ export function validateEngineAdapter(adapter) {
     if (!state || typeof state.hostDir !== "function" || typeof state.files !== "function" || typeof state.containerDirKey !== "string" || !state.containerDirKey) {
       throw new TypeError(`EngineAdapter ${adapter.id || "?"} declares an incomplete sessionState fact`);
     }
+    if (state.channelHistory !== undefined && typeof state.channelHistory !== "boolean") {
+      throw new TypeError(`EngineAdapter ${adapter.id || "?"} declares a malformed channelHistory fact`);
+    }
   }
   // OPTIONAL: the provider-failure kinds the orchestrator may replay in place. Declared → an array
   // of kind names; a malformed declaration must not load, or the retry would silently never fire.

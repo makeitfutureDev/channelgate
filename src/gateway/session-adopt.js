@@ -261,9 +261,15 @@ function volumeView(target, inside) {
 async function storesFor(engine, { dirs = {}, target = null } = {}) {
   const stores = [];
   const hostDir = engine === "claude" ? dirs.claude || claudeStateDir() : dirs.codex || codexStateDir();
-  if (hostDir && target?.runtimeScope !== "project") stores.push(directoryStore("host", hostDir));
+  if (hostDir && target?.runtimeScope !== "project" && target?.container?.sharedHistory !== true) stores.push(directoryStore("host", hostDir));
   const inside = containerStateDir(engine, target);
   if (!inside) return stores;
+  // The HOME's underlying projects/sessions directories are shadowed by shared history mounts.
+  // Inspect the live mount view, never the preserved private legacy files below those mounts.
+  if (target?.container?.sharedHistory === true) {
+    if (runtimeCanInspectState(target)) stores.push(runtimeStore(target, inside));
+    return stores;
+  }
   const onHost = volumeView(target, inside);
   if (onHost && (await readableDir(onHost))) stores.push(directoryStore("volume", onHost));
   else if (runtimeCanInspectState(target)) stores.push(runtimeStore(target, inside));

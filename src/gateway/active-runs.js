@@ -35,7 +35,10 @@ export async function recoveryForkSessionId(rec = {}) {
   if ((await getUser(rec.authorId))?.isAdmin === true) return sourceId;
   const rows = getDb().prepare("SELECT runtime FROM sessions WHERE slug = ? AND session_id = ?").all(rec.slug, sourceId);
   return rows.some((row) => {
-    try { return JSON.parse(row.runtime)?.scope === "project"; } catch { return false; }
+    try {
+      const runtime = JSON.parse(row.runtime);
+      return runtime?.backend === "container" && (runtime.scope === "project" || runtime.history === "channel-v1");
+    } catch { return false; }
   }) ? sourceId : "";
 }
 

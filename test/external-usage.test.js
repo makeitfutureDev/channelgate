@@ -5,7 +5,8 @@
 // spend twice and call it somebody working outside chat". Most of what follows is about that.
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdirSync, writeFileSync } from "node:fs";
+import { mkdirSync, writeFileSync, statSync } from "node:fs";
+import { spawnSync } from "node:child_process";
 import path from "node:path";
 import { ensureTestEnv, tempDir } from "./helpers.js";
 
@@ -15,7 +16,7 @@ const { usageDashboard } = await import("../src/gateway/usage.js");
 const { scanClaudeTranscript, scanClaudeState, normalizeClaudeTokenUsage, claudeBillingModel, claudeOriginFor } =
   await import("../src/gateway/claude-usage.js");
 const { scanCodexRollout, codexOriginFor } = await import("../src/engines/codex-usage.js");
-const { priceClaudeTokens, priceCodexTokens, gatewaySessionIds, matchWorkdir, buildWorkdirIndex, saveScopeSessions, scanExternalUsage, foldTurnsIntoModels, sessionAttribution, externalScanStaleReason, externalScanFingerprint } =
+const { priceClaudeTokens, priceCodexTokens, gatewaySessionIds, matchWorkdir, buildWorkdirIndex, saveScopeSessions, scanExternalUsage, foldTurnsIntoModels, sessionAttribution, externalScanStaleReason, externalScanFingerprint, hasSharedHistoryMount } =
   await import("../src/gateway/external-usage.js");
 
 // ── fixtures ────────────────────────────────────────────────────────────────────────────────────
@@ -450,4 +451,133 @@ test("Sonnet 5.5 external usage prices both cache TTLs without repricing Sonnet 
   const usage = { input_tokens: 1e6, cached_input_tokens: 1e6, cache_write_5m_tokens: 1e6, cache_write_1h_tokens: 1e6, output_tokens: 1e6 };
   assert.equal(priceClaudeTokens(usage, "claude-sonnet-5-5", rates), 18.6);
   assert.equal(priceClaudeTokens(usage, "claude-sonnet-5", rates), 18.7);
+});
+
+// ── a channel's shared history has one accounting identity ────────────────────────────────────
+function sharedOutsideSession(sessionId, engine = "claude") {
+  return {
+    sessionId, cwd: "/work/shared-history-fixture", origin: "terminal", size: 100, mtimeMs: 1000,
+    buckets: [{
+      bucket: new Date().toISOString().slice(0, 13), model: engine === "codex" ? "gpt-6-sol" : "claude-opus-5",
+      requests: 1, turns: 1, usage: { input_tokens: 1000, output_tokens: 10 },
+    }],
+  };
+}
+
+function usageView(slug, { shared = true, sessionId = "shared-session", engines = ["claude"], observe = () => {} } = {}) {
+  return {
+    slug, backend: "container",
+    // Deliberately true even for the legacy fixture: a new plan is not an actual mount.
+    container: { name: `cg-${slug}`, sharedHistory: true, claudeConfigDir: "/home/agent/.claude", codexHome: "/home/agent/.codex" },
+    runtime: {
+      async inspectUsage(_target, { args }) {
+        const engine = args.operation === "scan" ? "claude" : "codex";
+        const known = shared ? args.sharedKnown : args.known;
+        observe({ engine, args, known });
+        const session = sharedOutsideSession(sessionId, engine);
+        const unchanged = engines.includes(engine) && known?.[sessionId]?.size === session.size && known?.[sessionId]?.mtimeMs === session.mtimeMs;
+        return {
+          sessions: engines.includes(engine) && !unchanged ? [session] : [], unchanged: unchanged ? [sessionId] : [],
+          skipped: [], total: engines.includes(engine) ? 1 : 0, sharedHistory: shared,
+        };
+      },
+    },
+  };
+}
+
+test("actual exact history mounts identify a shared view, not a planned flag or a parent mount", () => {
+  const line = (mount) => `101 42 0:1 /source ${mount} rw - ext4 /dev/example rw`;
+  assert.equal(hasSharedHistoryMount(line("/home/agent/.claude/projects"), "/home/agent/.claude", "claude"), true);
+  assert.equal(hasSharedHistoryMount(line("/home/agent/.codex/sessions"), "/home/agent/.codex", "codex"), true);
+  assert.equal(hasSharedHistoryMount(line("/home/agent"), "/home/agent/.claude", "claude"), false);
+  assert.equal(hasSharedHistoryMount(line("/home/agent/.claude/projects-other"), "/home/agent/.claude", "claude"), false);
+  assert.equal(hasSharedHistoryMount(line("/a\\040b/projects"), "/a b", "claude"), true);
+  assert.equal(hasSharedHistoryMount(line("/home/agent/.codex/sessions"), "/home/agent/.codex", "other"), false);
+});
+
+test("admin and member views of shared Claude and Codex history charge each session once", async () => {
+  const slug = "usage-shared-both";
+  const scopes = [false, true].map((admin) => ({
+    scope: "container", scopeKey: admin ? slug : `${slug}:project-v2`,
+    target: usageView(slug, { sessionId: "usage-shared-both-id", engines: ["claude", "codex"] }),
+  }));
+  const result = await scanExternalUsage({ scopes });
+  assert.deepEqual(result.errors, []);
+  const rows = getDb().prepare("SELECT scope_key, engine, session_id FROM external_usage WHERE slug = ?").all(slug);
+  assert.deepEqual(rows.map((row) => [row.scope_key, row.engine]).sort(), [[slug, "claude"], [slug, "codex"]]);
+  assert.equal(result.outside, 2);
+  assert.equal(result.scopes[1].engines.claude.unchanged, 1);
+  assert.equal(result.scopes[1].engines.codex.unchanged, 1);
+});
+
+test("canonical shared scan removes only the matching old project accounting and bookmark", async () => {
+  const db = getDb(); const slug = "usage-shared-old"; const id = "usage-shared-old-id";
+  for (const [scope, scopeKey, sessionId] of [
+    ["container", `${slug}:project-v2`, id], ["container", `${slug}:project-v2`, "unrelated-project"],
+    ["container", slug, "unrelated-admin"], ["host", "", id],
+  ]) saveScopeSessions(db, { scope, scopeKey, engine: "claude", sessions: [sharedOutsideSession(sessionId)], index: [] });
+  const before = db.prepare("SELECT * FROM external_usage WHERE session_id IN ('unrelated-project','unrelated-admin') OR (scope='host' AND session_id=?) ORDER BY id").all(id);
+  const result = await scanExternalUsage({ scopes: [{ scope: "container", scopeKey: `${slug}:project-v2`, target: usageView(slug, { sessionId: id }) }] });
+  assert.deepEqual(result.errors, []);
+  assert.equal(db.prepare("SELECT count(*) c FROM external_usage WHERE scope_key=? AND session_id=?").get(`${slug}:project-v2`, id).c, 0);
+  assert.equal(db.prepare("SELECT count(*) c FROM external_usage_files WHERE scope_key=? AND session_id=?").get(`${slug}:project-v2`, id).c, 0);
+  assert.equal(db.prepare("SELECT count(*) c FROM external_usage WHERE scope_key=? AND session_id=?").get(slug, id).c, 1);
+  assert.deepEqual(db.prepare("SELECT * FROM external_usage WHERE session_id IN ('unrelated-project','unrelated-admin') OR (scope='host' AND session_id=?) ORDER BY id").all(id), before);
+});
+
+test("unchanged shared sessions remove old duplicates without repricing the canonical row", async () => {
+  const db = getDb(); const slug = "usage-shared-unchanged"; const id = "usage-shared-unchanged-id";
+  for (const scopeKey of [slug, `${slug}:project-v2`]) saveScopeSessions(db, { scope: "container", scopeKey, engine: "claude", sessions: [sharedOutsideSession(id)], index: [] });
+  db.prepare("UPDATE external_usage SET cost_usd=123.456, updated_ms=42 WHERE scope='container' AND scope_key=? AND session_id=?").run(slug, id);
+  const before = db.prepare("SELECT * FROM external_usage WHERE scope='container' AND scope_key=? AND session_id=?").get(slug, id);
+  const result = await scanExternalUsage({ scopes: [{ scope: "container", scopeKey: `${slug}:project-v2`, target: usageView(slug, { sessionId: id }) }] });
+  assert.deepEqual(result.errors, []);
+  assert.equal(result.scopes[0].engines.claude.unchanged, 1);
+  assert.deepEqual(db.prepare("SELECT * FROM external_usage WHERE scope='container' AND scope_key=? AND session_id=?").get(slug, id), before);
+  assert.equal(db.prepare("SELECT count(*) c FROM external_usage WHERE scope_key=? AND session_id=?").get(`${slug}:project-v2`, id).c, 0);
+});
+
+test("legacy private views retain separate scopes even when their new target plans shared mounts", async () => {
+  const slug = "usage-legacy-private";
+  const scopes = [false, true].map((admin) => ({
+    scope: "container", scopeKey: admin ? slug : `${slug}:project-v2`,
+    target: usageView(slug, { shared: false, sessionId: "usage-legacy-private-id" }),
+  }));
+  const result = await scanExternalUsage({ scopes });
+  assert.deepEqual(result.errors, []);
+  assert.equal(result.outside, 2);
+  assert.deepEqual(getDb().prepare("SELECT scope_key FROM external_usage WHERE slug=? ORDER BY scope_key").all(slug).map((r) => r.scope_key), [slug, `${slug}:project-v2`]);
+});
+
+test("inline reducer uses actual mounts and scope-local bookmarks for an unconverted container", async () => {
+  const db = getDb(); const slug = "usage-inline-legacy"; const id = "usage-inline-legacy-id";
+  const dir = tempDir("usage-inline-legacy-");
+  const file = claudeTranscript(dir, id, [assistant(new Date().toISOString(), "claude-opus-5", { input_tokens: 1000, output_tokens: 10 })]);
+  const info = statSync(file);
+  saveScopeSessions(db, { scope: "container", scopeKey: slug, engine: "claude", sessions: [{ ...sharedOutsideSession(id), size: info.size, mtimeMs: Math.trunc(info.mtimeMs) }], index: [] });
+  const target = usageView(slug);
+  target.container.claudeConfigDir = dir;
+  target.container.codexHome = path.join(dir, "no-codex");
+  target.runtime.inspectUsage = async (_target, { source, args }) => {
+    const run = spawnSync(process.execPath, ["--input-type=module", "-e", source, JSON.stringify(args)], { encoding: "utf8" });
+    assert.equal(run.status, 0, run.stderr);
+    return JSON.parse(run.stdout);
+  };
+  const result = await scanExternalUsage({ scopes: [{ scope: "container", scopeKey: `${slug}:project-v2`, target }] });
+  assert.deepEqual(result.errors, []);
+  assert.equal(result.scopes[0].engines.claude.scanned, 1, "a canonical bookmark must not suppress a different private view");
+  assert.equal(db.prepare("SELECT count(*) c FROM external_usage WHERE scope_key=? AND session_id=?").get(`${slug}:project-v2`, id).c, 1);
+});
+
+test("shared accounting and duplicate cleanup roll back together if cleanup fails", async () => {
+  const db = getDb(); const slug = "usage-shared-rollback"; const id = "usage-shared-rollback-id";
+  saveScopeSessions(db, { scope: "container", scopeKey: `${slug}:project-v2`, engine: "claude", sessions: [sharedOutsideSession(id)], index: [] });
+  db.exec(`CREATE TEMP TRIGGER cg_history_duplicate_test BEFORE DELETE ON external_usage WHEN OLD.scope_key='${slug}:project-v2' BEGIN SELECT RAISE(ABORT, 'fixture cleanup failure'); END`);
+  try {
+    const result = await scanExternalUsage({ scopes: [{ scope: "container", scopeKey: `${slug}:project-v2`, target: usageView(slug, { sessionId: id }) }] });
+    assert.ok(result.errors.some((error) => error.includes("fixture cleanup failure")));
+    assert.equal(db.prepare("SELECT count(*) c FROM external_usage WHERE scope_key=? AND session_id=?").get(slug, id).c, 0);
+    assert.equal(db.prepare("SELECT count(*) c FROM external_usage_files WHERE scope_key=? AND session_id=?").get(slug, id).c, 0);
+    assert.equal(db.prepare("SELECT count(*) c FROM external_usage WHERE scope_key=? AND session_id=?").get(`${slug}:project-v2`, id).c, 1);
+  } finally { db.exec("DROP TRIGGER cg_history_duplicate_test"); }
 });

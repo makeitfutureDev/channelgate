@@ -12746,8 +12746,8 @@ Documentation-only, engine-independent: no gateway runtime or Microsoft grants c
   Each asks "show SSH access" and starts an ordinary chat session with a harmless unique marker.
   Connect by terminal/VS Code Remote-SSH as each actor; compare container name and HOME volume
   with their own chat turn, then resume their native session with the corresponding engine.
-  Pass: admin matches admin, member matches project, work folder is shared, histories stay
-  separate, and the existing history remains intact across reconnect and container recreation.
+  Pass: admin matches admin, member matches project, work folder and channel conversation files
+  are shared, credentials stay separate, and history remains intact across reconnect/recreation.
   Verify any changed SSH fingerprint against the selected scope's persisted public host key.
 - [ ] Live SSH-SCOPE-02 (Claude and Codex): keep both actors connected in the same fixture.
   Close the admin connection while the member stays connected, then reverse roles. Pass: only
@@ -12756,6 +12756,46 @@ Documentation-only, engine-independent: no gateway runtime or Microsoft grants c
   actor and verify disconnect before new credential preparation; reconnect uses the new scope.
   Finally enable Admin mode with operator-home access on: SSH remains refused. Restore roles,
   settings and grants. Live execution is pending; automated passes do not satisfy this gate.
+
+### Shared channel history across roles
+
+- Automated: `test/container-history.test.js` checks canonical per-channel mounts, channel/platform
+  separation, bounded additive project migration, unchanged originals and timestamps, marker-last
+  completion, conflict/size/depth limits and refusal of symlinks/hardlinks. The helper has no
+  network, gateway database or admin HOME; the old project HOME is read-only and traversal
+  selects only transcript trees, never its login/configuration files.
+- Automated: `test/author-runtime-isolation.test.js`, `test/container-lifecycle.test.js` and
+  `test/runtime-integration-run.test.js` check separate credential HOMEs/artifacts and warm processes,
+  common history mounts, Claude/Codex same-session admin→member→admin turns, and refusal to publish
+  host-native transcripts. Adoption uses live history mounts rather than shadowed legacy HOME data.
+- Automated: `test/external-usage.test.js` verifies one accounting copy across shared Claude/Codex
+  mounts, actual private-vs-shared runtime detection during rollout, incremental bookmarks,
+  exact old duplicate cleanup and rollback without repricing unrelated/private or host rows.
+- Offline native probes: Claude 2.1.318 normal interactive resume picker lists the same synthetic
+  conversation in two isolated HOMEs; Codex 0.162.1 independent private indexes discover shared
+  files live, reconstruct a paginated user/assistant turn, omit shadowed legacy private rows,
+  and agree on archive/unarchive and readback. No model/provider requests were sent. A real
+  networkless Podman smoke verifies actual migration/mount writes, credential separation and
+  unchanged source originals; all temporary smoke volumes/files were removed.
+- Live SSH-HISTORY-SHARED-01 (Claude and Codex; pending): coordination and execution destinations
+  are distinct. Reserve private Claude and Codex Worker/Auto fixtures with separate workspaces;
+  record exact channel IDs, links and current privacy/membership/settings in the private QA case
+  before dispatch. Pin the intended engine and restore its prior selection afterward. Auto on,
+  Lean off, network on, container runtime. An approved member and an organization admin use
+  separate legitimate SSH keys and grants, with actual author IDs recorded. An operator sets up SSH and a
+  disposable legacy-history/role fixture; an ordinary requester cannot complete setup alone.
+  Seed harmless legacy project transcripts and preserve source hashes; close old project writers
+  before first migration. Each actor creates a unique-marker conversation, lists/resumes the
+  other actor's ordinary channel session in its native picker, and continues the same chat thread.
+  Include fresh and resumed sessions, both role orders, reconnect/recreate, native archive behavior,
+  and a session added while the other runtime is running. Pass only if session IDs/content agree,
+  credential/config/job state remains separate, an unrelated channel's history is absent, and a
+  host `/sudo` canary plus uncertain legacy-admin transcripts remain private. Verify each role's
+  SSH host fingerprint independently; shared history does not unify host keys. Record exact
+  revision/image/CLI versions, unique attempt ID/date/timezone, actual authors/settings, source-root
+  links, native picker/resume evidence, source hashes and restoration readback. Inject link/conflict
+  fixtures only in disposable data; failure must preserve both originals and existing destination.
+  Automated/native offline probes do not establish deployed Slack, SSH or human-client acceptance.
 
 
 ### Remote Bash admission (2026-11-01)

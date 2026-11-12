@@ -395,10 +395,10 @@ test("tools: the block on Admin + containerFullAccessHome is spelled out on gran
 test("show SSH access explains the requester's current-role history scope", async () => {
   const admin = reply(await toolsFor(ADMIN).get("show_channel_ssh")({}));
   const member = reply(await toolsFor(DEV).get("show_channel_ssh")({}));
-  assert.match(admin, /Your SSH history scope: \*\*admin\*\*/);
-  assert.match(member, /Your SSH history scope: \*\*project\*\*/);
+  assert.match(admin, /Your SSH credential\/runtime scope: \*\*admin\*\*/);
+  assert.match(member, /Your SSH credential\/runtime scope: \*\*project\*\*/);
   for (const shown of [admin, member]) {
-    assert.match(shown, /Admin and project histories stay separate/);
+    assert.match(shown, /conversation files/);
     assert.match(shown, /role change requires reconnecting/);
   }
 });

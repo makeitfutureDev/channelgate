@@ -18,6 +18,10 @@ release gates. Stable promotion and publication require approval of the exact te
 
 ### Beta development notes
 
+- Share a channel's Claude and Codex conversation files across admin and non-admin runtimes.
+  Keep logins and personal connection state separate, preserve legacy project histories during
+  migration, and keep host `/sudo` native history private.
+
 - Match the personal Activity dashboard and link-opening page to ChannelGate's teal/orange
   palette, Poppins typography and existing wordmark.
 - Show active/queued workers in browser Activity even on completed threads, push run changes

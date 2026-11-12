@@ -430,7 +430,9 @@ test("MCP grants and session notes stay in the user's runtime during an overlapp
     const { deps } = fakes();
     await session.prepareSshSession({ target: t, entry: sessionEntry, meta: {}, user, cliBin: "podman", log: { warn() {} } }, deps);
     const dir = session.sshUserDir(t, user.id);
-    assert.ok(readFileSync(path.join(dir, "session.md"), "utf8").includes(`runtime/history scope is **${t.runtimeScope}**`));
+    const note = readFileSync(path.join(dir, "session.md"), "utf8");
+    assert.ok(note.includes(`credential/runtime scope is **${t.runtimeScope}**`));
+    assert.ok(note.includes("conversation files are shared"));
     const mcp = JSON.parse(readFileSync(path.join(dir, "mcp.json"), "utf8")).mcpServers;
     const bundle = JSON.parse(readFileSync(path.join(dir, "codex-secrets.json"), "utf8"));
     return [mcp.gateway.env.CG_GATEWAY_CAPABILITY, bundle.gatewayCapability].map(cap => verifyGatewayCapability(cap, { secret: SECRET }).claims.jti);

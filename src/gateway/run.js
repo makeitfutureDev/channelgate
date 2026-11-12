@@ -51,7 +51,7 @@ import { channelCredentialsPreamble } from "./channel-credentials.js";
 import { codeChannelPreamble, syncCodeChannelMeta } from "./code-channels.js";
 import { resolveRunIntegrations } from "./run-integrations.js";
 import { customMcpTokens } from "./custom-mcps.js";
-import { modelBelongsToEngine, effortBelongsToModel } from "../engines/registry.js";
+import { modelBelongsToEngine, effortBelongsToModel, engineSessionState } from "../engines/registry.js";
 import { writeFile, rm, mkdir } from "node:fs/promises";
 import path from "node:path";
 import { gatewayRoot, runTmpDir, workspaceRoot } from "../config/paths.js";
@@ -933,6 +933,7 @@ async function runMessageImpl({ channelId, authorId, workspaceId = "", text, thr
   const runtimeStamp = JSON.stringify({
     backend: target.backend,
     scope: target.runtimeScope,
+    history: target.container?.sharedHistory === true && engineSessionState(engine)?.channelHistory === true ? "channel-v1" : "",
     container: target.container?.name || "",
     fingerprint: target.runtime.fingerprint(target),
     image: target.container?.image || "",
@@ -986,8 +987,14 @@ async function runMessageImpl({ channelId, authorId, workspaceId = "", text, thr
       let prior = null;
       try { prior = JSON.parse(sessionRuntime); } catch { /* legacy unclassified state */ }
       const previousScope = prior?.scope || "admin";
-      if (previousScope !== target.runtimeScope) {
+      const sharesHistory = target.container?.sharedHistory === true && engineSessionState(engine)?.channelHistory === true;
+      const sharedSource = sharesHistory && prior?.backend === "container"
+        && (prior.history === "channel-v1" || prior.scope === "project");
+      const historyChanged = sharesHistory && !sharedSource;
+      if (previousScope !== target.runtimeScope || historyChanged) {
         abortPooled(`${entry.slug}::${threadKey}`);
+      }
+      if ((previousScope !== target.runtimeScope || historyChanged) && !sharedSource) {
         if (!engineExplicit && sessionEngine && isEngineEnabled(sessionEngine)) engine = sessionEngine;
         sessionId = await resetSession(entry.slug, threadKey, engine, sessionGen, runtimeStamp);
         isNew = true;
@@ -2349,8 +2356,10 @@ async function runMessageImpl({ channelId, authorId, workspaceId = "", text, thr
     // switch is caught by the clean reset-before-spawn path above instead of a failed cross-engine
     // resume. Only when the row was unlabeled AND we resumed it as-is this turn (a fresh mint/reset
     // already stamped `engine`); Codex's own id is persisted above only when it changed, so this
-    // also labels a legacy Codex thread whose id round-tripped unchanged.
-    if (sessionEngine === "" && !fresh && finalSessionId) {
+    // also labels a legacy Codex thread whose id round-tripped unchanged. Shared-history turns
+    // additionally stamp the current credential lane even when the native session id stays put.
+    if (finalSessionId && ((sessionEngine === "" && !fresh)
+      || (target.container?.sharedHistory === true && engineSessionState(engine)?.channelHistory === true))) {
       await saveSession(entry.slug, threadKey, finalSessionId, engine, sessionGen, runtimeStamp);
     }
     // A completed turn on the chosen engine supersedes any old fallback-only session. In
