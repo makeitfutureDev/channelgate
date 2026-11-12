@@ -15,6 +15,65 @@ function serveBrandAssets(app) {
   app.get("/favicon.svg", (_req, res) => res.sendFile("favicon.svg", { root: fileURLToPath(new URL("../public", import.meta.url)) }));
 }
 
+test("Activity hands off to native Slack without a new tab and keeps a browser alternative", { skip: !process.env.CG_BROWSER_MODULE, timeout: 30_000 }, async (t) => {
+  resetActivityStateForTests();
+  const ownerId = "UACTIVITYAPP", channelId = "C_ACTIVITY_APP";
+  await setUser(ownerId, { approved: true });
+  await upsertChannelEntry(channelId, { name: "Activity app fixture", type: "channel" });
+  const entry = await getChannelEntry(channelId);
+  await saveChannelMeta(entry.slug, { access: "approved" });
+  const root = { ts: "100.000001", user: ownerId, text: "App handoff fixture", reply_count: 1, latest_reply: "101.123456" };
+  indexSlackThread({ channelId, slug: entry.slug, root, agentEngaged: true });
+  const client = { conversations: { replies: async () => ({ messages: [root] }) },
+    chat: { getPermalink: async () => ({ permalink: "https://example.slack.com/archives/C_ACTIVITY_APP/p101123456" }) } };
+  let base;
+  const app = express(); serveBrandAssets(app);
+  let onHandoff;
+  app.use((req, res, next) => {
+    res.on("finish", () => { if (req.path.includes("/open/C_ACTIVITY_APP/")) onHandoff?.({ status: res.statusCode, location: res.getHeader("Location") }); });
+    next();
+  });
+  app.use("/activity", createActivityRouter({ getClient: () => client, getTeamId: () => "TAPP", getBaseUrl: () => base,
+    snapshot: async () => ({ rows: [{ channel_id: channelId, thread_ts: root.ts, title: root.text,
+      channelName: "App fixture", status: "idle", last_message_ms: Date.now() }], total: 1 }) }));
+  const server = await new Promise((resolve) => { const s = app.listen(0, "127.0.0.1", () => resolve(s)); });
+  base = `http://127.0.0.1:${server.address().port}`;
+  t.after(() => new Promise((resolve) => { resetActivityStateForTests(); server.closeAllConnections(); server.close(resolve); }));
+  const { chromium } = await import(process.env.CG_BROWSER_MODULE);
+  const browser = await chromium.launch({ headless: true, executablePath: process.env.CG_BROWSER_EXECUTABLE });
+  t.after(() => browser.close());
+  const context = await browser.newContext(), page = await context.newPage();
+  page.setDefaultTimeout(5000);
+  // No native handler exists in headless Chromium. Verify the actual HTTP/protocol handoff
+  // and surviving dashboard, separately from the live installed-Slack acceptance gate.
+  await page.goto(createActivityGrantUrl({ baseUrl: base, ownerId, teamId: "TAPP" }));
+  await page.getByRole("link", { name: "Open in Slack", exact: true }).waitFor();
+  const dashboard = page.url();
+  for (const width of [1440, 390]) {
+    await page.setViewportSize({ width, height: 900 });
+    assert.equal(await page.evaluate(() => globalThis.document.documentElement.scrollWidth <= globalThis.innerWidth), true);
+    for (const name of ["Open in Slack", root.text]) {
+      assert.equal(await page.getByRole("link", { name, exact: true }).getAttribute("target"), "_self");
+    }
+    const web = page.getByRole("link", { name: "Open in browser: " + root.text, exact: true });
+    assert.equal(await web.getAttribute("target"), "_blank");
+    assert.equal(new URL(await web.getAttribute("href"), base).searchParams.get("browser"), "1");
+  }
+  // Exercise the native handoff last: a missing OS handler leaves a pending navigation.
+  const response = new Promise((resolve) => { onHandoff = resolve; });
+  await page.getByRole("link", { name: "Open in Slack", exact: true }).click();
+  const handoff = await response;
+  assert.equal(handoff.status, 303);
+  const target = new URL(handoff.location);
+  assert.equal(target.protocol, "slack:");
+  assert.equal(target.searchParams.get("team"), "TAPP");
+  assert.equal(target.searchParams.get("message"), root.latest_reply);
+  assert.equal(target.searchParams.get("thread_ts"), root.ts);
+  assert.equal(context.pages().length, 1);
+  assert.equal(page.url(), dashboard);
+
+});
+
 test("browser reopens the same launch within ten minutes and uses its session for twelve hours", { skip: !process.env.CG_BROWSER_MODULE, timeout: 30_000 }, async (t) => {
   resetActivityStateForTests();
   await setUser("UACTIVITYBROWSER", { approved: true, isAdmin: false });
@@ -209,7 +268,7 @@ test("Activity Mark All Done confirms on desktop and mobile and completes owned 
     await page.locator("#mark-all-done").click();
     const dialog = page.getByRole("dialog", { name: "Mark all your threads done?" });
     assert.match(await dialog.innerText(), /outside the current filter, search, or page/);
-    assert.equal(await page.evaluate(() => document.activeElement.id), "all-done-cancel");
+    assert.equal(await page.evaluate(() => globalThis.document.activeElement.id), "all-done-cancel");
     await dialog.getByRole("button", { name: "Cancel", exact: true }).click();
     await dialog.waitFor({ state: "hidden" });
     await page.locator("#mark-all-done").click(); await page.keyboard.press("Escape");
@@ -225,7 +284,7 @@ test("Activity Mark All Done confirms on desktop and mobile and completes owned 
     await page.keyboard.press("Escape"); assert.equal(await dialog.isVisible(), true);
     assert.equal(mutations.length, 1);
     if (process.env.CG_ACTIVITY_SCREENSHOT_DIR) await page.screenshot({ path: `${process.env.CG_ACTIVITY_SCREENSHOT_DIR}/activity-mark-all-done-${viewport.width}.png` });
-    assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
+    assert.equal(await page.evaluate(() => globalThis.document.documentElement.scrollWidth <= globalThis.innerWidth), true);
     releaseRead = null; release();
     await page.locator("#notice").filter({ hasText: "Marked 14 threads done. 0 skipped. 0 failed." }).waitFor();
     await dialog.waitFor({ state: "hidden" });

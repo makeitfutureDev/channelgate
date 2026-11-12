@@ -220,8 +220,13 @@ export function createActivityRouter({
       // Keep the thread pane open even for a root with no replies yet.
       target.searchParams.set("thread_ts", req.params.threadTs);
       target.searchParams.set("cid", req.params.channelId);
+      const app = new URL("slack://channel");
+      app.searchParams.set("team", session.teamId);
+      app.searchParams.set("id", req.params.channelId);
+      app.searchParams.set("message", latest);
+      app.searchParams.set("thread_ts", req.params.threadTs);
       await recheckOwned(req, client, session, req.params.channelId, req.params.threadTs);
-      return res.redirect(303, target.toString());
+      return res.redirect(303, req.query.browser === "1" ? target.toString() : app.toString());
     } catch (error) { return unavailable(res, error.status || 403); }
   });
   router.post("/:id/api/group-order", async (req, res) => {

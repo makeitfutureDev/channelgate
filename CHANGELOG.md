@@ -18,6 +18,9 @@ release gates. Stable promotion and publication require approval of the exact te
 
 ### Beta development notes
 
+- Open browser Activity threads directly in the Slack app, preserving the latest-reply target.
+  Keep an explicit Browser link for the HTTPS destination; the browser may ask to open Slack.
+
 - Add Mark All Done with confirmation to Slack Home Activity and the personal Activity page.
   Complete the viewer's accessible open indexed threads across pages/filters, queue root ✅
   markers and report partial failures while preserving ownership and access checks.

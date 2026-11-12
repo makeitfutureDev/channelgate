@@ -392,14 +392,14 @@ test("private Home button and REST expose only the viewer's eligible threads wit
   assert.deepEqual(f.reads, [], "refresh uses local state without transcript/permalink Slack reads");
   assert.equal((await f.request(user.url + "/api/threads", { headers: other.headers })).status, 401);
   const open = await f.request(data.rows[0].url, { headers: user.headers });
-  assert.equal(open.status, 303); assert.match(open.headers.get("location"), /^https:\/\/example.slack.com\/archives\//);
+  assert.equal(open.status, 303); assert.match(open.headers.get("location"), /^slack:\/\/channel\?/);
   assert.equal((await f.request(user.url + "/open/C_OTHER/102.000001", { headers: user.headers })).status, 403);
   assert.match(user.html, /<table/);
   f.setTeam("T_DIFFERENT");
   assert.equal((await f.request(user.url + "/api/threads", { headers: user.headers })).status, 403);
 });
 
-test("Open thread targets the newest exact reply on each click and includes its conversation context", async (t) => {
+test("Open thread targets Slack app at the newest exact reply on each click with a browser alternative", async (t) => {
   const f = await fixture(t); await f.root();
   const user = await f.login(), root = f.roots.get("C_WORK:100.000001");
   const url = user.url + "/open/C_WORK/100.000001", calls = [];
@@ -417,9 +417,12 @@ test("Open thread targets the newest exact reply on each click and includes its 
     const response = await f.request(url, { headers: user.headers });
     assert.equal(response.status, 303);
     const target = new URL(response.headers.get("location"));
-    assert.equal(target.pathname, "/archives/C_WORK/p" + latest.replace(".", ""));
+    assert.equal(target.protocol, "slack:");
+    assert.equal(target.hostname, "channel");
+    assert.equal(target.searchParams.get("team"), "T_WORK");
+    assert.equal(target.searchParams.get("message"), latest);
     assert.equal(target.searchParams.get("thread_ts"), root.ts);
-    assert.equal(target.searchParams.get("cid"), "C_WORK");
+    assert.equal(target.searchParams.get("id"), "C_WORK");
     assert.deepEqual(linkCalls.at(-1), { channel: "C_WORK", message_ts: latest });
   }
   assert.deepEqual(calls, Array(2).fill({ channel: "C_WORK", ts: root.ts, limit: 1 }), "one root lookup per click even with hundreds of replies");
@@ -427,8 +430,22 @@ test("Open thread targets the newest exact reply on each click and includes its 
   const response = await f.request(url, { headers: user.headers });
   assert.equal(response.status, 303);
   const target = new URL(response.headers.get("location"));
-  assert.equal(target.pathname, "/archives/C_WORK/p100000001");
+  assert.equal(target.searchParams.get("message"), root.ts);
   assert.equal(target.searchParams.get("thread_ts"), root.ts, "empty thread still opens its conversation pane");
+  const web = await f.request(url + "?browser=1", { headers: user.headers });
+  assert.equal(web.status, 303);
+  const browserTarget = new URL(web.headers.get("location"));
+  assert.equal(browserTarget.protocol, "https:");
+  assert.equal(browserTarget.hostname, "example.slack.com");
+  assert.equal(browserTarget.pathname, "/archives/C_WORK/p100000001");
+  assert.equal(browserTarget.searchParams.get("thread_ts"), root.ts);
+  assert.equal(browserTarget.searchParams.get("cid"), "C_WORK");
+  await setUser("U_MINE", { approved: false });
+  for (const suffix of ["", "?browser=1"]) {
+    const denied = await f.request(url + suffix, { headers: user.headers });
+    assert.equal(denied.status, 403);
+    assert.equal(denied.headers.get("location"), null);
+  }
 });
 
 test("Open thread refuses missing roots, changed owners, invalid latest metadata and foreign threads", async (t) => {
@@ -464,7 +481,7 @@ test("Open thread paginates to the latest reply when optional latest_reply metad
   const response = await f.request(user.url + "/open/C_WORK/100.000001", { headers: user.headers });
   assert.equal(response.status, 303);
   const target = new URL(response.headers.get("location"));
-  assert.equal(target.pathname, "/archives/C_WORK/p102123457");
+  assert.equal(target.searchParams.get("message"), "102.123457");
   assert.equal(target.searchParams.get("thread_ts"), root.ts);
   assert.deepEqual(calls.map((args) => [args.limit, args.cursor]), [[1, undefined], [100, undefined], [100, "next"]]);
 });

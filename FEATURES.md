@@ -90,8 +90,11 @@ Pending reads/results are reused after a timeout. Each lookup checks current acc
 ownership comes from the human root, never the run author. Indexed roots stay local on refresh.
 Private membership is rechecked on snapshots and at least every 15 seconds while connected;
 Open resolves a cached real Slack permalink after fresh authorization. Disconnected streams retry.
-In the personal browser dashboard, Open thread and the conversation title target the latest
-reply inside its thread pane. Each click reads the root's live `latest_reply` metadata
+In the personal browser dashboard, **Open in Slack** and the conversation title open the native
+Slack app with `slack://channel`, targeting the latest reply inside its thread pane without
+Slack's web launch page or a new browser tab. The browser may ask permission to open the app.
+The separate **Browser** link retains the HTTPS permalink alternative for users without the app.
+Both routes use the same fresh access checks. Each click reads the root's live `latest_reply` metadata
 (`conversations.replies`, limit 1), preserves the exact Slack timestamp, and obtains that message's
 permalink. If Slack omits optional latest-reply metadata on a nonempty thread, the click paginates
 replies completely before choosing the newest message. New replies are picked up on the next click
