@@ -18,6 +18,10 @@ release gates. Stable promotion and publication require approval of the exact te
 
 ### Beta development notes
 
+- Add Mark All Done with confirmation to Slack Home Activity and the personal Activity page.
+  Complete the viewer's accessible open indexed threads across pages/filters, queue root ✅
+  markers and report partial failures while preserving ownership and access checks.
+
 - Share a channel's Claude and Codex conversation files across admin and non-admin runtimes.
   Keep logins and personal connection state separate, preserve legacy project histories during
   migration, and keep host `/sudo` native history private.

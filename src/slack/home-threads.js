@@ -1,6 +1,8 @@
 // The App Home personal work list. Every read and click uses the Slack interaction's viewer;
 // neither button values nor stored thread ownership can grant channel or sudo-thread access.
 import { getChannelEntry, getChannelMeta, getUser, listChannels } from "../config/store.js";
+import { onConfigChange } from "../config/change-events.js";
+import { acquireKeyedLock } from "../util/keyed-lock.js";
 import { isAuthorized } from "../gateway/modes.js";
 import { getThreadSudo } from "../gateway/thread-engine.js";
 import { platformOfConversation } from "../platforms/ids.js";
@@ -11,10 +13,10 @@ import { syncThreadDoneMarker } from "./thread-done-marker.js";
 import { inspectThreadCompletion } from "../gateway/thread-completion.js";
 import {
   getSlackThread, indexSlackThread, skipSlackThreadCandidate, setSlackThreadDone, updateSlackThreadRootCompletion, slackThreadCandidates,
-  eligibleSlackThreadsForUser, isSlackThreadEligible, slackThreadRuntime, slackThreadStatus, liveSlackThreadCandidates,
+  eligibleSlackThreadsForUser, isSlackThreadEligible, slackThreadIsDone, slackThreadRuntime, slackThreadStatus, liveSlackThreadCandidates,
 } from "../gateway/slack-threads.js";
 
-export const HOME_THREADS_ACTION = /^cg_home_threads_(filter|page|refresh|history|done|reopen)$/;
+export const HOME_THREADS_ACTION = /^cg_home_threads_(filter|page|refresh|history|done|reopen|doneall)$/;
 export const HOME_THREADS_PAGE_SIZE = 10;
 const HISTORY_BATCH = 10;
 const LABELS = { active: "Active", all: "All open", working: "Working", waiting: "Waiting", idle: "Idle", done: "Completed", error: "Error" };
@@ -176,7 +178,7 @@ export async function homeThreadsSnapshot(client, userId, requested = {}, { read
     } catch { unavailable = true; }
   });
   const rows = window.map((row) => linked.get(`${row.channel_id}::${row.thread_ts}`)).filter(Boolean);
-  return { ...view, page, pages, total: filtered.length, rows, moreHistory, unavailable: unavailable || access.unavailable || hiddenChannels.size > 0 };
+  return { ...view, ...(requested.bulkResult ? { bulkResult: requested.bulkResult } : {}), ...(requested.bulkBusy ? { bulkBusy: true } : {}), page, pages, total: filtered.length, rows, moreHistory, unavailable: unavailable || access.unavailable || hiddenChannels.size > 0 };
 }
 
 const liveRootReads = new WeakMap();
@@ -289,8 +291,15 @@ export function homeThreadBlocks(snapshot) {
         initial_option: { text: { type: "plain_text", text: LABELS[filter] }, value: filter },
         options: Object.entries(LABELS).map(([value, label]) => ({ text: { type: "plain_text", text: label }, value })) },
       button("Refresh", "refresh", state),
+      ...(!snapshot.bulkBusy ? [{ ...button("Mark All Done", "doneall", state), confirm: {
+        title: { type: "plain_text", text: "Mark all threads done?" },
+        text: { type: "mrkdwn", text: "Mark all your open tracked agent threads across channels as done, including other pages and filters? A ✅ will appear on each main message. Running work continues." },
+        confirm: { type: "plain_text", text: "Mark All Done" }, deny: { type: "plain_text", text: "Cancel" },
+      } }] : []),
     ] },
   ];
+  if (snapshot.bulkBusy) blocks.push({ type: "context", elements: [{ type: "mrkdwn", text: "Marking your open threads done…" }] });
+  if (snapshot.bulkResult) blocks.push({ type: "context", elements: [{ type: "mrkdwn", text: bulkCompletionSummary(snapshot.bulkResult) }] });
   if (!rows.length) blocks.push({ type: "section", text: { type: "mrkdwn", text: "_No visible threads in this view._" } });
   for (const row of rows) {
     const title = String(row.title || "Open thread");
@@ -314,6 +323,56 @@ export function homeThreadBlocks(snapshot) {
   return blocks;
 }
 
+// Shared by authenticated Home clicks and the private browser dashboard. The target set is
+// derived on the server from all indexed owned threads, never a page/filter or supplied IDs.
+export async function markAllSlackThreadsDone(client, userId, { beforeWrite = async () => {} } = {}) {
+  const release = await acquireKeyedLock("mark-all-threads-done", userId);
+  let version = 0;
+  const unsubscribe = onConfigChange(() => { version++; });
+  const result = { marked: 0, skipped: 0, failed: 0 };
+  try {
+    const candidates = eligibleSlackThreadsForUser(userId).filter((row) => !slackThreadIsDone(row));
+    for (let index = 0; index < candidates.length; index++) {
+      const candidate = candidates[index];
+      try {
+        await beforeWrite(candidate);
+        let access = await accessContext(client, userId);
+        let entry = await getChannelEntry(candidate.channel_id);
+        if (!await access.allows(entry && { ...entry, channelId: candidate.channel_id }, candidate.thread_ts)) { result.skipped++; continue; }
+        const root = await readRoot(client, candidate.channel_id, candidate.thread_ts);
+        if (!humanRoot(root) || root.user !== userId) { result.skipped++; continue; }
+        // Root reads and membership calls can outlive revocation. Recheck the authenticated
+        // session and current authorization, rejecting any configuration change during that check.
+        const checkedVersion = version;
+        access = await accessContext(client, userId);
+        entry = await getChannelEntry(candidate.channel_id);
+        const allowed = await access.allows(entry && { ...entry, channelId: candidate.channel_id }, candidate.thread_ts);
+        await beforeWrite(candidate);
+        const row = getSlackThread(candidate.channel_id, candidate.thread_ts);
+        if (!allowed || checkedVersion !== version || row?.starter_id !== userId || !isSlackThreadEligible(row) || slackThreadIsDone(row)) { result.skipped++; continue; }
+        if (!setSlackThreadDone(row.channel_id, row.thread_ts, userId, true)) { result.skipped++; continue; }
+        markDone(userId, row.channel_id, row.thread_ts);
+        // setSlackThreadDone durably queues root checks. The existing bounded marker worker
+        // performs them without keeping bulk UI actions waiting on one reaction call per root.
+        result.marked++;
+      } catch (error) {
+        if (error.status === 401 || error.status === 403) throw error;
+        if (["ratelimited", "rate_limited", "slack_webapi_rate_limited_error"].includes(error.data?.error || error.code)) {
+          result.failed += candidates.length - index; break;
+        }
+        result.failed++;
+      }
+    }
+    return result;
+  } finally { unsubscribe(); release(); }
+}
+
+export function bulkCompletionSummary(result) {
+  return `Marked ${result.marked} thread${result.marked === 1 ? "" : "s"} done.`
+    + (result.skipped ? ` ${result.skipped} skipped because they were already done or unavailable.` : "")
+    + (result.failed ? ` ${result.failed} could not be updated. Please try again.` : "");
+}
+
 export function registerHomeThreadActions(app, { publishHome } = {}) {
   app.action("cg_home_threads_open", async ({ ack }) => { await ack(); });
   app.action(HOME_THREADS_ACTION, async ({ ack, body, action, client }) => {
@@ -325,6 +384,11 @@ export function registerHomeThreadActions(app, { publishHome } = {}) {
       const value = kind === "filter" ? { filter: action.selected_option?.value } : JSON.parse(action.value || "{}");
       const view = { ...normalizeThreadView(value),
         ...(["refresh", "history"].includes(kind) ? { forceThreads: true, discoverThreads: true } : {}) };
+      if (kind === "doneall") {
+        await publishHome(client, userId, { ...view, bulkBusy: true });
+        view.bulkResult = await markAllSlackThreadsDone(client, userId);
+        view.page = 0;
+      }
       if (["done", "reopen"].includes(kind)) {
         const row = getSlackThread(String(value.channelId || ""), String(value.threadTs || ""));
         if (!row || row.starter_id !== userId || !isSlackThreadEligible(row)) return;

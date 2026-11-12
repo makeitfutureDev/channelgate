@@ -14,6 +14,8 @@ function activityBrowser(config, browser) {
   const pending = new Set(), nodes = new Map();
   const orderDialog = el("order-dialog"), orderList = el("order-list"), orderButton = el("group-order");
   const orderNodes = new Map();
+  const allDoneButton = el("mark-all-done"), allDoneDialog = el("all-done-dialog");
+  let completingAll = false;
   let groupOrder = [...defaultGroupOrder], groupOrderVersion = -1, draftOrder = [], savingOrder = false;
   let rows = [], filter = "active", ended = false, loaded = false, stream = null;
   let revision = 0, requestId = 0, lastUpdated = 0, connected = false;
@@ -128,6 +130,10 @@ function activityBrowser(config, browser) {
     search.disabled = true;
     orderButton.disabled = true;
     orderDialog.close();
+    allDoneDialog.close();
+    el("all-done-error").textContent = "";
+    actionMessage = "";
+    message = "";
     for (const button of tabs.querySelectorAll("button")) button.disabled = true;
     render();
     connection();
@@ -210,7 +216,7 @@ function activityBrowser(config, browser) {
       }
       link(entry.open, url);
       const busy = pending.has(rowKey);
-      entry.toggle.disabled = busy || ended;
+      entry.toggle.disabled = busy || completingAll || ended;
       entry.toggle.textContent = busy ? "Saving…" : row.status === "done" ? "Reopen" : "Done";
       entry.toggle.setAttribute("aria-label", (row.status === "done" ? "Reopen: " : "Mark done: ") + title);
       if (body.children[index] !== entry.tr) body.insertBefore(entry.tr, body.children[index] || null);
@@ -220,7 +226,42 @@ function activityBrowser(config, browser) {
     el("empty-title").textContent = !loaded ? "Loading your activity…" : search.value.trim() ? "No matching conversations" : filter === "done" ? "No completed conversations" : "You’re all caught up";
     el("empty-copy").textContent = !loaded ? "Your latest conversations will appear here." : search.value.trim() ? "Try a different title or channel name." : filter === "done" ? "Conversations you mark Done will appear here." : "Conversations matching this view will appear as activity arrives.";
     el("result-count").textContent = ended ? "" : shown.length + (shown.length === 1 ? " conversation" : " conversations");
+    renderAllDone();
     notice();
+  }
+  function renderAllDone() {
+    allDoneButton.disabled = ended || !loaded || completingAll || pending.size > 0;
+    el("all-done-confirm").disabled = ended || completingAll || pending.size > 0;
+    el("all-done-cancel").disabled = completingAll;
+    el("all-done-confirm").textContent = completingAll ? "Marking all done…" : "Mark All Done";
+    allDoneDialog.setAttribute("aria-busy", String(completingAll));
+  }
+  async function completeAll() {
+    if (ended || completingAll || pending.size > 0 || !allDoneDialog.open) return;
+    completingAll = true;
+    actionMessage = "";
+    el("all-done-error").textContent = "";
+    render();
+    try {
+      const response = await fetch(base + "/api/completion-all", {
+        method: "POST", credentials: "same-origin",
+        headers: { "Content-Type": "application/json", "X-CG-CSRF": csrf },
+        body: JSON.stringify({ confirmed: true }),
+      });
+      if (response.status === 401 || response.status === 403) { endAccess(); return; }
+      if (!response.ok) throw new Error("unavailable");
+      const data = await response.json();
+      if (ended) return;
+      if (![data.marked, data.skipped, data.failed].every((count) => Number.isSafeInteger(count) && count >= 0)) throw new Error("invalid result");
+      const noun = data.marked === 1 ? " thread" : " threads";
+      actionMessage = "Marked " + data.marked + noun + " done. " + data.skipped + " skipped. " + data.failed + " failed."
+        + (data.failed ? " You can retry Mark All Done for the remaining open threads." : "");
+      allDoneDialog.close();
+      revision++; // A snapshot requested before completion cannot overwrite the refresh.
+      await refresh();
+    } catch {
+      if (!ended) el("all-done-error").textContent = "Mark All Done couldn’t finish. Some threads may already be done. You can safely try again.";
+    } finally { completingAll = false; render(); }
   }
   async function refresh() {
     if (ended) return;
@@ -239,7 +280,7 @@ function activityBrowser(config, browser) {
     }
   }
   async function complete(rowKey) {
-    if (ended || pending.has(rowKey)) return;
+    if (ended || completingAll || pending.has(rowKey)) return;
     const row = rows.find((item) => key(item) === rowKey);
     if (!row) return;
     const done = row.status !== "done";
@@ -268,6 +309,16 @@ function activityBrowser(config, browser) {
     filter = button.dataset.filter;
     render();
   });
+  allDoneButton.addEventListener("click", () => {
+    if (ended || !loaded || completingAll || pending.size > 0) return;
+    el("all-done-error").textContent = "";
+    renderAllDone();
+    allDoneDialog.showModal();
+    el("all-done-cancel").focus();
+  });
+  el("all-done-cancel").addEventListener("click", () => { if (!completingAll) allDoneDialog.close(); });
+  el("all-done-confirm").addEventListener("click", () => { void completeAll(); });
+  allDoneDialog.addEventListener("cancel", (event) => { if (completingAll) event.preventDefault(); });
   orderButton.addEventListener("click", () => {
     if (ended) return;
     draftOrder = [...groupOrder];
@@ -391,8 +442,9 @@ tbody tr:last-child td{border-bottom:0}tbody tr:hover{background:var(--panel-2)}
 }
 </style></head><body><main class="shell">
 ${ACTIVITY_BRAND}
-<header class="heading"><div><h1>My Activity</h1><p class="subtitle">Your conversations, with the latest status in one place.</p></div><div class="heading-actions"><div id="connection" class="connection reconnecting" role="status"><span id="connection-text">Connecting…</span></div><button id="group-order" class="order-button" type="button" aria-haspopup="dialog">⇅ Group order</button></div></header>
+<header class="heading"><div><h1>My Activity</h1><p class="subtitle">Your conversations, with the latest status in one place.</p></div><div class="heading-actions"><div id="connection" class="connection reconnecting" role="status"><span id="connection-text">Connecting…</span></div><button id="mark-all-done" class="order-button" type="button" aria-haspopup="dialog" disabled>Mark All Done</button><button id="group-order" class="order-button" type="button" aria-haspopup="dialog">⇅ Group order</button></div></header>
 <dialog id="order-dialog" class="order-dialog" aria-labelledby="order-title" aria-describedby="order-description"><h2 id="order-title">Arrange status groups</h2><p id="order-description">Move groups up or down. Newest conversations appear first within each group. Your order is saved to your account.</p><ol id="order-list" class="order-list"></ol><button id="order-reset" type="button">Reset to default</button><p id="order-error" class="order-error" role="alert"></p><div class="order-footer"><button id="order-cancel" type="button">Cancel</button><button id="order-save" class="order-save" type="button">Save order</button></div></dialog>
+<dialog id="all-done-dialog" class="order-dialog" aria-labelledby="all-done-title" aria-describedby="all-done-description"><h2 id="all-done-title">Mark all your threads done?</h2><p id="all-done-description">This marks all your open tracked agent threads done across all channels, including threads outside the current filter, search, or page. Their main Slack messages get ✅. Running work continues.</p><p id="all-done-error" class="order-error" role="alert"></p><div class="order-footer"><button id="all-done-cancel" type="button" autofocus>Cancel</button><button id="all-done-confirm" class="order-save" type="button">Mark All Done</button></div></dialog>
 <div id="notice" class="notice" role="alert" hidden></div>
 <div class="toolbar"><div id="summary" class="summary">Loading activity…</div><div class="search-wrap"><label class="search-label" for="search">Search conversations or channels</label><input type="search" id="search" placeholder="Search conversations or channels…" autocomplete="off" maxlength="300"></div></div>
 <section class="panel" aria-label="Conversations"><div id="filters" class="filters" role="group" aria-label="Filter by status">${[["active", "Active"], ["working", "Working"], ["waiting", "Waiting"], ["error", "Error"], ["idle", "Idle"], ["done", "Completed"], ["open", "All open"]].map(([value, label]) => `<button type="button" data-filter="${value}" aria-pressed="${value === "active"}">${label}<span>0</span></button>`).join("")}</div>
