@@ -18,7 +18,8 @@ export function indexSlackThread({ channelId, slug, root, agentEngaged = false }
   const lastMessage = Math.floor(Number(root.latest_reply || root.ts) * 1000);
   getDb().prepare(`INSERT INTO slack_threads(channel_id,thread_ts,slug,starter_id,title,updated_ms,root_done,last_message_ms,agent_engaged)
     VALUES(?,?,?,?,?,?,?,?,?) ON CONFLICT(channel_id,thread_ts) DO UPDATE SET
-    starter_id=excluded.starter_id,title=excluded.title,slug=excluded.slug,
+    starter_id=excluded.starter_id,
+    title=CASE WHEN session_title!='' THEN session_title ELSE excluded.title END,slug=excluded.slug,
     agent_engaged=MAX(agent_engaged,excluded.agent_engaged),
     last_message_ms=MAX(last_message_ms,excluded.last_message_ms)`)
     .run(channelId, root.ts, slug, root.user, title, Math.floor(Number(root.ts) * 1000), rootDone, lastMessage, agentEngaged === true ? 1 : 0);
@@ -27,6 +28,22 @@ export function indexSlackThread({ channelId, slug, root, agentEngaged = false }
     notifyThreadChanged({ channelId, threadTs: root.ts });
   }
   return current;
+}
+
+// Slack already authenticated this metadata event. Only update known human roots; an event
+// never creates ownership/engagement or starts a run. Activity readers still authorize viewers.
+export function renameSlackThread({ channelId, threadTs, title, eventTs } = {}) {
+  if (!channelId || !isSlackTs(threadTs) || !isSlackTs(eventTs) || typeof title !== "string") return false;
+  const clean = title.trim().slice(0, 200);
+  const timestamp = Number(eventTs);
+  if (!clean || !Number.isFinite(timestamp) || timestamp <= 0) return false;
+  const previous = getSlackThread(channelId, threadTs);
+  if (!previous?.starter_id) return false;
+  const changed = getDb().prepare(`UPDATE slack_threads SET title=?,session_title=?,session_title_ts=?
+    WHERE channel_id=? AND thread_ts=? AND starter_id!='' AND session_title_ts<?`)
+    .run(clean, clean, timestamp, channelId, threadTs, timestamp).changes;
+  if (changed && previous.title !== clean) notifyThreadChanged({ channelId, threadTs });
+  return Boolean(changed);
 }
 
 export async function trackSlackThread(client, { channelId, slug, threadKey, messageTs }) {
