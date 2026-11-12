@@ -1,9 +1,23 @@
 ---
 title: Account and secret controls
-description: Seventeen controls for connected accounts, email, and scoped environment credentials.
+description: Controls for personal reply mentions, connected accounts, email, and scoped environment credentials.
 ---
 
 Credential tools change saved account or environment state. Prefer the private UI fields so secrets never enter chat history. No tool on this page reveals a stored secret value. Process environment availability and connected-account identity are separate concepts.
+
+## set_my_reply_mentions
+
+Choose whether completed shared-conversation replies automatically mention the requester.
+
+| Argument | Required | Meaning and default |
+| --- | --- | --- |
+| `enabled` | Yes | Boolean; `true` enables automatic reply mentions, `false` disables them. |
+
+**Authority and scope:** Only the verified requester’s own platform user account. API attribution and agent principals cannot change this personal setting.
+
+**Result:** Saves the preference for following replies across conversations. New users start off; existing users retain on until they opt out. The saved choice survives restart.
+
+**Restrictions:** Direct messages never add automatic tags. Explicit mentions in answer text remain available. Users can also choose **Mention me in replies** in Slack App Home → **Help & settings**; administrators can use the Users drawer.
 
 ## set_my_composio_token
 
