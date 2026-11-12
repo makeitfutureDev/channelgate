@@ -162,7 +162,7 @@ test("every reply footer carries the same fixed menu: Files, Variables, Settings
       { channel: "C1", threadTs: "1.1", authorId },
     );
     // The 💻 resume control moved into Settings → Resume Session; footers no longer carry it.
-    assert.deepEqual(buttons.map((button) => button.text.text), ["Fork", "📂 Files", "🔑 Variables", "⚙️ Settings", "📊 Dashboard"]);
+    assert.deepEqual(buttons.map((button) => button.text.text), ["📂 Files", "🔑 Variables", "⚙️ Settings", "📊 Dashboard"]);
     assert.equal(buttons.some((button) => button.action_id === "resume_cmd_modal"), false);
   }
 });

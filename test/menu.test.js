@@ -34,7 +34,7 @@ function assertCard(message, channel, user, thread = "") {
   assert.equal(message.blocks.length, 1);
   assert.equal(message.blocks[0].type, "actions");
   // The same fixed menu every reply ends with; the Resume button was removed from it.
-  assert.deepEqual(message.blocks[0].elements.map(b => b.text.text), ["Fork", "📂 Files", "🔑 Variables", "⚙️ Settings", "📊 Dashboard"]);
+  assert.deepEqual(message.blocks[0].elements.map(b => b.text.text), ["📂 Files", "🔑 Variables", "⚙️ Settings", "📊 Dashboard"]);
   for (const button of message.blocks[0].elements) {
     const value = JSON.parse(button.value);
     assert.equal(value.c, channel); assert.equal(value.u, user); assert.equal(value.t, thread);

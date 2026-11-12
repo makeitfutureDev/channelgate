@@ -1,5 +1,4 @@
 import { resolveStreamRecipientTeam } from "./stream-recipient.js";
-import { accessContext } from "./home-threads.js";
 import { autoApproveSlackUser } from "../gateway/user-auto-approval.js";
 import { assertEngineSelectable } from "../engines/selection.js";
 // The message pipeline (extracted from slack/app.js — the 2026-08 restructure notes (internal repo) Phase 2.5): gating,
@@ -386,8 +385,8 @@ const THREAD_CONTEXT_MAX_CHARS = 24_000; // total replay budget — keeps a huge
 // prompt. `currentTs` is the triggering message, excluded from the replay. Returns "" when there's
 // nothing to add (empty thread, fetch failure, or history that yields no text). A thread the bot
 // already owns has a session and resumes it, so this is only called for the first turn in a thread.
-function forkHistoryPreamble({ childEngine, sourceUrl, throughTs = "" }) {
-  return `You are continuing a conversation in a new Slack thread using ${engineLabel(childEngine)}. Source thread: ${sourceUrl}. The quoted history below comes from that source thread${throughTs ? " through the selected reply, inclusive; later messages and private engine tool history are not included" : ""}; continue with the user's new request after it.\n\n`;
+function forkHistoryPreamble({ childEngine, sourceUrl }) {
+  return `You are continuing a conversation in a new Slack thread using ${engineLabel(childEngine)}. Source thread: ${sourceUrl}. The quoted history below comes from that source thread; continue with the user's new request after it.\n\n`;
 }
 
 // The lazy Slack-history copy a NATIVE fork falls back on when the engine refuses to clone its
@@ -397,37 +396,30 @@ export function forkFallbackContextGetter(client, { channelId, botUserId = "", f
   if (!client || !fallback?.sourceThreadTs) return null;
   return async () => {
     const history = await fetchThreadContext(client, { channelId, threadTs: fallback.sourceThreadTs, currentTs: fallback.currentTs, botUserId,
-      completedReplyCutoff: Number(fallback.completedReplyCutoff) || 0, throughTs: fallback.throughTs || "" });
-    return history ? forkHistoryPreamble({ childEngine: fallback.childEngine, sourceUrl: fallback.sourceUrl, throughTs: fallback.throughTs }) + history : "";
+      completedReplyCutoff: Number(fallback.completedReplyCutoff) || 0 });
+    return history ? forkHistoryPreamble({ childEngine: fallback.childEngine, sourceUrl: fallback.sourceUrl }) + history : "";
   };
 }
 
-export async function fetchThreadContext(client, { channelId, threadTs, currentTs, botUserId, raw = false, completedReplyCutoff = 0, throughTs = "" }) {
+export async function fetchThreadContext(client, { channelId, threadTs, currentTs, botUserId, raw = false, completedReplyCutoff = 0 }) {
   try {
     const messages = [];
     let cursor;
     do {
-      const r = await client.conversations.replies({ channel: channelId, ts: threadTs, limit: 200, cursor,
-        ...(throughTs ? { latest: throughTs, inclusive: true } : {}) });
+      const r = await client.conversations.replies({ channel: channelId, ts: threadTs, limit: 200, cursor });
       for (const m of r.messages ?? []) messages.push(m);
       cursor = r.response_metadata?.next_cursor || "";
     } while (cursor);
 
-    // Message forks require the exact selected bot reply. A deleted/forged point must never
-    // silently become a fork from a different boundary. Later messages are excluded even when
-    // this fork waited in the source queue. Slack timestamps have microsecond precision.
-    if (throughTs && (!/^\d+\.\d{1,6}$/.test(throughTs) || !messages.some((m) =>
-      m.ts === throughTs && m.user === botUserId && (m.text || m.blocks?.length)))) return "";
-    let truncated = false;
     // Ordinary handoffs exclude the triggering message and later messages. A queued fork also
     // includes bot replies completed while it waited, without copying later human requests.
     let prior = messages.filter((m) =>
-      m.ts && (throughTs ? Number(m.ts) <= Number(throughTs) : (Number(m.ts) < Number(currentTs) ||
-        (m.user === botUserId && Number(m.ts) < completedReplyCutoff))) &&
+      m.ts && (Number(m.ts) < Number(currentTs) ||
+        (m.user === botUserId && Number(m.ts) < completedReplyCutoff)) &&
         (m.text || m.files?.length || extractSlackTables(m).length)
     );
     if (!prior.length) return "";
-    if (prior.length > THREAD_CONTEXT_MAX_MSGS) { truncated = true; prior = prior.slice(-THREAD_CONTEXT_MAX_MSGS); }
+    if (prior.length > THREAD_CONTEXT_MAX_MSGS) prior = prior.slice(-THREAD_CONTEXT_MAX_MSGS);
 
     // Pre-resolve every user id we'll show or that appears in a mention, so rendering stays sync.
     // Resolved in PARALLEL (each id hits the per-process cache afterwards) — a cold many-user
@@ -451,8 +443,7 @@ export async function fetchThreadContext(client, { channelId, threadTs, currentT
       let text = renderMentions(appendSlackTables(m.text || "", m)).replace(/\s+/g, " ").trim();
       if (!text && m.files?.length) text = `(shared ${m.files.length} file${m.files.length === 1 ? "" : "s"})`;
       if (!text) continue;
-      const lineLimit = throughTs ? THREAD_CONTEXT_MAX_CHARS : THREAD_CONTEXT_MAX_LINE;
-      if (text.length > lineLimit) { truncated = true; text = `${text.slice(0, lineLimit)}…`; }
+      if (text.length > THREAD_CONTEXT_MAX_LINE) text = `${text.slice(0, THREAD_CONTEXT_MAX_LINE)}…`;
       // Replayed text and display names are untrusted — defang any embedded copy of our own
       // framing sentinels so a participant can't fake the end of this block and inject "system"
       // instructions after it.
@@ -465,11 +456,10 @@ export async function fetchThreadContext(client, { channelId, threadTs, currentT
     let total = 0;
     for (let i = lines.length - 1; i >= 0; i--) {
       total += lines[i].length + 1;
-      if (kept.length && total > THREAD_CONTEXT_MAX_CHARS) { truncated = true; break; }
+      if (kept.length && total > THREAD_CONTEXT_MAX_CHARS) break;
       kept.unshift(lines[i]);
     }
 
-    if (throughTs && truncated) kept.unshift("[Some earlier messages or long message text were omitted to fit the conversation context limit.]");
     // raw: the bare transcript lines — the memory reviewer frames them itself.
     if (raw) return kept.join("\n");
     return (
@@ -661,7 +651,7 @@ async function ensureUserKnown(client, userId) {
 // harness-switch card (src/slack/engine-switch-choice.js) re-entering with the original event —
 // run it on `engineChoice`, pin the thread there when `engineChoiceSwitch`, and hand the pending
 // row over exactly like a busy-thread choice.
-export async function processMessageEvent(event, client, { botUserId = "", teamId = "", bypassMention = false, dedupeTrigger = false, activeViewContext = null, busyChoice = "", busyTargetRunId = "", busyChoiceId = "", onBusyChoiceAccepted = null, engineChoice = "", engineChoiceSwitch = false, engineChoiceId = "", onEngineChoiceAccepted = null, questionSubmissionId = "", onQuestionSubmissionAccepted = null, syntheticFork = null, queuedForkHandle = null, forkMessageTs = "" } = {}) {
+export async function processMessageEvent(event, client, { botUserId = "", teamId = "", bypassMention = false, dedupeTrigger = false, activeViewContext = null, busyChoice = "", busyTargetRunId = "", busyChoiceId = "", onBusyChoiceAccepted = null, engineChoice = "", engineChoiceSwitch = false, engineChoiceId = "", onEngineChoiceAccepted = null, questionSubmissionId = "", onQuestionSubmissionAccepted = null, syntheticFork = null, queuedForkHandle = null } = {}) {
   try {
     if (isIgnorable(event, botUserId, getTrustedBotApps())) return;
     // A message without a human author (e.g. a trusted-bot post carrying no `user`) can't be
@@ -740,7 +730,7 @@ export async function processMessageEvent(event, client, { botUserId = "", teamI
     // A question continuation is an internal event containing the answers authenticated by its
     // Slack interaction handler. It is not a message Slack can hydrate: using the card timestamp
     // would replace the answers with the card's text and could carry unrelated attachments.
-    if (!questionSubmissionId && !syntheticFork && !queuedForkHandle && !forkMessageTs) event = await hydrateSlackMessage(event, client, {
+    if (!questionSubmissionId && !syntheticFork && !queuedForkHandle) event = await hydrateSlackMessage(event, client, {
       includeThreadFiles: async (message) => {
         const text = stripMentions(message.text, botUserId);
         const command = parseSlashCommand(text);
@@ -864,7 +854,7 @@ export async function processMessageEvent(event, client, { botUserId = "", teamI
           recordActiveRun(handle.runId, {
             channelId: event.channel, slug: entry.slug, threadKey, authorId: event.user,
             workspaceId: teamId, isDM, startedAt: Date.now(),
-            queuedFork: { event, botUserId, teamId, forkMessageTs },
+            queuedFork: { event, botUserId, teamId },
           });
           try {
             // Reserve before acknowledging: another message must not overtake this fork.
@@ -874,7 +864,7 @@ export async function processMessageEvent(event, client, { botUserId = "", teamI
             if (error) { await reply(`The fork could not be queued: ${error.message}`); return; }
             if (handle.aborted || handle.controller.signal.aborted || isForceStopping()) return;
             // Re-enter admission with current permissions, pins and the completed session id.
-            await processMessageEvent(event, client, { botUserId, teamId, bypassMention: true, queuedForkHandle: handle, forkMessageTs });
+            await processMessageEvent(event, client, { botUserId, teamId, bypassMention: true, queuedForkHandle: handle });
           } finally {
             if (shouldClearActiveRun({ forceStopping: isForceStopping() })) clearActiveRun(handle.runId);
             runQueue.release(runKey, handle);
@@ -885,23 +875,14 @@ export async function processMessageEvent(event, client, { botUserId = "", teamI
         const forkSnapshotTs = Date.now() / 1000;
         pendingForkSources.add(runKey);
         try {
-          // The form may have waited in a queue or survived daemon recovery. Recheck private
-          // Slack membership here, after queue ownership, before reading any historical text.
-          if (forkMessageTs) {
-            const access = await accessContext(client, event.user);
-            if (!await access.allows({ ...entry, channelId: event.channel }, threadKey)) {
-              await reply("You are no longer authorized to fork this conversation."); return;
-            }
-            if (codeChannel) { await reply("Message forks are available in ordinary Slack threads. Code channels share one session."); return; }
-          }
           if (await getThreadSudo(entry.slug, threadKey)) { await reply("A sudo thread cannot be forked into an ordinary channel thread."); return; }
           const sourceId = await getSession(entry.slug, threadKey);
-          const sourceEngine = await getSessionEngine(entry.slug, threadKey) || (forkMessageTs ? await resolveThreadEngine(entry.slug, threadKey, meta) : "");
+          const sourceEngine = await getSessionEngine(entry.slug, threadKey);
           const sourceRuntime = await getSessionRuntime(entry.slug, threadKey);
-          if ((!forkMessageTs && !sourceId) || !["claude", "codex"].includes(sourceEngine)) { await reply("This thread needs a completed Claude or Codex turn before it can be forked."); return; }
-          if (!forkMessageTs && sourceRuntime?.backend !== "container") { await reply("This session's history is outside the channel container. Run another turn here to carry it into the container before forking."); return; }
-          const sourceScope = sourceRuntime?.scope || "admin";
-          if (!forkMessageTs && sourceScope !== (authorIsAdmin ? "admin" : "project")) {
+          if (!sourceId || !["claude", "codex"].includes(sourceEngine)) { await reply("This thread needs a completed Claude or Codex turn before it can be forked."); return; }
+          if (sourceRuntime?.backend !== "container") { await reply("This session's history is outside the channel container. Run another turn here to carry it into the container before forking."); return; }
+          const sourceScope = sourceRuntime.scope || "admin";
+          if (sourceScope !== (authorIsAdmin ? "admin" : "project")) {
             await reply("Run a new turn under your own access level before forking this thread."); return;
           }
           let forkTarget = null;
@@ -926,30 +907,27 @@ export async function processMessageEvent(event, client, { botUserId = "", teamI
           }
           if (forkTarget) await assertEngineSelectable(forkTarget.engine);
           const childEngine = forkTarget ? forkTarget.engine : sourceEngine;
-          const nativeFork = !forkMessageTs && childEngine === sourceEngine;
+          const nativeFork = childEngine === sourceEngine;
           const sourceClean = Boolean(meta.cleanMode || await getThreadClean(entry.slug, threadKey));
-          if (forkMessageTs && sourceClean) {
-            await reply("Forking from a message is unavailable in Clean mode because it requires Slack history. Use `/fork <new message>` to branch the current session."); return;
-          }
           if (nativeFork) abortPooled(runKey); // settle the source transcript before cloning
-          const sourceUrl = await slackPermalink(client, event.channel, forkMessageTs || threadKey);
+          const sourceUrl = await slackPermalink(client, event.channel, threadKey);
           let sourceContext = "";
           if (!nativeFork && !sourceClean) {
             sourceContext = await fetchThreadContext(client, { channelId: event.channel, threadTs: threadKey, currentTs: event.ts, botUserId,
-              completedReplyCutoff: queuedForkHandle ? forkSnapshotTs : 0, throughTs: forkMessageTs });
+              completedReplyCutoff: queuedForkHandle ? forkSnapshotTs : 0 });
             if (!sourceContext) {
               await reply("I could not read the source thread's messages. Please try the fork again once its Slack history is available."); return;
             }
-            sourceContext = forkHistoryPreamble({ childEngine, sourceUrl, throughTs: forkMessageTs }) + sourceContext;
+            sourceContext = forkHistoryPreamble({ childEngine, sourceUrl }) + sourceContext;
           }
           // A native fork clones the engine's own session and reads no Slack history up front. It
           // still records WHERE that history is, so run.js can fetch it lazily (same cutoffs) when
           // the engine refuses the fork before running anything — Codex "missing source rollout" —
           // and continue the turn as a fresh session on the copy instead of failing or forgetting.
           const fallbackHistory = nativeFork && !sourceClean
-            ? { sourceThreadTs: threadKey, currentTs: event.ts, completedReplyCutoff: queuedForkHandle ? forkSnapshotTs : 0, throughTs: forkMessageTs || "", sourceUrl, childEngine }
+            ? { sourceThreadTs: threadKey, currentTs: event.ts, completedReplyCutoff: queuedForkHandle ? forkSnapshotTs : 0, sourceUrl, childEngine }
             : null;
-          const handoffNote = forkMessageTs ? " · visible conversation through this reply" : nativeFork ? "" : ` · continuing with ${engineLabel(childEngine)}${sourceClean ? " (clean session; no history replay)" : " from Slack history"}`;
+          const handoffNote = nativeFork ? "" : ` · continuing with ${engineLabel(childEngine)}${sourceClean ? " (clean session; no history replay)" : " from Slack history"}`;
           if (queuedForkHandle?.aborted || queuedForkHandle?.controller.signal.aborted || isForceStopping()) return;
           const root = await client.chat.postMessage({ channel: event.channel, text: `${task}\n\n↪️ Fork of <${sourceUrl}|this thread>${handoffNote}` });
           if (!root?.ts) throw new Error("Slack did not return a thread timestamp for the fork.");
@@ -1717,7 +1695,7 @@ export async function processMessageEvent(event, client, { botUserId = "", teamI
       if (handle.controller.signal.aborted) stopProgressOnAbort();
       // Discovery is optional preflight behind queue ownership and visible progress. A slow
       // Slack root lookup must not leave a request outside durable Stop/restart handling.
-      if (!questionSubmissionId && !syntheticFork && !queuedForkHandle && !forkMessageTs) {
+      if (!questionSubmissionId && !syntheticFork && !queuedForkHandle) {
         await trackSlackThread(client, { channelId: event.channel, slug: entry.slug, threadKey: replyTs || threadKey, messageTs: event.ts });
       }
       // First time the bot is EVER pulled into an existing thread → replay its earlier messages

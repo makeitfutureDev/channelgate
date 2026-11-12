@@ -20,16 +20,9 @@
   descriptions from current settings and channel approvals after activation.
 
 - Show the Activity dashboard's Working status in pink, keeping the existing spinner.
-- Add Fork before Files in Slack reply menus. Enter a new request to open a linked thread with
-  recent visible conversation through that reply, excluding later messages. The dialog explains
-  history limits, excluded private tool history and shared workspace files; current-session
-  `/fork` continues using native engine forks.
-- Fix the Fork button failing with "Couldn't open Fork. Try the button again.": the dialog now
-  opens immediately and the access check fills it afterwards, so a slow membership lookup no
-  longer outlives Slack's trigger window; a refused open is logged with Slack's error code.
-- Fix the Fork dialog still ending in "Couldn't open Fork" after it opened: its input asked Slack
-  for a 6,000-character limit, above the 3,000 Slack allows, so Slack refused the form at the
-  fill step. The next-request input now takes up to 3,000 characters.
+- Reply menus carry no Fork button. A per-reply fork could only copy Slack text into a fresh
+  session, since neither engine forks at an earlier point; `/fork <message>` remains the one way
+  to branch a thread and still clones the engine session.
 
 
 - Show readable, redacted provider errors when a background job's automatic follow-up fails,
