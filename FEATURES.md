@@ -170,7 +170,9 @@ Open resolves a cached real Slack permalink after fresh authorization. Disconnec
 In the personal browser dashboard, **Open in Slack** and the conversation title open the native
 Slack app with `slack://channel`, targeting the latest reply inside its thread pane without
 Slack's web launch page or a new browser tab. The browser may ask permission to open the app.
-The separate **Browser** link retains the HTTPS permalink alternative for users without the app.
+The **Open in Slack** link is styled as a padded button matching Done/Reopen. A compact square
+**↗** button retains the HTTPS browser alternative, with an accessible label and hover tooltip.
+The controls keep consistent spacing and padding on desktop and mobile.
 Both routes use the same fresh access checks. Each click reads the root's live `latest_reply` metadata
 (`conversations.replies`, limit 1), preserves the exact Slack timestamp, and obtains that message's
 permalink. If Slack omits optional latest-reply metadata on a nonempty thread, the click paginates
@@ -1764,7 +1766,10 @@ revisions on failed sync. Details and compatibility limits: `docs/SKILLS.md`.
   place, or replaced by the refusal (not authorized, sudo, code channel) with no submit button.
   Only when Slack refuses the open itself (an expired trigger, say) does the clicker get the
   private "Couldn't open Fork. Try the button again." notice, and the daemon records a
-  `reply_fork_open_failed` event carrying Slack's error code — never the payload.
+  `reply_fork_open_failed` event carrying Slack's error code — never the payload. The form's
+  next-request input is capped at 3,000 characters, Slack's documented ceiling for a
+  `plain_text_input` `max_length` (a larger value makes Slack refuse the whole form at the fill
+  step, so every click ended in the retry notice); the submission check shares the same bound.
 - **Native 👍/👎 answer feedback**: the same footer ends with Slack's `context_actions` block
   carrying `feedback_buttons` (`cg_reply_feedback`) on every streamed, classic, unattended and
   fallback answer that carries the stats footer (not on bare notices such as "🛑 Stopped."). Any

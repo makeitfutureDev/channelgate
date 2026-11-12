@@ -5,6 +5,8 @@
 - Add shared subscription usage to user Activity dashboards, with compact summary bars and a
   Subscriptions page. Simplify the Activity header and reuse compact cards in admin, including
   separate Codex EU quotas, model-specific Claude limits and available reset-credit expiries.
+- Style Activity’s Open in Slack link as a padded button and replace Browser text with a compact ↗ button.
+
 - Keep conversations open on Slack 👍 emoji reactions, including skin tones. The native positive
   answer-feedback button still marks work done, as do checkmark reactions and Done controls.
 
@@ -20,6 +22,9 @@
 - Fix the Fork button failing with "Couldn't open Fork. Try the button again.": the dialog now
   opens immediately and the access check fills it afterwards, so a slow membership lookup no
   longer outlives Slack's trigger window; a refused open is logged with Slack's error code.
+- Fix the Fork dialog still ending in "Couldn't open Fork" after it opened: its input asked Slack
+  for a 6,000-character limit, above the 3,000 Slack allows, so Slack refused the form at the
+  fill step. The next-request input now takes up to 3,000 characters.
 
 
 - Show readable, redacted provider errors when a background job's automatic follow-up fails,
