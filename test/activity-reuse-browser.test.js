@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import express from "express";
+import { fileURLToPath } from "node:url";
 import { ensureTestEnv } from "./helpers.js";
 ensureTestEnv();
 const { setUser, upsertChannelEntry, getChannelEntry, saveChannelMeta } = await import("../src/config/store.js");
@@ -9,12 +10,18 @@ const { indexSlackThread, setSlackThreadDone } = await import("../src/gateway/sl
 const { recordActiveRun, clearActiveRun } = await import("../src/gateway/active-runs.js");
 const { createActivityRouter, createActivityGrantUrl, resetActivityStateForTests, ACTIVITY_GRANT_TTL_MS, ACTIVITY_SESSION_TTL_MS } = await import("../src/web/activity.js");
 
+function serveBrandAssets(app) {
+  app.use("/fonts", express.static(fileURLToPath(new URL("../public/fonts", import.meta.url))));
+  app.get("/favicon.svg", (_req, res) => res.sendFile("favicon.svg", { root: fileURLToPath(new URL("../public", import.meta.url)) }));
+}
+
 test("browser reopens the same launch within ten minutes and uses its session for twelve hours", { skip: !process.env.CG_BROWSER_MODULE, timeout: 30_000 }, async (t) => {
   resetActivityStateForTests();
   await setUser("UACTIVITYBROWSER", { approved: true, isAdmin: false });
   let currentTime = Date.now(), base;
   const issuedAt = currentTime;
   const app = express();
+  serveBrandAssets(app);
   app.use("/activity", createActivityRouter({ getClient: () => ({}), getTeamId: () => "TFIXTURE", getBaseUrl: () => base,
     now: () => currentTime, pollMs: 25, snapshot: async () => ({ rows: [], total: 0 }), refreshKey: () => "fixture" }));
   const server = await new Promise((resolve) => { const s = app.listen(0, "127.0.0.1", () => resolve(s)); });
@@ -59,6 +66,7 @@ test("mobile Activity counts reflect durable worker events on completed roots wi
   setSlackThreadDone("C_ACTIVITY", root.ts, root.user, true);
   let base;
   const app = express();
+  serveBrandAssets(app);
   app.use("/activity", createActivityRouter({ getClient: () => ({}), getTeamId: () => "TFIXTURE", getBaseUrl: () => base,
     pollMs: 60_000, accessRefreshMs: 60_000 }));
   const server = await new Promise((resolve) => { const s = app.listen(0, "127.0.0.1", () => resolve(s)); });
@@ -73,11 +81,22 @@ test("mobile Activity counts reflect durable worker events on completed roots wi
   await page.waitForURL(/\/activity\/[A-Za-z0-9_-]{16}$/);
   await page.locator("#connection-text").filter({ hasText: "Live updates" }).waitFor();
   const sessionUrl = page.url();
+  assert.equal(await page.evaluate(async () => {
+    await globalThis.document.fonts.ready;
+    return globalThis.document.fonts.check("14px Poppins");
+  }), true);
   for (const engine of ["claude", "codex"]) {
     const run = { channelId: "C_ACTIVITY", slug: entry.slug, threadKey: root.ts, engine, authorId: root.user };
     recordActiveRun("mobile-worker", run);
     await page.locator("#summary").filter({ hasText: "1 open · 1 working · 0 waiting" }).waitFor();
     assert.equal(await page.locator("tbody tr .pill").innerText(), "Working");
+    if (engine === "claude" && process.env.CG_ACTIVITY_SCREENSHOT) {
+      await page.screenshot({ path: process.env.CG_ACTIVITY_SCREENSHOT, fullPage: true });
+      await page.setViewportSize({ width: 1440, height: 900 });
+      await page.screenshot({ path: process.env.CG_ACTIVITY_SCREENSHOT.replace(/\.png$/, "-desktop.png"), fullPage: true });
+      assert.equal(await page.evaluate(() => globalThis.document.documentElement.scrollWidth <= globalThis.innerWidth), true);
+      await page.setViewportSize({ width: 390, height: 844 });
+    }
     recordActiveRun("mobile-worker", { ...run, awaitingChoice: true });
     await page.locator("#summary").filter({ hasText: "1 open · 0 working · 1 waiting" }).waitFor();
     assert.equal(await page.locator("tbody tr .pill").innerText(), "Waiting");
