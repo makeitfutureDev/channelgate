@@ -13,7 +13,10 @@ for (const [name, messages, expected] of [
   ["checked root", [msg("1", check), msg("2")], true],
   ["checked latest", [msg("1"), msg("2", check)], true],
   ["checked older reply", [msg("1"), msg("2", check), msg("3")], true],
-  ["thumbs up", [msg("1", [{ name: "+1", count: 1 }])], true],
+  ...["+1", "thumbsup", "+1::skin-tone-3", "thumbsup::skin-tone-5"].flatMap((name) => [
+    [`${name} on root stays open`, [msg("1", [{ name, count: 1 }])], false],
+    [`${name} on older reply stays open`, [msg("1"), msg("2", [{ name, count: 1 }]), msg("3")], false],
+  ]),
   ["removed reaction", [msg("1", [{ name: "white_check_mark", count: 0 }])], false],
   ["ordinary text check", [{ ts: "1", text: "✅ done" }], false],
 ]) {

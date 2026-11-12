@@ -73,7 +73,7 @@ conversations are not scanned or backfilled by this action.
 
 ## Visible completion on Slack thread roots (2026-11-12)
 
-Completing an indexed agent thread through a ✅/👍 reaction on its root or any reply, the
+Completing an indexed agent thread through a ✅/✔️ reaction on its root or any reply, the
 owner's positive answer feedback, Slack Home Done, or the personal Activity dashboard Done
 adds the bot's `white_check_mark` reaction to the thread's main message. The check makes completed
 work visible in the channel. Reopen removes the bot's marker and preserves other people's reactions.
@@ -241,9 +241,11 @@ turn, engine session, agent background job or gateway AI follow-up. Passive obse
 messages and unrelated bots cannot add a thread. A durable participation marker survives session
 cleanup; legacy evidence promotes genuine roots, while already-indexed human-only entries stay hidden.
 
-✅, ✔️ and 👍 (`+1`/`thumbsup`, including skin tones) on the root or any reply, or Done in Activity,
-complete the thread. The owner’s native 👍 answer-feedback button also marks it Done, with
-current admission/membership/sudo checks and message-bound ownership validation. In Slack Home,
+✅ or ✔️ on the root or any reply, or Done in Activity, complete the thread.
+Emoji 👍 reactions (`+1`/`thumbsup`, including skin tones) leave the thread open and do not
+suppress reminders or add a completion check to the root. The owner’s native 👍 answer-feedback
+button also marks it Done, with current admission/membership/sudo checks and message-bound
+ownership validation. In Slack Home,
 completion takes priority over running/queued work or pending forms, excludes
 it from Active/All open and suppresses quiet-thread nudges and pending-response digests. Later
 messages/outcomes do not reopen it. Completed is an explicit archive with Reopen controls; Reopen

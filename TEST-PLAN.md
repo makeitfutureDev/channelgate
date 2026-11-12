@@ -334,8 +334,8 @@ view composition change; neither Claude nor Codex runs to build or handle this n
 In the disposable approved-user Slack fixtures, open Home → Activity → Open live dashboard; a
 second viewer must see only their own roots. Test public/private/DM/sudo access and a new browser
 without admin login. Repeat lifecycle/ownership cases with both Claude and Codex Worker tasks:
-Working → Idle, Error/retry, pending form Waiting, root/reply ✅/👍, Done and Reopen must synchronize
-without full page reload and preserve reminder suppression. Ordinary human announcements and
+Working → Idle, Error/retry, pending form Waiting, root/reply ✅/✔️, native positive-feedback
+button, Done and Reopen must synchronize without full page reload and preserve reminder suppression. Ordinary human announcements and
 unrelated-bot threads must never appear, including polluted indexed legacy rows. Clear a genuine
 engine session and restart: durable participation survives. Engine-independent auth/UI cases use
 their special fixtures. Live Slack/engine execution remains pending until observed and recorded.
@@ -402,12 +402,14 @@ Regression: `node --test test/home-threads.test.js test/thread-completion.test.j
  test/nudges-ttl.test.js test/followups.test.js` plus pipeline/recovery/background and digest suites.
 Root attribution, current channel membership/admission/sudo checks and stale/forged actions remain
 required. For open threads, test queued/background Working, question/approval Waiting, Idle and
-Error/retry. Done/✅/👍 on roots and older replies must outrank runtime status, disappear from Active
+Error/retry. Done and ✅/✔️ on roots and older replies must outrank runtime status, disappear from Active
 and All open, survive later messages/outcomes, and suppress both reminder paths. Completed archive
 retains explicit Reopen; removal preserves other reactions and manual Done. Exercise completion
 during permalink lookup and DM opening, missed reaction removal, legacy v44 override migration,
-root/reply event routing and skin-tone aliases. Test the owner’s native positive-feedback button
-and deny forged source/owner, revoked private membership and sudo demotion; negative feedback
+root/reply event routing. Emoji 👍 (`+1`/`thumbsup`, including skin tones) on roots and
+older replies must leave Home/browser Activity open, add no root marker, and preserve both
+reminder paths; adding/removing them cannot undo manual Done or native feedback completion.
+Test the owner’s native positive-feedback button and deny forged source/owner, revoked private membership and sudo demotion; negative feedback
 remains feedback only. Rows need dividers, a linked shortened title, inline metadata and a primary
 Done accessory on the right, using two text lines and no separate actions row. Dates use the actual
 newest Slack message across pages; outcome/Done time is excluded and
@@ -416,8 +418,8 @@ removing the newest reply corrects the date. Preserve pagination/history and all
 Live acceptance, separately in owned disposable Claude and Codex Slack Worker fixtures: send a task
 as the approved fixture user, open Home → Activity and follow its original link. For open roots,
 verify foreground/queued/background Working, question/approval Waiting, normal Idle and a controlled
-failure/retry. Complete separate threads using Activity Done, root ✅ and final/older-reply 👍; post
-later messages and leave work/forms pending. None appears in open lists or gets a quiet-thread
+failure/retry. Complete separate threads using Activity Done, root ✅ and final/older-reply ✔️,
+plus the native positive-feedback button; post later messages and leave work/forms pending. None appears in open lists or gets a quiet-thread
 nudge/pending digest, including after restart. Verify Completed and explicit Reopen, then remove one
 of several markers: remaining evidence still closes the thread. Removing all reactions opens it
 unless manual Done remains. Miss reaction events during downtime and verify delivery-time refresh.
@@ -13221,7 +13223,8 @@ Enterprise deployment without deleting saved data. Never record a live pass from
 - Live: use disposable private Claude and Codex auto-mode QA channels, an approved starter and a
   second authorized participant. Verify bot `reactions:write` is granted (reinstall if missing).
   For each engine create separate roots with “Reply with a short task summary and wait for me.”
-  After the actual answer, independently add ✅ to the last reply, add 👍 to a reply, click the
+  After the actual answer, add 👍 (including skin tones) to a root and reply: neither completes
+  work nor adds a bot root check. Independently add ✅ to the last reply, add ✔️ to a reply, click the
   starter's native positive answer feedback, click Home Done, and click browser Activity Done.
   Inspect each exact root with Slack reactions.get and in the channel: require a single bot
   `white_check_mark` on the root, rather than only on the answer, and shared Completed visibility.

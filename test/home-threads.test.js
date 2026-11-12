@@ -322,7 +322,37 @@ test("real persisted questions and approval requests show Waiting until resolved
   assert.equal((await homeThreadsSnapshot(client, "U_MINE", { filter: "waiting" })).rows.length, 0);
 });
 
-for (const marker of ["white_check_mark", "+1", "thumbsup", "+1::skin-tone-3", "activity", "feedback"]) {
+for (const reaction of ["+1", "thumbsup", "+1::skin-tone-3", "thumbsup::skin-tone-5"]) {
+  test(`${reaction} emoji reactions leave Activity and reminder eligibility open without a root marker`, async () => {
+    const { syncThreadCompletionReaction } = await import("../src/slack/thread-completion.js");
+    const { noteBotReply, sweepNudges } = await import("../src/gateway/nudges.js");
+    const { recordActivity, buildPendingReportForUser } = await import("../src/gateway/followups.js");
+    const c = await channel(); root(c, "100.000001", "U_MINE", { reactions: [{ name: reaction, count: 1 }] });
+    const messages = [roots.get(`${c.channelId}:100.000001`),
+      { ts: "101.000001", thread_ts: "100.000001", user: "BOT", reactions: [{ name: reaction, count: 1 }] }];
+    client.conversations.replies = async () => ({ messages });
+    client.reactions.get = async () => { assert.fail("thumbs-up events must not fetch completion evidence"); };
+    for (const ts of ["100.000001", "101.000001"]) {
+      for (const added of [true, false]) await syncThreadCompletionReaction(client,
+        { reaction, event_ts: "200.000001", item: { type: "message", channel: c.channelId, ts } }, { added });
+    }
+    assert.equal((await homeThreadsSnapshot(client, "U_MINE")).rows[0].status, "idle");
+    assert.equal((await activityThreadSnapshot(client, "U_MINE")).rows[0].status, "idle");
+    assert.equal((await homeThreadsSnapshot(client, "U_MINE", { filter: "done" })).rows.length, 0);
+    assert.deepEqual(markerCalls, []);
+    recordActivity({ channelId: c.channelId, slug: c.slug, threadTs: "100.000001", userId: "U_MINE", aiTurn: true, tsMs: 1000 });
+    recordActivity({ channelId: c.channelId, slug: c.slug, threadTs: "100.000001", userId: "BOT", isBot: true, aiTurn: true, tsMs: 2000 });
+    assert.match(await buildPendingReportForUser(client, "U_MINE", "BOT", 3000), /waiting on your decision in 1 thread/);
+    const map = new Map(); noteBotReply(c.channelId, c.slug, "100.000001", "U_MINE", { map, nowMs: 1000 });
+    let posts = 0;
+    await sweepNudges({ snapshot: () => ({ connected: true }), getClient: () => client }, {
+      map, nowMs: 3000, thresholdMs: 10, loadUser: async () => ({ nudges: true }), post: async () => { posts++; }, log: async () => {},
+    });
+    assert.equal(posts, 1);
+  });
+}
+
+for (const marker of ["white_check_mark", "heavy_check_mark", "activity", "feedback"]) {
   test(`${marker} completion on a root/reply or in Activity hides active work and suppresses both reminder paths`, async () => {
     const { noteBotReply, sweepNudges } = await import("../src/gateway/nudges.js");
     const { recordActivity, sendDigest, buildPendingReportForUser } = await import("../src/gateway/followups.js");
@@ -416,7 +446,7 @@ for (const boundary of ["permalink", "dm-open"]) {
 
 test("pending verification reconciles a completion reaction removed while offline", async () => {
   const { recordActivity, buildPendingReportForUser } = await import("../src/gateway/followups.js");
-  const c = await channel(); root(c, "100.000001", "U_MINE", { reactions: [{ name: "+1", count: 1 }] });
+  const c = await channel(); root(c, "100.000001", "U_MINE", { reactions: [{ name: "white_check_mark", count: 1 }] });
   roots.get("C_THREADS:100.000001").reactions = [];
   recordActivity({ channelId: c.channelId, slug: c.slug, threadTs: "100.000001", userId: "U_MINE", isBot: false, aiTurn: true, tsMs: 1000 });
   recordActivity({ channelId: c.channelId, slug: c.slug, threadTs: "100.000001", userId: "BOT", isBot: true, aiTurn: true, tsMs: 2000 });
@@ -440,26 +470,26 @@ test("upgrading v44 discards obsolete prompt reopening markers and preserves man
 test("root/reply completion events agree, preserve other markers and honor explicit Reopen", async () => {
   const { syncThreadCompletionReaction } = await import("../src/slack/thread-completion.js");
   const c = await channel(); root(c, "100.000001");
-  const messages = [roots.get("C_THREADS:100.000001"), { ts: "101.000001", thread_ts: "100.000001", user: "BOT", reactions: [{ name: "+1", count: 1 }] }];
+  const messages = [roots.get("C_THREADS:100.000001"), { ts: "101.000001", thread_ts: "100.000001", user: "BOT", reactions: [{ name: "heavy_check_mark", count: 1 }] }];
   client.conversations.replies = async () => ({ messages });
   client.reactions = { ...client.reactions, get: async ({ timestamp }) => ({ message: messages.find((m) => m.ts === timestamp) }) };
   const event = (ts, reaction, eventTs) => ({ item: { type: "message", channel: c.channelId, ts }, reaction, event_ts: eventTs });
-  await syncThreadCompletionReaction(client, event("101.000001", "+1", "200.000001"), { added: true });
+  await syncThreadCompletionReaction(client, event("101.000001", "heavy_check_mark", "200.000001"), { added: true });
   assert.equal((await homeThreadsSnapshot(client, "U_MINE")).rows.length, 0);
   messages[0].reactions = [{ name: "white_check_mark", count: 1 }];
   messages[1].reactions = [];
-  await syncThreadCompletionReaction(client, event("101.000001", "+1", "201.000001"));
+  await syncThreadCompletionReaction(client, event("101.000001", "heavy_check_mark", "201.000001"));
   assert.equal((await homeThreadsSnapshot(client, "U_MINE")).rows.length, 0, "remaining root check still completes work");
   setSlackThreadDone(c.channelId, "100.000001", "U_MINE", false, 300000);
   assert.equal((await homeThreadsSnapshot(client, "U_MINE")).rows.length, 1);
-  messages[1].reactions = [{ name: "thumbsup", count: 1 }];
-  await syncThreadCompletionReaction(client, event("101.000001", "thumbsup", "400.000001"), { added: true });
+  messages[1].reactions = [{ name: "heavy_check_mark", count: 1 }];
+  await syncThreadCompletionReaction(client, event("101.000001", "heavy_check_mark", "400.000001"), { added: true });
   assert.equal((await homeThreadsSnapshot(client, "U_MINE")).rows.length, 0);
   messages[0].reactions = []; messages[1].reactions = [];
   await syncThreadCompletionReaction(client, event("100.000001", "white_check_mark", "401.000001"));
   assert.equal((await homeThreadsSnapshot(client, "U_MINE")).rows.length, 1);
   setSlackThreadDone(c.channelId, "100.000001", "U_MINE", true);
-  await syncThreadCompletionReaction(client, event("101.000001", "thumbsup", "402.000001"));
+  await syncThreadCompletionReaction(client, event("101.000001", "heavy_check_mark", "402.000001"));
   assert.equal((await homeThreadsSnapshot(client, "U_MINE")).rows.length, 0, "manual Done survives reaction removal");
 });
 
@@ -928,9 +958,9 @@ test("reply completion mirrors the root, retries duplicates and removes only the
   const { syncThreadCompletionReaction } = await import("../src/slack/thread-completion.js");
   const { threadHasCompletionReaction } = await import("../src/gateway/thread-completion.js");
   const c = await channel(); root(c, "100.000001");
-  const messages = [roots.get(`${c.channelId}:100.000001`), { ts: "101.000001", thread_ts: "100.000001", reactions: [{ name: "+1", count: 1, users: ["U_MINE"] }] }];
+  const messages = [roots.get(`${c.channelId}:100.000001`), { ts: "101.000001", thread_ts: "100.000001", reactions: [{ name: "white_check_mark", count: 1, users: ["U_MINE"] }] }];
   markerFixture(messages);
-  const event = { reaction: "+1", event_ts: String(Date.now() / 1000), item: { type: "message", channel: c.channelId, ts: "101.000001" } };
+  const event = { reaction: "white_check_mark", event_ts: String(Date.now() / 1000), item: { type: "message", channel: c.channelId, ts: "101.000001" } };
   await syncThreadCompletionReaction(client, event, { added: true });
   await syncThreadCompletionReaction(client, event, { added: true });
   assert.ok(messages[0].reactions[0].users.includes("B_GATEWAY"));
