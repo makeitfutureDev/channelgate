@@ -6,7 +6,7 @@ import { ensureTestEnv } from "./helpers.js";
 ensureTestEnv();
 const { setUser, upsertChannelEntry, getChannelEntry, saveChannelMeta } = await import("../src/config/store.js");
 const { getDb } = await import("../src/db/index.js");
-const { indexSlackThread, setSlackThreadDone } = await import("../src/gateway/slack-threads.js");
+const { indexSlackThread, getSlackThread, setSlackThreadDone } = await import("../src/gateway/slack-threads.js");
 const { recordActiveRun, clearActiveRun } = await import("../src/gateway/active-runs.js");
 const { createActivityRouter, createActivityGrantUrl, resetActivityStateForTests, ACTIVITY_GRANT_TTL_MS, ACTIVITY_SESSION_TTL_MS } = await import("../src/web/activity.js");
 
@@ -161,4 +161,77 @@ test("mobile Activity counts reflect durable worker events on completed roots wi
   }
   assert.equal(await page.evaluate(() => globalThis.document.documentElement.scrollWidth <= globalThis.innerWidth), true);
   assert.deepEqual(errors, []);
+});
+
+
+test("Activity Mark All Done confirms on desktop and mobile and completes owned threads outside the search", { skip: !process.env.CG_BROWSER_MODULE, timeout: 30_000 }, async (t) => {
+  resetActivityStateForTests();
+  for (const table of ["slack_threads", "sessions", "channels", "channel_meta", "active_runs", "bg_jobs", "question_requests", "approval_requests", "followup_threads", "followup_done", "thread_overrides"]) getDb().exec(`DELETE FROM ${table}`);
+  const ownerId = "U_ACTIVITY_BULK", otherId = "U_ACTIVITY_BULK_OTHER";
+  await setUser(ownerId, { approved: true, isAdmin: false });
+  await setUser(otherId, { approved: true, isAdmin: false });
+  const roots = new Map(), owned = [];
+  for (const channelId of ["C_ACTIVITY_BULK_A", "C_ACTIVITY_BULK_B"]) {
+    await upsertChannelEntry(channelId, { name: channelId, type: "channel" });
+    const entry = await getChannelEntry(channelId);
+    await saveChannelMeta(entry.slug, { access: "approved" });
+    for (let index = 0; index < 7; index++) {
+      const root = { ts: `200.00000${index}`, user: ownerId, text: `${index === 0 ? "Visible" : "Hidden"} bulk fixture ${index}` };
+      roots.set(`${channelId}:${root.ts}`, root); owned.push({ channelId, root });
+      indexSlackThread({ channelId, slug: entry.slug, root, agentEngaged: true });
+    }
+    const root = { ts: "201.000001", user: otherId, text: "Other viewer fixture" };
+    roots.set(`${channelId}:${root.ts}`, root);
+    indexSlackThread({ channelId, slug: entry.slug, root, agentEngaged: true });
+  }
+  let base, releaseRead;
+  const client = { conversations: { replies: async ({ channel, ts }) => {
+    if (releaseRead) await releaseRead.promise;
+    return { messages: [roots.get(`${channel}:${ts}`)].filter(Boolean) };
+  } } };
+  const app = express(); serveBrandAssets(app);
+  app.use("/activity", createActivityRouter({ getClient: () => client, getTeamId: () => "TBULK", getBaseUrl: () => base }));
+  const server = await new Promise((resolve) => { const s = app.listen(0, "127.0.0.1", () => resolve(s)); });
+  base = `http://127.0.0.1:${server.address().port}`;
+  t.after(() => new Promise((resolve) => { resetActivityStateForTests(); server.closeAllConnections(); server.close(resolve); }));
+  const { chromium } = await import(process.env.CG_BROWSER_MODULE);
+  const browser = await chromium.launch({ headless: true, executablePath: process.env.CG_BROWSER_EXECUTABLE });
+  t.after(() => browser.close());
+  for (const viewport of [{ width: 1440, height: 1000 }, { width: 390, height: 844 }]) {
+    for (const { channelId, root } of owned) setSlackThreadDone(channelId, root.ts, ownerId, false);
+    const context = await browser.newContext({ viewport }), page = await context.newPage(), errors = [], mutations = [];
+    page.on("pageerror", (error) => errors.push(error.message));
+    page.on("request", (request) => { if (request.url().endsWith("/api/completion-all")) mutations.push(request); });
+    await page.goto(createActivityGrantUrl({ baseUrl: base, ownerId, teamId: "TBULK" }));
+    await page.locator("#result-count").filter({ hasText: "14 conversations" }).waitFor();
+    await page.locator("#search").fill("Visible");
+    await page.locator("#result-count").filter({ hasText: "2 conversations" }).waitFor();
+    await page.locator("#mark-all-done").click();
+    const dialog = page.getByRole("dialog", { name: "Mark all your threads done?" });
+    assert.match(await dialog.innerText(), /outside the current filter, search, or page/);
+    assert.equal(await page.evaluate(() => document.activeElement.id), "all-done-cancel");
+    await dialog.getByRole("button", { name: "Cancel", exact: true }).click();
+    await dialog.waitFor({ state: "hidden" });
+    await page.locator("#mark-all-done").click(); await page.keyboard.press("Escape");
+    await dialog.waitFor({ state: "hidden" });
+    assert.equal(mutations.length, 0);
+    assert.equal(owned.some(({ channelId, root }) => getSlackThread(channelId, root.ts).done_ms > 0), false);
+    await page.locator("#mark-all-done").click();
+    let release; const promise = new Promise((resolve) => { release = resolve; }); releaseRead = { promise };
+    const mutation = page.waitForRequest((request) => request.url().endsWith("/api/completion-all"));
+    await page.locator("#all-done-confirm").evaluate((button) => { button.click(); button.click(); });
+    await mutation;
+    assert.equal(await page.locator("#all-done-confirm").isDisabled(), true);
+    await page.keyboard.press("Escape"); assert.equal(await dialog.isVisible(), true);
+    assert.equal(mutations.length, 1);
+    if (process.env.CG_ACTIVITY_SCREENSHOT_DIR) await page.screenshot({ path: `${process.env.CG_ACTIVITY_SCREENSHOT_DIR}/activity-mark-all-done-${viewport.width}.png` });
+    assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
+    releaseRead = null; release();
+    await page.locator("#notice").filter({ hasText: "Marked 14 threads done. 0 skipped. 0 failed." }).waitFor();
+    await dialog.waitFor({ state: "hidden" });
+    for (const { channelId, root } of owned) assert.ok(getSlackThread(channelId, root.ts).done_ms > 0);
+    for (const channelId of ["C_ACTIVITY_BULK_A", "C_ACTIVITY_BULK_B"]) assert.equal(getSlackThread(channelId, "201.000001").done_ms, 0);
+    assert.deepEqual(errors, []);
+    await context.close();
+  }
 });
