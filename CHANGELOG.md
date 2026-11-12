@@ -2,6 +2,9 @@
 
 ## 0.6.5 — candidate, pending approval
 
+- Keep the Activity live stream connected when a thread snapshot exceeds the socket buffer: wait
+  for it to drain instead of closing, which made the page alternate Reconnecting/Live every 2 s.
+
 - Add ✅ to the exact answer when its conversation owner clicks native 👍 feedback, alongside
   the existing root check. Reopen still works while the answer keeps its feedback marker.
 

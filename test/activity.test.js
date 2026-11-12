@@ -139,17 +139,19 @@ async function fixture(t, options = {}) {
     advance: (ms) => { currentTime += ms; }, setTeam: (value) => { team = value; }, disconnect: () => { connected = false; } };
 }
 async function nextEvent(reader, event = "threads") {
-  let buffer = "";
-  const timer = setTimeout(() => reader.cancel(), 2500);
+  let buffer = "", timedOut = false;
+  const timer = setTimeout(() => { timedOut = true; reader.cancel(); }, 2500);
+  const decoder = new TextDecoder();
   try {
     while (true) {
       const { value, done } = await reader.read();
-      if (done) throw new Error(`SSE ended before ${event}`);
-      buffer += new TextDecoder().decode(value);
+      if (done) throw new Error(timedOut ? `no ${event} event within 2.5 s` : `SSE ended before ${event}`);
+      buffer += decoder.decode(value, { stream: true });
       for (const frame of buffer.split("\n\n").slice(0, -1)) {
         if (frame.includes(`event: ${event}\n`)) return JSON.parse(frame.split("data: ")[1]);
       }
-      buffer = buffer.slice(buffer.lastIndexOf("\n\n") + 2);
+      const consumed = buffer.lastIndexOf("\n\n"); // A frame may span several chunks: keep the partial tail intact.
+      if (consumed >= 0) buffer = buffer.slice(consumed + 2);
     }
   } finally { clearTimeout(timer); }
 }
@@ -640,6 +642,25 @@ test("accepted run event discovers its missing human root before queue ownership
   assert.equal((await nextEvent(reader)).rows[0].status, "working");
   assert.equal(getSlackThread("C_WORK", "100.000001").starter_id, "U_MINE");
   clearActiveRun("not-indexed");
+});
+
+test("SSE keeps a healthy connection open while a large snapshot drains instead of reconnecting every retry", async (t) => {
+  // A snapshot above the socket's high-water mark makes res.write() return false even when the
+  // browser is reading fine; closing there made the page cycle Reconnecting/Live every 2 s.
+  const rows = Array.from({ length: 400 }, (_, i) => ({ channel_id: "C_WORK", thread_ts: `100.${String(i).padStart(6, "0")}`,
+    title: "T".repeat(500), channelName: "#C_WORK", status: "idle", last_message_ms: 1 }));
+  let snapshots = 0;
+  const f = await fixture(t, { pollMs: 20, accessRefreshMs: 40, snapshot: async () => { snapshots++; return { rows, total: rows.length }; } });
+  const user = await f.login();
+  const response = await f.request(user.url + "/stream", { headers: user.headers });
+  const reader = response.body.getReader(); t.after(() => reader.cancel());
+  const first = await nextEvent(reader);
+  assert.equal(first.rows.length, 400);
+  assert.ok(JSON.stringify(first).length > 128 * 1024, "the fixture must exceed any default high-water mark");
+  f.advance(100);
+  const second = await nextEvent(reader);
+  assert.equal(second.rows.length, 400);
+  assert.ok(snapshots >= 2);
 });
 
 test("SSE removes revoked private access and rejects admission after user disable or Slack disconnect", async (t) => {
