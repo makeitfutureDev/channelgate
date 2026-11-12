@@ -3216,3 +3216,170 @@ test("failed stream fallback clears native processing after delivery", async () 
   assert.equal(calls.at(-1), "agents.sessions.setStatus");
   assert.ok(calls.lastIndexOf("agents.sessions.setStatus") > calls.indexOf("delivered"));
 });
+
+// ---------------------------------------------------------------------------------------------
+// Idle flush of the SDK's in-memory answer buffer (SLK-209). The real ChatStreamer holds
+// `markdown_text` until ~256 characters accumulate and answers `null` for every buffered append;
+// only then (or on any `chunks`) does it call Slack. A short sentence ending therefore stayed
+// invisible for as long as the model paused afterwards — the "reply stops mid-word" report. These
+// fakes reproduce exactly that contract: `null` while buffering, a "flush" record when Slack is
+// actually called, the same forced flush on `chunks`.
+function bufferingStreamFakes(calls, { bufferSize = 256 } = {}) {
+  let seq = 0;
+  const make = () => {
+    const id = `stream-${++seq}`;
+    const streamer = {
+      ts: undefined,
+      buffer: "",
+      append: async (payload) => {
+        if (payload?.markdown_text) streamer.buffer += payload.markdown_text;
+        if (streamer.buffer.length >= bufferSize || payload?.chunks) {
+          calls.push(["flush", id, { text: streamer.buffer, chunks: payload?.chunks ?? null }]);
+          streamer.buffer = "";
+          streamer.ts ||= `1720000000.0001${seq}`;
+          return { ok: true };
+        }
+        return null;
+      },
+      stop: async (payload) => {
+        if (payload?.markdown_text) streamer.buffer += payload.markdown_text;
+        calls.push(["stopStream", id, { text: streamer.buffer, blocks: payload?.blocks }]);
+        streamer.buffer = "";
+        streamer.ts ||= `1720000000.0001${seq}`;
+        return { ok: true };
+      },
+    };
+    return streamer;
+  };
+  return {
+    apiCall: refuseStatus(),
+    chatStream: () => make(),
+    chat: {
+      postMessage: async (payload) => calls.push(["postMessage", payload]),
+      update: async () => {},
+      delete: async () => {},
+    },
+  };
+}
+const flushes = (calls, id) => calls.filter((c) => c[0] === "flush" && (!id || c[1] === id));
+
+test("a short answer tail buffered by the SDK is flushed to Slack after a quiet moment", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout", "Date"] });
+  const calls = [];
+  const client = bufferingStreamFakes(calls);
+  const progress = startProgress("stream", client, cardChannel(), "1720000000.000000", { authorId: "U123", teamId: "T123", dir: null });
+  await cardReady();
+
+  progress.onDelta("The migration fai");
+  await cardReady();
+  assert.equal(flushes(calls).length, 0, "a short delta is buffered, not sent — batching stays intact");
+
+  t.mock.timers.tick(1_499);
+  await cardReady();
+  assert.equal(flushes(calls).length, 0, "no flush before the idle window elapses");
+
+  t.mock.timers.tick(1);
+  await cardReady();
+  await cardReady();
+  assert.equal(flushes(calls).length, 1, "the idle window pushes the buffered tail to Slack");
+  assert.equal(flushes(calls)[0][2].text, "The migration fai", "exactly the buffered text, nothing invented");
+
+  // Nothing new arrived: the timer must not keep firing and must never send an EMPTY flush,
+  // which on a helper without a message would create an empty Slack message.
+  t.mock.timers.tick(10_000);
+  await cardReady();
+  assert.equal(flushes(calls).length, 1, "an idle stream with an empty buffer is left alone");
+
+  progress.onDelta("led because the schema drifted.");
+  await cardReady();
+  await progress.finalize({ content: "The migration failed because the schema drifted.", durationMs: 1, usage: {} });
+  const stops = calls.filter((c) => c[0] === "stopStream");
+  assert.equal(stops.length, 1, "one answer message is sealed");
+  assert.ok(stops[0][2].text.startsWith("led because the schema drifted."),
+    "the terminal stop carries only the still-buffered remainder (plus the requester tag)");
+  assert.ok(!stops[0][2].text.includes("The migration fai"), "the flushed tail is not sent twice");
+  assert.ok(Array.isArray(stops[0][2].blocks) && stops[0][2].blocks.length, "the footer lands on the sealed answer");
+  assert.equal(calls.filter((c) => c[0] === "postMessage").length, 0, "no classic fallback duplicate");
+});
+
+test("buffered answer text is delivered before a tool call's card row", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout", "Date"] });
+  const calls = [];
+  const client = bufferingStreamFakes(calls);
+  const progress = startProgress("stream", client, cardChannel(), "1720000000.000000", { authorId: "U123", teamId: "T123", dir: null });
+  await cardReady();
+
+  progress.onDelta("Let me check the logs first.");
+  await cardReady();
+  assert.equal(flushes(calls).length, 0, "the sentence is buffered");
+
+  progress.onEvent({ kind: "tool_use", name: "Bash", target: "tail logs", id: "t1" });
+  await cardReady();
+  await cardReady();
+  const answerFlush = calls.findIndex((c) => c[0] === "flush" && c[2].text === "Let me check the logs first.");
+  const cardWrite = calls.findIndex((c) => c[0] === "flush" && Array.isArray(c[2].chunks) && c[2].chunks.some((chunk) => chunk?.type === "task_update"));
+  assert.ok(answerFlush >= 0, "the tool call flushes the sentence written before it");
+  assert.ok(cardWrite >= 0, "the tool row still reaches the card");
+  assert.ok(answerFlush < cardWrite, "the reader sees the sentence before the tool row, not after the tool finishes");
+
+  // The flush emptied the buffer; the idle timer must not follow up with an empty flush.
+  t.mock.timers.tick(5_000);
+  await cardReady();
+  assert.equal(flushes(calls).filter((c) => c[2].text.length > 0).length, 1, "exactly one text flush");
+  await progress.stop();
+});
+
+test("an actively streaming answer keeps batching — the idle flush waits for a real pause", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout", "Date"] });
+  const calls = [];
+  const client = bufferingStreamFakes(calls);
+  const progress = startProgress("stream", client, cardChannel(), "1720000000.000000", { authorId: "U123", teamId: "T123", dir: null });
+  await cardReady();
+
+  // Deltas every second for several seconds: each one re-arms the window, so nothing is flushed
+  // early and the SDK's own 256-character batching stays in charge.
+  for (let i = 0; i < 4; i += 1) {
+    progress.onDelta(`word${i} `);
+    await cardReady();
+    t.mock.timers.tick(1_000);
+    await cardReady();
+  }
+  assert.equal(flushes(calls).length, 0, "a live token stream is never flushed per delta");
+
+  t.mock.timers.tick(1_500);
+  await cardReady();
+  await cardReady();
+  assert.equal(flushes(calls).length, 1, "the first real pause delivers what was buffered");
+  assert.equal(flushes(calls)[0][2].text, "word0 word1 word2 word3 ");
+
+  // A delta long enough to trip the SDK's own threshold flushes on its own and disarms the timer.
+  progress.onDelta("x".repeat(300));
+  await cardReady();
+  assert.equal(flushes(calls).length, 2, "the SDK threshold still flushes immediately");
+  t.mock.timers.tick(5_000);
+  await cardReady();
+  assert.equal(flushes(calls).length, 2, "nothing left to flush, so the timer stays quiet");
+  await progress.stop();
+});
+
+test("a helper that answers nothing for an append never arms the idle flush", async (t) => {
+  // The SDK says `null` for "buffered". A client whose append returns undefined (every legacy
+  // fake, a nonstandard helper) carries no buffering signal, and a flush against it would be a
+  // spurious API call every window for the life of the turn.
+  t.mock.timers.enable({ apis: ["setTimeout", "Date"] });
+  const calls = [];
+  const streamer = {
+    ts: "1720000000.000100",
+    append: async (payload) => { calls.push(["append", payload]); },
+    stop: async (payload) => { calls.push(["stopStream", payload]); },
+  };
+  const client = { apiCall: refuseStatus(), chatStream: () => streamer, chat: { postMessage: async () => {}, update: async () => {} } };
+  const progress = startProgress("stream", client, cardChannel(), "1720000000.000000", { authorId: "U123", teamId: "T123", dir: null });
+  await cardReady();
+  progress.onDelta("short");
+  await cardReady();
+  t.mock.timers.tick(10_000);
+  await cardReady();
+  assert.equal(calls.filter((c) => c[0] === "append").length, 1, "no flush-only append is ever sent");
+  await progress.stop();
+});

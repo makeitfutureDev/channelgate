@@ -124,6 +124,15 @@ const isSubstantiveChunk = (chunk) => chunk?.type !== "task_update" || !isHeartb
 // a long tool phase and a long answer — message age, not task-row state, is the trigger.
 const STREAM_ROLLOVER_MS = 4.5 * 60_000;
 
+// The SDK's ChatStreamer holds answer text in memory until ~256 characters have accumulated and
+// only then calls Slack. That keeps a fast token stream under the rate limit, but it has no clock:
+// a short sentence ending stays invisible for as long as the model is silent afterwards — thinking,
+// running a tool, waiting on a subagent — so the reader sees a reply that ends mid-word under a
+// live "Writing" indicator and reads it as a run that died. Buffered text is therefore flushed
+// after this much quiet, and eagerly before a tool call (the pause everyone notices). Short
+// enough that a pause reads as a pause, long enough that an uninterrupted stream still batches.
+const STREAM_IDLE_FLUSH_MS = 1_500;
+
 // Native streams can roll between arbitrary answer deltas. If that happens inside a fenced code
 // block, close the fence in the retired fallback copy; its replacement receives the original
 // compiled Markdown (and therefore the original open fence) unchanged.
@@ -707,6 +716,11 @@ function startStreamingProgress(client, { channel, threadTs, isDM, authorId, tea
   let shimmer = null;
 
   let chain = Promise.resolve();
+  // Text the CURRENT answer helper accepted without calling Slack (its append returned exactly
+  // `null`, the SDK's "buffered" answer — a fake that returns nothing never arms this). While it is
+  // set, an idle timer stands ready to push that tail out; see STREAM_IDLE_FLUSH_MS.
+  let pendingBuffered = false;
+  let idleFlushTimer = null;
   let rawLen = 0; // raw answer chars accepted into the live stream
   let streamed = ""; // the accepted deltas themselves — finalize() prefix-checks against the final content
   // Gateway text written at the HEAD of the answer message before the engine produced a token (a
@@ -765,6 +779,7 @@ function startStreamingProgress(client, { channel, threadTs, isDM, authorId, tea
       await client.chat.delete({ channel, ts });
       streamStartedAt = null;
       answerStreamer = null;
+      noteBuffered(undefined);
     } catch (error) {
       reportStreamFailure("partial answer cleanup", error);
     }
@@ -779,6 +794,10 @@ function startStreamingProgress(client, { channel, threadTs, isDM, authorId, tea
     // buffered answer UNDER the "🛑 Stopped." card. Whatever already reached Slack is
     // finalized (and marked partial) by stop() instead.
     if (terminal === "stop") return null;
+    // A bare flush (`chunks: []`, no text) with nothing buffered would make the SDK call Slack with
+    // no content — on a helper without a message yet, that is an EMPTY message. Drop it instead.
+    const flushOnly = Array.isArray(payload?.chunks) && payload.chunks.length === 0 && !payload?.markdown_text;
+    if (flushOnly && !pendingBuffered) return null;
     if (!answerStreamer) answerStreamer = client.chatStream(streamArgs);
     const target = answerStreamer;
     let response;
@@ -798,6 +817,7 @@ function startStreamingProgress(client, { channel, threadTs, isDM, authorId, tea
     if (target === answerStreamer) {
       if (typeof payload?.markdown_text === "string") streamMarkdown += payload.markdown_text;
       if (target.ts && streamStartedAt === null) streamStartedAt = Date.now();
+      noteBuffered(response, payload);
     }
     // Slack clears assistant status whenever the app writes in the thread. Restore the current
     // live phase after durable toolbox updates immediately; answer deltas use a bounded cadence
@@ -811,6 +831,36 @@ function startStreamingProgress(client, { channel, threadTs, isDM, authorId, tea
       failed = true;
     });
     return chain;
+  };
+  // Push the helper's buffered tail to Slack without adding text. `chunks: []` is the SDK's
+  // documented way to force a flush (any `chunks` value flushes; an empty one adds nothing), and it
+  // rides appendCurrent so a stream Slack ended meanwhile gets the same reseed as any delta. Only
+  // ever sent while text is known to be buffered: an empty flush would create an empty message.
+  const flushBufferedText = async () => {
+    if (!pendingBuffered || !answerStreamer || terminal === "stop") return;
+    await appendCurrent({ chunks: [] });
+  };
+  const disarmIdleFlush = () => {
+    if (idleFlushTimer) clearTimeout(idleFlushTimer);
+    idleFlushTimer = null;
+  };
+  const armIdleFlush = () => {
+    disarmIdleFlush();
+    idleFlushTimer = setTimeout(() => {
+      idleFlushTimer = null;
+      if (terminal || failed) return;
+      enqueue(flushBufferedText);
+    }, STREAM_IDLE_FLUSH_MS);
+    idleFlushTimer.unref?.();
+  };
+  // Record what the current helper did with an append: `null` means it buffered (arm the idle
+  // flush, re-armed by every later delta so an active stream keeps batching), anything else means
+  // it called Slack and its buffer is empty.
+  const noteBuffered = (response, payload) => {
+    if (response !== null) pendingBuffered = false;
+    else if (payload?.markdown_text) pendingBuffered = true;
+    if (pendingBuffered) armIdleFlush();
+    else disarmIdleFlush();
   };
 
   // Native tool-call / task-planner card, streamed into its own FIRST message. Its appends ride
@@ -850,12 +900,15 @@ function startStreamingProgress(client, { channel, threadTs, isDM, authorId, tea
     answerStreamer = null;
     streamStartedAt = null;
     streamMarkdown = "";
+    noteBuffered(undefined); // whatever the dead helper held is in `compiled`, replayed below
     try {
       const next = client.chatStream(streamArgs);
       if (compiled) {
-        await next.append({ markdown_text: compiled });
+        const response = await next.append({ markdown_text: compiled });
         streamMarkdown = compiled;
         if (next.ts) streamStartedAt = Date.now();
+        // A short compiled answer is buffered again by the fresh helper; keep the idle flush honest.
+        noteBuffered(response, { markdown_text: compiled });
       }
       answerStreamer = next;
       shimmer?.afterMessageActivity?.({ immediate: true });
@@ -1017,6 +1070,7 @@ function startStreamingProgress(client, { channel, threadTs, isDM, authorId, tea
         answerStreamer = client.chatStream(streamArgs);
         streamStartedAt = null;
         streamMarkdown = "";
+        noteBuffered(undefined); // the retired helper's buffer went out with its stop; the new one is empty
         await appendCurrent({
           ...(compiledMarkdown ? { markdown_text: compiledMarkdown } : {}),
         });
@@ -1119,6 +1173,10 @@ function startStreamingProgress(client, { channel, threadTs, isDM, authorId, tea
       shimmer.onEvent?.(e);
       if (e.kind === "tool_use") {
         lastActivity = toolLabel(e.name, e.target);
+        // The sentence written before a tool call is complete: deliver it now rather than letting
+        // it sit in the buffer for the whole tool run, which is exactly the "stopped mid-word" the
+        // idle flush exists for. Queued BEFORE the tool row so the text lands first.
+        if (pendingBuffered && !failed) enqueue(flushBufferedText);
         timeline.tool(e.name, e.target, e.id);
       } else if (e.kind === "tool_result") {
         const label = toolLabel(e.name, e.target);
@@ -1200,6 +1258,7 @@ function startStreamingProgress(client, { channel, threadTs, isDM, authorId, tea
       }
       terminal = "finalize";
       stopped = true;
+      disarmIdleFlush(); // stop() below flushes the helper's buffer itself
       stopHeartbeat();
       await clearShimmer();
       try {
@@ -1414,6 +1473,7 @@ function startStreamingProgress(client, { channel, threadTs, isDM, authorId, tea
       }
       terminal = "stop";
       stopped = true;
+      disarmIdleFlush();
       stopHeartbeat("⏹️ Stopped");
       timeline.interruptReport();
       timeline.finishAgents("stopped");

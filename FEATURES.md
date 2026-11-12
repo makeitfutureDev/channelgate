@@ -2797,7 +2797,14 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
   answer is republished rather than abandoned: a fresh stream receives the complete compiled answer,
   the refused delta is replayed onto it, the footer lands on that surviving message and the stranded
   copy is deleted only once the replacement is durable — a lost streaming window costs a message,
-  never a delta or the footer. Alongside the answer, tool calls
+  never a delta or the footer. The SDK helper batches answer text in memory (~256 characters) before
+  each Slack call; the gateway adds the clock the helper lacks: a tail still buffered after 1.5 s
+  of engine silence, or when the model turns to a tool call, is flushed to the live message, so a
+  sentence written before a long think or tool run no longer sits invisible as a reply that ends
+  mid-word under a live "Writing" indicator. An uninterrupted token stream keeps the helper's own
+  batching (every delta re-arms the window), an empty buffer is never flushed (which would post an
+  empty message), and a helper that never reports buffering (returns nothing from an append) never
+  arms it. → TEST-PLAN: Slack gateway. Alongside the answer, tool calls
   and the agent's plan render in Slack's native
   **task_update card**, streamed as its own message directly ABOVE the answer — a turn with progress
   is two bot messages (the live card, then the uninterrupted answer beneath it), a text-only turn

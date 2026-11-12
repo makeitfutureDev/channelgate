@@ -7602,6 +7602,19 @@ structural invariants are automated; rendered navigation and feature claims also
       fresh stream holding the whole compiled answer plus the refused delta; the footer lands on
       that surviving message, the stranded partial is deleted, and no duplicate answer is posted
       beneath it (`test/slack-progress.test.js`).
+- [x] Unit (SLK-209): a short answer tail the SDK helper buffered (its append answered `null`) is
+      flushed to the live message after 1.5 s of engine silence and, eagerly, before a tool call's
+      card row; a live token stream re-arms the window and keeps the helper's 256-character
+      batching; an empty buffer is never flushed; the terminal stop carries only the still-buffered
+      remainder (no duplicate text, no classic fallback); a helper that returns nothing from an
+      append never arms the flush (`test/slack-progress.test.js`).
+- [ ] LIVE (SLK-209, Claude and Codex): in a test channel, prompt "Write one short sentence saying
+      you will check the repository, then run `ls` with the shell tool, then summarize." Pass: the
+      first sentence is visible in full in the streamed reply within ~2 s of being written — before
+      the tool row appears in the card and while the shell command runs — and the final reply
+      contains that sentence exactly once. Repeat with a prompt that makes the model pause to think
+      mid-answer ("Explain X in two paragraphs, thinking carefully between them"): the first
+      paragraph never stays cut off mid-word while the "Writing" indicator is live.
 - [x] Unit: a progress card whose stream Slack ended first (`message_not_in_streaming_state` on an
       append, on the scheduled rollover, or on the terminal seal) is republished into a fresh stream
       carrying the complete toolbox — warning rows and rows that never reached the dead message

@@ -2,6 +2,10 @@
 
 ## 0.6.5 — candidate, pending approval
 
+- Flush short answer text to the live Slack reply after 1.5 s of engine silence and before each
+  tool call. The Slack SDK batches ~256 characters in memory with no clock, so a sentence written
+  before a long think or tool run stayed invisible and the reply looked cut off mid-word.
+
 - Return Later conversations to Active when a fresh human message addresses the agent: require
   its @mention in shared conversations, or a direct message to it. Ordinary replies preserve
   Later. Remove the bot's root clock with durable retries and preserve human reactions.
