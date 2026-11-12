@@ -2,6 +2,9 @@
 
 ## 0.6.5 — candidate, pending approval
 
+- Return Later conversations to Active when a fresh human message arrives, including without
+  an @mention. Remove the bot's root clock with durable retries and preserve human reactions.
+
 - Compact Slack fork roots to `↪️ {User} Fork: {message}`. Move the source link and engine
   handoff note into the first thread reply, disable previews, and omit the repeated request.
 
