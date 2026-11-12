@@ -2,10 +2,20 @@
 
 ## Activity opens the latest thread message (2026-11-12)
 
+- Direct app routing: title and **Open in Slack** links use the current tab's authorized open
+  endpoint, which redirects to `slack://channel` with the session workspace, channel, exact latest
+  `message` and root `thread_ts`. **Browser** opens the same endpoint with `?browser=1` in a new
+  tab and redirects to the validated HTTPS permalink with `thread_ts` and `cid`. Both reject
+  revoked admission. Browser script tests verify targets, fallback URLs and hostile URL rejection.
+  Live desktop fixture: install/sign in to Slack, open the private dashboard and click both app
+  controls; allow the browser's external-protocol prompt if shown. Pass: Slack opens the correct
+  workspace and latest thread reply without visiting Slack's web launch page or creating an empty
+  browser tab. Browser link still opens the HTTPS destination. Repeat without an installed handler
+  to verify Browser remains available. Native app behavior is unexecuted until recorded separately.
 - Automated: `test/activity.test.js` and existing `test/home-thread-reader.test.js` /
   `test/activity-page.test.js`. Use the isolated Express Activity fixture with an approved owner,
   indexed thread and fake Slack root metadata. Pass: Open redirects to the exact live latest-reply
-  timestamp, including six-digit microseconds, with `thread_ts` and `cid` retaining the original
+  timestamp, including six-digit microseconds, with `thread_ts` retaining the original
   thread; a later click targets a newer reply even when the local activity date has not changed.
   When latest-reply metadata is present, a long thread requires only one root lookup per click.
   If optional metadata is absent on a nonempty thread, paginate replies to exhaustion and target

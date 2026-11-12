@@ -96,6 +96,24 @@ test("activity browser safely renders hostile text and restricts links to Slack 
   }
 });
 
+test("Activity app links reuse the current tab and retain an explicit browser alternative", () => {
+  const { elements, stream } = browser(() => new Promise(() => {}));
+  stream.snapshot([row()]);
+  const tr = elements.threads.children[0], title = tr.children[0].children[0];
+  const [app, , web] = tr.children[4].children;
+  assert.equal(title.target, "_self");
+  assert.equal(app.target, "_self");
+  assert.equal(app.textContent, "Open in Slack");
+  assert.equal(app.href, title.href);
+  assert.equal(web.href, app.href + "?browser=1");
+  assert.equal(web.target, "_blank");
+  assert.equal(web.rel, "noopener noreferrer");
+  for (const url of ["slack://channel?team=attacker&id=C1", "javascript:alert(1)", "https://attacker.example/"]) {
+    stream.snapshot([row("working", "unsafe", url)]);
+    for (const anchor of [title, app, web]) assert.equal(anchor.href, undefined);
+  }
+});
+
 test("activity browser filters locally and serializes each completion action with CSRF", async () => {
   const save = deferred();
   let done = false;

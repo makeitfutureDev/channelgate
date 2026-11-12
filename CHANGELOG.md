@@ -18,6 +18,9 @@ release gates. Stable promotion and publication require approval of the exact te
 
 ### Beta development notes
 
+- Open browser Activity threads directly in the Slack app, preserving the latest-reply target.
+  Keep an explicit Browser link for the HTTPS destination; the browser may ask to open Slack.
+
 - Place Open live dashboard after Help & settings in the Slack Home Activity navigation row.
 
 - Add Mark All Done with confirmation to Slack Home Activity and the personal Activity page.

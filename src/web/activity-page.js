@@ -96,10 +96,10 @@ function activityBrowser(config, browser) {
         (url.hostname === "slack.com" || url.hostname.endsWith(".slack.com")) ? url.href : "";
     } catch { return ""; }
   }
-  function link(anchor, url) {
+  function link(anchor, url, app = false) {
     if (url) {
       anchor.href = url;
-      anchor.target = "_blank";
+      anchor.target = app ? "_self" : "_blank";
       anchor.rel = "noopener noreferrer";
       anchor.removeAttribute("aria-disabled");
     } else {
@@ -164,12 +164,13 @@ function activityBrowser(config, browser) {
     statusCell.append(pill);
     const timeCell = node("td", "time-cell"), time = node("time");
     timeCell.append(time);
-    const actions = node("td", "actions"), open = node("a", "open-link", "Open thread ↗"), toggle = node("button", "toggle");
+    const actions = node("td", "actions"), open = node("a", "open-link", "Open in Slack"), toggle = node("button", "toggle");
+    const web = node("a", "open-link", "Browser ↗");
     toggle.type = "button";
     toggle.dataset.key = rowKey;
-    actions.append(open, toggle);
+    actions.append(open, toggle, web);
     tr.append(titleCell, channel, statusCell, timeCell, actions);
-    return { tr, title, channel, pill, statusText, time, open, toggle };
+    return { tr, title, channel, pill, statusText, time, open, toggle, web };
   }
   function matches(row) {
     if ((filter === "active" || filter === "open") && row.status === "done") return false;
@@ -198,9 +199,10 @@ function activityBrowser(config, browser) {
       let entry = nodes.get(rowKey);
       if (!entry) { entry = makeRow(rowKey); nodes.set(rowKey, entry); }
       const title = String(row.title || "Untitled conversation"), url = safeUrl(row.url);
+      const app = Boolean(url && new URL(url).origin === location.origin);
       entry.title.textContent = title;
       entry.title.title = title;
-      link(entry.title, url);
+      link(entry.title, url, app);
       entry.channel.textContent = String(row.channelName || "Conversation");
       entry.pill.className = "pill " + row.status;
       entry.statusText.textContent = states[row.status];
@@ -214,7 +216,9 @@ function activityBrowser(config, browser) {
         entry.time.removeAttribute("datetime");
         entry.time.removeAttribute("title");
       }
-      link(entry.open, url);
+      link(entry.open, url, app);
+      link(entry.web, app ? url + "?browser=1" : url);
+      entry.web.setAttribute("aria-label", "Open in browser: " + title);
       const busy = pending.has(rowKey);
       entry.toggle.disabled = busy || completingAll || ended;
       entry.toggle.textContent = busy ? "Saving…" : row.status === "done" ? "Reopen" : "Done";
