@@ -1007,3 +1007,54 @@ test("retry checks current reactions rather than restoring a stale completed mar
   assert.equal(markerCalls.length, 0);
   assert.equal(getSlackThread(c.channelId, "100.000001").root_done, 0);
 });
+
+
+test("Home Mark All Done requires native confirmation and covers all owned open pages", async () => {
+  const c = await channel();
+  for (let i = 0; i < 12; i++) root(c, `${100+i}.000001`);
+  root(c, "200.000001", "U_OTHER");
+  root(c, "201.000001"); setSlackThreadDone(c.channelId, "201.000001", "U_MINE", true);
+  const blocks = homeThreadBlocks({ rows: [], filter: "done" });
+  const button = blocks.flatMap((block) => block.elements || []).find((el) => el.action_id === "cg_home_threads_doneall");
+  assert.equal(button.text.text, "Mark All Done");
+  assert.equal(button.confirm.confirm.text, "Mark All Done"); assert.equal(button.confirm.deny.text, "Cancel");
+  assert.match(button.confirm.text.text, /across channels.*other pages and filters/);
+  assert.equal(getSlackThread(c.channelId, "100.000001").done_ms, 0, "rendering the confirmation does not mutate");
+  let handler, published;
+  registerHomeThreadActions({ action: (_id, fn) => { handler = fn; } }, { publishHome: async (_client, _user, view) => { published = view; } });
+  const args = { ack: async () => {}, client, body: { user: { id: "U_MINE" } }, action: {
+    action_id: button.action_id, value: JSON.stringify({ filter: "done", page: 8, ownerId: "U_OTHER", channelId: c.channelId, threadTs: "200.000001" }),
+  } };
+  await handler(args);
+  assert.deepEqual(published.bulkResult, { marked: 12, skipped: 0, failed: 0 }); assert.equal(published.page, 0);
+  assert.equal(getSlackThread(c.channelId, "200.000001").done_ms, 0);
+  assert.equal(getDb().prepare("SELECT count(*) n FROM slack_threads WHERE completion_marker_retry_ms>0 AND starter_id='U_MINE'").get().n, 13);
+  await handler(args); assert.deepEqual(published.bulkResult, { marked: 0, skipped: 0, failed: 0 });
+});
+
+test("Mark All Done skips private nonmembers, foreign roots, unengaged and sudo threads", async () => {
+  const { markAllSlackThreadsDone } = await import("../src/slack/home-threads.js");
+  const publicChannel = await channel(); root(publicChannel, "100.000001"); root(publicChannel, "101.000001");
+  await setThreadSudo(publicChannel.slug, "101.000001", true);
+  root(publicChannel, "102.000001"); roots.get(`${publicChannel.channelId}:102.000001`).user = "U_OTHER";
+  const privateChannel = await channel("G_PRIVATE", "group"); root(privateChannel, "103.000001"); members.set(privateChannel.channelId, []);
+  indexSlackThread({ channelId: publicChannel.channelId, slug: publicChannel.slug, root: { ts: "104.000001", user: "U_MINE", text: "human-only" } });
+  const result = await markAllSlackThreadsDone(client, "U_MINE");
+  assert.deepEqual(result, { marked: 1, skipped: 3, failed: 0 });
+  for (const ts of ["101.000001", "102.000001", "104.000001"]) assert.equal(getSlackThread(publicChannel.channelId, ts).done_ms, 0);
+  assert.equal(getSlackThread(privateChannel.channelId, "103.000001").done_ms, 0);
+});
+
+test("Mark All Done rechecks access after root lookup and reports partial Slack failures", async () => {
+  const { markAllSlackThreadsDone } = await import("../src/slack/home-threads.js");
+  const c = await channel(); root(c, "100.000001"); root(c, "101.000001");
+  const read = client.conversations.replies;
+  client.conversations.replies = async (args) => {
+    if (args.ts === "101.000001") throw new Error("Slack unavailable");
+    return read(args);
+  };
+  assert.deepEqual(await markAllSlackThreadsDone(client, "U_MINE"), { marked: 1, skipped: 0, failed: 1 });
+  client.conversations.replies = async (args) => { await setUser("U_MINE", { approved: false }); return read(args); };
+  assert.deepEqual(await markAllSlackThreadsDone(client, "U_MINE"), { marked: 0, skipped: 1, failed: 0 });
+  assert.equal(getSlackThread(c.channelId, "101.000001").done_ms, 0);
+});

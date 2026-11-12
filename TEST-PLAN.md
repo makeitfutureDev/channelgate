@@ -13075,3 +13075,34 @@ Enterprise deployment without deleting saved data. Never record a live pass from
   false successful marker claim while API writes are failing. Restore owned fixture state.
 - Live dual-engine acceptance pending; automated fixtures do not certify installed OAuth scopes
   or Slack client rendering. Existing historical completed threads are not backfilled.
+
+
+### Confirmed Mark All Done in both Activity views (2026-11-12)
+
+- Automated: `node --test test/home-threads.test.js test/activity.test.js test/activity-page.test.js`.
+  Verify Home's native confirmation and browser dialog, Cancel/Escape with zero writes, one
+  confirmed CSRF-protected request, disabled duplicate/conflicting actions, counts from the server,
+  partial failure and safe retry. Use 12 owned open roots across pages plus foreign, already-done,
+  private-nonmember, sudo, unengaged and changed-owner controls. All accessible owned open roots
+  are marked irrespective of filter/search/page; controls remain unchanged. Each successful write
+  queues the existing durable root ✅. Revoke access or expire the browser session while a Slack
+  root lookup waits: no subsequent unauthorized write. Rate limits stop the batch with accurate
+  failed counts; repeat completion is idempotent. Existing working jobs/approvals remain intact.
+- Live fixture: disposable private Claude and Codex auto-mode QA channels and two approved test
+  actors with isolated native Slack/browser identities. Each actor creates several harmless
+  indexed threads in both channels; include Completed, Working, Waiting, inaccessible and
+  foreign-owner controls, with more roots than one Home page. Ask each engine “Summarize this
+  harmless task and wait for my next instruction.” Verify actual delivered answers and ownership.
+  In Home choose a narrow filter/late page, press Mark All Done, inspect the scope explanation,
+  then Cancel: require unchanged completion and reactions. Repeat and confirm. Require every
+  accessible open indexed thread owned by that viewer to be Done, Completed visibility, shared
+  reminder suppression, queued then visible bot root ✅, and accurate marked/skipped/failed counts.
+  Foreign/inaccessible/already-done/unengaged controls retain their state; active work is not stopped.
+  Reopen owned roots, open the personal browser dashboard at desktop/mobile sizes, apply a search
+  or Completed filter, repeat Cancel/Escape and confirmed completion. Confirm only the dedicated
+  confirmation button starts the write. During an owned failure/expiry fixture require accurate
+  partial results, retry without duplicate changes, closed dialog on access loss and no leaked
+  private rows. Restore owned fixtures and settings.
+- Both engine fixture definitions required for actual delivered threads; the bulk completion
+  decision itself is daemon-side. Live Slack dual-engine acceptance remains pending; generated
+  browser-script tests do not certify the deployed Slack confirmation or installed OAuth scopes.

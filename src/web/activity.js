@@ -10,7 +10,7 @@ import { onThreadChanged } from "../gateway/thread-changes.js";
 import { onActiveRunsChanged } from "../gateway/active-runs.js";
 import { syncThreadDoneMarker } from "../slack/thread-done-marker.js";
 import { clearDone, markDone } from "../gateway/followups.js";
-import { accessContext, activityThreadSnapshot, homeThreadsRefreshKey } from "../slack/home-threads.js";
+import { accessContext, activityThreadSnapshot, homeThreadsRefreshKey, markAllSlackThreadsDone } from "../slack/home-threads.js";
 import { createHomeThreadReader } from "../slack/home-thread-reader.js";
 import { isSlackTs } from "../slack/thread-keys.js";
 import { isLoopbackHost, timingSafeEqualStr } from "./security.js";
@@ -236,6 +236,19 @@ export function createActivityRouter({
       const user = await setUser(session.ownerId, (current) => ({ activityGroupOrder: [...order],
         activityGroupOrderVersion: activityGroupOrderVersion(current?.activityGroupOrderVersion) + 1 }));
       return res.json({ groupOrder: user.activityGroupOrder, groupOrderVersion: user.activityGroupOrderVersion });
+    } catch (error) { return unavailable(res, error.status || 503); }
+  });
+  router.post("/:id/api/completion-all", async (req, res) => {
+    try {
+      const { session, client } = await context(req);
+      if (req.headers.origin !== req.activityOrigin || !timingSafeEqualStr(String(req.headers["x-cg-csrf"] || ""), session.csrf)) return unavailable(res, 403);
+      if (req.body?.confirmed !== true) return unavailable(res, 400);
+      // Ignore caller-supplied owners/targets. Every write revalidates this exact session and
+      // the current owned-thread policy after asynchronous Slack root/membership reads.
+      const result = await markAllSlackThreadsDone(client, session.ownerId, {
+        beforeWrite: async () => { await context(req); },
+      });
+      return res.json(result);
     } catch (error) { return unavailable(res, error.status || 503); }
   });
   router.post("/:id/api/completion", async (req, res) => {

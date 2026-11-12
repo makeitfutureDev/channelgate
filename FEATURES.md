@@ -1,5 +1,18 @@
 # ChannelGate — Features
 
+## Mark all Activity threads done (2026-11-12)
+
+Slack Home Activity and the personal browser Activity dashboard include **Mark All Done** with
+an explicit confirmation popup and Cancel. Confirmation marks all the viewer's open indexed
+agent threads across channels, including other pages and threads outside the current filter or
+search. Completed, foreign, inaccessible and unengaged threads are excluded; every target needs
+fresh root ownership and current gateway, private-membership and sudo access. Browser mutations
+also require the current personal session, same-origin CSRF and explicit confirmation.
+Completion uses the existing shared Done state and durable root ✅ queue; running work continues.
+The result reports marked, skipped and failed counts, and failures can be retried. Duplicate
+submissions are serialized per viewer. Cancel/Escape performs no mutation. Unindexed historical
+conversations are not scanned or backfilled by this action.
+
 ## Visible completion on Slack thread roots (2026-11-12)
 
 Completing an indexed agent thread through a ✅/👍 reaction on its root or any reply, the

@@ -663,3 +663,30 @@ test("Slack title events push renamed titles to Activity over SSE without pollin
   assert.equal(getSlackThread("C_WORK", "100.000001").starter_id, "U_MINE", "a participant's rename cannot take ownership");
   assert.deepEqual(f.reads, []);
 });
+
+
+test("browser Mark All Done requires confirmation and CSRF, spans pages, and ignores supplied owners", async (t) => {
+  const f = await fixture(t);
+  for (let i = 0; i < 12; i++) await f.root("C_WORK", `${100+i}.000001`);
+  await f.root("C_FOREIGN", "200.000001", "U_OTHER");
+  const user = await f.login(), path = user.url + "/api/completion-all";
+  for (const body of [{}, { confirmed: false }, { confirmed: "true" }]) {
+    assert.equal((await f.request(path, { method: "POST", headers: user.post, body: JSON.stringify(body) })).status, 400);
+  }
+  assert.equal((await f.request(path, { method: "POST", headers: user.headers, body: JSON.stringify({ confirmed: true }) })).status, 403);
+  assert.equal(getSlackThread("C_WORK", "100.000001").done_ms, 0);
+  const response = await f.request(path, { method: "POST", headers: user.post, body: JSON.stringify({ confirmed: true, ownerId: "U_OTHER", filter: "done", page: 9 }) });
+  assert.equal(response.status, 200); assert.deepEqual(await response.json(), { marked: 12, skipped: 0, failed: 0 });
+  assert.equal(getSlackThread("C_FOREIGN", "200.000001").done_ms, 0);
+  assert.equal(f.markerCalls.length, 0, "root checks are durably queued rather than blocking the bulk request");
+  assert.equal(getDb().prepare("SELECT count(*) n FROM slack_threads WHERE done_ms>0 AND completion_marker_retry_ms>0").get().n, 12);
+  assert.deepEqual(await (await f.request(path, { method: "POST", headers: user.post, body: JSON.stringify({ confirmed: true }) })).json(), { marked: 0, skipped: 0, failed: 0 });
+});
+
+test("browser Mark All Done stops when its session expires during a Slack root read", async (t) => {
+  const f = await fixture(t); await f.root();
+  const user = await f.login(), read = f.client.conversations.replies;
+  f.client.conversations.replies = async (args) => { f.advance(ACTIVITY_SESSION_TTL_MS); return read(args); };
+  const response = await f.request(user.url + "/api/completion-all", { method: "POST", headers: user.post, body: JSON.stringify({ confirmed: true }) });
+  assert.equal(response.status, 401); assert.equal(getSlackThread("C_WORK", "100.000001").done_ms, 0);
+});
