@@ -1,5 +1,31 @@
 # ChannelGate — Test Plan
 
+## Activity opens the latest thread message (2026-11-12)
+
+- Automated: `test/activity.test.js` and existing `test/home-thread-reader.test.js` /
+  `test/activity-page.test.js`. Use the isolated Express Activity fixture with an approved owner,
+  indexed thread and fake Slack root metadata. Pass: Open redirects to the exact live latest-reply
+  timestamp, including six-digit microseconds, with `thread_ts` and `cid` retaining the original
+  thread; a later click targets a newer reply even when the local activity date has not changed.
+  When latest-reply metadata is present, a long thread requires only one root lookup per click.
+  If optional metadata is absent on a nonempty thread, paginate replies to exhaustion and target
+  the latest exact timestamp; missing/repeated cursors, failed/empty pages or cross-thread messages
+  must not produce a partial redirect.
+  A no-reply root opens with thread context. Missing roots, changed owners, bot roots, malformed
+  or older latest timestamps, foreign ownership,
+  and private-membership revocation during a lookup must not redirect. Existing final ownership,
+  admission and sudo checks remain covered. Dashboard refresh performs no Slack reads.
+- Live fixture: authorized owner's personal browser Activity opened from Slack App Home, with
+  an indexed conversation containing at least two replies. Click Open thread; pass only if Slack
+  opens the conversation thread pane at the latest reply rather than the channel's root message.
+  Add an ordinary human reply to that same conversation, click Open thread again without reloading
+  Activity, and verify the newer reply is selected. Repeat with the linked conversation title and
+  on mobile. A root with no replies must still open in its thread pane. Use only the tester's own
+  disposable thread; no new agent call is required. Private QA definition: ACTIVITY-WEB-11.
+- Engine-independent: the shared Activity HTTP/Slack metadata and permalink path does not invoke
+  Claude or Codex. Local API redirects are tested separately from deployed Slack-client rendering;
+  unexecuted deployed client acceptance is not a pass.
+
 ## Personal Activity group order (2026-11-12)
 
 - Automated: `test/activity-page.test.js`, `test/activity.test.js` and

@@ -22,6 +22,9 @@ release gates. Stable promotion and publication require approval of the exact te
   Keep logins and personal connection state separate, preserve legacy project histories during
   migration, and keep host `/sudo` native history private.
 
+- Open personal Activity conversations at their latest reply inside the Slack thread pane;
+  resolve the latest message on each click without adding Slack reads to dashboard refreshes.
+
 - Order personal Activity by Error, Waiting, Working and Idle, newest first within each group.
   Add a top-right Group order dialog with per-user saved ordering, Cancel and Reset to default.
 
