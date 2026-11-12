@@ -77,8 +77,19 @@ export function recordSlackThreadOutcome(channelId, threadKey, { error = false, 
 }
 
 export function setSlackThreadDone(channelId, threadTs, userId, done, at = Date.now()) {
-  const changed = Boolean(getDb().prepare("UPDATE slack_threads SET done_ms=?,updated_ms=MAX(updated_ms,?),completion_marker_retry_ms=? WHERE channel_id=? AND thread_ts=? AND starter_id=?")
+  const changed = Boolean(getDb().prepare("UPDATE slack_threads SET done_ms=?,later_ms=0,updated_ms=MAX(updated_ms,?),completion_marker_retry_ms=? WHERE channel_id=? AND thread_ts=? AND starter_id=?")
     .run(done ? at : -at, at, at, channelId, threadTs, userId).changes);
+  if (changed) notifyThreadChanged({ channelId, threadTs });
+  return changed;
+}
+
+// A personal postponement is durable display state, never a cancellation or a timer.
+export function setSlackThreadLater(channelId, threadTs, userId, later, at = Date.now()) {
+  const changed = Boolean(getDb().prepare(`UPDATE slack_threads SET later_ms=?,
+    done_ms=CASE WHEN ? THEN ? ELSE done_ms END,updated_ms=MAX(updated_ms,?),
+    completion_marker_retry_ms=CASE WHEN ? THEN ? ELSE completion_marker_retry_ms END
+    WHERE channel_id=? AND thread_ts=? AND starter_id=?`)
+    .run(later ? at : 0, later ? 1 : 0, -at, at, later ? 1 : 0, at, channelId, threadTs, userId).changes);
   if (changed) notifyThreadChanged({ channelId, threadTs });
   return changed;
 }
@@ -158,6 +169,7 @@ export function slackThreadRuntime({ pendingApprovals = [] } = {}) {
 
 export function slackThreadStatus(row, runtime) {
   if (slackThreadIsDone(row)) return "done";
+  if (row.later_ms > 0) return "later";
   return runtime.get(`${row.channel_id}::${row.thread_ts}`) || (row.error_ms ? "error" : "idle");
 }
 

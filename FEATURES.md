@@ -1,5 +1,20 @@
 # ChannelGate — Features
 
+## Postpone conversations in Activity (2026-11-12)
+
+My Activity includes a **💤 Later** tab. **Delay for later** moves an owned conversation out of
+Active; **Resume** restores its current Working, Waiting, Error or Idle status. Later remains in
+All open and persists across new messages, history refreshes and gateway restarts. Postponement
+has no timer and does not stop running work. Done/Reopen clears the postponement.
+
+The root owner's native **👎 answer-feedback button** also moves the conversation to Later,
+including an explicitly completed conversation, and privately confirms the change. Other readers
+can still leave feedback without changing the owner's list. The existing **👍 feedback → Done**
+behavior is preserved. Button values cannot choose another channel/thread; every mutation checks
+current ownership, conversation admission, private membership and sudo access. Browser changes
+also require the personal Activity session, Origin and CSRF token. Emoji reactions are unchanged;
+💤 is the suggested visual convention for later on a root or latest reply, not a reaction trigger.
+
 ## Native fork fallback (2026-11-12)
 
 A native fork (same engine, `/fork` or the Fork button without a historical cutoff) clones the

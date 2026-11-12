@@ -1250,4 +1250,10 @@ export const migrations = [
       db.exec("ALTER TABLE slack_threads ADD COLUMN completion_marker_retry_ms INTEGER NOT NULL DEFAULT 0");
     },
   },
+  {
+    version: 49,
+    up(db) {
+      db.exec("ALTER TABLE slack_threads ADD COLUMN later_ms INTEGER NOT NULL DEFAULT 0");
+    },
+  },
 ];

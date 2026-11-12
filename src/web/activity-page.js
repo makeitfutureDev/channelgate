@@ -11,7 +11,7 @@ function activityBrowser(config, browser, subscriptionUi) {
   const { document, location, EventSource } = browser;
   const el = (id) => document.getElementById(id);
   const body = el("threads"), search = el("search"), tabs = el("filters");
-  const states = { working: "Working", waiting: "Waiting", error: "Error", done: "Done", idle: "Idle" };
+  const states = { working: "Working", waiting: "Waiting", error: "Error", done: "Done", later: "💤 Later", idle: "Idle" };
   const pending = new Set(), nodes = new Map();
   const orderDialog = el("order-dialog"), orderList = el("order-list"), orderButton = el("group-order");
   const orderNodes = new Map();
@@ -223,26 +223,29 @@ function activityBrowser(config, browser, subscriptionUi) {
     const web = node("a", "open-link browser-link", "↗");
     toggle.type = "button";
     toggle.dataset.key = rowKey;
-    actions.append(open, toggle, web);
+    const delay = node("button", "toggle");
+    delay.type = "button"; delay.dataset.key = rowKey; delay.dataset.operation = "later";
+    actions.append(open, toggle, web, delay);
     tr.append(titleCell, channel, statusCell, timeCell, actions);
-    return { tr, title, channel, pill, statusText, time, open, toggle, web };
+    return { tr, title, channel, pill, statusText, time, open, toggle, web, delay };
   }
   function matches(row) {
-    if ((filter === "active" || filter === "open") && row.status === "done") return false;
+    if (filter === "active" && ["done", "later"].includes(row.status)) return false;
+    if (filter === "open" && row.status === "done") return false;
     if (filter !== "active" && filter !== "open" && row.status !== filter) return false;
     const query = search.value.trim().toLocaleLowerCase();
     return !query || (String(row.title || "") + " " + String(row.channelName || "")).toLocaleLowerCase().includes(query);
   }
   function render() {
-    const counts = { active: 0, open: 0, working: 0, waiting: 0, error: 0, idle: 0, done: 0 };
-    for (const row of rows) { counts[row.status]++; if (row.status !== "done") { counts.active++; counts.open++; } }
+    const counts = { active: 0, open: 0, working: 0, waiting: 0, error: 0, idle: 0, later: 0, done: 0 };
+    for (const row of rows) { counts[row.status]++; if (row.status !== "done") { counts.open++; if (row.status !== "later") counts.active++; } }
     for (const button of tabs.querySelectorAll("button")) {
       const selected = button.dataset.filter === filter;
       button.setAttribute("aria-pressed", String(selected));
       button.querySelector("span").textContent = String(counts[button.dataset.filter]);
     }
-    el("summary").textContent = counts.active + " open · " + counts.working + " working · " + counts.waiting + " waiting";
-    const rank = (status) => status === "done" ? groupOrder.length : groupOrder.indexOf(status);
+    el("summary").textContent = counts.active + " active · " + counts.later + " later · " + counts.working + " working · " + counts.waiting + " waiting";
+    const rank = (status) => status === "done" ? groupOrder.length + 1 : status === "later" ? groupOrder.length : groupOrder.indexOf(status);
     const shown = ended ? [] : rows.filter(matches).sort((a, b) => rank(a.status) - rank(b.status)
       || (Number(b.lastMessageMs) || 0) - (Number(a.lastMessageMs) || 0));
     const visible = new Set(shown.map(key));
@@ -276,6 +279,10 @@ function activityBrowser(config, browser, subscriptionUi) {
       entry.web.setAttribute("aria-label", "Open in browser: " + title);
       entry.web.title = "Open in browser";
       const busy = pending.has(rowKey);
+      entry.delay.hidden = row.status === "done";
+      entry.delay.disabled = busy || completingAll || ended;
+      entry.delay.textContent = busy ? "Saving…" : row.status === "later" ? "Resume" : "💤 Delay for later";
+      entry.delay.setAttribute("aria-label", (row.status === "later" ? "Resume: " : "Delay for later: ") + title);
       entry.toggle.disabled = busy || completingAll || ended;
       entry.toggle.textContent = busy ? "Saving…" : row.status === "done" ? "Reopen" : "Done";
       entry.toggle.setAttribute("aria-label", (row.status === "done" ? "Reopen: " : "Mark done: ") + title);
@@ -283,8 +290,8 @@ function activityBrowser(config, browser, subscriptionUi) {
     });
     el("table").hidden = shown.length === 0;
     el("empty").hidden = shown.length > 0 || ended;
-    el("empty-title").textContent = !loaded ? "Loading your activity…" : search.value.trim() ? "No matching conversations" : filter === "done" ? "No completed conversations" : "You’re all caught up";
-    el("empty-copy").textContent = !loaded ? "Your latest conversations will appear here." : search.value.trim() ? "Try a different title or channel name." : filter === "done" ? "Conversations you mark Done will appear here." : "Conversations matching this view will appear as activity arrives.";
+    el("empty-title").textContent = !loaded ? "Loading your activity…" : search.value.trim() ? "No matching conversations" : filter === "later" ? "Nothing saved for later" : filter === "done" ? "No completed conversations" : "You’re all caught up";
+    el("empty-copy").textContent = !loaded ? "Your latest conversations will appear here." : search.value.trim() ? "Try a different title or channel name." : filter === "later" ? "Use Delay for later or the agent’s 👎 button to postpone a conversation. Resume it when you’re ready." : filter === "done" ? "Conversations you mark Done will appear here." : "Conversations matching this view will appear as activity arrives.";
     el("result-count").textContent = ended ? "" : shown.length + (shown.length === 1 ? " conversation" : " conversations");
     historyButton.disabled = ended || !loaded || loadingHistory || !moreHistory;
     historyButton.textContent = loadingHistory ? "Loading older threads…" : moreHistory ? "Load older threads" : "History loaded";
@@ -368,19 +375,19 @@ function activityBrowser(config, browser, subscriptionUi) {
       notice();
     }
   }
-  async function complete(rowKey) {
+  async function complete(rowKey, operation = "completion") {
     if (ended || completingAll || pending.has(rowKey)) return;
     const row = rows.find((item) => key(item) === rowKey);
     if (!row) return;
-    const done = row.status !== "done";
+    const value = operation === "later" ? row.status !== "later" : row.status !== "done";
     pending.add(rowKey);
     actionMessage = "";
     render();
     try {
-      const response = await fetch(base + "/api/completion", {
+      const response = await fetch(base + "/api/" + operation, {
         method: "POST", credentials: "same-origin",
         headers: { "Content-Type": "application/json", "X-CG-CSRF": csrf },
-        body: JSON.stringify({ channelId: row.channelId, threadTs: row.threadTs, done }),
+        body: JSON.stringify({ channelId: row.channelId, threadTs: row.threadTs, [operation === "later" ? "later" : "done"]: value }),
       });
       if (response.status === 401 || response.status === 403) { endAccess(); return; }
       if (!response.ok) throw new Error("unavailable");
@@ -432,7 +439,7 @@ function activityBrowser(config, browser, subscriptionUi) {
   search.addEventListener("input", render);
   body.addEventListener("click", (event) => {
     const button = event.target.closest("button[data-key]");
-    if (button) void complete(button.dataset.key);
+    if (button) void complete(button.dataset.key, button.dataset.operation);
   });
   subscriptionButton?.addEventListener("click", () => { void refreshSubscriptions(); });
   document.addEventListener?.("visibilitychange", () => {
@@ -554,7 +561,7 @@ ${subscriptionsView ? `<section aria-label="Subscriptions"><div class="subscript
 <dialog id="all-done-dialog" class="order-dialog" aria-labelledby="all-done-title" aria-describedby="all-done-description"><h2 id="all-done-title">Mark all your threads done?</h2><p id="all-done-description">This marks all your open tracked agent threads done across all channels, including threads outside the current filter, search, or page. Their main Slack messages get ✅. Running work continues.</p><p id="all-done-error" class="order-error" role="alert"></p><div class="order-footer"><button id="all-done-cancel" type="button" autofocus>Cancel</button><button id="all-done-confirm" class="order-save" type="button">Mark All Done</button></div></dialog>
 <div id="notice" class="notice" role="alert" hidden></div>
 <div class="toolbar"><div id="summary" class="summary">Loading activity…</div><div class="search-wrap"><label class="search-label" for="search">Search conversations or channels</label><input type="search" id="search" placeholder="Search conversations or channels…" autocomplete="off" maxlength="300"></div></div>
-<section class="panel" aria-label="Conversations"><div id="filters" class="filters" role="group" aria-label="Filter by status">${[["active", "Active"], ["working", "Working"], ["waiting", "Waiting"], ["error", "Error"], ["idle", "Idle"], ["done", "Completed"], ["open", "All open"]].map(([value, label]) => `<button type="button" data-filter="${value}" aria-pressed="${value === "active"}">${label}<span>0</span></button>`).join("")}</div>
+<section class="panel" aria-label="Conversations"><div id="filters" class="filters" role="group" aria-label="Filter by status">${[["active", "Active"], ["working", "Working"], ["waiting", "Waiting"], ["error", "Error"], ["idle", "Idle"], ["later", "💤 Later"], ["done", "Completed"], ["open", "All open"]].map(([value, label]) => `<button type="button" data-filter="${value}" aria-pressed="${value === "active"}">${label}<span>0</span></button>`).join("")}</div>
 <table id="table" hidden><thead><tr><th scope="col">Conversation</th><th scope="col">Channel</th><th scope="col">Status</th><th scope="col">Last message</th><th scope="col">Actions</th></tr></thead><tbody id="threads"></tbody></table>
 <div id="empty" class="empty" role="status"><div class="empty-symbol" aria-hidden="true">◎</div><h2 id="empty-title">Loading your activity…</h2><p id="empty-copy">Your latest conversations will appear here.</p></div>
 <noscript><p class="js-needed">Enable JavaScript to view live activity.</p></noscript></section>

@@ -1,5 +1,25 @@
 # ChannelGate — Test Plan
 
+## Activity Later (2026-11-12)
+
+- Automated: `test/activity.test.js`, `test/activity-page.test.js`, `test/home-threads.test.js`
+  and `test/slack-agent-sessions.test.js`. Verify owned Delay/Resume and native negative feedback,
+  Active/Later/All open counts, persisted history, live runtime precedence, Done clearing Later,
+  CSRF/session gates and forged/non-owner/private-revoked/sudo rejection. Existing positive
+  feedback, completion mirrors, SSE and group ordering remain covered.
+- Live **ACT-LATER-01**, **ACT-LATER-02**, both Claude and Codex: use an approved root owner in
+  disposable `cg-testing-claude-bash` and `cg-testing-codex-bash` fixtures and their personal My
+  Activity session. Ask “Reply with one sentence confirming this disposable Later test.” Click
+  **Delay for later**; expect the row only in Later/All open, with **Resume** restoring its actual
+  runtime or idle/error state. Refresh, load history, add a new reply and restart the disposable
+  gateway; Later must persist. Postpone during running work; it continues without returning to
+  Active. Click native 👎 on the owner's answer (also try a completed thread); expect Later plus
+  a private confirmation. Another reader's 👎 records feedback without postponing the owner’s
+  thread. Native 👍 and Done clear Later and complete; Reopen clears Later. Reject tampered
+  channel/thread values, revoked approval/membership, inaccessible sudo, expired session and
+  missing CSRF. Verify desktop/mobile controls and unchanged group order, checkmarks and 👍 emoji
+  reactions. Private QA definitions created and reread; live execution pending, not a pass.
+
 ## Activity history indexing and browser button (2026-11-12)
 
 - Automated: `test/home-threads.test.js`, `test/activity.test.js`, `test/activity-page.test.js`,
