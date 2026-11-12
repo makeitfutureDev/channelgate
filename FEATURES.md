@@ -111,23 +111,40 @@ Unknown/unindexed roots are not created from title metadata alone. Changes made 
 receives rename events are not backfilled; rename an existing indexed thread again to synchronize it.
 
 
-## Provider subscription usage (2026-11-11)
+## Provider subscription usage (2026-11-12)
 
-Admin → **Subscriptions** (`/subscriptions`) shows the provider-reported quotas of the Claude
-and Codex logins used by the gateway. Each card displays the known plan, session/weekly/model
+Admin → **Subscriptions** (`/subscriptions`) lists every enabled harness using the engine registry. Claude,
+Codex and Codex EU show provider-reported quotas; Codex EU reads only its dedicated ChatGPT
+login, with no fallback to the default Codex login or API key. Harnesses without a quota reader
+(including Claude Bedrock, Qwen and OpenCode) display an explicit Not supported status. Disabled
+harnesses disappear on the next read. Each quota card displays the known plan, session/weekly/model
 or review limits when reported, percent used/remaining, reset countdown plus local reset time,
 and last successful/check timestamps. These are account-wide provider limits, including usage
 outside ChannelGate; Overview remains the token and estimated API-cost ledger.
 
-The admin-only, no-store `GET /api/subscriptions` reads existing access tokens through the
-canonical login/relay helpers. Fixed HTTPS destinations, redirect refusal, a ten-second timeout,
+Activity users can open **Subscriptions** beside **Activity** in their existing private browser
+session. The Activity overview omits the redundant heading and subtitle and shows compact usage
+bars only for actual subscriptions, using the highest reported window per harness and naming that
+window. Admin and viewer detail pages share compact quota cards, plan badges, countdowns and local
+reset dates. Claude structured model limits (including Fable) and provider-reported reset allowances
+are included; reset credits show their grant expiry dates when reported. These are reset-credit
+expiries, not subscription renewal dates; plan prices or subscription end dates are never inferred.
+
+The admin-only, no-store `GET /api/subscriptions` and Activity-session-scoped
+`GET /activity/:id/api/subscriptions` share one reader. The latter intentionally shares organization
+quotas with every approved Activity viewer, with no administrator privileges; it requires the
+matching private session cookie, rechecks admission after provider latency, and retains the fixed
+12-hour session deadline. Other users' conversations and admin configuration stay inaccessible.
+The reader obtains existing access tokens through the canonical login/relay helpers. Codex reads reset-credit details through a separate fixed read-only
+endpoint only when its usage summary reports available credits. Claude reads reset grants through
+the official CLI's usage query. Fixed HTTPS destinations, redirect refusal, a ten-second timeout,
 a 256 KiB response cap and an allowlisted projection keep credentials and raw provider responses
 out of the browser. It never starts an engine turn, refreshes tokens or changes login files.
 API-key, missing, expired, unsupported and failing-provider states are explicit; missing quotas
 are never fabricated as zero. A failed read may show a clearly stale last successful reading
 for the same login, but a rejected/expired/changed login cannot inherit another account's data.
 
-Five-minute per-provider caches coalesce concurrent checks, include failures and honor longer
+Five-minute per-harness caches coalesce concurrent checks, include failures and honor longer
 provider Retry-After cooldowns (up to one hour). Manual refresh shares the cache. Browser polling
 stops when the page is hidden or left; direct entry, reload and Back/Forward are supported.
 Provider usage endpoints may change or reject setup-token scopes; the affected card explains

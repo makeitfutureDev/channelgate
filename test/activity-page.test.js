@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import vm from "node:vm";
+import { createSubscriptionUi } from "../public/subscription-ui.js";
 import { activityPage } from "../src/web/activity-page.js";
 
 // Exercise the generated browser script (including asynchronous responses), rather than a second
@@ -41,28 +42,30 @@ const response = (data, status = 200) => ({ status, ok: status >= 200 && status 
 function row(status = "working", title = "Fixture thread", url = "/activity/session/open/C1/1.1") {
   return { channelId: "C1", threadTs: "1.1", title, channelName: "Engineering", status, lastMessageMs: 1_800_000_000_000, url };
 }
-function browser(fetchImpl = async () => response({ rows: [] }), csrf = "fixture-csrf") {
+function browser(fetchImpl = async () => response({ rows: [] }), csrf = "fixture-csrf", subscriptions = false) {
   const elements = Object.fromEntries(["load-history", "threads", "search", "filters", "connection", "connection-text", "updated", "notice", "summary", "table", "empty", "empty-title", "empty-copy", "result-count", "group-order", "order-dialog", "order-list", "order-save", "order-cancel", "order-reset", "order-error", "mark-all-done", "all-done-dialog", "all-done-confirm", "all-done-cancel", "all-done-error"].map((id) => [id, new Element()]));
   for (const filter of ["active", "working", "waiting", "error", "idle", "later", "done", "open"]) {
     const button = new Element("button"); button.dataset.filter = filter; button.append(new Element("span")); elements.filters.append(button);
   }
+  if (subscriptions) for (const id of ["subscriptions-cards", "subscription-quick", "subscriptions-notice", "subscriptions-refresh"]) elements[id] = new Element();
+  const document = { getElementById: (id) => elements[id], createElement: (tag) => new Element(tag), hidden: false, listeners: {}, addEventListener(type, handler) { this.listeners[type] = handler; } };
   let stream;
   class EventSource extends Element {
     constructor(url) { super(); this.url = url; stream = this; }
     close() { this.closed = true; }
     snapshot(rows, extra = {}) { this.fire("threads", { data: JSON.stringify({ rows, ...extra }) }); }
   }
-  const requests = [], timers = [];
+  const requests = [], timers = [], browserListeners = {};
   const page = activityPage({ sessionId: "session", csrf });
   const script = /<script nonce="[^"]+">([\s\S]*?)<\/script>/.exec(page.html)?.[1];
   assert.ok(script);
   vm.runInNewContext(script, {
-    document: { getElementById: (id) => elements[id], createElement: (tag) => new Element(tag) },
+    document,
     fetch: (url, options) => { requests.push({ url, options }); return fetchImpl(url, options); },
     EventSource, URL, Intl, Date, location: { origin: "https://gateway.example" },
-    setInterval: (fn) => { timers.push(fn); return 1; }, clearInterval() {}, addEventListener() {},
+    setInterval: (fn) => { timers.push(fn); return 1; }, clearInterval() {}, setTimeout: (fn) => { timers.push(fn); return timers.length; }, clearTimeout() {}, addEventListener(type, handler) { browserListeners[type] = handler; },
   });
-  return { elements, stream, requests, timers, page };
+  return { elements, stream, requests, timers, page, document, browserListeners };
 }
 
 test("activity browser keeps a newer SSE snapshot when the initial fetch resolves later", async () => {
@@ -383,6 +386,73 @@ test("history exhaustion, retryable failure and session expiry have distinct bro
     if (status === 503) assert.match(b.elements.notice.textContent, /try again/);
     if (status === 401) assert.equal(b.elements.threads.children.length, 0);
   }
+});
+
+const subscription = (name = "Codex EU") => ({ name, kind: "subscription", status: "ok", windows: [{ label: "Weekly", usedPercent: 24 }] });
+test("Activity has compact subscription navigation without the removed heading or admin dependencies", () => {
+  for (const view of ["activity", "subscriptions"]) {
+    const { html } = activityPage({ sessionId: "session", csrf: "fixture", view });
+    assert.match(html, /href="\/activity\/session\/subscriptions"/);
+    assert.doesNotMatch(html, /<h1>My Activity|Your conversations, with the latest status|src="\/admin/);
+    assert.match(html, /<title>(Activity|Subscriptions) · ChannelGate/);
+    if (view === "subscriptions") assert.match(html, /id="activity-view" hidden/);
+  }
+});
+test("Activity quotas poll only while visible and reject hidden or expired late replies", async () => {
+  let next = deferred();
+  const fixture = browser((url) => url.endsWith("/subscriptions") ? next.promise : Promise.resolve(response({ rows: [row()] })), "csrf", true);
+  const { elements, document, stream, requests, timers } = fixture;
+  await flush();
+  next.resolve(response({ subscriptions: [subscription()] })); await flush();
+  assert.match(elements["subscription-quick"].innerHTML, /Codex EU/);
+  assert.match(elements["subscription-quick"].innerHTML, /24%/);
+  assert.equal(elements["subscription-quick"].hidden, false);
+  assert.equal(requests.filter((r) => r.url.endsWith("/subscriptions")).length, 1);
+  next = deferred();
+  timers.at(-1)(); await flush();
+  document.hidden = true; document.listeners.visibilitychange();
+  next.resolve(response({ subscriptions: [subscription("Hidden late response")] })); await flush();
+  assert.doesNotMatch(elements["subscription-quick"].innerHTML, /Hidden late response/);
+  next = deferred(); document.hidden = false; document.listeners.visibilitychange();
+  stream.fire("access-ended");
+  next.resolve(response({ subscriptions: [subscription("Expired late response")] })); await flush();
+  assert.equal(elements["subscription-quick"].innerHTML, "");
+  assert.equal(elements["subscriptions-cards"].innerHTML, "");
+  assert.equal(elements.threads.children.length, 0);
+});
+test("Activity subscription authorization loss clears both quotas and private conversations", async () => {
+  const { elements, stream } = browser((url) => Promise.resolve(url.endsWith("/subscriptions") ? response({}, 403) : response({ rows: [row()] })), "csrf", true);
+  await flush();
+  assert.equal(elements["subscription-quick"].innerHTML, "");
+  assert.equal(elements.threads.children.length, 0);
+  assert.equal(elements.search.disabled, true);
+  assert.equal(stream.closed, true);
+});
+
+test("shared subscription UI excludes API, missing and unsupported harnesses from quick view", () => {
+  const ui = createSubscriptionUi();
+  const rows = [subscription(), { name: "API fixture", kind: "api-key", status: "api-key", windows: [] }, { name: "Not connected fixture", kind: "none", status: "not-connected", windows: [] }, { name: "Unsupported fixture", kind: "unsupported", status: "unsupported", windows: [] }];
+  const quick = ui.summary(rows);
+  assert.match(quick, /Codex EU/);
+  assert.doesNotMatch(quick, /API fixture|Not connected fixture|Unsupported fixture/);
+  const card = ui.card({ ...subscription(), resetCredits: { available: 2, resets: [{ label: "Full reset", expiresAt: "2099-01-01T00:00:00Z", remaining: 2, paused: true }] }, expiresAt: "2099-02-01T00:00:00Z" });
+  assert.match(card, /2 remaining/);
+  assert.match(card, /Full reset \(2 remaining\) \(paused\) expires in/);
+  assert.match(card, /Subscription expires in/);
+  assert.doesNotMatch(ui.card(subscription()), /Subscription expires/);
+  const missing = ui.card({ ...subscription(), resetCredits: { available: 1, resets: [{ label: "Banked credit", remaining: 1, usableNow: false }] } });
+  assert.match(missing, /1 remaining/);
+  assert.match(missing, /Banked credit \(when limit reached\) · expiry unavailable/);
+});
+
+test("Activity pagehide stops late requests from restarting quota polling", async () => {
+  const quota = deferred();
+  const { browserListeners, requests, elements } = browser((url) => url.endsWith("/subscriptions") ? quota.promise : Promise.resolve(response({ rows: [] })), "csrf", true);
+  const before = requests.length;
+  browserListeners.pagehide();
+  quota.resolve(response({ subscriptions: [subscription()] })); await flush();
+  assert.equal(requests.length, before);
+  assert.equal(elements["subscription-quick"].innerHTML, undefined);
 });
 
 

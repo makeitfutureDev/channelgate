@@ -14,6 +14,7 @@ import { accessContext, activityThreadSnapshot, discoverSlackThreadHistory, home
 import { createHomeThreadReader } from "../slack/home-thread-reader.js";
 import { isSlackTs } from "../slack/thread-keys.js";
 import { isLoopbackHost, timingSafeEqualStr } from "./security.js";
+import { readSubscriptionUsage } from "../gateway/subscription-usage.js";
 import { activityPage } from "./activity-page.js";
 import { activityGroupOrder, activityGroupOrderVersion, validActivityGroupOrder } from "./activity-order.js";
 import { ACTIVITY_THEME_CSS, ACTIVITY_BRAND } from "./activity-theme.js";
@@ -92,7 +93,7 @@ async function latestMessageTs(client, channelId, root) {
 }
 function launchPage() {
   const nonce = token(16);
-  return { nonce, html: `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Open My Activity</title><link rel="icon" type="image/svg+xml" href="/favicon.svg"><style nonce="${nonce}">${ACTIVITY_THEME_CSS}body{display:grid;place-items:center;min-height:100vh}main{margin:24px;padding:32px;width:min(480px,calc(100% - 48px));background:var(--panel);border:1px solid var(--line);border-radius:10px}.brand{margin-bottom:28px}p{color:var(--muted);line-height:1.6}</style></head><body><main>${ACTIVITY_BRAND}<h1>My Activity</h1><p id="status">Opening your private dashboard…</p></main><script nonce="${nonce}">(async()=>{const secret=location.hash.slice(1);history.replaceState(null,"",location.pathname);try{if(!/^[A-Za-z0-9_-]{43}$/.test(secret))throw Error();const response=await fetch("/activity/exchange",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({token:secret})});if(!response.ok)throw Error();const data=await response.json();if(typeof data.url!=="string"||!data.url.startsWith("/activity/")||!/^[A-Za-z0-9_-]{16}$/.test(data.url.slice(10)))throw Error();location.replace(data.url);}catch{document.getElementById("status").textContent="This private link expired or is unavailable. Open a new dashboard link from Slack Activity."}})();</script></body></html>` };
+  return { nonce, html: `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Open ChannelGate</title><link rel="icon" type="image/svg+xml" href="/favicon.svg"><style nonce="${nonce}">${ACTIVITY_THEME_CSS}body{display:grid;place-items:center;min-height:100vh}main{margin:24px;padding:32px;width:min(480px,calc(100% - 48px));background:var(--panel);border:1px solid var(--line);border-radius:10px}.brand{margin-bottom:28px}p{color:var(--muted);line-height:1.6}</style></head><body><main>${ACTIVITY_BRAND}<p id="status">Opening your private dashboard…</p></main><script nonce="${nonce}">(async()=>{const secret=location.hash.slice(1);history.replaceState(null,"",location.pathname);try{if(!/^[A-Za-z0-9_-]{43}$/.test(secret))throw Error();const response=await fetch("/activity/exchange",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({token:secret})});if(!response.ok)throw Error();const data=await response.json();if(typeof data.url!=="string"||!data.url.startsWith("/activity/")||!/^[A-Za-z0-9_-]{16}$/.test(data.url.slice(10)))throw Error();location.replace(data.url);}catch{document.getElementById("status").textContent="This private link expired or is unavailable. Open a new dashboard link from Slack Activity."}})();</script></body></html>` };
 }
 
 export function resetActivityStateForTests() {
@@ -102,7 +103,7 @@ export function resetActivityStateForTests() {
 
 export function createActivityRouter({
   getClient, getTeamId, getBaseUrl = getPublicUrl,
-  snapshot = activityThreadSnapshot, refreshKey = homeThreadsRefreshKey,
+  snapshot = activityThreadSnapshot, refreshKey = homeThreadsRefreshKey, readSubscriptions = readSubscriptionUsage,
   now = Date.now, pollMs = 1000, accessRefreshMs = 15_000, maxStreams = 100,
 } = {}) {
   if (typeof getClient !== "function" || typeof getTeamId !== "function") throw new Error("Activity requires its live Slack connection");
@@ -186,12 +187,26 @@ export function createActivityRouter({
       return res.json({ url: `/activity/${id}` });
     } catch (error) { return unavailable(res, error.status || 403); }
   });
-  router.get("/:id", async (req, res) => {
+  const serveDashboard = async (req, res) => {
     try {
       const { session } = await context(req);
-      const page = activityPage({ sessionId: req.params.id, csrf: session.csrf });
+      const page = activityPage({ sessionId: req.params.id, csrf: session.csrf, view: req.path.endsWith("/subscriptions") ? "subscriptions" : "activity" });
       headers(res, page.nonce); return res.type("html").send(page.html);
     } catch (error) { return unavailable(res, error.status || 403); }
+  };
+  router.get("/:id", serveDashboard);
+  router.get("/:id/subscriptions", serveDashboard);
+  router.get("/:id/api/subscriptions", async (req, res) => {
+    try {
+      const { session } = await context(req);
+      const version = configVersion;
+      const data = await readSubscriptions();
+      // Usage is organization-wide, intentionally visible to admitted dashboard viewers. Keep
+      // login material inside the canonical reader, and recheck access after provider latency.
+      const current = await context(req);
+      if (current.session !== session || version !== configVersion) return unavailable(res, 503);
+      return res.json(data);
+    } catch (error) { return unavailable(res, error.status || 503); }
   });
   router.get("/:id/api/threads", async (req, res) => {
     try {

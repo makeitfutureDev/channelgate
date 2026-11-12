@@ -95,7 +95,7 @@ test("browser reopens the same launch within ten minutes and uses its session fo
   await page.goto(link);
   await page.waitForURL(/\/activity\/[A-Za-z0-9_-]{16}$/);
   const firstSession = page.url();
-  assert.equal(await page.title(), "My Activity · ChannelGate");
+  assert.equal(await page.title(), "Activity · ChannelGate");
   await page.goto(link);
   await page.waitForURL(/\/activity\/[A-Za-z0-9_-]{16}$/);
   assert.notEqual(page.url(), firstSession);
@@ -294,6 +294,72 @@ test("Activity Mark All Done confirms on desktop and mobile and completes owned 
     await context.close();
   }
 });
+
+test("Activity viewers see only subscription quick bars and can navigate to full quota cards", { skip: !process.env.CG_BROWSER_MODULE, timeout: 30_000 }, async (t) => {
+  resetActivityStateForTests();
+  await setUser("USUBSUSER", { approved: true, isAdmin: false });
+  let base, reads = 0, currentTime = Date.now();
+  const app = express(); serveBrandAssets(app);
+  app.use("/activity", createActivityRouter({ getClient: () => ({}), getTeamId: () => "TSUBS", getBaseUrl: () => base,
+    now: () => currentTime, snapshot: async () => ({ rows: [], total: 0 }), refreshKey: () => "fixture",
+    readSubscriptions: async () => {
+      reads++;
+      return { refreshAfterSeconds: 300, subscriptions: [
+        { name: "Claude", kind: "subscription", status: "ok", plan: "Max", windows: [{ label: "5-hour session", usedPercent: 0 }, { label: "Weekly · Fable", usedPercent: 63, resetsAt: new Date(Date.now() + 3600_000).toISOString() }] },
+        { name: "Codex EU", kind: "subscription", status: "ok", plan: "Pro", windows: [{ label: "Weekly", usedPercent: 10 }], resetCredits: { available: 2, resets: [{ label: "Full reset", expiresAt: "2099-01-01T00:00:00Z" }] } },
+        { name: "API fixture", kind: "api-key", status: "api-key", windows: [] },
+        { name: "Missing fixture", kind: "none", status: "not-connected", windows: [] },
+      ] };
+    } }));
+  const server = await new Promise((resolve) => { const s = app.listen(0, "127.0.0.1", () => resolve(s)); });
+  base = `http://127.0.0.1:${server.address().port}`;
+  t.after(() => new Promise((resolve) => { resetActivityStateForTests(); server.closeAllConnections(); server.close(resolve); }));
+  const { chromium } = await import(process.env.CG_BROWSER_MODULE);
+  const browser = await chromium.launch({ headless: true, executablePath: process.env.CG_BROWSER_EXECUTABLE });
+  t.after(() => browser.close());
+  const page = await browser.newPage(), errors = [];
+  page.on("pageerror", (error) => errors.push(error.message));
+  await page.goto(createActivityGrantUrl({ baseUrl: base, ownerId: "USUBSUSER", teamId: "TSUBS" }));
+  await page.locator(".subscription-quick").nth(1).waitFor();
+  assert.equal(await page.locator("h1").count(), 0);
+  assert.equal(await page.locator(".subscription-quick").count(), 2);
+  assert.match(await page.locator("#subscription-quick").innerText(), /63%/);
+  assert.doesNotMatch(await page.locator("#subscription-quick").innerText(), /API fixture|Missing fixture/);
+  const activityUrl = page.url();
+  await page.getByRole("link", { name: "Subscriptions", exact: true }).click();
+  await page.locator(".subscription-card").nth(1).waitFor();
+  assert.equal(page.url(), activityUrl + "/subscriptions");
+  assert.equal(await page.title(), "Subscriptions · ChannelGate");
+  assert.equal(await page.locator(".subscription-card").count(), 2);
+  assert.match(await page.locator("#subscriptions-cards").innerText(), /Weekly · Fable/);
+  assert.match(await page.locator("#subscriptions-cards").innerText(), /Resets in/);
+  assert.match(await page.locator("#subscriptions-cards").innerText(), /2 available/);
+  assert.match(await page.locator("#subscriptions-cards").innerText(), /Full reset expires in/);
+  const before = reads;
+  await page.locator("#subscriptions-refresh").click();
+  await page.waitForFunction(() => globalThis.document.getElementById("subscriptions-refresh").textContent === "Refresh");
+  assert.equal(reads, before + 1);
+  for (const width of [1440, 390]) {
+    await page.setViewportSize({ width, height: 900 });
+    assert.equal(await page.evaluate(() => globalThis.document.documentElement.scrollWidth <= globalThis.innerWidth), true);
+  }
+  const detailScreenshot = process.env.CG_ACTIVITY_DETAIL_SCREENSHOT || (process.env.CG_ACTIVITY_SCREENSHOT_DIR && `${process.env.CG_ACTIVITY_SCREENSHOT_DIR}/subscriptions-detail-mobile.png`);
+  if (detailScreenshot) await page.screenshot({ path: detailScreenshot, fullPage: true });
+  await page.reload(); await page.locator(".subscription-card").nth(1).waitFor();
+  await page.getByRole("link", { name: "Activity", exact: true }).click();
+  await page.locator(".subscription-quick").nth(1).waitFor();
+  const quickScreenshot = process.env.CG_ACTIVITY_SUBSCRIPTIONS_SCREENSHOT || (process.env.CG_ACTIVITY_SCREENSHOT_DIR && `${process.env.CG_ACTIVITY_SCREENSHOT_DIR}/subscriptions-quick-mobile.png`);
+  if (quickScreenshot) await page.screenshot({ path: quickScreenshot, fullPage: true });
+  await page.getByRole("link", { name: "Subscriptions", exact: true }).click();
+  await page.locator(".subscription-card").nth(1).waitFor();
+  currentTime += ACTIVITY_SESSION_TTL_MS;
+  await page.locator("#subscriptions-refresh").click();
+  await page.locator("#subscriptions-notice").filter({ hasText: /session has ended/ }).waitFor();
+  assert.equal(await page.locator(".subscription-card").count(), 0);
+  assert.equal(await page.locator("#subscriptions-refresh").isDisabled(), true);
+  assert.deepEqual(errors, []);
+});
+
 
 test("Later controls work in a real browser at desktop and mobile widths", { skip: !process.env.CG_BROWSER_MODULE, timeout: 30_000 }, async (t) => {
   resetActivityStateForTests();

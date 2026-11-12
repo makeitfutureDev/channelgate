@@ -109,7 +109,7 @@ export function bedrockCredentialState(options) {
 
 export function makeBedrockAdapter(claude) {
   // Avoid inheriting any optional operation that resolves the default Anthropic account.
-  const { updateSmoke: _updateSmoke, discoverModels: _discoverModels, ...base } = claude;
+  const { updateSmoke: _updateSmoke, discoverModels: _discoverModels, subscriptionUsage: _subscriptionUsage, ...base } = claude;
   return validateEngineAdapter({
     ...base,
     id: BEDROCK_ENGINE_ID, label: "Claude Bedrock", modelFamily: "bedrock",
