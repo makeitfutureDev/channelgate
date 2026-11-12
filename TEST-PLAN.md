@@ -13048,3 +13048,30 @@ Enterprise deployment without deleting saved data. Never record a live pass from
 - Reuse the dependency-refresh CLI and dual-engine acceptance definitions for runtime adoption;
   pending provider-account checks remain pending. After a safe restart, verify the actual service
   process executable is Node 24 and the health endpoint responds.
+
+
+### Visible Slack root completion marker (2026-11-12)
+
+- Automated: `node --test test/home-threads.test.js test/activity.test.js test/thread-completion.test.js test/slack-manifest.test.js`.
+  Verify root-targeted add/remove for reaction, native feedback, Home and browser Done/Reopen;
+  forged feedback/CSRF requests produce no marker; duplicate operations are idempotent. Verify
+  the bot marker is excluded from reaction evidence, human checks survive Reopen, reaction-only
+  removal reopens, in-flight inspection sees newly persisted mirror identity, and durable pending
+  writes recover after failures/restarts using current reaction evidence and bounded backoff.
+- Live: use disposable private Claude and Codex auto-mode QA channels, an approved starter and a
+  second authorized participant. Verify bot `reactions:write` is granted (reinstall if missing).
+  For each engine create separate roots with “Reply with a short task summary and wait for me.”
+  After the actual answer, independently add ✅ to the last reply, add 👍 to a reply, click the
+  starter's native positive answer feedback, click Home Done, and click browser Activity Done.
+  Inspect each exact root with Slack reactions.get and in the channel: require a single bot
+  `white_check_mark` on the root, rather than only on the answer, and shared Completed visibility.
+  Reopen using each UI; require removal of only the bot's root check and open visibility while
+  other people's reactions remain. Remove the final original reaction from a reaction-only
+  fixture: require its bot root check to disappear and reminders to regain ordinary eligibility.
+  Add another human check and remove only one: work remains complete. Repeat clicks/redelivery;
+  require no duplicate marker or unrelated-thread change. Revoke access and try forged/CSRF-less
+  writes: neither completion nor root reactions change. With an owned transport-failure fixture,
+  save Done then restore Slack access/restart: require a retry within the next minute, and no
+  false successful marker claim while API writes are failing. Restore owned fixture state.
+- Live dual-engine acceptance pending; automated fixtures do not certify installed OAuth scopes
+  or Slack client rendering. Existing historical completed threads are not backfilled.

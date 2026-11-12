@@ -43,6 +43,7 @@ import { pruneTerminalApprovalRequests, recoverInterruptedApprovalExecutions } f
 import { pruneApprovalLinkTokens } from "./gateway/approval-link-tokens.js";
 import { takeStaleRuns, createRunRecovery } from "./gateway/active-runs.js";
 import { recoverApiRuns } from "./gateway/api-runs.js";
+import { startThreadDoneMarkerSync } from "./slack/thread-done-marker.js";
 import { startNudgeSweep } from "./gateway/nudges.js";
 import { startClaudeLoginWatch } from "./gateway/login-watch.js";
 import { startFollowupDigest } from "./gateway/followups.js";
@@ -461,6 +462,7 @@ async function main() {
 
   // Opt-in no-response thread nudges (per-user preference).
   startNudgeSweep({ slack });
+  startThreadDoneMarkerSync({ slack });
 
   // Hourly watch on the Claude login the gateway authenticates with: it hard-expires every few
   // weeks and only a new interactive `claude` sign-in moves the date, so the three-day warning has

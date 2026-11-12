@@ -91,6 +91,7 @@
         "mpim:history",
         "mpim:read",
         "reactions:read",
+        "reactions:write",
         "remote_files:read",
         "search:read.files",
         "users:read"

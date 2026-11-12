@@ -3306,8 +3306,8 @@ async function connectAndWire(app) {
   // emoji (default 🤖) treats the reacted message as if the bot had been mentioned and runs it.
   app.event("reaction_added", async ({ event, client, body }) => {
     try {
-      await syncThreadCompletionReaction(client, event, { added: true }).catch(() => {});
       if (event.user === botUserId) return;
+      await syncThreadCompletionReaction(client, event, { added: true }).catch(() => {});
       // Same redelivery guard as the message handler (a repeat would re-run 🤖/stop/ack actions).
       const eventKey = body?.event_id || `rx:${event.event_ts}:${event.user}:${event.reaction}`;
       if (!seenEvents.add(eventKey)) return;
@@ -3530,8 +3530,8 @@ async function connectAndWire(app) {
   // it done). Other removed reactions are acknowledged as no-ops.
   app.event("reaction_removed", async ({ event, client }) => {
     try {
-      await syncThreadCompletionReaction(client, event).catch(() => {});
       if (event.user === botUserId) return;
+      await syncThreadCompletionReaction(client, event).catch(() => {});
       const channelId = event.item?.channel;
       if (!channelId || event.item?.type !== "message") return;
       if (!isCompletionReaction(event.reaction) && !getFollowupDoneReactions().includes(event.reaction)) return;

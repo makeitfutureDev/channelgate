@@ -1,5 +1,18 @@
 # ChannelGate — Features
 
+## Visible completion on Slack thread roots (2026-11-12)
+
+Completing an indexed agent thread through a ✅/👍 reaction on its root or any reply, the
+owner's positive answer feedback, Slack Home Done, or the personal Activity dashboard Done
+adds the bot's `white_check_mark` reaction to the thread's main message. The check makes completed
+work visible in the channel. Reopen removes the bot's marker and preserves other people's reactions.
+Removing the last completion reaction reopens reaction-only completion; the mirrored bot check
+cannot keep itself complete. Manual Done remains durable. Pending marker writes retry in bounded
+batches after API failures, reconnects and restarts. Existing ownership, access and CSRF rules apply.
+Requires bot scope `reactions:write`; existing installations missing it must add it and reinstall
+the Slack app. Completion is saved even while the Slack marker is pending. No historical Done
+backfill is performed; subsequent completion changes or pending writes synchronize their roots.
+
 ## Slack thread titles in Activity (2026-11-12)
 
 Renaming an indexed agent thread in Slack updates its title in Slack Home Activity and the live

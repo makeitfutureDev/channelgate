@@ -21,9 +21,13 @@ export async function inspectThreadCompletion(client, channelId, threadTs) {
     if (!Array.isArray(page.messages) || !page.messages.length) {
       throw new Error("Unable to verify thread completion reactions");
     }
+    const mirrorUser = getSlackThread(channelId, threadTs)?.completion_mirror_user;
     for (const message of page.messages) {
       if (message.ts === threadTs) root = message;
-      if (messageHasCompletionReaction(message)) completed = true;
+      const evidence = message.ts === threadTs && mirrorUser ? { ...message, reactions: message.reactions?.map((reaction) =>
+        reaction.name === "white_check_mark" && reaction.users?.includes(mirrorUser)
+          ? { ...reaction, count: reaction.count - 1 } : reaction) } : message;
+      if (messageHasCompletionReaction(evidence)) completed = true;
       const at = Math.floor(Number(message.ts) * 1000);
       if (Number.isFinite(at)) lastMessageMs = Math.max(lastMessageMs, at);
     }

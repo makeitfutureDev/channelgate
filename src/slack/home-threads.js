@@ -7,6 +7,7 @@ import { platformOfConversation } from "../platforms/ids.js";
 import { listConversationMemberIds } from "./members.js";
 import { listPendingApprovals } from "./approvals.js";
 import { clearDone, markDone } from "../gateway/followups.js";
+import { syncThreadDoneMarker } from "./thread-done-marker.js";
 import { inspectThreadCompletion } from "../gateway/thread-completion.js";
 import {
   getSlackThread, indexSlackThread, skipSlackThreadCandidate, setSlackThreadDone, updateSlackThreadRootCompletion, slackThreadCandidates,
@@ -336,6 +337,7 @@ export function registerHomeThreadActions(app, { publishHome } = {}) {
         setSlackThreadDone(row.channel_id, row.thread_ts, userId, kind === "done");
         if (kind === "done") markDone(userId, row.channel_id, row.thread_ts);
         else clearDone(userId, row.channel_id, row.thread_ts);
+        await syncThreadDoneMarker(client, row.channel_id, row.thread_ts);
       }
       await publishHome(client, userId, view);
     } catch (error) {

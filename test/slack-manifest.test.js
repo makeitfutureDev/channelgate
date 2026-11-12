@@ -20,7 +20,7 @@ test("installer manifest uses import-safe commands with runtime handlers", () =>
 
 test("installer manifest preserves code channels and native agent controls", () => {
   assert.equal(manifest.features.code_channels.enabled, true);
-  for (const scope of ["code_channels:manage", "chat:write.customize", "commands", "chat:write"]) {
+  for (const scope of ["reactions:write", "code_channels:manage", "chat:write.customize", "commands", "chat:write"]) {
     assert.ok(manifest.oauth_config.scopes.bot.includes(scope));
   }
   for (const event of ["agent_session_stopped", "agent_session_title_changed", "app_context_changed"]) {
