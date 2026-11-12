@@ -148,6 +148,33 @@
   cover both engines. This beta slice does not claim live Slack rendering or native historical
   engine-state cloning.
 
+## Native fork fallback and archived-channel schedules (2026-11-12)
+
+- Automated (engine-independent, stub-driven): `test/slack-fork.test.js` "a Codex native fork the
+  engine refuses falls back to a fresh session on the Slack history copy" — the stub's
+  `CODEX_STUB_FORK_UNAVAILABLE` marker makes `exec fork` fail with the Atlas lineage error; the
+  child thread is still created, the native attempt carries no history, the retry is a plain `exec`
+  on the same harness carrying `Source thread:` plus the source answer text read lazily, the child
+  session is the stub's fresh id, the source session is unchanged, the fallback note is posted in
+  the child, no failure is posted, the source thread accepts a new turn, and the child resumes its
+  fresh id. `test/session-engine.test.js` pins `isForkUnavailable` to the fork wordings and rejects
+  stdout-only matches. `test/queued-fork-recovery.test.js` proves native forks still read no
+  history during recovery. `test/scheduler-archived-channel.test.js`: a saved result in an archived
+  channel is retired once (no delivery, `undeliverable`, row enabled, one `schedule_paused`, no run
+  rows on later minutes); a due cron in an archived channel neither runs nor posts and runs again
+  after un-archiving; a `channel_not_found` delivery error retires the saved result (run delivery
+  `failed`/`delivery`) while a `ratelimited` error keeps retrying.
+- Live (Codex, pending): in a Codex channel with a thread long enough to be compacted (Atlas
+  `int-hubexo-nordics` reproduced it on 0.162.1), click Fork on a reply with no cutoff. Pass: the
+  child thread opens, the first bot message carries "could not fork the source thread's native
+  session", the answer reflects the source thread's content, a follow-up in the child resumes,
+  and the journal shows `run_fork_fallback` with no `run_error`. Claude: `--fork-session` on a
+  valid source must still fork natively (no note).
+- Live (engine-independent): remove the bot from a channel holding a weekly task with a saved
+  result. Pass: within two minutes the journal shows one `schedule_paused` and no further
+  `schedule_error` lines for that schedule; the row shows the paused status; re-inviting the bot
+  lets the next due minute run it.
+
 ## Personal Activity from every reply menu (2026-11-11)
 
 Regression: `node --test test/activity.test.js test/menu.test.js test/channel-settings-modal.test.js

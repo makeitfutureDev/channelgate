@@ -1,5 +1,31 @@
 # ChannelGate — Features
 
+## Native fork fallback (2026-11-12)
+
+A native fork (same engine, `/fork` or the Fork button without a historical cutoff) clones the
+engine's own session and reads no Slack history up front. It records where that history is (source
+thread, request timestamp, queued-fork cutoff). When the engine refuses the fork before any tool
+runs — Codex's `thread/fork failed: invalid paginated history lineage … missing source rollout`,
+observed on 0.162.1 for a long compacted thread whose rollout file and index row both exist —
+the gateway reads that history lazily with the same cutoffs, runs the same turn as a fresh session
+on the SAME harness with the copy in front of the request, prefixes the answer with a visible note,
+releases the source thread's queue and records the child's own session. Never a cross-engine
+failover, never a resume of the provisional fork id; a clean source continues on the request alone.
+`run_fork_fallback` is logged with the source session and the engine's error. Restart recovery of
+a queued native fork carries the same descriptor.
+
+## Schedules in archived channels and undeliverable results (2026-11-12)
+
+A schedule whose channel is archived (the bot was removed) neither runs nor delivers: on its due
+minute, or when it holds a saved result or an interrupted execution, the saved state is retired with
+`executionState: "undeliverable"` and `lastStatus: "undeliverable: channel archived (bot removed)"`,
+the row stays enabled with a `paused: channel archived…` status written once per archival
+(`schedule_paused` event), and it runs again on its next due minute after the bot is re-invited.
+A permanent Slack delivery error on a saved result (`channel_not_found`, `not_in_channel`,
+`is_archived`) retires that result the same way, marking the run's delivery `failed`
+(`errorKind: "delivery"`), instead of retrying every minute; transient errors keep the saved result
+and retry on the next minute as before.
+
 ## Optional Codex EU and Claude Bedrock harnesses (2026-11-12)
 
 Settings → Engine & runtime includes independent **Codex EU** (`codex-eu`) and **Claude

@@ -19,6 +19,7 @@ out=""
 previous=""
 resume="no"
 fork="no"
+fork_unavailable="no"
 resume_id=""
 mcp="no"
 cancel="no"
@@ -58,6 +59,7 @@ for arg in "$@"; do
     *'domains = { "api.github.com" = "allow" }'*) network_domain="yes" ;;
     *CODEX_STUB_WAIT_FOR_CANCEL*) cancel="yes" ;;
     *CODEX_STUB_FAIL_GENERIC*) fail="yes" ;;
+    *CODEX_STUB_FORK_UNAVAILABLE*) fork_unavailable="yes" ;;
     *CODEX_STUB_TWO_SEGMENTS*) two_segments="yes" ;;
     *CODEX_STUB_SUBAGENTS*) subagents="yes" ;;
     *CODEX_STUB_TRANSIENT_TWICE*) transient_times=2 ;;
@@ -270,6 +272,12 @@ fi
 # rejection (and keeps a JSON document out of the thread).
 if [ "$reject_all_models_body" = "yes" ] || { [ "$reject_model_body" = "yes" ] && [ "$model" = "gpt-5.6" ]; }; then
   printf '{"type":"turn.failed","error":{"message":"{\\"type\\":\\"error\\",\\"status\\":400,\\"error\\":{\\"type\\":\\"invalid_request_error\\",\\"message\\":\\"The '\''%s'\'' model is not supported when using Codex with a ChatGPT account.\\"}}"}}\n' "$model"
+  exit 1
+fi
+# Codex 0.162.1 refusing `exec fork` for a thread whose rollout lineage it cannot resolve: a
+# plain stderr line and exit 1, before any thread/turn event.
+if [ "$fork" = "yes" ] && [ "$fork_unavailable" = "yes" ]; then
+  printf '%s\n' 'Error: thread/fork: thread/fork failed: invalid paginated history lineage for 01a1ca13-2104-7fc0-be74-eacd5f0771bb: missing source rollout (code -32600)' >&2
   exit 1
 fi
 if [ "$fork" = "yes" ]; then

@@ -18,6 +18,18 @@ release gates. Stable promotion and publication require approval of the exact te
 
 ### Beta development notes
 
+- Continue a fork the engine refuses to clone natively. When Codex answers `exec fork` with a
+  rollout lineage error before running anything, the child thread now continues in a fresh
+  session on the source thread's Slack history (read lazily, same cutoffs), says so in the thread,
+  and releases the source thread. Previously the turn failed and the blank retry started
+  without context.
+
+- Stop a scheduled task whose channel the bot was removed from (archived) from retrying its
+  saved result every minute. The result is retired with an `undeliverable` status, the row is
+  paused once with a visible status and resumes after a re-invite, and a permanent Slack
+  delivery error (`channel_not_found`, `not_in_channel`, `is_archived`) retires a saved result
+  in any channel instead of looping.
+
 - Stop the periodic Slack membership check from rebuilding every channel workspace. A routine
   verification now touches no folder; only a channel the check restored after a re-invite is
   caught up. Reconnects no longer rebuild unchanged workspaces, a sync pass checks shared-folder

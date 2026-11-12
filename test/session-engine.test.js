@@ -131,3 +131,16 @@ test("unsupported list_turns heals only an explicit failed thread resume", () =>
   assert.equal(isSessionNotFound({ message: "list_turns is not supported yet" }), false);
   assert.equal(isSessionNotFound({ details: { stdout: "thread/resume failed: list_turns is not supported yet" } }), false);
 });
+
+test("isForkUnavailable matches Codex's refused thread/fork lineage and nothing broader", async () => {
+  const { isForkUnavailable } = await import("../src/gateway/run.js");
+  const atlas = {
+    message: "Codex failed because it reported a general error: Error: thread/fork: thread/fork failed: invalid paginated history lineage for 01a1ca13-2104-7fc0-be74-eacd5f0771bb: missing source rollout (code -32600)",
+    details: { stderr: "", toolUseCount: 0 },
+  };
+  assert.equal(isForkUnavailable(atlas), true);
+  assert.equal(isForkUnavailable({ details: { stderr: "thread/fork failed: source rollout belongs to another thread" } }), true);
+  assert.equal(isForkUnavailable({ message: "network error", details: { stderr: "ECONNRESET" } }), false);
+  assert.equal(isForkUnavailable({ message: "thread/resume failed: list_turns is not supported yet" }), false);
+  assert.equal(isForkUnavailable({ details: { stdout: "thread/fork failed: missing source rollout" } }), false, "stdout alone never triggers a fallback");
+});

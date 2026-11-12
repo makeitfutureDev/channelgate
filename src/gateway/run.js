@@ -396,6 +396,21 @@ export function isSessionNotFound(err) {
   return /no conversation found|conversation not found|session not found|no such (session|thread|conversation)|(session|thread)[^\n]*\bnot found|could not (find|resume)[^\n]*(session|thread|conversation)|unknown (session|thread)|no rollout found|rollout not found|failed to resolve rollout path[^\n]*file does not exist|--resume requires a valid session|is not a uuid|thread\/resume failed:\s*list_turns is not supported yet/.test(hay);
 }
 
+// The engine refused to FORK the source session before running anything. Codex reports this for a
+// thread whose rollout lineage it cannot resolve (`thread/fork failed: invalid paginated history
+// lineage … missing source rollout`, seen on 0.162.1 for a long compacted thread whose rollout
+// file and index row both exist). The child's prompt already carries the Slack history copy, so
+// the right answer is a fresh session with that copy — not a failed turn, and not a switch of
+// harness. Same message + stderr rule as isSessionNotFound.
+export function isForkUnavailable(err) {
+  const hay = `${err?.message || ""}\n${err?.details?.stderr || ""}`.toLowerCase();
+  return /thread\/fork failed|invalid paginated history lineage|missing source rollout|source rollout (is not paginated|belongs to another thread)|cannot fork[^\n]*(session|thread)|--fork-session[^\n]*(not found|no conversation)/.test(hay);
+}
+
+export function forkFallbackNote(engine) {
+  return `⚠️ _${engineLabel(engine)} could not fork the source thread's native session — continuing from the Slack history copy in a fresh session._\n\n`;
+}
+
 export function parseDurationMs(value, fallback = 10 * 60 * 1000) {
   if (!value) return fallback;
   const m = /^(\d+)(ms|s|m)?$/i.exec(String(value).trim());
@@ -681,7 +696,7 @@ export async function runMessage(args) {
   } finally { release?.(); }
 }
 
-async function runMessageImpl({ channelId, authorId, workspaceId = "", text, threadKey, admissionThreadKey = threadKey, attachments = [], signal = null, onDelta, onEvent, onRuntimeResolved, onForkSessionResolved, sessionId: presetSessionId = "", forkSourceSessionId = "", overrides = null, getFallbackContext = null, preferCold = false, progressReport = false, untrustedPrincipal = false, origin = "", fallbackPolicy = "", sudoSourceThreadKey = "", sudoScheduleId = "", questionThreadKey, scheduledQuestion = null, toolset = "" }) {
+async function runMessageImpl({ channelId, authorId, workspaceId = "", text, threadKey, admissionThreadKey = threadKey, attachments = [], signal = null, onDelta, onEvent, onRuntimeResolved, onForkSessionResolved, sessionId: presetSessionId = "", forkSourceSessionId = "", getForkFallbackContext = null, overrides = null, getFallbackContext = null, preferCold = false, progressReport = false, untrustedPrincipal = false, origin = "", fallbackPolicy = "", sudoSourceThreadKey = "", sudoScheduleId = "", questionThreadKey, scheduledQuestion = null, toolset = "" }) {
   // Fail closed before anything else: a run with no declared origin is a programming error, not a
   // default-to-interactive.
   if (!RUN_ORIGINS.includes(origin)) throw new Error(`runMessage requires a valid origin (got ${JSON.stringify(origin)}); one of: ${RUN_ORIGINS.join(", ")}`);
@@ -2045,6 +2060,7 @@ async function runMessageImpl({ channelId, authorId, workspaceId = "", text, thr
     // reply resumes the live one, not the dead file). A resume replays as-is, and a self-minting
     // engine (Codex) ignores the id on a fresh run. The warm process, if any, is bound to the old
     // id and is retired with it.
+    let forkFellBack = false;
     const remintFreshSession = async () => {
       if (!fresh || mintsOwnSessionId(engine)) return;
       abortPooled(`${entry.slug}::${threadKey}`);
@@ -2133,6 +2149,25 @@ async function runMessageImpl({ channelId, authorId, workspaceId = "", text, thr
             err.details = { ...(err.details || {}), defaultModel, defaultModelError: defaultModelError.message };
             throw err;
           }
+        } else if (fresh && forkSourceSessionId && isForkUnavailable(err) && !(Number(err?.details?.toolUseCount) > 0)) {
+          // A native fork the engine refused before any tool ran. The prompt already carries the
+          // source thread's Slack history (the pipeline builds every fork that way); drop the native
+          // source and run the same turn as a fresh session on the SAME harness, saying so in the
+          // thread. Without this the person got a dead-end error and a blank retry.
+          const note = forkFallbackNote(engine);
+          console.warn(`[gateway] ${engine} could not fork session ${forkSourceSessionId} in ${entry.slug} (${redactSecretValues(err.message, outputSecrets)}) — continuing from the Slack history copy`);
+          await logEvent("run_fork_fallback", { channel: channelId, author: authorId, slug: entry.slug, threadKey, origin, engine, sourceSessionId: forkSourceSessionId, error: redactSecretValues(err.message, outputSecrets) });
+          forkSourceSessionId = "";
+          forkFellBack = true;
+          announceAnswerNote(note);
+          await remintFreshSession();
+          // The pipeline recorded where the source thread's Slack history is for exactly this
+          // case; it is read now, lazily, with the fork's own cutoffs. A fork that has none (clean
+          // source) continues on the request alone — what a plain new thread would get.
+          const fallbackContext = getForkFallbackContext ? await getForkFallbackContext().catch(() => "") : "";
+          const fallbackPrompt = initialPromptOverride ?? (fallbackContext ? `${fallbackContext}${turnText}` : null);
+          result = await withTransientRetry(engine, () => runOnce(sid, fresh, fallbackPrompt), { beforeRetry: remintFreshSession });
+          result = { ...result, content: `${note}${result.content || ""}` };
         } else {
           // The failover cases: a replay-safe limit/credential failure, or a transient provider
           // failure that outlived every in-place retry (`transientRetries` proves the budget was
@@ -2293,6 +2328,9 @@ async function runMessageImpl({ channelId, authorId, workspaceId = "", text, thr
       await saveSession(entry.slug, threadKey, result.sessionId, engine, sessionGen, runtimeStamp);
       if (forkSourceSessionId) onForkSessionResolved?.(result.sessionId);
     }
+    // A fork that fell back to a fresh session still owes its caller the "source is free" signal:
+    // the pipeline holds the source thread's queue until the child has its own session.
+    if (forkFellBack) onForkSessionResolved?.(result.sessionId || sid);
 
     // The engine exited 0 but its "answer" is a usage-limit notice that did no work → switch to the
     // fallback harness (and remember it for this channel+engine cooldown).

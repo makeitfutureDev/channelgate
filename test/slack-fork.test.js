@@ -436,3 +436,60 @@ for (const engine of ["claude", "codex"]) {
     assert.equal(runtime.calls.spawn.length, before);
   });
 }
+
+test("a Codex native fork the engine refuses falls back to a fresh session on the Slack history copy", async () => {
+  // Codex 0.162.1 answered `exec fork <id>` with "invalid paginated history lineage … missing
+  // source rollout" for a long compacted thread (Atlas, int-hubexo-nordics, 2026-11-12). The
+  // child's prompt already carries the thread's Slack history, so the turn must continue in a
+  // fresh Codex session with a visible note — not fail, not switch harness, not strand the source.
+  saveSettings({ engine: "codex", engineEnabled: { claude: true, codex: true } });
+  const user = "U_FORK_FALLBACK";
+  const channel = "D_FORK_FALLBACK";
+  await setUser(user, { name: "Fork User", approved: true });
+  const client = slack();
+  const event = { type: "message", channel, channel_type: "im", user, ts: "7000.001", text: "Source task" };
+  await processMessageEvent(event, client, { botUserId: "UBOT" });
+  const entry = await getChannelEntry(channel);
+  const sourceId = await getSession(entry.slug, event.ts);
+  assert.ok(sourceId);
+  // The source thread as Slack would replay it: the request, the bot's answer, then the fork command.
+  let historyReads = 0;
+  const defaultReplies = client.conversations.replies;
+  client.conversations.replies = async () => {
+    historyReads++;
+    return { messages: [
+      { user, ts: event.ts, text: "Source task" },
+      { user: "UBOT", ts: "7000.0015", text: "The source answer mentions TOKEN-EARLY-42" },
+      { user, ts: "7000.002", text: "<@UBOT> /fork CODEX_STUB_FORK_UNAVAILABLE Explore another solution" },
+    ], response_metadata: {} };
+  };
+  const before = runtime.calls.spawn.length;
+  await processMessageEvent({ ...event, ts: "7000.002", thread_ts: event.ts, text: "<@UBOT> /fork CODEX_STUB_FORK_UNAVAILABLE Explore another solution" }, client, { botUserId: "UBOT" });
+  const childTs = client.posted.find((m) => /New request from/.test(m.text || ""))?.thread_ts;
+  assert.ok(childTs, "the child thread is still created");
+  const attempts = runtime.calls.spawn.slice(before);
+  const forkAttempt = attempts.find((call) => call.args.includes("fork"));
+  assert.ok(forkAttempt, "the native fork is attempted first");
+  const freshAttempt = attempts.find((call) => !call.args.includes("fork") && call.args.some((arg) => arg.includes("Explore another solution")));
+  assert.ok(freshAttempt, "the same turn is retried as a fresh session on the same harness");
+  assert.ok(!freshAttempt.args.includes("resume"), "the retry never resumes the provisional fork id");
+  assert.ok(!forkAttempt.args.some((arg) => /TOKEN-EARLY-42/.test(arg)), "the native attempt carries no history copy");
+  assert.ok(freshAttempt.args.some((arg) => /Source thread:/.test(arg) && /TOKEN-EARLY-42/.test(arg)), "the fresh session receives the Slack history copy, read lazily");
+  assert.ok(historyReads >= 1);
+  client.conversations.replies = defaultReplies;
+  assert.ok(!attempts.some((call) => call.args.includes("--fork-session")), "no cross-engine failover to Claude");
+  assert.equal(await getSession(entry.slug, childTs), "codex-stub-session", "the child keeps the fresh session the engine minted");
+  assert.equal(await getSession(entry.slug, event.ts), sourceId, "the source session is untouched");
+  assert.ok(client.posted.some((m) => m.thread_ts === childTs && /could not fork the source thread/.test(m.text || "")), "the fallback is announced in the child thread");
+  assert.ok(client.posted.some((m) => m.thread_ts === childTs && /stub .*reply/i.test(m.text || "")), "the child thread gets the answer");
+  assert.ok(!client.posted.some((m) => /run failed|general error/i.test(m.text || "")), "no failure is reported");
+  // The source thread was released: a follow-up there runs immediately.
+  const sourceBefore = runtime.calls.spawn.length;
+  await processMessageEvent({ ...event, ts: "7000.003", thread_ts: event.ts, text: "Continue the source" }, client, { botUserId: "UBOT" });
+  assert.ok(runtime.calls.spawn.length > sourceBefore, "the source thread accepts new turns after the fallback");
+  // And the child resumes its own fresh session on the next turn.
+  const childBefore = runtime.calls.spawn.length;
+  await processMessageEvent({ ...event, ts: "7000.004", thread_ts: childTs, text: "Continue the alternative" }, client, { botUserId: "UBOT" });
+  const resumed = runtime.calls.spawn.slice(childBefore).find((call) => call.args.includes("resume"));
+  assert.ok(resumed && resumed.args[resumed.args.indexOf("resume") + 1] === "codex-stub-session");
+});

@@ -540,6 +540,9 @@ export async function recoverRuns(stale, {
         text: rec.text,
         threadKey: rec.threadKey,
         forkSourceSessionId: await recoveryForkSessionId(rec),
+        getForkFallbackContext: rec.forkFallback?.sourceThreadTs
+          ? (await import("../slack/message-pipeline.js")).forkFallbackContextGetter(client, { channelId: rec.channelId, botUserId: rec.queuedFork?.botUserId || "", fallback: rec.forkFallback })
+          : null,
         overrides: rec.runtimeOverrides || null,
         attachments: Array.isArray(rec.attachments) ? rec.attachments : [],
         ...(rec.questionSubmissionId ? { questionSubmissionId: rec.questionSubmissionId,
