@@ -5,7 +5,7 @@
 The personal Activity dashboard is a compact monitor in the channelgate.dev style (Geist and
 Geist Mono, self-hosted under `public/fonts/`), built to stay readable in a corner of the screen.
 
-- **Header.** The agent's own name and initial, read from the Slack bot's profile (display name,
+- **Header.** The ChannelGate gate mark and the agent's own name, read from the Slack bot's profile (display name,
   then real name, then the bot handle; cached for an hour per bot user, never blocking the page),
   so each installation shows its own name. The live-connection state sits under the name. Each
   connected subscription is a short coloured usage line with its percentage (green, then amber
@@ -26,7 +26,9 @@ Geist Mono, self-hosted under `public/fonts/`), built to stay readable in a corn
   rows show a live running clock in the status label ("Working 4m 12s"), measured from the
   earliest accepted turn still running in that thread (`workingSinceMs` in the snapshot);
   waiting turns carry no clock. Last shows relative time ("now", "5m", "3h", "2d", then a short
-  date), with the full date on hover.
+  date), with the full date on hover. The channel name links to the conversation in the Slack app
+  (`slack://channel?team=…&id=…`; Ctrl/⌘-click opens `app.slack.com/client/…` in a new tab). Only a
+  validated workspace id and a bare Slack conversation id are linked; Slack enforces access.
 - **Actions.** Three icon buttons with accessible names: the Slack logo opens the thread in the
   Slack app (Ctrl/⌘-click opens the same thread in the browser instead, replacing the separate ↗
   button), ✓ marks it done (↺ reopens), ⏸ moves it to Later (▶ resumes). They appear on hover or

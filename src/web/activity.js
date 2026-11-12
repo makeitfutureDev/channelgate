@@ -216,7 +216,7 @@ export function createActivityRouter({
       const { session, client } = await context(req);
       const agent = await agentName(client).catch(() => "");
       const theme = activityTheme((await getUser(session.ownerId))?.activityTheme);
-      const page = activityPage({ sessionId: req.params.id, csrf: session.csrf, agent, theme, view: req.path.endsWith("/subscriptions") ? "subscriptions" : "activity" });
+      const page = activityPage({ sessionId: req.params.id, csrf: session.csrf, agent, theme, teamId: session.teamId, view: req.path.endsWith("/subscriptions") ? "subscriptions" : "activity" });
       headers(res, page.nonce); return res.type("html").send(page.html);
     } catch (error) { return unavailable(res, error.status || 403); }
   };

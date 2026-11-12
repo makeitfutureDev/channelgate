@@ -30,7 +30,7 @@ class Element {
   querySelectorAll(selector) { return this.children.flatMap((c) => [...(c.tag === selector ? [c] : []), ...c.querySelectorAll(selector)]); }
   closest(selector) {
     if (this.tag === "button" && selector.startsWith("button")) return this;
-    if (selector === "a.open-link" && this.tag === "a" && String(this.className).split(" ").includes("open-link")) return this;
+    if (selector.startsWith("a.") && this.tag === "a" && String(this.className).split(" ").includes(selector.slice(2))) return this;
     return this.parent?.closest(selector);
   }
   fire(type, event = {}) {
@@ -46,7 +46,7 @@ const response = (data, status = 200) => ({ status, ok: status >= 200 && status 
 function row(status = "working", title = "Fixture thread", url = "/activity/session/open/C1/1.1") {
   return { channelId: "C1", threadTs: "1.1", title, channelName: "Engineering", status, lastMessageMs: 1_800_000_000_000, url };
 }
-function browser(fetchImpl = async () => response({ rows: [] }), csrf = "fixture-csrf", subscriptions = false, { prefersLight = false } = {}) {
+function browser(fetchImpl = async () => response({ rows: [] }), csrf = "fixture-csrf", subscriptions = false, { prefersLight = false, teamId = "TWORK" } = {}) {
   const elements = Object.fromEntries(["theme-toggle", "load-history", "threads", "search", "filters", "connection", "connection-text", "updated", "notice", "summary", "table", "empty", "empty-title", "empty-copy", "result-count", "group-order", "order-dialog", "order-list", "order-save", "order-cancel", "order-reset", "order-error", "mark-all-done", "all-done-dialog", "all-done-confirm", "all-done-cancel", "all-done-error"].map((id) => [id, new Element()]));
   for (const filter of ["active", "working", "waiting", "error", "idle", "later", "done", "open"]) {
     const button = new Element("button"); button.dataset.filter = filter; button.append(new Element("span")); elements.filters.append(button);
@@ -60,7 +60,7 @@ function browser(fetchImpl = async () => response({ rows: [] }), csrf = "fixture
     snapshot(rows, extra = {}) { this.fire("threads", { data: JSON.stringify({ rows, ...extra }) }); }
   }
   const requests = [], timers = [], timeoutDelays = [], browserListeners = {}, opened = [];
-  const page = activityPage({ sessionId: "session", csrf });
+  const page = activityPage({ sessionId: "session", csrf, teamId });
   const script = /<script nonce="[^"]+">([\s\S]*?)<\/script>/.exec(page.html)?.[1];
   assert.ok(script);
   vm.runInNewContext(script, {
@@ -136,6 +136,30 @@ test("Activity has one icon Slack button; Ctrl/⌘-click opens the same thread i
   assert.equal(opened.length, 2);
 });
 
+test("the channel name opens the conversation in Slack; Ctrl/⌘-click opens it in the browser", () => {
+  const { elements, stream, opened } = browser(() => new Promise(() => {}));
+  stream.snapshot([row()]);
+  const channel = () => elements.threads.children[0].children[1].children[0];
+  assert.equal(channel().textContent, "Engineering");
+  assert.equal(channel().href, "slack://channel?team=TWORK&id=C1");
+  assert.equal(channel().target, "_self");
+  assert.equal(channel().attrs["aria-label"], "Open Engineering in Slack");
+  assert.equal(elements.threads.fire("click", { target: channel() }), false, "a plain click opens the Slack app");
+  assert.equal(elements.threads.fire("click", { target: channel(), metaKey: true }), true);
+  assert.deepEqual(opened.at(-1), ["https://app.slack.com/client/TWORK/C1", "_blank", "noopener,noreferrer"]);
+  for (const channelId of ["C1&team=TEVIL", "javascript:alert(1)", "slack:C1", "c1", "", "googlechat:spaces/AAA"]) {
+    stream.snapshot([{ ...row(), channelId }]);
+    assert.equal(channel().href, undefined, channelId);
+    assert.equal(channel().attrs["aria-disabled"], "true");
+    assert.equal(elements.threads.fire("click", { target: channel(), ctrlKey: true }), false);
+  }
+  assert.equal(opened.length, 1);
+  const noTeam = browser(() => new Promise(() => {}), "csrf", false, { teamId: "T1\"><script>" });
+  noTeam.stream.snapshot([row()]);
+  assert.equal(noTeam.elements.threads.children[0].children[1].children[0].href, undefined, "an invalid workspace id links nothing");
+  assert.doesNotMatch(noTeam.page.html, /T1\\?"><script>/);
+});
+
 test("status groups are labelled on their first row, and running work shows a live clock", () => {
   const { elements, stream, timers } = browser(() => new Promise(() => {}));
   const now = Date.now();
@@ -184,8 +208,8 @@ test("theme switch pins the opposite theme, returns to System when it matches th
 test("page shows the agent name safely and pins only a saved explicit theme", () => {
   const hostile = activityPage({ sessionId: "s", csrf: "c", agent: '<img src=x onerror="alert(1)">Atlas' }).html;
   assert.match(hostile, /<span class="agent-name">&lt;img src=x onerror=&quot;alert\(1\)&quot;&gt;Atlas<\/span>/);
-  assert.match(hostile, /<span class="agent-mark" aria-hidden="true">&lt;<\/span>/);
-  assert.match(activityPage({ sessionId: "s", csrf: "c", agent: "atlas" }).html, /agent-mark" aria-hidden="true">A</);
+  assert.match(hostile, /<span class="agent-mark" aria-hidden="true"><svg viewBox="0 0 48 48"[^>]*><rect[^>]*fill="#ff642f"/, "the ChannelGate gate mark");
+  assert.match(hostile, /<th scope="col">Actions<\/th>/);
   assert.match(activityPage({ sessionId: "s", csrf: "c" }).html, /agent-name">ChannelGate</);
   assert.match(activityPage({ sessionId: "s", csrf: "c", theme: "light" }).html, /<html lang="en" data-theme="light">/);
   assert.match(activityPage({ sessionId: "s", csrf: "c", theme: "dark" }).html, /<html lang="en" data-theme="dark">/);

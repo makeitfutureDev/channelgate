@@ -17,12 +17,16 @@
   one minute ago), Idle and Later thread, and two connected subscriptions. Open Dashboard from
   Slack.
 - Expected at 1440, 820 and 380 px, in both themes:
-  - The header shows the bot's Slack display name and initial.
+  - The header shows the ChannelGate gate mark and the bot's Slack display name.
   - Usage shows as lines at 1440 and 820 px and as rings at 380 px.
   - Each status uses its own colour; Later is purple.
   - Each group is labelled once with its count, and the Working clock advances every second.
   - Each row starts with a bar in its status colour; alternate rows are subtly banded; a long
     title wraps to two lines and then ends in an ellipsis.
+  - The header shows the ChannelGate gate mark. The Actions column has a visible header, and Last
+    sits close to Status.
+  - Clicking a channel name opens that channel in the Slack app; Ctrl/⌘-click opens it in the
+    browser. A malformed id or workspace links nothing (automated in `test/activity-page.test.js`).
   - Each action icon is centred in its button (automated: the browser test compares the icon's
     margins with the button size at 320–1920 px).
   - Hovering a row shows exactly three icon buttons; on touch devices they are always visible.

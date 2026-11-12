@@ -16,6 +16,8 @@
   Ctrl/⌘-click on the Slack icon replaces the separate browser button.
   Rows start with a status-coloured bar, alternate rows are subtly banded, titles wrap to two
   lines, and action icons are centred in their buttons.
+  Channel names open the channel in Slack, the header uses the ChannelGate logo, the Actions
+  column has a title, and Last sits closer to Status.
 
 - Keep the Activity live stream connected when a thread snapshot exceeds the socket buffer: wait
   for it to drain instead of closing, which made the page alternate Reconnecting/Live every 2 s.
