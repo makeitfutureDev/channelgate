@@ -262,8 +262,15 @@ never alter production credentials or send real access tokens to fixture servers
 - Run `CG_BROWSER_MODULE=<playwright index.mjs> CG_BROWSER_EXECUTABLE=<chromium> node --test
   test/admin-subscriptions-browser.test.js` for the real app's direct `/subscriptions` entry,
   sidebar link, refresh, reload, history navigation, labelled progress bars, and 390px viewport.
-  Synthetic provider replies must show Claude 42% (58% remaining) and Codex 91% with reset times;
+  Synthetic provider replies must show Claude 42% (58% remaining), Codex 91%, Codex EU 24%,
+  and an explicit unsupported Claude Bedrock card with no quota bar;
   require no page errors or horizontal overflow. Signed-out REST access must return 401.
+- Enabled harness regression (2026-11-12): enable all registered harnesses in isolated settings;
+  require one card per enabled ID, labels from adapters, and no credential or outbound calls for
+  unsupported providers. Disable a harness between reads and require removal plus cache eviction.
+  Codex and Codex EU must send distinct synthetic bearer/account headers, coalesce only their own
+  requests, refresh independently, and discard stale data on rotation/disconnect. Dedicated EU
+  missing/malformed/API-key files must never borrow the default login or environment API key.
 - Live admin acceptance: an authorized admin opens Subscriptions and compares each reported
   quota/reset to that provider's own usage screen for the gateway login. Confirm five-minute
   cache behavior, independent provider failure, stale timestamps and explicit missing/API-key/

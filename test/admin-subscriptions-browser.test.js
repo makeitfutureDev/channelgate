@@ -36,12 +36,14 @@ test("subscription page supports direct entry, refresh, history and a narrow vie
     return route.fulfill({ json: { refreshAfterSeconds: 300, subscriptions: [
       { provider: "claude", name: "Claude", plan: "Max", status: "ok", windows: [{ label: "Current session (5 hours)", usedPercent: 42, resetsAt: new Date(Date.now() + 3600_000).toISOString() }], updatedAt: new Date().toISOString() },
       { provider: "codex", name: "Codex", plan: "Pro", status: "ok", windows: [{ label: "Weekly", usedPercent: 91, resetsAt: new Date(Date.now() + 86400_000).toISOString() }], updatedAt: new Date().toISOString() },
+      { provider: "codex-eu", name: "Codex EU", plan: "Pro Lite", status: "ok", windows: [{ label: "EU weekly", usedPercent: 24, resetsAt: new Date(Date.now() + 86400_000).toISOString() }] },
+      { provider: "claude-bedrock", name: "Claude Bedrock", status: "unsupported", windows: [], message: "Subscription quota reporting is not available for this harness." },
     ] } });
   });
   await page.goto(`${base}/subscriptions`);
   await page.locator(".subscription-card").nth(1).waitFor();
   assert.equal(await page.title(), "Subscriptions — ChannelGate");
-  assert.equal(await page.locator(".subscription-card").count(), 2);
+  assert.equal(await page.locator(".subscription-card").count(), 4);
   assert.equal(await page.locator('progress[aria-label="Weekly usage"]').getAttribute("value"), "91");
   assert.match(await page.locator("#subscriptions-cards").innerText(), /58% remaining/);
   await page.locator("#subscriptions-refresh").click();
@@ -55,7 +57,10 @@ test("subscription page supports direct entry, refresh, history and a narrow vie
   await page.locator(".subscription-card").nth(1).waitFor();
   await page.setViewportSize({ width: 390, height: 844 });
   assert.equal(await page.evaluate(() => globalThis.document.documentElement.scrollWidth <= globalThis.innerWidth), true);
-  assert.equal(await page.locator("progress").count(), 2);
+  assert.equal(await page.locator("progress").count(), 3);
+  assert.equal(await page.locator('progress[aria-label="EU weekly usage"]').getAttribute("value"), "24");
+  assert.match(await page.locator("#subscriptions-cards").innerText(), /Codex EU/);
+  assert.match(await page.locator("#subscriptions-cards").innerText(), /Not supported/);
   if (process.env.CG_SUBSCRIPTIONS_SCREENSHOT) await page.screenshot({ path: process.env.CG_SUBSCRIPTIONS_SCREENSHOT, fullPage: true });
   assert.deepEqual(errors, []);
 });

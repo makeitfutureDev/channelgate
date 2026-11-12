@@ -1,10 +1,13 @@
 // Provider subscription quotas, separate from the gateway's token/cost ledger. This reader
 // never refreshes credentials or starts an engine turn. Access tokens stay in daemon memory.
 import { createHash } from "node:crypto";
+import path from "node:path";
+import { codexEuLoginHome } from "./channel-codex-paths.js";
+import { adapterFor } from "../engines/registry.js";
 import { resolveClaudeLogin } from "./claude-login.js";
 import { readDaemonClaudeAccessToken } from "./claude-token-relay.js";
 import { resolveCodexLogin, readDaemonCodexAccessToken } from "./codex-token-relay.js";
-import { getContainerClaudeOauthToken } from "../config/settings.js";
+import { getEnabledEngines, getContainerClaudeOauthToken } from "../config/settings.js";
 import { readBoundedBytes } from "../util/bounded-bytes.js";
 
 const ENDPOINTS = Object.freeze({
@@ -47,44 +50,58 @@ export function normalizeSubscriptionUsage(provider, data) {
   return { windows, plan: provider === "codex" ? text(data?.plan_type) : "" };
 }
 
-function daemonCredentials(provider) {
-  if (provider === "claude") {
-    const login = resolveClaudeLogin();
-    if (login.kind === "api-key" || login.kind === "none") return { kind: login.kind };
-    const current = login.kind === "settings" ? { token: getContainerClaudeOauthToken() } : readDaemonClaudeAccessToken(login);
-    return { kind: "subscription", token: current?.token || "", expiresAt: current?.expiresAt || 0, plan: current?.subscriptionType || "", source: login.kind };
-  }
-  const login = resolveCodexLogin();
-  if (login.kind !== "chatgpt") return { kind: login.kind === "none" && process.env.OPENAI_API_KEY ? "api-key" : login.kind };
-  const current = readDaemonCodexAccessToken(login);
-  return { kind: "subscription", token: current?.token || "", expiresAt: current?.expiresAt || 0, plan: current?.planType || "", accountId: current?.accountId || "", source: "chatgpt" };
+export function createDaemonSubscriptionCredentials({ resolveClaude = resolveClaudeLogin, readClaude = readDaemonClaudeAccessToken,
+  claudeToken = getContainerClaudeOauthToken, resolveCodex = resolveCodexLogin, readCodex = readDaemonCodexAccessToken,
+  euHome = codexEuLoginHome, env = process.env } = {}) {
+  return (engine, usage) => {
+    if (usage.provider === "claude") {
+      const login = resolveClaude();
+      if (login.kind === "api-key" || login.kind === "none") return { kind: login.kind };
+      const current = login.kind === "settings" ? { token: claudeToken() } : readClaude(login);
+      return { kind: "subscription", token: current?.token || "", expiresAt: current?.expiresAt || 0, plan: current?.subscriptionType || "", source: login.kind };
+    }
+    const dedicated = usage.login === "codex-eu";
+    const login = resolveCodex(dedicated ? { env: {}, candidates: [path.join(euHome(), "auth.json")] } : {});
+    if (dedicated && login.kind !== "chatgpt") return { kind: "none" };
+    if (login.kind !== "chatgpt") return { kind: login.kind === "none" && env.OPENAI_API_KEY ? "api-key" : login.kind };
+    const current = readCodex(login);
+    return { kind: "subscription", token: current?.token || "", expiresAt: current?.expiresAt || 0, plan: current?.planType || "", accountId: current?.accountId || "", source: dedicated ? "codex-eu" : "chatgpt" };
+  };
 }
+const daemonCredentials = createDaemonSubscriptionCredentials();
 
 // Dependency injection keeps provider fixtures entirely offline and outside real login state.
-export function createSubscriptionUsageReader({ credentials = daemonCredentials, fetchImpl = fetch, now = Date.now, timeoutMs = 10_000 } = {}) {
+export function createSubscriptionUsageReader({ credentials = daemonCredentials, engines = getEnabledEngines, adapter = adapterFor, fetchImpl = fetch, now = Date.now, timeoutMs = 10_000 } = {}) {
   const cache = new Map();
-  async function readProvider(provider) {
-    const base = { provider, name: provider === "claude" ? "Claude" : "Codex", plan: "", windows: [], checkedAt: null, updatedAt: null, stale: false };
+  async function readProvider(engine) {
+    const manifest = adapter(engine);
+    const usage = manifest?.subscriptionUsage;
+    const provider = usage?.provider;
+    const base = { provider: engine, name: manifest?.label || engine, plan: "", windows: [], checkedAt: null, updatedAt: null, stale: false };
+    if (!Object.hasOwn(ENDPOINTS, provider || "")) {
+      cache.delete(engine);
+      return { ...base, status: "unsupported", message: "Subscription quota reporting is not available for this harness. Check its provider dashboard for limits and billing." };
+    }
     let credential;
-    try { credential = credentials(provider); } catch { return { ...base, status: "unavailable", message: "Could not read the gateway login. Check engine settings." }; }
+    try { credential = credentials(engine, usage); } catch { return { ...base, status: "unavailable", message: "Could not read the gateway login. Check engine settings." }; }
     if (credential.kind !== "subscription" || !credential.token) {
-      cache.delete(provider);
+      cache.delete(engine);
       return { ...base, status: credential.kind === "api-key" ? "api-key" : "not-connected", message: credential.kind === "api-key" ? "API-key billing has no subscription quota. View token usage and estimated costs on Overview." : "No subscription login is available. Sign in to this engine on the gateway host." };
     }
     base.plan = text(credential.plan);
     if (credential.expiresAt && credential.expiresAt <= now()) {
-      cache.delete(provider);
+      cache.delete(engine);
       return { ...base, status: "expired", message: "The access token has expired. Renew the engine login on the gateway host; this page never refreshes credentials." };
     }
     // Bound to the actual token/account: a login change must never show the previous account's
-    // cached usage. Only one entry per provider is retained; hashes never leave this closure.
+    // cached usage. Only one entry per harness is retained; hashes never leave this closure.
     const key = createHash("sha256").update(JSON.stringify([credential.token, credential.accountId, credential.plan, credential.source])).digest("hex");
-    let entry = cache.get(provider);
+    let entry = cache.get(engine);
     if (entry?.key === key && entry.pending) return entry.pending;
     if (entry?.key === key && now() - entry.at < entry.ttl) return entry.value;
     const previous = entry?.key === key ? entry.good : null;
     entry = { key, at: 0, value: null, good: previous, pending: null, ttl: CACHE_MS };
-    cache.set(provider, entry);
+    cache.set(engine, entry);
     entry.pending = Promise.resolve().then(async () => {
       const checkedAt = new Date(now()).toISOString();
       let result;
@@ -127,7 +144,11 @@ export function createSubscriptionUsageReader({ credentials = daemonCredentials,
     });
     return entry.pending;
   }
-  return async () => ({ subscriptions: await Promise.all(["claude", "codex"].map(readProvider)), refreshAfterSeconds: CACHE_MS / 1000 });
+  return async () => {
+    const enabled = [...new Set(engines())];
+    for (const engine of cache.keys()) if (!enabled.includes(engine)) cache.delete(engine);
+    return { subscriptions: await Promise.all(enabled.map(readProvider)), refreshAfterSeconds: CACHE_MS / 1000 };
+  };
 }
 
 export const readSubscriptionUsage = createSubscriptionUsageReader();

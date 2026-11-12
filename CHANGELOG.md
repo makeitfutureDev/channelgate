@@ -2,6 +2,8 @@
 
 ## 0.6.5 — candidate, pending approval
 
+- Show every enabled harness on Subscriptions, including separate Codex EU quotas and explicit
+  unsupported reporting states for harnesses without a subscription quota reader.
 - Keep conversations open on Slack 👍 emoji reactions, including skin tones. The native positive
   answer-feedback button still marks work done, as do checkmark reactions and Done controls.
 

@@ -11,7 +11,7 @@ export function subscriptionReset(value, now = Date.now()) {
 }
 
 export function subscriptionCard(subscription) {
-  const labels = { ok: "Connected", expired: "Login expired", "not-connected": "Not connected", "api-key": "API billing", unavailable: "Usage unavailable" };
+  const labels = { ok: "Connected", expired: "Login expired", "not-connected": "Not connected", "api-key": "API billing", unavailable: "Usage unavailable", unsupported: "Not supported" };
   const status = Object.hasOwn(labels, subscription.status) ? subscription.status : "unavailable";
   const windows = (subscription.windows || []).map((window) => {
     const used = window.usedPercent;
@@ -69,7 +69,7 @@ let controller;
 export function setSubscriptionsActive(active) {
   if (!controller && active) {
     const root = document.getElementById("view-subscriptions");
-    root.innerHTML = `<div class="view-head dash-head"><div><h2>Subscriptions</h2><p class="hint">Live plan limits for the Claude and Codex logins used by this gateway.</p></div><button type="button" class="ghost" id="subscriptions-refresh">Refresh</button></div>
+    root.innerHTML = `<div class="view-head dash-head"><div><h2>Subscriptions</h2><p class="hint">Usage reporting for every enabled harness, including separate subscription logins.</p></div><button type="button" class="ghost" id="subscriptions-refresh">Refresh</button></div>
       <p class="hint">Includes usage across each provider account, including activity outside ChannelGate. Updates every 5 minutes while this page is visible.</p>
       <div id="subscriptions-notice" role="status" aria-live="polite"></div><div id="subscriptions-cards" class="subscription-grid"></div>
       <p class="hint">Provider limits are separate from the token counts and estimated API costs on <a href="/overview">Overview</a>. Providers may change these usage endpoints.</p>`;

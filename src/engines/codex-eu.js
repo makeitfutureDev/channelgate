@@ -27,6 +27,7 @@ export async function codexEuCredentialState({ readFileImpl = readFile } = {}) {
 export function makeCodexEuAdapter(base) {
   return validateEngineAdapter({
     ...base,
+    subscriptionUsage: { provider: "codex", login: "codex-eu" },
     id: "codex-eu", label: "Codex EU", terminalSetup: true, optIn: true, modelFamily: "codex", defaultModelKey: "defaultCodexEuModel",
     defaultEffortKey: "defaultCodexEuEffort", mcpMetaKey: "allowedCodexEuMcps",
     supports: { ...base.supports, usageLimitFallback: false },

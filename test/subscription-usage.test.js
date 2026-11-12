@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { once } from "node:events";
-import { ensureTestEnv } from "./helpers.js";
+import { ensureTestEnv, tempDir } from "./helpers.js";
 
 // The default reader imports the daemon login resolvers. Pin their homes before import even
 // though these tests inject all credentials and never contact a provider.
@@ -10,11 +10,13 @@ ensureTestEnv();
 // reader before restoring normal fetch for the local HTTP client below.
 const localFetch = globalThis.fetch;
 globalThis.fetch = async () => { throw new Error("Provider networking is disabled in this fixture"); };
-const { createSubscriptionUsageReader, normalizeSubscriptionUsage } = await import("../src/gateway/subscription-usage.js");
+const { createSubscriptionUsageReader: createReader, createDaemonSubscriptionCredentials, normalizeSubscriptionUsage } = await import("../src/gateway/subscription-usage.js");
 globalThis.fetch = localFetch;
 const { createSubscriptionsRouter } = await import("../src/web/routes/subscriptions.js");
 const { createSubscriptionPoller, subscriptionCard, subscriptionReset } = await import("../public/admin-subscriptions.js");
 const { default: express } = await import("express");
+
+const createSubscriptionUsageReader = (options) => createReader({ engines: () => ["claude", "codex"], ...options });
 
 const START = Date.parse("2026-11-11T12:00:00Z");
 const TTL = 300_000;
@@ -395,8 +397,107 @@ test("real admin subscription route admits an administrator and rejects signed-o
   const allowed = await fetch(`${base}/api/subscriptions`, { headers: { Cookie: cookie } });
   assert.equal(allowed.status, 200);
   assert.equal(allowed.headers.get("cache-control"), "no-store");
-  assert.deepEqual((await allowed.json()).subscriptions.map((row) => row.provider), ["claude", "codex"]);
+  assert.deepEqual((await allowed.json()).subscriptions.map((row) => row.provider), (await import("../src/config/settings.js")).getEnabledEngines());
   await setUser("USUBSCRIPTIONAUTH", { isAdmin: false, approved: true });
   assert.equal((await fetch(`${base}/api/subscriptions`, { headers: { Cookie: cookie } })).status, 401);
   assert.throws(() => ensureUserAdminAccount("USUBSCRIPTIONAUTH"), /not an administrator/);
+});
+
+test("enabled harnesses are resolved on each read and unsupported engines never probe credentials", async () => {
+  const { getEnabledEngines, saveSettings } = await import("../src/config/settings.js");
+  const { ENGINE_IDS } = await import("../src/engines/registry.js");
+  const credentialReads = [];
+  const requests = [];
+  const read = createReader({ credentials(engine) { credentialReads.push(engine); return connected(engine); }, now: () => START,
+    fetchImpl: async (url) => { requests.push(url); return success(url.includes("anthropic") ? claudeBody() : codexBody()); } });
+  try {
+    saveSettings({ engineEnabled: Object.fromEntries(ENGINE_IDS.map((id) => [id, true])) });
+    const result = await read();
+    assert.deepEqual(result.subscriptions.map((row) => row.provider), getEnabledEngines());
+    assert.deepEqual(credentialReads, ["claude", "codex", "codex-eu"]);
+    assert.equal(requests.length, 3);
+    for (const row of result.subscriptions.filter((item) => !credentialReads.includes(item.provider))) {
+      assert.equal(row.status, "unsupported");
+      assert.equal(row.windows.length, 0);
+      assert.match(subscriptionCard(row), /Not supported/);
+    }
+    assert.equal(forProvider(result, "codex-eu").name, "Codex EU");
+    saveSettings({ engineEnabled: Object.fromEntries(ENGINE_IDS.map((id) => [id, id === "codex-eu"])) });
+    assert.deepEqual((await read()).subscriptions.map((row) => row.provider), ["codex-eu"]);
+    assert.equal(requests.length, 3);
+    saveSettings({ engineEnabled: Object.fromEntries(ENGINE_IDS.map((id) => [id, id === "codex"])) });
+    assert.deepEqual((await read()).subscriptions.map((row) => row.provider), ["codex"]);
+    assert.equal(requests.length, 4, "disabled harness cache was discarded");
+  } finally { saveSettings({ engineEnabled: {} }); }
+});
+
+test("Codex EU credentials use only the dedicated login and never inherit a default API key", () => {
+  const calls = [];
+  let kind = "chatgpt";
+  const credentials = createDaemonSubscriptionCredentials({ euHome: () => "/fixture/eu-login", env: { OPENAI_API_KEY: "fixture-default-key" },
+    resolveCodex(options) { calls.push(options); return { kind, file: "fixture" }; },
+    readCodex() { return { token: "fixture-eu-token", accountId: "fixture-eu-account", planType: "pro_lite" }; } });
+  assert.equal(credentials("codex-eu", { provider: "codex", login: "codex-eu" }).accountId, "fixture-eu-account");
+  assert.deepEqual(calls[0], { env: {}, candidates: ["/fixture/eu-login/auth.json"] });
+  for (kind of ["none", "api-key"]) assert.deepEqual(credentials("codex-eu", { provider: "codex", login: "codex-eu" }), { kind: "none" });
+  assert.equal(credentials("codex", { provider: "codex" }).kind, "api-key");
+  assert.deepEqual(calls.at(-1), {});
+});
+
+test("Codex and Codex EU keep account headers, concurrent reads, failures and token changes isolated", async () => {
+  let clock = START, euToken = "fixture-eu-token", euKind = "subscription", failEu = false;
+  const requests = [];
+  const gate = deferred();
+  const read = createReader({ engines: () => ["codex", "codex-eu"], now: () => clock,
+    credentials(engine) { return { kind: engine === "codex-eu" ? euKind : "subscription", token: engine === "codex-eu" ? euToken : "fixture-normal-token", accountId: engine }; },
+    async fetchImpl(url, { headers }) {
+      requests.push({ url, headers });
+      await gate.promise;
+      return headers["ChatGPT-Account-Id"] === "codex-eu" ? failEu ? new Response("ignored", { status: 503 }) : success(codexBody(77)) : success(codexBody(12));
+    } });
+  const first = read(), concurrent = read();
+  await settle();
+  assert.equal(requests.length, 2);
+  gate.resolve();
+  const [a, b] = await Promise.all([first, concurrent]);
+  assert.deepEqual(a, b);
+  assert.equal(forProvider(a, "codex").windows[0].usedPercent, 12);
+  assert.equal(forProvider(a, "codex-eu").windows[0].usedPercent, 77);
+  assert.deepEqual(requests.map(({ headers }) => [headers.Authorization, headers["ChatGPT-Account-Id"]]), [["Bearer fixture-normal-token", "codex"], ["Bearer fixture-eu-token", "codex-eu"]]);
+  await read(); assert.equal(requests.length, 2);
+  clock += TTL; failEu = true;
+  const failed = await read();
+  assert.equal(forProvider(failed, "codex").stale, false);
+  assert.equal(forProvider(failed, "codex-eu").stale, true);
+  euToken = "fixture-rotated-eu-token";
+  const rotated = await read();
+  assert.equal(forProvider(rotated, "codex-eu").stale, false);
+  assert.deepEqual(forProvider(rotated, "codex-eu").windows, []);
+  euKind = "none";
+  assert.equal(forProvider(await read(), "codex-eu").status, "not-connected");
+  assert.equal(requests.length, 5);
+  assert.doesNotMatch(JSON.stringify(rotated), /fixture-.*token|Authorization|accountId/);
+});
+
+test("dedicated EU missing, malformed and API-key files cannot read another login's quota", async (t) => {
+  const { writeFileSync, rmSync } = await import("node:fs");
+  const path = await import("node:path");
+  const home = tempDir("cg-subscription-eu-");
+  t.after(() => rmSync(home, { recursive: true, force: true }));
+  const credentials = createDaemonSubscriptionCredentials({ euHome: () => home, env: { OPENAI_API_KEY: "fixture-default-api-key" } });
+  const usage = { provider: "codex", login: "codex-eu" };
+  assert.equal(credentials("codex-eu", usage).kind, "none");
+  for (const body of ["malformed-json", JSON.stringify({ OPENAI_API_KEY: "fixture-eu-api-key" }), JSON.stringify({ tokens: { access_token: "bad-token" } })]) {
+    writeFileSync(path.join(home, "auth.json"), body);
+    assert.equal(credentials("codex-eu", usage).kind, "none");
+  }
+  const claims = Buffer.from(JSON.stringify({ exp: START / 1000 + 86400, "https://api.openai.com/auth": { chatgpt_plan_type: "pro_lite", chatgpt_account_id: "fixture-eu-account" } })).toString("base64url");
+  const token = `${Buffer.from('{"alg":"RS256"}').toString("base64url")}.${claims}.fixture-signature`;
+  writeFileSync(path.join(home, "auth.json"), JSON.stringify({ tokens: { access_token: token, refresh_token: "fixture-unused-refresh" } }));
+  const credential = credentials("codex-eu", usage);
+  assert.equal(credential.kind, "subscription");
+  assert.equal(credential.accountId, "fixture-eu-account");
+  assert.equal(credential.plan, "pro_lite");
+  assert.equal(credential.token, token);
+  assert.doesNotMatch(JSON.stringify(credential), /fixture-unused-refresh/);
 });
