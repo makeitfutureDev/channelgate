@@ -57,7 +57,7 @@ test("optional harness settings expose terminal setup and persist independent ac
     globalThis.document.execCommand = () => false;
   });
   await bedrock.locator('[data-role="copy-command"]').click();
-  await page.waitForFunction(() => [...document.querySelectorAll('[data-role="copy-state"]')].some((el) => el.textContent.startsWith("Could not copy")));
+  await page.waitForFunction(() => [...globalThis.document.querySelectorAll('[data-role="copy-state"]')].some((el) => el.textContent.startsWith("Could not copy")));
   assert.match(await bedrock.locator('[data-role="copy-state"]').textContent(), /copy it manually/);
   const toggles = page.locator("#engine-enabled-box label");
   const euToggle = toggles.filter({ hasText: "Codex EU" }).locator("input");
