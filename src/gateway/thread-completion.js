@@ -24,7 +24,9 @@ export async function inspectThreadCompletion(client, channelId, threadTs) {
     const mirrorUser = getSlackThread(channelId, threadTs)?.completion_mirror_user;
     for (const message of page.messages) {
       if (message.ts === threadTs) root = message;
-      const evidence = message.ts === threadTs && mirrorUser ? { ...message, reactions: message.reactions?.map((reaction) =>
+      // Both the root marker and native-feedback answer markers mirror a saved choice.
+      // Neither may become new completion evidence after the owner reopens the thread.
+      const evidence = mirrorUser ? { ...message, reactions: message.reactions?.map((reaction) =>
         reaction.name === "white_check_mark" && reaction.users?.includes(mirrorUser)
           ? { ...reaction, count: reaction.count - 1 } : reaction) } : message;
       if (messageHasCompletionReaction(evidence)) completed = true;

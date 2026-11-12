@@ -91,6 +91,15 @@ The result reports marked, skipped and failed counts, and failures can be retrie
 submissions are serialized per viewer. Cancel/Escape performs no mutation. Unindexed historical
 conversations are not scanned or backfilled by this action.
 
+## Green check on liked Slack answers (2026-11-12)
+
+When the conversation owner clicks an answer's native 👍 feedback button, the bot also adds
+✅ to that exact answer, alongside the existing thread-root completion marker. Repeated clicks
+are harmless. Reopen removes the root marker; the answer's check remains as historical feedback
+and cannot complete the thread again. Human checkmarks still count. Existing ownership and
+access checks apply. Failed answer decoration preserves Done and can be retried by clicking 👍
+again; only the root marker has a durable automatic retry queue. No extra engine call is made.
+
 ## Visible completion on Slack thread roots (2026-11-12)
 
 Completing an indexed agent thread through a ✅/✔️ reaction on its root or any reply, the

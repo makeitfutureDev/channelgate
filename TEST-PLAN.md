@@ -13333,3 +13333,22 @@ Enterprise deployment without deleting saved data. Never record a live pass from
 - Both engine fixture definitions required for actual delivered threads; the bulk completion
   decision itself is daemon-side. Live Slack dual-engine acceptance remains pending; generated
   browser-script tests do not certify the deployed Slack confirmation or installed OAuth scopes.
+
+
+### Native thumbs-up checks the liked answer (2026-11-12)
+
+- Automated: `node --test test/home-threads.test.js test/thread-completion.test.js test/activity.test.js test/slack-agent-interface.test.js`.
+  Require a single check on the root and liked answer after repeated clicks, no change to other
+  answers, no writes for rejected ownership/access, preserved Done on thrown/returned Slack
+  failures, and repair on another click. Reopen removes the root check and survives a subsequent
+  completion scan/reaction event despite the answer check; a human check still counts.
+- Live: in disposable private `cg-testing-claude-auto` and `cg-testing-codex-auto` fixtures,
+  the approved root owner asks “Reply with a short task summary and wait for me.” Verify the
+  actual engine answer, then click its native 👍 button. Require exactly one bot ✅ on that
+  answer and the root, with Completed in Activity. Repeat the click; another answer stays unchanged.
+  Reopen in Activity and refresh: require open visibility and no root check, even though the liked
+  answer retains its check. Add a human check and require normal completion. Repeat as a second
+  approved reader: feedback is recorded but no completion markers change. Revoke private/sudo
+  access and require no writes. With an owned Slack-write failure fixture, verify Done survives
+  answer-marker failure and another 👍 after recovery adds the missing check. Restore owned state.
+- Live dual-engine acceptance pending; fixtures do not certify native Slack client rendering.
