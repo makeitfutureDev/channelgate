@@ -1,3 +1,4 @@
+import { userReplyMentionsEnabled } from "../config/user-preferences.js";
 // HTTP run API: fire a headless run without a Slack message. `POST /api/runs` (see
 // ../web/routes/runs.js) hands the parsed request here; startApiRun() provisions/resolves a gated
 // folder, pre-mints a session, kicks the run through runMessage() in the background, and returns a
@@ -25,6 +26,7 @@ import { request as httpsRequest } from "node:https";
 import { Readable } from "node:stream";
 import path from "node:path";
 import {
+  getUser,
   getChannelEntry,
   getChannelsIndex,
   upsertChannelEntry,
@@ -809,9 +811,11 @@ async function runInBackground(job, { textForRun, attachmentPath, client, teamId
     }
     const dir = client ? await getDirectory(client).catch(() => null) : null;
     if (client) {
+      const destination = await getChannelEntry(job.channelId);
       status = startProgress(getProgressView(), client, job.channelId, job.threadKey, {
-        isDM: false,
+        isDM: destination?.isDM === true || destination?.type === "im",
         authorId: job.author,
+        replyMentions: job.principalKind === "user" && userReplyMentionsEnabled(await getUser(job.author)),
         teamId,
         dir,
         // The caller-named author is attribution, not necessarily a Slack user: the reply menu is

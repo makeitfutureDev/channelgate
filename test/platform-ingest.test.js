@@ -11,7 +11,7 @@ const { makeInbound } = await import("../src/platforms/inbound.js");
 const { createIngest, ensureConversation } = await import("../src/platforms/ingest.js");
 const { buildNameDirectory } = await import("../src/platforms/format/mentions.js");
 const { normalizeName } = await import("../src/slack/directory.js");
-const { setUser, getChannelEntry, getChannelMeta } = await import("../src/config/store.js");
+const { setUser, getUser, getChannelEntry, getChannelMeta } = await import("../src/config/store.js");
 const { googleChatAdapter } = await import("../src/platforms/googlechat.js");
 const { registerTransport, resetTransports, liveConnector } = await import("../src/platforms/live.js");
 
@@ -279,3 +279,27 @@ test("a visible fallback chunk keeps its quote mapping even if the next chunk fa
   await assert.rejects(ingest(message), /second chunk unavailable/);
   assert.equal(sessionKeyForMessage({ ...message, messageId: "followup", replyToId: "first-visible-chunk" }), "group:original-message");
 });
+
+for (const platform of ["googlechat", "msteams"]) {
+  for (const engine of ["claude", "codex"]) {
+    test(`${platform} ${engine} follows the reply author's saved mention preference`, async () => {
+      const userId = `mention-${platform}-${engine}@example.com`;
+      const otherId = `other-${platform}-${engine}@example.com`;
+      await setUser(userId, { approved: true });
+      await setUser(otherId, { approved: true, replyMentions: true });
+      const connector = fakeConnector({ platform });
+      const ingest = createIngest({ connector, log: { info() {}, warn() {} }, run: async () => ({ content: "MENTION_PREF_OK", engine }) });
+      const message = makeInbound({ platform, kind: "channel", conversationId: `mention-pref-${platform}-${engine}`, userId, text: "hello", mentionsBot: true });
+      for (const enabled of [false, true, false]) {
+        if (enabled || (await getUser(userId)).replyMentions) await setUser(userId, { replyMentions: enabled });
+        connector.posted.length = 0; connector.edited.length = 0;
+        await ingest(message);
+        const writes = [...connector.edited, ...connector.posted].filter(body => body.text?.includes("MENTION_PREF_OK"));
+        assert.equal(writes.length, 1);
+        const serialized = JSON.stringify(writes);
+        assert.equal(serialized.includes(userId), enabled, "only the answer author's choice controls their notification");
+        assert.ok(!serialized.includes(otherId));
+      }
+    });
+  }
+}

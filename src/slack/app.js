@@ -138,6 +138,8 @@ import { isCodeChannelMeta } from "../gateway/code-channels.js";
 import { registerEngineSwitchChoiceActions } from "./engine-switch-choice.js";
 import { composioHomeButtons } from "./home-composio.js";
 import { nudgeHomeBlocks } from "./home-nudges.js";
+import { replyMentionsHomeBlocks } from "./home-reply-mentions.js";
+import { userReplyMentionsEnabled } from "../config/user-preferences.js";
 import { homeThreadsSnapshot, homeThreadBlocks, homeThreadsRefreshKey } from "./home-threads.js";
 import { createHomeThreadReader } from "./home-thread-reader.js";
 import { buildHomeTabView, createHomePublisher, normalizeHomeTab, registerHomeActions } from "./home-tabs.js";
@@ -3436,6 +3438,7 @@ async function connectAndWire(app) {
       help: async () => [
           { type: "divider" },
           ...nudgeHomeBlocks({ enabled: userNudgesEnabled(homeUser) }),
+          ...replyMentionsHomeBlocks({ enabled: userReplyMentionsEnabled(homeUser) }),
           { type: "divider" },
           { type: "section", text: { type: "mrkdwn", text: "*DM me* (no mention needed) or *@mention me* in a channel. Use `/status` for current channel work, `/pending` for threads awaiting your reply, or `/help` for all commands." } },
           { type: "section", text: { type: "mrkdwn", text: "*Commands* (type in a thread)\n`/menu` · `/help` · `/status` · `/clear` · `/context` · `/mode` · `/model` · `/compact` · `/stop` · `/sudo` _(admin)_ · `/update` _(admin)_" } },

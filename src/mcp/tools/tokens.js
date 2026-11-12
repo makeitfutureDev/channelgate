@@ -59,6 +59,20 @@ function renderVars(vars, empty, runtime = {}) {
 export function register(server, ctx) {
   const { createdBy, text, requireAdmin, requireManage, principalTrusted, loadMeta, slug } = ctx;
 
+  server.registerTool(
+    "set_my_reply_mentions",
+    {
+      description: "Turn automatic mentions at the end of YOUR OWN replies on or off across channels. New users start off; existing users keep on until they opt out. DMs never add an automatic mention. This only changes the verified requester, never another user.",
+      inputSchema: { enabled: z.boolean() },
+    },
+    async ({ enabled }) => {
+      if (!principalTrusted || !createdBy) return text("No verified user context — change this preference from your own chat message.");
+      if (typeof enabled !== "boolean") return text("enabled must be a boolean.");
+      await setUser(createdBy, { replyMentions: enabled });
+      return text(`Automatic reply mentions are now ${enabled ? "on" : "off"} for you. This applies to following replies outside DMs.`);
+    }
+  );
+
   // ── Personal Composio token (any user, for themselves) ─────────────────────────
   // Token-entry tools: the secret arrives inside a Slack message, so it sits in Slack history (and
   // search) until the author deletes that message. Harden what we control: the saved token is NEVER

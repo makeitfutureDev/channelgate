@@ -2,6 +2,7 @@
 // Selection is view state, never a gateway/user setting or an authorization credential.
 import { registerComposioHomeActions } from "./home-composio.js";
 import { registerNudgeHomeActions } from "./home-nudges.js";
+import { registerReplyMentionsHomeActions } from "./home-reply-mentions.js";
 import { registerHomeThreadActions } from "./home-threads.js";
 export const HOME_TAB_ACTION = /^cg_home_tab_(activity|connections|skills|channels|help)$/;
 export const HOME_TABS = Object.freeze({ activity: "Activity", connections: "Connections", skills: "Skills", channels: "Channels", help: "Help & settings" });
@@ -136,5 +137,6 @@ export function registerHomeActions(app, { publishHome }) {
   registerHomeTabActions(app, { publishHome });
   registerComposioHomeActions(app, { publishHome: (client, userId) => publishHome(client, userId, { tab: "connections" }) });
   registerNudgeHomeActions(app, { publishHome: (client, userId) => publishHome(client, userId, { tab: "help" }) });
+  registerReplyMentionsHomeActions(app, { publishHome: (client, userId) => publishHome(client, userId, { tab: "help" }) });
   registerHomeThreadActions(app, { publishHome });
 }

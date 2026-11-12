@@ -51,7 +51,7 @@ export async function ensureRoot() {
 
 // ── Users (global) ────────────────────────────────────────────────────────────
 // Shape: { "<platformUserId>": { name, composioToken, toolboxToken, isAdmin, approved,
-//          nudges, skills[], allowedMcps[], allowedCodexMcps[] } }
+//          nudges, replyMentions, skills[], allowedMcps[], allowedCodexMcps[] } }
 export async function getUsers() {
   const rows = getDb().prepare("SELECT user_id, data FROM users").all();
   const out = {};
@@ -79,7 +79,7 @@ export async function setUser(userId, patch) {
     if (values === null) { db.exec("COMMIT"); return existing; }
     const next = {
       name: "", composioToken: "", toolboxToken: "", isAdmin: false,
-      approved: false, skills: [], allowedMcps: [], allowedCodexMcps: [],
+      approved: false, replyMentions: false, skills: [], allowedMcps: [], allowedCodexMcps: [],
       allowedOpenCodeMcps: [], ...existing,
     };
     for (const [key, value] of Object.entries(values || {})) {

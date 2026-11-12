@@ -6,6 +6,7 @@ const { HOME_TABS, buildHomeTabView, createHomePublisher, registerHomeTabActions
 const { setUser, getUser } = await import("../src/config/store.js");
 const { COMPOSIO_HOME_CLEAR_ACTION, COMPOSIO_HOME_MODAL, COMPOSIO_TOKEN_BLOCK, COMPOSIO_TOKEN_INPUT } = await import("../src/slack/home-composio.js");
 const { NUDGE_HOME_TOGGLE_ACTION } = await import("../src/slack/home-nudges.js");
+const { REPLY_MENTIONS_HOME_TOGGLE_ACTION } = await import("../src/slack/home-reply-mentions.js");
 
 function fakeApp() {
   const actions = new Map(); const views = new Map();
@@ -86,9 +87,10 @@ test("Composio stays on Connections, reminders on Help & settings, and thread co
     state: { values: { [COMPOSIO_TOKEN_BLOCK]: { [COMPOSIO_TOKEN_INPUT]: { value: "saved-fixture-123" } } } },
   } });
   await app.actionFor(NUDGE_HOME_TOGGLE_ACTION)({ ack: async () => {}, body: { user: { id: "U_TAB_SELF" } }, action: { value: "on" }, client: {} });
+  await app.actionFor(REPLY_MENTIONS_HOME_TOGGLE_ACTION)({ ack: async () => {}, body: { user: { id: "U_TAB_SELF" } }, action: { value: "on" }, client: {} });
   await app.actionFor("cg_home_threads_filter")({ ack: async () => {}, body: { user: { id: "U_TAB_SELF" } },
     action: { action_id: "cg_home_threads_filter", selected_option: { value: "done" } }, client: {} });
-  assert.deepEqual(calls.map((c) => c.tab), ["connections", "connections", "help", "activity"]);
+  assert.deepEqual(calls.map((c) => c.tab), ["connections", "connections", "help", "help", "activity"]);
   assert.ok(calls.every((c) => c.userId === "U_TAB_SELF"));
   assert.equal(calls.at(-1).filter, "done");
 });
