@@ -45,7 +45,7 @@ test("subscription page supports direct entry, refresh, history and a narrow vie
   assert.equal(await page.title(), "Subscriptions — ChannelGate");
   assert.equal(await page.locator(".subscription-card").count(), 4);
   assert.equal(await page.locator('progress[aria-label="Weekly usage"]').getAttribute("value"), "91");
-  assert.match(await page.locator("#subscriptions-cards").innerText(), /58% remaining/);
+  assert.match(await page.locator("#subscriptions-cards").innerText(), /42%/);
   await page.locator("#subscriptions-refresh").click();
   await page.waitForFunction(() => globalThis.document.querySelector("#subscriptions-refresh").textContent === "Refresh");
   assert.equal(reads, 2);

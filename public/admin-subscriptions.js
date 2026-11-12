@@ -1,37 +1,8 @@
 import { api } from "./admin-api.js";
-import { escapeHtml as esc } from "./admin-view.js";
-
-const stamp = (value) => value && Number.isFinite(Date.parse(value)) ? new Date(value).toLocaleString() : "Not yet checked";
-export function subscriptionReset(value, now = Date.now()) {
-  if (!value || !Number.isFinite(Date.parse(value))) return "Reset time unavailable";
-  const minutes = Math.ceil((Date.parse(value) - now) / 60_000);
-  if (minutes <= 0) return "Reset time passed · awaiting provider update";
-  const duration = minutes < 60 ? `${minutes}m` : minutes < 1440 ? `${Math.floor(minutes / 60)}h ${minutes % 60}m` : `${Math.floor(minutes / 1440)}d ${Math.floor(minutes % 1440 / 60)}h`;
-  return `Resets in ${duration} · ${stamp(value)}`;
-}
-
-export function subscriptionCard(subscription) {
-  const labels = { ok: "Connected", expired: "Login expired", "not-connected": "Not connected", "api-key": "API billing", unavailable: "Usage unavailable", unsupported: "Not supported" };
-  const status = Object.hasOwn(labels, subscription.status) ? subscription.status : "unavailable";
-  const windows = (subscription.windows || []).map((window) => {
-    const used = window.usedPercent;
-    if (typeof used !== "number" || !Number.isFinite(used) || used < 0 || used > 100) return "";
-    const severity = used >= 90 ? "critical" : used >= 75 ? "warning" : "normal";
-    const formatted = used.toLocaleString(undefined, { maximumFractionDigits: 1 });
-    return `<div class="subscription-window ${severity}">
-      <div class="subscription-window-head"><span>${esc(window.label)}</span><strong>${esc(formatted)}% used</strong></div>
-      <progress max="100" value="${used}" aria-label="${esc(window.label)} usage">${esc(formatted)}%</progress>
-      <div class="subscription-window-foot"><span>${esc((100 - used).toLocaleString(undefined, { maximumFractionDigits: 1 }))}% remaining</span><span>${esc(subscriptionReset(window.resetsAt))}</span></div>
-    </div>`;
-  }).join("");
-  return `<article class="subscription-card">
-    <div class="subscription-card-head"><div><h3>${esc(subscription.name)}</h3><p class="hint">${esc(subscription.plan || "Subscription plan unavailable")}</p></div><span class="subscription-status ${status}">${subscription.stale ? "Stale data" : labels[status]}</span></div>
-    ${subscription.message ? `<p class="status-banner${status === "expired" ? " bad" : ""}">${esc(subscription.message)}</p>` : ""}
-    ${subscription.stale ? `<p class="hint">Showing the last successful provider reading. These limits may have changed.</p>` : ""}
-    ${windows || `<p class="hint">No subscription usage data available.</p>`}
-    <p class="subscription-updated">Last successful reading: ${esc(stamp(subscription.updatedAt))}<br>Last check: ${esc(stamp(subscription.checkedAt))}</p>
-  </article>`;
-}
+import { createSubscriptionUi, SUBSCRIPTION_CSS } from "./subscription-ui.js";
+const subscriptionUi = createSubscriptionUi();
+export const subscriptionReset = subscriptionUi.reset;
+export const subscriptionCard = subscriptionUi.card;
 
 // Poll only on the visible page; ignore late responses after leaving or hiding it.
 export function createSubscriptionPoller({ request = api, render, visible = () => !document.hidden, schedule = setTimeout, unschedule = clearTimeout } = {}) {
@@ -47,7 +18,8 @@ export function createSubscriptionPoller({ request = api, render, visible = () =
     try {
       const result = await request("/api/subscriptions");
       if (turn === generation && active) data = result;
-    } catch {
+    } catch (failure) {
+      if (turn === generation && active && (failure?.status === 401 || failure?.status === 403)) data = null;
       if (turn === generation && active) error = data ? "Could not refresh subscription usage. Showing the previous reading; limits may have changed." : "Could not load subscription usage. Try again.";
     } finally {
       pending = false;
@@ -69,10 +41,13 @@ let controller;
 export function setSubscriptionsActive(active) {
   if (!controller && active) {
     const root = document.getElementById("view-subscriptions");
-    root.innerHTML = `<div class="view-head dash-head"><div><h2>Subscriptions</h2><p class="hint">Usage reporting for every enabled harness, including separate subscription logins.</p></div><button type="button" class="ghost" id="subscriptions-refresh">Refresh</button></div>
-      <p class="hint">Includes usage across each provider account, including activity outside ChannelGate. Updates every 5 minutes while this page is visible.</p>
+    const style = document.createElement("style");
+    style.textContent = SUBSCRIPTION_CSS;
+    root.innerHTML = `<div class="view-head dash-head"><div><h2>Subscriptions</h2><p class="hint">Usage and resets for every enabled harness.</p></div><button type="button" class="ghost" id="subscriptions-refresh">Refresh</button></div>
+      <p class="hint">Account-wide usage · refreshes every 5 minutes.</p>
       <div id="subscriptions-notice" role="status" aria-live="polite"></div><div id="subscriptions-cards" class="subscription-grid"></div>
-      <p class="hint">Provider limits are separate from the token counts and estimated API costs on <a href="/overview">Overview</a>. Providers may change these usage endpoints.</p>`;
+`;
+    root.append(style);
     const button = root.querySelector("#subscriptions-refresh");
     controller = createSubscriptionPoller({ render({ data, error, loading }) {
       button.disabled = loading;
