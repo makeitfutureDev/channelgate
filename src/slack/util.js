@@ -331,6 +331,9 @@ export function neutralizeSentinels(s) {
 const MODEL_RE = /^(?:best|fable|haiku|opusplan|opus|sonnet|(?:opus|sonnet)\[1m\]|claude-[a-z0-9][a-z0-9.[\]-]*|gpt-[a-z0-9][a-z0-9.-]*|o[0-9][a-z0-9.-]*|codex(?:-[a-z0-9.-]+)?|auto|qwen[0-9][a-z0-9._-]*|qwen-[a-z0-9._-]+|glm-[a-z0-9._-]+|deepseek-[a-z0-9._-]+|kimi-[a-z0-9._-]+|minimax-[a-z0-9._-]+|[a-z0-9._-]+\/[a-z0-9._:/-]+)$/;
 export function isValidModel(value) {
   const v = String(value || "").trim().toLowerCase();
+  // Bedrock model/inference-profile IDs are a different vocabulary, with version colons and
+  // optional account ARNs. This is a shape gate; the selected adapter still validates ownership.
+  if (v.length <= 2048 && /^(?:arn:aws(?:-us-gov)?:bedrock:[a-z0-9-]+:\d{12}:(?:application-)?inference-profile\/[a-z0-9._:-]+|(?:(?:us|eu|apac|global|us-gov)\.)?anthropic\.claude-[a-z0-9][a-z0-9.:_-]*(?:\[1m\])?)$/.test(v)) return true;
   if (!v || v.length > 64 || /\s/.test(v)) return false;
   return MODEL_RE.test(v);
 }

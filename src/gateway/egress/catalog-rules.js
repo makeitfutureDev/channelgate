@@ -22,6 +22,7 @@ import { classifyAddress } from "../../web/ip-policy.js";
 import { normalizeHost } from "./rules.js";
 import { CLI_INTEGRATIONS } from "../../config/cli-catalog.js";
 import { PERPLEXITY_HOST, PERPLEXITY_RELAY_SECRET_NAME, PERPLEXITY_SESSION_COOKIE } from "../perplexity-research-contract.js";
+import { resolveBedrockProvider } from "../../engines/bedrock.js";
 
 export const SWAP_FORMATS = Object.freeze(["bearer", "raw", "basic-password", "basic-user"]);
 export const DEFAULT_RULE_HEADERS = Object.freeze(["authorization"]);
@@ -46,14 +47,19 @@ const CLAUDE_API_RELAY_RULE = Object.freeze({ hosts: Object.freeze(["api.anthrop
 // endpoints Codex authenticates to. `jwt` is the only format it accepts: a bare `cgph_` there is
 // never swapped. Kept in step with ENGINE_HOSTS.codex (engine-hosts.js).
 export const CODEX_RELAY_SECRET_NAME = "CODEX_ACCESS_TOKEN";
+export const CODEX_EU_RELAY_SECRET_NAME = "CODEX_EU_ACCESS_TOKEN";
 export const CODEX_RELAY_RULE = Object.freeze({ hosts: Object.freeze(["api.openai.com", "chatgpt.com", "auth.openai.com"]), headers: Object.freeze(["authorization"]), format: Object.freeze(["jwt"]) });
 export const CODEX_API_RELAY_SECRET_NAME = "CODEX_API_RELAY_KEY";
 export const CODEX_API_RELAY_RULE = Object.freeze({ hosts: Object.freeze(["api.openai.com"]), headers: Object.freeze(["authorization"]), format: Object.freeze(["bearer"]) });
 const PERPLEXITY_RELAY_RULE = Object.freeze({ hosts: Object.freeze([PERPLEXITY_HOST]), headers: Object.freeze(["cookie"]), format: Object.freeze(["cookie"]), cookies: Object.freeze([PERPLEXITY_SESSION_COOKIE]) });
-const RELAY_RULES = Object.freeze({ [RELAY_SECRET_NAME]: RELAY_RULE, [CODEX_RELAY_SECRET_NAME]: CODEX_RELAY_RULE, [CODEX_API_RELAY_SECRET_NAME]: CODEX_API_RELAY_RULE, [PERPLEXITY_RELAY_SECRET_NAME]: PERPLEXITY_RELAY_RULE, ...Object.fromEntries(CLAUDE_API_RELAY_NAMES.map((name) => [name, CLAUDE_API_RELAY_RULE])) });
+const RELAY_RULES = Object.freeze({ [RELAY_SECRET_NAME]: RELAY_RULE, [CODEX_RELAY_SECRET_NAME]: CODEX_RELAY_RULE, [CODEX_EU_RELAY_SECRET_NAME]: CODEX_RELAY_RULE, [CODEX_API_RELAY_SECRET_NAME]: CODEX_API_RELAY_RULE, [PERPLEXITY_RELAY_SECRET_NAME]: PERPLEXITY_RELAY_RULE, ...Object.fromEntries(CLAUDE_API_RELAY_NAMES.map((name) => [name, CLAUDE_API_RELAY_RULE])) });
 
 // The swap rule of a relay grant, by its secret name, or null for a name no relay uses.
 export function relayRuleFor(secretName) {
+  if (secretName === "AWS_BEARER_TOKEN_BEDROCK") {
+    const provider = resolveBedrockProvider();
+    return { hosts: provider.configured ? [new URL(provider.endpoint).hostname] : [], headers: ["authorization"], format: ["bearer"] };
+  }
   return Object.hasOwn(RELAY_RULES, secretName) ? RELAY_RULES[secretName] : null;
 }
 

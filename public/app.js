@@ -171,7 +171,9 @@ const MODEL_OPTIONS = {
 // isn't in the curated list (hand-edited config, a full id like claude-opus-4-8) should survive as
 // an extra option (same engine: keep so Save round-trips it) or be dropped (other engine).
 function modelMatchesEngine(model, engine) {
-  if (engine === "codex") return /^(?:gpt-|o[0-9]|codex)/i.test(model);
+  const family = ENGINE_MANIFESTS.find((m) => m.id === engine)?.modelFamily || engine;
+  if (family === "codex") return /^(?:gpt-|o[0-9]|codex)/i.test(model);
+  if (family === "bedrock") return /^(?:opus|sonnet|haiku)$|^(?:(?:us|eu|apac|global|us-gov)\.)?anthropic\.claude-|^arn:aws(?:-us-gov|-cn)?:bedrock:/i.test(model);
   // Mirrors isQwenTextModel (src/engines/qwen.js): the provider families, minus the image/audio
   // and single-purpose ones that cannot hold a conversation. Every engine generated from that
   // table shares the shapes, so the check follows the SERVER's list of provider harnesses rather
@@ -3974,6 +3976,33 @@ const SETTINGS_HAVE_PROVIDER_KEY = {};
 // save body carries exactly the providers the server declared.
 let QWEN_ENGINE_IDS = [];
 let QWEN_PROVIDER_CARDS = [];
+let TERMINAL_HARNESS_CARDS = [];
+
+function paintTerminalHarnesses(harnesses, settings) {
+  const tpl = document.getElementById("terminal-harness-tpl");
+  if (!tpl) return;
+  for (const old of document.querySelectorAll(".terminal-harness-card")) old.remove();
+  TERMINAL_HARNESS_CARDS = [];
+  for (const harness of harnesses || []) {
+    const card = tpl.content.firstElementChild.cloneNode(true);
+    const at = (role) => card.querySelector(`[data-role="${role}"]`);
+    at("label").textContent = harness.label;
+    at("description").textContent = harness.description;
+    at("command").textContent = harness.command;
+    const modelSelect = at("default-model");
+    const effortSelect = at("default-effort");
+    syncModelOptions({ modelSelect, engine: harness.id, value: settings[harness.modelField] || "", blankLabel: "provider default" });
+    syncDefaultEffort(modelSelect, effortSelect, harness.id, settings[harness.effortField]);
+    tpl.parentNode.insertBefore(card, tpl);
+    TERMINAL_HARNESS_CARDS.push({ ...harness, modelSelect, effortSelect });
+  }
+}
+
+function collectTerminalHarnesses() {
+  return Object.fromEntries(TERMINAL_HARNESS_CARDS.flatMap((card) => [
+    [card.modelField, card.modelSelect.value], [card.effortField, card.effortSelect.value],
+  ]));
+}
 
 // One settings card per provider, cloned from the template that marks where they belong. Rendered
 // as SIBLINGS of the other cards (not nested in a wrapper) so the settings search, the jump nav
@@ -4069,7 +4098,7 @@ function paintEngineToggles() {
     if (m.optIn && !SETTINGS_HAVE_PROVIDER_KEY[m.id]) {
       const hint = document.createElement("em");
       hint.className = "state";
-      hint.textContent = " · needs an API key below";
+      hint.textContent = m.terminalSetup ? " · configure in terminal below" : " · needs an API key below";
       label.append(hint);
     }
     return label;
@@ -4135,6 +4164,7 @@ function readSettingsForm() {
     defaultClaudeEffort: document.getElementById("set-default-claude-effort").value,
     defaultCodexEffort: document.getElementById("set-default-codex-effort").value,
     ...collectQwenProviders(),
+    ...collectTerminalHarnesses(),
     perplexityResearchEnabled: document.getElementById("set-perplexity-research-enabled").checked,
     ...(document.getElementById("set-perplexity-session-token").value ? { perplexitySessionToken: document.getElementById("set-perplexity-session-token").value } : {}),
     ...(document.getElementById("clear-perplexity-session-token").classList.contains("armed") ? { clearPerplexitySessionToken: true } : {}),
@@ -4205,6 +4235,7 @@ function paintSettings(s) {
   // Before the toggles paint: they annotate an opt-in harness whose provider key is still missing.
   paintQwenProviders(s.qwenProviders);
   for (const p of s.qwenProviders || []) SETTINGS_HAVE_PROVIDER_KEY[p.id] = p.hasApiKey === true;
+  paintTerminalHarnesses(s.terminalHarnesses, s);
   paintEngineToggles();
   const orgGrantsHost = document.getElementById("org-grants-editor");
   orgGrantsEditor = buildAccessGrantsEditor(s.accessGrants || {}, { tier: "organization" });

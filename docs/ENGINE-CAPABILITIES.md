@@ -3,6 +3,14 @@
 The executable source of truth is the validated manifest in `src/engines/adapters.js`; Slack and
 the Admin API/UI consume that registry.
 
+Two additional opt-in manifests reuse the native runners: **Codex EU** (`codex-eu`) requires a
+dedicated ChatGPT Enterprise login, and **Claude Bedrock** (`claude-bedrock`) reads an isolated
+terminal setup with a regional Bedrock bearer API key. Both are cold, keep separate session
+directories and have no failover edges. Container authentication requires proxy egress; `/sudo`
+uses the host provider setup. Codex EU retains Codex token accounting; Bedrock records tokens
+with unknown AWS cost. Bedrock container terminal takeover is unavailable; chat continuation
+still resumes its own session. See [terminal setup and limitations](PROVIDER-HARNESSES.md).
+
 | Capability | Claude | Codex | Qwen harnesses (Claude Code CLI) |
 | --- | --- | --- | --- |
 | Filesystem confinement | Per-conversation container mounts by default; Claude permissions control tools. Admin-only Slack `/sudo` threads deliberately run on the host | Same default container boundary; Read-only mode adds a CLI read-only sandbox. `/sudo` deliberately runs on the host | Identical to Claude — same CLI, same lockdown file, same resolved runtime |

@@ -47,6 +47,14 @@ const ANTHROPIC_CREDENTIAL_NAMES = ["ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN",
 function applyProviderEnv(env, providerEnv) {
   if (!providerEnv) return env;
   for (const name of ANTHROPIC_CREDENTIAL_NAMES) delete env[name];
+  // Provider routing must be atomic too. Bedrock's bearer key lives only at its regional AWS
+  // endpoint; neither an inherited Anthropic login nor a channel's AWS profile/endpoint may
+  // displace it. The provider adapter adds back its reviewed pins after this cleanup.
+  if (providerEnv.CLAUDE_CODE_USE_BEDROCK === "1") {
+    for (const name of Object.keys(env)) {
+      if (/^(?:ANTHROPIC_|AWS_|CLAUDE_CODE_USE_)/.test(name)) delete env[name];
+    }
+  }
   for (const [name, value] of Object.entries(providerEnv)) {
     if (value === undefined || value === null || value === "") continue;
     env[name] = String(value);
@@ -253,6 +261,7 @@ export async function runClaude({
   // adapter runs the same binary, and a hard-coded "claude" here would file its turns and its
   // failures under the wrong harness in /status and in the audit trail.
   engineId = "claude",
+  harnessLabel = "",
   runId = "",
   timeoutMs = 10 * 60 * 1000,
   maxSilenceMs = null,
@@ -266,7 +275,7 @@ export async function runClaude({
   // What a provider failure calls itself in the thread. "Claude" is the CLI; the harness may be
   // another provider driving it (src/engines/qwen.js), and the person reading the error has to
   // know which account to go and look at.
-  const harnessLabel = engineId === "claude" ? "Claude" : HARNESS_LABELS[engineId] || engineId;
+  const providerLabel = harnessLabel || (engineId === "claude" ? "Claude" : HARNESS_LABELS[engineId] || engineId);
 
   return new Promise((resolve, reject) => {
     // Minimal allowlisted env — the sandbox can't hide the child's own environment (see child-env.js).
@@ -347,7 +356,7 @@ export async function runClaude({
       if (!p) return;
       // The LAST provider error wins: an earlier one the CLI recovered from must not label the
       // failure that actually ended the turn.
-      providerError = claudeProviderError(p, harnessLabel) || providerError;
+      providerError = claudeProviderError(p, providerLabel) || providerError;
       stream.consume(p);
       if (forkSourceSessionId && p.type === "system" && p.subtype === "init" && p.session_id) onSessionResolved?.(p.session_id);
       if (p.type === "result") result = p;

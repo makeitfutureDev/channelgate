@@ -38,7 +38,7 @@ test("adapter registration and RunContext validation fail closed", () => {
 
 test("built-in registry publishes safe UI manifests and a generic fallback graph", () => {
   const manifests = engineUiManifest();
-  assert.deepEqual(manifests.map((m) => m.id), ["claude", "codex", "qwen", "qwen-eu", "opencode"]);
+  assert.deepEqual(manifests.map((m) => m.id), ["claude", "codex", "codex-eu", "claude-bedrock", "qwen", "qwen-eu", "opencode"]);
   assert.ok(manifests.every((m) => !Object.values(m).some((v) => typeof v === "function")));
   assert.deepEqual(fallbackTargets("claude"), ["codex"]);
   assert.deepEqual(fallbackTargets("codex"), ["claude"], "failover is bidirectional — either harness covers the other");

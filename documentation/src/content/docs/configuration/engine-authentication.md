@@ -51,6 +51,20 @@ Optional Anthropic-compatible provider harnesses have their own API-key and base
 
 ## Choose a login for work in Europe
 
+Settings also offers optional **Codex EU** and **Claude Bedrock** harnesses, disabled until an
+admin enables them. Each has a setup card with the exact command to run on the gateway host as
+the service user, and independent model/effort defaults. Enable the option, save, complete its
+terminal setup, then select it for a channel or thread.
+
+Codex EU uses a separate `CODEX_HOME` and ChatGPT Enterprise device login. The Enterprise
+workspace must have the required EU data and inference residency controls; the label does not
+set or verify them. Claude Bedrock uses a separate `CLAUDE_CONFIG_DIR`: start the displayed
+command, type `/setup-bedrock`, and choose **Amazon Bedrock API key**, AWS region and model pins.
+This gateway integration supports Bedrock bearer keys; AWS profile, SSO and IAM signing are
+not supported. Container runs use the protected egress proxy. Both harnesses keep their own
+sessions and never automatically fail over to another account. Bedrock sessions continue in chat;
+container terminal takeover is currently unavailable.
+
 The engine login decides two things ChannelGate does not control: which provider contract covers the prompts, and where inference runs. Work folders, memory, files and conversation history stay on your host, but every turn sends prompt and context to the selected provider, as described in [privacy and data flow](/docs/privacy). The provider facts below come from the providers' own documentation as of October 2026. Check the current terms before relying on them, and treat this section as orientation for your own assessment rather than legal advice.
 
 :::caution[What this page does and does not cover]

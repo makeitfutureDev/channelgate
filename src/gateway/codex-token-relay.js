@@ -29,9 +29,9 @@ import path from "node:path";
 import { spawn } from "node:child_process";
 import { codexEngineHome, gatewayRoot } from "../config/paths.js";
 import { codexAuthCandidates } from "../engines/codex-auth.js";
-import { buildChildEnv } from "../engines/child-env.js";
 import { acquireKeyedLock } from "../util/keyed-lock.js";
 import { jwtClaimSegments } from "./egress/placeholders.js";
+import { codexAuthProcessEnv } from "./channel-codex-paths.js";
 import { CODEX_NO_TELEMETRY } from "../engines/codex-telemetry.js";
 
 // The access token lives 10 days; refresh inside the last two (the CLI's own proactive window was
@@ -130,8 +130,8 @@ export async function refreshDaemonCodexToken({ login = resolveCodexLogin(), spa
       child = spawnImpl(
         "codex",
         ["exec", "--skip-git-repo-check", "--ephemeral", "--ignore-user-config", "-m", CODEX_RELAY_REFRESH_MODEL,
-          "-c", 'model_reasoning_effort="low"', "-c", CODEX_NO_TELEMETRY, "-s", "read-only", "Reply with exactly OK"],
-        { cwd, env: buildChildEnv({ HOME: path.dirname(codexHome), CODEX_HOME: codexHome }), stdio: ["ignore", "ignore", "pipe"] },
+          "-c", 'model_reasoning_effort="low"', "-c", 'cli_auth_credentials_store="file"', "-c", CODEX_NO_TELEMETRY, "-s", "read-only", "Reply with exactly OK"],
+        { cwd, env: codexAuthProcessEnv(codexHome), stdio: ["ignore", "ignore", "pipe"] },
       );
     } catch (e) {
       log?.warn?.(`[codex-relay] host refresh turn could not start: ${e?.message || e}`);

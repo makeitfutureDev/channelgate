@@ -26,7 +26,7 @@ export function engineCostRateKey(engine) { return adapterFor(engine)?.costRateK
 // backend wraps the base command (`<cli> exec -it -w <cwd> <name> <baseCommand>`). Called without
 // a target it stays exactly the two-argument host form every existing caller uses.
 export function resumeCommandFor(engine, sessionId, { target = null } = {}) {
-  const baseCommand = requireAdapter(engine).resumeCommand(sessionId);
+  const baseCommand = requireAdapter(engine).resumeCommand(sessionId, { target });
   if (typeof target?.runtime?.resumeCommand !== "function") return baseCommand;
   return target.runtime.resumeCommand(target, { baseCommand });
 }

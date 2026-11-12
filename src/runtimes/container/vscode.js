@@ -89,6 +89,9 @@ export function renderClaudeWrapper({ tokenFile = "", usersDir = "", loginEnvFil
     // delegates to Anthropic; only the main provider runner bypasses this launcher.
     `if [ -r ${quote(loginEnvFile)} ]; then`,
     "  unset ANTHROPIC_BASE_URL ANTHROPIC_AUTH_TOKEN ANTHROPIC_API_KEY CLAUDE_CODE_OAUTH_TOKEN CLAUDECODE",
+    "  unset CLAUDE_CODE_USE_BEDROCK AWS_BEARER_TOKEN_BEDROCK AWS_REGION AWS_DEFAULT_REGION ANTHROPIC_BEDROCK_BASE_URL ANTHROPIC_BEDROCK_REGION_PREFIX",
+    "  unset ANTHROPIC_MODEL ANTHROPIC_DEFAULT_MODEL ANTHROPIC_DEFAULT_OPUS_MODEL ANTHROPIC_DEFAULT_SONNET_MODEL ANTHROPIC_DEFAULT_HAIKU_MODEL ANTHROPIC_SMALL_FAST_MODEL ANTHROPIC_SMALL_FAST_MODEL_AWS_REGION",
+    `  CLAUDE_CONFIG_DIR=${quote(CONTAINER_CLAUDE_CONFIG_DIR)}; export CLAUDE_CONFIG_DIR`,
     `  set -a; . ${quote(loginEnvFile)}; set +a`,
     "fi",
     `if [ ! -r ${quote(loginEnvFile)} ] && [ -z "\${CLAUDE_CODE_OAUTH_TOKEN:-}" ] && [ -z "\${ANTHROPIC_API_KEY:-}" ] && [ -z "\${ANTHROPIC_AUTH_TOKEN:-}" ] && [ -r ${quote(tokenFile)} ]; then`,
