@@ -1,5 +1,32 @@
 # ChannelGate — Test Plan
 
+## Activity passkey sign-in (2026-11-13)
+
+- Engine-independent: enrollment, credential verification and Activity session issuance happen in
+  the web server and browser; no agent engine runs or supplies authentication authority.
+- Automated: `test/activity-passkeys.test.js` runs real Chromium WebAuthn signatures when
+  `CG_BROWSER_MODULE` points to Playwright's `index.mjs` and `CG_BROWSER_EXECUTABLE` to Chromium.
+  It uses an isolated database and localhost server, an approved owner and second viewer, an admin
+  fixture, and a CTAP2 resident-key virtual authenticator with user verification. It covers link
+  enrollment and literal key labels; desktop/mobile layout; username-free return login and cookie
+  scope; both directions of admin/Activity credential separation; owner/CSRF/origin guards;
+  browser swapping, challenge replay, handle tampering, expiry, user revocation, workspace changes,
+  Slack disconnection; transient daemon reset with durable keys; expired-link recovery; and key
+  deletion invalidating in-flight login and sessions. Existing `test/activity.test.js` and
+  `test/activity-reuse-browser.test.js` retain ten-minute launch and twelve-hour session gates.
+- Manual acceptance fixture: isolated HTTPS gateway, two approved Slack viewers with their own
+  conversations, and a physical or synced passkey authenticator. Open **Dashboard** from Slack,
+  choose **Passkeys**, name and add a passkey, bookmark **Activity sign-in**, then close the browser
+  session and return to `/activity/login`. Repeat after a disposable gateway restart. Pass only if
+  user verification opens only that viewer's eligible Activity with no admin access, the key label
+  persists, and no new Slack link is needed. Add a spare, remove the original, and verify only the
+  spare can sign back in; verify a new Slack link can recover access after removing all keys.
+- Negative acceptance: expired links offer passkey sign-in; a revoked viewer or different workspace
+  cannot log in; another viewer cannot list/remove the owner's keys; admin passkeys cannot authorize
+  Activity and Activity passkeys cannot authorize admin. Verify cancellation permits a retry and
+  all pages remain usable at 320 px. Physical-device/production acceptance is separate from the
+  automated virtual-authenticator evidence.
+
 ## Compact Activity monitor with dark and light themes (2026-11-13)
 
 - Engine-independent: the dashboard renders gateway state in the browser and calls no engine.

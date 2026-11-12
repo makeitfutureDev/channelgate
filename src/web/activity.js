@@ -17,7 +17,9 @@ import { isLoopbackHost, timingSafeEqualStr } from "./security.js";
 import { readSubscriptionUsage } from "../gateway/subscription-usage.js";
 import { activityPage } from "./activity-page.js";
 import { activityGroupOrder, activityGroupOrderVersion, validActivityGroupOrder, ACTIVITY_THEMES, activityTheme } from "./activity-order.js";
-import { ACTIVITY_THEME_CSS, ACTIVITY_BRAND } from "./activity-theme.js";
+import { activityAccessPage } from "./activity-access-page.js";
+import { installActivityPasskeys } from "./activity-passkeys.js";
+import { activityPasskey } from "../config/activity-passkeys.js";
 
 export const ACTIVITY_GRANT_TTL_MS = 10 * 60_000;
 export const ACTIVITY_SESSION_TTL_MS = 12 * 60 * 60_000;
@@ -92,8 +94,7 @@ async function latestMessageTs(client, channelId, root) {
   return latest;
 }
 function launchPage() {
-  const nonce = token(16);
-  return { nonce, html: `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Open ChannelGate</title><link rel="icon" type="image/svg+xml" href="/favicon.svg"><style nonce="${nonce}">${ACTIVITY_THEME_CSS}body{display:grid;place-items:center;min-height:100vh}main{margin:24px;padding:32px;width:min(480px,calc(100% - 48px));background:var(--panel);border:1px solid var(--line);border-radius:10px}.brand{margin-bottom:28px}p{color:var(--muted);line-height:1.6}</style></head><body><main>${ACTIVITY_BRAND}<p id="status">Opening your private dashboard…</p></main><script nonce="${nonce}">(async()=>{const secret=location.hash.slice(1);history.replaceState(null,"",location.pathname);try{if(!/^[A-Za-z0-9_-]{43}$/.test(secret))throw Error();const response=await fetch("/activity/exchange",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({token:secret})});if(!response.ok)throw Error();const data=await response.json();if(typeof data.url!=="string"||!data.url.startsWith("/activity/")||!/^[A-Za-z0-9_-]{16}$/.test(data.url.slice(10)))throw Error();location.replace(data.url);}catch{document.getElementById("status").textContent="This private link expired or is unavailable. Open a new dashboard link from Slack Activity."}})();</script></body></html>` };
+  return activityAccessPage({ mode: "open" });
 }
 
 export function resetActivityStateForTests() {
@@ -124,6 +125,10 @@ export function createActivityRouter({
     if (!session || session.expiresAt <= now() || session.origin !== baseFor(getBaseUrl())?.origin) throw Object.assign(new Error("Activity expired"), { status: 401 });
     const user = await getUser(session.ownerId);
     if (!user || (!user.approved && !user.isAdmin) || session.teamId !== getTeamId()) throw Object.assign(new Error("Activity access ended"), { status: 403 });
+    if (session.credentialId) {
+      const key = activityPasskey(session.credentialId);
+      if (!key || key.owner_id !== session.ownerId || key.team_id !== session.teamId || key.origin !== session.origin) throw Object.assign(new Error("Activity passkey removed"), { status: 401 });
+    }
     const client = getClient();
     if (!client) throw Object.assign(new Error("Slack disconnected"), { status: 403 });
     return client;
@@ -139,6 +144,18 @@ export function createActivityRouter({
     if (!session || sessions.get(req.params.id) !== session) throw Object.assign(new Error("Activity session missing"), { status: 401 });
     return { session, client: await authorize(session) };
   };
+  const issueSession = (res, identity) => {
+    const id = token(12), secret = token(); prune(now());
+    capOwner(sessions, identity.ownerId, 10); cap(sessions, 1000);
+    const session = { ownerId: identity.ownerId, teamId: identity.teamId, origin: identity.origin,
+      ...(identity.credentialId ? { credentialId: identity.credentialId } : {}),
+      cookieHash: hash(secret), csrf: token(), expiresAt: now() + ACTIVITY_SESSION_TTL_MS };
+    sessions.set(id, session);
+    res.append("Set-Cookie", `${cookieName(id)}=${secret}; HttpOnly; SameSite=Lax; Path=/activity/${id}; Max-Age=${ACTIVITY_SESSION_TTL_MS / 1000}${new URL(identity.origin).protocol === "https:" ? "; Secure" : ""}`);
+    return res.json({ url: `/activity/${id}` });
+  };
+  const sendPage = (res, page) => { headers(res, page.nonce); return res.type("html").send(page.html); };
+  installActivityPasskeys(router, { context, authorize, issueSession, sendPage, version: () => configVersion, now });
   const ownedThread = async (client, session, channelId, threadTs) => {
     const row = getSlackThread(channelId, threadTs);
     if (!row || row.starter_id !== session.ownerId || !isSlackThreadEligible(row)) throw Object.assign(new Error("Thread denied"), { status: 403 });
@@ -181,11 +198,7 @@ export function createActivityRouter({
       // asynchronous admission check so expiry, pruning or eviction cannot mint a session.
       if (grants.get(key) !== grant || grant.expiresAt <= now()) return unavailable(res, 410);
       if (version !== configVersion) return unavailable(res, 403);
-      const id = token(12), secret = token(); capOwner(sessions, grant.ownerId, 10); cap(sessions, 1000);
-      const session = { ...grant, cookieHash: hash(secret), csrf: token(), expiresAt: now() + ACTIVITY_SESSION_TTL_MS };
-      sessions.set(id, session);
-      res.setHeader("Set-Cookie", `${cookieName(id)}=${secret}; HttpOnly; SameSite=Lax; Path=/activity/${id}; Max-Age=${ACTIVITY_SESSION_TTL_MS / 1000}${new URL(grant.origin).protocol === "https:" ? "; Secure" : ""}`);
-      return res.json({ url: `/activity/${id}` });
+      return issueSession(res, grant);
     } catch (error) { return unavailable(res, error.status || 403); }
   });
   // The agent's display name comes from the bot's own Slack profile, so every install shows
@@ -218,7 +231,7 @@ export function createActivityRouter({
       const theme = activityTheme((await getUser(session.ownerId))?.activityTheme);
       const page = activityPage({ sessionId: req.params.id, csrf: session.csrf, agent, theme, teamId: session.teamId, view: req.path.endsWith("/subscriptions") ? "subscriptions" : "activity" });
       headers(res, page.nonce); return res.type("html").send(page.html);
-    } catch (error) { return unavailable(res, error.status || 403); }
+    } catch (error) { return sendPage(res.status(error.status || 401), activityAccessPage({ mode: "login" })); }
   };
   router.get("/:id", serveDashboard);
   router.get("/:id/subscriptions", serveDashboard);

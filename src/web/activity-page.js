@@ -189,7 +189,7 @@ function activityBrowser(config, browser, subscriptionUi) {
     el("updated").textContent = lastUpdated ? "Updated " + timeFormat.format(lastUpdated) : "Waiting for updates";
   }
   function notice() {
-    const text = ended ? "Your access has ended or this session has expired. Open Dashboard again from Slack." :
+    const text = ended ? "Your access has ended or this session has expired. Sign in with a passkey or open Dashboard again from Slack." :
       actionMessage || message || (unavailable ? "Some activity is temporarily unavailable. We’ll keep trying to refresh it." : "");
     el("notice").textContent = text;
     el("notice").hidden = !text;
@@ -197,7 +197,7 @@ function activityBrowser(config, browser, subscriptionUi) {
   function endAccess() {
     ended = true;
     clearSubscriptions();
-    if (subscriptionNotice) subscriptionNotice.textContent = "Your session has ended. Open Dashboard again from Slack.";
+    if (subscriptionNotice) subscriptionNotice.textContent = "Your session has ended. Sign in with a passkey or open Dashboard again from Slack.";
     if (subscriptionButton) subscriptionButton.textContent = "Refresh";
     connected = false;
     stream?.close();
@@ -755,6 +755,7 @@ tbody tr:hover .actions,tbody tr:focus-within .actions,.s-waiting .actions,.s-er
 <header class="top"><div class="agent"><span class="agent-mark" aria-hidden="true">${CHANNELGATE_LOGO}</span><div><span class="agent-name">${escapeHtml(agentName)}</span><div id="connection" class="connection reconnecting" role="status"><span id="connection-text">Connecting…</span></div></div></div>
 ${subscriptionsView ? "" : '<div id="subscription-quick" class="subscription-quick-list" aria-label="Subscription usage" hidden></div><div id="subscriptions-notice" role="status" aria-live="polite"></div>'}
 <nav class="page-nav" aria-label="Dashboard"><a href="${base}"${!subscriptionsView ? ' aria-current="page"' : ''}>Activity</a><a href="${base}/subscriptions"${subscriptionsView ? ' aria-current="page"' : ''}>Subscriptions</a></nav>
+<a href="${base}/passkeys" class="link-button">Passkeys</a>
 <button id="theme-toggle" class="icon-button" type="button" aria-label="Switch theme" title="Switch theme"></button></header>
 <main>
 ${subscriptionsView ? `<section class="subscriptions-page" aria-label="Subscriptions"><div class="subscriptions-head"><h1>Subscriptions</h1><button id="subscriptions-refresh" class="order-button" type="button">Refresh</button></div><p class="subscriptions-copy">Account-wide usage · refreshes every 10 minutes.</p><div id="subscriptions-notice" role="status" aria-live="polite"></div><div id="subscriptions-cards" class="subscription-grid"></div></section>` : ""}
@@ -768,7 +769,7 @@ ${subscriptionsView ? `<section class="subscriptions-page" aria-label="Subscript
 <div id="empty" class="empty" role="status"><div class="empty-symbol" aria-hidden="true">◎</div><h2 id="empty-title">Loading your activity…</h2><p id="empty-copy">Your latest conversations will appear here.</p></div>
 <noscript><p class="js-needed">Enable JavaScript to view live activity.</p></noscript></section>
 <footer class="footer"><div class="footer-actions"><span id="summary" class="summary">Loading activity…</span><button id="group-order" class="link-button" type="button" aria-haspopup="dialog">⇅ Group order</button><button id="mark-all-done" class="link-button" type="button" aria-haspopup="dialog" disabled>✓ Mark All Done</button><button id="load-history" class="link-button" type="button" disabled>Load older threads</button></div><div class="footer-actions"><span id="result-count"></span><span id="updated">Waiting for updates</span></div></footer>
-<p class="privacy">Your conversations are private. If your session expires, open Dashboard again from Slack.</p>
+<p class="privacy">Your conversations are private. <a href="${base}/passkeys">Save a passkey</a> to return later, or <a href="/activity/login">sign in again</a> when your session expires.</p>
 </div>
 </main><script nonce="${nonce}">(${activityBrowser.toString()})(${config}, globalThis, (${createSubscriptionUi.toString()})());</script></body></html>` };
 }

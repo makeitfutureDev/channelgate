@@ -1,5 +1,21 @@
 # ChannelGate — Features
 
+## Activity passkey sign-in (2026-11-13)
+
+Approved Slack users can open their private Dashboard link, choose **Passkeys**, and save a
+passkey for future visits. **Activity sign-in** (`/activity/login`) uses a discoverable passkey
+without asking for a username. Expired launch links and expired dashboard pages offer the same
+sign-in. The Passkeys page lists and removes the viewer's keys, with up to ten keys per account;
+a new Slack Dashboard link remains the recovery path when no saved key is available.
+
+Activity credentials persist in SQLite and belong to one viewer, Slack workspace and configured
+public origin. Every ceremony requires user verification, a five-minute browser-bound challenge,
+and the current user's admission and live Slack connection. Enrollment and deletion also require
+the existing Activity session and CSRF token. Passkey sign-in creates only the existing fixed
+twelve-hour Activity session and its path-scoped HttpOnly cookie. Removing a key invalidates
+sessions opened with that key. Activity credentials and administrator credentials remain separate.
+The existing ten-minute Slack launch links retain their original reusable lifetime.
+
 ## Compact Activity monitor with dark and light themes (2026-11-13)
 
 The personal Activity dashboard is a compact monitor in the channelgate.dev style (Geist and

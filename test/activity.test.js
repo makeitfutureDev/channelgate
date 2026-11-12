@@ -260,11 +260,13 @@ test("launch fragment is removed before reusable exchange; cookies, origin and e
   const html = await launch.text(), script = /<script nonce="[^"]+">([\s\S]+?)<\/script>/.exec(html)[1];
   assert.doesNotMatch(html, /already used/i);
   const calls = [];
-  await new Function("location", "history", "fetch", "document", `return ${script}`)(
-    { hash: new URL(url).hash, pathname: "/activity/open", replace: (value) => calls.push(value) },
-    { replaceState: () => calls.push("cleared") },
-    async (path, init) => { assert.equal(calls[0], "cleared"); calls.push(path); return f.request(path, { ...init, headers: { ...init.headers, Origin: f.base } }); },
-    { getElementById: () => ({ textContent: "" }) });
+  await new Function("globalThis", `return ${script}`)({
+    location: { hash: new URL(url).hash, pathname: "/activity/open", replace: (value) => calls.push(value) },
+    history: { replaceState: () => calls.push("cleared") },
+    fetch: async (path, init) => { assert.equal(calls[0], "cleared"); calls.push(path); return f.request(path, { ...init, headers: { ...init.headers, Origin: f.base } }); },
+    document: { getElementById: (id) => id === "status" ? { textContent: "" } : null, querySelectorAll: () => [] },
+    ChannelGatePasskeys: { available: () => true, errorMessage: error => error.message },
+  });
   assert.match(calls.at(-1), /^\/activity\/[A-Za-z0-9_-]{16}$/);
   assert.equal((await f.exchange(url)).status, 200);
   const sessionPath = calls.at(-1);
