@@ -305,8 +305,8 @@ test("Activity viewers see only subscription quick bars and can navigate to full
     readSubscriptions: async () => {
       reads++;
       return { refreshAfterSeconds: 300, subscriptions: [
-        { name: "Claude", kind: "subscription", status: "ok", plan: "Max", windows: [{ label: "5-hour session", usedPercent: 0 }, { label: "Weekly · Fable", usedPercent: 63, resetsAt: new Date(Date.now() + 3600_000).toISOString() }] },
-        { name: "Codex EU", kind: "subscription", status: "ok", plan: "Pro", windows: [{ label: "Weekly", usedPercent: 10 }], resetCredits: { available: 2, resets: [{ label: "Full reset", expiresAt: "2099-01-01T00:00:00Z" }] } },
+        { name: "Claude", account: { email: "claude@example.com", workspace: "Claude workspace" }, kind: "subscription", status: "ok", plan: "Max", windows: [{ label: "5-hour session", usedPercent: 0 }, { label: "Weekly · Fable", usedPercent: 63, resetsAt: new Date(Date.now() + 3600_000).toISOString() }] },
+        { name: "Codex EU", account: { email: "eu@example.com", workspace: "EU workspace" }, kind: "subscription", status: "ok", plan: "Pro", windows: [{ label: "Weekly", usedPercent: 10 }], resetCredits: { available: 2, resets: [{ label: "Full reset", expiresAt: "2099-01-01T00:00:00Z" }] } },
         { name: "API fixture", kind: "api-key", status: "api-key", windows: [] },
         { name: "Missing fixture", kind: "none", status: "not-connected", windows: [] },
       ] };
@@ -332,6 +332,7 @@ test("Activity viewers see only subscription quick bars and can navigate to full
   assert.equal(await page.title(), "Subscriptions · ChannelGate");
   assert.equal(await page.locator(".subscription-card").count(), 2);
   assert.match(await page.locator("#subscriptions-cards").innerText(), /Weekly · Fable/);
+  assert.deepEqual(await page.locator(".subscription-account").allTextContents(), ["claude@example.comClaude workspace", "eu@example.comEU workspace"]);
   assert.match(await page.locator("#subscriptions-cards").innerText(), /Resets in/);
   assert.match(await page.locator("#subscriptions-cards").innerText(), /2 available/);
   assert.match(await page.locator("#subscriptions-cards").innerText(), /Full reset expires in/);

@@ -111,7 +111,12 @@ Activity users can open **Subscriptions** beside **Activity** in their existing 
 session. The Activity overview omits the redundant heading and subtitle and shows compact usage
 bars only for actual subscriptions, using the highest reported window per harness and naming that
 window. Admin and viewer detail pages share compact quota cards, plan badges, countdowns and local
-reset dates. Claude structured model limits (including Fable) and provider-reported reset allowances
+reset dates. Each subscription card also shows the login email and workspace name when available.
+Claude account metadata comes from the same bearer's read-only OAuth profile; Codex email comes
+from its usage response/current token and workspace names require an exact selected-account match
+in the read-only accounts response. Missing metadata says Account unavailable rather than borrowing
+another login. Only display email/workspace are shared with approved viewers, never account IDs,
+credential paths or token claims; profile failures leave quota readings usable. Claude structured model limits (including Fable) and provider-reported reset allowances
 are included; reset credits show their grant expiry dates when reported. These are reset-credit
 expiries, not subscription renewal dates; plan prices or subscription end dates are never inferred.
 

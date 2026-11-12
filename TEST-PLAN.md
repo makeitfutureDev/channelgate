@@ -307,6 +307,16 @@ never alter production credentials or send real access tokens to fixture servers
   is supplemented by the bounded read-only reset-credit detail endpoint with identical account
   headers. Detail endpoint errors retain valid quota data and summary count; invalid/raw IDs,
   redeemed grants and secret response fields are excluded. Missing fields remain unknown.
+- Login identity regression (2026-11-12, engine-independent): synthetic Claude profile and distinct
+  normal/EU Codex tokens, usage emails and account lists. Open both admin and approved-user
+  Subscriptions at desktop/390px; require each card's own email/workspace, escaped as text and
+  wrapping without overflow. Never select an unrelated/default/first organization; require one
+  exact selected account ID match and reject ambiguous matches. Profile errors or malformed
+  payloads preserve quotas; missing identity says Account unavailable. Rotate/disconnect a login
+  and change its display identity with the same token; require cache invalidation/no prior-account
+  label. Verify matching bearer/account headers, fixed GET URLs, redirect refusal and response
+  bounds; JSON excludes raw token/claims/IDs and unrelated account-list entries. Identity requests
+  share the five-minute quota cache and the Activity post-read authorization check remains intact.
 - Live admin acceptance: an authorized admin opens Subscriptions and compares each reported
   quota/reset to that provider's own usage screen for the gateway login. Confirm five-minute
   cache behavior, independent provider failure, stale timestamps and explicit missing/API-key/

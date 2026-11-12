@@ -14,11 +14,47 @@ const ENDPOINTS = Object.freeze({
   claude: "https://api.anthropic.com/api/oauth/usage?cedar_ember=1&skip_spend=1",
   codex: "https://chatgpt.com/backend-api/wham/usage",
 });
+const CODEX_ACCOUNTS_ENDPOINT = "https://chatgpt.com/backend-api/wham/accounts/check";
+const CLAUDE_PROFILE_ENDPOINT = "https://api.anthropic.com/api/oauth/profile";
 const CODEX_RESETS_ENDPOINT = "https://chatgpt.com/backend-api/wham/rate-limit-reset-credits";
 const CACHE_MS = 300_000;
 const text = (value) => typeof value === "string" ? value.slice(0, 80) : "";
 const percent = (value) => typeof value === "number" && Number.isFinite(value) && value >= 0 && value <= 100 ? value : null;
 const count = (value) => Number.isSafeInteger(value) && value >= 0 ? value : null;
+
+const identityText = (value, max = 160) => typeof value === "string" ? value.replace(/[\x00-\x1f\x7f]/g, "").trim().slice(0, max) : "";
+function publicAccount(value) {
+  return { email: identityText(value?.email, 254), workspace: identityText(value?.workspace) };
+}
+function tokenClaims(token) {
+  try {
+    const payload = String(token || "").split(".")[1];
+    return payload && payload.length <= 64 * 1024 ? JSON.parse(Buffer.from(payload, "base64url").toString("utf8")) : null;
+  } catch { return null; }
+}
+// Display facts only. Claims are never authentication authority, and an unselected/default
+// organization must not be labelled as the selected ChatGPT workspace.
+export function codexSubscriptionAccount(current) {
+  const access = tokenClaims(current?.token), id = tokenClaims(current?.idToken);
+  const auth = access?.["https://api.openai.com/auth"];
+  const idAuth = id?.["https://api.openai.com/auth"];
+  const selected = current?.accountId || auth?.chatgpt_account_id;
+  const sameLogin = access?.sub && id?.sub === access.sub && idAuth?.chatgpt_account_id === selected;
+  const organization = sameLogin && Array.isArray(idAuth?.organizations)
+    ? idAuth.organizations.find((entry) => entry?.id === selected) : null;
+  return publicAccount({ email: access?.email || access?.["https://api.openai.com/profile"]?.email || (sameLogin ? id?.email : ""), workspace: organization?.title });
+}
+
+export function codexSubscriptionWorkspace(payload, accountId) {
+  if (typeof accountId !== "string" || !accountId) return "";
+  if (Array.isArray(payload?.accounts)) {
+    const matches = payload.accounts.slice(0, 100).filter((account) => account?.id === accountId);
+    return matches.length === 1 ? identityText(matches[0].name) : "";
+  }
+  if (!payload?.accounts || typeof payload.accounts !== "object") return "";
+  const matches = Object.values(payload.accounts).slice(0, 100).map((entry) => entry?.account).filter((account) => account?.account_id === accountId);
+  return matches.length === 1 ? identityText(matches[0].name) : "";
+}
 
 // The official Claude CLI reads this optional grant projection from the usage response.
 function normalizeClaudeResets(status) {
@@ -98,14 +134,14 @@ export function createDaemonSubscriptionCredentials({ resolveClaude = resolveCla
       const login = resolveClaude();
       if (login.kind === "api-key" || login.kind === "none") return { kind: login.kind };
       const current = login.kind === "settings" ? { token: claudeToken() } : readClaude(login);
-      return { kind: "subscription", token: current?.token || "", expiresAt: current?.expiresAt || 0, plan: current?.subscriptionType === "max" && /max_(5|20)x$/.test(current?.rateLimitTier || "") ? `Max ${current.rateLimitTier.match(/max_(5|20)x$/)[1]}x` : current?.subscriptionType || "", source: login.kind };
+      return { kind: "subscription", token: current?.token || "", expiresAt: current?.expiresAt || 0, plan: current?.subscriptionType === "max" && /max_(5|20)x$/.test(current?.rateLimitTier || "") ? `Max ${current.rateLimitTier.match(/max_(5|20)x$/)[1]}x` : current?.subscriptionType || "", source: login.kind, profile: "claude" };
     }
     const dedicated = usage.login === "codex-eu";
     const login = resolveCodex(dedicated ? { env: {}, candidates: [path.join(euHome(), "auth.json")] } : {});
     if (dedicated && login.kind !== "chatgpt") return { kind: "none" };
     if (login.kind !== "chatgpt") return { kind: login.kind === "none" && env.OPENAI_API_KEY ? "api-key" : login.kind };
     const current = readCodex(login);
-    return { kind: "subscription", token: current?.token || "", expiresAt: current?.expiresAt || 0, plan: current?.planType || "", accountId: current?.accountId || "", source: dedicated ? "codex-eu" : "chatgpt" };
+    return { kind: "subscription", token: current?.token || "", expiresAt: current?.expiresAt || 0, plan: current?.planType || "", accountId: current?.accountId || "", source: dedicated ? "codex-eu" : "chatgpt", account: codexSubscriptionAccount(current), profile: "codex" };
   };
 }
 const daemonCredentials = createDaemonSubscriptionCredentials();
@@ -117,15 +153,17 @@ export function createSubscriptionUsageReader({ credentials = daemonCredentials,
     const manifest = adapter(engine);
     const usage = manifest?.subscriptionUsage;
     const provider = usage?.provider;
-    const base = { provider: engine, kind: "unsupported", name: manifest?.label || engine, plan: "", windows: [], checkedAt: null, updatedAt: null, stale: false };
+    const base = { account: publicAccount(null), provider: engine, kind: "unsupported", name: manifest?.label || engine, plan: "", windows: [], checkedAt: null, updatedAt: null, stale: false };
     if (!Object.hasOwn(ENDPOINTS, provider || "")) {
       cache.delete(engine);
       return { ...base, status: "unsupported", message: "Subscription quota reporting is not available for this harness. Check its provider dashboard for limits and billing." };
     }
     let credential;
     try { credential = credentials(engine, usage); } catch { return { ...base, status: "unavailable", message: "Could not read the gateway login. Check engine settings." }; }
+    base.account = publicAccount(credential.account);
     base.kind = credential.kind === "subscription" ? "subscription" : credential.kind === "api-key" ? "api-key" : "none";
     if (credential.kind !== "subscription" || !credential.token) {
+      base.account = publicAccount(null);
       cache.delete(engine);
       return { ...base, status: credential.kind === "api-key" ? "api-key" : "not-connected", message: credential.kind === "api-key" ? "API-key billing has no subscription quota. View token usage and estimated costs on Overview." : "No subscription login is available. Sign in to this engine on the gateway host." };
     }
@@ -136,7 +174,7 @@ export function createSubscriptionUsageReader({ credentials = daemonCredentials,
     }
     // Bound to the actual token/account: a login change must never show the previous account's
     // cached usage. Only one entry per harness is retained; hashes never leave this closure.
-    const key = createHash("sha256").update(JSON.stringify([credential.token, credential.accountId, credential.plan, credential.source])).digest("hex");
+    const key = createHash("sha256").update(JSON.stringify([credential.token, credential.accountId, credential.plan, credential.source, base.account])).digest("hex");
     let entry = cache.get(engine);
     if (entry?.key === key && entry.pending) return entry.pending;
     if (entry?.key === key && now() - entry.at < entry.ttl) return entry.value;
@@ -163,7 +201,33 @@ export function createSubscriptionUsageReader({ credentials = daemonCredentials,
           result = { ...base, status: status === 401 ? "expired" : "unavailable", message: status === 401 ? "The provider rejected this login. Renew it on the gateway host." : status === 403 ? "This login cannot read subscription usage. Check its subscription and usage permissions." : status === 429 ? "The provider is rate limiting usage checks. Try again later." : "The provider could not return usage. Try again later." };
         } else {
           const bytes = await readBoundedBytes(response, 256 * 1024);
-          const normalized = normalizeSubscriptionUsage(provider, JSON.parse(bytes.toString("utf8")));
+          const payload = JSON.parse(bytes.toString("utf8"));
+          const normalized = normalizeSubscriptionUsage(provider, payload);
+          // /usage returns the identity of this exact authenticated Codex request. Prefer it to
+          // a saved ID-token email, and never publish the provider's account/user identifiers.
+          if (provider === "codex" && typeof payload?.email === "string") base.account = publicAccount({ ...base.account, email: payload.email });
+          if (provider === "codex" && credential.profile === "codex" && credential.accountId) {
+            try {
+              const accountsResponse = await fetchImpl(CODEX_ACCOUNTS_ENDPOINT, { headers, signal: AbortSignal.timeout(timeoutMs), redirect: "error" });
+              if (accountsResponse.ok) {
+                const accountBytes = await readBoundedBytes(accountsResponse, 256 * 1024);
+                const workspace = codexSubscriptionWorkspace(JSON.parse(accountBytes.toString("utf8")), credential.accountId);
+                if (workspace) base.account = publicAccount({ ...base.account, workspace });
+              } else await accountsResponse.body?.cancel?.();
+            } catch { /* Email and quotas remain available when workspace metadata cannot be read. */ }
+          }
+          if (provider === "claude" && credential.profile === "claude") {
+            try {
+              const profileResponse = await fetchImpl(CLAUDE_PROFILE_ENDPOINT, { headers, signal: AbortSignal.timeout(timeoutMs), redirect: "error" });
+              if (profileResponse.ok) {
+                const profileBytes = await readBoundedBytes(profileResponse, 256 * 1024);
+                const profile = JSON.parse(profileBytes.toString("utf8"));
+                // This profile is bound to the same bearer used for usage, including setup-token
+                // logins. Do not substitute the operator's possibly unrelated saved CLI account.
+                base.account = publicAccount({ email: profile?.account?.email, workspace: profile?.organization?.name });
+              } else await profileResponse.body?.cancel?.();
+            } catch { /* Valid quota data remains usable when account metadata is unavailable. */ }
+          }
           // Reset allowances have a separate read-only endpoint. A failure there must never
           // hide valid quota windows or leak a response body. Share the main per-harness cache.
           if (provider === "codex" && normalized.resetCredits?.available > 0) {
@@ -188,7 +252,7 @@ export function createSubscriptionUsageReader({ credentials = daemonCredentials,
       } else if (result.status === "expired") {
         entry.good = null;
       } else if (previous && result.status !== "expired") {
-        result = { ...result, windows: previous.windows, plan: previous.plan, ...(previous.resetCredits ? { resetCredits: previous.resetCredits } : {}), updatedAt: previous.updatedAt, stale: true };
+        result = { ...result, windows: previous.windows, account: previous.account, plan: previous.plan, ...(previous.resetCredits ? { resetCredits: previous.resetCredits } : {}), updatedAt: previous.updatedAt, stale: true };
       }
       entry.at = now();
       entry.value = result;

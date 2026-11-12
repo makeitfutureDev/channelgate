@@ -34,9 +34,9 @@ test("subscription page supports direct entry, refresh, history and a narrow vie
   await page.route("**/api/subscriptions", (route) => {
     reads += 1;
     return route.fulfill({ json: { refreshAfterSeconds: 300, subscriptions: [
-      { provider: "claude", name: "Claude", plan: "Max", status: "ok", windows: [{ label: "Current session (5 hours)", usedPercent: 42, resetsAt: new Date(Date.now() + 3600_000).toISOString() }], updatedAt: new Date().toISOString() },
-      { provider: "codex", name: "Codex", plan: "Pro", status: "ok", windows: [{ label: "Weekly", usedPercent: 91, resetsAt: new Date(Date.now() + 86400_000).toISOString() }], updatedAt: new Date().toISOString() },
-      { provider: "codex-eu", name: "Codex EU", plan: "Pro Lite", status: "ok", windows: [{ label: "EU weekly", usedPercent: 24, resetsAt: new Date(Date.now() + 86400_000).toISOString() }] },
+      { provider: "claude", name: "Claude", account: { email: "claude@example.com", workspace: "Claude workspace" }, plan: "Max", status: "ok", windows: [{ label: "Current session (5 hours)", usedPercent: 42, resetsAt: new Date(Date.now() + 3600_000).toISOString() }], updatedAt: new Date().toISOString() },
+      { provider: "codex", name: "Codex", account: { email: "codex@example.com", workspace: "Codex workspace" }, plan: "Pro", status: "ok", windows: [{ label: "Weekly", usedPercent: 91, resetsAt: new Date(Date.now() + 86400_000).toISOString() }], updatedAt: new Date().toISOString() },
+      { provider: "codex-eu", name: "Codex EU", account: { email: "eu@example.com", workspace: "EU workspace" }, plan: "Pro Lite", status: "ok", windows: [{ label: "EU weekly", usedPercent: 24, resetsAt: new Date(Date.now() + 86400_000).toISOString() }] },
       { provider: "claude-bedrock", name: "Claude Bedrock", status: "unsupported", windows: [], message: "Subscription quota reporting is not available for this harness." },
     ] } });
   });
@@ -46,6 +46,7 @@ test("subscription page supports direct entry, refresh, history and a narrow vie
   assert.equal(await page.locator(".subscription-card").count(), 4);
   assert.equal(await page.locator('progress[aria-label="Weekly usage"]').getAttribute("value"), "91");
   assert.match(await page.locator("#subscriptions-cards").innerText(), /42%/);
+  assert.deepEqual(await page.locator(".subscription-account").allTextContents(), ["claude@example.comClaude workspace", "codex@example.comCodex workspace", "eu@example.comEU workspace"]);
   await page.locator("#subscriptions-refresh").click();
   await page.waitForFunction(() => globalThis.document.querySelector("#subscriptions-refresh").textContent === "Refresh");
   assert.equal(reads, 2);

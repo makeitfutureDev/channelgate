@@ -2,6 +2,8 @@
 
 ## 0.6.5 — candidate, pending approval
 
+- Show the subscription login email and selected workspace on both admin and user quota cards,
+  keeping normal Codex and Codex EU identities separate.
 - Add shared subscription usage to user Activity dashboards, with compact summary bars and a
   Subscriptions page. Simplify the Activity header and reuse compact cards in admin, including
   separate Codex EU quotas, model-specific Claude limits and available reset-credit expiries.
