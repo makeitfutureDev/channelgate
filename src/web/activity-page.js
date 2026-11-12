@@ -67,7 +67,7 @@ function activityBrowser(config, browser, subscriptionUi) {
         if (generation !== subscriptionGeneration) void refreshSubscriptions();
         else {
           if (subscriptionButton) { subscriptionButton.disabled = false; subscriptionButton.textContent = "Refresh"; }
-          subscriptionTimer = browser.setTimeout(refreshSubscriptions, 300_000);
+          subscriptionTimer = browser.setTimeout(refreshSubscriptions, 600_000);
         }
       }
     }
@@ -558,7 +558,7 @@ tbody tr:last-child td{border-bottom:0}tbody tr:hover{background:var(--panel-2)}
 }
 </style></head><body><main class="shell">
 <div class="page-top">${ACTIVITY_BRAND}<nav class="page-nav" aria-label="Dashboard"><a href="${base}"${!subscriptionsView ? ' aria-current="page"' : ''}>Activity</a><a href="${base}/subscriptions"${subscriptionsView ? ' aria-current="page"' : ''}>Subscriptions</a></nav></div>
-${subscriptionsView ? `<section aria-label="Subscriptions"><div class="subscriptions-head"><h1>Subscriptions</h1><button id="subscriptions-refresh" class="order-button" type="button">Refresh</button></div><p class="subscriptions-copy">Account-wide usage · refreshes every 5 minutes.</p><div id="subscriptions-notice" role="status" aria-live="polite"></div><div id="subscriptions-cards" class="subscription-grid"></div></section>` : '<div id="subscription-quick" class="subscription-quick-list" aria-label="Subscription usage" hidden></div><div id="subscriptions-notice" role="status" aria-live="polite"></div>'}
+${subscriptionsView ? `<section aria-label="Subscriptions"><div class="subscriptions-head"><h1>Subscriptions</h1><button id="subscriptions-refresh" class="order-button" type="button">Refresh</button></div><p class="subscriptions-copy">Account-wide usage · refreshes every 10 minutes.</p><div id="subscriptions-notice" role="status" aria-live="polite"></div><div id="subscriptions-cards" class="subscription-grid"></div></section>` : '<div id="subscription-quick" class="subscription-quick-list" aria-label="Subscription usage" hidden></div><div id="subscriptions-notice" role="status" aria-live="polite"></div>'}
 <div id="activity-view"${subscriptionsView ? " hidden" : ""}>
 <header class="heading"><div class="heading-actions"><div id="connection" class="connection reconnecting" role="status"><span id="connection-text">Connecting…</span></div><button id="load-history" class="order-button" type="button" disabled>Load older threads</button><button id="mark-all-done" class="order-button" type="button" aria-haspopup="dialog" disabled>Mark All Done</button><button id="group-order" class="order-button" type="button" aria-haspopup="dialog">⇅ Group order</button></div></header>
 <dialog id="order-dialog" class="order-dialog" aria-labelledby="order-title" aria-describedby="order-description"><h2 id="order-title">Arrange status groups</h2><p id="order-description">Move groups up or down. Newest conversations appear first within each group. Your order is saved to your account.</p><ol id="order-list" class="order-list"></ol><button id="order-reset" type="button">Reset to default</button><p id="order-error" class="order-error" role="alert"></p><div class="order-footer"><button id="order-cancel" type="button">Cancel</button><button id="order-save" class="order-save" type="button">Save order</button></div></dialog>

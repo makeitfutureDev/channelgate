@@ -25,7 +25,7 @@ export function createSubscriptionPoller({ request = api, render, visible = () =
       pending = false;
       if (active && visible()) {
         if (turn !== generation) void refresh();
-        else { loading = false; paint(); timer = schedule(refresh, 300_000); }
+        else { loading = false; paint(); timer = schedule(refresh, 600_000); }
       }
     }
   }
@@ -44,7 +44,7 @@ export function setSubscriptionsActive(active) {
     const style = document.createElement("style");
     style.textContent = SUBSCRIPTION_CSS;
     root.innerHTML = `<div class="view-head dash-head"><div><h2>Subscriptions</h2><p class="hint">Usage and resets for every enabled harness.</p></div><button type="button" class="ghost" id="subscriptions-refresh">Refresh</button></div>
-      <p class="hint">Account-wide usage · refreshes every 5 minutes.</p>
+      <p class="hint">Account-wide usage · refreshes every 10 minutes.</p>
       <div id="subscriptions-notice" role="status" aria-live="polite"></div><div id="subscriptions-cards" class="subscription-grid"></div>
 `;
     root.append(style);

@@ -155,8 +155,9 @@ API-key, missing, expired, unsupported and failing-provider states are explicit;
 are never fabricated as zero. A failed read may show a clearly stale last successful reading
 for the same login, but a rejected/expired/changed login cannot inherit another account's data.
 
-Five-minute per-harness caches coalesce concurrent checks, include failures and honor longer
-provider Retry-After cooldowns (up to one hour). Manual refresh shares the cache. Browser polling
+One gateway-wide in-memory cache serves admin and every Activity viewer. Ten-minute per-harness
+entries coalesce concurrent checks, include failures and honor longer
+provider Retry-After cooldowns (up to one hour). Manual refresh shares the cache. Browser polling also waits ten minutes and
 stops when the page is hidden or left; direct entry, reload and Back/Forward are supported.
 Provider usage endpoints may change or reject setup-token scopes; the affected card explains
 unavailable data while the other provider remains usable. No additional provider login is stored.
