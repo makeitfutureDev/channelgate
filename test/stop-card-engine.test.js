@@ -67,7 +67,7 @@ for (const engine of ["claude", "codex"]) test(`the stop card ends a ${engine} t
   const card = stopCard(client);
   assert.equal(card.thread_ts, threadKey);
   assert.deepEqual(card.blocks.map((block) => block.type), ["section", "actions"]);
-  assert.deepEqual(card.blocks[1].elements.map((button) => button.text.text), ["Fork", "📂 Files", "🔑 Variables", "⚙️ Settings", "📊 Dashboard"]);
+  assert.deepEqual(card.blocks[1].elements.map((button) => button.text.text), ["📂 Files", "🔑 Variables", "⚙️ Settings", "📊 Dashboard"]);
   for (const button of card.blocks[1].elements) assert.deepEqual(JSON.parse(button.value), { o: "open", c: CHANNEL, t: threadKey, u: USER });
   assert.doesNotMatch(JSON.stringify(card), /resume_cmd_modal/);
 });

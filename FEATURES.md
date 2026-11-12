@@ -17,7 +17,7 @@ also require the personal Activity session, Origin and CSRF token. Emoji reactio
 
 ## Native fork fallback (2026-11-12)
 
-A native fork (same engine, `/fork` or the Fork button without a historical cutoff) clones the
+A native fork (same engine, `/fork`) clones the
 engine's own session and reads no Slack history up front. It records where that history is (source
 thread, request timestamp, queued-fork cutoff). When the engine refuses the fork before any tool
 runs — Codex's `thread/fork failed: invalid paginated history lineage … missing source rollout`,
@@ -1762,34 +1762,19 @@ revisions on failed sync. Details and compatibility limits: `docs/SKILLS.md`.
 
 ## Reply menu and standalone Slack menu
 
-- **Every AI reply in Slack ends with the same menu: Fork · 📂 Files · 🔑 Variables · ⚙️ Settings · 📊 Dashboard**, with
-  visible labels, always all five, in that order. That holds for a streamed or classic answer, a
+- **Every AI reply in Slack ends with the same menu: 📂 Files · 🔑 Variables · ⚙️ Settings · 📊 Dashboard**, with
+  visible labels, always all four, in that order. That holds for a streamed or classic answer, a
   failed turn (the error line carries it), "🛑 Stopped.", an answer after an engine/model switch or
   failover, an HTTP API run into a thread (streamed, fallback delivery or failure), a scheduled
   run and its failure notice, a background job or agent continuation, self-diagnosis, and a turn
   replayed after a restart (answer or failure). When an answer overflows into follow-up messages,
   the stats and menu ride the LAST one, never the streamed head. Referenced-file `📄` buttons follow
   the menu. There is no 💻 Resume button on any of them.
-- **Fork from a selected message:** Fork opens a private next-request dialog and starts a linked
-  new Slack thread with recent visible conversation through the clicked bot message, inclusive.
-  Later source messages are excluded, including after queueing or restart recovery. This uses a
-  fresh Claude/Codex session; private engine tool/subagent history is not copied. The dialog
-  discloses recent visible history and shared workspace files/channel memory. Replay is bounded to 200 messages /
-  24,000 characters, with omissions marked in context. Existing `/fork` retains native latest-session forking. Each click
-  and submission rechecks the clicker's channel access, original requester binding (admins may
-  open another requester's button), workspace, and sudo restrictions. Drafts expire after 15
-  minutes and submit once. Deleted or unavailable source replies fail before child creation;
-  Clean threads refuse message-history forks. Code channels explain their shared-session limitation
-  instead of offering an independent child. Older replies gain the button only when reposted.
-  The click consumes Slack's three-second trigger first: a "Checking your access…" dialog opens
-  before any store read or private-channel membership listing, then is filled with the form in
-  place, or replaced by the refusal (not authorized, sudo, code channel) with no submit button.
-  Only when Slack refuses the open itself (an expired trigger, say) does the clicker get the
-  private "Couldn't open Fork. Try the button again." notice, and the daemon records a
-  `reply_fork_open_failed` event carrying Slack's error code — never the payload. The form's
-  next-request input is capped at 3,000 characters, Slack's documented ceiling for a
-  `plain_text_input` `max_length` (a larger value makes Slack refuse the whole form at the fill
-  step, so every click ended in the retry notice); the submission check shares the same bound.
+- **No Fork button.** Branching a thread is the typed `/fork <message>` command only (its entry is
+  under *Engines (Claude + Codex)*). A per-reply button could not clone the engine session at an earlier point —
+  neither Claude Code's `--fork-session` nor Codex's `exec fork` takes a cutoff — so it could only
+  replay Slack text into a fresh session; that message-history fork was retired the day it landed.
+  A Fork button on a reply posted before the retirement is an unhandled action and does nothing.
 - **Native 👍/👎 answer feedback**: the same footer ends with Slack's `context_actions` block
   carrying `feedback_buttons` (`cg_reply_feedback`) on every streamed, classic, unattended and
   fallback answer that carries the stats footer (not on bare notices such as "🛑 Stopped."). Any
@@ -1803,13 +1788,13 @@ revisions on failed sync. Details and compatibility limits: `docs/SKILLS.md`.
   credential. Current user, workspace and source-conversation access are checked before issuance;
   the existing Activity session enforces ownership and access on every request. Without a valid
   Public URL, a private notice directs the viewer to Slack Home Activity. It grants no admin access.
-- Binding: a reply with a Slack requester binds Fork, Files, Variables and Settings to that person
+- Binding: a reply with a Slack requester binds Files, Variables and Settings to that person
   (another member's click is refused, as before; admins may still open another user's file button). An automation post
   (schedule, background job, API run, restart recovery) has no Slack requester, so its menu opens
   for whoever clicks it. That grants nothing: every open re-applies the clicker's own live channel
   authorization and binds the modal to that clicker.
 - Slack only. Google Chat and Teams receive the plain text of those notices and answers.
-- `/menu` returns only one card with the same **Fork, Files, Variables, Settings, Dashboard** buttons, directly
+- `/menu` returns only one card with the same **Files, Variables, Settings, Dashboard** buttons, directly
   from the daemon without starting Claude or Codex. The registered slash command is private to its
   caller; `@agent /menu` inside a channel thread (or `/menu` in a DM message) posts the card in that
   thread. All controls remain available before a session exists and retain their authorization

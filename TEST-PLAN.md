@@ -182,46 +182,18 @@
   Real Slack delivery and browser acceptance remain unexecuted until explicitly recorded.
 
 
-## Fork from a selected Slack reply (2026-11-12)
+## Fork stays a typed command (2026-11-12)
 
-- Automated: `test/reply-fork.test.js`, `test/slack-fork.test.js`,
-  `test/queued-fork-recovery.test.js`, and existing menu/delivery/progress tests. Verify requester,
-  administrator and channel authorization; forged workspace/channel/thread values; revoke before
-  submit; duplicate/expired drafts; exact inclusive historical cutoff; missing/non-bot cutoff;
-  visible truncation marker; independent fresh child sessions under Claude and Codex; unchanged
-  native `/fork`; queued historical cutoff survives recovery. Trigger consumption
-  (`test/reply-fork.test.js`, engine-independent): `views.open` with the loading dialog precedes
-  the membership listing and every store read; the form fills the same view id/hash; refusals
-  replace the dialog without a submit button; a refused open stores no draft, posts the fixed
-  retry notice and logs `reply_fork_open_failed` with only Slack's error code; a failed fill
-  drops the draft and shows the retry notice in the dialog. Form validity (engine-independent):
-  the input's `max_length` equals the exported `MAX_REQUEST` and lies within Slack's documented
-  1–3000 range for `plain_text_input`; a submission one character over that bound is refused.
-- Live, engine-independent, in a PRIVATE channel with 100+ members: click Fork on a bot reply.
-  Pass: the dialog appears at once with "Checking your access…", then shows the form without a
-  second click; no "Couldn't open Fork" notice, and no `reply_fork_open_failed` event with stage
-  `fill` in the admin events feed. In `cg-testing-claude-auto` as a non-member of a
-  private source: the dialog shows the refusal text and no Fork submit button.
-- Live, separately in `cg-testing-claude-auto` and `cg-testing-codex-auto`, as an authorized test
-  author with Clean off: ask `Remember EARLY-42 and reply EARLY-42`. After the completed reply,
-  ask `Now remember LATER-99 and reply LATER-99`. Click Fork on the EARLY-42 reply, enter
-  `What token did we discuss? Continue with another approach.` and submit. Pass: Fork precedes
-  Files; dialog explains recent visible history, excluded tool history and shared files/channel memory; new root
-  links the exact EARLY-42 reply, child remembers EARLY-42, copied prompt excludes LATER-99, child
-  has its own session ID and follow-ups resume it; original session remains usable and unchanged.
-- Repeat while source work runs, then in an isolated coordinated restart fixture. Pass: explicit
-  queue acknowledgement; selected historical cutoff remains EARLY-42 after source completion
-  and recovery, with no later human or bot text copied; Stop cancels a queued fork.
-- Negative UI checks: another non-admin clicks an owned footer, a non-member attempts a private
-  channel footer, and an author loses access after opening the dialog. Pass: no child or engine
-  spawn. Administrator clicks an accessible owned footer: fork runs as that administrator, never
-  the original requester. Sudo threads refuse; Clean threads explain why history cannot be copied.
-  Code-channel replies explain the shared-session limitation without starting a child.
-  Blank input remains in dialog; duplicate submit creates at most one child; expired/restarted
-  draft asks to reopen. Delete the clicked reply before submission: no child is created.
-- Live UI/engine acceptance is pending until explicitly executed; registered reusable QA cases
-  cover both engines. This beta slice does not claim live Slack rendering or native historical
-  engine-state cloning.
+- The per-reply Fork button and its message-history fork were retired the day they landed:
+  neither engine can fork at an earlier point, so the button could only replay Slack text into a
+  fresh session. `/fork <message>` (native session clone, cross-engine Slack-history handoff,
+  queueing and restart recovery) is unchanged and keeps its existing cases.
+- Automated, engine-independent: menu/delivery/progress/stop-card/`/menu` tests assert the fixed
+  menu is 📂 Files · 🔑 Variables · ⚙️ Settings · 📊 Dashboard with no Fork button;
+  `test/slack-fork.test.js` and `test/queued-fork-recovery.test.js` cover `/fork` and the Codex
+  native-fork fallback without a historical cutoff.
+- Live, engine-independent: any bot reply posted after the restart shows four menu buttons and
+  no Fork; `@agent /fork <message>` in a completed thread still opens a linked child thread.
 
 ## Native fork fallback and archived-channel schedules (2026-11-12)
 
