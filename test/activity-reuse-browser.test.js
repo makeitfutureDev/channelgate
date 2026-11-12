@@ -54,6 +54,61 @@ test("browser reopens the same launch within ten minutes and uses its session fo
   assert.deepEqual(errors, []);
 });
 
+test("Activity group order works on desktop and mobile and persists for only its viewer", { skip: !process.env.CG_BROWSER_MODULE, timeout: 30_000 }, async (t) => {
+  resetActivityStateForTests();
+  await setUser("UACTIVITYORDER", { approved: true, activityGroupOrder: null });
+  await setUser("UACTIVITYORDEROTHER", { approved: true, activityGroupOrder: null });
+  let base;
+  const rows = ["idle", "working", "waiting", "error", "error", "done"].map((status, i) => ({
+    channel_id: "C_ORDER", thread_ts: String(100 + i), title: status + i,
+    channelName: "Activity fixture", status, last_message_ms: Date.now() - i * 1000,
+  }));
+  const app = express(); serveBrandAssets(app);
+  app.use("/activity", createActivityRouter({ getClient: () => ({}), getTeamId: () => "TORDER", getBaseUrl: () => base,
+    snapshot: async () => ({ rows, total: rows.length }), refreshKey: () => "fixture" }));
+  const server = await new Promise((resolve) => { const s = app.listen(0, "127.0.0.1", () => resolve(s)); });
+  base = `http://127.0.0.1:${server.address().port}`;
+  t.after(() => new Promise((resolve) => { resetActivityStateForTests(); server.closeAllConnections(); server.close(resolve); }));
+  const { chromium } = await import(process.env.CG_BROWSER_MODULE);
+  const browser = await chromium.launch({ headless: true, executablePath: process.env.CG_BROWSER_EXECUTABLE });
+  t.after(() => browser.close());
+  for (const viewport of [{ width: 1440, height: 1000 }, { width: 390, height: 844 }]) {
+    await setUser("UACTIVITYORDER", { activityGroupOrder: null });
+    const context = await browser.newContext({ viewport }), page = await context.newPage(), errors = [];
+    page.on("pageerror", (e) => errors.push(e.message));
+    await page.goto(createActivityGrantUrl({ baseUrl: base, ownerId: "UACTIVITYORDER", teamId: "TORDER" }));
+    await page.locator("#result-count").filter({ hasText: "5 conversations" }).waitFor();
+    const titles = () => page.locator(".thread-title").allTextContents();
+    assert.deepEqual(await titles(), ["error3", "error4", "waiting2", "working1", "idle0"]);
+    await page.getByRole("button", { name: "Group order" }).click();
+    for (let i = 0; i < 3; i++) await page.getByRole("button", { name: "Move Idle up" }).click();
+    assert.deepEqual(await page.locator(".order-label").allTextContents(), ["Idle", "Error", "Waiting", "Working"]);
+    await page.getByRole("button", { name: "Cancel", exact: true }).click();
+    assert.deepEqual(await titles(), ["error3", "error4", "waiting2", "working1", "idle0"]);
+    await page.getByRole("button", { name: "Group order" }).click();
+    await page.getByRole("button", { name: "Move Error down" }).click();
+    await page.getByRole("button", { name: "Save order" }).click();
+    await page.locator("#order-dialog").waitFor({ state: "hidden" });
+    assert.deepEqual(await titles(), ["waiting2", "error3", "error4", "working1", "idle0"]);
+    await page.reload(); await page.locator("#result-count").filter({ hasText: "5 conversations" }).waitFor();
+    assert.deepEqual(await titles(), ["waiting2", "error3", "error4", "working1", "idle0"]);
+    await page.getByRole("button", { name: "Group order" }).click();
+    if (process.env.CG_ACTIVITY_SCREENSHOT_DIR) await page.screenshot({ path: `${process.env.CG_ACTIVITY_SCREENSHOT_DIR}/activity-order-${viewport.width}.png` });
+    assert.equal(await page.evaluate(() => globalThis.document.documentElement.scrollWidth <= globalThis.innerWidth), true);
+    await page.getByRole("button", { name: "Reset to default" }).click();
+    await page.getByRole("button", { name: "Save order" }).click();
+    await page.locator("#order-dialog").waitFor({ state: "hidden" });
+    assert.deepEqual(await titles(), ["error3", "error4", "waiting2", "working1", "idle0"]);
+    await page.locator("#search").fill("error");
+    assert.deepEqual(await titles(), ["error3", "error4"]);
+    await page.goto(createActivityGrantUrl({ baseUrl: base, ownerId: "UACTIVITYORDEROTHER", teamId: "TORDER" }));
+    await page.locator("#result-count").filter({ hasText: "5 conversations" }).waitFor();
+    assert.deepEqual(await titles(), ["error3", "error4", "waiting2", "working1", "idle0"]);
+    assert.deepEqual(errors, []);
+    await context.close();
+  }
+});
+
 test("mobile Activity counts reflect durable worker events on completed roots without reload", { skip: !process.env.CG_BROWSER_MODULE, timeout: 30_000 }, async (t) => {
   resetActivityStateForTests();
   for (const table of ["slack_threads", "sessions", "channels", "channel_meta", "active_runs", "bg_jobs", "question_requests", "approval_requests", "followup_threads", "followup_done", "thread_overrides"]) getDb().exec(`DELETE FROM ${table}`);
