@@ -174,10 +174,13 @@
   the membership listing and every store read; the form fills the same view id/hash; refusals
   replace the dialog without a submit button; a refused open stores no draft, posts the fixed
   retry notice and logs `reply_fork_open_failed` with only Slack's error code; a failed fill
-  drops the draft and shows the retry notice in the dialog.
+  drops the draft and shows the retry notice in the dialog. Form validity (engine-independent):
+  the input's `max_length` equals the exported `MAX_REQUEST` and lies within Slack's documented
+  1–3000 range for `plain_text_input`; a submission one character over that bound is refused.
 - Live, engine-independent, in a PRIVATE channel with 100+ members: click Fork on a bot reply.
   Pass: the dialog appears at once with "Checking your access…", then shows the form without a
-  second click; no "Couldn't open Fork" notice. In `cg-testing-claude-auto` as a non-member of a
+  second click; no "Couldn't open Fork" notice, and no `reply_fork_open_failed` event with stage
+  `fill` in the admin events feed. In `cg-testing-claude-auto` as a non-member of a
   private source: the dialog shows the refusal text and no Fork submit button.
 - Live, separately in `cg-testing-claude-auto` and `cg-testing-codex-auto`, as an authorized test
   author with Clean off: ask `Remember EARLY-42 and reply EARLY-42`. After the completed reply,
