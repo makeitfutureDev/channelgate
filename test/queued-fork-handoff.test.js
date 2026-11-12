@@ -62,7 +62,7 @@ function options(client, extra = {}) {
   };
 }
 const stored = (id) => getDb().prepare("SELECT data FROM active_runs WHERE id=?").get(id);
-const roots = (client) => client.posted.filter((m) => !m.thread_ts && /Fork of/.test(m.text || ""));
+const roots = (client) => client.posted.filter((m) => !m.thread_ts && /Fork:/.test(m.text || ""));
 
 test("redelivered fork cannot duplicate a reserved recovery command", async () => {
   const f = await fixture("redelivery");

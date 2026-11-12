@@ -208,6 +208,18 @@
   Real Slack delivery and browser acceptance remain unexecuted until explicitly recorded.
 
 
+## Compact fork posts
+
+- Automated: `test/slack-fork.test.js` checks the exact author/request root, absent source URL,
+  disabled unfurls, first-reply source attribution, and no repeated request for Claude and Codex.
+  Cross-engine notes remain in the first reply. Queued/restart fixtures retain one compact root.
+- Live (pending), separately in the private Claude-auto and Codex-auto fixtures: finish a source
+  turn that remembers a token; send `@agent /fork Repeat the token and explore another approach`.
+  Pass: compact author/request root, no expanded source preview, first reply is the source link,
+  then the engine answer; source/child sessions remain independent. Repeat queued and with an
+  opposite-engine shortcut; the first reply carries the handoff note and the source stays intact.
+  `/fork` without a message still gives usage guidance and creates no child.
+
 ## Fork stays a typed command (2026-11-12)
 
 - The per-reply Fork button and its message-history fork were retired the day they landed:
@@ -8921,9 +8933,10 @@ none` for its cases and live gates. Kept as history.
       and lists all commands (including `/status`, `/stop`, and `/pending`).
 - [x] Unit/fixture (`test/slack-fork.test.js`): `/fork <new message>` is parsed as a command;
       Claude uses `--resume <source> --fork-session`, Codex uses `exec fork <source>`, and both
-      keep confinement flags. A fake Slack DM receives a top-level root beginning with the
-      request, a blank line and the `↪️ Fork of` source link, plus a separate new
-      request in that thread and the engine reply there; source and child IDs remain distinct.
+      keep confinement flags. A fake Slack DM receives `↪️ {User} Fork: {message}` as its
+      top-level root, with no source URL and no link/media unfurls. Its first reply contains only
+      the `↪️ Fork of this thread` source link (and any handoff note), also with unfurls disabled.
+      No repeated request reply; engine answers in the child and source/child IDs remain distinct.
 - [x] Unit/fixture (`test/slack-fork.test.js`): `/fork :shortcut <new message>` resolves a
       model on the source engine for Claude and Codex, strips the prefix from the request,
       clears the child effort pin and preserves source pins/session. The native fork receives
@@ -8949,12 +8962,13 @@ none` for its cases and live gates. Kept as history.
       Send `@agent /fork :other Repeat the token and continue our decision`. Verify linked
       threads and source token/decision in the selected engine's answer, a fresh child session
       and correct model in footer/usage. Continue both threads independently. A clean source
-      starts a bare child with no replay and an explanatory root; a dedicated channel Codex
+      starts a bare child with no replay and an explanatory first reply; a dedicated channel Codex
       login refuses Claude. Simulate unavailable Slack history and confirm no child root.
 - [ ] Live Slack acceptance (Claude and Codex separately): finish a source turn, send
       `@agent /fork Compare an alternative approach` in its thread, and verify the source link,
-      child root showing `Compare an alternative approach` above the `↪️ Fork of this thread`
-      link in the channel timeline, separate request and answer. Repeat with a model shortcut
+      child root showing `↪️ {User} Fork: Compare an alternative approach` without a source
+      preview in the channel timeline. The first child reply is the linked `↪️ Fork of this thread`,
+      followed by the answer, with no duplicated request. Repeat with a model shortcut
       and verify its prefix is absent from the root. Follow up in both threads; each must remember its
       own continuation while retaining the shared pre-fork history. Try without a prior session and from `/sudo`: each must refuse without creating a new root.
 - [x] Fixture regression (`test/slack-fork.test.js`): busy source queues `/fork` for Claude and
