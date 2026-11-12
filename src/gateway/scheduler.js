@@ -4,6 +4,7 @@ import { runAdmissionRefusalKind } from "./run-admission-result.js";
 // matches the current minute: it runs the saved prompt as a fresh Claude session in that channel
 // (as the schedule's creator) and posts the result to the channel.
 import { getSchedules, updateSchedule, deleteSchedule, getSchedulerCursor, saveSchedulerCursor, claimScheduleMinute } from "../config/schedules.js";
+import { getChannelMeta } from "../config/store.js";
 import { getAcks, addAck, updateAck, deleteAck } from "../config/acks.js";
 import { plainFailureText } from "../util/process-outcome.js";
 import { cronMatches, elapsedMinutes } from "../util/cron.js";
@@ -29,6 +30,35 @@ const MAX_ONCE_ATTEMPTS = 2;
 let slackRef = null;
 const running = new Set(); // schedule ids currently executing
 const firedThisMinute = new Map(); // id -> minute key, to avoid double-fire within a minute
+
+// A delivery the destination can never accept: the bot is not in the channel any more, or the
+// channel is gone or archived. Retrying such a delivery every minute forever is what one archived
+// channel's weekly task did for five weeks (54,858 schedule_error events on one deployment).
+const PERMANENT_DELIVERY_ERROR = /\b(channel_not_found|not_in_channel|is_archived|channel_is_archived)\b/;
+const ARCHIVED_STATUS = "paused: channel archived (bot removed) — re-invite the bot to resume";
+
+function retireUndeliverable(sched, reason) {
+  if (sched.activeRunId) {
+    updateScheduleRun(sched.activeRunId, { deliveryStatus: "failed", errorKind: "delivery", error: reason });
+    appendScheduleRunEvent(sched.activeRunId, { kind: "delivery_abandoned" });
+  }
+  sched.pendingDelivery = null;
+  sched.executionState = "undeliverable";
+  sched.activeRunId = null;
+  updateSchedule(sched.id, { lastRun: new Date().toISOString(), lastStatus: `undeliverable: ${reason}`,
+    executionState: "undeliverable", pendingDelivery: null, executionThread: null, activeRunId: null });
+}
+
+// A schedule whose channel is archived (the bot was removed) neither runs nor delivers: there is
+// nobody to post to. Its row stays, enabled, so a re-invite resumes it on its next due minute. A
+// saved result or an interrupted execution is retired the same way a permanent delivery failure
+// is; the status is written once per archival, not once per minute.
+async function pauseForArchivedChannel(sched) {
+  if (needsRecovery(sched)) retireUndeliverable(sched, "channel archived (bot removed)");
+  if (sched.lastStatus === ARCHIVED_STATUS) return;
+  updateSchedule(sched.id, { lastStatus: ARCHIVED_STATUS });
+  await logEvent("schedule_paused", { id: sched.id, channel: sched.channelId, slug: sched.slug, reason: "channel_archived" });
+}
 
 // One-time ("run at") schedules delete themselves once they've run; recurring ones never do.
 function isOneTime(sched) {
@@ -182,6 +212,10 @@ export async function runSchedule(sched, { runner: runMessage = defaultRunMessag
   const recovering = Boolean(sched.pendingDelivery || ["queued", "running"].includes(sched.executionState));
   let run;
   try {
+    if ((await getChannelMeta(sched.slug).catch(() => null))?.archived) {
+      await pauseForArchivedChannel(sched);
+      return;
+    }
     run = recovering && sched.activeRunId ? getScheduleRun(sched.activeRunId) : null;
     if (!run) run = createScheduleRun(sched);
     sched.activeRunId = run.id;
@@ -374,6 +408,12 @@ export async function runSchedule(sched, { runner: runMessage = defaultRunMessag
   } catch (err) {
     const safeError = redactLogValue(plainFailureText(err.message) || "The run failed.");
     const deliveryFailure = sched.executionState === "completed" || Boolean(sched.pendingDelivery);
+    if (deliveryFailure && PERMANENT_DELIVERY_ERROR.test(safeError)) {
+      // The saved result cannot be delivered to this destination, now or on any later minute.
+      retireUndeliverable(sched, safeError);
+      await logEvent("schedule_error", { id: sched.id, error: safeError, retired: true });
+      return;
+    }
     const failedResult = err.details?.result || { engine: err.details?.engine, usage: err.details?.usage, costUSD: err.details?.costUSD };
     const usage = normalizeUsage(failedResult);
     updateScheduleRun(run?.id, { ...(deliveryFailure ? { deliveryStatus: "failed" } : {

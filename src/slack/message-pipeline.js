@@ -386,6 +386,22 @@ const THREAD_CONTEXT_MAX_CHARS = 24_000; // total replay budget — keeps a huge
 // prompt. `currentTs` is the triggering message, excluded from the replay. Returns "" when there's
 // nothing to add (empty thread, fetch failure, or history that yields no text). A thread the bot
 // already owns has a session and resumes it, so this is only called for the first turn in a thread.
+function forkHistoryPreamble({ childEngine, sourceUrl, throughTs = "" }) {
+  return `You are continuing a conversation in a new Slack thread using ${engineLabel(childEngine)}. Source thread: ${sourceUrl}. The quoted history below comes from that source thread${throughTs ? " through the selected reply, inclusive; later messages and private engine tool history are not included" : ""}; continue with the user's new request after it.\n\n`;
+}
+
+// The lazy Slack-history copy a NATIVE fork falls back on when the engine refuses to clone its
+// session (run.js isForkUnavailable). Built from the durable descriptor the fork recorded, with the
+// same cutoffs the eager copy would have used, so a fallback never includes later messages.
+export function forkFallbackContextGetter(client, { channelId, botUserId = "", fallback }) {
+  if (!client || !fallback?.sourceThreadTs) return null;
+  return async () => {
+    const history = await fetchThreadContext(client, { channelId, threadTs: fallback.sourceThreadTs, currentTs: fallback.currentTs, botUserId,
+      completedReplyCutoff: Number(fallback.completedReplyCutoff) || 0, throughTs: fallback.throughTs || "" });
+    return history ? forkHistoryPreamble({ childEngine: fallback.childEngine, sourceUrl: fallback.sourceUrl, throughTs: fallback.throughTs }) + history : "";
+  };
+}
+
 export async function fetchThreadContext(client, { channelId, threadTs, currentTs, botUserId, raw = false, completedReplyCutoff = 0, throughTs = "" }) {
   try {
     const messages = [];
@@ -924,8 +940,15 @@ export async function processMessageEvent(event, client, { botUserId = "", teamI
             if (!sourceContext) {
               await reply("I could not read the source thread's messages. Please try the fork again once its Slack history is available."); return;
             }
-            sourceContext = `You are continuing a conversation in a new Slack thread using ${engineLabel(childEngine)}. Source thread: ${sourceUrl}. The quoted history below comes from that source thread${forkMessageTs ? " through the selected reply, inclusive; later messages and private engine tool history are not included" : ""}; continue with the user's new request after it.\n\n${sourceContext}`;
+            sourceContext = forkHistoryPreamble({ childEngine, sourceUrl, throughTs: forkMessageTs }) + sourceContext;
           }
+          // A native fork clones the engine's own session and reads no Slack history up front. It
+          // still records WHERE that history is, so run.js can fetch it lazily (same cutoffs) when
+          // the engine refuses the fork before running anything — Codex "missing source rollout" —
+          // and continue the turn as a fresh session on the copy instead of failing or forgetting.
+          const fallbackHistory = nativeFork && !sourceClean
+            ? { sourceThreadTs: threadKey, currentTs: event.ts, completedReplyCutoff: queuedForkHandle ? forkSnapshotTs : 0, throughTs: forkMessageTs || "", sourceUrl, childEngine }
+            : null;
           const handoffNote = forkMessageTs ? " · visible conversation through this reply" : nativeFork ? "" : ` · continuing with ${engineLabel(childEngine)}${sourceClean ? " (clean session; no history replay)" : " from Slack history"}`;
           if (queuedForkHandle?.aborted || queuedForkHandle?.controller.signal.aborted || isForceStopping()) return;
           const root = await client.chat.postMessage({ channel: event.channel, text: `${task}\n\n↪️ Fork of <${sourceUrl}|this thread>${handoffNote}` });
@@ -951,7 +974,7 @@ export async function processMessageEvent(event, client, { botUserId = "", teamI
             if (queuedForkHandle?.aborted || queuedForkHandle?.controller.signal.aborted || isForceStopping()) return;
             await processMessageEvent({ ...event, ts: request.ts, thread_ts: forkKey, text: task, files: [] }, client, {
               botUserId, teamId, bypassMention: true, syntheticFork: {
-                sourceSessionId: nativeFork ? sourceId : "", sourceRunKey: runKey, threadContext: sourceContext,
+                sourceSessionId: nativeFork ? sourceId : "", sourceRunKey: runKey, threadContext: sourceContext, fallbackHistory,
                 onAccepted: () => { if (queuedForkHandle) clearActiveRun(queuedForkHandle.runId); },
                 onSourceForked: () => { if (queuedForkHandle) runQueue.release(runKey, queuedForkHandle); },
               },
@@ -1566,6 +1589,7 @@ export async function processMessageEvent(event, client, { botUserId = "", teamI
       ...(questionSubmissionId ? { questionSubmissionId } : {}),
       text: provenance + (syntheticFork?.threadContext || "") + promptForClaude,
       ...(syntheticFork?.sourceSessionId ? { forkSourceSessionId: syntheticFork.sourceSessionId } : {}),
+      ...(syntheticFork?.fallbackHistory ? { forkFallback: syntheticFork.fallbackHistory } : {}),
       ...(shortcutRuntimeOverrides ? { runtimeOverrides: shortcutRuntimeOverrides } : {}),
       attachments: attachmentPaths,
       startedAt: Date.now(),
@@ -1769,6 +1793,7 @@ export async function processMessageEvent(event, client, { botUserId = "", teamI
         ...(continuationQuestionId ? { questionSubmissionId: continuationQuestionId } : {}),
         text: textForRun,
         ...(syntheticFork?.sourceSessionId ? { forkSourceSessionId: syntheticFork.sourceSessionId } : {}),
+        ...(syntheticFork?.fallbackHistory ? { forkFallback: syntheticFork.fallbackHistory } : {}),
         ...(shortcutRuntimeOverrides ? { runtimeOverrides: shortcutRuntimeOverrides } : {}),
         attachments: attachmentPaths,
         startedAt: Date.now(),
@@ -1794,6 +1819,7 @@ export async function processMessageEvent(event, client, { botUserId = "", teamI
         overrides: shortcutRuntimeOverrides,
         threadKey,
         ...(syntheticFork?.sourceSessionId ? { forkSourceSessionId: syntheticFork.sourceSessionId } : {}),
+        getForkFallbackContext: syntheticFork?.fallbackHistory ? forkFallbackContextGetter(client, { channelId: event.channel, botUserId, fallback: syntheticFork.fallbackHistory }) : null,
         onForkSessionResolved: syntheticFork?.sourceSessionId ? () => {
           recordActiveRun(runId, { ...promotedRun, forkSourceSessionId: "" });
           pendingForkThreads.delete(`${entry.slug}::${threadKey}`);
