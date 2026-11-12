@@ -417,6 +417,18 @@ test("Later controls work in a real browser at desktop and mobile widths", { ski
       assert.ok(a.right <= c.left + 1 || c.right <= a.left + 1 || a.bottom <= c.top + 1 || c.bottom <= a.top + 1, `${width}: ${a.text} overlaps ${c.text}`);
     }
     assert.equal(await page.getByRole("button", { name: "Delay for later: Postpone this conversation", exact: true }).innerText(), "Later");
+    // Each icon sits in the exact centre of its button; the hidden text label takes no space.
+    const icons = await page.locator("#threads .actions").evaluate((cell) => [...cell.querySelectorAll("a,button")].filter((item) => !item.hidden).map((item) => {
+      const icon = globalThis.getComputedStyle(item, "::before");
+      return { label: item.getAttribute("aria-label"), width: item.clientWidth, height: item.clientHeight, size: parseFloat(icon.width),
+        left: parseFloat(icon.marginLeft), top: parseFloat(icon.marginTop), position: icon.position };
+    }));
+    assert.equal(icons.length, 3);
+    for (const icon of icons) {
+      assert.equal(icon.position, "absolute", icon.label);
+      assert.ok(Math.abs(icon.left - (icon.width - icon.size) / 2) <= 0.5 && Math.abs(icon.top - (icon.height - icon.size) / 2) <= 0.5,
+        `${width}: ${icon.label} icon must be centred (${JSON.stringify(icon)})`);
+    }
     if (process.env.CG_LATER_LAYOUT_SCREENSHOT && [390, 768, 1440].includes(width)) {
       await page.screenshot({ path: process.env.CG_LATER_LAYOUT_SCREENSHOT.replace(".png", `-${width}.png`), fullPage: true });
     }

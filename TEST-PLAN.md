@@ -21,6 +21,10 @@
   - Usage shows as lines at 1440 and 820 px and as rings at 380 px.
   - Each status uses its own colour; Later is purple.
   - Each group is labelled once with its count, and the Working clock advances every second.
+  - Each row starts with a bar in its status colour; alternate rows are subtly banded; a long
+    title wraps to two lines and then ends in an ellipsis.
+  - Each action icon is centred in its button (automated: the browser test compares the icon's
+    margins with the button size at 320–1920 px).
   - Hovering a row shows exactly three icon buttons; on touch devices they are always visible.
   - Plain click on the Slack icon opens the Slack app in the same tab; Ctrl/⌘-click opens the
     HTTPS thread in a new tab.

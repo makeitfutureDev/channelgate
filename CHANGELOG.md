@@ -14,6 +14,8 @@
   rings on narrow windows. Statuses get distinct colours (Later is purple), groups are labelled
   in place, and running threads show a live timer. Slack, Done and Later are icon buttons.
   Ctrl/⌘-click on the Slack icon replaces the separate browser button.
+  Rows start with a status-coloured bar, alternate rows are subtly banded, titles wrap to two
+  lines, and action icons are centred in their buttons.
 
 - Keep the Activity live stream connected when a thread snapshot exceeds the socket buffer: wait
   for it to drain instead of closing, which made the page alternate Reconnecting/Live every 2 s.
