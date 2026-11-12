@@ -1,5 +1,37 @@
 # ChannelGate — Features
 
+## Personal Settings in the Activity dashboard (2026-11-13)
+
+The personal Activity dashboard has a **Settings** page (`/activity/:id/settings`, beside
+Activity and Subscriptions) where each person manages everything they can configure for
+themselves, from a browser, without opening Slack Settings → You:
+
+- **General** — their account (name, role, id), the dashboard theme (Match system / Light /
+  Dark, saved to the account), quiet-thread reminders on/off (the App Home toggle's setting) and
+  a link to passkey management.
+- **Connections** — their own Composio account (`composio-user`: token + label, replace, remove;
+  informational in Composio SDK mode), their Toolbox token, and their personal email accounts
+  (add, edit, remove; IMAP and SMTP logins are verified first, blank passwords keep the stored
+  ones).
+- **MCP servers** — their personal custom MCP servers (`my-<name>`, public HTTPS only, Bearer or
+  Composio consumer key, up to five; edit keeps the stored token; custom-header entries can be
+  re-pointed or removed here and edited in Slack).
+- **Variables** — their personal environment variables: add (hidden by default, readable on
+  request), replace (keeps type and allowed servers) and remove. Values are write-only.
+- **Skills** — the personal skill picker (the same list Slack offers; another person's personal
+  skill is never offered).
+- **SSH keys** — register, list and remove their own public keys.
+
+Every change goes through `src/gateway/user-settings.js`, which uses the same stores, validation,
+audit events and live-relay revocation as Slack Settings → You; Slack's personal skill picker now
+calls the same helper. `GET /activity/:id/api/settings` returns a masked snapshot (configured /
+last4 / names, never a value); `POST /activity/:id/api/settings` takes one action from a closed
+set, requires the Activity session, Origin and CSRF token, changes only the session owner
+(caller-supplied owners and roles are ignored) and rechecks the session after slow work (DNS,
+mail logins) before writing. Its JSON limit is 48 KB so a 16 KB variable value fits; other
+Activity routes keep 8 KB. A refusal returns `{ error, field }` and the page keeps the form and
+what was typed. Losing access clears the page.
+
 ## Activity passkey sign-in (2026-11-13)
 
 Approved Slack users can open their private Dashboard link, choose **Passkeys**, and save a

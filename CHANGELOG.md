@@ -2,6 +2,11 @@
 
 ## 0.6.5 — candidate, pending approval
 
+- Add a Settings page to the Activity dashboard. Each person manages their own reminders,
+  theme, passkeys, Composio and Toolbox tokens, email accounts, MCP servers, variables, skills
+  and SSH keys from the browser. Secrets stay write-only, and every change affects only the
+  signed-in person.
+
 - Add passkey setup and management from private Activity dashboard links, plus a dedicated
   Activity sign-in page for returning users. Expired links offer passkey sign-in; Activity
   credentials remain separate from administrator credentials.

@@ -42,10 +42,11 @@ import { listForChannel, deleteSchedule, updateSchedule, countEnabledForChannel 
 import { resolveAccessGrants } from "../gateway/access-grants.js";
 import { assignTemplateToChannel, channelScopedSkills, channelSkillGrants, channelSkillsOff, listTemplateSummaries, templateOfMeta } from "../gateway/skills/templates.js";
 import { canSeeSkill, grantSkillsToChannel, grantSkillsToUser, revokeSkillsFromChannel, revokeSkillsFromUser } from "../gateway/skills/authoring.js";
-import { isForeignPersonalSkill, sanitizeSkillGrantNames, sharedSkillGrants } from "../gateway/access-grants.js";
+import { sanitizeSkillGrantNames, sharedSkillGrants } from "../gateway/access-grants.js";
 import { toolboxUrl } from "../gateway/mcp-catalog.js";
 import { revokeRemoteMcpsForAuthor } from "../mcp/remote-mcp-registry.js";
 import { listSkills, getSkill } from "../gateway/skills/catalog.js";
+import { personalSkillPicker } from "../gateway/user-settings.js";
 import { skillModelPreference } from "../gateway/skill-runtime.js";
 import { ENGINE_IDS, engineLabel, effortBelongsToModel, effortsForModel, modelBelongsToEngine, modelsForEngine, requireAdapter } from "../engines/registry.js";
 import { persistedSelectionForEngine, selectionFieldForEngine } from "../gateway/mcp-discovery.js";
@@ -848,21 +849,8 @@ function channelSkillPicker(meta, { userId, userIsAdmin }) {
 }
 
 // The viewer's own skill grants: every catalog skill they can see, their personal ones included.
-async function mySkillPicker(userId, userIsAdmin) {
-  const stored = sanitizeSkillGrantNames((await getUser(userId))?.skills || []);
-  const mine = new Set(stored.map((slug) => slug.toLowerCase()));
-  const rows = listSkills({ viewer: userIsAdmin ? "*" : userId })
-    .filter((skill) => canSeeSkill(skill, { userId, isAdmin: userIsAdmin, active: mine.has(skill.slug.toLowerCase()) }) && (skill.visibility !== "personal" || skill.createdBy === userId));
-  // Stored grants of someone else's personal skill are never offered; they are named so the
-  // person knows why they are not loaded (the run skips them — src/gateway/access-grants.js).
-  const offered = new Set(rows.map((skill) => skill.slug.toLowerCase()));
-  const foreign = stored.filter((slug) => !offered.has(slug.toLowerCase()) && isForeignPersonalSkill(getSkill(slug), userId));
-  return {
-    options: rows.map((skill) => ({ key: skill.slug, label: skill.slug, description: skill.description || "" })),
-    selected: rows.filter((skill) => mine.has(skill.slug.toLowerCase())).map((skill) => skill.slug),
-    foreign,
-  };
-}
+// One picker for every surface (Slack Settings → You and the Activity Settings page).
+const mySkillPicker = (userId, userIsAdmin) => personalSkillPicker(userId, userIsAdmin);
 
 // Who may open or save a form, by its key's kind and scope letter (c = this conversation,
 // o = organization, p = the viewer's own).
