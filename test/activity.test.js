@@ -837,6 +837,7 @@ test("Later saves only owned authorized threads with CSRF; history and runtime p
   assert.equal((await f.request(path, { method: "POST", headers: user.post, body: body(true, "100.000002") })).status, 403);
   assert.equal((await f.request(path, { method: "POST", headers: user.post, body: body(true) })).status, 200);
   assert.ok(getSlackThread("C_WORK", "100.000001").later_ms > 0);
+  assert.ok(f.markerCalls.some(([method, args]) => method === "add" && args.name === "clock3" && args.timestamp === "100.000001"));
   const run = { id: "later-running", channelId: "C_WORK", slug: "c-work", threadKey: "100.000001", engine: "codex" };
   recordActiveRun(run.id, run);
   await f.root();
@@ -847,6 +848,7 @@ test("Later saves only owned authorized threads with CSRF; history and runtime p
   assert.equal((await f.request(path, { method: "POST", headers: user.post, body: body(false) })).status, 200);
   data = await (await f.request(user.url + "/api/threads", { headers: user.headers })).json();
   assert.equal(data.rows[0].status, "working");
+  assert.ok(f.markerCalls.some(([method, args]) => method === "remove" && args.name === "clock3" && args.timestamp === "100.000001"));
   clearActiveRun(run.id);
   setSlackThreadLater("C_WORK", "100.000001", "U_MINE", true);
   assert.equal((await f.request(user.url + "/api/completion", { method: "POST", headers: user.post,

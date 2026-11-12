@@ -2,6 +2,13 @@
 
 ## Activity Later (2026-11-12)
 
+- Root marker regression: Later from Activity or native 👎 adds `clock3` on the exact main post;
+  duplicate requests are idempotent. Resume/Reopen/Done removes only the bot clock, completion
+  adds its normal check, and human clocks survive. Migration 50 queues existing postponed rows.
+  Failure/restart retries preserve choices; an overlapping Resume cannot lose clock cleanup.
+  Live ACT-LATER-01/02: inspect root reactions as well as private confirmation and Activity; no
+  clock is required on the answer. Repeat for Claude and Codex, including Slack failure recovery.
+
 - Layout regression: Chromium checks every action’s bounds and overlap at 320, 390, 700, 768,
   1024, 1100, 1440 and 1920 px. Open/browser and Done/Later groups must remain fully visible;
   Later uses 🕒 (`:clock3:`), including Slack Home and the private feedback confirmation.

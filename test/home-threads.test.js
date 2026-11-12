@@ -6,7 +6,7 @@ ensureTestEnv();
 const { getDb, toJson } = await import("../src/db/index.js");
 const { setUser, upsertChannelEntry, getChannelEntry, saveChannelMeta, patchChannelMeta } = await import("../src/config/store.js");
 const { setThreadSudo } = await import("../src/gateway/thread-engine.js");
-const { getSlackThread, indexSlackThread, trackSlackThread, recordSlackThreadOutcome, setSlackThreadDone,
+const { getSlackThread, indexSlackThread, trackSlackThread, recordSlackThreadOutcome, setSlackThreadDone, setSlackThreadLater,
   slackThreadRuntime, slackThreadStatus, updateSlackThreadRootCompletion, slackThreadCandidates, eligibleSlackThreadsForUser, renameSlackThread } = await import("../src/gateway/slack-threads.js");
 const { homeThreadsSnapshot, homeThreadBlocks, registerHomeThreadActions, normalizeThreadView, homeThreadsRefreshKey, activityThreadSnapshot, discoverSlackThreadHistory } = await import("../src/slack/home-threads.js");
 const { createHomeThreadReader } = await import("../src/slack/home-thread-reader.js");
@@ -940,11 +940,11 @@ function markerFixture(messages) {
   const reaction = (method) => async (args) => {
     markerCalls.push([method, args]);
     const root = messages[0];
-    const current = root.reactions?.find((r) => r.name === "white_check_mark");
+    const current = root.reactions?.find((r) => r.name === args.name);
     if (method === "add") {
       if (current?.users?.includes("B_GATEWAY")) throw Object.assign(new Error("duplicate"), { data: { error: "already_reacted" } });
       if (current) { current.count++; current.users.push("B_GATEWAY"); }
-      else (root.reactions ||= []).push({ name: "white_check_mark", count: 1, users: ["B_GATEWAY"] });
+      else (root.reactions ||= []).push({ name: args.name, count: 1, users: ["B_GATEWAY"] });
     } else if (current?.users?.includes("B_GATEWAY")) {
       current.count--; current.users = current.users.filter((u) => u !== "B_GATEWAY");
     } else return { ok: false, error: "no_reaction" };
@@ -1214,4 +1214,100 @@ test("feedback cannot postpone after private access is revoked during the root r
     parsed: { verdict: "down", channel: c.channelId, threadTs: "100.000001" } });
   assert.equal(result, false);
   assert.equal(getSlackThread(c.channelId, "100.000001").later_ms, 0);
+});
+
+
+test("Later feedback mirrors clock3 on the main post, duplicates are harmless and Resume preserves human clocks", async () => {
+  const { postponeThreadFromFeedback } = await import("../src/slack/thread-completion.js");
+  const { syncThreadDoneMarker } = await import("../src/slack/thread-done-marker.js");
+  const c = await channel(); root(c, "100.000001", "U_MINE", { reactions: [{ name: "clock3", count: 1, users: ["U_OTHER"] }] });
+  const messages = [roots.get(`${c.channelId}:100.000001`), { ts: "101.000001", thread_ts: "100.000001", user: "B_GATEWAY" }];
+  markerFixture(messages);
+  const input = { client, body: { user: { id: "U_MINE" }, channel: { id: c.channelId }, message: messages[1] },
+    parsed: { verdict: "down", channel: c.channelId, threadTs: "100.000001" } };
+  assert.equal(await postponeThreadFromFeedback(input), true);
+  assert.equal(await postponeThreadFromFeedback(input), true);
+  assert.deepEqual(messages[0].reactions[0].users, ["U_OTHER", "B_GATEWAY"]);
+  assert.ok(markerCalls.every(([, args]) => args.timestamp === "100.000001" && args.name === "clock3"));
+  assert.equal(getSlackThread(c.channelId, "100.000001").completion_marker_retry_ms, 0);
+  assert.equal(getSlackThread(c.channelId, "100.000001").later_marker, 1);
+  setSlackThreadLater(c.channelId, "100.000001", "U_MINE", false);
+  await syncThreadDoneMarker(client, c.channelId, "100.000001");
+  assert.deepEqual(messages[0].reactions[0], { name: "clock3", count: 1, users: ["U_OTHER"] });
+  assert.equal(getSlackThread(c.channelId, "100.000001").later_marker, 0);
+  assert.equal(getSlackThread(c.channelId, "100.000001").completion_marker_retry_ms, 0);
+});
+
+test("Done replaces the bot's Later clock with its completion check and Reopen leaves neither", async () => {
+  const { syncThreadDoneMarker } = await import("../src/slack/thread-done-marker.js");
+  const c = await channel(); root(c, "100.000001");
+  const messages = [roots.get(`${c.channelId}:100.000001`)]; markerFixture(messages);
+  setSlackThreadLater(c.channelId, "100.000001", "U_MINE", true);
+  await syncThreadDoneMarker(client, c.channelId, "100.000001");
+  setSlackThreadDone(c.channelId, "100.000001", "U_MINE", true);
+  await syncThreadDoneMarker(client, c.channelId, "100.000001");
+  assert.equal(messages[0].reactions.find((r) => r.name === "clock3").count, 0);
+  assert.equal(messages[0].reactions.find((r) => r.name === "white_check_mark").count, 1);
+  setSlackThreadDone(c.channelId, "100.000001", "U_MINE", false);
+  await syncThreadDoneMarker(client, c.channelId, "100.000001");
+  assert.ok(messages[0].reactions.every((r) => r.count === 0));
+});
+
+test("saved Later markers retry after Slack failure and an interrupted removal without losing the choice", async () => {
+  const { retryThreadDoneMarkers } = await import("../src/slack/thread-done-marker.js");
+  const c = await channel(); root(c, "100.000001");
+  const messages = [roots.get(`${c.channelId}:100.000001`)]; markerFixture(messages);
+  setSlackThreadLater(c.channelId, "100.000001", "U_MINE", true);
+  client.reactions.add = async () => ({ ok: false, error: "ratelimited" });
+  await retryThreadDoneMarkers(client);
+  let row = getSlackThread(c.channelId, "100.000001");
+  assert.ok(row.later_ms > 0 && row.later_marker === 1 && row.completion_marker_retry_ms > Date.now());
+  markerFixture(messages);
+  await retryThreadDoneMarkers(client, { now: Date.now() + 60001 });
+  assert.equal(messages[0].reactions[0].name, "clock3");
+  assert.equal(getSlackThread(c.channelId, "100.000001").completion_marker_retry_ms, 0);
+  setSlackThreadLater(c.channelId, "100.000001", "U_MINE", false);
+  // A saved Resume with an installed clock is all a fresh worker needs for cleanup.
+  await retryThreadDoneMarkers(client);
+  row = getSlackThread(c.channelId, "100.000001");
+  assert.equal(row.later_marker, 0); assert.equal(row.completion_marker_retry_ms, 0);
+  assert.equal(messages[0].reactions[0].count, 0);
+});
+
+test("Resume during an in-flight clock write retains cleanup for the next marker worker", async () => {
+  const { syncThreadDoneMarker, retryThreadDoneMarkers } = await import("../src/slack/thread-done-marker.js");
+  const c = await channel(); root(c, "100.000001");
+  const messages = [roots.get(`${c.channelId}:100.000001`)]; markerFixture(messages);
+  const add = client.reactions.add;
+  let finish;
+  client.reactions.add = async (args) => { await new Promise((resolve) => { finish = resolve; }); return add(args); };
+  setSlackThreadLater(c.channelId, "100.000001", "U_MINE", true);
+  const pending = syncThreadDoneMarker(client, c.channelId, "100.000001");
+  await new Promise((resolve) => setImmediate(resolve));
+  setSlackThreadLater(c.channelId, "100.000001", "U_MINE", false);
+  finish(); await pending;
+  assert.ok(getSlackThread(c.channelId, "100.000001").completion_marker_retry_ms > 0);
+  await retryThreadDoneMarkers(client);
+  assert.equal(messages[0].reactions[0].count, 0);
+});
+
+test("Later during in-flight clock removal queues a fresh root clock", async () => {
+  const { syncThreadDoneMarker, retryThreadDoneMarkers } = await import("../src/slack/thread-done-marker.js");
+  const c = await channel(); root(c, "100.000001");
+  const messages = [roots.get(`${c.channelId}:100.000001`)]; markerFixture(messages);
+  setSlackThreadLater(c.channelId, "100.000001", "U_MINE", true);
+  await syncThreadDoneMarker(client, c.channelId, "100.000001");
+  setSlackThreadLater(c.channelId, "100.000001", "U_MINE", false);
+  const remove = client.reactions.remove;
+  let finish;
+  client.reactions.remove = async (args) => { await new Promise((resolve) => { finish = resolve; }); return remove(args); };
+  const pending = syncThreadDoneMarker(client, c.channelId, "100.000001");
+  await new Promise((resolve) => setImmediate(resolve));
+  setSlackThreadLater(c.channelId, "100.000001", "U_MINE", true);
+  finish(); await pending;
+  assert.ok(getSlackThread(c.channelId, "100.000001").completion_marker_retry_ms > 0);
+  await retryThreadDoneMarkers(client);
+  assert.equal(messages[0].reactions[0].count, 1);
+  assert.equal(getSlackThread(c.channelId, "100.000001").later_marker, 1);
+  assert.equal(getSlackThread(c.channelId, "100.000001").completion_marker_retry_ms, 0);
 });
