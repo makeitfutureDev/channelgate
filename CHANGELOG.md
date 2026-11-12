@@ -22,6 +22,9 @@ release gates. Stable promotion and publication require approval of the exact te
 
 ### Beta development notes
 
+- Always show effort beside the model in the Slack live runner and reply footer. When no level
+  is explicitly configured, show `default effort`; runtime settings and CLI flags are unchanged.
+
 - Load up to 100 older tracked threads per indexing action in Slack Home and add **Load older
   threads** to the personal browser Activity page. Indexed history persists across reloads and
   restarts; automatic updates retain their local-only history behavior.

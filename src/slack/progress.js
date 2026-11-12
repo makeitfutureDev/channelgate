@@ -7,7 +7,7 @@ import { createTtlSet, isSlackInvalidBlocksError, postChunkedReply, MAX_SLACK_CH
 import { footerText, footerButtons, footerBlocks } from "./footer.js";
 import { answerImageBlocks, shareAnswerImageFiles } from "./images.js";
 import { setAgentSessionStatus, nativeSessionStatus, SESSION_STATUS } from "./agent-sessions.js";
-import { modelLabel, modelDisplayLabel } from "../gateway/model-info.js";
+import { effortLabel, modelLabel, modelDisplayLabel } from "../gateway/model-info.js";
 import { engineLabel } from "../engines/registry.js";
 import { describeSilence } from "../engines/watchdog.js";
 
@@ -311,10 +311,9 @@ function startStatusAnimation(client, channel, threadTs, { channelSession = fals
         ? modelLabel({ engine, model })
         : `${engineLabel(engine) || engine} CLI default`;
       nativeName = model ? modelDisplayLabel(model, engine) : runtime;
-      if (effort) {
-        nativeName += ` (${effort})`;
-        runtime += ` (${effort})`;
-      }
+      const effortText = effortLabel({ effort });
+      nativeName += ` (${effortText})`;
+      runtime += ` (${effortText})`;
       render();
     },
     afterMessageActivity,

@@ -444,10 +444,11 @@ Keep active/concurrent-run and partial-spend checks: already started work may fi
 must remain recorded. Restore the cap, usage fixtures and transport. Isolated automated evidence does
 not imply native-client or deployed-runtime acceptance.
 
-## Reply footer effort (2026-11-10)
+## Reply footer and live runner effort (2026-11-10; updated 2026-11-12)
 
 Regression: `node --test test/message-cost-visibility.test.js test/runtime-identity-preamble.test.js test/runtime-integration-surfaces.test.js test/platform-run-details.test.js test/skill-runtime.test.js`.
-Confirm effort follows the model with cost shown or hidden, unknown effort is omitted, fresh/resumed
+Also run `test/slack-progress.test.js` and `test/slack-stop-progress.test.js`.
+Confirm effort follows the model with cost shown or hidden, unspecified effort reads `default effort`, fresh/resumed
 results preserve every override layer, and failover/model retries retain the answering attempt's effort.
 
 Live acceptance, separately for Claude and Codex: in a disposable Slack Worker fixture, select a
@@ -455,7 +456,10 @@ compatible model and Low effort via `/model` for this thread. Send "Reply OK", t
 "Reply OK again". Pass: both footers begin `model · low`, followed by optional cost and the
 `ctx:` segment (see Reply footer context). Change thread effort to High and repeat; the next footer says
 `high`, earlier footers retain `low`. Clear all gateway/channel/thread effort choices on the fixture;
-pass: an unspecified CLI default does not invent an effort label. Restore fixture settings.
+pass: both the native running/Stop label (`model (default effort)`) and footer
+(`model · default effort · …`) retain effort text. Observe the assistant status/loading line too.
+Switch from explicit High to a fallback engine with all efforts unset: the old High must disappear
+from both live and final labels. CLI flags and stored settings must remain unchanged. Restore fixture settings.
 Inspect both streamed and classic reply paths; the same shared formatter supplies unattended replies.
 Live execution is separate from the automated regression and is not implied by it.
 
@@ -948,7 +952,7 @@ Automated: `test/skills-workspace-sync.test.js`, `test/code-channels.test.js`, `
 Live fixture (pending, run once with Claude and once with Codex): disposable private channels `cg-qa-linked-source` and `cg-qa-linked-follower`, same empty project directory, harmless test skill and memory sentinel. Set source Worker/network on; give follower different initial skills/memory. Select source folder from follower in Admin UI. Confirm source label/button, inherited controls, no conflict error, equal durable skill tree and source-scoped skill. Prompt follower: “Report your configured engine/model and the available shared test skill; add a test memory fact.” Change source skill/memory, retry, then change follower harness/model and confirm only runtime changes. Reject follower shared-setting edits with source guidance. Open an approved code channel from source and confirm it starts. Unlink follower and verify independent settings resume. Record message links, settings screenshots and engine evidence; no live PASS is claimed by automated checks. Restore/delete disposable fixtures. Cross-platform fixture: share a source with a Teams/Google Chat follower and verify actual-surface preamble while owner guide bytes remain stable. Drive fixture: valid disposable Drive folder, one scheduled job and one state directory, follower manual sync resolves to owner.
 
 
-Running label acceptance (Claude and Codex): in a Slack agent thread with chat:write.customize, select an explicit effort using /model, then ask “Read README.md and explain the startup flow.” Confirm Stop shows the selected model (effort), transitions through live tool/writing phases, and becomes active without an activity suffix after completion or Stop. Repeat with each engine and a different effort; verify fallback replaces model/effort. Pass only with observed Slack evidence. Live execution pending; automated coverage: test/slack-progress.test.js native Stop effort/phase test and test/slack-stop-progress.test.js late-event cancellation fixtures.
+Running label acceptance (Claude and Codex; updated 2026-11-12): in a Slack agent thread with chat:write.customize, select an explicit effort using /model, then ask “Read README.md and explain the startup flow.” Confirm Stop shows the selected model (effort), transitions through live tool/writing phases, and becomes active without an activity suffix after completion or Stop. Repeat with each engine and a different effort; verify fallback replaces model/effort. Clear all effort overrides on the disposable fixture: the runner and final footer must both show `default effort`, including on resumed turns. Pass only with observed Slack evidence. Live execution pending; automated coverage: test/slack-progress.test.js native Stop effort/phase test and test/slack-stop-progress.test.js late-event cancellation fixtures.
 
 ## User-linked dashboard access (2026-10-25)
 

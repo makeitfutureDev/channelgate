@@ -7,6 +7,12 @@ function firstNonEmpty(...values) {
   return "";
 }
 
+// An unset effort delegates to the CLI. Keep that choice visible without inventing a level or
+// changing the runner's flags. Shared by the live runner label and completed-reply statistics.
+export function effortLabel({ effort } = {}) {
+  return firstNonEmpty(effort) || "default effort";
+}
+
 function numberField(value, ...keys) {
   if (!value || typeof value !== "object") return null;
   for (const key of keys) {
