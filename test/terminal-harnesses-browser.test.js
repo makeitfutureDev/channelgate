@@ -26,6 +26,7 @@ test("optional harness settings expose terminal setup and persist independent ac
   const browser = await chromium.launch({ headless: true, executablePath: process.env.CG_BROWSER_EXECUTABLE || undefined, args: ["--no-sandbox"] });
   t.after(() => browser.close());
   const page = await browser.newPage({ viewport: { width: 1440, height: 1000 } });
+  await page.context().grantPermissions(["clipboard-read", "clipboard-write"]);
   page.setDefaultTimeout(10000);
   const errors = [];
   page.on("pageerror", (error) => errors.push(error.message));
@@ -37,6 +38,27 @@ test("optional harness settings expose terminal setup and persist independent ac
   const bedrock = cards.nth(1);
   assert.match(await eu.locator('[data-role="command"]').textContent(), /CODEX_HOME=.*login --device-auth/);
   assert.match(await bedrock.locator('[data-role="description"]').textContent(), /\/setup-bedrock.*API key.*not supported/);
+  for (const card of [eu, bedrock]) {
+    const command = await card.locator('[data-role="command"]').textContent();
+    await card.locator('[data-role="copy-command"]').click();
+    await page.waitForFunction((el) => el.textContent === "Copied", await card.locator('[data-role="copy-state"]').elementHandle());
+    assert.equal(await page.evaluate(() => navigator.clipboard.readText()), command, "copies the exact command from its own card");
+    assert.equal(await card.locator('[data-role="copy-state"]').textContent(), "Copied");
+  }
+  // Exercise the HTTP fallback against the browser's real clipboard, then deny both APIs.
+  await page.evaluate(() => Object.defineProperty(navigator, "clipboard", { configurable: true, value: undefined }));
+  await eu.locator('[data-role="copy-command"]').click();
+  await page.waitForFunction((el) => el.textContent === "Copied", await eu.locator('[data-role="copy-state"]').elementHandle());
+  assert.equal(await eu.locator('[data-role="copy-state"]').textContent(), "Copied");
+  await page.evaluate(() => { delete navigator.clipboard; });
+  assert.equal(await page.evaluate(() => navigator.clipboard.readText()), await eu.locator('[data-role="command"]').textContent());
+  await page.evaluate(() => {
+    Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText: () => Promise.reject(new Error("denied")) } });
+    document.execCommand = () => false;
+  });
+  await bedrock.locator('[data-role="copy-command"]').click();
+  await page.waitForFunction(() => [...document.querySelectorAll('[data-role="copy-state"]')].some((el) => el.textContent.startsWith("Could not copy")));
+  assert.match(await bedrock.locator('[data-role="copy-state"]').textContent(), /copy it manually/);
   const toggles = page.locator("#engine-enabled-box label");
   const euToggle = toggles.filter({ hasText: "Codex EU" }).locator("input");
   const bedrockToggle = toggles.filter({ hasText: "Claude Bedrock" }).locator("input");

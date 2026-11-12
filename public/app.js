@@ -3978,6 +3978,27 @@ let QWEN_ENGINE_IDS = [];
 let QWEN_PROVIDER_CARDS = [];
 let TERMINAL_HARNESS_CARDS = [];
 
+async function copyTerminalCommand(command) {
+  try {
+    await navigator.clipboard.writeText(command);
+    return true;
+  } catch {
+    // Self-hosted HTTP pages may have no Clipboard API. Keep a user-initiated copy available.
+    const input = document.createElement("textarea");
+    input.value = command;
+    input.style.cssText = "position:fixed;opacity:0;pointer-events:none";
+    document.body.append(input);
+    try {
+      input.select();
+      return document.execCommand("copy");
+    } catch {
+      return false;
+    } finally {
+      input.remove();
+    }
+  }
+}
+
 function paintTerminalHarnesses(harnesses, settings) {
   const tpl = document.getElementById("terminal-harness-tpl");
   if (!tpl) return;
@@ -3989,6 +4010,14 @@ function paintTerminalHarnesses(harnesses, settings) {
     at("label").textContent = harness.label;
     at("description").textContent = harness.description;
     at("command").textContent = harness.command;
+    const copy = at("copy-command");
+    copy.setAttribute("aria-label", `Copy ${harness.label} terminal command`);
+    copy.addEventListener("click", async () => {
+      at("copy-state").textContent = "Copying…";
+      const copied = await copyTerminalCommand(harness.command);
+      at("copy-state").textContent = copied ? "Copied" : "Could not copy — select the command and copy it manually.";
+      copy.focus();
+    });
     const modelSelect = at("default-model");
     const effortSelect = at("default-effort");
     syncModelOptions({ modelSelect, engine: harness.id, value: settings[harness.modelField] || "", blankLabel: "provider default" });
