@@ -1058,3 +1058,27 @@ test("Mark All Done rechecks access after root lookup and reports partial Slack 
   assert.deepEqual(await markAllSlackThreadsDone(client, "U_MINE"), { marked: 0, skipped: 1, failed: 0 });
   assert.equal(getSlackThread(c.channelId, "101.000001").done_ms, 0);
 });
+
+
+test("bulk completion stops on Slack rate limits and counts every untouched remaining target", async () => {
+  const { markAllSlackThreadsDone } = await import("../src/slack/home-threads.js");
+  const c = await channel(); root(c, "100.000001"); root(c, "101.000001");
+  let calls = 0;
+  client.conversations.replies = async () => { calls++; throw Object.assign(new Error("rate limited"), { code: "slack_webapi_rate_limited_error" }); };
+  assert.deepEqual(await markAllSlackThreadsDone(client, "U_MINE"), { marked: 0, skipped: 0, failed: 2 });
+  assert.equal(calls, 1); assert.equal(getSlackThread(c.channelId, "100.000001").done_ms, 0);
+});
+
+test("simultaneous bulk confirmations serialize and mark each thread only once", async () => {
+  const { markAllSlackThreadsDone } = await import("../src/slack/home-threads.js");
+  const c = await channel(); root(c, "100.000001");
+  const read = client.conversations.replies;
+  let releaseRead, readStarted;
+  const started = new Promise((resolve) => { readStarted = resolve; });
+  client.conversations.replies = (args) => new Promise((resolve) => { readStarted(); releaseRead = async () => resolve(await read(args)); });
+  const first = markAllSlackThreadsDone(client, "U_MINE"); await started;
+  const second = markAllSlackThreadsDone(client, "U_MINE");
+  await releaseRead();
+  const results = await Promise.all([first, second]);
+  assert.deepEqual(results.map((r) => r.marked), [1, 0]);
+});
