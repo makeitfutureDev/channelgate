@@ -1,7 +1,7 @@
 // Shared compact run statistics for chat replies. Surface-specific controls stay in their adapters.
 import { getShowMessageCost } from "../config/settings.js";
 import { normalizeUsage } from "./usage.js";
-import { contextUsageFor, modelLabel } from "./model-info.js";
+import { contextUsageFor, effortLabel, modelLabel } from "./model-info.js";
 
 // Compact token counts for the footer: 214 → "214", 34799 → "34.8k", 1959778 → "1.96M".
 function fmtTok(n) {
@@ -21,7 +21,7 @@ export function contextText(result) {
 }
 
 // Run stats, as SHORT as possible (width-conscious by user request; no icons — user preference):
-// "gpt-6.1-sol · high · ctx: 167.1k / 475k, 35%" — model · configured effort (when known) · cost
+// "gpt-6.1-sol · high · ctx: 167.1k / 475k, 35%" — model · effort (or "default effort") · cost
 // (only when the admin enabled it; 2 decimals, no ~/est. markers) · context. No duration and no
 // run token totals: the summed input re-counts the history once per model call and says nothing
 // about how full the context is. The resume command never rides here as text — it lives in
@@ -31,8 +31,7 @@ export function footerText(result) {
   // is shown bare (same figure the usage ledger records).
   const est = result.costUSD == null ? normalizeUsage(result) : null;
   const usd = result.costUSD ?? est?.costUSD;
-  const parts = [modelLabel(result)];
-  if (result.effort) parts.push(result.effort);
+  const parts = [modelLabel(result), effortLabel(result)];
   if (getShowMessageCost() && usd != null) parts.push(`$${usd.toFixed(2)}`);
   const ctx = contextText(result);
   if (ctx) parts.push(ctx);

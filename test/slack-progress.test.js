@@ -186,19 +186,19 @@ test("stream progress keeps a persistent toolbox while assistant status stays te
     "tool progress should use native assistant status"
   );
   assert.ok(
-    calls.some((c) => c[0] === "apiCall" && c[1] === "assistant.threads.setStatus" && c[2].status === "is gathering information… · Opus 4.8 1M"),
+    calls.some((c) => c[0] === "apiCall" && c[1] === "assistant.threads.setStatus" && c[2].status === "is gathering information… · Opus 4.8 1M (default effort)"),
     "the compact activity status should identify the resolved model"
   );
   assert.ok(
     calls.some((c) =>
       c[0] === "apiCall" &&
       c[1] === "assistant.threads.setStatus" &&
-      c[2].loading_messages?.[0] === "Opus 4.8 1M · Gathering information…"
+      c[2].loading_messages?.[0] === "Opus 4.8 1M (default effort) · Gathering informat…"
     ),
     "the prominent loading indicator should identify the resolved model"
   );
   assert.ok(
-    calls.some((c) => c[0] === "apiCall" && c[1] === "assistant.threads.setStatus" && c[2].status === "is using Bash(npm test)… · Opus 4.8 1M"),
+    calls.some((c) => c[0] === "apiCall" && c[1] === "assistant.threads.setStatus" && c[2].status === "is using Bash(npm test)… · Opus 4.8 1M (default effort)"),
     "later activity phases should retain the model"
   );
   assert.equal(calls.some((c) => c[0] === "postMessage"), false, "stream mode should not post activity log");
@@ -625,7 +625,7 @@ test("assistant status writes are serialized so the terminal clear is last", asy
   assert.equal(applied.at(-1).status, "active", "native idle must be the last status write");
   const native = applied.filter((p) => p.method === "agents.sessions.setStatus");
   assert.deepEqual(native.map((p) => [p.status, p.username]), [
-    ["processing", "AI agent"], ["active", "GPT-6.1 Sol"],
+    ["processing", "AI agent"], ["active", "GPT-6.1 Sol (default effort)"],
   ], "a coalesced terminal clear carries the latest model and cannot be followed by stale processing");
 });
 
@@ -645,11 +645,11 @@ test("an assistant-thread status line carries thinking summaries and the loading
 
   const statusCalls = calls.filter((c) => c[0] === "assistant.threads.setStatus");
   assert.ok(
-    statusCalls.some((c) => c[1].status === "is thinking — weighing the two schema options · Opus 4.8"),
+    statusCalls.some((c) => c[1].status === "is thinking — weighing the two schema options · Opus 4.8 (default effort)"),
     "the status should carry the reasoning gist"
   );
   assert.ok(
-    statusCalls.some((c) => (c[1].loading_messages || []).includes("Opus 4.8 · Thinking — weighing the two schema opt…")),
+    statusCalls.some((c) => (c[1].loading_messages || []).includes("Opus 4.8 (default effort) · Thinking — weighing t…")),
     "the prominent loading line should mirror the live activity, model first"
   );
   assert.equal(statusCalls.at(-1)[1].status, "", "stopping the run clears the temporary status");
@@ -730,15 +730,15 @@ test("stream progress updates its model label when the runtime falls back to Cod
 
   const statuses = calls.filter((c) => c[0] === "assistant.threads.setStatus").map((c) => c[1].status);
   const loadingMessages = calls.filter((c) => c[0] === "assistant.threads.setStatus").flatMap((c) => c[1].loading_messages || []);
-  assert.ok(statuses.includes("is gathering information… · Sonnet 4.6"));
-  assert.ok(statuses.includes("is gathering information… · gpt-5.4"));
-  assert.ok(loadingMessages.includes("Sonnet 4.6 · Gathering information…"));
-  assert.ok(loadingMessages.includes("gpt-5.4 · Gathering information…"));
+  assert.ok(statuses.includes("is gathering information… · Sonnet 4.6 (default effort)"));
+  assert.ok(statuses.includes("is gathering information… · gpt-5.4 (default effort)"));
+  assert.ok(loadingMessages.includes("Sonnet 4.6 (default effort) · Gathering informati…"));
+  assert.ok(loadingMessages.includes("gpt-5.4 (default effort) · Gathering information…"));
   const native = calls.filter(([method]) => method === "agents.sessions.setStatus").map(([, payload]) => payload);
-  assert.ok(native.some((p) => p.status === "processing" && p.username === "Sonnet 4.6"));
-  assert.ok(native.some((p) => p.status === "processing" && p.username === "GPT-5.4"));
+  assert.ok(native.some((p) => p.status === "processing" && p.username === "Sonnet 4.6 (default effort)"));
+  assert.ok(native.some((p) => p.status === "processing" && p.username === "GPT-5.4 (default effort)"));
   assert.equal(native.at(-1).status, "active");
-  assert.equal(native.at(-1).username, "GPT-5.4");
+  assert.equal(native.at(-1).username, "GPT-5.4 (default effort)");
 });
 
 test("a reused session starts with an honest generic name, then an engine default if no model is reported", async () => {
@@ -759,8 +759,8 @@ test("a reused session starts with an honest generic name, then an engine defaul
   await cardReady();
   await second.stop();
   const names = calls.filter(([method]) => method === "agents.sessions.setStatus").map(([, p]) => [p.status, p.username]);
-  assert.deepEqual(names, [["processing", "AI agent"], ["processing", "Opus 1M"], ["active", "Opus 1M"],
-    ["processing", "AI agent"], ["processing", "Codex CLI default"], ["active", "Codex CLI default"]]);
+  assert.deepEqual(names, [["processing", "AI agent"], ["processing", "Opus 1M (default effort)"], ["active", "Opus 1M (default effort)"],
+    ["processing", "AI agent"], ["processing", "Codex CLI default (default effort)"], ["active", "Codex CLI default (default effort)"]]);
 });
 
 test("completed-run footer carries the fixed labelled menu: Files, Variables, Settings", async () => {
@@ -3129,6 +3129,29 @@ test("native Stop label carries resolved effort and live phases, then clears act
   }
   assert.equal(native.at(-1).status, "active");
   assert.equal(native.at(-1).username, "Opus 4.8 (high)");
+});
+
+test("live runner replaces explicit effort with the CLI default on fallback", async () => {
+  const calls = [];
+  const client = {
+    apiCall: async (method, payload) => calls.push([method, payload]),
+    chatStream: () => ({ append: async () => {}, stop: async () => {} }),
+    chat: { postMessage: async () => {} },
+  };
+  const progress = startProgress("stream", client, "C_EFFORT_DEFAULT", "111.222", { authorId: "U1", teamId: "T1" });
+  try {
+    progress.onRuntimeResolved({ engine: "claude", model: "claude-opus-4-8", effort: "high" });
+    await cardReady();
+    progress.onRuntimeResolved({ engine: "codex", model: "gpt-6.1-sol" });
+    progress.onEvent({ kind: "tool_use", name: "Read", target: "README.md" });
+    await cardReady();
+    const native = calls.filter(([method]) => method === "agents.sessions.setStatus").map(([, payload]) => payload);
+    assert.equal(native.at(-1).username, "GPT-6.1 Sol (default effort) · Using tools");
+    const statuses = calls.filter(([method]) => method === "assistant.threads.setStatus").map(([, payload]) => payload);
+    assert.match(statuses.at(-1).status, /gpt-6\.1-sol \(default effort\)/);
+    assert.ok(statuses.at(-1).loading_messages.every((line) => line.includes("(default effort)")));
+    assert.doesNotMatch(JSON.stringify(statuses.at(-1)), /high/);
+  } finally { await progress.stop(); }
 });
 
 test("parsed shell tasks keep native tool status while real subagents coordinate", async () => {

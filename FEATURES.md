@@ -268,9 +268,10 @@ including both spending-limit refusal flags. A refusal after an earlier engine a
 attempt visible as failed/blocked rather than claiming no engine started. Successful agent reports and failed/partial work retain
 their existing delivery paths. This does not cancel already admitted work or guarantee a hard billing cap.
 
-- Reply statistics show configured effort immediately after the model (for example,
-  `gpt-6.1-terra · low · 26s · 314.9k/562 · 66%`). The value comes from the answering
-  attempt, including retries and engine fallback; unspecified effort is omitted.
+- Reply statistics always show effort immediately after the model (for example,
+  `gpt-6.1-terra · low · ctx: 120k / 475k, 25%`). The value comes from the answering
+  attempt, including retries and engine fallback; an unspecified level reads `default effort`.
+  This describes the CLI-selected setting without claiming a numeric level or changing CLI flags.
 
 Reaction subscription tokens include `chat.bot` for Workspace Events API access alongside the admin-approved `chat.app.messages.readonly`; ordinary messaging tokens remain separate.
 
@@ -455,7 +456,7 @@ Codex estimates include GPT-6.1 Terra ($1 / $0.05 / $5 per million input / cache
 - Admin and Slack settings identify the source; the folder picker explains linking. Durable files use owner identity/platform; cross-platform turns receive actual surface capabilities separately. Drive sync has one owner. Unlinking retains the effective setup; owner departure promotes a remaining conversation with its saved setup.
 
 
-Slack’s native running/Stop label shows the resolved model and explicitly configured effort, plus compact live phases (Thinking, Using tools, Writing, Waiting, Queued, Coordinating agents). Engine fallback replaces both model and effort; unset effort is omitted rather than guessed.
+Slack’s native running/Stop label always shows the resolved model and effort, plus compact live phases (Thinking, Using tools, Writing, Waiting, Queued, Coordinating agents). Engine fallback replaces both model and effort; an unset effort reads `default effort`, matching the final reply footer. The assistant status and loading line use the same label. Runtime selection and CLI flags are unchanged.
 
 Claude task lifecycle messages distinguish shell work from subagents: explicit non-agent tasks,
 including foreground and background `local_bash`, never create agent activity rows or the
