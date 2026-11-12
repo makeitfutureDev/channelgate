@@ -2,6 +2,10 @@
 
 ## Activity Later (2026-11-12)
 
+- Layout regression: Chromium checks every action’s bounds and overlap at 320, 390, 700, 768,
+  1024, 1100, 1440 and 1920 px. Open/browser and Done/Later groups must remain fully visible;
+  Later uses 🕒 (`:clock3:`), including Slack Home and the private feedback confirmation.
+
 - Automated: `test/activity.test.js`, `test/activity-page.test.js`, `test/home-threads.test.js`
   and `test/slack-agent-sessions.test.js`. Verify owned Delay/Resume and native negative feedback,
   Active/Later/All open counts, persisted history, live runtime precedence, Done clearing Later,

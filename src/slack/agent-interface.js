@@ -100,7 +100,7 @@ export function registerAgentInterfaceHandlers(app, {
           channel,
           user,
           ...(threadTs ? { thread_ts: threadTs } : {}),
-          text: postponed ? "💤 Moved to Later. Resume it from My Activity when you’re ready. Running work continues."
+          text: postponed ? "🕒 Moved to Later. Resume it from My Activity when you’re ready. Running work continues."
             : "Thanks for the 👎 — reply in this thread with what was off and I'll fix it.",
         }).catch(() => {});
       }
