@@ -104,7 +104,7 @@ export function resetActivityStateForTests() {
 export function createActivityRouter({
   getClient, getTeamId, getBaseUrl = getPublicUrl,
   snapshot = activityThreadSnapshot, refreshKey = homeThreadsRefreshKey, readSubscriptions = readSubscriptionUsage,
-  now = Date.now, pollMs = 1000, accessRefreshMs = 15_000, maxStreams = 100,
+  now = Date.now, pollMs = 1000, accessRefreshMs = 15_000, maxStreams = 100, drainTimeoutMs = 30_000,
 } = {}) {
   if (typeof getClient !== "function" || typeof getTeamId !== "function") throw new Error("Activity requires its live Slack connection");
   const router = express.Router({ caseSensitive: true });
@@ -319,6 +319,16 @@ export function createActivityRouter({
     const stream = { id: req.params.id, ownerId: initial.session.ownerId, end: () => res.end(), changed: queue };
     streams.add(stream);
     const endAccess = () => { if (!closed) { res.write('event: access-ended\ndata: {}\n\n'); res.end(); } };
+    // A false `write` only means the socket buffer is full (any snapshot above the stream's
+    // high-water mark trips it on a healthy connection): wait for the buffer to drain rather
+    // than closing, which would make the browser reconnect and refetch the same snapshot forever.
+    const drained = () => new Promise((resolve) => {
+      if (closed || res.destroyed) return resolve(false);
+      const settle = (ok) => { clearTimeout(limit); res.off("drain", onDrain); res.off("close", onClose); resolve(ok); };
+      const onDrain = () => settle(true), onClose = () => settle(false);
+      const limit = setTimeout(() => settle(false), drainTimeoutMs);
+      res.on("drain", onDrain); res.on("close", onClose);
+    });
     const send = async () => {
       dirty = true;
       if (sending || closed) return;
@@ -333,7 +343,7 @@ export function createActivityRouter({
           if (version !== configVersion) { dirty = true; continue; }
           lastKey = key; lastAccess = now();
           if (key !== refreshKey(initial.session.ownerId)) dirty = true;
-          if (!res.write(`event: threads\ndata: ${JSON.stringify(data)}\n\n`)) { res.end(); break; }
+          if (!res.write(`event: threads\ndata: ${JSON.stringify(data)}\n\n`) && !(await drained())) { res.end(); break; }
         }
       } catch (error) {
         if (error.status === 401 || error.status === 403) endAccess();

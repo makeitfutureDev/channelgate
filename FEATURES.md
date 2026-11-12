@@ -1,5 +1,15 @@
 # ChannelGate — Features
 
+## Activity live updates survive large snapshots (2026-11-12)
+
+The personal Activity dashboard's live stream (`GET /activity/:id/stream`) keeps one connection
+open regardless of snapshot size. When a `threads` event exceeds the socket's write buffer, the
+server waits for the buffer to drain (bounded by `drainTimeoutMs`, 30 s by default) instead of
+closing the response. A browser that stops reading for longer than that, or whose connection
+closes, is still dropped. Previously any snapshot above the high-water mark closed the stream on a
+healthy connection, so the page cycled between **Reconnecting…** and **Live updates** every two
+seconds (the stream's `retry` hint) and refetched the same snapshot on every reconnect.
+
 ## Postpone conversations in Activity (2026-11-12)
 
 My Activity includes a **🕒 Later** tab and compact **🕒 Later** row buttons. Row actions group

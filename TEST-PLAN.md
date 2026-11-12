@@ -1,5 +1,20 @@
 # ChannelGate — Test Plan
 
+## Activity live updates survive large snapshots (2026-11-12)
+
+- Automated: `test/activity.test.js` ("SSE keeps a healthy connection open while a large snapshot
+  drains…"). Fixture: the isolated Express Activity router with a `snapshot` override returning
+  400 rows of 500-character titles (over 128 KB per event, above any default high-water mark),
+  `pollMs: 20`, `accessRefreshMs: 40`. Expected: the first `threads` event arrives complete, and
+  after advancing the clock a second event arrives on the SAME connection. Pass rule: no
+  "SSE ended before threads"; the test fails on the previous code, which ended the response
+  whenever `res.write()` returned false. Engine-independent: no engine is involved.
+- Live **ACTIVITY-SSE-01**, engine-independent: in a personal browser Activity session whose
+  snapshot is large (load older threads until well over 100 rows), watch the connection badge for
+  one minute. Expected: it stays on **Live updates** (or **Updates delayed** only while the tab is
+  hidden); it never alternates with **Reconnecting…**, and the Network tab shows one long-lived
+  `/stream` request rather than a new one every two seconds. Pending live execution.
+
 ## Activity Later (2026-11-12)
 
 - Root marker regression: Later from Activity or native 👎 adds `clock3` on the exact main post;
