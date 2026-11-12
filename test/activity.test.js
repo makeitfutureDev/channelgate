@@ -395,6 +395,107 @@ test("private Home button and REST expose only the viewer's eligible threads wit
   assert.equal((await f.request(user.url + "/api/threads", { headers: user.headers })).status, 403);
 });
 
+test("Open thread targets the newest exact reply on each click and includes its conversation context", async (t) => {
+  const f = await fixture(t); await f.root();
+  const user = await f.login(), root = f.roots.get("C_WORK:100.000001");
+  const url = user.url + "/open/C_WORK/100.000001", calls = [];
+  const originalRead = f.client.conversations.replies;
+  f.client.conversations.replies = async (args) => { calls.push(args); return originalRead(args); };
+  // The locally indexed date remains the root's date; exact live metadata must win.
+  root.reply_count = 800; root.latest_reply = "1794471234.123456";
+  const linkCalls = [];
+  f.client.chat.getPermalink = async (args) => {
+    linkCalls.push(args);
+    return { permalink: `https://example.slack.com/archives/C_WORK/p${args.message_ts.replace(".", "")}?thread_ts=100.000001&cid=C_WORK` };
+  };
+  for (const latest of ["1794471234.123456", "1794471234.123457"]) {
+    root.latest_reply = latest;
+    const response = await f.request(url, { headers: user.headers });
+    assert.equal(response.status, 303);
+    const target = new URL(response.headers.get("location"));
+    assert.equal(target.pathname, "/archives/C_WORK/p" + latest.replace(".", ""));
+    assert.equal(target.searchParams.get("thread_ts"), root.ts);
+    assert.equal(target.searchParams.get("cid"), "C_WORK");
+    assert.deepEqual(linkCalls.at(-1), { channel: "C_WORK", message_ts: latest });
+  }
+  assert.deepEqual(calls, Array(2).fill({ channel: "C_WORK", ts: root.ts, limit: 1 }), "one root lookup per click even with hundreds of replies");
+  delete root.latest_reply; root.reply_count = 0;
+  const response = await f.request(url, { headers: user.headers });
+  assert.equal(response.status, 303);
+  const target = new URL(response.headers.get("location"));
+  assert.equal(target.pathname, "/archives/C_WORK/p100000001");
+  assert.equal(target.searchParams.get("thread_ts"), root.ts, "empty thread still opens its conversation pane");
+});
+
+test("Open thread refuses missing roots, changed owners, invalid latest metadata and foreign threads", async (t) => {
+  const f = await fixture(t); await f.root();
+  const user = await f.login(), path = user.url + "/open/C_WORK/100.000001";
+  const original = { ...f.roots.get("C_WORK:100.000001") };
+  const variants = [null, { ...original, user: "U_OTHER" }, { ...original, bot_id: "B_OTHER" },
+    { ...original, latest_reply: "bad" }, { ...original, latest_reply: "99.000001" }];
+  for (const root of variants) {
+    f.roots.set("C_WORK:100.000001", root);
+    const response = await f.request(path, { headers: user.headers });
+    assert.ok([403, 503].includes(response.status));
+    assert.equal(response.headers.get("location"), null);
+  }
+  assert.equal(f.reads.includes("link"), false);
+  f.roots.set("C_WORK:100.000001", original);
+  await f.root("C_OTHER", "101.000001", "U_OTHER");
+  const before = f.reads.length;
+  assert.equal((await f.request(user.url + "/open/C_OTHER/101.000001", { headers: user.headers })).status, 403);
+  assert.equal(f.reads.length, before, "foreign thread denied before Slack reads");
+});
+
+test("Open thread paginates to the latest reply when optional latest_reply metadata is absent", async (t) => {
+  const f = await fixture(t); await f.root();
+  const user = await f.login(), root = { ...f.roots.get("C_WORK:100.000001"), reply_count: 3 }, calls = [];
+  f.client.conversations.replies = async (args) => {
+    calls.push(args);
+    if (args.limit === 1) return { messages: [root] };
+    if (!args.cursor) return { messages: [root, { ts: "101.123456", thread_ts: root.ts }], has_more: true, response_metadata: { next_cursor: "next" } };
+    assert.equal(args.cursor, "next");
+    return { messages: [{ ts: "102.123456", thread_ts: root.ts }, { ts: "102.123457", thread_ts: root.ts }], has_more: false };
+  };
+  const response = await f.request(user.url + "/open/C_WORK/100.000001", { headers: user.headers });
+  assert.equal(response.status, 303);
+  const target = new URL(response.headers.get("location"));
+  assert.equal(target.pathname, "/archives/C_WORK/p102123457");
+  assert.equal(target.searchParams.get("thread_ts"), root.ts);
+  assert.deepEqual(calls.map((args) => [args.limit, args.cursor]), [[1, undefined], [100, undefined], [100, "next"]]);
+});
+
+test("Open thread never redirects from incomplete, repeated or failed reply pagination", async (t) => {
+  const f = await fixture(t); await f.root();
+  const user = await f.login(), root = { ...f.roots.get("C_WORK:100.000001"), reply_count: 3 };
+  for (const failedPage of [
+    { messages: [root], has_more: true },
+    { messages: [root], response_metadata: { next_cursor: "repeat" } },
+    { ok: false, error: "ratelimited" },
+    { messages: [] },
+    { messages: [{ ts: "101.000001", thread_ts: "999.000001" }] },
+  ]) {
+    f.client.conversations.replies = async ({ limit }) => limit === 1 ? { messages: [root] } : failedPage;
+    const response = await f.request(user.url + "/open/C_WORK/100.000001", { headers: user.headers });
+    assert.notEqual(response.status, 303);
+    assert.equal(response.headers.get("location"), null);
+  }
+});
+
+test("Open thread rechecks private membership after a delayed latest-reply lookup", async (t) => {
+  const f = await fixture(t); await f.root("G_PRIVATE", "100.000001", "U_MINE", true, "group");
+  f.members.set("G_PRIVATE", ["U_MINE"]);
+  const user = await f.login(), gate = defer(), started = defer();
+  f.client.conversations.replies = async () => {
+    started.resolve(); await gate.promise;
+    return { messages: [{ ts: "100.000001", user: "U_MINE", latest_reply: "101.123456", reply_count: 1 }] };
+  };
+  const pending = f.request(user.url + "/open/G_PRIVATE/100.000001", { headers: user.headers });
+  await started.promise; f.members.set("G_PRIVATE", []); gate.resolve();
+  const response = await pending;
+  assert.equal(response.status, 403); assert.equal(response.headers.get("location"), null);
+});
+
 test("Done requires CSRF and fresh root ownership and shares persistent completion with Slack", async (t) => {
   const f = await fixture(t); await f.root(); await f.root("C_OTHER", "101.000001", "U_OTHER");
   const user = await f.login(), path = user.url + "/api/completion";

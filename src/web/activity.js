@@ -11,6 +11,7 @@ import { onActiveRunsChanged } from "../gateway/active-runs.js";
 import { clearDone, markDone } from "../gateway/followups.js";
 import { accessContext, activityThreadSnapshot, homeThreadsRefreshKey } from "../slack/home-threads.js";
 import { createHomeThreadReader } from "../slack/home-thread-reader.js";
+import { isSlackTs } from "../slack/thread-keys.js";
 import { isLoopbackHost, timingSafeEqualStr } from "./security.js";
 import { activityPage } from "./activity-page.js";
 import { activityGroupOrder, activityGroupOrderVersion, validActivityGroupOrder } from "./activity-order.js";
@@ -63,6 +64,30 @@ function headers(res, nonce = "") {
 }
 function unavailable(res, status = 401) {
   return res.status(status).json({ error: "Activity is unavailable. Open a new dashboard link from Slack Activity." });
+}
+
+async function latestMessageTs(client, channelId, root) {
+  if (root.latest_reply) {
+    if (typeof root.latest_reply !== "string" || !isSlackTs(root.latest_reply) || Number(root.latest_reply) < Number(root.ts)) throw new Error("Invalid latest reply");
+    return root.latest_reply;
+  }
+  if (!(root.reply_count > 0)) return root.ts;
+  // latest_reply is optional in Slack's documented response. Only that fallback needs a
+  // transcript walk; require complete pagination before claiming to have the newest reply.
+  let latest = root.ts, cursor;
+  const seen = new Set();
+  do {
+    const page = await client.conversations.replies({ channel: channelId, ts: root.ts, limit: 100, ...(cursor ? { cursor } : {}) });
+    if (page?.ok === false || !Array.isArray(page?.messages) || !page.messages.length) throw new Error("Thread messages unavailable");
+    for (const message of page.messages) {
+      if (typeof message.ts !== "string" || !isSlackTs(message.ts) || (message.thread_ts && message.thread_ts !== root.ts)) throw new Error("Invalid thread message");
+      if (Number(message.ts) > Number(latest)) latest = message.ts;
+    }
+    cursor = page.response_metadata?.next_cursor?.trim();
+    if ((page.has_more && !cursor) || (cursor && seen.has(cursor))) throw new Error("Incomplete thread pagination");
+    if (cursor) seen.add(cursor);
+  } while (cursor);
+  return latest;
 }
 function launchPage() {
   const nonce = token(16);
@@ -181,9 +206,19 @@ export function createActivityRouter({
     try {
       const { session, client } = await context(req);
       await ownedThread(client, session, req.params.channelId, req.params.threadTs);
-      const link = await reader.permalink(client, req.params.channelId, req.params.threadTs);
+      // Resolve the latest reply at click time. The index's millisecond activity date loses
+      // Slack's microsecond precision and is not a message identifier. Root metadata usually
+      // supplies latest_reply; only its absence on a nonempty thread requires pagination.
+      const page = await client.conversations.replies({ channel: req.params.channelId, ts: req.params.threadTs, limit: 1 });
+      const root = page?.ok !== false && page?.messages?.find((message) => message.ts === req.params.threadTs);
+      if (!root || root.user !== session.ownerId || root.bot_id) return unavailable(res, 403);
+      const latest = await latestMessageTs(client, req.params.channelId, root);
+      const link = await reader.permalink(client, req.params.channelId, latest);
       const target = new URL(link.permalink);
       if (target.protocol !== "https:" || target.username || target.password || !target.hostname.endsWith(".slack.com") || !target.pathname.startsWith("/archives/")) return unavailable(res, 403);
+      // Keep the thread pane open even for a root with no replies yet.
+      target.searchParams.set("thread_ts", req.params.threadTs);
+      target.searchParams.set("cid", req.params.channelId);
       await recheckOwned(req, client, session, req.params.channelId, req.params.threadTs);
       return res.redirect(303, target.toString());
     } catch (error) { return unavailable(res, error.status || 403); }

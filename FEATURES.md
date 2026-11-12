@@ -64,6 +64,14 @@ Pending reads/results are reused after a timeout. Each lookup checks current acc
 ownership comes from the human root, never the run author. Indexed roots stay local on refresh.
 Private membership is rechecked on snapshots and at least every 15 seconds while connected;
 Open resolves a cached real Slack permalink after fresh authorization. Disconnected streams retry.
+In the personal browser dashboard, Open thread and the conversation title target the latest
+reply inside its thread pane. Each click reads the root's live `latest_reply` metadata
+(`conversations.replies`, limit 1), preserves the exact Slack timestamp, and obtains that message's
+permalink. If Slack omits optional latest-reply metadata on a nonempty thread, the click paginates
+replies completely before choosing the newest message. New replies are picked up on the next click
+without dashboard reload; no-reply roots still open with explicit thread context. Missing roots,
+changed owners, malformed metadata or incomplete pagination do not redirect; current access is
+rechecked after the Slack lookups. Refreshes add no Slack reads.
 The snapshot is bounded to 1,000 authorized threads and indicates truncation.
 
 Activity and its private-link landing page use the ChannelGate admin brand: dark teal surfaces,
