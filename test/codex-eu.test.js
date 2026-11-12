@@ -19,16 +19,18 @@ const auth = (plan) => JSON.stringify({ tokens: { access_token: jwt(plan), refre
 const write = (body) => { mkdirSync(codexEuLoginHome(), { recursive: true, mode: 0o700 }); writeFileSync(file, body, { mode: 0o600 }); };
 function target() { return { backend: "container", meta: { channelId: "C_EU", engine: "codex-eu", codexAuthSource: "channel" }, runtime: { spawn() {}, capabilities: { isolated: true }, helperCommand: () => ({ command: "node", args: ["/helper.js"] }) }, container: { home: "/home/agent", codexHome: "/home/agent/.codex-eu", codexEuHome: "/home/agent/.codex-eu", credentialMode: { codex: "missing" }, egress: { active: true, mode: "proxy", network: "none" } } }; }
 
-test("Codex EU checks only its dedicated Enterprise file and never substitutes an API key or default login", async () => {
+test("Codex EU checks only its dedicated ChatGPT file and never substitutes an API key or default login", async () => {
   const seen = [];
   const absent = await codexEuCredentialState({ readFileImpl: async (name) => { seen.push(name); throw Object.assign(new Error("missing"), { code: "ENOENT" }); } });
   assert.equal(absent.authenticated, false);
   assert.deepEqual(seen, [file]);
   assert.match(absent.detail, /--device-auth/);
-  for (const body of [JSON.stringify({ OPENAI_API_KEY: "fixture-api" }), auth("plus"), auth("business"), "malformed"]) {
+  for (const body of [JSON.stringify({ OPENAI_API_KEY: "fixture-api" }), JSON.stringify({ tokens: {} }), JSON.stringify({ tokens: { access_token: "invalid-jwt" } }), "malformed"]) {
     assert.equal((await codexEuCredentialState({ readFileImpl: async () => body })).authenticated, false);
   }
-  assert.equal((await codexEuCredentialState({ readFileImpl: async () => auth("enterprise") })).authenticated, true);
+  for (const plan of ["enterprise", "self_serve_business_prolite", "business", "plus", "pro"]) {
+    assert.equal((await codexEuCredentialState({ readFileImpl: async () => auth(plan) })).authenticated, true, `${plan} subscription is accepted`);
+  }
   assert.deepEqual(codexLoginCandidatesFor({ engine: "codex-eu", codexAuthSource: "channel" }), [file]);
 });
 
@@ -63,8 +65,10 @@ test("EU adapter is a separate optional harness and cannot fail over or share ph
   assert.equal((await eu.selectionReadiness()).ready, false);
   write(auth("enterprise"));
   assert.equal((await eu.selectionReadiness()).ready, true);
-  write(auth("plus"));
-  assert.equal((await eu.selectionReadiness()).ready, false, "readiness must reflect rotation without TTL");
+  write(auth("self_serve_business_prolite"));
+  assert.equal((await eu.selectionReadiness()).ready, true, "Pro Lite login is selectable without Enterprise");
+  write(JSON.stringify({ tokens: {} }));
+  assert.equal((await eu.selectionReadiness()).ready, false, "readiness must reflect logout without TTL");
 });
 
 test("EU never mounts its full login in any container, including selected legacy bridge channels", () => {
@@ -100,8 +104,10 @@ test("EU proxy grants keep their login identity while the live channel selects o
   assert.equal(row.secretName, "CODEX_EU_ACCESS_TOKEN");
   const value = await grants.resolveGrantValue(row, { metaFor: async () => ({ codexAuthSource: "channel" }), codexRelayToken: async (opts) => { assert.deepEqual(opts.candidates, [file]); return { token: "fixture-eu-live", source: "chatgpt" }; } });
   assert.equal(value, "fixture-eu-live");
-  write(auth("plus"));
-  assert.equal(await grants.resolveGrantValue(row), "", "a cached Enterprise grant pauses immediately after wrong-account rotation");
+  write(auth("self_serve_business_prolite"));
+  assert.equal(await grants.resolveGrantValue(row, { codexRelayToken: async () => ({ token: "fixture-prolite-live", source: "chatgpt" }) }), "fixture-prolite-live", "Pro Lite credentials reach the dedicated relay");
+  write(JSON.stringify({ tokens: {} }));
+  assert.equal(await grants.resolveGrantValue(row), "", "a cached subscription grant pauses immediately after logout");
 });
 
 test("relay writer installs only EU state without replacing the ordinary Codex login", async () => {
@@ -114,8 +120,8 @@ test("relay writer installs only EU state without replacing the ordinary Codex l
 });
 
 
-test("the EU adapter routes a real run through the dedicated state while retaining managed MCP payloads", async () => {
-  write(auth("enterprise"));
+test("the EU adapter routes a Pro Lite run through the dedicated state while retaining managed MCP payloads", async () => {
+  write(auth("self_serve_business_prolite"));
   let actual;
   const eu = makeCodexEuAdapter({ ...requireAdapter("codex"), run: async (ctx) => { actual = ctx; return { text: "done" }; } });
   const sharedTarget = target();

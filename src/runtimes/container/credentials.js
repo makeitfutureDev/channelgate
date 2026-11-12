@@ -205,7 +205,7 @@ export function credentialError(target, engineId, env = process.env) {
     return new Error(CLAUDE_MISSING_MESSAGE);
   }
   if (engineId === "codex-eu") {
-    if (!egressActive(target)) return new Error("Codex EU requires the container egress proxy to relay its isolated Enterprise login. Enable proxy egress or use an authorized /sudo host thread.");
+    if (!egressActive(target)) return new Error("Codex EU requires the container egress proxy to relay its isolated ChatGPT login. Enable proxy egress or use an authorized /sudo host thread.");
     const file = readable(path.join(codexEuLoginHome(), "auth.json"));
     return file ? null : new Error(`Codex EU is not signed in — run \`${codexEuLoginHint()}\` on the gateway host.`);
   }

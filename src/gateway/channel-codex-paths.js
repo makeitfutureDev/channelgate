@@ -23,7 +23,7 @@ export function codexAuthProcessEnv(home) {
 }
 
 
-// Optional Enterprise harness: one dedicated login, never the daemon or channel account.
+// Optional ChatGPT harness: one dedicated login, never the daemon or channel account.
 export function codexEuLoginHome() {
   return path.join(gatewayRoot(), "engine-state", "codex-eu-login");
 }

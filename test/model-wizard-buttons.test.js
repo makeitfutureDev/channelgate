@@ -111,3 +111,33 @@ test("the picker patterns still match the retired static_select action ids", () 
   assert.ok(EFFORT_PICKER_ACTION_PATTERN.test("cg_effort_pick"));
   assert.ok(EFFORT_PICKER_ACTION_PATTERN.test("cg_effort_pick_3"));
 });
+
+
+test("wizard descriptions and posted text follow live harness toggles and channel approvals", async () => {
+  const { saveSettings, getSettings } = await import("../src/config/settings.js");
+  const { modelWizardScopeBlocks, modelWizardEngineBlocks, modelWizardText, postModelWizard } = await import("../src/slack/model-wizard.js");
+  const before = getSettings().engineEnabled;
+  const meta = { approvedEngines: ["claude", "codex", "codex-eu"] };
+  const messages = [];
+  const client = { chat: { postMessage: async (message) => messages.push(message) } };
+  try {
+    saveSettings({ engineEnabled: { "codex-eu": false, "claude-bedrock": false } });
+    await postModelWizard(client, { channel: "C_WIZARD", meta });
+    assert.ok(!messages.at(-1).text.includes("Codex EU"));
+    saveSettings({ engineEnabled: { "codex-eu": true, "claude-bedrock": true } });
+    await postModelWizard(client, { channel: "C_WIZARD", meta });
+    assert.ok(messages.at(-1).text.includes("Codex EU"));
+    assert.ok(!messages.at(-1).text.includes("Claude Bedrock"), "unapproved harness is absent from the introduction");
+    assert.ok(JSON.stringify(modelWizardScopeBlocks({ meta })).includes("Codex EU"));
+    assert.ok(!JSON.stringify(modelWizardScopeBlocks({ meta })).includes("Claude Bedrock"));
+    assert.ok(allButtons(modelWizardEngineBlocks({ meta })).some(button => button.text.text === "Codex EU"));
+    saveSettings({ engineEnabled: { "codex-eu": false } });
+    await postModelWizard(client, { channel: "C_WIZARD", meta });
+    assert.ok(!messages.at(-1).text.includes("Codex EU"));
+    assert.equal(modelWizardText({ codexAuthSource: "channel" }), "Change the Codex model: pick scope, model, then effort.");
+    await postModelWizard(client, { channel: "C_WIZARD", meta: { codexAuthSource: "channel" } });
+    assert.equal(messages.at(-1).text, modelWizardText({ codexAuthSource: "channel" }));
+  } finally {
+    saveSettings({ engineEnabled: before });
+  }
+});

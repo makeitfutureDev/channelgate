@@ -11,7 +11,7 @@ export function terminalHarnessSetup() {
       id: "codex-eu", label: "Codex EU", modelField: "defaultCodexEuModel", effortField: "defaultCodexEuEffort",
       directory: codexEuLoginHome(),
       command: `install -d -m 700 ${shellQuote(codexEuLoginHome())} && CODEX_HOME=${shellQuote(codexEuLoginHome())} codex -c cli_auth_credentials_store='"file"' login --device-auth`,
-      description: "Sign in on the gateway host as the gateway service user, choosing your ChatGPT Enterprise workspace. Configure EU data and inference residency in that workspace. A separate login alone does not enforce residency. This harness never falls back to another account.",
+      description: "Sign in on the gateway host as the gateway service user, choosing your intended ChatGPT workspace (including Pro Lite). Enterprise is not required. EU data and inference residency depend on that workspace’s available controls and configuration. A separate login alone does not enforce residency. This harness never falls back to another account.",
     },
     {
       id: "claude-bedrock", label: "Claude Bedrock", modelField: "defaultBedrockModel", effortField: "defaultBedrockEffort",

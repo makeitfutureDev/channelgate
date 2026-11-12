@@ -4,7 +4,7 @@ The executable source of truth is the validated manifest in `src/engines/adapter
 the Admin API/UI consume that registry.
 
 Two additional opt-in manifests reuse the native runners: **Codex EU** (`codex-eu`) requires a
-dedicated ChatGPT Enterprise login, and **Claude Bedrock** (`claude-bedrock`) reads an isolated
+dedicated ChatGPT login (including Pro Lite; no Enterprise requirement), and **Claude Bedrock** (`claude-bedrock`) reads an isolated
 terminal setup with a regional Bedrock bearer API key. Both are cold, keep separate session
 directories and have no failover edges. Container authentication requires proxy egress; `/sudo`
 uses the host provider setup. Codex EU retains Codex token accounting; Bedrock records tokens

@@ -21,7 +21,7 @@ export { isAuthorized };
 import { requestApproval, handleApprovalClick, handleApprovalCommentSubmit, APPROVAL_ACTIONS, setApprovalClient } from "./approvals.js";
 // Re-exported for existing importers (web/app.js, tests) — moved to slack/approvals.js.
 export { requestApproval };
-import { MODEL_WIZARD_SCOPE_CHANNEL_ACTION, MODEL_WIZARD_SCOPE_THREAD_ACTION, MODEL_WIZARD_ENGINE_CLAUDE_ACTION, MODEL_WIZARD_ENGINE_CODEX_ACTION, MODEL_WIZARD_ENGINE_RESET_ACTION, MODEL_WIZARD_BACK_ACTION_PATTERN, MODEL_PICKER_ACTION_PATTERN, EFFORT_PICKER_ACTION_PATTERN, ENGINE_PICKER_ACTION, MODEL_WIZARD_TEXT, modelWizardScopeBlocks, handleModelWizard, modelOptionsForEngine } from "./model-wizard.js";
+import { MODEL_WIZARD_SCOPE_CHANNEL_ACTION, MODEL_WIZARD_SCOPE_THREAD_ACTION, MODEL_WIZARD_ENGINE_CLAUDE_ACTION, MODEL_WIZARD_ENGINE_CODEX_ACTION, MODEL_WIZARD_ENGINE_RESET_ACTION, MODEL_WIZARD_BACK_ACTION_PATTERN, MODEL_PICKER_ACTION_PATTERN, EFFORT_PICKER_ACTION_PATTERN, ENGINE_PICKER_ACTION, modelWizardText, modelWizardScopeBlocks, handleModelWizard, modelOptionsForEngine } from "./model-wizard.js";
 // Re-exported for existing importers (tests) — moved to slack/model-wizard.js.
 export { modelOptionsForEngine };
 import { getSessionMap } from "../gateway/sessions.js";
@@ -3286,7 +3286,7 @@ async function connectAndWire(app) {
         return;
       }
       const threadTs = command.thread_ts || "";
-      await respond({ response_type: "ephemeral", text: MODEL_WIZARD_TEXT, blocks: modelWizardScopeBlocks({ threadTs, meta }) });
+      await respond({ response_type: "ephemeral", text: modelWizardText(meta), blocks: modelWizardScopeBlocks({ threadTs, meta }) });
     } catch (e) {
       console.error("[slack] /model error:", e.message);
       await respond({ response_type: "ephemeral", text: "Couldn't open the model wizard — check the gateway logs." });
