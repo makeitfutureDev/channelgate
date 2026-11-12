@@ -1265,4 +1265,30 @@ export const migrations = [
       db.exec("UPDATE slack_threads SET completion_marker_retry_ms=1 WHERE later_ms>0");
     },
   },
+  {
+    version: 51,
+    up(db) {
+      // Activity credentials never share administrator accounts or sessions.
+      db.exec(`
+        CREATE TABLE activity_accounts (
+          id TEXT PRIMARY KEY,
+          owner_id TEXT NOT NULL,
+          team_id TEXT NOT NULL,
+          origin TEXT NOT NULL,
+          UNIQUE(owner_id, team_id, origin)
+        );
+        CREATE TABLE activity_passkeys (
+          id TEXT PRIMARY KEY,
+          account_id TEXT NOT NULL REFERENCES activity_accounts(id) ON DELETE CASCADE,
+          public_key BLOB NOT NULL,
+          counter INTEGER NOT NULL,
+          transports TEXT NOT NULL DEFAULT '[]',
+          name TEXT NOT NULL,
+          created_ms INTEGER NOT NULL,
+          last_used_ms INTEGER
+        );
+        CREATE INDEX idx_activity_passkeys_account ON activity_passkeys(account_id);
+      `);
+    },
+  },
 ];

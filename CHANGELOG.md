@@ -2,6 +2,10 @@
 
 ## 0.6.5 — candidate, pending approval
 
+- Add passkey setup and management from private Activity dashboard links, plus a dedicated
+  Activity sign-in page for returning users. Expired links offer passkey sign-in; Activity
+  credentials remain separate from administrator credentials.
+
 - Flush short answer text to the live Slack reply after 1.5 s of engine silence and before each
   tool call. The Slack SDK batches ~256 characters in memory with no clock, so a sentence written
   before a long think or tool run stayed invisible and the reply looked cut off mid-word.
