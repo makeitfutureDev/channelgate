@@ -1271,7 +1271,7 @@ test("feedback cannot postpone after private access is revoked during the root r
 });
 
 
-test("a fresh unmentioned human reply resumes Later, removes only the bot clock and refreshes Active", async () => {
+test("only a fresh human message addressed to the agent resumes Later and removes its clock", async () => {
   const { observeSlackThreadMessage } = await import("../src/slack/thread-activity.js");
   const { syncThreadDoneMarker } = await import("../src/slack/thread-done-marker.js");
   const c = await channel();
@@ -1283,7 +1283,14 @@ test("a fresh unmentioned human reply resumes Later, removes only the bot clock 
   const key = homeThreadsRefreshKey("U_MINE");
   getDb().prepare("INSERT INTO active_runs(id,data) VALUES(?,?)")
     .run("resumed-later", toJson({ channelId: c.channelId, threadKey: "100.000001" }));
-  await observeSlackThreadMessage(client, { channel: c.channelId, thread_ts: "100.000001", ts: "201.000001", user: "U_MINE", text: "Let's continue" }, "B_GATEWAY");
+  const message = { channel: c.channelId, thread_ts: "100.000001", ts: "201.000001", user: "U_MINE", text: "Let's continue" };
+  for (const text of ["Let's continue", "<@UOTHER> please continue"]) {
+    await observeSlackThreadMessage(client, { ...message, text }, "UGATEWAY");
+    assert.equal(getSlackThread(c.channelId, "100.000001").later_ms, 200000);
+    assert.equal(getSlackThread(c.channelId, "100.000001").later_marker, 1);
+    assert.equal(markerCalls.length, 1, "ordinary replies leave the root clock intact");
+  }
+  await observeSlackThreadMessage(client, { ...message, text: "<@UGATEWAY> Let's continue" }, "UGATEWAY");
   const row = getSlackThread(c.channelId, "100.000001");
   assert.equal(row.later_ms, 0); assert.equal(row.later_marker, 0);
   assert.equal(row.completion_marker_retry_ms, 0);
@@ -1293,10 +1300,10 @@ test("a fresh unmentioned human reply resumes Later, removes only the bot clock 
   assert.deepEqual(messages[0].reactions[0], { name: "clock3", count: 1, users: ["U_OTHER"] });
   assert.deepEqual(markerCalls.at(-1), ["remove", { channel: c.channelId, timestamp: "100.000001", name: "clock3" }]);
   const calls = markerCalls.length;
-  await observeSlackThreadMessage(client, { type: "app_mention", channel: c.channelId, thread_ts: "100.000001", ts: "201.000001", user: "U_MINE" }, "B_GATEWAY");
+  await observeSlackThreadMessage(client, { ...message, type: "app_mention", text: "<@UGATEWAY> Let's continue" }, "UGATEWAY");
   assert.equal(markerCalls.length, calls, "a companion mention envelope does not duplicate marker writes");
   setSlackThreadLater(c.channelId, "100.000001", "U_MINE", true, 202000);
-  await observeSlackThreadMessage(client, { type: "app_mention", channel: c.channelId, thread_ts: "100.000001", ts: "203.000001", user: "U_MINE" }, "B_GATEWAY");
+  await observeSlackThreadMessage(client, { ...message, type: "app_mention", ts: "203.000001", text: "<@UGATEWAY> Continue" }, "UGATEWAY");
   assert.equal(getSlackThread(c.channelId, "100.000001").later_ms, 0, "mention-only delivery resumes too");
 });
 
@@ -1304,13 +1311,13 @@ test("bots, background outcomes, edits and old deliveries leave Later set", asyn
   const { observeSlackThreadMessage } = await import("../src/slack/thread-activity.js");
   const c = await channel(); root(c, "100.000001");
   setSlackThreadLater(c.channelId, "100.000001", "U_MINE", true, 200000);
-  const base = { channel: c.channelId, thread_ts: "100.000001", ts: "201.000001", user: "U_MINE" };
+  const base = { channel: c.channelId, thread_ts: "100.000001", ts: "201.000001", user: "U_MINE", text: "<@UGATEWAY> Continue" };
   for (const event of [
-    { user: "B_GATEWAY" }, { bot_id: "B_OTHER" }, { app_id: "A_OTHER" },
+    { user: "UGATEWAY" }, { bot_id: "B_OTHER" }, { app_id: "A_OTHER" },
     { subtype: "bot_message" }, { user: undefined }, { subtype: "message_changed" },
     { subtype: "message_deleted" }, { ts: "199.000001" }, { ts: "200.000000" }, { ts: "invalid" },
   ]) {
-    await observeSlackThreadMessage(client, { ...base, ...event }, "B_GATEWAY");
+    await observeSlackThreadMessage(client, { ...base, ...event }, "UGATEWAY");
     assert.equal(getSlackThread(c.channelId, "100.000001").later_ms, 200000);
   }
   recordSlackThreadOutcome(c.channelId, "100.000001", { at: 300000 });
@@ -1323,13 +1330,18 @@ test("human attachments and broadcasts resume Later in DMs and private channels 
   for (const [channelId, type, subtype] of [["D_LATER", "im", "file_share"], ["G_LATER", "group", "thread_broadcast"], ["C_LATER", "channel", "me_message"]]) {
     const c = await channel(channelId, type); root(c, "100.000001");
     setSlackThreadLater(channelId, "100.000001", "U_MINE", true, 200000);
-    const event = { channel: channelId, thread_ts: "100.000001", ts: "201.000001", user: "U_OTHER", subtype };
-    await observeSlackThreadMessage(client, event, "B_GATEWAY");
+    const event = { channel: channelId, channel_type: type, thread_ts: "100.000001", ts: "201.000001", user: "U_OTHER", subtype,
+      text: type === "im" ? "Continue" : "<@UGATEWAY> Continue" };
+    if (type !== "im") {
+      await observeSlackThreadMessage(client, { ...event, text: "An ordinary attachment or broadcast" }, "UGATEWAY");
+      assert.equal(getSlackThread(channelId, "100.000001").later_ms, 200000);
+    }
+    await observeSlackThreadMessage(client, event, "UGATEWAY");
     assert.equal(getSlackThread(channelId, "100.000001").later_ms, 0);
     setSlackThreadDone(channelId, "100.000001", "U_MINE", true, 202000);
-    await observeSlackThreadMessage(client, { ...event, ts: "203.000001" }, "B_GATEWAY");
+    await observeSlackThreadMessage(client, { ...event, ts: "203.000001" }, "UGATEWAY");
     assert.equal(getSlackThread(channelId, "100.000001").done_ms, 202000);
-    await observeSlackThreadMessage(client, { ...event, thread_ts: "999.000001" }, "B_GATEWAY");
+    await observeSlackThreadMessage(client, { ...event, thread_ts: "999.000001" }, "UGATEWAY");
     assert.equal(getSlackThread(channelId, "999.000001"), null);
   }
 });
@@ -1342,8 +1354,8 @@ test("a human reply keeps clock cleanup durable after Slack failure and redelive
   setSlackThreadLater(c.channelId, "100.000001", "U_MINE", true, 200000);
   await syncThreadDoneMarker(client, c.channelId, "100.000001");
   client.reactions.remove = async () => ({ ok: false, error: "ratelimited" });
-  const event = { channel: c.channelId, thread_ts: "100.000001", ts: "201.000001", user: "U_MINE" };
-  await observeSlackThreadMessage(client, event, "B_GATEWAY");
+  const event = { channel: c.channelId, thread_ts: "100.000001", ts: "201.000001", user: "U_MINE", text: "<@UGATEWAY> Continue" };
+  await observeSlackThreadMessage(client, event, "UGATEWAY");
   const row = getSlackThread(c.channelId, "100.000001");
   assert.equal(row.later_ms, 0); assert.equal(row.later_marker, 1);
   assert.ok(row.completion_marker_retry_ms > Date.now());
@@ -1351,7 +1363,7 @@ test("a human reply keeps clock cleanup durable after Slack failure and redelive
   await retryThreadDoneMarkers(client, { now: Date.now() + 60001 });
   assert.equal(getSlackThread(c.channelId, "100.000001").later_marker, 0);
   setSlackThreadLater(c.channelId, "100.000001", "U_MINE", true, 202000);
-  await observeSlackThreadMessage(client, event, "B_GATEWAY");
+  await observeSlackThreadMessage(client, event, "UGATEWAY");
   assert.equal(getSlackThread(c.channelId, "100.000001").later_ms, 202000);
 });
 

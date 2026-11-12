@@ -2,8 +2,9 @@
 
 ## 0.6.5 — candidate, pending approval
 
-- Return Later conversations to Active when a fresh human message arrives, including without
-  an @mention. Remove the bot's root clock with durable retries and preserve human reactions.
+- Return Later conversations to Active when a fresh human message addresses the agent: require
+  its @mention in shared conversations, or a direct message to it. Ordinary replies preserve
+  Later. Remove the bot's root clock with durable retries and preserve human reactions.
 
 - Compact Slack fork roots to `↪️ {User} Fork: {message}`. Move the source link and engine
   handoff note into the first thread reply, disable previews, and omit the repeated request.
