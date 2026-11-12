@@ -50,10 +50,12 @@ My Activity includes a **Later** tab and compact **Later** row buttons (purple �
 2026-11-13). Row actions group Open in Slack, and Done with Later/Resume; both groups wrap within the
 cell without clipping, including tablet widths. **Delay for later** moves an owned conversation out of
 Active; **Resume** restores its current Working, Waiting, Error or Idle status. Later remains in
-All open and persists across bot replies, history refreshes and gateway restarts. A fresh human
-message in the thread automatically restores Active and removes the bot's root clock, even without
-an @mention and in DMs/private channels. Old deliveries, edits, deletions and background outcomes
-do not resume it. Postponement has no timer and does not stop running work. Done/Reopen clears it.
+All open and persists across ordinary thread replies, bot replies, history refreshes and gateway
+restarts. A fresh human message addressed to the agent restores Active and removes the bot's root
+clock: public/private/group conversations require an explicit @mention of this agent; a DM to the
+agent is already addressed to it. Messages mentioning another agent, old deliveries, edits,
+deletions and background outcomes do not resume it. Postponement has no timer and does not stop
+running work. Done/Reopen clears it.
 
 The root owner's native **👎 answer-feedback button** also moves the conversation to Later,
 including an explicitly completed conversation, and privately confirms the change. Other readers
@@ -62,7 +64,7 @@ behavior is preserved. Button values cannot choose another channel/thread; every
 current ownership, conversation admission, private membership and sudo access. Browser changes
 also require the personal Activity session, Origin and CSRF token. Moving to Later adds the bot's
 🕒 (`clock3`) reaction to the main Slack post, including from an answer's 👎 button. Resume,
-Reopen, a fresh human message or completion removes only the bot's clock; human clocks remain. Saved choices survive
+Reopen, a fresh human message to the agent or completion removes only the bot's clock; human clocks remain. Saved choices survive
 Slack failures and the bounded marker worker retries after restart/reconnect. Previously postponed
 threads receive a clock after upgrade. Clock reactions are display markers, not action triggers.
 
