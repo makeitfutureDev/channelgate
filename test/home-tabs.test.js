@@ -31,6 +31,28 @@ test("Activity is the default and every section loads only its selected content"
   }
 });
 
+test("the private dashboard launch follows Help in the Activity navigation row only", async () => {
+  const { activityHomeActions } = await import("../src/slack/home-activity.js");
+  const launch = activityHomeActions({ ownerId: "U_VIEWER", teamId: "T_WORK", baseUrl: "https://dashboard.example", approved: true });
+  for (const tab of [undefined, ...Object.keys(HOME_TABS)]) {
+    const view = await buildHomeTabView({ tab, userId: "U_VIEWER", role: "approved", activityActions: launch,
+      sections: Object.fromEntries(Object.keys(HOME_TABS).map((key) => [key, async () => []])) });
+    const rows = view.blocks.filter((block) => block.type === "actions");
+    assert.equal(rows.length, 1, "launch must not occupy a separate row");
+    const nav = rows[0].elements;
+    const activity = !tab || tab === "activity";
+    assert.equal(nav.length, activity ? 6 : 5);
+    assert.equal(nav[4].text.text, "Help & settings");
+    if (activity) {
+      assert.equal(nav[5].action_id, "cg_activity_open");
+      assert.equal(nav[5].text.text, "Open live dashboard");
+      assert.equal(nav[5].url, launch[0].url, "preserve the private launch grant");
+    }
+  }
+  assert.deepEqual(activityHomeActions({ ownerId: "U_VIEWER", teamId: "T_WORK", baseUrl: "", approved: true }), []);
+  assert.deepEqual(activityHomeActions({ ownerId: "U_VIEWER", teamId: "T_WORK", baseUrl: "https://dashboard.example", approved: false }), []);
+});
+
 test("tab clicks acknowledge first and publish only for the authenticated clicking viewer", async () => {
   const app = fakeApp(); const calls = [];
   registerHomeTabActions(app, { publishHome: async (_client, userId, state) => calls.push({ userId, state }) });

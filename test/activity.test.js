@@ -11,7 +11,7 @@ const { registerAgentInterfaceHandlers } = await import("../src/slack/agent-inte
 const { setThreadSudo } = await import("../src/gateway/thread-engine.js");
 const { activityThreadSnapshot } = await import("../src/slack/home-threads.js");
 const { recordActiveRun, clearActiveRun } = await import("../src/gateway/active-runs.js");
-const { activityHomeBlocks } = await import("../src/slack/home-activity.js");
+const { activityHomeActions } = await import("../src/slack/home-activity.js");
 const { handleReplyDashboardAction, registerReplyDashboardActions, REPLY_DASHBOARD_ACTION_ID } = await import("../src/slack/reply-dashboard.js");
 const { menuButtons } = await import("../src/slack/footer.js");
 const { createActivityRouter, createActivityGrantUrl, resetActivityStateForTests, ACTIVITY_GRANT_TTL_MS, ACTIVITY_SESSION_TTL_MS } = await import("../src/web/activity.js");
@@ -378,9 +378,9 @@ test("administrator Activity retains its own auth while private paths enforce Ho
 
 test("private Home button and REST expose only the viewer's eligible threads with real-link resolution on click", async (t) => {
   const f = await fixture(t);
-  const blocks = activityHomeBlocks({ ownerId: "U_MINE", teamId: "T_WORK", baseUrl: f.base, approved: true });
-  assert.equal(blocks[0].elements[0].text.text, "Open live dashboard");
-  assert.equal(activityHomeBlocks({ ownerId: "U_MINE", teamId: "T_WORK", baseUrl: f.base, approved: false }).length, 0);
+  const blocks = activityHomeActions({ ownerId: "U_MINE", teamId: "T_WORK", baseUrl: f.base, approved: true });
+  assert.equal(blocks[0].text.text, "Open live dashboard");
+  assert.equal(activityHomeActions({ ownerId: "U_MINE", teamId: "T_WORK", baseUrl: f.base, approved: false }).length, 0);
   await f.root(); await f.root("C_HUMAN", "101.000001", "U_MINE", false);
   await f.root("C_OTHER", "102.000001", "U_OTHER");
   const user = await f.login(), other = await f.login("U_OTHER");
