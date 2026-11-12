@@ -202,7 +202,7 @@ test("mobile Activity counts reflect durable worker events on completed roots wi
   for (const engine of ["claude", "codex"]) {
     const run = { channelId: "C_ACTIVITY", slug: entry.slug, threadKey: root.ts, engine, authorId: root.user };
     recordActiveRun("mobile-worker", run);
-    await page.locator("#summary").filter({ hasText: "1 open · 1 working · 0 waiting" }).waitFor();
+    await page.locator("#summary").filter({ hasText: "1 active · 0 later · 1 working · 0 waiting" }).waitFor();
     assert.equal(await page.locator("tbody tr .pill").innerText(), "Working");
     if (engine === "claude" && process.env.CG_ACTIVITY_SCREENSHOT) {
       await page.screenshot({ path: process.env.CG_ACTIVITY_SCREENSHOT, fullPage: true });
@@ -212,10 +212,10 @@ test("mobile Activity counts reflect durable worker events on completed roots wi
       await page.setViewportSize({ width: 390, height: 844 });
     }
     recordActiveRun("mobile-worker", { ...run, awaitingChoice: true });
-    await page.locator("#summary").filter({ hasText: "1 open · 0 working · 1 waiting" }).waitFor();
+    await page.locator("#summary").filter({ hasText: "1 active · 0 later · 0 working · 1 waiting" }).waitFor();
     assert.equal(await page.locator("tbody tr .pill").innerText(), "Waiting");
     clearActiveRun("mobile-worker");
-    await page.locator("#summary").filter({ hasText: "0 open · 0 working · 0 waiting" }).waitFor();
+    await page.locator("#summary").filter({ hasText: "0 active · 0 later · 0 working · 0 waiting" }).waitFor();
     assert.equal(page.url(), sessionUrl);
   }
   assert.equal(await page.evaluate(() => globalThis.document.documentElement.scrollWidth <= globalThis.innerWidth), true);
