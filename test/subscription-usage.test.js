@@ -19,7 +19,7 @@ const { default: express } = await import("express");
 const createSubscriptionUsageReader = (options) => createReader({ engines: () => ["claude", "codex"], ...options });
 
 const START = Date.parse("2026-11-11T12:00:00Z");
-const TTL = 300_000;
+const TTL = 600_000;
 const success = (body) => new Response(JSON.stringify(body), { headers: { "Content-Type": "application/json" } });
 const claudeBody = (used = 25) => ({ five_hour: { utilization: used, resets_at: "2026-11-11T17:00:00Z" } });
 const codexBody = (used = 40) => ({ plan_type: "plus", rate_limit: { primary_window: { used_percent: used, reset_at: 1794416400, limit_window_seconds: 18000 } } });
@@ -124,12 +124,12 @@ test("outbound calls use exact fixed endpoints, bearer auth and provider-specifi
   assert.deepEqual(requests[0].options.headers, { Authorization: "Bearer fixture-claude-access", Accept: "application/json", "User-Agent": "ChannelGate/subscription-usage", "anthropic-beta": "oauth-2025-04-20" });
   assert.deepEqual(requests[1].options.headers, { Authorization: "Bearer fixture-codex-access", Accept: "application/json", "User-Agent": "ChannelGate/subscription-usage", "ChatGPT-Account-Id": "fixture-account" });
   for (const { options } of requests) { assert.equal(options.redirect, "error"); assert.ok(options.signal instanceof AbortSignal); assert.equal(options.signal.aborted, false); }
-  assert.equal(result.refreshAfterSeconds, 300);
+  assert.equal(result.refreshAfterSeconds, 600);
   assert.ok(result.subscriptions.every((row) => row.status === "ok" && row.checkedAt === "2026-11-11T12:00:00.000Z" && row.updatedAt === row.checkedAt));
   assert.doesNotMatch(JSON.stringify(result), /fixture-(?:claude|codex)-access|fixture-account|Authorization/);
 });
 
-test("successful readings cache for five minutes and concurrent readers share provider requests", async () => {
+test("successful readings cache for ten minutes and concurrent readers share provider requests", async () => {
   let clock = START, count = 0;
   const gate = deferred();
   const read = createSubscriptionUsageReader({ credentials: connected, now: () => clock, fetchImpl: async (url) => { count++; await gate.promise; return success(url.includes("anthropic") ? claudeBody() : codexBody()); } });
@@ -156,10 +156,10 @@ test("Codex without an account identifier omits the account-selection header", a
   assert.equal(Object.hasOwn(headers, "ChatGPT-Account-Id"), false);
 });
 
-test("rate-limit Retry-After cooldown supports seconds and HTTP dates with five-minute and one-hour bounds", async () => {
+test("rate-limit Retry-After cooldown supports seconds and HTTP dates with ten-minute and one-hour bounds", async () => {
   for (const [header, cooldown] of [
     ["1", TTL], ["900", 900_000], ["999999999", 3_600_000],
-    [new Date(START + 600_000).toUTCString(), 600_000], ["invalid", TTL],
+    [new Date(START + 900_000).toUTCString(), 900_000], ["invalid", TTL],
   ]) {
     let clock = START, count = 0;
     const read = createSubscriptionUsageReader({ credentials: (provider) => provider === "claude" ? connected(provider) : { kind: "none" }, now: () => clock,
@@ -361,7 +361,7 @@ test("poller explicitly labels the previous reading when a later API request fai
 });
 
 test("subscription endpoint returns no-store JSON from its injected reader", async () => {
-  const payload = { subscriptions: [], refreshAfterSeconds: 300 };
+  const payload = { subscriptions: [], refreshAfterSeconds: 600 };
   const app = express();
   let reads = 0;
   app.use("/api", createSubscriptionsRouter({ readUsage: async () => { reads++; return payload; } }));
@@ -374,6 +374,68 @@ test("subscription endpoint returns no-store JSON from its injected reader", asy
     assert.deepEqual(await response.json(), payload);
     assert.equal(reads, 1);
   } finally { await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve())); }
+});
+
+test("admin and multiple Activity sessions share ten-minute quota checks and rate-limit cooldowns", async (t) => {
+  const { setUser } = await import("../src/config/store.js");
+  const { createActivityRouter, createActivityGrantUrl, resetActivityStateForTests } = await import("../src/web/activity.js");
+  let clock = START, count = 0, limited = false;
+  let gate = deferred(), started = deferred();
+  const read = createSubscriptionUsageReader({ credentials: connected, now: () => clock,
+    fetchImpl: async (url) => {
+      count++;
+      if (count % 2 === 0) started.resolve();
+      await gate.promise;
+      return limited ? new Response("private upstream error", { status: 429 }) : success(url.includes("anthropic") ? claudeBody() : codexBody());
+    },
+  });
+  const app = express();
+  app.use("/api", createSubscriptionsRouter({ readUsage: read }));
+  let base;
+  app.use("/activity", createActivityRouter({ getClient: () => ({}), getTeamId: () => "TSHAREDCACHE", getBaseUrl: () => base, readSubscriptions: read }));
+  const server = app.listen(0, "127.0.0.1");
+  await once(server, "listening");
+  base = `http://127.0.0.1:${server.address().port}`;
+  t.after(() => { resetActivityStateForTests(); server.closeAllConnections(); return new Promise((resolve) => server.close(resolve)); });
+  const targets = [{ url: base + "/api/subscriptions", headers: {} }];
+  for (const ownerId of ["USHAREDCACHE1", "USHAREDCACHE2"]) {
+    await setUser(ownerId, { approved: true });
+    const launch = createActivityGrantUrl({ baseUrl: base, ownerId, teamId: "TSHAREDCACHE" });
+    const exchange = await fetch(base + "/activity/exchange", { method: "POST", headers: { Origin: base, "Content-Type": "application/json" }, body: JSON.stringify({ token: new URL(launch).hash.slice(1) }) });
+    assert.equal(exchange.status, 200);
+    const session = await exchange.json();
+    targets.push({ url: base + session.url + "/api/subscriptions", headers: { cookie: exchange.headers.get("set-cookie").split(";")[0] } });
+  }
+  const batch = () => Promise.all(Array.from({ length: 30 }, async (_, i) => {
+    const target = targets[i % targets.length];
+    const response = await fetch(target.url, { headers: target.headers });
+    assert.equal(response.status, 200);
+    return response.json();
+  }));
+  const initial = batch();
+  await started.promise;
+  assert.equal(count, 2, "one pending quota lookup per harness across all pages");
+  gate.resolve();
+  const first = await initial;
+  assert.ok(first.every((value) => JSON.stringify(value) === JSON.stringify(first[0])));
+  clock += TTL - 1;
+  assert.deepEqual(await batch(), first);
+  assert.equal(count, 2, "repeated Refresh requests use the gateway cache");
+  clock++;
+  gate = deferred(); started = deferred(); limited = true;
+  const refresh = batch();
+  await started.promise;
+  assert.equal(count, 4, "expiry still coalesces the next provider checks");
+  gate.resolve();
+  const stale = await refresh;
+  assert.ok(stale.every((value) => value.subscriptions.every((row) => row.stale && row.updatedAt === first[0].subscriptions[0].updatedAt && row.windows.length)));
+  clock += TTL - 1;
+  assert.deepEqual(await batch(), stale);
+  assert.equal(count, 4, "429 cooldown is shared by every viewer");
+  clock++; limited = false;
+  const recovered = await batch();
+  assert.equal(count, 6);
+  assert.ok(recovered.every((value) => value.subscriptions.every((row) => row.status === "ok" && !row.stale)));
 });
 
 test("real admin subscription route admits an administrator and rejects signed-out, run-key and demoted-member requests", async (t) => {

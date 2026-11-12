@@ -2,6 +2,9 @@
 
 ## 0.6.5 — candidate, pending approval
 
+- Refresh subscription usage every ten minutes through one gateway cache shared by admin and
+  Activity viewers, coalescing simultaneous checks and retaining stale readings during rate limits.
+
 - Add a 🕒 reaction to the main Slack message when its conversation moves to Later. Remove the
   bot's clock on Resume or completion; retry failed marker writes and repair existing Later rows.
 

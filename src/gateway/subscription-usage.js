@@ -17,7 +17,7 @@ const ENDPOINTS = Object.freeze({
 const CODEX_ACCOUNTS_ENDPOINT = "https://chatgpt.com/backend-api/wham/accounts/check";
 const CLAUDE_PROFILE_ENDPOINT = "https://api.anthropic.com/api/oauth/profile";
 const CODEX_RESETS_ENDPOINT = "https://chatgpt.com/backend-api/wham/rate-limit-reset-credits";
-const CACHE_MS = 300_000;
+const CACHE_MS = 600_000;
 const text = (value) => typeof value === "string" ? value.slice(0, 80) : "";
 const percent = (value) => typeof value === "number" && Number.isFinite(value) && value >= 0 && value <= 100 ? value : null;
 const count = (value) => Number.isSafeInteger(value) && value >= 0 ? value : null;
@@ -268,4 +268,6 @@ export function createSubscriptionUsageReader({ credentials = daemonCredentials,
   };
 }
 
+// One daemon-wide cache for admin and every Activity viewer, including manual refreshes.
+// Keep this singleton: constructing a reader per request defeats caching and coalescing.
 export const readSubscriptionUsage = createSubscriptionUsageReader();

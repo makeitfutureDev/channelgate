@@ -33,7 +33,7 @@ test("subscription page supports direct entry, refresh, history and a narrow vie
   let reads = 0;
   await page.route("**/api/subscriptions", (route) => {
     reads += 1;
-    return route.fulfill({ json: { refreshAfterSeconds: 300, subscriptions: [
+    return route.fulfill({ json: { refreshAfterSeconds: 600, subscriptions: [
       { provider: "claude", name: "Claude", account: { email: "claude@example.com", workspace: "Claude workspace" }, plan: "Max", status: "ok", windows: [{ label: "Current session (5 hours)", usedPercent: 42, resetsAt: new Date(Date.now() + 3600_000).toISOString() }], updatedAt: new Date().toISOString() },
       { provider: "codex", name: "Codex", account: { email: "codex@example.com", workspace: "Codex workspace" }, plan: "Pro", status: "ok", windows: [{ label: "Weekly", usedPercent: 91, resetsAt: new Date(Date.now() + 86400_000).toISOString() }], updatedAt: new Date().toISOString() },
       { provider: "codex-eu", name: "Codex EU", account: { email: "eu@example.com", workspace: "EU workspace" }, plan: "Pro Lite", status: "ok", windows: [{ label: "EU weekly", usedPercent: 24, resetsAt: new Date(Date.now() + 86400_000).toISOString() }] },

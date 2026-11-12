@@ -304,6 +304,13 @@ never alter production credentials or send real access tokens to fixture servers
   no admin API privileges and no access to other users' threads. API cache remains shared with
   the admin page; opening the viewer cannot trigger an engine or token refresh. Exercise these
   routes in `test/activity.test.js` plus the generated-browser and Chromium Activity suites.
+- Shared gateway cache (2026-11-12): concurrently request admin Subscriptions and two approved
+  Activity sessions, including manual Refresh and reload. Require identical readings and only
+  one upstream quota request per harness for ten minutes, even at the exact expiry boundary.
+  Browser polling waits ten minutes. A 429 retains the last successful reading with its original
+  timestamp and stale warning; repeated page requests make no provider calls during the cooldown
+  (at least ten minutes, or longer Retry-After up to one hour). Credential changes and disconnects
+  still invalidate old-account readings. No browser directly calls a provider.
 - Reset provider fixtures: Claude `limits[]` numeric percentages replace matching flat legacy
   windows; `cedar_ember.grants[]` preserves held reset counts even when unavailable until the
   limit is hit, records paused/usable flags separately, and uses `ends_at` for expiry, never the normal weekly reset date. Codex `rate_limit_reset_credits.available_count`
@@ -320,9 +327,9 @@ never alter production credentials or send real access tokens to fixture servers
   and change its display identity with the same token; require cache invalidation/no prior-account
   label. Verify matching bearer/account headers, fixed GET URLs, redirect refusal and response
   bounds; JSON excludes raw token/claims/IDs and unrelated account-list entries. Identity requests
-  share the five-minute quota cache and the Activity post-read authorization check remains intact.
+  share the ten-minute quota cache and the Activity post-read authorization check remains intact.
 - Live admin acceptance: an authorized admin opens Subscriptions and compares each reported
-  quota/reset to that provider's own usage screen for the gateway login. Confirm five-minute
+  quota/reset to that provider's own usage screen for the gateway login. Confirm ten-minute
   cache behavior, independent provider failure, stale timestamps and explicit missing/API-key/
   expired states using an isolated fixture. Inspect the response for absence of tokens, raw
   upstream bodies, account IDs, credential paths and fingerprints. The page must never start an

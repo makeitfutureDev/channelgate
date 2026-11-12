@@ -55,7 +55,7 @@ function browser(fetchImpl = async () => response({ rows: [] }), csrf = "fixture
     close() { this.closed = true; }
     snapshot(rows, extra = {}) { this.fire("threads", { data: JSON.stringify({ rows, ...extra }) }); }
   }
-  const requests = [], timers = [], browserListeners = {};
+  const requests = [], timers = [], timeoutDelays = [], browserListeners = {};
   const page = activityPage({ sessionId: "session", csrf });
   const script = /<script nonce="[^"]+">([\s\S]*?)<\/script>/.exec(page.html)?.[1];
   assert.ok(script);
@@ -63,9 +63,9 @@ function browser(fetchImpl = async () => response({ rows: [] }), csrf = "fixture
     document,
     fetch: (url, options) => { requests.push({ url, options }); return fetchImpl(url, options); },
     EventSource, URL, Intl, Date, location: { origin: "https://gateway.example" },
-    setInterval: (fn) => { timers.push(fn); return 1; }, clearInterval() {}, setTimeout: (fn) => { timers.push(fn); return timers.length; }, clearTimeout() {}, addEventListener(type, handler) { browserListeners[type] = handler; },
+    setInterval: (fn) => { timers.push(fn); return 1; }, clearInterval() {}, setTimeout: (fn, delay) => { timers.push(fn); timeoutDelays.push(delay); return timers.length; }, clearTimeout() {}, addEventListener(type, handler) { browserListeners[type] = handler; },
   });
-  return { elements, stream, requests, timers, page, document, browserListeners };
+  return { elements, stream, requests, timers, timeoutDelays, page, document, browserListeners };
 }
 
 test("activity browser keeps a newer SSE snapshot when the initial fetch resolves later", async () => {
@@ -401,12 +401,13 @@ test("Activity has compact subscription navigation without the removed heading o
 test("Activity quotas poll only while visible and reject hidden or expired late replies", async () => {
   let next = deferred();
   const fixture = browser((url) => url.endsWith("/subscriptions") ? next.promise : Promise.resolve(response({ rows: [row()] })), "csrf", true);
-  const { elements, document, stream, requests, timers } = fixture;
+  const { elements, document, stream, requests, timers, timeoutDelays } = fixture;
   await flush();
   next.resolve(response({ subscriptions: [subscription()] })); await flush();
   assert.match(elements["subscription-quick"].innerHTML, /Codex EU/);
   assert.match(elements["subscription-quick"].innerHTML, /24%/);
   assert.equal(elements["subscription-quick"].hidden, false);
+  assert.equal(timeoutDelays.at(-1), 600_000, "subscription polling waits ten minutes");
   assert.equal(requests.filter((r) => r.url.endsWith("/subscriptions")).length, 1);
   next = deferred();
   timers.at(-1)(); await flush();

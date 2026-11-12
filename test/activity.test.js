@@ -779,7 +779,7 @@ test("history cannot index after channel access changes during the final private
 });
 
 test("approved Activity viewers can read shared subscription usage without admin access", async (t) => {
-  const payload = { subscriptions: [{ provider: "codex-eu", name: "Codex EU", kind: "subscription", status: "ok", windows: [{ label: "Weekly", usedPercent: 24, resetsAt: "2026-12-01T12:00:00Z" }] }], refreshAfterSeconds: 300 };
+  const payload = { subscriptions: [{ provider: "codex-eu", name: "Codex EU", kind: "subscription", status: "ok", windows: [{ label: "Weekly", usedPercent: 24, resetsAt: "2026-12-01T12:00:00Z" }] }], refreshAfterSeconds: 600 };
   let calls = 0;
   const f = await fixture(t, { readSubscriptions: async () => { calls++; return payload; } });
   const user = await f.login();
