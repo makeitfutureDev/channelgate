@@ -131,7 +131,8 @@ Activity users can open **Subscriptions** beside **Activity** in their existing 
 session. The Activity overview omits the redundant heading and subtitle and shows compact usage
 bars only for actual subscriptions, using the highest reported window per harness and naming that
 window. Admin and viewer detail pages share compact quota cards, plan badges, countdowns and local
-reset dates. Each subscription card also shows the login email and workspace name when available.
+reset dates. Subscription cards use larger text on desktop and mobile: 18px names, 22px usage
+values, and 13–15px account/reset details. Each subscription card also shows the login email and workspace name when available.
 Claude account metadata comes from the same bearer's read-only OAuth profile; Codex email comes
 from its usage response/current token and workspace names require an exact selected-account match
 in the read-only accounts response. Missing metadata says Account unavailable rather than borrowing
