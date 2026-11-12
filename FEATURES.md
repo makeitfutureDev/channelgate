@@ -1,5 +1,32 @@
 # ChannelGate — Features
 
+## Optional Codex EU and Claude Bedrock harnesses (2026-11-12)
+
+Settings → Engine & runtime includes independent **Codex EU** (`codex-eu`) and **Claude
+Bedrock** (`claude-bedrock`) options, disabled until explicitly enabled. Their setup cards show
+the exact host-terminal commands, with separate default model/effort controls. After setup,
+enabled and channel-approved harnesses appear in the existing runtime and `/model` pickers.
+Each uses its own login and session directory, cold processes, and no automatic failover edge.
+Missing configuration fails with its own setup remedy instead of borrowing another account.
+
+Codex EU reads only its dedicated host `CODEX_HOME`; the operator chooses a ChatGPT Enterprise
+workspace during device sign-in. EU data and inference residency are workspace configuration:
+the option's name and separate login do not establish those controls. Container authentication
+uses a distinct access-token relay, keeping it separate from the default and per-channel Codex
+logins, including concurrent threads.
+Container turns require proxy egress; the dedicated EU credential file is never mounted, even
+in legacy bridge mode. Direct-host `/sudo` remains available to authorized administrators.
+
+Claude Bedrock reads only reviewed provider environment values from an isolated Claude Code
+terminal wizard configuration. Configure `/setup-bedrock` with an **Amazon Bedrock API key**,
+AWS region and optional model pins. This integration supports bearer API keys; AWS profile/SSO
+and IAM SigV4 signing are not supported. Gateway permissions, hooks, MCP and instruction settings
+remain authoritative. The egress proxy swaps the bearer key only on the configured regional
+Bedrock endpoint. Anthropic credentials never accompany this provider. Tokens are retained;
+AWS dollar cost remains unknown rather than using Anthropic prices.
+Chat continuation resumes Bedrock sessions. Bedrock container terminal takeover currently
+returns explicit guidance to continue in chat; host-terminal provider setup is independent.
+
 ## Mark all Activity threads done (2026-11-12)
 
 Slack Home Activity and the personal browser Activity dashboard include **Mark All Done** with

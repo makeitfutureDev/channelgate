@@ -11,6 +11,7 @@ import { ENGINE_IDS, adapterOr, modelsForEngine } from "../engines/registry.js";
 // Value-only import (the default endpoint constant). qwen.js reads settings LAZILY, so this
 // direction carries no cycle.
 import { QWEN_PROVIDERS, qwenProvider } from "../engines/qwen.js";
+import { terminalHarnessSetup } from "../engines/terminal-setup.js";
 // The default container image ref lives with the image module (a dependency-free leaf) so the
 // transactional updater can name the same image without importing this file's database layer.
 import { CONTAINER_DEFAULT_IMAGE } from "../runtimes/container/image.js";
@@ -1208,12 +1209,12 @@ export function settingsForApi() {
     },
     accessGrants: getOrgAccessGrants(),
     engine: getEngine(),
-    defaultClaudeModel: getDefaultModel("claude"),
-    defaultCodexModel: getDefaultModel("codex"),
+    ...Object.fromEntries(ENGINES.map((id) => [adapterOr(id).defaultModelKey, getDefaultModel(id)])),
     ...Object.fromEntries(ENGINES.map((id) => [adapterOr(id).defaultEffortKey, getDefaultEffort(id)])),
     // One entry per Anthropic-compatible provider, so the admin UI renders a card per harness
     // instead of carrying a hard-coded copy of the table.
     qwenProviders: qwenProviderSettings(),
+    terminalHarnesses: terminalHarnessSetup(),
     perplexityResearch: {
       enabled: perplexity.enabled,
       hasSessionToken: Boolean(perplexity.sessionToken),

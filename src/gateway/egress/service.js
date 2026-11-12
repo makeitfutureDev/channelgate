@@ -33,6 +33,7 @@ import { normalizeChannelEnv } from "../../config/channel-env.js";
 import { getOrgEnv, getUserEnv } from "../../config/scoped-env.js";
 import { onConfigChange } from "../../config/change-events.js";
 import { QWEN_PROVIDERS } from "../../engines/qwen.js";
+import { resolveBedrockProvider } from "../../engines/bedrock.js";
 import { logEvent } from "../../util/logger.js";
 import { platformOr } from "../../platforms/registry.js";
 import { egressActive as hookEgressActive, egressModeOf, setEgressProvider } from "../../runtimes/container/egress-hook.js";
@@ -110,6 +111,8 @@ export function modelApiHosts() {
 
 function qwenHosts() {
   const hosts = [];
+  const bedrock = resolveBedrockProvider();
+  if (bedrock.configured) hosts.push(hostOfUrl(bedrock.endpoint));
   for (const entry of QWEN_PROVIDERS) {
     try {
       const host = hostOfUrl(getQwenConfig(entry.id).baseUrl);

@@ -14,6 +14,8 @@ import { codexEngineHome } from "../config/paths.js";
 import { hostClaudeStateDir, hostCodexStateDir } from "./host-state.js";
 import { discoverCodexModels } from "./model-discovery.js";
 import { requirePluginRuntime } from "../gateway/plugin-runtime.js";
+import { makeCodexEuAdapter } from "./codex-eu.js";
+import { makeBedrockAdapter } from "./bedrock.js";
 
 // Which Claude login the gateway is using (src/gateway/claude-login.js). Imported LAZILY: that
 // module reads a setting, src/config/settings.js imports the engine registry, and the registry
@@ -417,4 +419,4 @@ const opencode = validateEngineAdapter({
   health: (options) => commandHealth("opencode", options),
 });
 
-export const BUILTIN_ENGINE_ADAPTERS = Object.freeze([claude, codex, ...QWEN_PROVIDERS.map(makeQwenAdapter), opencode]);
+export const BUILTIN_ENGINE_ADAPTERS = Object.freeze([claude, codex, makeCodexEuAdapter(codex), makeBedrockAdapter(claude), ...QWEN_PROVIDERS.map(makeQwenAdapter), opencode]);

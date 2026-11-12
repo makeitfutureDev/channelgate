@@ -679,6 +679,16 @@
                     <em class="state">Run <code>pwm login</code> on your computer and paste the token from <code>~/.config/perplexity-web-mcp/token</code>, or copy the value of the <code>__Secure-next-auth.session-token</code> cookie from your signed-in Perplexity browser. Paste only the value. The token is write-only; replace it here if the session expires.</em>
                   </label>
                 </div>
+                <template id="terminal-harness-tpl">
+                  <div class="setcard terminal-harness-card">
+                    <h4 data-role="label"></h4>
+                    <p class="desc" data-role="description"></p>
+                    <p class="desc">Optional: enable this harness under <em>Harnesses the gateway may use</em>, save, then configure its dedicated login in a terminal on the gateway server.</p>
+                    <label class="field"><span>Terminal command</span><pre><code data-role="command"></code></pre></label>
+                    <label class="field"><span>Default model</span><select data-role="default-model"></select><em class="state">Blank uses the isolated login's provider default.</em></label>
+                    <label class="field"><span>Default effort</span><select data-role="default-effort"></select></label>
+                  </div>
+                </template>
                 <!-- One card per Anthropic-compatible provider (src/engines/qwen.js holds the
                      table; /api/settings sends `qwenProviders`). The cards are cloned from this
                      template into the section as SIBLINGS, so each one is searched, jumped to and

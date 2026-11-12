@@ -132,7 +132,7 @@ test("engines are enabled by default and the map round-trips through settings", 
   saveSettings({ engineEnabled: { claude: true, codex: false, opencode: false } });
   assert.equal(isEngineEnabled("codex"), false);
   assert.deepEqual(getEnabledEngines(), ["claude"]);
-  assert.deepEqual(getEngineEnabledMap(), { claude: true, codex: false, qwen: false, "qwen-eu": false, opencode: false });
+  assert.deepEqual(getEngineEnabledMap(), { claude: true, codex: false, "codex-eu": false, "claude-bedrock": false, qwen: false, "qwen-eu": false, opencode: false });
   assert.equal(settingsForApi().engineEnabled.codex, false);
 });
 

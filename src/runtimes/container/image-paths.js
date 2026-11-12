@@ -88,6 +88,8 @@ export function containerImagePaths() {
     tmpDir: CONTAINER_TMPDIR,
     claudeConfigDir: CONTAINER_CLAUDE_CONFIG_DIR,
     codexHome: CONTAINER_CODEX_HOME,
+    codexEuHome: `${CONTAINER_HOME}/.codex-eu`,
+    claudeBedrockConfigDir: `${CONTAINER_HOME}/.claude-bedrock`,
     npmPrefix: CONTAINER_NPM_PREFIX,
     bundleRoot: CONTAINER_BUNDLE_ROOT,
     socketDir: CONTAINER_SOCKET_DIR,

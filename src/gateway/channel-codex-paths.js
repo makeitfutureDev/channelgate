@@ -22,3 +22,17 @@ export function codexAuthProcessEnv(home) {
   return env;
 }
 
+
+// Optional Enterprise harness: one dedicated login, never the daemon or channel account.
+export function codexEuLoginHome() {
+  return path.join(gatewayRoot(), "engine-state", "codex-eu-login");
+}
+
+export function isCodexEu(meta) {
+  return meta?.codexHarness === "eu" || meta?.engine === "codex-eu";
+}
+
+export function codexEuLoginHint() {
+  const quoted = `'${codexEuLoginHome().replaceAll("'", "'\\''")}'`;
+  return `install -d -m 700 ${quoted} && CODEX_HOME=${quoted} codex -c 'cli_auth_credentials_store="file"' login --device-auth`;
+}

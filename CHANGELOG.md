@@ -18,6 +18,10 @@ release gates. Stable promotion and publication require approval of the exact te
 
 ### Beta development notes
 
+- Add optional Codex EU and Claude Bedrock harnesses with independent terminal setup, defaults
+  and sessions. Codex EU uses a dedicated Enterprise login; residency follows its workspace.
+  Bedrock supports regional bearer API keys. Both stay outside automatic account failover.
+
 - Open browser Activity threads directly in the Slack app, preserving the latest-reply target.
   Keep an explicit Browser link for the HTTPS destination; the browser may ask to open Slack.
 

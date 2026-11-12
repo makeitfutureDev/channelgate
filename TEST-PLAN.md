@@ -1,5 +1,43 @@
 # ChannelGate — Test Plan
 
+## Optional terminal-configured provider harnesses (2026-11-12)
+
+- Automated regressions: `test/codex-eu.test.js`, `test/bedrock-engine.test.js` and
+  `test/terminal-harnesses.test.js`, plus existing engine registry, enable/selection, runtime,
+  token-relay, model-wizard and egress tests. Verify disabled defaults, independent activation,
+  defaults round-trip, absence of fallback edges, credential-free setup responses, retained
+  thread ownership, separate auth/session homes, destination-bound proxy swaps and key rotation.
+- Live definition **HARNESS-TERMINAL-01** (Admin UI; engine-independent control plane): open
+  Settings → Engine & runtime. Both options start off. Enable either and save before login;
+  reload and verify both toggles persist independently. Inspect both setup cards: exact host
+  paths/commands, Enterprise residency caveat and Bedrock API-key-only restriction are visible.
+  Enter each harness's default model/effort and reload. Pass: values persist, disabled harnesses
+  are absent from pickers, and no credential or token is returned to the browser.
+- Live definition **HARNESS-TERMINAL-02** (Codex, External Credential Fixture): as the gateway
+  service account run the displayed Codex EU device-login command, choose a separately approved
+  Enterprise workspace, and verify its EU residency controls with that workspace administrator.
+  Use the disposable `cg-testing-codex-bash` fixture, temporarily enabling and channel-approving
+  `codex-eu`; select it in `/model` and send `Remember nonce EU-<unique>; reply with it.` Send a
+  second turn asking for the nonce. Run a normal Codex thread concurrently. Pass: both EU turns
+  use `codex-eu`, resume its own transcript, and relay only its dedicated login; normal Codex
+  retains its existing account. Missing/expired EU login must give a setup/credential failure,
+  without using default or channel Codex credentials. Restore fixture configuration. Product
+  acceptance is unexecuted until the operator supplies this new Enterprise login.
+- Live definition **HARNESS-TERMINAL-03** (Claude, External Credential Fixture): as the service
+  account run the displayed isolated Claude command, type `/setup-bedrock`, select Amazon
+  Bedrock API key and the intended AWS region/models. In disposable `cg-testing-claude-bash`,
+  temporarily enable/channel-approve `claude-bedrock`, select it and send `Remember nonce
+  BEDROCK-<unique>; reply with it.` Ask for the nonce on the next turn; run an ordinary Claude
+  thread concurrently. Repeat a turn with the fixture network switch off. Pass: isolated
+  Bedrock sessions resume, the configured regional endpoint works, no real bearer/Anthropic
+  credential enters container artifacts, ordinary Claude keeps its own login, and Bedrock
+  usage records tokens with unknown dollar cost. Missing bearer key, profile/SSO-only setup,
+  custom endpoint and malformed region fail clearly without Anthropic fallback. Restore fixture
+  configuration. Live provider acceptance requires the operator's Bedrock API key and model access.
+- Test definitions above are maintained in the private QA registry. No new account has been
+  authenticated on the operator's behalf; unit and browser fixtures do not certify provider
+  credentials, Enterprise residency or live AWS model access.
+
 ## Activity opens the latest thread message (2026-11-12)
 
 - Direct app routing: title and **Open in Slack** links use the current tab's authorized open

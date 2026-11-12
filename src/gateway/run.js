@@ -899,7 +899,15 @@ async function runMessageImpl({ channelId, authorId, workspaceId = "", text, thr
   // asks "is this a container?" — it asks the target's declared capabilities.
   //
   // cleanMode is taken from the RUN meta on purpose — it changes the cwd the container mounts.
-  const target = runtimeResolver(entry.slug, overrides ? { ...meta, adminMode: Boolean(meta.adminMode || channelAdminMode) } : meta, { isAdminAuthor: trustedAdminAuthor });
+  // Credentials follow the thread's admitted harness, including a retained session owner. The
+  // channel default can differ from it; never resolve a provider login from that default alone.
+  const runtimeEngine = enginePinnedByUser ? requestedEngine : storedEngine && isEngineEnabled(storedEngine) ? storedEngine : engine;
+  const target = runtimeResolver(entry.slug, {
+    ...meta,
+    engine: runtimeEngine,
+    codexHarness: runtimeEngine === "codex-eu" ? "eu" : "",
+    ...(overrides ? { adminMode: Boolean(meta.adminMode || channelAdminMode) } : {}),
+  }, { isAdminAuthor: trustedAdminAuthor });
   const isolatedRuntime = runtimeSupports(target, "isolated");
   // The engine's own credential inside an isolated runtime: the container has no access to the
   // daemon's Claude state dir, so a setup-token — or a relay of the resolved login's current access

@@ -37,8 +37,9 @@ import { daemonTimeZone } from "../../util/timezone.js";
 import { gatewayClaudeCredentialsFile, hasClaudeApiKey, resolveClaudeLogin } from "../../gateway/claude-login.js";
 import { CONTAINER_CLAUDE_CONFIG_DIR, CONTAINER_CODEX_AUTH_FILE, CONTAINER_CODEX_HOME, CONTAINER_HOME } from "./image-paths.js";
 import { egressEnv } from "./egress-env.js";
-import { egressErrorFor } from "./egress-hook.js";
+import { egressActive, egressErrorFor } from "./egress-hook.js";
 import { codexLoginCandidatesFor } from "../../gateway/channel-codex-auth.js";
+import { codexEuLoginHome, codexEuLoginHint } from "../../gateway/channel-codex-paths.js";
 
 export const AGENT_HOME = CONTAINER_HOME;
 export const CLAUDE_CONTAINER_CONFIG_DIR = CONTAINER_CLAUDE_CONFIG_DIR;
@@ -159,7 +160,7 @@ export function intendedCredentialModes(settings = {}, { egressActive = false } 
 // the real login never becomes a mount; `codexLoginFile` is the resolved login either way.
 export function settleCredentialModes(settings = {}, env = process.env, { egressActive = false, meta = null } = {}) {
   const claudeSource = settings?.hasClaudeOauthToken ? "" : resolveClaudeCredentialSource(env);
-  const candidates = codexLoginCandidatesFor(meta);
+  const candidates = codexLoginCandidatesFor(meta && { ...meta, engine: "codex", codexHarness: "" });
   const codexLoginFile = candidates ? readable(candidates[0]) : resolveCodexAuthFile(env);
   // Both ChatGPT and API-key files are relayed through the proxy. Neither credential file needs
   // to be mounted into an agent container while the proxy is active.
@@ -202,6 +203,11 @@ export function credentialError(target, engineId, env = process.env) {
     // after the target was settled must count just like a login that appeared would.
     if (hasClaudeApiKey(env)) return null;
     return new Error(CLAUDE_MISSING_MESSAGE);
+  }
+  if (engineId === "codex-eu") {
+    if (!egressActive(target)) return new Error("Codex EU requires the container egress proxy to relay its isolated Enterprise login. Enable proxy egress or use an authorized /sudo host thread.");
+    const file = readable(path.join(codexEuLoginHome(), "auth.json"));
+    return file ? null : new Error(`Codex EU is not signed in — run \`${codexEuLoginHint()}\` on the gateway host.`);
   }
   if (engineId === "codex") {
     const candidates = codexLoginCandidatesFor(target?.meta);
@@ -255,8 +261,8 @@ export function codexAuthIdentity(file) {
 export function containerEnvDefaults(target) {
   return {
     HOME: AGENT_HOME,
-    CLAUDE_CONFIG_DIR: CLAUDE_CONTAINER_CONFIG_DIR,
-    CODEX_HOME: CODEX_CONTAINER_HOME,
+    CLAUDE_CONFIG_DIR: target?.container?.claudeConfigDir || CLAUDE_CONTAINER_CONFIG_DIR,
+    CODEX_HOME: target?.container?.codexHome || CODEX_CONTAINER_HOME,
     TZ: daemonTimeZone(),
     CG_RUNTIME: "container",
     CG_CHANNEL: String(target?.slug || ""),

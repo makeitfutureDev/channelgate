@@ -119,6 +119,27 @@ console.log(JSON.stringify(Object.fromEntries(names.map(name => [name, process.e
   assert.equal(main.CG_CLAUDE_MAIN, "", "the main-process marker is consumed before tools or children inherit it");
 });
 
+test("nested Claude drops Bedrock routing, bearer, model pins and transcript home before its independent login", () => {
+  const dir = tempDir("cg-nested-bedrock-");
+  const wrapper = path.join(dir, "claude");
+  const binary = path.join(dir, "actual-claude");
+  const loginEnvFile = path.join(dir, "login.env");
+  writeFileSync(loginEnvFile, "ANTHROPIC_API_KEY='cgph_r_anthropic'\n");
+  writeFileSync(binary, `#!/usr/bin/env node
+const names = ["CLAUDE_CODE_USE_BEDROCK", "AWS_BEARER_TOKEN_BEDROCK", "AWS_REGION", "ANTHROPIC_MODEL", "ANTHROPIC_DEFAULT_SONNET_MODEL", "CLAUDE_CONFIG_DIR", "ANTHROPIC_API_KEY"];
+console.log(JSON.stringify(Object.fromEntries(names.map(name => [name, process.env[name] || ""]))));
+`);
+  chmodSync(binary, 0o700);
+  writeFileSync(wrapper, renderClaudeWrapper({ loginEnvFile, claudeBin: binary }));
+  chmodSync(wrapper, 0o700);
+  const output = JSON.parse(execFileSync(wrapper, [], { encoding: "utf8", env: {
+    ...process.env, CLAUDE_CODE_USE_BEDROCK: "1", AWS_BEARER_TOKEN_BEDROCK: "cgph_r_bedrock",
+    AWS_REGION: "eu-central-1", ANTHROPIC_MODEL: "eu.anthropic.claude-sonnet-4-6-v1:0",
+    ANTHROPIC_DEFAULT_SONNET_MODEL: "eu.anthropic.claude-sonnet-4-6-v1:0", CLAUDE_CONFIG_DIR: "/home/agent/.claude-bedrock",
+  } }));
+  assert.deepEqual(output, { CLAUDE_CODE_USE_BEDROCK: "", AWS_BEARER_TOKEN_BEDROCK: "", AWS_REGION: "", ANTHROPIC_MODEL: "", ANTHROPIC_DEFAULT_SONNET_MODEL: "", CLAUDE_CONFIG_DIR: "/home/agent/.claude", ANTHROPIC_API_KEY: "cgph_r_anthropic" });
+});
+
 test("Qwen's main container process bypasses the Anthropic launcher and keeps its own provider credential", async () => {
   const backend = createFakeRuntimeBackend();
   const t = fakeTarget(backend, "nested-qwen", { channelId: "C_NESTED_QWEN" });

@@ -11,7 +11,7 @@ import { getDb } from "../db/index.js";
 import { getSettings, getCodexModelRates, getAssumedModels } from "../config/settings.js";
 import { countDrop } from "../util/drops.js";
 import { resolveCurrentModel, modelDisplayLabel } from "./model-info.js";
-import { engineSupports, engineCostRateKey } from "../engines/registry.js";
+import { engineSupports, engineCostRateKey, adapterFor } from "../engines/registry.js";
 import { normalizeCodexTokenUsage } from "../engines/codex-usage.js";
 import { claudeCumulativeSnapshot, claudeSessionDelta, latestClaudeSnapshot } from "../db/claude-session-usage.js";
 
@@ -82,7 +82,7 @@ export function estimateCodexCost(u = {}, model = "", requests = [], { rates = g
 // priced with OpenAI rates.
 export function normalizeUsage(result = {}) {
   const u = result.usage || {};
-  const isCodex = result.engine === "codex";
+  const isCodex = result.engine === "codex" || adapterFor(result.engine)?.modelFamily === "codex";
   const codexUsage = isCodex ? normalizeCodexTokenUsage(u) : null;
   const inTok = isCodex
     ? codexUsage.input_tokens
