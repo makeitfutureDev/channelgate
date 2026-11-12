@@ -6,6 +6,9 @@
   recent visible conversation through that reply, excluding later messages. The dialog explains
   history limits, excluded private tool history and shared workspace files; current-session
   `/fork` continues using native engine forks.
+- Fix the Fork button failing with "Couldn't open Fork. Try the button again.": the dialog now
+  opens immediately and the access check fills it afterwards, so a slow membership lookup no
+  longer outlives Slack's trigger window; a refused open is logged with Slack's error code.
 
 
 - Show readable, redacted provider errors when a background job's automatic follow-up fails,

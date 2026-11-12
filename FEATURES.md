@@ -1699,6 +1699,12 @@ revisions on failed sync. Details and compatibility limits: `docs/SKILLS.md`.
   minutes and submit once. Deleted or unavailable source replies fail before child creation;
   Clean threads refuse message-history forks. Code channels explain their shared-session limitation
   instead of offering an independent child. Older replies gain the button only when reposted.
+  The click consumes Slack's three-second trigger first: a "Checking your access…" dialog opens
+  before any store read or private-channel membership listing, then is filled with the form in
+  place, or replaced by the refusal (not authorized, sudo, code channel) with no submit button.
+  Only when Slack refuses the open itself (an expired trigger, say) does the clicker get the
+  private "Couldn't open Fork. Try the button again." notice, and the daemon records a
+  `reply_fork_open_failed` event carrying Slack's error code — never the payload.
 - **Native 👍/👎 answer feedback**: the same footer ends with Slack's `context_actions` block
   carrying `feedback_buttons` (`cg_reply_feedback`) on every streamed, classic, unattended and
   fallback answer that carries the stats footer (not on bare notices such as "🛑 Stopped."). Any
