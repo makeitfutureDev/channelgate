@@ -6,7 +6,7 @@ import { ensureTestEnv } from "./helpers.js";
 ensureTestEnv();
 const { getDb } = await import("../src/db/index.js");
 const { setUser, getUser, upsertChannelEntry, getChannelEntry, saveChannelMeta } = await import("../src/config/store.js");
-const { indexSlackThread, getSlackThread, setSlackThreadDone, recordSlackThreadOutcome } = await import("../src/gateway/slack-threads.js");
+const { indexSlackThread, getSlackThread, setSlackThreadLater, setSlackThreadDone, recordSlackThreadOutcome } = await import("../src/gateway/slack-threads.js");
 const { registerAgentInterfaceHandlers } = await import("../src/slack/agent-interface.js");
 const { setThreadSudo } = await import("../src/gateway/thread-engine.js");
 const { activityThreadSnapshot } = await import("../src/slack/home-threads.js");
@@ -776,4 +776,45 @@ test("history cannot index after channel access changes during the final private
   assert.equal(data.history.unavailable, true); assert.equal(data.history.moreHistory, true);
   assert.deepEqual(data.rows, []);
   assert.equal(getSlackThread("G_HISTORY", "100.000001"), null);
+});
+
+
+test("Later saves only owned authorized threads with CSRF; history and runtime preserve it until Resume or Done", async (t) => {
+  const f = await fixture(t);
+  await f.root(); await f.root("C_WORK", "100.000002", "U_OTHER");
+  const user = await f.login(), path = user.url + "/api/later";
+  const body = (later, threadTs = "100.000001") => JSON.stringify({ channelId: "C_WORK", threadTs, later });
+  assert.equal((await f.request(path, { method: "POST", headers: user.headers, body: body(true) })).status, 403);
+  assert.equal((await f.request(path, { method: "POST", headers: user.post, body: body("yes") })).status, 400);
+  assert.equal((await f.request(path, { method: "POST", headers: user.post, body: body(true, "100.000002") })).status, 403);
+  assert.equal((await f.request(path, { method: "POST", headers: user.post, body: body(true) })).status, 200);
+  assert.ok(getSlackThread("C_WORK", "100.000001").later_ms > 0);
+  const run = { id: "later-running", channelId: "C_WORK", slug: "c-work", threadKey: "100.000001", engine: "codex" };
+  recordActiveRun(run.id, run);
+  await f.root();
+  let data = await (await f.request(user.url + "/api/threads", { headers: user.headers })).json();
+  assert.equal(data.rows[0].status, "later");
+  assert.equal((await activityThreadSnapshot(f.client, "U_MINE", { filter: "active" })).rows.length, 0);
+  assert.equal((await activityThreadSnapshot(f.client, "U_MINE", { filter: "all" })).rows.length, 1);
+  assert.equal((await f.request(path, { method: "POST", headers: user.post, body: body(false) })).status, 200);
+  data = await (await f.request(user.url + "/api/threads", { headers: user.headers })).json();
+  assert.equal(data.rows[0].status, "working");
+  clearActiveRun(run.id);
+  setSlackThreadLater("C_WORK", "100.000001", "U_MINE", true);
+  assert.equal((await f.request(user.url + "/api/completion", { method: "POST", headers: user.post,
+    body: JSON.stringify({ channelId: "C_WORK", threadTs: "100.000001", done: true }) })).status, 200);
+  assert.equal(getSlackThread("C_WORK", "100.000001").later_ms, 0);
+});
+
+test("Later rechecks private membership and ownership after a delayed root lookup", async (t) => {
+  const f = await fixture(t); await f.root("G_PRIVATE", "100.000001", "U_MINE", true, "private");
+  f.members.set("G_PRIVATE", ["U_MINE"]);
+  const user = await f.login(), read = defer();
+  f.client.conversations.replies = async () => { await read.promise; return { messages: [{ ts: "100.000001", user: "U_MINE" }] }; };
+  const pending = f.request(user.url + "/api/later", { method: "POST", headers: user.post,
+    body: JSON.stringify({ channelId: "G_PRIVATE", threadTs: "100.000001", later: true }) });
+  await new Promise((resolve) => setImmediate(resolve));
+  f.members.set("G_PRIVATE", []); read.resolve();
+  assert.equal((await pending).status, 403);
+  assert.equal(getSlackThread("G_PRIVATE", "100.000001").later_ms, 0);
 });

@@ -1149,3 +1149,69 @@ test("initial membership lookup failure cannot report historical indexing exhaus
   const result = await discoverSlackThreadHistory(client, "U_MINE");
   assert.equal(result.scanned, 0); assert.equal(result.incomplete, true); assert.equal(result.moreHistory, true);
 });
+
+
+test("native negative feedback postpones only the owner’s admitted thread and acknowledges privately", async () => {
+  const { postponeThreadFromFeedback } = await import("../src/slack/thread-completion.js");
+  const { registerAgentInterfaceHandlers } = await import("../src/slack/agent-interface.js");
+  const { feedbackBlocks, REPLY_FEEDBACK_ACTION_ID } = await import("../src/slack/footer.js");
+  const c = await channel("G_PRIVATE", "group"); root(c, "100.000001");
+  const body = { user: { id: "U_MINE" }, channel: { id: c.channelId }, message: { ts: "101.000001", thread_ts: "100.000001" } };
+  const parsed = { verdict: "down", channel: c.channelId, threadTs: "100.000001" };
+  members.set(c.channelId, ["U_MINE"]);
+  for (const bad of [{ ...parsed, channel: "C_OTHER" }, { ...parsed, threadTs: "999.000001" }]) {
+    assert.equal(await postponeThreadFromFeedback({ client, body, parsed: bad }), false);
+  }
+  assert.equal(await postponeThreadFromFeedback({ client, body: { ...body, user: { id: "U_OTHER" } }, parsed }), false);
+  members.set(c.channelId, []);
+  assert.equal(await postponeThreadFromFeedback({ client, body, parsed }), false);
+  members.set(c.channelId, ["U_MINE"]);
+  await setThreadSudo(c.slug, "100.000001", true);
+  assert.equal(await postponeThreadFromFeedback({ client, body, parsed }), false);
+  await setThreadSudo(c.slug, "100.000001", false);
+  const actions = new Map(), notices = [];
+  client.chat.postEphemeral = async (message) => { notices.push(message); };
+  registerAgentInterfaceHandlers({ event() {}, action: (id, fn) => actions.set(id, fn) }, { onNegativeFeedback: postponeThreadFromFeedback });
+  const value = feedbackBlocks({ channel: c.channelId, threadTs: "100.000001", authorId: "U_MINE" })[0].elements[0].negative_button.value;
+  let acked = false;
+  await actions.get(REPLY_FEEDBACK_ACTION_ID)({ ack: async () => { acked = true; }, body, action: { value }, client });
+  assert.ok(acked);
+  assert.ok(getSlackThread(c.channelId, "100.000001").later_ms > 0);
+  assert.match(notices[0].text, /Moved to Later/);
+  assert.equal(notices[0].user, "U_MINE");
+  assert.equal((await homeThreadsSnapshot(client, "U_MINE")).rows.length, 0);
+  assert.equal((await homeThreadsSnapshot(client, "U_MINE", { filter: "later" })).rows[0].status, "later");
+});
+
+
+test("Later survives process restart, explicit completed feedback, and clears on positive feedback", async () => {
+  const { postponeThreadFromFeedback, completeThreadFromFeedback } = await import("../src/slack/thread-completion.js");
+  const c = await channel(); root(c, "100.000001");
+  const input = { client, body: { user: { id: "U_MINE" }, channel: { id: c.channelId }, message: { ts: "101.000001", thread_ts: "100.000001" } },
+    parsed: { verdict: "down", channel: c.channelId, threadTs: "100.000001" } };
+  setSlackThreadDone(c.channelId, "100.000001", "U_MINE", true);
+  assert.equal(await postponeThreadFromFeedback(input), true);
+  const output = execFileSync(process.execPath, ["--input-type=module", "-e",
+    'import { getSlackThread, slackThreadStatus } from "./src/gateway/slack-threads.js"; process.stdout.write(slackThreadStatus(getSlackThread("C_THREADS", "100.000001"), new Map()));'],
+    { cwd: new URL("..", import.meta.url), env: process.env, encoding: "utf8" });
+  assert.equal(output, "later");
+  assert.equal(await completeThreadFromFeedback({ ...input, parsed: { ...input.parsed, verdict: "up" } }), true);
+  assert.equal(getSlackThread(c.channelId, "100.000001").later_ms, 0);
+  assert.equal(slackThreadStatus(getSlackThread(c.channelId, "100.000001"), new Map()), "done");
+});
+
+test("feedback cannot postpone after private access is revoked during the root read", async () => {
+  const { postponeThreadFromFeedback } = await import("../src/slack/thread-completion.js");
+  const c = await channel("G_PRIVATE", "group"); root(c, "100.000001"); members.set(c.channelId, ["U_MINE"]);
+  const original = client.conversations.replies;
+  client.conversations.replies = async (args) => {
+    const response = await original(args);
+    await setUser("U_MINE", { approved: false });
+    return response;
+  };
+  const result = await postponeThreadFromFeedback({ client,
+    body: { user: { id: "U_MINE" }, channel: { id: c.channelId }, message: { ts: "101.000001", thread_ts: "100.000001" } },
+    parsed: { verdict: "down", channel: c.channelId, threadTs: "100.000001" } });
+  assert.equal(result, false);
+  assert.equal(getSlackThread(c.channelId, "100.000001").later_ms, 0);
+});

@@ -294,3 +294,44 @@ test("Activity Mark All Done confirms on desktop and mobile and completes owned 
     await context.close();
   }
 });
+
+test("Later controls work in a real browser at desktop and mobile widths", { skip: !process.env.CG_BROWSER_MODULE, timeout: 30_000 }, async (t) => {
+  resetActivityStateForTests();
+  const ownerId = "U_LATER_BROWSER", channelId = "C_LATER_BROWSER";
+  await setUser(ownerId, { approved: true });
+  await upsertChannelEntry(channelId, { name: "Later browser fixture", type: "channel" });
+  const entry = await getChannelEntry(channelId);
+  await saveChannelMeta(entry.slug, { access: "approved" });
+  const root = { ts: "100.000001", user: ownerId, text: "Postpone this conversation" };
+  indexSlackThread({ channelId, slug: entry.slug, root, agentEngaged: true });
+  const client = { auth: { test: async () => ({ user_id: "B_LATER" }) },
+    reactions: { add: async () => ({ ok: true }), remove: async () => ({ ok: true }) },
+    conversations: { replies: async () => ({ messages: [root] }) } };
+  let base;
+  const app = express(); serveBrandAssets(app);
+  app.use("/activity", createActivityRouter({ getClient: () => client, getTeamId: () => "T_LATER", getBaseUrl: () => base }));
+  const server = await new Promise((resolve) => { const s = app.listen(0, "127.0.0.1", () => resolve(s)); });
+  base = `http://127.0.0.1:${server.address().port}`;
+  t.after(() => new Promise((resolve) => { resetActivityStateForTests(); server.closeAllConnections(); server.close(resolve); }));
+  const { chromium } = await import(process.env.CG_BROWSER_MODULE);
+  const browser = await chromium.launch({ headless: true, executablePath: process.env.CG_BROWSER_EXECUTABLE });
+  t.after(() => browser.close());
+  for (const width of [1440, 390]) {
+    const context = await browser.newContext({ viewport: { width, height: 1000 } });
+    const page = await context.newPage(); page.setDefaultTimeout(5000);
+    const errors = []; page.on("pageerror", (error) => errors.push(error.message));
+    await page.goto(createActivityGrantUrl({ baseUrl: base, ownerId, teamId: "T_LATER" }));
+    await page.getByRole("button", { name: "Delay for later: Postpone this conversation", exact: true }).click();
+    await page.waitForFunction(() => globalThis.document.querySelector('[data-filter="later"] span').textContent === "1");
+    assert.equal(await page.locator("#threads tr").count(), 0);
+    await page.locator('[data-filter="later"]').click();
+    await page.getByRole("button", { name: "Resume: Postpone this conversation", exact: true }).waitFor();
+    assert.equal(await page.evaluate(() => globalThis.document.documentElement.scrollWidth <= globalThis.innerWidth), true);
+    await page.getByRole("button", { name: "Resume: Postpone this conversation", exact: true }).click();
+    await page.waitForFunction(() => globalThis.document.querySelector('[data-filter="later"] span').textContent === "0");
+    await page.locator('[data-filter="active"]').click();
+    await page.getByRole("button", { name: "Delay for later: Postpone this conversation", exact: true }).waitFor();
+    assert.deepEqual(errors, []);
+    await context.close();
+  }
+});

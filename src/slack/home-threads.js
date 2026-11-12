@@ -20,9 +20,9 @@ export const HOME_THREADS_ACTION = /^cg_home_threads_(filter|page|refresh|histor
 export const HOME_THREADS_PAGE_SIZE = 10;
 const HISTORY_INDEX_BATCH = 100;
 const HISTORY_BATCH = 10;
-const LABELS = { active: "Active", all: "All open", working: "Working", waiting: "Waiting", idle: "Idle", done: "Completed", error: "Error" };
-const ICONS = { working: "🟢", waiting: "🟡", idle: "⚪", done: "✅", error: "🔴" };
-const RANK = { working: 0, waiting: 1, error: 2, idle: 3, done: 4 };
+const LABELS = { active: "Active", all: "All open", working: "Working", waiting: "Waiting", idle: "Idle", done: "Completed", later: "Later", error: "Error" };
+const ICONS = { working: "🟢", waiting: "🟡", idle: "⚪", done: "✅", later: "💤", error: "🔴" };
+const RANK = { working: 0, waiting: 1, error: 2, idle: 3, later: 4, done: 5 };
 const esc = (value) => String(value || "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/[*_~`]/g, "");
 const button = (text, action, value) => ({ type: "button", text: { type: "plain_text", text }, action_id: `cg_home_threads_${action}`, value: JSON.stringify(value) });
 
@@ -173,7 +173,7 @@ export async function homeThreadsSnapshot(client, userId, requested = {}, { read
   if (reconcile) await runBatch([...eligible.values()].sort((a, b) => a.checked_ms - b.checked_ms).slice(0, HISTORY_BATCH), verifySafely);
   const selection = () => [...eligible.values()]
     .filter((r) => !hiddenChannels.has(r.channel_id))
-    .filter((r) => ["all", "active"].includes(view.filter) ? r.status !== "done" : r.status === view.filter)
+    .filter((r) => view.filter === "all" ? r.status !== "done" : view.filter === "active" ? !["done", "later"].includes(r.status) : r.status === view.filter)
     .sort((a, b) => RANK[a.status] - RANK[b.status] || b.last_message_ms - a.last_message_ms || Number(b.thread_ts) - Number(a.thread_ts));
   let filtered;
   let pages;
@@ -284,12 +284,12 @@ export async function activityThreadSnapshot(client, userId, requested = {}, { n
     if (authorized.length === 1000) { truncated = true; break; }
     // Completion continues to suppress reminders/Home. The browser exposes current work until
     // it ends, then falls back to the same durable completion marker.
-    const status = runtime.get(`${row.channel_id}::${row.thread_ts}`) || slackThreadStatus(row, runtime);
+    const status = row.later_ms > 0 ? slackThreadStatus(row, runtime) : runtime.get(`${row.channel_id}::${row.thread_ts}`) || slackThreadStatus(row, runtime);
     authorized.push({ ...row, channelName: entry.name || "Direct message", status });
   }
   const needle = search.toLocaleLowerCase();
   const filtered = authorized.filter((row) =>
-    (view.filter === "all-statuses" || (["all", "active"].includes(view.filter) ? row.status !== "done" : row.status === view.filter))
+    (view.filter === "all-statuses" || (view.filter === "all" ? row.status !== "done" : view.filter === "active" ? !["done", "later"].includes(row.status) : row.status === view.filter))
     && (!needle || `${row.title} ${row.channelName}`.toLocaleLowerCase().includes(needle)))
     .sort((a, b) => RANK[a.status] - RANK[b.status] || b.last_message_ms - a.last_message_ms || Number(b.thread_ts) - Number(a.thread_ts));
   const pages = Math.max(1, Math.ceil(filtered.length / pageSize));

@@ -146,7 +146,7 @@ import { activityHomeActions } from "./home-activity.js";
 import { registerReplyDashboardActions } from "./reply-dashboard.js";
 import { registerReplyForkActions } from "./reply-fork.js";
 import { isCompletionReaction } from "../gateway/completion-reactions.js";
-import { completeThreadFromFeedback, syncThreadCompletionReaction } from "./thread-completion.js";
+import { postponeThreadFromFeedback, completeThreadFromFeedback, syncThreadCompletionReaction } from "./thread-completion.js";
 import { buildMenuCard, buildMenuResumeView, MENU_RESUME_ACTION_ID } from "./menu.js";
 import { resolveResumeSession } from "./resume-session.js";
 import { buildStatusReport } from "./status-controller.js";
@@ -2970,6 +2970,7 @@ async function connectAndWire(app) {
   registerAgentInterfaceHandlers(app, {
     botUserId, seenEvents, authorizedControlEntry, stopRunsInChannel, setAssistantStatus,
     onPositiveFeedback: completeThreadFromFeedback,
+    onNegativeFeedback: postponeThreadFromFeedback,
     // A thread-less Stop names a code channel's one session (everything running there).
     isCodeChannel: async (channelId) => {
       const entry = await getChannelEntry(channelId);

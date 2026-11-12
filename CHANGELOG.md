@@ -2,6 +2,9 @@
 
 ## 0.6.5 — candidate, pending approval
 
+- Add a Later section to My Activity with Delay for later and Resume. The conversation owner's
+  native thumbs-down answer feedback also postpones the thread; running work continues.
+
 - Style Activity’s Open in Slack link as a padded button and replace Browser text with a compact ↗ button.
 
 - Keep conversations open on Slack 👍 emoji reactions, including skin tones. The native positive
