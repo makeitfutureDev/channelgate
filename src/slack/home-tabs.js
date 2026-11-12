@@ -102,7 +102,7 @@ export function createHomePublisher(render, {
   return publish;
 }
 
-export async function buildHomeTabView({ tab, userId, role, sections, footer = [], needsActivityRetry = () => false }) {
+export async function buildHomeTabView({ tab, userId, role, sections, footer = [], activityActions = [], needsActivityRetry = () => false }) {
   tab = normalizeHomeTab(tab);
   const content = await sections[tab]();
   return {
@@ -111,10 +111,10 @@ export async function buildHomeTabView({ tab, userId, role, sections, footer = [
     blocks: [
       { type: "header", text: { type: "plain_text", text: "ChannelGate", emoji: true } },
       { type: "section", text: { type: "mrkdwn", text: `Hi <@${userId}> — you're ${role} on this gateway.` } },
-      { type: "actions", elements: Object.entries(HOME_TABS).map(([value, label]) => ({
+      { type: "actions", elements: [...Object.entries(HOME_TABS).map(([value, label]) => ({
         type: "button", action_id: `cg_home_tab_${value}`, value,
         text: { type: "plain_text", text: label }, ...(value === tab ? { style: "primary" } : {}),
-      })) },
+      })), ...(tab === "activity" ? activityActions : [])] },
       ...content,
       ...(tab === "help" && footer.length ? [{ type: "context", elements: [{ type: "mrkdwn", text: footer.join("  ·  ") }] }] : []),
     ],

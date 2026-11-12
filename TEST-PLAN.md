@@ -214,6 +214,13 @@ fixtures do not establish live Slack acceptance.
 
 Native acceptance records ACTIVITY-WEB-01 through ACTIVITY-WEB-07 and strengthened HOME-THREADS-01
 cover private Home launch, isolation, revocation, rendering, completion, live updates and bounds.
+Engine-independent layout acceptance: in Slack App Home as an approved user/admin with a Public
+URL configured, select Activity. **Open live dashboard** must follow **Help & settings** in the
+same actions row, with no separate dashboard-button row. Click it and verify the private launch
+still works. Switch tabs: the launch button is absent. With no Public URL or an unapproved viewer,
+it is absent on Activity too. Slack may wrap the shared row on narrow clients. This is a Slack
+view composition change; neither Claude nor Codex runs to build or handle this navigation.
+
 In the disposable approved-user Slack fixtures, open Home → Activity → Open live dashboard; a
 second viewer must see only their own roots. Test public/private/DM/sudo access and a new browser
 without admin login. Repeat lifecycle/ownership cases with both Claude and Codex Worker tasks:

@@ -72,7 +72,8 @@ after a successful save. Status filters and search retain the chosen order; Comp
 The preference endpoint requires the same session, current admission, Origin and CSRF protections
 as other personal Activity actions. No browser storage or engine call is needed.
 
-Slack Home → Activity offers **Open live dashboard** when a Public URL is configured. It opens a
+Slack Home → Activity offers **Open live dashboard** as the rightmost button in the navigation
+actions row, after **Help & settings**, when a Public URL is configured. It opens a
 responsive browser table of the viewer's own agent threads, with search, status filters, Working
 spinners, labeled status colors, last-message dates, Open thread and Done/Reopen. Completed work
 is hidden from open filters except while that thread is actively Working or Waiting. Live status
