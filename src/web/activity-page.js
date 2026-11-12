@@ -1,21 +1,83 @@
 // Cookie-authenticated browser dashboard with self-hosted brand assets and no browser storage.
 import crypto from "node:crypto";
 import { ACTIVITY_THEME_CSS, ACTIVITY_BRAND } from "./activity-theme.js";
+import { DEFAULT_ACTIVITY_GROUP_ORDER } from "./activity-order.js";
 
 // Kept as an ordinary function so the exact script served to browsers is testable without a bundler.
 function activityBrowser(config, browser) {
   "use strict";
-  const { base, csrf } = config;
+  const { base, csrf, defaultGroupOrder } = config;
   const { document, location, EventSource } = browser;
   const el = (id) => document.getElementById(id);
   const body = el("threads"), search = el("search"), tabs = el("filters");
   const states = { working: "Working", waiting: "Waiting", error: "Error", done: "Done", idle: "Idle" };
   const pending = new Set(), nodes = new Map();
+  const orderDialog = el("order-dialog"), orderList = el("order-list"), orderButton = el("group-order");
+  const orderNodes = new Map();
+  let groupOrder = [...defaultGroupOrder], groupOrderVersion = -1, draftOrder = [], savingOrder = false;
   let rows = [], filter = "active", ended = false, loaded = false, stream = null;
   let revision = 0, requestId = 0, lastUpdated = 0, connected = false;
   let unavailable = false, message = "", actionMessage = "";
   const dateFormat = new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
   const timeFormat = new Intl.DateTimeFormat(undefined, { hour: "numeric", minute: "2-digit", second: "2-digit" });
+
+  function validOrder(value) {
+    return Array.isArray(value) && value.length === defaultGroupOrder.length
+      && new Set(value).size === value.length && value.every((status) => defaultGroupOrder.includes(status));
+  }
+  function acceptOrder(data) {
+    const version = Number.isSafeInteger(data.groupOrderVersion) && data.groupOrderVersion >= 0 ? data.groupOrderVersion : 0;
+    if (validOrder(data.groupOrder) && version >= groupOrderVersion) {
+      groupOrder = [...data.groupOrder]; groupOrderVersion = version;
+    }
+  }
+  function renderOrder() {
+    draftOrder.forEach((status, index) => {
+      let entry = orderNodes.get(status);
+      if (!entry) {
+        const item = node("li"), label = node("span", "order-label", states[status]);
+        const controls = node("div", "order-moves");
+        const buttons = [-1, 1].map((direction) => {
+          const button = node("button", "order-move", direction < 0 ? "↑" : "↓");
+          button.type = "button";
+          button.dataset.status = status;
+          button.dataset.direction = String(direction);
+          button.setAttribute("aria-label", "Move " + states[status] + (direction < 0 ? " up" : " down"));
+          return button;
+        });
+        controls.append(...buttons); item.append(label, controls);
+        entry = { item, buttons }; orderNodes.set(status, entry);
+      }
+      entry.buttons[0].disabled = savingOrder || index === 0;
+      entry.buttons[1].disabled = savingOrder || index === draftOrder.length - 1;
+      if (orderList.children[index] !== entry.item) orderList.insertBefore(entry.item, orderList.children[index] || null);
+    });
+    for (const id of ["order-save", "order-cancel", "order-reset"]) el(id).disabled = savingOrder;
+    el("order-save").textContent = savingOrder ? "Saving…" : "Save order";
+  }
+  async function saveOrder() {
+    if (savingOrder || ended) return;
+    savingOrder = true;
+    el("order-error").textContent = "";
+    renderOrder();
+    try {
+      const response = await fetch(base + "/api/group-order", {
+        method: "POST", credentials: "same-origin",
+        headers: { "Content-Type": "application/json", "X-CG-CSRF": csrf },
+        body: JSON.stringify({ groupOrder: draftOrder }),
+      });
+      if (response.status === 401 || response.status === 403) { endAccess(); return; }
+      if (!response.ok) throw new Error("unavailable");
+      const data = await response.json();
+      if (ended) return;
+      if (!validOrder(data.groupOrder)) throw new Error("invalid order");
+      acceptOrder(data);
+      revision++; // An older in-flight snapshot must not overwrite the saved order.
+      orderDialog.close(); render();
+    } catch {
+      if (!ended) el("order-error").textContent = "That order couldn’t be saved. Please try again.";
+    } finally { savingOrder = false; renderOrder(); }
+  }
 
   function node(tag, className, text) {
     const item = document.createElement(tag);
@@ -64,6 +126,8 @@ function activityBrowser(config, browser) {
     lastUpdated = 0;
     search.value = "";
     search.disabled = true;
+    orderButton.disabled = true;
+    orderDialog.close();
     for (const button of tabs.querySelectorAll("button")) button.disabled = true;
     render();
     connection();
@@ -72,6 +136,7 @@ function activityBrowser(config, browser) {
     if (ended || !data || !Array.isArray(data.rows)) return false;
     rows = data.rows.filter((row) => row && typeof row.channelId === "string" && typeof row.threadTs === "string")
       .map((row) => ({ ...row, status: Object.hasOwn(states, row.status) ? row.status : "idle" }));
+    acceptOrder(data);
     revision++;
     loaded = true;
     unavailable = Boolean(data.unavailable);
@@ -115,7 +180,9 @@ function activityBrowser(config, browser) {
       button.querySelector("span").textContent = String(counts[button.dataset.filter]);
     }
     el("summary").textContent = counts.active + " open · " + counts.working + " working · " + counts.waiting + " waiting";
-    const shown = ended ? [] : rows.filter(matches).sort((a, b) => (Number(b.lastMessageMs) || 0) - (Number(a.lastMessageMs) || 0));
+    const rank = (status) => status === "done" ? groupOrder.length : groupOrder.indexOf(status);
+    const shown = ended ? [] : rows.filter(matches).sort((a, b) => rank(a.status) - rank(b.status)
+      || (Number(b.lastMessageMs) || 0) - (Number(a.lastMessageMs) || 0));
     const visible = new Set(shown.map(key));
     for (const [rowKey, entry] of nodes) {
       if (!visible.has(rowKey)) { entry.tr.remove(); nodes.delete(rowKey); }
@@ -201,6 +268,26 @@ function activityBrowser(config, browser) {
     filter = button.dataset.filter;
     render();
   });
+  orderButton.addEventListener("click", () => {
+    if (ended) return;
+    draftOrder = [...groupOrder];
+    el("order-error").textContent = "";
+    renderOrder(); orderDialog.showModal();
+  });
+  orderList.addEventListener("click", (event) => {
+    const button = event.target.closest("button[data-status]");
+    if (!button || button.disabled || savingOrder || ended) return;
+    const index = draftOrder.indexOf(button.dataset.status), next = index + Number(button.dataset.direction);
+    if (index < 0 || next < 0 || next >= draftOrder.length) return;
+    [draftOrder[index], draftOrder[next]] = [draftOrder[next], draftOrder[index]];
+    renderOrder();
+    const buttons = orderNodes.get(button.dataset.status).buttons;
+    (button.disabled ? buttons.find((item) => !item.disabled) : button)?.focus();
+  });
+  el("order-reset").addEventListener("click", () => { if (!savingOrder && !ended) { draftOrder = [...defaultGroupOrder]; renderOrder(); } });
+  el("order-cancel").addEventListener("click", () => { if (!savingOrder) orderDialog.close(); });
+  el("order-save").addEventListener("click", () => { void saveOrder(); });
+  orderDialog.addEventListener("cancel", (event) => { if (savingOrder) event.preventDefault(); });
   search.addEventListener("input", render);
   body.addEventListener("click", (event) => {
     const button = event.target.closest("button[data-key]");
@@ -228,13 +315,23 @@ function activityBrowser(config, browser) {
 
 export function activityPage({ sessionId, csrf }) {
   const nonce = crypto.randomBytes(16).toString("base64url");
-  const config = JSON.stringify({ base: `/activity/${encodeURIComponent(sessionId)}`, csrf }).replaceAll("<", "\\u003c");
+  const config = JSON.stringify({ base: `/activity/${encodeURIComponent(sessionId)}`, csrf, defaultGroupOrder: DEFAULT_ACTIVITY_GROUP_ORDER }).replaceAll("<", "\\u003c");
   return { nonce, html: `<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="color-scheme" content="dark"><title>My Activity · ChannelGate</title><link rel="icon" type="image/svg+xml" href="/favicon.svg">
 <style nonce="${nonce}">
 ${ACTIVITY_THEME_CSS}
 .shell{max-width:1440px;margin:0 auto;padding:36px 32px 20px}
 .heading{display:flex;align-items:center;justify-content:space-between;gap:20px;margin:30px 0 22px}
+.heading-actions{display:flex;align-items:center;justify-content:flex-end;gap:16px;flex-wrap:wrap}
+.order-button,.order-dialog button{border:1px solid var(--line);border-radius:7px;padding:9px 12px;color:var(--ink);background:var(--panel-2);font-size:12px}
+.order-button:hover,.order-dialog button:hover{border-color:var(--muted)}
+.order-dialog{width:min(420px,calc(100% - 32px));max-height:calc(100dvh - 32px);overflow:auto;padding:24px;color:var(--ink);background:var(--panel);border:1px solid var(--line);border-radius:12px}
+.order-dialog::backdrop{background:rgba(0,0,0,.65)}
+.order-dialog h2{font-size:18px;margin:0 0 10px}.order-dialog p{font-size:13px;color:var(--muted);line-height:1.6}
+.order-list{padding:0;list-style:none;margin:20px 0}.order-list li{display:flex;align-items:center;justify-content:space-between;padding:10px 0;border-bottom:1px solid var(--line-soft)}
+.order-moves{display:flex;gap:6px}.order-dialog .order-move{min-width:44px;min-height:44px;font-size:18px;padding:6px}
+.order-dialog button:disabled{opacity:.4;cursor:default}.order-footer{display:flex;justify-content:flex-end;gap:8px;margin-top:16px}.order-dialog .order-save{background:var(--orange);color:var(--panel-dark)}
+.order-dialog .order-error{color:#ffb3a9;min-height:1.6em}
 .subtitle{margin:14px 0 0;color:var(--muted)}
 .connection{display:flex;align-items:center;gap:8px;white-space:nowrap;font-size:12px;color:var(--muted)}
 .connection::before{content:"";width:7px;height:7px;background:var(--warn);border-radius:50%}
@@ -294,7 +391,8 @@ tbody tr:last-child td{border-bottom:0}tbody tr:hover{background:var(--panel-2)}
 }
 </style></head><body><main class="shell">
 ${ACTIVITY_BRAND}
-<header class="heading"><div><h1>My Activity</h1><p class="subtitle">Your conversations, with the latest status in one place.</p></div><div id="connection" class="connection reconnecting" role="status"><span id="connection-text">Connecting…</span></div></header>
+<header class="heading"><div><h1>My Activity</h1><p class="subtitle">Your conversations, with the latest status in one place.</p></div><div class="heading-actions"><div id="connection" class="connection reconnecting" role="status"><span id="connection-text">Connecting…</span></div><button id="group-order" class="order-button" type="button" aria-haspopup="dialog">⇅ Group order</button></div></header>
+<dialog id="order-dialog" class="order-dialog" aria-labelledby="order-title" aria-describedby="order-description"><h2 id="order-title">Arrange status groups</h2><p id="order-description">Move groups up or down. Newest conversations appear first within each group. Your order is saved to your account.</p><ol id="order-list" class="order-list"></ol><button id="order-reset" type="button">Reset to default</button><p id="order-error" class="order-error" role="alert"></p><div class="order-footer"><button id="order-cancel" type="button">Cancel</button><button id="order-save" class="order-save" type="button">Save order</button></div></dialog>
 <div id="notice" class="notice" role="alert" hidden></div>
 <div class="toolbar"><div id="summary" class="summary">Loading activity…</div><div class="search-wrap"><label class="search-label" for="search">Search conversations or channels</label><input type="search" id="search" placeholder="Search conversations or channels…" autocomplete="off" maxlength="300"></div></div>
 <section class="panel" aria-label="Conversations"><div id="filters" class="filters" role="group" aria-label="Filter by status">${[["active", "Active"], ["working", "Working"], ["waiting", "Waiting"], ["error", "Error"], ["idle", "Idle"], ["done", "Completed"], ["open", "All open"]].map(([value, label]) => `<button type="button" data-filter="${value}" aria-pressed="${value === "active"}">${label}<span>0</span></button>`).join("")}</div>

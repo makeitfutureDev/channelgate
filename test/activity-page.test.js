@@ -22,6 +22,9 @@ class Element {
   }
   remove() { if (this.parent) { this.parent.children.splice(this.parent.children.indexOf(this), 1); this.parent = null; } }
   addEventListener(type, listener) { this.listeners[type] = listener; }
+  showModal() { this.open = true; }
+  close() { this.open = false; }
+  focus() { this.focused = true; }
   querySelector(selector) { return this.querySelectorAll(selector)[0]; }
   querySelectorAll(selector) { return this.children.flatMap((c) => [...(c.tag === selector ? [c] : []), ...c.querySelectorAll(selector)]); }
   closest(selector) { return this.tag === "button" && selector.startsWith("button") ? this : this.parent?.closest(selector); }
@@ -34,7 +37,7 @@ function row(status = "working", title = "Fixture thread", url = "/activity/sess
   return { channelId: "C1", threadTs: "1.1", title, channelName: "Engineering", status, lastMessageMs: 1_800_000_000_000, url };
 }
 function browser(fetchImpl = async () => response({ rows: [] }), csrf = "fixture-csrf") {
-  const elements = Object.fromEntries(["threads", "search", "filters", "connection", "connection-text", "updated", "notice", "summary", "table", "empty", "empty-title", "empty-copy", "result-count"].map((id) => [id, new Element()]));
+  const elements = Object.fromEntries(["threads", "search", "filters", "connection", "connection-text", "updated", "notice", "summary", "table", "empty", "empty-title", "empty-copy", "result-count", "group-order", "order-dialog", "order-list", "order-save", "order-cancel", "order-reset", "order-error"].map((id) => [id, new Element()]));
   for (const filter of ["active", "working", "waiting", "error", "idle", "done", "open"]) {
     const button = new Element("button"); button.dataset.filter = filter; button.append(new Element("span")); elements.filters.append(button);
   }
@@ -42,7 +45,7 @@ function browser(fetchImpl = async () => response({ rows: [] }), csrf = "fixture
   class EventSource extends Element {
     constructor(url) { super(); this.url = url; stream = this; }
     close() { this.closed = true; }
-    snapshot(rows) { this.fire("threads", { data: JSON.stringify({ rows }) }); }
+    snapshot(rows, extra = {}) { this.fire("threads", { data: JSON.stringify({ rows, ...extra }) }); }
   }
   const requests = [], timers = [];
   const page = activityPage({ sessionId: "session", csrf });
@@ -136,4 +139,70 @@ test("activity browser handles authorization failures and hides transient server
     if (status !== 500) { assert.equal(stream.closed, true); assert.equal(elements.search.disabled, true); }
     else assert.match(elements.notice.textContent, /try again automatically/);
   }
+});
+
+const titles = (elements) => elements.threads.children.map((tr) => tr.children[0].textContent);
+const orderLabels = (elements) => elements["order-list"].children.map((li) => li.children[0].textContent);
+function moveGroup(elements, status, direction) {
+  const button = elements["order-list"].children.flatMap((li) => li.children[1].children)
+    .find((b) => b.dataset.status === status && b.dataset.direction === String(direction));
+  elements["order-list"].fire("click", { target: button });
+}
+test("activity groups errors, waiting, working and idle before sorting newest within a group", () => {
+  const { elements, stream } = browser(() => new Promise(() => {}));
+  const rows = ["idle", "working", "waiting", "error", "error", "done"].map((status, i) =>
+    ({ ...row(status, status + i), threadTs: String(i + 1), lastMessageMs: 100 - i }));
+  stream.snapshot(rows);
+  assert.deepEqual(titles(elements), ["error3", "error4", "waiting2", "working1", "idle0"]);
+  stream.snapshot(rows.map((r) => r.title === "idle0" ? { ...r, status: "waiting" } : r));
+  assert.deepEqual(titles(elements), ["error3", "error4", "idle0", "waiting2", "working1"]);
+  elements.filters.fire("click", { target: elements.filters.children.find((b) => b.dataset.filter === "open") });
+  assert.deepEqual(titles(elements), ["error3", "error4", "idle0", "waiting2", "working1"]);
+  elements.filters.fire("click", { target: elements.filters.children.find((b) => b.dataset.filter === "error") });
+  assert.deepEqual(titles(elements), ["error3", "error4"]);
+});
+
+test("group order dialog stages changes, saves once with CSRF, survives live updates, and resets", async () => {
+  const save = deferred();
+  const { elements, stream, requests } = browser((url) => url.endsWith("/group-order") ? save.promise : new Promise(() => {}));
+  const rows = ["idle", "error", "working", "waiting"].map((status, i) => ({ ...row(status, status), threadTs: String(i + 1) }));
+  stream.snapshot(rows);
+  elements["group-order"].fire("click");
+  assert.equal(elements["order-dialog"].open, true);
+  moveGroup(elements, "idle", -1); moveGroup(elements, "idle", -1); moveGroup(elements, "idle", -1);
+  assert.deepEqual(orderLabels(elements), ["Idle", "Error", "Waiting", "Working"]);
+  assert.deepEqual(titles(elements), ["error", "waiting", "working", "idle"], "draft has not been applied");
+  elements["order-cancel"].fire("click"); elements["group-order"].fire("click");
+  assert.deepEqual(orderLabels(elements), ["Error", "Waiting", "Working", "Idle"]);
+  moveGroup(elements, "error", 1);
+  elements["order-save"].fire("click"); elements["order-save"].fire("click");
+  const posts = requests.filter((req) => req.url.endsWith("/group-order"));
+  assert.equal(posts.length, 1);
+  assert.equal(posts[0].options.headers["X-CG-CSRF"], "fixture-csrf");
+  assert.deepEqual(JSON.parse(posts[0].options.body), { groupOrder: ["waiting", "error", "working", "idle"] });
+  assert.equal(elements["order-cancel"].disabled, true);
+  save.resolve(response({ groupOrder: ["waiting", "error", "working", "idle"], groupOrderVersion: 1 })); await flush();
+  assert.equal(elements["order-dialog"].open, false);
+  stream.snapshot(rows, { groupOrder: ["error", "waiting", "working", "idle"], groupOrderVersion: 0 });
+  assert.deepEqual(titles(elements), ["waiting", "error", "working", "idle"], "buffered pre-save SSE cannot revert the saved order");
+  stream.snapshot(rows, { groupOrder: ["waiting", "error", "working", "idle"], groupOrderVersion: 1 });
+  assert.deepEqual(titles(elements), ["waiting", "error", "working", "idle"]);
+  elements["group-order"].fire("click"); elements["order-reset"].fire("click");
+  assert.deepEqual(orderLabels(elements), ["Error", "Waiting", "Working", "Idle"]);
+  elements["order-cancel"].fire("click");
+  stream.snapshot(rows, { groupOrder: ["unknown"] });
+  assert.deepEqual(titles(elements), ["waiting", "error", "working", "idle"]);
+});
+
+test("group order failure preserves the draft and access loss closes the dialog", async () => {
+  const { elements, stream } = browser((url) => url.endsWith("/group-order") ? Promise.resolve(response({}, 500)) : new Promise(() => {}));
+  elements["group-order"].fire("click"); moveGroup(elements, "error", 1);
+  elements["order-save"].fire("click"); await flush();
+  assert.equal(elements["order-dialog"].open, true);
+  assert.match(elements["order-error"].textContent, /couldn’t be saved/);
+  assert.equal(elements["order-save"].disabled, false);
+  assert.deepEqual(orderLabels(elements), ["Waiting", "Error", "Working", "Idle"]);
+  stream.fire("access-ended");
+  assert.equal(elements["order-dialog"].open, false);
+  assert.equal(elements["group-order"].disabled, true);
 });

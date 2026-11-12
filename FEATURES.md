@@ -37,6 +37,15 @@ unavailable data while the other provider remains usable. No additional provider
 
 ## Private live Activity dashboard (2026-11-11)
 
+The personal browser dashboard lists open conversations by status: **Error → Waiting → Working
+→ Idle**, with newest messages first within each group. The top-right **Group order** button
+opens a keyboard- and touch-accessible dialog with up/down buttons, Cancel, Save order and Reset
+to default. Saving stores only the authenticated viewer's preference in their user record; the
+order follows them across browser sessions/devices and live snapshots. Draft moves apply only
+after a successful save. Status filters and search retain the chosen order; Completed stays separate.
+The preference endpoint requires the same session, current admission, Origin and CSRF protections
+as other personal Activity actions. No browser storage or engine call is needed.
+
 Slack Home → Activity offers **Open live dashboard** when a Public URL is configured. It opens a
 responsive browser table of the viewer's own agent threads, with search, status filters, Working
 spinners, labeled status colors, last-message dates, Open thread and Done/Reopen. Completed work
