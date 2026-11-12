@@ -3,6 +3,7 @@
 // feedback controls, and the ack-only URL buttons inside composed replies and data-table rows.
 // Kept out of app.js so the handlers can be exercised without the whole Bolt wiring.
 import { logEvent } from "../util/logger.js";
+import { renameSlackThread } from "../gateway/slack-threads.js";
 import { stoppedSessionTarget } from "./agent-sessions.js";
 import { REPLY_FEEDBACK_ACTION_ID, parseFeedbackValue } from "./footer.js";
 import { TABLE_ROW_ACTION_ID } from "./tables.js";
@@ -55,12 +56,13 @@ export function registerAgentInterfaceHandlers(app, {
     }
   });
 
-  // A user renamed the session from Slack's own UI. Nothing to apply (titles are Slack-owned);
-  // recorded so the thread's history explains the new name.
+  // Mirror Slack's session title into Activity using the existing local invalidation path.
+  // No history reads or engine work: passive root refreshes preserve this explicit title.
   app.event("agent_session_title_changed", async ({ event }) => {
     const channel = String(event?.channel || "");
     const threadTs = String(event?.thread_ts || "");
     if (!channel || !threadTs) return;
+    renameSlackThread({ channelId: channel, threadTs, title: event?.title, eventTs: event?.event_ts });
     void logEvent("agent_session_renamed", {
       channel,
       threadKey: threadTs,

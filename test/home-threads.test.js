@@ -7,7 +7,7 @@ const { getDb, toJson } = await import("../src/db/index.js");
 const { setUser, upsertChannelEntry, getChannelEntry, saveChannelMeta, patchChannelMeta } = await import("../src/config/store.js");
 const { setThreadSudo } = await import("../src/gateway/thread-engine.js");
 const { getSlackThread, indexSlackThread, trackSlackThread, recordSlackThreadOutcome, setSlackThreadDone,
-  slackThreadRuntime, slackThreadStatus, updateSlackThreadRootCompletion, slackThreadCandidates, eligibleSlackThreadsForUser } = await import("../src/gateway/slack-threads.js");
+  slackThreadRuntime, slackThreadStatus, updateSlackThreadRootCompletion, slackThreadCandidates, eligibleSlackThreadsForUser, renameSlackThread } = await import("../src/gateway/slack-threads.js");
 const { homeThreadsSnapshot, homeThreadBlocks, registerHomeThreadActions, normalizeThreadView, homeThreadsRefreshKey, activityThreadSnapshot } = await import("../src/slack/home-threads.js");
 const { createHomeThreadReader } = await import("../src/slack/home-thread-reader.js");
 
@@ -845,4 +845,43 @@ test("Activity bounds missing live-root repair and discovers agent jobs but neve
   assert.equal(getSlackThread(c.channelId, shellTs), null);
   await activityThreadSnapshot(client, "U_MINE");
   assert.equal(reads.length, 12, "indexed rows and shell-only jobs cause no further Slack reads");
+});
+
+
+test("Slack renames survive root refreshes, reject old deliveries, and update Activity search locally", async (t) => {
+  const c = await channel();
+  const original = root(c, "100.000001");
+  root(c, "101.000001");
+  const beforeKey = homeThreadsRefreshKey("U_MINE");
+  const { onThreadChanged } = await import("../src/gateway/thread-changes.js");
+  const hints = []; t.after(onThreadChanged((hint) => hints.push(hint)));
+  const rename = (title, eventTs = "200.000002") => renameSlackThread({ channelId: c.channelId, threadTs: original.thread_ts, title, eventTs });
+  assert.equal(rename("  A custom trip title  "), true);
+  assert.notEqual(homeThreadsRefreshKey("U_MINE"), beforeKey);
+  assert.equal(rename("Old title", "200.000001"), false, "out-of-order events cannot undo the latest rename");
+  assert.equal(rename("Retry with same timestamp"), false);
+  assert.equal(rename("A custom trip title", "201.000001"), true, "same-title events still advance the watermark");
+  assert.equal(rename("Delayed intermediate title", "200.999999"), false);
+  assert.deepEqual(hints, [{ channelId: c.channelId, threadTs: original.thread_ts }]);
+  indexSlackThread({ channelId: c.channelId, slug: c.slug, root: { ts: original.thread_ts, user: "U_MINE", text: "Edited original message" } });
+  const current = getSlackThread(c.channelId, original.thread_ts);
+  assert.equal(current.title, "A custom trip title");
+  for (const field of ["starter_id", "updated_ms", "last_message_ms", "done_ms", "agent_engaged"]) assert.equal(current[field], original[field], `${field} unchanged`);
+  assert.equal(getSlackThread(c.channelId, "101.000001").title, "Task 101.000001");
+  const snapshot = await activityThreadSnapshot(client, "U_MINE", { search: "custom trip" });
+  assert.deepEqual(snapshot.rows.map((r) => r.title), ["A custom trip title"]);
+  assert.deepEqual(reads, [], "rename and Activity search never query Slack history");
+  assert.equal((await activityThreadSnapshot(client, "U_OTHER", { search: "custom trip" })).total, 0);
+});
+
+test("renames ignore unknown/tombstoned roots and malformed or empty metadata", async () => {
+  const c = await channel(); root(c, "100.000001");
+  const valid = { channelId: c.channelId, threadTs: "100.000001", title: "New name", eventTs: "200.000001" };
+  for (const change of [{ channelId: "" }, { threadTs: "" }, { threadTs: "sched-task" }, { eventTs: "bad" }, { eventTs: "0.0" }, { title: "   " }, { title: {} }, { threadTs: "999.000001" }, { channelId: "C_OTHER" }]) {
+    assert.equal(renameSlackThread({ ...valid, ...change }), false);
+  }
+  assert.equal(getSlackThread(c.channelId, "100.000001").title, "Task 100.000001");
+  assert.equal(getSlackThread(c.channelId, "999.000001"), null);
+  getDb().prepare("UPDATE slack_threads SET starter_id='' WHERE channel_id=?").run(c.channelId);
+  assert.equal(renameSlackThread(valid), false);
 });

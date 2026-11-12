@@ -7,6 +7,7 @@ ensureTestEnv();
 const { getDb } = await import("../src/db/index.js");
 const { setUser, upsertChannelEntry, getChannelEntry, saveChannelMeta } = await import("../src/config/store.js");
 const { indexSlackThread, getSlackThread, setSlackThreadDone, recordSlackThreadOutcome } = await import("../src/gateway/slack-threads.js");
+const { registerAgentInterfaceHandlers } = await import("../src/slack/agent-interface.js");
 const { setThreadSudo } = await import("../src/gateway/thread-engine.js");
 const { activityThreadSnapshot } = await import("../src/slack/home-threads.js");
 const { recordActiveRun, clearActiveRun } = await import("../src/gateway/active-runs.js");
@@ -491,4 +492,27 @@ test("SSE removes revoked private access and rejects admission after user disabl
   assert.equal((await f.exchange()).status, 403);
   await setUser("U_MINE", { approved: true }); f.disconnect();
   assert.equal((await f.exchange()).status, 403);
+});
+
+
+test("Slack title events push renamed titles to Activity over SSE without polling or Slack reads", async (t) => {
+  const f = await fixture(t, { pollMs: 60_000, accessRefreshMs: 60_000 });
+  const entry = await f.root();
+  const user = await f.login(); f.reads.length = 0;
+  const response = await f.request(user.url + "/stream", { headers: user.headers });
+  const reader = response.body.getReader(); t.after(() => reader.cancel());
+  await nextEvent(reader);
+  const events = new Map();
+  registerAgentInterfaceHandlers({ event: (name, fn) => events.set(name, fn), action: () => {} });
+  await events.get("agent_session_title_changed")({ event: {
+    channel: "C_WORK", thread_ts: "100.000001", user: "U_OTHER", title: "Renamed from Slack", event_ts: "200.000001",
+  } });
+  const row = (await nextEvent(reader)).rows[0];
+  assert.equal(row.title, "Renamed from Slack");
+  assert.equal(row.status, "idle");
+  indexSlackThread({ channelId: "C_WORK", slug: entry.slug, root: { ts: "100.000001", user: "U_MINE", text: "Original root preview" } });
+  const refreshed = await f.request(user.url + "/api/threads", { headers: user.headers });
+  assert.equal((await refreshed.json()).rows[0].title, "Renamed from Slack");
+  assert.equal(getSlackThread("C_WORK", "100.000001").starter_id, "U_MINE", "a participant's rename cannot take ownership");
+  assert.deepEqual(f.reads, []);
 });

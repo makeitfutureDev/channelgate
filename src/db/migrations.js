@@ -1233,4 +1233,13 @@ export const migrations = [
       db.exec("ALTER TABLE slack_threads ADD COLUMN agent_engaged INTEGER NOT NULL DEFAULT 0");
     },
   },
+  {
+    version: 47,
+    up(db) {
+      // Keep Slack's explicit session title separate from the root-message preview so passive
+      // discovery cannot undo a rename. The watermark rejects retried/out-of-order events.
+      db.exec("ALTER TABLE slack_threads ADD COLUMN session_title TEXT NOT NULL DEFAULT ''");
+      db.exec("ALTER TABLE slack_threads ADD COLUMN session_title_ts REAL NOT NULL DEFAULT 0");
+    },
+  },
 ];

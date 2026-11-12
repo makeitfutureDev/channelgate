@@ -1,5 +1,26 @@
 # ChannelGate — Test Plan
 
+## Slack title synchronization to Activity (2026-11-12)
+
+- Automated: `test/home-threads.test.js`, `test/activity.test.js`, `test/migrations.test.js`,
+  plus existing Slack agent-session and Activity page regressions. Exercise the real title-event
+  handler through SSE with polling delayed to 60 seconds; verify immediate title delivery,
+  local search, unchanged ownership/status/dates and no Slack reads. Verify passive reindexing,
+  duplicate/out-of-order/same-title events, malformed metadata, unknown and tombstoned roots,
+  viewer isolation, and v46→v47 upgrade retaining existing rows.
+- Live fixture: Tiberiu DM, Slack App Home → Activity and its private browser dashboard, authorized
+  author Tiberiu, with an existing human-owned indexed agent thread. Ensure the installed Slack app
+  subscribes to `agent_session_title_changed` and the candidate daemon is running. Rename the
+  thread in Slack to `Activity rename QA 1`; without refreshing the browser, verify the matching row
+  changes and search finds the new title. Open/refresh Slack Home Activity and verify the same name.
+  Rename again to `Activity rename QA 2`, refresh both views and restart the candidate daemon safely;
+  pass only when the second title persists with unchanged ownership, status and last-message date,
+  and no rename-triggered engine turn or Slack history requests. Restore the original title.
+- Engine-independent: this metadata event, SQLite write and SSE path do not invoke either engine.
+  Use existing Claude and Codex thread rows as fixtures when available; no new model call is needed.
+  Real Slack delivery and browser acceptance remain unexecuted until explicitly recorded.
+
+
 ## Fork from a selected Slack reply (2026-11-12)
 
 - Automated: `test/reply-fork.test.js`, `test/slack-fork.test.js`,
