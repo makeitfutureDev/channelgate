@@ -45,6 +45,11 @@ Private membership is rechecked on snapshots and at least every 15 seconds while
 Open resolves a cached real Slack permalink after fresh authorization. Disconnected streams retry.
 The snapshot is bounded to 1,000 authorized threads and indicates truncation.
 
+Activity and its private-link landing page use the ChannelGate admin brand: dark teal surfaces,
+light teal supporting text, self-hosted Poppins, the existing #makeitfuture. wordmark and ChannelGate
+label, and orange accents for selected filters, focus and the title underline. Brand fonts and
+favicon reuse public login assets; no external font service or administrator stylesheet is needed.
+
 A private Home button carries a ten-minute, reusable bearer grant in a URL fragment. The landing
 page removes it before exchanging it for a twelve-hour HttpOnly, SameSite cookie scoped to one opaque
 dashboard path (Secure over HTTPS). The same launch link can be opened repeatedly until ten

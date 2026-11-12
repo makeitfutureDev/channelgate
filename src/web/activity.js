@@ -13,6 +13,7 @@ import { accessContext, activityThreadSnapshot, homeThreadsRefreshKey } from "..
 import { createHomeThreadReader } from "../slack/home-thread-reader.js";
 import { isLoopbackHost, timingSafeEqualStr } from "./security.js";
 import { activityPage } from "./activity-page.js";
+import { ACTIVITY_THEME_CSS, ACTIVITY_BRAND } from "./activity-theme.js";
 
 export const ACTIVITY_GRANT_TTL_MS = 10 * 60_000;
 export const ACTIVITY_SESSION_TTL_MS = 12 * 60 * 60_000;
@@ -57,14 +58,14 @@ export function createActivityGrantUrl({ baseUrl = getPublicUrl(), ownerId, team
 function headers(res, nonce = "") {
   res.set({ "Cache-Control": "no-store, max-age=0", Pragma: "no-cache", "Referrer-Policy": "no-referrer",
     "X-Content-Type-Options": "nosniff", "X-Frame-Options": "DENY",
-    "Content-Security-Policy": `default-src 'none'; ${nonce ? `script-src 'nonce-${nonce}'; style-src 'nonce-${nonce}'; connect-src 'self'; img-src 'self' data:;` : ""} base-uri 'none'; form-action 'none'; frame-ancestors 'none'` });
+    "Content-Security-Policy": `default-src 'none'; ${nonce ? `script-src 'nonce-${nonce}'; style-src 'nonce-${nonce}'; connect-src 'self'; img-src 'self' data:; font-src 'self';` : ""} base-uri 'none'; form-action 'none'; frame-ancestors 'none'` });
 }
 function unavailable(res, status = 401) {
   return res.status(status).json({ error: "Activity is unavailable. Open a new dashboard link from Slack Activity." });
 }
 function launchPage() {
   const nonce = token(16);
-  return { nonce, html: `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Open My Activity</title><style nonce="${nonce}">body{background:#10151f;color:#e9edf5;font:16px system-ui;margin:0;display:grid;place-items:center;min-height:100vh}main{padding:32px;max-width:480px}p{line-height:1.6}</style></head><body><main><h1>My Activity</h1><p id="status">Opening your private dashboard…</p></main><script nonce="${nonce}">(async()=>{const secret=location.hash.slice(1);history.replaceState(null,"",location.pathname);try{if(!/^[A-Za-z0-9_-]{43}$/.test(secret))throw Error();const response=await fetch("/activity/exchange",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({token:secret})});if(!response.ok)throw Error();const data=await response.json();if(typeof data.url!=="string"||!data.url.startsWith("/activity/")||!/^[A-Za-z0-9_-]{16}$/.test(data.url.slice(10)))throw Error();location.replace(data.url);}catch{document.getElementById("status").textContent="This private link expired or is unavailable. Open a new dashboard link from Slack Activity."}})();</script></body></html>` };
+  return { nonce, html: `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Open My Activity</title><link rel="icon" type="image/svg+xml" href="/favicon.svg"><style nonce="${nonce}">${ACTIVITY_THEME_CSS}body{display:grid;place-items:center;min-height:100vh}main{margin:24px;padding:32px;width:min(480px,calc(100% - 48px));background:var(--panel);border:1px solid var(--line);border-radius:10px}.brand{margin-bottom:28px}p{color:var(--muted);line-height:1.6}</style></head><body><main>${ACTIVITY_BRAND}<h1>My Activity</h1><p id="status">Opening your private dashboard…</p></main><script nonce="${nonce}">(async()=>{const secret=location.hash.slice(1);history.replaceState(null,"",location.pathname);try{if(!/^[A-Za-z0-9_-]{43}$/.test(secret))throw Error();const response=await fetch("/activity/exchange",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({token:secret})});if(!response.ok)throw Error();const data=await response.json();if(typeof data.url!=="string"||!data.url.startsWith("/activity/")||!/^[A-Za-z0-9_-]{16}$/.test(data.url.slice(10)))throw Error();location.replace(data.url);}catch{document.getElementById("status").textContent="This private link expired or is unavailable. Open a new dashboard link from Slack Activity."}})();</script></body></html>` };
 }
 
 export function resetActivityStateForTests() {

@@ -62,6 +62,13 @@ never alter production credentials or send real access tokens to fixture servers
 
 ## Private live Activity dashboard and agent-only discovery (2026-11-11)
 
+Branding (2026-11-12): compare Activity and expired/opening-link screens with the admin/login
+palette and wordmark. Verify Poppins actually loads from the existing public font URLs under
+the nonce CSP (font-src self), with no external assets or admin session. Inspect 390px and 1440px
+views for clear status labels, teal panels, orange selected/focus/title accents, and no horizontal
+page overflow. Reuse the Chromium Activity fixture and ACTIVITY-WEB-04; visual fixture checks do
+not claim native live acceptance.
+
 Active-worker regression (2026-11-12): use real `recordActiveRun`/`clearActiveRun` events and an
 SSE fixture whose polling interval exceeds the test timeout. A completed own root becomes Working,
 then Waiting for a busy choice, then Completed again without losing its durable marker; ordinary
