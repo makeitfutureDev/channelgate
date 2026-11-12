@@ -29,6 +29,21 @@ export function newInspectMarker() {
   return `cg-state-${randomBytes(8).toString("hex")}`;
 }
 
+// A closed vocabulary for why the in-container usage reducer did not answer. Matched against the
+// exec result, never echoed: the category is safe in a user-facing error, the stderr is not.
+export const USAGE_INSPECTION_CATEGORIES = Object.freeze([
+  "missing-file", "permission-denied", "state-database", "timed-out", "container-unavailable", "unknown",
+]);
+export function classifyUsageInspectionFailure({ stderr = "", signal = null } = {}) {
+  const text = String(stderr || "");
+  if (/timed out after \d+ms/.test(text) || signal === "SIGKILL") return "timed-out";
+  if (/no such container|is not running|container state improper|not found/i.test(text)) return "container-unavailable";
+  if (/\bENOENT\b/.test(text)) return "missing-file";
+  if (/\bE(ACCES|PERM)\b/.test(text)) return "permission-denied";
+  if (/SQLITE|ERR_SQLITE|database/i.test(text)) return "state-database";
+  return "unknown";
+}
+
 /**
  * The `sh -c` script that lists and heads every match INSIDE the container. Every path is quoted
  * except the wildcards, and a test asserts on it verbatim and then runs it.
@@ -111,7 +126,17 @@ export function createContainerState({ exec, lifecycle, log = () => {} } = {}) {
     const result = await exec.runExec(target, [target.container.name, "node", "--input-type=module", "-e", source, JSON.stringify(args)], {
       retry: false, timeoutMs: INSPECT_TIMEOUT_MS,
     });
-    if (result.code !== 0) throw new Error("runtime usage inspection failed");
+    if (result.code !== 0) {
+      // The reducer's stderr can name transcript paths and host state, so the thrown message carries
+      // only an allowlisted category plus the exit facts; the first stderr line goes to the daemon
+      // log, where an operator can read it (2026-11-12: every such failure read "failed" and nothing else).
+      const category = classifyUsageInspectionFailure(result);
+      const exit = `exit ${result.code}${result.signal ? `, ${result.signal}` : ""}`;
+      log(`[container] usage inspection in ${target.container.name} failed (${exit}, ${category}): ${String(result.stderr || "").split("\n").map((line) => line.trim()).find(Boolean) || "no stderr"}`);
+      throw Object.assign(new Error(`runtime usage inspection failed (${exit}, ${category})`), {
+        details: { exitCode: result.code, signal: result.signal || null, category },
+      });
+    }
     try { return JSON.parse(result.stdout); }
     catch { throw new Error("runtime usage inspection returned invalid JSON"); }
   }

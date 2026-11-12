@@ -4362,6 +4362,14 @@ are retired, bullet by bullet; everything else stands.
   while retiring the old warm process. Host `/sudo` transcripts are never imported into the shared
   store, and other installations/channels have separate history roots. External usage detects the
   actual shared mounts and records one channel copy, preserving unrelated legacy/private usage.
+  A thread born before shared history is reset once by the harness that OWNS its session (the
+  chat-visible context is replayed), even when the channel default has since moved to a harness
+  without shared history such as Codex EU; the session stamp records that harness's history mode,
+  so the reset never repeats. The Codex usage probe treats an index row whose rollout file is
+  gone as a miss (filename scan, then an empty baseline) instead of aborting the resume, and a
+  probe failure names its exit code plus an allowlisted category (`missing-file`,
+  `permission-denied`, `state-database`, `timed-out`, `container-unavailable`, `unknown`) while
+  the reducer's stderr stays in the daemon log.
   → TEST-PLAN: SSH runtime scope and history parity.
 - **Developers SSH into a channel container, not into the host** (`docs/SSH-ACCESS.md`). A person
   registers ONE public key once from chat (`add_my_ssh_key`, bound to the identity that pasted it,

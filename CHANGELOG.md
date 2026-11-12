@@ -26,6 +26,11 @@ release gates. Stable promotion and publication require approval of the exact te
 
 ### Beta development notes
 
+- Fix threads failing with `runtime usage inspection failed` after shared channel history
+  activated: a thread born before shared history is now reset by the harness that owns its
+  session even when the channel default moved to Codex EU, the Codex usage probe no longer aborts
+  a resume on an index row whose rollout file is gone, and a probe failure reports its exit code
+  and a safe category instead of a bare "failed".
 - Update the Claude model pickers and inherited `:fable` shortcut to Fable 5.2, with its
   published cache-aware pricing for external usage. Previously saved model pins remain valid.
 

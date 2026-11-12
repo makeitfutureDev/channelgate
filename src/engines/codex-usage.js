@@ -86,7 +86,12 @@ async function indexedRolloutPath(stateDir, sessionId) {
       db = new DatabaseSync(path.join(stateDir, name), { readOnly: true });
       const row = db.prepare("SELECT rollout_path FROM threads WHERE id = ? AND rollout_path IS NOT NULL").get(sessionId);
       const candidate = String(row?.rollout_path || "");
-      if (candidate && within(candidate, path.join(stateDir, "sessions"))) return candidate;
+      if (candidate && within(candidate, path.join(stateDir, "sessions"))) {
+        // The index outlives the file: a shared history store mounted over `sessions/` (or a
+        // Codex cleanup) leaves rows whose rollout is gone. A dangling path is a MISS for the
+        // filename scan below, never an open() that aborts the resume it was meant to meter.
+        try { await stat(candidate); return candidate; } catch { /* fall through to the scan */ }
+      }
     } catch {
       // Older Codex state databases may not have the current threads schema; scan below.
     } finally {
