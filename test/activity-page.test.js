@@ -103,7 +103,7 @@ test("Activity app links reuse the current tab and retain an explicit browser al
   const { elements, stream } = browser(() => new Promise(() => {}));
   stream.snapshot([row()]);
   const tr = elements.threads.children[0], title = tr.children[0].children[0];
-  const [app, , web] = tr.children[4].children;
+  const [app, web] = tr.children[4].children[0].children;
   assert.equal(title.target, "_self");
   assert.equal(app.target, "_self");
   assert.equal(app.textContent, "Open in Slack");
@@ -122,12 +122,12 @@ test("activity browser filters locally and serializes each completion action wit
   let done = false;
   const { elements, stream, requests } = browser((url) => url.endsWith("/completion") ? save.promise : Promise.resolve(response({ rows: [row(done ? "done" : "working")] })));
   await flush();
-  const tr = elements.threads.children[0], toggle = tr.children[4].children[1];
+  const tr = elements.threads.children[0], toggle = tr.children[4].children[1].children[0];
   elements.search.value = "no match"; elements.search.fire("input");
   assert.equal(elements.threads.children.length, 0);
   elements.search.value = "engineering"; elements.search.fire("input");
   assert.equal(elements.threads.children.length, 1);
-  const button = elements.threads.children[0].children[4].children[1];
+  const button = elements.threads.children[0].children[4].children[1].children[0];
   elements.threads.fire("click", { target: button });
   elements.threads.fire("click", { target: button });
   assert.equal(button.disabled, true);
@@ -138,7 +138,7 @@ test("activity browser filters locally and serializes each completion action wit
   done = true; save.resolve(response({ ok: true })); await flush();
   assert.equal(elements.threads.children.length, 0);
   elements.filters.fire("click", { target: elements.filters.children.find((b) => b.dataset.filter === "done") });
-  assert.equal(elements.threads.children[0].children[4].children[1].textContent, "Reopen");
+  assert.equal(elements.threads.children[0].children[4].children[1].children[0].textContent, "Reopen");
   assert.equal(toggle.textContent, "Done");
   stream.fire("access-ended");
 });
@@ -263,7 +263,7 @@ test("Mark All Done sends once with CSRF, blocks row changes while saving, and r
   const { elements, requests, stream } = browser((url) => url.endsWith("/completion-all") ? save.promise
     : Promise.resolve(response({ rows: [row(saved ? "done" : "working")] })));
   await flush();
-  const toggle = elements.threads.children[0].children[4].children[1];
+  const toggle = elements.threads.children[0].children[4].children[1].children[0];
   elements["mark-all-done"].fire("click");
   elements["all-done-confirm"].fire("click"); elements["all-done-confirm"].fire("click");
   elements.threads.fire("click", { target: toggle });
@@ -298,7 +298,7 @@ test("Mark All Done waits for pending row actions and allows a safe retry after 
     return Promise.resolve(response({ rows: [row()] }));
   });
   await flush();
-  elements.threads.fire("click", { target: elements.threads.children[0].children[4].children[1] });
+  elements.threads.fire("click", { target: elements.threads.children[0].children[4].children[1].children[0] });
   assert.equal(elements["mark-all-done"].disabled, true);
   elements["mark-all-done"].fire("click");
   assert.notEqual(elements["all-done-dialog"].open, true);
@@ -461,8 +461,8 @@ test("Later hides postponed work from Active, retains it in All open, and serial
   const save = deferred();
   const b = browser((url) => url.endsWith("/later") ? save.promise : Promise.resolve(response({ rows: [row(status)] })));
   await flush();
-  const delay = b.elements.threads.children[0].children[4].children[3];
-  assert.equal(delay.textContent, "💤 Delay for later");
+  const delay = b.elements.threads.children[0].children[4].children[1].children[1];
+  assert.equal(delay.textContent, "🕒 Later");
   b.elements.threads.fire("click", { target: delay });
   b.elements.threads.fire("click", { target: delay });
   assert.equal(delay.disabled, true);
@@ -475,7 +475,7 @@ test("Later hides postponed work from Active, retains it in All open, and serial
   assert.match(b.elements.summary.textContent, /0 active · 1 later/);
   const select = (filter) => b.elements.filters.fire("click", { target: b.elements.filters.children.find((t) => t.dataset.filter === filter) });
   select("later");
-  const resume = b.elements.threads.children[0].children[4].children[3];
+  const resume = b.elements.threads.children[0].children[4].children[1].children[1];
   assert.equal(resume.textContent, "Resume");
   b.elements.threads.fire("click", { target: resume }); await flush();
   assert.deepEqual(JSON.parse(b.requests.filter((r) => r.url.endsWith("/later")).at(-1).options.body), { channelId: "C1", threadTs: "1.1", later: false });

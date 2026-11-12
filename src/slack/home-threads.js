@@ -21,7 +21,7 @@ export const HOME_THREADS_PAGE_SIZE = 10;
 const HISTORY_INDEX_BATCH = 100;
 const HISTORY_BATCH = 10;
 const LABELS = { active: "Active", all: "All open", working: "Working", waiting: "Waiting", idle: "Idle", done: "Completed", later: "Later", error: "Error" };
-const ICONS = { working: "🟢", waiting: "🟡", idle: "⚪", done: "✅", later: "💤", error: "🔴" };
+const ICONS = { working: "🟢", waiting: "🟡", idle: "⚪", done: "✅", later: "🕒", error: "🔴" };
 const RANK = { working: 0, waiting: 1, error: 2, idle: 3, later: 4, done: 5 };
 const esc = (value) => String(value || "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/[*_~`]/g, "");
 const button = (text, action, value) => ({ type: "button", text: { type: "plain_text", text }, action_id: `cg_home_threads_${action}`, value: JSON.stringify(value) });

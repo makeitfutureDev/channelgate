@@ -11,7 +11,7 @@ function activityBrowser(config, browser, subscriptionUi) {
   const { document, location, EventSource } = browser;
   const el = (id) => document.getElementById(id);
   const body = el("threads"), search = el("search"), tabs = el("filters");
-  const states = { working: "Working", waiting: "Waiting", error: "Error", done: "Done", later: "💤 Later", idle: "Idle" };
+  const states = { working: "Working", waiting: "Waiting", error: "Error", done: "Done", later: "🕒 Later", idle: "Idle" };
   const pending = new Set(), nodes = new Map();
   const orderDialog = el("order-dialog"), orderList = el("order-list"), orderButton = el("group-order");
   const orderNodes = new Map();
@@ -225,7 +225,9 @@ function activityBrowser(config, browser, subscriptionUi) {
     toggle.dataset.key = rowKey;
     const delay = node("button", "toggle");
     delay.type = "button"; delay.dataset.key = rowKey; delay.dataset.operation = "later";
-    actions.append(open, toggle, web, delay);
+    const links = node("div", "action-links"), state = node("div", "action-state");
+    links.append(open, web); state.append(toggle, delay);
+    actions.append(links, state);
     tr.append(titleCell, channel, statusCell, timeCell, actions);
     return { tr, title, channel, pill, statusText, time, open, toggle, web, delay };
   }
@@ -281,7 +283,7 @@ function activityBrowser(config, browser, subscriptionUi) {
       const busy = pending.has(rowKey);
       entry.delay.hidden = row.status === "done";
       entry.delay.disabled = busy || completingAll || ended;
-      entry.delay.textContent = busy ? "Saving…" : row.status === "later" ? "Resume" : "💤 Delay for later";
+      entry.delay.textContent = busy ? "Saving…" : row.status === "later" ? "Resume" : "🕒 Later";
       entry.delay.setAttribute("aria-label", (row.status === "later" ? "Resume: " : "Delay for later: ") + title);
       entry.toggle.disabled = busy || completingAll || ended;
       entry.toggle.textContent = busy ? "Saving…" : row.status === "done" ? "Reopen" : "Done";
@@ -513,7 +515,7 @@ input::placeholder{color:var(--faint)}
 table{width:100%;border-collapse:collapse;table-layout:fixed}
 thead{background:var(--panel-dark);text-align:left;color:var(--muted);font-size:10px;letter-spacing:.06em;text-transform:uppercase}
 th{padding:13px 18px;font-weight:600}
-th:first-child{width:35%}th:nth-child(2){width:17%}th:nth-child(3){width:12%}th:nth-child(4){width:16%}th:last-child{width:20%}
+th:first-child{width:31%}th:nth-child(2){width:15%}th:nth-child(3){width:12%}th:nth-child(4){width:16%}th:last-child{width:26%;text-align:right}
 td{padding:18px;border-bottom:1px solid var(--line-soft);vertical-align:middle}
 tbody tr:last-child td{border-bottom:0}tbody tr:hover{background:var(--panel-2)}
 .thread-title{color:var(--ink);font-weight:600;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;overflow-wrap:anywhere;line-height:1.5}
@@ -526,9 +528,11 @@ tbody tr:last-child td{border-bottom:0}tbody tr:hover{background:var(--panel-2)}
 .pill.waiting{background:rgba(232,176,75,.15);color:#f1ca83}
 .pill.error{background:rgba(229,96,77,.15);color:#ffb3a9}
 .pill.done{background:rgba(78,199,122,.15);color:#9ce2b6}
-.actions{white-space:nowrap;text-align:right}
+.actions{text-align:right}
+.action-links,.action-state{display:flex;justify-content:flex-end;align-items:center;flex-wrap:wrap;gap:8px}
+.action-state{margin-top:8px}
 .open-link,.toggle{display:inline-flex;align-items:center;justify-content:center;vertical-align:middle;border:1px solid var(--line);background:var(--panel-2);color:var(--ink);font-size:12px;line-height:1.5;border-radius:7px;padding:6px 12px;min-height:34px}
-.open-link,.toggle{margin-right:8px}
+.actions .open-link,.actions .toggle{margin:0;max-width:100%;white-space:normal}
 .toggle{min-width:66px}
 .browser-link{width:34px;height:34px;padding:6px;margin-right:0;font-size:16px;line-height:1}
 .open-link:hover,.toggle:hover{background:var(--teal);border-color:var(--muted);text-decoration:none}
@@ -540,7 +544,7 @@ tbody tr:last-child td{border-bottom:0}tbody tr:hover{background:var(--panel-2)}
 .privacy{color:var(--faint);font-size:11px;margin-top:24px}.js-needed{padding:24px;color:#f1ca83}
 @keyframes spin{to{transform:rotate(360deg)}}
 @media(prefers-reduced-motion:reduce){.working .status-dot{animation:none}}
-@media(max-width:1100px){.shell{padding:28px 20px}th,td{padding:15px 12px}.open-link:not(.browser-link){display:flex;width:max-content;margin:0 auto 8px}.actions{text-align:center}}
+@media(max-width:1100px){.shell{padding:28px 20px}th,td{padding:15px 12px}}
 @media(max-width:700px){
   .shell{padding:22px 16px}.heading{align-items:flex-start;flex-direction:column;gap:18px;margin:26px 0 20px}h1{font-size:27px}
   .toolbar{align-items:stretch;flex-direction:column-reverse;gap:12px;margin:20px 0 13px}.search-wrap{width:100%;min-width:0}
@@ -549,7 +553,7 @@ tbody tr:last-child td{border-bottom:0}tbody tr:hover{background:var(--panel-2)}
   tbody tr:last-child{border-bottom:0}td{display:block;padding:0;border:0}
   .thread-cell{grid-column:1/-1;grid-row:1}.thread-title{-webkit-line-clamp:3;font-size:14px}
   .channel-cell{grid-column:1;grid-row:2}.status-cell{grid-column:2;grid-row:2/4;align-self:center}.time-cell{grid-column:1;grid-row:3;font-size:11px}
-  .actions{grid-column:1/-1;display:flex;align-items:center;justify-content:flex-end;gap:8px;flex-wrap:wrap;margin-top:5px}
+  .actions{grid-column:1/-1;display:flex;align-items:center;justify-content:flex-end;gap:8px;flex-wrap:wrap;margin-top:5px}.action-state{margin-top:0}.actions .open-link,.actions .toggle{min-height:44px}
   .open-link,.toggle{margin:0}.open-link:not(.browser-link){display:inline-flex;width:auto;margin:0}.empty{padding:45px 18px}.footer{font-size:10px}.subtitle{font-size:13px}
 }
 </style></head><body><main class="shell">
@@ -561,7 +565,7 @@ ${subscriptionsView ? `<section aria-label="Subscriptions"><div class="subscript
 <dialog id="all-done-dialog" class="order-dialog" aria-labelledby="all-done-title" aria-describedby="all-done-description"><h2 id="all-done-title">Mark all your threads done?</h2><p id="all-done-description">This marks all your open tracked agent threads done across all channels, including threads outside the current filter, search, or page. Their main Slack messages get ✅. Running work continues.</p><p id="all-done-error" class="order-error" role="alert"></p><div class="order-footer"><button id="all-done-cancel" type="button" autofocus>Cancel</button><button id="all-done-confirm" class="order-save" type="button">Mark All Done</button></div></dialog>
 <div id="notice" class="notice" role="alert" hidden></div>
 <div class="toolbar"><div id="summary" class="summary">Loading activity…</div><div class="search-wrap"><label class="search-label" for="search">Search conversations or channels</label><input type="search" id="search" placeholder="Search conversations or channels…" autocomplete="off" maxlength="300"></div></div>
-<section class="panel" aria-label="Conversations"><div id="filters" class="filters" role="group" aria-label="Filter by status">${[["active", "Active"], ["working", "Working"], ["waiting", "Waiting"], ["error", "Error"], ["idle", "Idle"], ["later", "💤 Later"], ["done", "Completed"], ["open", "All open"]].map(([value, label]) => `<button type="button" data-filter="${value}" aria-pressed="${value === "active"}">${label}<span>0</span></button>`).join("")}</div>
+<section class="panel" aria-label="Conversations"><div id="filters" class="filters" role="group" aria-label="Filter by status">${[["active", "Active"], ["working", "Working"], ["waiting", "Waiting"], ["error", "Error"], ["idle", "Idle"], ["later", "🕒 Later"], ["done", "Completed"], ["open", "All open"]].map(([value, label]) => `<button type="button" data-filter="${value}" aria-pressed="${value === "active"}">${label}<span>0</span></button>`).join("")}</div>
 <table id="table" hidden><thead><tr><th scope="col">Conversation</th><th scope="col">Channel</th><th scope="col">Status</th><th scope="col">Last message</th><th scope="col">Actions</th></tr></thead><tbody id="threads"></tbody></table>
 <div id="empty" class="empty" role="status"><div class="empty-symbol" aria-hidden="true">◎</div><h2 id="empty-title">Loading your activity…</h2><p id="empty-copy">Your latest conversations will appear here.</p></div>
 <noscript><p class="js-needed">Enable JavaScript to view live activity.</p></noscript></section>

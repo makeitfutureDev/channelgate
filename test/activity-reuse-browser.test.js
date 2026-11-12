@@ -383,11 +383,31 @@ test("Later controls work in a real browser at desktop and mobile widths", { ski
   const { chromium } = await import(process.env.CG_BROWSER_MODULE);
   const browser = await chromium.launch({ headless: true, executablePath: process.env.CG_BROWSER_EXECUTABLE });
   t.after(() => browser.close());
-  for (const width of [1440, 390]) {
+  for (const width of [320, 390, 700, 768, 1024, 1100, 1440, 1920]) {
     const context = await browser.newContext({ viewport: { width, height: 1000 } });
     const page = await context.newPage(); page.setDefaultTimeout(5000);
     const errors = []; page.on("pageerror", (error) => errors.push(error.message));
     await page.goto(createActivityGrantUrl({ baseUrl: base, ownerId, teamId: "T_LATER" }));
+    await page.getByRole("button", { name: "Delay for later: Postpone this conversation", exact: true }).waitFor();
+    const layout = await page.locator("#threads .actions").evaluate((cell) => {
+      const bounds = cell.getBoundingClientRect();
+      const controls = [...cell.querySelectorAll("a,button")].filter((item) => !item.hidden).map((item) => {
+        const r = item.getBoundingClientRect();
+        return { text: item.textContent, left: r.left, right: r.right, top: r.top, bottom: r.bottom };
+      });
+      return { left: bounds.left, right: bounds.right, controls };
+    });
+    for (const control of layout.controls) {
+      assert.ok(control.left >= layout.left - 1 && control.right <= layout.right + 1, `${width}: ${control.text} must stay inside its action cell`);
+    }
+    for (let i = 0; i < layout.controls.length; i++) for (let j = i + 1; j < layout.controls.length; j++) {
+      const a = layout.controls[i], c = layout.controls[j];
+      assert.ok(a.right <= c.left + 1 || c.right <= a.left + 1 || a.bottom <= c.top + 1 || c.bottom <= a.top + 1, `${width}: ${a.text} overlaps ${c.text}`);
+    }
+    assert.equal(await page.getByRole("button", { name: "Delay for later: Postpone this conversation", exact: true }).innerText(), "🕒 Later");
+    if (process.env.CG_LATER_LAYOUT_SCREENSHOT && [390, 768, 1440].includes(width)) {
+      await page.screenshot({ path: process.env.CG_LATER_LAYOUT_SCREENSHOT.replace(".png", `-${width}.png`), fullPage: true });
+    }
     await page.getByRole("button", { name: "Delay for later: Postpone this conversation", exact: true }).click();
     await page.waitForFunction(() => globalThis.document.querySelector('[data-filter="later"] span').textContent === "1");
     assert.equal(await page.locator("#threads tr").count(), 0);
