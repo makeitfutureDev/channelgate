@@ -19,7 +19,9 @@ Geist Mono, self-hosted under `public/fonts/`), built to stay readable in a corn
 - **Status colours.** One colour per status, used for the dot, the label, the tab dot and the
   group header: Working blue (with a pulse), Waiting amber, Error red, Idle grey, Later purple,
   Completed green. Orange is reserved for the brand.
-- **Table.** Single-line rows with Conversation, Channel, Status and Last columns. Each status
+- **Table.** Compact rows with Conversation, Channel, Status and Last columns. Titles wrap to at
+  most two lines. Each row starts with a 3 px bar in its status colour, and alternate rows carry a
+  subtle band (stronger on hover). Each status
   group is labelled on its first row with its count, in the viewer's saved group order. Working
   rows show a live running clock in the status label ("Working 4m 12s"), measured from the
   earliest accepted turn still running in that thread (`workingSinceMs` in the snapshot);
