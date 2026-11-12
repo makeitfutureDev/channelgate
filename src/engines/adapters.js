@@ -65,7 +65,7 @@ const claude = validateEngineAdapter({
   instructionFile: "CLAUDE.md", skillsDir: ".claude/skills", mcpTransport: "file", contextWindow: 200_000,
   efforts: ["low", "medium", "high", "xhigh"], models: [
     { label: "Opus 5.5", value: "claude-opus-5-5", description: "Current Opus model for most coding and knowledge work." },
-    { label: "Fable 5.1", value: "claude-fable-5-1", description: "Current Fable model for demanding long-running work." },
+    { label: "Fable 5.2", value: "claude-fable-5-2", description: "Current Fable model for demanding long-running work." },
     { label: "Sonnet 5.5", value: "claude-sonnet-5-5", description: "Current Sonnet model for everyday work." },
     { label: "Haiku 4.5", value: "claude-haiku-4-5", description: "Current Haiku model for fast, low-cost work." },
   ], mintsOwnSessionId: false,

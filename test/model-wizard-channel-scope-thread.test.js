@@ -107,13 +107,13 @@ test("a dedicated channel Codex login offers only Codex models and rejects an ol
   assert.match(client.ephemerals.at(-1).text, /engine stays Codex/);
 });
 
-test("Fable 5.1 saves its exact ID while an older Fable button remains usable", async () => {
+test("Fable 5.2 saves its exact ID while an older Fable button remains usable", async () => {
   const entry = await channel("C_MW_FABLE", "mw-fable-model");
   const client = fakeClient();
   await click(client, "C_MW_FABLE", MODEL_WIZARD_SCOPE_CHANNEL_ACTION, wizardValue());
   await click(client, "C_MW_FABLE", "cg_mw_engine_claude", wizardValue());
-  await click(client, "C_MW_FABLE", `${MODEL_PICKER_ACTION}_2`, wizardValue("claude-fable-5-1"));
-  assert.equal((await getChannelMeta(entry.slug)).model, "claude-fable-5-1");
+  await click(client, "C_MW_FABLE", `${MODEL_PICKER_ACTION}_2`, wizardValue("claude-fable-5-2"));
+  assert.equal((await getChannelMeta(entry.slug)).model, "claude-fable-5-2");
   await click(client, "C_MW_FABLE", `${MODEL_PICKER_ACTION}_7`, wizardValue("fable"));
   assert.equal((await getChannelMeta(entry.slug)).model, "fable");
   assert.equal(client.ephemerals.length, 0);

@@ -6846,7 +6846,7 @@ exercise the `qwen-eu` adapter itself, in a scratch runtime root (no production 
       the same login under 0.153.4 is served the GPT-5.6 line with no GPT-6 Sol/Luna, so a pin bump
       is what exposes a new model, and `~/.codex/models_cache.json` carries `client_version` so a
       mixed-version probe cannot leave a stale catalog behind.
-- [x] Automated: Claude's picker and browser fallback show only the exact Opus 5.5, Fable 5.1,
+- [x] Automated: Claude's picker and browser fallback show only the exact Opus 5.5, Fable 5.2,
       Sonnet 5.5, and Haiku 4.5 IDs; a previously saved same-engine alias remains selected in
       Slack, and the Admin UI consumes the registry's model/effort manifests and keeps a valid
       saved same-engine custom ID available (`test/model-options.test.js`,
@@ -6855,6 +6855,14 @@ exercise the `qwen-eu` adapter itself, in a scratch runtime root (no production 
       external transcripts use $2 input, $10 output, $2.50/$4 cache writes and $0.10 cache reads
       per million tokens, while saved Sonnet 5 remains selectable and priced independently
       (`test/model-info.test.js`, `test/model-options.test.js`, `test/external-usage.test.js`).
+- [x] Automated: Fable 5.2 saves as `claude-fable-5-2`, the inherited `:fable` shortcut
+      resolves to it, and external usage uses its published cache-aware rates without changing
+      Fable 5.1 pricing or existing saved pins.
+- [ ] Live Claude/Codex: start on each engine in its private Auto fixture, open `/model`,
+      choose Claude → Fable 5.2 → high, then ask "Reply with exactly FABLE52_OK".
+      Pass: selected model is `claude-fable-5-2`, next turn reports Claude/Fable 5.2 and the
+      sentinel. With inherited shortcuts, `@bot :fable Reply with exactly FABLE52_SHORTCUT_OK`
+      also selects Fable 5.2. An existing pinned Fable 5.1 remains selectable until changed.
 - [ ] Live Claude/Codex: in private admin fixtures, open `/model` from a thread on each engine,
       select Claude → Sonnet 5.5 → medium, and ask "Reply with exactly SONNET55_OK".
       Pass: picker submits `claude-sonnet-5-5`, next Claude turn reports that provider model,
@@ -6878,12 +6886,12 @@ exercise the `qwen-eu` adapter itself, in a scratch runtime root (no production 
       match the authenticated CLI's current visible catalog, include `gpt-6-astra`, and show
       Astra's reported efforts through `ultra`; select Astra and complete one ordinary turn.
 - [ ] Live Claude: in the Claude Auto fixture, open `/model`, choose Claude, and verify that
-      the four versioned choices include Opus 5.5 and Fable 5.1, with no unversioned `fable`
+      the four versioned choices include Opus 5.5 and Fable 5.2, with no unversioned `fable`
       button. Select Opus 5.5, complete the wizard, and confirm a normal turn reports
       `claude-opus-5-5`. With an existing `opus` override, reopen the picker and verify that
       `Current: opus` remains marked until another model is selected.
 - [ ] Admin browser: load a Claude model selector and verify the same four exact-version choices;
-      save Fable 5.1 and reload to confirm the stored model is `claude-fable-5-1`.
+      save Fable 5.2 and reload to confirm the stored model is `claude-fable-5-2`.
 - [ ] Admin browser: load Settings and a conversation Runtime page after a catalog refresh; verify
       both show the same Codex models as Slack, model changes narrow the effort selector, and a
       saved valid full/custom same-engine model ID survives a load/save round trip.

@@ -454,6 +454,16 @@ test("Sonnet 5.5 external usage prices both cache TTLs without repricing Sonnet 
 });
 
 // ── a channel's shared history has one accounting identity ────────────────────────────────────
+test("Fable 5.2 external usage keeps Fable 5.1 historical pricing", async () => {
+  const { getClaudeModelRates } = await import("../src/config/settings.js");
+  const rates = getClaudeModelRates();
+  for (const [field, expected] of Object.entries({ input_tokens: 8, cached_input_tokens: 0.2,
+    cache_write_5m_tokens: 10, cache_write_1h_tokens: 16, output_tokens: 40 })) {
+    assert.equal(priceClaudeTokens({ [field]: 1e6 }, "claude-fable-5-2", rates), expected, field);
+  }
+  assert.equal(priceClaudeTokens({ input_tokens: 1e6, output_tokens: 1e6 }, "claude-fable-5-1", rates), 60);
+});
+
 function sharedOutsideSession(sessionId, engine = "claude") {
   return {
     sessionId, cwd: "/work/shared-history-fixture", origin: "terminal", size: 100, mtimeMs: 1000,
