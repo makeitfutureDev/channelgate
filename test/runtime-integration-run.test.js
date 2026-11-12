@@ -211,6 +211,31 @@ async function hostThread(channelId, threadKey, { entry, meta }) {
 
 test.afterEach(() => setRuntimeResolver(null));
 
+test("Claude and Codex keep shared channel sessions across admin and member turns", async () => {
+  saveSettings({ memoryReviewEvery: 0, composioMode: "personal", engineFallback: false, codexEnabled: true });
+  for (const engine of ["claude", "codex"]) {
+    const backend = createFakeRuntimeBackend();
+    setRuntimeResolver((slug, meta, options) => {
+      const target = fakeTarget(backend, slug, meta, options);
+      target.container.sharedHistory = true;
+      return target;
+    });
+    const channelId = `C_SHARED_HISTORY_${engine.toUpperCase()}`;
+    const { entry } = await channel(channelId, `shared-history-${engine}`, { engine });
+    const sessions = [];
+    for (const isAdmin of [true, false, true]) {
+      await setUser("U_RT", { approved: true, isAdmin });
+      const result = await runMessage({ channelId, authorId: "U_RT", text: "continue the channel conversation", threadKey: "9400.001", origin: "slack_foreground", preferCold: true });
+      sessions.push(result.sessionId);
+      const stamp = await getSessionRuntime(entry.slug, "9400.001");
+      assert.equal(stamp.scope, isAdmin ? "admin" : "project");
+      assert.equal(stamp.history, "channel-v1");
+    }
+    assert.equal(new Set(sessions).size, 1, `${engine}: role changes must retain the native conversation`);
+    assert.equal(backend.calls.spawn.length, 3, "all three turns answer without a resume-heal retry");
+  }
+});
+
 test("an isolated turn warms the runtime up, holds a run lease, and releases it", async () => {
   saveSettings({ engine: "claude", memoryReviewEvery: 0, composioMode: "personal" });
   const backend = createFakeRuntimeBackend();

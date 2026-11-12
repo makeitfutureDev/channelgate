@@ -18,6 +18,7 @@ import { createContainerReaper } from "./reaper.js";
 import { codexAuthCandidates, codexAuthIdentity, credentialError, credentialNotes, intendedCredentialModes } from "./credentials.js";
 import { containerImagePaths, IMAGE_HELPERS, IMAGE_SPEC_VERSION } from "./image-paths.js";
 import { egressPlanFor } from "./egress-hook.js";
+import { channelHistoryRoot } from "./history.js";
 
 export { credentialError, credentialNotes } from "./credentials.js";
 export { containerFingerprint } from "./lifecycle.js";
@@ -106,6 +107,9 @@ export const containerBackend = Object.freeze({
     const container = {
       name,
       homeVolume: homeVolumeName(base),
+      // Conversation files are channel-owned; HOME still isolates credentials and configuration.
+      sharedHistory: true,
+      historyRoot: channelHistoryRoot(base),
       // The persistent /tmp and /var/tmp volumes, keyed by mount kind (lifecycle.js).
       tmpVolumes: tmpVolumeNames(base),
       // Host volume location for legacy adoption discovery only. Usage reads inside the

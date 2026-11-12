@@ -75,6 +75,7 @@ const claude = validateEngineAdapter({
   modelBelongs: (m) => /^(?:best|fable|haiku|opusplan|opus|sonnet|(?:opus|sonnet)\[1m\])$|^claude-/.test(m),
   resumeCommand: (id) => `claude --resume ${id}`,
   sessionState: Object.freeze({
+    channelHistory: true,
     // A direct `/sudo` turn uses the daemon account's native Claude config/state directory.
     hostDir: () => hostClaudeStateDir(),
     containerDirKey: "claudeConfigDir",
@@ -230,6 +231,7 @@ const makeQwenAdapter = (entry) => validateEngineAdapter({
   // Identical to Claude's: the same binary, writing the same transcripts, keyed by the same
   // project-directory rule into the same config dir.
   sessionState: Object.freeze({
+    channelHistory: true,
     hostDir: () => hostClaudeStateDir(),
     containerDirKey: "claudeConfigDir",
     files: ({ cwd, sessionId }) => {
@@ -326,6 +328,7 @@ const codex = validateEngineAdapter({
   modelBelongs: (m) => /^(?:gpt-|o[0-9]|codex)/.test(m),
   resumeCommand: (id) => `codex exec resume ${id}`,
   sessionState: Object.freeze({
+    channelHistory: true,
     // A direct `/sudo` turn uses the daemon account's native CODEX_HOME.
     hostDir: () => hostCodexStateDir(),
     containerDirKey: "codexHome",

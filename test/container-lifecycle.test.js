@@ -68,7 +68,7 @@ test("mounts: nothing under the gateway root but the clean workspace, the MCP so
   const t = target("mounts-chan");
   const allowedUnderRoot = new Set([cleanWorkspaceFolder("mounts-chan", "slack"), runtimeSocketDir()]);
   const kinds = t.container.mounts.map((m) => m.kind);
-  assert.deepEqual(kinds, ["workdir", "clean", "artifacts", "tmp", "var-tmp", "codex-socket", "home", "socket", "codex-auth"]);
+  assert.deepEqual(kinds, ["workdir", "clean", "artifacts", "tmp", "var-tmp", "codex-socket", "home", "history-claude-projects", "history-codex-sessions", "history-codex-archived-sessions", "socket", "codex-auth"]);
 
   for (const mount of t.container.mounts) {
     if (mount.type === "volume" || mount.type === "tmpfs") continue;
@@ -110,7 +110,7 @@ test("operator home: granted only to adminMode channels while the gateway switch
   const admin = resolveRuntime("home-admin", { platform: "slack", channelId: "C2", adminMode: true }, { isAdminAuthor: true, settings: on });
   assert.equal(operatorHomeGranted(admin), true);
   const kinds = admin.container.mounts.map((m) => m.kind);
-  assert.deepEqual(kinds, ["workdir", "clean", "artifacts", "tmp", "var-tmp", "codex-socket", "home", "socket", "codex-auth", "operator-home", "mask"]);
+  assert.deepEqual(kinds, ["workdir", "clean", "artifacts", "tmp", "var-tmp", "codex-socket", "home", "history-claude-projects", "history-codex-sessions", "history-codex-archived-sessions", "socket", "codex-auth", "operator-home", "mask"]);
   const grant = admin.container.mounts.find((m) => m.kind === "operator-home");
   assert.equal(grant.type, "bind");
   assert.equal(grant.mode, "rw");
@@ -263,7 +263,7 @@ test("state machine: exited → start (no recreate), and a lost lease is announc
   lease.release();
   assert.deepEqual({ created: result.created, started: result.started }, { created: false, started: true });
   assert.deepEqual(h.fake.last("start"), ["podman", "start", t.container.name]);
-  assert.equal(h.fake.last("run"), null, "an exited container is started, never recreated");
+  assert.equal(h.fake.find("run").filter((argv) => argv[2] === "-d").length, 0, "an exited container is started, never recreated");
   assert.ok(announced.some((m) => /background processes from the previous session were lost/i.test(m)));
 });
 
@@ -276,7 +276,7 @@ test("state machine: running with a matching fingerprint is reused as-is", async
   h.fake.reset();
   const result = await h.lifecycle.ensureUp(t, {});
   assert.deepEqual({ created: result.created, started: result.started }, { created: false, started: false });
-  assert.equal(h.fake.last("run"), null);
+  assert.equal(h.fake.find("run").filter((argv) => argv[2] === "-d").length, 0);
   assert.equal(h.fake.last("start"), null);
   assert.equal(h.fake.last("rm"), null);
 });
@@ -351,6 +351,26 @@ test("mount mismatch + busy: waits for the runs inside, announces it, then rebui
   assert.equal(announced.length, 1, "announced once, not once per poll");
 });
 
+test("shared history migration drains an active project writer without double-excluding its own lease", async () => {
+  let polls = 0;
+  let writer;
+  const h = harness({ lifecycleOpts: {
+    sleep: async () => {
+      polls++;
+      assert.equal(h.fake.find("run").some((argv) => argv.includes("--entrypoint")), false, "migration must not start while the old project writer is live");
+      if (polls === 2) writer.release();
+    },
+  } });
+  const t = resolveRuntime("history-project-writer", { platform: "slack", channelId: "C_HISTORY_WRITER" }, { settings: SETTINGS });
+  writer = h.reaper.acquireLease(t, { kind: "job", id: "active-project-writer" });
+  const own = h.reaper.acquireLease(t, { kind: "run", id: "history-preparation" });
+  try {
+    await h.lifecycle.ensureUp(t, { lease: own });
+    assert.equal(polls, 2, "one writer must remain after excluding the preparatory lease once");
+    assert.equal(h.fake.find("run").filter((argv) => argv.includes("--entrypoint")).length, 1);
+  } finally { writer.release(); own.release(); }
+});
+
 test("mount rebuild waits past its notice interval then resumes automatically", async () => {
   let clock = 0;
   let job;
@@ -383,7 +403,7 @@ test("Stop aborts a rebuild waiter without touching the occupied container", asy
   const own = h.reaper.acquireLease(t, { id: "r1" });
   await assert.rejects(h.lifecycle.ensureUp(t, { lease: own, signal: controller.signal }), { name: "AbortError" });
   assert.equal(h.fake.last("rm"), null);
-  assert.equal(h.fake.last("run"), null);
+  assert.equal(h.fake.find("run").filter((argv) => argv[2] === "-d").length, 0);
   assert.equal(h.reaper.leaseCount(t.container.name), 2);
   own.release(); job.release();
   await h.lifecycle.ensureUp(t, {});

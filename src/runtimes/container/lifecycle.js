@@ -7,11 +7,12 @@
 // deliberately NOT in it: rotating a channel secret retires the warm engine process through the
 // pool's own fingerprint, and must not tear down a container that background jobs are using.
 import { createHash } from "node:crypto";
-import { lstatSync, mkdirSync } from "node:fs";
+import { existsSync, lstatSync, mkdirSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { acquireKeyedLock } from "../../util/keyed-lock.js";
-import { containerLabels, installFilterArgs, isOurContainer, labelArgs, LABEL_CHANNEL, LABEL_FINGERPRINT, LABEL_IMAGE, LABEL_INSTALL, LABEL_MOUNTS, LABEL_PLATFORM, runtimeArtifactDir } from "./names.js";
+import { containerLabels, containerName, installFilterArgs, isOurContainer, labelArgs, LABEL_CHANNEL, LABEL_FINGERPRINT, LABEL_IMAGE, LABEL_INSTALL, LABEL_MOUNTS, LABEL_PLATFORM, runtimeArtifactDir } from "./names.js";
+import { buildHistorySeedArgs, historyMounts, historySeedMarker } from "./history.js";
 import { CODEX_CONTAINER_AUTH_FILE, containerEnvDefaults, settleCredentialModes } from "./credentials.js";
 import { CONTAINER_EGRESS_CA, CONTAINER_EGRESS_DIR, CONTAINER_SOCKET_DIR } from "./image-paths.js";
 import { ensureEgressFor, releaseEgressFor } from "./egress-hook.js";
@@ -213,6 +214,7 @@ export function buildMounts(base) {
     // After /tmp: destinations are applied deepest-last, so this lands on top of the /tmp volume.
     ...codexSocketMount(base),
     { kind: "home", type: "volume", source: base.container?.homeVolume || "", target: "/home/agent", mode: "rw" },
+    ...(base.container?.sharedHistory === true ? historyMounts(base) : []),
     { kind: "socket", type: "bind", source: base.socketDir, target: SOCKET_MOUNT_TARGET, mode: "ro" },
     { kind: "codex-auth", type: "bind-file", source: base.codexAuthFile || "", target: CODEX_CONTAINER_AUTH_FILE, mode: "rw", resolved: false },
     ...egressMounts(base),
@@ -503,6 +505,35 @@ export function createContainerLifecycle({
     throw new Error(`could not create container ${target.container.name}: ${stderr || `exit ${result.code}`}`);
   }
 
+  // The old project HOME is the only automatically publishable legacy source. An admin HOME
+  // may contain host-carried /sudo sessions and remains intact for an explicit reviewed import.
+  // Serialize both role lanes, and wait for old project writers before taking the one-time copy.
+  async function prepareSharedHistory(caps, target, { ownLeaseId, signal, announce }) {
+    if (!target.container?.sharedHistory) return;
+    const marker = historySeedMarker(target);
+    const releaseHistory = await acquireKeyedLock("cg-channel-history", target.container.historyRoot, { signal });
+    try {
+      if (existsSync(marker)) return;
+      const projectName = containerName({ ...target, runtimeScope: "project" });
+      const occupants = () => {
+        const excluded = new Set([ownLeaseId]);
+        for (const waiter of preparing.get(projectName) || []) excluded.add(waiter.leaseId);
+        return reaper.leaseCount(projectName, { exclude: [...excluded] });
+      };
+      while (occupants() > 0) {
+        announceOnce(announce, "Preparing shared channel history — waiting for existing project sessions to finish. Stop cancels this wait.");
+        await waitPoll(signal);
+      }
+      checkAbort(signal);
+      const result = await cli.runWith(caps, buildHistorySeedArgs(target, caps), { timeoutMs: 120_000 });
+      checkAbort(signal);
+      if (result.code !== 0) throw new Error("Could not prepare shared channel history. Original HOME volumes are unchanged; inspect the channel history migration before retrying.");
+      log(`[container] prepared shared conversation history for ${target.slug}`);
+    } finally {
+      releaseHistory();
+    }
+  }
+
   async function startContainer(caps, name) {
     const result = await cli.runWith(caps, ["start", name], { timeoutMs: 60_000 });
     if (result.code !== 0) throw new Error(`could not start container ${name}: ${String(result.stderr || "").trim() || `exit ${result.code}`}`);
@@ -564,6 +595,8 @@ export function createContainerLifecycle({
       // closed, remedy named) when the service cannot bind it.
       await ensureEgressFor(target);
       settleTarget(target, { caps, img });
+      ensureBindSources(target);
+      await prepareSharedHistory(caps, target, { ownLeaseId, signal, announce });
       const fingerprint = containerFingerprint(target);
       const mountFingerprint = containerMountFingerprint(target);
       target.container.fingerprint = fingerprint;

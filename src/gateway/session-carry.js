@@ -83,6 +83,9 @@ export async function carrySession({
   if (!sessionId || !target || from === to) return null;
   // Host transcripts can contain admin-only filesystem/tool history. Never import them for members.
   if (target.runtimeScope === "project") return null;
+  // Shared channel transcripts are readable by members. Never publish host /sudo state into
+  // that store, including when the receiving author is an admin. A fresh chat session heals it.
+  if (to === "container" && target.container?.sharedHistory === true) return null;
 
   try {
     signal?.throwIfAborted();

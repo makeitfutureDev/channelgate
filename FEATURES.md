@@ -4232,13 +4232,21 @@ are retired, bullet by bullet; everything else stands.
   a gateway run. Closing the window removes the live token and lease; the wrapper itself is inert.
   The lease record itself lives in daemon-owned metadata under the gateway root, never in the
   agent-writable artifact directory. → TEST-PLAN: Container runtime (v0.8 P1).
-- **SSH uses the developer's current-role history scope:** organization admins connect to the
+- **SSH uses the developer's current-role credential scope with shared channel history:** organization admins connect to the
   admin container/HOME and members or guests to the project container/HOME, matching ordinary
   chat turns by that person. The broker rechecks rank on refresh and disconnects on scope
   changes before preparing credentials. Per-user session files, held MCP relays and last-session
   login cleanup stay within the selected container. The existing Admin + operator-home SSH
   refusal stays enforced, with a second check on the resolved target. Connection guidance names
-  the requester's scope; no history migration or deletion is performed.
+  the requester's scope. Claude/Qwen transcript directories and Codex session/
+  archive directories share one channel-owned store across roles, while credentials, settings,
+  personal integrations and native job SQLite databases remain separate. First use additively
+  seeds legacy project history after its writers finish; unsafe links, conflicts or I/O limits
+  fail closed and preserve the source. Legacy admin history remains private for reviewed import
+  because it may contain older host-carried transcripts. Role changes keep shared native sessions
+  while retiring the old warm process. Host `/sudo` transcripts are never imported into the shared
+  store, and other installations/channels have separate history roots. External usage detects the
+  actual shared mounts and records one channel copy, preserving unrelated legacy/private usage.
   → TEST-PLAN: SSH runtime scope and history parity.
 - **Developers SSH into a channel container, not into the host** (`docs/SSH-ACCESS.md`). A person
   registers ONE public key once from chat (`add_my_ssh_key`, bound to the identity that pasted it,

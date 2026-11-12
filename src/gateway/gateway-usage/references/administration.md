@@ -233,8 +233,9 @@ no MCP tool can flip it; Auto, Lean or a claimed role cannot enable the grant.
 
 **Non-admin members and guests see only project mounts, including in Admin mode.** They get
 Worker with the channel's Auto/Lean options in a separate project container. It has its own
-HOME, temporary volumes, artifacts and engine histories, so neither the operator home nor
-admin session state is exposed. The project folder and channel memory remain shared. Each
+HOME, temporary volumes, credential artifacts and native job state, so neither the operator home
+nor admin credentials are exposed. Claude/Codex channel conversation files, the project folder
+and channel memory are shared across authorized roles; `/sudo` host history remains private. Each
 spawn checks the author's current role, including background work; memory reviews always use
 the project container. A lane change starts fresh engine history. Only admins use the legacy
 container lane, whether or not that run qualifies for the optional home mount.

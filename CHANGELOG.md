@@ -18,6 +18,10 @@ release gates. Stable promotion and publication require approval of the exact te
 
 ### Beta development notes
 
+- Share a channel's Claude and Codex conversation files across admin and non-admin runtimes.
+  Keep logins and personal connection state separate, preserve legacy project histories during
+  migration, and keep host `/sudo` native history private.
+
 - Order personal Activity by Error, Waiting, Working and Idle, newest first within each group.
   Add a top-right Group order dialog with per-user saved ordering, Cancel and Reset to default.
 
