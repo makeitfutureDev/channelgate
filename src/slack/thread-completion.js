@@ -4,6 +4,7 @@ import { inspectThreadCompletion } from "../gateway/thread-completion.js";
 import { isCompletionReaction } from "../gateway/completion-reactions.js";
 import { isAuthorized } from "../gateway/modes.js";
 import { getThreadSudo } from "../gateway/thread-engine.js";
+import { syncThreadDoneMarker } from "./thread-done-marker.js";
 import { listConversationMemberIds } from "./members.js";
 
 // Root and reply reactions use the same durable completion evidence. On removal inspect the
@@ -20,6 +21,7 @@ export async function syncThreadCompletionReaction(client, event, { added = fals
   updateSlackThreadRootCompletion(channelId, { ts: threadTs }, {
     ...inspected, reactionAt: added ? Math.floor(Number(event.event_ts) * 1000) || 0 : 0,
   });
+  await syncThreadDoneMarker(client, channelId, threadTs);
 }
 
 // The owner's native 👍 feedback also means Done. Its untrusted button value cannot name a
@@ -37,5 +39,7 @@ export async function completeThreadFromFeedback({ client, body, parsed }) {
   if (!meta || !isAuthorized(meta, userId, Boolean(entry.isDM || meta.isDM), { isAdminUser: user?.isAdmin === true, isApprovedUser: user?.approved === true })) return false;
   if (!["channel", "C"].includes(entry.type) && !(await listConversationMemberIds(client, channelId)).includes(userId)) return false;
   if (!user?.isAdmin && await getThreadSudo(entry.slug, threadTs)) return false;
-  return setSlackThreadDone(channelId, threadTs, userId, true);
+  const changed = setSlackThreadDone(channelId, threadTs, userId, true);
+  if (changed) await syncThreadDoneMarker(client, channelId, threadTs);
+  return changed;
 }

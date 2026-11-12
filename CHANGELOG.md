@@ -24,6 +24,9 @@ release gates. Stable promotion and publication require approval of the exact te
 
 - Open personal Activity conversations at their latest reply inside the Slack thread pane;
   resolve the latest message on each click without adding Slack reads to dashboard refreshes.
+- Mark the main Slack thread message with ✅ when work is completed through a reply reaction,
+  positive feedback, Home Done or Activity dashboard Done. Reopen clears the bot's marker;
+  failed writes retry durably. Requires the Slack bot's `reactions:write` scope.
 
 - Order personal Activity by Error, Waiting, Working and Idle, newest first within each group.
   Add a top-right Group order dialog with per-user saved ordering, Cancel and Reset to default.

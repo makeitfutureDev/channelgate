@@ -281,8 +281,8 @@ test("the Slack app manifest is valid JSON, renamed, and keeps its scopes and ev
   assert.equal(raw.includes(OLD_NAME), false);
   // Scopes and events are the app's contract with an existing install — the rename must not move
   // a single one of them.
-  assert.equal(manifest.oauth_config.scopes.bot.length, 23);
-  for (const scope of ["app_mentions:read", "chat:write", "commands", "lists:write", "users:read"]) {
+  assert.equal(manifest.oauth_config.scopes.bot.length, 24);
+  for (const scope of ["app_mentions:read", "chat:write", "commands", "lists:write", "reactions:write", "users:read"]) {
     assert.ok(manifest.oauth_config.scopes.bot.includes(scope), scope);
   }
   assert.equal(manifest.settings.event_subscriptions.bot_events.length, 13);

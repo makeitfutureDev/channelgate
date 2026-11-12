@@ -1242,4 +1242,12 @@ export const migrations = [
       db.exec("ALTER TABLE slack_threads ADD COLUMN session_title_ts REAL NOT NULL DEFAULT 0");
     },
   },
+  {
+    version: 48,
+    up(db) {
+      // Identify our display-only root check so it cannot sustain its own completion evidence.
+      db.exec("ALTER TABLE slack_threads ADD COLUMN completion_mirror_user TEXT NOT NULL DEFAULT ''");
+      db.exec("ALTER TABLE slack_threads ADD COLUMN completion_marker_retry_ms INTEGER NOT NULL DEFAULT 0");
+    },
+  },
 ];

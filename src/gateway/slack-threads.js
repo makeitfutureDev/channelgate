@@ -77,8 +77,8 @@ export function recordSlackThreadOutcome(channelId, threadKey, { error = false, 
 }
 
 export function setSlackThreadDone(channelId, threadTs, userId, done, at = Date.now()) {
-  const changed = Boolean(getDb().prepare("UPDATE slack_threads SET done_ms=?,updated_ms=MAX(updated_ms,?) WHERE channel_id=? AND thread_ts=? AND starter_id=?")
-    .run(done ? at : -at, at, channelId, threadTs, userId).changes);
+  const changed = Boolean(getDb().prepare("UPDATE slack_threads SET done_ms=?,updated_ms=MAX(updated_ms,?),completion_marker_retry_ms=? WHERE channel_id=? AND thread_ts=? AND starter_id=?")
+    .run(done ? at : -at, at, at, channelId, threadTs, userId).changes);
   if (changed) notifyThreadChanged({ channelId, threadTs });
   return changed;
 }
@@ -95,9 +95,11 @@ export function updateSlackThreadRootCompletion(channelId, root, { reactionAt = 
     root_done=CASE WHEN ?>=checked_ms THEN ? ELSE root_done END,checked_ms=MAX(checked_ms,?),
     last_message_ms=CASE WHEN ?>0 THEN
       CASE WHEN ?>=checked_ms AND last_message_ms<=? THEN ? ELSE last_message_ms END
-      ELSE MAX(last_message_ms,?) END
+      ELSE MAX(last_message_ms,?) END,
+    completion_marker_retry_ms=CASE WHEN (?>=checked_ms AND root_done!=?) OR ?>root_reaction_ms
+      THEN ? ELSE completion_marker_retry_ms END
     WHERE channel_id=? AND thread_ts=?`)
-    .run(done ? reactionAt : 0, checkedAt, done, checkedAt, inspectedAt, checkedAt, inspectedAt, lastMessageMs, lastMessageMs, channelId, root.ts);
+    .run(done ? reactionAt : 0, checkedAt, done, checkedAt, inspectedAt, checkedAt, inspectedAt, lastMessageMs, lastMessageMs, checkedAt, done, done ? reactionAt : 0, Date.now(), channelId, root.ts);
   const current = getSlackThread(channelId, root.ts);
   if (current && ["root_done", "root_reaction_ms", "last_message_ms"].some((key) => previous?.[key] !== current[key])) {
     notifyThreadChanged({ channelId, threadTs: root.ts });

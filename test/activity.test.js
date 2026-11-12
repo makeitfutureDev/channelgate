@@ -98,7 +98,11 @@ const defer = () => { let resolve; const promise = new Promise((r) => { resolve 
 async function fixture(t, options = {}) {
   let currentTime = Date.now(), team = "T_WORK", connected = true, base;
   const roots = new Map(), members = new Map(), reads = [];
-  const client = { conversations: {
+  const markerCalls = [];
+  const client = { auth: { test: async () => ({ user_id: "B_GATEWAY" }) }, reactions: {
+    add: async (args) => { markerCalls.push(["add", args]); return { ok: true }; },
+    remove: async (args) => { markerCalls.push(["remove", args]); return { ok: true }; },
+  }, conversations: {
     replies: async ({ channel, ts }) => { reads.push("replies"); return { messages: [roots.get(`${channel}:${ts}`)].filter(Boolean) }; },
     members: async ({ channel }) => { reads.push("members"); return { members: members.get(channel) || [] }; },
   }, chat: { getPermalink: async ({ channel, message_ts }) => { reads.push("link"); return { permalink: `https://example.slack.com/archives/${channel}/p${message_ts.replace(".", "")}` }; } } };
@@ -131,7 +135,7 @@ async function fixture(t, options = {}) {
     indexSlackThread({ channelId: id, slug: entry.slug, root: message, agentEngaged: engaged });
     return entry;
   };
-  return { base, client, request, grant, exchange, login, root, roots, members, reads,
+  return { base, client, markerCalls, request, grant, exchange, login, root, roots, members, reads,
     advance: (ms) => { currentTime += ms; }, setTeam: (value) => { team = value; }, disconnect: () => { connected = false; } };
 }
 async function nextEvent(reader, event = "threads") {
@@ -508,6 +512,9 @@ test("Done requires CSRF and fresh root ownership and shares persistent completi
   const reopen = JSON.stringify({ channelId: "C_WORK", threadTs: "100.000001", done: false });
   assert.equal((await f.request(path, { method: "POST", headers: user.post, body: reopen })).status, 200);
   assert.ok(getSlackThread("C_WORK", "100.000001").done_ms < 0);
+  assert.deepEqual(f.markerCalls, ["add", "remove"].map((method) => [method, {
+    channel: "C_WORK", timestamp: "100.000001", name: "white_check_mark",
+  }]));
   const foreign = JSON.stringify({ channelId: "C_OTHER", threadTs: "101.000001", done: true, ownerId: "U_OTHER" });
   assert.equal((await f.request(path, { method: "POST", headers: user.post, body: foreign })).status, 403);
   f.roots.set("C_WORK:100.000001", { ts: "100.000001", user: "U_OTHER" });

@@ -8,6 +8,7 @@ import { onConfigChange } from "../config/change-events.js";
 import { getSlackThread, isSlackThreadEligible, setSlackThreadDone } from "../gateway/slack-threads.js";
 import { onThreadChanged } from "../gateway/thread-changes.js";
 import { onActiveRunsChanged } from "../gateway/active-runs.js";
+import { syncThreadDoneMarker } from "../slack/thread-done-marker.js";
 import { clearDone, markDone } from "../gateway/followups.js";
 import { accessContext, activityThreadSnapshot, homeThreadsRefreshKey } from "../slack/home-threads.js";
 import { createHomeThreadReader } from "../slack/home-thread-reader.js";
@@ -250,6 +251,7 @@ export function createActivityRouter({
       await recheckOwned(req, client, session, channelId, threadTs);
       if (!setSlackThreadDone(channelId, threadTs, session.ownerId, done)) return unavailable(res, 403);
       if (done) markDone(session.ownerId, channelId, threadTs); else clearDone(session.ownerId, channelId, threadTs);
+      await syncThreadDoneMarker(client, channelId, threadTs);
       return res.json({ ok: true });
     } catch (error) { return unavailable(res, error.status || 403); }
   });
