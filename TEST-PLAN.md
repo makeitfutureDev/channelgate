@@ -306,7 +306,8 @@ never alter production credentials or send real access tokens to fixture servers
 - Login identity regression (2026-11-12, engine-independent): synthetic Claude profile and distinct
   normal/EU Codex tokens, usage emails and account lists. Open both admin and approved-user
   Subscriptions at desktop/390px; require each card's own email/workspace, escaped as text and
-  wrapping without overflow. Never select an unrelated/default/first organization; require one
+  wrapping without overflow. Subscription text remains enlarged at mobile widths: 18px names,
+  22px usage values and 13–15px metadata; reset dates and account names stay readable. Never select an unrelated/default/first organization; require one
   exact selected account ID match and reject ambiguous matches. Profile errors or malformed
   payloads preserve quotas; missing identity says Account unavailable. Rotate/disconnect a login
   and change its display identity with the same token; require cache invalidation/no prior-account
