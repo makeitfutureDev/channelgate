@@ -141,7 +141,8 @@ import { nudgeHomeBlocks } from "./home-nudges.js";
 import { homeThreadsSnapshot, homeThreadBlocks, homeThreadsRefreshKey } from "./home-threads.js";
 import { createHomeThreadReader } from "./home-thread-reader.js";
 import { buildHomeTabView, createHomePublisher, normalizeHomeTab, registerHomeActions } from "./home-tabs.js";
-import { getSlackThread, recordSlackThreadMessage, eligibleSlackThreadsForUser } from "../gateway/slack-threads.js";
+import { getSlackThread, eligibleSlackThreadsForUser } from "../gateway/slack-threads.js";
+import { observeSlackThreadMessage } from "./thread-activity.js";
 import { activityHomeActions } from "./home-activity.js";
 import { registerReplyDashboardActions } from "./reply-dashboard.js";
 import { isCompletionReaction } from "../gateway/completion-reactions.js";
@@ -234,7 +235,6 @@ async function observeForFollowups(event, botUserId) {
   try {
     const sub = event.subtype;
     if (sub && !["file_share", "thread_broadcast", "bot_message", "me_message"].includes(sub)) return;
-    recordSlackThreadMessage(event.channel, event.thread_ts ?? event.ts, event.ts);
     if (!getFollowupRemindersEnabled()) return;
     const type = event.channel_type;
     if (type !== "channel" && type !== "group") return; // public/private channels only — not DMs
@@ -3114,6 +3114,7 @@ async function connectAndWire(app) {
 
     // Passive follow-up tracking: observe the raw inbound message (any author, mention or not)
     // before gating, so we can later tell each person which threads await their reply.
+    observeSlackThreadMessage(client, incoming, botUserId).catch(() => {});
     observeForFollowups(incoming, botUserId).catch(() => {});
 
     // Edit-to-mention: if a message is edited to ADD an @mention it didn't have before, treat the
@@ -3146,6 +3147,7 @@ async function connectAndWire(app) {
   app.event("app_mention", async ({ event: incoming, client, body }) => {
     const eventKey = body?.event_id || `mention:${incoming.channel}:${incoming.event_ts || incoming.ts}`;
     if (!seenEvents.add(eventKey)) return;
+    observeSlackThreadMessage(client, incoming, botUserId).catch(() => {});
     await processMessageEvent(incoming, client, { botUserId, teamId, dedupeTrigger: true });
   });
 

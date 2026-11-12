@@ -50,6 +50,10 @@
   duplicate requests are idempotent. Resume/Reopen/Done removes only the bot clock, completion
   adds its normal check, and human clocks survive. Migration 50 queues existing postponed rows.
   Failure/restart retries preserve choices; an overlapping Resume cannot lose clock cleanup.
+  A fresh human message automatically resumes Later and removes the bot clock through the same
+  durable retry path. Cover unmentioned replies, attachments, broadcasts, DMs/private channels,
+  live Working status, human clocks, old/redelivered messages after re-postponement, ignored bot
+  replies/background outcomes/edits/deletions and unchanged Done choices.
   Live ACT-LATER-01/02: inspect root reactions as well as private confirmation and Activity; no
   clock is required on the answer. Repeat for Claude and Codex, including Slack failure recovery.
 
@@ -66,7 +70,7 @@
   disposable `cg-testing-claude-bash` and `cg-testing-codex-bash` fixtures and their personal My
   Activity session. Ask “Reply with one sentence confirming this disposable Later test.” Click
   **Delay for later**; expect the row only in Later/All open, with **Resume** restoring its actual
-  runtime or idle/error state. Refresh, load history, add a new reply and restart the disposable
+  runtime or idle/error state. Refresh, load history, add a bot reply and restart the disposable
   gateway; Later must persist. Postpone during running work; it continues without returning to
   Active. Click native 👎 on the owner's answer (also try a completed thread); expect Later plus
   a private confirmation. Another reader's 👎 records feedback without postponing the owner’s
@@ -74,6 +78,18 @@
   channel/thread values, revoked approval/membership, inaccessible sudo, expired session and
   missing CSRF. Verify desktop/mobile controls and unchanged group order, checkmarks and 👍 emoji
   reactions. Private QA definitions created and reread; live execution pending, not a pass.
+
+- Live **ACT-LATER-03**, Claude and Codex: in each named disposable fixture above, postpone an
+  owner-authored answered root and verify Later plus the bot's root `clock3`. Add a human clock
+  too, then send “Let's continue this thread” without an @mention. Expect Later count to drop,
+  Active to include the same thread with current Idle/Working/Waiting/Error status, the bot clock
+  removed and the human clock retained. Repeat with an @mentioned harmless prompt while the
+  engine runs, with an attachment and in owned private/DM fixtures. Postpone again; delayed old
+  messages, edits, bot replies and background completion must preserve Later. On an isolated
+  Slack-failure fixture, fail clock removal once; Active must update immediately and cleanup must
+  retry after reconnect/restart without another prompt. Completed controls stay completed. Record
+  exact revision, source/root/reply timestamps, Activity before/after and root reaction users.
+  Definition coverage only until live execution; automated fixtures do not establish a live pass.
 
 ## Activity history indexing and browser button (2026-11-12)
 

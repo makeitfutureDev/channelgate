@@ -117,13 +117,20 @@ export function updateSlackThreadRootCompletion(channelId, root, { reactionAt = 
   }
 }
 
-export function recordSlackThreadMessage(channelId, threadKey, messageTs) {
+export function recordSlackThreadMessage(channelId, threadKey, messageTs, { human = false } = {}) {
   const threadTs = slackThreadFor(threadKey);
   const at = Math.floor(Number(messageTs) * 1000);
-  if (!threadTs || !Number.isFinite(at)) return;
+  if (!threadTs || !isSlackTs(messageTs) || !Number.isFinite(at)) return false;
+  // A fresh human reply resumes postponed work, even without an agent mention. Ignore
+  // old deliveries and keep the saved clock until its durable cleanup has succeeded.
+  const resumed = human && getDb().prepare(`UPDATE slack_threads SET later_ms=0,
+    updated_ms=MAX(updated_ms,?),completion_marker_retry_ms=?
+    WHERE channel_id=? AND thread_ts=? AND later_ms>0 AND later_ms<?`)
+    .run(at, Date.now(), channelId, threadTs, at).changes > 0;
   const changed = getDb().prepare("UPDATE slack_threads SET last_message_ms=? WHERE channel_id=? AND thread_ts=? AND last_message_ms<?")
     .run(at, channelId, threadTs, at).changes;
-  if (changed) notifyThreadChanged({ channelId, threadTs });
+  if (changed || resumed) notifyThreadChanged({ channelId, threadTs });
+  return Boolean(resumed);
 }
 
 export function slackThreadIsDone(row) {
