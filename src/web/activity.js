@@ -20,6 +20,7 @@ import { activityGroupOrder, activityGroupOrderVersion, validActivityGroupOrder,
 import { activityAccessPage } from "./activity-access-page.js";
 import { installActivityPasskeys } from "./activity-passkeys.js";
 import { activityPasskey } from "../config/activity-passkeys.js";
+import { applyUserSettingsChange, userSettingsSnapshot, UserSettingsError } from "../gateway/user-settings.js";
 
 export const ACTIVITY_GRANT_TTL_MS = 10 * 60_000;
 export const ACTIVITY_SESSION_TTL_MS = 12 * 60 * 60_000;
@@ -120,7 +121,9 @@ export function createActivityRouter({
     req.activityOrigin = base.origin;
     next();
   });
-  router.use(express.json({ limit: "8kb" }));
+  // Settings carries a variable value (up to 16 KB) or an email account; everything else is tiny.
+  const smallJson = express.json({ limit: "8kb" }), settingsJson = express.json({ limit: "48kb" });
+  router.use((req, res, next) => (req.method === "POST" && /^\/[^/]+\/api\/settings$/.test(req.path) ? settingsJson : smallJson)(req, res, next));
   const authorize = async (session) => {
     if (!session || session.expiresAt <= now() || session.origin !== baseFor(getBaseUrl())?.origin) throw Object.assign(new Error("Activity expired"), { status: 401 });
     const user = await getUser(session.ownerId);
@@ -229,12 +232,41 @@ export function createActivityRouter({
       const { session, client } = await context(req);
       const agent = await agentName(client).catch(() => "");
       const theme = activityTheme((await getUser(session.ownerId))?.activityTheme);
-      const page = activityPage({ sessionId: req.params.id, csrf: session.csrf, agent, theme, teamId: session.teamId, view: req.path.endsWith("/subscriptions") ? "subscriptions" : "activity" });
+      const view = req.path.endsWith("/subscriptions") ? "subscriptions" : req.path.endsWith("/settings") ? "settings" : "activity";
+      const page = activityPage({ sessionId: req.params.id, csrf: session.csrf, agent, theme, teamId: session.teamId, view });
       headers(res, page.nonce); return res.type("html").send(page.html);
     } catch (error) { return sendPage(res.status(error.status || 401), activityAccessPage({ mode: "login" })); }
   };
   router.get("/:id", serveDashboard);
   router.get("/:id/subscriptions", serveDashboard);
+  router.get("/:id/settings", serveDashboard);
+  // The viewer's OWN settings, masked. Secret values never leave the process (write-only).
+  router.get("/:id/api/settings", async (req, res) => {
+    try {
+      const { session } = await context(req);
+      const data = await userSettingsSnapshot(session.ownerId);
+      await context(req); // Revocation while the snapshot awaited cannot publish it.
+      return res.json(data);
+    } catch (error) { return unavailable(res, error.status || 503); }
+  });
+  router.post("/:id/api/settings", async (req, res) => {
+    let session;
+    try {
+      ({ session } = await context(req));
+      if (req.headers.origin !== req.activityOrigin || !timingSafeEqualStr(String(req.headers["x-cg-csrf"] || ""), session.csrf)) return unavailable(res, 403);
+    } catch (error) { return unavailable(res, error.status || 403); }
+    try {
+      // Only the authenticated owner is ever changed; caller-supplied owners or roles are ignored.
+      // `authorize` re-checks this exact session after slow work (DNS, mail logins), before writing.
+      const result = await applyUserSettingsChange(session.ownerId, req.body || {}, {
+        authorize: async () => { const current = await context(req); if (current.session !== session) throw Object.assign(new Error("Activity session changed"), { status: 401 }); },
+      });
+      return res.json({ notice: result.notice, settings: await userSettingsSnapshot(session.ownerId) });
+    } catch (error) {
+      if (error instanceof UserSettingsError) return res.status(error.status).json({ error: error.message, field: error.field });
+      return unavailable(res, error.status === 401 || error.status === 403 ? error.status : 503);
+    }
+  });
   router.get("/:id/api/subscriptions", async (req, res) => {
     try {
       const { session } = await context(req);

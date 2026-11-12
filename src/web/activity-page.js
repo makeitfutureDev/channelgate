@@ -4,6 +4,39 @@ import { ACTIVITY_THEME_CSS } from "./activity-theme.js";
 import { createSubscriptionUi, SUBSCRIPTION_CSS } from "../../public/subscription-ui.js";
 import { DEFAULT_ACTIVITY_GROUP_ORDER } from "./activity-order.js";
 
+// The header's theme switch, shared by every dashboard view. Matching the system choice clears
+// the override, so the page follows the OS again; a failed save keeps the theme for this page only.
+function themeBrowser(config, browser) {
+  "use strict";
+  const { base, csrf } = config;
+  const { document } = browser;
+  const themeButton = document.getElementById("theme-toggle"), root = document.documentElement, scheme = browser.matchMedia?.("(prefers-color-scheme: light)");
+  const effectiveTheme = () => root?.dataset.theme || (scheme?.matches ? "light" : "dark");
+  function paintTheme() {
+    if (!themeButton) return;
+    const next = effectiveTheme() === "dark" ? "light" : "dark";
+    themeButton.setAttribute("aria-label", "Switch to " + next + " theme");
+    themeButton.title = "Switch to " + next + " theme";
+    themeButton.dataset.theme = effectiveTheme();
+  }
+  async function saveTheme(saved) {
+    if (!root) return;
+    if (saved === "system") delete root.dataset.theme; else root.dataset.theme = saved;
+    paintTheme();
+    try {
+      await fetch(base + "/api/theme", { method: "POST", credentials: "same-origin",
+        headers: { "Content-Type": "application/json", "X-CG-CSRF": csrf }, body: JSON.stringify({ theme: saved }) });
+    } catch { /* The page keeps the chosen theme; it simply is not remembered. */ }
+  }
+  themeButton?.addEventListener("click", () => {
+    const next = effectiveTheme() === "dark" ? "light" : "dark";
+    void saveTheme(next === (scheme?.matches ? "light" : "dark") ? "system" : next);
+  });
+  scheme?.addEventListener?.("change", paintTheme);
+  paintTheme();
+  return { saveTheme, current: () => root?.dataset.theme || "system" };
+}
+
 // Kept as an ordinary function so the exact script served to browsers is testable without a bundler.
 function activityBrowser(config, browser, subscriptionUi) {
   "use strict";
@@ -517,29 +550,6 @@ function activityBrowser(config, browser, subscriptionUi) {
       browser.open?.(channelAnchor.dataset.web, "_blank", "noopener,noreferrer");
     }
   });
-  const themeButton = el("theme-toggle"), root = document.documentElement, scheme = browser.matchMedia?.("(prefers-color-scheme: light)");
-  const effectiveTheme = () => root?.dataset.theme || (scheme?.matches ? "light" : "dark");
-  function paintTheme() {
-    if (!themeButton) return;
-    const next = effectiveTheme() === "dark" ? "light" : "dark";
-    themeButton.setAttribute("aria-label", "Switch to " + next + " theme");
-    themeButton.title = "Switch to " + next + " theme";
-    themeButton.dataset.theme = effectiveTheme();
-  }
-  themeButton?.addEventListener("click", async () => {
-    if (!root || ended) return;
-    const next = effectiveTheme() === "dark" ? "light" : "dark";
-    // Matching the system choice clears the override, so the page follows the OS again.
-    const saved = next === (scheme?.matches ? "light" : "dark") ? "system" : next;
-    if (saved === "system") delete root.dataset.theme; else root.dataset.theme = saved;
-    paintTheme();
-    try {
-      await fetch(base + "/api/theme", { method: "POST", credentials: "same-origin",
-        headers: { "Content-Type": "application/json", "X-CG-CSRF": csrf }, body: JSON.stringify({ theme: saved }) });
-    } catch { /* The page keeps the chosen theme; it simply is not remembered. */ }
-  });
-  scheme?.addEventListener?.("change", paintTheme);
-  paintTheme();
   subscriptionButton?.addEventListener("click", () => { void refreshSubscriptions(); });
   document.addEventListener?.("visibilitychange", () => {
     if (document.hidden) {
@@ -570,6 +580,312 @@ function activityBrowser(config, browser, subscriptionUi) {
   browser.addEventListener("pageshow", (event) => { if (event.persisted) location.reload(); });
 }
 
+// The Settings view: the viewer's own preferences, connections, MCP servers, variables, skills
+// and SSH keys. Every value is rendered with textContent; secret inputs are never prefilled.
+function settingsBrowser(config, browser, theme) {
+  "use strict";
+  const { base, csrf } = config;
+  const { document, location } = browser;
+  const el = (id) => document.getElementById(id);
+  const panel = el("settings-panel"), nav = el("settings-nav"), status = el("settings-status");
+  const SECTIONS = [["general", "General"], ["connections", "Connections"], ["mcps", "MCP servers"], ["variables", "Variables"], ["skills", "Skills"], ["ssh", "SSH keys"]];
+  const wanted = String(location?.hash || "").replace(/^#/, "");
+  let section = SECTIONS.some(([id]) => id === wanted) ? wanted : "general";
+  let data = null, busy = false, ended = false, notice = "", noticeKind = "", editing = null, skillQuery = "";
+  const dateFormat = new Intl.DateTimeFormat(undefined, { year: "numeric", month: "short", day: "numeric" });
+
+  function node(tag, className, text) {
+    const item = document.createElement(tag);
+    if (className) item.className = className;
+    if (text !== undefined) item.textContent = text;
+    return item;
+  }
+  function when(value) {
+    const date = new Date(typeof value === "number" ? value : String(value || ""));
+    return value && Number.isFinite(date.getTime()) ? dateFormat.format(date) : "";
+  }
+  function button(text, onClick, className = "settings-button") {
+    const item = node("button", className, text);
+    item.type = "button"; item.disabled = busy || ended;
+    item.addEventListener("click", onClick);
+    return item;
+  }
+  function input(name, { type = "text", placeholder = "", value = "", max = 300, multiline = false } = {}) {
+    const item = node(multiline ? "textarea" : "input", "settings-input");
+    if (!multiline) item.type = type;
+    item.name = name; item.value = value; item.placeholder = placeholder;
+    item.setAttribute("autocomplete", type === "password" ? "new-password" : "off");
+    item.setAttribute("spellcheck", "false");
+    item.setAttribute("maxlength", String(max));
+    item.disabled = busy || ended;
+    return item;
+  }
+  function field(label, control, hint = "") {
+    const wrap = node("label", "settings-field");
+    wrap.append(node("span", "settings-label", label), control);
+    if (hint) wrap.append(node("span", "settings-hint", hint));
+    return wrap;
+  }
+  function card(title, description = "") {
+    const item = node("section", "settings-card");
+    item.append(node("h2", "", title));
+    if (description) item.append(node("p", "settings-copy", description));
+    return item;
+  }
+  function row(primary, secondary, actions = []) {
+    const item = node("div", "settings-row"), text = node("div", "settings-row-text");
+    text.append(node("div", "settings-row-title", primary));
+    if (secondary) text.append(node("div", "settings-row-meta", secondary));
+    const controls = node("div", "settings-row-actions");
+    controls.append(...actions);
+    item.append(text, controls);
+    return item;
+  }
+  // A form posts its named controls plus `extra`; a refusal stays beside the form.
+  function form(fields, submitText, build, { extra = {}, cancel = null } = {}) {
+    const item = node("form", "settings-form"), error = node("p", "settings-error");
+    error.setAttribute("role", "alert");
+    item.append(...fields);
+    const footer = node("div", "settings-form-actions");
+    if (cancel) footer.append(button("Cancel", cancel, "settings-button ghost"));
+    const submit = node("button", "settings-button primary", submitText);
+    submit.type = "submit"; submit.disabled = busy || ended;
+    footer.append(submit);
+    item.append(error, footer);
+    item.addEventListener("submit", (event) => {
+      event.preventDefault();
+      const values = {};
+      for (const control of item.querySelectorAll("input")) values[control.name] = control.type === "checkbox" ? control.checked : control.value;
+      for (const control of item.querySelectorAll("textarea")) values[control.name] = control.value;
+      for (const control of item.querySelectorAll("select")) values[control.name] = control.value;
+      void send({ ...build(values), ...extra }, error);
+    });
+    return item;
+  }
+  function confirmThen(message, body) {
+    return () => { if (!browser.confirm || browser.confirm(message)) void send(body); };
+  }
+  function paintStatus() {
+    status.textContent = ended ? "Your session has ended. Sign in with a passkey or open Dashboard again from Slack." : notice;
+    status.className = "settings-status" + (ended ? " error" : noticeKind ? " " + noticeKind : "");
+    status.hidden = !status.textContent;
+  }
+  function end() { ended = true; busy = false; render(); }
+
+  async function load() {
+    try {
+      const response = await fetch(base + "/api/settings", { cache: "no-store", credentials: "same-origin" });
+      if (response.status === 401 || response.status === 403) { end(); return; }
+      if (!response.ok) throw new Error("unavailable");
+      data = await response.json();
+    } catch {
+      notice = "Settings couldn’t load. Refresh the page to try again."; noticeKind = "error";
+    }
+    render();
+  }
+  function lock(value) { for (const control of panel.querySelectorAll("input,textarea,select,button")) control.disabled = value; }
+  // Starting a change locks the page instead of re-rendering it, so a refusal keeps what the
+  // person typed and shows beside the form that caused it.
+  async function send(body, errorNode = null) {
+    if (busy || ended) return;
+    busy = true; notice = ""; noticeKind = ""; paintStatus(); lock(true);
+    if (errorNode) errorNode.textContent = "";
+    panel.setAttribute("aria-busy", "true");
+    const settle = (message) => {
+      busy = false; lock(false); panel.setAttribute("aria-busy", "false");
+      if (errorNode) errorNode.textContent = message; else { notice = message; noticeKind = "error"; paintStatus(); }
+    };
+    try {
+      const response = await fetch(base + "/api/settings", {
+        method: "POST", credentials: "same-origin",
+        headers: { "Content-Type": "application/json", "X-CG-CSRF": csrf }, body: JSON.stringify(body),
+      });
+      if (response.status === 401 || response.status === 403) { end(); return; }
+      const result = await response.json().catch(() => ({}));
+      if (response.status === 400 && typeof result.error === "string") { settle(result.error); return; }
+      if (!response.ok || !result.settings) throw new Error("unavailable");
+      data = result.settings; editing = null; busy = false;
+      notice = String(result.notice || "Saved."); noticeKind = "ok";
+      render();
+    } catch { settle("That change couldn’t be saved. Please try again."); }
+  }
+
+  const BUILD = {
+    general() {
+      const account = card("Account", "Who this dashboard belongs to.");
+      const roles = { admin: "Administrator", member: "Approved member", guest: "Guest" };
+      account.append(row(data.account.name || data.account.id, (roles[data.account.role] || "Member") + " · " + data.account.id));
+      const appearance = card("Appearance", "Saved to your account, so every dashboard session uses it.");
+      const select = node("select", "settings-input");
+      for (const [value, label] of [["system", "Match system"], ["light", "Light"], ["dark", "Dark"]]) {
+        const option = node("option", "", label); option.value = value; option.selected = theme.current() === value; select.append(option);
+      }
+      select.disabled = ended;
+      select.addEventListener("change", () => { void theme.saveTheme(select.value); });
+      appearance.append(field("Theme", select));
+      const reminders = card("Quiet-thread reminders", "When the agent answers you and the thread stays quiet, it mentions you there once after the reminder window. Applies in every channel and DM.");
+      const enabled = Boolean(data.general.nudges);
+      reminders.append(row(enabled ? "On" : "Off", "", [button(enabled ? "Turn off" : "Turn on", () => { void send({ action: "nudges", enabled: !enabled }); }, "settings-button" + (enabled ? "" : " primary"))]));
+      const mentions = card("Mention me in replies", "Automatically mention you when delivering your replies in channels and group conversations. Follows you across conversations; direct messages never need a mention.");
+      const mentioned = Boolean(data.general.replyMentions);
+      mentions.append(row(mentioned ? "On" : "Off", "", [button(mentioned ? "Turn off" : "Turn on", () => { void send({ action: "replyMentions", enabled: !mentioned }); }, "settings-button" + (mentioned ? "" : " primary"))]));
+      const keys = card("Passkeys", "Sign back in to this dashboard without a new Slack link.");
+      const link = node("a", "settings-button", "Manage passkeys"); link.href = base + "/passkeys";
+      keys.append(link);
+      return [account, appearance, reminders, mentions, keys];
+    },
+    connections() {
+      const c = data.connections, cards = [];
+      const composio = card("Composio · your account", "Your own apps (Gmail, Calendar, HubSpot, …) as composio-user. Only your runs use it, in every conversation.");
+      if (c.composioMode === "sdk") composio.append(node("p", "settings-copy", "This gateway runs Composio in SDK mode: your session is created automatically. Nothing to configure."));
+      else {
+        composio.append(row(c.composio.configured ? "Connected" + (c.composio.last4 ? " · ••••" + c.composio.last4 : "") : "Not connected", c.composio.label,
+          c.composio.configured ? [button("Remove", confirmThen("Remove your Composio account? Runs in progress stop using it.", { action: "composio.remove" }), "settings-button danger")] : []));
+        composio.append(form([field(c.composio.configured ? "Replace token" : "Token", input("token", { type: "password", max: 4096, placeholder: c.composio.configured ? "Leave blank to keep the current token" : "" })),
+          field("Label", input("label", { value: c.composio.label, max: 80, placeholder: "e.g. Work account" }), "Optional. Shown here and in Slack Settings.")],
+        "Save", (v) => ({ action: "composio.save", token: v.token, label: v.label })));
+      }
+      cards.push(composio);
+      const toolbox = card("Toolbox", "Your personal token for the gateway's Toolbox server" + (c.toolboxServer ? " (" + c.toolboxServer + ")" : "") + ".");
+      toolbox.append(row(c.toolbox.configured ? "Configured" + (c.toolbox.last4 ? " · ••••" + c.toolbox.last4 : "") : "Not set", "",
+        c.toolbox.configured ? [button("Remove", confirmThen("Remove your Toolbox token?", { action: "toolbox.remove" }), "settings-button danger")] : []));
+      toolbox.append(form([field(c.toolbox.configured ? "Replace token" : "Token", input("token", { type: "password", max: 4096 }))], "Save", (v) => ({ action: "toolbox.save", token: v.token })));
+      cards.push(toolbox);
+      const email = card("Email accounts", "Mailboxes only your runs read and send from. Saving logs in to IMAP and SMTP first; passwords are never shown again.");
+      for (const account of c.email) {
+        email.append(row(account.name + " · " + account.address, "IMAP " + account.imap.host + ":" + account.imap.port + " · SMTP " + account.smtp.host + ":" + account.smtp.port + (account.sendEnabled ? "" : " · sending off"), [
+          button("Edit", () => { editing = { kind: "email", value: account }; render(); }),
+          button("Remove", confirmThen("Remove email account " + account.name + "?", { action: "email.remove", name: account.name }), "settings-button danger")]));
+      }
+      if (!c.email.length) email.append(node("p", "settings-empty", "No email accounts."));
+      const current = editing?.kind === "email" ? editing.value : null;
+      const v = (key, fallback = "") => current ? String(key.split(".").reduce((o, k) => o?.[k], current) ?? fallback) : fallback;
+      email.append(node("h3", "", current ? "Edit " + current.name : "Add an account"));
+      email.append(form([
+        ...(current ? [] : [field("Name", input("name", { max: 40, placeholder: "work" }), "Lowercase letters, digits and dashes.")]),
+        field("Address", input("address", { type: "email", value: v("address"), max: 254 })),
+        field("Display name", input("displayName", { value: v("displayName"), max: 120 })),
+        field("IMAP host", input("imapHost", { value: v("imap.host"), max: 253 })), field("IMAP port", input("imapPort", { value: v("imap.port", "993"), max: 5 })),
+        field("IMAP user", input("imapUser", { value: v("imap.user"), max: 254 })), field("IMAP password", input("imapPassword", { type: "password", max: 1024, placeholder: current ? "Leave blank to keep" : "" })),
+        field("SMTP host", input("smtpHost", { value: v("smtp.host"), max: 253 })), field("SMTP port", input("smtpPort", { value: v("smtp.port", "587"), max: 5 })),
+        field("SMTP user", input("smtpUser", { value: v("smtp.user"), max: 254 }), "Blank uses the IMAP user."), field("SMTP password", input("smtpPassword", { type: "password", max: 1024, placeholder: current ? "Leave blank to keep" : "Blank uses the IMAP password" })),
+      ], current ? "Save changes" : "Connect", (values) => ({ action: "email.save", ...values, ...(current ? { name: current.name } : {}) }),
+      current ? { cancel: () => { editing = null; render(); } } : {}));
+      cards.push(email);
+      return cards;
+    },
+    mcps() {
+      const m = data.mcps;
+      const list = card("Your MCP servers", "Remote MCP servers only your runs connect to, as my-<name>. Up to " + m.limit + ". Tokens are write-only.");
+      const auth = { bearer: "Bearer token", composio: "Composio consumer key", custom: "Custom headers (edit in Slack Settings)" };
+      for (const server of m.servers) {
+        list.append(row(server.serverName, String(server.url || "").replace(/^https:\/\//, "") + " · " + (auth[server.authType] || "Bearer token") + (server.tokenLast4 ? " · ••" + server.tokenLast4 : ""), [
+          button("Edit", () => { editing = { kind: "mcp", value: server }; render(); }),
+          button("Remove", confirmThen("Remove " + server.serverName + "? Runs stop receiving it, including any in progress.", { action: "mcp.remove", name: server.name }), "settings-button danger")]));
+      }
+      if (!m.servers.length) list.append(node("p", "settings-empty", "No MCP servers yet."));
+      const current = editing?.kind === "mcp" ? editing.value : null;
+      const add = card(current ? "Edit " + current.serverName : "Add a server", current ? "Leave the token blank to keep the stored one." : "The URL must be public HTTPS. Its tools reach your next run.");
+      const authSelect = node("select", "settings-input"); authSelect.name = "authType"; authSelect.disabled = busy || ended;
+      for (const [value, label] of [["bearer", "Bearer token"], ["composio", "Composio consumer key"]]) {
+        const option = node("option", "", label); option.value = value; option.selected = (current?.authType || "bearer") === value; authSelect.append(option);
+      }
+      const fields = [
+        ...(current ? [] : [field("Name", input("name", { max: 40, placeholder: "notion" }), "Lowercase letters, digits and dashes.")]),
+        field("URL", input("url", { type: "url", value: current?.url || "", max: 2048, placeholder: "https://mcp.example.com/mcp" })),
+        ...(current?.authType === "custom" ? [] : [field("Authentication", authSelect), field("Token", input("token", { type: "password", max: 8192, placeholder: current ? "Leave blank to keep" : "" }))]),
+      ];
+      add.append(form(fields, current ? "Save changes" : "Add server", (values) => ({ action: "mcp.save", name: current ? current.name : values.name, url: values.url,
+        ...(values.token ? { token: values.token } : {}), ...(current?.authType === "custom" ? {} : { authType: values.authType }) }),
+      current ? { cancel: () => { editing = null; render(); } } : {}));
+      return [list, add];
+    },
+    variables() {
+      const list = card("Your variables", "Environment variables only your runs receive, in every conversation. Values are write-only: nobody can read them back here.");
+      for (const variable of data.variables) {
+        const kind = variable.exposure === "hidden" ? "Hidden" + (variable.hosts.length ? " · " + variable.hosts.join(", ") : " · servers approved by an admin") : "Readable";
+        list.append(row(variable.name, kind + (variable.last4 ? " · ••" + variable.last4 : "") + (variable.setAt ? " · " + when(variable.setAt) : ""), [
+          button("Replace", () => { editing = { kind: "variable", value: variable }; render(); }),
+          button("Remove", confirmThen("Remove " + variable.name + "?", { action: "variable.remove", name: variable.name }), "settings-button danger")]));
+      }
+      if (!data.variables.length) list.append(node("p", "settings-empty", "No variables yet."));
+      const current = editing?.kind === "variable" ? editing.value : null;
+      const add = card(current ? "Replace " + current.name : "Add a variable", current ? "The new value keeps the same type and allowed servers; the old one stops working now." : "Hidden values reach the container only as a placeholder the gateway swaps in on approved servers. Mark it readable only for a password or connection string used outside HTTPS.");
+      const readable = node("input"); readable.type = "checkbox"; readable.name = "readable"; readable.disabled = busy || ended;
+      const readableLabel = node("label", "settings-check"); readableLabel.append(readable, node("span", "", "Readable (the raw value is placed in the environment)"));
+      add.append(form([
+        ...(current ? [] : [field("Name", input("name", { max: 64, placeholder: "MY_API_KEY" }), "Uppercase letters, digits and underscores.")]),
+        field("Value", input("value", { multiline: true, max: 16384 })),
+        ...(current ? [] : [readableLabel]),
+      ], current ? "Replace value" : "Add variable", (values) => ({ action: "variable.save", name: current ? current.name : values.name, value: values.value, ...(current ? {} : { readable: values.readable === true }) }),
+      current ? { cancel: () => { editing = null; render(); } } : {}));
+      return [list, add];
+    },
+    skills() {
+      const s = data.skills;
+      const pick = card("Your skills", "Skills added here load into every run you start, in any conversation. Channel and organization skills are managed by their owners.");
+      if (s.foreign?.length) pick.append(node("p", "settings-warning", "Not loaded: " + s.foreign.join(", ") + " — another person's personal skill. Saving here removes it."));
+      const search = input("skill-search", { type: "search", value: skillQuery, max: 120, placeholder: "Filter skills…" });
+      search.disabled = ended;
+      const list = node("div", "settings-skill-list");
+      const selected = new Set(s.selected.map((slug) => slug.toLowerCase()));
+      const boxes = [];
+      function paintSkills() {
+        const query = skillQuery.trim().toLowerCase();
+        for (const entry of boxes) entry.item.hidden = Boolean(query) && !(entry.option.label + " " + entry.option.description).toLowerCase().includes(query);
+      }
+      for (const option of s.options) {
+        const item = node("label", "settings-skill"), box = node("input");
+        box.type = "checkbox"; box.value = option.key; box.checked = selected.has(option.key.toLowerCase()); box.disabled = busy || ended;
+        const text = node("span", "settings-skill-text");
+        text.append(node("span", "settings-row-title", option.label), node("span", "settings-row-meta", option.description));
+        item.append(box, text); list.append(item); boxes.push({ item, box, option });
+      }
+      search.addEventListener("input", () => { skillQuery = search.value; paintSkills(); });
+      paintSkills();
+      if (!s.options.length) list.append(node("p", "settings-empty", "No skills are available to you yet."));
+      const error = node("p", "settings-error"); error.setAttribute("role", "alert");
+      pick.append(search, list, error, button("Save skills", () => { void send({ action: "skills.save", selected: boxes.filter((entry) => entry.box.checked).map((entry) => entry.option.key) }, error); }, "settings-button primary"));
+      return [pick];
+    },
+    ssh() {
+      const k = data.ssh;
+      const list = card("Your SSH keys", "Public keys that let you SSH into a channel's container once you enable access there (ask the agent: “enable SSH access for me”). Up to " + k.max + ".");
+      for (const key of k.keys) {
+        list.append(row(key.fingerprint, key.type + (key.label ? " · " + key.label : "") + " · added " + when(key.createdAt) + " · " + (key.lastUsedAt ? "last used " + when(key.lastUsedAt) : "never used"), [
+          button("Remove", confirmThen("Remove " + key.fingerprint + "? Every channel grant stops working for it.", { action: "ssh.remove", id: key.id }), "settings-button danger")]));
+      }
+      if (!k.keys.length) list.append(node("p", "settings-empty", "No SSH keys registered."));
+      const add = card("Add a public key", "Paste the single line of your .pub file. Never paste a private key.");
+      add.append(form([field("Public key", input("publicKey", { multiline: true, max: 16384, placeholder: "ssh-ed25519 AAAA… you@laptop" })), field("Label", input("label", { max: 80, placeholder: "laptop" }))],
+        "Add key", (values) => ({ action: "ssh.add", publicKey: values.publicKey, label: values.label })));
+      return [list, add];
+    },
+  };
+
+  function render() {
+    nav.replaceChildren(...SECTIONS.map(([id, label]) => {
+      const item = node("button", "settings-tab", label);
+      item.type = "button";
+      if (id === section) item.setAttribute("aria-current", "page");
+      item.addEventListener("click", () => { section = id; editing = null; notice = ""; noticeKind = ""; if (browser.history?.replaceState) browser.history.replaceState(null, "", "#" + id); render(); });
+      return item;
+    }));
+    paintStatus();
+    if (ended) { panel.replaceChildren(); return; }
+    if (!data) { panel.replaceChildren(node("p", "settings-empty", noticeKind === "error" ? "" : "Loading your settings…")); return; }
+    panel.replaceChildren(...BUILD[section]());
+    panel.setAttribute("aria-busy", String(busy));
+  }
+  // Back/forward and edited links change only the hash; follow them without a reload.
+  browser.addEventListener?.("hashchange", () => {
+    const next = String(location?.hash || "").replace(/^#/, "");
+    if (next !== section && SECTIONS.some(([id]) => id === next)) { section = next; editing = null; render(); }
+  });
+  render();
+  void load();
+}
+
 const icon = (svg) => `url("data:image/svg+xml,${encodeURIComponent(`<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'>${svg}</svg>`)}")`;
 const ICONS = {
   slack: icon("<path d='M5.04 15.17a2.53 2.53 0 1 1-2.52-2.53h2.52v2.53Zm1.27 0a2.53 2.53 0 0 1 5.05 0v6.31a2.53 2.53 0 1 1-5.05 0v-6.31ZM8.83 5.04a2.53 2.53 0 1 1 2.53-2.52v2.52H8.83Zm0 1.27a2.53 2.53 0 0 1 0 5.05H2.52a2.53 2.53 0 0 1 0-5.05h6.31Zm10.13 2.52a2.53 2.53 0 1 1 2.52 2.53h-2.52V8.83Zm-1.27 0a2.53 2.53 0 0 1-5.05 0V2.52a2.53 2.53 0 1 1 5.05 0v6.31Zm-2.52 10.13a2.53 2.53 0 1 1-2.53 2.52v-2.52h2.53Zm0-1.27a2.53 2.53 0 0 1 0-5.05h6.31a2.53 2.53 0 1 1 0 5.05h-6.31Z'/>"),
@@ -598,7 +914,7 @@ const CHANNELGATE_LOGO = `<svg viewBox="0 0 48 48" focusable="false"><rect width
 const escapeHtml = (value) => String(value ?? "").replace(/[&<>"']/g, (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[char]);
 
 export function activityPage({ sessionId, csrf, view = "activity", agent = "", theme = "system", teamId = "" }) {
-  const subscriptionsView = view === "subscriptions";
+  const subscriptionsView = view === "subscriptions", settingsView = view === "settings";
   const base = `/activity/${encodeURIComponent(sessionId)}`;
   const nonce = crypto.randomBytes(16).toString("base64url");
   const config = JSON.stringify({ base, csrf, view, teamId: /^[A-Z0-9]{2,32}$/.test(String(teamId)) ? String(teamId) : "", defaultGroupOrder: DEFAULT_ACTIVITY_GROUP_ORDER }).replaceAll("<", "\\u003c");
@@ -606,7 +922,7 @@ export function activityPage({ sessionId, csrf, view = "activity", agent = "", t
   const pinned = theme === "dark" || theme === "light" ? ` data-theme="${theme}"` : "";
   const filters = [["active", "Active"], ["working", "Working"], ["waiting", "Waiting"], ["error", "Error"], ["idle", "Idle"], ["later", "Later"], ["done", "Completed"], ["open", "All open"]];
   return { nonce, html: `<!doctype html>
-<html lang="en"${pinned}><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="color-scheme" content="dark light"><title>${subscriptionsView ? "Subscriptions" : "Activity"} · ChannelGate</title><link rel="icon" type="image/svg+xml" href="/favicon.svg">
+<html lang="en"${pinned}><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="color-scheme" content="dark light"><title>${subscriptionsView ? "Subscriptions" : settingsView ? "Settings" : "Activity"} · ChannelGate</title><link rel="icon" type="image/svg+xml" href="/favicon.svg">
 <style nonce="${nonce}">
 ${ACTIVITY_THEME_CSS}
 ${SUBSCRIPTION_CSS}
@@ -720,6 +1036,43 @@ tbody tr:hover .actions,tbody tr:focus-within .actions,.s-waiting .actions,.s-er
 .order-dialog button:disabled{opacity:.4;cursor:default}.order-footer{display:flex;justify-content:flex-end;gap:8px;margin-top:14px}.order-dialog .order-save{background:var(--orange);border-color:var(--orange);color:var(--brand-ink)}
 .order-dialog .order-error{color:var(--danger);min-height:1.6em}
 .subscriptions-page{padding:8px 16px 24px}
+.settings-page{max-width:1080px;margin:0 auto;padding:18px 16px 32px}
+.settings-head h1{font-size:20px;margin:0 0 4px}
+.settings-copy{color:var(--muted);font-size:12.5px;margin:0 0 12px;line-height:1.55}
+.settings-status{margin:0 0 12px;padding:9px 12px;border-radius:8px;font-size:12.5px;border:1px solid color-mix(in srgb,var(--ok) 40%,transparent);background:color-mix(in srgb,var(--ok) 12%,transparent)}
+.settings-status.error{border-color:color-mix(in srgb,var(--danger) 45%,transparent);background:color-mix(in srgb,var(--danger) 12%,transparent)}
+.settings-layout{display:grid;grid-template-columns:190px minmax(0,1fr);gap:20px;align-items:start}
+.settings-nav{display:flex;flex-direction:column;gap:2px;position:sticky;top:64px}
+.settings-tab{text-align:left;padding:8px 10px;border:0;border-radius:7px;background:transparent;color:var(--muted);font-size:13px}
+.settings-tab:hover{color:var(--ink);background:var(--hover)}
+.settings-tab[aria-current=page]{color:var(--ink);background:var(--panel-2);font-weight:600}
+.settings-panel{display:flex;flex-direction:column;gap:14px;min-width:0}
+.settings-card{padding:16px 18px;background:var(--panel);border:1px solid var(--line);border-radius:12px}
+.settings-card h2{font-size:14.5px;margin:0 0 4px}.settings-card h3{font-size:13px;margin:16px 0 8px;color:var(--ink-2)}
+.settings-row{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:10px 0;border-top:1px solid var(--line-soft)}
+.settings-row-text{min-width:0}.settings-row-title{font-weight:500;overflow-wrap:anywhere}
+.settings-row-meta{display:block;font:11.5px var(--mono);color:var(--muted);overflow-wrap:anywhere;margin-top:2px}
+.settings-row-actions{display:flex;gap:6px;flex:none}
+.settings-form{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:10px 14px;margin-top:10px}
+.settings-field{display:flex;flex-direction:column;gap:4px;min-width:0}
+.settings-label{font-size:11.5px;color:var(--ink-2);font-weight:500}.settings-hint{font-size:11px;color:var(--faint)}
+.settings-input{width:100%;min-height:32px;padding:6px 10px;border:1px solid var(--line-2);border-radius:7px;background:var(--panel-dark);color:var(--ink);font:12.5px var(--font)}
+textarea.settings-input{min-height:72px;resize:vertical;font-family:var(--mono)}
+select.settings-input{height:32px}
+.settings-check{display:flex;align-items:center;gap:8px;font-size:12.5px;color:var(--ink-2);grid-column:1/-1}
+.settings-check input,.settings-skill input{width:16px;height:16px;min-height:0;accent-color:var(--orange)}
+.settings-form-actions{grid-column:1/-1;display:flex;justify-content:flex-end;gap:8px}
+.settings-error{grid-column:1/-1;margin:0;color:var(--danger);font-size:12px;min-height:0}.settings-error:empty{display:none}
+.settings-warning{color:var(--warn);font-size:12px}
+.settings-empty{color:var(--faint);font-size:12.5px;margin:8px 0 0}
+.settings-button{display:inline-flex;align-items:center;justify-content:center;height:30px;padding:0 12px;border:1px solid var(--line-2);border-radius:7px;background:var(--panel-2);color:var(--ink);font-size:12px;white-space:nowrap}
+.settings-button:hover:not(:disabled){border-color:var(--muted)}
+.settings-button:disabled{opacity:.5;cursor:default}
+.settings-button.primary{background:var(--orange);border-color:var(--orange);color:var(--brand-ink)}
+.settings-button.danger{color:var(--danger)}.settings-button.ghost{background:transparent}
+.settings-skill-list{display:flex;flex-direction:column;max-height:420px;overflow:auto;margin:10px 0;border:1px solid var(--line);border-radius:8px}
+.settings-skill{display:flex;gap:10px;align-items:flex-start;padding:9px 12px;border-bottom:1px solid var(--line-soft)}
+.settings-skill[hidden]{display:none}.settings-skill-text{display:flex;flex-direction:column;min-width:0}
 .subscription-card{background:var(--panel)}
 @media(prefers-reduced-motion:reduce){.pill.working .status-dot{animation:none}.actions{transition:none}}
 @media(hover:none){.actions{opacity:1}}
@@ -728,6 +1081,9 @@ tbody tr:hover .actions,tbody tr:focus-within .actions,.s-waiting .actions,.s-er
   .channel-cell,th:nth-child(2){display:none}
 }
 @media(max-width:640px){
+  .settings-layout{grid-template-columns:1fr}
+  .settings-nav{position:static;flex-direction:row;overflow-x:auto}
+  .settings-row{flex-wrap:wrap}
   .top{padding:8px 12px;gap:8px 10px}
   .agent-name{max-width:150px}
   .top .subscription-quick-list{order:1;gap:10px}
@@ -752,14 +1108,14 @@ tbody tr:hover .actions,tbody tr:focus-within .actions,.s-waiting .actions,.s-er
   .open-link,.toggle{width:32px;height:32px}
 }
 </style></head><body>
-<header class="top"><div class="agent"><span class="agent-mark" aria-hidden="true">${CHANNELGATE_LOGO}</span><div><span class="agent-name">${escapeHtml(agentName)}</span><div id="connection" class="connection reconnecting" role="status"><span id="connection-text">Connecting…</span></div></div></div>
-${subscriptionsView ? "" : '<div id="subscription-quick" class="subscription-quick-list" aria-label="Subscription usage" hidden></div><div id="subscriptions-notice" role="status" aria-live="polite"></div>'}
-<nav class="page-nav" aria-label="Dashboard"><a href="${base}"${!subscriptionsView ? ' aria-current="page"' : ''}>Activity</a><a href="${base}/subscriptions"${subscriptionsView ? ' aria-current="page"' : ''}>Subscriptions</a></nav>
+<header class="top"><div class="agent"><span class="agent-mark" aria-hidden="true">${CHANNELGATE_LOGO}</span><div><span class="agent-name">${escapeHtml(agentName)}</span>${settingsView ? "" : '<div id="connection" class="connection reconnecting" role="status"><span id="connection-text">Connecting…</span></div>'}</div></div>
+${subscriptionsView || settingsView ? "" : '<div id="subscription-quick" class="subscription-quick-list" aria-label="Subscription usage" hidden></div><div id="subscriptions-notice" role="status" aria-live="polite"></div>'}
+<nav class="page-nav" aria-label="Dashboard"><a href="${base}"${view === "activity" ? ' aria-current="page"' : ''}>Activity</a><a href="${base}/subscriptions"${subscriptionsView ? ' aria-current="page"' : ''}>Subscriptions</a><a href="${base}/settings"${settingsView ? ' aria-current="page"' : ''}>Settings</a></nav>
 <a href="${base}/passkeys" class="link-button">Passkeys</a>
 <button id="theme-toggle" class="icon-button" type="button" aria-label="Switch theme" title="Switch theme"></button></header>
 <main>
 ${subscriptionsView ? `<section class="subscriptions-page" aria-label="Subscriptions"><div class="subscriptions-head"><h1>Subscriptions</h1><button id="subscriptions-refresh" class="order-button" type="button">Refresh</button></div><p class="subscriptions-copy">Account-wide usage · refreshes every 10 minutes.</p><div id="subscriptions-notice" role="status" aria-live="polite"></div><div id="subscriptions-cards" class="subscription-grid"></div></section>` : ""}
-<div id="activity-view"${subscriptionsView ? " hidden" : ""}>
+${settingsView ? `<section class="settings-page" aria-label="Settings"><div class="settings-head"><h1>Settings</h1><p class="settings-copy">Your own preferences and connections. They follow you into every conversation; nobody else's runs use them.</p></div><div id="settings-status" class="settings-status" role="status" aria-live="polite" hidden></div><div class="settings-layout"><nav id="settings-nav" class="settings-nav" aria-label="Settings sections"></nav><div id="settings-panel" class="settings-panel"></div></div><noscript><p class="js-needed">Enable JavaScript to manage your settings.</p></noscript></section>` : `<div id="activity-view"${subscriptionsView ? " hidden" : ""}>
 <dialog id="order-dialog" class="order-dialog" aria-labelledby="order-title" aria-describedby="order-description"><h2 id="order-title">Arrange status groups</h2><p id="order-description">Move groups up or down. Newest conversations appear first within each group. Your order is saved to your account.</p><ol id="order-list" class="order-list"></ol><button id="order-reset" type="button">Reset to default</button><p id="order-error" class="order-error" role="alert"></p><div class="order-footer"><button id="order-cancel" type="button">Cancel</button><button id="order-save" class="order-save" type="button">Save order</button></div></dialog>
 <dialog id="all-done-dialog" class="order-dialog" aria-labelledby="all-done-title" aria-describedby="all-done-description"><h2 id="all-done-title">Mark all your threads done?</h2><p id="all-done-description">This marks all your open tracked agent threads done across all channels, including threads outside the current filter, search, or page. Their main Slack messages get ✅. Running work continues.</p><p id="all-done-error" class="order-error" role="alert"></p><div class="order-footer"><button id="all-done-cancel" type="button" autofocus>Cancel</button><button id="all-done-confirm" class="order-save" type="button">Mark All Done</button></div></dialog>
 <section aria-label="Conversations"><div class="bar"><div id="filters" class="filters" role="group" aria-label="Filter by status">${filters.map(([value, label]) => `<button type="button" class="s-${value}" data-filter="${value}" aria-pressed="${value === "active"}">${["working", "waiting", "error", "idle", "later", "done"].includes(value) ? '<i aria-hidden="true"></i>' : ""}${label}<span>0</span></button>`).join("")}</div>
@@ -770,6 +1126,8 @@ ${subscriptionsView ? `<section class="subscriptions-page" aria-label="Subscript
 <noscript><p class="js-needed">Enable JavaScript to view live activity.</p></noscript></section>
 <footer class="footer"><div class="footer-actions"><span id="summary" class="summary">Loading activity…</span><button id="group-order" class="link-button" type="button" aria-haspopup="dialog">⇅ Group order</button><button id="mark-all-done" class="link-button" type="button" aria-haspopup="dialog" disabled>✓ Mark All Done</button><button id="load-history" class="link-button" type="button" disabled>Load older threads</button></div><div class="footer-actions"><span id="result-count"></span><span id="updated">Waiting for updates</span></div></footer>
 <p class="privacy">Your conversations are private. <a href="${base}/passkeys">Save a passkey</a> to return later, or <a href="/activity/login">sign in again</a> when your session expires.</p>
-</div>
-</main><script nonce="${nonce}">(${activityBrowser.toString()})(${config}, globalThis, (${createSubscriptionUi.toString()})());</script></body></html>` };
+</div>`}
+</main><script nonce="${nonce}">${settingsView
+    ? `(${settingsBrowser.toString()})(${config}, globalThis, (${themeBrowser.toString()})(${config}, globalThis));`
+    : `(${themeBrowser.toString()})(${config}, globalThis);(${activityBrowser.toString()})(${config}, globalThis, (${createSubscriptionUi.toString()})());`}</script></body></html>` };
 }

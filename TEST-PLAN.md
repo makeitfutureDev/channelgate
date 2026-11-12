@@ -1,5 +1,36 @@
 # ChannelGate — Test Plan
 
+## Personal Settings in the Activity dashboard (2026-11-13)
+
+- Engine-independent for the page and API: settings are stored by the daemon and no engine runs
+  while they change. The effect on runs is engine-dependent and is covered by the live cases.
+- Automated: `node --test test/user-settings.test.js test/activity-settings-page.test.js
+  test/activity.test.js`. Covers the masked snapshot (no token, variable, MCP or mail password
+  value in any response), owner-only writes with ignored caller owners/roles, the reminder and
+  reply-mention preferences (new users off), Composio/Toolbox
+  save/label/remove and the SDK-mode refusal, variable validation (reserved and invalid names),
+  hidden/readable creation and type-preserving replace, MCP private-URL refusal and token-keeping
+  edits, mail-login verification and password keeping, skill availability (foreign personal
+  skills refused), SSH key ownership, the authorize-before-write recheck, CSRF/Origin/cookie
+  refusals, another session's CSRF token, revocation, the 48 KB settings body limit, and the
+  browser script (one nonce script, no `innerHTML`, hostile text as text, no prefilled secret
+  inputs, refusals keep the form, access loss clears the page).
+- Live **SETTINGS-01**, Claude and Codex: open Dashboard from a Slack reply as an approved
+  non-admin, choose **Settings**. Add variable `QA_SETTINGS_PROBE` (hidden) with a throwaway
+  value, then in a channel ask the agent: "Is QA_SETTINGS_PROBE set in your environment? Say only
+  yes or no and never print it." Pass if both engines answer yes, the value appears nowhere in
+  Slack, the page or the API response, and after **Remove** a fresh turn answers no.
+- Live **SETTINGS-02**, Claude and Codex: under **MCP servers** add a disposable public MCP
+  (Bearer token). Ask the agent to list its MCP servers. Pass if `my-<name>` appears for the
+  author only (another approved user's turn in the same channel does not list it) and disappears
+  after **Remove**, including for a turn already in progress at its next request.
+- Live **SETTINGS-03**, engine-independent: with two browsers signed in as different people,
+  saving a Composio token, reminder or reply-mention preference or skill in one never changes the
+  other; with Mention me in replies on, the next channel reply mentions that person and not the
+  other; a CSRF
+  token copied from the other session is refused; revoking the user in admin makes the page
+  report the ended session on the next action.
+
 ## Personal automatic reply mentions (2026-11-13)
 
 - Automated: `test/user-reply-mentions.test.js` covers new-user defaults, migration 52 from
@@ -33,7 +64,6 @@
   engine and source thread; automated mocks do not establish live notification delivery. Restore
   fixture preferences. Private QA cases `REPLY-MENTIONS-01` and `REPLY-MENTIONS-02` cover both engines. Teams and Google
   Chat live testing remains on the existing owner hold; their mocked delivery checks are separate.
-
 
 ## Activity passkey sign-in (2026-11-13)
 
