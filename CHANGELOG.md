@@ -10,7 +10,8 @@
   daemon speaks through Google's Gemini Live API; spoken requests run as ordinary turns in the
   bound Slack thread, authored by the caller, and the transcript, task list and estimated voice
   cost are posted there when the call ends. Admins enable it under Settings → Voice calls with a
-  Gemini API key, model and voice. See `docs/VOICE-CALLS.md`.
+  Gemini API key, model and voice. See `docs/VOICE-CALLS.md`. Both Google key shapes are accepted
+  (`AIza…` and the newer dotted `AQ.…`).
 
 - Bring the Google Chat `/settings` card in line with Slack's Settings: the pages are now
   **Agent, Access, MCP, Variables, Skills, Schedules, Diagnostics** and **You**, picked from one
