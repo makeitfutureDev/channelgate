@@ -90,11 +90,24 @@ export function estimateVoiceCost(model, totals) {
     + perM(totals.audioOut, rates.audioOut) + perM(totals.textOut, rates.textOut)).toFixed(6));
 }
 
-function parseServerMessage(data) {
-  try {
-    const text = typeof data === "string" ? data : Buffer.isBuffer(data) ? data.toString("utf8") : data instanceof ArrayBuffer ? Buffer.from(data).toString("utf8") : String(data);
-    return JSON.parse(text);
-  } catch { return null; }
+// Gemini delivers its JSON as BINARY WebSocket frames. With `binaryType = "arraybuffer"` they
+// arrive as ArrayBuffers and parse synchronously; a Blob (a client that ignores binaryType) is
+// read asynchronously. Anything that is not valid JSON is ignored, never fatal.
+function decodeFrame(data) {
+  if (typeof data === "string") return data;
+  if (Buffer.isBuffer(data)) return data.toString("utf8");
+  if (data instanceof ArrayBuffer) return Buffer.from(data).toString("utf8");
+  if (ArrayBuffer.isView(data)) return Buffer.from(data.buffer, data.byteOffset, data.byteLength).toString("utf8");
+  return null;
+}
+function parseJson(text) {
+  try { return typeof text === "string" ? JSON.parse(text) : null; } catch { return null; }
+}
+export function parseServerMessage(data) {
+  const text = decodeFrame(data);
+  if (text !== null) return parseJson(text);
+  if (data && typeof data.text === "function") return data.text().then(parseJson, () => null);
+  return null;
 }
 
 // One live session. Events:
@@ -135,12 +148,16 @@ export class GeminiLiveSession extends EventEmitter {
       if (this.socket !== socket) return;
       this._send(buildSetupMessage({ model: this.model, voice: this.voice, systemInstruction: this.systemInstruction, tools: this.tools, handle: this.handle }), socket);
     });
-    socket.addEventListener("message", (event) => {
-      if (this.socket !== socket) return;
-      const message = parseServerMessage(event.data);
-      if (!message) return;
+    try { socket.binaryType = "arraybuffer"; } catch { /* a client without the property delivers Blobs, parsed below */ }
+    const accept = (message) => {
+      if (!message || this.socket !== socket) return;
       if (message.setupComplete !== undefined) { clearTimeout(setupTimer); this.ready = true; this.reconnecting = false; this.emit("ready", { generation }); return; }
       this._handle(message);
+    };
+    socket.addEventListener("message", (event) => {
+      if (this.socket !== socket) return;
+      const parsed = parseServerMessage(event.data);
+      if (parsed && typeof parsed.then === "function") parsed.then(accept, () => {}); else accept(parsed);
     });
     socket.addEventListener("error", (event) => {
       if (this.socket !== socket) return;
