@@ -446,3 +446,52 @@ test("Later controls work in a real browser at desktop and mobile widths", { ski
     await context.close();
   }
 });
+
+test("Chromium reports the Activity dashboard and its sign-in page as one installable app", { skip: !process.env.CG_BROWSER_MODULE, timeout: 30_000 }, async (t) => {
+  resetActivityStateForTests();
+  const ownerId = "UACTIVITYPWA";
+  await setUser(ownerId, { approved: true });
+  let base;
+  const app = express(); serveBrandAssets(app);
+  app.use("/activity", createActivityRouter({ getClient: () => ({}), getTeamId: () => "TPWA", getBaseUrl: () => base,
+    getBotIdentity: () => ({ handle: "xavier" }), snapshot: async () => ({ rows: [], total: 0 }) }));
+  const server = await new Promise((resolve) => { const s = app.listen(0, "127.0.0.1", () => resolve(s)); });
+  base = `http://127.0.0.1:${server.address().port}`;
+  t.after(() => new Promise((resolve) => { resetActivityStateForTests(); server.closeAllConnections(); server.close(resolve); }));
+  const { chromium } = await import(process.env.CG_BROWSER_MODULE);
+  const { mkdtemp, rm } = await import("node:fs/promises");
+  const { tmpdir } = await import("node:os"), { join } = await import("node:path");
+  // A persistent profile: Chromium refuses to install from an off-the-record (incognito) context.
+  const profile = await mkdtemp(join(tmpdir(), "cg-activity-pwa-"));
+  const context = await chromium.launchPersistentContext(profile, { headless: true, executablePath: process.env.CG_BROWSER_EXECUTABLE });
+  t.after(async () => { await context.close(); await rm(profile, { recursive: true, force: true }); });
+  const page = context.pages()[0] || await context.newPage();
+  page.setDefaultTimeout(5000);
+  const cdp = await context.newCDPSession(page);
+  const installable = async () => {
+    const { url, errors, data } = await cdp.send("Page.getAppManifest");
+    const { installabilityErrors } = await cdp.send("Page.getInstallabilityErrors");
+    return { url, errors, manifest: JSON.parse(data || "{}"), installabilityErrors };
+  };
+  // Signed out, the installed app starts on passkey sign-in.
+  await page.goto(`${base}/activity/app`);
+  assert.equal(new URL(page.url()).pathname, "/activity/login");
+  let state = await installable();
+  assert.equal(state.url, `${base}/activity/manifest.webmanifest`);
+  assert.deepEqual(state.errors, []);
+  assert.deepEqual(state.installabilityErrors, []);
+  // Signed in, every view links the SAME manifest id, so Chrome sees one app.
+  await page.goto(createActivityGrantUrl({ baseUrl: base, ownerId, teamId: "TPWA" }));
+  await page.waitForURL(/\/activity\/[A-Za-z0-9_-]{16}$/);
+  const dashboard = page.url();
+  for (const view of ["", "/subscriptions", "/settings"]) {
+    await page.goto(dashboard + view);
+    state = await installable();
+    assert.deepEqual(state.installabilityErrors, [], view || "activity");
+    assert.equal(state.manifest.id, "/activity/app");
+    assert.equal(state.manifest.name, "xavier · Activity");
+  }
+  // The launcher resumes this browser's live session instead of asking to sign in again.
+  await page.goto(`${base}/activity/app`);
+  assert.equal(page.url(), dashboard);
+});
