@@ -488,6 +488,162 @@
                   <h4>Google Chat (Beta)</h4>
                   <div id="gchat-status" class="status-banner">Not configured</div>
                   <p class="desc">Google publishes the app's events to your Pub/Sub topic and the daemon pulls them (grant the service account <code>roles/pubsub.subscriber</code> on the subscription). For <strong>working card buttons</strong> set the Chat app's connection to the <strong>HTTP endpoint URL</strong> below instead of the topic — Google never delivers button clicks over Pub/Sub — and keep the subscription for reaction events.</p>
+                  <details class="gchat-guide" id="gchat-setup-guide">
+                    <summary>Google Chat setup guide — start here</summary>
+                    <div class="gchat-guide-body">
+                      <p>Create a new Google Chat app and connect it to this gateway. Follow steps 1–9 for your first reply, step 10 for working buttons, and step 11 for optional reaction controls. Open a step to see its instructions and links.</p>
+                      <p>Before you start: use a Google Workspace work account with permission to create a Cloud project. Keep this dashboard open in one tab and Google Cloud in another. This gateway already provides the application code.</p>
+                      <p><strong>Examples:</strong> this guide uses <code>Atlas</code> as the app name, <code>atlas-chat-events</code> as the topic, and <code>atlas-chat-events-sub</code> as the subscription. You can choose other names. Replace <code>PROJECT_ID</code> with your project's actual ID and keep the same project selected in Google Cloud throughout.</p>
+                      <details class="gchat-guide-step" id="gchat-step-1" open>
+                        <summary>1. Create a Google Cloud project</summary>
+                        <div>
+                          <ol>
+                            <li>Open <a href="https://console.cloud.google.com/projectcreate" target="_blank" rel="noopener noreferrer">Create a project</a> using your Workspace work account.</li>
+                            <li>Enter a project name, for example <code>Atlas Google Chat</code>, and select your organization's appropriate location.</li>
+                            <li>Choose an available project ID, for example <code>atlas-google-chat</code>, then click <strong>Create</strong>. Google may add a suffix: use the actual ID it assigns.</li>
+                            <li>Select the new project in the top project selector. On the <a href="https://console.cloud.google.com/home/dashboard" target="_blank" rel="noopener noreferrer">project dashboard</a>, record its <strong>Project ID</strong> and <strong>Project number</strong>. These are different values.</li>
+                          </ol>
+                          <p><a href="https://developers.google.com/workspace/guides/create-project" target="_blank" rel="noopener noreferrer">Google's project setup instructions</a></p>
+                        </div>
+                      </details>
+                      <details class="gchat-guide-step" id="gchat-step-2">
+                        <summary>2. Enable the APIs and billing</summary>
+                        <div>
+                          <ol>
+                            <li>Open <a href="https://console.cloud.google.com/apis/library/chat.googleapis.com" target="_blank" rel="noopener noreferrer">Google Chat API</a> and click <strong>Enable</strong>.</li>
+                            <li>Open <a href="https://console.cloud.google.com/apis/library/pubsub.googleapis.com" target="_blank" rel="noopener noreferrer">Cloud Pub/Sub API</a> and click <strong>Enable</strong>.</li>
+                            <li>Open <a href="https://console.cloud.google.com/billing" target="_blank" rel="noopener noreferrer">Billing</a> and link the project to your organization's approved billing account, as required by Google's Pub/Sub setup.</li>
+                          </ol>
+                          <p><a href="https://developers.google.com/workspace/chat/quickstart/pub-sub" target="_blank" rel="noopener noreferrer">Google's Pub/Sub prerequisites</a></p>
+                        </div>
+                      </details>
+                      <details class="gchat-guide-step" id="gchat-step-3">
+                        <summary>3. Set up Google Auth branding</summary>
+                        <div>
+                          <ol>
+                            <li>Open <a href="https://console.cloud.google.com/auth/branding" target="_blank" rel="noopener noreferrer">Google Auth Platform → Branding</a>. Click <strong>Get started</strong> if prompted.</li>
+                            <li>Set <strong>App name</strong> to <code>Atlas</code>, enter your work or support email as <strong>User support email</strong>, select <strong>Internal</strong> as the audience, and enter a work contact email.</li>
+                            <li>Complete the wizard. Basic messaging uses a service account; you do not need a browser OAuth client or redirect URL.</li>
+                          </ol>
+                          <p><a href="https://developers.google.com/workspace/guides/configure-oauth-consent" target="_blank" rel="noopener noreferrer">Google's branding and consent instructions</a></p>
+                        </div>
+                      </details>
+                      <details class="gchat-guide-step" id="gchat-step-4">
+                        <summary>4. Create the gateway service account and JSON key</summary>
+                        <div>
+                          <ol>
+                            <li>Open <a href="https://console.cloud.google.com/iam-admin/serviceaccounts" target="_blank" rel="noopener noreferrer">IAM &amp; Admin → Service Accounts</a> and click <strong>Create service account</strong>.</li>
+                            <li>Use <code>Atlas ChannelGate</code> as the name, <code>atlas-channelgate</code> as the ID, and <code>Connects ChannelGate to Google Chat</code> as the description.</li>
+                            <li>Finish creation. Leave the optional project-role and user-access sections empty; step 6 grants the needed subscription role.</li>
+                            <li>Open the new account, then choose <strong>Keys → Add key → Create new key → JSON → Create</strong>.</li>
+                          </ol>
+                          <p>Keep the downloaded JSON key private. Paste it only into this dashboard's <strong>Service-account key (JSON)</strong> field in step 8. If your organization blocks key creation, ask its Google Cloud administrator to resolve the policy restriction.</p>
+                          <p><a href="https://docs.cloud.google.com/iam/docs/keys-create-delete" target="_blank" rel="noopener noreferrer">Google's key creation instructions</a></p>
+                        </div>
+                      </details>
+                      <details class="gchat-guide-step" id="gchat-step-5">
+                        <summary>5. Create a Pub/Sub topic and Pull subscription</summary>
+                        <div>
+                          <ol>
+                            <li>Open <a href="https://console.cloud.google.com/cloudpubsub/topic/list" target="_blank" rel="noopener noreferrer">Pub/Sub → Topics</a> and click <strong>Create topic</strong>. Set <strong>Topic ID</strong> to <code>atlas-chat-events</code>, clear <strong>Add a default subscription</strong> if selected, and create it.</li>
+                            <li>Record the full topic name: <code>projects/PROJECT_ID/topics/atlas-chat-events</code>.</li>
+                            <li>Open <a href="https://console.cloud.google.com/cloudpubsub/subscription/list" target="_blank" rel="noopener noreferrer">Pub/Sub → Subscriptions</a> and click <strong>Create subscription</strong>. Set <strong>Subscription ID</strong> to <code>atlas-chat-events-sub</code>, select your topic, choose <strong>Pull</strong> delivery, and create it.</li>
+                            <li>Record the full subscription name: <code>projects/PROJECT_ID/subscriptions/atlas-chat-events-sub</code>.</li>
+                          </ol>
+                          <p><a href="https://docs.cloud.google.com/pubsub/docs/create-topic" target="_blank" rel="noopener noreferrer">Create a topic</a> · <a href="https://docs.cloud.google.com/pubsub/docs/create-subscription" target="_blank" rel="noopener noreferrer">Create a subscription</a></p>
+                        </div>
+                      </details>
+                      <details class="gchat-guide-step" id="gchat-step-6">
+                        <summary>6. Allow the gateway to read the subscription</summary>
+                        <div>
+                          <ol>
+                            <li>In <a href="https://console.cloud.google.com/cloudpubsub/subscription/list" target="_blank" rel="noopener noreferrer">Pub/Sub → Subscriptions</a>, open <code>atlas-chat-events-sub</code> and its <strong>Permissions</strong> panel.</li>
+                            <li>Click <strong>Grant access</strong>. Enter the step 4 account, <code>atlas-channelgate@PROJECT_ID.iam.gserviceaccount.com</code>, as the principal.</li>
+                            <li>Select <strong>Pub/Sub Subscriber</strong> (<code>roles/pubsub.subscriber</code>) and save. Apply this role to the <strong>subscription</strong>.</li>
+                          </ol>
+                        </div>
+                      </details>
+                      <details class="gchat-guide-step" id="gchat-step-7">
+                        <summary>7. Configure the Google Chat app and publisher</summary>
+                        <div>
+                          <ol>
+                            <li>Open <a href="https://console.cloud.google.com/apis/api/chat.googleapis.com/hangouts-chat" target="_blank" rel="noopener noreferrer">Google Chat API → Configuration</a>.</li>
+                            <li>Set <strong>App name</strong> to <code>Atlas</code> and add a short description, for example <code>Team AI assistant</code>. For <strong>Avatar URL</strong>, use your app's public square PNG or JPEG, or the <a href="https://developers.google.com/workspace/chat/images/quickstart-app-avatar.png" target="_blank" rel="noopener noreferrer">Google sample avatar</a>.</li>
+                            <li>Keep <strong>Build this Chat app as a Google Workspace add-on</strong> enabled if selected. Enable <strong>Interactive features</strong> and <strong>Join spaces and group conversations</strong>; enable direct messages if a separate option is shown.</li>
+                            <li>Under <strong>Connection settings</strong>, choose <strong>Cloud Pub/Sub</strong> and enter <code>projects/PROJECT_ID/topics/atlas-chat-events</code>.</li>
+                            <li>Under <strong>Visibility</strong>, add your work email and intended testers. Enable error logging, set <strong>App status</strong> to <strong>Live — available to users</strong> if offered, and click <strong>Save</strong>.</li>
+                            <li>After saving, copy the <strong>Service account email</strong> shown under Connection settings. It typically looks like <code>service-PROJECT_NUMBER@gcp-sa-gsuiteaddons.iam.gserviceaccount.com</code>.</li>
+                            <li>Open your <a href="https://console.cloud.google.com/cloudpubsub/topic/list" target="_blank" rel="noopener noreferrer">Pub/Sub topic</a> → <strong>Permissions → Grant access</strong>. Use that exact Google-generated email as principal, choose <strong>Pub/Sub Publisher</strong> (<code>roles/pubsub.publisher</code>), and save. This grant belongs on the <strong>topic</strong>.</li>
+                          </ol>
+                          <p><strong>Two different accounts:</strong> the step 4 account owns the JSON key used by the gateway. The Google-generated step 7 account publishes events and identifies incoming HTTP requests. Do not swap them.</p>
+                          <p>If you deliberately chose a standalone Chat app instead of a Workspace add-on, its Pub/Sub publisher is <code>chat-api-push@system.gserviceaccount.com</code>.</p>
+                          <p><a href="https://developers.google.com/workspace/chat/configure-chat-api" target="_blank" rel="noopener noreferrer">Google's Chat app configuration guide</a> · <a href="https://developers.google.com/workspace/add-ons/chat/quickstart-pubsub" target="_blank" rel="noopener noreferrer">Workspace add-on Pub/Sub guide</a></p>
+                        </div>
+                      </details>
+                      <details class="gchat-guide-step" id="gchat-step-8">
+                        <summary>8. Fill in this gateway's Google Chat fields</summary>
+                        <div>
+                          <p>In <strong>Settings → Connection → Google Chat</strong>, use the form directly below this guide:</p>
+                          <ul>
+                            <li><strong>Service-account key (JSON):</strong> the complete contents of the private JSON file downloaded in step 4.</li>
+                            <li><strong>Pub/Sub subscription:</strong> <code>projects/PROJECT_ID/subscriptions/atlas-chat-events-sub</code>.</li>
+                            <li><strong>Chat app service account:</strong> the exact Google-generated email copied in step 7.</li>
+                            <li><strong>Reaction events topic:</strong> leave empty for the first messaging test.</li>
+                            <li><strong>Google Cloud project number</strong> and <strong>Bot user id:</strong> leave empty for this Workspace add-on setup; the bot ID is learned automatically.</li>
+                          </ul>
+                          <p>Click <strong>Save</strong>, then <strong>Connect</strong> in the Google Chat section. Expect <strong>Connected — pulling …</strong>. This confirms that the subscription can be read; step 9 checks the complete message path.</p>
+                          <p><a href="#set-gchat-key">Go to the Google Chat fields</a> · <a href="https://developers.google.com/workspace/chat/authenticate-authorize-chat-app" target="_blank" rel="noopener noreferrer">Google's service-account authentication guide</a></p>
+                        </div>
+                      </details>
+                      <details class="gchat-guide-step" id="gchat-step-9">
+                        <summary>9. Add the app to Google Chat and test a reply</summary>
+                        <div>
+                          <ol>
+                            <li>Open <a href="https://chat.google.com" target="_blank" rel="noopener noreferrer">Google Chat</a>. Start a <strong>New chat</strong>, search for your app's name, open a direct message, and send <code>Hello</code>.</li>
+                            <li>For a shared space, open its <strong>Apps &amp; integrations / Manage apps</strong>, add the app, and send a new message mentioning it, for example <code>@Atlas hello</code>.</li>
+                            <li>If the app says your user is unapproved, have a gateway administrator approve your <strong>Google Chat identity</strong> in this dashboard's <strong>Users</strong> page.</li>
+                          </ol>
+                          <p><strong>Pass:</strong> an actual reply arrives in Google Chat. A connected subscription alone does not prove messages are working.</p>
+                          <p><a href="https://developers.google.com/workspace/chat/test-interactive-features" target="_blank" rel="noopener noreferrer">Google's testing instructions</a></p>
+                        </div>
+                      </details>
+                      <details class="gchat-guide-step" id="gchat-step-10">
+                        <summary>10. Enable working Files / Settings buttons with HTTPS</summary>
+                        <div>
+                          <p>Use two tabs: this dashboard and Google Cloud. The gateway already provides the receiving endpoint; no new application code is needed.</p>
+                          <ol>
+                            <li><strong>Find the gateway's public address.</strong> If its dashboard opens at <code>https://gateway.example.com/settings</code>, the base address is <code>https://gateway.example.com</code>. This is only an example: use the actual gateway you are connecting. Google must be able to reach it over HTTPS. For localhost, a private IP or VPN-only access, ask the server administrator for a public HTTPS address first.</li>
+                            <li><strong>Set Public URL.</strong> In this page's <a href="#set-public-url">Public URL field</a>, enter that base address without <code>/settings</code> or <code>/api/googlechat/events</code>, then click <strong>Save</strong>. Filling this field records an existing address; it does not create a website, domain or tunnel.</li>
+                            <li><strong>Copy the HTTP endpoint URL.</strong> In the Google Chat section below this guide, copy the complete displayed endpoint. The gateway automatically adds <code>/api/googlechat/events</code>; for the example it is <code>https://gateway.example.com/api/googlechat/events</code>.</li>
+                            <li><strong>Check Chat app service account.</strong> In <a href="https://console.cloud.google.com/apis/api/chat.googleapis.com/hangouts-chat" target="_blank" rel="noopener noreferrer">Google Chat API → Configuration</a>, select the correct project and copy <strong>Service account email</strong> from Connection settings. Paste that Google-generated step 7 email into this dashboard's <strong>Chat app service account</strong> field. It is separate from the JSON-key account.</li>
+                            <li><strong>Activate it here.</strong> Click <strong>Save</strong>, then <strong>Connect</strong> in the Google Chat section. The status should include <code>endpoint https://…/api/googlechat/events</code>.</li>
+                            <li><strong>Tell Google where to send events.</strong> Back in Google Cloud's <strong>Connection settings</strong>, change <strong>Cloud Pub/Sub</strong> to <strong>HTTP endpoint URL</strong>. Select <strong>Use a common HTTP endpoint URL for all triggers</strong> if shown and paste the exact endpoint copied from this dashboard. If separate trigger URLs are shown instead, use the same endpoint for message, membership, app command and app home triggers as applicable. Click <strong>Save</strong>.</li>
+                            <li><strong>Keep the Pub/Sub topic and subscription.</strong> Optional reactions in step 11 still use them.</li>
+                            <li><strong>Test the button.</strong> Send another message in Google Chat, then press <strong>Files</strong> under the reply. The conversation file card should open without a red error.</li>
+                          </ol>
+                          <p>For a standalone Chat app, choose the <strong>HTTP endpoint URL</strong> authentication audience. If you instead use the project-number audience, enter that numeric value in this dashboard's <strong>Google Cloud project number</strong> field. Standalone requests are signed as <code>chat@system.gserviceaccount.com</code>; the Workspace add-on email above is required only for add-ons.</p>
+                          <p><a href="https://developers.google.com/workspace/chat/configure-chat-api" target="_blank" rel="noopener noreferrer">Google's connection settings</a> · <a href="https://developers.google.com/workspace/chat/verify-requests-from-chat" target="_blank" rel="noopener noreferrer">Google's request verification guide</a></p>
+                        </div>
+                      </details>
+                      <details class="gchat-guide-step" id="gchat-step-11">
+                        <summary>11. Optional: enable 🤖 / 🛑 / ✅ reaction controls</summary>
+                        <div>
+                          <p>Complete messaging first. Reactions require Google Workspace administrator approval; they are not enabled by the basic JSON key setup.</p>
+                          <ol>
+                            <li>Enable the <a href="https://console.cloud.google.com/apis/library/workspaceevents.googleapis.com" target="_blank" rel="noopener noreferrer">Google Workspace Events API</a> in the same project.</li>
+                            <li>Open the step 4 account in <a href="https://console.cloud.google.com/iam-admin/serviceaccounts" target="_blank" rel="noopener noreferrer">Service Accounts</a>, then <strong>Advanced settings → Create Google Workspace Marketplace-compatible OAuth client</strong>.</li>
+                            <li>Enable the <a href="https://console.cloud.google.com/apis/library/appsmarket-component.googleapis.com" target="_blank" rel="noopener noreferrer">Google Workspace Marketplace SDK</a>. In its <strong>App Configuration</strong>, choose <strong>Private</strong> visibility, <strong>Individual + admin install</strong>, and the <strong>Chat app</strong> integration.</li>
+                            <li>Add <code>https://www.googleapis.com/auth/chat.app.messages.readonly</code> to the Marketplace OAuth scopes. Do not add <code>chat.bot</code> to this scope list.</li>
+                            <li>Complete the required developer information and store listing, <strong>publish the app privately</strong>, and have a Google Workspace administrator install and approve it. Saving a draft or trusting an OAuth client alone does not grant this scope.</li>
+                            <li>Confirm the step 7 publisher still has <strong>Pub/Sub Publisher</strong> on the topic. In this dashboard, set <strong>Reaction events topic</strong> to <code>projects/PROJECT_ID/topics/atlas-chat-events</code>, then <strong>Save → Connect</strong>.</li>
+                          </ol>
+                          <p>Look for <code>reactions N/M spaces</code> in the connection status. If approval fails, basic messaging can still work.</p>
+                          <p><a href="https://developers.google.com/workspace/chat/authenticate-authorize-chat-app#admin-approval" target="_blank" rel="noopener noreferrer">Google's full administrator-approval procedure</a> · <a href="https://developers.google.com/workspace/events/guides/events-chat" target="_blank" rel="noopener noreferrer">Google Chat event subscriptions</a></p>
+                        </div>
+                      </details>
+                      <p class="gchat-guide-help"><strong>If something fails:</strong> subscription <code>403</code> → check step 6; connected but no replies → check the step 7 publisher, visibility and topic name; buttons fail → check step 10. Share the step number and error with your administrator, with the JSON key hidden. <a href="https://developers.google.com/workspace/chat/troubleshoot-chat-apps" target="_blank" rel="noopener noreferrer">Google's troubleshooting guide</a></p>
+                    </div>
+                  </details>
                   <p class="desc">HTTP endpoint URL: <code id="gchat-endpoint">set the Public URL first</code></p>
                   <label class="field">
                     <span>Service-account key (JSON)</span>

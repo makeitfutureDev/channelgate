@@ -1,5 +1,27 @@
 # ChannelGate — Test Plan
 
+## Google Chat setup guide in Settings (2026-11-13)
+
+- Engine-independent documentation: static settings markup and CSS; reading the guide does not
+  invoke Claude or Codex or change connection settings. No new live Google account is required.
+- Fixture: the actual admin HTML and stylesheet, with application scripts disabled and Settings
+  made visible; no real credentials or API calls. At desktop (1440×1000) and mobile (390×844),
+  open “Google Chat setup guide — start here”, then each of its 11 numbered steps. Pass if each
+  step has working disclosure behavior, HTTPS external links with safe new-tab attributes, and
+  content that stays within the card. Tab/Enter must open and close a step with visible focus.
+  Check the actual Settings page after deployment using an existing administrator session too.
+- Step 10 must distinguish the existing public base URL from `/api/googlechat/events`, explain
+  that the Public URL field does not create hosting, identify the generated app account separately
+  from the JSON-key account, and include Save → Connect plus Google's common trigger URL setting.
+  Step 11 must remain optional and link directly to Google's administrator-approval section.
+- Existing regression checks: `node --test test/admin-ui-controls.test.js
+  test/settings-single-page.test.js test/admin-login-assets.test.js`.
+- Verified on the local browser fixture: 11 disclosures, 33 external links, internal field
+  destinations, unique DOM IDs, keyboard focus/Enter toggling, and no guide text overflow at both
+  viewport sizes. Existing checks: 18 passed, one unrelated opt-in login-browser case skipped;
+  static and secret scans passed. Live authenticated page verification remains unexecuted: the
+  requested deployment URL returned HTTP 502 during this change. No Google connection was changed.
+
 ## Activity footer placement (2026-11-13)
 
 - Engine-independent: CSS layout uses viewport and content height; no engine output controls it.
