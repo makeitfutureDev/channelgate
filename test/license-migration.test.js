@@ -68,7 +68,11 @@ test("upgrading a populated v11 database preserves its rows", () => {
     runMigrations(db);
 
     assert.equal(version(db), latest);
-    assert.equal(db.prepare("SELECT data FROM users WHERE user_id = ?").get("U_KEEP").data, '{"name":"kept"}');
+    assert.deepEqual(
+      JSON.parse(db.prepare("SELECT data FROM users WHERE user_id = ?").get("U_KEEP").data),
+      { name: "kept", replyMentions: true },
+      "the existing user fields survive alongside the reply-mention migration default",
+    );
     assert.equal(db.prepare("SELECT COUNT(*) AS n FROM usage").get().n, 1);
     assert.equal(db.prepare("SELECT COUNT(*) AS n FROM license_usage").get().n, 0, "a new install-month starts empty");
   } finally {
