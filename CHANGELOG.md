@@ -2,6 +2,10 @@
 
 ## 0.6.5 — candidate, pending approval
 
+- Make the Activity dashboard easier to read. Idle and Later titles now use the full text colour,
+  channel names, times, headers, group labels and tab counts are brighter, every secondary text
+  colour meets WCAG AA in both themes, and alternate rows are clearly banded in dark mode.
+
 - Add a Diagnostics page to Slack Channel Settings. It shows how to resume the current thread's
   session from a terminal in both forms: the `podman exec` command for the gateway host and the
   short `cd … && claude --resume <id>` command for a shell already inside the channel's container

@@ -591,3 +591,28 @@ test("Later hides postponed work from Active, retains it in All open, and serial
   b.elements.threads.fire("click", { target: resume });
   assert.equal(b.requests.filter((r) => r.url.endsWith("/later")).length, 2);
 });
+
+test("Activity text stays legible: WCAG AA contrast for secondary text and visible row bands in both themes", () => {
+  const { html } = activityPage({ sessionId: "s", csrf: "c" });
+  const block = (marker) => html.slice(html.indexOf(marker)).split("}")[0];
+  const themes = { dark: block(":root{color-scheme:dark"), light: block("color-scheme:light") };
+  const lum = (hex) => {
+    const [r, g, b] = [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16) / 255).map((c) => (c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4));
+    return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+  };
+  const contrast = (a, b) => { const [x, y] = [lum(a), lum(b)].sort((p, q) => q - p); return (x + 0.05) / (y + 0.05); };
+  for (const [name, css] of Object.entries(themes)) {
+    const token = (key) => css.match(new RegExp(`--${key}:([^;]+);`))?.[1];
+    const alpha = (key) => Number(token(key).match(/,\s*([.\d]+)\)$/)[1]);
+    for (const surface of ["bg", "panel", "panel-2"]) {
+      for (const text of ["ink-2", "muted", "faint", "s-idle"]) {
+        assert.ok(contrast(token(text), token(surface)) >= 4.5, `${name}: --${text} on --${surface} is ${contrast(token(text), token(surface)).toFixed(2)}:1`);
+      }
+    }
+    assert.ok(alpha("band") >= (name === "dark" ? 0.05 : 0.035), `${name}: alternate rows are visibly banded`);
+    assert.ok(alpha("hover") > alpha("band"), `${name}: hover stays stronger than the band`);
+  }
+  assert.doesNotMatch(html, /\.s-idle \.thread-title/, "idle titles use the full text colour");
+  assert.match(html, /\.channel-cell\{[^}]*color:var\(--muted\)/);
+  assert.match(html, /th\{[^}]*color:var\(--muted\)/);
+});

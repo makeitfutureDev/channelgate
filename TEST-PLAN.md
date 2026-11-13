@@ -113,8 +113,14 @@
   - Usage shows as lines at 1440 and 820 px and as rings at 380 px.
   - Each status uses its own colour; Later is purple.
   - Each group is labelled once with its count, and the Working clock advances every second.
-  - Each row starts with a bar in its status colour; alternate rows are subtly banded; a long
-    title wraps to two lines and then ends in an ellipsis.
+  - Each row starts with a bar in its status colour; alternate rows are visibly banded in both
+    themes (in dark, the band is distinguishable at a glance without hovering); a long title
+    wraps to two lines and then ends in an ellipsis.
+  - Legibility: Idle and Later titles are the same full text colour as Working titles; channel,
+    Last, column headers and group labels read without effort. Automated in
+    `test/activity-page.test.js` ("Activity text stays legible…"): every secondary text token
+    reaches 4.5:1 on `--bg`, `--panel` and `--panel-2` in both themes, the band alpha is at least
+    .05 dark / .035 light, and hover stays stronger than the band.
   - The header shows the ChannelGate gate mark. The Actions column has a visible header, and Last
     sits close to Status.
   - Clicking a channel name opens that channel in the Slack app; Ctrl/⌘-click opens it in the
