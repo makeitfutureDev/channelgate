@@ -19,3 +19,9 @@ export const ACTIVITY_THEMES = Object.freeze(["system", "dark", "light"]);
 export function activityTheme(value) {
   return ACTIVITY_THEMES.includes(value) ? value : "system";
 }
+
+export const ACTIVITY_GROUPINGS = Object.freeze(["status", "channel"]);
+
+export function activityGrouping(value) {
+  return ACTIVITY_GROUPINGS.includes(value) ? value : "status";
+}

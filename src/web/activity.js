@@ -18,7 +18,7 @@ import { isSlackTs } from "../slack/thread-keys.js";
 import { isLoopbackHost, timingSafeEqualStr } from "./security.js";
 import { readSubscriptionUsage } from "../gateway/subscription-usage.js";
 import { activityPage } from "./activity-page.js";
-import { activityGroupOrder, activityGroupOrderVersion, validActivityGroupOrder, ACTIVITY_THEMES, activityTheme } from "./activity-order.js";
+import { activityGroupOrder, activityGroupOrderVersion, validActivityGroupOrder, ACTIVITY_THEMES, activityTheme, ACTIVITY_GROUPINGS, activityGrouping } from "./activity-order.js";
 import { activityAccessPage } from "./activity-access-page.js";
 import { installActivityPasskeys } from "./activity-passkeys.js";
 import { ACTIVITY_APP_ICONS, activityAppCookie, activityAppSessionId, activityManifest } from "./activity-app.js";
@@ -217,6 +217,7 @@ export function createActivityRouter({
         ...(Number.isSafeInteger(row.working_since_ms) ? { workingSinceMs: row.working_since_ms } : {}),
         url: `/activity/${id}/open/${encodeURIComponent(row.channel_id)}/${encodeURIComponent(row.thread_ts)}` })),
       unavailable: Boolean(data.unavailable), truncated: Boolean(data.truncated), total: data.total, updatedAt: now(),
+      groupBy: activityGrouping(user?.activityGroupBy), groupByVersion: activityGroupOrderVersion(user?.activityGroupByVersion),
       groupOrder: activityGroupOrder(user?.activityGroupOrder), groupOrderVersion: activityGroupOrderVersion(user?.activityGroupOrderVersion),
     };
   };
@@ -392,6 +393,18 @@ export function createActivityRouter({
       const user = await setUser(session.ownerId, (current) => ({ activityGroupOrder: [...order],
         activityGroupOrderVersion: activityGroupOrderVersion(current?.activityGroupOrderVersion) + 1 }));
       return res.json({ groupOrder: user.activityGroupOrder, groupOrderVersion: user.activityGroupOrderVersion });
+    } catch (error) { return unavailable(res, error.status || 503); }
+  });
+  router.post("/:id/api/group-by", async (req, res) => {
+    try {
+      const { session } = await context(req);
+      if (req.headers.origin !== req.activityOrigin || !timingSafeEqualStr(String(req.headers["x-cg-csrf"] || ""), session.csrf)) return unavailable(res, 403);
+      const groupBy = req.body?.groupBy;
+      if (!ACTIVITY_GROUPINGS.includes(groupBy)) return unavailable(res, 400);
+      await context(req);
+      const user = await setUser(session.ownerId, (current) => ({ activityGroupBy: groupBy,
+        activityGroupByVersion: activityGroupOrderVersion(current?.activityGroupByVersion) + 1 }));
+      return res.json({ groupBy: user.activityGroupBy, groupByVersion: user.activityGroupByVersion });
     } catch (error) { return unavailable(res, error.status || 503); }
   });
   router.post("/:id/api/theme", async (req, res) => {

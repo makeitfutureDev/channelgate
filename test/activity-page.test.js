@@ -47,7 +47,7 @@ function row(status = "working", title = "Fixture thread", url = "/activity/sess
   return { channelId: "C1", threadTs: "1.1", title, channelName: "Engineering", status, lastMessageMs: 1_800_000_000_000, url };
 }
 function browser(fetchImpl = async () => response({ rows: [] }), csrf = "fixture-csrf", subscriptions = false, { prefersLight = false, teamId = "TWORK" } = {}) {
-  const elements = Object.fromEntries(["theme-toggle", "load-history", "threads", "search", "filters", "connection", "connection-text", "updated", "notice", "summary", "table", "empty", "empty-title", "empty-copy", "result-count", "group-order", "order-dialog", "order-list", "order-save", "order-cancel", "order-reset", "order-error", "mark-all-done", "all-done-dialog", "all-done-confirm", "all-done-cancel", "all-done-error"].map((id) => [id, new Element()]));
+  const elements = Object.fromEntries(["group-by", "theme-toggle", "load-history", "threads", "search", "filters", "connection", "connection-text", "updated", "notice", "summary", "table", "empty", "empty-title", "empty-copy", "result-count", "group-order", "order-dialog", "order-list", "order-save", "order-cancel", "order-reset", "order-error", "mark-all-done", "all-done-dialog", "all-done-confirm", "all-done-cancel", "all-done-error"].map((id) => [id, new Element()]));
   for (const filter of ["active", "working", "waiting", "error", "idle", "later", "done", "open"]) {
     const button = new Element("button"); button.dataset.filter = filter; button.append(new Element("span")); elements.filters.append(button);
   }
@@ -615,4 +615,54 @@ test("Activity text stays legible: WCAG AA contrast for secondary text and visib
   assert.doesNotMatch(html, /\.s-idle \.thread-title/, "idle titles use the full text colour");
   assert.match(html, /\.channel-cell\{[^}]*color:var\(--muted\)/);
   assert.match(html, /th\{[^}]*color:var\(--muted\)/);
+});
+
+test("channel grouping keeps channel ids distinct, sorts within channels and filters group counts", async () => {
+  const { elements, stream, requests } = browser((url, options) => url.endsWith("/group-by")
+    ? Promise.resolve(response({ groupBy: JSON.parse(options.body).groupBy, groupByVersion: 1 })) : new Promise(() => {}));
+  const rows = [
+    { ...row("idle", "beta idle"), channelId: "C2", channelName: "Beta", threadTs: "1" },
+    { ...row("working", "alpha run"), channelId: "C1", channelName: "Alpha", threadTs: "2" },
+    { ...row("error", "beta error"), channelId: "C2", channelName: "Beta", threadTs: "3" },
+    { ...row("idle", "alpha old"), channelId: "C1", channelName: "Alpha", threadTs: "4", lastMessageMs: 100 },
+    { ...row("idle", "alpha new"), channelId: "C1", channelName: "Alpha", threadTs: "5" },
+    { ...row("waiting", "duplicate name"), channelId: "C3", channelName: "Alpha", threadTs: "6" },
+    { ...row("done", "completed"), channelId: "C1", channelName: "Alpha", threadTs: "7" },
+  ];
+  const titles = () => elements.threads.children.map((tr) => tr.children[0].textContent);
+  const groups = () => elements.threads.children.map((tr) => tr.dataset.group);
+  stream.snapshot(rows);
+  assert.equal(elements["group-by"].value, "status");
+  elements["group-by"].value = "channel"; elements["group-by"].fire("change"); await flush();
+  assert.deepEqual(titles(), ["alpha run", "alpha new", "alpha old", "duplicate name", "beta error", "beta idle"]);
+  assert.deepEqual(groups(), ["Alpha · 3", undefined, undefined, "Alpha · 1", "Beta · 2", undefined]);
+  assert.equal(requests.at(-1).options.headers["X-CG-CSRF"], "fixture-csrf");
+  stream.snapshot(rows, { groupBy: "status", groupByVersion: 0, groupOrder: ["idle", "error", "waiting", "working"], groupOrderVersion: 1 });
+  assert.equal(elements["group-by"].value, "channel", "stale preference cannot undo a save");
+  assert.deepEqual(titles().slice(0, 3), ["alpha new", "alpha old", "alpha run"]);
+  elements.search.value = "beta"; elements.search.fire("input");
+  assert.deepEqual(titles(), ["beta idle", "beta error"]);
+  assert.deepEqual(groups(), ["Beta · 2", undefined]);
+  elements.search.value = ""; elements.search.fire("input");
+  elements.filters.fire("click", { target: elements.filters.children.find((b) => b.dataset.filter === "done") });
+  assert.deepEqual(titles(), ["completed"]); assert.deepEqual(groups(), ["Alpha · 1"]);
+  stream.snapshot(rows, { groupBy: "status", groupByVersion: 2 });
+  assert.deepEqual(groups(), ["Done · 1"]);
+  stream.fire("access-ended"); assert.equal(elements["group-by"].disabled, true);
+});
+
+test("failed grouping save restores the view, serializes writes and safely labels hostile channel names", async () => {
+  const save = deferred();
+  const { elements, stream, requests } = browser((url) => url.endsWith("/group-by") ? save.promise : new Promise(() => {}));
+  stream.snapshot([row()]);
+  elements["group-by"].value = "channel"; elements["group-by"].fire("change"); elements["group-by"].fire("change");
+  assert.equal(elements["group-by"].disabled, true);
+  assert.equal(requests.filter((r) => r.url.endsWith("/group-by")).length, 1);
+  save.resolve(response({}, 500)); await flush();
+  assert.equal(elements["group-by"].value, "status"); assert.equal(elements["group-by"].disabled, false);
+  assert.match(elements.notice.textContent, /grouping couldn’t be saved/);
+  const name = '<img src=x onerror="alert(1)">';
+  stream.snapshot([{ ...row(), channelName: name }], { groupBy: "channel", groupByVersion: 1 });
+  assert.equal(elements.threads.children[0].dataset.group, name + " · 1");
+  assert.equal(elements.threads.children[0].children.length, 5);
 });

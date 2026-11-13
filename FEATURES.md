@@ -349,8 +349,15 @@ unavailable data while the other provider remains usable. No additional provider
 
 ## Private live Activity dashboard (2026-11-11)
 
-The personal browser dashboard lists open conversations by status: **Error → Waiting → Working
-→ Idle**, with newest messages first within each group. The top-right **Group order** button
+The personal browser dashboard offers **Group by → Status / Channel** beside the filters.
+Channel grouping lists channels alphabetically with a heading and visible conversation count,
+keeping the viewer's status order and newest-first ordering within each status. Channels are
+identified by ID even when their names match. Search, filters, live updates and thread actions
+work in either view. The grouping preference is saved per viewer across sessions/devices;
+saving failures keep the previous view and offer retry. No browser storage or engine call is used.
+
+By default, the personal browser dashboard lists open conversations by status: **Error → Waiting → Working
+→ Idle**, with newest messages first within each group. The footer **Group order** button
 opens a keyboard- and touch-accessible dialog with up/down buttons, Cancel, Save order and Reset
 to default. Saving stores only the authenticated viewer's preference in their user record; the
 order follows them across browser sessions/devices and live snapshots. Draft moves apply only

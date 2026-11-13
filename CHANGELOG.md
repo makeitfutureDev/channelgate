@@ -2,6 +2,8 @@
 
 ## 0.6.5 — candidate, pending approval
 
+- Add **Group by → Channel** to the personal Activity dashboard, with channel headings and
+  counts. The choice follows each viewer across sessions; status grouping remains available.
 - Keep the Activity footer at the bottom of the window when conversations do not fill the page,
   and below the final conversation for longer lists.
 
