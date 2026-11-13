@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { ensureTestEnv } from "./helpers.js";
 ensureTestEnv();
-const { GeminiLiveSession, buildSetupMessage, geminiLiveUrl, usageByModality, estimateVoiceCost, INPUT_MIME, VOICE_MODELS, isVoiceModel, isVoiceName } =
+const { GeminiLiveSession, buildSetupMessage, geminiLiveUrl, usageByModality, estimateVoiceCost, INPUT_MIME, VOICE_MODELS, isVoiceModel, isVoiceName, parseServerMessage } =
   await import("../src/gateway/voice/gemini-live.js");
 
 class FakeSocket {
@@ -143,4 +143,25 @@ test("a setup that never completes fails with an error and closing is idempotent
   assert.throws(() => session.connect(), /closed/);
   assert.throws(() => new GeminiLiveSession({ apiKey: "", WebSocketImpl: FakeSocket }), /key missing/);
   assert.throws(() => new GeminiLiveSession({ apiKey: "k", WebSocketImpl: null }), /WebSocket client unavailable/);
+});
+
+test("binary frames are decoded: ArrayBuffer and typed arrays synchronously, Blobs asynchronously", async () => {
+  const { session, socket, seen } = connected();
+  assert.equal(socket.binaryType, "arraybuffer", "the client asks for ArrayBuffers, which is how Gemini actually sends its JSON");
+  const frame = (object) => { const bytes = Buffer.from(JSON.stringify(object)); return bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength); };
+  socket.emit("message", { data: frame({ setupComplete: {} }) });
+  assert.equal(session.ready, true);
+  socket.emit("message", { data: new Uint8Array(Buffer.from(JSON.stringify({ serverContent: { outputTranscription: { text: "typed" } } }))) });
+  assert.deepEqual(seen.at(-1), ["output_transcript", { text: "typed" }]);
+  socket.emit("message", { data: { text: async () => JSON.stringify({ serverContent: { inputTranscription: { text: "blob" } } }) } });
+  assert.equal(seen.at(-1)[1].text, "typed", "a Blob is read asynchronously");
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(seen.at(-1), ["input_transcript", { text: "blob", final: true }]);
+  socket.emit("message", { data: { text: async () => { throw new Error("unreadable"); } } });
+  socket.emit("message", { data: 42 });
+  socket.emit("message", { data: new Uint8Array([0xff, 0xfe]) });
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(seen.at(-1), ["input_transcript", { text: "blob", final: true }], "undecodable frames are ignored");
+  assert.equal(parseServerMessage("{}") !== null, true);
+  assert.equal(parseServerMessage(null), null);
 });
