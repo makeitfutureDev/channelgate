@@ -42,6 +42,7 @@ function themeBrowser(config, browser) {
 function activityBrowser(config, browser, subscriptionUi) {
   "use strict";
   const { base, csrf, defaultGroupOrder } = config;
+  const voiceCalls = config.voiceCalls === true;
   const teamId = typeof config.teamId === "string" && /^[A-Z0-9]{2,32}$/.test(config.teamId) ? config.teamId : "";
   const { document, location, EventSource } = browser;
   const el = (id) => document.getElementById(id);
@@ -319,10 +320,14 @@ function activityBrowser(config, browser, subscriptionUi) {
     const pin = node("button", "toggle");
     pin.type = "button"; pin.dataset.key = rowKey; pin.dataset.operation = "pin";
     const links = node("div", "action-links"), state = node("div", "action-state");
-    links.append(open); state.append(toggle, delay, pin);
+    links.append(open);
+    // A voice call bound to this thread (web/call-page.js), only while the gateway offers calls.
+    const call = node("a", "call-link", "Call the agent");
+    if (voiceCalls) links.append(call);
+    state.append(toggle, delay, pin);
     actions.append(links, state);
     tr.append(titleCell, channelCell, statusCell, timeCell, actions);
-    return { tr, title, channel, pill, statusText, elapsed, time, open, toggle, delay, pin, since: 0, stamp: 0 };
+    return { tr, title, channel, pill, statusText, elapsed, time, open, call, toggle, delay, pin, since: 0, stamp: 0 };
   }
   function matches(row) {
     if (!row.pinned) {
@@ -426,6 +431,11 @@ function activityBrowser(config, browser, subscriptionUi) {
       entry.open.dataset.app = app ? "1" : "";
       entry.open.setAttribute("aria-label", "Open in Slack: " + title);
       entry.open.title = app ? "Open in Slack · Ctrl/⌘-click opens it in the browser" : "Open in Slack";
+      if (voiceCalls && /^[A-Z0-9_]{1,32}$/.test(String(row.channelId)) && /^\d{1,13}\.\d{1,6}$/.test(String(row.threadTs))) {
+        entry.call.href = base + "/call?channel=" + encodeURIComponent(row.channelId) + "&thread=" + encodeURIComponent(row.threadTs);
+        entry.call.title = "Call the agent about this conversation";
+        entry.call.setAttribute("aria-label", "Call the agent: " + title);
+      }
       const busy = pending.has(rowKey);
       entry.delay.hidden = row.status === "done";
       entry.delay.disabled = busy || completingAll || ended;
@@ -956,6 +966,7 @@ function settingsBrowser(config, browser, theme) {
 
 const icon = (svg) => `url("data:image/svg+xml,${encodeURIComponent(`<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'>${svg}</svg>`)}")`;
 const ICONS = {
+  call: icon("<path d='M6.6 2.6c.5-.5 1.3-.5 1.8 0l2.3 2.3c.5.5.5 1.3 0 1.8L9.4 8.1c-.3.3-.4.8-.1 1.2a13 13 0 0 0 5.4 5.4c.4.2.9.2 1.2-.1l1.4-1.3c.5-.5 1.3-.5 1.8 0l2.3 2.3c.5.5.5 1.3 0 1.8l-1.5 1.5c-1 1-2.5 1.4-3.9.9A20 20 0 0 1 4.2 8c-.5-1.4-.1-2.9.9-3.9l1.5-1.5Z'/>"),
   pin: icon("<path d='m15 2 7 7-2 2-2-1-4 4v3l-1 1-3-3-5 5-1-1 5-5-3-3 1-1h3l4-4-1-2 2-2Z'/>"),
   slack: icon("<path d='M5.04 15.17a2.53 2.53 0 1 1-2.52-2.53h2.52v2.53Zm1.27 0a2.53 2.53 0 0 1 5.05 0v6.31a2.53 2.53 0 1 1-5.05 0v-6.31ZM8.83 5.04a2.53 2.53 0 1 1 2.53-2.52v2.52H8.83Zm0 1.27a2.53 2.53 0 0 1 0 5.05H2.52a2.53 2.53 0 0 1 0-5.05h6.31Zm10.13 2.52a2.53 2.53 0 1 1 2.52 2.53h-2.52V8.83Zm-1.27 0a2.53 2.53 0 0 1-5.05 0V2.52a2.53 2.53 0 1 1 5.05 0v6.31Zm-2.52 10.13a2.53 2.53 0 1 1-2.53 2.52v-2.52h2.53Zm0-1.27a2.53 2.53 0 0 1 0-5.05h6.31a2.53 2.53 0 1 1 0 5.05h-6.31Z'/>"),
   done: icon("<path d='M20.3 5.3a1 1 0 0 1 0 1.4l-10.5 10.5a1 1 0 0 1-1.4 0L3.7 12.5a1 1 0 1 1 1.4-1.4l4 4 9.8-9.8a1 1 0 0 1 1.4 0Z'/>"),
@@ -982,11 +993,11 @@ const LIGHT = `color-scheme:light;
 const CHANNELGATE_LOGO = `<svg viewBox="0 0 48 48" focusable="false"><rect width="48" height="48" rx="12" fill="#ff642f"/><g transform="translate(6 6)" fill="#18382b"><path d="M3 30V15a15 15 0 0 1 30 0v15h-7V15a8 8 0 0 0-16 0v15Z"/><path d="M14 30V15a4 4 0 0 1 8 0v15Z"/></g></svg>`;
 const escapeHtml = (value) => String(value ?? "").replace(/[&<>"']/g, (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[char]);
 
-export function activityPage({ sessionId, csrf, view = "activity", agent = "", theme = "system", teamId = "" }) {
+export function activityPage({ sessionId, csrf, view = "activity", agent = "", theme = "system", teamId = "", voiceCalls = false }) {
   const subscriptionsView = view === "subscriptions", settingsView = view === "settings";
   const base = `/activity/${encodeURIComponent(sessionId)}`;
   const nonce = crypto.randomBytes(16).toString("base64url");
-  const config = JSON.stringify({ base, csrf, view, teamId: /^[A-Z0-9]{2,32}$/.test(String(teamId)) ? String(teamId) : "", defaultGroupOrder: DEFAULT_ACTIVITY_GROUP_ORDER }).replaceAll("<", "\\u003c");
+  const config = JSON.stringify({ base, csrf, view, teamId: /^[A-Z0-9]{2,32}$/.test(String(teamId)) ? String(teamId) : "", defaultGroupOrder: DEFAULT_ACTIVITY_GROUP_ORDER, voiceCalls: voiceCalls === true }).replaceAll("<", "\\u003c");
   const agentName = String(agent || "").trim() || "ChannelGate";
   const pinned = theme === "dark" || theme === "light" ? ` data-theme="${theme}"` : "";
   const filters = [["active", "Active"], ["working", "Working"], ["waiting", "Waiting"], ["error", "Error"], ["idle", "Idle"], ["later", "Later"], ["done", "Completed"], ["open", "All open"]];
@@ -1035,8 +1046,8 @@ a:hover{text-decoration:none}
 .page-nav a:hover{color:var(--ink)}
 .page-nav a[aria-current=page]{background:var(--panel-2);color:var(--ink);font-weight:600;box-shadow:none}
 .icon-button{display:grid;place-items:center;flex:none;width:28px;height:28px;padding:0;border:1px solid var(--line-2);border-radius:7px;background:transparent;color:var(--muted)}
-.icon-button,.open-link,.toggle{position:relative}
-.icon-button::before,.open-link::before,.toggle::before{content:"";position:absolute;inset:0;margin:auto;width:14px;height:14px;background:currentColor;-webkit-mask:var(--icon) center/contain no-repeat;mask:var(--icon) center/contain no-repeat}
+.icon-button,.open-link,.call-link,.toggle{position:relative}
+.icon-button::before,.open-link::before,.call-link::before,.toggle::before{content:"";position:absolute;inset:0;margin:auto;width:14px;height:14px;background:currentColor;-webkit-mask:var(--icon) center/contain no-repeat;mask:var(--icon) center/contain no-repeat}
 #theme-toggle{--icon:${ICONS.moon}}#theme-toggle[data-theme=light]{--icon:${ICONS.sun}}
 .icon-button:hover{color:var(--ink);border-color:var(--muted)}
 .bar{display:flex;flex-wrap:wrap;align-items:center;gap:10px;min-height:44px;padding:0 10px;border-bottom:1px solid var(--line)}
@@ -1085,9 +1096,10 @@ tbody[data-group-by=status] tr.s-waiting[data-group]::before,tbody[data-group-by
 .actions{display:flex;justify-content:flex-end;gap:4px;opacity:0;transition:opacity .12s}
 tbody tr:hover .actions,tbody tr:focus-within .actions,.s-waiting .actions,.s-error .actions{opacity:1}
 .action-links,.action-state{display:flex;gap:4px;margin:0}
-.open-link,.toggle{display:inline-grid;place-items:center;width:28px;height:28px;min-height:0;padding:0;border:1px solid var(--line-2);border-radius:7px;background:var(--panel);color:var(--ink-2);font-size:0;line-height:0;overflow:hidden;text-indent:-9999px}
-.open-link:hover,.toggle:hover{border-color:var(--muted);background:var(--panel-2);color:var(--ink)}
+.open-link,.call-link,.toggle{display:inline-grid;place-items:center;width:28px;height:28px;min-height:0;padding:0;border:1px solid var(--line-2);border-radius:7px;background:var(--panel);color:var(--ink-2);font-size:0;line-height:0;overflow:hidden;text-indent:-9999px}
+.open-link:hover,.call-link:hover,.toggle:hover{border-color:var(--muted);background:var(--panel-2);color:var(--ink)}
 .open-link{--icon:${ICONS.slack}}
+.call-link{--icon:${ICONS.call}}
 .toggle[data-state=done]{--icon:${ICONS.done};color:var(--s-done)}
 .toggle[data-state=reopen]{--icon:${ICONS.reopen}}
 .toggle[data-state=later]{--icon:${ICONS.later};color:var(--s-later)}
@@ -1184,7 +1196,7 @@ select.settings-input{height:32px}
   tbody tr:not([data-group]) .thread-cell{grid-row:1}tbody tr:not([data-group]) .time-cell{grid-row:1}
   tbody tr:not([data-group]) .status-cell,tbody tr:not([data-group]) .channel-cell,tbody tr:not([data-group]) .actions{grid-row:2}
   .pill{height:20px;font-size:11px;padding:0 8px}
-  .open-link,.toggle{width:32px;height:32px}
+  .open-link,.call-link,.toggle{width:32px;height:32px}
 }
 </style></head><body>
 <header class="top"><div class="agent"><span class="agent-mark" aria-hidden="true">${CHANNELGATE_LOGO}</span><div><span class="agent-name">${escapeHtml(agentName)}</span>${settingsView ? "" : '<div id="connection" class="connection reconnecting" role="status"><span id="connection-text">Connecting…</span></div>'}</div></div>

@@ -1,5 +1,37 @@
 # ChannelGate — Features
 
+## Voice calls with a channel's agent · Beta (2026-11-13)
+
+An approved user can talk to a channel's agent from a browser call page bound to one Slack
+conversation and one thread (`docs/VOICE-CALLS.md`). Entry points: the **📞 Call** reply-menu
+button (present only while voice calls are configured) and the **Call the agent** action on each
+personal Activity row. Both mint the clicker's own private ten-minute Activity launch that opens
+`/activity/<session>/call?channel=…&thread=…`; the Slack button is admitted by the same
+`accessContext().allows()` rule as Dashboard, and the call is admitted again when it starts.
+
+The daemon holds the Google **Gemini Live** session (`src/gateway/voice/gemini-live.js`: one
+WebSocket, 16 kHz PCM in, 24 kHz PCM out, input/output transcription, context compression,
+session resumption across `goAway`). The browser streams microphone audio as ~120 ms
+octet-stream POSTs and receives audio, transcript and task events over one SSE stream, so no
+WebSocket upgrade is needed on the public edge and the API key never reaches a browser. Settings →
+**Voice calls** holds the enable switch, the Gemini API key (write-only on listings, revealable
+only through `POST /api/secrets/reveal`), the model (`gemini-3.8-live` or the 2.5 native-audio
+preview) and the voice.
+
+The voice model only converses and dispatches. Its tools (`src/gateway/voice/calls.js`):
+`run_task` posts the spoken request into the bound thread as “🎙️ *Name (voice call):* …” and runs
+an ordinary engine turn there **authored by the caller** (origin `voice_call`, the thread's run
+queue, live progress, the usual footer), then reports the result back to the voice as a
+`[gateway]` message; `check_tasks`, `read_thread` (the thread's recent messages) and `end_call`.
+A call without a thread opens its own root. `voice_call` is an interactive user origin that is
+deliberately **not escalatable**: an admin's spoken task runs as Worker and answers tool prompts
+through the thread's approval cards. One call per person; at most eight per gateway; a call ends
+after 60 minutes, after five silent minutes, on hang-up, on `end_call`, or when the voice service
+drops. On every end the thread receives the summary (duration, tasks, estimated voice cost and the
+capped transcript), the `usage` ledger gets a `gemini-live` / `voice-call` row priced from the
+Gemini audio and text rates, and `voice_call_started` / `voice_call_ended` events are logged.
+Gateway restarts end calls without a summary (phase 1).
+
 ## Admin controls for parallel agent runs (2026-11-13)
 
 Settings → Agent defaults → **Parallel agent runs** exposes the global agent-run limit and

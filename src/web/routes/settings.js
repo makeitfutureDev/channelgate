@@ -25,6 +25,7 @@ import {
   settingsForApi,
   saveSettings,
   isPerplexitySessionToken,
+  isGeminiApiKey, VOICE_CALL_MODELS, VOICE_CALL_VOICES,
   normalizePublicUrl,
   applySettingsToEnv,
   resolveSlackConfig,
@@ -240,6 +241,30 @@ export function createSettingsRouter({
       if (Object.hasOwn(body, "clearPerplexitySessionToken")) {
         if (typeof body.clearPerplexitySessionToken !== "boolean") return res.status(400).json({ error: "clearPerplexitySessionToken must be a boolean" });
         if (body.clearPerplexitySessionToken) patch.perplexitySessionToken = "";
+      }
+      // ── Voice calls ──────────────────────────────────────────────────────────
+      // Optional and independent of the engines. An empty key box keeps the stored key; only an
+      // explicit clear removes it. Model and voice are validated against the closed lists.
+      if (Object.hasOwn(body, "voiceCallsEnabled")) {
+        if (typeof body.voiceCallsEnabled !== "boolean") return res.status(400).json({ error: "voiceCallsEnabled must be a boolean" });
+        patch.voiceCallsEnabled = body.voiceCallsEnabled;
+      }
+      if (Object.hasOwn(body, "geminiApiKey")) {
+        if (typeof body.geminiApiKey !== "string") return res.status(400).json({ error: "geminiApiKey must be a string" });
+        const key = body.geminiApiKey.trim();
+        if (key !== "") {
+          if (!isGeminiApiKey(key)) return res.status(400).json({ error: "Paste only the Gemini API key value (letters, digits, - and _)" });
+          patch.geminiApiKey = key;
+        }
+      }
+      if (body.clearGeminiApiKey === true) patch.geminiApiKey = "";
+      if (Object.hasOwn(body, "voiceCallModel")) {
+        if (!VOICE_CALL_MODELS.includes(body.voiceCallModel)) return res.status(400).json({ error: `voiceCallModel must be one of: ${VOICE_CALL_MODELS.join(", ")}` });
+        patch.voiceCallModel = body.voiceCallModel;
+      }
+      if (Object.hasOwn(body, "voiceCallVoice")) {
+        if (!VOICE_CALL_VOICES.includes(body.voiceCallVoice)) return res.status(400).json({ error: `voiceCallVoice must be one of: ${VOICE_CALL_VOICES.join(", ")}` });
+        patch.voiceCallVoice = body.voiceCallVoice;
       }
       // ── Google Chat ──────────────────────────────────────────────────────────
       // The key is validated BEFORE it is stored: a pasted OAuth-client JSON or a truncated file

@@ -120,7 +120,7 @@ test("review buttons are requester-bound (unbound without one), root-relative, a
   );
   const actionIds = footer.map((button) => button.action_id);
   assert.equal(new Set(actionIds).size, actionIds.length, `duplicate footer action_id: ${actionIds.join(", ")}`);
-  assert.ok(footer.filter((button) => ![SECRETS_ACTION_ID, "cg_channel_settings", "cg_reply_dashboard"].includes(button.action_id))
+  assert.ok(footer.filter((button) => ![SECRETS_ACTION_ID, "cg_channel_settings", "cg_reply_dashboard", "cg_reply_call"].includes(button.action_id))
     .every((button) => FILES_ACTION_PATTERN.test(button.action_id)),
   "every file control must reach the shared handler");
   assert.equal(footer.filter((button) => button.action_id === SECRETS_ACTION_ID).length, 1,

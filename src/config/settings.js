@@ -546,6 +546,32 @@ export function getPerplexityResearchConfig() {
 export function hasQwenApiKey(providerId) {
   return Boolean(getQwenConfig(providerId).apiKey);
 }
+
+// Voice calls (gateway/voice/): a browser call with a channel's agent, spoken through Google's
+// Gemini Live API. Off until an admin enables it AND stores a Gemini API key; `GEMINI_API_KEY` in
+// the environment is the bootstrap fallback for the key only. The key is write-only on listings
+// (has*/last4) and revealable only through /api/secrets/reveal (web/secrets.js).
+export const VOICE_CALL_MODELS = Object.freeze(["gemini-3.8-live", "gemini-2.5-flash-native-audio-preview-12-2025"]);
+export const VOICE_CALL_VOICES = Object.freeze(["Kore", "Puck", "Charon", "Fenrir", "Aoede", "Leda", "Orus", "Zephyr"]);
+export function isGeminiApiKey(value) {
+  return typeof value === "string" && value.length >= 20 && value.length <= 256 && /^[A-Za-z0-9_-]+$/.test(value);
+}
+export function getVoiceCallConfig() {
+  const s = getSettings();
+  const stored = typeof s.geminiApiKey === "string" ? s.geminiApiKey.trim() : "";
+  const env = typeof process.env.GEMINI_API_KEY === "string" ? process.env.GEMINI_API_KEY.trim() : "";
+  const apiKey = isGeminiApiKey(stored) ? stored : isGeminiApiKey(env) ? env : "";
+  return {
+    enabled: s.voiceCallsEnabled === true,
+    apiKey,
+    model: VOICE_CALL_MODELS.includes(s.voiceCallModel) ? s.voiceCallModel : VOICE_CALL_MODELS[0],
+    voice: VOICE_CALL_VOICES.includes(s.voiceCallVoice) ? s.voiceCallVoice : VOICE_CALL_VOICES[0],
+  };
+}
+export function voiceCallsAvailable() {
+  const c = getVoiceCallConfig();
+  return c.enabled && Boolean(c.apiKey);
+}
 // What the admin UI renders one card from, per provider. Presence and endpoint only — the key
 // itself is fetched one at a time from POST /api/secrets/reveal, like every other credential.
 export function qwenProviderSettings() {
@@ -1238,6 +1264,15 @@ export function settingsForApi() {
     perplexityResearch: {
       enabled: perplexity.enabled,
       hasSessionToken: Boolean(perplexity.sessionToken),
+    },
+    voiceCalls: {
+      enabled: getVoiceCallConfig().enabled,
+      hasApiKey: Boolean(getVoiceCallConfig().apiKey),
+      apiKeyLast4: last4(getVoiceCallConfig().apiKey),
+      model: getVoiceCallConfig().model,
+      voice: getVoiceCallConfig().voice,
+      models: [...VOICE_CALL_MODELS],
+      voices: [...VOICE_CALL_VOICES],
     },
     modelChangeAccess: getModelChangeAccess(),
     modelShortcuts: getModelShortcuts(),

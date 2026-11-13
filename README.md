@@ -196,6 +196,9 @@ catalog, including edge cases and links to regression coverage.
   to the workspace through short-lived, scoped links.
 - **Voice prompts:** optional local Whisper transcription with Slack transcript fallback turns
   supported voice clips into text instructions. Raw audio is not passed to the coding engines.
+- **Voice calls (Beta):** a **📞 Call** reply button opens a private browser call bound to the
+  thread. The gateway speaks through Google's Gemini Live API, your spoken requests run as normal
+  turns in that thread, and the transcript lands there when you hang up (`docs/VOICE-CALLS.md`).
 - **Video and screen recordings:** bundled media tools and a video-analysis workflow extract
   frames and speech for the agent to inspect inside the channel workspace.
 - **Browser automation:** bundled Playwright, Chromium and Chrome DevTools tooling support

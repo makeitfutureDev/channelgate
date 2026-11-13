@@ -4214,6 +4214,11 @@ function readSettingsForm() {
     defaultCodexEffort: document.getElementById("set-default-codex-effort").value,
     ...collectQwenProviders(),
     ...collectTerminalHarnesses(),
+    voiceCallsEnabled: document.getElementById("set-voice-calls-enabled").checked,
+    ...(tokenValue(document.getElementById("set-gemini-api-key")) ? { geminiApiKey: tokenValue(document.getElementById("set-gemini-api-key")) } : {}),
+    ...(document.getElementById("clear-gemini-api-key").classList.contains("armed") ? { clearGeminiApiKey: true } : {}),
+    ...(document.getElementById("set-voice-call-model").value ? { voiceCallModel: document.getElementById("set-voice-call-model").value } : {}),
+    ...(document.getElementById("set-voice-call-voice").value ? { voiceCallVoice: document.getElementById("set-voice-call-voice").value } : {}),
     perplexityResearchEnabled: document.getElementById("set-perplexity-research-enabled").checked,
     ...(document.getElementById("set-perplexity-session-token").value ? { perplexitySessionToken: document.getElementById("set-perplexity-session-token").value } : {}),
     ...(document.getElementById("clear-perplexity-session-token").classList.contains("armed") ? { clearPerplexitySessionToken: true } : {}),
@@ -4278,6 +4283,15 @@ function readSettingsForm() {
 }
 
 function paintSettings(s) {
+  const voice = s.voiceCalls || {};
+  document.getElementById("set-voice-calls-enabled").checked = voice.enabled === true;
+  document.getElementById("gemini-api-key-state").textContent = tokenState(voice.hasApiKey, voice.apiKeyLast4);
+  attachReveal(document.getElementById("set-gemini-api-key"), { has: voice.hasApiKey, last4: voice.apiKeyLast4, fetch: revealSecret("settings", "geminiApiKey") });
+  for (const [id, options, current] of [["set-voice-call-model", voice.models, voice.model], ["set-voice-call-voice", voice.voices, voice.voice]]) {
+    const select = document.getElementById(id);
+    select.replaceChildren(...(options || []).map((value) => { const option = document.createElement("option"); option.value = value; option.textContent = value; return option; }));
+    select.value = current || "";
+  }
   document.getElementById("set-perplexity-research-enabled").checked = s.perplexityResearch?.enabled === true;
   document.getElementById("set-perplexity-session-token").value = "";
   document.getElementById("perplexity-session-state").textContent = s.perplexityResearch?.hasSessionToken ? "configured" : "not configured";
@@ -4657,7 +4671,7 @@ function bindSettings() {
       verifyBtn.disabled = false;
     }
   });
-  for (const id of ["clear-composio-sdk-key", "clear-default-composio", "clear-default-toolbox", "clear-admin-user", "clear-license-key", "clear-gchat-key", "clear-teams-secret", "clear-container-claude-token", "clear-perplexity-session-token"]) {
+  for (const id of ["clear-composio-sdk-key", "clear-default-composio", "clear-default-toolbox", "clear-admin-user", "clear-license-key", "clear-gchat-key", "clear-teams-secret", "clear-container-claude-token", "clear-perplexity-session-token", "clear-gemini-api-key"]) {
     const btn = document.getElementById(id);
     // The button lives inside the field's <label>; preventDefault stops the click from
     // bubbling to the label and focusing the token input.
@@ -4819,7 +4833,7 @@ function bindSettings() {
           connectSlack: slackTokenChanged,
         }),
       });
-      for (const id of ["clear-composio-sdk-key", "clear-default-composio", "clear-default-toolbox", "clear-admin-user", "clear-license-key", "clear-gchat-key", "clear-teams-secret", "clear-container-claude-token", "clear-perplexity-session-token"]) disarmClearTok(document.getElementById(id));
+      for (const id of ["clear-composio-sdk-key", "clear-default-composio", "clear-default-toolbox", "clear-admin-user", "clear-license-key", "clear-gchat-key", "clear-teams-secret", "clear-container-claude-token", "clear-perplexity-session-token", "clear-gemini-api-key"]) disarmClearTok(document.getElementById(id));
       for (const card of QWEN_PROVIDER_CARDS) disarmClearTok(card.clearBtn);
       // A saved key kicks off a fresh verification server-side; repaint so the card shows the new
       // state (and the new last4) instead of the pre-save one.

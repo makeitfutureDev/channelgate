@@ -16,7 +16,8 @@ async function accessBrowser({ mode, base, csrf, adminPasskeysAvailable }, env) 
     return data;
   }
   function navigate(data) {
-    if (!/^\/activity\/[A-Za-z0-9_-]{16}$/.test(data.url || '')) throw new Error('Activity is unavailable.');
+    // The session page, or the one in-app destination a launch may carry (the voice-call page).
+    if (!/^\/activity\/[A-Za-z0-9_-]{16}(\/call\?channel=[A-Z0-9_]{1,32}(&thread=\d{1,13}\.\d{1,6})?)?$/.test(data.url || '')) throw new Error('Activity is unavailable.');
     location.replace(data.url);
   }
   async function run(action) {
