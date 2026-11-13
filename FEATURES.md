@@ -1,5 +1,12 @@
 # ChannelGate — Features
 
+## Activity excludes bot-started live threads without warnings (2026-11-13)
+
+Activity records successfully verified bot-started live roots as excluded discovery candidates.
+They remain outside personal lists, do not trigger the partial-data banner, and cannot repeatedly
+consume the root-repair batch ahead of older human threads. Failed or timed-out Slack reads still
+raise the warning and remain retryable. Current access is rechecked before saving an exclusion.
+
 ## Activity footer placement (2026-11-13)
 
 The Activity footer and privacy links sit at the bottom of the window for empty or short

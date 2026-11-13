@@ -768,6 +768,61 @@ test("Activity repairs missing live roots using the actual human starter rather 
   assert.equal(getSlackThread(c.channelId, "101.000001")?.starter_id || "", "", "a bot root can never become the author's personal work");
 });
 
+test("bot-started live threads do not warn or starve older human threads across refreshes", async () => {
+  const c = await channel(); root(c, "100.000001");
+  const insert = getDb().prepare("INSERT INTO active_runs(id,data) VALUES(?,?)");
+  roots.set(`${c.channelId}:101.000001`, { ts: "101.000001", user: "U_MINE", text: "Older human work" });
+  insert.run("human", toJson({ channelId: c.channelId, slug: c.slug, threadKey: "101.000001" }));
+  for (let n = 0; n < 12; n++) {
+    const ts = `${102 + n}.000001`;
+    roots.set(`${c.channelId}:${ts}`, { ts, user: "U_MINE", bot_id: "B_AUTOMATION", text: "Automation" });
+    insert.run(`bot-${n}`, toJson({ channelId: c.channelId, slug: c.slug, threadKey: ts }));
+  }
+  const first = await activityThreadSnapshot(client, "U_MINE");
+  assert.equal(first.unavailable, false, "successful bot reads are exclusions, not lookup failures");
+  assert.equal(first.total, 1);
+  assert.equal(reads.length, 10, "root repair still obeys its per-snapshot bound");
+  const second = await activityThreadSnapshot(client, "U_MINE");
+  assert.equal(second.unavailable, false);
+  assert.deepEqual(second.rows.map((row) => row.thread_ts), ["101.000001", "100.000001"]);
+  assert.equal(reads.length, 13, "known bot roots cannot starve the remaining human root");
+  await activityThreadSnapshot(client, "U_MINE");
+  assert.equal(reads.length, 13, "excluded bot roots are not fetched again while their runs remain active");
+});
+
+test("failed live root reads still warn and recover on a later successful read", async () => {
+  const c = await channel(); root(c, "100.000001");
+  const ts = "101.000001";
+  getDb().prepare("INSERT INTO active_runs(id,data) VALUES(?,?)").run("failed-root", toJson({ channelId: c.channelId, slug: c.slug, threadKey: ts }));
+  const replies = client.conversations.replies;
+  client.conversations.replies = async () => { throw new Error("Slack unavailable"); };
+  let now = Date.now();
+  const failed = await activityThreadSnapshot(client, "U_MINE", {}, { now: () => now });
+  assert.equal(failed.unavailable, true);
+  assert.equal(failed.total, 1);
+  assert.equal(getSlackThread(c.channelId, ts), null, "a failed request must remain retryable");
+  roots.set(`${c.channelId}:${ts}`, { ts, user: "U_MINE", text: "Recovered work" });
+  client.conversations.replies = replies;
+  now += 15_001;
+  const recovered = await activityThreadSnapshot(client, "U_MINE", {}, { now: () => now });
+  assert.equal(recovered.unavailable, false);
+  assert.equal(recovered.total, 2);
+});
+
+test("bot-root exclusion rechecks private membership after fetching the root", async () => {
+  const c = await channel("G_PRIVATE", "group");
+  members.set(c.channelId, ["U_MINE"]);
+  const ts = "101.000001";
+  getDb().prepare("INSERT INTO active_runs(id,data) VALUES(?,?)").run("revoked-bot", toJson({ channelId: c.channelId, slug: c.slug, threadKey: ts }));
+  client.conversations.replies = async () => {
+    members.set(c.channelId, []);
+    return { messages: [{ ts, user: "U_MINE", bot_id: "B_AUTOMATION", text: "Automation" }] };
+  };
+  const snapshot = await activityThreadSnapshot(client, "U_MINE");
+  assert.equal(snapshot.total, 0);
+  assert.equal(getSlackThread(c.channelId, ts), null, "revoked access must prevent discovery writes");
+});
+
 test("Activity missing-root repair checks current channel, private membership and sudo access before any root fetch", async () => {
   const privateChannel = await channel("G_PRIVATE", "group");
   const sudoChannel = await channel("C_SUDO");
