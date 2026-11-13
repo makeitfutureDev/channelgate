@@ -84,7 +84,10 @@ Geist Mono, self-hosted under `public/fonts/`), built to stay readable in a corn
   Completed green. Orange is reserved for the brand.
 - **Table.** Compact rows with Conversation, Channel, Status and Last columns. Titles wrap to at
   most two lines. Each row starts with a 3 px bar in its status colour, and alternate rows carry a
-  subtle band (stronger on hover). Each status
+  clearly visible band (stronger on hover). Text is high-contrast: every title, Idle and Later
+  included, uses the full text colour (only Completed titles are softened); channel names, times,
+  column headers, group labels and tab counts use brighter secondary colours, and every secondary
+  text colour meets WCAG AA (4.5:1) on each page surface in both themes. Each status
   group is labelled on its first row with its count, in the viewer's saved group order. Working
   rows show a live running clock in the status label ("Working 4m 12s"), measured from the
   earliest accepted turn still running in that thread (`workingSinceMs` in the snapshot);
