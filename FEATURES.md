@@ -492,6 +492,11 @@ keeping the viewer's status order and newest-first ordering within each status. 
 identified by ID even when their names match. Search, filters, live updates and thread actions
 work in either view. The grouping preference is saved per viewer across sessions/devices;
 saving failures keep the previous view and offer retry. No browser storage or engine call is used.
+In Channel view every channel is a rounded card: a tinted header bar with a colored channel dot,
+name and count, and its conversations indented beneath it on a tree line whose node dot shows
+each thread's status color. A channel keeps the same color between visits (eight-color palette
+keyed by channel ID); two cards directly above each other never share one. Multi-channel pins use
+the same cards. Status view keeps the flat table with labeled sections.
 
 By default, the personal browser dashboard lists open conversations by status: **Error → Waiting → Working
 → Idle**, with newest messages first within each group. The footer **Group order** button

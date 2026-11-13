@@ -398,6 +398,7 @@ function activityBrowser(config, browser, subscriptionUi, callUi) {
     if (!savingGrouping) grouping.value = groupBy;
     body.dataset.groupBy = groupBy;
     pinnedBody.dataset.groupBy = groupBy;
+    const channelHue = (id) => { let hash = 0; for (const ch of String(id)) hash = (hash * 31 + ch.charCodeAt(0)) >>> 0; return hash % 8; };
     const channelName = (row) => String(row.channelName || "Conversation");
     const compareChannel = (a, b) => channelName(a).localeCompare(channelName(b)) || a.channelId.localeCompare(b.channelId);
     const groupKey = (row) => groupBy === "channel" ? row.channelId : row.status;
@@ -407,6 +408,19 @@ function activityBrowser(config, browser, subscriptionUi, callUi) {
     const pinned = filtered.filter(isPinned).sort(groupBy === "channel" ? compareRows : newest);
     const ordinary = filtered.filter((row) => !isPinned(row)).sort(compareRows);
     const groupPinned = groupBy === "channel" && new Set(pinned.map((row) => row.channelId)).size > 1;
+    // A stable hue per channel, nudged when it would match the card directly above it.
+    const hues = new Map();
+    for (const section of groupBy === "channel" ? [pinned, ordinary] : []) {
+      let previous = -1;
+      for (const row of section) {
+        if (hues.has(section === pinned ? "p" + row.channelId : row.channelId)) continue;
+        let hue = channelHue(row.channelId);
+        if (hue === previous) hue = (hue + 1) % 8;
+        hues.set(section === pinned ? "p" + row.channelId : row.channelId, hue); previous = hue;
+      }
+    }
+    if (groupBy === "channel") body.dataset.cards = ""; else delete body.dataset.cards;
+    if (groupPinned) pinnedBody.dataset.cards = ""; else delete pinnedBody.dataset.cards;
     const shown = [...pinned, ...ordinary];
     const visible = new Set(shown.map(key));
     const groupSize = new Map();
@@ -435,6 +449,12 @@ function activityBrowser(config, browser, subscriptionUi, callUi) {
       const sectionRows = saved ? pinned : ordinary, sizes = saved ? pinnedGroupSize : groupSize;
       if ((!saved || groupPinned) && (localIndex === 0 || groupKey(sectionRows[localIndex - 1]) !== groupKey(row))) entry.tr.dataset.group = (groupBy === "channel" ? channelName(row) : states[row.status]) + " · " + sizes.get(groupKey(row));
       else delete entry.tr.dataset.group;
+      // Channel groups render as cards: a per-channel hue, and the closing row rounds the card off.
+      if (groupBy === "channel" && (!saved || groupPinned)) {
+        entry.tr.dataset.hue = String(hues.get(saved ? "p" + row.channelId : row.channelId));
+        if (localIndex === sectionRows.length - 1 || groupKey(sectionRows[localIndex + 1]) !== groupKey(row)) entry.tr.dataset.groupEnd = "";
+        else delete entry.tr.dataset.groupEnd;
+      } else { delete entry.tr.dataset.hue; delete entry.tr.dataset.groupEnd; }
       entry.pill.className = "pill " + row.status;
       entry.statusText.textContent = states[row.status];
       const since = Number(row.workingSinceMs);
@@ -1165,6 +1185,21 @@ tbody tr:nth-child(even){background-color:var(--band)}
 tbody tr:hover,tbody tr:focus-within{background-color:var(--hover)}
 tbody tr[data-group]::before{content:attr(data-group);overflow-wrap:anywhere;min-width:0;grid-column:1/-1;display:flex;align-items:center;min-height:30px;margin:0 -16px 0;padding:6px 16px;background:var(--panel);border-bottom:1px solid var(--line-soft);font:600 10.5px var(--mono);letter-spacing:.12em;text-transform:uppercase;color:var(--ink-2)}
 tbody[data-group-by=status] tr.s-waiting[data-group]::before,tbody[data-group-by=status] tr.s-error[data-group]::before{color:var(--c)}
+tbody[data-cards]{padding:2px 12px 14px}
+tbody[data-cards] tr{--indent:44px;--pr:3px;--lx:21px;--head:42px;--g:var(--muted);--guide:linear-gradient(90deg,transparent var(--lx),color-mix(in srgb,var(--g) 50%,transparent) var(--lx) calc(var(--lx) + 2px),transparent calc(var(--lx) + 2px));position:relative;padding:0 var(--pr) 0 var(--indent);border:solid var(--line);border-width:0 1px 1px;border-bottom-color:var(--line-soft);background-color:var(--panel);background-image:var(--guide);background-clip:padding-box}
+tbody[data-cards] .channel-cell .channel-link{color:var(--faint)}
+tbody[data-cards] tr:nth-child(even){background-color:var(--panel)}
+tbody[data-cards] tr:hover,tbody[data-cards] tr:focus-within{background-color:color-mix(in srgb,var(--g) 7%,var(--panel))}
+tbody[data-cards] tr::after{content:"";position:absolute;left:calc(var(--lx) - 4px);top:calc(50% - 5px);width:10px;height:10px;border-radius:50%;background:var(--c);box-shadow:0 0 0 3px var(--panel)}
+tbody[data-cards] tr[data-group]{margin-top:14px;border-top-width:1px;border-top-left-radius:11px;border-top-right-radius:11px}
+tbody[data-cards] tr[data-group]::after{top:calc(var(--head) / 2 + 50% - 5px)}
+tbody[data-cards] tr[data-group-end]{border-bottom-color:var(--line);border-bottom-left-radius:11px;border-bottom-right-radius:11px;background-size:100% 50%;background-repeat:no-repeat}
+tbody[data-cards] tr[data-group][data-group-end]{background-size:100% calc(var(--head) / 2 + 50%)}
+tbody[data-cards] tr[data-group]::before{display:block;height:var(--head);min-height:0;margin:0 calc(-1 * var(--pr)) 0 calc(-1 * var(--indent));padding:0 14px 0 var(--indent);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;border-radius:10px 10px 0 0;border-bottom:1px solid color-mix(in srgb,var(--g) 30%,var(--line));background:radial-gradient(circle at calc(var(--lx) + 1px) 50%,var(--g) 0 6px,transparent 6.5px),color-mix(in srgb,var(--g) 13%,var(--panel));font:600 13px/var(--head) var(--font);letter-spacing:0;text-transform:none;color:var(--ink)}
+tbody[data-cards] tr[data-hue="0"]{--g:hsl(222 70% 56%)}tbody[data-cards] tr[data-hue="1"]{--g:hsl(155 70% 45%)}
+tbody[data-cards] tr[data-hue="2"]{--g:hsl(28 70% 56%)}tbody[data-cards] tr[data-hue="3"]{--g:hsl(275 70% 56%)}
+tbody[data-cards] tr[data-hue="4"]{--g:hsl(345 70% 56%)}tbody[data-cards] tr[data-hue="5"]{--g:hsl(190 70% 56%)}
+tbody[data-cards] tr[data-hue="6"]{--g:hsl(52 60% 45%)}tbody[data-cards] tr[data-hue="7"]{--g:hsl(105 60% 45%)}
 .thread-cell{padding:10px 0;min-width:0}
 .thread-title{display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;line-clamp:2;color:var(--ink);font-weight:500;line-height:1.4;overflow:hidden;overflow-wrap:anywhere}
 .s-done .thread-title{color:var(--ink-2)}
@@ -1286,6 +1321,13 @@ select.settings-input{height:32px}
   tbody tr:not([data-group]) .status-cell,tbody tr:not([data-group]) .channel-cell,tbody tr:not([data-group]) .actions{grid-row:2}
   .pill{height:20px;font-size:11px;padding:0 8px}
   .open-link,.call-link,.toggle{width:32px;height:32px}
+  tbody[data-cards]{padding:2px 8px 12px}
+  tbody[data-cards] tr{--indent:34px;--pr:10px;--lx:15px;--head:38px;padding:9px var(--pr) 9px var(--indent)}
+  tbody[data-cards] tr::after{top:14px}
+  tbody[data-cards] tr[data-group]::before{margin:-9px calc(-1 * var(--pr)) 4px calc(-1 * var(--indent));padding:0 12px 0 var(--indent)}
+  tbody[data-cards] tr[data-group]::after{top:calc(var(--head) + 9px)}
+  tbody[data-cards] tr[data-group-end]{background-size:100% 19px}
+  tbody[data-cards] tr[data-group][data-group-end]{background-size:100% calc(var(--head) + 14px)}
 }
 </style></head><body>
 <header class="top"><div class="agent"><span class="agent-mark" aria-hidden="true">${channelGateLogo(logoColor)}</span><div><span class="agent-name">${escapeHtml(agentName)}</span>${settingsView ? "" : '<div id="connection" class="connection reconnecting" role="status"><span id="connection-text">Connecting…</span></div>'}</div></div>

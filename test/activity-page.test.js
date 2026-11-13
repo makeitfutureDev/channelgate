@@ -636,6 +636,14 @@ test("channel grouping keeps channel ids distinct, sorts within channels and fil
   elements["group-by"].value = "channel"; elements["group-by"].fire("change"); await flush();
   assert.deepEqual(titles(), ["alpha run", "alpha new", "alpha old", "duplicate name", "beta error", "beta idle"]);
   assert.deepEqual(groups(), ["Alpha · 3", undefined, undefined, "Alpha · 1", "Beta · 2", undefined]);
+  // Channel groups render as cards: the body opts in, each group's last row closes its card,
+  // a group shares one hue and adjacent cards never share one.
+  assert.equal(elements.threads.dataset.cards, "");
+  assert.deepEqual(elements.threads.children.map((tr) => tr.dataset.groupEnd), [undefined, undefined, "", "", undefined, ""]);
+  const hues = elements.threads.children.map((tr) => tr.dataset.hue);
+  assert.ok(hues.every((hue) => /^[0-7]$/.test(hue)));
+  assert.equal(new Set(hues.slice(0, 3)).size, 1);
+  assert.notEqual(hues[2], hues[3]); assert.notEqual(hues[3], hues[4]);
   assert.equal(requests.at(-1).options.headers["X-CG-CSRF"], "fixture-csrf");
   stream.snapshot(rows, { groupBy: "status", groupByVersion: 0, groupOrder: ["idle", "error", "waiting", "working"], groupOrderVersion: 1 });
   assert.equal(elements["group-by"].value, "channel", "stale preference cannot undo a save");
@@ -648,6 +656,9 @@ test("channel grouping keeps channel ids distinct, sorts within channels and fil
   assert.deepEqual(titles(), ["completed"]); assert.deepEqual(groups(), ["Alpha · 1"]);
   stream.snapshot(rows, { groupBy: "status", groupByVersion: 2 });
   assert.deepEqual(groups(), ["Done · 1"]);
+  assert.equal(elements.threads.dataset.cards, undefined, "status grouping keeps the flat table");
+  assert.equal(elements.threads.children[0].dataset.hue, undefined);
+  assert.equal(elements.threads.children[0].dataset.groupEnd, undefined);
   stream.fire("access-ended"); assert.equal(elements["group-by"].disabled, true);
 });
 
