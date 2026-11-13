@@ -587,13 +587,19 @@ test("a stale full inspection cannot undo a newer completion or message-date obs
   assert.equal(afterDeletion.root_done, 1); assert.equal(afterDeletion.last_message_ms, 200000);
 });
 
-test("native positive feedback cannot forge thread ownership or retain revoked private/sudo access", async () => {
+for (const partialMessage of [false, true]) test(`native positive feedback cannot forge thread ownership or retain revoked private/sudo access (partial message: ${partialMessage})`, async () => {
   const { completeThreadFromFeedback } = await import("../src/slack/thread-completion.js");
   const c = await channel("G_PRIVATE", "group"); root(c, "100.000001");
   const body = { user: { id: "U_MINE" }, channel: { id: c.channelId }, message: { ts: "101.000001", thread_ts: "100.000001" } };
+  if (partialMessage) {
+    body.container = { channel_id: c.channelId, message_ts: body.message.ts };
+    delete body.message.ts;
+  }
   const parsed = { verdict: "up", channel: c.channelId, threadTs: "100.000001" };
   members.set(c.channelId, ["U_MINE"]);
   assert.equal(await completeThreadFromFeedback({ client, body, parsed: { ...parsed, threadTs: "999.000001" } }), false);
+  assert.equal(await completeThreadFromFeedback({ client, body: { ...body, message: undefined }, parsed }), false,
+    "container timestamp alone cannot prove the target thread");
   assert.equal(await completeThreadFromFeedback({ client, body: { ...body, user: { id: "U_OTHER" } }, parsed }), false);
   members.set(c.channelId, []);
   assert.equal(await completeThreadFromFeedback({ client, body, parsed }), false);
@@ -1044,6 +1050,23 @@ test("native thumbs-up checks the liked answer once and its decoration cannot re
   assert.equal((await homeThreadsSnapshot(client, "U_MINE")).rows[0].status, "idle");
   messages[1].reactions[0].users.push("U_OTHER"); messages[1].reactions[0].count++;
   assert.equal(await threadHasCompletionReaction(client, c.channelId, "100.000001"), true, "human checks remain evidence");
+});
+
+test("native feedback marks the answer when Slack supplies its timestamp only in the container", async () => {
+  const { completeThreadFromFeedback } = await import("../src/slack/thread-completion.js");
+  const c = await channel(); root(c, "100.000001");
+  const messages = [roots.get(`${c.channelId}:100.000001`),
+    { ts: "101.000001", thread_ts: "100.000001", user: "B_GATEWAY" },
+    { ts: "102.000001", thread_ts: "100.000001", user: "B_GATEWAY" }];
+  markerFixture(messages);
+  const input = { client, body: { user: { id: "U_MINE" },
+    container: { channel_id: c.channelId, message_ts: "101.000001" }, message: { thread_ts: "100.000001" } },
+    parsed: { verdict: "up", channel: c.channelId, threadTs: "100.000001" } };
+  assert.equal(await completeThreadFromFeedback(input), true);
+  assert.equal(await completeThreadFromFeedback(input), true);
+  for (const message of messages.slice(0, 2)) assert.deepEqual(message.reactions,
+    [{ name: "white_check_mark", count: 1, users: ["B_GATEWAY"] }]);
+  assert.equal(messages[2].reactions, undefined);
 });
 
 for (const errorKind of ["throw", "response"]) test(`liked-answer marker ${errorKind} failure preserves Done and repeated feedback repairs it`, async () => {

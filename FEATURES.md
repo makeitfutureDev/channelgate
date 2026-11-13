@@ -354,6 +354,8 @@ are harmless. Reopen removes the root marker; the answer's check remains as hist
 and cannot complete the thread again. Human checkmarks still count. Existing ownership and
 access checks apply. Failed answer decoration preserves Done and can be retried by clicking 👍
 again; only the root marker has a durable automatic retry queue. No extra engine call is made.
+Feedback also marks the selected answer when Slack supplies its timestamp in the action
+container rather than the message object, with the same verified thread and owner checks.
 
 ## Reopen completed Slack threads on a new prompt (2026-11-13)
 

@@ -2,6 +2,9 @@
 
 ## 0.6.5 — candidate, pending approval
 
+- Fix the missing ✅ on a liked Slack answer when its feedback payload supplies the answer
+  timestamp in the action container. The thread root and selected answer now both get marked.
+
 - Add **voice calls** (Beta): a **📞 Call** reply-menu button and a **Call the agent** action on
   Activity rows open a private browser call page bound to that conversation and thread. The
   daemon speaks through Google's Gemini Live API; spoken requests run as ordinary turns in the
