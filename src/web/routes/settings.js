@@ -253,7 +253,7 @@ export function createSettingsRouter({
         if (typeof body.geminiApiKey !== "string") return res.status(400).json({ error: "geminiApiKey must be a string" });
         const key = body.geminiApiKey.trim();
         if (key !== "") {
-          if (!isGeminiApiKey(key)) return res.status(400).json({ error: "Paste only the Gemini API key value (letters, digits, - and _)" });
+          if (!isGeminiApiKey(key)) return res.status(400).json({ error: "Paste only the Gemini API key value (letters, digits, dots, - and _; 20 to 256 characters)" });
           patch.geminiApiKey = key;
         }
       }

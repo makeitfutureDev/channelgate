@@ -57,6 +57,15 @@ beforeEach(async () => {
   saveSettings({ voiceCallsEnabled: false, geminiApiKey: "" });
 });
 
+test("both Google key shapes are accepted and anything that could break the URL is refused", async () => {
+  const { isGeminiApiKey, getVoiceCallConfig } = await import("../src/config/settings.js");
+  for (const key of ["AIzaSyA1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6Q7r", "AQ.Ab1cD2eF3gH4iJ5kL6mN7oP8qR9sT0uV1wX2yZ3aB4cD5eF6gH7i"]) assert.equal(isGeminiApiKey(key), true, key);
+  for (const key of ["short", "AQ.key with space 0123456789", "AQ.key&x=1_0123456789abcdef", "AQ.key\"0123456789abcdefgh", "x".repeat(257), 42, null]) assert.equal(isGeminiApiKey(key), false, String(key));
+  saveSettings({ voiceCallsEnabled: true, geminiApiKey: "AQ.Ab1cD2eF3gH4iJ5kL6mN7oP8qR9sT0uV1wX2yZ3aB4cD5eF6gH7i" });
+  assert.equal(getVoiceCallConfig().apiKey, "AQ.Ab1cD2eF3gH4iJ5kL6mN7oP8qR9sT0uV1wX2yZ3aB4cD5eF6gH7i");
+  saveSettings({ voiceCallsEnabled: false, geminiApiKey: "" });
+});
+
 test("voice_call is a registered interactive user origin that never escalates", async () => {
   assert.ok(RUN_ORIGINS.includes(VOICE_CALL_ORIGIN));
   assert.equal(PRINCIPAL_KIND_BY_ORIGIN[VOICE_CALL_ORIGIN], "user");

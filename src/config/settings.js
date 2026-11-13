@@ -553,8 +553,11 @@ export function hasQwenApiKey(providerId) {
 // (has*/last4) and revealable only through /api/secrets/reveal (web/secrets.js).
 export const VOICE_CALL_MODELS = Object.freeze(["gemini-3.8-live", "gemini-2.5-flash-native-audio-preview-12-2025"]);
 export const VOICE_CALL_VOICES = Object.freeze(["Kore", "Puck", "Charon", "Fenrir", "Aoede", "Leda", "Orus", "Zephyr"]);
+// Google issues two shapes: the classic `AIza…` key and the newer `AQ.…` key, which carries a dot.
+// Accept printable URL-safe characters plus the dot; refuse whitespace, quotes and separators so a
+// pasted line can never smuggle a second query parameter into the Live API URL.
 export function isGeminiApiKey(value) {
-  return typeof value === "string" && value.length >= 20 && value.length <= 256 && /^[A-Za-z0-9_-]+$/.test(value);
+  return typeof value === "string" && value.length >= 20 && value.length <= 256 && /^[A-Za-z0-9._-]+$/.test(value);
 }
 export function getVoiceCallConfig() {
   const s = getSettings();
