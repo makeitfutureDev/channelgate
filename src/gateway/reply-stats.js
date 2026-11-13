@@ -27,7 +27,7 @@ export function contextText(result) {
 // (only when the admin enabled it; 2 decimals, no ~/est. markers) · context. No duration and no
 // run token totals: the summed input re-counts the history once per model call and says nothing
 // about how full the context is. The resume command never rides here as text — it lives in
-// Channel Settings → Resume Session and `/resume`.
+// Channel Settings → Diagnostics and `/resume`.
 export function footerText(result) {
   // Claude reports a real dollar cost; Codex doesn't — the per-model rate estimate from Settings
   // is shown bare (same figure the usage ledger records).

@@ -5679,7 +5679,7 @@ The skipped/live cases below remain unverified; this branch is not a release can
   Invoke native `/menu` at top level, `@agent /menu` in each channel thread and `/menu` in a DM
   thread. Pass: exactly the three-button card (Files, Variables, Settings), no visible
   intro/stats/progress and no new `run_start`. Click each: the existing channel-scoped modals open
-  without changing data. Settings → Resume Session shows existing sessions with their owning harness
+  without changing data. Settings → Diagnostics shows existing sessions with their owning harness
   and container cwd, including Clean cwd; fresh cases show guidance. On a card posted before this
   change, clear the thread and click its old Resume button: no old session command. A channel message `/menu` without mention is ignored;
   a revoked/nonmember or different non-admin author cannot open an old menu's controls; a current
@@ -6581,14 +6581,33 @@ Automated: `test/channel-memory.test.js`, `test/memory-search.test.js`,
       channel default** clears all three pins and the next turn in the thread returns to the channel
       harness/model. Confirm the channel record is audited and the thread pin is not, and that
       rapid successive picks each land instead of producing an expired-view card.
-- [x] Automated Resume Session tab: the Settings modal renders a **Resume Session** tab button and,
-      for a thread with a live session, the copyable resume command, the session id and the folder —
-      with the command escaped the way every other value in that modal is, so a channel-configurable
-      work folder cannot smuggle Slack control markup into the card. A thread with no session says
-      so and shows no command; opening Settings outside a thread says the command needs a thread.
-      The shared resolver reads the session at render time: a cleared session yields no command, and
-      a session minted by Codex prints a Codex resume line even when the channel default is Claude
-      (`test/channel-settings-modal.test.js`, `test/menu.test.js`).
+- [x] Automated Diagnostics page: the Settings page dropdown lists **Diagnostics** between Schedules
+      and You, and the legacy `resume` page id lands on it. For a thread with a live session in a
+      containerized channel the page renders the engine, session id, folder and runtime lane, then
+      *On the gateway machine* with the `podman exec … <engine> --resume <id>` wrapper and *Inside
+      the container* with the plain `cd "…" && <engine> --resume <id>` line, each with where-to-run
+      guidance (gateway host as the gateway user; SSH session or VS Code attached to the container),
+      plus the note that the native pickers skip `claude -p` / non-interactive sessions. A host
+      runtime renders the plain line alone as *In a terminal*. Every command is escaped the way every
+      other value in that modal is, so a channel-configurable work folder cannot smuggle Slack
+      control markup into the card. The Agent page carries no resume command any more. A thread
+      with no session says so and shows no command; opening Settings outside a thread says the
+      command needs a thread; an admin-lane session viewed by a non-admin shows the facts, no
+      command and the reason. The shared resolver reads the session at render time and returns
+      `shellCommand` (the plain line), `hostCommand` (the wrapper, "" on a host runtime) and
+      `runtimeScope` beside the recommended `command`: a cleared session yields no command, and a
+      session minted by Codex prints a Codex resume line even when the channel default is Claude
+      (`test/channel-settings-modal.test.js`, `test/slack-settings-redesign.test.js`,
+      `test/slack-settings-blockkit-limits.test.js`, `test/menu.test.js`).
+- [ ] Live Diagnostics page (engine-independent Slack UI case, run once per harness where the
+      session is minted by that harness): in a disposable containerized channel, send a message,
+      then open **⚙️ Settings → Diagnostics** from a reply inside that thread. Pass when the page
+      shows the session id and folder, the *On the gateway machine* `podman exec …` command, the
+      *Inside the container* `cd "…" && <engine> --resume <id>` command and the picker note; running
+      the first on the gateway host reopens that conversation; running the second from an SSH
+      session into the channel (or VS Code attached to its container) reopens the same
+      conversation; and the Agent page shows no resume command. Then `/clear` the thread and
+      reopen Diagnostics: it must say there is no session rather than offering the cleared id.
 - [x] Automated footers: a completed interactive reply's controls are exactly 📂 Files / 🔑 Variables /
       ⚙️ Settings (plus any 📄 review-file buttons) with no `resume_cmd_modal` control, and an
       unattended `deliverResult` answer ends with the same menu, unbound
@@ -6611,7 +6630,7 @@ Automated: `test/channel-memory.test.js`, `test/memory-search.test.js`,
       the static server 404s any path under `.worktrees/`).
 - [ ] Live resume round trip (engine-independent Slack UI case, run once per harness where the
       session is minted by that harness): in a disposable channel, send a message, then open
-      **⚙️ Settings → Resume Session** from a reply inside that thread. Pass when the tab shows the
+      **⚙️ Settings → Diagnostics** from a reply inside that thread. Pass when the page shows the
       thread's command (the `exec` form for a containerized channel), the reply footer shows NO 💻
       button, running the shown command on the gateway machine reopens that conversation, and
       pasting the same line back as `/resume <command>` continues it from the thread. Then `/clear`

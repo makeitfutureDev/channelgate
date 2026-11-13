@@ -131,7 +131,10 @@ const snapshot = {
     sessionId: "994f6108-b405-4bbe-b96d-1641051df2fa",
     engine: "claude",
     workDir: "/home/agent/ChannelGate/slack/settings-channel",
-    command: 'cd "/home/agent/ChannelGate/slack/settings-channel" && claude --resume 994f6108-b405-4bbe-b96d-1641051df2fa',
+    command: 'podman exec -it -w \'/home/agent/ChannelGate/slack/settings-channel\' cg-abc-slack-settings-channel claude --resume 994f6108-b405-4bbe-b96d-1641051df2fa',
+    shellCommand: 'cd "/home/agent/ChannelGate/slack/settings-channel" && claude --resume 994f6108-b405-4bbe-b96d-1641051df2fa',
+    hostCommand: 'podman exec -it -w \'/home/agent/ChannelGate/slack/settings-channel\' cg-abc-slack-settings-channel claude --resume 994f6108-b405-4bbe-b96d-1641051df2fa',
+    runtimeScope: "admin",
   },
 };
 
@@ -177,7 +180,7 @@ test("Settings pages are one dropdown on the first line, with the open page sele
   assert.equal(nav.accessory.action_id, CHANNEL_SETTINGS_TAB_SELECT_ACTION_ID);
   assert.match(nav.text.text, /<#C_SETTINGS>/);
   assert.deepEqual(nav.accessory.options.map((entry) => parseActionValue(entry.value).p), [...CHANNEL_SETTINGS_TABS]);
-  assert.deepEqual(nav.accessory.options.map((entry) => entry.text.text), ["Agent", "Access", "MCP", "Variables", "Skills", "Schedules", "You"]);
+  assert.deepEqual(nav.accessory.options.map((entry) => entry.text.text), ["Agent", "Access", "MCP", "Variables", "Skills", "Schedules", "Diagnostics", "You"]);
   assert.equal(parseActionValue(nav.accessory.initial_option.value).p, "mcp");
   assert.equal(view.close.text, "Done");
   assert.equal(view.submit, undefined, "no form open, no submit");
@@ -217,7 +220,7 @@ test("Agent holds this thread's and the channel's runtime rows, the mode and the
   assert.match(rendered(buildChannelSettingsView({ ...snapshot, vpn: { configured: false, state: "unconfigured" } }, state, { tab: "agent" })), /VPN · Not configured/);
   assert.doesNotMatch(text, /cg_channel_settings_access_field_allowedUsers/, "people live on Access now");
   // Every legacy page id lands on the page that owns its controls now.
-  for (const [legacy, page] of [["general", "agent"], ["runtime", "agent"], ["network", "agent"], ["resume", "agent"], ["secrets", "variables"], ["automations", "schedules"], ["nonsense", "agent"]]) {
+  for (const [legacy, page] of [["general", "agent"], ["runtime", "agent"], ["network", "agent"], ["resume", "diagnostics"], ["secrets", "variables"], ["automations", "schedules"], ["nonsense", "agent"]]) {
     assert.equal(parseSettingsMetadata(buildChannelSettingsView(snapshot, state, { tab: legacy }).private_metadata).tab, page, legacy);
   }
 });
@@ -253,15 +256,39 @@ test("each Settings page renders its part of the channel setup", () => {
   for (const heading of ["Composio", "Make toolbox", "Toolbox", "Custom MCP"]) assert.ok(mcp.blocks.some((block) => block.type === "header" && block.text.text === heading), heading);
 });
 
-test("Agent shows this thread's resume command, escaped, and nothing outside a thread or session", () => {
-  const view = buildChannelSettingsView(snapshot, state, { tab: "agent" });
+test("Diagnostics shows this thread's resume commands for the gateway host and for a shell inside the container, escaped", () => {
+  const view = buildChannelSettingsView(snapshot, state, { tab: "diagnostics" });
   const text = rendered(view);
-  // The command is escaped like every other value in this modal, so a channel-configurable work
-  // folder can never smuggle Slack control markup into the card.
-  assert.match(text, /Resume in a terminal/);
-  assert.match(text, /```cd .*settings-channel.* &amp;&amp; claude --resume 994f6108-b405-4bbe-b96d-1641051df2fa```/);
-  assert.doesNotMatch(rendered(buildChannelSettingsView({ ...snapshot, resume: { inThread: true, command: "" } }, state, { tab: "agent" })), /Resume in a terminal/);
-  assert.doesNotMatch(rendered(buildChannelSettingsView({ ...snapshot, resume: { inThread: false, command: "" } }, state, { tab: "agent" })), /Resume in a terminal/);
+  assert.match(text, /Resume this thread/);
+  assert.match(text, /994f6108-b405-4bbe-b96d-1641051df2fa/);
+  // Both forms, each labelled with WHERE it runs. The command is escaped like every other value
+  // in this modal, so a channel-configurable work folder can never smuggle Slack control markup.
+  assert.match(text, /On the gateway machine\*\\n```podman exec -it -w .*settings-channel.* cg-abc-slack-settings-channel claude --resume 994f6108-b405-4bbe-b96d-1641051df2fa```/);
+  assert.match(text, /Inside the container\*\\n```cd .*settings-channel.* &amp;&amp; claude --resume 994f6108-b405-4bbe-b96d-1641051df2fa```/);
+  assert.match(text, /SSH session into the channel, or VS Code attached to it/);
+  assert.match(text, /include-non-interactive/, "explains why the native pickers show nothing");
+  assert.match(text, /admin runtime/);
+  // The Agent page no longer carries the command; Diagnostics owns it.
+  assert.doesNotMatch(rendered(buildChannelSettingsView(snapshot, state, { tab: "agent" })), /Resume in a terminal|podman exec/);
+
+  // A host runtime has one form only: the plain shell line, labelled for the gateway machine.
+  const hostOnly = { ...snapshot.resume, command: snapshot.resume.shellCommand, hostCommand: "" };
+  const host = rendered(buildChannelSettingsView({ ...snapshot, resume: hostOnly }, state, { tab: "diagnostics" }));
+  assert.doesNotMatch(host, /On the gateway machine|Inside the container|podman exec/);
+  assert.match(host, /In a terminal\*\\n```cd .*settings-channel.* &amp;&amp; claude --resume 994f6108/);
+
+  // An admin-lane session viewed by a non-admin: facts, no command, and the reason.
+  const locked = rendered(buildChannelSettingsView({ ...snapshot, resume: { ...snapshot.resume, command: "", shellCommand: "", hostCommand: "" } }, state, { tab: "diagnostics" }));
+  assert.match(locked, /994f6108-b405-4bbe-b96d-1641051df2fa/);
+  assert.match(locked, /administrator runtime/);
+  assert.doesNotMatch(locked, /claude --resume/);
+
+  // No session yet, and outside a thread: the page says so and shows no command.
+  assert.match(rendered(buildChannelSettingsView({ ...snapshot, resume: { inThread: true, sessionId: "", command: "" } }, state, { tab: "diagnostics" })), /no session yet/);
+  assert.match(rendered(buildChannelSettingsView({ ...snapshot, resume: { inThread: false, command: "" } }, state, { tab: "diagnostics" })), /from a reply inside a thread/);
+  for (const resume of [{ inThread: true, sessionId: "", command: "" }, { inThread: false, command: "" }]) {
+    assert.doesNotMatch(rendered(buildChannelSettingsView({ ...snapshot, resume }, state, { tab: "diagnostics" })), /--resume/);
+  }
 });
 
 test("Agent edits the channel default and the thread pin in place, one row of dropdowns per scope", () => {
@@ -470,7 +497,7 @@ test("Cloud MCP toggles replace one matching selection without duplicating other
   assert.deepEqual(cloudSelectionsAfterToggle([current[1]], "codex", "tool-group:github", { activate: true, selection: github }), [current[1], github]);
 });
 
-test("the Resume Session tab renders the live session resolved from the store", async () => {
+test("the Diagnostics page renders the live session resolved from the store, in both command forms", async () => {
   const { resolveResumeSession } = await import("../src/slack/resume-session.js");
   const { saveSession, clearSession } = await import("../src/gateway/sessions.js");
   await store.ensureRoot();
@@ -485,14 +512,22 @@ test("the Resume Session tab renders the live session resolved from the store", 
   assert.equal(resume.sessionId, "resume-session-id");
   assert.equal(resume.engine, "codex");
   assert.match(resume.command, /resume-session-id/);
-  const view = rendered(buildChannelSettingsView({ ...snapshot, resume }, state, { tab: "agent" }));
+  assert.equal(resume.runtimeScope, "project");
+  // The shell form is the engine's own line in the channel folder — what a shell inside the
+  // container runs; the host form, when the runtime wraps it, is the recommended `command`.
+  assert.equal(resume.shellCommand, `cd ${JSON.stringify(resume.workDir)} && codex exec resume resume-session-id`);
+  assert.ok(resume.command === resume.shellCommand ? resume.hostCommand === "" : resume.hostCommand === resume.command, "hostCommand is the wrapped form or empty");
+  const view = rendered(buildChannelSettingsView({ ...snapshot, resume }, state, { tab: "diagnostics" }));
   assert.match(view, /resume-session-id/);
-  assert.match(view, /Resume in a terminal/);
+  assert.match(view, /Resume this thread/);
+  assert.match(view, /codex exec resume resume-session-id/);
 
   // A cleared session leaves no command behind, and no thread means nothing to resume at all.
   await clearSession(entry.slug, "1700000000.000100");
-  assert.equal((await resolveResumeSession({ entry, meta }, "1700000000.000100")).command, "");
-  assert.deepEqual(await resolveResumeSession({ entry, meta }, ""), { inThread: false, sessionId: "", engine: "", workDir: "", command: "" });
+  const cleared = await resolveResumeSession({ entry, meta }, "1700000000.000100");
+  assert.equal(cleared.command, "");
+  assert.equal(cleared.shellCommand, "");
+  assert.deepEqual(await resolveResumeSession({ entry, meta }, ""), { inThread: false, sessionId: "", engine: "", workDir: "", command: "", shellCommand: "", hostCommand: "", runtimeScope: "" });
 });
 
 test("credential snapshots retain only a safe tail", () => {

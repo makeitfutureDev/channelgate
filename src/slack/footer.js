@@ -33,7 +33,7 @@ export function buildResumeCommand(cwd, sessionId, engine, target = null) {
 // posts into Slack: a streamed or classic reply, an error, a stop, a scheduled/background/API/
 // recovery delivery, and the `/menu` card. It is one fixed set with visible labels, so a reply never
 // shows a partial or icon-only variant of it. The resume command is deliberately NOT here: it lives
-// in Channel Settings → Resume Session and `/resume`. Forking is deliberately not a button either:
+// in Channel Settings → Diagnostics and `/resume`. Forking is deliberately not a button either:
 // a per-reply Fork could only replay Slack text into a fresh session (neither engine forks at an
 // earlier point), so branching stays the typed `/fork <message>`, which clones the engine session.
 //

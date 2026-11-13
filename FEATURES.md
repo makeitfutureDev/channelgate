@@ -1929,7 +1929,7 @@ revisions on failed sync. Details and compatibility limits: `docs/SKILLS.md`.
   from the daemon without starting Claude or Codex. The registered slash command is private to its
   caller; `@agent /menu` inside a channel thread (or `/menu` in a DM message) posts the card in that
   thread. All controls remain available before a session exists and retain their authorization
-  checks. Resume Session is a tab in Settings and the `/resume` command; a 💻 Resume button on a
+  checks. The resume command is Settings → Diagnostics and the `/resume` command; a 💻 Resume button on a
   card posted before this change still opens the resume modal (it reads the thread's session when
   clicked and rechecks requester, channel, access and membership).
 - Existing Slack installations must add `/menu` from `slack-app-manifest.json` to their installed
@@ -2247,12 +2247,21 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
   no provisioned VPN service is answered from metadata alone — no status helper runs, and the row
   reads *Not configured* immediately — so only a provisioned channel spends a subprocess and a
   second view update filling in *Checking status…*.
-  **Resume Session** is a page of its own, open to every authorized user: it renders THIS thread's
-  copyable `cd "…" && <engine> --resume <id>` terminal command (the container `exec` form for a
-  containerized channel), resolved from the session at render time so a stale Settings view cannot
-  hand out a cleared session's id, plus the session id and the folder it belongs to. Opened outside
-  a thread, or in a thread that has not run a turn yet, the tab says so instead of showing a
-  command. It replaces the 💻 reply-footer button, which is gone from run footers.
+  **Diagnostics** is a page of its own, open to every authorized user, and owns THIS thread's
+  terminal resume commands (the Agent page no longer shows one). It renders the engine, the
+  session id, the folder and the runtime lane, then TWO copyable commands, each labelled with
+  where it runs: *On the gateway machine* — the container backend's `podman exec -it -w "…"
+  <container> <engine> --resume <id>` wrapper for a terminal on the gateway host — and *Inside the
+  container* — the plain `cd "…" && <engine> --resume <id>` line for a shell that is already in the
+  channel's container (an SSH session into the channel, or VS Code attached to it). A host runtime
+  has one form only, labelled *In a terminal*. A closing note explains why the native pickers show
+  nothing: Claude's `/resume` skips `claude -p` sessions and Codex lists its non-interactive ones
+  only with `codex resume --include-non-interactive`, so a chat-started session is resumed by id.
+  Everything is resolved from the session at render time, so a stale Settings view cannot hand out
+  a cleared session's id. Opened outside a thread, or in a thread that has not run a turn yet, the
+  page says so instead of showing a command; an admin-lane session viewed by a non-admin shows the
+  facts and says the command is an admin's. The old `resume` page id lands here. It replaces the
+  💻 reply-footer button, which is gone from run footers.
   **Automations** lists this conversation's scheduled tasks, reminders and `/loop` wake-ups (up to
   20, then a pointer to the admin Schedules page): title, kind, on/paused, the cron with its next
   run or the one-time run time (both in the gateway's zone), remaining loop ticks, creator and last
@@ -5884,7 +5893,7 @@ are retired, bullet by bullet; everything else stands.
   contextWindow; no icons/unit labels). The reply footer's controls are the reply menu (📂 Files, 🔑 Variables,
   ⚙️ Settings — see *Reply menu*) and any 📄 review-file buttons, in one actions row under the stats
   context. The resume command is NOT one of them —
-  it lives in Settings → **Resume Session**, `/menu` and `/resume`. Model = the configured cascade that governed the turn (thread override → channel/DM
+  it lives in Settings → **Diagnostics**, `/menu` and `/resume`. Model = the configured cascade that governed the turn (thread override → channel/DM
   model → gateway default) → CLI-reported runtime model (when nothing is configured) → engine name;
   context% and Codex cost rates still key on the CLI-reported runtime model, where multi-model
   Claude `modelUsage` maps use the model with dominant output tokens, and a reported
