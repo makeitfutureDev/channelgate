@@ -188,7 +188,7 @@ test("direct-host Bedrock keeps its own login and scrubs the bearer from split s
     assert.equal(captures[0].env.CLAUDE_CONFIG_DIR, bedrock.bedrockLoginHome());
     fail = true;
     await assert.rejects(() => adapter.run(ctx), (error) => {
-      assert.match(error.message, /^Claude Bedrock authentication failed/);
+      assert.match(error.message, /^Claude Extra authentication failed/);
       assert.ok(!JSON.stringify({ message: error.message, stack: error.stack, details: error.details }).includes(KEY));
       assert.equal(error.details.engine, "claude-bedrock");
       assert.equal(error.details.requestedModel, "sonnet");

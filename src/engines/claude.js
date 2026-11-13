@@ -50,7 +50,7 @@ function applyProviderEnv(env, providerEnv) {
   // Provider routing must be atomic too. Bedrock's bearer key lives only at its regional AWS
   // endpoint; neither an inherited Anthropic login nor a channel's AWS profile/endpoint may
   // displace it. The provider adapter adds back its reviewed pins after this cleanup.
-  if (providerEnv.CLAUDE_CODE_USE_BEDROCK === "1") {
+  if (providerEnv.CLAUDE_CODE_USE_BEDROCK === "1" || providerEnv.CLAUDE_CODE_OAUTH_TOKEN) {
     for (const name of Object.keys(env)) {
       if (/^(?:ANTHROPIC_|AWS_|CLAUDE_CODE_USE_)/.test(name)) delete env[name];
     }

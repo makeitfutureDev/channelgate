@@ -14,10 +14,10 @@ export function terminalHarnessSetup() {
       description: "Sign in on the gateway host as the gateway service user, choosing your intended ChatGPT workspace (including Pro Lite). Enterprise is not required. EU data and inference residency depend on that workspace’s available controls and configuration. A separate login alone does not enforce residency. This harness never falls back to another account.",
     },
     {
-      id: "claude-bedrock", label: "Claude Bedrock", modelField: "defaultBedrockModel", effortField: "defaultBedrockEffort",
+      id: "claude-bedrock", label: "Claude Extra", modelField: "defaultBedrockModel", effortField: "defaultBedrockEffort",
       directory: bedrockLoginHome(),
       command: `install -d -m 700 ${shellQuote(bedrockLoginHome())} && CLAUDE_CONFIG_DIR=${shellQuote(bedrockLoginHome())} claude`,
-      description: "Run on the gateway host as the gateway service user, then type /setup-bedrock. Choose an Amazon Bedrock API key, your AWS region and model pins. This integration supports the Bedrock bearer API key method; AWS profile, SSO and IAM access-key signing are not supported. Usage is billed by AWS; costs are recorded as tokens only.",
+      description: "Run on the gateway host as the gateway service user and sign in with a separate Claude subscription. For Amazon Bedrock instead, type /setup-bedrock and choose an API key, your AWS region and model pins. AWS profile, SSO and IAM access-key signing are not supported. A saved AWS setup stays on Bedrock until you remove its provider environment settings. This login never borrows the regular Claude account. Bedrock usage is billed by AWS; dollar costs remain unknown.",
     },
   ];
 }

@@ -2,6 +2,12 @@
 
 ## 0.6.5 — candidate, pending approval
 
+- Expand the additional Claude harness to **Claude Extra**: sign in with a separate Claude
+  subscription or configure Amazon Bedrock from the same isolated terminal command. Existing
+  logins, engine IDs and sessions are retained. Subscription turns use their own account relay;
+  incomplete AWS configuration still fails clearly without switching providers or borrowing
+  regular Claude's login.
+
 - Add Settings → **Appearance** with a live logo color picker, custom hex and reset. Each gateway
   can use a distinct Activity/app icon color, including real PNG icons for installed browser apps.
   Activity Settings links administrators to the shared control. Existing Chrome Dock icons may

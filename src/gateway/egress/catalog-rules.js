@@ -38,6 +38,7 @@ const FORBIDDEN_HEADERS = new Set(["host", "connection", "proxy-authorization", 
 // The relayed Claude login (scope `relay`): the placeholder in CLAUDE_CODE_OAUTH_TOKEN is swapped
 // only in the Authorization header on the Anthropic API.
 export const RELAY_SECRET_NAME = "CLAUDE_CODE_OAUTH_TOKEN";
+export const CLAUDE_EXTRA_RELAY_SECRET_NAME = "CLAUDE_EXTRA_OAUTH_TOKEN";
 export const RELAY_RULE = Object.freeze({ hosts: Object.freeze(["api.anthropic.com"]), headers: Object.freeze(["authorization"]), format: Object.freeze(["bearer"]) });
 export const CLAUDE_API_RELAY_NAMES = Object.freeze(["ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN"]);
 const CLAUDE_API_RELAY_RULE = Object.freeze({ hosts: Object.freeze(["api.anthropic.com"]), headers: Object.freeze(["authorization", "x-api-key"]), format: Object.freeze(["bearer", "raw"]) });
@@ -62,6 +63,7 @@ export function relayRuleFor(secretName) {
     const provider = resolveBedrockProvider();
     return { hosts: provider.configured ? [new URL(provider.endpoint).hostname] : [], headers: ["authorization"], format: ["bearer"] };
   }
+  if (secretName === CLAUDE_EXTRA_RELAY_SECRET_NAME) return RELAY_RULE;
   return Object.hasOwn(RELAY_RULES, secretName) ? RELAY_RULES[secretName] : null;
 }
 

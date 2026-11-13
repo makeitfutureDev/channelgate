@@ -31,7 +31,7 @@ import { codexEuLoginHome, isCodexEu, isChannelCodex } from "../channel-codex-pa
 import path from "node:path";
 import { egressActive } from "../../runtimes/container/egress-hook.js";
 import { corePlaceholder, mintPlaceholder, PLACEHOLDER_SHAPES, wrapPlaceholder } from "./placeholders.js";
-import { CLAUDE_API_RELAY_NAMES, CODEX_CHANNEL_API_RELAY_SECRET_NAME, CODEX_CHANNEL_RELAY_SECRET_NAME, CODEX_API_RELAY_SECRET_NAME, CODEX_EU_RELAY_SECRET_NAME, CODEX_RELAY_SECRET_NAME, RELAY_SECRET_NAME, relayRuleFor, rulesFor } from "./catalog-rules.js";
+import { CLAUDE_API_RELAY_NAMES, CLAUDE_EXTRA_RELAY_SECRET_NAME, CODEX_CHANNEL_API_RELAY_SECRET_NAME, CODEX_CHANNEL_RELAY_SECRET_NAME, CODEX_API_RELAY_SECRET_NAME, CODEX_EU_RELAY_SECRET_NAME, CODEX_RELAY_SECRET_NAME, RELAY_SECRET_NAME, relayRuleFor, rulesFor } from "./catalog-rules.js";
 import { engineHostsFor } from "./engine-hosts.js";
 
 export const GRANT_SCOPES = Object.freeze(["organization", "channel", "personal", "relay"]);
@@ -154,6 +154,23 @@ export function revokeMissing({ scope, channelId, ownerId, present, now = Date.n
 // and refreshed when it is about to expire — at most once a minute.
 const relayCaches = new Map(); // secret name → { at, promise }
 async function cachedRelayToken(secretName, deps, channelId = "") {
+  if (secretName === CLAUDE_EXTRA_RELAY_SECRET_NAME) {
+    const extra = await import("../../engines/bedrock.js");
+    // Recheck the dedicated file/provider before consulting a cached token: deletion, expiry,
+    // rotation or a switch to AWS must take effect immediately, even within the cache window.
+    const auth = (deps.extraClaudeState || extra.extraClaudeCredentialState)();
+    if (!auth.authenticated || auth.method !== "claude-subscription") return "";
+    const key = `${secretName}:${auth.fingerprint}`;
+    let cache = relayCaches.get(key);
+    if (!cache || Date.now() - cache.at > RELAY_CACHE_MS) {
+      // Keep only one generation; token rotations must not grow an unbounded cache.
+      for (const old of relayCaches.keys()) if (old.startsWith(`${secretName}:`)) relayCaches.delete(old);
+      cache = { at: Date.now(), promise: Promise.resolve().then(() => (deps.extraClaudeRelayToken || extra.resolveExtraClaudeToken)()) };
+      relayCaches.set(key, cache);
+      cache.promise.catch(() => { if (relayCaches.get(key) === cache) relayCaches.delete(key); });
+    }
+    return String((await cache.promise)?.token || "");
+  }
   const euSecret = secretName === CODEX_EU_RELAY_SECRET_NAME;
   const channelSecret = [CODEX_CHANNEL_RELAY_SECRET_NAME, CODEX_CHANNEL_API_RELAY_SECRET_NAME].includes(secretName);
   const apiSecret = [CODEX_API_RELAY_SECRET_NAME, CODEX_CHANNEL_API_RELAY_SECRET_NAME].includes(secretName);
@@ -400,6 +417,17 @@ export function containerClaudeCredential({ target, relay, channelId = "" }) {
   if (!key) return relay;
   const placeholder = relayPlaceholderFor({ channelId: key });
   return { ...relay, token: `${PLACEHOLDER_SHAPES["anthropic-oauth"]}${placeholder}`, placeholder: true };
+}
+
+// The additional subscription gets its own live resolver and placeholder, never the regular
+// Claude relay. A raw token is admitted only to an explicitly resolved direct-host run.
+export function containerExtraClaudeCredential({ target, relay } = {}) {
+  if (!relay?.token) return { token: "", error: relay?.error || "The extra Claude subscription is not signed in" };
+  if (target?.backend === "host") return relay;
+  if (!egressActive(target)) return { token: "", error: "The extra Claude subscription requires the egress proxy to relay its isolated login" };
+  const channelId = String(target?.meta?.channelId || "");
+  if (!channelId) return { token: "", error: "the run has no channel to bind the extra Claude sign-in to" };
+  return { ...relay, token: `${PLACEHOLDER_SHAPES["anthropic-oauth"]}${placeholderFor({ scope: "relay", channelId, secretName: CLAUDE_EXTRA_RELAY_SECRET_NAME })}`, placeholder: true };
 }
 
 // The durable nested-CLI login holds only channel-bound placeholders. An API-key installation
