@@ -62,7 +62,7 @@ test("channel login offers a separate harness, preserves switching, and copies t
   assert.equal(await page.locator(".ch-auth-channel-panel .ch-codex-device-section").isVisible(), false);
   await page.locator(".ch-auth-channel-panel .ch-codex-api-key").fill("sk-BROWSER-ACCOUNT-FIXTURE-12345");
   await page.locator(".ch-auth-channel-panel .ch-codex-key-save").click();
-  await page.waitForFunction(() => document.querySelector(".ch-engine").value === "codex-channel");
+  await page.locator('.ch-engine option[value="codex-channel"]:checked').waitFor({ state: "attached" });
   assert.equal(await page.locator(".ch-engine-field").isVisible(), true);
   await page.locator(".ch-engine").selectOption("codex");
   assert.equal(await page.locator(".ch-engine").inputValue(), "codex");
