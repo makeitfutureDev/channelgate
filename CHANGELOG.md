@@ -2,6 +2,9 @@
 
 ## 0.6.5 — candidate, pending approval
 
+- Keep the Activity footer at the bottom of the window when conversations do not fill the page,
+  and below the final conversation for longer lists.
+
 - Make the Activity dashboard an installable web app. Chrome and Edge now offer **Install** on
   any Activity page; the app opens in its own window with the ChannelGate icon, resumes your
   current session and falls back to passkey sign-in when it has expired.

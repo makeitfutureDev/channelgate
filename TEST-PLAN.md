@@ -1,5 +1,16 @@
 # ChannelGate — Test Plan
 
+## Activity footer placement (2026-11-13)
+
+- Engine-independent: CSS layout uses viewport and content height; no engine output controls it.
+- Browser acceptance: render the Activity dashboard with zero, one and 60 conversation rows at
+  desktop (1440×900) and mobile (390×844) sizes in light and dark themes. When content fits,
+  the privacy line ends at the viewport bottom and the footer remains visible. With 60 rows,
+  scroll to the bottom: the footer follows the last row without overlap, and the privacy line
+  ends at the document bottom. Repeat at 390×480, allowing natural scrolling when wrapped
+  controls exceed the viewport, and verify no horizontal overflow. All 18 browser scenarios passed.
+- Regression: `node --test test/activity-page.test.js test/activity-settings-page.test.js`.
+
 ## Optional queue controls preserve Activity status (2026-11-13)
 
 - Automated: `node --test test/activity.test.js test/home-threads.test.js`. The production

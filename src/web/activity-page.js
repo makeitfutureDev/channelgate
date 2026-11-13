@@ -933,7 +933,10 @@ ${SUBSCRIPTION_CSS}
 @media(prefers-color-scheme:light){:root:not([data-theme=dark]){${LIGHT}}}
 :root[data-theme=light]{${LIGHT}}
 :root[data-theme=dark]{${DARK}}
-body{font:13px/1.45 var(--font);background:var(--bg);color:var(--ink)}
+body{display:flex;flex-direction:column;min-height:100vh;min-height:100dvh;font:13px/1.45 var(--font);background:var(--bg);color:var(--ink)}
+main{display:flex;flex-direction:column;flex:1}
+#activity-view{display:flex;flex-direction:column;flex:1}
+#activity-view>section{flex:1}
 a:hover{text-decoration:none}
 .s-working,.pill.working{--c:var(--s-working)}.s-waiting,.pill.waiting{--c:var(--s-waiting)}.s-error,.pill.error{--c:var(--s-error)}.s-idle,.pill.idle{--c:var(--s-idle)}.s-later,.pill.later{--c:var(--s-later)}.s-done,.pill.done{--c:var(--s-done)}
 .top{position:sticky;top:0;z-index:5;display:flex;align-items:center;flex-wrap:wrap;gap:8px 14px;min-height:52px;padding:8px 16px;background:color-mix(in srgb,var(--bg) 92%,transparent);backdrop-filter:blur(8px);border-bottom:1px solid var(--line)}
