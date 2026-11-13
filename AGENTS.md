@@ -166,14 +166,17 @@ post/edit the reply in the thread (degraded to the surface's capabilities) → u
   idempotency window, in-flight cap, `api_jobs`; the key is an admin credential and every run acts
   as the fixed admin `api` principal with no personal scope — the caller-supplied author is
   attribution only, never trusted for personal tokens or admin state).
-- `src/gateway/voice/` + `src/web/call-page.js` + `src/slack/call-button.js` — voice calls
-  (`docs/VOICE-CALLS.md`): `gemini-live.js` is the Gemini Live WebSocket client (setup, PCM
-  frames, transcription, function calls, usage deltas, resumption on `goAway`); `calls.js` the
-  call manager — admission by the Dashboard rule, one bound thread, the voice's tools, a spoken
+- `src/gateway/voice/` + `src/web/call-overlay.js` + `src/slack/call-button.js` — voice calls
+  (`docs/VOICE-CALLS.md`): `gemini-live.js` is the Gemini Live WebSocket client (setup, binary
+  PCM frames, transcription, function calls, usage deltas, resumption on `goAway`); `calls.js`
+  the call manager — admission by the Dashboard rule, one bound conversation at a time (or none),
+  the voice's tools (list/search the caller's OWN Activity conversations, switch thread or
+  channel with the segment transcript posted to the thread left behind, read, dispatch), a spoken
   task dispatched as a turn AUTHORED BY THE CALLER with origin `voice_call` (interactive, never
-  escalatable), the hang-up summary and the `gemini-live` usage row. The browser page lives under
-  the caller's Activity session (`src/web/activity.js` routes: SSE down, octet-stream POSTs up;
-  no WebSocket server); the Gemini key is a write-only setting (`getVoiceCallConfig`).
+  escalatable), the hang-up summary, the `gemini-live` usage row and one memory line in the
+  caller's DM folder. The browser side is an overlay on the Activity dashboard
+  (`src/web/activity.js` routes: SSE down, octet-stream POSTs up; no WebSocket server); the
+  Gemini key is a write-only setting (`getVoiceCallConfig`).
 - `src/gateway/{approval-requests,instruction-approvals,approval-link-tokens}.js` +
   `src/slack/approvals.js` + `src/web/approval-links.js` + `src/platforms/approval-delivery.js` —
   approvals: one decision path with scopes once / thread / forever ("forever" is admin-only), the
