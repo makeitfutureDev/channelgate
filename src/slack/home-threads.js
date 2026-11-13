@@ -255,8 +255,11 @@ async function discoverLiveRoots(client, userId, access, channels, now, rootRead
     const currentAccess = await accessContext(client, userId);
     access = currentAccess;
     // Root ownership is verified from Slack, never inferred from a queued run's author.
-    if (humanRoot(root) && await currentAccess.allows(entry, candidate.threadTs)) {
-      indexSlackThread({ channelId: entry.channelId, slug: entry.slug, root, agentEngaged: true });
+    if (root && await currentAccess.allows(entry, candidate.threadTs)) {
+      if (humanRoot(root)) indexSlackThread({ channelId: entry.channelId, slug: entry.slug, root, agentEngaged: true });
+      // A bot-started thread is a verified exclusion, not missing Slack activity. Retain
+      // the discovery tombstone so active automation cannot consume every repair batch.
+      else skipSlackThreadCandidate({ channelId: entry.channelId, slug: entry.slug, threadTs: candidate.threadTs });
       reads.delete(key);
     } else { state.root = null; unavailable = true; }
   }

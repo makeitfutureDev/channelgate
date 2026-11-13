@@ -2,6 +2,10 @@
 
 ## 0.6.5 — candidate, pending approval
 
+- Stop showing the Activity partial-data warning for successfully verified bot-started threads.
+  Excluded automation threads no longer delay discovery of older human threads; actual Slack
+  lookup failures still show the warning.
+
 - Pin personal Activity conversations into a matching table above the regular feed. Pins follow
   your account across sessions; the section disappears when no pinned conversations match.
 

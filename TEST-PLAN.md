@@ -1,5 +1,22 @@
 # ChannelGate — Test Plan
 
+## Activity bot-started live-root exclusions (2026-11-13)
+
+- Engine-independent: root ownership, discovery and warning state are evaluated in the daemon;
+  no engine is invoked and the same rules apply to Claude and Codex active-run records.
+- Regression: `node --test test/home-threads.test.js test/activity.test.js` covers bot-root
+  exclusions across repeated refreshes, a batch of twelve bot roots ahead of a human root,
+  real Slack failures and later recovery, stalled/coalesced reads, and private membership
+  revocation during a bot-root lookup.
+- Live acceptance fixture: a disposable Slack channel admitted to the viewer, with an indexed
+  human thread and an active agent run whose unindexed root was posted by a bot. Open personal
+  Activity and refresh twice. The human thread stays visible, the bot thread stays excluded,
+  and `/api/threads` plus `threads` stream events report `unavailable: false`. The excluded root
+  is not repeatedly fetched while its run remains active. Use an isolated failing/timeout Slack
+  client fixture to verify `unavailable: true` without removing the indexed human row; restore
+  reads and confirm recovery. Revoke private membership while a bot-root read awaits and verify
+  no discovery row is written. Never change a production thread to build this fixture.
+
 ## Pinned Activity conversations (2026-11-13)
 
 - Engine-independent: dashboard row placement and personal preference writes do not invoke an
