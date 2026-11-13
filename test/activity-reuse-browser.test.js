@@ -423,7 +423,7 @@ test("Later controls work in a real browser at desktop and mobile widths", { ski
       return { label: item.getAttribute("aria-label"), width: item.clientWidth, height: item.clientHeight, size: parseFloat(icon.width),
         left: parseFloat(icon.marginLeft), top: parseFloat(icon.marginTop), position: icon.position };
     }));
-    assert.equal(icons.length, 3);
+    assert.equal(icons.length, 4, "Slack, Done, Later and Pin each have a centred icon");
     for (const icon of icons) {
       assert.equal(icon.position, "absolute", icon.label);
       assert.ok(Math.abs(icon.left - (icon.width - icon.size) / 2) <= 0.5 && Math.abs(icon.top - (icon.height - icon.size) / 2) <= 0.5,
@@ -538,4 +538,88 @@ test("Activity channel grouping persists and stays usable on desktop and mobile 
     assert.deepEqual(errors, []);
     await context.close();
   }
+});
+
+test("Activity pins persist in a matching top table and work on desktop/mobile in both themes", { skip: !process.env.CG_BROWSER_MODULE, timeout: 45_000 }, async (t) => {
+  resetActivityStateForTests();
+  const ownerId = "UPINFIXTURE", channelId = "CPINFIXTURE", otherId = "UOTHERPINFIXTURE";
+  await setUser(ownerId, { approved: true, activityPinnedThreads: [] });
+  await setUser(otherId, { approved: true, activityPinnedThreads: [] });
+  await upsertChannelEntry(channelId, { name: "Pinned browser fixture", type: "channel" });
+  const entry = await getChannelEntry(channelId);
+  await saveChannelMeta(entry.slug, { access: "approved" });
+  const roots = [
+    { ts: "200.000001", user: ownerId, text: "Pinned activity browser fixture with a long conversation title" },
+    { ts: "200.000002", user: ownerId, text: "Second fixture conversation" },
+    { ts: "200.000003", user: otherId, text: "Other viewer fixture" },
+  ];
+  for (const root of roots) indexSlackThread({ channelId, slug: entry.slug, root, agentEngaged: true });
+  const client = { auth: { test: async () => ({ user_id: "BPINFIXTURE" }) },
+    conversations: { replies: async ({ ts }) => ({ messages: roots.filter((root) => root.ts === ts) }) },
+    reactions: { add: async () => ({ ok: true }), remove: async () => ({ ok: true }) } };
+  let base;
+  const app = express(); serveBrandAssets(app);
+  app.use("/activity", createActivityRouter({ getClient: () => client, getTeamId: () => "TPINFIXTURE", getBaseUrl: () => base, pollMs: 25 }));
+  const server = await new Promise((resolve) => { const s = app.listen(0, "127.0.0.1", () => resolve(s)); });
+  base = `http://127.0.0.1:${server.address().port}`;
+  t.after(() => new Promise((resolve) => { resetActivityStateForTests(); server.closeAllConnections(); server.close(resolve); }));
+  const { chromium } = await import(process.env.CG_BROWSER_MODULE);
+  const browser = await chromium.launch({ headless: true, executablePath: process.env.CG_BROWSER_EXECUTABLE });
+  t.after(() => browser.close());
+  const context = await browser.newContext(), page = await context.newPage(), errors = [];
+  page.setDefaultTimeout(5000);
+  page.on("pageerror", (error) => errors.push(error.message));
+  await page.goto(createActivityGrantUrl({ baseUrl: base, ownerId, teamId: "TPINFIXTURE" }));
+  const pin = page.getByRole("button", { name: "Pin: " + roots[0].text, exact: true });
+  await pin.waitFor();
+  assert.equal(await page.locator("#pinned-section").isVisible(), false);
+  await pin.click();
+  await page.locator("#pinned-threads tr").waitFor();
+  assert.equal(await page.locator("#threads tr").count(), 1);
+  assert.equal(await page.locator("#pinned-count").textContent(), "1");
+  for (const theme of ["dark", "light"]) {
+    await page.evaluate((value) => { globalThis.document.documentElement.dataset.theme = value; }, theme);
+    for (const width of [1440, 768, 700, 390, 320]) {
+      await page.setViewportSize({ width, height: 900 });
+      assert.equal(await page.evaluate(() => globalThis.document.documentElement.scrollWidth <= globalThis.innerWidth), true, `${theme}/${width}: no horizontal overflow`);
+      const pinnedBox = await page.locator("#pinned-section").boundingBox(), tableBox = await page.locator("#table").boundingBox();
+      assert.ok(pinnedBox.y + pinnedBox.height <= tableBox.y, "pins appear above the ordinary table");
+      for (const button of await page.locator("#pinned-threads button").all()) {
+        const box = await button.boundingBox();
+        const cell = await page.locator("#pinned-threads .actions").boundingBox();
+        assert.ok(box.x >= 0 && box.x + box.width <= width, `${theme}/${width}: controls fit`);
+        assert.ok(box.x >= cell.x && box.x + box.width <= cell.x + cell.width, `${theme}/${width}: controls stay in their column`);
+      }
+      const cols = await page.locator("#pinned-threads tr, #threads tr").evaluateAll((rows) => rows.map((row) => [...row.children].map((cell) => Math.round(cell.getBoundingClientRect().x))));
+      assert.deepEqual(cols[0], cols[1], "both tables use the same columns");
+    }
+  }
+  await page.reload(); await page.locator("#pinned-threads tr").waitFor();
+  const second = await context.newPage();
+  await second.goto(createActivityGrantUrl({ baseUrl: base, ownerId, teamId: "TPINFIXTURE" }));
+  await second.locator("#pinned-threads tr").waitFor();
+  await second.close();
+  await page.getByRole("button", { name: "Delay for later: " + roots[0].text, exact: true }).click();
+  await page.getByRole("button", { name: "Resume: " + roots[0].text, exact: true }).waitFor();
+  assert.equal(await page.locator("#pinned-threads tr").count(), 1);
+  await page.getByRole("button", { name: "Mark done: " + roots[0].text, exact: true }).click();
+  await page.getByRole("button", { name: "Reopen: " + roots[0].text, exact: true }).waitFor();
+  assert.equal(await page.locator("#pinned-threads tr").count(), 1, "Done does not unpin");
+  await page.locator("#search").fill("Second");
+  assert.equal(await page.locator("#pinned-section").isVisible(), false);
+  await page.locator("#search").fill("");
+  await page.locator("#group-by").selectOption("channel");
+  assert.equal(await page.locator("#pinned-threads tr").count(), 1);
+  const otherContext = await browser.newContext(), other = await otherContext.newPage();
+  await other.goto(createActivityGrantUrl({ baseUrl: base, ownerId: otherId, teamId: "TPINFIXTURE" }));
+  await other.locator("#threads tr").waitFor();
+  assert.equal(await other.locator("#pinned-section").isVisible(), false);
+  assert.equal(await other.locator("#threads tr").count(), 1);
+  await otherContext.close();
+  await page.getByRole("button", { name: "Unpin: " + roots[0].text, exact: true }).click();
+  await page.waitForFunction(() => globalThis.document.getElementById("pinned-section").hidden);
+  await page.getByRole("button", { name: /^Completed/ }).click();
+  await page.getByRole("button", { name: "Pin: " + roots[0].text, exact: true }).waitFor();
+  assert.equal(await page.locator("#threads tr").count(), 1);
+  assert.deepEqual(errors, []);
 });

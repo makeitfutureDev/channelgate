@@ -209,10 +209,12 @@ export function createActivityRouter({
     if (version !== configVersion) throw Object.assign(new Error("Thread access changed"), { status: 403 });
   };
   const browserSnapshot = async (client, session, id) => {
-    const data = await snapshot(client, session.ownerId, { filter: "all-statuses", pageSize: 1000 });
     const user = await getUser(session.ownerId);
+    const pins = new Set(Array.isArray(user?.activityPinnedThreads) ? user.activityPinnedThreads : []);
+    const data = await snapshot(client, session.ownerId, { filter: "all-statuses", pageSize: 1000, pinnedThreads: [...pins] });
     return {
       rows: data.rows.map((row) => ({ channelId: row.channel_id, threadTs: row.thread_ts,
+        pinned: pins.has(JSON.stringify([row.channel_id, row.thread_ts])),
         title: row.title, channelName: row.channelName, status: row.status, lastMessageMs: row.last_message_ms,
         ...(Number.isSafeInteger(row.working_since_ms) ? { workingSinceMs: row.working_since_ms } : {}),
         url: `/activity/${id}/open/${encodeURIComponent(row.channel_id)}/${encodeURIComponent(row.thread_ts)}` })),
@@ -380,6 +382,22 @@ export function createActivityRouter({
       await recheckOwned(req, client, session, req.params.channelId, req.params.threadTs);
       return res.redirect(303, req.query.browser === "1" ? target.toString() : app.toString());
     } catch (error) { return unavailable(res, error.status || 403); }
+  });
+  router.post("/:id/api/pin", async (req, res) => {
+    try {
+      const { session, client } = await context(req);
+      if (req.headers.origin !== req.activityOrigin || !timingSafeEqualStr(String(req.headers["x-cg-csrf"] || ""), session.csrf)) return unavailable(res, 403);
+      const { channelId, threadTs, pinned } = req.body || {};
+      if (typeof channelId !== "string" || typeof threadTs !== "string" || typeof pinned !== "boolean") return unavailable(res, 400);
+      await recheckOwned(req, client, session, channelId, threadTs);
+      const key = JSON.stringify([channelId, threadTs]);
+      await setUser(session.ownerId, (current) => {
+        const pins = new Set(Array.isArray(current?.activityPinnedThreads) ? current.activityPinnedThreads : []);
+        if (pinned) pins.add(key); else pins.delete(key);
+        return { activityPinnedThreads: [...pins] };
+      });
+      return res.json({ ok: true });
+    } catch (error) { return unavailable(res, error.status || 503); }
   });
   router.post("/:id/api/group-order", async (req, res) => {
     try {

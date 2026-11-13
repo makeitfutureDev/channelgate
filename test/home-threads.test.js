@@ -708,6 +708,11 @@ test("local Activity snapshots cap visible data and flag partial results", async
   const snapshot = await activityThreadSnapshot(client, "U_MINE", { pageSize: 10000 });
   assert.equal(snapshot.total, 1000); assert.equal(snapshot.rows.length, 1000);
   assert.equal(snapshot.truncated, true); assert.equal(snapshot.pages, 1);
+  const pin = JSON.stringify([c.channelId, "100.000001"]);
+  const withPin = await activityThreadSnapshot(client, "U_MINE", { filter: "all-statuses", pageSize: 1000, pinnedThreads: [pin] });
+  assert.equal(withPin.rows.length, 1001);
+  assert.equal(withPin.rows.some((row) => row.thread_ts === "100.000001"), true, "old saved pins survive the ordinary history cap");
+  assert.equal(new Set(withPin.rows.map((row) => row.thread_ts)).size, withPin.rows.length);
 });
 
 test("thread changes emit scoped invalidations and passive checks do not loop", async () => {
