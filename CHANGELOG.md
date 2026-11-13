@@ -2,6 +2,9 @@
 
 ## 0.6.5 — candidate, pending approval
 
+- Describe the native answer buttons as **Mark as done (thread owner only)** and **Move to Later (thread owner only)**, with matching
+  screen-reader labels for their Activity actions.
+
 - Add admin controls for parallel agent runs and reserved interactive slots, separate from the
   running-container limit. Saved limits update queued work immediately without stopping active runs.
 
