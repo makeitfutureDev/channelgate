@@ -477,7 +477,7 @@ test("Chromium reports the Activity dashboard and its sign-in page as one instal
   await page.goto(`${base}/activity/app`);
   assert.equal(new URL(page.url()).pathname, "/activity/login");
   let state = await installable();
-  assert.equal(state.url, `${base}/activity/manifest.webmanifest`);
+  assert.equal(state.url, `${base}/activity/manifest.webmanifest?color=ff642f`);
   assert.deepEqual(state.errors, []);
   assert.deepEqual(state.installabilityErrors, []);
   // Signed in, every view links the SAME manifest id, so Chrome sees one app.
@@ -487,6 +487,7 @@ test("Chromium reports the Activity dashboard and its sign-in page as one instal
   for (const view of ["", "/subscriptions", "/settings"]) {
     await page.goto(dashboard + view);
     state = await installable();
+    assert.equal(state.url, `${base}/activity/manifest.webmanifest?color=ff642f`);
     assert.deepEqual(state.installabilityErrors, [], view || "activity");
     assert.equal(state.manifest.id, "/activity/app");
     assert.equal(state.manifest.name, "xavier · Activity");

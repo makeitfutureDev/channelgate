@@ -1,3 +1,4 @@
+import { normalizeLogoColor } from "../../config/appearance.js";
 import { assertEngineSelectable } from "../../engines/selection.js";
 import { assertNewMcpSelections } from "../../gateway/mcp-selection.js";
 // Settings + lifecycle admin routes: daemon settings (Slack tokens + options), on-demand
@@ -341,6 +342,11 @@ export function createSettingsRouter({
       if (body.clearComposioSdkApiKey === true) patch.composioSdkApiKey = "";
       if (typeof body.composioMcpUrl === "string") patch.composioMcpUrl = body.composioMcpUrl.trim();
       if (typeof body.toolboxMcpUrl === "string") patch.toolboxMcpUrl = body.toolboxMcpUrl.trim();
+      if (Object.hasOwn(body, "logoColor")) {
+        const color = normalizeLogoColor(body.logoColor);
+        if (!color) return res.status(400).json({ error: "Logo color must be a six-digit hex color, such as #ff642f" });
+        patch.logoColor = color;
+      }
       if (typeof body.publicUrl === "string") patch.publicUrl = normalizePublicUrl(body.publicUrl);
       // Which proxy header the login/approval backoff may believe: "" / cloudflare / xff.
       if (typeof body.trustProxy === "string") {

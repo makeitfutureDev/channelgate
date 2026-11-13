@@ -1,5 +1,18 @@
 # ChannelGate — Features
 
+## Deployment app logo color (2026-11-14)
+
+Administrator Settings → **Appearance** has a color picker, six-digit hex field, live icon
+preview and reset to the original orange. Save changes this deployment's shared Activity logo,
+favicon and actual 192/512 PNG app icons, including the opaque maskable icon. The reviewed gate
+shape, transparency and anti-aliasing remain; dark colors use a white gate for visibility. The
+Activity Settings Appearance card links administrators to this control and explains the shared
+scope to everyone else. Each deployment keeps its own setting, so installed apps from different
+gateways can use distinct colors. The manifest id, scope and launcher remain stable; versioned
+icon URLs and uncached manifest responses expose updates without changing app identity or access.
+Chrome controls installed icon updates; an existing Dock icon may need the app reopened or
+reinstalled to refresh. No macOS-specific update timing is promised.
+
 ## Voice calls with a channel's agent · Beta (2026-11-13, navigation 2026-11-14)
 
 An approved user can talk to a channel's agent from a voice-call overlay on their personal

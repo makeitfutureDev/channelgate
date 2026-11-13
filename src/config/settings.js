@@ -15,6 +15,7 @@ import { terminalHarnessSetup } from "../engines/terminal-setup.js";
 // The default container image ref lives with the image module (a dependency-free leaf) so the
 // transactional updater can name the same image without importing this file's database layer.
 import { CONTAINER_DEFAULT_IMAGE } from "../runtimes/container/image.js";
+import { logoColor } from "./appearance.js";
 import { modelShortcutsFromSettings } from "./model-shortcuts.js";
 import { enterpriseFeatureEnabled, requireEnterpriseFeature } from "../ee/feature-entitlements.js";
 // Dependency-free reaction normalization keeps reserved Teams controls out of activation lists.
@@ -48,6 +49,9 @@ export function normalizePublicUrl(value) {
   if (!trimmed) return "";
   return /^[A-Za-z][A-Za-z\d+.-]*:\/\//.test(trimmed) ? trimmed : `https://${trimmed}`;
 }
+
+// Invalid hand-edited settings fall back to the original public branding.
+export function getLogoColor() { return logoColor(getSettings().logoColor); }
 
 // The stored settings' VERSION: a counter bumped by every saveSettings, so a reader can tell
 // whether the values it is holding are still the ones on disk. It lives in settings.json itself
@@ -1201,6 +1205,7 @@ export function settingsForApi() {
     composioMcpUrl: s.composioMcpUrl ?? process.env.COMPOSIO_MCP_URL ?? "https://connect.composio.dev/mcp",
     toolboxMcpUrl: s.toolboxMcpUrl ?? process.env.TOOLBOX_MCP_URL ?? "https://www.skillsmanager.uk/toolbox",
     publicUrl: getPublicUrl(),
+    logoColor: getLogoColor(),
     trustProxy: getTrustProxy(),
     approvalLinks: getApprovalLinks(),
     aiTestingUsers: getAiTestingUsers(),

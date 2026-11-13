@@ -1,9 +1,11 @@
 // Cookie-authenticated browser dashboard with self-hosted brand assets and no browser storage.
 import crypto from "node:crypto";
+import { getLogoColor } from "../config/settings.js";
+import { channelGateLogo } from "../config/appearance.js";
 import { ACTIVITY_THEME_CSS } from "./activity-theme.js";
 import { createSubscriptionUi, SUBSCRIPTION_CSS } from "../../public/subscription-ui.js";
 import { DEFAULT_ACTIVITY_GROUP_ORDER } from "./activity-order.js";
-import { ACTIVITY_APP_HEAD } from "./activity-app.js";
+import { activityAppHead } from "./activity-app.js";
 import { CALL_OVERLAY_CSS, callOverlayBrowser, callOverlayConfig, callOverlayMarkup } from "./call-overlay.js";
 
 // The header's theme switch, shared by every dashboard view. Matching the system choice clears
@@ -875,6 +877,10 @@ function settingsBrowser(config, browser, theme) {
       select.disabled = ended;
       select.addEventListener("change", () => { void theme.saveTheme(select.value); });
       appearance.append(field("Theme", select));
+      appearance.append(node("p", "settings-copy", "The app logo color is shared by everyone on this gateway. An administrator can change it in gateway Settings → Appearance."));
+      if (data.account.role === "admin") {
+        const branding = node("a", "settings-button", "Change app logo color"); branding.href = "/settings#set-appearance"; appearance.append(branding);
+      }
       const reminders = card("Quiet-thread reminders", "When the agent answers you and the thread stays quiet, it mentions you there once after the reminder window. Applies in every channel and DM.");
       const enabled = Boolean(data.general.nudges);
       reminders.append(row(enabled ? "On" : "Off", "", [button(enabled ? "Turn off" : "Turn on", () => { void send({ action: "nudges", enabled: !enabled }); }, "settings-button" + (enabled ? "" : " primary"))]));
@@ -1063,11 +1069,9 @@ const LIGHT = `color-scheme:light;
   --orange:#f0531c;--orange-soft:rgba(240,83,28,.16);--brand-ink:#fff;--teal:#eaeee8;
   --s-working:#1f6fd6;--s-waiting:#a8690a;--s-error:#d33434;--s-idle:#56635f;--s-later:#8a3fd1;--s-done:#23874d;
   --ok:#23874d;--warn:#c07c10;--danger:#d33434;--tint:11%;--shadow:rgba(16,32,28,.18);`;
-// The ChannelGate gate mark (as on channelgate.dev), inline so it needs no extra request or CSP source.
-const CHANNELGATE_LOGO = `<svg viewBox="0 0 48 48" focusable="false"><rect width="48" height="48" rx="12" fill="#ff642f"/><g transform="translate(6 6)" fill="#18382b"><path d="M3 30V15a15 15 0 0 1 30 0v15h-7V15a8 8 0 0 0-16 0v15Z"/><path d="M14 30V15a4 4 0 0 1 8 0v15Z"/></g></svg>`;
 const escapeHtml = (value) => String(value ?? "").replace(/[&<>"']/g, (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[char]);
 
-export function activityPage({ sessionId, csrf, view = "activity", agent = "", theme = "system", teamId = "", voiceCalls = false, callTarget = null }) {
+export function activityPage({ sessionId, csrf, view = "activity", agent = "", theme = "system", teamId = "", voiceCalls = false, callTarget = null, logoColor = getLogoColor() }) {
   const subscriptionsView = view === "subscriptions", settingsView = view === "settings";
   const base = `/activity/${encodeURIComponent(sessionId)}`;
   const nonce = crypto.randomBytes(16).toString("base64url");
@@ -1079,7 +1083,7 @@ export function activityPage({ sessionId, csrf, view = "activity", agent = "", t
   const pinned = theme === "dark" || theme === "light" ? ` data-theme="${theme}"` : "";
   const filters = [["active", "Active"], ["working", "Working"], ["waiting", "Waiting"], ["error", "Error"], ["idle", "Idle"], ["later", "Later"], ["done", "Completed"], ["open", "All open"]];
   return { nonce, html: `<!doctype html>
-<html lang="en"${pinned}><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="color-scheme" content="dark light"><title>${subscriptionsView ? "Subscriptions" : settingsView ? "Settings" : "Activity"} · ChannelGate</title><link rel="icon" type="image/svg+xml" href="/favicon.svg">${ACTIVITY_APP_HEAD}
+<html lang="en"${pinned}><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="color-scheme" content="dark light"><title>${subscriptionsView ? "Subscriptions" : settingsView ? "Settings" : "Activity"} · ChannelGate</title>${activityAppHead(logoColor)}
 <style nonce="${nonce}">
 ${ACTIVITY_THEME_CSS}
 ${SUBSCRIPTION_CSS}
@@ -1284,7 +1288,7 @@ select.settings-input{height:32px}
   .open-link,.call-link,.toggle{width:32px;height:32px}
 }
 </style></head><body>
-<header class="top"><div class="agent"><span class="agent-mark" aria-hidden="true">${CHANNELGATE_LOGO}</span><div><span class="agent-name">${escapeHtml(agentName)}</span>${settingsView ? "" : '<div id="connection" class="connection reconnecting" role="status"><span id="connection-text">Connecting…</span></div>'}</div></div>
+<header class="top"><div class="agent"><span class="agent-mark" aria-hidden="true">${channelGateLogo(logoColor)}</span><div><span class="agent-name">${escapeHtml(agentName)}</span>${settingsView ? "" : '<div id="connection" class="connection reconnecting" role="status"><span id="connection-text">Connecting…</span></div>'}</div></div>
 ${subscriptionsView || settingsView ? "" : '<div id="subscription-quick" class="subscription-quick-list" aria-label="Subscription usage" hidden></div><div id="subscriptions-notice" role="status" aria-live="polite"></div>'}
 <nav class="page-nav" aria-label="Dashboard"><a href="${base}"${view === "activity" ? ' aria-current="page"' : ''}>Activity</a><a href="${base}/subscriptions"${subscriptionsView ? ' aria-current="page"' : ''}>Subscriptions</a><a href="${base}/settings"${settingsView ? ' aria-current="page"' : ''}>Settings</a></nav>
 <a href="${base}/passkeys" class="link-button">Passkeys</a>

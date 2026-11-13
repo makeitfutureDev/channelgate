@@ -1053,7 +1053,7 @@ test("Activity is one installable web app: shared manifest, icons and a launcher
   assert.equal(signedOut.status, 303);
   assert.equal(signedOut.headers.get("location"), "/activity/login");
   const loginPage = await f.request("/activity/login");
-  assert.match(await loginPage.text(), /<link rel="manifest" href="\/activity\/manifest\.webmanifest">/);
+  assert.match(await loginPage.text(), /<link rel="manifest" href="\/activity\/manifest\.webmanifest\?color=ff642f">/);
   assert.match(loginPage.headers.get("content-security-policy"), /manifest-src 'self'/);
 
   // A new session also sets the launcher cookie (id only, never the secret) scoped to /activity/app.
@@ -1075,7 +1075,7 @@ test("Activity is one installable web app: shared manifest, icons and a launcher
   assert.equal(page.status, 401);
   const dashboard = await f.request(url, { headers: { cookie: sessionCookie.split(";")[0] } });
   assert.equal(dashboard.status, 200);
-  assert.match(await dashboard.text(), /<link rel="manifest" href="\/activity\/manifest\.webmanifest">/);
+  assert.match(await dashboard.text(), /<link rel="manifest" href="\/activity\/manifest\.webmanifest\?color=ff642f">/);
   for (const bad of ["cg_activity_app=nope", "cg_activity_app=AAAAAAAAAAAAAAAA", ""]) {
     assert.equal((await f.request("/activity/app", { headers: { cookie: bad } })).headers.get("location"), "/activity/login", bad);
   }

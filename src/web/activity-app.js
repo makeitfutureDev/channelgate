@@ -6,6 +6,8 @@
 // launcher resumes the browser's latest live session (by id only; the dashboard still checks
 // the session cookie) or falls back to passkey sign-in. Nothing here grants access.
 
+import { logoColor } from "../config/appearance.js";
+
 export const ACTIVITY_APP_START = "/activity/app";
 export const ACTIVITY_APP_SCOPE = "/activity/";
 export const ACTIVITY_MANIFEST_PATH = "/activity/manifest.webmanifest";
@@ -19,16 +21,20 @@ export const ACTIVITY_APP_ICONS = Object.freeze({
 const DARK_BG = "#080e0d", LIGHT_BG = "#f6f7f4";
 
 /** Tags every Activity page carries in <head>: the manifest, the window colour and the icons. */
-export const ACTIVITY_APP_HEAD = `<link rel="manifest" href="${ACTIVITY_MANIFEST_PATH}">`
+export function activityAppHead(color) {
+  const query = `?color=${logoColor(color).slice(1)}`;
+  return `<link rel="manifest" href="${ACTIVITY_MANIFEST_PATH}${query}">`
   + `<meta name="theme-color" content="${DARK_BG}" media="(prefers-color-scheme: dark)">`
   + `<meta name="theme-color" content="${LIGHT_BG}" media="(prefers-color-scheme: light)">`
   + `<meta name="mobile-web-app-capable" content="yes"><meta name="apple-mobile-web-app-title" content="Activity">`
-  + `<link rel="apple-touch-icon" href="${ACTIVITY_APP_SCOPE}icon-192.png">`;
+  + `<link rel="apple-touch-icon" href="${ACTIVITY_APP_SCOPE}icon-192.png${query}">`
+  + `<link rel="icon" type="image/svg+xml" href="${ACTIVITY_APP_SCOPE}icon.svg${query}">`;
+}
 
 const cleanName = (value) => String(value || "").replace(/[\u0000-\u001f\u007f]/g, "").trim().slice(0, 60);
 
-export function activityManifest({ agent = "" } = {}) {
-  const name = cleanName(agent);
+export function activityManifest({ agent = "", color } = {}) {
+  const name = cleanName(agent), query = `?color=${logoColor(color).slice(1)}`;
   return {
     id: ACTIVITY_APP_START,
     name: name ? `${name} · Activity` : "ChannelGate Activity",
@@ -42,9 +48,9 @@ export function activityManifest({ agent = "" } = {}) {
     // A Slack Activity link or bookmark opened while the app runs reuses its window.
     launch_handler: { client_mode: ["navigate-existing", "auto"] },
     icons: [
-      { src: `${ACTIVITY_APP_SCOPE}icon-192.png`, sizes: "192x192", type: "image/png", purpose: "any" },
-      { src: `${ACTIVITY_APP_SCOPE}icon-512.png`, sizes: "512x512", type: "image/png", purpose: "any" },
-      { src: `${ACTIVITY_APP_SCOPE}icon-maskable-512.png`, sizes: "512x512", type: "image/png", purpose: "maskable" },
+      { src: `${ACTIVITY_APP_SCOPE}icon-192.png${query}`, sizes: "192x192", type: "image/png", purpose: "any" },
+      { src: `${ACTIVITY_APP_SCOPE}icon-512.png${query}`, sizes: "512x512", type: "image/png", purpose: "any" },
+      { src: `${ACTIVITY_APP_SCOPE}icon-maskable-512.png${query}`, sizes: "512x512", type: "image/png", purpose: "maskable" },
     ],
   };
 }

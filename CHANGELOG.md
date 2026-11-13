@@ -2,6 +2,11 @@
 
 ## 0.6.5 — candidate, pending approval
 
+- Add Settings → **Appearance** with a live logo color picker, custom hex and reset. Each gateway
+  can use a distinct Activity/app icon color, including real PNG icons for installed browser apps.
+  Activity Settings links administrators to the shared control. Existing Chrome Dock icons may
+  need the app reopened or reinstalled to refresh.
+
 - Pin whole channels in personal Activity. Their current and future open conversations,
   including Later, join Pinned across status tabs; completed threads return to Completed unless
   individually pinned. Channel cards stay available when empty, and channel/thread pins remain

@@ -1335,3 +1335,5 @@ button.clear-tok.armed { background: rgba(229, 96, 77, .14); border-color: rgba(
 .cmcp-pair { display: flex; gap: 8px; margin: 8px 0; flex-wrap: wrap; }
 .cmcp-pair input { flex: 1 1 180px; min-width: 0; padding: 9px 12px; border-radius: 8px; background: var(--panel-2); border: 1px solid var(--line); color: var(--ink); font: inherit; }
 .cmcp-extra > button { margin: 4px 8px 4px 0; }
+
+.logo-color-editor{display:flex;align-items:center;flex-wrap:wrap;gap:16px}.logo-color-editor .field{margin:0;max-width:180px}.logo-color-editor input[type=color]{width:64px;min-height:36px;padding:3px}.logo-color-editor svg{flex:none}
