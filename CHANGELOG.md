@@ -18,6 +18,14 @@ product overview.
 
 ## Unreleased
 
+- Bring the Google Chat `/settings` card in line with Slack's Settings: the pages are now
+  **Agent, Access, MCP, Variables, Skills, Schedules, Diagnostics** and **You**, picked from one
+  **Section** dropdown that switches page on change. Access is its own page (hidden in a direct
+  message), Diagnostics shows both resume commands (gateway machine and inside the container),
+  and You opens your personal connections and variables in the private browser form. Each
+  heading opens its own titled card section, and the typed-command list is folded under
+  **Typed commands** at the bottom. Teams keeps its six-page layout.
+
 - Redesign the Google Chat **private settings** browser page: variables, channel and personal
   connections and email accounts are now grouped cards with scope and status badges, host chips,
   collapsible forms, a visible saved/not-saved banner, and light and dark themes. It still runs

@@ -19,7 +19,19 @@ export const TEAMS_SETTINGS_PAGES = Object.freeze([
   ['general', 'General'], ['secrets', 'Variables'], ['mcp', 'MCPs'],
   ['skills', 'Skills'], ['automations', 'Automations'], ['resume', 'Resume'],
 ]);
-const validPage = page => TEAMS_SETTINGS_PAGES.some(([id]) => id === page);
+// A surface may supply its own page set as [id, title, source, part]: `source` is the shared page
+// that renders it (and the id the shared handlers store in `state.tab`), `part` a slice of it.
+// Without one, every surface gets the six pages above, each its own source.
+const pagesOf = ctx => ctx.pages || TEAMS_SETTINGS_PAGES;
+const sourceOf = entry => entry[2] || entry[0];
+const validPage = (ctx, page) => pagesOf(ctx).some(entry => entry[0] === page || sourceOf(entry) === page);
+// The page to show: an exact id, else the page already on screen when it renders the stored
+// source (an Access change must not jump to Agent), else the first page of that source.
+function currentPage(ctx) {
+  const pages = pagesOf(ctx), tab = ctx.state.tab;
+  const shown = pages.find(entry => entry[0] === ctx.state.shownPage);
+  return pages.find(entry => entry[0] === tab) || [shown, ...pages].find(entry => entry && sourceOf(entry) === tab) || pages[0];
+}
 const text = value => ({ type: 'TextBlock', text: String(value).slice(0, 2400), wrap: true });
 
 export function teamsSettingsUi(stateId) {
@@ -40,8 +52,8 @@ export function teamsSettingsUi(stateId) {
   };
 }
 
-export function createTeamsSettingsContext(state, { connector, authorize, source = 'teams_settings', surfaceLabel = 'Teams', listMembers = null, isHumanMember = null, publicCredentials = false }) {
-  const context = { state, connector, source, surfaceLabel, listMembers, isHumanMember, publicCredentials, ownerId: state.message.userId,
+export function createTeamsSettingsContext(state, { connector, authorize, source = 'teams_settings', surfaceLabel = 'Teams', listMembers = null, isHumanMember = null, publicCredentials = false, pages = null, renderPage = null }) {
+  const context = { state, connector, source, surfaceLabel, listMembers, isHumanMember, publicCredentials, pages, renderPage, ownerId: state.message.userId,
     channelId: state.message.conversationId, sessionKey: state.sessionKey, entry: state.entry, meta: state.meta,
     isShared: state.sharedSettings === true };
   context.authorize = async () => {
@@ -76,11 +88,11 @@ export function createTeamsSettingsContext(state, { connector, authorize, source
   return context;
 }
 
-function automations(ctx, ui) {
+function automations(ctx, ui, title = 'Automations') {
   const rows = listForChannel(ctx.channelId);
   const pages = Math.max(1, Math.ceil(rows.length / 12));
   const page = Math.min(Math.max(0, Number.isSafeInteger(ctx.state.automationPage) ? ctx.state.automationPage : 0), pages - 1);
-  const body = [ui.heading('Automations'), ui.text(`${rows.length} automations — page ${page + 1}/${pages}. Times are shown in ${daemonTimeZone()}. Ask the agent to create a task or reminder.`)];
+  const body = [ui.heading(title), ui.text(`${rows.length} automations — page ${page + 1}/${pages}. Times are shown in ${daemonTimeZone()}. Ask the agent to create a task or reminder.`)];
   for (const row of rows.slice(page * 12, (page + 1) * 12)) {
     const next = row.runAt || (row.enabled && row.cron ? nextCronRun(row.cron) : null);
     body.push(ui.heading(String(row.description || row.loopReason || row.prompt || row.id).slice(0, 120)),
@@ -98,7 +110,9 @@ function automations(ctx, ui) {
   return { body, actions };
 }
 
-async function resume(ctx, ui) {
+const PICKER_NOTE = 'The native pickers do not list sessions started from chat: Claude\'s /resume skips "claude -p" sessions, and Codex shows them only with "codex resume --include-non-interactive". Resume by id with the commands above.';
+async function resume(ctx, ui, part) {
+  if (part === 'commands') return resumeCommands(ctx, ui);
   const current = await resolveResumeSession({ entry: ctx.entry, meta: effectiveMeta(ctx.meta), isAdminAuthor: ctx.userIsAdmin && !ctx.isShared }, ctx.sessionKey);
   const body = [ui.heading('Resume Session')];
   if (!current.command) body.push(ui.text(current.sessionId && ctx.isShared
@@ -109,15 +123,40 @@ async function resume(ctx, ui) {
   return { body, actions: [] };
 }
 
+// Slack's Diagnostics page: the session facts, then BOTH ways into it, each labelled with where
+// it runs — the wrapped command for the gateway machine and the bare one for a shell already
+// inside the conversation's container.
+async function resumeCommands(ctx, ui) {
+  const current = await resolveResumeSession({ entry: ctx.entry, meta: effectiveMeta(ctx.meta), isAdminAuthor: ctx.userIsAdmin && !ctx.isShared }, ctx.sessionKey);
+  const body = [ui.heading('Resume this thread')];
+  if (!current.inThread) body.push(ui.text('Open settings from the session you want to resume in a terminal.'));
+  else if (!current.sessionId) body.push(ui.text('This session has not run a turn yet. Send it a message first, then open Diagnostics again.'));
+  else {
+    body.push(ui.text(`Engine: ${current.engine || 'unknown'} · Session: ${current.sessionId}${current.runtimeScope ? ` · ${current.runtimeScope} runtime` : ''}`), ui.text(`Folder: ${current.workDir || '—'}`));
+    const host = current.hostCommand, shell = current.shellCommand;
+    if (!host && !shell) body.push(ui.text('This session belongs to the conversation\'s administrator runtime. Ask an admin for its resume command.'));
+    else {
+      if (host) body.push({ ...ui.input('resumeHostCommand', 'On the gateway machine', host), isMultiline: true },
+        ui.text('Run it in a terminal on the gateway host as the gateway\'s own user. It opens the conversation\'s container and resumes the session inside it.'));
+      if (shell) body.push({ ...ui.input('resumeCommand', host ? 'Inside the container' : 'In a terminal', shell), isMultiline: true },
+        ui.text(host ? 'Run it from a shell that is already inside this conversation\'s container: an SSH session into it, or VS Code attached to it.'
+          : 'Run it in a terminal on the gateway machine as the gateway\'s own user.'));
+      body.push(ui.text(PICKER_NOTE));
+    }
+  }
+  return { body, actions: [] };
+}
+
 export async function buildTeamsSettings(ctx, stateId) {
   const ui = teamsSettingsUi(stateId);
-  const page = validPage(ctx.state.tab) ? ctx.state.tab : 'general';
-  ctx.state.tab = page;
-  const content = page === 'general' ? await renderGeneral(ctx, ui)
-    : page === 'automations' ? automations(ctx, ui)
-      : page === 'resume' ? await resume(ctx, ui)
-        : await renderCatalogPage(page, ctx, ui);
-  const tabs = TEAMS_SETTINGS_PAGES.map(([id, title]) => ui.execute(id === page ? `• ${title}` : title, 'settings.page', { page: id }, 'none'));
+  const entry = currentPage(ctx), page = entry[0], shared = sourceOf(entry), part = entry[3];
+  ctx.state.tab = page; ctx.state.shownPage = page;
+  const content = await ctx.renderPage?.(shared, ctx, ui)
+    || (shared === 'general' ? await renderGeneral(ctx, ui, { part })
+      : shared === 'automations' ? automations(ctx, ui, entry[1])
+        : shared === 'resume' ? await resume(ctx, ui, part)
+          : await renderCatalogPage(shared, ctx, ui));
+  const tabs = pagesOf(ctx).map(([id, title]) => ui.execute(id === page ? `• ${title}` : title, 'settings.page', { page: id }, 'none'));
   // One action per column keeps all six tabs on one line without relying on the
   // host's per-ActionSet action limit or alignment. Form actions keep their host layout.
   const navigation = { type: 'ColumnSet', horizontalAlignment: 'Center',
@@ -154,7 +193,7 @@ export async function handleTeamsSettings(action, data, ctx, stateId) {
     throw new Error('Personal and organization variables require authenticated settings.');
   }
   if (action === 'settings.page') {
-    if (!validPage(data.page)) throw new Error('Unknown settings page.');
+    if (!validPage(ctx, data.page)) throw new Error('Unknown settings page.');
     ctx.state.tab = data.page; ctx.state.notice = ''; ctx.state.confirmation = null;
     return buildTeamsSettings(ctx, stateId);
   }
