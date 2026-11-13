@@ -547,7 +547,8 @@
   both cards and the fallback. This browser-only behavior invokes neither engine.
   Settings → Engine & runtime. Both options start off. Enable either and save before login;
   reload and verify both toggles persist independently. Inspect both setup cards: exact host
-  paths/commands, workspace residency caveat and Bedrock API-key-only restriction are visible.
+  paths/commands, workspace residency caveat, separate Claude subscription instructions and
+  Bedrock API-key-only restriction are visible.
   Enter each harness's default model/effort and reload. Pass: values persist, disabled harnesses
   are absent from pickers, and no credential or token is returned to the browser. Open `/model`
   before and after enabling Codex EU without restarting; its introductory text, scope guidance
@@ -576,9 +577,37 @@
   usage records tokens with unknown dollar cost. Missing bearer key, profile/SSO-only setup,
   custom endpoint and malformed region fail clearly without Anthropic fallback. Restore fixture
   configuration. Live provider acceptance requires the operator's Bedrock API key and model access.
+- Live definition **HARNESS-TERMINAL-04** (Claude, External Credential Fixture; added
+  2026-11-14): as the gateway service account, run Claude Extra's displayed isolated terminal
+  command and sign in with a separately approved Claude subscription, without AWS settings.
+  Preserve any existing credentials in that directory; never copy refresh tokens into a second
+  login directory. In disposable `cg-testing-claude-bash`, temporarily enable/channel-approve
+  `claude-bedrock` and select **Claude Extra**. Send `Remember nonce EXTRA-<unique>; reply with
+  it.` Ask for the nonce on the next turn and run an ordinary Claude thread concurrently.
+  Pass: Extra uses its dedicated subscription on both turns and resumes its own transcript;
+  regular Claude keeps its own account/session. Inspect redacted runtime evidence: Extra's
+  relay placeholder differs from regular Claude's, resolves only to its own login at Anthropic,
+  and no real access/refresh token enters container artifacts or logs. Shared CLI installation
+  and shared channel tools do not change which account authenticates. A provider usage-limit
+  response must remain attributed to the dedicated account, with no switch to regular Claude.
+- Live definition **HARNESS-TERMINAL-05** (Claude, disposable credential fixture; added
+  2026-11-14): keep a working regular Claude login while the dedicated Extra login is absent,
+  expired or removed between turns. Pass: Extra refuses with its own login remedy and cannot
+  use regular Claude, a gateway setup-token or an ambient API key. Remove or replace the
+  dedicated credential in the fixture while a relay is cached; the old account must stop being
+  used, and its placeholder must never resolve to the default account. Verify rotation resumes
+  only with the current dedicated credential. Repeat with valid dedicated OAuth plus partial
+  AWS settings (missing/invalid region or missing bearer key), malformed JSON, profile/SSO-only
+  setup and a custom endpoint. Pass: each declared AWS setup fails clearly without OAuth
+  fallback; a complete AWS setup still reaches only its configured regional Bedrock endpoint.
+  Test `opus`/`sonnet` aliases in both modes and reject native model IDs belonging to the other
+  provider. Recheck normal Claude after each failure. Restore the fixture's settings and login
+  state. Execute against a disposable fixture; do not log out production accounts to test this.
 - Test definitions above are maintained in the private QA registry. No new account has been
-  authenticated on the operator's behalf; unit and browser fixtures do not certify provider
-  credentials, Enterprise residency or live AWS model access.
+  authenticated on the operator's behalf by these test definitions; unit and browser fixtures do
+  not certify provider credentials, subscription quota, Enterprise residency or live AWS model
+  access. The added Claude Extra live checks remain pending until recorded execution evidence
+  exists; their inclusion here is not a pass.
 
 ## Activity action button spacing (2026-11-12)
 

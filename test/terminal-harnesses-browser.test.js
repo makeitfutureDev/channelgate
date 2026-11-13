@@ -61,7 +61,7 @@ test("optional harness settings expose terminal setup and persist independent ac
   assert.match(await bedrock.locator('[data-role="copy-state"]').textContent(), /copy it manually/);
   const toggles = page.locator("#engine-enabled-box label");
   const euToggle = toggles.filter({ hasText: "Codex EU" }).locator("input");
-  const bedrockToggle = toggles.filter({ hasText: "Claude Bedrock" }).locator("input");
+  const bedrockToggle = toggles.filter({ hasText: "Claude Extra" }).locator("input");
   assert.equal(await euToggle.isChecked(), false);
   assert.equal(await bedrockToggle.isChecked(), false);
   await euToggle.check();

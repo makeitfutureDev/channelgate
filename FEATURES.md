@@ -344,10 +344,10 @@ A permanent Slack delivery error on a saved result (`channel_not_found`, `not_in
 (`errorKind: "delivery"`), instead of retrying every minute; transient errors keep the saved result
 and retry on the next minute as before.
 
-## Optional Codex EU and Claude Bedrock harnesses (2026-11-12)
+## Optional Codex EU and Claude Extra harnesses (2026-11-12; expanded 2026-11-14)
 
 Settings → Engine & runtime includes independent **Codex EU** (`codex-eu`) and **Claude
-Bedrock** (`claude-bedrock`) options, disabled until explicitly enabled. Their setup cards show
+Extra** (`claude-bedrock`, retained for compatibility) options, disabled until explicitly enabled. Their setup cards show
 the exact host-terminal commands, with a **Copy command** button for each harness and separate
 default model/effort controls. Copy confirms success, supports HTTP clipboard fallback, and
 shows manual-copy guidance when browser clipboard access is denied. After setup,
@@ -366,15 +366,27 @@ logins, including concurrent threads.
 Container turns require proxy egress; the dedicated EU credential file is never mounted, even
 in legacy bridge mode. Direct-host `/sudo` remains available to authorized administrators.
 
-Claude Bedrock reads only reviewed provider environment values from an isolated Claude Code
-terminal wizard configuration. Configure `/setup-bedrock` with an **Amazon Bedrock API key**,
-AWS region and optional model pins. This integration supports bearer API keys; AWS profile/SSO
-and IAM SigV4 signing are not supported. Gateway permissions, hooks, MCP and instruction settings
-remain authoritative. The egress proxy swaps the bearer key only on the configured regional
-Bedrock endpoint. Anthropic credentials never accompany this provider. Tokens are retained;
-AWS dollar cost remains unknown rather than using Anthropic prices.
-Chat continuation resumes Bedrock sessions. Bedrock container terminal takeover currently
-returns explicit guidance to continue in chat; host-terminal provider setup is independent.
+Claude Extra uses the same Claude Code CLI with an independent login and transcript directory.
+Its existing `engine-state/claude-bedrock` directory is retained, so a subscription already signed
+in there stays usable without copying or moving refresh tokens. Run the displayed isolated
+Claude command and sign in normally for a separate Claude subscription, or run `/setup-bedrock`
+for AWS. With no Bedrock configuration, only that directory's Claude OAuth login is admitted;
+the default Claude login, a gateway setup-token and ambient API keys are never substitutes.
+Container subscription turns use their own destination-bound access-token relay, separate from
+regular Claude, while the refresh token stays on the host. A subscription routes to Anthropic;
+it does not establish AWS or EU residency. Subscription usage limits remain the account's own.
+
+An AWS/Bedrock terminal configuration selects Bedrock and must supply an **Amazon Bedrock API
+key**, AWS region and optional model pins. Partial or malformed AWS setup fails instead of
+borrowing an OAuth login. This integration supports bearer API keys; AWS profile/SSO and IAM
+SigV4 signing are not supported. Only reviewed provider environment values are imported;
+gateway permissions, hooks, MCP and instruction settings remain authoritative. The proxy swaps
+the bearer key only on the configured regional Bedrock endpoint, with no Anthropic credential
+accompanying it. Tokens are retained; AWS dollar cost remains unknown rather than using
+Anthropic prices. The `opus`, `sonnet` and `haiku` aliases work in both modes; native model IDs
+must match the configured provider.
+Chat continuation resumes the extra harness's own sessions. Container terminal takeover
+currently returns explicit guidance to continue in chat; host-terminal setup is independent.
 
 ## Mark all Activity threads done (2026-11-12)
 

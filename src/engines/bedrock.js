@@ -5,6 +5,7 @@
 import { createHash } from "node:crypto";
 import { closeSync, constants, fstatSync, openSync, readFileSync } from "node:fs";
 import path from "node:path";
+import os from "node:os";
 import { gatewayRoot } from "../config/paths.js";
 import { commandHealth, validateEngineAdapter } from "./contract.js";
 import { runClaude } from "./claude.js";
@@ -56,7 +57,7 @@ function readProviderSettings(configDir) {
   } catch (error) {
     return { error: error.code === "ENOENT"
       ? "no Bedrock terminal setup was found; run the isolated Claude command in Settings, then /setup-bedrock and choose Amazon Bedrock API key"
-      : "Bedrock terminal settings could not be read as JSON; rerun /setup-bedrock in its isolated Claude directory" };
+      : "Bedrock terminal settings could not be read as JSON; rerun /setup-bedrock in its isolated Claude directory", missing: error.code === "ENOENT" };
   } finally {
     if (fd !== undefined) closeSync(fd);
   }
@@ -107,22 +108,94 @@ export function bedrockCredentialState(options) {
   };
 }
 
+// This additional Claude Code process owns one login directory, regardless of whether the
+// operator chose Claude subscription sign-in or the AWS wizard. A partial AWS setup must never
+// fall through to a subscription, and neither mode may borrow the default Claude account.
+export function resolveExtraClaudeProvider({ configDir = bedrockLoginHome(), now = Date.now } = {}) {
+  const loaded = readProviderSettings(configDir);
+  if (loaded.error && !loaded.missing) return { kind: "none", configured: false, error: loaded.error };
+  const settings = loaded.missing ? {} : loaded.settings;
+  if (!settings || typeof settings !== "object" || Array.isArray(settings)
+      || (settings.env !== undefined && (!settings.env || typeof settings.env !== "object" || Array.isArray(settings.env)))) {
+    return { kind: "none", configured: false, error: "the extra Claude terminal settings must contain a JSON object" };
+  }
+  const env = settings.env || {};
+  const populated = Object.entries(env).filter(([, value]) => value !== "" && value !== null && value !== undefined);
+  if (populated.some(([name]) => /^(?:AWS_|ANTHROPIC_BEDROCK_|CLAUDE_CODE_USE_BEDROCK$)/.test(name))) {
+    return { kind: "bedrock", ...resolveBedrockProvider({ configDir }) };
+  }
+  if (populated.some(([name]) => /^(?:CLAUDE_CODE_USE_|ANTHROPIC_(?:API_KEY|AUTH_TOKEN|BASE_URL)$)/.test(name))) {
+    return { kind: "none", configured: false, error: "this extra Claude login supports a Claude subscription or /setup-bedrock; remove conflicting provider routing from its terminal settings" };
+  }
+  const login = extraClaudeLogin({ configDir, now });
+  return { kind: "subscription", configured: login.kind !== "none", configDir, login, error: login.reason || "" };
+}
+
+function readExtraClaudeCredentials(configDir) {
+  let fd;
+  try {
+    fd = openSync(path.join(configDir, ".credentials.json"), constants.O_RDONLY | constants.O_NOFOLLOW);
+    const stat = fstatSync(fd);
+    if (!stat.isFile() || stat.size > MAX_SETTINGS_BYTES) return null;
+    return JSON.parse(readFileSync(fd, "utf8"))?.claudeAiOauth || null;
+  } catch { return null; }
+  finally { if (fd !== undefined) closeSync(fd); }
+}
+
+function extraClaudeLogin({ configDir, now }) {
+  const oauth = readExtraClaudeCredentials(configDir);
+  const usable = typeof oauth?.accessToken === "string" && oauth.accessToken.trim()
+    && !(Number(oauth.refreshTokenExpiresAt) && Number(oauth.refreshTokenExpiresAt) <= now());
+  if (!usable) return { kind: "none", reason: "sign in with a Claude subscription using the isolated terminal command in Settings, or run /setup-bedrock for AWS" };
+  return {
+    kind: "extra", file: path.join(configDir, ".credentials.json"), configDir, home: os.homedir(),
+    isolatedProvider: true, accessExpiresAt: Number(oauth.expiresAt) || 0,
+    expiresAt: Number(oauth.refreshTokenExpiresAt) || 0,
+    fingerprint: createHash("sha256").update(JSON.stringify(oauth)).digest("hex"), reason: "",
+  };
+}
+
+export function extraClaudeCredentialState(options) {
+  const provider = resolveExtraClaudeProvider(options);
+  if (provider.kind === "bedrock") return bedrockCredentialState(options);
+  return {
+    known: true, authenticated: provider.configured, method: provider.configured ? "claude-subscription" : "none",
+    detail: provider.configured ? "Separate Claude subscription login" : provider.error,
+    source: provider.configDir || "", fingerprint: provider.login?.fingerprint || "",
+  };
+}
+
+export async function resolveExtraClaudeToken({ configDir = bedrockLoginHome(), ...options } = {}) {
+  const provider = resolveExtraClaudeProvider({ configDir, now: options.now });
+  if (provider.kind !== "subscription" || !provider.configured) return { token: "", source: "none", error: provider.error || "The extra Claude harness is configured for Bedrock, not a subscription" };
+  const { resolveContainerClaudeToken } = await import("../gateway/claude-token-relay.js");
+  return resolveContainerClaudeToken({
+    ...options, configured: () => "", env: {}, resolveLogin: () => provider.login,
+    read: () => {
+      const oauth = readExtraClaudeCredentials(configDir);
+      return typeof oauth?.accessToken === "string" && oauth.accessToken.trim()
+        ? { token: oauth.accessToken, expiresAt: Number(oauth.expiresAt) || 0 } : null;
+    },
+  });
+}
+
 export function makeBedrockAdapter(claude) {
   // Avoid inheriting any optional operation that resolves the default Anthropic account.
   const { updateSmoke: _updateSmoke, discoverModels: _discoverModels, subscriptionUsage: _subscriptionUsage, ...base } = claude;
   return validateEngineAdapter({
     ...base,
-    id: BEDROCK_ENGINE_ID, label: "Claude Bedrock", modelFamily: "bedrock",
+    id: BEDROCK_ENGINE_ID, label: "Claude Extra", modelFamily: "claude-extra",
     defaultModelKey: "defaultBedrockModel", defaultEffortKey: "defaultBedrockEffort",
     optIn: true, terminalSetup: true,
     models: [
-      { value: "opus", label: "Opus (Bedrock pin)", description: "The Opus model pinned by your Bedrock terminal setup." },
-      { value: "sonnet", label: "Sonnet (Bedrock pin)", description: "The Sonnet model pinned by your Bedrock terminal setup." },
-      { value: "haiku", label: "Haiku (Bedrock pin)", description: "The Haiku model pinned by your Bedrock terminal setup." },
+      { value: "opus", label: "Opus", description: "Opus for this login, or the model pinned by your Bedrock setup." },
+      { value: "sonnet", label: "Sonnet", description: "Sonnet for this login, or the model pinned by your Bedrock setup." },
+      { value: "haiku", label: "Haiku", description: "Haiku for this login, or the model pinned by your Bedrock setup." },
+      ...claude.models.filter((model) => !["opus", "sonnet", "haiku"].includes(model.value)),
     ],
     supports: { ...base.supports, warmPool: false, interruptSteer: false, realCost: false, usageLimitFallback: false },
     sessionState: Object.freeze({ ...base.sessionState, channelHistory: false, hostDir: () => bedrockLoginHome(), containerDirKey: "claudeBedrockConfigDir" }),
-    modelBelongs: isBedrockModel,
+    modelBelongs: (model) => isBedrockModel(model) || claude.modelBelongs(model),
     resumeCommand(id, { target } = {}) {
       // A direct terminal exec holds no tracked SSH/VS Code lease, so the proxy correctly refuses
       // its relay while the channel is idle. A bare container `claude` also selects the independent
@@ -152,12 +225,17 @@ export function makeBedrockAdapter(claude) {
         meta: { ...resolvedTarget.meta, engine: BEDROCK_ENGINE_ID },
         ...(isIsolatedTarget(resolvedTarget) ? { container: { ...resolvedTarget.container, claudeConfigDir: configDir } } : {}),
       };
-      const provider = resolveBedrockProvider();
-      if (!provider.configured) throw Object.assign(new Error(`The Claude Bedrock harness is selected, but ${provider.error}.`), { details: { runtimeCredential: true, runtime: target.backend, engine: BEDROCK_ENGINE_ID } });
-      const { containerBedrockCredential } = await import("../gateway/egress/grants.js");
-      const credential = await containerBedrockCredential({ target, provider });
+      const provider = resolveExtraClaudeProvider();
+      if (!provider.configured) throw Object.assign(new Error(`The extra Claude harness is selected, but ${provider.error}.`), { details: { runtimeCredential: true, runtime: target.backend, engine: BEDROCK_ENGINE_ID } });
+      const subscription = provider.kind === "subscription";
+      if (r.model && !(subscription ? claude.modelBelongs(r.model) : isBedrockModel(r.model))) {
+        throw new Error(`The selected model does not belong to this ${subscription ? "Claude subscription" : "Bedrock"} login; choose a matching model or opus, sonnet or haiku.`);
+      }
+      const { containerBedrockCredential, containerExtraClaudeCredential } = await import("../gateway/egress/grants.js");
+      const relay = subscription ? await resolveExtraClaudeToken() : null;
+      const credential = subscription ? containerExtraClaudeCredential({ target, relay }) : containerBedrockCredential({ target, provider });
       if (!credential.token) throw Object.assign(new Error(credential.error || "The Claude Bedrock credential is unavailable."), { details: { runtimeCredential: true, runtime: target.backend, engine: BEDROCK_ENGINE_ID } });
-      const secrets = [provider.bearerToken];
+      const secrets = [subscription ? relay.token : provider.bearerToken];
       const stream = createSecretRedactor(secrets);
       try {
         const result = await runClaude({
@@ -172,8 +250,10 @@ export function makeBedrockAdapter(claude) {
           permissionPromptTool: r.permissionPromptTool, pluginDirs: r.claudePluginDirs,
           instructionFile: r.instructionFile, disallowedTools: r.disallowedTools,
           extraEnv: r.channelEnv, browserNamespace: r.browserNamespace, target,
-          engineId: BEDROCK_ENGINE_ID, harnessLabel: "Claude Bedrock", claudeOauthToken: "",
-          providerEnv: { ...provider.env, AWS_BEARER_TOKEN_BEDROCK: credential.token, CLAUDE_CONFIG_DIR: configDir },
+          engineId: BEDROCK_ENGINE_ID, harnessLabel: "Claude Extra", claudeOauthToken: "",
+          providerEnv: subscription
+            ? { CLAUDE_CODE_OAUTH_TOKEN: credential.token, CLAUDE_CONFIG_DIR: configDir }
+            : { ...provider.env, AWS_BEARER_TOKEN_BEDROCK: credential.token, CLAUDE_CONFIG_DIR: configDir },
         });
         // Claude Code's price table cannot establish an AWS bill (regions and inference profiles
         // price differently). Keep real token counts; leave dollar cost unknown.
@@ -189,13 +269,13 @@ export function makeBedrockAdapter(claude) {
       }
     },
     interrupt: () => false,
-    credentialState: () => bedrockCredentialState(),
+    credentialState: () => extraClaudeCredentialState(),
     // Enabling the option is independent of selecting it for a turn/default. A missing terminal
     // setup must not replace a channel's working runtime selection.
-    selectionReadiness: () => { const provider = resolveBedrockProvider(); return { ready: provider.configured, reason: provider.error }; },
+    selectionReadiness: () => { const provider = resolveExtraClaudeProvider(); return { ready: provider.configured, reason: provider.error }; },
     async health(options) {
       const baseHealth = await commandHealth("claude", options);
-      const { fingerprint: _fingerprint, source: _source, ...auth } = bedrockCredentialState();
+      const { fingerprint: _fingerprint, source: _source, ...auth } = extraClaudeCredentialState();
       return { ...baseHealth, auth };
     },
   });

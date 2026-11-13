@@ -174,6 +174,7 @@ const MODEL_OPTIONS = {
 function modelMatchesEngine(model, engine) {
   const family = ENGINE_MANIFESTS.find((m) => m.id === engine)?.modelFamily || engine;
   if (family === "codex") return /^(?:gpt-|o[0-9]|codex)/i.test(model);
+  if (family === "claude-extra") return /^(?:best|fable|haiku|opusplan|opus|sonnet|(?:opus|sonnet)\[1m\])$|^claude-|^(?:(?:us|eu|apac|global|us-gov)\.)?anthropic\.claude-|^arn:aws(?:-us-gov)?:bedrock:/i.test(model);
   if (family === "bedrock") return /^(?:opus|sonnet|haiku)$|^(?:(?:us|eu|apac|global|us-gov)\.)?anthropic\.claude-|^arn:aws(?:-us-gov|-cn)?:bedrock:/i.test(model);
   // Mirrors isQwenTextModel (src/engines/qwen.js): the provider families, minus the image/audio
   // and single-purpose ones that cannot hold a conversation. Every engine generated from that

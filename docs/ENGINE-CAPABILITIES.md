@@ -4,12 +4,16 @@ The executable source of truth is the validated manifest in `src/engines/adapter
 the Admin API/UI consume that registry.
 
 Two additional opt-in manifests reuse the native runners: **Codex EU** (`codex-eu`) requires a
-dedicated ChatGPT login (including Pro Lite; no Enterprise requirement), and **Claude Bedrock** (`claude-bedrock`) reads an isolated
-terminal setup with a regional Bedrock bearer API key. Both are cold, keep separate session
-directories and have no failover edges. Container authentication requires proxy egress; `/sudo`
-uses the host provider setup. Codex EU retains Codex token accounting; Bedrock records tokens
-with unknown AWS cost. Bedrock container terminal takeover is unavailable; chat continuation
-still resumes its own session. See [terminal setup and limitations](PROVIDER-HARNESSES.md).
+dedicated ChatGPT login (including Pro Lite; no Enterprise requirement), and **Claude Extra**
+(retained engine ID `claude-bedrock`) accepts either its own Claude subscription login or an
+isolated terminal setup with a regional Bedrock bearer API key. Both are cold, keep separate
+session directories and have no failover edges. Container authentication requires proxy egress;
+`/sudo` uses the same dedicated host login/provider setup. Subscription authentication never
+borrows regular Claude's login or API key. AWS setup, including an incomplete one, selects
+Bedrock and never falls back to a subscription. Codex EU retains Codex token accounting;
+Bedrock records tokens with unknown AWS cost. Claude Extra container terminal takeover is
+unavailable; chat continuation still resumes its own session. See
+[terminal setup and limitations](PROVIDER-HARNESSES.md).
 
 | Capability | Claude | Codex | Qwen harnesses (Claude Code CLI) |
 | --- | --- | --- | --- |
