@@ -263,6 +263,18 @@ and cannot complete the thread again. Human checkmarks still count. Existing own
 access checks apply. Failed answer decoration preserves Done and can be retried by clicking 👍
 again; only the root marker has a durable automatic retry queue. No extra engine call is made.
 
+## Reopen completed Slack threads on a new prompt (2026-11-13)
+
+A fresh authorized human message addressed to the agent in a completed indexed thread reopens it and
+removes the bot's ✅ from the main/root message. Shared conversations require an explicit
+@mention; DMs accept direct messages, including attachments. Activity returns to the current
+runtime status and shared reminder eligibility resumes. Old root/reply reactions and delayed
+bot marker events cannot close it again; a new completion action can. Bot replies, background
+outcomes, edits, ordinary shared replies, duplicate envelopes and messages older than the saved
+completion leave it closed. Other people's reactions and historical answer checks remain.
+Current gateway admission, private membership and /sudo access are checked before reopening.
+Root-marker removal uses the existing durable retry queue after API failures/reconnect/restart.
+
 ## Visible completion on Slack thread roots (2026-11-12)
 
 Completing an indexed agent thread through a ✅/✔️ reaction on its root or any reply, the
@@ -466,7 +478,7 @@ button also marks it Done, with current admission/membership/sudo checks and mes
 ownership validation. In Slack Home,
 completion takes priority over running/queued work or pending forms, excludes
 it from Active/All open and suppresses quiet-thread nudges and pending-response digests. Later
-messages/outcomes do not reopen it. Completed is an explicit archive with Reopen controls; Reopen
+bot messages/outcomes do not reopen it; a fresh human prompt to the agent does. Completed is an explicit archive with Reopen controls; Reopen
 can override existing reactions until a newer completion event. Removing a reaction reopens only
 when no other completion reaction or manual Done remains. Digest delivery rechecks local completion
 after permalink lookup and DM opening. Existing task-result delivery and explicit schedules retain

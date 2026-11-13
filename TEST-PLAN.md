@@ -702,6 +702,30 @@ must not initiate My threads history/root scans; non-Channels views must not enu
 roster (Activity still performs its own thread-access checks). Restore the disposable key/preference.
 Native rendering acceptance is pending until observed; unit fixtures alone do not establish it.
 
+## Reopen a completed Slack thread on a new prompt (2026-11-13)
+
+Regression: `node --test test/home-threads.test.js test/thread-completion.test.js` covers
+manual Done and root/reply reaction completion, Activity refresh and Working status, shared
+reminder completion checks, DM attachments, private/shared @mentions, duplicate/old deliveries,
+bot/edit/background exclusions, passive stale reactions, delayed bot mirror events, fresh
+completion after reopening, and failed removal with durable retry.
+
+Live acceptance for BOTH Claude and Codex: in separate owner-authored disposable Slack Worker
+threads, ask “@Agent Reply with one sentence confirming this reopening test.” Complete through
+Home/Activity Done, native positive answer feedback, and root/reply ✅/✔️ in separate roots.
+Verify the bot's parent ✅, then send “@Agent Please make another change: reply REOPENED.”
+Expect the bot's parent check to disappear, Completed to lose the row, Active/All open to show
+Working then Idle, and shared nudge/digest completion checks to return open. In a DM repeat
+without an @mention, including an attachment. Human parent checks and old answer checks remain
+but must not immediately re-close the row; add a fresh completion reaction to close it again.
+Ordinary shared replies, another agent's mention, bot messages, background outcomes, edits,
+companion app_mention envelopes and redelivery older than the new Done preserve the saved state.
+Denied senders, revoked private members and /sudo non-admins must not reopen any thread or remove
+its marker, including access revocation during the membership lookup.
+Use an isolated Slack API failure fixture to interrupt removal, recover/reconnect/restart, then
+verify removal within the next one-minute sweep. Record exact candidate, channel/root, actor,
+reaction users and Activity status. Restore fixtures; live acceptance is pending until observed.
+
 ## Personal Slack thread list (2026-11-11)
 
 Regression: `node --test test/home-threads.test.js test/thread-completion.test.js
@@ -710,7 +734,7 @@ Regression: `node --test test/home-threads.test.js test/thread-completion.test.j
 Root attribution, current channel membership/admission/sudo checks and stale/forged actions remain
 required. For open threads, test queued/background Working, question/approval Waiting, Idle and
 Error/retry. Done and ✅/✔️ on roots and older replies must outrank runtime status, disappear from Active
-and All open, survive later messages/outcomes, and suppress both reminder paths. Completed archive
+and All open, survive bot messages/outcomes, and suppress both reminder paths until a fresh human prompt to the agent or explicit Reopen. Completed archive
 retains explicit Reopen; removal preserves other reactions and manual Done. Exercise completion
 during permalink lookup and DM opening, missed reaction removal, legacy v44 override migration,
 root/reply event routing. Emoji 👍 (`+1`/`thumbsup`, including skin tones) on roots and
@@ -726,8 +750,8 @@ Live acceptance, separately in owned disposable Claude and Codex Slack Worker fi
 as the approved fixture user, open Home → Activity and follow its original link. For open roots,
 verify foreground/queued/background Working, question/approval Waiting, normal Idle and a controlled
 failure/retry. Complete separate threads using Activity Done, root ✅ and final/older-reply ✔️,
-plus the native positive-feedback button; post later messages and leave work/forms pending. None appears in open lists or gets a quiet-thread
-nudge/pending digest, including after restart. Verify Completed and explicit Reopen, then remove one
+plus the native positive-feedback button; leave work/forms pending. None appears in open lists or gets a quiet-thread
+nudge/pending digest, including after restart, until a fresh human prompt to the agent or explicit Reopen. Exercise new-prompt reopening as defined above. Verify Completed and explicit Reopen, then remove one
 of several markers: remaining evidence still closes the thread. Removing all reactions opens it
 unless manual Done remains. Miss reaction events during downtime and verify delivery-time refresh.
 Restore all preferences and fixtures; native Slack/live-engine acceptance remains pending until run.
