@@ -291,8 +291,10 @@ test("the reply footer ends with the feedback controls unless asked for the plai
   assert.deepEqual(footerBlocks(result, {}).map((block) => block.type), ["context"], "no channel, no controls at all");
   const [feedback] = feedbackBlocks(context);
   assert.equal(feedback.elements[0].type, "feedback_buttons");
-  assert.equal(feedback.elements[0].positive_button.text.text, "👍");
-  assert.equal(feedback.elements[0].negative_button.text.text, "👎");
+  assert.equal(feedback.elements[0].positive_button.text.text, "Mark as done");
+  assert.equal(feedback.elements[0].negative_button.text.text, "Move to Later");
+  assert.equal(feedback.elements[0].positive_button.accessibility_label, "Mark conversation as done");
+  assert.equal(feedback.elements[0].negative_button.accessibility_label, "Move conversation to Later");
 });
 
 test("the manifest subscribes to the agent session events and registers /model", () => {

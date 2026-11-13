@@ -2035,7 +2035,9 @@ revisions on failed sync. Details and compatibility limits: `docs/SKILLS.md`.
   A Fork button on a reply posted before the retirement is an unhandled action and does nothing.
 - **Native 👍/👎 answer feedback**: the same footer ends with Slack's `context_actions` block
   carrying `feedback_buttons` (`cg_reply_feedback`) on every streamed, classic, unattended and
-  fallback answer that carries the stats footer (not on bare notices such as "🛑 Stopped."). Any
+  fallback answer that carries the stats footer (not on bare notices such as "🛑 Stopped.").
+  The buttons use **Mark as done** and **Move to Later** as their text, with matching descriptive
+  screen-reader labels, to explain the thread owner's Activity actions. Any
   channel member's verdict counts — it is an opinion, not a privilege: the click is acknowledged,
   recorded as a `reply_feedback` event (channel, thread, message, clicker, verdict, requester) and
   a 👎 answers the clicker privately, inviting the correction in the thread. If Slack rejects the

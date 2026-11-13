@@ -10442,6 +10442,15 @@ Claude and on Codex.
       spinner and phrases exactly as before, with no per-turn error noise.
 
 ### Answer feedback (👍 / 👎)
+- [x] Automated footer contract: positive button text is `Mark as done`, negative is
+      `Move to Later`; screen-reader labels describe the corresponding conversation action.
+- [ ] Live label acceptance, both Claude and Codex: as the owner of a disposable answered
+      root in each engine's Slack test channel, hover native 👍 and 👎. Require `Mark as done`
+      and `Move to Later` respectively, while retaining the native thumb icons. Inspect the
+      accessible names for `Mark conversation as done` and `Move conversation to Later`.
+      Click 👎 and require Later plus its private confirmation; click 👍 and require Done.
+      Record the exact answer/root and Slack client version. Payload checks alone do not prove
+      client hover rendering. Existing answer messages require a footer update to acquire new text.
 - [x] Automated (`test/slack-agent-sessions.test.js`, `test/slack-progress.test.js`,
       `test/deliver.test.js`, `test/slack-answer-images.test.js`): every stats footer ends with one
       `context_actions` block carrying `feedback_buttons` (`cg_reply_feedback`, 👍 / 👎) on the

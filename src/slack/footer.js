@@ -157,8 +157,8 @@ export function feedbackBlocks({ channel = "", threadTs = "", authorId = "" } = 
     elements: [{
       type: "feedback_buttons",
       action_id: REPLY_FEEDBACK_ACTION_ID,
-      positive_button: { text: { type: "plain_text", text: "👍", emoji: true }, accessibility_label: "Good answer", value: `up:${bound}` },
-      negative_button: { text: { type: "plain_text", text: "👎", emoji: true }, accessibility_label: "Bad answer", value: `down:${bound}` },
+      positive_button: { text: { type: "plain_text", text: "Mark as done" }, accessibility_label: "Mark conversation as done", value: `up:${bound}` },
+      negative_button: { text: { type: "plain_text", text: "Move to Later" }, accessibility_label: "Move conversation to Later", value: `down:${bound}` },
     }],
   }];
 }
