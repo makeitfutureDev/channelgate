@@ -566,6 +566,34 @@ has sent the app at least one message (so their `users/…` id is recorded).
   `reactions N/M spaces` with no duplicate subscriptions (`subscriptions.list`); add the app to a
   new space → covered within seconds; after ≥ 1 h, `expireTime` has moved forward.
 
+## Google Chat settings follow Slack's pages (2026-11-13)
+
+Automated fixtures: `test/googlechat-settings.test.js` (the **Section** dropdown lists Agent,
+Access, MCP, Variables, Skills, Schedules, Diagnostics, You and navigates on change; Agent holds
+runtime + mode + options and no access policy; Access holds who can use/manage + People, keeps
+its place after a change and is absent in a DM; legacy page ids still open; Diagnostics and You
+render; no section is empty), `test/googlechat-settings-commands.test.js` (typed commands folded
+last), `test/googlechat-card-routing.test.js` (the dropdown's `onChangeAction` is routed to the
+add-on endpoint) and the unchanged Teams settings suites (Teams keeps its six pages).
+Engine-independent: the card is rendered by the gateway before any engine runs.
+
+Live (Google Chat test space, HTTP-connected app; a manager/admin account):
+- [ ] Send `/settings`. Expect one private card titled with the conversation, a **Section**
+      dropdown showing *Agent*, and titled sections *Channel defaults*, *Current session*, *Mode*,
+      *VPN*; **Typed commands** is the last, folded section.
+- [ ] Pick each Section entry in turn. Expect the card to switch in place, in Slack's order:
+      Agent, Access, MCP, Variables, Skills, Schedules, Diagnostics, You.
+- [ ] On **Access** change *Who can use it here* and Apply. Expect the saved value and the card
+      still on Access. On **Agent** change Mode; expect the card still on Agent.
+- [ ] In a thread that has run a turn, open **Diagnostics** as a non-admin on a project-lane
+      session. Expect engine, session id, folder, and two commands labelled *On the gateway
+      machine* and *Inside the container*.
+- [ ] Open **You** → **Open my private settings**. Expect the private browser page (connections,
+      email accounts, variables); **Back to settings** returns to You.
+- [ ] Send `/settings` in a direct message with the app. Expect no Access entry; Mode is on Agent.
+- [ ] Teams regression: `/settings` in Teams still shows General, Variables, MCPs, Skills,
+      Automations, Resume.
+
 ## Google Chat native controls (2026-10-14)
 
 Automated fixtures: `test/googlechat-help.test.js`, `test/googlechat-settings.test.js`,

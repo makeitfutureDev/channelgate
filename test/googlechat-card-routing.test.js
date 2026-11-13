@@ -51,3 +51,12 @@ test('an add-on click naming the endpoint URL resolves to the cgAction name', ()
   assert.equal(normalized.action.function, 'settings.page');
   assert.deepEqual({ ...googleChatActionData(normalized) }, { action: 'settings.page', data: Object.assign(Object.create(null), { stateId: 'state-1', page: 'mcp' }) });
 });
+
+test('a dropdown that acts on change is routed to the endpoint as well', async () => {
+  const { routeCardActions } = await import('../src/platforms/googlechat/cards.js');
+  const picker = { selectionInput: { name: 'settingsPage', type: 'DROPDOWN', items: [], onChangeAction: { function: 'settings.page', parameters: [{ key: 'cgAction', value: 'settings.page' }] } } };
+  const routed = routeCardActions({ sections: [{ widgets: [picker] }] }, ENDPOINT).sections[0].widgets[0].selectionInput.onChangeAction;
+  assert.equal(routed.function, ENDPOINT);
+  assert.equal(routed.parameters[0].value, 'settings.page');
+  assert.equal(routeCardActions({ sections: [{ widgets: [picker] }] }, '').sections[0].widgets[0].selectionInput.onChangeAction.function, 'settings.page');
+});
