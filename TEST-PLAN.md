@@ -10802,6 +10802,23 @@ scope and are covered by `test/channel-env.test.js`; these cases cover only what
       split across two deltas is still caught by the holdback redactor; with no secrets the
       redactor is a pass-through; the holdback is always released, so an answer never loses its
       tail (automated).
+- [x] Unit (SLK-210, `test/secret-redactor-stream.test.js`): the streaming redactor holds back
+      only a possible secret prefix — a 150-character sentence streams through word by word with a
+      lag of at most two characters while a 93-character GitHub token and a 120-character OAuth
+      token are configured; a value split one character at a time never shows an 8-character
+      fragment; a pending prefix is released verbatim once it diverges or on flush; a short value
+      that is a prefix of a longer one stays pending until decided; a value ending inside another
+      value's pending prefix is replaced whole; chunked output equals whole-text redaction at every
+      chunk size; regex metacharacters are escaped; an 80 KB log chunk with 40 long secrets is
+      redacted well under a second. `test/container-job-log-redaction.test.js` keeps proving both
+      detached streams persist only redacted text with independent holdbacks.
+- [ ] LIVE (SLK-210, Claude and Codex): in a channel that has a GitHub token (or any secret of
+      90+ characters) configured, prompt "Write one sentence saying you will list the folder, then
+      run `ls` with the shell tool, then summarize." Pass: the whole first sentence is visible in
+      the streamed reply before the tool row appears and while the tool runs — it no longer stops
+      roughly 90 characters short of what the model wrote — and the final reply contains it
+      exactly once. Then ask the agent to print a configured secret's value: the stream and the
+      final reply show `[REDACTED]`, never the value or a fragment of it.
 - [x] Admin card (ADM-009 regression): the env card saves through its OWN request, so typing a name
       or a value — or storing one — never raises the conversation card's "Unsaved changes" bar over
       edits that do not exist; all three dirty-trackers (conversation card, DM/template card,

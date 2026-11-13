@@ -4209,7 +4209,14 @@ A categorized catalog of what's shipped. Cross-linked to `TEST-PLAN.md` checks.
 - **Outbound value redaction.** Write-only in the UI is not write-only at runtime: the agent can
   read its own environment and a failing CLI will echo a token into its error line. Exact values
   are stripped from the reply, the live stream (holdback, so a value split across two deltas still
-  matches) and background-job output.
+  matches) and background-job output. The streaming holdback keeps ONLY the tail that could still
+  begin a secret — the longest suffix of the text so far that is a proper prefix of some value —
+  so ordinary prose is emitted as it arrives and the live Slack reply keeps pace with the model
+  (the earlier flat holdback of longest-secret-minus-one characters made every live reply trail
+  the model by ~92 characters whenever a GitHub token was configured, which read as an answer
+  stopped mid-word until the run ended). A match that starts before the emit boundary is replaced
+  whole, and a short value that is a prefix of a longer one stays pending until the longer one is
+  decided, exactly like the egress response scrubber.
 - **Surfaces.** `/secrets` and a message shortcut in Slack, a 🔑 Variables button on every reply
   footer (including when the channel has none, so users can add the first), and a card on the
   channel's admin page. Managing them needs the same privilege as running

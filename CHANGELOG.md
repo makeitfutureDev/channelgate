@@ -2,6 +2,12 @@
 
 ## 0.6.5 — candidate, pending approval
 
+- Keep the live Slack reply in step with the model: the streaming secret redactor now holds back
+  only text that could still begin a configured secret, instead of a flat longest-secret-minus-one
+  characters. With a GitHub token configured, every streamed answer used to trail the model by
+  about 92 characters and only catch up when the run ended, so a sentence written before a tool
+  call stayed cut off mid-word for the whole tool run.
+
 - Fix the missing ✅ on a liked Slack answer when its feedback payload supplies the answer
   timestamp in the action container. The thread root and selected answer now both get marked.
 
