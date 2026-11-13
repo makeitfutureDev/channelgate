@@ -2,6 +2,11 @@
 
 ## 0.6.5 — candidate, pending approval
 
+- Redesign the Google Chat **private settings** browser page: variables, channel and personal
+  connections and email accounts are now grouped cards with scope and status badges, host chips,
+  collapsible forms, a visible saved/not-saved banner, and light and dark themes. It still runs
+  no script; the stylesheet is nonce-bound.
+
 - Add **Group by → Channel** to the personal Activity dashboard, with channel headings and
   counts. The choice follows each viewer across sessions; status grouping remains available.
 - Keep the Activity footer at the bottom of the window when conversations do not fill the page,
