@@ -1,5 +1,11 @@
 # ChannelGate — Features
 
+## Activity footer placement (2026-11-13)
+
+The Activity footer and privacy links sit at the bottom of the window for empty or short
+conversation lists. Longer lists push them below the content, without covering conversations
+or action buttons. The layout follows the available viewport height on desktop and mobile.
+
 ## Optional queue controls preserve Activity status (2026-11-13)
 
 Activity and Slack App Home ignore optional Steer/Cancel cards for messages already accepted
