@@ -19,6 +19,22 @@
 
 ## Pinned Activity conversations (2026-11-13)
 
+- Channel grouping follow-up: use three pins across Alpha (two) and Beta (one), plus an ordinary
+  Alpha row. Select Group by → Channel: pinned headings must read “Alpha · 2”, “Beta · 1” and
+  the regular table “Alpha · 1”. Sort channels by name/ID, then status and recency within each.
+  Search a shared title term to retain one pin per channel: both counts become 1. Search Alpha:
+  one visible channel needs no redundant heading. Clear search, unpin Beta and check headings
+  update; switching to Status removes pinned headings and restores recency order. Same-named
+  channel IDs stay distinct and grouping reuses existing row controls.
+  Automated: the generated browser-script case in `test/activity-page.test.js` and the Chromium
+  case “pinned conversations group by channel on desktop and mobile and follow search and
+  grouping preferences” in `test/activity-reuse-browser.test.js`. The latter runs the real
+  Activity router with synthetic indexed roots at 1440/390 px in dark/light themes, verifies
+  persistence after reload, and requires no overflow or browser errors. All 33 browser-script
+  cases and 11 Chromium Activity cases passed locally. This display-only follow-up is
+  engine-independent. Repeat the same actions on disposable owned deployed threads after
+  activation; authenticated deployment acceptance for this follow-up remains unexecuted.
+
 - Engine-independent: dashboard row placement and personal preference writes do not invoke an
   engine or depend on engine-generated output. The same behavior covers Claude and Codex rows.
 - Regression: `node --test test/activity-page.test.js test/activity.test.js

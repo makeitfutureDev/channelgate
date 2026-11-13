@@ -378,17 +378,22 @@ function activityBrowser(config, browser, subscriptionUi) {
     grouping.disabled = ended || savingGrouping;
     if (!savingGrouping) grouping.value = groupBy;
     body.dataset.groupBy = groupBy;
+    pinnedBody.dataset.groupBy = groupBy;
     const channelName = (row) => String(row.channelName || "Conversation");
     const compareChannel = (a, b) => channelName(a).localeCompare(channelName(b)) || a.channelId.localeCompare(b.channelId);
     const groupKey = (row) => groupBy === "channel" ? row.channelId : row.status;
     const filtered = ended ? [] : rows.filter(matches);
-    const pinned = filtered.filter((row) => row.pinned).sort((a, b) => (Number(b.lastMessageMs) || 0) - (Number(a.lastMessageMs) || 0));
-    const ordinary = filtered.filter((row) => !row.pinned).sort((a, b) => (groupBy === "channel" ? compareChannel(a, b) : 0) || rank(a.status) - rank(b.status)
-      || (Number(b.lastMessageMs) || 0) - (Number(a.lastMessageMs) || 0));
+    const newest = (a, b) => (Number(b.lastMessageMs) || 0) - (Number(a.lastMessageMs) || 0);
+    const compareRows = (a, b) => (groupBy === "channel" ? compareChannel(a, b) : 0) || rank(a.status) - rank(b.status) || newest(a, b);
+    const pinned = filtered.filter((row) => row.pinned).sort(groupBy === "channel" ? compareRows : newest);
+    const ordinary = filtered.filter((row) => !row.pinned).sort(compareRows);
+    const groupPinned = groupBy === "channel" && new Set(pinned.map((row) => row.channelId)).size > 1;
     const shown = [...pinned, ...ordinary];
     const visible = new Set(shown.map(key));
     const groupSize = new Map();
     for (const row of ordinary) groupSize.set(groupKey(row), (groupSize.get(groupKey(row)) || 0) + 1);
+    const pinnedGroupSize = new Map();
+    for (const row of pinned) pinnedGroupSize.set(groupKey(row), (pinnedGroupSize.get(groupKey(row)) || 0) + 1);
     for (const [rowKey, entry] of nodes) {
       if (!visible.has(rowKey)) { entry.tr.remove(); nodes.delete(rowKey); }
     }
@@ -406,7 +411,8 @@ function activityBrowser(config, browser, subscriptionUi) {
       entry.tr.className = "row s-" + row.status;
       // Label each group on its first conversation, preserving row controls and focus.
       const localIndex = row.pinned ? index : index - pinned.length;
-      if (!row.pinned && (localIndex === 0 || groupKey(ordinary[localIndex - 1]) !== groupKey(row))) entry.tr.dataset.group = (groupBy === "channel" ? channelName(row) : states[row.status]) + " · " + groupSize.get(groupKey(row));
+      const sectionRows = row.pinned ? pinned : ordinary, sizes = row.pinned ? pinnedGroupSize : groupSize;
+      if ((!row.pinned || groupPinned) && (localIndex === 0 || groupKey(sectionRows[localIndex - 1]) !== groupKey(row))) entry.tr.dataset.group = (groupBy === "channel" ? channelName(row) : states[row.status]) + " · " + sizes.get(groupKey(row));
       else delete entry.tr.dataset.group;
       entry.pill.className = "pill " + row.status;
       entry.statusText.textContent = states[row.status];

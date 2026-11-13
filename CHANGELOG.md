@@ -8,6 +8,7 @@
 
 - Pin personal Activity conversations into a matching table above the regular feed. Pins follow
   your account across sessions; the section disappears when no pinned conversations match.
+  Group by → Channel also groups multi-channel pins with separate channel headings and counts.
 
 - Add a readable 11-step Google Chat setup guide inside Settings → Connection, with Google Cloud
   links, expanded HTTPS/button instructions and separate optional reaction setup.
