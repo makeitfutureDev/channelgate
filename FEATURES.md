@@ -1,5 +1,15 @@
 # ChannelGate — Features
 
+## Google Chat setup guide in Settings (2026-11-13)
+
+Settings → Connection → Google Chat includes an expandable, numbered 11-step setup guide with
+direct Google Cloud and official documentation links. It covers project creation, APIs, branding,
+the JSON service account, Pub/Sub permissions, app configuration, gateway fields and a real reply
+test. Step 10 explains Public URL versus the HTTP endpoint, the separate Google-generated app
+identity, Save → Connect and Google's trigger configuration. Optional reaction approval and
+troubleshooting remain separate. Native disclosure controls support keyboard navigation; long
+resource names wrap on narrow screens. This is setup documentation; connection behavior is unchanged.
+
 ## Activity footer placement (2026-11-13)
 
 The Activity footer and privacy links sit at the bottom of the window for empty or short

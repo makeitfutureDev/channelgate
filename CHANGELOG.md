@@ -2,6 +2,9 @@
 
 ## 0.6.5 — candidate, pending approval
 
+- Add a readable 11-step Google Chat setup guide inside Settings → Connection, with Google Cloud
+  links, expanded HTTPS/button instructions and separate optional reaction setup.
+
 - Add **Group by → Channel** to the personal Activity dashboard, with channel headings and
   counts. The choice follows each viewer across sessions; status grouping remains available.
 - Keep the Activity footer at the bottom of the window when conversations do not fill the page,
