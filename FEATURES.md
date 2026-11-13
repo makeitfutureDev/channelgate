@@ -19,6 +19,11 @@ duplicating pinned rows. Pins are saved per viewer across sessions and survive t
 history cap; every read/write enforces current ownership and channel access. Pinning does not
 change Slack reactions, thread status or anyone else's dashboard.
 
+With **Group by → Channel**, pins from multiple visible channels are grouped under channel
+headings with pin-only counts, using the same channel/status/recency ordering as the regular
+table. Search and unpinning update both tables' groups independently. A single visible pinned
+channel has no redundant heading; switching to Status restores the flat pinned list by recency.
+
 ## Google Chat setup guide in Settings (2026-11-13)
 
 Settings → Connection → Google Chat includes an expandable, numbered 11-step setup guide with

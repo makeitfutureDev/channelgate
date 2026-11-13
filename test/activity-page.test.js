@@ -743,3 +743,39 @@ test("failed pin save leaves rows in place and access denial clears both tables"
   assert.equal(b.elements.threads.children.length, 0);
   assert.equal(b.elements["pinned-section"].hidden, true);
 });
+
+test("channel grouping groups multi-channel pins separately with filtered counts and stable row controls", () => {
+  const b = browser(() => new Promise(() => {})), e = b.elements;
+  const pinned = [
+    { ...row("idle", "Beta pinned"), pinned: true, channelId: "C2", channelName: "Beta", threadTs: "2", lastMessageMs: 300 },
+    { ...row("idle", "Alpha idle pinned"), pinned: true, channelId: "C1", channelName: "Alpha", threadTs: "3", lastMessageMs: 200 },
+    { ...row("error", "Alpha error pinned"), pinned: true, channelId: "C1", channelName: "Alpha", threadTs: "4", lastMessageMs: 100 },
+    { ...row("waiting", "Same name pinned"), pinned: true, channelId: "C3", channelName: "Alpha", threadTs: "5", lastMessageMs: 50 },
+  ];
+  const ordinary = { ...row("idle", "Alpha regular"), threadTs: "6", channelName: "Alpha" };
+  const titles = () => e["pinned-threads"].children.map((tr) => tr.children[0].textContent);
+  const groups = () => e["pinned-threads"].children.map((tr) => tr.dataset.group);
+  b.stream.snapshot([...pinned, ordinary]);
+  const originalNodes = new Set(e["pinned-threads"].children);
+  assert.deepEqual(titles(), ["Beta pinned", "Alpha idle pinned", "Alpha error pinned", "Same name pinned"]);
+  assert.deepEqual(groups(), [undefined, undefined, undefined, undefined]);
+  b.stream.snapshot([...pinned, ordinary], { groupBy: "channel", groupByVersion: 1 });
+  assert.equal(e["pinned-threads"].dataset.groupBy, "channel");
+  assert.deepEqual(titles(), ["Alpha error pinned", "Alpha idle pinned", "Same name pinned", "Beta pinned"]);
+  assert.deepEqual(groups(), ["Alpha · 2", undefined, "Alpha · 1", "Beta · 1"]);
+  assert.equal(e.threads.children[0].dataset.group, "Alpha · 1", "regular counts exclude pins");
+  assert.ok(e["pinned-threads"].children.every((tr) => originalNodes.has(tr)), "grouping reuses existing row controls");
+  e.search.value = "pinned"; e.search.fire("input");
+  assert.deepEqual(groups(), ["Alpha · 2", undefined, "Alpha · 1", "Beta · 1"]);
+  e.search.value = "Alpha"; e.search.fire("input");
+  assert.deepEqual(groups(), ["Alpha · 2", undefined, "Alpha · 1"], "same-named channel ids stay distinct");
+  e.search.value = "Beta"; e.search.fire("input");
+  assert.deepEqual(groups(), [undefined], "one visible channel needs no extra heading");
+  e.search.value = ""; e.search.fire("input");
+  b.stream.snapshot([{ ...pinned[0], pinned: false }, ...pinned.slice(1), ordinary], { groupBy: "channel", groupByVersion: 1 });
+  assert.deepEqual(groups(), ["Alpha · 2", undefined, "Alpha · 1"]);
+  assert.equal(e["pinned-count"].textContent, "3");
+  b.stream.snapshot(pinned, { groupBy: "status", groupByVersion: 2 });
+  assert.deepEqual(titles(), ["Beta pinned", "Alpha idle pinned", "Alpha error pinned", "Same name pinned"]);
+  assert.deepEqual(groups(), [undefined, undefined, undefined, undefined], "switching back removes pinned channel headings");
+});

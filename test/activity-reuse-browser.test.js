@@ -623,3 +623,59 @@ test("Activity pins persist in a matching top table and work on desktop/mobile i
   assert.equal(await page.locator("#threads tr").count(), 1);
   assert.deepEqual(errors, []);
 });
+
+test("pinned conversations group by channel on desktop and mobile and follow search and grouping preferences", { skip: !process.env.CG_BROWSER_MODULE, timeout: 30_000 }, async (t) => {
+  resetActivityStateForTests();
+  const ownerId = "UPINGROUPBROWSER";
+  const fixtures = [
+    { channelId: "CPINBETA", channelName: "Beta", ts: "300.000001", text: "Shared Beta task", pinned: true },
+    { channelId: "CPINALPHA", channelName: "Alpha", ts: "300.000002", text: "Shared Alpha task", pinned: true },
+    { channelId: "CPINALPHA", channelName: "Alpha", ts: "300.000003", text: "Another Alpha task", pinned: true },
+    { channelId: "CPINALPHA", channelName: "Alpha", ts: "300.000004", text: "Regular Alpha task", pinned: false },
+  ];
+  await setUser(ownerId, { approved: true, activityGroupBy: "status", activityPinnedThreads: fixtures.filter((f) => f.pinned).map((f) => JSON.stringify([f.channelId, f.ts])) });
+  for (const fixture of fixtures) {
+    await upsertChannelEntry(fixture.channelId, { name: fixture.channelName, type: "channel" });
+    const entry = await getChannelEntry(fixture.channelId);
+    await saveChannelMeta(entry.slug, { access: "approved" });
+    indexSlackThread({ channelId: fixture.channelId, slug: entry.slug, root: { ts: fixture.ts, text: fixture.text, user: ownerId }, agentEngaged: true });
+  }
+  let base;
+  const app = express(); serveBrandAssets(app);
+  app.use("/activity", createActivityRouter({ getClient: () => ({}), getTeamId: () => "TPINGROUP", getBaseUrl: () => base }));
+  const server = await new Promise((resolve) => { const s = app.listen(0, "127.0.0.1", () => resolve(s)); });
+  base = `http://127.0.0.1:${server.address().port}`;
+  t.after(() => new Promise((resolve) => { resetActivityStateForTests(); server.closeAllConnections(); server.close(resolve); }));
+  const { chromium } = await import(process.env.CG_BROWSER_MODULE);
+  const browser = await chromium.launch({ headless: true, executablePath: process.env.CG_BROWSER_EXECUTABLE });
+  t.after(() => browser.close());
+  for (const width of [1440, 390]) for (const colorScheme of ["dark", "light"]) {
+    await setUser(ownerId, { activityGroupBy: "status" });
+    const context = await browser.newContext({ viewport: { width, height: 900 }, colorScheme });
+    const page = await context.newPage(), errors = [];
+    page.setDefaultTimeout(5000); page.on("pageerror", (error) => errors.push(error.message));
+    const groups = () => page.locator("#pinned-threads tr[data-group]").evaluateAll((trs) => trs.map((tr) => tr.dataset.group));
+    await page.goto(createActivityGrantUrl({ baseUrl: base, ownerId, teamId: "TPINGROUP" }));
+    await page.locator("#pinned-threads tr").first().waitFor();
+    assert.deepEqual(await groups(), []);
+    await page.getByLabel("Group by", { exact: true }).selectOption("channel");
+    await page.waitForFunction(() => globalThis.document.querySelector("#pinned-threads").dataset.groupBy === "channel");
+    assert.deepEqual(await groups(), ["Alpha · 2", "Beta · 1"]);
+    assert.equal(await page.locator("#threads tr[data-group]").getAttribute("data-group"), "Alpha · 1");
+    assert.equal(await page.evaluate(() => globalThis.document.documentElement.scrollWidth <= globalThis.innerWidth), true);
+    await page.reload();
+    await page.waitForFunction(() => globalThis.document.querySelectorAll("#pinned-threads tr[data-group]").length === 2);
+    assert.deepEqual(await groups(), ["Alpha · 2", "Beta · 1"]);
+    await page.getByRole("searchbox").fill("Shared");
+    assert.deepEqual(await groups(), ["Alpha · 1", "Beta · 1"]);
+    await page.getByRole("searchbox").fill("Alpha");
+    assert.deepEqual(await groups(), [], "a single visible pinned channel has no redundant heading");
+    await page.getByRole("searchbox").fill("");
+    await page.getByLabel("Group by", { exact: true }).selectOption("status");
+    await page.waitForFunction(() => globalThis.document.querySelector("#pinned-threads").dataset.groupBy === "status");
+    assert.deepEqual(await groups(), []);
+    assert.equal(await page.locator("#pinned-threads tr").count(), 3);
+    assert.deepEqual(errors, []);
+    await context.close();
+  }
+});
