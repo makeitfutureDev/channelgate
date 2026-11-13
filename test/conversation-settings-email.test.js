@@ -51,7 +51,7 @@ test('the private browser form connects, lists masked and removes channel and pe
   assert.match(opened.html, /<h2>Email accounts<\/h2>/);
   assert.match(opened.html, /name="imapPassword" type="password" autocomplete="new-password" maxlength="8000" value=""/);
   assert.match(opened.html, /name="smtpPassword" type="password"/);
-  assert.match(opened.html, /<select name="emailScope"><option value="channel">channel<\/option><option value="personal">personal<\/option><\/select>/);
+  assert.match(opened.html, /<select name="emailScope"><option value="channel">This conversation<\/option><option value="personal">Only me<\/option><\/select>/);
   assert.match(opened.html, /Leave passwords blank to keep the stored ones when editing; blank SMTP user\/password = same as IMAP/);
   assert.match(opened.html, /No email account connected/);
 
@@ -71,8 +71,8 @@ test('the private browser form connects, lists masked and removes channel and pe
 
   let html = await f.reload(opened);
   assert.match(html, /Saved\. Credential values remain hidden\./);
-  assert.match(html, /<li>channel · work · work@example.com · IMAP imap.example.com:993 · SMTP smtp.example.com:587<form method="post">/);
-  assert.match(html, /<li>personal · mine · me@example.com · IMAP imap.example.com:993 · SMTP smtp.example.com:587/);
+  assert.match(html, /<strong>work<\/strong><span class="badge scope">This conversation<\/span><div class="meta">work@example.com · IMAP imap.example.com:993 · SMTP smtp.example.com:587<\/div><\/div><form method="post" class="inline">/);
+  assert.match(html, /<strong>mine<\/strong><span class="badge scope">Only me<\/span><div class="meta">me@example.com · IMAP imap.example.com:993 · SMTP smtp.example.com:587/);
   assert.match(html, /name="action" value="settings.email.remove"><input type="hidden" name="emailScope" value="channel"><input type="hidden" name="name" value="work">/);
   assert.match(html, /name="emailScope" value="personal"><input type="hidden" name="name" value="mine">/);
   assert.ok(!html.includes(PASSWORD) && !html.includes(SMTP_PASSWORD));
