@@ -844,6 +844,19 @@
                     <input id="set-ctxwindow" type="number" min="1000" step="1000" placeholder="200000" />
                   </label>
                 </div>
+                <div class="setcard" id="voice-calls-card">
+                  <h4>Voice calls · Beta</h4>
+                  <p class="desc">Let approved users talk to a channel's agent from a browser call page (the <strong>📞 Call</strong> reply button and the Activity page). The daemon holds a Google Gemini Live session; spoken requests run as ordinary turns in the bound Slack thread, authored by the caller, and the transcript is posted there when the call ends. Voice minutes are billed to your Gemini API key (about $0.02 per minute).</p>
+                  <label class="toggle"><input type="checkbox" id="set-voice-calls-enabled" /> Enable voice calls</label>
+                  <label class="field">
+                    <span>Gemini API key <em class="state" id="gemini-api-key-state"></em></span>
+                    <input id="set-gemini-api-key" type="password" placeholder="leave blank to keep current" autocomplete="new-password" maxlength="256" />
+                    <div class="tok-foot"><button type="button" class="clear-tok" id="clear-gemini-api-key">clear</button></div>
+                    <em class="state">Create a key in Google AI Studio. It stays in gateway settings and never reaches a browser or a channel container.</em>
+                  </label>
+                  <label class="field"><span>Voice model</span><select id="set-voice-call-model"></select></label>
+                  <label class="field"><span>Voice</span><select id="set-voice-call-voice"></select></label>
+                </div>
                 <div class="setcard" id="perplexity-research-card">
                   <h4>Perplexity research</h4>
                   <p class="desc">Let agents delegate research through your Perplexity subscription. This is a gateway-wide shared login for research only, using the unofficial Perplexity web bridge.</p>

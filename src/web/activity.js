@@ -26,6 +26,9 @@ import { activityPasskey } from "../config/activity-passkeys.js";
 import { adminAccount, adminPasskeyById } from "../config/admin-accounts.js";
 import { adminSession } from "./auth.js";
 import { applyUserSettingsChange, userSettingsSnapshot, UserSettingsError } from "../gateway/user-settings.js";
+import { callPage, CALL_WORKLET_PATH, CALL_WORKLET_SOURCE } from "./call-page.js";
+import { callManager as defaultCallManager } from "../gateway/voice/calls.js";
+import { voiceCallsAvailable } from "../config/settings.js";
 
 export const ACTIVITY_GRANT_TTL_MS = 10 * 60_000;
 export const ACTIVITY_SESSION_TTL_MS = 12 * 60 * 60_000;
@@ -57,20 +60,32 @@ function prune(now) {
   for (const map of [grants, sessions]) for (const [key, row] of map) if (row.expiresAt <= now) map.delete(key);
 }
 
-export function createActivityGrantUrl({ baseUrl = getPublicUrl(), ownerId, teamId, now = Date.now() } = {}) {
+// A launch may carry ONE in-app destination, opened after the exchange: today the voice-call page
+// bound to a conversation (and optionally its thread). Anything else is refused at mint time, so a
+// grant can never redirect outside the session's own path.
+export const ACTIVITY_NEXT_PATTERN = /^\/call\?channel=[A-Z0-9_]{1,32}(?:&thread=\d{1,13}\.\d{1,6})?$/;
+export function activityCallPath(channelId, threadTs = "") {
+  const path = `/call?channel=${encodeURIComponent(String(channelId || ""))}${threadTs ? `&thread=${encodeURIComponent(String(threadTs))}` : ""}`;
+  return ACTIVITY_NEXT_PATTERN.test(path) ? path : "";
+}
+
+export function createActivityGrantUrl({ baseUrl = getPublicUrl(), ownerId, teamId, now = Date.now(), next = "" } = {}) {
   const base = baseFor(baseUrl);
   if (!base || !ownerId || !teamId) return "";
+  if (next && !ACTIVITY_NEXT_PATTERN.test(next)) return "";
   prune(now); capOwner(grants, String(ownerId), 20); cap(grants, 2000);
   const secret = token();
-  grants.set(hash(secret), { ownerId: String(ownerId), teamId: String(teamId), origin: base.origin, expiresAt: now + ACTIVITY_GRANT_TTL_MS });
+  grants.set(hash(secret), { ownerId: String(ownerId), teamId: String(teamId), origin: base.origin, expiresAt: now + ACTIVITY_GRANT_TTL_MS, ...(next ? { next } : {}) });
   // The fragment never travels in HTTP requests, proxy logs or Slack link-unfurl requests.
   return `${base.origin}/activity/open#${secret}`;
 }
 
-function headers(res, nonce = "") {
+// `worklet` admits the call page's same-origin AudioWorklet module: a nonce cannot cover a
+// worklet fetch, so that one page (and only it) also allows 'self' scripts.
+function headers(res, nonce = "", { worklet = false } = {}) {
   res.set({ "Cache-Control": "no-store, max-age=0", Pragma: "no-cache", "Referrer-Policy": "no-referrer",
     "X-Content-Type-Options": "nosniff", "X-Frame-Options": "DENY",
-    "Content-Security-Policy": `default-src 'none'; ${nonce ? `script-src 'nonce-${nonce}'; style-src 'nonce-${nonce}'; connect-src 'self'; img-src 'self' data:; font-src 'self';` : ""} manifest-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'` });
+    "Content-Security-Policy": `default-src 'none'; ${nonce ? `script-src 'nonce-${nonce}'${worklet ? " 'self'" : ""}; style-src 'nonce-${nonce}'; connect-src 'self'; img-src 'self' data:; font-src 'self';` : ""} manifest-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'` });
 }
 function unavailable(res, status = 401) {
   return res.status(status).json({ error: "Activity is unavailable. Open a new dashboard link from Slack Activity." });
@@ -112,7 +127,9 @@ export function createActivityRouter({
   getClient, getTeamId, getBaseUrl = getPublicUrl, getBotIdentity = () => null,
   snapshot = activityThreadSnapshot, refreshKey = homeThreadsRefreshKey, readSubscriptions = readSubscriptionUsage,
   now = Date.now, pollMs = 1000, accessRefreshMs = 15_000, maxStreams = 100, drainTimeoutMs = 30_000,
+  calls = null, voiceAvailable = voiceCallsAvailable,
 } = {}) {
+  const callsFor = () => calls || defaultCallManager();
   if (typeof getClient !== "function" || typeof getTeamId !== "function") throw new Error("Activity requires its live Slack connection");
   const router = express.Router({ caseSensitive: true });
   const reader = createHomeThreadReader();
@@ -170,7 +187,8 @@ export function createActivityRouter({
     res.append("Set-Cookie", `${cookieName(id)}=${secret}; HttpOnly; SameSite=Lax; Path=/activity/${id}; Max-Age=${ACTIVITY_SESSION_TTL_MS / 1000}${secure ? "; Secure" : ""}`);
     // The installed app's launcher resumes this session; it learns the id only, never the secret.
     res.append("Set-Cookie", activityAppCookie(id, { maxAgeSeconds: ACTIVITY_SESSION_TTL_MS / 1000, secure }));
-    return redirect ? res.redirect(303, `/activity/${id}`) : res.json({ url: `/activity/${id}` });
+    const next = ACTIVITY_NEXT_PATTERN.test(identity.next || "") ? identity.next : "";
+    return redirect ? res.redirect(303, `/activity/${id}${next}`) : res.json({ url: `/activity/${id}${next}` });
   };
   const sendPage = (res, page) => { headers(res, page.nonce); return res.type("html").send(page.html); };
   router.get("/from-admin", async (req, res) => {
@@ -271,10 +289,93 @@ export function createActivityRouter({
       const agent = await agentName(client).catch(() => "");
       const theme = activityTheme((await getUser(session.ownerId))?.activityTheme);
       const view = req.path.endsWith("/subscriptions") ? "subscriptions" : req.path.endsWith("/settings") ? "settings" : "activity";
-      const page = activityPage({ sessionId: req.params.id, csrf: session.csrf, agent, theme, teamId: session.teamId, view });
+      const page = activityPage({ sessionId: req.params.id, csrf: session.csrf, agent, theme, teamId: session.teamId, view, voiceCalls: voiceAvailable() });
       headers(res, page.nonce); return res.type("html").send(page.html);
     } catch (error) { return sendPage(res.status(error.status || 401), activityAccessPage({ mode: "login" })); }
   };
+  // ── Voice calls (gateway/voice/calls.js) ─────────────────────────────────────
+  // The page and every call route live under the session path so its cookie travels. A call is
+  // admitted by the same rule as the Dashboard button (channel authorization + membership), and
+  // the manager re-checks the caller on every audio chunk and on hang-up.
+  const callTarget = (req) => {
+    const channelId = String(req.query?.channel || req.body?.channelId || "");
+    const threadTs = String(req.query?.thread || req.body?.threadTs || "");
+    if (!/^[A-Z0-9_]{1,32}$/.test(channelId) || (threadTs && !isSlackTs(threadTs))) return null;
+    return { channelId, threadTs };
+  };
+  const csrfOk = (req, session) => req.headers.origin === req.activityOrigin
+    && timingSafeEqualStr(String(req.headers["x-cg-csrf"] || req.query?.csrf || ""), session.csrf);
+  router.get("/:id/call", async (req, res) => {
+    try {
+      const { session, client } = await context(req);
+      const target = callTarget(req);
+      if (!target) return unavailable(res, 400);
+      if (!voiceAvailable()) return res.status(503).type("text").send("Voice calls are not configured. An administrator enables them under Settings → Voice calls.");
+      const entry = await getChannelEntry(target.channelId);
+      const access = await accessContext(client, session.ownerId);
+      if (!entry || (!access.user.approved && !access.user.isAdmin) || !await access.allows({ ...entry, channelId: target.channelId }, target.threadTs)) return unavailable(res, 403);
+      await context(req);
+      const agent = await agentName(client).catch(() => "");
+      const theme = activityTheme((await getUser(session.ownerId))?.activityTheme);
+      const channelName = entry.isDM || entry.type === "im" ? "Direct messages" : `#${String(entry.name || target.channelId).replace(/^#/, "")}`;
+      const page = callPage({ sessionId: req.params.id, csrf: session.csrf, channelId: target.channelId, threadTs: target.threadTs, channelName, agent, theme });
+      headers(res, page.nonce, { worklet: true }); return res.type("html").send(page.html);
+    } catch (error) { return sendPage(res.status(error.status || 401), activityAccessPage({ mode: "login" })); }
+  });
+  router.post("/:id/call/start", async (req, res) => {
+    try {
+      const { session, client } = await context(req);
+      if (!csrfOk(req, session)) return unavailable(res, 403);
+      const target = callTarget(req);
+      if (!target) return res.status(400).json({ error: "A call needs a conversation." });
+      const identity = getBotIdentity() || {};
+      const call = await callsFor().start({ ownerId: session.ownerId, channelId: target.channelId, threadTs: target.threadTs, client, teamId: session.teamId, botUserId: typeof identity.userId === "string" ? identity.userId : "" });
+      await context(req);
+      return res.json(call);
+    } catch (error) {
+      if (error.status === 401 || error.status === 403) return unavailable(res, error.status);
+      return res.status(error.status || 503).json({ error: error.message || "The call could not start." });
+    }
+  });
+  router.get("/:id/call/:callId/events", async (req, res) => {
+    let session;
+    try { ({ session } = await context(req)); } catch (error) { return unavailable(res, error.status || 403); }
+    // Subscribe before the headers go out: an unknown or foreign call is a plain 404, and the
+    // snapshot the subscription delivers synchronously waits until the stream is open.
+    let unsubscribe, open = false;
+    const pending = [];
+    const write = (event) => {
+      if (res.destroyed) return;
+      res.write(`data: ${JSON.stringify(event)}\n\n`);
+      if (event.type === "ended") res.end();
+    };
+    try {
+      unsubscribe = callsFor().subscribe(req.params.callId, session.ownerId, (event) => { if (open) write(event); else pending.push(event); });
+    } catch (error) { return unavailable(res, error.status || 404); }
+    res.status(200).set({ "Content-Type": "text/event-stream; charset=utf-8", "Cache-Control": "no-store, no-transform", "X-Accel-Buffering": "no", Connection: "keep-alive" });
+    res.flushHeaders(); res.write("retry: 1000\n\n");
+    open = true;
+    for (const event of pending.splice(0)) write(event);
+    const keepalive = setInterval(() => { if (!res.destroyed) res.write(": ping\n\n"); }, 15_000);
+    res.on("close", () => { clearInterval(keepalive); unsubscribe?.(); });
+  });
+  router.post("/:id/call/:callId/audio", express.raw({ type: "application/octet-stream", limit: "64kb" }), async (req, res) => {
+    try {
+      const { session } = await context(req);
+      if (!csrfOk(req, session)) return unavailable(res, 403);
+      if (!Buffer.isBuffer(req.body) || !req.body.length) return res.status(400).json({ error: "audio body missing" });
+      const accepted = callsFor().audio(req.params.callId, session.ownerId, req.body);
+      return res.json({ ok: true, accepted });
+    } catch (error) { return unavailable(res, error.status || 404); }
+  });
+  router.post("/:id/call/:callId/end", async (req, res) => {
+    try {
+      const { session } = await context(req);
+      if (!csrfOk(req, session)) return unavailable(res, 403);
+      const ended = await callsFor().end(req.params.callId, session.ownerId, "the caller hung up");
+      return res.json({ ok: ended });
+    } catch (error) { return unavailable(res, error.status || 404); }
+  });
   // One installable app: a stable manifest, icons and launcher under /activity/. Registered
   // ahead of "/:id" so these names are never read as session ids.
   router.get("/manifest.webmanifest", async (_req, res) => {
@@ -284,6 +385,10 @@ export function createActivityRouter({
   for (const [route, file] of Object.entries(ACTIVITY_APP_ICONS)) router.get(`/${route}`, (_req, res) => {
     res.set("Cache-Control", "public, max-age=86400");
     res.sendFile(file, { root: fileURLToPath(new URL("../../public/activity/", import.meta.url)) });
+  });
+  router.get(CALL_WORKLET_PATH.replace(/^\/activity/, ""), (_req, res) => {
+    res.set("Cache-Control", "public, max-age=3600");
+    res.type("application/javascript").send(CALL_WORKLET_SOURCE);
   });
   router.get("/app", (req, res) => {
     const id = activityAppSessionId(req.headers.cookie), session = id && sessions.get(id);

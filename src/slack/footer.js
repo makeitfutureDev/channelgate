@@ -12,6 +12,8 @@ import { actionValue as fileActionValue, FILES_ACTION_ID } from "./file-explorer
 import { actionValue as secretActionValue, SECRETS_ACTION_ID } from "./secret-explorer.js";
 import { actionValue as settingsActionValue, CHANNEL_SETTINGS_ACTION_ID } from "./channel-settings.js";
 import { REPLY_DASHBOARD_ACTION_ID } from "./reply-dashboard.js";
+import { REPLY_CALL_ACTION_ID } from "./call-button.js";
+import { voiceCallsAvailable } from "../config/settings.js";
 
 // The terminal command that reopens a thread's session locally. It `cd`s into the channel's
 // working folder first, because Claude/Codex locate a session by the directory you run them in
@@ -94,6 +96,20 @@ export function dashboardButton(channelId, threadTs, authorId = "") {
   };
 }
 
+// Opens a voice call with this channel's agent, bound to this thread (slack/call-button.js). Like
+// Dashboard it is viewer-specific: the click mints the clicker's own private launch. Rendered only
+// while the gateway has voice calls configured, so the menu stays the fixed four otherwise.
+export function callButton(channelId, threadTs, authorId = "") {
+  if (!channelId) return null;
+  return {
+    type: "button",
+    action_id: REPLY_CALL_ACTION_ID,
+    text: { type: "plain_text", text: "📞 Call", emoji: true },
+    accessibility_label: "Start a voice call with the agent in this thread",
+    value: JSON.stringify({ o: "open", c: channelId, t: threadTs || "", u: authorId || "" }),
+  };
+}
+
 // The fixed menu, in this order, or nothing (no channel to bind to).
 export function menuButtons({ channel = "", threadTs = "", authorId = "" } = {}) {
   if (!channel) return [];
@@ -102,6 +118,7 @@ export function menuButtons({ channel = "", threadTs = "", authorId = "" } = {})
     secretsButton(channel, threadTs, authorId),
     settingsButton(channel, threadTs, authorId),
     dashboardButton(channel, threadTs, authorId),
+    ...(voiceCallsAvailable() ? [callButton(channel, threadTs, authorId)] : []),
   ];
 }
 

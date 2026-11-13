@@ -457,7 +457,7 @@ function keepAliveMs() {
 // of an interactive turn — never the unbounded background backlog. Each of those is granted (and
 // leaves the queue) as a slot frees, so an interactive turn's position strictly decreases and it
 // always eventually runs.
-const INTERACTIVE_RUN_ORIGINS = new Set(["slack_foreground", "googlechat_foreground", "msteams_foreground", "api_foreground"]);
+const INTERACTIVE_RUN_ORIGINS = new Set(["slack_foreground", "googlechat_foreground", "msteams_foreground", "api_foreground", "voice_call"]);
 let runSemaphore = null;
 let backgroundRunSemaphore = null;
 

@@ -47,6 +47,8 @@ const READERS = {
     // guarantee should survive someone adding a field to the table without reading this file.
     qwenApiKey: (s) => s.qwenApiKey,
     qwenEuApiKey: (s) => s.qwenEuApiKey,
+    // The Gemini API key behind voice calls (gateway/voice/). Same terms as the provider keys above.
+    geminiApiKey: (s) => s.geminiApiKey,
   },
   user: {
     composioToken: (u) => u.composioToken,
