@@ -719,6 +719,12 @@ test("local Activity snapshots cap visible data and flag partial results", async
   assert.equal(withPin.rows.length, 1001);
   assert.equal(withPin.rows.some((row) => row.thread_ts === "100.000001"), true, "old saved pins survive the ordinary history cap");
   assert.equal(new Set(withPin.rows.map((row) => row.thread_ts)).size, withPin.rows.length);
+  const channelPin = await activityThreadSnapshot(client, "U_MINE", { filter: "all-statuses", pageSize: 1000, pinnedChannels: [c.channelId] });
+  assert.equal(channelPin.rows.length, 1001, "all open threads in a pinned channel survive the feed cap");
+  setSlackThreadDone(c.channelId, "100.000001", "U_MINE", true);
+  const completed = await activityThreadSnapshot(client, "U_MINE", { filter: "all-statuses", pageSize: 1, pinnedChannels: [c.channelId] });
+  assert.equal(completed.rows.length, 1000);
+  assert.equal(completed.rows.some((row) => row.thread_ts === "100.000001"), false, "channel pins do not retain completed history outside the page");
 });
 
 test("thread changes emit scoped invalidations and passive checks do not loop", async () => {

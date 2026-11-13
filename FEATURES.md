@@ -65,12 +65,29 @@ They remain outside personal lists, do not trigger the partial-data banner, and 
 consume the root-repair batch ahead of older human threads. Failed or timed-out Slack reads still
 raise the warning and remain retryable. Current access is rechecked before saving an exclusion.
 
+## Pinned Activity channels (2026-11-14)
+
+Each Activity row has a **Pin channel** control beside its channel name. It saves the channel
+for that viewer and moves all their open tracked conversations into **Pinned conversations**,
+including Later and future conversations. Like individual pins, open channel pins stay visible
+across status tabs and follow search. Completed conversations return to the ordinary Completed
+view unless individually pinned. Status/channel grouping, counts and row controls still work;
+threads appear once. Channel cards show the channel name, open count and **Unpin channel**, and
+remain available with “No open conversations” after the last open thread finishes.
+
+Channel pins persist across sessions, synchronize through Activity's live feed, and retain all
+open pinned-channel threads beyond the ordinary feed cap. They are independent of individual
+thread pins: unpinning either never removes the other preference. Pins never grant access,
+expose another viewer's threads, change Slack reactions or complete/postpone work. Channel reads
+and writes enforce current gateway admission and private-conversation membership; inaccessible
+channel names disappear with their rows. Desktop, tablet and mobile show channel pin controls.
+
 ## Pinned Activity conversations (2026-11-13)
 
 Each personal Activity row has a Pin/Unpin button. Pinning moves the conversation into a
 matching **Pinned conversations** table above the regular feed, with the same columns, live
 status, clocks and Slack/Done/Later controls. The section appears only when a pin matches the
-search; unpinning the last conversation hides it. Pins remain visible across status tabs,
+search; unpinning the last conversation hides it when no pinned channel remains. Pins remain visible across status tabs,
 including after completion or postponement, while search applies to both tables. Regular
 status/channel grouping and counts continue to describe the underlying conversations without
 duplicating pinned rows. Pins are saved per viewer across sessions and survive the ordinary

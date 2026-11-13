@@ -47,7 +47,7 @@ function row(status = "working", title = "Fixture thread", url = "/activity/sess
   return { channelId: "C1", threadTs: "1.1", title, channelName: "Engineering", status, lastMessageMs: 1_800_000_000_000, url };
 }
 function browser(fetchImpl = async () => response({ rows: [] }), csrf = "fixture-csrf", subscriptions = false, { prefersLight = false, teamId = "TWORK" } = {}) {
-  const elements = Object.fromEntries(["pinned-section", "pinned-count", "pinned-threads", "group-by", "theme-toggle", "load-history", "threads", "search", "filters", "connection", "connection-text", "updated", "notice", "summary", "table", "empty", "empty-title", "empty-copy", "result-count", "group-order", "order-dialog", "order-list", "order-save", "order-cancel", "order-reset", "order-error", "mark-all-done", "all-done-dialog", "all-done-confirm", "all-done-cancel", "all-done-error"].map((id) => [id, new Element()]));
+  const elements = Object.fromEntries(["pinned-channels", "pinned-section", "pinned-count", "pinned-threads", "group-by", "theme-toggle", "load-history", "threads", "search", "filters", "connection", "connection-text", "updated", "notice", "summary", "table", "empty", "empty-title", "empty-copy", "result-count", "group-order", "order-dialog", "order-list", "order-save", "order-cancel", "order-reset", "order-error", "mark-all-done", "all-done-dialog", "all-done-confirm", "all-done-cancel", "all-done-error"].map((id) => [id, new Element()]));
   for (const filter of ["active", "working", "waiting", "error", "idle", "later", "done", "open"]) {
     const button = new Element("button"); button.dataset.filter = filter; button.append(new Element("span")); elements.filters.append(button);
   }
@@ -778,4 +778,65 @@ test("channel grouping groups multi-channel pins separately with filtered counts
   b.stream.snapshot(pinned, { groupBy: "status", groupByVersion: 2 });
   assert.deepEqual(titles(), ["Beta pinned", "Alpha idle pinned", "Alpha error pinned", "Same name pinned"]);
   assert.deepEqual(groups(), [undefined, undefined, undefined, undefined], "switching back removes pinned channel headings");
+});
+
+test("channel pins promote all open conversations once across status filters, retain empty channels and preserve explicit thread pins", () => {
+  const b = browser(() => new Promise(() => {})), e = b.elements;
+  const channel = { channelId: "C1", channelName: "Engineering" };
+  const fixtures = [
+    { ...row("idle", "Open task"), channelPinned: true },
+    { ...row("later", "Later task"), threadTs: "2", channelPinned: true },
+    { ...row("done", "Done task"), threadTs: "3", channelPinned: true },
+    { ...row("done", "Saved task"), threadTs: "4", channelPinned: true, pinned: true },
+    { ...row("idle", "Regular task"), threadTs: "5", channelId: "C2", channelName: "Other" },
+  ];
+  b.stream.snapshot(fixtures, { pinnedChannels: [channel] });
+  assert.equal(e["pinned-channels"].children[0].children[0].textContent, "Engineering");
+  assert.equal(e["pinned-channels"].children[0].children[1].textContent, "2 open");
+  assert.deepEqual(e["pinned-threads"].children.map((tr) => tr.children[0].textContent), ["Open task", "Later task", "Saved task"]);
+  assert.equal(e.threads.children.length, 1);
+  const inherited = e["pinned-threads"].children[0];
+  assert.equal(inherited.children[4].children[1].children[2].textContent, "Pin", "inherited placement preserves the individual Pin action");
+  assert.equal(inherited.children[1].children[1].attrs["aria-label"], "Unpin channel: Engineering");
+  e.filters.fire("click", { target: e.filters.children.find((button) => button.dataset.filter === "open") });
+  assert.equal(e["pinned-threads"].children.length, 3, "All open includes Later inherited work plus the explicit Done pin");
+  e.filters.fire("click", { target: e.filters.children.find((button) => button.dataset.filter === "done") });
+  assert.equal(e["pinned-threads"].children.length, 3, "open channel pins persist across tabs; inherited Done work returns to regular completed rows");
+  assert.equal(e.threads.children[0].children[0].textContent, "Done task");
+  e.search.value = "absent"; e.search.fire("input");
+  assert.equal(e["pinned-section"].hidden, true);
+  e.search.value = ""; e.search.fire("input");
+  b.stream.snapshot([], { pinnedChannels: [channel] });
+  assert.equal(e["pinned-section"].hidden, false);
+  assert.equal(e["pinned-channels"].children[0].children[1].textContent, "No open conversations");
+  assert.equal(e["pinned-channels"].children[0].children[2].textContent, "Unpin channel");
+  b.stream.fire("access-ended");
+  assert.equal(e["pinned-section"].hidden, true);
+  assert.equal(e["pinned-channels"].children.length, 0);
+});
+
+test("channel pin controls save once with CSRF, retain row focus and report failed saves", async () => {
+  const saving = deferred(); let pinned = false;
+  const channel = { channelId: "C1", channelName: "Engineering" };
+  const b = browser(async (url, options) => {
+    if (url.endsWith("/channel-pin")) { const result = await saving.promise; pinned = true; return result; }
+    return response({ rows: [{ ...row("idle"), channelPinned: pinned }], pinnedChannels: pinned ? [channel] : [] });
+  });
+  await flush();
+  const tr = b.elements.threads.children[0], button = tr.children[1].children[1];
+  b.elements.threads.fire("click", { target: button });
+  b.elements.threads.fire("click", { target: button });
+  assert.equal(b.requests.filter((req) => req.url.endsWith("/channel-pin")).length, 1);
+  assert.equal(button.disabled, true);
+  const request = b.requests.find((req) => req.url.endsWith("/channel-pin"));
+  assert.deepEqual(JSON.parse(request.options.body), { channelId: "C1", pinned: true });
+  assert.equal(request.options.headers["X-CG-CSRF"], "fixture-csrf");
+  saving.resolve(response({ ok: true })); await flush();
+  assert.equal(b.elements["pinned-threads"].children[0], tr);
+  assert.equal(button.disabled, false);
+  const failed = browser(async (url) => url.endsWith("/channel-pin") ? response({}, 503) : response({ rows: [row("idle")] }));
+  await flush();
+  failed.elements.threads.fire("click", { target: failed.elements.threads.children[0].children[1].children[1] }); await flush();
+  assert.match(failed.elements.notice.textContent, /channel pin couldn’t be saved/);
+  assert.equal(failed.elements["pinned-section"].hidden, true);
 });

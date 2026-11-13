@@ -2,6 +2,12 @@
 
 ## 0.6.5 — candidate, pending approval
 
+- Pin whole channels in personal Activity. Their current and future open conversations,
+  including Later, join Pinned across status tabs; completed threads return to Completed unless
+  individually pinned. Channel cards stay available when empty, and channel/thread pins remain
+  independent. Pins follow search, grouping and current access, persist per viewer, and work on
+  desktop, tablet and mobile.
+
 - Keep the live Slack reply in step with the model: the streaming secret redactor now holds back
   only text that could still begin a configured secret, instead of a flat longest-secret-minus-one
   characters. With a GitHub token configured, every streamed answer used to trail the model by

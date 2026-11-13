@@ -19,8 +19,8 @@ const { createActivityRouter, createActivityGrantUrl, resetActivityStateForTests
 beforeEach(async () => {
   resetActivityStateForTests();
   for (const table of ["slack_threads", "sessions", "channels", "channel_meta", "active_runs", "bg_jobs", "question_requests", "approval_requests", "followup_threads", "followup_done", "thread_overrides"]) getDb().exec(`DELETE FROM ${table}`);
-  await setUser("U_MINE", { approved: true, isAdmin: false, activityPinnedThreads: [] });
-  await setUser("U_OTHER", { approved: true, isAdmin: false, activityPinnedThreads: [] });
+  await setUser("U_MINE", { approved: true, isAdmin: false, activityPinnedThreads: [], activityPinnedChannels: [] });
+  await setUser("U_OTHER", { approved: true, isAdmin: false, activityPinnedThreads: [], activityPinnedChannels: [] });
 });
 
 test("reply Dashboard privately launches the clicker's Activity from owned, foreign and automation replies", async (t) => {
@@ -1174,4 +1174,81 @@ test("Activity pin rechecks revocation after an awaited private membership read"
   await started.promise; await setUser("U_MINE", { approved: false }); gate.resolve();
   assert.equal((await pending).status, 403);
   assert.deepEqual((await getUser("U_MINE")).activityPinnedThreads, []);
+});
+
+test("Activity channel pins persist per viewer, include future open work and preserve separate thread pins", async (t) => {
+  const f = await fixture(t);
+  await f.root(); await f.root("C_WORK", "100.000002");
+  await f.root("C_WORK", "100.000003", "U_OTHER");
+  const mine = await f.login(), other = await f.login("U_OTHER");
+  const snapshot = async (viewer) => (await f.request(viewer.url + "/api/threads", { headers: viewer.headers })).json();
+  const pin = (channelId, pinned) => f.request(mine.url + "/api/channel-pin", { method: "POST", headers: mine.post,
+    body: JSON.stringify({ channelId, pinned, ownerId: "U_OTHER", isAdmin: true, activityPinnedThreads: [] }) });
+  const original = getSlackThread("C_WORK", "100.000001");
+  await setUser("U_MINE", { activityPinnedThreads: [JSON.stringify(["C_WORK", "100.000001"])] });
+  const stream = await f.request(mine.url + "/stream", { headers: mine.headers });
+  const reader = stream.body.getReader(); t.after(() => reader.cancel());
+  assert.deepEqual((await nextEvent(reader)).pinnedChannels, []);
+  assert.equal((await pin("C_WORK", true)).status, 200);
+  const event = await nextEvent(reader);
+  assert.deepEqual(event.pinnedChannels, [{ channelId: "C_WORK", channelName: "#C_WORK" }]);
+  assert.ok(event.rows.every((row) => row.channelPinned));
+  assert.deepEqual(event.rows.map((row) => row.pinned).sort(), [false, true]);
+  assert.equal((await pin("C_WORK", true)).status, 200);
+  assert.deepEqual((await getUser("U_MINE")).activityPinnedChannels, ["C_WORK"], "idempotent");
+  assert.deepEqual((await snapshot(other)).pinnedChannels, []);
+  assert.ok((await snapshot(other)).rows.every((row) => !row.channelPinned));
+  assert.equal((await getUser("U_MINE")).isAdmin, false);
+  assert.deepEqual(getSlackThread("C_WORK", "100.000001"), original);
+  await f.root("C_WORK", "100.000004");
+  setSlackThreadLater("C_WORK", "100.000002", "U_MINE", true);
+  const again = await snapshot(await f.login());
+  assert.equal(again.rows.find((row) => row.threadTs === "100.000004").channelPinned, true);
+  assert.equal(again.rows.find((row) => row.threadTs === "100.000002").status, "later");
+  assert.ok(again.rows.every((row) => row.threadTs !== "100.000003"), "foreign roots remain excluded");
+  // Unpinning a channel never clears an individual conversation pin.
+  assert.equal((await pin("C_WORK", false)).status, 200);
+  const unpinned = await snapshot(mine);
+  assert.deepEqual(unpinned.pinnedChannels, []);
+  assert.ok(unpinned.rows.every((row) => !row.channelPinned));
+  assert.equal(unpinned.rows.find((row) => row.threadTs === "100.000001").pinned, true);
+  await f.root("C_EMPTY", "100.000001", "U_OTHER");
+  const results = await Promise.all([pin("C_WORK", true), pin("C_EMPTY", true)]);
+  assert.ok(results.every((result) => result.status === 200));
+  assert.deepEqual(new Set((await snapshot(mine)).pinnedChannels.map((channel) => channel.channelId)), new Set(["C_WORK", "C_EMPTY"]));
+  assert.deepEqual((await getUser("U_OTHER")).activityPinnedChannels, []);
+  assert.equal(f.markerCalls.length, 0, "pins never mutate Slack reactions");
+});
+
+test("Activity channel pins reject malformed, CSRF, inaccessible and revoked requests and hide private channel names", async (t) => {
+  const f = await fixture(t), entry = await f.root("G_PRIVATE", "100.000001", "U_MINE", true, "private");
+  f.members.set("G_PRIVATE", ["U_MINE"]);
+  const mine = await f.login(), payload = { channelId: "G_PRIVATE", pinned: true };
+  const send = (body = payload, headers = mine.post) => f.request(mine.url + "/api/channel-pin", { method: "POST", headers, body: JSON.stringify(body) });
+  for (const [headers, status] of [[{ ...mine.post, cookie: "" }, 401], [{ ...mine.post, "X-CG-CSRF": "bad" }, 403], [{ ...mine.post, Origin: "https://other.example" }, 403]]) assert.equal((await send(payload, headers)).status, status);
+  for (const body of [{ ...payload, pinned: "true" }, { ...payload, channelId: null }, { ...payload, channelId: "" }, { ...payload, channelId: "googlechat:spaces/AAA" }]) assert.equal((await send(body)).status, 400);
+  assert.equal((await send({ ...payload, channelId: "C_UNKNOWN" })).status, 403);
+  assert.equal((await send()).status, 200);
+  f.members.set("G_PRIVATE", []);
+  assert.equal((await send()).status, 403);
+  const hidden = await (await f.request(mine.url + "/api/threads", { headers: mine.headers })).json();
+  assert.deepEqual(hidden.pinnedChannels, []); assert.deepEqual(hidden.rows, []);
+  assert.doesNotMatch(JSON.stringify(hidden), /G_PRIVATE/);
+  f.members.set("G_PRIVATE", ["U_MINE"]);
+  await saveChannelMeta(entry.slug, { access: "none" }); assert.equal((await send()).status, 403);
+  await saveChannelMeta(entry.slug, { access: "approved" });
+  await setUser("U_MINE", { approved: false }); assert.equal((await send()).status, 403);
+});
+
+test("Activity channel pin rechecks revocation after awaited private membership", async (t) => {
+  const f = await fixture(t);
+  await f.root("G_PRIVATE", "100.000001", "U_MINE", true, "private");
+  f.members.set("G_PRIVATE", ["U_MINE"]);
+  const mine = await f.login(), started = defer(), gate = defer();
+  f.client.conversations.members = async () => { started.resolve(); await gate.promise; return { members: ["U_MINE"] }; };
+  const pending = f.request(mine.url + "/api/channel-pin", { method: "POST", headers: mine.post,
+    body: JSON.stringify({ channelId: "G_PRIVATE", pinned: true }) });
+  await started.promise; await setUser("U_MINE", { approved: false }); gate.resolve();
+  assert.equal((await pending).status, 403);
+  assert.deepEqual((await getUser("U_MINE")).activityPinnedChannels, []);
 });
