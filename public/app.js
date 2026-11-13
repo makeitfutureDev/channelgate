@@ -4110,7 +4110,7 @@ function collectQwenProviders() {
 function paintEngineToggles() {
   const box = document.getElementById("engine-enabled-box");
   if (!box || !ENGINE_MANIFESTS.length) return;
-  const onCount = ENGINE_MANIFESTS.filter((m) => engineIsEnabled(m.id)).length;
+  const onCount = ENGINE_MANIFESTS.filter((m) => !m.channelScoped && engineIsEnabled(m.id)).length;
   box.replaceChildren(...ENGINE_MANIFESTS.map((m) => {
     const on = engineIsEnabled(m.id);
     const label = document.createElement("label");
@@ -4120,7 +4120,7 @@ function paintEngineToggles() {
     input.checked = on;
     // The last enabled harness can't be switched off — the daemon would have nothing to run, and
     // the API refuses that state anyway. Disable the box rather than let the save 400.
-    input.disabled = on && onCount === 1;
+    input.disabled = on && !m.channelScoped && onCount === 1;
     input.title = input.disabled ? "At least one harness must stay enabled" : "";
     input.addEventListener("change", () => {
       ENGINE_ENABLED[m.id] = input.checked;
