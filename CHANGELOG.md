@@ -2,6 +2,12 @@
 
 ## 0.6.5 — candidate, pending approval
 
+- Add a Diagnostics page to Slack Channel Settings. It shows how to resume the current thread's
+  session from a terminal in both forms: the `podman exec` command for the gateway host and the
+  short `cd … && claude --resume <id>` command for a shell already inside the channel's container
+  (SSH or VS Code), with a note that the native `/resume` pickers skip sessions started from chat.
+  The Agent page no longer carries the command.
+
 - Add a Settings page to the Activity dashboard. Each person manages their own reminders,
   reply mentions, theme, passkeys, Composio and Toolbox tokens, email accounts, MCP servers, variables, skills
   and SSH keys from the browser. Secrets stay write-only, and every change affects only the

@@ -318,7 +318,7 @@ test("every page, in every role and with every inline form open, passes Block Ki
   const forms = ["composio:c", "make:c", "toolbox:c", "cm-add:c", "cm:c:linear", `var-add:c`, `var-val:c:${long}`, `var-hosts:c:${long}`, "var-add:o", "composio:p", "toolbox:p", "cm-add:p", "cm:p:notes", "var-add:p", "var-val:p:MY_TOKEN"];
   const formPage = (key) => (key.startsWith("var") ? (key.includes(":p") ? "you" : "variables") : key.includes(":p") ? "you" : "mcp");
   for (const options of roles) {
-    for (const tab of ["agent", "access", "mcp", "variables", "skills", "schedules", "you"]) {
+    for (const tab of ["agent", "access", "mcp", "variables", "skills", "schedules", "diagnostics", "you"]) {
       for (const extra of [{}, { confirm: `var-rm:c:${long}` }, { confirm: "sched-rm:rec1" }, { memberFocus: "U5" }, { memberFocus: "UNOTHERE" }]) {
         const view = buildChannelSettingsView(snapshot, { ...state, ...extra }, { ...options, tab, notice: "✅ Saved." });
         assert.deepEqual(blockKitProblems(view), [], `${tab} ${JSON.stringify(options)} ${JSON.stringify(extra)}`);

@@ -1625,7 +1625,7 @@ export function assertRuntimeChangeAllowed(meta, userIsAdmin) {
 }
 
 // The one builder for the Settings modal's root view. Thread pins and this thread's session are
-// store reads, so General Settings' two runtime scopes and the Resume Session page's command are
+// store reads, so General Settings' two runtime scopes and the Diagnostics page's command are
 // resolved here rather than inside the synchronous snapshot. A resume lookup that fails must not
 // take the other pages down with it — it then reads as "no session" instead of an error card.
 // The VPN row is the one fact a subprocess owns: a conversation with no provisioned service is

@@ -93,10 +93,11 @@ export const CHANNEL_SETTINGS_DM_FLAGS_ACTION_ID = "cg_channel_settings_dm_flags
 export const CHANNEL_SETTINGS_ACTION_PATTERN = /^cg_channel_settings(?:$|_)/;
 // The pages the modal offers, in the order the page dropdown lists them (2026-10 redesign): what
 // the agent is (Agent), who uses it (Access), what it reaches (MCP, Variables, Skills), what runs
-// unattended (Schedules), and everything personal to the viewer (You). LEGACY_TABS lands a view
-// or button from before the redesign on the page that now owns its controls.
-export const CHANNEL_SETTINGS_TABS = Object.freeze(["agent", "access", "mcp", "variables", "skills", "schedules", "you"]);
-const LEGACY_TABS = Object.freeze({ general: "agent", runtime: "agent", network: "agent", resume: "agent", secrets: "variables", automations: "schedules" });
+// unattended (Schedules), how to reach this thread's session from a terminal (Diagnostics), and
+// everything personal to the viewer (You). LEGACY_TABS lands a view or button from before the
+// redesign on the page that now owns its controls.
+export const CHANNEL_SETTINGS_TABS = Object.freeze(["agent", "access", "mcp", "variables", "skills", "schedules", "diagnostics", "you"]);
+const LEGACY_TABS = Object.freeze({ general: "agent", runtime: "agent", network: "agent", resume: "diagnostics", secrets: "variables", automations: "schedules" });
 export const SETTINGS_DEFAULT_VALUE = "__default__";
 export const SETTINGS_NONE_VALUE = "__none__";
 export const SETTINGS_PAGE_SIZE = 12;
@@ -393,6 +394,7 @@ const TAB_LABELS = Object.freeze({
   variables: "Variables",
   skills: "Skills",
   schedules: "Schedules",
+  diagnostics: "Diagnostics",
   you: "You",
 });
 
@@ -796,7 +798,6 @@ function agentPage(snapshot, state, opts) {
   const editable = opts.canEditRuntime !== false;
   const locked = Boolean(runtime.channelLogin);
   const vpn = snapshot.vpn;
-  const resume = snapshot.resume || {};
   return [
     ...(locked ? [context(`*Codex* · this channel's own login · ${escapeMrkdwn(runtime.channelLoginStatus || "checking…")}`)] : []),
     ...(thread ? [
@@ -813,10 +814,49 @@ function agentPage(snapshot, state, opts) {
     // No service provisioned: one line, no controls. A provisioned one (or one still being read —
     // `vpn` absent until the hydration pass fills it in) gets its state and controls.
     ...(snapshot.workspaceLink ? [] : vpn && vpn.configured === false ? [context("VPN · Not configured")] : vpnRows(snapshot, state, { canManageVpn: opts.canManageVpn })),
-    ...(resume.inThread && resume.command ? [
-      { type: "divider" },
-      { type: "section", text: mrkdwn(`*Resume in a terminal*\n\`\`\`${escapeMrkdwn(resume.command)}\`\`\``) },
+  ];
+}
+
+// ── Diagnostics ──────────────────────────────────────────────────────────────────────────────
+// How to reach THIS thread's engine session from a terminal. Both CLIs hide a headless session
+// from their own pickers (Claude's `/resume` skips `claude -p` sessions; Codex lists its
+// non-interactive ones only with `--include-non-interactive`), so a developer who attaches to the
+// channel's container and opens the picker sees nothing from Slack. The page gives the two
+// commands that DO work, each labelled with where it runs: the gateway machine (the backend's
+// `exec` wrapper, admin-oriented) and a shell already inside the container (SSH, or VS Code
+// attached to it). Everything is read from the session at render time, like the old Resume
+// Session page it replaces, and escaped like every other value in this modal.
+const PICKER_NOTE = "The native pickers do not list sessions started from chat: Claude's `/resume` skips `claude -p` sessions, and Codex shows them only with `codex resume --include-non-interactive`. Resume by id with the commands above.";
+
+function diagnosticsPage(snapshot) {
+  const resume = snapshot.resume || {};
+  if (!resume.inThread) return [header("Resume this thread"), context("Open Settings from a reply inside a thread to see how to resume its session in a terminal.")];
+  if (!resume.sessionId) return [header("Resume this thread"), context("This thread has no session yet. Send it a message first, then open Diagnostics again.")];
+  const scope = resume.runtimeScope ? ` · ${escapeMrkdwn(resume.runtimeScope)} runtime` : "";
+  const facts = [
+    header("Resume this thread"),
+    context(`*Engine* ${escapeMrkdwn(resume.engine || "unknown")} · *Session* ${inlineCode(resume.sessionId)}${scope}`),
+    context(`*Folder* ${inlineCode(resume.workDir || "—")}`),
+  ];
+  const shell = resume.shellCommand || "";
+  const host = resume.hostCommand || "";
+  // An admin session viewed by a non-admin resolves to no command at all: the facts stay, and the
+  // page says why rather than handing out a line that would fail in their own container lane.
+  if (!shell && !host) return [...facts, context("🔒 This session belongs to the channel's administrator runtime. Ask an admin for its resume command.")];
+  return [
+    ...facts,
+    { type: "divider" },
+    ...(host ? [
+      { type: "section", text: mrkdwn(`*On the gateway machine*\n\`\`\`${escapeMrkdwn(host)}\`\`\``) },
+      context("Run it in a terminal on the gateway host as the gateway's own user. It opens the channel's container and resumes the session inside it."),
     ] : []),
+    ...(shell ? [
+      { type: "section", text: mrkdwn(`*${host ? "Inside the container" : "In a terminal"}*\n\`\`\`${escapeMrkdwn(shell)}\`\`\``) },
+      context(host
+        ? "Run it from a shell that is already inside this channel's container: an SSH session into the channel, or VS Code attached to it."
+        : "Run it in a terminal on the gateway machine as the gateway's own user."),
+    ] : []),
+    context(PICKER_NOTE),
   ];
 }
 
@@ -1156,7 +1196,7 @@ export function buildChannelSettingsView(snapshot = {}, state = {}, {
     ? [context("These shared settings are managed in the source conversation. Your personal settings remain under You.")]
     : {
     agent: agentPage, access: accessPage, mcp: mcpPage, variables: variablesPage,
-    skills: skillsPage, schedules: scheduleRows, you: youPage,
+    skills: skillsPage, schedules: scheduleRows, diagnostics: diagnosticsPage, you: youPage,
   }[active](snapshot, state, opts);
   let blocks = [
     pageNav(state, active, { isDM: snapshot.isDM }),
