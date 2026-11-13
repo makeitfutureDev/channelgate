@@ -1,5 +1,11 @@
 # Changelog — ChannelGate
 
+## Unreleased
+
+- Refresh vulnerable production dependency resolutions within their allowed versions and update the `qs` override to 6.16.1.
+
+- Fix Google Chat reaction subscription authorization by including the required `chat.bot` scope in the separate Workspace Events token.
+
 ChannelGate was formerly *Claude Gateway for Slack*; entries below the rename keep their original
 wording. All notable changes to the gateway, newest first. Dates are when the work landed.
 This project brings Claude Code (and optionally OpenAI Codex) into Slack as a self-hosted,
