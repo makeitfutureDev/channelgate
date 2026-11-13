@@ -28,8 +28,11 @@ test("detached job persists only redacted stdout and stderr across chunk boundar
   assert.equal(output.includes(secret.slice(0, 17)), false, "interleaving stderr must not expose stdout's held prefix");
   assert.equal((output.match(/\[REDACTED\]/g) || []).length, 2);
   assert.equal(parseContainerJobExit(output), 0);
-  assert.match(stripContainerJobExit(output), /stdout \[REDACTED\] tail/);
-  assert.match(stripContainerJobExit(output), /stderr \[REDACTED\] tail/);
+  // Prose that cannot begin the value is persisted as soon as it arrives, so the two streams'
+  // prefixes interleave in real write order; what matters is that each value is redacted whole.
+  const body = stripContainerJobExit(output);
+  assert.ok(body.includes("stdout ") && body.includes("stderr "), "both streams' prose is persisted");
+  assert.equal((body.match(/\[REDACTED\] tail/g) || []).length, 2, "each stream's value is redacted whole, followed by its own tail");
   assert.equal(child.stdout.includes(secret) || child.stderr.includes(secret), false);
 });
 

@@ -53,26 +53,64 @@ export function redactSecretValues(text, values = []) {
   return out;
 }
 
+const escapeRe = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
 // Streaming form for the delta path. Redacting each chunk independently would miss any value split
 // across two chunks — which is the common case, since the model streams a token at a time. Holds
-// back the last (longest secret - 1) characters until they can no longer begin a match.
+// back ONLY the tail that could still become a match: the longest suffix of the text so far that is
+// a proper prefix of some secret. Ordinary prose never begins a credential, so the holdback is
+// normally zero and the live reply keeps pace with the model.
+//
+// It used to hold back a flat (longest secret - 1) characters instead. With a 93-character GitHub
+// token in a channel's secrets, every live Slack reply therefore trailed the model by ~92
+// characters and only caught up when the run ended — a sentence written just before a tool call
+// stayed cut off mid-word for the whole tool run, which read as an answer that had died.
+//
+// Same algorithm as the egress response scrubber (`gateway/egress/scrub.js`): a match that STARTS
+// before the emit boundary is replaced whole even when it reaches past it, so a short secret that
+// ends inside a longer secret's pending prefix is never split by the boundary; a complete short
+// secret that is itself a prefix of a longer one stays pending until the longer one is decided.
 export function createSecretRedactor(values = []) {
   const secrets = [...new Set(values)].filter((v) => typeof v === "string" && v.length >= MIN_REDACTABLE_LENGTH).sort((a, b) => b.length - a.length);
   if (secrets.length === 0) return { push: (chunk) => (typeof chunk === "string" ? chunk : String(chunk ?? "")), flush: () => "" };
-  const carry = secrets[0].length - 1;
-  let buffer = "";
+  // Longest first in the alternation, so the longer of two overlapping values wins at one index.
+  const re = new RegExp(secrets.map(escapeRe).join("|"), "g");
+  // The length of the longest suffix of `s` that is a PROPER prefix of some secret.
+  const holdback = (s) => {
+    let best = 0;
+    for (const secret of secrets) {
+      for (let k = Math.min(secret.length - 1, s.length); k > best; k -= 1) {
+        if (s.charCodeAt(s.length - k) === secret.charCodeAt(0) && secret.startsWith(s.slice(s.length - k))) {
+          best = k;
+          break;
+        }
+      }
+    }
+    return best;
+  };
+  let pending = "";
+  const redactOut = (text, final) => {
+    const limit = final ? text.length : text.length - holdback(text);
+    let out = "";
+    let last = 0;
+    re.lastIndex = 0;
+    for (let m = re.exec(text); m; m = re.exec(text)) {
+      if (m.index >= limit) break;
+      out += text.slice(last, m.index) + "[REDACTED]";
+      last = m.index + m[0].length;
+    }
+    const cut = Math.max(last, limit);
+    out += text.slice(last, cut);
+    pending = text.slice(cut);
+    return out;
+  };
   return {
     push(chunk) {
-      buffer += typeof chunk === "string" ? chunk : String(chunk ?? "");
-      buffer = redactSecretValues(buffer, secrets);
-      if (buffer.length <= carry) return "";
-      const emit = buffer.slice(0, buffer.length - carry);
-      buffer = buffer.slice(buffer.length - carry);
-      return emit;
+      return redactOut(pending + (typeof chunk === "string" ? chunk : String(chunk ?? "")), false);
     },
     flush() {
-      const rest = redactSecretValues(buffer, secrets);
-      buffer = "";
+      const rest = redactOut(pending, true);
+      pending = "";
       return rest;
     },
   };
