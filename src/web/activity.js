@@ -229,14 +229,23 @@ export function createActivityRouter({
   const browserSnapshot = async (client, session, id) => {
     const user = await getUser(session.ownerId);
     const pins = new Set(Array.isArray(user?.activityPinnedThreads) ? user.activityPinnedThreads : []);
-    const data = await snapshot(client, session.ownerId, { filter: "all-statuses", pageSize: 1000, pinnedThreads: [...pins] });
+    const channelPins = new Set(Array.isArray(user?.activityPinnedChannels) ? user.activityPinnedChannels : []);
+    const access = await accessContext(client, session.ownerId);
+    const pinnedChannels = [];
+    for (const channelId of channelPins) {
+      if (typeof channelId !== "string") continue;
+      const entry = await getChannelEntry(channelId);
+      if (await access.allows(entry && { ...entry, channelId })) pinnedChannels.push({ channelId, channelName: entry.name || "Direct message" });
+    }
+    const data = await snapshot(client, session.ownerId, { filter: "all-statuses", pageSize: 1000,
+      pinnedThreads: [...pins], pinnedChannels: pinnedChannels.map((entry) => entry.channelId) });
     return {
       rows: data.rows.map((row) => ({ channelId: row.channel_id, threadTs: row.thread_ts,
-        pinned: pins.has(JSON.stringify([row.channel_id, row.thread_ts])),
+        pinned: pins.has(JSON.stringify([row.channel_id, row.thread_ts])), channelPinned: channelPins.has(row.channel_id),
         title: row.title, channelName: row.channelName, status: row.status, lastMessageMs: row.last_message_ms,
         ...(Number.isSafeInteger(row.working_since_ms) ? { workingSinceMs: row.working_since_ms } : {}),
         url: `/activity/${id}/open/${encodeURIComponent(row.channel_id)}/${encodeURIComponent(row.thread_ts)}` })),
-      unavailable: Boolean(data.unavailable), truncated: Boolean(data.truncated), total: data.total, updatedAt: now(),
+      pinnedChannels, unavailable: Boolean(data.unavailable || access.unavailable), truncated: Boolean(data.truncated), total: data.total, updatedAt: now(),
       groupBy: activityGrouping(user?.activityGroupBy), groupByVersion: activityGroupOrderVersion(user?.activityGroupByVersion),
       groupOrder: activityGroupOrder(user?.activityGroupOrder), groupOrderVersion: activityGroupOrderVersion(user?.activityGroupOrderVersion),
     };
@@ -497,6 +506,26 @@ export function createActivityRouter({
         const pins = new Set(Array.isArray(current?.activityPinnedThreads) ? current.activityPinnedThreads : []);
         if (pinned) pins.add(key); else pins.delete(key);
         return { activityPinnedThreads: [...pins] };
+      });
+      return res.json({ ok: true });
+    } catch (error) { return unavailable(res, error.status || 503); }
+  });
+  router.post("/:id/api/channel-pin", async (req, res) => {
+    try {
+      const { session, client } = await context(req);
+      if (req.headers.origin !== req.activityOrigin || !timingSafeEqualStr(String(req.headers["x-cg-csrf"] || ""), session.csrf)) return unavailable(res, 403);
+      const { channelId, pinned } = req.body || {};
+      if (typeof channelId !== "string" || !/^[A-Z0-9_]{1,32}$/.test(channelId) || typeof pinned !== "boolean") return unavailable(res, 400);
+      const version = configVersion;
+      const entry = await getChannelEntry(channelId);
+      const access = await accessContext(client, session.ownerId);
+      if (!await access.allows(entry && { ...entry, channelId })) return unavailable(res, 403);
+      await context(req);
+      if (version !== configVersion) return unavailable(res, 403);
+      await setUser(session.ownerId, (current) => {
+        const pins = new Set(Array.isArray(current?.activityPinnedChannels) ? current.activityPinnedChannels : []);
+        if (pinned) pins.add(channelId); else pins.delete(channelId);
+        return { activityPinnedChannels: [...pins] };
       });
       return res.json({ ok: true });
     } catch (error) { return unavailable(res, error.status || 503); }

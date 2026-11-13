@@ -123,6 +123,40 @@
   reads and confirm recovery. Revoke private membership while a bot-root read awaits and verify
   no discovery row is written. Never change a production thread to build this fixture.
 
+## Pinned Activity channels (2026-11-14)
+
+- Engine-independent: Activity preference writes, channel admission, indexed thread state and
+  browser placement run entirely in the daemon/browser; no Claude or Codex turn is invoked.
+- Automated: `node --test test/activity-page.test.js test/activity.test.js
+  test/home-threads.test.js` covers personal/idempotent/concurrent writes, CSRF and origin,
+  private membership and revocation while reads await, channel-name privacy, SSE/session
+  persistence, future rows, explicit thread pin independence, empty channel cards, search/status
+  tabs, failed saves and open channel pins beyond the ordinary 1000-thread feed/page cap.
+- Browser fixture: run `test/activity-reuse-browser.test.js` with `CG_BROWSER_MODULE` pointing
+  at Playwright and `CG_BROWSER_EXECUTABLE` at Chromium. The channel-pins case serves the real
+  Activity router with synthetic public channels, two approved viewers and indexed owned/foreign
+  roots. At 1440/768/390/320 px in both themes require no overflow, visible usable channel pin
+  controls, all open/Later rows in Pinned once, persistence, grouping/search, future SSE rows,
+  personal isolation, empty channel cards, and independent thread pins after channel unpinning.
+- Live acceptance: in disposable authorized channels Alpha and Beta, viewer A owns two open
+  engaged threads in Alpha (one Later), a completed Alpha thread, and an open Beta thread.
+  Viewer B owns a separate Alpha thread. Open A's Activity, click **Pin channel** beside Alpha.
+  Require the Alpha channel card and both open Alpha rows in Pinned, only Beta in ordinary Active,
+  no B row, and the completed Alpha row only in Completed. Switch status tabs: both open Alpha
+  pins remain; search a missing term hides them and clearing search restores them. Switch Group
+  by Status/Channel, reload, then open a second session: pins persist without duplicate rows.
+  Add another owned engaged Alpha thread through the normal application: it joins Pinned live.
+  Individually pin one Alpha thread, mark every Alpha thread Done, and require the channel card
+  to remain with “No open conversations”; the individual Done pin remains. Unpin Alpha: the
+  individual thread stays pinned. Unpin that thread: Pinned disappears. B's dashboard never
+  inherits A's pins. Repeat the layout checks on a mobile viewport in both themes.
+- Access fixture: repeat with a private channel; revoke A's membership and refresh. Neither the
+  pinned channel name nor its rows may appear, and authenticated channel-pin writes must return
+  403. A stale session/CSRF/wrong Origin must fail; restoring access restores the saved preference.
+  Do not change production membership to construct this fixture. Record the deployed revision,
+  exact disposable channel/thread URLs, screenshots, `/api/threads` and `channel-pin` responses;
+  pass only when all assertions hold. Local synthetic checks do not claim deployed acceptance.
+
 ## Pinned Activity conversations (2026-11-13)
 
 - Channel grouping follow-up: use three pins across Alpha (two) and Beta (one), plus an ordinary
