@@ -26,7 +26,7 @@ import { activityPasskey } from "../config/activity-passkeys.js";
 import { adminAccount, adminPasskeyById } from "../config/admin-accounts.js";
 import { adminSession } from "./auth.js";
 import { applyUserSettingsChange, userSettingsSnapshot, UserSettingsError } from "../gateway/user-settings.js";
-import { callPage, CALL_WORKLET_PATH, CALL_WORKLET_SOURCE } from "./call-page.js";
+import { CALL_WORKLET_PATH, CALL_WORKLET_SOURCE } from "./call-overlay.js";
 import { callManager as defaultCallManager } from "../gateway/voice/calls.js";
 import { voiceCallsAvailable } from "../config/settings.js";
 
@@ -60,12 +60,12 @@ function prune(now) {
   for (const map of [grants, sessions]) for (const [key, row] of map) if (row.expiresAt <= now) map.delete(key);
 }
 
-// A launch may carry ONE in-app destination, opened after the exchange: today the voice-call page
-// bound to a conversation (and optionally its thread). Anything else is refused at mint time, so a
-// grant can never redirect outside the session's own path.
-export const ACTIVITY_NEXT_PATTERN = /^\/call\?channel=[A-Z0-9_]{1,32}(?:&thread=\d{1,13}\.\d{1,6})?$/;
+// A launch may carry ONE in-app destination, opened after the exchange: today the dashboard with
+// the voice-call overlay bound to a conversation (and optionally its thread). Anything else is
+// refused at mint time, so a grant can never redirect outside the session's own path.
+export const ACTIVITY_NEXT_PATTERN = /^\?call=[A-Z0-9_]{1,32}(?:&thread=\d{1,13}\.\d{1,6})?$/;
 export function activityCallPath(channelId, threadTs = "") {
-  const path = `/call?channel=${encodeURIComponent(String(channelId || ""))}${threadTs ? `&thread=${encodeURIComponent(String(threadTs))}` : ""}`;
+  const path = `?call=${encodeURIComponent(String(channelId || ""))}${threadTs ? `&thread=${encodeURIComponent(String(threadTs))}` : ""}`;
   return ACTIVITY_NEXT_PATTERN.test(path) ? path : "";
 }
 
@@ -298,37 +298,34 @@ export function createActivityRouter({
       const agent = await agentName(client).catch(() => "");
       const theme = activityTheme((await getUser(session.ownerId))?.activityTheme);
       const view = req.path.endsWith("/subscriptions") ? "subscriptions" : req.path.endsWith("/settings") ? "settings" : "activity";
-      const page = activityPage({ sessionId: req.params.id, csrf: session.csrf, agent, theme, teamId: session.teamId, view, voiceCalls: voiceAvailable() });
-      headers(res, page.nonce); return res.type("html").send(page.html);
+      const voiceCalls = voiceAvailable();
+      // `?call=<channel>[&thread=<ts>]` opens the voice-call overlay bound to that conversation.
+      const launch = view === "activity" && voiceCalls && typeof req.query?.call === "string" ? callTarget({ query: { channel: req.query.call, thread: req.query.thread } }) : null;
+      const page = activityPage({ sessionId: req.params.id, csrf: session.csrf, agent, theme, teamId: session.teamId, view, voiceCalls, callTarget: launch?.channelId ? launch : null });
+      headers(res, page.nonce, { worklet: voiceCalls && view === "activity" }); return res.type("html").send(page.html);
     } catch (error) { return sendPage(res.status(error.status || 401), activityAccessPage({ mode: "login" })); }
   };
   // ── Voice calls (gateway/voice/calls.js) ─────────────────────────────────────
   // The page and every call route live under the session path so its cookie travels. A call is
   // admitted by the same rule as the Dashboard button (channel authorization + membership), and
   // the manager re-checks the caller on every audio chunk and on hang-up.
+  // A call may start unbound (the voice then offers the caller's conversations); a thread needs
+  // its conversation. Anything malformed is refused rather than guessed.
   const callTarget = (req) => {
     const channelId = String(req.query?.channel || req.body?.channelId || "");
     const threadTs = String(req.query?.thread || req.body?.threadTs || "");
-    if (!/^[A-Z0-9_]{1,32}$/.test(channelId) || (threadTs && !isSlackTs(threadTs))) return null;
+    if ((channelId && !/^[A-Z0-9_]{1,32}$/.test(channelId)) || (threadTs && (!channelId || !isSlackTs(threadTs)))) return null;
     return { channelId, threadTs };
   };
   const csrfOk = (req, session) => req.headers.origin === req.activityOrigin
     && timingSafeEqualStr(String(req.headers["x-cg-csrf"] || req.query?.csrf || ""), session.csrf);
+  // Older links to the standalone call page land on the dashboard with the overlay instead.
   router.get("/:id/call", async (req, res) => {
     try {
-      const { session, client } = await context(req);
+      await context(req);
       const target = callTarget(req);
       if (!target) return unavailable(res, 400);
-      if (!voiceAvailable()) return res.status(503).type("text").send("Voice calls are not configured. An administrator enables them under Settings → Voice calls.");
-      const entry = await getChannelEntry(target.channelId);
-      const access = await accessContext(client, session.ownerId);
-      if (!entry || (!access.user.approved && !access.user.isAdmin) || !await access.allows({ ...entry, channelId: target.channelId }, target.threadTs)) return unavailable(res, 403);
-      await context(req);
-      const agent = await agentName(client).catch(() => "");
-      const theme = activityTheme((await getUser(session.ownerId))?.activityTheme);
-      const channelName = entry.isDM || entry.type === "im" ? "Direct messages" : `#${String(entry.name || target.channelId).replace(/^#/, "")}`;
-      const page = callPage({ sessionId: req.params.id, csrf: session.csrf, channelId: target.channelId, threadTs: target.threadTs, channelName, agent, theme });
-      headers(res, page.nonce, { worklet: true }); return res.type("html").send(page.html);
+      return res.redirect(303, `/activity/${encodeURIComponent(req.params.id)}${activityCallPath(target.channelId, target.threadTs)}`);
     } catch (error) { return sendPage(res.status(error.status || 401), activityAccessPage({ mode: "login" })); }
   });
   router.post("/:id/call/start", async (req, res) => {
@@ -336,7 +333,7 @@ export function createActivityRouter({
       const { session, client } = await context(req);
       if (!csrfOk(req, session)) return unavailable(res, 403);
       const target = callTarget(req);
-      if (!target) return res.status(400).json({ error: "A call needs a conversation." });
+      if (!target) return res.status(400).json({ error: "That conversation reference is malformed." });
       const identity = getBotIdentity() || {};
       const call = await callsFor().start({ ownerId: session.ownerId, channelId: target.channelId, threadTs: target.threadTs, client, teamId: session.teamId, botUserId: typeof identity.userId === "string" ? identity.userId : "" });
       await context(req);
