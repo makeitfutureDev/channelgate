@@ -27,7 +27,7 @@ import { abortPooled } from "../engines/session-pool.js";
 import { DEFAULT_SILENCE_WINDOWS } from "../engines/watchdog.js";
 import { adapterFor, mintsOwnSessionId, usesMcpConfigFile, engineSupports, requireAdapter, fallbackTargets, engineLabel, engineCredentialState, engineTransientKinds, modelsForEngine } from "../engines/registry.js";
 import { validateRunContext } from "../engines/contract.js";
-import { getEngine, getDefaultModel, getDefaultEffort, getEngineFallback, isEngineEnabled, getEnabledEngines, ENGINES, getOrgAccessGrants } from "../config/settings.js";
+import { getRunConcurrency, getEngine, getDefaultModel, getDefaultEffort, getEngineFallback, isEngineEnabled, getEnabledEngines, ENGINES, getOrgAccessGrants } from "../config/settings.js";
 import { claudeTokenFingerprint, resolveContainerClaudeToken } from "./claude-token-relay.js";
 import { installNestedClaudeLogin } from "./nested-claude-login.js";
 import { installPerplexityResearchLogin, perplexityResearchPreamble } from "./perplexity-research.js";
@@ -443,7 +443,7 @@ function keepAliveMs() {
 // Global cap on concurrent runs through runMessage (interactive turns plus background/schedule
 // continuations — bg jobs and schedules have their own upstream caps, but they all funnel here).
 // Without it a message burst spawns unbounded `claude`/`codex` processes. Configurable via
-// MAX_CONCURRENT_RUNS (default 8). Lazily created so .env / settings.json are loaded first;
+// Admin settings override MAX_CONCURRENT_RUNS (default 8). Existing pools resize live;
 // excess runs queue FIFO rather than failing (the C4/H4 watchdogs keep slots from leaking).
 //
 // Two lanes, one pool: background-origin runs (schedules, background agents, continuations,
@@ -462,19 +462,24 @@ let runSemaphore = null;
 let backgroundRunSemaphore = null;
 
 function runSlotCaps() {
-  const n = Number.parseInt(process.env.MAX_CONCURRENT_RUNS ?? "", 10);
-  const total = Number.isFinite(n) && n > 0 ? n : 8;
-  const r = Number.parseInt(process.env.RESERVED_INTERACTIVE_RUNS ?? "", 10);
-  const reserved = Number.isFinite(r) && r >= 0 ? r : 2;
-  return { total, background: Math.max(1, total - reserved) };
+  const { maxConcurrentRuns, reservedInteractiveRuns } = getRunConcurrency();
+  return { total: maxConcurrentRuns, background: maxConcurrentRuns - reservedInteractiveRuns };
+}
+
+export function refreshRunSlots() {
+  const caps = runSlotCaps();
+  if (!runSemaphore) {
+    runSemaphore = createSemaphore(caps.total);
+    backgroundRunSemaphore = createSemaphore(caps.background);
+  } else {
+    // Keep holders and waiters in the SAME pools. Resetting here would over-admit running work.
+    backgroundRunSemaphore.resize(caps.background);
+    runSemaphore.resize(caps.total);
+  }
 }
 
 function ensureRunSemaphores() {
-  if (!runSemaphore) {
-    const caps = runSlotCaps();
-    runSemaphore = createSemaphore(caps.total);
-    backgroundRunSemaphore = createSemaphore(caps.background);
-  }
+  refreshRunSlots();
 }
 
 // Test seam: the semaphores are lazy module state sized from env on first use.

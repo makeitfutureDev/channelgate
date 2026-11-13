@@ -1,5 +1,30 @@
 # ChannelGate — Test Plan
 
+## Admin controls for parallel agent runs (2026-11-13)
+
+- Automated: `test/run-concurrency-settings.test.js`, `test/run-slots.test.js`,
+  `test/run-concurrency-settings-browser.test.js` and `test/semaphore.test.js` cover effective
+  environment defaults, persistence/zero reserve, strict and atomic rejection, stale-save
+  protection, FIFO/cancellation, live increases and decreases, and real desktop/mobile controls.
+- UI fixture (engine-independent): isolated authenticated-admin Express router and Chromium;
+  open Settings → Agent defaults. Set total 32/reserve 0, save/reload, verify both values and
+  container limit unchanged. Confirm explanation distinguishes containers and interactive turns,
+  desktop/mobile layout fits, and invalid integer/reserve inputs receive errors without writes.
+  This disposable fixture is separate from deployed admin authentication acceptance.
+- Live dual-engine fixture: reserve an isolated QA gateway and admin operator (Contact), with
+  Apps as approved non-admin in cg-qa-auto C0BTFTRU33Q (Claude) and cg-qa-private-auto
+  C0BTGG50BHR (Codex), Worker + Auto, Lean off, network on, fresh threads and matching current
+  engine configuration verified before execution. Repeat the entire scenario separately for each
+  engine. Snapshot settings first. On that gateway set total 2/reserve 1. Start two background-agent tasks: “Run `sleep 45`, then reply DONE.”
+  While one background run holds a slot and the other queues, send a fresh foreground “Reply
+  INTERACTIVE-OK”. The foreground must be admitted before the first
+  background releases. Raise total to 3 without sending another task: the queued background
+  must start. Lower total to 1 while runs are held, then enqueue a fresh foreground request:
+  no holder is cancelled and that request is not admitted until occupancy falls below one. Capture
+  run origins, timestamps, queue/release evidence, actual runtime/model, revision, exact thread URLs and settings reads. Restore the
+  snapshot and await terminal tasks. PASS requires all behavior for both engines; this definition
+  does not claim live execution. No production queue saturation is authorized by this fixture.
+
 ## Separate channel-account Codex harness (2026-11-13)
 
 - Automated regression: `test/codex-channel.test.js`, `test/codex-channel-history.test.js`,
