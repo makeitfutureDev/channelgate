@@ -19,8 +19,10 @@ export async function syncThreadCompletionReaction(client, event, { added = fals
   const threadTs = result.message.thread_ts || result.message.ts || event.item.ts;
   if (!getSlackThread(channelId, threadTs)) return;
   const inspected = await inspectThreadCompletion(client, channelId, threadTs);
+  // A delayed mirror event must not promote an old human check past a newer prompt/Reopen.
+  const mirrorEvent = event.user === getSlackThread(channelId, threadTs)?.completion_mirror_user;
   updateSlackThreadRootCompletion(channelId, { ts: threadTs }, {
-    ...inspected, reactionAt: added ? Math.floor(Number(event.event_ts) * 1000) || 0 : 0,
+    ...inspected, reactionAt: added && !mirrorEvent ? Math.floor(Number(event.event_ts) * 1000) || 0 : 0,
   });
   await syncThreadDoneMarker(client, channelId, threadTs);
 }

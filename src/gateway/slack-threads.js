@@ -56,7 +56,7 @@ export async function trackSlackThread(client, { channelId, slug, threadKey, mes
       if (!root || !indexSlackThread({ channelId, slug, root, agentEngaged: true })) return;
     }
     markSlackThreadEngaged(channelId, threadTs);
-    // A new message updates activity but does not silently reopen explicitly completed work.
+    // Discovery updates activity; the raw human-message observer owns reopening.
     const at = Math.floor(Number(messageTs) * 1000);
     if (Number.isFinite(at)) getDb().prepare(`UPDATE slack_threads SET updated_ms=MAX(updated_ms,?),
       last_message_ms=MAX(last_message_ms,?),
@@ -121,16 +121,24 @@ export function recordSlackThreadMessage(channelId, threadKey, messageTs, { huma
   const threadTs = slackThreadFor(threadKey);
   const at = Math.floor(Number(messageTs) * 1000);
   if (!threadTs || !isSlackTs(messageTs) || !Number.isFinite(at)) return false;
-  // The caller identifies fresh human messages addressed to the agent. Ignore
-  // old deliveries and keep the saved clock until its durable cleanup has succeeded.
+  // A fresh human prompt overrides completion just like explicit Reopen. Keep reaction
+  // evidence, but fence it behind the prompt's timestamp so passive scans cannot re-close
+  // the thread. Bot replies/outcomes, duplicates and older deliveries do not reopen it.
+  const reopened = human && getDb().prepare(`UPDATE slack_threads SET done_ms=-?,
+    updated_ms=MAX(updated_ms,?),completion_marker_retry_ms=?
+    WHERE channel_id=? AND thread_ts=? AND
+      (done_ms>0 OR (root_done=1 AND (done_ms>=0 OR root_reaction_ms>ABS(done_ms))))
+      AND ?>MAX(ABS(done_ms),root_reaction_ms) AND ?>CAST(thread_ts AS REAL)*1000`)
+    .run(at, at, Date.now(), channelId, threadTs, at, at).changes > 0;
+  // Keep the saved clock until its durable cleanup has succeeded.
   const resumed = human && getDb().prepare(`UPDATE slack_threads SET later_ms=0,
     updated_ms=MAX(updated_ms,?),completion_marker_retry_ms=?
     WHERE channel_id=? AND thread_ts=? AND later_ms>0 AND later_ms<?`)
     .run(at, Date.now(), channelId, threadTs, at).changes > 0;
   const changed = getDb().prepare("UPDATE slack_threads SET last_message_ms=? WHERE channel_id=? AND thread_ts=? AND last_message_ms<?")
     .run(at, channelId, threadTs, at).changes;
-  if (changed || resumed) notifyThreadChanged({ channelId, threadTs });
-  return Boolean(resumed);
+  if (changed || resumed || reopened) notifyThreadChanged({ channelId, threadTs });
+  return Boolean(resumed || reopened);
 }
 
 export function slackThreadIsDone(row) {

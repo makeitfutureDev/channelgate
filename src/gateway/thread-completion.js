@@ -1,5 +1,5 @@
 // Completion is shared by Activity, quiet nudges and pending digests, including reactions on
-// older replies. Later messages do not undo a person's completion choice.
+// older replies. A fresh human prompt can override existing completion evidence.
 import { messageHasCompletionReaction } from "./completion-reactions.js";
 import { getSlackThread, slackThreadIsDone, updateSlackThreadRootCompletion } from "./slack-threads.js";
 
