@@ -7,6 +7,11 @@
   Activity Settings links administrators to the shared control. Existing Chrome Dock icons may
   need the app reopened or reinstalled to refresh.
 
+- Pin whole channels in personal Activity. Their current and future open conversations,
+  including Later, join Pinned across status tabs; completed threads return to Completed unless
+  individually pinned. Channel cards stay available when empty, and channel/thread pins remain
+  independent. Pins follow search, grouping and current access, persist per viewer, and work on
+  desktop, tablet and mobile.
 
 - Keep the live Slack reply in step with the model: the streaming secret redactor now holds back
   only text that could still begin a configured secret, instead of a flat longest-secret-minus-one
@@ -24,6 +29,12 @@
   cost are posted there when the call ends. Admins enable it under Settings → Voice calls with a
   Gemini API key, model and voice. See `docs/VOICE-CALLS.md`. Both Google key shapes are accepted
   (`AIza…` and the newer dotted `AQ.…`).
+- Voice calls navigate: the call is an overlay on the personal Activity dashboard (the **📞 Call**
+  button there starts a call in no conversation yet), the voice sees your own open conversations
+  (eight most recent up front, list and search with a channel filter for more) and can switch
+  the call to another thread or channel. Each thread you leave receives that segment's transcript
+  and tasks, the final summary names every conversation visited, and one line about the call is
+  saved to your DM memory.
 
 - Bring the Google Chat `/settings` card in line with Slack's Settings: the pages are now
   **Agent, Access, MCP, Variables, Skills, Schedules, Diagnostics** and **You**, picked from one

@@ -27,7 +27,7 @@ import { activityPasskey } from "../config/activity-passkeys.js";
 import { adminAccount, adminPasskeyById } from "../config/admin-accounts.js";
 import { adminSession } from "./auth.js";
 import { applyUserSettingsChange, userSettingsSnapshot, UserSettingsError } from "../gateway/user-settings.js";
-import { callPage, CALL_WORKLET_PATH, CALL_WORKLET_SOURCE } from "./call-page.js";
+import { CALL_WORKLET_PATH, CALL_WORKLET_SOURCE } from "./call-overlay.js";
 import { callManager as defaultCallManager } from "../gateway/voice/calls.js";
 import { voiceCallsAvailable } from "../config/settings.js";
 
@@ -61,12 +61,12 @@ function prune(now) {
   for (const map of [grants, sessions]) for (const [key, row] of map) if (row.expiresAt <= now) map.delete(key);
 }
 
-// A launch may carry ONE in-app destination, opened after the exchange: today the voice-call page
-// bound to a conversation (and optionally its thread). Anything else is refused at mint time, so a
-// grant can never redirect outside the session's own path.
-export const ACTIVITY_NEXT_PATTERN = /^\/call\?channel=[A-Z0-9_]{1,32}(?:&thread=\d{1,13}\.\d{1,6})?$/;
+// A launch may carry ONE in-app destination, opened after the exchange: today the dashboard with
+// the voice-call overlay bound to a conversation (and optionally its thread). Anything else is
+// refused at mint time, so a grant can never redirect outside the session's own path.
+export const ACTIVITY_NEXT_PATTERN = /^\?call=[A-Z0-9_]{1,32}(?:&thread=\d{1,13}\.\d{1,6})?$/;
 export function activityCallPath(channelId, threadTs = "") {
-  const path = `/call?channel=${encodeURIComponent(String(channelId || ""))}${threadTs ? `&thread=${encodeURIComponent(String(threadTs))}` : ""}`;
+  const path = `?call=${encodeURIComponent(String(channelId || ""))}${threadTs ? `&thread=${encodeURIComponent(String(threadTs))}` : ""}`;
   return ACTIVITY_NEXT_PATTERN.test(path) ? path : "";
 }
 
@@ -230,14 +230,23 @@ export function createActivityRouter({
   const browserSnapshot = async (client, session, id) => {
     const user = await getUser(session.ownerId);
     const pins = new Set(Array.isArray(user?.activityPinnedThreads) ? user.activityPinnedThreads : []);
-    const data = await snapshot(client, session.ownerId, { filter: "all-statuses", pageSize: 1000, pinnedThreads: [...pins] });
+    const channelPins = new Set(Array.isArray(user?.activityPinnedChannels) ? user.activityPinnedChannels : []);
+    const access = await accessContext(client, session.ownerId);
+    const pinnedChannels = [];
+    for (const channelId of channelPins) {
+      if (typeof channelId !== "string") continue;
+      const entry = await getChannelEntry(channelId);
+      if (await access.allows(entry && { ...entry, channelId })) pinnedChannels.push({ channelId, channelName: entry.name || "Direct message" });
+    }
+    const data = await snapshot(client, session.ownerId, { filter: "all-statuses", pageSize: 1000,
+      pinnedThreads: [...pins], pinnedChannels: pinnedChannels.map((entry) => entry.channelId) });
     return {
       rows: data.rows.map((row) => ({ channelId: row.channel_id, threadTs: row.thread_ts,
-        pinned: pins.has(JSON.stringify([row.channel_id, row.thread_ts])),
+        pinned: pins.has(JSON.stringify([row.channel_id, row.thread_ts])), channelPinned: channelPins.has(row.channel_id),
         title: row.title, channelName: row.channelName, status: row.status, lastMessageMs: row.last_message_ms,
         ...(Number.isSafeInteger(row.working_since_ms) ? { workingSinceMs: row.working_since_ms } : {}),
         url: `/activity/${id}/open/${encodeURIComponent(row.channel_id)}/${encodeURIComponent(row.thread_ts)}` })),
-      unavailable: Boolean(data.unavailable), truncated: Boolean(data.truncated), total: data.total, updatedAt: now(),
+      pinnedChannels, unavailable: Boolean(data.unavailable || access.unavailable), truncated: Boolean(data.truncated), total: data.total, updatedAt: now(),
       groupBy: activityGrouping(user?.activityGroupBy), groupByVersion: activityGroupOrderVersion(user?.activityGroupByVersion),
       groupOrder: activityGroupOrder(user?.activityGroupOrder), groupOrderVersion: activityGroupOrderVersion(user?.activityGroupOrderVersion),
     };
@@ -290,37 +299,34 @@ export function createActivityRouter({
       const agent = await agentName(client).catch(() => "");
       const theme = activityTheme((await getUser(session.ownerId))?.activityTheme);
       const view = req.path.endsWith("/subscriptions") ? "subscriptions" : req.path.endsWith("/settings") ? "settings" : "activity";
-      const page = activityPage({ sessionId: req.params.id, csrf: session.csrf, agent, theme, teamId: session.teamId, view, voiceCalls: voiceAvailable() });
-      headers(res, page.nonce); return res.type("html").send(page.html);
+      const voiceCalls = voiceAvailable();
+      // `?call=<channel>[&thread=<ts>]` opens the voice-call overlay bound to that conversation.
+      const launch = view === "activity" && voiceCalls && typeof req.query?.call === "string" ? callTarget({ query: { channel: req.query.call, thread: req.query.thread } }) : null;
+      const page = activityPage({ sessionId: req.params.id, csrf: session.csrf, agent, theme, teamId: session.teamId, view, voiceCalls, callTarget: launch?.channelId ? launch : null });
+      headers(res, page.nonce, { worklet: voiceCalls && view === "activity" }); return res.type("html").send(page.html);
     } catch (error) { return sendPage(res.status(error.status || 401), activityAccessPage({ mode: "login" })); }
   };
   // ── Voice calls (gateway/voice/calls.js) ─────────────────────────────────────
   // The page and every call route live under the session path so its cookie travels. A call is
   // admitted by the same rule as the Dashboard button (channel authorization + membership), and
   // the manager re-checks the caller on every audio chunk and on hang-up.
+  // A call may start unbound (the voice then offers the caller's conversations); a thread needs
+  // its conversation. Anything malformed is refused rather than guessed.
   const callTarget = (req) => {
     const channelId = String(req.query?.channel || req.body?.channelId || "");
     const threadTs = String(req.query?.thread || req.body?.threadTs || "");
-    if (!/^[A-Z0-9_]{1,32}$/.test(channelId) || (threadTs && !isSlackTs(threadTs))) return null;
+    if ((channelId && !/^[A-Z0-9_]{1,32}$/.test(channelId)) || (threadTs && (!channelId || !isSlackTs(threadTs)))) return null;
     return { channelId, threadTs };
   };
   const csrfOk = (req, session) => req.headers.origin === req.activityOrigin
     && timingSafeEqualStr(String(req.headers["x-cg-csrf"] || req.query?.csrf || ""), session.csrf);
+  // Older links to the standalone call page land on the dashboard with the overlay instead.
   router.get("/:id/call", async (req, res) => {
     try {
-      const { session, client } = await context(req);
+      await context(req);
       const target = callTarget(req);
       if (!target) return unavailable(res, 400);
-      if (!voiceAvailable()) return res.status(503).type("text").send("Voice calls are not configured. An administrator enables them under Settings → Voice calls.");
-      const entry = await getChannelEntry(target.channelId);
-      const access = await accessContext(client, session.ownerId);
-      if (!entry || (!access.user.approved && !access.user.isAdmin) || !await access.allows({ ...entry, channelId: target.channelId }, target.threadTs)) return unavailable(res, 403);
-      await context(req);
-      const agent = await agentName(client).catch(() => "");
-      const theme = activityTheme((await getUser(session.ownerId))?.activityTheme);
-      const channelName = entry.isDM || entry.type === "im" ? "Direct messages" : `#${String(entry.name || target.channelId).replace(/^#/, "")}`;
-      const page = callPage({ sessionId: req.params.id, csrf: session.csrf, channelId: target.channelId, threadTs: target.threadTs, channelName, agent, theme });
-      headers(res, page.nonce, { worklet: true }); return res.type("html").send(page.html);
+      return res.redirect(303, `/activity/${encodeURIComponent(req.params.id)}${activityCallPath(target.channelId, target.threadTs)}`);
     } catch (error) { return sendPage(res.status(error.status || 401), activityAccessPage({ mode: "login" })); }
   });
   router.post("/:id/call/start", async (req, res) => {
@@ -328,7 +334,7 @@ export function createActivityRouter({
       const { session, client } = await context(req);
       if (!csrfOk(req, session)) return unavailable(res, 403);
       const target = callTarget(req);
-      if (!target) return res.status(400).json({ error: "A call needs a conversation." });
+      if (!target) return res.status(400).json({ error: "That conversation reference is malformed." });
       const identity = getBotIdentity() || {};
       const call = await callsFor().start({ ownerId: session.ownerId, channelId: target.channelId, threadTs: target.threadTs, client, teamId: session.teamId, botUserId: typeof identity.userId === "string" ? identity.userId : "" });
       await context(req);
@@ -510,6 +516,26 @@ export function createActivityRouter({
         const pins = new Set(Array.isArray(current?.activityPinnedThreads) ? current.activityPinnedThreads : []);
         if (pinned) pins.add(key); else pins.delete(key);
         return { activityPinnedThreads: [...pins] };
+      });
+      return res.json({ ok: true });
+    } catch (error) { return unavailable(res, error.status || 503); }
+  });
+  router.post("/:id/api/channel-pin", async (req, res) => {
+    try {
+      const { session, client } = await context(req);
+      if (req.headers.origin !== req.activityOrigin || !timingSafeEqualStr(String(req.headers["x-cg-csrf"] || ""), session.csrf)) return unavailable(res, 403);
+      const { channelId, pinned } = req.body || {};
+      if (typeof channelId !== "string" || !/^[A-Z0-9_]{1,32}$/.test(channelId) || typeof pinned !== "boolean") return unavailable(res, 400);
+      const version = configVersion;
+      const entry = await getChannelEntry(channelId);
+      const access = await accessContext(client, session.ownerId);
+      if (!await access.allows(entry && { ...entry, channelId })) return unavailable(res, 403);
+      await context(req);
+      if (version !== configVersion) return unavailable(res, 403);
+      await setUser(session.ownerId, (current) => {
+        const pins = new Set(Array.isArray(current?.activityPinnedChannels) ? current.activityPinnedChannels : []);
+        if (pinned) pins.add(channelId); else pins.delete(channelId);
+        return { activityPinnedChannels: [...pins] };
       });
       return res.json({ ok: true });
     } catch (error) { return unavailable(res, error.status || 503); }

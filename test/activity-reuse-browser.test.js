@@ -584,7 +584,7 @@ test("Activity pins persist in a matching top table and work on desktop/mobile i
       assert.equal(await page.evaluate(() => globalThis.document.documentElement.scrollWidth <= globalThis.innerWidth), true, `${theme}/${width}: no horizontal overflow`);
       const pinnedBox = await page.locator("#pinned-section").boundingBox(), tableBox = await page.locator("#table").boundingBox();
       assert.ok(pinnedBox.y + pinnedBox.height <= tableBox.y, "pins appear above the ordinary table");
-      for (const button of await page.locator("#pinned-threads button").all()) {
+      for (const button of await page.locator("#pinned-threads .actions button").all()) {
         const box = await button.boundingBox();
         const cell = await page.locator("#pinned-threads .actions").boundingBox();
         assert.ok(box.x >= 0 && box.x + box.width <= width, `${theme}/${width}: controls fit`);
@@ -678,4 +678,84 @@ test("pinned conversations group by channel on desktop and mobile and follow sea
     assert.deepEqual(errors, []);
     await context.close();
   }
+});
+
+test("Activity channel pins collect future open threads, retain empty channels and separate personal thread pins on desktop and mobile", { skip: !process.env.CG_BROWSER_MODULE, timeout: 30_000 }, async (t) => {
+  resetActivityStateForTests();
+  const ownerId = "UCHANNELPIN", otherId = "UCHANNELPINOTHER", channelId = "CCHANNELPIN", secondId = "CCHANNELPINOTHER";
+  for (const userId of [ownerId, otherId]) await setUser(userId, { approved: true, activityPinnedThreads: [], activityPinnedChannels: [] });
+  for (const id of [channelId, secondId]) {
+    await upsertChannelEntry(id, { name: id === channelId ? "Pinned channel with a long name" : "Ordinary channel", type: "channel" });
+    await saveChannelMeta((await getChannelEntry(id)).slug, { access: "approved" });
+  }
+  const entry = await getChannelEntry(channelId), other = await getChannelEntry(secondId);
+  const roots = [
+    { ts: "400.000001", user: ownerId, text: "Channel pin first conversation" },
+    { ts: "400.000002", user: ownerId, text: "Channel pin later conversation" },
+    { ts: "400.000003", user: ownerId, text: "Channel pin completed conversation" },
+    { ts: "400.000004", user: otherId, text: "Another viewer conversation" },
+  ];
+  for (const root of roots) indexSlackThread({ channelId, slug: entry.slug, root, agentEngaged: true });
+  indexSlackThread({ channelId: secondId, slug: other.slug, root: { ts: "500.000001", user: ownerId, text: "Ordinary channel task" }, agentEngaged: true });
+  setSlackThreadDone(channelId, roots[2].ts, ownerId, true);
+  const { setSlackThreadLater } = await import("../src/gateway/slack-threads.js");
+  setSlackThreadLater(channelId, roots[1].ts, ownerId, true);
+  const client = { conversations: { replies: async ({ ts }) => ({ messages: roots.filter((root) => root.ts === ts) }) },
+    reactions: { add: async () => ({ ok: true }), remove: async () => ({ ok: true }) } };
+  let base;
+  const app = express(); serveBrandAssets(app);
+  app.use("/activity", createActivityRouter({ getClient: () => client, getTeamId: () => "TCHANNELPIN", getBaseUrl: () => base, pollMs: 25 }));
+  const server = await new Promise((resolve) => { const s = app.listen(0, "127.0.0.1", () => resolve(s)); });
+  base = `http://127.0.0.1:${server.address().port}`;
+  t.after(() => new Promise((resolve) => { resetActivityStateForTests(); server.closeAllConnections(); server.close(resolve); }));
+  const { chromium } = await import(process.env.CG_BROWSER_MODULE);
+  const browser = await chromium.launch({ headless: true, executablePath: process.env.CG_BROWSER_EXECUTABLE });
+  t.after(() => browser.close());
+  const context = await browser.newContext(), page = await context.newPage(), errors = [];
+  page.setDefaultTimeout(5000); page.on("pageerror", (error) => errors.push(error.message));
+  await page.goto(createActivityGrantUrl({ baseUrl: base, ownerId, teamId: "TCHANNELPIN" }));
+  await page.getByRole("button", { name: "Pin channel: Pinned channel with a long name", exact: true }).click();
+  await page.waitForFunction(() => globalThis.document.querySelectorAll("#pinned-threads tr").length === 2);
+  assert.equal(await page.locator("#threads tr").count(), 1);
+  assert.equal(await page.locator("#pinned-channels .pinned-channel-count").textContent(), "2 open");
+  await page.getByRole("button", { name: "Pin: " + roots[0].text, exact: true }).click();
+  await page.getByRole("button", { name: "Unpin: " + roots[0].text, exact: true }).waitFor();
+  for (const theme of ["dark", "light"]) {
+    await page.evaluate((value) => { globalThis.document.documentElement.dataset.theme = value; }, theme);
+    for (const width of [1440, 768, 390, 320]) {
+      await page.setViewportSize({ width, height: 900 });
+      assert.equal(await page.evaluate(() => globalThis.document.documentElement.scrollWidth <= globalThis.innerWidth), true, `${theme}/${width}: no page overflow`);
+      for (const button of await page.locator(".channel-pin").all()) {
+        if (!await button.isVisible()) continue;
+        const box = await button.boundingBox();
+        assert.ok(box.x >= 0 && box.x + box.width <= width, `${theme}/${width}: visible channel pin controls fit`);
+      }
+    }
+  }
+  await page.locator("#group-by").selectOption("channel");
+  await page.getByRole("button", { name: /^Completed/ }).click();
+  assert.equal(await page.locator("#pinned-threads tr").count(), 2, "all open inherited pins stay visible across tabs");
+  assert.equal(await page.locator("#threads tr").count(), 1, "completed channel work remains in the ordinary Completed view");
+  await page.locator("#search").fill("no matches");
+  assert.equal(await page.locator("#pinned-section").isVisible(), false);
+  await page.locator("#search").fill("");
+  roots.push({ ts: "400.000005", user: ownerId, text: "Future pinned channel conversation" });
+  indexSlackThread({ channelId, slug: entry.slug, root: roots.at(-1), agentEngaged: true });
+  await page.waitForFunction(() => globalThis.document.querySelectorAll("#pinned-threads tr").length === 3);
+  await page.reload();
+  await page.waitForFunction(() => globalThis.document.querySelectorAll("#pinned-threads tr").length === 3);
+  const otherContext = await browser.newContext(), otherPage = await otherContext.newPage();
+  await otherPage.goto(createActivityGrantUrl({ baseUrl: base, ownerId: otherId, teamId: "TCHANNELPIN" }));
+  await otherPage.locator("#threads tr").waitFor();
+  assert.equal(await otherPage.locator("#pinned-section").isVisible(), false, "channel pins remain personal");
+  await otherContext.close();
+  for (const root of roots.filter((root) => root.user === ownerId)) setSlackThreadDone(channelId, root.ts, ownerId, true);
+  await page.waitForFunction(() => globalThis.document.querySelector("#pinned-channels .pinned-channel-count")?.textContent === "No open conversations");
+  assert.equal(await page.locator("#pinned-threads tr").count(), 1, "explicit Done pin survives channel completion");
+  await page.locator("#pinned-channels").getByRole("button", { name: "Unpin channel: Pinned channel with a long name", exact: true }).click();
+  await page.waitForFunction(() => globalThis.document.getElementById("pinned-channels").hidden);
+  assert.equal(await page.locator("#pinned-threads tr").count(), 1, "unpinning the channel preserves explicit thread pins");
+  await page.getByRole("button", { name: "Unpin: " + roots[0].text, exact: true }).click();
+  await page.waitForFunction(() => globalThis.document.getElementById("pinned-section").hidden);
+  assert.deepEqual(errors, []);
 });

@@ -29,41 +29,52 @@
   distinct Dock icons after Chrome refreshes them (reopen or reinstall if needed). Linux Chromium
   evidence proves supplied assets and settings; it does not establish macOS Dock refresh timing.
 
-## Voice calls with a channel's agent (2026-11-13)
+## Voice calls with a channel's agent (2026-11-13, navigation 2026-11-14)
 
 - Automated: `test/voice-gemini-live.test.js` drives the Gemini Live client with a fake
-  WebSocket (setup message shape and `NON_BLOCKING` declarations, audio only after
-  `setupComplete`, audio/transcript/interruption/tool events, cumulative usage → deltas and the
-  cost table, `goAway` reconnection with the resumption handle, setup timeout, idempotent close).
-  `test/voice-calls.test.js` covers the manager with a fake voice session (origin registration
-  and non-escalation, refusals when unconfigured / unknown conversation / unapproved caller, root
-  thread vs bound thread, system-instruction context, `run_task` → thread post → turn authored by
-  the caller with `origin: "voice_call"` → delivery, accounting and `[gateway]` report, failed
-  task reporting, transcript aggregation, owner-only audio and hang-up, the end summary and
-  `gemini-live` usage row, `end_call` grace, voice-service drop, `endAll`), the Activity routes
-  (launch `next` restricted to the call page, call page CSP with the worklet allowance, 400/403/401
-  refusals, start/events/audio/end with CSRF in header or beacon query, owner scoping) and the
-  Slack **📞 Call** button (absent until configured, private ephemeral launch that redeems to the
-  bound call page, denial messages). Regression neighbours: `test/activity.test.js`,
-  `test/activity-page.test.js`, `test/menu.test.js`, `test/review-file-buttons.test.js`,
-  `test/run-escalation.test.js`, `test/ssh-session.test.js`.
-- Live acceptance (Claude and Codex, separately, in a disposable Worker channel with a Public
-  URL over HTTPS): as an admin, Settings → Voice calls → enable, paste a Gemini API key, save;
-  confirm `/api/settings` returns `voiceCalls.hasApiKey: true` and no key value. As an approved
-  non-admin, ask the agent anything in a thread; the reply menu must end with **📞 Call**. Click
-  it: an ephemeral link opens the call page bound to that thread (title names the channel, "in
-  the current thread"). Start the call, allow the microphone, say "Hello, what are we working
-  on?" — expect a spoken answer that reflects the thread, both lines in the transcript pane. Say
-  "Create a file called hello.txt with the text hello and tell me when it is done." Expect in the
-  thread: the "🎙️ *Name (voice call):*" post, the live progress card, the engine's answer with
-  the standard footer, then the voice reporting the result. Ask "is the task done?" (check_tasks)
-  and "what was said in the thread?" (read_thread). Say "goodbye": the voice says goodbye and
-  the page shows the call ended; the thread receives "📞 Voice call ended — N min · 1 task · ~$…"
-  with the transcript. Verify `usage` has a `gemini-live` row for the call and the engine's row
-  for the task, and the task ran in the channel container (no admin bypass even for an admin
-  caller). From Activity, the row's **Call the agent** icon opens the same page. Pass rules: no
-  key or token in the page source or network responses; a second caller cannot read the first
-  call's events (404); hang-up from another browser tab's beacon ends the call.
+  WebSocket (setup message shape and `NON_BLOCKING` declarations, binary/typed-array/Blob frame
+  decoding, audio only after `setupComplete`, audio/transcript/interruption/tool events,
+  cumulative usage → deltas and the cost table, `goAway` reconnection with the resumption handle,
+  setup timeout, idempotent close). `test/voice-calls.test.js` covers the manager with a fake
+  voice session and a fake Activity snapshot (both Google key shapes, origin registration and
+  non-escalation, refusals when unconfigured / unknown conversation / unapproved caller / thread
+  without conversation, root thread vs bound thread, the initial eight open conversations in the
+  system instruction, an unbound call that lists with status/channel/limit filters, searches,
+  refuses `run_task` until bound, switches by id and by channel name with the segment transcript
+  and tasks posted to the thread left behind, refuses unknown channels, malformed ids and
+  conversations the caller may not post in, a task finishing after the call moved on, failed
+  task reporting, transcript aggregation, owner-only audio and hang-up, the end summary with
+  "Also visited", the `gemini-live` usage row, the DM memory line written only to the caller's
+  own DM folder, `end_call` grace, voice-service drop, `endAll`), the Activity routes (launch
+  `next` restricted to `?call=…`, dashboard overlay markup, auto-open target and worklet CSP
+  allowance on the Activity view only, legacy `/call` redirect, bound and unbound start, SSE,
+  audio, end with CSRF in header or beacon query, owner scoping) and the Slack **📞 Call** button.
+  Regression neighbours: `test/activity.test.js`, `test/activity-page.test.js`,
+  `test/menu.test.js`, `test/review-file-buttons.test.js`, `test/run-escalation.test.js`.
+- Live acceptance (Claude and Codex, separately, in a disposable Worker channel plus a second
+  channel the tester is a member of, with a Public URL over HTTPS): as an admin, Settings → Voice
+  calls → enable, paste a Gemini API key, save; confirm `/api/settings` returns
+  `voiceCalls.hasApiKey: true` and no key value. As an approved non-admin with at least two open
+  Activity conversations in different channels, ask the agent anything in a thread; the reply
+  menu must end with **📞 Call**. Click it: an ephemeral link opens the dashboard with the call
+  overlay bound to that thread ("In #channel · title"). Start the call, allow the microphone, say
+  "Hello, what are we working on?" — expect a spoken list of your open conversations. Say "switch
+  to <the other conversation's title>": the overlay binding changes, the thread you left receives
+  "📞 Voice call moved on" with the transcript so far, the new thread receives "joined by voice
+  call", and the voice summarizes its recent messages. Say "Create a file called hello.txt with
+  the text hello and tell me when it is done." Expect in that thread: the "🎙️ *Name (voice
+  call):*" post, the live progress card, the engine's answer with the standard footer, then the
+  voice reporting the result. Say "open a new conversation in #<other channel>": a root is opened
+  there. Say "goodbye": the voice says goodbye, the overlay shows the call ended, the last thread
+  receives "📞 Voice call ended — N min · 1 task · ~$… · Also visited: …" with the transcript, and
+  your DM folder's `MEMORY.md` gains one "Voice call on <date>" line. From the dashboard, the
+  **📞 Call** button starts an unbound call that offers the list; a row's **Call the agent** icon
+  opens the overlay bound to that row. Verify `usage` has a `gemini-live` row for the call and
+  the engine's row for the task, and that the task ran in the channel container (no admin
+  bypass even for an admin caller). Pass rules: no key or token in the page source or network
+  responses; a second caller cannot read the first call's events (404); the list never shows a
+  conversation started by someone else; switching to a channel the caller may not post in is
+  refused and said aloud.
 
 ## Admin controls for parallel agent runs (2026-11-13)
 
@@ -140,6 +151,40 @@
   client fixture to verify `unavailable: true` without removing the indexed human row; restore
   reads and confirm recovery. Revoke private membership while a bot-root read awaits and verify
   no discovery row is written. Never change a production thread to build this fixture.
+
+## Pinned Activity channels (2026-11-14)
+
+- Engine-independent: Activity preference writes, channel admission, indexed thread state and
+  browser placement run entirely in the daemon/browser; no Claude or Codex turn is invoked.
+- Automated: `node --test test/activity-page.test.js test/activity.test.js
+  test/home-threads.test.js` covers personal/idempotent/concurrent writes, CSRF and origin,
+  private membership and revocation while reads await, channel-name privacy, SSE/session
+  persistence, future rows, explicit thread pin independence, empty channel cards, search/status
+  tabs, failed saves and open channel pins beyond the ordinary 1000-thread feed/page cap.
+- Browser fixture: run `test/activity-reuse-browser.test.js` with `CG_BROWSER_MODULE` pointing
+  at Playwright and `CG_BROWSER_EXECUTABLE` at Chromium. The channel-pins case serves the real
+  Activity router with synthetic public channels, two approved viewers and indexed owned/foreign
+  roots. At 1440/768/390/320 px in both themes require no overflow, visible usable channel pin
+  controls, all open/Later rows in Pinned once, persistence, grouping/search, future SSE rows,
+  personal isolation, empty channel cards, and independent thread pins after channel unpinning.
+- Live acceptance: in disposable authorized channels Alpha and Beta, viewer A owns two open
+  engaged threads in Alpha (one Later), a completed Alpha thread, and an open Beta thread.
+  Viewer B owns a separate Alpha thread. Open A's Activity, click **Pin channel** beside Alpha.
+  Require the Alpha channel card and both open Alpha rows in Pinned, only Beta in ordinary Active,
+  no B row, and the completed Alpha row only in Completed. Switch status tabs: both open Alpha
+  pins remain; search a missing term hides them and clearing search restores them. Switch Group
+  by Status/Channel, reload, then open a second session: pins persist without duplicate rows.
+  Add another owned engaged Alpha thread through the normal application: it joins Pinned live.
+  Individually pin one Alpha thread, mark every Alpha thread Done, and require the channel card
+  to remain with “No open conversations”; the individual Done pin remains. Unpin Alpha: the
+  individual thread stays pinned. Unpin that thread: Pinned disappears. B's dashboard never
+  inherits A's pins. Repeat the layout checks on a mobile viewport in both themes.
+- Access fixture: repeat with a private channel; revoke A's membership and refresh. Neither the
+  pinned channel name nor its rows may appear, and authenticated channel-pin writes must return
+  403. A stale session/CSRF/wrong Origin must fail; restoring access restores the saved preference.
+  Do not change production membership to construct this fixture. Record the deployed revision,
+  exact disposable channel/thread URLs, screenshots, `/api/threads` and `channel-pin` responses;
+  pass only when all assertions hold. Local synthetic checks do not claim deployed acceptance.
 
 ## Pinned Activity conversations (2026-11-13)
 

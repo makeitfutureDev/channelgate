@@ -6,6 +6,7 @@ import { ACTIVITY_THEME_CSS } from "./activity-theme.js";
 import { createSubscriptionUi, SUBSCRIPTION_CSS } from "../../public/subscription-ui.js";
 import { DEFAULT_ACTIVITY_GROUP_ORDER } from "./activity-order.js";
 import { activityAppHead } from "./activity-app.js";
+import { CALL_OVERLAY_CSS, callOverlayBrowser, callOverlayConfig, callOverlayMarkup } from "./call-overlay.js";
 
 // The header's theme switch, shared by every dashboard view. Matching the system choice clears
 // the override, so the page follows the OS again; a failed save keeps the theme for this page only.
@@ -41,15 +42,19 @@ function themeBrowser(config, browser) {
 }
 
 // Kept as an ordinary function so the exact script served to browsers is testable without a bundler.
-function activityBrowser(config, browser, subscriptionUi) {
+function activityBrowser(config, browser, subscriptionUi, callUi) {
   "use strict";
+  callUi = callUi || null;
   const { base, csrf, defaultGroupOrder } = config;
   const voiceCalls = config.voiceCalls === true;
   const teamId = typeof config.teamId === "string" && /^[A-Z0-9]{2,32}$/.test(config.teamId) ? config.teamId : "";
   const { document, location, EventSource } = browser;
   const el = (id) => document.getElementById(id);
   const body = el("threads"), search = el("search"), tabs = el("filters");
-  const pinnedBody = el("pinned-threads");
+  const pinnedBody = el("pinned-threads"), pinnedChannelList = el("pinned-channels");
+  const pendingChannels = new Set(), channelNodes = new Map();
+  let pinnedChannels = [];
+  const isPinned = (row) => row.pinned || row.channelPinned && row.status !== "done";
   const states = { working: "Working", waiting: "Waiting", error: "Error", done: "Done", later: "Later", idle: "Idle" };
   const pending = new Set(), nodes = new Map();
   const orderDialog = el("order-dialog"), orderList = el("order-list"), orderButton = el("group-order");
@@ -271,6 +276,8 @@ function activityBrowser(config, browser, subscriptionUi) {
     connected = false;
     stream?.close();
     rows = [];
+    pinnedChannels = [];
+    pendingChannels.clear();
     pending.clear();
     lastUpdated = 0;
     search.value = "";
@@ -290,6 +297,8 @@ function activityBrowser(config, browser, subscriptionUi) {
     if (ended || !data || !Array.isArray(data.rows)) return false;
     rows = data.rows.filter((row) => row && typeof row.channelId === "string" && typeof row.threadTs === "string")
       .map((row) => ({ ...row, status: Object.hasOwn(states, row.status) ? row.status : "idle" }));
+    pinnedChannels = Array.isArray(data.pinnedChannels) ? data.pinnedChannels.filter((entry) => entry
+      && typeof entry.channelId === "string" && typeof entry.channelName === "string") : [];
     acceptOrder(data);
     acceptGrouping(data);
     revision++;
@@ -306,7 +315,9 @@ function activityBrowser(config, browser, subscriptionUi) {
     const titleCell = node("td", "thread-cell"), title = node("a", "thread-title");
     titleCell.append(title);
     const channelCell = node("td", "channel-cell"), channel = node("a", "channel-link");
-    channelCell.append(channel);
+    const channelPin = node("button", "toggle channel-pin");
+    channelPin.type = "button"; channelPin.dataset.channelId = "";
+    channelCell.append(channel, channelPin);
     const statusCell = node("td", "status-cell"), pill = node("span", "pill");
     const dot = node("span", "status-dot"), statusText = node("span"), elapsed = node("span", "elapsed");
     dot.setAttribute("aria-hidden", "true");
@@ -323,16 +334,17 @@ function activityBrowser(config, browser, subscriptionUi) {
     pin.type = "button"; pin.dataset.key = rowKey; pin.dataset.operation = "pin";
     const links = node("div", "action-links"), state = node("div", "action-state");
     links.append(open);
-    // A voice call bound to this thread (web/call-page.js), only while the gateway offers calls.
+    // A voice call bound to this thread (web/call-overlay.js), only while the gateway offers calls.
     const call = node("a", "call-link", "Call the agent");
+    call.href = "#call";
     if (voiceCalls) links.append(call);
     state.append(toggle, delay, pin);
     actions.append(links, state);
     tr.append(titleCell, channelCell, statusCell, timeCell, actions);
-    return { tr, title, channel, pill, statusText, elapsed, time, open, call, toggle, delay, pin, since: 0, stamp: 0 };
+    return { tr, title, channel, channelPin, pill, statusText, elapsed, time, open, call, toggle, delay, pin, since: 0, stamp: 0 };
   }
   function matches(row) {
-    if (!row.pinned) {
+    if (!isPinned(row)) {
       if (filter === "active" && ["done", "later"].includes(row.status)) return false;
       if (filter === "open" && row.status === "done") return false;
       if (filter !== "active" && filter !== "open" && row.status !== filter) return false;
@@ -392,8 +404,8 @@ function activityBrowser(config, browser, subscriptionUi) {
     const filtered = ended ? [] : rows.filter(matches);
     const newest = (a, b) => (Number(b.lastMessageMs) || 0) - (Number(a.lastMessageMs) || 0);
     const compareRows = (a, b) => (groupBy === "channel" ? compareChannel(a, b) : 0) || rank(a.status) - rank(b.status) || newest(a, b);
-    const pinned = filtered.filter((row) => row.pinned).sort(groupBy === "channel" ? compareRows : newest);
-    const ordinary = filtered.filter((row) => !row.pinned).sort(compareRows);
+    const pinned = filtered.filter(isPinned).sort(groupBy === "channel" ? compareRows : newest);
+    const ordinary = filtered.filter((row) => !isPinned(row)).sort(compareRows);
     const groupPinned = groupBy === "channel" && new Set(pinned.map((row) => row.channelId)).size > 1;
     const shown = [...pinned, ...ordinary];
     const visible = new Set(shown.map(key));
@@ -415,11 +427,13 @@ function activityBrowser(config, browser, subscriptionUi) {
       link(entry.title, url, app);
       entry.channel.textContent = String(row.channelName || "Conversation");
       channelLink(entry.channel, row.channelId);
+      paintChannelPin(entry.channelPin, row.channelId, row.channelName, Boolean(row.channelPinned));
       entry.tr.className = "row s-" + row.status;
       // Label each group on its first conversation, preserving row controls and focus.
-      const localIndex = row.pinned ? index : index - pinned.length;
-      const sectionRows = row.pinned ? pinned : ordinary, sizes = row.pinned ? pinnedGroupSize : groupSize;
-      if ((!row.pinned || groupPinned) && (localIndex === 0 || groupKey(sectionRows[localIndex - 1]) !== groupKey(row))) entry.tr.dataset.group = (groupBy === "channel" ? channelName(row) : states[row.status]) + " · " + sizes.get(groupKey(row));
+      const saved = isPinned(row);
+      const localIndex = saved ? index : index - pinned.length;
+      const sectionRows = saved ? pinned : ordinary, sizes = saved ? pinnedGroupSize : groupSize;
+      if ((!saved || groupPinned) && (localIndex === 0 || groupKey(sectionRows[localIndex - 1]) !== groupKey(row))) entry.tr.dataset.group = (groupBy === "channel" ? channelName(row) : states[row.status]) + " · " + sizes.get(groupKey(row));
       else delete entry.tr.dataset.group;
       entry.pill.className = "pill " + row.status;
       entry.statusText.textContent = states[row.status];
@@ -434,7 +448,8 @@ function activityBrowser(config, browser, subscriptionUi) {
       entry.open.setAttribute("aria-label", "Open in Slack: " + title);
       entry.open.title = app ? "Open in Slack · Ctrl/⌘-click opens it in the browser" : "Open in Slack";
       if (voiceCalls && /^[A-Z0-9_]{1,32}$/.test(String(row.channelId)) && /^\d{1,13}\.\d{1,6}$/.test(String(row.threadTs))) {
-        entry.call.href = base + "/call?channel=" + encodeURIComponent(row.channelId) + "&thread=" + encodeURIComponent(row.threadTs);
+        entry.call.dataset.channelId = row.channelId; entry.call.dataset.threadTs = row.threadTs;
+        entry.call.dataset.channelName = String(row.channelName || ""); entry.call.dataset.title = title;
         entry.call.title = "Call the agent about this conversation";
         entry.call.setAttribute("aria-label", "Call the agent: " + title);
       }
@@ -456,10 +471,32 @@ function activityBrowser(config, browser, subscriptionUi) {
       entry.pin.title = row.pinned ? "Unpin conversation" : "Pin conversation";
       entry.pin.setAttribute("aria-label", (row.pinned ? "Unpin: " : "Pin: ") + title);
       entry.pin.setAttribute("aria-pressed", String(Boolean(row.pinned)));
-      const target = row.pinned ? pinnedBody : body;
+      const target = saved ? pinnedBody : body;
       if (target.children[localIndex] !== entry.tr) target.insertBefore(entry.tr, target.children[localIndex] || null);
     });
-    el("pinned-section").hidden = pinned.length === 0;
+    const query = search.value.trim().toLocaleLowerCase();
+    const channels = ended ? [] : pinnedChannels.filter((entry) => !query || entry.channelName.toLocaleLowerCase().includes(query)
+      || pinned.some((row) => row.channelId === entry.channelId))
+      .sort((a, b) => a.channelName.localeCompare(b.channelName) || a.channelId.localeCompare(b.channelId));
+    const visibleChannels = new Set(channels.map((entry) => entry.channelId));
+    for (const [id, entry] of channelNodes) if (!visibleChannels.has(id)) { entry.card.remove(); channelNodes.delete(id); }
+    channels.forEach((channel, index) => {
+      let entry = channelNodes.get(channel.channelId);
+      if (!entry) {
+        const card = node("div", "pinned-channel"), name = node("a", "channel-link"), count = node("span", "pinned-channel-count"), button = node("button", "toggle channel-pin");
+        button.type = "button"; card.append(name, count, button);
+        entry = { card, name, count, button }; channelNodes.set(channel.channelId, entry);
+      }
+      entry.name.textContent = channel.channelName;
+      channelLink(entry.name, channel.channelId);
+      const open = rows.filter((row) => row.channelId === channel.channelId && row.status !== "done").length;
+      entry.count.textContent = open ? open + " open" : "No open conversations";
+      entry.card.dataset.channelId = channel.channelId;
+      paintChannelPin(entry.button, channel.channelId, channel.channelName, true);
+      if (pinnedChannelList.children[index] !== entry.card) pinnedChannelList.insertBefore(entry.card, pinnedChannelList.children[index] || null);
+    });
+    pinnedChannelList.hidden = channels.length === 0;
+    el("pinned-section").hidden = pinned.length === 0 && channels.length === 0;
     el("pinned-count").textContent = String(pinned.length);
     el("table").hidden = ordinary.length === 0;
     el("empty").hidden = shown.length > 0 || ended;
@@ -471,6 +508,32 @@ function activityBrowser(config, browser, subscriptionUi) {
     historyButton.setAttribute("aria-busy", String(loadingHistory));
     renderAllDone();
     notice();
+  }
+  function paintChannelPin(button, channelId, name, pinned) {
+    button.dataset.channelId = channelId;
+    button.dataset.state = pinned ? "unpin" : "pin";
+    button.textContent = pinned ? "Unpin channel" : "Pin channel";
+    button.title = pinned ? "Unpin channel" : "Pin channel and its open conversations";
+    button.setAttribute("aria-label", (pinned ? "Unpin channel: " : "Pin channel: ") + String(name || "Conversation"));
+    button.setAttribute("aria-pressed", String(pinned));
+    button.disabled = ended || pendingChannels.has(channelId);
+  }
+  async function pinChannel(channelId) {
+    if (ended || pendingChannels.has(channelId)) return;
+    const pinned = pinnedChannels.some((entry) => entry.channelId === channelId);
+    pendingChannels.add(channelId); actionMessage = ""; render();
+    try {
+      const response = await fetch(base + "/api/channel-pin", {
+        method: "POST", credentials: "same-origin",
+        headers: { "Content-Type": "application/json", "X-CG-CSRF": csrf },
+        body: JSON.stringify({ channelId, pinned: !pinned }),
+      });
+      if (response.status === 401 || response.status === 403) { endAccess(); return; }
+      if (!response.ok) throw new Error("unavailable");
+      revision++; // A fetch started before this preference write must not overwrite it.
+      await refresh();
+    } catch { if (!ended) actionMessage = "That channel pin couldn’t be saved. Please try again."; }
+    finally { pendingChannels.delete(channelId); render(); }
   }
   function renderAllDone() {
     allDoneButton.disabled = ended || !loaded || completingAll || pending.size > 0;
@@ -613,8 +676,16 @@ function activityBrowser(config, browser, subscriptionUi) {
   grouping.addEventListener("change", () => { void saveGrouping(); });
   search.addEventListener("input", render);
   function rowClick(event) {
+    const channelButton = event.target.closest("button[data-channel-id]");
+    if (channelButton?.dataset.channelId) { void pinChannel(channelButton.dataset.channelId); return; }
     const button = event.target.closest("button[data-key]");
     if (button) { void complete(button.dataset.key, button.dataset.operation); return; }
+    const callAnchor = event.target.closest?.("a.call-link");
+    if (callAnchor) {
+      event.preventDefault();
+      if (callAnchor.dataset.channelId) callUi?.open({ channelId: callAnchor.dataset.channelId, threadTs: callAnchor.dataset.threadTs || "", channelName: "#" + String(callAnchor.dataset.channelName || "").replace(/^#/, ""), title: callAnchor.dataset.title || "" });
+      return;
+    }
     // The Slack button opens the desktop app; Ctrl/⌘-click opens the same thread in the browser.
     const anchor = event.target.closest?.("a.open-link");
     if (anchor?.href && anchor.dataset.app === "1" && (event.metaKey || event.ctrlKey)) {
@@ -630,6 +701,9 @@ function activityBrowser(config, browser, subscriptionUi) {
   }
   body.addEventListener("click", rowClick);
   pinnedBody.addEventListener("click", rowClick);
+  pinnedChannelList.addEventListener("click", rowClick);
+  el("call-agent")?.addEventListener("click", () => { callUi?.open(null); });
+  if (callUi && config.callTarget && config.callTarget.channelId) callUi.open({ channelId: config.callTarget.channelId, threadTs: config.callTarget.threadTs || "" });
   subscriptionButton?.addEventListener("click", () => { void refreshSubscriptions(); });
   document.addEventListener?.("visibilitychange", () => {
     if (document.hidden) {
@@ -997,11 +1071,14 @@ const LIGHT = `color-scheme:light;
   --ok:#23874d;--warn:#c07c10;--danger:#d33434;--tint:11%;--shadow:rgba(16,32,28,.18);`;
 const escapeHtml = (value) => String(value ?? "").replace(/[&<>"']/g, (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[char]);
 
-export function activityPage({ sessionId, csrf, view = "activity", agent = "", theme = "system", teamId = "", voiceCalls = false, logoColor = getLogoColor() }) {
+export function activityPage({ sessionId, csrf, view = "activity", agent = "", theme = "system", teamId = "", voiceCalls = false, callTarget = null, logoColor = getLogoColor() }) {
   const subscriptionsView = view === "subscriptions", settingsView = view === "settings";
   const base = `/activity/${encodeURIComponent(sessionId)}`;
   const nonce = crypto.randomBytes(16).toString("base64url");
-  const config = JSON.stringify({ base, csrf, view, teamId: /^[A-Z0-9]{2,32}$/.test(String(teamId)) ? String(teamId) : "", defaultGroupOrder: DEFAULT_ACTIVITY_GROUP_ORDER, voiceCalls: voiceCalls === true }).replaceAll("<", "\\u003c");
+  const launch = callTarget && /^[A-Z0-9_]{1,32}$/.test(String(callTarget.channelId || "")) && (!callTarget.threadTs || /^\d{1,13}\.\d{1,6}$/.test(String(callTarget.threadTs)))
+    ? { channelId: String(callTarget.channelId), threadTs: String(callTarget.threadTs || "") } : null;
+  const config = JSON.stringify({ base, csrf, view, teamId: /^[A-Z0-9]{2,32}$/.test(String(teamId)) ? String(teamId) : "", defaultGroupOrder: DEFAULT_ACTIVITY_GROUP_ORDER, voiceCalls: voiceCalls === true,
+    ...(voiceCalls ? { ...callOverlayConfig({ base, csrf, agent }), callTarget: launch } : {}) }).replaceAll("<", "\\u003c");
   const agentName = String(agent || "").trim() || "ChannelGate";
   const pinned = theme === "dark" || theme === "light" ? ` data-theme="${theme}"` : "";
   const filters = [["active", "Active"], ["working", "Working"], ["waiting", "Waiting"], ["error", "Error"], ["idle", "Idle"], ["later", "Later"], ["done", "Completed"], ["open", "All open"]];
@@ -1073,6 +1150,11 @@ thead,tbody{display:block}
 thead tr,tbody tr{display:grid;grid-template-columns:minmax(0,1fr) minmax(120px,190px) 124px 44px 136px;align-items:center;column-gap:12px;padding:0 16px}
 .pinned-section{margin:0 0 24px}
 .pinned-heading{display:flex;align-items:center;gap:10px;margin:0;padding:12px 16px;font:600 13px var(--font);color:var(--ink)}
+.pinned-channels{display:flex;flex-wrap:wrap;gap:8px;padding:0 16px 12px}
+.pinned-channel{display:flex;align-items:center;gap:8px;max-width:100%;padding:5px 8px;border:1px solid var(--line);border-radius:9px;background:var(--panel)}
+.pinned-channel .channel-link{overflow-wrap:anywhere;min-width:0;font-size:12px}
+.pinned-channel-count{color:var(--muted);font:10px var(--mono)}
+.pinned-channel .channel-pin{flex:none}
 .pinned-heading span{font:500 11px var(--mono);color:var(--muted)}
 thead tr{height:30px;border-bottom:1px solid var(--line)}
 th{padding:0;font:500 10.5px var(--mono);letter-spacing:.1em;text-transform:uppercase;color:var(--muted);text-align:left}
@@ -1089,6 +1171,9 @@ tbody[data-group-by=status] tr.s-waiting[data-group]::before,tbody[data-group-by
 .thread-title:hover{color:var(--ink);text-decoration:underline}
 .channel-cell{font:11.5px var(--mono);color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .channel-link{color:inherit}
+.channel-cell .channel-link{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis}
+.channel-cell{display:flex;align-items:center;gap:6px}
+.channel-cell .channel-pin{flex:none}
 .channel-link[href]:hover{color:var(--ink);text-decoration:underline}
 .status-cell{min-width:0}
 .pill{display:inline-flex;align-items:center;gap:6px;max-width:100%;height:22px;padding:0 9px;border-radius:999px;font-size:11.5px;font-weight:500;white-space:nowrap;color:var(--c);background:color-mix(in srgb,var(--c) var(--tint),transparent);border:1px solid color-mix(in srgb,var(--c) 28%,transparent)}
@@ -1104,6 +1189,7 @@ tbody tr:hover .actions,tbody tr:focus-within .actions,.s-waiting .actions,.s-er
 .open-link:hover,.call-link:hover,.toggle:hover{border-color:var(--muted);background:var(--panel-2);color:var(--ink)}
 .open-link{--icon:${ICONS.slack}}
 .call-link{--icon:${ICONS.call}}
+${voiceCalls ? CALL_OVERLAY_CSS : ""}
 .toggle[data-state=done]{--icon:${ICONS.done};color:var(--s-done)}
 .toggle[data-state=reopen]{--icon:${ICONS.reopen}}
 .toggle[data-state=later]{--icon:${ICONS.later};color:var(--s-later)}
@@ -1172,8 +1258,7 @@ select.settings-input{height:32px}
 @media(prefers-reduced-motion:reduce){.pill.working .status-dot{animation:none}.actions{transition:none}}
 @media(hover:none){.actions{opacity:1}}
 @media(max-width:980px){
-  thead tr,tbody tr{grid-template-columns:minmax(0,1fr) 124px 44px 136px}
-  .channel-cell,th:nth-child(2){display:none}
+  thead tr,tbody tr{grid-template-columns:minmax(0,1fr) minmax(90px,125px) 124px 44px 136px;column-gap:8px}
 }
 @media(max-width:640px){
   .settings-layout{grid-template-columns:1fr}
@@ -1195,7 +1280,7 @@ select.settings-input{height:32px}
   tbody tr[data-group] .thread-cell{grid-row:2}
   .time-cell{grid-column:3;grid-row:2;text-align:right}
   .status-cell{grid-column:1;grid-row:3}
-  .channel-cell{display:block;grid-column:2;grid-row:3}
+  .channel-cell{display:flex;grid-column:2;grid-row:3}
   .actions{grid-column:3;grid-row:3}
   tbody tr:not([data-group]) .thread-cell{grid-row:1}tbody tr:not([data-group]) .time-cell{grid-row:1}
   tbody tr:not([data-group]) .status-cell,tbody tr:not([data-group]) .channel-cell,tbody tr:not([data-group]) .actions{grid-row:2}
@@ -1207,7 +1292,7 @@ select.settings-input{height:32px}
 ${subscriptionsView || settingsView ? "" : '<div id="subscription-quick" class="subscription-quick-list" aria-label="Subscription usage" hidden></div><div id="subscriptions-notice" role="status" aria-live="polite"></div>'}
 <nav class="page-nav" aria-label="Dashboard"><a href="${base}"${view === "activity" ? ' aria-current="page"' : ''}>Activity</a><a href="${base}/subscriptions"${subscriptionsView ? ' aria-current="page"' : ''}>Subscriptions</a><a href="${base}/settings"${settingsView ? ' aria-current="page"' : ''}>Settings</a></nav>
 <a href="${base}/passkeys" class="link-button">Passkeys</a>
-<button id="theme-toggle" class="icon-button" type="button" aria-label="Switch theme" title="Switch theme"></button></header>
+${voiceCalls && view === "activity" ? '<button id="call-agent" type="button" title="Start a voice call with the agent">📞 Call</button>' : ""}<button id="theme-toggle" class="icon-button" type="button" aria-label="Switch theme" title="Switch theme"></button></header>
 <main>
 ${subscriptionsView ? `<section class="subscriptions-page" aria-label="Subscriptions"><div class="subscriptions-head"><h1>Subscriptions</h1><button id="subscriptions-refresh" class="order-button" type="button">Refresh</button></div><p class="subscriptions-copy">Account-wide usage · refreshes every 10 minutes.</p><div id="subscriptions-notice" role="status" aria-live="polite"></div><div id="subscriptions-cards" class="subscription-grid"></div></section>` : ""}
 ${settingsView ? `<section class="settings-page" aria-label="Settings"><div class="settings-head"><h1>Settings</h1><p class="settings-copy">Your own preferences and connections. They follow you into every conversation; nobody else's runs use them.</p></div><div id="settings-status" class="settings-status" role="status" aria-live="polite" hidden></div><div class="settings-layout"><nav id="settings-nav" class="settings-nav" aria-label="Settings sections"></nav><div id="settings-panel" class="settings-panel"></div></div><noscript><p class="js-needed">Enable JavaScript to manage your settings.</p></noscript></section>` : `<div id="activity-view"${subscriptionsView ? " hidden" : ""}>
@@ -1218,6 +1303,7 @@ ${settingsView ? `<section class="settings-page" aria-label="Settings"><div clas
 <div class="search-wrap"><label class="search-label" for="search">Search conversations or channels</label><input type="search" id="search" placeholder="Filter threads…" autocomplete="off" maxlength="300"></div></div>
 <div id="notice" class="notice" role="alert" hidden></div>
 <section id="pinned-section" class="pinned-section" aria-labelledby="pinned-title" hidden><h2 id="pinned-title" class="pinned-heading">Pinned conversations <span id="pinned-count">0</span></h2>
+<div id="pinned-channels" class="pinned-channels" aria-label="Pinned channels" hidden></div>
 <table aria-label="Pinned conversations"><thead><tr><th scope="col">Conversation</th><th scope="col">Channel</th><th scope="col">Status</th><th scope="col">Last</th><th scope="col">Actions</th></tr></thead><tbody id="pinned-threads"></tbody></table></section>
 <table id="table" hidden><thead><tr><th scope="col">Conversation</th><th scope="col">Channel</th><th scope="col">Status</th><th scope="col">Last</th><th scope="col">Actions</th></tr></thead><tbody id="threads"></tbody></table>
 <div id="empty" class="empty" role="status"><div class="empty-symbol" aria-hidden="true">◎</div><h2 id="empty-title">Loading your activity…</h2><p id="empty-copy">Your latest conversations will appear here.</p></div>
@@ -1225,7 +1311,7 @@ ${settingsView ? `<section class="settings-page" aria-label="Settings"><div clas
 <footer class="footer"><div class="footer-actions"><span id="summary" class="summary">Loading activity…</span><button id="group-order" class="link-button" type="button" aria-haspopup="dialog">⇅ Group order</button><button id="mark-all-done" class="link-button" type="button" aria-haspopup="dialog" disabled>✓ Mark All Done</button><button id="load-history" class="link-button" type="button" disabled>Load older threads</button></div><div class="footer-actions"><span id="result-count"></span><span id="updated">Waiting for updates</span></div></footer>
 <p class="privacy">Your conversations are private. <a href="${base}/passkeys">Manage passkeys</a> or <a href="/activity/login">sign in again</a> when your session expires.</p>
 </div>`}
-</main><script nonce="${nonce}">${settingsView
+</main>${voiceCalls && view === "activity" ? callOverlayMarkup({ agentName }) : ""}<script nonce="${nonce}">${settingsView
     ? `(${settingsBrowser.toString()})(${config}, globalThis, (${themeBrowser.toString()})(${config}, globalThis));`
-    : `(${themeBrowser.toString()})(${config}, globalThis);(${activityBrowser.toString()})(${config}, globalThis, (${createSubscriptionUi.toString()})());`}</script></body></html>` };
+    : `(${themeBrowser.toString()})(${config}, globalThis);(${activityBrowser.toString()})(${config}, globalThis, (${createSubscriptionUi.toString()})()${voiceCalls && view === "activity" ? `, (${callOverlayBrowser.toString()})(${config}, globalThis)` : ""});`}</script></body></html>` };
 }

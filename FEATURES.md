@@ -13,37 +13,50 @@ icon URLs and uncached manifest responses expose updates without changing app id
 Chrome controls installed icon updates; an existing Dock icon may need the app reopened or
 reinstalled to refresh. No macOS-specific update timing is promised.
 
-## Voice calls with a channel's agent · Beta (2026-11-13)
+## Voice calls with a channel's agent · Beta (2026-11-13, navigation 2026-11-14)
 
-An approved user can talk to a channel's agent from a browser call page bound to one Slack
-conversation and one thread (`docs/VOICE-CALLS.md`). Entry points: the **📞 Call** reply-menu
-button (present only while voice calls are configured) and the **Call the agent** action on each
-personal Activity row. Both mint the clicker's own private ten-minute Activity launch that opens
-`/activity/<session>/call?channel=…&thread=…`; the Slack button is admitted by the same
-`accessContext().allows()` rule as Dashboard, and the call is admitted again when it starts.
+An approved user can talk to a channel's agent from a voice-call overlay on their personal
+Activity dashboard (`docs/VOICE-CALLS.md`). Entry points: the **📞 Call** reply-menu button
+(present only while voice calls are configured), the **Call the agent** action on each Activity
+row, and the dashboard's own **📞 Call** button. The Slack button mints the clicker's private
+ten-minute Activity launch that opens `/activity/<session>?call=<channel>&thread=<ts>`, which
+opens the overlay bound to that thread; the button is admitted by the same
+`accessContext().allows()` rule as Dashboard, and every binding is admitted again by the call
+manager. Older `/activity/<session>/call?…` links redirect to the dashboard.
 
 The daemon holds the Google **Gemini Live** session (`src/gateway/voice/gemini-live.js`: one
-WebSocket, 16 kHz PCM in, 24 kHz PCM out, input/output transcription, context compression,
-session resumption across `goAway`). The browser streams microphone audio as ~120 ms
-octet-stream POSTs and receives audio, transcript and task events over one SSE stream, so no
-WebSocket upgrade is needed on the public edge and the API key never reaches a browser. Settings →
-**Voice calls** holds the enable switch, the Gemini API key (write-only on listings, revealable
-only through `POST /api/secrets/reveal`), the model (`gemini-3.8-live` or the 2.5 native-audio
-preview) and the voice.
+WebSocket, binary frames, 16 kHz PCM in, 24 kHz PCM out, input/output transcription, context
+compression, session resumption across `goAway`). The browser streams microphone audio as ~120 ms
+octet-stream POSTs and receives audio, transcript, binding and task events over one SSE stream, so
+no WebSocket upgrade is needed on the public edge and the API key never reaches a browser.
+Settings → **Voice calls** holds the enable switch, the Gemini API key (write-only on listings,
+revealable only through `POST /api/secrets/reveal`; both the `AIza…` and the dotted `AQ.…`
+shapes), the model (`gemini-3.8-live` or the 2.5 native-audio preview) and the voice.
 
-The voice model only converses and dispatches. Its tools (`src/gateway/voice/calls.js`):
-`run_task` posts the spoken request into the bound thread as “🎙️ *Name (voice call):* …” and runs
-an ordinary engine turn there **authored by the caller** (origin `voice_call`, the thread's run
-queue, live progress, the usual footer), then reports the result back to the voice as a
-`[gateway]` message; `check_tasks`, `read_thread` (the thread's recent messages) and `end_call`.
-A call without a thread opens its own root. `voice_call` is an interactive user origin that is
-deliberately **not escalatable**: an admin's spoken task runs as Worker and answers tool prompts
-through the thread's approval cards. One call per person; at most eight per gateway; a call ends
-after 60 minutes, after five silent minutes, on hang-up, on `end_call`, or when the voice service
-drops. On every end the thread receives the summary (duration, tasks, estimated voice cost and the
-capped transcript), the `usage` ledger gets a `gemini-live` / `voice-call` row priced from the
-Gemini audio and text rates, and `voice_call_started` / `voice_call_ended` events are logged.
-Gateway restarts end calls without a summary (phase 1).
+The voice model only converses, navigates and dispatches (`src/gateway/voice/calls.js`). A call
+is bound to one conversation and one thread at a time, or to none: an unbound call (the
+dashboard button) starts with the caller's eight most recent open conversations in its
+instructions and asks which to open. Tools: `list_conversations` (the caller's OWN conversations,
+exactly the Activity list, most recent first, filtered by status and channel, 8 by default and
+at most 20), `search_conversations` (title/channel words, optional channel filter; anything beyond
+the caller's own conversations is a task for the channel agent), `switch_conversation` (an id from
+the list, or a channel name to open a new root there; re-authorized by `allows()`; the segment's
+transcript and tasks are posted to the thread being left as "📞 Voice call moved on", the new
+thread gets "joined by voice call" and its recent messages come back to the voice), `run_task`
+(posts the spoken request into the current thread as "🎙️ *Name (voice call):* …" and runs an
+ordinary engine turn there **authored by the caller**, origin `voice_call`, the thread's run queue,
+live progress, the usual footer, then reports the result back as a `[gateway]` message that says
+where it ran if the call has moved on), `check_tasks`, `read_thread` and `end_call`. `voice_call`
+is an interactive user origin that is deliberately **not escalatable**: an admin's spoken task
+runs as Worker and answers tool prompts through the thread's approval cards. One call per person;
+at most eight per gateway; a call ends after 60 minutes, after five silent minutes, on hang-up,
+on `end_call`, or when the voice service drops. On every end the current thread receives the
+summary (duration, tasks, estimated voice cost, the other conversations visited and the last
+segment's transcript), the `usage` ledger gets a `gemini-live` / `voice-call` row priced from
+the Gemini audio and text rates, one line describing the call (date, duration, conversations,
+tasks) is saved to the caller's own DM channel memory when they have a DM folder, and
+`voice_call_started` / `voice_call_bound` / `voice_call_ended` events are logged. Gateway
+restarts end calls without a summary.
 
 ## Admin controls for parallel agent runs (2026-11-13)
 
@@ -78,12 +91,29 @@ They remain outside personal lists, do not trigger the partial-data banner, and 
 consume the root-repair batch ahead of older human threads. Failed or timed-out Slack reads still
 raise the warning and remain retryable. Current access is rechecked before saving an exclusion.
 
+## Pinned Activity channels (2026-11-14)
+
+Each Activity row has a **Pin channel** control beside its channel name. It saves the channel
+for that viewer and moves all their open tracked conversations into **Pinned conversations**,
+including Later and future conversations. Like individual pins, open channel pins stay visible
+across status tabs and follow search. Completed conversations return to the ordinary Completed
+view unless individually pinned. Status/channel grouping, counts and row controls still work;
+threads appear once. Channel cards show the channel name, open count and **Unpin channel**, and
+remain available with “No open conversations” after the last open thread finishes.
+
+Channel pins persist across sessions, synchronize through Activity's live feed, and retain all
+open pinned-channel threads beyond the ordinary feed cap. They are independent of individual
+thread pins: unpinning either never removes the other preference. Pins never grant access,
+expose another viewer's threads, change Slack reactions or complete/postpone work. Channel reads
+and writes enforce current gateway admission and private-conversation membership; inaccessible
+channel names disappear with their rows. Desktop, tablet and mobile show channel pin controls.
+
 ## Pinned Activity conversations (2026-11-13)
 
 Each personal Activity row has a Pin/Unpin button. Pinning moves the conversation into a
 matching **Pinned conversations** table above the regular feed, with the same columns, live
 status, clocks and Slack/Done/Later controls. The section appears only when a pin matches the
-search; unpinning the last conversation hides it. Pins remain visible across status tabs,
+search; unpinning the last conversation hides it when no pinned channel remains. Pins remain visible across status tabs,
 including after completion or postponement, while search applies to both tables. Regular
 status/channel grouping and counts continue to describe the underlying conversations without
 duplicating pinned rows. Pins are saved per viewer across sessions and survive the ordinary
