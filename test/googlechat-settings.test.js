@@ -32,24 +32,79 @@ async function fixture({ admin = true } = {}) {
   return { channelId, owner, resource, entry, state, connector, build, apply };
 }
 
-test('Chat renders six owner-scoped native settings tabs with safe public credential pages', async () => {
+test('Chat renders Slack\'s settings pages as owner-scoped native cards with safe public credential pages', async () => {
   const f = await fixture();
   const general = await f.build();
   assert.ok(input(general, 'channel_engine'));
   assert.ok(input(general, 'thread_engine'));
   assert.match(JSON.stringify(general), /Chat &lt;settings&gt;/);
-  assert.deepEqual(actions(general).filter(button => button.onClick.action.function === 'settings.page').map(button => button.text),
-    ['• General', 'Variables', 'MCPs', 'Skills', 'Automations', 'Resume']);
-  for (const page of ['general', 'secrets', 'mcp', 'skills', 'automations', 'resume']) {
+  // Page navigation is ONE dropdown that acts on change, never a row of tab buttons.
+  assert.equal(actions(general).filter(button => button.onClick.action.function === 'settings.page').length, 0);
+  const picker = input(general, 'settingsPage');
+  assert.deepEqual(picker.items.map(item => [item.text, item.value, item.selected]), [['Agent', 'agent', true], ['Access', 'access', false], ['MCP', 'mcp', false],
+    ['Variables', 'variables', false], ['Skills', 'skills', false], ['Schedules', 'schedules', false], ['Diagnostics', 'diagnostics', false], ['You', 'you', false]]);
+  // Agent carries the runtime, the mode and its options; who may use the conversation is Access's.
+  assert.ok(input(general, 'access_mode') && input(general, 'access_autoMode') && input(general, 'access_allowNetwork'));
+  assert.ok(!input(general, 'access_access') && !input(general, 'access_manageAccess') && !input(general, 'access_allowedUsers'));
+  assert.equal(picker.type, 'DROPDOWN');
+  assert.equal(picker.onChangeAction.function, 'settings.page');
+  assert.ok(picker.onChangeAction.parameters.some(({ key, value }) => key === 'cgAction' && value === 'settings.page'));
+  assert.ok(!picker.onChangeAction.parameters.some(({ key }) => key === 'cgInputs'), 'the dropdown must submit its own value');
+  // Headings open titled sections; no section is empty.
+  assert.ok(general.sections.filter(section => section.header).length >= 1);
+  assert.ok(general.sections.every(section => section.widgets.length));
+  // The dropdown's submitted form value navigates; other submitted inputs are not applied.
+  const picked = await f.apply('settings.page', { settingsPage: 'schedules', channel_engine: 'codex' });
+  assert.equal(input(picked, 'settingsPage').items.find(item => item.selected).value, 'schedules');
+  await assert.rejects(f.apply('settings.page', { settingsPage: 'nope' }), /Unknown settings page/);
+  for (const page of ['agent', 'access', 'mcp', 'variables', 'skills', 'schedules', 'diagnostics', 'you']) {
     const card = await f.apply('settings.page', { page });
     validateChatCard(card);
     assert.ok(Buffer.byteLength(JSON.stringify(card)) <= MAX_CHAT_CARD_BYTES);
-    assert.ok(actions(card).some(button => button.text === '• ' + ({ general: 'General', secrets: 'Variables', mcp: 'MCPs', skills: 'Skills', automations: 'Automations', resume: 'Resume' })[page]));
-    if (['secrets', 'mcp'].includes(page)) {
+    assert.ok(card.sections.every(section => section.widgets.length));
+    assert.equal(input(card, 'settingsPage').items.find(item => item.selected).value, page);
+    if (['variables', 'mcp', 'you'].includes(page)) {
       assert.ok(actions(card).some(button => button.onClick.action.function === 'settings.private'));
       assert.ok(!widgets(card).some(widget => widget.textInput));
     }
   }
+  // Ids from cards posted before the Slack page set, and the ids the shared policy stores, still open.
+  for (const [legacy, page] of [['general', 'agent'], ['secrets', 'variables'], ['automations', 'schedules'], ['resume', 'diagnostics']]) {
+    assert.equal(input(await f.apply('settings.page', { page: legacy }), 'settingsPage').items.find(item => item.selected).value, page);
+  }
+});
+
+test('Chat Access is its own page, keeps its place after a change and is absent in a direct message', async () => {
+  const f = await fixture();
+  await f.build();
+  const access = await f.apply('settings.page', { page: 'access' });
+  assert.ok(input(access, 'access_access') && input(access, 'access_manageAccess') && input(access, 'access_allowedUsers') && input(access, 'access_managers'));
+  assert.ok(!input(access, 'access_mode') && !input(access, 'channel_engine'));
+  assert.ok(access.sections.some(section => section.header === 'People'));
+  const saved = await f.apply('settings.access', { field: 'access', access_access: 'admins' });
+  assert.equal((await getChannelMeta(f.entry.slug)).access, 'admins');
+  assert.equal(input(saved, 'settingsPage').items.find(item => item.selected).value, 'access');
+  // A change made on Agent stays on Agent.
+  await f.apply('settings.page', { page: 'agent' });
+  const mode = await f.apply('settings.access', { field: 'autoMode', access_autoMode: 'on' });
+  assert.equal(input(mode, 'settingsPage').items.find(item => item.selected).value, 'agent');
+  await patchChannelMeta(f.entry.slug, { isDM: true });
+  f.state.meta = await getChannelMeta(f.entry.slug);
+  const dm = await f.build();
+  assert.deepEqual(input(dm, 'settingsPage').items.map(item => item.value), ['agent', 'mcp', 'variables', 'skills', 'schedules', 'diagnostics', 'you']);
+  assert.ok(input(dm, 'access_mode'));
+});
+
+test('Chat Diagnostics explains a session without a turn and You opens only the private form', async () => {
+  const f = await fixture();
+  await f.build();
+  const diagnostics = await f.apply('settings.page', { page: 'diagnostics' });
+  assert.ok(diagnostics.sections.some(section => section.header === 'Resume this thread'));
+  assert.match(JSON.stringify(diagnostics), /has not run a turn yet/);
+  const you = await f.apply('settings.page', { page: 'you' });
+  const open = actions(you).find(button => button.onClick.action.function === 'settings.private');
+  assert.equal(actionData(open).page, 'you');
+  assert.ok(!widgets(you).some(widget => widget.textInput || widget.selectionInput && widget.selectionInput.name !== 'settingsPage'));
 });
 
 test('Chat cannot submit credential values or personal/organization variables from a public card', async () => {
@@ -96,7 +151,8 @@ test('Chat rejects stale runtime snapshots and validates a whole scope before wr
 
 test('Chat named access uses authorized roster identities and rechecks roles after roster requests', async () => {
   const f = await fixture();
-  const card = await f.build();
+  await f.build();
+  const card = await f.apply('settings.page', { page: 'access' });
   assert.ok(input(card, 'access_allowedUsers').items.some(member => member.value === f.owner));
   await f.apply('settings.access', { field: 'allowedUsers', access_allowedUsers: f.owner + ',member@example.com' });
   assert.deepEqual((await getChannelMeta(f.entry.slug)).allowedUsers, [f.owner, 'member@example.com']);

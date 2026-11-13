@@ -14,7 +14,7 @@ import { createConversationSettingsGrantUrl } from '../../web/conversation-setti
 import { rememberReplySession } from '../reply-sessions.js';
 import { googleChatWorkspaceContext } from './workspace-access.js';
 import { isSpaceName, isMessageName, isThreadName } from './api.js';
-import { chatText, chatButtons, chatAction, chatLink, chatCard, controlError, GoogleChatControlError } from './cards.js';
+import { chatText, chatButtons, chatAction, chatLink, chatCard, validateChatCard, controlError, GoogleChatControlError } from './cards.js';
 import { GOOGLE_CHAT_HELP_TEXT, createGoogleChatHelpCard } from './help.js';
 import { buildGoogleChatSettings, handleGoogleChatSettings, createGoogleChatSettingsContext } from './settings.js';
 import { parseSettingsCommand, GOOGLE_CHAT_SETTINGS_USAGE } from './settings-commands.js';
@@ -22,7 +22,7 @@ import { handleGeneral } from '../msteams/settings-general.js';
 import { verifyMenuAction } from './reply-menu.js';
 import { handlePlatformApproval } from '../../slack/approvals.js';
 
-const FORMS = /^(?:(?:channel|thread)_(?:engine|model|effort)|access_(?:mode|access|manageAccess|autoMode|cleanMode|allowNetwork|skillRuntimeSwap|allowedUsers|managers)|skillTemplate|resumeCommand|scope|comment)$/;
+const FORMS = /^(?:(?:channel|thread)_(?:engine|model|effort)|access_(?:mode|access|manageAccess|autoMode|cleanMode|allowNetwork|skillRuntimeSwap|allowedUsers|managers)|skillTemplate|resumeCommand|scope|comment|settingsPage)$/;
 export function googleChatActionData(event) {
   const fn = event.action?.function;
   if (typeof fn !== 'string' || !/^[a-z][a-z0-9_.-]{0,79}$/.test(fn)) throw new Error('Invalid card action.');
@@ -127,7 +127,9 @@ export function createGoogleChatControls({ connector, authorize = googleChatWork
     let card = kind === 'file' ? await preview(state, id, context) : kind === 'files' ? await files(state, id, context)
       : await buildGoogleChatSettings(state, id, { connector, authorize });
     // Typed commands work even where Chat cannot deliver this card's clicks (a Pub/Sub connection).
-    if (kind === 'settings') card = chatCard(card.header.title, [chatText(GOOGLE_CHAT_SETTINGS_USAGE), ...card.sections.flatMap(section => section.widgets)]);
+    // They sit folded under the settings themselves: one visible line, the list behind "Show more".
+    if (kind === 'settings') card = validateChatCard({ ...card, sections: [...card.sections, { header: 'Typed commands', collapsible: true, uncollapsibleWidgetsCount: 1,
+      widgets: [chatText('Buttons not responding? Type a setting instead.'), chatText(GOOGLE_CHAT_SETTINGS_USAGE)] }] });
     states.set(id, state);
     try {
       const sent = await connector.postCard({ conversationId: state.message.rawConversationId, threadKey: state.message.threadKey,
@@ -202,8 +204,8 @@ export function createGoogleChatControls({ connector, authorize = googleChatWork
       state.meta = context.meta;
       let card;
       if (action === 'settings.private') {
-        const url = createConversationSettingsGrantUrl({ ...grant(state), baseUrl: linkBase(), tab: data.page === 'mcp' ? 'mcp' : 'secrets' });
-        card = chatCard('Private settings', [chatText('Enter credentials only in this private browser form.'), chatButtons([chatLink('Open private settings', url), chatAction('Back to settings', 'settings.page', data.stateId, { page: data.page === 'mcp' ? 'mcp' : 'secrets' })])]);
+        const url = createConversationSettingsGrantUrl({ ...grant(state), baseUrl: linkBase(), tab: ['mcp', 'you'].includes(data.page) ? 'mcp' : 'secrets' });
+        card = chatCard('Private settings', [chatText('Enter credentials only in this private browser form.'), chatButtons([chatLink('Open private settings', url), chatAction('Back to settings', 'settings.page', data.stateId, { page: ['mcp', 'you'].includes(data.page) ? data.page : 'secrets' })])]);
       } else if (action.startsWith('settings.')) card = await handleGoogleChatSettings(action, data, state, data.stateId, { connector, authorize });
       else if (action === 'files.browse' || action === 'files.preview') {
         state.relative = normalizeRelativePath(data.relative || '');

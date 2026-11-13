@@ -17,7 +17,7 @@ const COMMAND_HINT = 'In spaces and groups, mention me before a typed command: `
 const TOPICS = [
   { title: 'All commands', rows: [
     '`/help` — Show this guide.',
-    '`/settings` — Open General, Variables, MCPs, Skills, Automations and Resume.',
+    '`/settings` — Open Agent, Access, MCP, Variables, Skills, Schedules, Diagnostics and You.',
     '`/settings <option> <value>` — Change mode, Auto, Lean, network, access, VPN or the engine/model/effort by typing it. `/settings help` lists the options.',
     '`/secrets` — Open Variables. Enter credential values only in the protected browser page; stored values are never shown or prefilled.',
     '`/files [folder]` — Browse, download, edit eligible text, or upload files with write access.',
@@ -40,9 +40,9 @@ const TOPICS = [
     'Voice notes need local Whisper enabled and installed. Raw audio is never sent to Claude or Codex. If transcription is unavailable, send text or ask an administrator to check Whisper.',
   ] },
   { title: 'Settings, connections & access', rows: [
-    '`/settings` opens private controls in this conversation. **General** manages conversation defaults, session overrides, and Read-only, Worker or Admin mode.',
+    '`/settings` opens private controls in this conversation. **Agent** manages conversation defaults, session overrides, and Read-only, Worker or Admin mode; **Access** sets who may use and manage the conversation.',
     '**Auto** approves tool requests. **Lean** omits optional skills and connectors. **Allow network** is a separate switch. Changes follow your current permissions.',
-    'Use `/model` for enabled engines and providers. An admin can set a dedicated Codex login in the admin UI → Channel Runtime; that conversation then stays on Codex. **Resume** shows the available terminal command.',
+    'Use `/model` for enabled engines and providers. An admin can set a dedicated Codex login in the admin UI → Channel Runtime; that conversation then stays on Codex. **Diagnostics** shows the terminal commands that resume this session.',
     '**Variables** uses a protected browser page for secret entry. Google Chat cannot mask text input, so never paste tokens or passwords into a card or message.',
     'Conversation values override personal values, then organization values. Organization changes are admin-only; hidden secrets may need admin approval for a new server.',
     'Open **MCPs** to manage conversation connections. Use the protected browser page for personal Composio or Toolbox tokens. SDK mode manages its own identities; saved Personal-mode tokens remain inactive there.',
@@ -64,7 +64,7 @@ const TOPICS = [
     '`remind me in 2 hours to call the client` — Send a reminder.',
     '`every Monday at 09:00 summarize new messages` — Schedule work.',
     'Reminders send a nudge; scheduled tasks wake the agent to do work.',
-    'Ask `list schedules` or `delete schedule <id>`. In **Automations**, see next runs, pause or resume recurring schedules, cancel reminders, or stop loops.',
+    'Ask `list schedules` or `delete schedule <id>`. In **Schedules**, see next runs, pause or resume recurring schedules, cancel reminders, or stop loops.',
     'Ask me to `run it in the background`. When this conversation’s mode permits it, the job keeps running after the turn and reports back here when finished.',
   ] },
   { title: 'Reply controls', rows: [

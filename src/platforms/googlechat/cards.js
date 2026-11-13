@@ -43,6 +43,8 @@ export function routeCardActions(card, endpoint) {
     const out = {};
     for (const [key, item] of Object.entries(value)) out[key] = walk(item);
     if (out.onClick?.action && typeof out.onClick.action === 'object') out.onClick = { ...out.onClick, action: { ...out.onClick.action, function: endpoint } };
+    // A dropdown that acts on change (the settings section picker) is dispatched the same way.
+    if (out.onChangeAction && typeof out.onChangeAction === 'object') out.onChangeAction = { ...out.onChangeAction, function: endpoint };
     return out;
   };
   return walk(card);
@@ -50,6 +52,14 @@ export function routeCardActions(card, endpoint) {
 
 // Shared settings policy renders its small, declarative Adaptive Card UI. Converting that UI
 // keeps authorization and runtime transactions in one place while using Chat-native controls.
+export const SETTINGS_PAGE_INPUT = 'settingsPage';
+const isHeading = item => item?.type === 'TextBlock' && item.weight === 'Bolder' && item.separator === true;
+// The shared policy's page navigation: a ColumnSet holding one `settings.page` action per column.
+function pageTabs(item) {
+  if (item?.type !== 'ColumnSet' || !item.columns?.length) return null;
+  const tabs = item.columns.map(column => column.items?.length === 1 && column.items[0]?.type === 'ActionSet' && column.items[0].actions?.length === 1 ? column.items[0].actions[0] : null);
+  return tabs.every(tab => tab?.data?.cgAction === 'settings.page' && typeof tab.data.page === 'string') ? tabs : null;
+}
 export function adaptiveSettingsToChat(card) {
   function action(item) {
     if (item.type === 'Action.OpenUrl') return chatLink(item.title, item.url);
@@ -61,6 +71,12 @@ export function adaptiveSettingsToChat(card) {
   function widgets(items) {
     return (items || []).flatMap(item => {
       if (!item) return [];
+      const tabs = pageTabs(item);
+      // The six page tabs become ONE dropdown that navigates on change: a row of six buttons
+      // wraps badly in Chat and pushes the page's own controls down.
+      if (tabs) return [{ selectionInput: { name: SETTINGS_PAGE_INPUT, label: 'Section', type: 'DROPDOWN',
+        items: tabs.map(tab => ({ text: String(tab.title).replace(/^• /, '').slice(0, 100), value: String(tab.data.page), selected: String(tab.title).startsWith('• ') })),
+        onChangeAction: chatAction('', 'settings.page', tabs[0].data.stateId).onClick.action } }];
       if (item.type === 'TextBlock') {
         const result = chatText(item.text);
         if (item.weight === 'Bolder') result.textParagraph.text = `<b>${result.textParagraph.text}</b>`;
@@ -81,8 +97,21 @@ export function adaptiveSettingsToChat(card) {
   }
   // The first Bolder TextBlock is the Adaptive title; it becomes the Chat header, not a repeat.
   const titled = card.body?.[0]?.type === 'TextBlock' && card.body[0].weight === 'Bolder';
-  const body = titled ? card.body.slice(1) : card.body;
-  return chatCard(titled ? card.body[0].text : 'Channel settings', [...widgets(body), ...(card.actions?.length ? [chatButtons(card.actions.map(action))] : [])]);
+  const body = (titled ? card.body.slice(1) : card.body) || [];
+  // Every later heading opens its own Chat section, so a page reads as titled groups instead of
+  // one undivided column of text, selectors and buttons.
+  const sections = [{ widgets: [] }];
+  for (const item of body) {
+    if (isHeading(item)) sections.push({ header: escapeCardText(String(item.text).slice(0, 120)), widgets: [] });
+    else sections.at(-1).widgets.push(...widgets([item]));
+  }
+  if (card.actions?.length) sections.at(-1).widgets.push(chatButtons(card.actions.map(action)));
+  // Chat rejects a section without widgets: a heading with nothing under it stays a bold line.
+  const filled = sections.filter(section => section.header || section.widgets.length)
+    .map(section => section.widgets.length ? section : { widgets: [{ textParagraph: { text: `<b>${section.header}</b>` } }] });
+  const title = titled ? card.body[0].text : 'Channel settings';
+  if (!filled.length) return chatCard(title, []);
+  return validateChatCard({ header: { title: String(title).slice(0, 120) }, sections: filled });
 }
 
 // A deliberate, value-free explanation a requester may see privately. Anything else (REST

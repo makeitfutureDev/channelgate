@@ -62,7 +62,10 @@ test('the /settings card lists the typed commands', async () => {
   const f = await fixture();
   await f.command('/settings');
   assert.equal(f.posts.length, 1);
-  assert.match(JSON.stringify(f.posts[0].card.sections[0].widgets[0]), /settings auto on\|off/);
+  const typed = f.posts[0].card.sections.at(-1);
+  assert.equal(typed.header, 'Typed commands');
+  assert.deepEqual([typed.collapsible, typed.uncollapsibleWidgetsCount], [true, 1]);
+  assert.match(JSON.stringify(typed.widgets[1]), /settings auto on\|off/);
 });
 
 test('event shape names keys and types only, never values', () => {
