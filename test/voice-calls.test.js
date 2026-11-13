@@ -112,6 +112,7 @@ test("a call without a thread opens one, with a thread announces itself there an
   const second = FakeSession.instances[1];
   assert.match(second.options.systemInstruction, /Tiberiu: Earlier message\nAgent: Earlier reply/);
   assert.match(buildSystemInstruction({ callerName: "A", channelName: "#x", isAdmin: true }), /organization admin/);
+  assert.match(buildSystemInstruction({ callerName: "A", channelName: "#x" }), /limited to this one thread.*never guess/);
 });
 
 test("run_task posts the spoken request, runs a turn as the caller in the bound thread and reports back to the voice", async () => {
