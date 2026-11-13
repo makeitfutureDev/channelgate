@@ -379,6 +379,30 @@ Slack icon, and the action buttons became icons.
   Claude or Codex. Local API redirects are tested separately from deployed Slack-client rendering;
   unexecuted deployed client acceptance is not a pass.
 
+## Personal Activity channel grouping (2026-11-13)
+
+- Automated: `node --test test/activity-page.test.js test/activity.test.js
+  test/activity-reuse-browser.test.js`. Set `CG_BROWSER_MODULE` and
+  `CG_BROWSER_EXECUTABLE` for actual Chromium execution. The isolated Express fixture uses
+  an approved viewer with mixed-status threads in Alpha and Beta channels plus duplicate-name
+  channels with different IDs; no Slack messages or engine calls are required.
+- Action: open Activity at 1440×1000 and 390×844 in both themes, select **Group by → Channel**.
+  Pass: alphabetical channel headings with visible counts; distinct channel IDs stay separate;
+  saved status priority and newest-first ordering within each status; search/status filters
+  recompute counts. Reload and open a fresh session: Channel remains selected for this viewer;
+  a separate viewer retains Status. Switch back to Status and verify the existing group order.
+  Live snapshots update rows and grouping without losing filters or actions. Failed saves keep
+  the old view, display retry guidance, and permit retry; expired/revoked sessions disable the
+  selector and clear private rows. Forged owner fields cannot change another viewer; invalid
+  values, missing cookie, foreign Origin, bad CSRF and revoked admission reject writes.
+- Live fixture: the authorized viewer's own private Activity dashboard with existing agent
+  threads in two accessible channels. Repeat the selector, reload, search and status actions;
+  confirm mobile controls remain reachable with no horizontal page overflow or browser errors.
+  Restore the original preference afterward. Proposed private QA definition: ACTIVITY-WEB-CHANNEL-GROUPING
+  (registry update and deployed acceptance pending when personal Airtable access is unavailable).
+- Engine-independent: grouping, preference storage and browser rendering do not call an engine.
+  Local browser fixture evidence does not claim deployed Slack/client acceptance.
+
 ## Personal Activity group order (2026-11-12)
 
 - Automated: `test/activity-page.test.js`, `test/activity.test.js` and

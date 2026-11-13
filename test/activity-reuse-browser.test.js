@@ -495,3 +495,47 @@ test("Chromium reports the Activity dashboard and its sign-in page as one instal
   await page.goto(`${base}/activity/app`);
   assert.equal(page.url(), dashboard);
 });
+
+test("Activity channel grouping persists and stays usable on desktop and mobile in both themes", { skip: !process.env.CG_BROWSER_MODULE, timeout: 30_000 }, async (t) => {
+  resetActivityStateForTests();
+  await setUser("UACTIVITYCHANNEL", { approved: true, activityGroupBy: "status", activityGroupByVersion: 0 });
+  let base;
+  const rows = [
+    { channel_id: "C_BETA", thread_ts: "100", title: "Beta error", channelName: "Beta", status: "error", last_message_ms: 1000 },
+    { channel_id: "C_ALPHA", thread_ts: "101", title: "Alpha idle", channelName: "Alpha", status: "idle", last_message_ms: 3000 },
+    { channel_id: "C_ALPHA", thread_ts: "102", title: "Alpha error", channelName: "Alpha", status: "error", last_message_ms: 2000 },
+  ];
+  const app = express(); serveBrandAssets(app);
+  app.use("/activity", createActivityRouter({ getClient: () => ({}), getTeamId: () => "TCHANNEL", getBaseUrl: () => base,
+    snapshot: async () => ({ rows, total: rows.length }), refreshKey: () => "fixture" }));
+  const server = await new Promise((resolve) => { const s = app.listen(0, "127.0.0.1", () => resolve(s)); });
+  base = `http://127.0.0.1:${server.address().port}`;
+  t.after(() => new Promise((resolve) => { resetActivityStateForTests(); server.closeAllConnections(); server.close(resolve); }));
+  const { chromium } = await import(process.env.CG_BROWSER_MODULE);
+  const browser = await chromium.launch({ headless: true, executablePath: process.env.CG_BROWSER_EXECUTABLE });
+  t.after(() => browser.close());
+  for (const width of [1440, 390]) for (const colorScheme of ["dark", "light"]) {
+    const context = await browser.newContext({ viewport: { width, height: 900 }, colorScheme });
+    const page = await context.newPage(), errors = [];
+    page.setDefaultTimeout(5000);
+    page.on("pageerror", (error) => errors.push(error.message));
+    await page.goto(createActivityGrantUrl({ baseUrl: base, ownerId: "UACTIVITYCHANNEL", teamId: "TCHANNEL" }));
+    await page.locator("#result-count").filter({ hasText: "3 conversations" }).waitFor();
+    await page.getByLabel("Group by", { exact: true }).selectOption("channel");
+    await page.waitForFunction(() => globalThis.document.querySelector("#threads").dataset.groupBy === "channel" && !globalThis.document.querySelector("#group-by").disabled);
+    assert.deepEqual(await page.locator(".thread-title").allTextContents(), ["Alpha error", "Alpha idle", "Beta error"]);
+    assert.deepEqual(await page.locator("tr[data-group]").evaluateAll((trs) => trs.map((tr) => tr.dataset.group)), ["Alpha · 2", "Beta · 1"]);
+    assert.equal(await page.evaluate(() => globalThis.document.documentElement.scrollWidth <= globalThis.innerWidth), true);
+    await page.reload();
+    await page.waitForFunction(() => globalThis.document.querySelector("#group-by").value === "channel");
+    await page.getByRole("searchbox").fill("idle");
+    await page.waitForFunction(() => globalThis.document.querySelectorAll("#threads tr").length === 1);
+    assert.equal(await page.locator("tr[data-group]").getAttribute("data-group"), "Alpha · 1");
+    await page.getByRole("searchbox").fill("");
+    await page.getByLabel("Group by", { exact: true }).selectOption("status");
+    await page.waitForFunction(() => globalThis.document.querySelector("#threads").dataset.groupBy === "status" && !globalThis.document.querySelector("#group-by").disabled);
+    assert.deepEqual(await page.locator(".thread-title").allTextContents(), ["Alpha error", "Beta error", "Alpha idle"]);
+    assert.deepEqual(errors, []);
+    await context.close();
+  }
+});

@@ -50,6 +50,8 @@ function activityBrowser(config, browser, subscriptionUi) {
   const pending = new Set(), nodes = new Map();
   const orderDialog = el("order-dialog"), orderList = el("order-list"), orderButton = el("group-order");
   const orderNodes = new Map();
+  const grouping = el("group-by");
+  let groupBy = "status", groupByVersion = -1, savingGrouping = false;
   const allDoneButton = el("mark-all-done"), allDoneDialog = el("all-done-dialog");
   const historyButton = el("load-history");
   let loadingHistory = false, moreHistory = true;
@@ -120,6 +122,35 @@ function activityBrowser(config, browser, subscriptionUi) {
     if (validOrder(data.groupOrder) && version >= groupOrderVersion) {
       groupOrder = [...data.groupOrder]; groupOrderVersion = version;
     }
+  }
+  function acceptGrouping(data) {
+    const version = Number.isSafeInteger(data.groupByVersion) && data.groupByVersion >= 0 ? data.groupByVersion : 0;
+    if (["status", "channel"].includes(data.groupBy) && version >= groupByVersion) {
+      groupBy = data.groupBy; groupByVersion = version;
+    }
+  }
+  async function saveGrouping() {
+    if (ended || savingGrouping) return;
+    const selected = grouping.value;
+    if (!["status", "channel"].includes(selected)) return;
+    savingGrouping = true; grouping.disabled = true;
+    actionMessage = "";
+    try {
+      const response = await fetch(base + "/api/group-by", {
+        method: "POST", credentials: "same-origin",
+        headers: { "Content-Type": "application/json", "X-CG-CSRF": csrf },
+        body: JSON.stringify({ groupBy: selected }),
+      });
+      if (response.status === 401 || response.status === 403) { endAccess(); return; }
+      if (!response.ok) throw new Error("unavailable");
+      const data = await response.json();
+      if (ended) return;
+      if (!["status", "channel"].includes(data.groupBy)) throw new Error("invalid grouping");
+      acceptGrouping(data);
+      revision++; // Discard snapshots fetched before this save.
+    } catch {
+      if (!ended) actionMessage = "That grouping couldn’t be saved. Please try again.";
+    } finally { savingGrouping = false; render(); connection(); }
   }
   function renderOrder() {
     draftOrder.forEach((status, index) => {
@@ -241,6 +272,7 @@ function activityBrowser(config, browser, subscriptionUi) {
     search.value = "";
     search.disabled = true;
     orderButton.disabled = true;
+    grouping.disabled = true;
     orderDialog.close();
     allDoneDialog.close();
     el("all-done-error").textContent = "";
@@ -255,6 +287,7 @@ function activityBrowser(config, browser, subscriptionUi) {
     rows = data.rows.filter((row) => row && typeof row.channelId === "string" && typeof row.threadTs === "string")
       .map((row) => ({ ...row, status: Object.hasOwn(states, row.status) ? row.status : "idle" }));
     acceptOrder(data);
+    acceptGrouping(data);
     revision++;
     loaded = true;
     unavailable = Boolean(data.unavailable);
@@ -337,11 +370,17 @@ function activityBrowser(config, browser, subscriptionUi) {
     }
     el("summary").textContent = counts.active + " active · " + counts.later + " later · " + counts.working + " working · " + counts.waiting + " waiting";
     const rank = (status) => status === "done" ? groupOrder.length + 1 : status === "later" ? groupOrder.length : groupOrder.indexOf(status);
-    const shown = ended ? [] : rows.filter(matches).sort((a, b) => rank(a.status) - rank(b.status)
+    grouping.disabled = ended || savingGrouping;
+    if (!savingGrouping) grouping.value = groupBy;
+    body.dataset.groupBy = groupBy;
+    const channelName = (row) => String(row.channelName || "Conversation");
+    const compareChannel = (a, b) => channelName(a).localeCompare(channelName(b)) || a.channelId.localeCompare(b.channelId);
+    const groupKey = (row) => groupBy === "channel" ? row.channelId : row.status;
+    const shown = ended ? [] : rows.filter(matches).sort((a, b) => (groupBy === "channel" ? compareChannel(a, b) : 0) || rank(a.status) - rank(b.status)
       || (Number(b.lastMessageMs) || 0) - (Number(a.lastMessageMs) || 0));
     const visible = new Set(shown.map(key));
-    const groupSize = {};
-    for (const row of shown) groupSize[row.status] = (groupSize[row.status] || 0) + 1;
+    const groupSize = new Map();
+    for (const row of shown) groupSize.set(groupKey(row), (groupSize.get(groupKey(row)) || 0) + 1);
     for (const [rowKey, entry] of nodes) {
       if (!visible.has(rowKey)) { entry.tr.remove(); nodes.delete(rowKey); }
     }
@@ -357,8 +396,8 @@ function activityBrowser(config, browser, subscriptionUi) {
       entry.channel.textContent = String(row.channelName || "Conversation");
       channelLink(entry.channel, row.channelId);
       entry.tr.className = "row s-" + row.status;
-      // Status groups are labelled on their first row, so every tbody child stays a conversation.
-      if (index === 0 || shown[index - 1].status !== row.status) entry.tr.dataset.group = states[row.status] + " · " + groupSize[row.status];
+      // Label each group on its first conversation, preserving row controls and focus.
+      if (index === 0 || groupKey(shown[index - 1]) !== groupKey(row)) entry.tr.dataset.group = (groupBy === "channel" ? channelName(row) : states[row.status]) + " · " + groupSize.get(groupKey(row));
       else delete entry.tr.dataset.group;
       entry.pill.className = "pill " + row.status;
       entry.statusText.textContent = states[row.status];
@@ -534,6 +573,7 @@ function activityBrowser(config, browser, subscriptionUi) {
   el("order-cancel").addEventListener("click", () => { if (!savingOrder) orderDialog.close(); });
   el("order-save").addEventListener("click", () => { void saveOrder(); });
   orderDialog.addEventListener("cancel", (event) => { if (savingOrder) event.preventDefault(); });
+  grouping.addEventListener("change", () => { void saveGrouping(); });
   search.addEventListener("input", render);
   body.addEventListener("click", (event) => {
     const button = event.target.closest("button[data-key]");
@@ -971,13 +1011,15 @@ a:hover{text-decoration:none}
 .icon-button::before,.open-link::before,.toggle::before{content:"";position:absolute;inset:0;margin:auto;width:14px;height:14px;background:currentColor;-webkit-mask:var(--icon) center/contain no-repeat;mask:var(--icon) center/contain no-repeat}
 #theme-toggle{--icon:${ICONS.moon}}#theme-toggle[data-theme=light]{--icon:${ICONS.sun}}
 .icon-button:hover{color:var(--ink);border-color:var(--muted)}
-.bar{display:flex;align-items:center;gap:10px;min-height:44px;padding:0 10px;border-bottom:1px solid var(--line)}
+.bar{display:flex;flex-wrap:wrap;align-items:center;gap:10px;min-height:44px;padding:0 10px;border-bottom:1px solid var(--line)}
 .filters{display:flex;gap:2px;min-width:0;overflow-x:auto;scrollbar-width:none;padding:0;border:0}
 .filters button{display:flex;align-items:center;gap:6px;flex-shrink:0;height:28px;padding:0 9px;border:0;border-radius:7px;background:transparent;color:var(--ink-2);font-size:12px;white-space:nowrap}
 .filters button:hover{color:var(--ink);background:var(--hover)}
 .filters button[aria-pressed=true]{color:var(--ink);background:var(--panel-2);font-weight:600;box-shadow:none}
 .filters button i{width:6px;height:6px;border-radius:50%;background:var(--c)}
 .filters span{margin-left:0;font-family:var(--mono);font-size:11px;color:var(--muted);opacity:1;font-weight:400}
+.grouping{display:flex;align-items:center;gap:6px;flex-shrink:0;white-space:nowrap;color:var(--ink-2);font-size:12px}
+.grouping select{height:30px;padding:0 6px;border:1px solid var(--line);border-radius:7px;background:var(--panel);color:var(--ink);font:inherit}
 .search-wrap{position:relative;flex:0 1 240px;min-width:140px;margin-left:auto}
 .search-label{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%)}
 input{width:100%;height:30px;padding:0 10px;border:1px solid var(--line);border-radius:7px;background:var(--panel);color:var(--ink);font-size:12px}
@@ -993,8 +1035,8 @@ td{display:block;padding:0;border:0;min-width:0}
 tbody tr{min-height:40px;border-bottom:1px solid var(--line-soft);background-image:linear-gradient(90deg,var(--c) 0 3px,transparent 3px)}
 tbody tr:nth-child(even){background-color:var(--band)}
 tbody tr:hover,tbody tr:focus-within{background-color:var(--hover)}
-tbody tr[data-group]::before{content:attr(data-group);grid-column:1/-1;display:flex;align-items:center;height:30px;margin:0 -16px 0;padding:0 16px;background:var(--panel);border-bottom:1px solid var(--line-soft);font:600 10.5px var(--mono);letter-spacing:.12em;text-transform:uppercase;color:var(--ink-2)}
-tbody tr.s-waiting[data-group]::before,tbody tr.s-error[data-group]::before{color:var(--c)}
+tbody tr[data-group]::before{content:attr(data-group);overflow-wrap:anywhere;min-width:0;grid-column:1/-1;display:flex;align-items:center;min-height:30px;margin:0 -16px 0;padding:6px 16px;background:var(--panel);border-bottom:1px solid var(--line-soft);font:600 10.5px var(--mono);letter-spacing:.12em;text-transform:uppercase;color:var(--ink-2)}
+tbody[data-group-by=status] tr.s-waiting[data-group]::before,tbody[data-group-by=status] tr.s-error[data-group]::before{color:var(--c)}
 .thread-cell{padding:10px 0;min-width:0}
 .thread-title{display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;line-clamp:2;color:var(--ink);font-weight:500;line-height:1.4;overflow:hidden;overflow-wrap:anywhere}
 .s-done .thread-title{color:var(--ink-2)}
@@ -1123,6 +1165,7 @@ ${settingsView ? `<section class="settings-page" aria-label="Settings"><div clas
 <dialog id="order-dialog" class="order-dialog" aria-labelledby="order-title" aria-describedby="order-description"><h2 id="order-title">Arrange status groups</h2><p id="order-description">Move groups up or down. Newest conversations appear first within each group. Your order is saved to your account.</p><ol id="order-list" class="order-list"></ol><button id="order-reset" type="button">Reset to default</button><p id="order-error" class="order-error" role="alert"></p><div class="order-footer"><button id="order-cancel" type="button">Cancel</button><button id="order-save" class="order-save" type="button">Save order</button></div></dialog>
 <dialog id="all-done-dialog" class="order-dialog" aria-labelledby="all-done-title" aria-describedby="all-done-description"><h2 id="all-done-title">Mark all your threads done?</h2><p id="all-done-description">This marks all your open tracked agent threads done across all channels, including threads outside the current filter, search, or page. Their main Slack messages get ✅. Running work continues.</p><p id="all-done-error" class="order-error" role="alert"></p><div class="order-footer"><button id="all-done-cancel" type="button" autofocus>Cancel</button><button id="all-done-confirm" class="order-save" type="button">Mark All Done</button></div></dialog>
 <section aria-label="Conversations"><div class="bar"><div id="filters" class="filters" role="group" aria-label="Filter by status">${filters.map(([value, label]) => `<button type="button" class="s-${value}" data-filter="${value}" aria-pressed="${value === "active"}">${["working", "waiting", "error", "idle", "later", "done"].includes(value) ? '<i aria-hidden="true"></i>' : ""}${label}<span>0</span></button>`).join("")}</div>
+<div class="grouping"><label for="group-by">Group by</label><select id="group-by"><option value="status">Status</option><option value="channel">Channel</option></select></div>
 <div class="search-wrap"><label class="search-label" for="search">Search conversations or channels</label><input type="search" id="search" placeholder="Filter threads…" autocomplete="off" maxlength="300"></div></div>
 <div id="notice" class="notice" role="alert" hidden></div>
 <table id="table" hidden><thead><tr><th scope="col">Conversation</th><th scope="col">Channel</th><th scope="col">Status</th><th scope="col">Last</th><th scope="col">Actions</th></tr></thead><tbody id="threads"></tbody></table>
