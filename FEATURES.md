@@ -451,7 +451,8 @@ control-plane status.
   own) as inline forms, with the save acknowledged at once and the connection test allowed up to
   45 s. In Teams: Settings → **MCPs** → *Email accounts* (channel block and *My connections*). In
   Google Chat: Settings → *Open private settings* — the private browser form, since a public card
-  cannot take a password. All surfaces call the same store; audit events
+  cannot take a password. That page is script-free and styled by one nonce-bound stylesheet
+  (grouped cards for variables, connections and email accounts; light and dark). All surfaces call the same store; audit events
   `channel_email_account_set/_removed` and `user_email_account_set/_removed` carry the name, the
   address and the server hosts, never a password.
 - **Write-only.** Every listing (`GET /api/channels`, `/api/users`, the per-scope routes, the

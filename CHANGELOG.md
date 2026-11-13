@@ -18,6 +18,11 @@ product overview.
 
 ## Unreleased
 
+- Redesign the Google Chat **private settings** browser page: variables, channel and personal
+  connections and email accounts are now grouped cards with scope and status badges, host chips,
+  collapsible forms, a visible saved/not-saved banner, and light and dark themes. It still runs
+  no script; the stylesheet is nonce-bound.
+
 - **Company email auto-approval.** Admins can configure exact email domains in Users, preview
   existing Slack users and approve matching provider identities automatically. Manual revocations
   prevent automatic reapproval; no administrator privileges are granted.

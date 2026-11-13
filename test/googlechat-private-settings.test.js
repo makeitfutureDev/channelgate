@@ -49,6 +49,10 @@ test('private settings grant is one-use; browser password forms never contain st
   assert.match(opened.exchange.headers.get('set-cookie'), /HttpOnly; SameSite=Lax/);
   assert.equal(opened.response.headers.get('referrer-policy'), 'no-referrer');
   assert.match(opened.response.headers.get('content-security-policy'), /form-action 'self'/);
+  // Styled without script: one nonce'd stylesheet, and the nonce in the header is the one on the tag.
+  const styleNonce = /style-src 'nonce-([A-Za-z0-9_-]+)';/.exec(opened.response.headers.get('content-security-policy'))?.[1];
+  assert.ok(styleNonce && opened.html.includes(`<style nonce="${styleNonce}">`));
+  assert.doesNotMatch(opened.html, /<script|style="/);
   assert.match(opened.html, /name="variableValue" type="password"/);
   assert.match(opened.html, /name="personalComposioToken" type="password"/);
   assert.equal((await fetch(opened.url, { redirect: 'manual' })).status, 410);
