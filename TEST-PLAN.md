@@ -13892,3 +13892,17 @@ Enterprise deployment without deleting saved data. Never record a live pass from
   access and require no writes. With an owned Slack-write failure fixture, verify Done survives
   answer-marker failure and another 👍 after recovery adds the missing check. Restore owned state.
 - Live dual-engine acceptance pending; fixtures do not certify native Slack client rendering.
+
+### Feedback answer timestamp fallback (2026-11-13)
+
+- Automated: run the native thumbs-up checks above. The partial-message fixture supplies
+  `message.thread_ts` and `container.message_ts` without `message.ts`: repeated clicks must
+  mark exactly the root and selected answer once, leaving other answers unchanged. Repeat the
+  ownership, forged-thread, private-membership and sudo rejection checks with this payload.
+  A container timestamp alone cannot substitute for verified thread metadata.
+- Live: use the same disposable Claude and Codex auto fixtures, prompt and native feedback
+  actions above. Require the root and exact liked answer to show a bot ✅, repeat without
+  duplicates, and verify Activity Reopen stays open despite historical answer feedback.
+  This correction is daemon-side; both delivered answer formats remain in live coverage.
+- Regression reproduced before the fix (Done/root ✅ with no answer ✅) and passes after it.
+  Live Slack client acceptance remains pending.

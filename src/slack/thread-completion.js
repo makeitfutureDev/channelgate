@@ -60,7 +60,9 @@ async function changeThreadFromFeedback({ client, body, parsed }, verdict) {
   if (changed) await syncThreadDoneMarker(client, channelId, threadTs);
   // The root shows the thread's state; the liked answer also gets visible confirmation.
   // Only write after the same ownership/access checks, and keep Done if decoration fails.
-  const messageTs = body?.message?.ts;
+  // Native feedback can put the answer timestamp in the container while message carries
+  // only thread_ts. Match the feedback event's target resolution in agent-interface.js.
+  const messageTs = body?.message?.ts || body?.container?.message_ts;
   if (changed && verdict === "up" && messageTs && messageTs !== threadTs && getSlackThread(channelId, threadTs)?.completion_mirror_user) {
     try {
       const result = await client.reactions.add({ channel: channelId, timestamp: messageTs, name: "white_check_mark" });
