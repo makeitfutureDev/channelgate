@@ -4,6 +4,7 @@ import { ACTIVITY_THEME_CSS } from "./activity-theme.js";
 import { createSubscriptionUi, SUBSCRIPTION_CSS } from "../../public/subscription-ui.js";
 import { DEFAULT_ACTIVITY_GROUP_ORDER } from "./activity-order.js";
 import { ACTIVITY_APP_HEAD } from "./activity-app.js";
+import { CALL_OVERLAY_CSS, callOverlayBrowser, callOverlayConfig, callOverlayMarkup } from "./call-overlay.js";
 
 // The header's theme switch, shared by every dashboard view. Matching the system choice clears
 // the override, so the page follows the OS again; a failed save keeps the theme for this page only.
@@ -39,8 +40,9 @@ function themeBrowser(config, browser) {
 }
 
 // Kept as an ordinary function so the exact script served to browsers is testable without a bundler.
-function activityBrowser(config, browser, subscriptionUi) {
+function activityBrowser(config, browser, subscriptionUi, callUi) {
   "use strict";
+  callUi = callUi || null;
   const { base, csrf, defaultGroupOrder } = config;
   const voiceCalls = config.voiceCalls === true;
   const teamId = typeof config.teamId === "string" && /^[A-Z0-9]{2,32}$/.test(config.teamId) ? config.teamId : "";
@@ -321,8 +323,9 @@ function activityBrowser(config, browser, subscriptionUi) {
     pin.type = "button"; pin.dataset.key = rowKey; pin.dataset.operation = "pin";
     const links = node("div", "action-links"), state = node("div", "action-state");
     links.append(open);
-    // A voice call bound to this thread (web/call-page.js), only while the gateway offers calls.
+    // A voice call bound to this thread (web/call-overlay.js), only while the gateway offers calls.
     const call = node("a", "call-link", "Call the agent");
+    call.href = "#call";
     if (voiceCalls) links.append(call);
     state.append(toggle, delay, pin);
     actions.append(links, state);
@@ -432,7 +435,8 @@ function activityBrowser(config, browser, subscriptionUi) {
       entry.open.setAttribute("aria-label", "Open in Slack: " + title);
       entry.open.title = app ? "Open in Slack · Ctrl/⌘-click opens it in the browser" : "Open in Slack";
       if (voiceCalls && /^[A-Z0-9_]{1,32}$/.test(String(row.channelId)) && /^\d{1,13}\.\d{1,6}$/.test(String(row.threadTs))) {
-        entry.call.href = base + "/call?channel=" + encodeURIComponent(row.channelId) + "&thread=" + encodeURIComponent(row.threadTs);
+        entry.call.dataset.channelId = row.channelId; entry.call.dataset.threadTs = row.threadTs;
+        entry.call.dataset.channelName = String(row.channelName || ""); entry.call.dataset.title = title;
         entry.call.title = "Call the agent about this conversation";
         entry.call.setAttribute("aria-label", "Call the agent: " + title);
       }
@@ -613,6 +617,12 @@ function activityBrowser(config, browser, subscriptionUi) {
   function rowClick(event) {
     const button = event.target.closest("button[data-key]");
     if (button) { void complete(button.dataset.key, button.dataset.operation); return; }
+    const callAnchor = event.target.closest?.("a.call-link");
+    if (callAnchor) {
+      event.preventDefault();
+      if (callAnchor.dataset.channelId) callUi?.open({ channelId: callAnchor.dataset.channelId, threadTs: callAnchor.dataset.threadTs || "", channelName: "#" + String(callAnchor.dataset.channelName || "").replace(/^#/, ""), title: callAnchor.dataset.title || "" });
+      return;
+    }
     // The Slack button opens the desktop app; Ctrl/⌘-click opens the same thread in the browser.
     const anchor = event.target.closest?.("a.open-link");
     if (anchor?.href && anchor.dataset.app === "1" && (event.metaKey || event.ctrlKey)) {
@@ -628,6 +638,8 @@ function activityBrowser(config, browser, subscriptionUi) {
   }
   body.addEventListener("click", rowClick);
   pinnedBody.addEventListener("click", rowClick);
+  el("call-agent")?.addEventListener("click", () => { callUi?.open(null); });
+  if (callUi && config.callTarget && config.callTarget.channelId) callUi.open({ channelId: config.callTarget.channelId, threadTs: config.callTarget.threadTs || "" });
   subscriptionButton?.addEventListener("click", () => { void refreshSubscriptions(); });
   document.addEventListener?.("visibilitychange", () => {
     if (document.hidden) {
@@ -993,11 +1005,14 @@ const LIGHT = `color-scheme:light;
 const CHANNELGATE_LOGO = `<svg viewBox="0 0 48 48" focusable="false"><rect width="48" height="48" rx="12" fill="#ff642f"/><g transform="translate(6 6)" fill="#18382b"><path d="M3 30V15a15 15 0 0 1 30 0v15h-7V15a8 8 0 0 0-16 0v15Z"/><path d="M14 30V15a4 4 0 0 1 8 0v15Z"/></g></svg>`;
 const escapeHtml = (value) => String(value ?? "").replace(/[&<>"']/g, (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[char]);
 
-export function activityPage({ sessionId, csrf, view = "activity", agent = "", theme = "system", teamId = "", voiceCalls = false }) {
+export function activityPage({ sessionId, csrf, view = "activity", agent = "", theme = "system", teamId = "", voiceCalls = false, callTarget = null }) {
   const subscriptionsView = view === "subscriptions", settingsView = view === "settings";
   const base = `/activity/${encodeURIComponent(sessionId)}`;
   const nonce = crypto.randomBytes(16).toString("base64url");
-  const config = JSON.stringify({ base, csrf, view, teamId: /^[A-Z0-9]{2,32}$/.test(String(teamId)) ? String(teamId) : "", defaultGroupOrder: DEFAULT_ACTIVITY_GROUP_ORDER, voiceCalls: voiceCalls === true }).replaceAll("<", "\\u003c");
+  const launch = callTarget && /^[A-Z0-9_]{1,32}$/.test(String(callTarget.channelId || "")) && (!callTarget.threadTs || /^\d{1,13}\.\d{1,6}$/.test(String(callTarget.threadTs)))
+    ? { channelId: String(callTarget.channelId), threadTs: String(callTarget.threadTs || "") } : null;
+  const config = JSON.stringify({ base, csrf, view, teamId: /^[A-Z0-9]{2,32}$/.test(String(teamId)) ? String(teamId) : "", defaultGroupOrder: DEFAULT_ACTIVITY_GROUP_ORDER, voiceCalls: voiceCalls === true,
+    ...(voiceCalls ? { ...callOverlayConfig({ base, csrf, agent }), callTarget: launch } : {}) }).replaceAll("<", "\\u003c");
   const agentName = String(agent || "").trim() || "ChannelGate";
   const pinned = theme === "dark" || theme === "light" ? ` data-theme="${theme}"` : "";
   const filters = [["active", "Active"], ["working", "Working"], ["waiting", "Waiting"], ["error", "Error"], ["idle", "Idle"], ["later", "Later"], ["done", "Completed"], ["open", "All open"]];
@@ -1100,6 +1115,7 @@ tbody tr:hover .actions,tbody tr:focus-within .actions,.s-waiting .actions,.s-er
 .open-link:hover,.call-link:hover,.toggle:hover{border-color:var(--muted);background:var(--panel-2);color:var(--ink)}
 .open-link{--icon:${ICONS.slack}}
 .call-link{--icon:${ICONS.call}}
+${voiceCalls ? CALL_OVERLAY_CSS : ""}
 .toggle[data-state=done]{--icon:${ICONS.done};color:var(--s-done)}
 .toggle[data-state=reopen]{--icon:${ICONS.reopen}}
 .toggle[data-state=later]{--icon:${ICONS.later};color:var(--s-later)}
@@ -1203,7 +1219,7 @@ select.settings-input{height:32px}
 ${subscriptionsView || settingsView ? "" : '<div id="subscription-quick" class="subscription-quick-list" aria-label="Subscription usage" hidden></div><div id="subscriptions-notice" role="status" aria-live="polite"></div>'}
 <nav class="page-nav" aria-label="Dashboard"><a href="${base}"${view === "activity" ? ' aria-current="page"' : ''}>Activity</a><a href="${base}/subscriptions"${subscriptionsView ? ' aria-current="page"' : ''}>Subscriptions</a><a href="${base}/settings"${settingsView ? ' aria-current="page"' : ''}>Settings</a></nav>
 <a href="${base}/passkeys" class="link-button">Passkeys</a>
-<button id="theme-toggle" class="icon-button" type="button" aria-label="Switch theme" title="Switch theme"></button></header>
+${voiceCalls && view === "activity" ? '<button id="call-agent" type="button" title="Start a voice call with the agent">📞 Call</button>' : ""}<button id="theme-toggle" class="icon-button" type="button" aria-label="Switch theme" title="Switch theme"></button></header>
 <main>
 ${subscriptionsView ? `<section class="subscriptions-page" aria-label="Subscriptions"><div class="subscriptions-head"><h1>Subscriptions</h1><button id="subscriptions-refresh" class="order-button" type="button">Refresh</button></div><p class="subscriptions-copy">Account-wide usage · refreshes every 10 minutes.</p><div id="subscriptions-notice" role="status" aria-live="polite"></div><div id="subscriptions-cards" class="subscription-grid"></div></section>` : ""}
 ${settingsView ? `<section class="settings-page" aria-label="Settings"><div class="settings-head"><h1>Settings</h1><p class="settings-copy">Your own preferences and connections. They follow you into every conversation; nobody else's runs use them.</p></div><div id="settings-status" class="settings-status" role="status" aria-live="polite" hidden></div><div class="settings-layout"><nav id="settings-nav" class="settings-nav" aria-label="Settings sections"></nav><div id="settings-panel" class="settings-panel"></div></div><noscript><p class="js-needed">Enable JavaScript to manage your settings.</p></noscript></section>` : `<div id="activity-view"${subscriptionsView ? " hidden" : ""}>
@@ -1221,7 +1237,7 @@ ${settingsView ? `<section class="settings-page" aria-label="Settings"><div clas
 <footer class="footer"><div class="footer-actions"><span id="summary" class="summary">Loading activity…</span><button id="group-order" class="link-button" type="button" aria-haspopup="dialog">⇅ Group order</button><button id="mark-all-done" class="link-button" type="button" aria-haspopup="dialog" disabled>✓ Mark All Done</button><button id="load-history" class="link-button" type="button" disabled>Load older threads</button></div><div class="footer-actions"><span id="result-count"></span><span id="updated">Waiting for updates</span></div></footer>
 <p class="privacy">Your conversations are private. <a href="${base}/passkeys">Manage passkeys</a> or <a href="/activity/login">sign in again</a> when your session expires.</p>
 </div>`}
-</main><script nonce="${nonce}">${settingsView
+</main>${voiceCalls && view === "activity" ? callOverlayMarkup({ agentName }) : ""}<script nonce="${nonce}">${settingsView
     ? `(${settingsBrowser.toString()})(${config}, globalThis, (${themeBrowser.toString()})(${config}, globalThis));`
-    : `(${themeBrowser.toString()})(${config}, globalThis);(${activityBrowser.toString()})(${config}, globalThis, (${createSubscriptionUi.toString()})());`}</script></body></html>` };
+    : `(${themeBrowser.toString()})(${config}, globalThis);(${activityBrowser.toString()})(${config}, globalThis, (${createSubscriptionUi.toString()})()${voiceCalls && view === "activity" ? `, (${callOverlayBrowser.toString()})(${config}, globalThis)` : ""});`}</script></body></html>` };
 }
