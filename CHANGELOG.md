@@ -2,6 +2,10 @@
 
 ## 0.6.5 — candidate, pending approval
 
+- Make **Group by → Channel** in personal Activity easier to read: each channel is now its own
+  card with a colored header, and its conversations are indented under a tree line whose dots
+  show each thread's status. A channel keeps its color, and neighboring cards never match.
+
 - Pin whole channels in personal Activity. Their current and future open conversations,
   including Later, join Pinned across status tabs; completed threads return to Completed unless
   individually pinned. Channel cards stay available when empty, and channel/thread pins remain

@@ -611,6 +611,10 @@ Slack icon, and the action buttons became icons.
   channels with different IDs; no Slack messages or engine calls are required.
 - Action: open Activity at 1440×1000 and 390×844 in both themes, select **Group by → Channel**.
   Pass: alphabetical channel headings with visible counts; distinct channel IDs stay separate;
+  each channel is a separate rounded card with a tinted header (channel dot, name, count) and
+  its conversations indented under a tree line with status-colored nodes; header text is
+  vertically centered; adjacent cards have different colors; the Status/Last/Actions columns
+  still line up with the table header on desktop;
   saved status priority and newest-first ordering within each status; search/status filters
   recompute counts. Reload and open a fresh session: Channel remains selected for this viewer;
   a separate viewer retains Status. Switch back to Status and verify the existing group order.
