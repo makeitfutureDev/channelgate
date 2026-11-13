@@ -251,6 +251,40 @@ test("Activity reports when a working thread started so the browser can show its
   assert.equal(byTs["200.000001"].workingSinceMs, undefined, "waiting on a person carries no running clock");
 });
 
+test("optional queued-message controls preserve Working, its clock and real blockers", async (t) => {
+  const f = await fixture(t);
+  const threadKey = "100.000001", startedAt = 1_700_000_000_000;
+  await f.root("C_WORK", threadKey);
+  const { busyThreadChoices } = await import("../src/slack/busy-thread-choice.js");
+  const { createQuestion, updateQuestion } = await import("../src/gateway/questions.js");
+  const { createApprovalRequest, transitionApprovalRequest } = await import("../src/gateway/approval-requests.js");
+  const context = { channelId: "C_WORK", threadKey, authorId: "U_MINE" };
+  // Use the production card store: these records carry awaitingChoice despite being optional.
+  const card = busyThreadChoices.create({ event: { channel: "C_WORK", thread_ts: threadKey, user: "U_MINE" }, queuedRunId: "queued" });
+  t.after(() => busyThreadChoices.discard(card));
+  recordActiveRun("running", { ...context, startedAt });
+  recordActiveRun("queued", { ...context, startedAt: startedAt + 1000 });
+  const mine = await f.login();
+  const snapshot = async () => (await (await f.request(mine.url + "/api/threads", { headers: mine.headers })).json()).rows[0];
+  assert.equal((await snapshot()).status, "working");
+  assert.equal((await snapshot()).workingSinceMs, startedAt);
+  clearActiveRun("running");
+  assert.equal((await snapshot()).status, "working", "an accepted queued turn runs without a button click");
+  assert.equal((await snapshot()).workingSinceMs, startedAt + 1000);
+  const question = createQuestion(context, { title: "Required decision", questions: [{ id: "next", prompt: "What next?", type: "text" }] });
+  assert.equal((await snapshot()).status, "waiting");
+  assert.equal((await snapshot()).workingSinceMs, undefined);
+  updateQuestion(question.id, question.revision, { status: "cancelled" });
+  assert.equal((await snapshot()).status, "working");
+  const approval = createApprovalRequest({ id: "queue-approval", actionKey: "queue-approval", channelId: "C_WORK", action: context });
+  assert.equal((await snapshot()).status, "waiting");
+  transitionApprovalRequest(approval.id, "pending", "denied");
+  assert.equal((await snapshot()).status, "working");
+  clearActiveRun("queued");
+  assert.equal((await snapshot()).status, "idle", "a leftover optional card cannot keep a thread waiting or working");
+  assert.equal((await snapshot()).workingSinceMs, undefined);
+});
+
 test("launch fragment is removed before reusable exchange; cookies, origin and expiry fail closed", async (t) => {
   const f = await fixture(t), url = f.grant();
   assert.ok(new URL(url).hash);

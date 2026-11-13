@@ -2,6 +2,9 @@
 
 ## 0.6.5 — candidate, pending approval
 
+- Keep Activity and Slack App Home showing Working when a queued message has optional
+  Steer/Cancel controls. Only decisions that need a response mark the thread Waiting.
+
 - Make the Activity dashboard easier to read. Idle and Later titles now use the full text colour,
   channel names, times, headers, group labels and tab counts are brighter, every secondary text
   colour meets WCAG AA in both themes, and alternate rows are clearly banded in dark mode.

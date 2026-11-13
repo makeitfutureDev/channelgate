@@ -162,6 +162,9 @@ export function slackThreadRuntime({ pendingApprovals = [] } = {}) {
   };
   for (const row of db.prepare("SELECT data FROM active_runs").all()) {
     const rec = fromJson(row.data, {}) || {};
+    // Queued-message controls are optional: the accepted run owns the runtime state.
+    // Ignore even orphaned controls so a stale card cannot manufacture a blocker or clock.
+    if (rec.awaitingChoice && rec.queuedRunId) continue;
     add(rec, rec.awaitingChoice ? "waiting" : "working");
   }
   for (const row of db.prepare("SELECT data FROM bg_jobs").all()) add(fromJson(row.data, {}), "working");

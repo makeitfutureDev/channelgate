@@ -1,5 +1,22 @@
 # ChannelGate — Test Plan
 
+## Optional queue controls preserve Activity status (2026-11-13)
+
+- Automated: `node --test test/activity.test.js test/home-threads.test.js`. The production
+  queued-card store plus active/queued run rows must yield Working and the accepted run's clock;
+  a real question or approval must override this with Waiting; resolving it restores Working;
+  removing all accepted work leaves Idle even if an optional card remains. Existing required
+  choice, question and approval coverage must keep passing.
+- Live **ACTIVITY-QUEUE-01**, Claude and Codex: in an approved disposable Worker channel, open
+  the author's Activity dashboard and Slack App Home. Ask "Run a shell command that waits 60
+  seconds, then reply done." While it runs, send a second addressed message: "After that, reply
+  queue verified." Leave the optional Steer/Cancel card untouched. Pass if both surfaces stay
+  Working, the clock continues, the second message runs automatically, and the thread becomes
+  Idle when finished. Separately ask "Use ask_questions to ask which option I want, A or B,
+  and wait for my response." Pass if the real question shows Waiting until answered; a genuine
+  permission approval must likewise still show Waiting. Record the deployed revision, both
+  source threads and observed status transitions; automated fixture results are not live passes.
+
 ## Personal Settings in the Activity dashboard (2026-11-13)
 
 - Engine-independent for the page and API: settings are stored by the daemon and no engine runs

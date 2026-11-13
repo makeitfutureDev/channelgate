@@ -1,5 +1,12 @@
 # ChannelGate — Features
 
+## Optional queue controls preserve Activity status (2026-11-13)
+
+Activity and Slack App Home ignore optional Steer/Cancel cards for messages already accepted
+into the run queue. Accepted foreground or background work stays **Working**, including its
+running clock; leftover optional cards alone leave the thread **Idle**. Required legacy
+busy-thread/engine-switch decisions, questions and approvals still show **Waiting**.
+
 ## Personal Settings in the Activity dashboard (2026-11-13)
 
 The personal Activity dashboard has a **Settings** page (`/activity/:id/settings`, beside
