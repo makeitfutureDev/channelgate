@@ -46,6 +46,7 @@ function activityBrowser(config, browser, subscriptionUi) {
   const { document, location, EventSource } = browser;
   const el = (id) => document.getElementById(id);
   const body = el("threads"), search = el("search"), tabs = el("filters");
+  const pinnedBody = el("pinned-threads");
   const states = { working: "Working", waiting: "Waiting", error: "Error", done: "Done", later: "Later", idle: "Idle" };
   const pending = new Set(), nodes = new Map();
   const orderDialog = el("order-dialog"), orderList = el("order-list"), orderButton = el("group-order");
@@ -315,16 +316,20 @@ function activityBrowser(config, browser, subscriptionUi) {
     toggle.dataset.key = rowKey;
     const delay = node("button", "toggle");
     delay.type = "button"; delay.dataset.key = rowKey; delay.dataset.operation = "later";
+    const pin = node("button", "toggle");
+    pin.type = "button"; pin.dataset.key = rowKey; pin.dataset.operation = "pin";
     const links = node("div", "action-links"), state = node("div", "action-state");
-    links.append(open); state.append(toggle, delay);
+    links.append(open); state.append(toggle, delay, pin);
     actions.append(links, state);
     tr.append(titleCell, channelCell, statusCell, timeCell, actions);
-    return { tr, title, channel, pill, statusText, elapsed, time, open, toggle, delay, since: 0, stamp: 0 };
+    return { tr, title, channel, pill, statusText, elapsed, time, open, toggle, delay, pin, since: 0, stamp: 0 };
   }
   function matches(row) {
-    if (filter === "active" && ["done", "later"].includes(row.status)) return false;
-    if (filter === "open" && row.status === "done") return false;
-    if (filter !== "active" && filter !== "open" && row.status !== filter) return false;
+    if (!row.pinned) {
+      if (filter === "active" && ["done", "later"].includes(row.status)) return false;
+      if (filter === "open" && row.status === "done") return false;
+      if (filter !== "active" && filter !== "open" && row.status !== filter) return false;
+    }
     const query = search.value.trim().toLocaleLowerCase();
     return !query || (String(row.title || "") + " " + String(row.channelName || "")).toLocaleLowerCase().includes(query);
   }
@@ -376,11 +381,14 @@ function activityBrowser(config, browser, subscriptionUi) {
     const channelName = (row) => String(row.channelName || "Conversation");
     const compareChannel = (a, b) => channelName(a).localeCompare(channelName(b)) || a.channelId.localeCompare(b.channelId);
     const groupKey = (row) => groupBy === "channel" ? row.channelId : row.status;
-    const shown = ended ? [] : rows.filter(matches).sort((a, b) => (groupBy === "channel" ? compareChannel(a, b) : 0) || rank(a.status) - rank(b.status)
+    const filtered = ended ? [] : rows.filter(matches);
+    const pinned = filtered.filter((row) => row.pinned).sort((a, b) => (Number(b.lastMessageMs) || 0) - (Number(a.lastMessageMs) || 0));
+    const ordinary = filtered.filter((row) => !row.pinned).sort((a, b) => (groupBy === "channel" ? compareChannel(a, b) : 0) || rank(a.status) - rank(b.status)
       || (Number(b.lastMessageMs) || 0) - (Number(a.lastMessageMs) || 0));
+    const shown = [...pinned, ...ordinary];
     const visible = new Set(shown.map(key));
     const groupSize = new Map();
-    for (const row of shown) groupSize.set(groupKey(row), (groupSize.get(groupKey(row)) || 0) + 1);
+    for (const row of ordinary) groupSize.set(groupKey(row), (groupSize.get(groupKey(row)) || 0) + 1);
     for (const [rowKey, entry] of nodes) {
       if (!visible.has(rowKey)) { entry.tr.remove(); nodes.delete(rowKey); }
     }
@@ -397,7 +405,8 @@ function activityBrowser(config, browser, subscriptionUi) {
       channelLink(entry.channel, row.channelId);
       entry.tr.className = "row s-" + row.status;
       // Label each group on its first conversation, preserving row controls and focus.
-      if (index === 0 || groupKey(shown[index - 1]) !== groupKey(row)) entry.tr.dataset.group = (groupBy === "channel" ? channelName(row) : states[row.status]) + " · " + groupSize.get(groupKey(row));
+      const localIndex = row.pinned ? index : index - pinned.length;
+      if (!row.pinned && (localIndex === 0 || groupKey(ordinary[localIndex - 1]) !== groupKey(row))) entry.tr.dataset.group = (groupBy === "channel" ? channelName(row) : states[row.status]) + " · " + groupSize.get(groupKey(row));
       else delete entry.tr.dataset.group;
       entry.pill.className = "pill " + row.status;
       entry.statusText.textContent = states[row.status];
@@ -423,9 +432,18 @@ function activityBrowser(config, browser, subscriptionUi) {
       entry.toggle.dataset.state = busy ? "busy" : row.status === "done" ? "reopen" : "done";
       entry.toggle.title = row.status === "done" ? "Reopen" : "Mark done";
       entry.toggle.setAttribute("aria-label", (row.status === "done" ? "Reopen: " : "Mark done: ") + title);
-      if (body.children[index] !== entry.tr) body.insertBefore(entry.tr, body.children[index] || null);
+      entry.pin.disabled = busy || completingAll || ended;
+      entry.pin.textContent = row.pinned ? "Unpin" : "Pin";
+      entry.pin.dataset.state = row.pinned ? "unpin" : "pin";
+      entry.pin.title = row.pinned ? "Unpin conversation" : "Pin conversation";
+      entry.pin.setAttribute("aria-label", (row.pinned ? "Unpin: " : "Pin: ") + title);
+      entry.pin.setAttribute("aria-pressed", String(Boolean(row.pinned)));
+      const target = row.pinned ? pinnedBody : body;
+      if (target.children[localIndex] !== entry.tr) target.insertBefore(entry.tr, target.children[localIndex] || null);
     });
-    el("table").hidden = shown.length === 0;
+    el("pinned-section").hidden = pinned.length === 0;
+    el("pinned-count").textContent = String(pinned.length);
+    el("table").hidden = ordinary.length === 0;
     el("empty").hidden = shown.length > 0 || ended;
     el("empty-title").textContent = !loaded ? "Loading your activity…" : search.value.trim() ? "No matching conversations" : filter === "later" ? "Nothing saved for later" : filter === "done" ? "No completed conversations" : "You’re all caught up";
     el("empty-copy").textContent = !loaded ? "Your latest conversations will appear here." : search.value.trim() ? "Try a different title or channel name." : filter === "later" ? "Use Delay for later or the agent’s 👎 button to postpone a conversation. Resume it when you’re ready." : filter === "done" ? "Conversations you mark Done will appear here." : "Conversations matching this view will appear as activity arrives.";
@@ -516,7 +534,8 @@ function activityBrowser(config, browser, subscriptionUi) {
     if (ended || completingAll || pending.has(rowKey)) return;
     const row = rows.find((item) => key(item) === rowKey);
     if (!row) return;
-    const value = operation === "later" ? row.status !== "later" : row.status !== "done";
+    const field = operation === "pin" ? "pinned" : operation === "later" ? "later" : "done";
+    const value = operation === "pin" ? !row.pinned : operation === "later" ? row.status !== "later" : row.status !== "done";
     pending.add(rowKey);
     actionMessage = "";
     render();
@@ -524,7 +543,7 @@ function activityBrowser(config, browser, subscriptionUi) {
       const response = await fetch(base + "/api/" + operation, {
         method: "POST", credentials: "same-origin",
         headers: { "Content-Type": "application/json", "X-CG-CSRF": csrf },
-        body: JSON.stringify({ channelId: row.channelId, threadTs: row.threadTs, [operation === "later" ? "later" : "done"]: value }),
+        body: JSON.stringify({ channelId: row.channelId, threadTs: row.threadTs, [field]: value }),
       });
       if (response.status === 401 || response.status === 403) { endAccess(); return; }
       if (!response.ok) throw new Error("unavailable");
@@ -575,7 +594,7 @@ function activityBrowser(config, browser, subscriptionUi) {
   orderDialog.addEventListener("cancel", (event) => { if (savingOrder) event.preventDefault(); });
   grouping.addEventListener("change", () => { void saveGrouping(); });
   search.addEventListener("input", render);
-  body.addEventListener("click", (event) => {
+  function rowClick(event) {
     const button = event.target.closest("button[data-key]");
     if (button) { void complete(button.dataset.key, button.dataset.operation); return; }
     // The Slack button opens the desktop app; Ctrl/⌘-click opens the same thread in the browser.
@@ -590,7 +609,9 @@ function activityBrowser(config, browser, subscriptionUi) {
       event.preventDefault();
       browser.open?.(channelAnchor.dataset.web, "_blank", "noopener,noreferrer");
     }
-  });
+  }
+  body.addEventListener("click", rowClick);
+  pinnedBody.addEventListener("click", rowClick);
   subscriptionButton?.addEventListener("click", () => { void refreshSubscriptions(); });
   document.addEventListener?.("visibilitychange", () => {
     if (document.hidden) {
@@ -929,6 +950,7 @@ function settingsBrowser(config, browser, theme) {
 
 const icon = (svg) => `url("data:image/svg+xml,${encodeURIComponent(`<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'>${svg}</svg>`)}")`;
 const ICONS = {
+  pin: icon("<path d='m15 2 7 7-2 2-2-1-4 4v3l-1 1-3-3-5 5-1-1 5-5-3-3 1-1h3l4-4-1-2 2-2Z'/>"),
   slack: icon("<path d='M5.04 15.17a2.53 2.53 0 1 1-2.52-2.53h2.52v2.53Zm1.27 0a2.53 2.53 0 0 1 5.05 0v6.31a2.53 2.53 0 1 1-5.05 0v-6.31ZM8.83 5.04a2.53 2.53 0 1 1 2.53-2.52v2.52H8.83Zm0 1.27a2.53 2.53 0 0 1 0 5.05H2.52a2.53 2.53 0 0 1 0-5.05h6.31Zm10.13 2.52a2.53 2.53 0 1 1 2.52 2.53h-2.52V8.83Zm-1.27 0a2.53 2.53 0 0 1-5.05 0V2.52a2.53 2.53 0 1 1 5.05 0v6.31Zm-2.52 10.13a2.53 2.53 0 1 1-2.53 2.52v-2.52h2.53Zm0-1.27a2.53 2.53 0 0 1 0-5.05h6.31a2.53 2.53 0 1 1 0 5.05h-6.31Z'/>"),
   done: icon("<path d='M20.3 5.3a1 1 0 0 1 0 1.4l-10.5 10.5a1 1 0 0 1-1.4 0L3.7 12.5a1 1 0 1 1 1.4-1.4l4 4 9.8-9.8a1 1 0 0 1 1.4 0Z'/>"),
   reopen: icon("<path d='M12 4a8 8 0 1 1-7.4 5h2.2A6 6 0 1 0 12 6v3L7.5 5 12 1v3Z'/>"),
@@ -1027,7 +1049,10 @@ input::placeholder{color:var(--faint)}
 .notice{margin:10px 14px 0;padding:9px 12px;border:1px solid color-mix(in srgb,var(--warn) 40%,transparent);background:color-mix(in srgb,var(--warn) 12%,transparent);color:var(--ink);border-radius:8px;font-size:12.5px}
 table{display:block;width:100%;border-collapse:collapse}
 thead,tbody{display:block}
-thead tr,tbody tr{display:grid;grid-template-columns:minmax(0,1fr) minmax(120px,190px) 124px 44px 104px;align-items:center;column-gap:12px;padding:0 16px}
+thead tr,tbody tr{display:grid;grid-template-columns:minmax(0,1fr) minmax(120px,190px) 124px 44px 136px;align-items:center;column-gap:12px;padding:0 16px}
+.pinned-section{margin:0 0 24px}
+.pinned-heading{display:flex;align-items:center;gap:10px;margin:0;padding:12px 16px;font:600 13px var(--font);color:var(--ink)}
+.pinned-heading span{font:500 11px var(--mono);color:var(--muted)}
 thead tr{height:30px;border-bottom:1px solid var(--line)}
 th{padding:0;font:500 10.5px var(--mono);letter-spacing:.1em;text-transform:uppercase;color:var(--muted);text-align:left}
 th:last-child{text-align:right}
@@ -1062,6 +1087,8 @@ tbody tr:hover .actions,tbody tr:focus-within .actions,.s-waiting .actions,.s-er
 .toggle[data-state=later]{--icon:${ICONS.later};color:var(--s-later)}
 .toggle[data-state=resume]{--icon:${ICONS.resume};color:var(--s-later)}
 .toggle[data-state=busy]{--icon:${ICONS.busy}}
+.toggle[data-state=pin],.toggle[data-state=unpin]{--icon:${ICONS.pin}}
+.toggle[data-state=unpin]{color:var(--orange);background:var(--orange-soft)}
 .empty{text-align:center;padding:56px 24px}
 .empty-symbol{font-size:24px;color:var(--faint);margin-bottom:10px}
 .empty h2{font-size:15px;margin:0 0 6px}.empty p{color:var(--muted);margin:0;font-size:12.5px}
@@ -1123,7 +1150,7 @@ select.settings-input{height:32px}
 @media(prefers-reduced-motion:reduce){.pill.working .status-dot{animation:none}.actions{transition:none}}
 @media(hover:none){.actions{opacity:1}}
 @media(max-width:980px){
-  thead tr,tbody tr{grid-template-columns:minmax(0,1fr) 124px 44px 104px}
+  thead tr,tbody tr{grid-template-columns:minmax(0,1fr) 124px 44px 136px}
   .channel-cell,th:nth-child(2){display:none}
 }
 @media(max-width:640px){
@@ -1168,6 +1195,8 @@ ${settingsView ? `<section class="settings-page" aria-label="Settings"><div clas
 <div class="grouping"><label for="group-by">Group by</label><select id="group-by"><option value="status">Status</option><option value="channel">Channel</option></select></div>
 <div class="search-wrap"><label class="search-label" for="search">Search conversations or channels</label><input type="search" id="search" placeholder="Filter threads…" autocomplete="off" maxlength="300"></div></div>
 <div id="notice" class="notice" role="alert" hidden></div>
+<section id="pinned-section" class="pinned-section" aria-labelledby="pinned-title" hidden><h2 id="pinned-title" class="pinned-heading">Pinned conversations <span id="pinned-count">0</span></h2>
+<table aria-label="Pinned conversations"><thead><tr><th scope="col">Conversation</th><th scope="col">Channel</th><th scope="col">Status</th><th scope="col">Last</th><th scope="col">Actions</th></tr></thead><tbody id="pinned-threads"></tbody></table></section>
 <table id="table" hidden><thead><tr><th scope="col">Conversation</th><th scope="col">Channel</th><th scope="col">Status</th><th scope="col">Last</th><th scope="col">Actions</th></tr></thead><tbody id="threads"></tbody></table>
 <div id="empty" class="empty" role="status"><div class="empty-symbol" aria-hidden="true">◎</div><h2 id="empty-title">Loading your activity…</h2><p id="empty-copy">Your latest conversations will appear here.</p></div>
 <noscript><p class="js-needed">Enable JavaScript to view live activity.</p></noscript></section>

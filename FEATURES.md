@@ -1,5 +1,17 @@
 # ChannelGate — Features
 
+## Pinned Activity conversations (2026-11-13)
+
+Each personal Activity row has a Pin/Unpin button. Pinning moves the conversation into a
+matching **Pinned conversations** table above the regular feed, with the same columns, live
+status, clocks and Slack/Done/Later controls. The section appears only when a pin matches the
+search; unpinning the last conversation hides it. Pins remain visible across status tabs,
+including after completion or postponement, while search applies to both tables. Regular
+status/channel grouping and counts continue to describe the underlying conversations without
+duplicating pinned rows. Pins are saved per viewer across sessions and survive the ordinary
+history cap; every read/write enforces current ownership and channel access. Pinning does not
+change Slack reactions, thread status or anyone else's dashboard.
+
 ## Google Chat setup guide in Settings (2026-11-13)
 
 Settings → Connection → Google Chat includes an expandable, numbered 11-step setup guide with

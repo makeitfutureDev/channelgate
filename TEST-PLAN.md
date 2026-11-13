@@ -1,5 +1,33 @@
 # ChannelGate — Test Plan
 
+## Pinned Activity conversations (2026-11-13)
+
+- Engine-independent: dashboard row placement and personal preference writes do not invoke an
+  engine or depend on engine-generated output. The same behavior covers Claude and Codex rows.
+- Regression: `node --test test/activity-page.test.js test/activity.test.js
+  test/home-threads.test.js test/activity-settings-page.test.js` covers row moves without
+  duplication, status tabs/search/grouping, persistence and concurrent/idempotent writes,
+  SSE updates, owned-thread authorization, CSRF, membership revocation during a read, failed
+  saves, access loss and pins beyond the ordinary 1000-row history cap.
+- Browser fixture: `test/activity-reuse-browser.test.js`, named case “Activity pins persist in
+  a matching top table and work on desktop/mobile in both themes”. Set `CG_BROWSER_MODULE` to
+  Playwright's module and `CG_BROWSER_EXECUTABLE` to installed Chromium; run `node --test
+  --test-name-pattern='Activity pins persist in a matching' test/activity-reuse-browser.test.js`.
+  The test runs the real Activity router on loopback against synthetic Slack roots with two
+  approved viewers. No production data or engine run is required. At 1440, 768, 700, 390 and 320 px
+  in dark/light themes, pass if the initially absent section appears above the ordinary table
+  after Pin, both tables align, controls fit and there is no horizontal overflow. Reload and
+  a second same-owner session must retain the pin; another viewer must not see it. Later and
+  Done must retain it; search must filter it; the last Unpin must hide the section and return
+  the completed row to Completed. No browser script errors are allowed.
+- Verified locally: all 185 focused regression assertions and all 10 Chromium Activity browser
+  cases passed, including the new pin fixture in both themes and the existing row-action layout
+  checks from 320 through 1920 px. Static, secret-scan and security-coverage checks passed.
+- Live deployment acceptance: repeat the same Pin/reload/Later/Done/Unpin actions on disposable
+  owned Activity conversations after activation, checking status/channel grouping and another
+  viewer. This authenticated deployed-page check remains unexecuted by this implementation;
+  local fixture results are recorded separately and do not claim deployment acceptance.
+
 ## Google Chat setup guide in Settings (2026-11-13)
 
 - Engine-independent documentation: static settings markup and CSS; reading the guide does not

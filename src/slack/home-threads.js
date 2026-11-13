@@ -278,11 +278,17 @@ export async function activityThreadSnapshot(client, userId, requested = {}, { n
   const runtime = slackThreadRuntime({ pendingApprovals: listPendingApprovals() });
   const workingSince = slackThreadWorkingSince();
   const authorized = [];
+  const pinned = new Set(Array.isArray(requested.pinnedThreads) ? requested.pinnedThreads : []);
+  let ordinaryCount = 0;
   let truncated = false;
   for (const row of eligibleSlackThreadsForUser(userId)) {
+    const isPinned = pinned.has(JSON.stringify([row.channel_id, row.thread_ts]));
+    // Keep saved pins reachable when newer history fills the ordinary feed's bound. Pins
+    // still pass exactly the same ownership, eligibility and live access checks below.
+    if (!isPinned && ordinaryCount === 1000) { truncated = true; if (!pinned.size) break; continue; }
     const entry = channels.get(row.channel_id);
     if (!await access.allows(entry, row.thread_ts)) continue;
-    if (authorized.length === 1000) { truncated = true; break; }
+    if (!isPinned) ordinaryCount++;
     // Completion continues to suppress reminders/Home. The browser exposes current work until
     // it ends, then falls back to the same durable completion marker.
     const status = row.later_ms > 0 ? slackThreadStatus(row, runtime) : runtime.get(`${row.channel_id}::${row.thread_ts}`) || slackThreadStatus(row, runtime);
@@ -297,7 +303,8 @@ export async function activityThreadSnapshot(client, userId, requested = {}, { n
   const pages = Math.max(1, Math.ceil(filtered.length / pageSize));
   const page = Math.min(view.page, pages - 1);
   return { ...view, search, pageSize, page, pages, total: filtered.length,
-    rows: filtered.slice(page * pageSize, (page + 1) * pageSize), unavailable: discovery.unavailable || access.unavailable, truncated };
+    rows: filtered.filter((row, index) => (index >= page * pageSize && index < (page + 1) * pageSize)
+      || pinned.has(JSON.stringify([row.channel_id, row.thread_ts]))), unavailable: discovery.unavailable || access.unavailable, truncated };
 }
 
 // Only local display state participates: unchanged Activity pages never poll Slack history.
