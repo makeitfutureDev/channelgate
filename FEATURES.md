@@ -2036,7 +2036,7 @@ revisions on failed sync. Details and compatibility limits: `docs/SKILLS.md`.
 - **Native 👍/👎 answer feedback**: the same footer ends with Slack's `context_actions` block
   carrying `feedback_buttons` (`cg_reply_feedback`) on every streamed, classic, unattended and
   fallback answer that carries the stats footer (not on bare notices such as "🛑 Stopped.").
-  The buttons use **Mark as done** and **Move to Later** as their text, with matching descriptive
+  The buttons use **Mark as done (thread owner only)** and **Move to Later (thread owner only)** as their text, with matching descriptive
   screen-reader labels, to explain the thread owner's Activity actions. Any
   channel member's verdict counts — it is an opinion, not a privilege: the click is acknowledged,
   recorded as a `reply_feedback` event (channel, thread, message, clicker, verdict, requester) and
