@@ -1,5 +1,18 @@
 # Operations runbook
 
+## Parallel agent runs
+
+In the admin UI, open **Settings → Agent defaults → Parallel agent runs**. Set the total
+concurrent agent runs and the slots reserved for live chat/foreground API requests. Reserved
+slots are part of the total: 32 total with 2 reserved permits up to 30 background runs.
+Interactive requests can use any free slot. Extra work queues; save applies immediately to
+existing queues, and lowering the total lets current runs finish. Lowering the total alone
+also reduces the reservation when necessary to keep one background slot. This is independent
+of **Access & security → Container runtime → Max containers running at once**.
+
+Until an admin value is saved, `MAX_CONCURRENT_RUNS` (default 8) and
+`RESERVED_INTERACTIVE_RUNS` (default 2) supply the limits. Stored admin values take precedence.
+
 ## Private user Activity dashboard
 
 With the gateway's **Public URL** set to its reachable HTTPS origin, approved Slack users can open

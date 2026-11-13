@@ -4153,6 +4153,11 @@ function paintEngineToggles() {
 // called TWICE: once right after a paint (the baseline the page was loaded with) and once on Save
 // — what differs between the two is all that gets sent.
 function readSettingsForm() {
+  for (const id of ["set-max-concurrent-runs", "set-reserved-interactive-runs"]) {
+    const input = document.getElementById(id);
+    if (!input.checkValidity()) throw new Error(`${id === "set-max-concurrent-runs" ? "Maximum parallel agent runs" : "Reserved interactive slots"} must be a whole number between ${input.min} and ${input.max}.`);
+  }
+
   return {
     // Tokens are write-only: tokenValue() is "" unless the admin actually typed a new one (the
     // fields are pre-filled with the masked stored value, so `.value` is never blank).
@@ -4219,6 +4224,8 @@ function readSettingsForm() {
     engineFallbackMode: document.getElementById("set-engine-fallback-mode").value,
     showMessageCost: document.getElementById("set-show-message-cost").checked,
     whisperEnabled: document.getElementById("set-whisper-enabled").checked,
+    maxConcurrentRuns: Number(document.getElementById("set-max-concurrent-runs").value),
+    reservedInteractiveRuns: Number(document.getElementById("set-reserved-interactive-runs").value),
     containerCli: document.getElementById("set-container-cli").value,
     containerImage: document.getElementById("set-container-image").value,
     containerIdleMinutes: Number(document.getElementById("set-container-idle").value) || undefined,
@@ -4365,6 +4372,8 @@ function paintSettings(s) {
   document.getElementById("set-engine-fallback-mode").value = s.engineFallbackMode || "auto";
   document.getElementById("set-show-message-cost").checked = s.showMessageCost !== false;
   document.getElementById("set-whisper-enabled").checked = s.whisperEnabled !== false;
+  document.getElementById("set-max-concurrent-runs").value = s.maxConcurrentRuns ?? 8;
+  document.getElementById("set-reserved-interactive-runs").value = s.reservedInteractiveRuns ?? 2;
   // Container runtime. The token follows the write-only rule: has*/last4 here, value on demand.
   document.getElementById("set-container-cli").value = s.containerCli || "auto";
   document.getElementById("set-container-image").value = s.containerImage || "";

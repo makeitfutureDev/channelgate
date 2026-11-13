@@ -1,5 +1,16 @@
 # ChannelGate — Features
 
+## Admin controls for parallel agent runs (2026-11-13)
+
+Settings → Agent defaults → **Parallel agent runs** exposes the global agent-run limit and
+slots reserved for interactive requests. These are distinct from the running-container cap.
+Interactive requests are live Slack, Teams and Google Chat turns plus foreground API requests;
+schedules, background agents and continuations use the remaining capacity. Interactive turns
+can use any free slot. Save applies immediately to existing queues without interrupting active
+runs; lowering the limit drains existing holders before admitting more. Defaults remain eight
+runs and two reserved slots, with legacy environment values used until an admin value is saved.
+Reservation zero is supported; at least one slot remains available to background work.
+
 ## Separate channel-account Codex harness (2026-11-13)
 
 A connected conversation account appears as **Codex (channel account)** (`codex-channel`)

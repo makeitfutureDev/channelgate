@@ -21,6 +21,7 @@ import { requireAdapter, modelBelongsToEngine, effortBelongsToModel } from "../.
 import {
   getAdminPassword,
   getSettings,
+  getRunConcurrency,
   settingsForApi,
   saveSettings,
   isPerplexitySessionToken,
@@ -457,6 +458,19 @@ export function createSettingsRouter({
       if (typeof body.engineFallbackMode === "string" && ENGINE_FALLBACK_MODES.includes(body.engineFallbackMode)) patch.engineFallbackMode = body.engineFallbackMode;
       if (typeof body.showMessageCost === "boolean") patch.showMessageCost = body.showMessageCost;
       if (typeof body.whisperEnabled === "boolean") patch.whisperEnabled = body.whisperEnabled;
+      // Strict integer inputs: blank, boolean and null must never silently change admission.
+      for (const [key, min, max] of [["maxConcurrentRuns", 1, 500], ["reservedInteractiveRuns", 0, 499]]) {
+        if (body[key] === undefined) continue;
+        const n = body[key];
+        if (!Number.isInteger(n) || n < min || n > max) return res.status(400).json({ error: `${key} must be an integer between ${min} and ${max}` });
+        patch[key] = n;
+      }
+      if (patch.reservedInteractiveRuns !== undefined && patch.reservedInteractiveRuns >= (patch.maxConcurrentRuns ?? getRunConcurrency().maxConcurrentRuns)) {
+        return res.status(400).json({ error: "reservedInteractiveRuns must be less than maxConcurrentRuns so background work can run" });
+      }
+      if (patch.maxConcurrentRuns !== undefined && patch.reservedInteractiveRuns === undefined) {
+        patch.reservedInteractiveRuns = Math.min(getRunConcurrency().reservedInteractiveRuns, patch.maxConcurrentRuns - 1);
+      }
       // ── Container runtime ───────────────────────────────────────────────────
       // The three free-text values (image, memory, cpus) are argv tokens for the container CLI, so
       // they are pattern-checked here rather than sanitized later — a rejected save is the only
@@ -697,6 +711,10 @@ export function createSettingsRouter({
         });
       }
       applySettingsToEnv();
+      if (patch.maxConcurrentRuns !== undefined || patch.reservedInteractiveRuns !== undefined) {
+        const { refreshRunSlots } = await import("../../gateway/run.js");
+        refreshRunSlots();
+      }
       if (passwordChanged) invalidateAllSessions();
       if (licenseKeyChanged) {
         const { onLicenseKeyChanged } = await import("../../ee/license.js");

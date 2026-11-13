@@ -3,7 +3,9 @@ import assert from "node:assert/strict";
 import { ensureTestEnv } from "./helpers.js";
 
 ensureTestEnv();
-const { acquireRunSlot, resetRunSlots, runSlotStats } = await import("../src/gateway/run.js");
+const { acquireRunSlot, resetRunSlots, runSlotStats, refreshRunSlots } = await import("../src/gateway/run.js");
+
+const { saveSettings } = await import("../src/config/settings.js");
 
 // One global cap used to serve every run, so a Slack turn queued behind whatever was already in
 // it. Background work — schedules, background agents, their continuations, recovery, diagnosis —
@@ -23,6 +25,7 @@ function withCaps(total, reserved) {
 }
 
 test.afterEach(() => {
+  saveSettings({ maxConcurrentRuns: null, reservedInteractiveRuns: null });
   delete process.env.MAX_CONCURRENT_RUNS;
   delete process.env.RESERVED_INTERACTIVE_RUNS;
   resetRunSlots();
@@ -137,4 +140,47 @@ test("an unknown origin is treated as background, never as a reserved live turn"
 
   first();
   (await second)();
+});
+
+
+test("live settings increase wakes existing queued runs and preserves holders when lowered", async () => {
+  withCaps(2, 0);
+  const holders = [await acquireRunSlot({ origin: "slack_foreground" }), await acquireRunSlot({ origin: "slack_foreground" })];
+  const order = [];
+  const queued = [0, 1, 2].map((i) => acquireRunSlot({ origin: "slack_foreground" }).then((release) => { order.push(i); return release; }));
+  await settle();
+  saveSettings({ maxConcurrentRuns: 4, reservedInteractiveRuns: 0 });
+  refreshRunSlots();
+  await settle();
+  assert.deepEqual(order, [0, 1]);
+  assert.equal(runSlotStats().active, 4);
+  saveSettings({ maxConcurrentRuns: 1 });
+  refreshRunSlots();
+  holders[0](); holders[1](); (await queued[0])();
+  await settle();
+  assert.equal(runSlotStats().active, 1);
+  assert.deepEqual(order, [0, 1], "decrease does not cancel holders or over-admit waiters");
+  (await queued[1])();
+  (await queued[2])();
+  assert.equal(runSlotStats().active, 0);
+});
+
+test("live reservation changes retain the background queue and cancellation", async () => {
+  withCaps(4, 2);
+  const first = await acquireRunSlot({ origin: "schedule" });
+  const second = await acquireRunSlot({ origin: "schedule" });
+  const controller = new AbortController();
+  const cancelled = acquireRunSlot({ origin: "schedule", signal: controller.signal });
+  const queued = acquireRunSlot({ origin: "schedule" });
+  controller.abort();
+  await assert.rejects(cancelled, { name: "AbortError" });
+  saveSettings({ maxConcurrentRuns: 4, reservedInteractiveRuns: 1 });
+  refreshRunSlots();
+  const third = await queued;
+  assert.equal(runSlotStats().backgroundActive, 3);
+  let waited = false;
+  const live = await acquireRunSlot({ origin: "api_foreground", onWait: () => { waited = true; } });
+  assert.equal(waited, false);
+  first(); second(); third(); live();
+  assert.equal(runSlotStats().active, 0);
 });

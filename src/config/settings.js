@@ -441,6 +441,20 @@ export function getWhisperEnabled() {
   return v === undefined ? true : Boolean(v);
 }
 
+// Global agent-run admission is independent of the number of running containers.
+export function getRunConcurrency() {
+  const s = getSettings();
+  const envTotal = Number.parseInt(process.env.MAX_CONCURRENT_RUNS ?? "", 10);
+  const envReserved = Number.parseInt(process.env.RESERVED_INTERACTIVE_RUNS ?? "", 10);
+  const maxConcurrentRuns = Number.isInteger(s.maxConcurrentRuns) && s.maxConcurrentRuns >= 1 && s.maxConcurrentRuns <= 500
+    ? s.maxConcurrentRuns : (Number.isFinite(envTotal) && envTotal > 0 ? envTotal : 8);
+  const configuredReserve = Number.isInteger(s.reservedInteractiveRuns) && s.reservedInteractiveRuns >= 0 && s.reservedInteractiveRuns <= 499
+    ? s.reservedInteractiveRuns : (Number.isFinite(envReserved) && envReserved >= 0 ? envReserved : 2);
+  // Always leave a background slot, including when the total is lowered on its own.
+  const reservedInteractiveRuns = Math.min(configuredReserve, maxConcurrentRuns - 1);
+  return { maxConcurrentRuns, reservedInteractiveRuns };
+}
+
 // ── Container runtime (v0.8) ──────────────────────────────────────────────────────────────────
 // Flat keys like every other setting (the secrets allowlist resolves top-level names). Read as one
 // snapshot by resolveRuntime() and carried on the RuntimeTarget — backend modules never import
@@ -1234,6 +1248,7 @@ export function settingsForApi() {
 
     showMessageCost: getShowMessageCost(),
     whisperEnabled: getWhisperEnabled(),
+    ...getRunConcurrency(),
     // Container runtime (v0.8). Non-secret values verbatim; the Claude token follows the same
     // write-only rule as every other credential here — has*/last4 only, fetched one at a time from
     // POST /api/secrets/reveal.

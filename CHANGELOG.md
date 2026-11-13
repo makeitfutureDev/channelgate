@@ -2,6 +2,9 @@
 
 ## 0.6.5 — candidate, pending approval
 
+- Add admin controls for parallel agent runs and reserved interactive slots, separate from the
+  running-container limit. Saved limits update queued work immediately without stopping active runs.
+
 - Show connected conversation Codex accounts as a separate **Codex (channel account)** harness,
   allowing channel/thread switches to Claude, gateway Codex or other admitted harnesses. Keep
   account sessions and concurrent credential relays separate; preserve existing dedicated defaults.

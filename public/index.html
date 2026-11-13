@@ -764,6 +764,19 @@
                   <p class="setsec-desc">Harnesses, models, replies, instructions, schedules and Drive sync for every conversation that doesn&rsquo;t override them.</p>
                 </header>
                 <div class="setcard">
+                  <h4>Parallel agent runs</h4>
+                  <p class="desc">Gateway-wide limit across conversations and harnesses. Extra requests wait in a queue. Changes apply when saved; active runs finish normally if you lower the limit. This is separate from the running-container limit under Access &amp; security.</p>
+                  <label class="field">
+                    <span>Maximum parallel agent runs</span>
+                    <input id="set-max-concurrent-runs" type="number" min="1" max="500" step="1" required />
+                  </label>
+                  <label class="field">
+                    <span>Slots reserved for interactive requests</span>
+                    <input id="set-reserved-interactive-runs" type="number" min="0" max="499" step="1" required />
+                    <em class="state">Interactive requests are live Slack, Teams and Google Chat messages, plus foreground API requests. Scheduled and background agents share the remaining slots. These slots are included in the total; reserve fewer than the total so background work can run. For example, 32 total with 2 reserved allows up to 30 background runs. Interactive requests can use any free slot.</em>
+                  </label>
+                </div>
+                <div class="setcard">
                   <h4>Engine &amp; runtime</h4>
                   <div class="field">
                     <span>Harnesses the gateway may use</span>
@@ -1213,6 +1226,7 @@
                   <label class="field">
                     <span>Max containers running at once — the least recently used is stopped past this</span>
                     <input id="set-container-max" type="number" min="1" max="500" step="1" placeholder="8" />
+                    <em class="state">Counts containers, not agent runs. Set parallel agent runs under Agent defaults.</em>
                   </label>
                   <label class="field">
                     <span>Process limit per container (pids)</span>
