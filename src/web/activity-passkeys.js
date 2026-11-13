@@ -4,6 +4,7 @@ import { generateRegistrationOptions, verifyRegistrationResponse, generateAuthen
 import { activityAccount, activityPasskeys, activityPasskey, saveActivityPasskey, advanceActivityPasskey, removeActivityPasskey } from '../config/activity-passkeys.js';
 import { clientKey, createLoginLimiter, timingSafeEqualStr } from './security.js';
 import { activityAccessPage } from './activity-access-page.js';
+import { adminAccount, adminAccountForUser, adminPasskeys, adminPasskeyById, advanceAdminCounter, listAdminAccounts } from '../config/admin-accounts.js';
 
 const FIVE_MIN = 5 * 60_000;
 const COOKIE = 'cg_activity_webauthn';
@@ -14,8 +15,9 @@ function topLevel(response) {
   if (data.crossOrigin === true || data.topOrigin !== undefined) reject(403);
 }
 
-// Receives only Activity authority; no administrator cookie or API credential is consulted.
-export function installActivityPasskeys(router, { context, authorize, issueSession, sendPage, version, now }) {
+// Admin credentials can authenticate their linked user's Activity without minting admin sessions.
+// Activity-only credentials never acquire administrator authority.
+export function installActivityPasskeys(router, { context, authorize, issueSession, sendPage, getTeamId, version, now }) {
   const pending = new Map();
   const limiter = createLoginLimiter({ freeAttempts: 10, baseDelayMs: 1000, maxDelayMs: 60_000, ttlMs: 60_000, globalMaxFailures: 500, globalWindowMs: 60_000 });
   const starts = new Map();
@@ -75,7 +77,9 @@ export function installActivityPasskeys(router, { context, authorize, issueSessi
   router.get('/:id/passkeys', async (req, res) => {
     try {
       const { session } = await context(req);
-      sendPage(res, activityAccessPage({ mode: 'manage', base: `/activity/${req.params.id}`, csrf: session.csrf }));
+      const admin = adminAccountForUser(session.ownerId);
+      sendPage(res, activityAccessPage({ mode: 'manage', base: `/activity/${req.params.id}`, csrf: session.csrf,
+        adminPasskeysAvailable: Boolean(admin?.enabled && adminPasskeys(admin.id).length) }));
     } catch { res.redirect(303, '/activity/login'); }
   });
   router.get('/:id/api/passkeys', safe(async (req, res) => {
@@ -112,23 +116,37 @@ export function installActivityPasskeys(router, { context, authorize, issueSessi
   }));
   router.post('/auth/login/options', safe(async (req, res) => {
     const rp = guard(req, res);
+    // Discoverable login selects its account later. Snapshot versions server-side so an admin
+    // revocation (or workspace switch) also invalidates ceremonies already open in a browser.
+    const teamId = getTeamId();
+    const adminVersions = Object.fromEntries(listAdminAccounts().filter(account => account.enabled && account.userId && account.passkeyCount)
+      .map(account => [account.id, account.authVersion]));
     const options = await generateAuthenticationOptions({ rpID: rp.rpID, userVerification: 'required', timeout: 60_000 });
-    remember(req, res, 'login', rp, options);
+    remember(req, res, 'login', rp, options, { adminVersions, teamId });
     res.json({ options }); // Discoverable: never enumerate users or credential IDs.
   }));
   router.post('/auth/login/verify', safe(async (req, res) => {
     const rp = guard(req, res), saved = consume(req, 'login', rp);
-    const response = req.body?.response, key = activityPasskey(response?.id);
-    if (!key || key.origin !== rp.origin || response.response?.userHandle !== key.account_id) reject(401);
-    const identity = { ownerId: key.owner_id, teamId: key.team_id, origin: key.origin, expiresAt: saved.expiresAt };
+    const response = req.body?.response, activityKey = activityPasskey(response?.id);
+    const adminKey = activityKey ? null : adminPasskeyById(response?.id);
+    const account = adminKey ? adminAccount(adminKey.accountId) : null;
+    if (!activityKey && (!adminKey || !account?.enabled || !account.userId || saved.adminVersions?.[account.id] !== account.authVersion)) reject(401);
+    const key = activityKey || adminKey;
+    const handle = activityKey ? key.account_id : account.userHandle;
+    if ((activityKey && key.origin !== rp.origin) || response.response?.userHandle !== handle) reject(401);
+    const identity = activityKey ? { ownerId: key.owner_id, teamId: key.team_id, origin: key.origin, expiresAt: saved.expiresAt, credentialId: key.id } :
+      { ownerId: account.userId, teamId: saved.teamId, origin: rp.origin, expiresAt: saved.expiresAt,
+        adminAuth: { accountId: account.id, authVersion: account.authVersion, credentialId: key.id } };
     await authorize(identity);
     topLevel(response);
     const result = await verifyAuthenticationResponse({ response, expectedChallenge: saved.challenge, expectedOrigin: rp.origin,
       expectedRPID: rp.rpID, credential: { id: key.id, publicKey: key.publicKey, counter: key.counter, transports: key.transports },
       requireUserVerification: true, requireUserPresence: true });
     await authorize(identity);
-    if (!result.verified || !result.authenticationInfo.userVerified || saved.version !== version() || saved.expiresAt <= now()
-      || !advanceActivityPasskey(key, result.authenticationInfo.newCounter, now())) reject(401);
-    issueSession(res, { ...identity, credentialId: key.id });
+    if (!result.verified || !result.authenticationInfo.userVerified || saved.version !== version() || saved.expiresAt <= now()) reject(401);
+    if (activityKey) {
+      if (!advanceActivityPasskey(key, result.authenticationInfo.newCounter, now())) reject(401);
+    } else advanceAdminCounter(account, key, result.authenticationInfo);
+    issueSession(res, identity);
   }));
 }

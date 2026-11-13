@@ -49,6 +49,21 @@ setting; agent principals and untrusted API attribution cannot change another pe
 
 ## Activity passkey sign-in (2026-11-13)
 
+Existing administrator passkeys also sign into `/activity/login` as the administrator's linked
+Slack user, with no second enrollment. Activity login issues only Activity authority; an
+Activity-only passkey cannot sign into administration. Admin credential counters and last-use
+times use the canonical admin store; account revocation, disabling, unlinking, demotion or key
+removal invalidates the derived Activity access. Open login ceremonies snapshot admin account
+versions and the Slack workspace so later revocation or a workspace switch cannot admit them.
+
+The main admin sidebar has a **My Activity** button, separate from the Activity audit history.
+It uses the current linked, non-bootstrap administrator browser session to open that user's
+private dashboard without another passkey prompt. API keys and caller-supplied identities cannot
+use this handoff. Foreign Origin/Referer and explicit cross-origin Fetch Metadata are refused,
+including same-site sibling-origin requests without an Origin header. Admins who already have
+passkeys see an existing-key notice and an admin passkey-management link on the Activity Passkeys
+page, instead of being asked to add another key.
+
 Approved Slack users can open their private Dashboard link, choose **Passkeys**, and save a
 passkey for future visits. **Activity sign-in** (`/activity/login`) uses a discoverable passkey
 without asking for a username. Expired launch links and expired dashboard pages offer the same
@@ -60,7 +75,7 @@ public origin. Every ceremony requires user verification, a five-minute browser-
 and the current user's admission and live Slack connection. Enrollment and deletion also require
 the existing Activity session and CSRF token. Passkey sign-in creates only the existing fixed
 twelve-hour Activity session and its path-scoped HttpOnly cookie. Removing a key invalidates
-sessions opened with that key. Activity credentials and administrator credentials remain separate.
+sessions opened with that key. Activity-only credentials retain their limited scope.
 The existing ten-minute Slack launch links retain their original reusable lifetime.
 
 ## Compact Activity monitor with dark and light themes (2026-11-13)

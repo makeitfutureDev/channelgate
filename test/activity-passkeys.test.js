@@ -9,24 +9,24 @@ const { saveSettings } = await import('../src/config/settings.js');
 const { getDb } = await import('../src/db/index.js');
 const { createActivityRouter, createActivityGrantUrl, resetActivityStateForTests, ACTIVITY_SESSION_TTL_MS } = await import('../src/web/activity.js');
 const { activityAccount, activityPasskeys, activityPasskey } = await import('../src/config/activity-passkeys.js');
-const { createAdminAuthRouter } = await import('../src/web/admin-auth.js');
+const { createWebApp } = await import('../src/web/app.js');
 
 test('Activity passkeys use real browser signatures, persistent identities and isolated sessions', { skip: !process.env.CG_BROWSER_MODULE, timeout: 60_000 }, async t => {
   resetActivityStateForTests();
   await setUser('U_ACTIVITY_KEY', { approved: true });
   await setUser('U_ACTIVITY_OTHER', { approved: true });
-  let base, clock = Date.now(), team = 'T_ACTIVITY_KEY', live = true;
+  let base, clock = Date.now(), team = 'T_ACTIVITY_KEY', live = true, lastOwner;
   const createRouter = () => createActivityRouter({ getClient: () => live ? {} : null, getTeamId: () => team,
-    getBaseUrl: () => base, now: () => clock, snapshot: async () => ({ rows: [], total: 0 }), refreshKey: () => 'fixture', readSubscriptions: async () => ({ subscriptions: [] }) });
+    getBaseUrl: () => base, now: () => clock, snapshot: async (_client, ownerId) => { lastOwner = ownerId; return { rows: [], total: 0 }; }, refreshKey: () => 'fixture', readSubscriptions: async () => ({ subscriptions: [] }) });
   let router = createRouter();
   const app = express();
   app.use('/fonts', express.static(fileURLToPath(new URL('../public/fonts', import.meta.url))));
   app.get('/favicon.svg', (_req, res) => res.sendFile('favicon.svg', { root: fileURLToPath(new URL('../public/', import.meta.url)) }));
   app.use('/activity', (req, res, next) => router(req, res, next));
-  app.use(express.json()); app.use('/api/auth', createAdminAuthRouter());
+  app.use(createWebApp());
   app.use((error, _req, res, _next) => res.status(error.status || 400).json({ error: 'Fixture request denied' }));
   const server = await new Promise(resolve => { const s = app.listen(0, '127.0.0.1', () => resolve(s)); });
-  base = `http://localhost:${server.address().port}`; saveSettings({ publicUrl: base });
+  base = `http://localhost:${server.address().port}`; saveSettings({ publicUrl: base, apiKey: 'fixture-activity-run-api-key' });
   t.after(() => new Promise(resolve => { resetActivityStateForTests(); server.closeAllConnections(); server.close(resolve); }));
   const { chromium } = await import(process.env.CG_BROWSER_MODULE);
   const browser = await chromium.launch({ headless: true, executablePath: process.env.CG_BROWSER_EXECUTABLE });
@@ -46,11 +46,12 @@ test('Activity passkeys use real browser signatures, persistent identities and i
   async function openLink(ownerId = 'U_ACTIVITY_KEY') {
     await page.goto(grant(ownerId)); await page.waitForURL(/\/activity\/[A-Za-z0-9_-]{16}$/); return new URL(page.url()).pathname;
   }
-  async function signAssertion(path = '/activity/auth/login') {
+  async function signAssertion(path = '/activity/auth/login', credentialId) {
     const result = await api(path + '/options', {});
     assert.equal(result.status, 200, JSON.stringify(result));
     assert.deepEqual(result.body.options.allowCredentials ?? [], []);
-    return page.evaluate(options => globalThis.ChannelGatePasskeys.get(options), result.body.options);
+    return page.evaluate(options => globalThis.ChannelGatePasskeys.get(options), { ...result.body.options,
+      ...(credentialId ? { allowCredentials: [{ type: 'public-key', id: credentialId }] } : {}) });
   }
   async function csrfFor(path) {
     const response = await ctx.request.get(base + path + '/passkeys');
@@ -89,12 +90,18 @@ test('Activity passkeys use real browser signatures, persistent identities and i
     assert.ok(activityPasskeys(account.id)[0].lastUsedAt);
     assert.equal((await api('/api/auth/me', undefined, { method: 'GET' })).status, 401);
   });
-  await t.test('Activity credentials cannot sign in to admin and admin credentials cannot sign in to Activity', async () => {
+  await t.test('the same linked admin key signs into Activity while Activity-only keys remain barred from admin', async () => {
     await page.goto(base + '/activity/login');
+    const accounts = await import('../src/config/admin-accounts.js');
+    const { createAdminSession } = await import('../src/web/auth.js');
+    let setupCookie;
+    createAdminSession({ headers: {} }, { setHeader: (_name, value) => { setupCookie = value.split(';')[0]; } }, accounts.ensureBootstrapAdmin(), { bootstrap: true });
+    const setupDenied = await ctx.request.get(base + '/activity/from-admin', { maxRedirects: 0, headers: { Cookie: setupCookie } });
+    assert.equal(setupDenied.status(), 303); assert.equal(setupDenied.headers().location, '/activity/login');
+    assert.equal(setupDenied.headers()['set-cookie'], undefined);
     const activityResponse = await signAssertion('/api/auth/login');
     assert.notEqual((await api('/api/auth/login/verify', { response: activityResponse })).status, 200);
     const { generateRegistrationOptions, verifyRegistrationResponse } = await import('@simplewebauthn/server');
-    const accounts = await import('../src/config/admin-accounts.js');
     await setUser('U_ACTIVITY_ADMIN', { isAdmin: true });
     const account = accounts.ensureUserAdminAccount('U_ACTIVITY_ADMIN');
     const options = await generateRegistrationOptions({ rpName: 'Admin fixture', rpID: 'localhost', userName: 'Admin fixture',
@@ -105,10 +112,72 @@ test('Activity passkeys use real browser signatures, persistent identities and i
     accounts.saveAdminPasskey({ accountId: account.id, authVersion: account.authVersion, credential: verified.registrationInfo.credential,
       deviceType: verified.registrationInfo.credentialDeviceType, backedUp: verified.registrationInfo.credentialBackedUp });
     const adminId = response.id;
-    const result = await api('/activity/auth/login/options', {});
-    const adminAssertion = await page.evaluate(options => globalThis.ChannelGatePasskeys.get(options),
-      { ...result.body.options, allowCredentials: [{ type: 'public-key', id: adminId }] });
+    const before = accounts.adminPasskeyById(adminId);
+    let adminAssertion = await signAssertion('/activity/auth/login', adminId);
+    const activityLogin = await api('/activity/auth/login/verify', { response: adminAssertion });
+    assert.equal(activityLogin.status, 200, JSON.stringify(activityLogin));
+    assert.equal((await api(activityLogin.body.url + '/api/threads', undefined, { method: 'GET' })).status, 200);
+    assert.equal(lastOwner, 'U_ACTIVITY_ADMIN');
+    assert.ok(accounts.adminPasskeyById(adminId).counter > before.counter);
+    assert.ok(accounts.adminPasskeyById(adminId).lastUsedAt);
+    assert.equal((await ctx.cookies()).some(c => c.name === 'cg_session'), false, 'Activity login alone does not mint admin authority');
+    await page.goto(base + activityLogin.body.url + '/passkeys');
+    assert.match(await page.locator('main').innerText(), /administrator passkeys already work/);
+    assert.equal(await page.locator('#add-passkey').count(), 0, 'do not ask existing admins to enroll a second key');
+    await page.goto(base + '/activity/login');
+    adminAssertion = await signAssertion('/api/auth/login', adminId);
+    assert.equal((await api('/api/auth/login/verify', { response: adminAssertion })).status, 200);
+    for (const headers of [{ 'Sec-Fetch-Site': 'same-site' }, { 'Sec-Fetch-Site': 'cross-site' }, { Referer: 'https://sibling.example/attack' }, { Origin: 'https://evil.example' }]) {
+      const denied = await ctx.request.get(base + '/activity/from-admin', { maxRedirects: 0, headers });
+      assert.equal(denied.status(), 403); assert.equal(denied.headers()['set-cookie'], undefined);
+    }
+    await page.goto(base + '/overview');
+    await page.getByRole('link', { name: 'My Activity ↗', exact: true }).waitFor();
+    const requests = [];
+    const track = req => { if (req.url().endsWith('/auth/login/options')) requests.push(req.url()); };
+    page.on('request', track);
+    await page.getByRole('link', { name: 'My Activity ↗', exact: true }).click();
+    await page.waitForURL(/\/activity\/[A-Za-z0-9_-]{16}$/);
+    page.off('request', track); assert.deepEqual(requests, [], 'the admin shortcut does not start another passkey ceremony');
+    const handoff = new URL(page.url()).pathname;
+    assert.equal((await api(handoff + '/api/threads', undefined, { method: 'GET' })).status, 200);
+    assert.equal(lastOwner, 'U_ACTIVITY_ADMIN');
+    await page.goto(base + '/activity/from-admin?ownerId=U_ACTIVITY_OTHER');
+    await page.waitForURL(/\/activity\/[A-Za-z0-9_-]{16}$/);
+    await api(new URL(page.url()).pathname + '/api/threads', undefined, { method: 'GET' });
+    assert.equal(lastOwner, 'U_ACTIVITY_ADMIN', 'the shortcut never takes identity from query parameters');
+    const anonymous = await browser.newContext(); t.after(() => anonymous.close());
+    const denied = await anonymous.request.get(base + '/activity/from-admin', { maxRedirects: 0, headers: { Authorization: 'Bearer fixture-activity-run-api-key' } });
+    assert.equal(denied.status(), 303); assert.equal(denied.headers().location, '/activity/login');
+    assert.equal(denied.headers()['set-cookie'], undefined);
+    accounts.revokeAdminSessions(account.id);
+    assert.equal((await api(handoff + '/api/threads', undefined, { method: 'GET' })).status, 401);
+    assert.equal((await api(activityLogin.body.url + '/api/threads', undefined, { method: 'GET' })).status, 401);
+    await page.goto(base + '/activity/login');
+    adminAssertion = await signAssertion('/activity/auth/login', adminId);
+    accounts.revokeAdminSessions(account.id);
+    assert.equal((await api('/activity/auth/login/verify', { response: adminAssertion })).status, 401, 'revoking admin sessions invalidates an already-open Activity ceremony');
+    for (const state of ['disabled', 'unlinked']) {
+      adminAssertion = await signAssertion('/activity/auth/login', adminId);
+      if (state === 'disabled') getDb().prepare('UPDATE admin_accounts SET enabled=0 WHERE id=?').run(account.id);
+      else getDb().prepare('UPDATE admin_accounts SET user_id=NULL WHERE id=?').run(account.id);
+      assert.equal((await api('/activity/auth/login/verify', { response: adminAssertion })).status, 401, state);
+      getDb().prepare('UPDATE admin_accounts SET enabled=1,user_id=? WHERE id=?').run('U_ACTIVITY_ADMIN', account.id);
+    }
+    adminAssertion = await signAssertion('/activity/auth/login', adminId); team = 'T_OTHER';
+    assert.equal((await api('/activity/auth/login/verify', { response: adminAssertion })).status, 403); team = 'T_ACTIVITY_KEY';
+    adminAssertion = await signAssertion('/activity/auth/login', adminId);
+    await setUser('U_ACTIVITY_ADMIN', { isAdmin: false, approved: true });
     assert.notEqual((await api('/activity/auth/login/verify', { response: adminAssertion })).status, 200);
+    await setUser('U_ACTIVITY_ADMIN', { isAdmin: true });
+    adminAssertion = await signAssertion('/activity/auth/login', adminId);
+    const beforeRemoval = await api('/activity/auth/login/verify', { response: adminAssertion });
+    assert.equal(beforeRemoval.status, 200);
+    adminAssertion = await signAssertion('/activity/auth/login', adminId);
+    // Isolate the missing-key guard from the authVersion bump performed by normal admin removal.
+    getDb().prepare('DELETE FROM admin_passkeys WHERE id=?').run(adminId);
+    assert.equal((await api('/activity/auth/login/verify', { response: adminAssertion })).status, 401);
+    assert.equal((await api(beforeRemoval.body.url + '/api/threads', undefined, { method: 'GET' })).status, 401);
     await cdp.send('WebAuthn.removeCredential', { authenticatorId, credentialId: Buffer.from(adminId, 'base64url').toString('base64') });
   });
   await t.test('origins, CSRF and ownership protect enrollment and deletion', async () => {

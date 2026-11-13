@@ -1,5 +1,6 @@
 // A private user dashboard: ten-minute Slack launch grant -> path-scoped browser session.
-// This router deliberately accepts neither administrator cookies nor run API credentials.
+// Ordinary routes use Activity cookies only. The explicit admin shortcut can mint the owner's
+// Activity session from a verified, linked administrator browser session; API keys never qualify.
 import crypto from "node:crypto";
 import express from "express";
 import { getPublicUrl } from "../config/settings.js";
@@ -20,6 +21,8 @@ import { activityGroupOrder, activityGroupOrderVersion, validActivityGroupOrder,
 import { activityAccessPage } from "./activity-access-page.js";
 import { installActivityPasskeys } from "./activity-passkeys.js";
 import { activityPasskey } from "../config/activity-passkeys.js";
+import { adminAccount, adminPasskeyById } from "../config/admin-accounts.js";
+import { adminSession } from "./auth.js";
 import { applyUserSettingsChange, userSettingsSnapshot, UserSettingsError } from "../gateway/user-settings.js";
 
 export const ACTIVITY_GRANT_TTL_MS = 10 * 60_000;
@@ -132,6 +135,12 @@ export function createActivityRouter({
       const key = activityPasskey(session.credentialId);
       if (!key || key.owner_id !== session.ownerId || key.team_id !== session.teamId || key.origin !== session.origin) throw Object.assign(new Error("Activity passkey removed"), { status: 401 });
     }
+    if (session.adminAuth) {
+      const account = adminAccount(session.adminAuth.accountId);
+      const key = session.adminAuth.credentialId ? adminPasskeyById(session.adminAuth.credentialId) : null;
+      if (!account?.enabled || !account.userId || account.userId !== session.ownerId || account.authVersion !== session.adminAuth.authVersion
+        || (session.adminAuth.credentialId && key?.accountId !== account.id)) throw Object.assign(new Error("Administrator access changed"), { status: 401 });
+    }
     const client = getClient();
     if (!client) throw Object.assign(new Error("Slack disconnected"), { status: 403 });
     return client;
@@ -147,18 +156,39 @@ export function createActivityRouter({
     if (!session || sessions.get(req.params.id) !== session) throw Object.assign(new Error("Activity session missing"), { status: 401 });
     return { session, client: await authorize(session) };
   };
-  const issueSession = (res, identity) => {
+  const issueSession = (res, identity, { redirect = false } = {}) => {
     const id = token(12), secret = token(); prune(now());
     capOwner(sessions, identity.ownerId, 10); cap(sessions, 1000);
     const session = { ownerId: identity.ownerId, teamId: identity.teamId, origin: identity.origin,
       ...(identity.credentialId ? { credentialId: identity.credentialId } : {}),
+      ...(identity.adminAuth ? { adminAuth: { ...identity.adminAuth } } : {}),
       cookieHash: hash(secret), csrf: token(), expiresAt: now() + ACTIVITY_SESSION_TTL_MS };
     sessions.set(id, session);
     res.append("Set-Cookie", `${cookieName(id)}=${secret}; HttpOnly; SameSite=Lax; Path=/activity/${id}; Max-Age=${ACTIVITY_SESSION_TTL_MS / 1000}${new URL(identity.origin).protocol === "https:" ? "; Secure" : ""}`);
-    return res.json({ url: `/activity/${id}` });
+    return redirect ? res.redirect(303, `/activity/${id}`) : res.json({ url: `/activity/${id}` });
   };
   const sendPage = (res, page) => { headers(res, page.nonce); return res.type("html").send(page.html); };
-  installActivityPasskeys(router, { context, authorize, issueSession, sendPage, version: () => configVersion, now });
+  router.get("/from-admin", async (req, res) => {
+    // Strict cookies still travel between same-site sibling origins. Only a same-origin
+    // navigation (or direct bookmark) may create a session and consume an owner's slot.
+    const site = req.headers["sec-fetch-site"];
+    if (site && !["same-origin", "none"].includes(site)) return unavailable(res, 403);
+    if (req.headers.referer) {
+      try { if (new URL(req.headers.referer).origin !== req.activityOrigin) return unavailable(res, 403); }
+      catch { return unavailable(res, 403); }
+    }
+    const signedIn = adminSession(req);
+    if (!signedIn || signedIn.bootstrap || !signedIn.account.userId) return res.redirect(303, "/activity/login");
+    const identity = { ownerId: signedIn.account.userId, teamId: getTeamId(), origin: req.activityOrigin,
+      expiresAt: now() + ACTIVITY_SESSION_TTL_MS, adminAuth: { accountId: signedIn.accountId, authVersion: signedIn.authVersion } };
+    const before = configVersion;
+    try {
+      await authorize(identity);
+      if (before !== configVersion || adminSession(req)?.token !== signedIn.token) return unavailable(res, 403);
+      return issueSession(res, identity, { redirect: true });
+    } catch (error) { return unavailable(res, error.status || 403); }
+  });
+  installActivityPasskeys(router, { context, authorize, issueSession, sendPage, getTeamId, version: () => configVersion, now });
   const ownedThread = async (client, session, channelId, threadTs) => {
     const row = getSlackThread(channelId, threadTs);
     if (!row || row.starter_id !== session.ownerId || !isSlackThreadEligible(row)) throw Object.assign(new Error("Thread denied"), { status: 403 });

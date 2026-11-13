@@ -6,6 +6,10 @@
   channel names, times, headers, group labels and tab counts are brighter, every secondary text
   colour meets WCAG AA in both themes, and alternate rows are clearly banded in dark mode.
 
+- Reuse existing administrator passkeys for personal Activity sign-in, without a second
+  enrollment. Add **My Activity** to the admin sidebar to open the signed-in person's dashboard
+  without another authentication prompt. Activity-only passkeys keep their limited access.
+
 - Add a Diagnostics page to Slack Channel Settings. It shows how to resume the current thread's
   session from a terminal in both forms: the `podman exec` command for the gateway host and the
   short `cd … && claude --resume <id>` command for a shell already inside the channel's container
@@ -23,7 +27,7 @@
 
 - Add passkey setup and management from private Activity dashboard links, plus a dedicated
   Activity sign-in page for returning users. Expired links offer passkey sign-in; Activity
-  credentials remain separate from administrator credentials.
+  sessions remain limited to the viewer's Activity.
 
 - Flush short answer text to the live Slack reply after 1.5 s of engine silence and before each
   tool call. The Slack SDK batches ~256 characters in memory with no clock, so a sentence written

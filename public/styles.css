@@ -148,6 +148,8 @@ code {
 
 .sidebar-foot { margin-top: auto; padding-top: 12px; border-top: 1px solid var(--line-soft); display: flex; flex-direction: column; gap: 6px; }
 .sidebar-foot button { margin-top: 6px; width: 100%; }
+.personal-activity { display: block; padding: 9px 12px; border: 1px solid var(--line); border-radius: 7px; background: var(--panel); color: var(--ink); text-align: center; font-weight: 500; }
+.personal-activity:hover { background: var(--panel-2); text-decoration: none; }
 
 /* Status chips (sidebar health) ------------------------------------------------ */
 .health { display: flex; flex-direction: column; gap: 2px; }

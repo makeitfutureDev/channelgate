@@ -1125,7 +1125,7 @@ ${settingsView ? `<section class="settings-page" aria-label="Settings"><div clas
 <div id="empty" class="empty" role="status"><div class="empty-symbol" aria-hidden="true">◎</div><h2 id="empty-title">Loading your activity…</h2><p id="empty-copy">Your latest conversations will appear here.</p></div>
 <noscript><p class="js-needed">Enable JavaScript to view live activity.</p></noscript></section>
 <footer class="footer"><div class="footer-actions"><span id="summary" class="summary">Loading activity…</span><button id="group-order" class="link-button" type="button" aria-haspopup="dialog">⇅ Group order</button><button id="mark-all-done" class="link-button" type="button" aria-haspopup="dialog" disabled>✓ Mark All Done</button><button id="load-history" class="link-button" type="button" disabled>Load older threads</button></div><div class="footer-actions"><span id="result-count"></span><span id="updated">Waiting for updates</span></div></footer>
-<p class="privacy">Your conversations are private. <a href="${base}/passkeys">Save a passkey</a> to return later, or <a href="/activity/login">sign in again</a> when your session expires.</p>
+<p class="privacy">Your conversations are private. <a href="${base}/passkeys">Manage passkeys</a> or <a href="/activity/login">sign in again</a> when your session expires.</p>
 </div>`}
 </main><script nonce="${nonce}">${settingsView
     ? `(${settingsBrowser.toString()})(${config}, globalThis, (${themeBrowser.toString()})(${config}, globalThis));`
