@@ -2,9 +2,10 @@
 // Ordinary routes use Activity cookies only. The explicit admin shortcut can mint the owner's
 // Activity session from a verified, linked administrator browser session; API keys never qualify.
 import crypto from "node:crypto";
-import { fileURLToPath } from "node:url";
+import { channelGateLogo, normalizeLogoColor } from "../config/appearance.js";
+import { activityIcon } from "./activity-icons.js";
 import express from "express";
-import { getPublicUrl } from "../config/settings.js";
+import { getPublicUrl, getLogoColor } from "../config/settings.js";
 import { getChannelEntry, getUser, setUser } from "../config/store.js";
 import { onConfigChange } from "../config/change-events.js";
 import { getSlackThread, isSlackThreadEligible, setSlackThreadLater, setSlackThreadDone } from "../gateway/slack-threads.js";
@@ -380,11 +381,20 @@ export function createActivityRouter({
   // ahead of "/:id" so these names are never read as session ids.
   router.get("/manifest.webmanifest", async (_req, res) => {
     const agent = await agentName(getClient()).catch(() => "");
-    res.type("application/manifest+json").send(JSON.stringify(activityManifest({ agent })));
+    res.set("Cache-Control", "no-store");
+    res.type("application/manifest+json").send(JSON.stringify(activityManifest({ agent, color: getLogoColor() })));
   });
-  for (const [route, file] of Object.entries(ACTIVITY_APP_ICONS)) router.get(`/${route}`, (_req, res) => {
-    res.set("Cache-Control", "public, max-age=86400");
-    res.sendFile(file, { root: fileURLToPath(new URL("../../public/activity/", import.meta.url)) });
+  for (const [route, file] of Object.entries(ACTIVITY_APP_ICONS)) router.get(`/${route}`, (req, res) => {
+    const color = req.query.color === undefined ? getLogoColor() : (typeof req.query.color === "string" ? normalizeLogoColor("#" + req.query.color) : null);
+    if (!color) return res.status(400).end();
+    res.set("Cache-Control", req.query.color === undefined ? "no-cache" : "public, max-age=31536000, immutable");
+    res.type("png").send(activityIcon(file, color));
+  });
+  router.get("/icon.svg", (req, res) => {
+    const color = req.query.color === undefined ? getLogoColor() : (typeof req.query.color === "string" ? normalizeLogoColor("#" + req.query.color) : null);
+    if (!color) return res.status(400).end();
+    res.set("Cache-Control", req.query.color === undefined ? "no-cache" : "public, max-age=31536000, immutable");
+    res.type("svg").send(channelGateLogo(color));
   });
   router.get(CALL_WORKLET_PATH.replace(/^\/activity/, ""), (_req, res) => {
     res.set("Cache-Control", "public, max-age=3600");

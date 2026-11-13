@@ -2,6 +2,12 @@
 
 ## 0.6.5 — candidate, pending approval
 
+- Add Settings → **Appearance** with a live logo color picker, custom hex and reset. Each gateway
+  can use a distinct Activity/app icon color, including real PNG icons for installed browser apps.
+  Activity Settings links administrators to the shared control. Existing Chrome Dock icons may
+  need the app reopened or reinstalled to refresh.
+
+
 - Keep the live Slack reply in step with the model: the streaming secret redactor now holds back
   only text that could still begin a configured secret, instead of a flat longest-secret-minus-one
   characters. With a GitHub token configured, every streamed answer used to trail the model by

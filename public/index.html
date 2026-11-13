@@ -445,6 +445,7 @@
                    being read. On narrow screens this becomes a compact horizontal row. -->
               <nav class="setnav" id="settings-nav" aria-label="Settings sections">
                 <a href="#set-connection" data-sec="connection">Connection</a>
+                <a href="#set-appearance" data-sec="appearance">Appearance</a>
                 <a href="#set-agent" data-sec="agent">Agent defaults</a>
                 <a href="#set-templates" data-sec="templates">Access Templates</a>
                 <a href="#set-integrations" data-sec="integrations">Integrations</a>
@@ -754,6 +755,22 @@
                     <span id="ai-testing-users-label">Slack testing users</span>
                     <div id="set-ai-testing-users" class="user-picker" role="group" aria-labelledby="ai-testing-users-label"></div>
                   </div>
+                </div>
+              </section>
+
+              <section class="setsec" id="set-appearance" data-sec="appearance" aria-labelledby="set-appearance-h">
+                <header class="setsec-head"><h3 id="set-appearance-h">Appearance</h3>
+                  <p class="setsec-desc">Give this gateway its own app color, so installed apps are easy to distinguish.</p></header>
+                <div class="setcard" data-setkey="logo color icon dock chrome app branding">
+                  <h4>ChannelGate logo color</h4>
+                  <p class="desc">Shared by everyone on this gateway. Updates the Activity logo, browser icon and installed app icons. Each gateway keeps its own color.</p>
+                  <div class="logo-color-editor">
+                    <svg id="set-logo-preview" viewBox="0 0 48 48" width="64" height="64" role="img" aria-label="ChannelGate app icon preview"><rect width="48" height="48" rx="12" fill="#ff642f"/><g transform="translate(6 6)" fill="#18382b"><path d="M3 30V15a15 15 0 0 1 30 0v15h-7V15a8 8 0 0 0-16 0v15Z"/><path d="M14 30V15a4 4 0 0 1 8 0v15Z"/></g></svg>
+                    <label class="field">Logo color<input id="set-logo-color" type="color" value="#ff642f" /></label>
+                    <label class="field">Hex color<input id="set-logo-hex" type="text" value="#ff642f" maxlength="7" pattern="#[0-9a-fA-F]{6}" spellcheck="false" placeholder="#ff642f" /></label>
+                    <button id="reset-logo-color" type="button" class="btn">Reset to orange</button>
+                  </div>
+                  <p class="hint">Save, then reopen Activity. Chrome controls when an installed app updates its Dock icon; you may need to reinstall the app to refresh it.</p>
                 </div>
               </section>
 

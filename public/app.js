@@ -4152,7 +4152,23 @@ function paintEngineToggles() {
 // Read the whole Settings form into the API's shape. Separate from the save handler because it is
 // called TWICE: once right after a paint (the baseline the page was loaded with) and once on Save
 // — what differs between the two is all that gets sent.
+function paintLogoColor(color) {
+  if (!/^#[0-9a-f]{6}$/i.test(color)) return;
+  document.getElementById("set-logo-color").value = color;
+  document.getElementById("set-logo-hex").value = color;
+  const preview = document.getElementById("set-logo-preview");
+  preview.querySelector("rect").setAttribute("fill", color);
+  const luminance = [1, 3, 5].map((i) => parseInt(color.slice(i, i + 2), 16) / 255)
+    .map((v) => v <= .04045 ? v / 12.92 : ((v + .055) / 1.055) ** 2.4)
+    .reduce((sum, v, i) => sum + v * [.2126, .7152, .0722][i], 0);
+  preview.querySelector("g").setAttribute("fill", luminance > .179 ? "#18382b" : "#ffffff");
+}
+for (const id of ["set-logo-color", "set-logo-hex"]) document.getElementById(id).addEventListener("input", (event) => {
+  paintLogoColor(event.target.value);
+});
+document.getElementById("reset-logo-color").addEventListener("click", () => { paintLogoColor("#ff642f"); markSettingsDirty(); });
 function readSettingsForm() {
+  if (!document.getElementById("set-logo-hex").checkValidity()) throw new Error("Logo color must be a six-digit hex color, such as #ff642f.");
   for (const id of ["set-max-concurrent-runs", "set-reserved-interactive-runs"]) {
     const input = document.getElementById(id);
     if (!input.checkValidity()) throw new Error(`${id === "set-max-concurrent-runs" ? "Maximum parallel agent runs" : "Reserved interactive slots"} must be a whole number between ${input.min} and ${input.max}.`);
@@ -4186,6 +4202,7 @@ function readSettingsForm() {
     composioMcpUrl: document.getElementById("set-composio").value,
     toolboxMcpUrl: document.getElementById("set-toolbox").value,
     publicUrl: document.getElementById("set-public-url").value,
+    logoColor: document.getElementById("set-logo-hex").value,
     trustProxy: document.getElementById("set-trust-proxy").value,
     approvalLinks: document.getElementById("set-approval-links").value,
     aiTestingUsers: aiTestingPicker?.getValues() || [],
@@ -4333,6 +4350,7 @@ function paintSettings(s) {
   document.getElementById("set-composio").value = s.composioMcpUrl || "";
   document.getElementById("set-toolbox").value = s.toolboxMcpUrl || "";
   document.getElementById("set-public-url").value = s.publicUrl || "";
+  paintLogoColor(s.logoColor || "#ff642f");
   document.getElementById("set-trust-proxy").value = s.trustProxy || "";
   document.getElementById("set-approval-links").value = s.approvalLinks || "auto";
   aiTestingPicker = mountUserPicker(document.getElementById("set-ai-testing-users"), {

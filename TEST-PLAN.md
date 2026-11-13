@@ -1,5 +1,34 @@
 # ChannelGate — Test Plan
 
+## Deployment app logo color (2026-11-14)
+
+- Automated: `test/activity-logo-color.test.js` checks canonical hex persistence, default/reset
+  artwork, atomic rejection of invalid types/injection attempts/stale revisions, admin-session
+  enforcement, bounded known asset lookup, public manifest/icon caching, stable app identity,
+  decoded PNG RGB pixels and transparency, opaque maskable output, old versioned URL stability,
+  and colored Activity/login head/header rendering. Existing Activity and voice-call regressions
+  cover session cookies, launchers, page CSP and authorization.
+- Real Chromium: `CG_BROWSER_MODULE=<playwright/index.mjs> node --test
+  test/activity-logo-color-browser.test.js` uses a disposable authenticated-admin router fixture.
+  It saves/reloads a custom color, verifies inline preview with Public URL unset, malformed input
+  and reset-before-save behavior, Activity Settings navigation, header and sign-in metadata,
+  decodes every served PNG through browser canvas to check actual color/alpha, and checks narrow
+  screen layout and browser errors.
+- Live acceptance (**engine-independent**: settings, rendering and installed browser metadata do
+  not invoke an engine): in a disposable gateway HTTPS browser fixture, sign in as an administrator,
+  open Activity Settings → Change app logo color → Appearance. Preview `#2266ee`, Save, reload
+  Settings and Activity/Subscriptions/Settings/sign-in/passkey pages; expect saved blue preview,
+  blue Activity gate and blue favicon. Manifest must retain id/start `/activity/app`, scope
+  `/activity/`, and reference real blue PNGs at all advertised sizes, including maskable. Open a
+  browser call page if configured; its favicon/manifest must match too. Check an approved
+  non-admin sees the shared-scope explanation and cannot write administrator settings. Attempt
+  an invalid hex and stale settings revision: reject without partial mutation. Reset to orange
+  and save: original PNG bytes return. Another deployment remains unchanged. Pass: persistence,
+  exact RGB/alpha/dimensions, unchanged app identity and access, no overflow or console errors.
+  Separately install two gateway apps in Chrome on macOS with different selected colors; verify
+  distinct Dock icons after Chrome refreshes them (reopen or reinstall if needed). Linux Chromium
+  evidence proves supplied assets and settings; it does not establish macOS Dock refresh timing.
+
 ## Voice calls with a channel's agent (2026-11-13)
 
 - Automated: `test/voice-gemini-live.test.js` drives the Gemini Live client with a fake

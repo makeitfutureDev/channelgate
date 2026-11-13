@@ -6,6 +6,8 @@
 // POSTs up (`…/audio`, ~120 ms of audio each). Both ride the same reverse proxies and cookies the
 // Activity dashboard already uses, so a deployment needs no WebSocket upgrade support.
 import crypto from "node:crypto";
+import { getLogoColor } from "../config/settings.js";
+import { activityAppHead } from "./activity-app.js";
 import { ACTIVITY_THEME_CSS, ACTIVITY_BRAND } from "./activity-theme.js";
 
 export const CALL_WORKLET_PATH = "/activity/call-worklet.js";
@@ -204,7 +206,7 @@ export function callPage({ sessionId, csrf, channelId, threadTs = "", channelNam
   const pinned = theme === "dark" || theme === "light" ? ` data-theme="${theme}"` : "";
   const esc = (value) => String(value).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
   return { nonce, html: `<!doctype html>
-<html lang="en"${pinned}><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="color-scheme" content="dark light"><title>Call ${esc(agentName)} · ChannelGate</title><link rel="icon" type="image/svg+xml" href="/favicon.svg">
+<html lang="en"${pinned}><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="color-scheme" content="dark light"><title>Call ${esc(agentName)} · ChannelGate</title>${activityAppHead(getLogoColor())}
 <style nonce="${nonce}">${ACTIVITY_THEME_CSS}
 body{margin:0;min-height:100dvh;display:grid;place-items:start center}main{box-sizing:border-box;width:min(720px,calc(100% - 32px));margin:24px 16px;padding:24px;background:var(--panel);border:1px solid var(--line);border-radius:14px}
 h1{font-size:20px;margin:0 0 4px}.sub{color:var(--muted);font-size:14px;margin:0 0 18px}.controls{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin:0 0 14px}
