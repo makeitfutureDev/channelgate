@@ -2,6 +2,7 @@
 // Ordinary routes use Activity cookies only. The explicit admin shortcut can mint the owner's
 // Activity session from a verified, linked administrator browser session; API keys never qualify.
 import crypto from "node:crypto";
+import { fileURLToPath } from "node:url";
 import express from "express";
 import { getPublicUrl } from "../config/settings.js";
 import { getChannelEntry, getUser, setUser } from "../config/store.js";
@@ -20,6 +21,7 @@ import { activityPage } from "./activity-page.js";
 import { activityGroupOrder, activityGroupOrderVersion, validActivityGroupOrder, ACTIVITY_THEMES, activityTheme } from "./activity-order.js";
 import { activityAccessPage } from "./activity-access-page.js";
 import { installActivityPasskeys } from "./activity-passkeys.js";
+import { ACTIVITY_APP_ICONS, activityAppCookie, activityAppSessionId, activityManifest } from "./activity-app.js";
 import { activityPasskey } from "../config/activity-passkeys.js";
 import { adminAccount, adminPasskeyById } from "../config/admin-accounts.js";
 import { adminSession } from "./auth.js";
@@ -68,7 +70,7 @@ export function createActivityGrantUrl({ baseUrl = getPublicUrl(), ownerId, team
 function headers(res, nonce = "") {
   res.set({ "Cache-Control": "no-store, max-age=0", Pragma: "no-cache", "Referrer-Policy": "no-referrer",
     "X-Content-Type-Options": "nosniff", "X-Frame-Options": "DENY",
-    "Content-Security-Policy": `default-src 'none'; ${nonce ? `script-src 'nonce-${nonce}'; style-src 'nonce-${nonce}'; connect-src 'self'; img-src 'self' data:; font-src 'self';` : ""} base-uri 'none'; form-action 'none'; frame-ancestors 'none'` });
+    "Content-Security-Policy": `default-src 'none'; ${nonce ? `script-src 'nonce-${nonce}'; style-src 'nonce-${nonce}'; connect-src 'self'; img-src 'self' data:; font-src 'self';` : ""} manifest-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'` });
 }
 function unavailable(res, status = 401) {
   return res.status(status).json({ error: "Activity is unavailable. Open a new dashboard link from Slack Activity." });
@@ -164,7 +166,10 @@ export function createActivityRouter({
       ...(identity.adminAuth ? { adminAuth: { ...identity.adminAuth } } : {}),
       cookieHash: hash(secret), csrf: token(), expiresAt: now() + ACTIVITY_SESSION_TTL_MS };
     sessions.set(id, session);
-    res.append("Set-Cookie", `${cookieName(id)}=${secret}; HttpOnly; SameSite=Lax; Path=/activity/${id}; Max-Age=${ACTIVITY_SESSION_TTL_MS / 1000}${new URL(identity.origin).protocol === "https:" ? "; Secure" : ""}`);
+    const secure = new URL(identity.origin).protocol === "https:";
+    res.append("Set-Cookie", `${cookieName(id)}=${secret}; HttpOnly; SameSite=Lax; Path=/activity/${id}; Max-Age=${ACTIVITY_SESSION_TTL_MS / 1000}${secure ? "; Secure" : ""}`);
+    // The installed app's launcher resumes this session; it learns the id only, never the secret.
+    res.append("Set-Cookie", activityAppCookie(id, { maxAgeSeconds: ACTIVITY_SESSION_TTL_MS / 1000, secure }));
     return redirect ? res.redirect(303, `/activity/${id}`) : res.json({ url: `/activity/${id}` });
   };
   const sendPage = (res, page) => { headers(res, page.nonce); return res.type("html").send(page.html); };
@@ -267,6 +272,21 @@ export function createActivityRouter({
       headers(res, page.nonce); return res.type("html").send(page.html);
     } catch (error) { return sendPage(res.status(error.status || 401), activityAccessPage({ mode: "login" })); }
   };
+  // One installable app: a stable manifest, icons and launcher under /activity/. Registered
+  // ahead of "/:id" so these names are never read as session ids.
+  router.get("/manifest.webmanifest", async (_req, res) => {
+    const agent = await agentName(getClient()).catch(() => "");
+    res.type("application/manifest+json").send(JSON.stringify(activityManifest({ agent })));
+  });
+  for (const [route, file] of Object.entries(ACTIVITY_APP_ICONS)) router.get(`/${route}`, (_req, res) => {
+    res.set("Cache-Control", "public, max-age=86400");
+    res.sendFile(file, { root: fileURLToPath(new URL("../../public/activity/", import.meta.url)) });
+  });
+  router.get("/app", (req, res) => {
+    const id = activityAppSessionId(req.headers.cookie), session = id && sessions.get(id);
+    if (session && session.expiresAt > now() && session.origin === req.activityOrigin) return res.redirect(303, `/activity/${id}`);
+    return res.redirect(303, "/activity/login");
+  });
   router.get("/:id", serveDashboard);
   router.get("/:id/subscriptions", serveDashboard);
   router.get("/:id/settings", serveDashboard);

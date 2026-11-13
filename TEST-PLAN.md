@@ -17,7 +17,25 @@
   permission approval must likewise still show Waiting. Record the deployed revision, both
   source threads and observed status transitions; automated fixture results are not live passes.
 
-## Personal Settings in the Activity dashboard (2026-11-13)
+## Activity as an installable web app (2026-11-13)
+
+- Engine-independent: the manifest, icons and launcher are browser routes that call no engine.
+- Automated: `test/activity.test.js` ("Activity is one installable web app…") checks the manifest
+  fields and content type, that every icon is a PNG of its declared size inside the scope, the
+  signed-out launcher redirect to sign-in, the `manifest-src 'self'` CSP and manifest link on the
+  sign-in page and dashboard, the launcher cookie (id only, `Path=/activity/app`, 12 h), that the
+  launcher id alone opens no dashboard, and the fallback for malformed, unknown and expired ids.
+  With `CG_BROWSER_MODULE`/`CG_BROWSER_EXECUTABLE`, `test/activity-reuse-browser.test.js` asks
+  Chromium itself (`Page.getInstallabilityErrors`, persistent profile) and requires no errors on
+  sign-in, Activity, Subscriptions and Settings, the same manifest id on each, and that
+  `/activity/app` resumes the signed-in dashboard. Removing `manifest-src` makes it fail.
+- Manual (desktop Chrome or Edge over the deployment's HTTPS URL): open a Slack Activity link,
+  then use the address-bar **Install** icon (or ⋮ → Cast, save and share → Install page as app).
+  Pass if the installed window shows the gate icon and the agent's name, has no address bar,
+  switches between Activity, Subscriptions and Settings inside the same window, and Slack links
+  open Slack. Close and relaunch the app: within 12 h it opens the dashboard directly; after a
+  gateway restart it opens passkey sign-in and returns to the dashboard after signing in.
+
 
 - Engine-independent for the page and API: settings are stored by the daemon and no engine runs
   while they change. The effect on runs is engine-dependent and is covered by the live cases.

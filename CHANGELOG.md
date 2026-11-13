@@ -2,6 +2,10 @@
 
 ## 0.6.5 — candidate, pending approval
 
+- Make the Activity dashboard an installable web app. Chrome and Edge now offer **Install** on
+  any Activity page; the app opens in its own window with the ChannelGate icon, resumes your
+  current session and falls back to passkey sign-in when it has expired.
+
 - Keep Activity and Slack App Home showing Working when a queued message has optional
   Steer/Cancel controls. Only decisions that need a response mark the thread Waiting.
 

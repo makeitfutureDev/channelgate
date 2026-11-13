@@ -1023,3 +1023,62 @@ test("Settings page and API are the viewer's own, masked, CSRF-protected and clo
   assert.equal((await f.request(endpoint, { method: "POST", headers: mine.post, body: JSON.stringify({ action: "nudges", enabled: true }) })).status, 403);
   assert.notEqual((await getUser("U_MINE")).nudges, true);
 });
+
+test("Activity is one installable web app: shared manifest, icons and a launcher that resumes the live session", async (t) => {
+  const f = await fixture(t);
+  await f.root("C_WORK", "100.000001", "U_MINE");
+  const manifestResponse = await f.request("/activity/manifest.webmanifest", { headers: { Origin: f.base } });
+  assert.equal(manifestResponse.status, 200);
+  assert.match(manifestResponse.headers.get("content-type"), /^application\/manifest\+json/);
+  const manifest = await manifestResponse.json();
+  assert.equal(manifest.id, "/activity/app");
+  assert.equal(manifest.start_url, "/activity/app");
+  assert.equal(manifest.scope, "/activity/");
+  assert.equal(manifest.display, "standalone");
+  assert.ok(manifest.name && manifest.short_name);
+  for (const size of ["192x192", "512x512"]) assert.ok(manifest.icons.some((icon) => icon.sizes === size && icon.type === "image/png" && icon.purpose === "any"), size);
+  assert.ok(manifest.icons.some((icon) => icon.purpose === "maskable"));
+  for (const icon of manifest.icons) {
+    const response = await f.request(icon.src);
+    assert.equal(response.status, 200, icon.src);
+    assert.equal(response.headers.get("content-type"), "image/png");
+    const bytes = Buffer.from(await response.arrayBuffer());
+    assert.equal(bytes.readUInt32BE(1), 0x504e470d, "PNG signature");
+    assert.equal(`${bytes.readUInt32BE(16)}x${bytes.readUInt32BE(20)}`, icon.sizes);
+  }
+  assert.equal(manifest.icons.every((icon) => icon.src.startsWith(manifest.scope)), true);
+
+  // Signed out: the app opens on passkey sign-in, which also links the manifest under a CSP that allows it.
+  const signedOut = await f.request("/activity/app");
+  assert.equal(signedOut.status, 303);
+  assert.equal(signedOut.headers.get("location"), "/activity/login");
+  const loginPage = await f.request("/activity/login");
+  assert.match(await loginPage.text(), /<link rel="manifest" href="\/activity\/manifest\.webmanifest">/);
+  assert.match(loginPage.headers.get("content-security-policy"), /manifest-src 'self'/);
+
+  // A new session also sets the launcher cookie (id only, never the secret) scoped to /activity/app.
+  const response = await f.exchange();
+  const { url } = await response.json();
+  const cookies = response.headers.getSetCookie();
+  const launcher = cookies.find((c) => c.startsWith("cg_activity_app="));
+  const sessionCookie = cookies.find((c) => c.startsWith("cg_activity_") && !c.startsWith("cg_activity_app="));
+  assert.ok(launcher && sessionCookie);
+  const id = url.split("/").at(-1);
+  assert.equal(launcher.split(";")[0], `cg_activity_app=${id}`);
+  assert.match(launcher, /; HttpOnly; SameSite=Lax; Path=\/activity\/app; Max-Age=43200/);
+  assert.doesNotMatch(launcher, new RegExp(sessionCookie.split(";")[0].split("=")[1]));
+  const resumed = await f.request("/activity/app", { headers: { cookie: launcher.split(";")[0] } });
+  assert.equal(resumed.status, 303);
+  assert.equal(resumed.headers.get("location"), url);
+  // The dashboard still demands the session cookie: the launcher id alone opens nothing.
+  const page = await f.request(url, { headers: { cookie: launcher.split(";")[0] } });
+  assert.equal(page.status, 401);
+  const dashboard = await f.request(url, { headers: { cookie: sessionCookie.split(";")[0] } });
+  assert.equal(dashboard.status, 200);
+  assert.match(await dashboard.text(), /<link rel="manifest" href="\/activity\/manifest\.webmanifest">/);
+  for (const bad of ["cg_activity_app=nope", "cg_activity_app=AAAAAAAAAAAAAAAA", ""]) {
+    assert.equal((await f.request("/activity/app", { headers: { cookie: bad } })).headers.get("location"), "/activity/login", bad);
+  }
+  f.advance(ACTIVITY_SESSION_TTL_MS + 1);
+  assert.equal((await f.request("/activity/app", { headers: { cookie: launcher.split(";")[0] } })).headers.get("location"), "/activity/login");
+});

@@ -7,7 +7,24 @@ into the run queue. Accepted foreground or background work stays **Working**, in
 running clock; leftover optional cards alone leave the thread **Idle**. Required legacy
 busy-thread/engine-switch decisions, questions and approvals still show **Waiting**.
 
-## Personal Settings in the Activity dashboard (2026-11-13)
+## Activity as an installable web app (2026-11-13)
+
+Every personal Activity page (Activity, Subscriptions, Settings, Passkeys and the sign-in page)
+belongs to ONE installable web app, so Chrome and Edge offer **Install** and the dashboard opens
+in its own window with the ChannelGate gate icon.
+
+- **One manifest.** All Activity pages link `/activity/manifest.webmanifest` (id and start URL
+  `/activity/app`, scope `/activity/`, standalone display, 192/512 px and maskable PNG icons
+  served from `/activity/icon-*.png`). The app name is the agent's Slack display name followed by
+  "· Activity" ("ChannelGate Activity" when unknown). The page CSP adds `manifest-src 'self'`.
+  An Activity link opened while the app is running reuses its window where the browser supports
+  `launch_handler`.
+- **Stable start.** A session's own URL (`/activity/<id>`) is random and its cookie is scoped to
+  that path, so the app starts at `/activity/app`: it resumes the browser's latest live session
+  (a `cg_activity_app` cookie scoped to `/activity/app` holds only the session id, never its
+  secret; the dashboard still requires the session cookie) or opens passkey sign-in. Restarts,
+  expiry and a missing or malformed cookie all fall back to sign-in; the launcher grants nothing.
+
 
 The personal Activity dashboard has a **Settings** page (`/activity/:id/settings`, beside
 Activity and Subscriptions) where each person manages everything they can configure for

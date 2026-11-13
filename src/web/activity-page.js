@@ -3,6 +3,7 @@ import crypto from "node:crypto";
 import { ACTIVITY_THEME_CSS } from "./activity-theme.js";
 import { createSubscriptionUi, SUBSCRIPTION_CSS } from "../../public/subscription-ui.js";
 import { DEFAULT_ACTIVITY_GROUP_ORDER } from "./activity-order.js";
+import { ACTIVITY_APP_HEAD } from "./activity-app.js";
 
 // The header's theme switch, shared by every dashboard view. Matching the system choice clears
 // the override, so the page follows the OS again; a failed save keeps the theme for this page only.
@@ -922,7 +923,7 @@ export function activityPage({ sessionId, csrf, view = "activity", agent = "", t
   const pinned = theme === "dark" || theme === "light" ? ` data-theme="${theme}"` : "";
   const filters = [["active", "Active"], ["working", "Working"], ["waiting", "Waiting"], ["error", "Error"], ["idle", "Idle"], ["later", "Later"], ["done", "Completed"], ["open", "All open"]];
   return { nonce, html: `<!doctype html>
-<html lang="en"${pinned}><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="color-scheme" content="dark light"><title>${subscriptionsView ? "Subscriptions" : settingsView ? "Settings" : "Activity"} · ChannelGate</title><link rel="icon" type="image/svg+xml" href="/favicon.svg">
+<html lang="en"${pinned}><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="color-scheme" content="dark light"><title>${subscriptionsView ? "Subscriptions" : settingsView ? "Settings" : "Activity"} · ChannelGate</title><link rel="icon" type="image/svg+xml" href="/favicon.svg">${ACTIVITY_APP_HEAD}
 <style nonce="${nonce}">
 ${ACTIVITY_THEME_CSS}
 ${SUBSCRIPTION_CSS}
