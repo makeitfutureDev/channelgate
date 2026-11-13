@@ -107,32 +107,39 @@ function runtimeDisplay(ctx, scope, snapshot, locked) {
   return { ...snapshot, engine: draft.values.engine || snapshot.inheritedEngine, values: draft.values };
 }
 
-export async function renderGeneral(ctx, ui) {
+// `part` slices the page the way Slack's modal does: 'agent' is the runtime, the mode with its
+// options, the network line and the VPN; 'access' is who may use and manage the conversation and
+// the named people. Without one (Teams) the page is everything, as before.
+export async function renderGeneral(ctx, ui, { part = '' } = {}) {
   const { channel, thread, locked } = await generalRuntimeScopes(ctx);
   ctx.state.runtimeBaseline = { channel: { ...channel.values, locked }, ...(thread ? { thread: { ...thread.values, locked } } : {}) };
   const meta = effectiveMeta(ctx.meta), manager = managed(ctx.meta, ctx);
-  const body = [ui.text('Models are shown only for the selected engine. After changing Engine, use Load models, then choose model and effort and Apply for that scope. Channel defaults affect new sessions; thread overrides apply to this session.'), ui.heading('Channel defaults'), ...runtimeRows('channel', runtimeDisplay(ctx, 'channel', channel, locked), locked, ui)];
-  if (ctx.meta.codexAuthSource === 'channel') {
+  const agent = part !== 'access', access = part !== 'agent';
+  const body = !agent ? [] : [ui.text('Models are shown only for the selected engine. After changing Engine, use Load models, then choose model and effort and Apply for that scope. Channel defaults affect new sessions; thread overrides apply to this session.'), ui.heading('Channel defaults'), ...runtimeRows('channel', runtimeDisplay(ctx, 'channel', channel, locked), locked, ui)];
+  if (agent && ctx.meta.codexAuthSource === 'channel') {
     const login = await channelCodexLoginStatus(ctx.channelId).catch(error => {
       if (error.code === "enterprise_required") return { enterpriseRequired: true };
       throw error;
     });
     body.push(ui.text(`Channel Codex login: ${login.enterpriseRequired ? 'Enterprise required; switch to the gateway login in admin Settings to resume runs' : login.authenticated ? 'Signed in' : login.phase === 'pending' ? 'Sign-in in progress' : 'No channel login yet'}.`));
   }
-  if (thread) {
+  if (agent && thread) {
     body.push(ui.heading('Current session'), ...runtimeRows('thread', runtimeDisplay(ctx, 'thread', thread, locked), locked, ui));
     if (thread.sessionEngine) body.push(ui.text(`This session already runs on ${engineLabel(thread.sessionEngine)}. A channel default does not replace its live engine; choose an engine here to switch it.`));
     body.push(ui.buttons([ui.execute('Follow channel default', 'settings.thread.reset', {}, 'none')]));
   }
-  body.push(ui.heading(ctx.meta.isDM ? 'Mode and network' : 'Access'), ui.text('Only current managers can change channel access settings. Admin tool permissions still require an admin author.'));
+  body.push(ui.heading(part === 'agent' ? 'Mode' : ctx.meta.isDM ? 'Mode and network' : 'Access'), ui.text('Only current managers can change channel access settings. Admin tool permissions still require an admin author.'));
   if (manager || ctx.meta.isDM) {
-    const fields = ctx.meta.isDM ? ['mode', ...flagFields.filter(field => field !== 'allowNetwork')] : [...Object.keys(accessChoices), ...flagFields];
+    const policy = ['access', 'manageAccess'];
+    const fields = (ctx.meta.isDM ? ['mode', ...flagFields.filter(field => field !== 'allowNetwork')] : [...Object.keys(accessChoices), ...flagFields])
+      .filter(field => policy.includes(field) ? access : agent);
     for (const field of fields) {
       const value = field === 'mode' ? channelMode(meta) : field === 'access' ? meta.access || 'approved' : field === 'manageAccess' ? meta.manageAccess || 'admins' : meta[field] ? 'on' : 'off';
       const choices = accessChoices[field] || [{ label: 'On', value: 'on' }, { label: 'Off', value: 'off' }];
       body.push(ui.choice(`access_${field}`, labels[field], value, choices), ui.buttons([ui.execute(`Apply ${labels[field].split(' — ')[0]}`, 'settings.access', { field })]));
     }
-    if (!ctx.meta.isDM) {
+    if (!ctx.meta.isDM && access) {
+      if (part) body.push(ui.heading('People'));
       try {
         const members = await roster(ctx);
         const namedRows = [];
@@ -150,7 +157,11 @@ export async function renderGeneral(ctx, ui) {
         else body.push(ui.text('The complete member selectors are too large for this conversation card. Edit guest access and named managers in the authenticated channel settings website. All saved selections remain unchanged.'));
       } catch { body.push(ui.text('Named users cannot be edited until current conversation membership is available.')); }
     }
+  } else if (part === 'access') {
+    const named = field => accessChoices[field].find(item => item.value === (meta[field] || (field === 'access' ? 'approved' : 'admins')))?.label;
+    body.push(ui.text(`${labels.access}: ${named('access')}\n${labels.manageAccess}: ${named('manageAccess')}`));
   } else body.push(ui.text(`Mode: ${channelMode(meta)}${meta.autoMode ? ' · Auto' : ''}${meta.cleanMode ? ' · Lean' : ''}${meta.skillRuntimeSwap ? ' · Skill model swap' : ''}. Only current managers can change channel access settings.`));
+  if (!agent) return { body, actions: [] };
   body.push(ui.text(networkLabel(meta, { detail: true })));
   let vpn = unconfiguredChannelVpnStatus(ctx.meta);
   if (!vpn) { try { vpn = await getChannelVpnStatus(ctx.channelId); } catch { vpn = { state: 'unavailable', message: 'VPN status is unavailable for this conversation.' }; } }

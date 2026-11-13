@@ -2,6 +2,14 @@
 
 ## 0.6.5 — candidate, pending approval
 
+- Bring the Google Chat `/settings` card in line with Slack's Settings: the pages are now
+  **Agent, Access, MCP, Variables, Skills, Schedules, Diagnostics** and **You**, picked from one
+  **Section** dropdown that switches page on change. Access is its own page (hidden in a direct
+  message), Diagnostics shows both resume commands (gateway machine and inside the container),
+  and You opens your personal connections and variables in the private browser form. Each
+  heading opens its own titled card section, and the typed-command list is folded under
+  **Typed commands** at the bottom. Teams keeps its six-page layout.
+
 - Describe the native answer buttons as **Mark as done (thread owner only)** and **Move to Later (thread owner only)**, with matching
   screen-reader labels for their Activity actions.
 

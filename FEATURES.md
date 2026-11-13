@@ -1138,8 +1138,17 @@ Task progress remain visible; older agent streams without optional task-type met
   phrases use a chat icon. The card is the whole reply, with no separate text bubble. If card
   delivery fails, the complete text guide is returned.
 - `/settings`, `/secrets` and `/model` open requester-only panels in their source space/session.
-  General, Variables, MCPs, Skills, Automations and Resume reuse the same guarded settings policy
-  as Teams. Channel defaults and session overrides have separate model/effort previews and Apply
+  The settings card follows Slack's Settings modal: the same pages in the same order under the
+  same names — **Agent** (engine/model/effort for the conversation and the current session, the
+  mode with Auto, Lean, network and skill model swap, VPN), **Access** (who may use and manage the
+  conversation, guests and named managers; absent in a direct message), **MCP**, **Variables**,
+  **Skills**, **Schedules**, **Diagnostics** (the session's engine, id and folder with BOTH resume
+  commands, one for the gateway machine and one for a shell inside the container) and **You**
+  (a person's own connections, email accounts and variables, opened in the private browser form
+  because a Chat card cannot mask input). They reuse the same guarded settings policy as Teams,
+  whose own six-page layout is unchanged. The pages are chosen from one **Section** dropdown that
+  navigates on change (not a row of tab buttons), and each heading of a page is its own titled
+  card section; a change made on Access stays on Access. Channel defaults and session overrides have separate model/effort previews and Apply
   actions. Credential entry opens a private browser form using one-use grants, HttpOnly cookies,
   CSRF checks and current space membership; stored values are never displayed or prefilled.
 - `/files [folder]`, `/sendfile <path>` and the agent's `share_file` show private file controls:
@@ -1193,7 +1202,8 @@ Task progress remain visible; older agent streams without optional task-type met
   `settings.vpn` / `settings.runtime` action the card buttons call (`settings-commands.js`), so
   authorization, manager checks, mode policy and audit are unchanged; the reply is the policy's
   own outcome. Named guests/managers, credentials and destructive actions stay on cards or the
-  private browser form. The `/settings` card leads with this command list. This is what works
+  private browser form. The `/settings` card ends with this command list, folded under
+  **Typed commands** (one visible line, the list behind *Show more*). This is what works
   on a Pub/Sub-connected app, where Chat delivers no card clicks to the gateway.
 - **Click and ignored-event logging.** Every card click logs `card click received via
   pubsub|http: <action>`; a click whose shape is not recognized logs `card click dropped`, and any
