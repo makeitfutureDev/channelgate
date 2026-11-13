@@ -55,7 +55,7 @@ test("shared gateway Codex login API is admin-only and rejects invalid key input
   assert.equal("file" in state, false);
 });
 
-test("selecting a channel Codex login fixes its engine and clears incompatible model settings", async () => {
+test("attaching a channel Codex login preserves the selected harness and model", async () => {
   const login = await fetch(`${base}/api/login`, {
     method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ password: "codex-login-web-test" }),
   });
@@ -67,7 +67,7 @@ test("selecting a channel Codex login fixes its engine and clears incompatible m
   assert.equal(saved.status, 200);
   const meta = await getChannelMeta(entry.slug);
   assert.equal(meta.codexAuthSource, "channel");
-  assert.equal(meta.engine, "codex");
-  assert.equal(meta.model, "");
+  assert.equal(meta.engine, "claude");
+  assert.equal(meta.model, "claude-sonnet-5");
   assert.equal(meta.effort, "high");
 });

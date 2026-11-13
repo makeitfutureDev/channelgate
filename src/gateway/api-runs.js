@@ -36,6 +36,7 @@ import {
   defaultChannelMeta,
 } from "../config/store.js";
 import { assertChannelEngineApproved } from "./channel-engines.js";
+import { assertEngineSelectable } from "../engines/selection.js";
 import { runMessage, effectiveMeta, applyRunOverrides } from "./run.js";
 import { ATTACHMENT_MAX_BYTES, oversizeMessage, readBoundedBytes } from "../util/bounded-bytes.js";
 import { ensureRealDir, writeNoFollow, writeStreamNoFollow } from "./safe-fs.js";
@@ -154,6 +155,7 @@ function startShape(job, reused = false) {
     jobId: job.id,
     status: job.status,
     engine: job.engine,
+    harness: job.engine,
     slug: job.slug,
     channelId: job.slackThread ? job.channelId : null,
     slackThread: Boolean(job.slackThread),
@@ -467,6 +469,7 @@ async function fireWebhook(job) {
     sessionId: job.sessionId,
     resumeCommand: job.resumeCommand,
     engine: job.engine,
+    harness: job.engine,
     slug: job.slug,
     channelId: job.slackThread ? job.channelId : null,
     costUSD: job.costUSD ?? null,
@@ -521,7 +524,7 @@ function countInflight() {
 // Returns job admission/session facts plus conversationKey/threadTs/threadReused/threadPermalink.
 // or { ok:false, code, error }. The run itself proceeds in the background.
 export async function startApiRun(input = {}) {
-  const { message, file, fileUrl, engine: engineIn, model, effort, mode, idempotencyKey } = input;
+  const { message, file, fileUrl, engine: engineIn, harness: harnessIn, model, effort, mode, idempotencyKey } = input;
   const msg = String(message ?? "").trim();
   const hasFile = Boolean((typeof file?.dataBase64 === "string" && file.dataBase64) || (typeof file === "string" && file) || fileUrl);
   if (!msg && !hasFile) return { ok: false, code: 400, error: "Provide a `message` (and/or a file)." };
@@ -547,8 +550,11 @@ export async function startApiRun(input = {}) {
 
   // Per-request overrides (win over the channel/DM config for this one run). Validated before the
   // reservation below so a malformed request never consumes an in-flight slot.
-  const engineOv = engineIn ? String(engineIn).trim().toLowerCase() : "";
-  if (engineOv && !ENGINES.includes(engineOv)) return { ok: false, code: 400, error: `engine must be one of: ${ENGINES.join(", ")}` };
+  const legacyEngineOv = engineIn ? String(engineIn).trim().toLowerCase() : "";
+  const harnessOv = harnessIn ? String(harnessIn).trim().toLowerCase() : "";
+  if (legacyEngineOv && harnessOv && legacyEngineOv !== harnessOv) return { ok: false, code: 400, error: "harness and engine must name the same harness when both are supplied." };
+  const engineOv = harnessOv || legacyEngineOv;
+  if (engineOv && !ENGINES.includes(engineOv)) return { ok: false, code: 400, error: `harness (or engine) must be one of: ${ENGINES.join(", ")}` };
   const modeOv = mode ? normalizeMode(mode) : "";
   if (modeOv === "invalid") return { ok: false, code: 400, error: "mode must be one of: read, worker, auto, full, lean (aliases: bash→worker, admin→full)" };
   const overrides =
@@ -648,8 +654,12 @@ async function startClaimedRun({ author, channel, file, fileUrl, fileName, webho
   // Reject an explicit disallowed override before preparing files or posting a kickoff. Reused
   // conversations resolve their session owner later, under the ordinary run admission guard.
   try {
-    if (engineOv || !conversationKey) assertChannelEngineApproved(meta, engineOv || (ENGINES.includes(meta.engine) ? meta.engine : "") || getEngine());
-  } catch (error) { return { ok: false, code: error.statusCode || 403, error: error.message }; }
+    if (engineOv || !conversationKey) {
+      const selectedEngine = engineOv || (ENGINES.includes(meta.engine) ? meta.engine : "") || getEngine();
+      assertChannelEngineApproved(meta, selectedEngine);
+      await assertEngineSelectable(selectedEngine, { channelId: entry.channelId, meta });
+    }
+  } catch (error) { return { ok: false, code: error.statusCode || error.status || 400, error: error.message }; }
   await ensureChannelFolder(slug, meta); // idempotent — writes the lockdown + uploads root exists
   const cwd = effectiveWorkDir(slug, meta);
 
@@ -854,7 +864,18 @@ async function runInBackground(job, { textForRun, attachmentPath, client, teamId
       progressReport: Boolean(status && client),
       onDelta: status?.onDelta,
       onEvent,
+      onRuntimeResolved: (runtime) => {
+        if (runtime?.engine && runtime.engine !== job.engine) {
+          job.engine = runtime.engine;
+          persist(job);
+        }
+        status?.onRuntimeResolved?.(runtime);
+      },
     });
+
+    // Report the harness that actually answered, including a default's automatic failover.
+    // This also applies when a stop arrives as that harness is finishing.
+    job.engine = result.engine || job.engine;
 
     // A stop that landed while the run was finishing: honor the intent — mark stopped, suppress the
     // answer (don't post/return it), but still bill what it cost.
@@ -877,7 +898,6 @@ async function runInBackground(job, { textForRun, attachmentPath, client, teamId
     job.completedMs = Date.now();
     // Take the engine + session actually used (Codex mints its own thread id), so the resume
     // command and session id are accurate on completion even if the engine differed from the guess.
-    job.engine = result.engine || job.engine;
     if (result.sessionId) job.sessionId = result.sessionId;
     if (result.cwd) job.cwd = result.cwd;
     job.resumeCommand = await buildResumeCommand({ slug: job.slug, cwd: job.cwd, sessionId: job.sessionId, engine: job.engine });

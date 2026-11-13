@@ -6,6 +6,7 @@ ensureTestEnv();
 
 const {
   modelWizardModelBlocks,
+  modelWizardEngineBlocks,
   modelWizardEffortBlocks,
   modelOptionsForEngine,
   MODEL_PICKER_ACTION_PATTERN,
@@ -134,10 +135,20 @@ test("wizard descriptions and posted text follow live harness toggles and channe
     saveSettings({ engineEnabled: { "codex-eu": false } });
     await postModelWizard(client, { channel: "C_WIZARD", meta });
     assert.ok(!messages.at(-1).text.includes("Codex EU"));
-    assert.equal(modelWizardText({ codexAuthSource: "channel" }), "Change the Codex model: pick scope, model, then effort.");
+    assert.match(modelWizardText({ codexAuthSource: "channel", channelId: "C_WIZARD" }), /pick scope, then harness/);
     await postModelWizard(client, { channel: "C_WIZARD", meta: { codexAuthSource: "channel" } });
     assert.equal(messages.at(-1).text, modelWizardText({ codexAuthSource: "channel" }));
   } finally {
     saveSettings({ engineEnabled: before });
   }
+});
+
+test("the channel account is offered alongside gateway harnesses only in its connected channel", () => {
+  const connected = { channelId: "C_ACCOUNT_PICKER", codexAuthSource: "channel" };
+  const ids = meta => allButtons(modelWizardEngineBlocks({ scope: "channel", meta })).map(button => button.action_id);
+  assert.ok(ids(connected).includes("cg_mw_engine_codex-channel"));
+  assert.ok(ids(connected).includes("cg_mw_engine_codex"));
+  assert.ok(ids(connected).includes("cg_mw_engine_claude"));
+  assert.ok(!ids({ channelId: "C_UNCONNECTED" }).includes("cg_mw_engine_codex-channel"));
+  assert.ok(!ids({ ...connected, approvedEngines: ["claude"] }).includes("cg_mw_engine_codex-channel"));
 });

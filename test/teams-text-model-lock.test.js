@@ -21,14 +21,14 @@ function settings(engineEnabled = { claude: true, codex: true }) {
 }
 
 for (const kind of ['channel', 'dm']) {
-  test(`Teams ${kind} /model claude rejects a channel Codex login without changing any override`, async () => {
+  test(`Teams ${kind} /model claude switches away from a channel Codex login`, async () => {
     settings();
     const slug = `teams-text-lock-${kind}`, before = { engine: 'codex', model: 'gpt-6-sol', effort: 'high' };
     setThreadRuntimeOverrides(slug, 'root', before);
     const meta = { engine: 'codex', codexAuthSource: 'channel', model: 'gpt-6-sol' };
-    assert.match(await command(slug, '/model claude sonnet', meta, { kind }), /own Codex login.*Codex/);
-    assert.deepEqual(await snapshot(slug), before);
-    assert.equal(await resolveThreadEngine(slug, 'root', meta), 'codex');
+    assert.match(await command(slug, '/model claude sonnet', meta, { kind }), /Session engine: claude/);
+    assert.deepEqual(await snapshot(slug), { engine: 'claude', model: 'sonnet', effort: '' });
+    assert.equal(await resolveThreadEngine(slug, 'root', meta), 'claude');
   });
 }
 
@@ -90,8 +90,8 @@ test('Teams /model default clears the model override and reports the compatible 
 // scheduling seam avoids sleeps or replacing the real engine admission/store implementations.
 function duringAdmission(callback) {
   let reads = 0;
-  return { engine: 'claude', get codexAuthSource() {
-    if (++reads === 2) queueMicrotask(callback);
+  return { engine: 'claude', get channelId() {
+    if (++reads === 1) queueMicrotask(callback);
     return '';
   } };
 }

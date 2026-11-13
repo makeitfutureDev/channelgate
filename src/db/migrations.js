@@ -1305,4 +1305,29 @@ export const migrations = [
       }
     },
   },
+  {
+    version: 53,
+    up(db) {
+      // Dedicated-account channels previously forced every Codex selection to their account.
+      // Preserve that account for saved defaults/pins without keeping the channel-wide lock.
+      for (const row of db.prepare("SELECT slug, data FROM channel_meta").all()) {
+        let meta;
+        try { meta = JSON.parse(row.data); } catch { continue; }
+        if (meta?.codexAuthSource !== "channel") continue;
+        meta.engine = "codex-channel";
+        meta.codexChannelLegacyHistory = true;
+        if (Array.isArray(meta.approvedEngines)) meta.approvedEngines = meta.approvedEngines.map(id => id === "codex" ? "codex-channel" : id);
+        if (meta.allowedCodexMcps && !meta.allowedChannelCodexMcps) meta.allowedChannelCodexMcps = meta.allowedCodexMcps;
+        db.prepare("UPDATE channel_meta SET data=? WHERE slug=?").run(JSON.stringify(meta), row.slug);
+        db.prepare("UPDATE sessions SET engine='codex-channel' WHERE slug=? AND engine='codex'").run(row.slug);
+        db.prepare("UPDATE thread_overrides SET value='codex-channel' WHERE slug=? AND kind='engine' AND value='codex'").run(row.slug);
+        for (const schedule of db.prepare("SELECT id, data FROM schedules WHERE channel_id=?").all(meta.channelId || "")) {
+          let data;
+          try { data = JSON.parse(schedule.data); } catch { continue; }
+          if (data?.engine !== "codex") continue;
+          db.prepare("UPDATE schedules SET data=? WHERE id=?").run(JSON.stringify({ ...data, engine: "codex-channel" }), schedule.id);
+        }
+      }
+    },
+  },
 ];

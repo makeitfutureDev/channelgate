@@ -24,8 +24,42 @@ deprecated: it acts as a fixed admin principal in *any* conversation with no per
 and every use logs a deprecation warning (one per hour). Replace it with channel tokens and clear
 it. An authenticated admin session also works from the browser.
 
-The Admin UI's HTTP run API page documents message/file inputs, engine overrides, polling,
+The Admin UI's HTTP run API page documents message/file inputs, harness overrides, polling,
 stopping and completion webhooks.
+
+## Harness selection
+
+Set `harness` to a registered harness ID for this run. `engine` remains a supported alias;
+when both fields are supplied they must name the same harness, otherwise the API returns 400.
+For example, to use the customer's connected Codex account:
+
+```json
+{
+  "channel": "C0123456789",
+  "harness": "codex-channel",
+  "message": "Review the latest changes."
+}
+```
+
+The Codex harnesses have separate selections and sessions:
+
+- `codex`: the gateway's Codex account.
+- `codex-channel`: **Codex (channel account)**, the dedicated account connected to the target
+  conversation. Requires Enterprise and that conversation's connected Codex account; a missing
+  connection is refused before a new job starts and never falls back to the gateway account.
+- `codex-eu`: the separate Codex EU account, when configured and enabled.
+
+Other registered harness IDs are accepted too. The selected harness must be enabled, ready,
+and approved for the target conversation. An explicit `harness` or `engine` is a per-run pin:
+provider failure does not silently switch it to another harness. Omit both fields to use normal
+thread/channel/gateway selection.
+
+POST, GET status/list and completion webhooks return `harness`, with `engine` carrying the same
+ID for existing clients. Initially this is the admission selection; for a reused conversation,
+its live thread selection is resolved after waiting for the thread queue. Status updates follow
+the resolved harness while the run executes, including any permitted failover from a default.
+At completion both fields identify the harness actually used.
+An idempotent retry returns the original job and its harness; it does not change that run.
 
 ## Conversations
 

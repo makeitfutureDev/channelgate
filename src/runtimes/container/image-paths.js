@@ -88,6 +88,7 @@ export function containerImagePaths() {
     tmpDir: CONTAINER_TMPDIR,
     claudeConfigDir: CONTAINER_CLAUDE_CONFIG_DIR,
     codexHome: CONTAINER_CODEX_HOME,
+    codexChannelHome: `${CONTAINER_HOME}/.codex-channel`,
     codexEuHome: `${CONTAINER_HOME}/.codex-eu`,
     claudeBedrockConfigDir: `${CONTAINER_HOME}/.claude-bedrock`,
     npmPrefix: CONTAINER_NPM_PREFIX,

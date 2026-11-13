@@ -132,13 +132,13 @@ test("engines are enabled by default and the map round-trips through settings", 
   saveSettings({ engineEnabled: { claude: true, codex: false, opencode: false } });
   assert.equal(isEngineEnabled("codex"), false);
   assert.deepEqual(getEnabledEngines(), ["claude"]);
-  assert.deepEqual(getEngineEnabledMap(), { claude: true, codex: false, "codex-eu": false, "claude-bedrock": false, qwen: false, "qwen-eu": false, opencode: false });
+  assert.deepEqual(getEngineEnabledMap(), { claude: true, codex: false, "codex-channel": false, "codex-eu": false, "claude-bedrock": false, qwen: false, "qwen-eu": false, opencode: false });
   assert.equal(settingsForApi().engineEnabled.codex, false);
 });
 
 test("a stored map that disables every harness fails open instead of bricking the gateway", () => {
   saveSettings({ engineEnabled: { claude: false, codex: false, opencode: false } });
-  assert.deepEqual(getEnabledEngines(), ["claude", "codex", "opencode"]);
+  assert.deepEqual(getEnabledEngines(), ["claude", "codex", "codex-channel", "opencode"]);
 });
 
 test("the gateway default engine resolves past a disabled harness", () => {

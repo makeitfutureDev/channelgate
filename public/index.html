@@ -272,13 +272,16 @@
                   <tr><td><code>fileUrl</code></td><td>string</td><td>http(s) URL the daemon downloads into the run's <code>uploads/</code>. ≤25&nbsp;MB.</td></tr>
                   <tr><td><code>fileName</code></td><td>string</td><td>Override the saved filename (with <code>fileUrl</code>/inline).</td></tr>
                   <tr><td><code>webhook</code></td><td>string</td><td>http(s) URL POSTed once the run finishes (completed <em>or</em> failed).</td></tr>
-                  <tr><td><code>engine</code></td><td>string</td><td>Per-run override: <code>claude</code> or <code>codex</code>.</td></tr>
+                  <tr><td><code>harness</code></td><td>string</td><td>Per-run harness ID, such as <code>claude</code>, <code>codex</code> (gateway account), <code>codex-channel</code> (channel account), or <code>codex-eu</code>. Must be enabled, configured and approved for this conversation.</td></tr>
+                  <tr><td><code>engine</code></td><td>string</td><td>Supported alias of <code>harness</code>. If both are supplied, they must name the same harness.</td></tr>
                   <tr><td><code>model</code> / <code>effort</code></td><td>string</td><td>Per-run model / reasoning-effort override.</td></tr>
                   <tr><td><code>mode</code></td><td>string</td><td>Capability profile: <code>read</code>, <code>worker</code>, <code>auto</code>, <code>full</code>, <code>lean</code> (aliases <code>bash</code>→worker, <code>admin</code>→full).</td></tr>
                   <tr><td><code>idempotencyKey</code></td><td>string</td><td>Any unique-per-request string. A repeat POST with the same key within 15&nbsp;min returns the original job instead of starting a second run.</td></tr>
                 </tbody>
               </table>
+              <p class="desc"><code>codex-channel</code> selects <strong>Codex (channel account)</strong> and requires Enterprise plus a Codex account connected to the target conversation. It keeps a separate session from the gateway's <code>codex</code> and <code>codex-eu</code> harnesses. An explicit <code>harness</code> or <code>engine</code> pins this run; a provider failure does not silently switch it to another harness. Omit both to use the thread/channel/gateway selection.</p>
               <p class="desc"><strong>Responses:</strong> <code>202</code> a fresh run started · <code>200</code> an idempotent hit (<code>reused:true</code>) · <code>400</code> validation error · <code>409</code> an event key belongs to another keyed conversation · <code>429</code> too many runs in flight (max 25) · <code>503</code> Slack unavailable or thread verification failed for a keyed conversation. <code>401</code> if the token is missing or wrong.</p>
+              <p class="desc">POST, status, list and webhook responses include <code>harness</code> and the compatible <code>engine</code> alias with the same ID. At completion they identify the harness actually used. For a reused conversation the live thread selection resolves after waiting for its queue; the initial response reports the admission selection.</p>
               <p class="desc">POST, status, list and webhook responses include <code>threadTs</code>, <code>threadReused</code> and <code>threadPermalink</code>. Headless runs return null timestamps/links; link lookup failure also returns null. <code>threadReused</code> means an existing thread was used for this event; <code>reused</code> means the event itself was deduplicated. Keyed runs resolve the agent session after acquiring the thread queue: <code>sessionId</code> and <code>resumeCommand</code> are null until completion. A deleted root is replaced; access errors or throttling fail without creating a duplicate thread.</p>
               <pre class="apidoc-pre"><code>curl -X POST <span class="apidoc-base">https://your-gateway</span>/api/runs \
   -H "X-API-Key: &lt;your token&gt;" \
@@ -295,6 +298,7 @@
   "ok": true,
   "jobId": "a1b2c3d4e5f6",
   "status": "running",
+  "harness": "claude",
   "engine": "claude",
   "conversationKey": "mail:thread:conversation-42",
   "threadTs": "1791540000.000001",
@@ -313,6 +317,7 @@
   "ok": true,
   "jobId": "a1b2c3d4e5f6",
   "status": "completed",
+  "harness": "claude",
   "engine": "claude",
   "sessionId": "…",
   "resumeCommand": "…",
@@ -344,6 +349,7 @@
   "status": "completed",          // or "failed"
   "sessionId": "…",
   "resumeCommand": "…",
+  "harness": "claude",
   "engine": "claude",
   "costUSD": 0.0123,
   "costEstimated": false,         // true = priced from the usage ledger (Codex reports no cost)
@@ -1584,16 +1590,16 @@
         <div class="subpane" data-pane="runtime">
           <div class="ch-auth-chooser">
             <label class="field">
-              <span>Which Codex login should this channel use? · Dedicated login requires Enterprise</span>
+              <span>Connect a Codex account for this channel · Enterprise</span>
               <select class="ch-codex-auth-source">
-                <option value="gateway">Default gateway login (shared)</option>
-                <option value="channel">This channel's own login</option>
+                <option value="gateway">Use the available gateway harnesses</option>
+                <option value="channel">Add this channel's own account</option>
               </select>
             </label>
           </div>
           <div class="ch-auth-channel-panel" hidden>
             <h4>This channel's Codex setup</h4>
-            <p class="hint">This login is used only by this conversation. Other channels keep their own selection.</p>
+            <p class="hint">This account appears as Codex (channel account) in the harness picker. Switch between it and gateway harnesses in this channel or a thread.</p>
             <div class="field ch-codex-login">
               <label class="field"><span>Sign-in method</span><select class="ch-codex-login-method"><option value="">Choose a method…</option><option value="device">Sign in with ChatGPT</option><option value="api-key">Use an OpenAI API key</option></select></label>
               <div class="ch-codex-login-status state">Checking sign-in…</div>

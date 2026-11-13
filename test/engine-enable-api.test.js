@@ -92,5 +92,5 @@ test("the admin UI renders the harness switches and saves both engine settings",
   assert.match(client, /engineEnabled: \{ \.\.\.ENGINE_ENABLED \}/);
   // Every engine picker is built from the enabled set, so a disabled harness can't be chosen.
   assert.match(client, /function selectableEngines/);
-  assert.match(client, /selectableEngines\(\)\.map/);
+  assert.match(client, /selectableEngines\(meta\)\.map/);
 });

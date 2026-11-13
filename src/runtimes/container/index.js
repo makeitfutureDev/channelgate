@@ -18,6 +18,7 @@ import { createContainerReaper } from "./reaper.js";
 import { codexAuthCandidates, codexAuthIdentity, credentialError, credentialNotes, intendedCredentialModes } from "./credentials.js";
 import { containerImagePaths, IMAGE_HELPERS, IMAGE_SPEC_VERSION } from "./image-paths.js";
 import { egressPlanFor } from "./egress-hook.js";
+import { adapterFor } from "../../engines/registry.js";
 import { channelHistoryRoot } from "./history.js";
 
 export { credentialError, credentialNotes } from "./credentials.js";
@@ -144,6 +145,9 @@ export const containerBackend = Object.freeze({
       // the target instead of keeping a second copy of the same strings.
       ...containerImagePaths(),
     };
+    const selectedAdapter = adapterFor(base.meta?.engine);
+    const stateKey = selectedAdapter?.cli === "codex" ? selectedAdapter.sessionState?.containerDirKey : "";
+    if (stateKey && container[stateKey]) container.codexHome = container[stateKey];
     const target = {
       ...base,
       backend: "container",

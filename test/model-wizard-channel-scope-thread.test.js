@@ -90,21 +90,22 @@ test("a channel-scope model pick applies to the thread it was made in", async ()
   assert.doesNotMatch(JSON.stringify(done.blocks), /fresh Claude session/, "nothing moved, so nothing to warn about");
 });
 
-test("a dedicated channel Codex login offers only Codex models and rejects an old Claude button", async () => {
+test("a dedicated channel Codex login offers harness switching and accepts a Claude button", async () => {
   saveSettings({ engine: "claude", modelChangeAccess: "admins", engineEnabled: { claude: true, codex: true } });
   await setUser(ADMIN, { name: "Admin", approved: true, isAdmin: true });
   const entry = await channel("C_MW_LOCKED", "mw-codex-locked", { codexAuthSource: "channel", engine: "codex", model: "" });
   await saveSession(entry.slug, THREAD, "old-claude-session", "claude");
   await setThreadEngine(entry.slug, THREAD, "claude");
-  assert.equal(await resolveThreadEngine(entry.slug, THREAD, await getChannelMeta(entry.slug)), "codex");
+  assert.equal(await resolveThreadEngine(entry.slug, THREAD, await getChannelMeta(entry.slug)), "claude");
   const client = fakeClient();
   await click(client, "C_MW_LOCKED", MODEL_WIZARD_SCOPE_CHANNEL_ACTION, wizardValue());
   const card = JSON.stringify(client.updates.at(-1).blocks);
-  assert.match(card, /Choose a Codex model/);
-  assert.doesNotMatch(card, /cg_mw_engine_claude/);
+  assert.match(card, /Which harness/);
+  assert.match(card, /cg_mw_engine_claude/);
+  assert.match(card, /cg_mw_engine_codex-channel/);
   await click(client, "C_MW_LOCKED", "cg_mw_engine_claude", wizardValue());
-  assert.equal((await getChannelMeta(entry.slug)).engine, "codex");
-  assert.match(client.ephemerals.at(-1).text, /engine stays Codex/);
+  assert.equal((await getChannelMeta(entry.slug)).engine, "claude");
+  assert.equal(client.ephemerals.length, 0);
 });
 
 test("Fable 5.2 saves its exact ID while an older Fable button remains usable", async () => {

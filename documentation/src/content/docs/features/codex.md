@@ -19,7 +19,7 @@ A new Codex process does not mean a fresh conversation on every reply. ChannelGa
 
 ## Set up authentication
 
-The operator configures a working Codex login or API credential. An administrator can choose a dedicated Codex login for the conversation through Runtime → Codex authentication. That choice fixes the channel and its threads to Codex and does not fall back to a different account if the dedicated login is missing. It is distinct from a human's personal Composio connection. Consult the authentication guide before changing shared login behavior.
+The operator configures a working Codex login or API credential. An administrator can choose a dedicated Codex login for the conversation through Runtime → Codex authentication. That account appears as **Codex (channel account)** (`codex-channel`), independently selectable from gateway **Codex** (`codex`). Channels and threads can switch harnesses; a missing dedicated login never falls back to a different account. It is distinct from a human's personal Composio connection. Consult the authentication guide before changing shared login behavior.
 
 In the proxy-backed container runtime, the engine receives access-only authentication with protected placeholders rather than the host's refresh token. Authentication errors identify the configuration that needs repair.
 

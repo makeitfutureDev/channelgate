@@ -69,7 +69,7 @@ export function register(server, ctx) {
     { description: "List the MCP servers available to allow in this channel (from the host's configured servers).", inputSchema: {} },
     async () => {
       const meta = await loadMeta();
-      const servers = await requireAdapter(activeEngine).discoverMcps({ channelId: activeEngine === "codex" && meta?.codexAuthSource === "channel" ? channelId : "" });
+      const servers = await requireAdapter(activeEngine).discoverMcps({ channelId: activeEngine === "codex-channel" ? channelId : "" });
       if (!servers.length) return text("No MCP servers available on the host.");
       return text(servers.map((s) => `• ${s.name}${s.selectable === false ? " (unavailable: " + s.admissionReason + ")" : s.connected ? "" : " (offline)"}`).join("\n"));
     }
@@ -99,7 +99,7 @@ export function register(server, ctx) {
     async ({ names }) => {
       if (!(await requireManage())) return text("Only this channel's managers (or an admin) can change its MCP servers.");
       const sourceMeta = await loadMeta();
-      const available = await requireAdapter(activeEngine).discoverMcps({ channelId: activeEngine === "codex" && sourceMeta?.codexAuthSource === "channel" ? channelId : "" });
+      const available = await requireAdapter(activeEngine).discoverMcps({ channelId: activeEngine === "codex-channel" ? channelId : "" });
       const requested = available.filter(s => names.some(name => s.name.toLowerCase() === String(name).toLowerCase()))
         .map(s => persistedSelectionForEngine(activeEngine, s)).filter(Boolean);
       try { await assertNewMcpSelections(activeEngine, requested); }

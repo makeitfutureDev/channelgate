@@ -7,6 +7,7 @@ export const ACCESS_GRANT_FIELDS = [
   "skills",
   "allowedMcps",
   "allowedCodexMcps",
+  "allowedChannelCodexMcps",
   "allowedOpenCodeMcps",
 ];
 

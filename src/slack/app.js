@@ -1,4 +1,4 @@
-import { assertApprovedEnginesUpdate, assertChannelEngineApproved, isChannelEngineApproved } from "../gateway/channel-engines.js";
+import { assertApprovedEnginesUpdate, assertChannelEngineApproved, engineAvailableForChannel, isChannelEngineApproved } from "../gateway/channel-engines.js";
 import { getLicenseStatus } from "../ee/license.js";
 import { assertEngineSelectable } from "../engines/selection.js";
 import { randomUUID } from "node:crypto";
@@ -827,7 +827,7 @@ export async function accessPeople(meta, channelId, focusId = "") {
 async function cloudPickerData(meta, waitMs) {
   const out = {};
   const inherited = getOrgAccessGrants();
-  for (const engine of ["claude", "codex"]) {
+  for (const engine of cloudEngineChoices(meta)) {
     const items = await withTimeout(cloudManagerItems(meta, engine).catch(() => null), waitMs, null);
     if (!items) { out[engine] = { ready: false }; continue; }
     out[engine] = {
@@ -1238,10 +1238,12 @@ function pickerDiff(current = [], picked = []) {
   };
 }
 
+const cloudEngineChoices = meta => ["claude", "codex", "codex-channel"].filter(id => engineAvailableForChannel(meta, id));
+
 function channelSettingsSnapshot(meta = {}) {
   const effective = effectiveMeta(meta);
   const channelLogin = effective.codexAuthSource === "channel";
-  const effectiveEngine = channelLogin ? "codex" : effective.engine || getEngine();
+  const effectiveEngine = effective.engine || getEngine();
   const gatewayEngine = getEngine();
   const organization = getOrgAccessGrants();
   const channelTier = { ...effective, skills: channelSkillGrants(effective) };
@@ -1256,8 +1258,8 @@ function channelSettingsSnapshot(meta = {}) {
       approvedEngines: meta.approvedEngines ?? null,
       harnessOptions: ENGINE_IDS.map((id) => ({ value: id, label: engineLabel(id) })),
       channelLogin,
-      configuredEngineId: channelLogin ? "codex" : effective.engine || "",
-      configuredEngine: channelLogin ? "Codex" : effective.engine ? engineLabel(effective.engine) : "",
+      configuredEngineId: effective.engine || "",
+      configuredEngine: effective.engine ? engineLabel(effective.engine) : "",
       effectiveEngineId: effectiveEngine,
       effectiveEngine: engineLabel(effectiveEngine),
       gatewayEngineId: gatewayEngine,
@@ -1282,6 +1284,7 @@ function channelSettingsSnapshot(meta = {}) {
     cloudMcp: {
       claude: { channel: effective.allowedMcps || [], organization: organization.allowedMcps || [] },
       codex: { channel: effective.allowedCodexMcps || [], organization: organization.allowedCodexMcps || [] },
+      ...(channelLogin ? { "codex-channel": { channel: effective.allowedChannelCodexMcps || [], organization: [] } } : {}),
     },
     skills: {
       template: template?.name || effective.skillTemplate || "",
@@ -1329,7 +1332,7 @@ export function channelSettingsEditOptions(meta, userIsAdmin, { authorId = "", i
 // effectiveMeta with that one field blank, so the dropdown's "inherited" label and the validation
 // that accepts the next pick can never disagree about what an unset field means.
 function inheritedChannelRuntime(meta = {}) {
-  const engine = meta.codexAuthSource === "channel" ? "codex" : effectiveMeta({ ...meta, engine: "" }).engine || getEngine();
+  const engine = effectiveMeta({ ...meta, engine: "" }).engine || getEngine();
   return {
     engine,
     model: effectiveMeta({ ...meta, model: "" }).model || getDefaultModel(engine) || "",
@@ -1356,7 +1359,7 @@ async function threadRuntimeEngine(slug, threadKey, meta) {
 // thread inside a Claude channel offers Codex models rather than the channel's.
 export async function runtimeScopes(slug, meta, snapshot, threadKey) {
   const runtime = snapshot.runtime;
-  const engines = getEnabledEngines().filter((id) => isChannelEngineApproved(meta, id)).map((id) => ({ label: engineLabel(id), value: id }));
+  const engines = getEnabledEngines().filter((id) => isChannelEngineApproved(meta, id) && engineAvailableForChannel(meta, id)).map((id) => ({ label: engineLabel(id), value: id }));
   const channelEngine = runtime.effectiveEngineId;
   const channelModel = runtime.configuredModel || getDefaultModel(channelEngine) || "";
   const parent = inheritedChannelRuntime(meta);
@@ -1374,9 +1377,8 @@ export async function runtimeScopes(slug, meta, snapshot, threadKey) {
       model: parentModel ? `Inherited default (${parentModel})` : "Engine default",
       effort: parentEffort ? `Inherited default (${parentEffort})` : "Engine default",
     },
-    options: { engines: runtime.channelLogin ? [{ label: "Codex", value: "codex" }] : engines, models: modelsForEngine(channelEngine), efforts: effortChoices(channelEngine, channelModel) },
+    options: { engines: engines, models: modelsForEngine(channelEngine), efforts: effortChoices(channelEngine, channelModel) },
   };
-  if (runtime.channelLogin) channel.inherited.engine = "This channel's Codex login";
   if (!slug || !threadKey) return { channel, thread: null };
   const [engine, model, effort, activeEngine] = await Promise.all([
     getThreadEngine(slug, threadKey),
@@ -1391,7 +1393,7 @@ export async function runtimeScopes(slug, meta, snapshot, threadKey) {
   return {
     channel,
     thread: {
-      values: { engine: runtime.channelLogin ? "" : engine, model, effort },
+      values: { engine, model, effort },
       pinned: Boolean(engine || model || effort),
       // Named only when it is the reason this thread differs from the channel, so the tab explains
       // a surprising engine instead of repeating what the dropdown already says.
@@ -1401,7 +1403,7 @@ export async function runtimeScopes(slug, meta, snapshot, threadKey) {
         model: inheritedModel ? `Follow channel (${inheritedModel})` : "Follow channel (engine default)",
         effort: inheritedEffort ? `Follow channel (${inheritedEffort})` : "Follow channel (engine default)",
       },
-      options: { engines: runtime.channelLogin ? [{ label: "Codex", value: "codex" }] : engines, models: modelsForEngine(activeEngine), efforts: effortChoices(activeEngine, model || inheritedModel) },
+      options: { engines: engines, models: modelsForEngine(activeEngine), efforts: effortChoices(activeEngine, model || inheritedModel) },
     },
   };
 }
@@ -1436,7 +1438,7 @@ export async function applyThreadRuntimeSelection({ entry, meta, state, actorId,
   const next = nextRuntimeTriple(current, field, value, inheritedEngine);
   const { patch, actualEngine } = runtimeSettingsPatch(next, { gatewayEngine: inheritedEngine });
   assertChannelEngineApproved(meta, actualEngine);
-  if (field === "engine" && patch.engine) await assertEngineSelectable(patch.engine);
+  if (field === "engine" && patch.engine) await assertEngineSelectable(patch.engine, { meta });
   if (patch.engine !== current.engine) await setThreadEngine(entry.slug, threadKey, patch.engine);
   if (patch.model !== current.model) await setThreadModel(entry.slug, threadKey, patch.model);
   if (patch.effort !== current.effort) await setThreadEffort(entry.slug, threadKey, patch.effort);
@@ -1488,7 +1490,7 @@ export function cloudSelectionsAfterToggle(current = [], engine, key, { activate
 }
 
 function cloudSelectionKey(engine, entry = {}) {
-  return engine === "codex"
+  return requireAdapter(engine).cli === "codex"
     ? `${String(entry.kind || "")}:${String(entry.id || "")}`
     : String(entry.name || "").trim().toLowerCase();
 }
@@ -1499,7 +1501,7 @@ async function cloudManagerItems(meta, engine) {
   const inherited = Array.isArray(getOrgAccessGrants()?.[field]) ? getOrgAccessGrants()[field] : [];
   const directKeys = new Set(direct.map((entry) => cloudSelectionKey(engine, entry)));
   const inheritedKeys = new Set(inherited.map((entry) => cloudSelectionKey(engine, entry)));
-  const available = await requireAdapter(engine).discoverMcps({ channelId: engine === "codex" && meta?.codexAuthSource === "channel" ? meta.channelId : "" });
+  const available = await requireAdapter(engine).discoverMcps({ channelId: engine === "codex-channel" ? meta.channelId : "" });
   const rows = new Map();
   for (const entry of [...available, ...direct, ...inherited]) {
     const key = cloudSelectionKey(engine, entry);
@@ -2391,7 +2393,7 @@ async function connectAndWire(app) {
       }
       if (actionId.startsWith(CHANNEL_SETTINGS_CLOUD_SELECT_PREFIX)) {
         // Admin-only: channelSettingsContext enforced it for every cg_channel_settings_cloud_ id.
-        const engine = actionId.slice(CHANNEL_SETTINGS_CLOUD_SELECT_PREFIX.length) === "codex" ? "codex" : "claude";
+        const engine = cloudEngineChoices(meta).find(id => id === actionId.slice(CHANNEL_SETTINGS_CLOUD_SELECT_PREFIX.length)) || "claude";
         const field = selectionFieldForEngine(engine);
         const items = await cloudManagerItems(meta, engine);
         const picked = (action?.selected_options || []).map((entry) => String(entry.value));
@@ -2407,7 +2409,7 @@ async function connectAndWire(app) {
         meta = await patchAuditedChannelSettings(entry, clicker, { [field]: next });
         await ensureChannelFolder(entry.slug, effectiveMeta(meta));
         await logEvent("channel_cloud_mcp_updated", { channel: state.channelId, slug: entry.slug, engine, added, removed, author: clicker });
-        await repaint({ meta }, { notice: `✅ Cloud MCP for ${engine === "codex" ? "Codex" : "Claude"} saved.` });
+        await repaint({ meta }, { notice: `✅ Cloud MCP for ${engineLabel(engine)} saved.` });
         return;
       }
       if (actionId === CHANNEL_SETTINGS_SKILLS_SELECT_ACTION_ID) {
@@ -2534,7 +2536,6 @@ async function connectAndWire(app) {
       if (runtimeTarget) {
         const { scope, field } = runtimeTarget;
         assertRuntimeChangeAllowed(meta, userIsAdmin);
-        if (field === "engine" && meta.codexAuthSource === "channel") throw new Error("This channel uses its own Codex login, so its engine is Codex.");
         const value = String(action?.selected_option?.value || SETTINGS_DEFAULT_VALUE);
         let notice;
         if (scope === "channel") {
@@ -2544,7 +2545,7 @@ async function connectAndWire(app) {
           const next = nextRuntimeTriple({ engine: meta.engine, model: meta.model, effort: meta.effort }, field, value, inheritedEngine);
           const { patch, actualEngine } = runtimeSettingsPatch(next, { gatewayEngine: inheritedEngine });
           assertChannelEngineApproved(meta, actualEngine);
-          if (field === "engine" && patch.engine) await assertEngineSelectable(patch.engine);
+          if (field === "engine" && patch.engine) await assertEngineSelectable(patch.engine, { meta });
           meta = await patchAuditedChannelSettings(entry, clicker, patch);
           await logEvent("channel_runtime_updated", {
             channel: state.channelId, slug: entry.slug, engine: actualEngine,
@@ -2600,41 +2601,41 @@ async function connectAndWire(app) {
       }
 
       if (actionId === CHANNEL_SETTINGS_CLOUD_MANAGE_ACTION_ID) {
-        const engine = meta.engine === "codex" ? "codex" : "claude";
+        const engine = cloudEngineChoices(meta).includes(meta.engine) ? meta.engine : "claude";
         const loading = await client.views.push({
           trigger_id: requireTrigger(),
-          view: buildCatalogManagerView([], state, { kind: "cloud", channelName: entry.name, engine, notice: "Loading the live MCP catalog…" }),
+          view: buildCatalogManagerView([], state, { kind: "cloud", engines: cloudEngineChoices(meta), channelName: entry.name, engine, notice: "Loading the live MCP catalog…" }),
         });
         const loadingViewId = loading?.view?.id;
         if (!loadingViewId) throw new Error("Slack couldn't open the Cloud MCP manager. Reopen Settings and try again.");
         const items = await cloudManagerItems(meta, engine);
         await client.views.update({
           view_id: loadingViewId,
-          view: buildCatalogManagerView(items, state, { kind: "cloud", channelName: entry.name, engine }),
+          view: buildCatalogManagerView(items, state, { kind: "cloud", engines: cloudEngineChoices(meta), channelName: entry.name, engine }),
         });
         return;
       }
 
       if (actionId.startsWith(CHANNEL_SETTINGS_CLOUD_ENGINE_PREFIX) || actionId.startsWith(CHANNEL_SETTINGS_CLOUD_PAGE_PREFIX)) {
-        const engine = command.e === "codex" ? "codex" : "claude";
+        const engine = cloudEngineChoices(meta).includes(command.e) ? command.e : "claude";
         const page = actionId.startsWith(CHANNEL_SETTINGS_CLOUD_PAGE_PREFIX) ? Number(command.p) || 0 : 0;
         const items = await cloudManagerItems(meta, engine);
-        await updateCurrent(buildCatalogManagerView(items, state, { kind: "cloud", channelName: entry.name, engine, page }));
+        await updateCurrent(buildCatalogManagerView(items, state, { kind: "cloud", engines: cloudEngineChoices(meta), channelName: entry.name, engine, page }));
         return;
       }
 
       if (actionId.startsWith(CHANNEL_SETTINGS_CLOUD_TOGGLE_PREFIX)) {
-        const engine = command.e === "codex" ? "codex" : "claude";
+        const engine = cloudEngineChoices(meta).includes(command.e) ? command.e : "claude";
         const field = selectionFieldForEngine(engine);
         const key = String(command.k || "");
         const activate = Boolean(command.a);
         let selection = null;
         if (activate) {
-          const available = await requireAdapter(engine).discoverMcps({ channelId: engine === "codex" && meta?.codexAuthSource === "channel" ? meta.channelId : "" });
+          const available = await requireAdapter(engine).discoverMcps({ channelId: engine === "codex-channel" ? meta.channelId : "" });
           selection = available.find((item) => cloudSelectionKey(engine, item) === key);
           selection = persistedSelectionForEngine(engine, selection);
           if (!selection) throw new Error("That MCP capability has no admissible transport. Refresh the catalog or repair its host definition.");
-          await assertNewMcpSelections(engine, [selection]);
+          await assertNewMcpSelections(engine, [selection], [], { channelId: requireAdapter(engine).channelScoped ? meta.channelId : "" });
         }
         meta = await patchAuditedChannelSettings(entry, clicker, (current) => {
           return { [field]: cloudSelectionsAfterToggle(current[field], engine, key, { activate, selection }) };
@@ -2642,7 +2643,7 @@ async function connectAndWire(app) {
         const items = await cloudManagerItems(meta, engine);
         const name = items.find((item) => item.key === key)?.name || key;
         await updateCurrent(buildCatalogManagerView(items, state, {
-          kind: "cloud", channelName: entry.name, engine, page: state.page,
+          kind: "cloud", engines: cloudEngineChoices(meta), channelName: entry.name, engine, page: state.page,
           notice: `${activate ? "✅ Activated" : "🗑️ Deactivated"} *${name}* for ${engineLabel(engine)}.`,
         }));
         return;

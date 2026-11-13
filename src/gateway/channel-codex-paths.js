@@ -28,6 +28,10 @@ export function codexEuLoginHome() {
   return path.join(gatewayRoot(), "engine-state", "codex-eu-login");
 }
 
+export function isChannelCodex(meta) {
+  return meta?.engine === "codex-channel";
+}
+
 export function isCodexEu(meta) {
   return meta?.codexHarness === "eu" || meta?.engine === "codex-eu";
 }

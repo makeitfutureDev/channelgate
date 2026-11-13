@@ -123,14 +123,15 @@ function engineIsEnabled(id) {
 
 // Enabled harnesses only — but never an EMPTY list: if the map hasn't loaded yet (or somehow
 // disables everything) fall back to the full manifest so a picker is never blank.
-function selectableEngines() {
-  const enabled = ENGINE_MANIFESTS.filter((m) => engineIsEnabled(m.id));
-  return enabled.length ? enabled : ENGINE_MANIFESTS;
+function selectableEngines(meta = null) {
+  const available = ENGINE_MANIFESTS.filter((m) => !m.channelScoped || meta?.codexAuthSource === "channel");
+  const enabled = available.filter((m) => engineIsEnabled(m.id));
+  return enabled.length ? enabled : available;
 }
 
-function engineOptionsHtml({ includeDefault = false } = {}) {
+function engineOptionsHtml({ includeDefault = false, meta = null } = {}) {
   return (includeDefault ? '<option value="">Default (global setting)</option>' : "") +
-    selectableEngines().map((m) => `<option value="${escapeHtml(m.id)}">${escapeHtml(m.label)}</option>`).join("");
+    selectableEngines(meta).map((m) => `<option value="${escapeHtml(m.id)}">${escapeHtml(m.label)}</option>`).join("");
 }
 
 function syncEffortOptions({ engineSelect, modelSelect, effortSelect, label, value, engine: pinnedEngine, blankLabel = "default" }) {
@@ -1646,28 +1647,30 @@ function mcpBoxState(box) {
     return {
       claude: Array.isArray(parsed.claude) ? parsed.claude.map(String) : [],
       codex: Array.isArray(parsed.codex) ? parsed.codex.map(String) : [],
+      "codex-channel": Array.isArray(parsed["codex-channel"]) ? parsed["codex-channel"].map(String) : [],
     };
   } catch {
-    return { claude: [], codex: [] };
+    return { claude: [], codex: [], "codex-channel": [] };
   }
 }
 
-function initializeMcpBox(box, { claude = [], codex = [] } = {}) {
+function initializeMcpBox(box, { claude = [], codex = [], "codex-channel": channelCodex = [] } = {}) {
   box.dataset.kind = "m";
   box.dataset.mcpSelections = JSON.stringify({
     claude: claude.map(mcpEntryId).filter(Boolean),
     codex: codex.map(mcpEntryId).filter(Boolean),
+    "codex-channel": channelCodex.map(mcpEntryId).filter(Boolean),
   });
   // Preserve already-saved objects when discovery is unavailable/offline so an unrelated Save
   // round-trips them instead of silently erasing access.
-  box._mcpOriginals = { claude: [...claude], codex: [...codex] };
+  box._mcpOriginals = { claude: [...claude], codex: [...codex], "codex-channel": [...channelCodex] };
 }
 
 function captureMcpSelection(box) {
   if (box.dataset.engine === "both") {
     if (box.dataset.mcpLoading) return;
     const state = mcpBoxState(box);
-    for (const engine of ["claude", "codex"]) {
+    for (const engine of ["claude", "codex", ...(box.dataset.mcpChannelId ? ["codex-channel"] : [])]) {
       state[engine] = [...box.querySelectorAll(`input[type="checkbox"][data-mcp-engine="${engine}"]:checked`)]
         .map((input) => input.value);
     }
@@ -1686,7 +1689,7 @@ function captureMcpSelection(box) {
 }
 
 function catalogWithSavedEntries(box, engine) {
-  const catalog = AVAILABLE_MCPS[engine === "codex" ? (box.dataset.mcpCodexKey || "codex") : engine] || [];
+  const catalog = AVAILABLE_MCPS[engine === "codex-channel" ? `codex-channel:${box.dataset.mcpChannelId}` : engine] || [];
   const state = mcpBoxState(box);
   const wanted = new Set(state[engine]);
   const merged = [...catalog];
@@ -1720,10 +1723,10 @@ function paintMcpBox(box, engine) {
 function paintAllMcpBoxes(box) {
   box.replaceChildren();
   box.classList.remove("empty");
-  for (const engine of ["claude", "codex"]) {
+  for (const engine of ["claude", "codex", ...(box.dataset.mcpChannelId ? ["codex-channel"] : [])]) {
     const section = document.createElement("section");
     section.className = "mcp-engine-group";
-    section.innerHTML = `<h5>${engine === "claude" ? "Claude" : "Codex"}</h5>`;
+    section.innerHTML = `<h5>${engine === "claude" ? "Claude" : engine === "codex-channel" ? "Codex (channel account)" : "Codex"}</h5>`;
     const list = document.createElement("div");
     const selected = mcpBoxState(box)[engine];
     const items = catalogWithSavedEntries(box, engine).map(entry => mcpCheckboxItem(entry, selected));
@@ -1735,10 +1738,10 @@ function paintAllMcpBoxes(box) {
 }
 
 async function loadMcpCatalog(engine, channelId = "") {
-  const key = engine === "codex" && channelId ? `codex:${channelId}` : engine;
+  const key = engine === "codex-channel" && channelId ? `codex-channel:${channelId}` : engine;
   if (Array.isArray(AVAILABLE_MCPS[key])) return AVAILABLE_MCPS[key];
   if (!MCP_CATALOG_LOADS[key]) {
-    MCP_CATALOG_LOADS[key] = api(`/api/mcp/available?engine=${encodeURIComponent(engine)}${channelId && engine === "codex" ? `&channelId=${encodeURIComponent(channelId)}` : ""}`)
+    MCP_CATALOG_LOADS[key] = api(`/api/mcp/available?engine=${encodeURIComponent(engine)}${channelId && engine === "codex-channel" ? `&channelId=${encodeURIComponent(channelId)}` : ""}`)
       .then((result) => {
         AVAILABLE_MCPS[key] = Array.isArray(result.servers) ? result.servers : [];
         return AVAILABLE_MCPS[key];
@@ -1753,18 +1756,20 @@ async function loadMcpCatalog(engine, channelId = "") {
 async function renderMcpBoxForEngine(box, engineValue, countEl, channelId = "") {
   captureMcpSelection(box);
   box.dataset.engine = "both";
-  const codexKey = channelId ? `codex:${channelId}` : "codex";
-  box.dataset.mcpCodexKey = codexKey;
-  const missing = ["claude", "codex"].filter((engine) => !Array.isArray(AVAILABLE_MCPS[engine === "codex" ? codexKey : engine]));
+  box.dataset.mcpChannelId = channelId;
+  const engines = ["claude", "codex", ...(channelId ? ["codex-channel"] : [])];
+  const keyFor = engine => engine === "codex-channel" ? `codex-channel:${channelId}` : engine;
+  const missing = engines.filter(engine => !Array.isArray(AVAILABLE_MCPS[keyFor(engine)]));
   if (missing.length) {
     box.dataset.mcpLoading = "both";
     box.classList.add("empty");
-    box.textContent = "loading Claude and Codex MCP lists…";
+    box.textContent = "loading MCP lists…";
     updateChecksCount(box, countEl);
-    await Promise.all(missing.map(async (engine) => {
-      try { await loadMcpCatalog(engine, engine === "codex" ? channelId : ""); } catch { AVAILABLE_MCPS[engine === "codex" ? codexKey : engine] = []; }
+    await Promise.all(missing.map(async engine => {
+      try { await loadMcpCatalog(engine, engine === "codex-channel" ? channelId : ""); }
+      catch { AVAILABLE_MCPS[keyFor(engine)] = []; }
     }));
-    if (!box.isConnected || box.dataset.mcpCodexKey !== codexKey) return;
+    if (!box.isConnected || box.dataset.mcpChannelId !== channelId) return;
   }
   delete box.dataset.mcpLoading;
   paintAllMcpBoxes(box);
@@ -2127,6 +2132,7 @@ function renderChannelDetail(ch) {
   initializeMcpBox(mcpsBox, {
     claude: meta.allowedMcps || [],
     codex: meta.allowedCodexMcps || [],
+    "codex-channel": meta.allowedChannelCodexMcps || [],
   });
   wireChecksTools(mcpsBox, card.querySelector(".ch-mcps-filter"), mcpsCount);
   mcpsBox.addEventListener("change", () => captureMcpSelection(mcpsBox));
@@ -2315,7 +2321,7 @@ function renderChannelDetail(ch) {
     approvedBox.textContent = "";
   }
   const engineSelect = card.querySelector(".ch-engine");
-  engineSelect.innerHTML = engineOptionsHtml({ includeDefault: true });
+  engineSelect.innerHTML = engineOptionsHtml({ includeDefault: true, meta });
   engineSelect.value = meta.engine || "";
   const harnessPolicy = card.querySelector(".ch-harness-policy");
   const harnessRestrict = card.querySelector(".ch-harness-restrict");
@@ -2367,19 +2373,24 @@ function renderChannelDetail(ch) {
   const paintAuthScope = () => {
     const dedicated = authSource.value === "channel";
     channelPanel.hidden = !dedicated;
-    card.querySelector(".ch-engine-field").hidden = dedicated;
-    if (dedicated) engineSelect.value = "codex";
+    const currentEngine = engineSelect.value;
+    engineSelect.innerHTML = engineOptionsHtml({ includeDefault: true, meta: { ...meta, codexAuthSource: authSource.value } });
+    engineSelect.value = currentEngine === "codex-channel" && !dedicated ? "" : currentEngine;
+    paintHarnessPolicy();
     syncModelOptions({ engineSelect, modelSelect, value: modelMatchesEngine(modelSelect.value, effectiveEngine(engineSelect.value)) ? modelSelect.value : "", blankLabel: "gateway default (Settings)" });
     syncEffortOptions({ engineSelect, modelSelect, effortSelect, label: effortLabel });
-    renderMcpBoxForEngine(mcpsBox, engineSelect.value, mcpsCount, dedicated ? ch.channelId : "");
+    renderMcpBoxForEngine(mcpsBox, engineSelect.value, mcpsCount, authSource.value === "channel" ? ch.channelId : "");
   };
   authSource.value = meta.codexAuthSource || "gateway";
   authSource.addEventListener("change", paintAuthScope);
   mountCodexLoginBox(channelPanel.querySelector(".ch-codex-login"), `/api/channels/${encodeURIComponent(ch.channelId)}/codex-login`, {
     onComplete: () => {
       authSource.value = "channel";
-      ch.meta = { ...(ch.meta || {}), codexAuthSource: "channel", engine: "codex" };
-      delete AVAILABLE_MCPS[`codex:${ch.channelId}`];
+      ch.meta = { ...(ch.meta || {}), codexAuthSource: "channel", engine: "codex-channel" };
+      meta.codexAuthSource = "channel";
+      engineSelect.innerHTML = engineOptionsHtml({ includeDefault: true, meta });
+      engineSelect.value = "codex-channel";
+      delete AVAILABLE_MCPS[`codex-channel:${ch.channelId}`];
       paintAuthScope();
     },
   });
@@ -2410,7 +2421,7 @@ function renderChannelDetail(ch) {
       effortSelect: card.querySelector(".ch-effort"),
       label: card.querySelector(".ch-effort-label"),
     });
-    renderMcpBoxForEngine(mcpsBox, engineSelect.value, mcpsCount);
+    renderMcpBoxForEngine(mcpsBox, engineSelect.value, mcpsCount, authSource.value === "channel" ? ch.channelId : "");
   });
   card.querySelector(".ch-model").addEventListener("change", () => syncEffortOptions({
     engineSelect,
@@ -2529,6 +2540,8 @@ function renderChannelDetail(ch) {
             .map((s) => ({ name: s.name, match: s.match, namespace: s.namespace })),
           allowedCodexMcps: selectedMcpEntries(mcpsBox, "codex")
             .map((s) => ({ id: s.id, name: s.name, kind: s.kind, serverName: s.serverName, ...(s.toolPrefix ? { toolPrefix: s.toolPrefix } : {}) })),
+          allowedChannelCodexMcps: selectedMcpEntries(mcpsBox, "codex-channel")
+            .map((s) => ({ id: s.id, name: s.name, kind: s.kind, serverName: s.serverName, ...(s.toolPrefix ? { toolPrefix: s.toolPrefix } : {}) })),
           ...(skillsPicker ? {
             skills: skillsPicker.getSelected(),
             // A deleted template may still be referenced by the saved conversation. Preserve
@@ -2571,7 +2584,7 @@ function renderChannelDetail(ch) {
       showBudgetStatus(card.querySelector(".ch-budget-status"), ch.channelId);
       harnessPolicyDirty = false;
       if (composioTok || previousNoDefaultTokens !== Boolean(ch.meta.noDefaultTokens)) void loadComposioConnections(true);
-      initializeMcpBox(mcpsBox, { claude: ch.meta.allowedMcps || [], codex: ch.meta.allowedCodexMcps || [] });
+      initializeMcpBox(mcpsBox, { claude: ch.meta.allowedMcps || [], codex: ch.meta.allowedCodexMcps || [], "codex-channel": ch.meta.allowedChannelCodexMcps || [] });
       if (!mcpsBox.dataset.mcpLoading) paintAllMcpBoxes(mcpsBox);
       updateChecksCount(mcpsBox, mcpsCount);
       void refreshVpn();

@@ -500,10 +500,10 @@ test("Codex behind the egress proxy: ChatGPT and API-key logins are relayed; bri
   }
 });
 
-test("a channel-selected Codex home does not fall back to the gateway login", () => {
+test("channel Codex login is gated at spawn independently of shared create-time facts", () => {
   const engineAuth = path.join(codexEngineHome(), "auth.json");
   const channelId = "C_CHANNEL_CODEX_AUTH";
-  const meta = { channelId, codexAuthSource: "channel" };
+  const meta = { channelId, engine: "codex-channel", codexAuthSource: "channel" };
   const channelHome = channelCodexHome(channelId);
   const channelAuth = path.join(channelHome, "auth.json");
   mkdirSync(path.dirname(engineAuth), { recursive: true });
@@ -511,16 +511,16 @@ test("a channel-selected Codex home does not fall back to the gateway login", ()
   writeFileSync(engineAuth, chatgptAuthJson(), { mode: 0o600 });
   try {
     rmSync(channelAuth, { force: true });
-    const missing = credentials.settleCredentialModes(BASE, NO_CODEX_ENV, { egressActive: true, meta });
-    assert.equal(missing.modes.codex, "missing");
+    const shared = credentials.settleCredentialModes(BASE, NO_CODEX_ENV, { egressActive: true, meta });
+    assert.equal(shared.modes.codex, "relay");
+    assert.equal(shared.codexLoginFile, engineAuth);
     const t = target("channel-codex-auth", BASE, meta);
-    t.container.credentialMode = missing.modes;
-    assert.match(credentials.credentialError(t, "codex", NO_CODEX_ENV).message, /not signed in/);
+    t.container.credentialMode = shared.modes;
+    t.container.egress = { active: true, mode: "proxy" };
+    assert.match(credentials.credentialError(t, "codex-channel", NO_CODEX_ENV).message, /Connect this channel/);
     writeFileSync(channelAuth, chatgptAuthJson(), { mode: 0o600 });
-    const selected = credentials.settleCredentialModes(BASE, NO_CODEX_ENV, { egressActive: true, meta });
-    assert.equal(selected.modes.codex, "relay");
-    assert.equal(selected.codexLoginFile, channelAuth);
-    assert.equal(selected.codexAuthFile, "");
+    assert.equal(credentials.credentialError(t, "codex-channel", NO_CODEX_ENV), null);
+    assert.deepEqual(credentials.settleCredentialModes(BASE, NO_CODEX_ENV, { egressActive: true, meta }), shared);
   } finally {
     rmSync(channelAuth, { force: true });
     rmSync(engineAuth, { force: true });

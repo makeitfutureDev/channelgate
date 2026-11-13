@@ -902,11 +902,8 @@ export async function processMessageEvent(event, client, { botUserId = "", teamI
             if (forkShortcut.effort !== undefined && (!forkShortcut.effort || !effortBelongsToModel(forkShortcut.effort, forkTarget.engine, forkTarget.model))) {
               await reply(`Invalid effort \`:${forkShortcut.effort}\` for \`${forkTarget.model}\`. Choose ${effortsForModel(forkTarget.engine, forkTarget.model).map(value => `\`:${value}\``).join(", ")}.`); return;
             }
-            if (meta.codexAuthSource === "channel" && forkTarget.engine !== "codex") {
-              await reply("This channel uses its own Codex login, so its engine stays Codex."); return;
-            }
           }
-          if (forkTarget) await assertEngineSelectable(forkTarget.engine);
+          if (forkTarget) await assertEngineSelectable(forkTarget.engine, { meta });
           const childEngine = forkTarget ? forkTarget.engine : sourceEngine;
           const nativeFork = childEngine === sourceEngine;
           const sourceClean = Boolean(meta.cleanMode || await getThreadClean(entry.slug, threadKey));
@@ -1219,11 +1216,7 @@ export async function processMessageEvent(event, client, { botUserId = "", teamI
         await client.chat.postMessage({ channel: event.channel, ...threadOpts, text: `Invalid effort \`:${shortcut.effort}\` for \`${target.model}\`. Choose ${effortsForModel(target.engine, target.model).map(value => `\`:${value}\``).join(", ")}.` });
         return;
       }
-      if (meta.codexAuthSource === "channel" && target.engine !== "codex") {
-        await client.chat.postMessage({ channel: event.channel, ...threadOpts, text: "This channel uses its own Codex login, so its engine stays Codex." });
-        return;
-      }
-      await assertEngineSelectable(target.engine);
+      await assertEngineSelectable(target.engine, { meta });
       // Each accepted task keeps its selection even if later queued messages change the pins.
       shortcutRuntimeOverrides = { engine: target.engine, model: target.model, effort: shortcut.effort || "" };
       engineSwitched = (await getThreadEngine(entry.slug, threadKey)) !== target.engine;
@@ -1242,11 +1235,7 @@ export async function processMessageEvent(event, client, { botUserId = "", teamI
     // again" leaves the thread as it is. Any engine directive in the text was already applied
     // when the message first ran, so it is stripped below but not re-applied over this choice.
     if (engineChoice && ENGINE_IDS.includes(engineChoice) && engineChoiceSwitch) {
-      if (meta.codexAuthSource === "channel" && engineChoice !== "codex") {
-        await client.chat.postMessage({ channel: event.channel, ...threadOpts, text: "This channel uses its own Codex login, so its engine stays Codex." });
-        return;
-      }
-      await assertEngineSelectable(engineChoice);
+      await assertEngineSelectable(engineChoice, { meta });
       engineSwitched = (await getThreadEngine(entry.slug, threadKey)) !== engineChoice;
       await setThreadEngine(entry.slug, threadKey, engineChoice);
       if (!modelBelongsToEngine(await getThreadModel(entry.slug, threadKey), engineChoice)) await setThreadModel(entry.slug, threadKey, "");
@@ -1270,12 +1259,8 @@ export async function processMessageEvent(event, client, { botUserId = "", teamI
       }
       if (anchored || phrase) {
         const eng = (anchored ? anchored[1] : phrase[1]).toLowerCase();
-        if (meta.codexAuthSource === "channel" && eng !== "codex") {
-          await client.chat.postMessage({ channel: event.channel, ...threadOpts, text: "This channel uses its own Codex login, so its engine stays Codex." });
-          return;
-        }
         if (!engineChoice) {
-          await assertEngineSelectable(eng);
+          await assertEngineSelectable(eng, { meta });
           engineSwitched = (await getThreadEngine(entry.slug, threadKey)) !== eng;
           await setThreadEngine(entry.slug, threadKey, eng);
           // A thread model/effort pinned by the /model wizard is engine-specific — switching the

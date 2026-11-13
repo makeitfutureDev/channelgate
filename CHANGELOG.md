@@ -2,6 +2,12 @@
 
 ## 0.6.5 — candidate, pending approval
 
+- Show connected conversation Codex accounts as a separate **Codex (channel account)** harness,
+  allowing channel/thread switches to Claude, gateway Codex or other admitted harnesses. Keep
+  account sessions and concurrent credential relays separate; preserve existing dedicated defaults.
+- Accept `harness` alongside the existing `engine` field in the HTTP Run API and report the
+  selected harness in run responses and webhooks. Conflicting aliases are rejected.
+
 - Stop showing the Activity partial-data warning for successfully verified bot-started threads.
   Excluded automation threads no longer delay discovery of older human threads; actual Slack
   lookup failures still show the warning.

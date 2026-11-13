@@ -198,6 +198,6 @@ test("runtime permission, disabled engine and dedicated Codex login refuse a sho
   saveSettings({ engineEnabled: { claude: true, codex: true } });
   await saveChannelMeta(entry.slug, { ...meta, codexAuthSource: "channel", engine: "codex" });
   await send("opus", "125.003");
-  assert.match(messages.at(-1).text, /engine stays Codex/);
-  assert.equal(await getThreadEngine(entry.slug, "125.003"), "");
+  assert.equal(await getThreadEngine(entry.slug, "125.003"), "claude");
+  assert.equal(await getThreadModel(entry.slug, "125.003"), "claude-opus-5-5");
 });

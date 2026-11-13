@@ -102,7 +102,7 @@ export function selectionFieldForEngine(engine) {
 
 export function persistedSelectionForEngine(engine, entry) {
   if (!entry || typeof entry !== "object" || entry.selectable === false) return null;
-  if (engine !== "codex") {
+  if ((requireAdapter(engine).modelFamily || engine) !== "codex") {
     if (!entry.name || !entry.match || !entry.namespace) return null;
     return { name: entry.name, match: entry.match, namespace: entry.namespace };
   }

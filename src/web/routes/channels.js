@@ -192,13 +192,13 @@ export function createChannelsRouter({
     try {
       const entry = await registeredChannel(req, res);
       if (!entry) return;
-      assertChannelEngineApproved(await getChannelMeta(entry.slug), "codex");
+      assertChannelEngineApproved(await getChannelMeta(entry.slug), "codex-channel");
       const method = req.body?.method;
       const status = await startChannelCodexLogin(req.params.channelId, method, {
         key: req.body?.key,
         onAuthenticated: async () => {
           const before = await getChannelMeta(entry.slug);
-          const after = await patchChannelMeta(entry.slug, (current) => ({ ...current, codexAuthSource: "channel", engine: "codex", model: modelBelongsToEngine(current.model, "codex") ? current.model : "", effort: effortBelongsToEngine(current.effort, "codex") ? current.effort : "" }));
+          const after = await patchChannelMeta(entry.slug, (current) => ({ ...current, codexAuthSource: "channel", engine: "codex-channel", model: modelBelongsToEngine(current.model, "codex-channel") ? current.model : "", effort: effortBelongsToEngine(current.effort, "codex-channel") ? current.effort : "" }));
           await logChannelPolicyChange({ channelId: req.params.channelId, slug: entry.slug, actor: ADMIN_UI_ACTOR, before, after });
         },
       });
@@ -324,7 +324,7 @@ export function createChannelsRouter({
       const badModel = invalidModelOrEffort(body);
       if (badModel) return res.status(400).json({ error: badModel });
       if (body.engine && body.engine !== current.engine) {
-        try { await assertEngineSelectable(body.engine); }
+        try { await assertEngineSelectable(body.engine, { channelId: req.params.channelId, meta: current }); }
         catch (error) { return res.status(400).json({ error: error.message }); }
       }
       if (Array.isArray(body.allowedMcps)) {
@@ -348,6 +348,7 @@ export function createChannelsRouter({
       }
       if (Array.isArray(body.allowedMcps)) next_.allowedMcps = sanitizeMcps(body.allowedMcps);
       if (Array.isArray(body.allowedCodexMcps)) next_.allowedCodexMcps = sanitizeCodexMcps(body.allowedCodexMcps);
+      if (Array.isArray(body.allowedChannelCodexMcps)) next_.allowedChannelCodexMcps = sanitizeCodexMcps(body.allowedChannelCodexMcps);
       if (typeof body.model === "string") next_.model = body.model.trim();
       if (typeof body.effort === "string") next_.effort = body.effort.trim();
       if (typeof body.adminMode === "boolean") next_.adminMode = body.adminMode;
@@ -358,11 +359,6 @@ export function createChannelsRouter({
       if (typeof body.skillRuntimeSwap === "boolean") next_.skillRuntimeSwap = body.skillRuntimeSwap;
       if (typeof body.engine === "string" && (body.engine === "" || ENGINES.includes(body.engine))) next_.engine = body.engine;
       if (CODEX_AUTH_SOURCES.includes(body.codexAuthSource)) next_.codexAuthSource = body.codexAuthSource;
-      if (next_.codexAuthSource === "channel") {
-        next_.engine = "codex";
-        if (!modelBelongsToEngine(next_.model, "codex")) next_.model = "";
-        if (!effortBelongsToEngine(next_.effort, "codex")) next_.effort = "";
-      }
       if (typeof body.composioToken === "string" && body.composioToken) next_.composioToken = body.composioToken.trim();
       if (body.clearComposioToken === true) next_.composioToken = "";
       if (typeof body.toolboxToken === "string" && body.toolboxToken) next_.toolboxToken = body.toolboxToken.trim();
@@ -450,7 +446,7 @@ export function createChannelsRouter({
       if (body.engine) {
         const current = await getChannelMeta(entry.slug);
         if (body.engine !== current?.engine) {
-          try { await assertEngineSelectable(body.engine); }
+          try { await assertEngineSelectable(body.engine, { channelId: req.params.channelId, meta: current }); }
           catch (error) { return res.status(400).json({ error: error.message }); }
         }
       }
@@ -535,6 +531,7 @@ export function createChannelsRouter({
             allowedUsers: allowedUsersPatch ?? current.allowedUsers,
             allowedMcps: Array.isArray(body.allowedMcps) ? sanitizeMcps(body.allowedMcps) : current.allowedMcps,
             allowedCodexMcps: Array.isArray(body.allowedCodexMcps) ? sanitizeCodexMcps(body.allowedCodexMcps) : current.allowedCodexMcps ?? [],
+            allowedChannelCodexMcps: Array.isArray(body.allowedChannelCodexMcps) ? sanitizeCodexMcps(body.allowedChannelCodexMcps) : current.allowedChannelCodexMcps ?? [],
             skills: Array.isArray(body.skills) ? body.skills : current.skills,
             skillTemplate: typeof body.skillTemplate === "string" ? (body.skillTemplate.trim() ? getTemplate(body.skillTemplate.trim())?.slug ?? "__unknown__" : "") : (current.skillTemplate || ""),
             adminMode: typeof body.adminMode === "boolean" ? body.adminMode : current.adminMode,
@@ -556,11 +553,6 @@ export function createChannelsRouter({
             effort: typeof body.effort === "string" ? body.effort.trim() : current.effort,
           };
           if (Object.hasOwn(body, "approvedEngines")) out.approvedEngines = assertApprovedEnginesUpdate(current, body.approvedEngines);
-          if (out.codexAuthSource === "channel") {
-            out.engine = "codex";
-            if (!modelBelongsToEngine(out.model, "codex")) out.model = "";
-            if (!effortBelongsToEngine(out.effort, "codex")) out.effort = "";
-          }
           if (Object.hasOwn(body, "approvedEngines") || Object.hasOwn(body, "engine") || Object.hasOwn(body, "codexAuthSource")) {
             assertChannelEngineApproved(out, effectiveMeta(out).engine || getEngine());
           }
@@ -758,7 +750,7 @@ export function createChannelsRouter({
         const patched = await patchChannelMeta(ch.slug, (current) => {
           if (current?.archived) return null;
           const base = current ?? defaultChannelMeta({ channelId: ch.channelId, name: ch.name, type: ch.type, isDM: ch.isDM });
-          return { ...base, engine: base.codexAuthSource === "channel" ? "codex" : "", model: "", effort: "" };
+          return { ...base, engine: "", model: "", effort: "" };
         });
         if (patched) {
           reset++;

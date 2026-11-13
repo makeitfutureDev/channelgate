@@ -70,10 +70,9 @@ export function createConversationControls() {
         }
         const parts = arg.split(/\s+/);
         const selectedEngine = isEngineId(parts[0]) ? parts.shift() : engine;
-        if (meta.codexAuthSource === 'channel' && selectedEngine !== 'codex') return await respond('This channel uses its own Codex login, so its engine stays Codex.');
         const selectedModel = parts.join(' ') === 'default' ? '' : parts.join(' ');
         if (parts.length > 1 || !modelBelongsToEngine(selectedModel, selectedEngine)) return await respond('Use /model [engine] [model|default] with a model belonging to that engine.');
-        try { await assertEngineSelectable(selectedEngine); } catch (error) { return await respond(error.message); }
+        try { await assertEngineSelectable(selectedEngine, { channelId: meta.channelId || message.conversationId, meta }); } catch (error) { return await respond(error.message); }
         const currentPending = await pendingForSession?.({ conversationId: message.conversationId, sessionKey });
         if (lane.jobs.size || lane.clearing || currentPending?.count) return await respond('Wait for this session’s work to finish, or stop it, before changing its runtime.');
         const actualModel = compatibleModel([selectedModel, meta.model, getDefaultModel(selectedEngine)], selectedEngine);

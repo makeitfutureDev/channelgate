@@ -65,7 +65,7 @@ function helpTopics(activationReactions = DEFAULT_TEAMS_ACTIVATION_REACTIONS) {
       { title: 'Make it yours', rows: [
         '`/settings` opens a private popup for this conversation. **General** manages conversation defaults, session overrides, and Read-only, Worker or Admin mode.',
         '**Auto** approves tool requests. **Lean** omits optional skills and connectors. **Allow network** is a separate switch. Changes follow your current permissions.',
-        'Use `/model` for enabled engines and providers, including opt-in Qwen. An admin can set a dedicated Codex login in the admin UI → Channel Runtime; that conversation then stays on Codex. **Resume** shows the available terminal command.',
+        'Use `/model` for enabled engines and providers, including opt-in Qwen. An admin can set a dedicated Codex login in the admin UI → Channel Runtime; Codex (channel account) then appears as a separate harness in that conversation. **Resume** shows the available terminal command.',
       ] },
       { title: 'Variables & connections', rows: [
         '`/secrets` opens Variables. Conversation values override personal values, then organization values. Organization changes are admin-only; hidden secrets may need admin approval for a new server.',

@@ -4,7 +4,7 @@
 //
 //   POST /api/runs        → start a run. Body: { message, channel?, author?, file?, fileUrl?,
 //                           fileName?, webhook? }. Returns { jobId, sessionId, resumeCommand,
-//                           statusUrl, engine, slackThread }.
+//                           statusUrl, harness, engine, slackThread }.
 //   GET  /api/runs/:id    → the job's status + result.
 import express from "express";
 import { costHistoryStart, costVisibleAt } from "../../ee/cost-history.js";
@@ -17,6 +17,7 @@ function publicJob(job, now = new Date(), historyStart = costHistoryStart(now)) 
     jobId: job.id,
     status: job.status,
     engine: job.engine,
+    harness: job.engine,
     slug: job.slug,
     channelId: job.slackThread ? job.channelId : null,
     slackThread: Boolean(job.slackThread),
@@ -56,8 +57,8 @@ export function createRunsRouter({ slack } = {}) {
 
   router.post("/", async (req, res, next) => {
     try {
-      const { message, channel, author, file, fileUrl, fileName, webhook, engine, model, effort, mode, idempotencyKey, conversationKey } = req.body ?? {};
-      const started = await startApiRun({ message, channel, author, file, fileUrl, fileName, webhook, engine, model, effort, mode, idempotencyKey, conversationKey, slack, principal: tokenPrincipal(req) });
+      const { message, channel, author, file, fileUrl, fileName, webhook, harness, engine, model, effort, mode, idempotencyKey, conversationKey } = req.body ?? {};
+      const started = await startApiRun({ message, channel, author, file, fileUrl, fileName, webhook, harness, engine, model, effort, mode, idempotencyKey, conversationKey, slack, principal: tokenPrincipal(req) });
       if (!started.ok) return res.status(started.code || 400).json({ ok: false, error: started.error });
       // 200 for an idempotent hit on an existing job (nothing new started), 202 for a fresh run.
       res.status(started.reused ? 200 : 202).json({
@@ -65,6 +66,7 @@ export function createRunsRouter({ slack } = {}) {
         jobId: started.jobId,
         status: started.status,
         engine: started.engine,
+        harness: started.harness,
         slug: started.slug,
         channelId: started.channelId,
         slackThread: started.slackThread,

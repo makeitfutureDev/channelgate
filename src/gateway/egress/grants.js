@@ -27,11 +27,11 @@ import { PERPLEXITY_RELAY_SECRET_NAME } from "../perplexity-research-contract.js
 import { resolveContainerClaudeToken } from "../claude-token-relay.js";
 import { renderContainerCodexApiAuth, renderContainerCodexAuth, resolveContainerCodexToken } from "../codex-token-relay.js";
 import { codexLoginCandidatesFor } from "../channel-codex-auth.js";
-import { codexEuLoginHome, isCodexEu } from "../channel-codex-paths.js";
+import { codexEuLoginHome, isCodexEu, isChannelCodex } from "../channel-codex-paths.js";
 import path from "node:path";
 import { egressActive } from "../../runtimes/container/egress-hook.js";
 import { corePlaceholder, mintPlaceholder, PLACEHOLDER_SHAPES, wrapPlaceholder } from "./placeholders.js";
-import { CLAUDE_API_RELAY_NAMES, CODEX_API_RELAY_SECRET_NAME, CODEX_EU_RELAY_SECRET_NAME, CODEX_RELAY_SECRET_NAME, RELAY_SECRET_NAME, relayRuleFor, rulesFor } from "./catalog-rules.js";
+import { CLAUDE_API_RELAY_NAMES, CODEX_CHANNEL_API_RELAY_SECRET_NAME, CODEX_CHANNEL_RELAY_SECRET_NAME, CODEX_API_RELAY_SECRET_NAME, CODEX_EU_RELAY_SECRET_NAME, CODEX_RELAY_SECRET_NAME, RELAY_SECRET_NAME, relayRuleFor, rulesFor } from "./catalog-rules.js";
 import { engineHostsFor } from "./engine-hosts.js";
 
 export const GRANT_SCOPES = Object.freeze(["organization", "channel", "personal", "relay"]);
@@ -155,7 +155,9 @@ export function revokeMissing({ scope, channelId, ownerId, present, now = Date.n
 const relayCaches = new Map(); // secret name → { at, promise }
 async function cachedRelayToken(secretName, deps, channelId = "") {
   const euSecret = secretName === CODEX_EU_RELAY_SECRET_NAME;
-  const codexSecret = euSecret || secretName === CODEX_RELAY_SECRET_NAME || secretName === CODEX_API_RELAY_SECRET_NAME;
+  const channelSecret = [CODEX_CHANNEL_RELAY_SECRET_NAME, CODEX_CHANNEL_API_RELAY_SECRET_NAME].includes(secretName);
+  const apiSecret = [CODEX_API_RELAY_SECRET_NAME, CODEX_CHANNEL_API_RELAY_SECRET_NAME].includes(secretName);
+  const codexSecret = euSecret || channelSecret || secretName === CODEX_RELAY_SECRET_NAME || secretName === CODEX_API_RELAY_SECRET_NAME;
   const euAuth = euSecret ? await (await import("../../engines/codex-eu.js")).codexEuCredentialState() : null;
   if (euSecret && !euAuth?.authenticated) return "";
   const resolve = codexSecret
@@ -164,14 +166,14 @@ async function cachedRelayToken(secretName, deps, channelId = "") {
   const now = Date.now();
   const meta = codexSecret && !euSecret ? await channelMetaFor(channelId, deps) : null;
   // An existing dedicated-login relay must pause immediately, including warm cached tokens.
-  if (codexSecret && meta?.codexAuthSource === "channel" && !enterpriseFeatureEnabled("channelCodexLogin")) return "";
-  const cacheKey = codexSecret ? `${secretName}:${channelId}:${euAuth?.fingerprint || meta?.codexAuthSource || "gateway"}` : secretName;
+  if (channelSecret && (meta?.codexAuthSource !== "channel" || !enterpriseFeatureEnabled("channelCodexLogin"))) return "";
+  const cacheKey = codexSecret ? `${secretName}:${channelId}:${euAuth?.fingerprint || (channelSecret ? "channel" : "gateway")}` : secretName;
   let cache = relayCaches.get(cacheKey);
   if (!cache || now - cache.at > RELAY_CACHE_MS) {
     cache = { at: now, promise: Promise.resolve().then(async () => {
       if (!codexSecret) return resolve();
-      const token = await resolve({ candidates: euSecret ? [path.join(codexEuLoginHome(), "auth.json")] : codexLoginCandidatesFor(meta) });
-      return token?.source === (secretName === CODEX_API_RELAY_SECRET_NAME ? "api-key" : "chatgpt") ? token : { token: "" };
+      const token = await resolve({ candidates: euSecret ? [path.join(codexEuLoginHome(), "auth.json")] : codexLoginCandidatesFor({ ...meta, channelId, engine: channelSecret ? "codex-channel" : "codex", codexHarness: "" }) });
+      return token?.source === (apiSecret ? "api-key" : "chatgpt") ? token : { token: "" };
     }) };
     relayCaches.set(cacheKey, cache);
     cache.promise.catch(() => { if (relayCaches.get(cacheKey) === cache) relayCaches.delete(cacheKey); });
@@ -427,12 +429,12 @@ async function channelIdOfTarget(target) {
   return Object.entries(index).find(([, entry]) => entry?.slug === slug && platformOr(entry?.platform).id === platform)?.[0] || "";
 }
 
-export function codexRelayPlaceholderFor({ channelId, eu = false }) {
-  return placeholderFor({ scope: "relay", channelId, secretName: eu ? CODEX_EU_RELAY_SECRET_NAME : CODEX_RELAY_SECRET_NAME });
+export function codexRelayPlaceholderFor({ channelId, eu = false, channel = false }) {
+  return placeholderFor({ scope: "relay", channelId, secretName: eu ? CODEX_EU_RELAY_SECRET_NAME : channel ? CODEX_CHANNEL_RELAY_SECRET_NAME : CODEX_RELAY_SECRET_NAME });
 }
 
-export function codexApiRelayPlaceholderFor({ channelId }) {
-  return placeholderFor({ scope: "relay", channelId, secretName: CODEX_API_RELAY_SECRET_NAME });
+export function codexApiRelayPlaceholderFor({ channelId, channel = false }) {
+  return placeholderFor({ scope: "relay", channelId, secretName: channel ? CODEX_CHANNEL_API_RELAY_SECRET_NAME : CODEX_API_RELAY_SECRET_NAME });
 }
 
 // What a containerized Codex reads as its sign-in: the body of the ACCESS-ONLY auth.json the
@@ -451,13 +453,13 @@ export async function containerCodexCredential({ target, channelId = "", resolve
   if (eu && relay.source !== "chatgpt") return { error: "Codex EU requires a ChatGPT sign-in" };
   if (relay.source === "api-key") {
     return {
-      authJson: renderContainerCodexApiAuth({ apiKey: codexApiRelayPlaceholderFor({ channelId: key }) }),
+      authJson: renderContainerCodexApiAuth({ apiKey: codexApiRelayPlaceholderFor({ channelId: key, channel: isChannelCodex(target?.meta) }) }),
       expiresAt: 0,
       source: "api-key",
       placeholder: true,
     };
   }
-  const accessToken = wrapPlaceholder(codexRelayPlaceholderFor({ channelId: key, eu }), { shape: "jwt", claimsFrom: relay.token });
+  const accessToken = wrapPlaceholder(codexRelayPlaceholderFor({ channelId: key, eu, channel: isChannelCodex(target?.meta) }), { shape: "jwt", claimsFrom: relay.token });
   return {
     authJson: renderContainerCodexAuth({ accessToken, idToken: relay.idToken, accountId: relay.accountId, now }),
     expiresAt: relay.expiresAt || 0,

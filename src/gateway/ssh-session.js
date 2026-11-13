@@ -255,14 +255,15 @@ async function prepareCodexSessionFiles({ target, userDir, integrations, meta, c
   // Behind the egress proxy the container has no Codex login until one is placed: the same
   // access-only relay file a turn writes (src/gateway/codex-token-relay.js), so an interactive
   // `codex` works before the channel's first Codex turn — and never sees a refresh token.
-  if (target?.container?.credentialMode?.codex === "relay") {
+  if (target?.container?.credentialMode?.codex === "relay" || requireAdapter(target?.meta?.engine || "codex").channelScoped) {
     const problem = await installCodexLogin(target);
     if (problem) throw new Error(`Codex sign-in not placed: ${problem}`);
   }
-  const allowed = meta[requireAdapter("codex").mcpMetaKey] || [];
+  const engine = requireAdapter(target?.meta?.engine || "codex").modelFamily === "codex" ? target.meta.engine : "codex";
+  const allowed = meta[requireAdapter(engine).mcpMetaKey] || [];
   // Minted for Codex: the capability names the engine that holds it.
   const runtime = await buildMcpRuntime({
-    clean, engine: "codex", target, allowedMcps: allowed, pluginRuntime: null, fingerprintNow: now(),
+    clean, engine, target, allowedMcps: allowed, pluginRuntime: null, fingerprintNow: now(),
     composioUserEndpoint: integrations.composioUserEndpoint, composioEndpoint: integrations.composioEndpoint,
     composioUserToken: integrations.composioUserToken, composioToken: integrations.composioToken,
     toolboxToken: integrations.toolboxToken, makeToolboxUrl: integrations.makeToolboxUrl, makeToolboxKey: integrations.makeToolboxKey, customMcps: integrations.customMcps || {},
@@ -271,7 +272,7 @@ async function prepareCodexSessionFiles({ target, userDir, integrations, meta, c
     gatewayFsRoot: allowedFsRoot(), gatewayWorkspaceRoot: workspaceRoot(),
     toolset: SSH_TOOLSET, ttlMs: SSH_CAPABILITY_TTL_MS,
   });
-  const policy = codexMcpPolicyFor(await listMcps(meta.codexAuthSource === "channel" ? entry.channelId : ""), allowed);
+  const policy = codexMcpPolicyFor(await listMcps(engine === "codex-channel" ? entry.channelId : ""), allowed);
   for (const server of policy.servers) if (server.enabled && !server.definition) server.enabled = false;
   const gatewayCapability = runtime.gatewayCapability || "";
   const bundle = codexSecretBundle({

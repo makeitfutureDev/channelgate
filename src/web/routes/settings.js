@@ -394,7 +394,7 @@ export function createSettingsRouter({
           id,
           typeof body.engineEnabled[id] === "boolean" ? body.engineEnabled[id] : isEngineEnabled(id),
         ]));
-        if (!ENGINES.some((id) => next[id])) return res.status(400).json({ error: "at least one engine must stay enabled" });
+        if (!ENGINES.some((id) => !requireAdapter(id).channelScoped && next[id])) return res.status(400).json({ error: "at least one engine must stay enabled" });
         patch.engineEnabled = next;
       }
       if (typeof body.engine === "string" && ENGINES.includes(body.engine)) {
@@ -923,7 +923,7 @@ export function createSettingsRouter({
     try {
       const engine = ENGINES.includes(req.query.engine) ? req.query.engine : getEngine();
       let channelId = "";
-      if (engine === "codex" && req.query.channelId) {
+      if (requireAdapter(engine).channelScoped && req.query.channelId) {
         const id = String(req.query.channelId);
         const entry = (await getChannelsIndex())[id];
         if (!entry) return res.status(404).json({ error: "Channel not found" });

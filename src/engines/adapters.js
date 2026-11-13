@@ -14,6 +14,7 @@ import { codexEngineHome } from "../config/paths.js";
 import { hostClaudeStateDir, hostCodexStateDir } from "./host-state.js";
 import { discoverCodexModels } from "./model-discovery.js";
 import { requirePluginRuntime } from "../gateway/plugin-runtime.js";
+import { makeChannelCodexAdapter } from "./codex-channel.js";
 import { makeCodexEuAdapter } from "./codex-eu.js";
 import { makeBedrockAdapter } from "./bedrock.js";
 
@@ -346,7 +347,7 @@ const codex = validateEngineAdapter({
     const r = ctx.runtime;
     requirePluginRuntime(r.pluginRuntime, this.id);
     const target = runtimeTargetOr(ctx.target, ctx.cwd);
-    const catalog = await listEngineMcps("codex", { channelId: target?.meta?.codexAuthSource === "channel" ? target.meta.channelId : "" }).catch(() => []);
+    const catalog = await listEngineMcps("codex", { channelId: target?.meta?.engine === "codex-channel" ? target.meta.channelId : "" }).catch(() => []);
     const codexMcpPolicy = codexMcpPolicyFor(catalog, r.allowedMcps || []);
     codexMcpPolicy.servers.push(...(r.pluginMcpServers || []));
     codexMcpPolicy.servers.push(...(r.managedMcpServers || []));
@@ -421,4 +422,4 @@ const opencode = validateEngineAdapter({
   health: (options) => commandHealth("opencode", options),
 });
 
-export const BUILTIN_ENGINE_ADAPTERS = Object.freeze([claude, codex, makeCodexEuAdapter(codex), makeBedrockAdapter(claude), ...QWEN_PROVIDERS.map(makeQwenAdapter), opencode]);
+export const BUILTIN_ENGINE_ADAPTERS = Object.freeze([claude, codex, makeChannelCodexAdapter(codex), makeCodexEuAdapter(codex), makeBedrockAdapter(claude), ...QWEN_PROVIDERS.map(makeQwenAdapter), opencode]);

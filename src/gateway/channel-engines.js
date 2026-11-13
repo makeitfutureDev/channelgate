@@ -1,6 +1,6 @@
 // Managed harness policy belongs to the conversation, independently of the current license.
 // Enterprise admits changes; a downgrade must never silently widen an existing restriction.
-import { ENGINE_IDS, engineLabel, isEngineId } from "../engines/registry.js";
+import { ENGINE_IDS, adapterFor, engineLabel, isEngineId } from "../engines/registry.js";
 import { getLicenseStatus } from "../ee/license.js";
 
 export function normalizeApprovedEngines(value) {
@@ -36,4 +36,10 @@ export function assertChannelEngineApproved(meta, engine) {
   throw Object.assign(new Error(`${engineLabel(engine)} is not an approved harness for this channel. Select an approved harness in channel or thread settings, or ask an Enterprise administrator to update Approved harnesses.`), {
     status: 403, statusCode: 403, code: "channel_engine_not_approved", details: { channelEngineRefused: true, engine },
   });
+}
+
+// Channel account harnesses belong only in this conversation's picker, never gateway/user defaults.
+export function engineAvailableForChannel(meta, engine) {
+  const adapter = adapterFor(engine);
+  return Boolean(adapter && (!adapter.channelScoped || (meta?.channelId && meta?.codexAuthSource === "channel")));
 }

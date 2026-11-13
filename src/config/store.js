@@ -226,6 +226,7 @@ export function defaultChannelMeta({ channelId, name, type, isDM, platform }) {
     // expands to the flags below on save. undefined/legacy channels derive it from the flags.
     allowedUsers: [], // empty = nobody until configured (fail closed). DMs auto-allow the peer.
     allowedMcps: [], // Claude catalog entries; both built-in Composio identities are separate.
+    allowedChannelCodexMcps: [], // Optional servers for the channel account only.
     allowedCodexMcps: [], // Codex runtime app-family/server identities; enforced by codex launch overrides.
     skills: [], // skills added to this conversation (on top of its skill template)
     skillTemplate: "", // slug of the skill template this conversation follows ("" = none)
@@ -376,7 +377,7 @@ function validateChannelPolicy(current, next) {
   }
   if (next.engine && next.engine !== current?.engine) assertChannelEngineApproved(next, next.engine);
   if (next.codexAuthSource === "channel" && next.codexAuthSource !== current?.codexAuthSource) {
-    assertChannelEngineApproved(next, "codex");
+    assertChannelEngineApproved(next, "codex-channel");
   }
   return next;
 }

@@ -340,11 +340,15 @@ export function isEngineEnabled(engine) {
   if (!ENGINES.includes(id)) return false;
   const map = getSettings().engineEnabled;
   if (!map || typeof map !== "object") return !engineIsOptIn(id);
-  const on = (e) => (engineIsOptIn(e) ? map[e] === true : map[e] !== false);
+  const on = (e) => {
+    if (engineIsOptIn(e)) return map[e] === true;
+    const inherited = adapterOr(e).enabledWith;
+    return map[e] === undefined && inherited ? map[inherited] !== false : map[e] !== false;
+  };
   // Never lock every harness out — but the rescue restores the DEFAULT harnesses only. An opt-in
   // engine must never be switched on by a fallback, and a deployment that deliberately runs ONLY
   // an opt-in harness must not have the others silently restored underneath it.
-  if (!ENGINES.some(on)) return !engineIsOptIn(id);
+  if (!ENGINES.some(e => !adapterOr(e).channelScoped && on(e))) return !engineIsOptIn(id);
   return on(id);
 }
 export function getEnabledEngines() {
@@ -357,10 +361,10 @@ export function getEngineEnabledMap() {
 
 export function getEngine() {
   const v = getSettings().engine;
-  const configured = ENGINES.includes(v) ? v : "claude";
+  const configured = ENGINES.includes(v) && !adapterOr(v).channelScoped ? v : "claude";
   // A disabled harness must not stay the gateway default just because it's the stored value —
   // resolve to the first enabled one instead of spawning a CLI the admin turned off.
-  return isEngineEnabled(configured) ? configured : getEnabledEngines()[0] || configured;
+  return isEngineEnabled(configured) ? configured : getEnabledEngines().find(id => !adapterOr(id).channelScoped) || configured;
 }
 
 // Gateway-wide default model, per engine. Used when a channel/DM/thread sets no model of its own,

@@ -1,3 +1,5 @@
+import { engineAvailableForChannel, isChannelEngineApproved } from "../../gateway/channel-engines.js";
+import { assertEngineSelectable } from "../../engines/selection.js";
 // Teams General Settings share Slack's stores/policy. Runtime forms save one complete scope;
 // legacy per-field actions remain valid for previously posted cards.
 import { getEngine, getEnabledEngines, getDefaultModel } from '../../config/settings.js';
@@ -29,19 +31,19 @@ const actor = ctx => ({ authorId: ctx.ownerId, isAdminUser: Boolean(ctx.userIsAd
 const managed = (meta, ctx) => isAuthorized(meta, ctx.ownerId, Boolean(meta.isDM), actor(ctx)) && canManage(meta, actor(ctx));
 const defaultChoice = label => ({ label, value: RUNTIME_DEFAULT_VALUE });
 const compatible = (candidates, engine) => candidates.find(value => value && modelBelongsToEngine(value, engine)) || '';
-const parentEngine = meta => meta.codexAuthSource === 'channel' ? 'codex' : effectiveMeta({ ...meta, engine: '' }).engine || getEngine();
+const parentEngine = meta => effectiveMeta({ ...meta, engine: '' }).engine || getEngine();
 
 export async function generalRuntimeScopes(ctx) {
-  const meta = ctx.meta, effective = effectiveMeta(meta), locked = meta.codexAuthSource === 'channel';
-  const engine = locked ? 'codex' : effective.engine || getEngine();
+  const meta = ctx.meta, effective = effectiveMeta(meta), locked = false;
+  const engine = effective.engine || getEngine();
   const inheritedModel = compatible([effectiveMeta({ ...meta, model: '' }).model, getDefaultModel(engine)], engine);
   const model = compatible([effective.model, inheritedModel], engine);
   const inheritedEffort = effectiveMeta({ ...meta, effort: '' }).effort || '';
   const efforts = effortsForModel(engine, model);
-  const engines = (locked ? ['codex'] : getEnabledEngines()).map(value => ({ label: engineLabel(value), value }));
+  const engines = getEnabledEngines().filter(value => engineAvailableForChannel(meta, value) && isChannelEngineApproved(meta, value)).map(value => ({ label: engineLabel(value), value }));
   const channel = {
     engine, model, inheritedEngine: parentEngine(meta),
-    values: { engine: locked ? 'codex' : meta.engine || '', model: meta.model || '', effort: meta.effort || '' },
+    values: { engine: meta.engine || '', model: meta.model || '', effort: meta.effort || '' },
     inherited: { engine: `Inherited default (${engineLabel(parentEngine(meta))})`, model: inheritedModel ? `Inherited default (${inheritedModel})` : 'Engine default', effort: inheritedEffort && efforts.includes(inheritedEffort) ? `Inherited default (${inheritedEffort})` : 'Engine default' },
     engines,
   };
@@ -57,9 +59,9 @@ export async function generalRuntimeScopes(ctx) {
   const source = sessionEngine ? 'Session default' : 'Follow channel';
   return { channel, locked, thread: {
     engine: activeEngine, model: threadModel, engines, sessionEngine,
-    inheritedEngine: locked ? 'codex' : mintedEngine || engine,
-    values: { engine: locked ? 'codex' : pin, model: pinModel, effort: pinEffort },
-    inherited: { engine: `${mintedEngine && mintedEngine !== engine ? 'Session default' : 'Follow channel'} (${engineLabel(locked ? 'codex' : mintedEngine || engine)})`, model: inheritedThreadModel ? `${source} (${inheritedThreadModel})` : `${source} (engine default)`, effort: threadEffort ? `${source} (${threadEffort})` : `${source} (engine default)` },
+    inheritedEngine: mintedEngine || engine,
+    values: { engine: pin, model: pinModel, effort: pinEffort },
+    inherited: { engine: `${mintedEngine && mintedEngine !== engine ? 'Session default' : 'Follow channel'} (${engineLabel(mintedEngine || engine)})`, model: inheritedThreadModel ? `${source} (${inheritedThreadModel})` : `${source} (engine default)`, effort: threadEffort ? `${source} (${threadEffort})` : `${source} (engine default)` },
   } };
 }
 
@@ -77,7 +79,6 @@ function runtimeRows(scope, snapshot, locked, ui) {
     ...effortsForModel(snapshot.engine), ...models.flatMap(item => effortsForModel(snapshot.engine, item.value)),
   ])];
   for (const field of RUNTIME_FIELDS) {
-    if (field === 'engine' && locked) { body.push(ui.text('Engine: Codex — locked to this channel’s Codex login.')); continue; }
     let choices = field === 'engine' ? snapshot.engines : field === 'model' ? models : efforts.map(value => ({ label: value, value }));
     // Keep a saved compatible full model ID visible even if live discovery no longer lists it.
     const saved = snapshot.values[field];
@@ -111,7 +112,7 @@ export async function renderGeneral(ctx, ui) {
   ctx.state.runtimeBaseline = { channel: { ...channel.values, locked }, ...(thread ? { thread: { ...thread.values, locked } } : {}) };
   const meta = effectiveMeta(ctx.meta), manager = managed(ctx.meta, ctx);
   const body = [ui.text('Models are shown only for the selected engine. After changing Engine, use Load models, then choose model and effort and Apply for that scope. Channel defaults affect new sessions; thread overrides apply to this session.'), ui.heading('Channel defaults'), ...runtimeRows('channel', runtimeDisplay(ctx, 'channel', channel, locked), locked, ui)];
-  if (locked) {
+  if (ctx.meta.codexAuthSource === 'channel') {
     const login = await channelCodexLoginStatus(ctx.channelId).catch(error => {
       if (error.code === "enterprise_required") return { enterpriseRequired: true };
       throw error;
@@ -193,12 +194,8 @@ function assertRuntimeBaseline(ctx, scope, own, locked) {
   }
 }
 function combinedRuntimeSelection(data, scope, meta, inheritedEngine) {
-  const locked = meta.codexAuthSource === 'channel';
-  if (locked && data[`${scope}_engine`] !== undefined && data[`${scope}_engine`] !== 'codex') {
-    throw new Error('This channel uses its own Codex login, so its engine is Codex.');
-  }
   const form = Object.fromEntries(RUNTIME_FIELDS.map(field => [field,
-    field === 'engine' && locked ? 'codex' : readRuntimeInput(data, scope, field)]));
+    readRuntimeInput(data, scope, field)]));
   // Resolve defaults against the newly selected engine, including template/channel inheritance.
   const { patch, actualEngine } = runtimeSettingsPatch({ ...form, effort: '' }, { gatewayEngine: inheritedEngine });
   const inherited = scope === 'channel' ? effectiveMeta({ ...meta, engine: actualEngine, model: '', effort: '' }) : effectiveMeta(meta);
@@ -217,8 +214,8 @@ export async function handleGeneral(action, data, ctx, _ui) {
     const fresh = await ctx.authorize(); assertCurrentAuthorized(fresh);
     const scopes = await generalRuntimeScopes(fresh), snapshot = scopes[scope];
     assertRuntimeBaseline(ctx, scope, snapshot.values, scopes.locked);
-    if (scopes.locked) throw new Error('This channel uses its own Codex login, so its engine is Codex.');
     const engine = readRuntimeInput(data, scope, 'engine');
+    if (engine) await assertEngineSelectable(engine, { meta: fresh.meta, channelId: fresh.channelId });
     runtimeSettingsPatch({ engine }, { gatewayEngine: snapshot.inheritedEngine });
     const values = nextRuntimeTriple(Object.fromEntries(RUNTIME_FIELDS.map(field => [field,
       readRuntimeInput(data, scope, field)])), 'engine', engine, snapshot.inheritedEngine);
@@ -232,12 +229,15 @@ export async function handleGeneral(action, data, ctx, _ui) {
     const { scope } = data;
     if (!['channel', 'thread'].includes(scope)) throw new Error('Unknown runtime control.');
     if (scope === 'channel') {
+      const requestedEngine = readRuntimeInput(data, scope, 'engine');
+      if (requestedEngine) await assertEngineSelectable(requestedEngine, { meta: ctx.meta, channelId: ctx.channelId });
       ctx.meta = await ctx.patch((current, fresh) => {
         assertCurrentAuthorized(fresh, current);
-        const locked = current.codexAuthSource === 'channel';
-        const own = { engine: locked ? 'codex' : current.engine || '', model: current.model || '', effort: current.effort || '' };
+        const locked = false;
+        const own = { engine: current.engine || '', model: current.model || '', effort: current.effort || '' };
         assertRuntimeBaseline(ctx, scope, own, locked);
-        return combinedRuntimeSelection(data, scope, current, parentEngine(current));
+        const next = combinedRuntimeSelection(data, scope, current, parentEngine(current));
+        return next;
       });
     } else {
       const session = requireSession(ctx), release = await acquireKeyedLock('teams-settings-runtime', `${ctx.entry.slug}:${session}`);
@@ -247,13 +247,14 @@ export async function handleGeneral(action, data, ctx, _ui) {
           getThreadEngine(ctx.entry.slug, session), getThreadModel(ctx.entry.slug, session), getThreadEffort(ctx.entry.slug, session),
         ]);
         const latest = await ctx.authorize(); assertCurrentAuthorized(latest);
-        const locked = latest.meta.codexAuthSource === 'channel';
-        assertRuntimeBaseline(ctx, scope, { engine: locked ? 'codex' : engine, model, effort }, locked);
+        const locked = false;
+        assertRuntimeBaseline(ctx, scope, { engine: engine, model, effort }, locked);
         // The roster check above can outlive a turn that creates/replaces this live session.
         const mintedEngine = await getSessionEngine(ctx.entry.slug, session);
-        const inheritedEngine = locked ? 'codex' : mintedEngine || effectiveMeta(latest.meta).engine || getEngine();
+        const inheritedEngine = mintedEngine || effectiveMeta(latest.meta).engine || getEngine();
         const next = combinedRuntimeSelection(data, scope, latest.meta, inheritedEngine);
-        setThreadRuntimeOverrides(ctx.entry.slug, session, { ...next, engine: locked ? '' : next.engine }, { expected: { engine, model, effort } });
+        if (next.engine) await assertEngineSelectable(next.engine, { meta: latest.meta, channelId: ctx.channelId });
+        setThreadRuntimeOverrides(ctx.entry.slug, session, { ...next, engine: next.engine }, { expected: { engine, model, effort } });
       } finally { release(); }
     }
     if (ctx.state.runtimeDrafts) delete ctx.state.runtimeDrafts[scope];
@@ -268,24 +269,24 @@ export async function handleGeneral(action, data, ctx, _ui) {
     const { scope, field } = data;
     if (!['channel', 'thread'].includes(scope) || !RUNTIME_FIELDS.includes(field)) throw new Error('Unknown runtime control.');
     const value = readRuntimeInput(data, scope, field);
+    if (field === 'engine' && value) await assertEngineSelectable(value, { meta: ctx.meta, channelId: ctx.channelId });
     if (scope === 'channel') {
       ctx.meta = await ctx.patch((current, fresh) => {
         assertCurrentAuthorized(fresh, current);
-        if (field === 'engine' && current.codexAuthSource === 'channel') throw new Error('This channel uses its own Codex login, so its engine is Codex.');
-        const own = { engine: current.codexAuthSource === 'channel' ? 'codex' : current.engine || '', model: current.model || '', effort: current.effort || '' };
-        return validatedSelection(own, field, value, parentEngine(current));
+        const own = { engine: current.engine || '', model: current.model || '', effort: current.effort || '' };
+        const next = validatedSelection(own, field, value, parentEngine(current));
+        return next;
       });
     } else {
       const session = requireSession(ctx), release = await acquireKeyedLock('teams-settings-runtime', `${ctx.entry.slug}:${session}`);
       try {
         const fresh = await ctx.authorize(); assertCurrentAuthorized(fresh);
-        if (field === 'engine' && fresh.meta.codexAuthSource === 'channel') throw new Error('This channel uses its own Codex login, so its engine is Codex.');
         const [engine, model, effort, mintedEngine] = await Promise.all([getThreadEngine(ctx.entry.slug, session), getThreadModel(ctx.entry.slug, session), getThreadEffort(ctx.entry.slug, session), getSessionEngine(ctx.entry.slug, session)]);
         const latest = await ctx.authorize(); assertCurrentAuthorized(latest);
-        const inheritedEngine = latest.meta.codexAuthSource === 'channel' ? 'codex' : mintedEngine || effectiveMeta(latest.meta).engine || getEngine();
-        const next = validatedSelection({ engine: latest.meta.codexAuthSource === 'channel' ? 'codex' : engine, model, effort }, field, value, inheritedEngine);
-        if (latest.meta.codexAuthSource === 'channel' && (field === 'engine' || next.engine && next.engine !== 'codex')) throw new Error('This channel uses its own Codex login, so its engine is Codex.');
-        await Promise.all([setThreadEngine(ctx.entry.slug, session, latest.meta.codexAuthSource === 'channel' ? '' : next.engine), setThreadModel(ctx.entry.slug, session, next.model), setThreadEffort(ctx.entry.slug, session, next.effort)]);
+        const inheritedEngine = mintedEngine || effectiveMeta(latest.meta).engine || getEngine();
+        const next = validatedSelection({ engine, model, effort }, field, value, inheritedEngine);
+        if (field === "engine" && next.engine) await assertEngineSelectable(next.engine, { meta: latest.meta, channelId: ctx.channelId });
+        await Promise.all([setThreadEngine(ctx.entry.slug, session, next.engine), setThreadModel(ctx.entry.slug, session, next.model), setThreadEffort(ctx.entry.slug, session, next.effort)]);
       } finally { release(); }
     }
     if (ctx.state.runtimeDrafts) delete ctx.state.runtimeDrafts[scope];

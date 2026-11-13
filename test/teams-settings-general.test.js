@@ -113,18 +113,18 @@ test('model previews reject stale/disabled/locked/unauthorized forms without wri
   assert.equal(stale.meta.model, 'sonnet');
   const disabled = context({ engine: 'claude' });
   await renderGeneral(disabled, ui); saveSettings({ engineEnabled: { codex: false } });
-  try { await assert.rejects(handleGeneral('settings.runtime.models', data, disabled, ui), /no longer enabled/); }
+  try { await assert.rejects(handleGeneral('settings.runtime.models', data, disabled, ui), /disabled|no longer enabled/); }
   finally { saveSettings({ engineEnabled: {} }); }
   const locked = context({ engine: 'codex', codexAuthSource: 'channel' });
   const lockedCard = await renderGeneral(locked, ui);
-  assert.ok(!JSON.stringify(lockedCard).includes('settings.runtime.models'));
+  assert.ok(JSON.stringify(lockedCard).includes('settings.runtime.models'));
   assert.ok(lockedCard.body.filter(row => row.id?.endsWith('_model')).every(row => row.choices.slice(1).every(item => modelBelongsToEngine(item.value, 'codex'))));
-  await assert.rejects(handleGeneral('settings.runtime.models', data, locked, ui), /own Codex login/);
+  await handleGeneral('settings.runtime.models', data, locked, ui);
   const revoked = context({ engine: 'claude' });
   await renderGeneral(revoked, ui);
   revoked.authorize = async () => ({ ...revoked, userIsApproved: false });
   await assert.rejects(handleGeneral('settings.runtime.models', data, revoked, ui), /no longer authorized/);
-  for (const ctx of [stale, disabled, locked, revoked]) assert.equal(ctx.state.runtimeDrafts, undefined);
+  for (const ctx of [stale, disabled, revoked]) assert.equal(ctx.state.runtimeDrafts, undefined);
 });
 
 test('stale model drafts are discarded and compatible full model IDs remain visible', async () => {
@@ -173,7 +173,7 @@ test('combined Apply rejects incomplete/incompatible/disabled selections before 
     assert.deepEqual(ctx.meta, before);
   }
   saveSettings({ engineEnabled: { codex: false } });
-  await assert.rejects(handleGeneral('settings.runtime.apply', { scope: 'channel', channel_engine: 'codex', channel_model: 'gpt-6-sol', channel_effort: 'high' }, ctx, ui), /no longer enabled/);
+  await assert.rejects(handleGeneral('settings.runtime.apply', { scope: 'channel', channel_engine: 'codex', channel_model: 'gpt-6-sol', channel_effort: 'high' }, ctx, ui), /disabled|no longer enabled/);
   assert.deepEqual(ctx.meta, before); saveSettings({ engineEnabled: {} });
 });
 
@@ -206,9 +206,8 @@ test('combined defaults use retained session engine and dedicated channel login 
   assert.equal(await getThreadModel(ctx.entry.slug, ctx.sessionKey), 'gpt-6-sol');
   const locked = context({ codexAuthSource: 'channel', engine: 'codex' });
   await renderGeneral(locked, ui);
-  await assert.rejects(handleGeneral('settings.runtime.apply', { scope: 'channel', channel_engine: 'claude', channel_model: 'opus', channel_effort: 'high' }, locked, ui), /own Codex login/);
-  await handleGeneral('settings.runtime.apply', { scope: 'channel', channel_model: 'gpt-6-sol', channel_effort: 'high' }, locked, ui);
-  assert.equal(locked.meta.engine, 'codex'); assert.equal(locked.meta.model, 'gpt-6-sol');
+  await handleGeneral('settings.runtime.apply', { scope: 'channel', channel_engine: 'claude', channel_model: 'opus', channel_effort: 'high' }, locked, ui);
+  assert.equal(locked.meta.engine, 'claude'); assert.equal(locked.meta.model, 'opus');
 });
 test('default-engine Apply re-resolves a session minted during the final membership check', async () => {
   const ctx = context({ engine: 'claude', model: 'opus' });
@@ -252,7 +251,7 @@ test('disabled engines and forged incompatible model/effort fields are rejected 
   assert.equal(ctx.meta.model, 'opus');
   await assert.rejects(handleGeneral('settings.runtime', { scope: 'channel', field: 'effort', channel_effort: 'ultra' }, ctx, ui), /effort is not supported/);
   saveSettings({ engineEnabled: { codex: false } });
-  await assert.rejects(handleGeneral('settings.runtime', { scope: 'channel', field: 'engine', channel_engine: 'codex' }, ctx, ui), /no longer enabled/);
+  await assert.rejects(handleGeneral('settings.runtime', { scope: 'channel', field: 'engine', channel_engine: 'codex' }, ctx, ui), /disabled|no longer enabled/);
   assert.equal(ctx.meta.engine, 'claude');
   saveSettings({ engineEnabled: {} });
 });
@@ -280,11 +279,12 @@ test('clearing a thread engine validates dependents against its unpinned fallbac
   assert.equal(await getThreadModel(ctx.entry.slug, ctx.sessionKey), '');
 });
 
-test('channel login locks both engine selectors and rejects forged changes', async () => {
+test('channel login retains both engine selectors and permits harness changes', async () => {
   const ctx = context({ engine: 'claude', codexAuthSource: 'channel' });
   const { body } = await renderGeneral(ctx, ui);
-  assert.ok(!body.some(row => row.id === 'channel_engine' || row.id === 'thread_engine'));
-  for (const scope of ['channel', 'thread']) await assert.rejects(handleGeneral('settings.runtime', { scope, field: 'engine', [`${scope}_engine`]: 'claude' }, ctx, ui), /own Codex login/);
+  assert.ok(body.some(row => row.id === 'channel_engine'));
+  assert.ok(body.some(row => row.id === 'thread_engine'));
+  for (const scope of ['channel', 'thread']) await handleGeneral('settings.runtime', { scope, field: 'engine', [`${scope}_engine`]: 'claude' }, ctx, ui);
 });
 
 test('manager authority is rechecked against latest metadata and fresh roles at mutation', async () => {
@@ -358,6 +358,6 @@ test('worst-case native member IDs and selected names fit Teams attachment budge
 
 test('shared helpers validate runtime triples while clearing only incompatible dependencies', () => {
   assert.deepEqual(nextRuntimeTriple({ engine: 'codex', model: 'gpt-6-sol', effort: 'ultra' }, 'engine', 'claude', 'claude'), { engine: 'claude', model: '', effort: '' });
-  assert.throws(() => runtimeSettingsPatch({ engine: 'unknown' }), /no longer enabled/);
+  assert.throws(() => runtimeSettingsPatch({ engine: 'unknown' }), /disabled|no longer enabled/);
   assert.throws(() => nextRuntimeTriple({}, 'unknown', '', 'claude'), /Unknown runtime/);
 });

@@ -3,7 +3,7 @@
 // Extracted from slack/app.js (the 2026-08 restructure notes (internal repo) Phase 2.4) so
 // unattended delivery (slack/deliver.js) and the Bolt wiring share one implementation without
 // importing the whole app module.
-import { resumeCommandFor } from "../engines/registry.js";
+import { resumeCommandFor, requireAdapter } from "../engines/registry.js";
 import { footerText } from "../gateway/reply-stats.js";
 import { referencedWorkspaceFiles } from "../gateway/reply-files.js";
 export { referencedWorkspaceFiles } from "../gateway/reply-files.js";
@@ -23,7 +23,8 @@ import { REPLY_DASHBOARD_ACTION_ID } from "./reply-dashboard.js";
 // stays today's `cd "<folder>" && <cmd>` line, byte for byte.
 export function buildResumeCommand(cwd, sessionId, engine, target = null) {
   if (!sessionId || !cwd) return "";
-  const base = resumeCommandFor(engine, sessionId);
+  if (requireAdapter(engine).channelScoped && !target?.meta?.channelId) return "";
+  const base = requireAdapter(engine).resumeCommand(sessionId, { target });
   const wrapped = target ? resumeCommandFor(engine, sessionId, { target }) : base;
   if (wrapped && wrapped !== base) return wrapped;
   return `cd ${JSON.stringify(cwd)} && ${base}`;

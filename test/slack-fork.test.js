@@ -270,10 +270,9 @@ test("another-engine fork respects clean mode and a dedicated channel Codex logi
   await saveChannelMeta(entry.slug, { channelId: channel, name: entry.name, type: "im", isDM: true, codexAuthSource: "channel", engine: "codex" });
   const count = client.posted.length;
   const spawns = runtime.calls.spawn.length;
-  await processMessageEvent({ ...event, ts: "8100.003", thread_ts: event.ts, text: "/fork :other Forbidden engine" }, client, { botUserId: "UBOT" });
-  assert.match(client.posted.at(-1).text, /engine stays Codex/);
-  assert.ok(client.posted.slice(count).every((m) => m.thread_ts === event.ts));
-  assert.equal(runtime.calls.spawn.length, spawns);
+  await processMessageEvent({ ...event, ts: "8100.003", thread_ts: event.ts, text: "/fork :other Another harness" }, client, { botUserId: "UBOT" });
+  assert.ok(client.posted.slice(count).some((m) => /Fork of/.test(m.text || "")));
+  assert.ok(runtime.calls.spawn.length > spawns);
 });
 
 async function until(check) {

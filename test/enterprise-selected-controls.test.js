@@ -25,7 +25,7 @@ test("selected controls stop using saved Enterprise configuration after downgrad
   testLicenseEnv();
   const skill = { slug: "model-skill", meta: { model: "sonnet" } };
   const swap = { skill, meta: { skillRuntimeSwap: true }, engine: "claude", model: "opus" };
-  const channel = { ...defaultChannelMeta("D_ENTERPRISE_CONTROLS", "Enterprise controls", true), channelId: "D_ENTERPRISE_CONTROLS", skillRuntimeSwap: true, codexAuthSource: "channel", engine: "codex" };
+  const channel = { ...defaultChannelMeta("D_ENTERPRISE_CONTROLS", "Enterprise controls", true), channelId: "D_ENTERPRISE_CONTROLS", skillRuntimeSwap: true, codexAuthSource: "channel", engine: "codex-channel" };
   await saveChannelMeta("enterprise-controls", channel);
   await setThreadSkillModel("enterprise-controls", "thread", "sonnet");
   saveSettings({ userAutoApprovalEnabled: true, userAutoApprovalDomains: ["example.com"] });

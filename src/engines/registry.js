@@ -46,7 +46,7 @@ export function engineStateDir(engine, target = null) {
   const state = engineSessionState(engine);
   if (!state) return "";
   const inContainer = target?.container?.[state.containerDirKey];
-  return inContainer ? String(inContainer) : state.hostDir();
+  return inContainer ? String(inContainer) : state.hostDir({ channelId: target?.meta?.channelId || "" });
 }
 
 /**

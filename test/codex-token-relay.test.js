@@ -273,18 +273,18 @@ test("a channel API-key login stays on the host and only its scoped placeholder 
   const channelId = "C_CODEX_API_ONLY";
   const home = channelCodexHome(channelId);
   const file = authFile(home, { apiKey: true });
-  const target = { ...activeTarget(channelId), meta: { channelId, codexAuthSource: "channel" } };
+  const target = { ...activeTarget(channelId), meta: { channelId, engine: "codex-channel", codexAuthSource: "channel" } };
   assert.deepEqual(codexLoginCandidatesFor(target.meta), [file]);
   const resolved = await relay.resolveContainerCodexToken({ candidates: [file] });
   assert.equal(resolved.source, "api-key");
   const placed = await grants.containerCodexCredential({ target });
   const parsed = JSON.parse(placed.authJson);
   assert.equal(parsed.tokens, null);
-  assert.equal(parsed.OPENAI_API_KEY, grants.codexApiRelayPlaceholderFor({ channelId }));
+  assert.equal(parsed.OPENAI_API_KEY, grants.codexApiRelayPlaceholderFor({ channelId, channel: true }));
   assert.ok(!placed.authJson.includes(resolved.token));
   const grant = await grants.resolveEgressGrant(parsed.OPENAI_API_KEY, { metaFor: async () => target.meta });
   assert.equal(grant.value, resolved.token);
-  assert.equal(grant.secretName, CODEX_API_RELAY_SECRET_NAME);
+  assert.equal(grant.secretName, "CODEX_CHANNEL_API_RELAY_KEY");
   assert.deepEqual(grant.hosts, [...CODEX_API_RELAY_RULE.hosts]);
   assert.deepEqual(grant.format, ["bearer"]);
   assert.equal(swapHeaders({ headers: { host: "api.openai.com", authorization: `Bearer ${parsed.OPENAI_API_KEY}` }, hostname: "api.openai.com", resolveGrant: resolverFor(grant) }).headers.authorization, `Bearer ${resolved.token}`);
@@ -295,7 +295,7 @@ test("a channel ChatGPT login relays from its own host home and keeps the refres
   grants.__resetGrantCaches();
   const channelId = "C_CODEX_SUBSCRIPTION_ONLY";
   const file = authFile(channelCodexHome(channelId));
-  const target = { ...activeTarget(channelId), meta: { channelId, codexAuthSource: "channel" } };
+  const target = { ...activeTarget(channelId), meta: { channelId, engine: "codex-channel", codexAuthSource: "channel" } };
   const original = relay.readDaemonCodexAccessToken(file);
   const placed = await grants.containerCodexCredential({ target });
   const parsed = JSON.parse(placed.authJson);
@@ -304,7 +304,7 @@ test("a channel ChatGPT login relays from its own host home and keeps the refres
   assert.ok(!placed.authJson.includes(original.token));
   const grant = await grants.resolveEgressGrant(corePlaceholder(parsed.tokens.access_token), { metaFor: async () => target.meta });
   assert.equal(grant.value, original.token);
-  assert.equal(grant.secretName, CODEX_RELAY_SECRET_NAME);
+  assert.equal(grant.secretName, "CODEX_CHANNEL_ACCESS_TOKEN");
 });
 
 test("installRelayedCodexLogin writes the file through the backend, refuses a still-mounted shared file, and names a missing login", async () => {

@@ -61,7 +61,7 @@ test("MCP checklists show Claude and Codex together while persisting separate gr
   assert.match(app, /\/api\/mcp\/available\?engine=\$\{encodeURIComponent\(engine\)\}/);
   assert.match(app, /for \(const engine of \["claude", "codex"\]\)/);
   assert.match(app, /data-mcp-engine/);
-  assert.match(app, /loading Claude and Codex MCP lists/);
+  assert.match(app, /loading MCP lists/);
   assert.match(app, /allowedCodexMcps/);
   assert.match(app, /captureMcpSelection/);
   assert.match(app, /paintAllMcpBoxes/);

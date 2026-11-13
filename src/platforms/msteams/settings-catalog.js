@@ -1,3 +1,4 @@
+import { engineAvailableForChannel } from "../../gateway/channel-engines.js";
 import { enterpriseFeatureEnabled } from "../../ee/feature-entitlements.js";
 // Teams catalog pages share the same credential, grant and catalog stores as Slack Settings.
 // Card state carries identifiers only; stored credentials never become input defaults.
@@ -10,7 +11,7 @@ import { effectiveMeta } from '../../gateway/run.js';
 import { resolveMakeToolboxUpdate } from '../../gateway/make-toolbox.js';
 import { selectionFieldForEngine, persistedSelectionForEngine } from '../../gateway/mcp-discovery.js';
 import { assertNewMcpSelections } from '../../gateway/mcp-selection.js';
-import { requireAdapter } from '../../engines/registry.js';
+import { requireAdapter, engineLabel } from '../../engines/registry.js';
 import { getSkill, listSkills } from '../../gateway/skills/catalog.js';
 import { canSeeSkill, grantSkillsToChannel, revokeSkillsFromChannel } from '../../gateway/skills/authoring.js';
 import { assignTemplateToChannel, channelSkillGrants, listTemplateSummaries, templateOfMeta } from '../../gateway/skills/templates.js';
@@ -35,7 +36,7 @@ function emailAccountRows(ui, scope, accounts, emptyText) {
 const label = scope => ({ channel: 'Channel', organization: 'Organization', personal: 'Personal' })[scope];
 const str = value => typeof value === 'string' ? value.trim() : '';
 const configured = value => value ? `Configured${typeof value === 'string' && value.length >= 12 ? ` (••••${value.slice(-4)})` : ''}` : 'Not configured';
-const keyFor = (engine, item) => engine === 'codex' ? `${item.kind || ''}:${item.id || ''}` : str(item.name).toLowerCase();
+const keyFor = (engine, item) => requireAdapter(engine).cli === 'codex' ? `${item.kind || ''}:${item.id || ''}` : str(item.name).toLowerCase();
 const orgKeys = () => new Set((getOrgAccessGrants().skills || []).map(value => value.toLowerCase()));
 
 function pageSlice(items, requested, size = PAGE_SIZE) {
@@ -71,7 +72,7 @@ async function cloudItems(ctx, engine) {
   const directKeys = new Set(direct.map(item => keyFor(engine, item)));
   const inheritedKeys = new Set(org.map(item => keyFor(engine, item)));
   // A channel card must not publish the administrator's ungranted/private connection catalog.
-  const available = ctx.isShared ? [] : await requireAdapter(engine).discoverMcps({ channelId: engine === 'codex' && ctx.meta.codexAuthSource === 'channel' ? ctx.channelId : '' });
+  const available = ctx.isShared ? [] : await requireAdapter(engine).discoverMcps({ channelId: engine === 'codex-channel' ? ctx.channelId : '' });
   const availableKeys = new Set(available.map(item => keyFor(engine, item)));
   const rows = new Map();
   for (const source of [...available, ...direct, ...org]) {
@@ -194,8 +195,9 @@ export async function renderCatalogPage(page, ctx, ui) {
   body.push(ui.heading('Cloud MCP'));
   if (!ctx.userIsAdmin) { body.push(ui.text('Only administrators can manage Cloud MCP.')); return { body, actions }; }
   if (ctx.isShared) body.push(ui.text('Active channel connections are shown here. Browse additional private connections in authenticated settings.'));
-  const engine = ctx.state.cloudEngine === 'codex' ? 'codex' : 'claude';
-  body.push(ui.buttons(['claude', 'codex'].map(value => ui.execute(value === 'codex' ? 'Codex catalog' : 'Claude catalog', 'settings.catalog.page', { page: 'mcp', engine: value, index: 0 }, 'none'))));
+  const engines = ['claude', 'codex', 'codex-channel'].filter(id => engineAvailableForChannel(ctx.meta, id));
+  const engine = engines.includes(ctx.state.cloudEngine) ? ctx.state.cloudEngine : 'claude';
+  body.push(ui.buttons(engines.map(value => ui.execute(`${engineLabel(value)} catalog`, 'settings.catalog.page', { page: 'mcp', engine: value, index: 0 }, 'none'))));
   const all = await cloudItems(ctx, engine), slice = pageSlice(all, ctx.state.cloudPage);
   body.push(ui.text(`${engine} — ${all.length} capabilities — page ${slice.page + 1}/${slice.totalPages}`));
   for (const item of slice.items) {
@@ -236,7 +238,7 @@ export async function handleCatalogAction(action, data, ctx, _ui) {
     const index = Number.isSafeInteger(Number(data.index)) && Number(data.index) >= 0 ? Number(data.index) : 0;
     ctx.state[data.page === 'skills' && data.catalog === 'templates' ? 'templatePage' : { secrets: 'variablePage', mcp: 'cloudPage', skills: 'skillPage' }[data.page]] = index;
     if (data.page === 'mcp' && data.engine) {
-      if (!['claude', 'codex'].includes(data.engine)) throw new Error('Unknown engine.');
+      if (!['claude', 'codex', 'codex-channel'].includes(data.engine) || !engineAvailableForChannel(ctx.meta, data.engine)) throw new Error('Unknown engine.');
       ctx.state.cloudEngine = data.engine;
     }
     if (data.page === 'secrets' && data.variableName) {
@@ -348,16 +350,16 @@ export async function handleCatalogAction(action, data, ctx, _ui) {
   }
   if (action === 'settings.cloud.toggle') {
     if (!current.userIsAdmin) throw new Error('Only administrators can manage Cloud MCP.');
-    if (!['claude', 'codex'].includes(data.engine) || typeof data.activate !== 'boolean' || !str(data.key)) throw new Error('Invalid Cloud MCP selection.');
+    if (!['claude', 'codex', 'codex-channel'].includes(data.engine) || !engineAvailableForChannel(ctx.meta, data.engine) || typeof data.activate !== 'boolean' || !str(data.key)) throw new Error('Invalid Cloud MCP selection.');
     const engine = data.engine, key = str(data.key), field = selectionFieldForEngine(engine);
     if ((getOrgAccessGrants()[field] || []).some(item => keyFor(engine, item) === key)) throw new Error('Organization MCP grants are inherited and cannot be changed here.');
     let selection = null;
     if (data.activate) {
-      const available = await requireAdapter(engine).discoverMcps({ channelId: engine === 'codex' && current.meta.codexAuthSource === 'channel' ? current.channelId : '' });
+      const available = await requireAdapter(engine).discoverMcps({ channelId: engine === 'codex-channel' ? current.channelId : '' });
       selection = persistedSelectionForEngine(engine, available.find(item => keyFor(engine, item) === key));
       if (!selection) throw new Error('That MCP capability is no longer available.');
       await assertNewMcpSelections(engine, [selection], current.meta[field] || [], {
-        channelId: current.meta.codexAuthSource === 'channel' ? current.channelId : '',
+        channelId: engine === 'codex-channel' ? current.channelId : '',
       });
     }
     // Discovery and admission are asynchronous; recheck roles before the write.

@@ -3,16 +3,16 @@ title: A dedicated Codex login for a conversation
 description: Select a separate Codex account without falling back to another conversation or gateway login.
 ---
 
-**Enterprise availability.** Dedicated channel Codex authentication requires an effective Enterprise license. A configured dedicated-login channel refuses a run after downgrade rather than silently using the shared gateway account. Shared gateway Codex authentication remains available in other tiers.
+**Enterprise availability.** Dedicated channel Codex authentication requires an effective Enterprise license. The dedicated harness refuses a run after downgrade rather than silently using the shared gateway account; other approved harnesses remain selectable. Shared gateway Codex authentication remains available in other tiers.
 
 
 A conversation can use the gateway's Codex connection or its own dedicated Codex login. This separates the authentication source for that conversation while leaving Slack and Claude on their existing gateway connections.
 
 ## Select the authentication source
 
-An administrator opens the conversation's **Runtime → Codex authentication** settings. Choose the gateway login to retain the usual engine, model, and effort controls. Choose the conversation login to use its separately stored Codex authentication.
+An administrator opens the conversation's **Runtime → Codex authentication** settings. Connect the conversation login to use its separately stored Codex authentication. Harness, model and effort controls remain available.
 
-A dedicated login fixes the conversation to **Codex**. Redundant engine controls disappear, and the Slack model picker goes from scope directly to Codex model and effort. Existing Claude threads move to a fresh Codex session on their next turn; their Claude session ID cannot be resumed by Codex.
+The connected account appears as **Codex (channel account)** (`codex-channel`) alongside gateway **Codex** (`codex`) and other approved harnesses. Successful sign-in selects it as the conversation default. Use the harness selector or `/model` to switch the conversation or one thread. Existing threads retain their session owner until explicitly switched; a switch starts a fresh session with the chat context carried forward.
 
 ## Sign in
 
@@ -25,10 +25,12 @@ Status shows the method and whether sign-in succeeded, without revealing stored 
 
 ## Understand what the login governs
 
-The selected account supplies Codex authentication for the conversation's normal turns, applicable direct-host administrator turns, and Codex Cloud MCP discovery. Channel model and effort choices remain separate settings.
+The dedicated account supplies authentication only when **Codex (channel account)** is selected, including applicable direct-host administrator turns and its own Codex Cloud MCP discovery. Gateway **Codex** always uses the gateway account. Dedicated sessions and relay identities remain separate during concurrent runs. Channel model and effort choices remain separate settings.
 
 In proxy-mode containers, the host authentication file and refresh token remain outside the container. The runtime receives a channel-bound credential relay; ChatGPT and API-key methods have their corresponding allowed provider routes.
 
 Changing a login affects account usage and available capabilities. Verify the chosen account before treating a setup as complete, and inspect [usage attribution](/docs/features/usage-and-costs) when comparing costs.
 
 Related: [engine authentication](/docs/configuration/engine-authentication), [Codex](/docs/features/codex), and [model picker](/docs/features/model-picker).
+
+The HTTP Run API accepts `"harness": "codex-channel"` (or legacy `"engine": "codex-channel"`) when targeting this conversation. Responses expose both `harness` and `engine`; conflicting aliases are rejected.

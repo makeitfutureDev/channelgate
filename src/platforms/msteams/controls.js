@@ -51,13 +51,13 @@ export function createTeamsControls({ connector, now = Date.now, authorize = tea
     return generalRuntimeScopes({ meta: state.meta, entry: state.entry, sessionKey: state.sessionKey });
   }
   async function modelCard(state, stateId, { engine: requested = state.loadedEngine, draft = null, notice = '' } = {}) {
-    const { thread: current, locked } = await modelRuntime(state);
+    const { thread: current } = await modelRuntime(state);
     const summary = text(`Current engine: ${current.engine}; model: ${current.model || 'engine default'}; effort: ${current.values.effort || 'inherited default'}.`);
     if (!state.message.isDM && !canChangeChannelRuntime(state.authorIsAdmin)) {
       return card('Session model', [summary, text('Runtime changes in this conversation are restricted to administrators.')]);
     }
     const offered = value => current.engines.some(item => item.value === value);
-    const engine = locked ? 'codex' : [requested, current.engine].find(offered) || current.engines[0]?.value;
+    const engine = [requested, current.engine].find(offered) || current.engines[0]?.value;
     state.loadedEngine = engine;
     const ui = teamsSettingsUi(stateId);
     const models = [...modelsForEngine(engine)];
@@ -69,11 +69,10 @@ export function createTeamsControls({ connector, now = Date.now, authorize = tea
     const savedEffort = efforts.includes(wanted.effort) ? wanted.effort : '';
     const body = [summary, ...(notice ? [text(notice)] : []),
       text('Models are shown only for the selected engine. After changing Engine, use Load models, then choose model and effort and Apply to this session. Changes apply to the next turn. Use /settings → General for conversation defaults.'),
-      ...(locked ? [text('Engine: Codex — locked to this conversation’s Codex login.')]
-        : [ui.choice('engine', 'Engine', engine, current.engines), ui.buttons([ui.execute('Load models', 'model.load')])]),
+      ui.choice('engine', 'Engine', engine, current.engines), ui.buttons([ui.execute('Load models', 'model.load')]),
       ui.choice('model', 'Model', savedModel || 'default', [{ label: 'Default model for selected engine', value: 'default' }, ...models]),
       ui.choice('effort', 'Effort', savedEffort || 'default', [{ label: 'Inherited default', value: 'default' }, ...efforts.map(value => ({ label: value, value }))])];
-    // The action's engine is the locked card's only engine value; elsewhere the Engine input wins.
+    // Apply names the same engine whose models were loaded into this card.
     return card('Session model', body, [ui.execute('Apply to this session', 'model.save', { engine })]);
   }
   async function files(state, stateId, context, relative = '', page = 0, signal) {
@@ -327,7 +326,7 @@ export function createTeamsControls({ connector, now = Date.now, authorize = tea
       const { engine, model: draftModel, effort } = interaction.data;
       if (typeof engine !== 'string' || !engine || engine.length > 64) throw new Error('Choose an engine first.');
       const scopes = await generalRuntimeScopes({ meta: state.meta, entry: state.entry, sessionKey: state.sessionKey });
-      if (scopes.locked || !scopes.thread.engines.some(item => item.value === engine)) throw new Error('Choose an enabled engine.');
+      if (!scopes.thread.engines.some(item => item.value === engine)) throw new Error('Choose an enabled engine.');
       const draft = engine === state.loadedEngine ? { model: String(draftModel || ''), effort: String(effort || '') } : {};
       return repaintModel(await modelCard(state, interaction.data.stateId, { engine, draft }));
     }
@@ -338,7 +337,7 @@ export function createTeamsControls({ connector, now = Date.now, authorize = tea
       // models loads them instead of saving a model chosen from the other engine's list.
       if (interaction.data.engine !== state.loadedEngine) {
         const scopes = await generalRuntimeScopes({ meta: state.meta, entry: state.entry, sessionKey: state.sessionKey });
-        if (scopes.locked || !scopes.thread.engines.some(item => item.value === interaction.data.engine)) throw new Error('Choose an enabled engine.');
+        if (!scopes.thread.engines.some(item => item.value === interaction.data.engine)) throw new Error('Choose an enabled engine.');
         return repaintModel(await modelCard(state, interaction.data.stateId, { engine: interaction.data.engine, draft: {},
           notice: 'Engine changed, so its models were loaded and nothing was saved. Choose a model and effort, then Apply.' }));
       }

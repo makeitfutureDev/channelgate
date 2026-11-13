@@ -143,16 +143,13 @@ test('runtime policy is checked on open and again on Apply; personal chats can s
   assert.equal(await getThreadModel(dm.args.entry.slug, dm.args.sessionKey), 'gpt-6-sol');
 });
 
-test('channel login locks engine and expired/revoked access cannot submit', async () => {
+test('channel login permits engine switching and expired/revoked access cannot submit', async () => {
   const locked = fixture({ meta: { codexAuthSource: 'channel' } }); await locked.native.onCommand(locked.args);
   const lockedCard = locked.sent[0].card;
-  assert.equal(lockedCard.body.find(row => row.id === 'engine'), undefined, 'a locked engine has no Engine input');
-  assert.equal(lockedCard.body.find(row => row.type === 'ActionSet'), undefined, 'and no Load models button');
-  assert.ok(lockedCard.body.find(row => row.id === 'model').choices.slice(1).every(row => !row.value.startsWith('claude-')));
-  assert.deepEqual(lockedCard.actions.map(row => row.verb), ['model.save']);
-  await locked.submit({ engine: 'claude', model: 'sonnet', effort: 'default' });
-  await locked.load('claude');
-  assert.equal(await getThreadEngine(locked.args.entry.slug, locked.args.sessionKey), '');
+  assert.ok(lockedCard.body.find(row => row.id === 'engine'));
+  assert.ok(lockedCard.body.find(row => row.type === 'ActionSet'));
+  await locked.apply('codex', { model: 'gpt-6-sol', effort: 'high' });
+  assert.equal(await getThreadEngine(locked.args.entry.slug, locked.args.sessionKey), 'codex');
   let time = 0; const expired = fixture({ now: () => time }); await expired.native.onCommand(expired.args);
   time = 16 * 60_000;
   assert.match(JSON.stringify((await expired.load('codex')).body), /Action could not be completed/);

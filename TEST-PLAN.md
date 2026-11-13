@@ -1,5 +1,39 @@
 # ChannelGate — Test Plan
 
+## Separate channel-account Codex harness (2026-11-13)
+
+- Automated regression: `test/codex-channel.test.js`, `test/codex-channel-history.test.js`,
+  `test/api-runs-harness.test.js`, `test/codex-token-relay.test.js`, channel login web/browser,
+  model wizard/directive/fork, channel policy, engine registry/enabled and Teams settings tests.
+  Verify registry identity, account readiness, isolated host/container HOME and resume commands,
+  migration of legacy defaults/policies/pins/sessions, and immutable concurrent relay identities.
+- Live fixture: disposable authorized Slack channel with a connected customer Codex account,
+  configured gateway Codex and Claude, Enterprise active, proxy egress, and all three harnesses
+  approved. For both an existing Claude thread and existing dedicated Codex thread, open `/model`
+  → just this thread; select Claude, Codex (channel account), then gateway Codex, with a fresh
+  prompt each time: “Create a small file stating the configured harness ID and chosen model.”
+  Inspect resolved runtime/audit/session metadata and each account’s provider usage. Pass only
+  when explicit selection wins, the picker remains available and no account is substituted.
+  Repeat channel-wide selection for new threads; existing threads retain their session owner.
+- Concurrent credential fixture: one shared Codex API-key run and one dedicated-account run in
+  that channel. Change the default to Claude while both are active. Inspect proxy grant/account
+  evidence: each continues with its initial account; no refresh token enters the container.
+  Disconnect/downgrade the dedicated account and verify only its relay is refused; restore setup.
+- API fixture: authenticated admin Run API targeting the disposable channel. POST
+  `{ "channel": "<fixture-id>", "message": "Report the configured harness ID", "harness": "codex-channel" }`.
+  Poll status and inspect the completion webhook: `harness` and `engine` must both identify the
+  actual selected harness. Repeat with legacy `engine`, matching aliases, conflicting aliases
+  (400), unknown ID (400), disconnected account, disabled harness, policy refusal and expired
+  entitlement (refused before spawn). Explicit selections never fail over to another account.
+- Upgrade fixture: isolated pre-v53 database with a dedicated channel, approved Codex-only
+  policy, Codex session/pin and schedule. Upgrade, resume its thread and verify native history
+  remains available under the dedicated HOME and the policy never gains gateway Codex access.
+- Local validation: full suite passed 4,906 tests with 57 optional/live skips; follow-up
+  API/history/account regressions and the real Chromium channel-login/picker test passed.
+  Static analysis, whitespace and secret scanning passed.
+- QA registry defines these gates for both Claude and Codex where reachable. Live provider
+  acceptance is pending; local fixtures are not evidence of deployed account billing.
+
 ## Activity bot-started live-root exclusions (2026-11-13)
 
 - Engine-independent: root ownership, discovery and warning state are evaluated in the daemon;

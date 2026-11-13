@@ -1,5 +1,20 @@
 # ChannelGate — Features
 
+## Separate channel-account Codex harness (2026-11-13)
+
+A connected conversation account appears as **Codex (channel account)** (`codex-channel`)
+in harness selectors, alongside gateway **Codex** (`codex`) and optional **Codex EU**.
+Connecting an account selects its dedicated harness without locking other channel or thread
+harness choices. Dedicated accounts require Enterprise and never substitute gateway credentials
+or automatic failover. Their sessions, optional MCP selections and live relay identities are
+separate, including concurrent runs while the channel default changes. Existing dedicated
+channels, session ownership, pins and approved-harness policies migrate to the dedicated ID.
+
+The HTTP Run API accepts `harness` as an alias for `engine`; mismatched aliases return 400.
+POST/status/list/webhook responses expose both fields, with resolved/finished runs reporting
+the actual harness. Requests for `codex-channel` require the target conversation’s connected
+account, enabled harness, entitlement and approved-harness policy.
+
 ## Activity excludes bot-started live threads without warnings (2026-11-13)
 
 Activity records successfully verified bot-started live roots as excluded discovery candidates.

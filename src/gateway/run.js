@@ -25,7 +25,7 @@ import { buildEngineMcpRuntime } from "./run-engine-mcp.js";
 import { releaseRemoteMcps } from "../mcp/remote-mcp-registry.js";
 import { abortPooled } from "../engines/session-pool.js";
 import { DEFAULT_SILENCE_WINDOWS } from "../engines/watchdog.js";
-import { mintsOwnSessionId, usesMcpConfigFile, engineSupports, requireAdapter, fallbackTargets, engineLabel, engineCredentialState, engineTransientKinds, modelsForEngine } from "../engines/registry.js";
+import { adapterFor, mintsOwnSessionId, usesMcpConfigFile, engineSupports, requireAdapter, fallbackTargets, engineLabel, engineCredentialState, engineTransientKinds, modelsForEngine } from "../engines/registry.js";
 import { validateRunContext } from "../engines/contract.js";
 import { getEngine, getDefaultModel, getDefaultEffort, getEngineFallback, isEngineEnabled, getEnabledEngines, ENGINES, getOrgAccessGrants } from "../config/settings.js";
 import { claudeTokenFingerprint, resolveContainerClaudeToken } from "./claude-token-relay.js";
@@ -132,7 +132,7 @@ export function transientProviderFailure(error, engine = "") {
 // before any work still follows the existing replay-safe retry/failover path.
 export function codexCapacityContinuation(error) {
   const details = error?.details || {};
-  return details.engine === "codex" && details.providerError === true
+  return (adapterFor(details.engine)?.modelFamily || details.engine) === "codex" && details.providerError === true
     && details.providerKind === "transient" && details.replaySafe === false
     && Boolean(details.sessionId) && (Number(details.toolUseCount) > 0 || Boolean(details.partialContent))
     && /selected model is at capacity/i.test(String(error.message || ""));
@@ -778,16 +778,14 @@ async function runMessageImpl({ channelId, authorId, workspaceId = "", text, thr
   // "claude"/"codex" directive or the /model wizard's thread scope) wins, then the channel's
   // engine, then the global default. For an EXISTING thread this is only the requested engine:
   // the session's own engine can still outrank a channel/global value (see decideThreadEngine).
-  const channelCodexLocked = meta.codexAuthSource === "channel";
-  if (channelCodexLocked) requireEnterpriseFeature("channelCodexLogin");
-  const threadEngine = channelCodexLocked || (overrides?.engine && ENGINES.includes(overrides.engine)) ? "" : await getThreadEngine(entry.slug, threadKey);
-  const channelEngine = channelCodexLocked ? "codex" : ENGINES.includes(meta.engine) ? meta.engine : "";
-  let engine = channelCodexLocked ? "codex" : threadEngine || channelEngine || getEngine();
+  const threadEngine = overrides?.engine && ENGINES.includes(overrides.engine) ? "" : await getThreadEngine(entry.slug, threadKey);
+  const channelEngine = ENGINES.includes(meta.engine) ? meta.engine : "";
+  let engine = threadEngine || channelEngine || getEngine();
   // Explicit = the ask names an engine for THIS thread/run specifically (per-run API override or
   // per-thread directive/wizard). Channel/global values are defaults, not asks — an existing
   // thread outranks them and keeps running on the engine its session was born under (see
   // decideThreadEngine below).
-  let engineExplicit = channelCodexLocked || Boolean(threadEngine || (overrides?.engine && ENGINES.includes(overrides.engine)));
+  let engineExplicit = Boolean(threadEngine || (overrides?.engine && ENGINES.includes(overrides.engine)));
   // The same fact, captured BEFORE the disabled-harness substitution below can set the flag for
   // its own reasons: did a PERSON name this harness for this thread/run? It decides whether
   // automatic cross-engine failover is allowed to answer as the other harness (see below).
@@ -826,14 +824,14 @@ async function runMessageImpl({ channelId, authorId, workspaceId = "", text, thr
   // a fresh session on the enabled harness with the thread transcript replayed into it.
   // An explicit unapproved request is refused below, never substituted or announced as running.
   if (!isEngineEnabled(engine) && (!enginePinnedByUser || isChannelEngineApproved(channelMeta, engine))) {
-    if (channelCodexLocked) {
+    if (requireAdapter(engine).channelScoped) {
       return {
-        slug: entry.slug, cwd: "", model: "", engine: "codex",
-        content: "This channel uses its own Codex login, but Codex is disabled in gateway Settings. Enable Codex or select the default gateway login for this channel.",
+        slug: entry.slug, cwd: "", model: "", engine,
+        content: `${engineLabel(engine)} is disabled in gateway Settings. Enable it or select another harness for this thread.`,
         sessionId: null, isNew: false, usage: {}, costUSD: 0, durationMs: 0, engineRefused: true,
       };
     }
-    const substitute = getEnabledEngines().find(id => isChannelEngineApproved(channelMeta, id)) || "";
+    const substitute = getEnabledEngines().find(id => isChannelEngineApproved(channelMeta, id) && (!requireAdapter(id).channelScoped || channelMeta.codexAuthSource === "channel")) || "";
     if (substitute && substitute !== engine) {
       console.warn(`[gateway] ${entry.slug}/${threadKey}: harness ${engine} is disabled in settings — running on ${substitute}`);
       engine = substitute;

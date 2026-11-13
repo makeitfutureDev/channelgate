@@ -102,7 +102,7 @@ test("Free template API mutations reject with 403 while existing catalog data st
 
 test("cached dedicated Codex relay pauses on downgrade and resumes without deleting the saved login", async () => {
   license("enterprise");
-  const placeholder = codexRelayPlaceholderFor({ channelId: "C_ENT_CODEX_CACHE" });
+  const placeholder = codexRelayPlaceholderFor({ channelId: "C_ENT_CODEX_CACHE", channel: true });
   const deps = { metaFor: async () => ({ codexAuthSource: "channel", channelId: "C_ENT_CODEX_CACHE" }), codexRelayToken: async () => ({ token: "fake-codex-relay-token", source: "chatgpt" }) };
   assert.ok(await resolveEgressGrant(placeholder, deps));
   license("free");

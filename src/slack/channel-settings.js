@@ -1,3 +1,4 @@
+import { engineLabel } from "../engines/registry.js";
 import { enterpriseFeatureEnabled } from "../ee/feature-entitlements.js";
 // Channel Settings modal for Slack. It mirrors the web conversation editor's safe channel-level
 // controls while keeping credential values write-only and re-authorizing every interaction in the
@@ -695,12 +696,12 @@ const masked = (value = {}) => (value.configured ? (value.last4 ? inlineCode(`�
 // ── Agent ────────────────────────────────────────────────────────────────────────────────────
 // Engine, model and effort as one row of dropdowns per scope (an actions block), the thread's
 // first when Settings was opened from one; then the mode and its options in the same style.
-function runtimeRow(scope, data = {}, state, { editable = true, codexLocked = false, reset = false } = {}) {
+function runtimeRow(scope, data = {}, state, { editable = true, reset = false } = {}) {
   const ids = RUNTIME_SELECT_ACTION_IDS[scope];
   const values = data.values || {};
   const inherited = data.inherited || {};
   const lists = { engine: data.options?.engines || [], model: data.options?.models || [], effort: data.options?.efforts || [] };
-  const fields = RUNTIME_FIELDS.filter((field) => !(codexLocked && field === "engine"));
+  const fields = RUNTIME_FIELDS;
   if (!editable) {
     return [context(fields.map((field) => values[field] || inherited[field] || "default").map((value) => escapeMrkdwn(value)).join(" · "))];
   }
@@ -802,11 +803,11 @@ function agentPage(snapshot, state, opts) {
     ...(locked ? [context(`*Codex* · this channel's own login · ${escapeMrkdwn(runtime.channelLoginStatus || "checking…")}`)] : []),
     ...(thread ? [
       context(`*This thread*${thread.pinned ? " · 📌 pinned" : ""}`),
-      ...runtimeRow("thread", thread, state, { editable, codexLocked: locked, reset: editable && thread.pinned }),
+      ...runtimeRow("thread", thread, state, { editable, reset: editable && thread.pinned }),
       ...(thread.sessionEngineLabel ? [context(`_Its session runs on ${escapeMrkdwn(thread.sessionEngineLabel)} until you pin an engine._`)] : []),
     ] : []),
     context("*Channel default*"),
-    ...runtimeRow("channel", scopes.channel, state, { editable, codexLocked: locked }),
+    ...runtimeRow("channel", scopes.channel, state, { editable }),
     ...(editable ? [] : [context("🔒 The gateway's policy limits engine changes to admins.")]),
     ...harnessRows(runtime, opts),
     { type: "divider" },
@@ -997,9 +998,9 @@ function connectionRows(snapshot, state, scope, opts) {
 function cloudRows(snapshot) {
   const cloud = snapshot.cloudMcp || {};
   const blocks = [header("Cloud MCP")];
-  for (const engine of ["claude", "codex"]) {
+  for (const engine of Object.keys(cloud)) {
     const data = cloud[engine] || {};
-    blocks.push(context(`*${engine === "claude" ? "Claude" : "Codex"}*`));
+    blocks.push(context(`*${engineLabel(engine)}*`));
     if (!data.ready) {
       blocks.push(context("_Loading the catalog… switch pages to refresh._"));
       continue;
@@ -1427,6 +1428,7 @@ export function buildCatalogManagerView(items = [], state = {}, {
   kind = "skills",
   channelName = "",
   engine = "",
+  engines = ["claude", "codex"],
   page = 0,
   notice = "",
 } = {}) {
@@ -1440,7 +1442,7 @@ export function buildCatalogManagerView(items = [], state = {}, {
   if (isMcp) {
     blocks.push({
       type: "actions",
-      elements: ["claude", "codex"].map((id) => button(`${CHANNEL_SETTINGS_CLOUD_ENGINE_PREFIX}${id}`, id === "claude" ? "Claude" : "Codex", state, "cloud_engine", { e: id }, id === engine ? { style: "primary" } : {})),
+      elements: engines.map((id) => button(`${CHANNEL_SETTINGS_CLOUD_ENGINE_PREFIX}${id}`, engineLabel(id), state, "cloud_engine", { e: id }, id === engine ? { style: "primary" } : {})),
     });
   }
   if (!shown.length) blocks.push({ type: "section", text: mrkdwn("_No available items._") });
