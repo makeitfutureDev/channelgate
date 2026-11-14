@@ -193,7 +193,7 @@ test("an unbound call lists, searches and switches conversations, posting each s
   assert.match(segment.text, /moved on\* — 1 min here · 1 task/);
   assert.match(segment.text, /\*Tasks here:\* 1\. Summarize the pipeline — done/);
   assert.match(segment.text, /> \*Tiberiu:\* Open the pipeline review\n> \*Agent:\* Started the summary\./);
-  const root = f.posted.at(-1);
+  const root = f.posted.find((p) => p.conversationId === "C_WORK" && !p.threadKey);
   assert.equal(root.conversationId, "C_WORK"); assert.equal(root.threadKey, undefined); assert.match(root.text, /Voice call.*Tiberiu/);
   session.emit("tool_call", { id: "t8", name: "switch_conversation", args: { channel: "nowhere" } });
   await tick();
@@ -393,7 +393,8 @@ async function webFixture(t, { manager } = {}) {
   const client = { auth: { test: async () => ({ user_id: "B_GATEWAY" }) }, chat: { postEphemeral: async () => ({}), postMessage: async () => ({ ts: "1.1" }) },
     conversations: { replies: async () => ({ messages: [] }), members: async () => ({ members: ["U_MINE"] }) }, users: { info: async () => ({ user: { profile: { display_name: "Atlas" } } }) } };
   const app = express();
-  app.use("/activity", createActivityRouter({ getClient: () => client, getTeamId: () => "T_WORK", getBaseUrl: () => base, getBotIdentity: () => ({ userId: "B_GATEWAY", handle: "atlas" }), calls, voiceAvailable: () => true, pollMs: 20 }));
+  app.use("/activity", createActivityRouter({ getClient: () => client, getTeamId: () => "T_WORK", getBaseUrl: () => base, getBotIdentity: () => ({ userId: "B_GATEWAY", handle: "atlas" }), calls, voiceAvailable: () => true, pollMs: 20,
+    snapshot: async () => ({ rows: ROWS, total: ROWS.length }) }));
   const server = await new Promise((resolve) => { const listener = app.listen(0, "127.0.0.1", () => resolve(listener)); });
   base = `http://127.0.0.1:${server.address().port}`;
   t.after(async () => { resetActivityStateForTests(); server.closeAllConnections(); await new Promise((resolve) => server.close(resolve)); });
@@ -517,4 +518,133 @@ test("the reply menu grows a Call button only while voice calls are configured, 
   assert.match(sent.at(-1).text, /Public URL/);
   await handleReplyCallAction({ ack: async () => {}, client: f.client, body: { user: { id: "U_MINE" }, channel: { id: "C_ELSE" }, team: { id: "T_WORK" } }, action: button }, { teamId: "T_WORK", baseUrl: f.base });
   assert.match(sent.at(-1).text, /unavailable/);
+});
+
+test("dashboard switches keep the voice session and reauthorize the caller and destination", async (t) => {
+  await channel(); await channel("C_SALES"); await channel("C_PRIVATE", { access: "admins" });
+  const f = fixture(); t.after(() => f.manager.endAll());
+  const call = await f.manager.start({ ownerId: "U_MINE", channelId: "C_WORK", threadTs: "55.000001", client: f.client });
+  const session = FakeSession.instances[0];
+  await assert.rejects(f.manager.switchConversation(call.id, "U_MINE", { channelId: "C_SALES", threadTs: "44.000001" }), { status: 409 });
+  session.live(); session.emit("input_transcript", { text: "First conversation" });
+  await assert.rejects(f.manager.switchConversation(call.id, "U_NOPE", { channelId: "C_SALES", threadTs: "44.000001" }), { status: 404 });
+  await assert.rejects(f.manager.switchConversation(call.id, "U_MINE", { channelId: "C_PRIVATE", threadTs: "1.1" }), { status: 403 });
+  assert.equal(f.manager.get(call.id).bound.channelId, "C_WORK");
+  const switched = await f.manager.switchConversation(call.id, "U_MINE", { channelId: "C_SALES", threadTs: "44.000001" });
+  assert.equal(switched.id, call.id); assert.equal(switched.bound.title, "Pipeline review for Q4");
+  assert.equal(session.closed, false); assert.equal(FakeSession.instances.length, 1);
+  assert.match(session.texts.at(-1), /now in #c_sales, thread 44.000001/);
+  assert.match(session.texts.at(-1), /Earlier message/);
+  const segment = f.posted.find(p => /Voice call moved on/.test(p.text));
+  assert.equal(segment.threadKey, "55.000001"); assert.match(segment.text, /First conversation/);
+  const count = f.posted.length;
+  assert.equal((await f.manager.switchConversation(call.id, "U_MINE", { channelId: "C_SALES", threadTs: "44.000001" })).switched, false);
+  assert.equal(f.posted.length, count);
+  session.emit("tool_call", { id: "task", name: "run_task", args: { request: "Reply MOVED_OK" } });
+  await tick(40);
+  assert.equal(f.runs[0].channelId, "C_SALES"); assert.equal(f.runs[0].threadKey, "44.000001");
+  assert.equal(f.runs[0].authorId, "U_MINE");
+  await setUser("U_MINE", { approved: false });
+  await assert.rejects(f.manager.switchConversation(call.id, "U_MINE", { channelId: "C_WORK", threadTs: "55.000001" }), { status: 403 });
+});
+
+test("the dashboard switch route requires session, CSRF, owner and an authorized destination", async (t) => {
+  await channel(); await channel("C_SALES"); await channel("C_PRIVATE", { access: "admins" });
+  const managerFixture = fixture(); t.after(() => managerFixture.manager.endAll());
+  const f = await webFixture(t, { manager: managerFixture.manager });
+  const s = await f.login();
+  const call = await managerFixture.manager.start({ ownerId: "U_MINE", channelId: "C_WORK", threadTs: "55.000001", client: f.client });
+  FakeSession.instances[0].live();
+  const path = `${s.sessionBase}/call/${call.id}/switch`;
+  const options = { method: "POST", headers: { ...s.headers, "Content-Type": "application/json" }, body: JSON.stringify({ channelId: "C_SALES", threadTs: "44.000001" }) };
+  assert.equal((await f.request(path, { ...options, headers: { Origin: f.base, "Content-Type": "application/json" } })).status, 401);
+  assert.equal((await f.request(path, { ...options, headers: { cookie: s.cookie, Origin: f.base, "Content-Type": "application/json" } })).status, 403);
+  for (const body of [{}, { channelId: "bad!" }, { channelId: "C_SALES", threadTs: "bad" }]) assert.equal((await f.request(path, { ...options, body: JSON.stringify(body) })).status, 400);
+  assert.equal((await f.request(`${s.sessionBase}/call/foreign/switch`, options)).status, 404);
+  assert.equal((await f.request(path, { ...options, body: JSON.stringify({ channelId: "C_PRIVATE", threadTs: "1.1" }) })).status, 403);
+  const moved = await f.request(path, options);
+  assert.equal(moved.status, 200); assert.equal((await moved.json()).bound.threadTs, "44.000001");
+});
+
+test("Activity minimizes a connected call, switches it from a row and restores transcript and controls", { skip: !process.env.CG_BROWSER_MODULE, timeout: 40_000 }, async (t) => {
+  await channel(); await channel("C_SALES");
+  const managerFixture = fixture(); t.after(() => managerFixture.manager.endAll());
+  const f = await webFixture(t, { manager: managerFixture.manager });
+  const { chromium } = await import(process.env.CG_BROWSER_MODULE);
+  const browser = await chromium.launch({ headless: true, executablePath: process.env.CG_BROWSER_EXECUTABLE,
+    args: ["--no-sandbox", "--use-fake-device-for-media-stream", "--use-fake-ui-for-media-stream"] });
+  t.after(() => browser.close());
+  const page = await browser.newPage({ viewport: { width: 1440, height: 1000 } }); page.setDefaultTimeout(6000);
+  const errors = []; page.on("pageerror", e => errors.push(e.message));
+  await page.goto(createActivityGrantUrl({ baseUrl: f.base, ownerId: "U_MINE", teamId: "T_WORK" }));
+  await page.locator('a.call-link[data-channel-id="C_WORK"][data-thread-ts="55.000001"]').click();
+  await page.getByRole("button", { name: "Start call", exact: true }).click();
+  await page.getByRole("button", { name: "Minimize", exact: true }).waitFor();
+  const session = FakeSession.instances[0]; session.live();
+  session.emit("input_transcript", { text: "Keep this transcript" });
+  await page.getByText("Keep this transcript", { exact: true }).waitFor();
+  await page.getByRole("button", { name: "Mute", exact: true }).click();
+  await page.getByRole("button", { name: "Minimize", exact: true }).click();
+  const bubble = page.locator('[data-call="restore"]');
+  assert.equal(await page.locator('[role="dialog"][aria-labelledby="call-title"]').count(), 0);
+  assert.match(await bubble.getAttribute("aria-label"), /muted/);
+  assert.equal(await page.locator(".call-panel").isVisible(), false);
+  // A real dashboard control remains usable with the bubble visible.
+  await page.locator("#search").fill("Pipeline");
+  await page.locator('a.call-link[data-channel-id="C_SALES"]').click();
+  await page.waitForFunction(() => globalThis.document.querySelector('[data-call="binding"]').textContent.includes("Pipeline review"));
+  assert.equal(await page.locator(".call-panel").isVisible(), false);
+  assert.equal(FakeSession.instances.length, 1); assert.equal(session.closed, false);
+  assert.match(session.texts.at(-1), /now in #c_sales/);
+  await page.waitForFunction(() => globalThis.document.querySelector('[data-call="bubble-timer"]').textContent !== "00:00");
+  await bubble.click();
+  assert.equal(await page.getByText("Keep this transcript", { exact: true }).isVisible(), true);
+  assert.equal(await page.getByRole("button", { name: "Unmute", exact: true }).getAttribute("aria-pressed"), "true");
+  await page.getByRole("button", { name: "Minimize", exact: true }).focus(); await page.keyboard.press("Escape");
+  assert.equal(await bubble.isVisible(), true);
+  // A denied switch restores the controls and retains the current call.
+  await page.route("**/call/*/switch", route => route.fulfill({ status: 403, contentType: "application/json", body: JSON.stringify({ error: "Destination access denied" }) }));
+  await page.locator("#search").fill("");
+  await page.locator('a.call-link[data-channel-id="C_WORK"][data-thread-ts="55.000001"]').click();
+  await page.getByText("Destination access denied", { exact: true }).waitFor();
+  assert.equal(await page.locator(".call-panel").isVisible(), true);
+  assert.match(await page.locator('[data-call="binding"]').textContent(), /Pipeline review/);
+  for (const width of [390, 1440]) {
+    await page.setViewportSize({ width, height: 850 });
+    await page.getByRole("button", { name: "Minimize", exact: true }).click();
+    const box = await bubble.boundingBox();
+    assert.ok(box.x >= 0 && box.x + box.width <= width && box.y + box.height <= 850);
+    await bubble.click();
+  }
+  await page.getByRole("button", { name: "Hang up", exact: true }).click();
+  await page.getByRole("button", { name: "Start call", exact: true }).waitFor();
+  assert.equal(await bubble.isVisible(), false); assert.equal(session.closed, true);
+  assert.deepEqual(errors, []);
+});
+
+test("queued switches finish in order and a failed join preserves the current binding", async (t) => {
+  await channel(); await channel("C_SALES");
+  const posted = [];
+  let release, entered;
+  const joined = new Promise(resolve => { entered = resolve; });
+  const held = new Promise(resolve => { release = resolve; });
+  const f = fixture({ post: async (_client, args) => {
+    if (args.threadKey === "44.000001" && /joined/.test(args.text)) { entered(); await held; }
+    if (args.threadKey === "99.000001") throw new Error("Join failed");
+    posted.push(args); return { messageId: "1.1" };
+  } });
+  t.after(() => f.manager.endAll());
+  const call = await f.manager.start({ ownerId: "U_MINE", channelId: "C_WORK", threadTs: "55.000001", client: f.client });
+  FakeSession.instances[0].live();
+  const first = f.manager.switchConversation(call.id, "U_MINE", { channelId: "C_SALES", threadTs: "44.000001" });
+  await joined;
+  const second = f.manager.switchConversation(call.id, "U_MINE", { channelId: "C_WORK", threadTs: "33.000001" });
+  assert.equal(f.manager.get(call.id).bound.threadTs, "55.000001");
+  release(); await Promise.all([first, second]);
+  assert.equal(f.manager.get(call.id).bound.threadTs, "33.000001");
+  assert.deepEqual(posted.filter(p => /Voice call moved on/.test(p.text)).map(p => p.threadKey), ["55.000001", "44.000001"]);
+  await assert.rejects(f.manager.switchConversation(call.id, "U_MINE", { channelId: "C_SALES", threadTs: "99.000001" }), /Join failed/);
+  assert.equal(f.manager.get(call.id).bound.threadTs, "33.000001");
+  await f.manager.switchConversation(call.id, "U_MINE", { channelId: "C_WORK", threadTs: "55.000001" });
+  assert.equal(f.manager.get(call.id).bound.threadTs, "55.000001");
 });

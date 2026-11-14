@@ -31,6 +31,27 @@
 
 ## Voice calls with a channel's agent (2026-11-13, navigation 2026-11-14)
 
+- Minimized view and dashboard switching (2026-11-14): `test/voice-calls.test.js` checks
+  owner-only, CSRF-protected switching, malformed destinations, revoked caller/destination access,
+  unchanged same-thread selection, the original voice session, segment placement, context updates
+  and subsequent task routing. Its Chromium case uses the real Activity router, call manager,
+  SSE and audio routes with a fake Gemini session and Chromium fake microphone. Enable with
+  `CG_BROWSER_MODULE` (absolute Playwright module path) and, if needed, `CG_BROWSER_EXECUTABLE`.
+  At 1440px and 390px, start/mute/minimize, filter the dashboard, select a different row's call
+  icon, restore transcript/controls, use Escape, deny a switch and hang up. Pass: dashboard stays
+  clickable, bubble fits viewport, timer keeps ticking, only one session exists, binding/context
+  move, transcript/mute persist, denied switch restores controls without changing binding, no
+  bubble remains after hang-up and no page errors. UI visibility is engine-independent; synthetic
+  Gemini does not establish live speech/provider acceptance.
+- Live switching acceptance (Claude and Codex separately): use the disposable Worker/Auto
+  fixtures and approved non-admin caller below. Start in thread A, say "This is the first thread",
+  minimize and click **Call the agent** in thread B. Pass: same call id/session, bubble stays
+  minimized, thread A receives its transcript segment and B receives a join notice. Restore, say
+  "Reply with CALL_SWITCH_OK in the current thread"; the caller-authored task and answer must
+  appear only in B. Same-thread clicks post no duplicate notices; rapid A/B clicks serialize.
+  Inaccessible destinations return 403 and foreign calls 404 without changing the current binding;
+  missing CSRF is refused. Hang up and verify the summary lands in the final thread. Track the
+  live speech and dual-engine results separately from fixture tests; unexecuted cases remain pending.
 - Automated: `test/voice-gemini-live.test.js` drives the Gemini Live client with a fake
   WebSocket (setup message shape and `NON_BLOCKING` declarations, binary/typed-array/Blob frame
   decoding, audio only after `setupComplete`, audio/transcript/interruption/tool events,

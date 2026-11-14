@@ -225,12 +225,19 @@ export function createCallManager({
 
   // Bind (or re-bind) the call to a conversation. Posts the segment transcript to the thread being
   // left, announces the call in the new thread (or opens a root there), and loads its context.
-  async function bind(call, { channelId, threadTs = "", title = "" }) {
+  function bind(call, target) {
+    const pending = (call.bindingQueue || Promise.resolve()).then(() => bindNow(call, target));
+    call.bindingQueue = pending.catch(() => {});
+    return pending;
+  }
+  async function bindNow(call, { channelId, threadTs = "", title = "" }) {
+    if (call.ending) throw httpError(404, "That call is not active.");
     const entry = await loadEntry(channelId);
     if (!entry) throw httpError(404, "That conversation is not registered.");
     const ctx = await access(call.client, call.ownerId);
     if ((!ctx.user.approved && !ctx.user.isAdmin) || !await ctx.allows({ ...entry, channelId }, threadTs)) throw httpError(403, "You are not authorized to call the agent from that conversation.");
-    if (call.bound) await leaveSegment(call, { moved: true });
+    if (call.ending) throw httpError(404, "That call is not active.");
+    if (call.bound?.channelId === channelId && threadTs && call.bound.threadTs === threadTs) return { ...boundView(call), context: { text: "", messages: [] }, opened: false, unchanged: true };
     const channelName = channelLabel(entry, channelId);
     let boundThread = threadTs, opened = false;
     if (boundThread) {
@@ -241,6 +248,9 @@ export function createCallManager({
       boundThread = posted.messageId; opened = true;
     }
     const context = opened ? { text: "", messages: [] } : await contextFor(call, channelId, boundThread);
+    if (call.ending) throw httpError(404, "That call is not active.");
+    if (call.bound) await leaveSegment(call, { moved: true });
+    if (call.ending) throw httpError(404, "That call is not active.");
     // What was said while the call was in no conversation yet (the request to open this one,
     // typically) belongs to this first segment; a segment left behind was already posted.
     call.bound = { channelId, slug: entry.slug, isDM: Boolean(entry.isDM || entry.type === "im"), threadTs: boundThread, channelName, title: clean(title, 160), since: now() };
@@ -445,6 +455,18 @@ export function createCallManager({
     return call.session.sendAudio(chunk);
   }
 
+  async function switchConversation(id, ownerId, { channelId, threadTs = "" }) {
+    const call = calls.get(id);
+    if (!call || call.ownerId !== ownerId || call.ending) throw httpError(404, "That call is not active.");
+    if (!channelId) throw httpError(400, "Choose a conversation for the call.");
+    if (!call.session?.ready) throw httpError(409, "The call is still connecting. Try again once connected.");
+    const target = threadTs ? await resolveSwitch(call, { id: `${channelId}:${threadTs}` }) : { channelId, threadTs };
+    const result = await bind(call, target);
+    touch(call);
+    if (!result.unchanged) call.session.sendText(`[gateway] The caller moved this active call using the dashboard. You are now in ${result.channelName}, thread ${result.threadTs}${result.title ? ` — ${result.title}` : ""}. Use this conversation for subsequent tasks. Recent messages:\n${result.context.text || "No recent messages."}`);
+    return { id, bound: boundView(call), switched: !result.unchanged };
+  }
+
   function transcriptLines(call, from) {
     const lines = [];
     let used = 0;
@@ -518,7 +540,7 @@ export function createCallManager({
     await Promise.all([...calls.keys()].map((id) => end(id, "", reason)));
   }
 
-  return { available, start, subscribe, audio, end, endAll, get: (id) => calls.get(id) || null, size: () => calls.size };
+  return { available, start, subscribe, audio, switchConversation, end, endAll, get: (id) => calls.get(id) || null, size: () => calls.size };
 }
 
 let shared = null;

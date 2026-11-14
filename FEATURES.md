@@ -24,6 +24,16 @@ opens the overlay bound to that thread; the button is admitted by the same
 `accessContext().allows()` rule as Dashboard, and every binding is admitted again by the call
 manager. Older `/activity/<session>/call?…` links redirect to the dashboard.
 
+During a call, **Minimize** (or Escape) hides the transcript and controls into a floating phone
+icon with the elapsed time; the dashboard remains usable while microphone capture, audio and
+events continue. Click the icon to restore the transcript and mute/hang-up controls. Mute state
+and transcript survive minimizing. A row's **Call the agent** action during an active call moves
+that same call to the selected conversation without reconnecting or opening a second voice
+session, preserving the minimized view. The owner-only, CSRF-protected switch rechecks destination
+access, posts the segment to the thread left behind and supplies the new thread's context to the
+voice. Switches serialize; selecting the current thread creates no duplicate notices. Switch
+errors restore visible controls and retain the current binding; ending removes the floating icon.
+
 The daemon holds the Google **Gemini Live** session (`src/gateway/voice/gemini-live.js`: one
 WebSocket, binary frames, 16 kHz PCM in, 24 kHz PCM out, input/output transcription, context
 compression, session resumption across `goAway`). The browser streams microphone audio as ~120 ms

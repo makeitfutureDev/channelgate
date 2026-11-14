@@ -15,6 +15,10 @@ conversation or channel, and keep talking.
 2. Press **Start call**, allow the microphone and talk. The voice knows your eight most recent
    open conversations (the same list as your Activity page) and, when the call is in a thread,
    its recent messages. You can interrupt it.
+   Press **Minimize** (or Escape) to keep talking while using the dashboard. A small floating
+   phone icon shows the call timer; click it to restore the transcript and controls. While in a
+   call, clicking another row's **Call the agent** icon moves the existing call to that thread
+   and keeps the minimized view. Each thread receives the transcript of the time spent there.
 3. Ask "what am I working on?", "what is waiting in #sales?", or "find the pipeline review": the
    voice lists or searches your own conversations, with a channel filter when you name one. Say
    "open that one" or "switch to #sales": the call moves there. The thread you leave receives the
@@ -110,6 +114,7 @@ the call id, thread, caller, duration, cost, conversations visited and reason.
 - `src/web/activity.js` — the routes under the caller's Activity session: the dashboard with
   `?call=<channel>[&thread=<ts>]`, `POST /:id/call/start` (bound or not),
   `GET /:id/call/:callId/events` (SSE), `POST /:id/call/:callId/audio`,
+  `POST /:id/call/:callId/switch` (owner-only, CSRF-protected destination change),
   `POST /:id/call/:callId/end`, the AudioWorklet module at `/activity/call-worklet.js`, and a
   redirect for the older standalone-page links. The Activity view's CSP additionally allows
   same-origin scripts for that worklet.

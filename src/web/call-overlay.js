@@ -45,6 +45,10 @@ export function callOverlayConfig({ base, csrf, agent = "" }) {
 export const CALL_OVERLAY_CSS = `
 #call-overlay{position:fixed;inset:0;z-index:50;display:grid;place-items:center;background:color-mix(in srgb,var(--bg) 70%,transparent);backdrop-filter:blur(6px)}
 #call-overlay[hidden]{display:none}
+#call-overlay.call-minimized{inset:auto max(16px,env(safe-area-inset-right)) max(16px,env(safe-area-inset-bottom)) auto;background:none;backdrop-filter:none;display:block}
+#call-overlay.call-minimized .call-panel{display:none}
+.call-bubble{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;width:64px;height:64px;border:2px solid var(--s-done,#2e9d57);border-radius:50%;background:var(--panel);color:var(--ink);box-shadow:0 6px 24px rgba(0,0,0,.3);cursor:pointer;font:inherit;font-size:22px}
+.call-bubble[hidden]{display:none}.call-bubble .timer{font-size:11px;font-variant-numeric:tabular-nums}.call-bubble[data-tone=error]{border-color:#d9534f}.call-bubble[data-tone=warn]{border-color:#c9a227}.call-bubble:focus-visible{outline:3px solid var(--orange);outline-offset:3px}
 .call-panel{box-sizing:border-box;width:min(680px,calc(100% - 32px));max-height:calc(100dvh - 32px);overflow:auto;padding:22px;background:var(--panel);border:1px solid var(--line);border-radius:14px;box-shadow:0 24px 64px rgba(0,0,0,.35)}
 .call-panel h2{font-size:18px;margin:0 0 4px}.call-binding{color:var(--muted);font-size:14px;margin:0 0 16px;overflow-wrap:anywhere}.call-binding strong{color:var(--ink)}
 .call-controls{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin:0 0 12px}.call-controls button{font:inherit;padding:9px 15px;border:1px solid var(--line);border-radius:9px;background:var(--panel-2);color:var(--ink);cursor:pointer}.call-controls button:disabled{opacity:.5;cursor:default}
@@ -62,17 +66,18 @@ export function callOverlayMarkup({ agentName = "ChannelGate" } = {}) {
   return `<div id="call-overlay" role="dialog" aria-modal="true" aria-labelledby="call-title" hidden><div class="call-panel">
 <h2 id="call-title">📞 Call ${esc(agentName)}</h2>
 <p class="call-binding" data-call="binding">Not in a conversation yet.</p>
-<div class="call-controls"><button type="button" class="primary" data-call="start">Start call</button><button type="button" class="danger" data-call="hangup" hidden>Hang up</button><button type="button" data-call="mute" hidden aria-pressed="false">Mute</button><button type="button" data-call="close">Close</button><span class="timer" data-call="timer">00:00</span></div>
+<div class="call-controls"><button type="button" class="primary" data-call="start">Start call</button><button type="button" class="danger" data-call="hangup" hidden>Hang up</button><button type="button" data-call="mute" hidden aria-pressed="false">Mute</button><button type="button" data-call="minimize" hidden>Minimize</button><button type="button" data-call="close">Close</button><span class="timer" data-call="timer">00:00</span></div>
 <p class="call-status" data-call="status" role="status" aria-live="polite"></p>
 <div class="call-transcript" data-call="transcript" aria-label="Transcript" aria-live="polite"></div>
 <section class="call-tasks" data-call="tasks-section" hidden><h3>Tasks sent to the agent</h3><ul data-call="tasks"></ul></section>
 <p class="call-foot">Everything said is logged into the Slack conversation the call is in. Say which conversation to open, or ask what you are working on.</p>
-</div></div>`;
+</div><button type="button" class="call-bubble" data-call="restore" aria-label="Show active call" title="Show active call" hidden><span data-call="bubble-icon" aria-hidden="true">📞</span><span class="timer" data-call="bubble-timer" aria-hidden="true">00:00</span></button></div>`;
 }
 
 // Runs on the dashboard. Returns { open(target), active() }: `open` shows the overlay bound to a
 // conversation ({ channelId, threadTs, channelName, title }) or to none (the voice then lists the
-// caller's conversations), and starts nothing until the person presses Start.
+// caller's conversations). During a call, open(target) switches it and preserves its minimized
+// view; open(null) restores the controls. A new call starts only when the person presses Start.
 export function callOverlayBrowser(config, env) {
   const { document, fetch, EventSource, navigator, AudioContext, AudioWorkletNode, atob } = env;
   const { callBase: base, callCsrf: csrf, callAgent: agent, workletPath, inputRate, outputRate } = config;
@@ -80,16 +85,29 @@ export function callOverlayBrowser(config, env) {
   if (!root) return { open() {}, active: () => false };
   const q = (name) => root.querySelector('[data-call="' + name + '"]');
   const binding = q("binding"), status = q("status"), start = q("start"), hangup = q("hangup"), mute = q("mute"), closeButton = q("close"), transcript = q("transcript"), tasks = q("tasks"), tasksSection = q("tasks-section"), timer = q("timer");
+  const minimize = q("minimize"), restore = q("restore"), bubbleTimer = q("bubble-timer"), bubbleIcon = q("bubble-icon");
   let callId = "", target = null, events = null, capture = null, player = null, workletNode = null, processor = null, stream = null, muted = false, startedAt = 0, tick = null;
   let playhead = 0; const playing = new Set();
+  let bound = null, switchQueue = Promise.resolve();
   const headers = { "X-CG-CSRF": csrf, "X-CG-Request": "1" };
-  function say(text, tone) { status.textContent = text; status.dataset.tone = tone || ""; }
+  function updateBubble() {
+    const label = "Show active call" + (muted ? " (muted)" : "") + " · " + binding.textContent + " · " + status.textContent;
+    restore.setAttribute("aria-label", label); restore.title = label; restore.dataset.tone = status.dataset.tone;
+    bubbleIcon.textContent = muted ? "🔇" : "📞";
+  }
+  function say(text, tone) { status.textContent = text; status.dataset.tone = tone || ""; updateBubble(); }
+  function setMinimized(value) {
+    root.classList.toggle("call-minimized", value); restore.hidden = !value;
+    if (value) { root.removeAttribute("role"); root.removeAttribute("aria-modal"); root.removeAttribute("aria-labelledby"); restore.focus(); }
+    else { root.setAttribute("role", "dialog"); root.setAttribute("aria-modal", "true"); root.setAttribute("aria-labelledby", "call-title"); (callId ? minimize : start).focus(); }
+  }
   function fmt(ms) { const s = Math.floor(ms / 1000); return String(Math.floor(s / 60)).padStart(2, "0") + ":" + String(s % 60).padStart(2, "0"); }
   function showBinding(bound) {
     binding.replaceChildren();
-    if (!bound || !bound.channelName) { binding.textContent = target && target.channelName ? "Will open in " + target.channelName + (target.title ? " · " + target.title : "") : "Not in a conversation yet. Ask the agent what you are working on, or name a conversation."; return; }
+    if (!bound || !bound.channelName) { binding.textContent = target && target.channelName ? "Will open in " + target.channelName + (target.title ? " · " + target.title : "") : "Not in a conversation yet. Ask the agent what you are working on, or name a conversation."; updateBubble(); return; }
     const strong = document.createElement("strong"); strong.textContent = bound.channelName;
     binding.append("In ", strong, bound.title ? " · " + bound.title : bound.threadTs ? " · thread" : "");
+    updateBubble();
   }
   function line(who, text, ms) {
     const row = document.createElement("div"); row.className = "line " + who;
@@ -174,15 +192,16 @@ export function callOverlayBrowser(config, env) {
     if (tick) { clearInterval(tick); tick = null; }
     callId = "";
     start.hidden = false; hangup.hidden = true; mute.hidden = true; closeButton.hidden = false;
+    minimize.hidden = true; setMinimized(false);
     say(message, "ended");
   }
   function connectEvents() {
     events = new EventSource(base + "/call/" + callId + "/events");
     events.onmessage = (message) => {
       let event; try { event = JSON.parse(message.data); } catch (e) { return; }
-      if (event.type === "state") { showTranscript(event.transcript || []); for (const task of event.tasks || []) showTask(task); showBinding(event.bound); if (event.status === "live") say("Connected — start talking", "live"); return; }
+      if (event.type === "state") { showTranscript(event.transcript || []); for (const task of event.tasks || []) showTask(task); bound = event.bound; showBinding(bound); if (event.status === "live") say("Connected — start talking", "live"); return; }
       if (event.type === "ready") { say("Connected — start talking", "live"); return; }
-      if (event.type === "bound") { showBinding(event); return; }
+      if (event.type === "bound") { bound = event; showBinding(bound); return; }
       if (event.type === "audio") { playAudio(event.data); return; }
       if (event.type === "interrupted") { stopPlayback(); return; }
       if (event.type === "transcript") { updateLine(event); return; }
@@ -202,11 +221,12 @@ export function callOverlayBrowser(config, env) {
       const data = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(data.error || "The call could not start.");
       callId = data.id; startedAt = Date.now();
+      muted = false; mute.textContent = "Mute"; mute.setAttribute("aria-pressed", "false");
       transcript.replaceChildren(); tasks.replaceChildren(); tasksSection.hidden = true;
-      showBinding(data.bound);
+      bound = data.bound; showBinding(bound);
       connectEvents();
-      start.hidden = true; hangup.hidden = false; mute.hidden = false;
-      tick = setInterval(() => { timer.textContent = fmt(Date.now() - startedAt); }, 1000);
+      start.hidden = true; hangup.hidden = false; mute.hidden = false; minimize.hidden = false;
+      tick = setInterval(() => { timer.textContent = bubbleTimer.textContent = fmt(Date.now() - startedAt); }, 1000);
       say("Connecting to the voice service…", "");
     } catch (error) {
       closeCapture(); closeButton.hidden = false;
@@ -223,14 +243,35 @@ export function callOverlayBrowser(config, env) {
   start.addEventListener("click", () => { void begin(); });
   hangup.addEventListener("click", () => { void finish(); });
   closeButton.addEventListener("click", () => { if (!callId) root.hidden = true; });
-  mute.addEventListener("click", () => { muted = !muted; mute.textContent = muted ? "Unmute" : "Mute"; mute.setAttribute("aria-pressed", String(muted)); workletNode?.port.postMessage({ muted }); });
+  minimize.addEventListener("click", () => { if (callId) setMinimized(true); });
+  restore.addEventListener("click", () => setMinimized(false));
+  root.addEventListener("keydown", (event) => { if (event.key === "Escape") { if (callId) setMinimized(true); else if (!start.disabled) root.hidden = true; } });
+  mute.addEventListener("click", () => { muted = !muted; mute.textContent = muted ? "Unmute" : "Mute"; mute.setAttribute("aria-pressed", String(muted)); workletNode?.port.postMessage({ muted }); updateBubble(); });
   env.addEventListener?.("pagehide", () => { if (callId) navigator.sendBeacon?.(base + "/call/" + callId + "/end?csrf=" + encodeURIComponent(csrf)); });
   const supported = Boolean(navigator.mediaDevices?.getUserMedia) && typeof AudioContext === "function";
+  async function switchTo(next, id) {
+    if (callId !== id) return;
+    if (bound && bound.channelId === next.channelId && bound.threadTs === (next.threadTs || "")) return;
+    say("Switching conversation…", "warn");
+    try {
+      const response = await fetch(base + "/call/" + id + "/switch", { method: "POST", credentials: "same-origin", headers: { ...headers, "Content-Type": "application/json" }, body: JSON.stringify({ channelId: next.channelId, threadTs: next.threadTs || "" }) });
+      const data = await response.json().catch(() => ({}));
+      if (callId !== id) return;
+      if (!response.ok) throw new Error(data.error || "The call could not switch conversations.");
+      bound = data.bound; showBinding(bound); say("Connected — start talking", "live");
+    } catch (error) { if (callId === id) { say(error.message || "The call could not switch conversations.", "error"); setMinimized(false); } }
+  }
   function open(next) {
-    if (!callId) { target = next || null; showBinding(null); timer.textContent = "00:00"; transcript.replaceChildren(); tasks.replaceChildren(); tasksSection.hidden = true; closeButton.hidden = false;
+    if (callId && next?.channelId) {
+      const id = callId;
+      switchQueue = switchQueue.then(() => switchTo(next, id));
+      return switchQueue;
+    }
+    if (!callId) { target = next || null; showBinding(null); timer.textContent = bubbleTimer.textContent = "00:00"; transcript.replaceChildren(); tasks.replaceChildren(); tasksSection.hidden = true; closeButton.hidden = false;
       if (!supported) { start.disabled = true; say("This browser cannot capture audio. Use a current Chrome, Edge, Safari or Firefox over HTTPS.", "error"); }
       else say("Ready. Start the call when you are.", ""); }
     root.hidden = false;
+    setMinimized(false);
   }
   return { open, active: () => Boolean(callId) };
 }
