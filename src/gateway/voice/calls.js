@@ -133,6 +133,7 @@ export function buildSystemInstruction({ callerName, channelName = "", agentName
     : "The caller has no tracked conversations yet; list_conversations will say so.";
   return [
     `You are the voice of ${agentName}, the ChannelGate agent, on a live voice call with ${callerName}${isAdmin ? " (an organization admin)" : ""}. ${bound ? `The call is currently in the Slack conversation ${channelName}.` : "The call is not in any conversation yet: ask which one to open, or offer the list below."} Everything you dispatch runs in the current conversation and everything said is logged there when the call moves on or ends.`,
+    "Use the readable conversation label and title when speaking. Never read conversation IDs aloud; IDs are only routing keys for tools.",
     [style, language, patience].filter(Boolean).join(" "),
     "You discuss, answer from the context you have, and hand real work to the channel agent with run_task: it runs in the channel's own environment with its files, tools, memory and credentials, and can take minutes. Pass the caller's request completely and faithfully. Say in a few words that you started it, then keep talking; never pretend a result you do not have.",
     "A message starting with [gateway] is not from the caller: it is the gateway reporting a task result or event. Summarize it for the caller in one or two spoken sentences, mentioning anything they must decide. Use check_tasks when asked about progress and read_thread when asked what was said or produced in the current conversation.",
@@ -244,7 +245,7 @@ export function createCallManager({
       .sort((a, b) => (b.last_message_ms || 0) - (a.last_message_ms || 0) || Number(b.thread_ts) - Number(a.thread_ts));
     const size = Math.min(Math.max(Number(limit) || INITIAL_CONVERSATIONS, 1), MAX_LISTED_CONVERSATIONS);
     const list = rows.slice(0, size).map((row) => ({
-      id: `${row.channel_id}:${row.thread_ts}`, title: clean(row.title, 160) || "Untitled conversation", channel: `#${String(row.channelName || "").replace(/^#/, "")}`,
+      id: `${row.channel_id}:${row.thread_ts}`, title: clean(row.title, 160) || "Untitled conversation", channel: row.isDM ? row.channelName : `#${String(row.channelName || "").replace(/^#/, "")}`,
       status: row.status, lastActivity: row.last_message_ms ? new Date(row.last_message_ms).toISOString().slice(0, 16).replace("T", " ") : "",
     }));
     return { conversations: list, total: rows.length, more: rows.length > size, unavailable: Boolean(data?.unavailable) };

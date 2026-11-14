@@ -1,5 +1,11 @@
 # ChannelGate — Features
 
+## Readable personal conversation names (2026-11-14)
+
+Activity and Slack App Home use **Personal conversation with <name>** for direct messages when
+the registered peer has a name, otherwise **Personal conversation**. Pinned channel cards,
+search and voice conversation lists share the readable label; raw DM IDs remain routing keys.
+
 ## Deployment app logo color (2026-11-14)
 
 Administrator Settings → **Appearance** has a color picker, six-digit hex field, live icon

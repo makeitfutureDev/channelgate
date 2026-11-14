@@ -13,7 +13,7 @@ import { onThreadChanged } from "../gateway/thread-changes.js";
 import { onActiveRunsChanged } from "../gateway/active-runs.js";
 import { syncThreadDoneMarker } from "../slack/thread-done-marker.js";
 import { clearDone, markDone } from "../gateway/followups.js";
-import { accessContext, activityThreadSnapshot, discoverSlackThreadHistory, homeThreadsRefreshKey, markAllSlackThreadsDone } from "../slack/home-threads.js";
+import { accessContext, activityChannelName, activityThreadSnapshot, discoverSlackThreadHistory, homeThreadsRefreshKey, markAllSlackThreadsDone } from "../slack/home-threads.js";
 import { createHomeThreadReader } from "../slack/home-thread-reader.js";
 import { isSlackTs } from "../slack/thread-keys.js";
 import { isLoopbackHost, timingSafeEqualStr } from "./security.js";
@@ -236,7 +236,7 @@ export function createActivityRouter({
     for (const channelId of channelPins) {
       if (typeof channelId !== "string") continue;
       const entry = await getChannelEntry(channelId);
-      if (await access.allows(entry && { ...entry, channelId })) pinnedChannels.push({ channelId, channelName: entry.name || "Direct message" });
+      if (await access.allows(entry && { ...entry, channelId })) pinnedChannels.push({ channelId, channelName: await activityChannelName({ ...entry, channelId }) });
     }
     const data = await snapshot(client, session.ownerId, { filter: "all-statuses", pageSize: 1000,
       pinnedThreads: [...pins], pinnedChannels: pinnedChannels.map((entry) => entry.channelId) });

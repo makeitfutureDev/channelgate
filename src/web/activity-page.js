@@ -703,7 +703,7 @@ function activityBrowser(config, browser, subscriptionUi, callUi) {
     const callAnchor = event.target.closest?.("a.call-link");
     if (callAnchor) {
       event.preventDefault();
-      if (callAnchor.dataset.channelId) callUi?.open({ channelId: callAnchor.dataset.channelId, threadTs: callAnchor.dataset.threadTs || "", channelName: "#" + String(callAnchor.dataset.channelName || "").replace(/^#/, ""), title: callAnchor.dataset.title || "" });
+      if (callAnchor.dataset.channelId) callUi?.open({ channelId: callAnchor.dataset.channelId, threadTs: callAnchor.dataset.threadTs || "", channelName: String(callAnchor.dataset.channelName || ""), title: callAnchor.dataset.title || "" });
       return;
     }
     // The Slack button opens the desktop app; Ctrl/⌘-click opens the same thread in the browser.

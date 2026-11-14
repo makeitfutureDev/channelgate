@@ -26,6 +26,18 @@ const RANK = { working: 0, waiting: 1, error: 2, idle: 3, later: 4, done: 5 };
 const esc = (value) => String(value || "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/[*_~`]/g, "");
 const button = (text, action, value) => ({ type: "button", text: { type: "plain_text", text }, action_id: `cg_home_threads_${action}`, value: JSON.stringify(value) });
 
+const isActivityDM = (entry) => Boolean(entry?.isDM || entry?.type === "im" || /^D[A-Z0-9]+$/.test(entry?.channelId || ""));
+
+// Resolve display text only after the caller has checked conversation access. DM storage names
+// may be opaque Slack IDs or legacy dm-* slugs; only the registered peer supplies a name.
+export async function activityChannelName(entry) {
+  if (!isActivityDM(entry)) return entry?.name || "Conversation";
+  const meta = await getChannelMeta(entry.slug);
+  const peer = meta?.dmUserId ? await getUser(meta.dmUserId) : null;
+  const name = String(peer?.name || "").trim();
+  return name ? `Personal conversation with ${name}` : "Personal conversation";
+}
+
 export function normalizeThreadView(value = {}) {
   const page = Number(value.page);
   return { filter: Object.hasOwn(LABELS, value.filter) ? value.filter : "active", page: Number.isSafeInteger(page) && page >= 0 ? Math.min(page, 1000000) : 0 };
@@ -131,7 +143,7 @@ export async function homeThreadsSnapshot(client, userId, requested = {}, { read
     if (hiddenChannels.has(row.channel_id)) continue;
     const entry = byId.get(row.channel_id);
     if (!await access.allows(entry, row.thread_ts)) continue;
-    eligible.set(`${row.channel_id}::${row.thread_ts}`, { ...row, channelName: entry.name || "Direct message", status: slackThreadStatus(row, runtime) });
+    eligible.set(`${row.channel_id}::${row.thread_ts}`, { ...row, channelName: await activityChannelName(entry), isDM: isActivityDM(entry), status: slackThreadStatus(row, runtime) });
   }
   const verified = new Set();
   const verify = async (row) => {
@@ -300,7 +312,7 @@ export async function activityThreadSnapshot(client, userId, requested = {}, { n
     // Completion continues to suppress reminders/Home. The browser exposes current work until
     // it ends, then falls back to the same durable completion marker.
     const since = status === "working" ? workingSince.get(`${row.channel_id}::${row.thread_ts}`) : undefined;
-    authorized.push({ ...row, channelName: entry.name || "Direct message", status, ...(since ? { working_since_ms: since } : {}) });
+    authorized.push({ ...row, channelName: await activityChannelName(entry), isDM: isActivityDM(entry), status, ...(since ? { working_since_ms: since } : {}) });
   }
   const needle = search.toLocaleLowerCase();
   const filtered = authorized.filter((row) =>

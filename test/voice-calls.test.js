@@ -696,3 +696,13 @@ test("the caller's voice preferences and recent calls shape the prompt and the t
   assert.doesNotMatch(FakeSession.instances.at(-1).options.systemInstruction, /Voice call on/, "another person's DM memory is never read");
   await other.manager.end(fourth.id, "U_OTHER");
 });
+
+test("voice conversation lists use readable DM labels without channel prefixes", async () => {
+  const f = fixture({ snapshot: async () => ({ rows: [{ channel_id: "D12345678", thread_ts: "55.000001", title: "Private task", channelName: "Personal conversation with Alex Example", isDM: true, status: "idle", last_message_ms: 3000 }] }) });
+  const started = await f.manager.start({ ownerId: "U_MINE", client: f.client });
+  const session = FakeSession.instances[0];
+  assert.match(session.options.systemInstruction, /Personal conversation with Alex Example/);
+  assert.doesNotMatch(session.options.systemInstruction, /#Personal conversation/);
+  assert.match(session.options.systemInstruction, /Never read conversation IDs aloud/);
+  assert.equal(await f.manager.end(started.id, "U_MINE"), true);
+});

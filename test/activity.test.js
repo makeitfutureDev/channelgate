@@ -1252,3 +1252,32 @@ test("Activity channel pin rechecks revocation after awaited private membership"
   assert.equal((await pending).status, 403);
   assert.deepEqual((await getUser("U_MINE")).activityPinnedChannels, []);
 });
+
+
+test("Activity DM labels resolve the peer, hide legacy identifiers and apply to empty pins and search", async (t) => {
+  const f = await fixture(t);
+  const entry = await f.root("D12345678", "100.000001", "U_MINE", true, "im");
+  f.members.set("D12345678", ["U_MINE"]);
+  await upsertChannelEntry("D12345678", { name: "dm-U_MINE" });
+  await setUser("U_MINE", { name: "Alex Example", activityPinnedChannels: ["D12345678"] });
+  await saveChannelMeta(entry.slug, { dmUserId: "U_MINE" });
+  const mine = await f.login();
+  const snapshot = async () => (await f.request(mine.url + "/api/threads", { headers: mine.headers })).json();
+  let data = await snapshot();
+  assert.equal(data.rows[0].channelName, "Personal conversation with Alex Example");
+  assert.equal(data.pinnedChannels[0].channelName, data.rows[0].channelName);
+  const searched = await activityThreadSnapshot(f.client, "U_MINE", { search: "Alex Example" });
+  assert.equal(searched.rows.length, 1);
+  assert.equal(searched.rows[0].isDM, true);
+  await saveChannelMeta(entry.slug, { dmUserId: "U_MISSING" });
+  data = await snapshot();
+  assert.equal(data.rows[0].channelName, "Personal conversation");
+  assert.equal(data.pinnedChannels[0].channelName, "Personal conversation");
+  setSlackThreadDone("D12345678", "100.000001", "U_MINE", true);
+  data = await snapshot();
+  assert.equal(data.pinnedChannels[0].channelName, "Personal conversation", "empty pinned groups use the same resolver");
+  f.members.set("D12345678", []);
+  data = await snapshot();
+  assert.deepEqual(data.rows, []);
+  assert.deepEqual(data.pinnedChannels, []);
+});
