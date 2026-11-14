@@ -375,6 +375,17 @@ export function createActivityRouter({
       return res.json({ ok: true, accepted });
     } catch (error) { return unavailable(res, error.status || 404); }
   });
+  router.post("/:id/call/:callId/switch", async (req, res) => {
+    try {
+      const { session } = await context(req);
+      if (!csrfOk(req, session)) return unavailable(res, 403);
+      const target = callTarget(req);
+      if (!target?.channelId) return res.status(400).json({ error: "Choose a valid conversation for the call." });
+      return res.json(await callsFor().switchConversation(req.params.callId, session.ownerId, target));
+    } catch (error) {
+      return res.status(error.status || 503).json({ error: error.message || "The call could not switch conversations." });
+    }
+  });
   router.post("/:id/call/:callId/end", async (req, res) => {
     try {
       const { session } = await context(req);
