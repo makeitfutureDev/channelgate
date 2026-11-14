@@ -26,6 +26,7 @@ class Element {
   showModal() { this.open = true; }
   close() { this.open = false; }
   focus() { this.focused = true; }
+  blur() { this.blurred = true; }
   querySelector(selector) { return this.querySelectorAll(selector)[0]; }
   querySelectorAll(selector) { return this.children.flatMap((c) => [...(c.tag === selector ? [c] : []), ...c.querySelectorAll(selector)]); }
   closest(selector) {
@@ -47,7 +48,7 @@ function row(status = "working", title = "Fixture thread", url = "/activity/sess
   return { channelId: "C1", threadTs: "1.1", title, channelName: "Engineering", status, lastMessageMs: 1_800_000_000_000, url };
 }
 function browser(fetchImpl = async () => response({ rows: [] }), csrf = "fixture-csrf", subscriptions = false, { prefersLight = false, teamId = "TWORK" } = {}) {
-  const elements = Object.fromEntries(["pinned-channels", "pinned-section", "pinned-count", "pinned-threads", "group-by", "theme-toggle", "load-history", "threads", "search", "filters", "connection", "connection-text", "updated", "notice", "summary", "table", "empty", "empty-title", "empty-copy", "result-count", "group-order", "order-dialog", "order-list", "order-save", "order-cancel", "order-reset", "order-error", "mark-all-done", "all-done-dialog", "all-done-confirm", "all-done-cancel", "all-done-error"].map((id) => [id, new Element()]));
+  const elements = Object.fromEntries(["pinned-channels", "pinned-section", "pinned-count", "pinned-threads", "group-by", "theme-toggle", "load-history", "threads", "search", "filters", "connection", "connection-text", "updated", "notice", "summary", "table", "empty", "empty-title", "empty-copy", "result-count", "group-order", "order-dialog", "order-list", "order-save", "order-cancel", "order-reset", "order-error", "mark-all-done", "all-done-dialog", "all-done-confirm", "all-done-cancel", "all-done-error", "columns-button", "columns-dialog", "columns-list", "columns-save", "columns-cancel", "columns-reset", "columns-error", "table", "pinned-table"].map((id) => [id, new Element()]));
   for (const filter of ["active", "working", "waiting", "error", "idle", "later", "done", "open"]) {
     const button = new Element("button"); button.dataset.filter = filter; button.append(new Element("span")); elements.filters.append(button);
   }
@@ -108,7 +109,7 @@ test("Activity has one icon Slack button; Ctrl/⌘-click opens the same thread i
   const { elements, stream, opened } = browser(() => new Promise(() => {}));
   stream.snapshot([row()]);
   const tr = elements.threads.children[0], title = tr.children[0].children[0];
-  const links = tr.children[4].children[0].children;
+  const links = tr.children[5].children[0].children;
   assert.equal(links.length, 1, "the separate browser button is gone");
   const [app] = links;
   assert.equal(title.target, "_self");
@@ -125,11 +126,11 @@ test("Activity has one icon Slack button; Ctrl/⌘-click opens the same thread i
     assert.deepEqual(opened.at(-1), [app.href + "?browser=1", "_blank", "noopener,noreferrer"]);
   }
   stream.snapshot([row("working", "Slack permalink", "https://team.slack.com/archives/C1/p11")]);
-  const permalink = elements.threads.children[0].children[4].children[0].children[0];
+  const permalink = elements.threads.children[0].children[5].children[0].children[0];
   assert.equal(elements.threads.fire("click", { target: permalink, ctrlKey: true }), false, "a Slack permalink keeps the browser default");
   for (const url of ["slack://channel?team=attacker&id=C1", "javascript:alert(1)", "https://attacker.example/"]) {
     stream.snapshot([row("working", "unsafe", url)]);
-    const anchor = elements.threads.children[0].children[4].children[0].children[0];
+    const anchor = elements.threads.children[0].children[5].children[0].children[0];
     assert.equal(anchor.href, undefined);
     assert.equal(elements.threads.fire("click", { target: anchor, ctrlKey: true }), false);
   }
@@ -139,7 +140,7 @@ test("Activity has one icon Slack button; Ctrl/⌘-click opens the same thread i
 test("the channel name opens the conversation in Slack; Ctrl/⌘-click opens it in the browser", () => {
   const { elements, stream, opened } = browser(() => new Promise(() => {}));
   stream.snapshot([row()]);
-  const channel = () => elements.threads.children[0].children[1].children[0];
+  const channel = () => elements.threads.children[0].children[2].children[0];
   assert.equal(channel().textContent, "Engineering");
   assert.equal(channel().href, "slack://channel?team=TWORK&id=C1");
   assert.equal(channel().target, "_self");
@@ -156,7 +157,7 @@ test("the channel name opens the conversation in Slack; Ctrl/⌘-click opens it 
   assert.equal(opened.length, 1);
   const noTeam = browser(() => new Promise(() => {}), "csrf", false, { teamId: "T1\"><script>" });
   noTeam.stream.snapshot([row()]);
-  assert.equal(noTeam.elements.threads.children[0].children[1].children[0].href, undefined, "an invalid workspace id links nothing");
+  assert.equal(noTeam.elements.threads.children[0].children[2].children[0].href, undefined, "an invalid workspace id links nothing");
   assert.doesNotMatch(noTeam.page.html, /T1\\?"><script>/);
 });
 
@@ -174,15 +175,15 @@ test("status groups are labelled on their first row, and running work shows a li
   assert.deepEqual(trs.map((tr) => tr.children[0].textContent), ["ask", "run", "old", "older"]);
   assert.deepEqual(trs.map((tr) => tr.dataset.group), ["Waiting · 1", "Working · 1", "Idle · 2", undefined]);
   assert.deepEqual(trs.map((tr) => tr.className), ["row s-waiting", "row s-working", "row s-idle", "row s-idle"]);
-  const pill = (tr) => tr.children[2].children[0];
+  const pill = (tr) => tr.children[3].children[0];
   assert.match(pill(trs[1]).textContent, /^Working4m 1[23]s$/);
   assert.equal(pill(trs[0]).textContent, "Waiting", "only the agent's own running work carries a clock");
-  assert.deepEqual(trs.map((tr) => tr.children[3].children[0].textContent), ["5m", "now", "3h", "2d"]);
-  assert.equal(trs[1].children[3].children[0].attrs.title, undefined);
+  assert.deepEqual(trs.map((tr) => tr.children[4].children[0].textContent), ["5m", "now", "3h", "2d"]);
+  assert.equal(trs[1].children[4].children[0].attrs.title, undefined);
   for (const timer of timers) timer();
   assert.match(pill(trs[1]).textContent, /^Working4m 1[2-4]s$/);
   stream.snapshot([{ ...rows[0], status: "idle" }]);
-  assert.equal(elements.threads.children[0].children[2].children[0].textContent, "Idle");
+  assert.equal(elements.threads.children[0].children[3].children[0].textContent, "Idle");
 });
 
 test("theme switch pins the opposite theme, returns to System when it matches the OS, and saves with CSRF", async () => {
@@ -209,7 +210,7 @@ test("page shows the agent name safely and pins only a saved explicit theme", ()
   const hostile = activityPage({ sessionId: "s", csrf: "c", agent: '<img src=x onerror="alert(1)">Atlas' }).html;
   assert.match(hostile, /<span class="agent-name">&lt;img src=x onerror=&quot;alert\(1\)&quot;&gt;Atlas<\/span>/);
   assert.match(hostile, /<span class="agent-mark" aria-hidden="true"><svg viewBox="0 0 48 48"[^>]*><rect[^>]*fill="#ff642f"/, "the ChannelGate gate mark");
-  assert.match(hostile, /<th scope="col">Actions<\/th>/);
+  assert.match(hostile, /<th scope="col" data-col="actions" draggable="true"[^>]*><span class="col-label">Actions<\/span><\/th>/);
   assert.match(activityPage({ sessionId: "s", csrf: "c" }).html, /agent-name">ChannelGate</);
   assert.match(activityPage({ sessionId: "s", csrf: "c", theme: "light" }).html, /<html lang="en" data-theme="light">/);
   assert.match(activityPage({ sessionId: "s", csrf: "c", theme: "dark" }).html, /<html lang="en" data-theme="dark">/);
@@ -221,12 +222,12 @@ test("activity browser filters locally and serializes each completion action wit
   let done = false;
   const { elements, stream, requests } = browser((url) => url.endsWith("/completion") ? save.promise : Promise.resolve(response({ rows: [row(done ? "done" : "working")] })));
   await flush();
-  const tr = elements.threads.children[0], toggle = tr.children[4].children[1].children[0];
+  const tr = elements.threads.children[0], toggle = tr.children[5].children[1].children[0];
   elements.search.value = "no match"; elements.search.fire("input");
   assert.equal(elements.threads.children.length, 0);
   elements.search.value = "engineering"; elements.search.fire("input");
   assert.equal(elements.threads.children.length, 1);
-  const button = elements.threads.children[0].children[4].children[1].children[0];
+  const button = elements.threads.children[0].children[5].children[1].children[0];
   elements.threads.fire("click", { target: button });
   elements.threads.fire("click", { target: button });
   assert.equal(button.disabled, true);
@@ -237,7 +238,7 @@ test("activity browser filters locally and serializes each completion action wit
   done = true; save.resolve(response({ ok: true })); await flush();
   assert.equal(elements.threads.children.length, 0);
   elements.filters.fire("click", { target: elements.filters.children.find((b) => b.dataset.filter === "done") });
-  assert.equal(elements.threads.children[0].children[4].children[1].children[0].textContent, "Reopen");
+  assert.equal(elements.threads.children[0].children[5].children[1].children[0].textContent, "Reopen");
   assert.equal(toggle.textContent, "Done");
   stream.fire("access-ended");
 });
@@ -362,7 +363,7 @@ test("Mark All Done sends once with CSRF, blocks row changes while saving, and r
   const { elements, requests, stream } = browser((url) => url.endsWith("/completion-all") ? save.promise
     : Promise.resolve(response({ rows: [row(saved ? "done" : "working")] })));
   await flush();
-  const toggle = elements.threads.children[0].children[4].children[1].children[0];
+  const toggle = elements.threads.children[0].children[5].children[1].children[0];
   elements["mark-all-done"].fire("click");
   elements["all-done-confirm"].fire("click"); elements["all-done-confirm"].fire("click");
   elements.threads.fire("click", { target: toggle });
@@ -397,7 +398,7 @@ test("Mark All Done waits for pending row actions and allows a safe retry after 
     return Promise.resolve(response({ rows: [row()] }));
   });
   await flush();
-  elements.threads.fire("click", { target: elements.threads.children[0].children[4].children[1].children[0] });
+  elements.threads.fire("click", { target: elements.threads.children[0].children[5].children[1].children[0] });
   assert.equal(elements["mark-all-done"].disabled, true);
   elements["mark-all-done"].fire("click");
   assert.notEqual(elements["all-done-dialog"].open, true);
@@ -566,7 +567,7 @@ test("Later hides postponed work from Active, retains it in All open, and serial
   const save = deferred();
   const b = browser((url) => url.endsWith("/later") ? save.promise : Promise.resolve(response({ rows: [row(status)] })));
   await flush();
-  const delay = b.elements.threads.children[0].children[4].children[1].children[1];
+  const delay = b.elements.threads.children[0].children[5].children[1].children[1];
   assert.equal(delay.textContent, "Later");
   assert.equal(delay.dataset.state, "later");
   b.elements.threads.fire("click", { target: delay });
@@ -581,7 +582,7 @@ test("Later hides postponed work from Active, retains it in All open, and serial
   assert.match(b.elements.summary.textContent, /0 active · 1 later/);
   const select = (filter) => b.elements.filters.fire("click", { target: b.elements.filters.children.find((t) => t.dataset.filter === filter) });
   select("later");
-  const resume = b.elements.threads.children[0].children[4].children[1].children[1];
+  const resume = b.elements.threads.children[0].children[5].children[1].children[1];
   assert.equal(resume.textContent, "Resume");
   assert.equal(resume.dataset.state, "resume");
   b.elements.threads.fire("click", { target: resume }); await flush();
@@ -687,7 +688,7 @@ test("failed grouping save restores the view, serializes writes and safely label
   const name = '<img src=x onerror="alert(1)">';
   stream.snapshot([{ ...row(), channelName: name }], { groupBy: "channel", groupByVersion: 1 });
   assert.equal(elements.threads.children[0].dataset.group, name + " · 1");
-  assert.equal(elements.threads.children[0].children.length, 5);
+  assert.equal(elements.threads.children[0].children.length, 6);
 });
 
 test("pins move rows to a matching top table, survive status tabs, filter by search and clear on access loss", () => {
@@ -702,7 +703,7 @@ test("pins move rows to a matching top table, survive status tabs, filter by sea
   assert.equal(e.threads.children.length, 1);
   assert.equal(tr.dataset.group, undefined);
   assert.equal(e.threads.children[0].dataset.group, "Idle · 1");
-  const pin = tr.children[4].children[1].children[2];
+  const pin = tr.children[5].children[1].children[2];
   assert.equal(pin.textContent, "Unpin"); assert.equal(pin.attrs["aria-pressed"], "true");
   e.filters.fire("click", { target: e.filters.children.find((button) => button.dataset.filter === "working") });
   assert.equal(e["pinned-threads"].children[0], tr);
@@ -732,7 +733,7 @@ test("pin and unpin serialize CSRF writes, reuse rows and preserve controls in t
     return response({ ok: true });
   });
   await flush();
-  const tr = b.elements.threads.children[0], pin = tr.children[4].children[1].children[2];
+  const tr = b.elements.threads.children[0], pin = tr.children[5].children[1].children[2];
   b.elements.threads.fire("click", { target: pin });
   b.elements.threads.fire("click", { target: pin });
   assert.equal(changes, 1); assert.equal(pin.disabled, true);
@@ -742,7 +743,7 @@ test("pin and unpin serialize CSRF writes, reuse rows and preserve controls in t
   save.resolve(); await flush();
   assert.equal(b.elements["pinned-threads"].children[0], tr);
   assert.equal(b.elements.threads.children.length, 0);
-  const done = tr.children[4].children[1].children[0];
+  const done = tr.children[5].children[1].children[0];
   b.elements["pinned-threads"].fire("click", { target: done }); await flush();
   assert.ok(b.requests.some((r) => r.url.endsWith("/completion")));
   b.elements["pinned-threads"].fire("click", { target: pin }); await flush();
@@ -756,7 +757,7 @@ test("failed pin save leaves rows in place and access denial clears both tables"
   let status = 503;
   const b = browser(async (url) => url.endsWith("/pin") ? response({}, status) : response({ rows: [row("idle")] }));
   await flush();
-  const pin = b.elements.threads.children[0].children[4].children[1].children[2];
+  const pin = b.elements.threads.children[0].children[5].children[1].children[2];
   b.elements.threads.fire("click", { target: pin }); await flush();
   assert.equal(b.elements["pinned-section"].hidden, true);
   assert.equal(pin.disabled, false);
@@ -819,8 +820,8 @@ test("channel pins promote all open conversations once across status filters, re
   assert.deepEqual(e["pinned-threads"].children.map((tr) => tr.children[0].textContent), ["Open task", "Later task", "Saved task"]);
   assert.equal(e.threads.children.length, 1);
   const inherited = e["pinned-threads"].children[0];
-  assert.equal(inherited.children[4].children[1].children[2].textContent, "Pin", "inherited placement preserves the individual Pin action");
-  assert.equal(inherited.children[1].children[1].attrs["aria-label"], "Unpin channel: Engineering");
+  assert.equal(inherited.children[5].children[1].children[2].textContent, "Pin", "inherited placement preserves the individual Pin action");
+  assert.equal(inherited.children[2].children[1].attrs["aria-label"], "Unpin channel: Engineering");
   e.filters.fire("click", { target: e.filters.children.find((button) => button.dataset.filter === "open") });
   assert.equal(e["pinned-threads"].children.length, 3, "All open includes Later inherited work plus the explicit Done pin");
   e.filters.fire("click", { target: e.filters.children.find((button) => button.dataset.filter === "done") });
@@ -846,7 +847,7 @@ test("channel pin controls save once with CSRF, retain row focus and report fail
     return response({ rows: [{ ...row("idle"), channelPinned: pinned }], pinnedChannels: pinned ? [channel] : [] });
   });
   await flush();
-  const tr = b.elements.threads.children[0], button = tr.children[1].children[1];
+  const tr = b.elements.threads.children[0], button = tr.children[2].children[1];
   b.elements.threads.fire("click", { target: button });
   b.elements.threads.fire("click", { target: button });
   assert.equal(b.requests.filter((req) => req.url.endsWith("/channel-pin")).length, 1);
@@ -859,7 +860,7 @@ test("channel pin controls save once with CSRF, retain row focus and report fail
   assert.equal(button.disabled, false);
   const failed = browser(async (url) => url.endsWith("/channel-pin") ? response({}, 503) : response({ rows: [row("idle")] }));
   await flush();
-  failed.elements.threads.fire("click", { target: failed.elements.threads.children[0].children[1].children[1] }); await flush();
+  failed.elements.threads.fire("click", { target: failed.elements.threads.children[0].children[2].children[1] }); await flush();
   assert.match(failed.elements.notice.textContent, /channel pin couldn’t be saved/);
   assert.equal(failed.elements["pinned-section"].hidden, true);
 });
@@ -876,4 +877,104 @@ test("Activity renders personal conversation labels in channel groups and pinned
   assert.match(elements.threads.textContent, /Personal conversation with Alex Example/);
   assert.match(elements["pinned-channels"].textContent, /Personal conversation/);
   assert.doesNotMatch(elements.threads.textContent + elements["pinned-channels"].textContent, /D12345678|D87654321|#Personal/);
+});
+
+
+const cellsByClass = (tr) => Object.fromEntries(tr.children.map((cell) => [cell.className, cell]));
+
+test("Comment column shows the saved note, saves an edit once with CSRF and is searchable", async () => {
+  const save = deferred();
+  const { elements, stream, requests } = browser((url) => url.endsWith("/api/comment") ? save.promise : new Promise(() => {}));
+  stream.snapshot([{ ...row(), comment: "Ask Ana about pricing" }, { ...row("idle", "Second"), threadTs: "2.2" }]);
+  const [first, second] = elements.threads.children;
+  assert.deepEqual(first.children.map((cell) => cell.className), ["thread-cell", "comment-cell", "channel-cell", "status-cell", "time-cell", "actions"]);
+  const input = cellsByClass(first)["comment-cell"].children[0];
+  assert.equal(input.value, "Ask Ana about pricing");
+  assert.equal(input.attrs.maxlength, "500");
+  assert.equal(input.attrs["aria-label"], "Comment on: Fixture thread");
+  assert.equal(cellsByClass(second)["comment-cell"].children[0].value, "");
+  elements.search.value = "pricing"; elements.search.fire("input");
+  assert.equal(elements.threads.children.length, 1, "search matches comment text");
+  elements.search.value = ""; elements.search.fire("input");
+  input.value = "Ask Ana about pricing"; input.fire("change");
+  assert.equal(requests.filter((r) => r.url.endsWith("/api/comment")).length, 0, "an unchanged comment saves nothing");
+  input.value = "  Call Ana\ttomorrow "; input.fire("change"); input.fire("change");
+  const posts = requests.filter((r) => r.url.endsWith("/api/comment"));
+  assert.equal(posts.length, 1, "one save at a time");
+  assert.equal(posts[0].options.headers["X-CG-CSRF"], "fixture-csrf");
+  assert.deepEqual(JSON.parse(posts[0].options.body), { channelId: "C1", threadTs: "1.1", comment: "Call Ana tomorrow" });
+  assert.equal(input.dataset.state, "saving");
+  stream.snapshot([{ ...row(), comment: "Ask Ana about pricing" }]);
+  assert.equal(input.value, "  Call Ana\ttomorrow ", "a live update never overwrites a comment being saved");
+  save.resolve(response({ comment: "Call Ana tomorrow" })); await flush();
+  assert.equal(input.value, "Call Ana tomorrow");
+  assert.equal(input.dataset.state, undefined);
+  input.value = "draft"; input.fire("keydown", { key: "Escape" });
+  assert.equal(input.value, "Call Ana tomorrow", "Escape restores the saved comment");
+  assert.equal(input.blurred, true);
+});
+
+test("a failed comment save keeps the typed text and an expired session ends access", async () => {
+  let status = 500;
+  const { elements, stream } = browser((url) => url.endsWith("/api/comment") ? Promise.resolve(response({}, status)) : new Promise(() => {}));
+  stream.snapshot([row()]);
+  const input = cellsByClass(elements.threads.children[0])["comment-cell"].children[0];
+  input.value = "Keep me"; input.fire("change"); await flush();
+  assert.equal(input.dataset.state, "error");
+  assert.equal(input.value, "Keep me");
+  assert.match(elements.notice.textContent, /comment couldn’t be saved/);
+  stream.snapshot([row()]);
+  assert.equal(input.value, "Keep me", "a failed comment is not replaced by the old value");
+  status = 401; input.fire("change"); await flush();
+  assert.equal(elements.threads.children.length, 0);
+  assert.match(elements.notice.textContent, /access has ended/);
+});
+
+test("saved column order reorders every row, and the Columns dialog saves a staged order once", async () => {
+  const save = deferred();
+  const { elements, stream, requests } = browser((url) => url.endsWith("/api/columns") ? save.promise : new Promise(() => {}));
+  const order = ["status", "conversation", "actions", "last", "comment", "channel"];
+  stream.snapshot([row()], { columns: { order, widths: { conversation: 300, actions: 999, comment: 10 } }, columnsVersion: 3 });
+  const classes = () => elements.threads.children[0].children.map((cell) => cell.className);
+  assert.deepEqual(classes(), ["status-cell", "thread-cell", "actions", "time-cell", "comment-cell", "channel-cell"]);
+  stream.snapshot([{ ...row("idle", "Other"), threadTs: "2.2" }, row()], { columns: { order: ["conversation"], widths: {} }, columnsVersion: 4 });
+  assert.deepEqual(elements.threads.children.map((tr) => tr.children[0].className), ["status-cell", "status-cell"], "a malformed layout is ignored");
+  stream.snapshot([row()], { columns: { order: [...order].reverse(), widths: {} }, columnsVersion: 2 });
+  assert.deepEqual(classes()[0], "status-cell", "an older layout version is ignored");
+  elements["columns-button"].fire("click");
+  assert.equal(elements["columns-dialog"].open, true);
+  const labels = () => elements["columns-list"].children.map((li) => li.children[0].textContent);
+  assert.deepEqual(labels(), ["Status", "Conversation", "Actions", "Last", "Comment", "Channel"]);
+  const move = (label, direction) => elements["columns-list"].children.find((li) => li.children[0].textContent === label).children[1].children[direction < 0 ? 0 : 1];
+  elements["columns-list"].fire("click", { target: move("Comment", -1) });
+  elements["columns-list"].fire("click", { target: move("Comment", -1) });
+  assert.deepEqual(labels(), ["Status", "Conversation", "Comment", "Actions", "Last", "Channel"]);
+  assert.deepEqual(classes()[2], "actions", "nothing changes before Save");
+  const staged = ["status", "conversation", "comment", "actions", "last", "channel"];
+  elements["columns-save"].fire("click"); elements["columns-save"].fire("click");
+  const posts = requests.filter((r) => r.url.endsWith("/api/columns"));
+  assert.equal(posts.length, 1, "one save while saving");
+  assert.equal(posts[0].options.headers["X-CG-CSRF"], "fixture-csrf");
+  assert.deepEqual(JSON.parse(posts[0].options.body), { order: staged, widths: { conversation: 300 } }, "invalid stored widths are dropped, valid ones kept");
+  assert.equal(elements["columns-save"].textContent, "Saving…");
+  stream.snapshot([row()], { columns: { order: [...order], widths: {} }, columnsVersion: 9 });
+  assert.deepEqual(classes()[2], "comment-cell", "a live snapshot cannot undo a layout being saved");
+  save.resolve(response({ columns: { order: staged, widths: { conversation: 300 } }, columnsVersion: 10 })); await flush();
+  assert.equal(elements["columns-dialog"].open, false);
+  assert.deepEqual(classes(), ["status-cell", "thread-cell", "comment-cell", "actions", "time-cell", "channel-cell"]);
+  stream.snapshot([row()], { columns: { order: [...order], widths: {} }, columnsVersion: 9 });
+  assert.deepEqual(classes()[2], "comment-cell", "older versions stay ignored after the save");
+});
+
+test("a failed Columns save restores the previous layout and Reset stages the defaults", async () => {
+  const { elements, stream } = browser((url) => url.endsWith("/api/columns") ? Promise.resolve(response({}, 500)) : new Promise(() => {}));
+  stream.snapshot([row()], { columns: { order: ["channel", "conversation", "comment", "status", "last", "actions"], widths: {} }, columnsVersion: 1 });
+  const classes = () => elements.threads.children[0].children.map((cell) => cell.className);
+  elements["columns-button"].fire("click");
+  elements["columns-reset"].fire("click");
+  assert.deepEqual(elements["columns-list"].children.map((li) => li.children[0].textContent), ["Conversation", "Comment", "Channel", "Status", "Last", "Actions"]);
+  elements["columns-save"].fire("click"); await flush(); await flush();
+  assert.equal(elements["columns-dialog"].open, true);
+  assert.match(elements["columns-error"].textContent, /couldn’t be saved/);
+  assert.equal(classes()[0], "channel-cell", "the previous layout comes back");
 });

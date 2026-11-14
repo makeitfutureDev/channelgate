@@ -1324,3 +1324,67 @@ test("fork Activity rows open and support independent Done/Later with fresh crea
   assert.equal((await action(mine, "completion", true)).status, 403);
   assert.equal((await f.request(mine.url + `/open/G_FORKS/${threadTs}`, { headers: mine.headers })).status, 403);
 });
+
+test("Activity comments are the owner's private one-line notes on their own conversations", async (t) => {
+  const f = await fixture(t);
+  await f.root(); await f.root("C_WORK", "100.000002");
+  await f.root("C_WORK", "100.000003", "U_OTHER");
+  const mine = await f.login(), other = await f.login("U_OTHER");
+  const endpoint = mine.url + "/api/comment";
+  const snapshot = async (viewer) => (await f.request(viewer.url + "/api/threads", { headers: viewer.headers })).json();
+  const send = (body, headers = mine.post) => f.request(endpoint, { method: "POST", headers, body: JSON.stringify(body) });
+  const payload = { channelId: "C_WORK", threadTs: "100.000001", comment: "  Waiting on\nthe client reply  ", ownerId: "U_OTHER", isAdmin: true };
+  assert.ok((await snapshot(mine)).rows.every((row) => row.comment === ""));
+  for (const [headers, status] of [[{ ...mine.post, cookie: "" }, 401], [{ ...mine.post, "X-CG-CSRF": "bad" }, 403], [{ ...mine.post, Origin: "https://other.example" }, 403]]) assert.equal((await send(payload, headers)).status, status);
+  for (const body of [{ ...payload, comment: 5 }, { ...payload, comment: null }, { ...payload, comment: "x".repeat(501) }, { ...payload, channelId: null }, { ...payload, threadTs: [] }]) assert.equal((await send(body)).status, 400);
+  assert.equal((await send({ ...payload, threadTs: "100.000003" })).status, 403, "another person's conversation");
+  assert.equal((await getUser("U_MINE")).activityComments, undefined);
+  const original = await getUser("U_MINE"), thread = getSlackThread("C_WORK", "100.000001");
+  const saved = await send(payload);
+  assert.equal(saved.status, 200);
+  assert.deepEqual(await saved.json(), { comment: "Waiting on the client reply" });
+  assert.deepEqual(await getUser("U_MINE"), { ...original, activityComments: { '["C_WORK","100.000001"]': "Waiting on the client reply" } });
+  assert.equal((await send({ ...payload, comment: "é".repeat(500) })).status, 200, "the limit counts characters, not bytes");
+  const rows = (await snapshot(await f.login())).rows;
+  assert.equal(rows.find((row) => row.threadTs === "100.000001").comment, "é".repeat(500));
+  assert.equal(rows.find((row) => row.threadTs === "100.000002").comment, "");
+  assert.ok((await snapshot(other)).rows.every((row) => row.comment === ""), "comments are never shown to another person");
+  assert.equal((await getUser("U_OTHER")).activityComments, undefined);
+  assert.deepEqual(getSlackThread("C_WORK", "100.000001"), thread, "a comment never changes thread state");
+  assert.equal((await send({ ...payload, comment: "   " })).status, 200);
+  assert.deepEqual((await getUser("U_MINE")).activityComments, {}, "an empty comment removes it");
+  assert.equal(f.markerCalls.length, 0);
+  await setUser("U_MINE", { approved: false });
+  assert.equal((await send(payload)).status, 403);
+  assert.deepEqual((await getUser("U_MINE")).activityComments, {});
+});
+
+test("Activity column layout persists per viewer and rejects malformed layouts, CSRF and revoked admission", async (t) => {
+  const f = await fixture(t);
+  const mine = await f.login(), other = await f.login("U_OTHER");
+  const endpoint = mine.url + "/api/columns";
+  const defaults = ["conversation", "comment", "channel", "status", "last", "actions"];
+  const custom = { order: ["status", "conversation", "actions", "last", "comment", "channel"], widths: { conversation: 420, comment: 240 } };
+  const snapshot = async (viewer) => (await f.request(viewer.url + "/api/threads", { headers: viewer.headers })).json();
+  assert.deepEqual((await snapshot(mine)).columns, { order: defaults, widths: {} });
+  const send = (body, headers = mine.post) => f.request(endpoint, { method: "POST", headers, body: JSON.stringify(body) });
+  for (const body of [{}, { order: defaults }, { widths: {} }, { order: defaults.slice(1), widths: {} }, { order: [...defaults.slice(1), "conversation"].concat("x"), widths: {} },
+    { order: ["conversation", "conversation", "channel", "status", "last", "actions"], widths: {} }, { order: defaults, widths: [] }, { order: defaults, widths: { actions: 200 } },
+    { order: defaults, widths: { conversation: 119 } }, { order: defaults, widths: { conversation: 1601 } }, { order: defaults, widths: { comment: 100.5 } }, { order: defaults, widths: { comment: "200" } }]) {
+    assert.equal((await send(body)).status, 400, JSON.stringify(body));
+  }
+  assert.equal((await f.request(endpoint, { method: "POST", headers: mine.post, body: '{"order":' + JSON.stringify(defaults) + ',"widths":{"__proto__":200}}' })).status, 400);
+  for (const [headers, status] of [[{ ...mine.post, cookie: "" }, 401], [{ ...mine.post, "X-CG-CSRF": "bad" }, 403], [{ ...mine.post, Origin: "https://other.example" }, 403]]) assert.equal((await send(custom, headers)).status, status);
+  const original = await getUser("U_MINE");
+  const saved = await send({ ...custom, ownerId: "U_OTHER", isAdmin: true });
+  assert.equal(saved.status, 200);
+  assert.deepEqual(await saved.json(), { columns: custom, columnsVersion: 1 });
+  assert.deepEqual(await getUser("U_MINE"), { ...original, activityColumns: custom, activityColumnsVersion: 1 });
+  assert.deepEqual((await snapshot(await f.login())).columns, custom);
+  assert.equal((await snapshot(mine)).columnsVersion, 1);
+  assert.deepEqual((await snapshot(other)).columns, { order: defaults, widths: {} });
+  await setUser("U_MINE", { activityColumns: { order: ["conversation", "channel"], widths: { conversation: 5 } } });
+  assert.deepEqual((await snapshot(mine)).columns, { order: defaults, widths: {} }, "a stale stored layout falls back to the defaults");
+  await setUser("U_MINE", { approved: false, isAdmin: false });
+  assert.equal((await send(custom)).status, 403);
+});
