@@ -4,7 +4,7 @@ import { getLogoColor } from "../config/settings.js";
 import { channelGateLogo } from "../config/appearance.js";
 import { ACTIVITY_THEME_CSS } from "./activity-theme.js";
 import { createSubscriptionUi, SUBSCRIPTION_CSS } from "../../public/subscription-ui.js";
-import { DEFAULT_ACTIVITY_GROUP_ORDER, DEFAULT_ACTIVITY_GROUPING } from "./activity-order.js";
+import { DEFAULT_ACTIVITY_GROUP_ORDER, DEFAULT_ACTIVITY_GROUPING, ACTIVITY_COLUMNS, ACTIVITY_COLUMN_MIN_WIDTHS, ACTIVITY_COLUMN_MAX_WIDTH, ACTIVITY_COMMENT_MAX } from "./activity-order.js";
 import { activityAppHead, ACTIVITY_APP_COLORS } from "./activity-app.js";
 import { CALL_OVERLAY_CSS, callOverlayBrowser, callOverlayConfig, callOverlayMarkup } from "./call-overlay.js";
 
@@ -73,6 +73,13 @@ function activityBrowser(config, browser, subscriptionUi, callUi) {
   let rows = [], filter = "active", ended = false, loaded = false, stream = null;
   let revision = 0, requestId = 0, lastUpdated = 0, connected = false;
   let unavailable = false, message = "", actionMessage = "";
+  // Table columns: the viewer's saved order and pixel widths (unset = the stylesheet default).
+  const columnMeta = config.columns;
+  const columnIds = columnMeta.ids;
+  const columnsDialog = el("columns-dialog"), columnsList = el("columns-list"), columnsButton = el("columns-button");
+  const columnsNodes = new Map(), commentPending = new Set();
+  let columnOrder = [...columnIds], columnWidths = {}, columnsVersion = -1, columnsSaving = 0, columnsSeq = 0, columnsTimer = null;
+  let resizing = null, dragging = null, draftColumns = [], draftWidths = {}, columnsDialogSaving = false;
   const subscriptionRoot = el("subscriptions-cards"), quickRoot = el("subscription-quick"), subscriptionNotice = el("subscriptions-notice"), subscriptionButton = el("subscriptions-refresh");
   let subscriptionData = null, subscriptionPending = false, subscriptionGeneration = 0, subscriptionTimer = null, subscriptionPaused = false;
   function clearSubscriptions() {
@@ -219,6 +226,113 @@ function activityBrowser(config, browser, subscriptionUi, callUi) {
     if (text !== undefined) item.textContent = text;
     return item;
   }
+  function validColumnOrder(value) {
+    return Array.isArray(value) && value.length === columnIds.length && new Set(value).size === value.length && value.every((id) => columnIds.includes(id));
+  }
+  function clampWidth(id, width) {
+    return Math.min(columnMeta.max, Math.max(columnMeta.min[id], Math.round(width)));
+  }
+  function cleanWidths(value) {
+    const widths = {};
+    if (value && typeof value === "object") for (const id of Object.keys(columnMeta.min)) {
+      if (Object.hasOwn(value, id) && Number.isSafeInteger(value[id]) && clampWidth(id, value[id]) === value[id]) widths[id] = value[id];
+    }
+    return widths;
+  }
+  function acceptColumns(data) {
+    // A drag, a resize or an unsaved change in flight owns the layout until it settles.
+    if (resizing || dragging || columnsSaving || columnsTimer !== null || !data?.columns) return;
+    const version = Number.isSafeInteger(data.columnsVersion) && data.columnsVersion >= 0 ? data.columnsVersion : 0;
+    if (!validColumnOrder(data.columns.order) || version < columnsVersion) return;
+    columnOrder = [...data.columns.order]; columnWidths = cleanWidths(data.columns.widths); columnsVersion = version;
+    applyColumns();
+  }
+  function columnTemplate() {
+    return columnOrder.map((id) => Object.hasOwn(columnWidths, id) ? columnWidths[id] + "px" : columnMeta.templates[id]).join(" ");
+  }
+  function headerRows() { return [...(document.querySelectorAll?.("thead tr") || [])]; }
+  function paintTemplate() {
+    const template = columnTemplate();
+    for (const table of [el("table"), el("pinned-table")]) table?.style?.setProperty?.("--cols", template);
+  }
+  function placeCells(parent, cells) {
+    columnOrder.forEach((id, index) => {
+      const cell = cells[id];
+      if (cell && parent.children[index] !== cell) parent.insertBefore(cell, parent.children[index] || null);
+    });
+  }
+  function applyColumns() {
+    paintTemplate();
+    for (const tr of headerRows()) {
+      const cells = {};
+      for (const th of tr.querySelectorAll("th")) if (th.dataset.col) cells[th.dataset.col] = th;
+      placeCells(tr, cells);
+    }
+    for (const entry of nodes.values()) placeCells(entry.tr, entry.cells);
+  }
+  async function saveColumns(order = columnOrder, widths = columnWidths) {
+    if (ended) return false;
+    const seq = ++columnsSeq;
+    columnsSaving++;
+    try {
+      const response = await fetch(base + "/api/columns", {
+        method: "POST", credentials: "same-origin",
+        headers: { "Content-Type": "application/json", "X-CG-CSRF": csrf },
+        body: JSON.stringify({ order, widths }),
+      });
+      if (response.status === 401 || response.status === 403) { endAccess(); return false; }
+      if (!response.ok) throw new Error("unavailable");
+      const data = await response.json();
+      if (ended) return false;
+      if (!validColumnOrder(data.columns?.order)) throw new Error("invalid columns");
+      revision++; // An older in-flight snapshot must not overwrite the saved layout.
+      if (seq === columnsSeq && !resizing && !dragging) {
+        columnOrder = [...data.columns.order]; columnWidths = cleanWidths(data.columns.widths);
+        columnsVersion = Number.isSafeInteger(data.columnsVersion) ? data.columnsVersion : columnsVersion;
+        applyColumns();
+      }
+      return true;
+    } catch {
+      if (!ended) { actionMessage = "That column layout couldn’t be saved. Please try again."; notice(); }
+      return false;
+    } finally { columnsSaving--; }
+  }
+  // Keyboard resizing saves once the keys stop, not on every step.
+  function saveColumnsSoon() {
+    if (columnsTimer !== null) browser.clearTimeout(columnsTimer);
+    columnsTimer = browser.setTimeout(() => { columnsTimer = null; void saveColumns(); }, 600);
+  }
+  function moveColumn(id, target, after) {
+    if (id === target || !columnIds.includes(id) || !columnIds.includes(target)) return false;
+    const order = columnOrder.filter((item) => item !== id);
+    order.splice(order.indexOf(target) + (after ? 1 : 0), 0, id);
+    if (order.join() === columnOrder.join()) return false;
+    columnOrder = order; applyColumns();
+    return true;
+  }
+  function renderColumnsDialog() {
+    if (!columnsList) return;
+    draftColumns.forEach((id, index) => {
+      let entry = columnsNodes.get(id);
+      if (!entry) {
+        const item = node("li"), label = node("span", "order-label", columnMeta.labels[id]);
+        const controls = node("div", "order-moves");
+        const buttons = [-1, 1].map((direction) => {
+          const button = node("button", "order-move", direction < 0 ? "↑" : "↓");
+          button.type = "button"; button.dataset.column = id; button.dataset.direction = String(direction);
+          button.setAttribute("aria-label", "Move " + columnMeta.labels[id] + (direction < 0 ? " left" : " right"));
+          return button;
+        });
+        controls.append(...buttons); item.append(label, controls);
+        entry = { item, buttons }; columnsNodes.set(id, entry);
+      }
+      entry.buttons[0].disabled = columnsDialogSaving || index === 0;
+      entry.buttons[1].disabled = columnsDialogSaving || index === draftColumns.length - 1;
+      if (columnsList.children[index] !== entry.item) columnsList.insertBefore(entry.item, columnsList.children[index] || null);
+    });
+    for (const id of ["columns-save", "columns-cancel", "columns-reset"]) { const item = el(id); if (item) item.disabled = columnsDialogSaving; }
+    const save = el("columns-save"); if (save) save.textContent = columnsDialogSaving ? "Saving…" : "Save columns";
+  }
   function key(row) { return JSON.stringify([row.channelId, row.threadTs]); }
   function safeUrl(value) {
     try {
@@ -290,6 +404,8 @@ function activityBrowser(config, browser, subscriptionUi, callUi) {
     grouping.disabled = true;
     orderDialog.close();
     allDoneDialog.close();
+    columnsDialog?.close();
+    if (columnsButton) columnsButton.disabled = true;
     el("all-done-error").textContent = "";
     actionMessage = "";
     message = "";
@@ -300,11 +416,12 @@ function activityBrowser(config, browser, subscriptionUi, callUi) {
   function accept(data) {
     if (ended || !data || !Array.isArray(data.rows)) return false;
     rows = data.rows.filter((row) => row && typeof row.channelId === "string" && typeof row.threadTs === "string")
-      .map((row) => ({ ...row, status: Object.hasOwn(states, row.status) ? row.status : "idle" }));
+      .map((row) => ({ ...row, status: Object.hasOwn(states, row.status) ? row.status : "idle", comment: typeof row.comment === "string" ? row.comment : "" }));
     pinnedChannels = Array.isArray(data.pinnedChannels) ? data.pinnedChannels.filter((entry) => entry
       && typeof entry.channelId === "string" && typeof entry.channelName === "string") : [];
     acceptOrder(data);
     acceptGrouping(data);
+    acceptColumns(data);
     revision++;
     loaded = true;
     unavailable = Boolean(data.unavailable);
@@ -318,6 +435,13 @@ function activityBrowser(config, browser, subscriptionUi, callUi) {
     const tr = node("tr");
     const titleCell = node("td", "thread-cell"), title = node("a", "thread-title");
     titleCell.append(title);
+    // A private one-line note: Enter or leaving the field saves it, Escape restores the saved one.
+    const commentCell = node("td", "comment-cell"), comment = node("input", "comment-input");
+    comment.type = "text"; comment.placeholder = "Add a comment";
+    comment.setAttribute("maxlength", String(columnMeta.commentMax));
+    comment.setAttribute("autocomplete", "off");
+    comment.dataset.key = rowKey;
+    commentCell.append(comment);
     const channelCell = node("td", "channel-cell"), channel = node("a", "channel-link");
     const channelPin = node("button", "toggle channel-pin");
     channelPin.type = "button"; channelPin.dataset.channelId = "";
@@ -344,8 +468,15 @@ function activityBrowser(config, browser, subscriptionUi, callUi) {
     if (voiceCalls) links.append(call);
     state.append(toggle, delay, pin);
     actions.append(links, state);
-    tr.append(titleCell, channelCell, statusCell, timeCell, actions);
-    return { tr, title, channel, channelPin, pill, statusText, elapsed, time, open, call, toggle, delay, pin, since: 0, stamp: 0 };
+    const cells = { conversation: titleCell, comment: commentCell, channel: channelCell, status: statusCell, last: timeCell, actions };
+    placeCells(tr, cells);
+    const entry = { tr, cells, title, comment, saved: "", channel, channelPin, pill, statusText, elapsed, time, open, call, toggle, delay, pin, since: 0, stamp: 0 };
+    comment.addEventListener("keydown", (event) => {
+      if (event.key === "Enter") { event.preventDefault?.(); comment.blur?.(); }
+      else if (event.key === "Escape") { comment.value = entry.saved; delete comment.dataset.state; comment.blur?.(); }
+    });
+    comment.addEventListener("change", () => { void saveComment(rowKey, comment.value); });
+    return entry;
   }
   function matches(row) {
     if (!isPinned(row)) {
@@ -354,7 +485,7 @@ function activityBrowser(config, browser, subscriptionUi, callUi) {
       if (filter !== "active" && filter !== "open" && row.status !== filter) return false;
     }
     const query = search.value.trim().toLocaleLowerCase();
-    return !query || (String(row.title || "") + " " + String(row.channelName || "")).toLocaleLowerCase().includes(query);
+    return !query || (String(row.title || "") + " " + String(row.channelName || "") + " " + String(row.comment || "")).toLocaleLowerCase().includes(query);
   }
   // Compact clocks: "4m 12s" for running work, "5m"/"8h"/"6d" since the last message.
   function duration(ms) {
@@ -442,6 +573,12 @@ function activityBrowser(config, browser, subscriptionUi, callUi) {
       const app = Boolean(url && new URL(url).origin === location.origin);
       entry.title.textContent = title;
       entry.title.title = title;
+      entry.saved = row.comment;
+      // Never overwrite what the person is typing, saving, or failed to save.
+      if (document.activeElement !== entry.comment && !commentPending.has(rowKey) && entry.comment.dataset.state !== "error") entry.comment.value = row.comment;
+      entry.comment.title = row.comment || "Add a private comment";
+      entry.comment.setAttribute("aria-label", "Comment on: " + title);
+      entry.comment.disabled = ended;
       link(entry.title, url, app);
       entry.channel.textContent = String(row.channelName || "Conversation");
       channelLink(entry.channel, row.channelId);
@@ -635,6 +772,35 @@ function activityBrowser(config, browser, subscriptionUi, callUi) {
       notice();
     }
   }
+  async function saveComment(rowKey, value) {
+    const row = rows.find((item) => key(item) === rowKey), entry = nodes.get(rowKey);
+    if (ended || !row || !entry || commentPending.has(rowKey)) return;
+    const text = String(value).replace(/\s+/g, " ").trim();
+    if (text === row.comment) { entry.comment.value = text; delete entry.comment.dataset.state; return; }
+    commentPending.add(rowKey);
+    entry.comment.dataset.state = "saving";
+    actionMessage = "";
+    try {
+      const response = await fetch(base + "/api/comment", {
+        method: "POST", credentials: "same-origin",
+        headers: { "Content-Type": "application/json", "X-CG-CSRF": csrf },
+        body: JSON.stringify({ channelId: row.channelId, threadTs: row.threadTs, comment: text }),
+      });
+      if (response.status === 401 || response.status === 403) { endAccess(); return; }
+      if (!response.ok) throw new Error("unavailable");
+      const data = await response.json();
+      if (ended) return;
+      for (const item of rows) if (key(item) === rowKey) item.comment = typeof data.comment === "string" ? data.comment : text;
+      delete entry.comment.dataset.state;
+      if (document.activeElement !== entry.comment) entry.comment.value = rows.find((item) => key(item) === rowKey)?.comment ?? text;
+      revision++; // A snapshot fetched before this save must not bring back the old comment.
+    } catch {
+      if (!ended) { entry.comment.dataset.state = "error"; actionMessage = "That comment couldn’t be saved. Edit it to try again."; }
+    } finally {
+      commentPending.delete(rowKey);
+      render();
+    }
+  }
   async function complete(rowKey, operation = "completion") {
     if (ended || completingAll || pending.has(rowKey)) return;
     const row = rows.find((item) => key(item) === rowKey);
@@ -698,6 +864,122 @@ function activityBrowser(config, browser, subscriptionUi, callUi) {
   el("order-save").addEventListener("click", () => { void saveOrder(); });
   orderDialog.addEventListener("cancel", (event) => { if (savingOrder) event.preventDefault(); });
   grouping.addEventListener("change", () => { void saveGrouping(); });
+  // Column headers: drag a header to move it, drag its edge to resize, double-click the edge to
+  // reset it. The edge is also a focusable separator (←/→, Shift for larger steps, Home resets).
+  function headerHandlers(head) {
+    head.addEventListener("pointerdown", (event) => {
+      const handle = event.target.closest?.(".col-resize"), th = handle?.closest?.("th");
+      if (!handle || !th?.dataset.col || ended || event.button > 0) return;
+      event.preventDefault();
+      handle.setPointerCapture?.(event.pointerId);
+      handle.dataset.active = "";
+      th.draggable = false; // A resize must never become a column drag.
+      document.documentElement.classList?.add("col-resizing");
+      resizing = { id: th.dataset.col, handle, startX: event.clientX, start: th.getBoundingClientRect().width, moved: false };
+    });
+    head.addEventListener("pointermove", (event) => {
+      if (!resizing) return;
+      const width = clampWidth(resizing.id, resizing.start + event.clientX - resizing.startX);
+      if (Math.abs(event.clientX - resizing.startX) < 2 && !resizing.moved) return;
+      resizing.moved = true; columnWidths[resizing.id] = width; paintTemplate();
+    });
+    const finish = () => {
+      if (!resizing) return;
+      const { handle, moved } = resizing;
+      delete handle.dataset.active;
+      const th = handle.closest?.("th"); if (th) th.draggable = true;
+      document.documentElement.classList?.remove("col-resizing");
+      resizing = null;
+      if (moved) void saveColumns();
+    };
+    head.addEventListener("pointerup", finish);
+    head.addEventListener("pointercancel", finish);
+    head.addEventListener("lostpointercapture", finish);
+    head.addEventListener("dblclick", (event) => {
+      const th = event.target.closest?.(".col-resize")?.closest?.("th");
+      if (!th?.dataset.col || ended || !Object.hasOwn(columnWidths, th.dataset.col)) return;
+      delete columnWidths[th.dataset.col]; paintTemplate(); void saveColumns();
+    });
+    head.addEventListener("keydown", (event) => {
+      const th = event.target.closest?.(".col-resize")?.closest?.("th"), id = th?.dataset.col;
+      if (!id || ended || !["ArrowLeft", "ArrowRight", "Home"].includes(event.key)) return;
+      event.preventDefault();
+      if (event.key === "Home") delete columnWidths[id];
+      else columnWidths[id] = clampWidth(id, (columnWidths[id] ?? th.getBoundingClientRect().width) + (event.key === "ArrowRight" ? 1 : -1) * (event.shiftKey ? 64 : 16));
+      paintTemplate(); saveColumnsSoon();
+    });
+    head.addEventListener("dragstart", (event) => {
+      const th = event.target.closest?.("th");
+      if (resizing || ended || !th?.dataset.col) { event.preventDefault(); return; }
+      dragging = th.dataset.col; th.dataset.dragging = "";
+      event.dataTransfer?.setData("text/plain", dragging);
+      if (event.dataTransfer) event.dataTransfer.effectAllowed = "move";
+    });
+    head.addEventListener("dragover", (event) => {
+      const th = event.target.closest?.("th");
+      if (!dragging || !th?.dataset.col) return;
+      event.preventDefault();
+      if (event.dataTransfer) event.dataTransfer.dropEffect = "move";
+      for (const item of document.querySelectorAll?.("th[data-drop]") || []) if (item !== th) delete item.dataset.drop;
+      const box = th.getBoundingClientRect();
+      th.dataset.drop = th.dataset.col === dragging ? "" : event.clientX > box.left + box.width / 2 ? "after" : "before";
+    });
+    head.addEventListener("dragleave", (event) => {
+      const th = event.target.closest?.("th");
+      if (th && !th.contains?.(event.relatedTarget)) delete th.dataset.drop;
+    });
+    head.addEventListener("drop", (event) => {
+      const th = event.target.closest?.("th");
+      if (!dragging || !th?.dataset.col) return;
+      event.preventDefault();
+      const id = dragging, after = th.dataset.drop === "after";
+      delete th.dataset.drop;
+      if (moveColumn(id, th.dataset.col, after)) void saveColumns();
+    });
+    head.addEventListener("dragend", () => {
+      for (const item of document.querySelectorAll?.("th[data-drop],th[data-dragging]") || []) { delete item.dataset.drop; delete item.dataset.dragging; }
+      dragging = null;
+    });
+  }
+  for (const head of document.querySelectorAll?.("thead") || []) headerHandlers(head);
+  columnsButton?.addEventListener("click", () => {
+    if (ended) return;
+    draftColumns = [...columnOrder]; draftWidths = { ...columnWidths };
+    el("columns-error").textContent = "";
+    renderColumnsDialog(); columnsDialog.showModal();
+  });
+  columnsList?.addEventListener("click", (event) => {
+    const button = event.target.closest("button[data-column]");
+    if (!button || button.disabled || columnsDialogSaving || ended) return;
+    const index = draftColumns.indexOf(button.dataset.column), next = index + Number(button.dataset.direction);
+    if (index < 0 || next < 0 || next >= draftColumns.length) return;
+    [draftColumns[index], draftColumns[next]] = [draftColumns[next], draftColumns[index]];
+    renderColumnsDialog();
+    const buttons = columnsNodes.get(button.dataset.column).buttons;
+    (button.disabled ? buttons.find((item) => !item.disabled) : button)?.focus();
+  });
+  el("columns-reset")?.addEventListener("click", () => {
+    if (columnsDialogSaving || ended) return;
+    draftColumns = [...columnIds]; draftWidths = {}; renderColumnsDialog();
+  });
+  el("columns-cancel")?.addEventListener("click", () => { if (!columnsDialogSaving) columnsDialog.close(); });
+  el("columns-save")?.addEventListener("click", async () => {
+    if (columnsDialogSaving || ended) return;
+    columnsDialogSaving = true; el("columns-error").textContent = ""; renderColumnsDialog();
+    const previous = { order: [...columnOrder], widths: { ...columnWidths } };
+    columnOrder = [...draftColumns]; columnWidths = { ...draftWidths }; applyColumns();
+    const saved = await saveColumns();
+    columnsDialogSaving = false;
+    if (saved) columnsDialog.close();
+    else if (!ended) {
+      columnOrder = previous.order; columnWidths = previous.widths; applyColumns();
+      actionMessage = ""; notice();
+      el("columns-error").textContent = "That column layout couldn’t be saved. Please try again.";
+    }
+    renderColumnsDialog();
+  });
+  columnsDialog?.addEventListener("cancel", (event) => { if (columnsDialogSaving) event.preventDefault(); });
+  applyColumns();
   search.addEventListener("input", render);
   function rowClick(event) {
     const channelButton = event.target.closest("button[data-channel-id]");
@@ -1114,6 +1396,15 @@ const LIGHT = `color-scheme:light;
   --orange:#f0531c;--orange-soft:rgba(240,83,28,.16);--brand-ink:#fff;--teal:#eaeee8;
   --s-working:#1f6fd6;--s-waiting:#a8690a;--s-error:#d33434;--s-idle:#56635f;--s-later:#8a3fd1;--s-done:#23874d;
   --ok:#23874d;--warn:#c07c10;--danger:#d33434;--tint:11%;--shadow:rgba(16,32,28,.18);`;
+// Column labels and the default track of each column when the viewer has not resized it.
+const COLUMN_LABELS = Object.freeze({ conversation: "Conversation", comment: "Comment", channel: "Channel", status: "Status", last: "Last", actions: "Actions" });
+const COLUMN_TEMPLATES = Object.freeze({ conversation: "minmax(0,1.6fr)", comment: "minmax(110px,1fr)", channel: "var(--col-channel)", status: "124px", last: "44px", actions: "136px" });
+const COLUMN_CONFIG = Object.freeze({ ids: ACTIVITY_COLUMNS, labels: COLUMN_LABELS, templates: COLUMN_TEMPLATES,
+  min: ACTIVITY_COLUMN_MIN_WIDTHS, max: ACTIVITY_COLUMN_MAX_WIDTH, commentMax: ACTIVITY_COMMENT_MAX });
+const DEFAULT_COLUMN_TEMPLATE = ACTIVITY_COLUMNS.map((id) => COLUMN_TEMPLATES[id]).join(" ");
+// Headers are draggable to reorder; every resizable header carries a focusable edge.
+const tableHead = () => `<thead><tr>${ACTIVITY_COLUMNS.map((id) => `<th scope="col" data-col="${id}" draggable="true" title="Drag to move the ${COLUMN_LABELS[id]} column"><span class="col-label">${COLUMN_LABELS[id]}</span>${
+  Object.hasOwn(ACTIVITY_COLUMN_MIN_WIDTHS, id) ? `<span class="col-resize" role="separator" aria-orientation="vertical" tabindex="0" aria-label="Resize the ${COLUMN_LABELS[id]} column" title="Drag to resize · double-click to reset"></span>` : ""}</th>`).join("")}</tr></thead>`;
 const escapeHtml = (value) => String(value ?? "").replace(/[&<>"']/g, (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[char]);
 
 export function activityPage({ sessionId, csrf, view = "activity", agent = "", theme = "system", teamId = "", voiceCalls = false, callTarget = null, logoColor = getLogoColor() }) {
@@ -1122,7 +1413,7 @@ export function activityPage({ sessionId, csrf, view = "activity", agent = "", t
   const nonce = crypto.randomBytes(16).toString("base64url");
   const launch = callTarget && /^[A-Z0-9_]{1,32}$/.test(String(callTarget.channelId || "")) && (!callTarget.threadTs || /^\d{1,13}\.\d{1,6}$/.test(String(callTarget.threadTs)))
     ? { channelId: String(callTarget.channelId), threadTs: String(callTarget.threadTs || "") } : null;
-  const config = JSON.stringify({ base, csrf, view, themeColors: ACTIVITY_APP_COLORS, teamId: /^[A-Z0-9]{2,32}$/.test(String(teamId)) ? String(teamId) : "", defaultGroupOrder: DEFAULT_ACTIVITY_GROUP_ORDER, defaultGrouping: DEFAULT_ACTIVITY_GROUPING, voiceCalls: voiceCalls === true,
+  const config = JSON.stringify({ base, csrf, view, themeColors: ACTIVITY_APP_COLORS, teamId: /^[A-Z0-9]{2,32}$/.test(String(teamId)) ? String(teamId) : "", defaultGroupOrder: DEFAULT_ACTIVITY_GROUP_ORDER, defaultGrouping: DEFAULT_ACTIVITY_GROUPING, columns: COLUMN_CONFIG, voiceCalls: voiceCalls === true,
     ...(voiceCalls ? { ...callOverlayConfig({ base, csrf, agent }), callTarget: launch } : {}) }).replaceAll("<", "\\u003c");
   const agentName = String(agent || "").trim() || "ChannelGate";
   const pinned = theme === "dark" || theme === "light" ? ` data-theme="${theme}"` : "";
@@ -1192,7 +1483,9 @@ input::placeholder{color:var(--faint)}
 .notice{margin:10px 14px 0;padding:9px 12px;border:1px solid color-mix(in srgb,var(--warn) 40%,transparent);background:color-mix(in srgb,var(--warn) 12%,transparent);color:var(--ink);border-radius:8px;font-size:12.5px}
 table{display:block;width:100%;border-collapse:collapse}
 thead,tbody{display:block}
-thead tr,tbody tr{display:grid;grid-template-columns:minmax(0,1fr) minmax(120px,190px) 124px 44px 136px;align-items:center;column-gap:12px;padding:0 16px}
+:root{--col-channel:minmax(120px,190px)}
+table{overflow-x:auto}
+thead tr,tbody tr{display:grid;grid-template-columns:var(--cols,${DEFAULT_COLUMN_TEMPLATE});align-items:center;column-gap:12px;padding:0 16px}
 .pinned-section{margin:0 0 24px}
 .pinned-heading{display:flex;align-items:center;gap:10px;margin:0;padding:12px 16px;font:600 13px var(--font);color:var(--ink)}
 .pinned-channels{display:flex;flex-wrap:wrap;gap:8px;padding:0 16px 12px}
@@ -1202,8 +1495,25 @@ thead tr,tbody tr{display:grid;grid-template-columns:minmax(0,1fr) minmax(120px,
 .pinned-channel .channel-pin{flex:none}
 .pinned-heading span{font:500 11px var(--mono);color:var(--muted)}
 thead tr{height:30px;border-bottom:1px solid var(--line)}
-th{padding:0;font:500 10.5px var(--mono);letter-spacing:.1em;text-transform:uppercase;color:var(--muted);text-align:left}
-th:last-child{text-align:right}
+th{position:relative;min-width:0;padding:0;font:500 10.5px var(--mono);letter-spacing:.1em;text-transform:uppercase;color:var(--muted);text-align:left;cursor:grab;user-select:none}
+th .col-label{display:block;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
+th[data-col=actions]{text-align:right}
+th[data-dragging]{opacity:.45}
+th[data-drop=before]{box-shadow:inset 2px 0 var(--orange)}th[data-drop=after]{box-shadow:inset -2px 0 var(--orange)}
+.col-resize{position:absolute;z-index:1;top:-6px;bottom:-6px;right:-9px;width:12px;cursor:col-resize;touch-action:none}
+.col-resize::after{content:"";position:absolute;top:6px;bottom:6px;left:5px;width:2px;border-radius:2px;background:var(--line-2);opacity:0;transition:opacity .12s}
+thead tr:hover .col-resize::after,.col-resize:focus-visible::after,.col-resize[data-active]::after{opacity:1}
+.col-resize:hover::after,.col-resize[data-active]::after{background:var(--orange)}
+.col-resize:focus-visible{outline:none}
+:root.col-resizing,:root.col-resizing *{cursor:col-resize!important;user-select:none}
+.comment-cell{min-width:0}
+.comment-input{display:block;width:calc(100% + 9px);margin-left:-9px;height:28px;padding:0 8px;border-color:transparent;background:transparent;color:var(--ink-2);font:12px var(--font);text-overflow:ellipsis}
+tbody tr:hover .comment-input,.comment-input:focus{border-color:var(--line-2)}
+.comment-input:focus{outline:none;background:var(--panel);color:var(--ink);border-color:var(--muted)}
+.comment-input:placeholder-shown:not(:focus){opacity:0;transition:opacity .12s}
+tbody tr:hover .comment-input:placeholder-shown,tbody tr:focus-within .comment-input:placeholder-shown{opacity:1}
+.comment-input[data-state=saving]{opacity:.6}
+.comment-input[data-state=error]{border-color:var(--danger)}
 td{display:block;padding:0;border:0;min-width:0}
 tbody tr{min-height:40px;border-bottom:1px solid var(--line-soft);background-image:linear-gradient(90deg,var(--c) 0 3px,transparent 3px)}
 tbody tr:nth-child(even){background-color:var(--band)}
@@ -1320,9 +1630,10 @@ select.settings-input{height:32px}
 .settings-skill[hidden]{display:none}.settings-skill-text{display:flex;flex-direction:column;min-width:0}
 .subscription-card{background:var(--panel)}
 @media(prefers-reduced-motion:reduce){.pill.working .status-dot{animation:none}.actions{transition:none}}
-@media(hover:none){.actions{opacity:1}}
+@media(hover:none){.actions{opacity:1}.comment-input:placeholder-shown:not(:focus){opacity:1}}
 @media(max-width:980px){
-  thead tr,tbody tr{grid-template-columns:minmax(0,1fr) minmax(90px,125px) 124px 44px 136px;column-gap:8px}
+  :root{--col-channel:minmax(90px,125px)}
+  thead tr,tbody tr{column-gap:8px}
 }
 @media(max-width:640px){
   .settings-layout{grid-template-columns:1fr}
@@ -1346,6 +1657,8 @@ select.settings-input{height:32px}
   .status-cell{grid-column:1;grid-row:3}
   .channel-cell{display:flex;grid-column:2;grid-row:3}
   .actions{grid-column:3;grid-row:3}
+  .comment-cell{grid-column:1/-1;grid-row:4}
+  tbody tr:not([data-group]) .comment-cell{grid-row:3}
   tbody tr:not([data-group]) .thread-cell{grid-row:1}tbody tr:not([data-group]) .time-cell{grid-row:1}
   tbody tr:not([data-group]) .status-cell,tbody tr:not([data-group]) .channel-cell,tbody tr:not([data-group]) .actions{grid-row:2}
   .pill{height:20px;font-size:11px;padding:0 8px}
@@ -1374,6 +1687,7 @@ ${voiceCalls && view === "activity" ? '<button id="call-agent" type="button" tit
 ${subscriptionsView ? `<section class="subscriptions-page" aria-label="Subscriptions"><div class="subscriptions-head"><h1>Subscriptions</h1><button id="subscriptions-refresh" class="order-button" type="button">Refresh</button></div><p class="subscriptions-copy">Account-wide usage · refreshes every 10 minutes.</p><div id="subscriptions-notice" role="status" aria-live="polite"></div><div id="subscriptions-cards" class="subscription-grid"></div></section>` : ""}
 ${settingsView ? `<section class="settings-page" aria-label="Settings"><div class="settings-head"><h1>Settings</h1><p class="settings-copy">Your own preferences and connections. They follow you into every conversation; nobody else's runs use them.</p></div><div id="settings-status" class="settings-status" role="status" aria-live="polite" hidden></div><div class="settings-layout"><nav id="settings-nav" class="settings-nav" aria-label="Settings sections"></nav><div id="settings-panel" class="settings-panel"></div></div><noscript><p class="js-needed">Enable JavaScript to manage your settings.</p></noscript></section>` : `<div id="activity-view"${subscriptionsView ? " hidden" : ""}>
 <dialog id="order-dialog" class="order-dialog" aria-labelledby="order-title" aria-describedby="order-description"><h2 id="order-title">Arrange status groups</h2><p id="order-description">Move groups up or down. Newest conversations appear first within each group. Your order is saved to your account.</p><ol id="order-list" class="order-list"></ol><button id="order-reset" type="button">Reset to default</button><p id="order-error" class="order-error" role="alert"></p><div class="order-footer"><button id="order-cancel" type="button">Cancel</button><button id="order-save" class="order-save" type="button">Save order</button></div></dialog>
+<dialog id="columns-dialog" class="order-dialog" aria-labelledby="columns-title" aria-describedby="columns-description"><h2 id="columns-title">Arrange columns</h2><p id="columns-description">Move columns left or right. You can also drag a column header to move it and drag its edge to resize it. Your layout is saved to your account.</p><ol id="columns-list" class="order-list"></ol><button id="columns-reset" type="button">Reset order and widths</button><p id="columns-error" class="order-error" role="alert"></p><div class="order-footer"><button id="columns-cancel" type="button">Cancel</button><button id="columns-save" class="order-save" type="button">Save columns</button></div></dialog>
 <dialog id="all-done-dialog" class="order-dialog" aria-labelledby="all-done-title" aria-describedby="all-done-description"><h2 id="all-done-title">Mark all your threads done?</h2><p id="all-done-description">This marks all your open tracked agent threads done across all channels, including threads outside the current filter, search, or page. Their main Slack messages get ✅. Running work continues.</p><p id="all-done-error" class="order-error" role="alert"></p><div class="order-footer"><button id="all-done-cancel" type="button" autofocus>Cancel</button><button id="all-done-confirm" class="order-save" type="button">Mark All Done</button></div></dialog>
 <section aria-label="Conversations"><div class="bar"><div id="filters" class="filters" role="group" aria-label="Filter by status">${filters.map(([value, label]) => `<button type="button" class="s-${value}" data-filter="${value}" aria-pressed="${value === "active"}">${["working", "waiting", "error", "idle", "later", "done"].includes(value) ? '<i aria-hidden="true"></i>' : ""}${label}<span>0</span></button>`).join("")}</div>
 <div class="grouping"><label for="group-by">Group by</label><select id="group-by"><option value="channel">Channel</option><option value="status">Status</option></select></div>
@@ -1381,11 +1695,11 @@ ${settingsView ? `<section class="settings-page" aria-label="Settings"><div clas
 <div id="notice" class="notice" role="alert" hidden></div>
 <section id="pinned-section" class="pinned-section" aria-labelledby="pinned-title" hidden><h2 id="pinned-title" class="pinned-heading">Pinned conversations <span id="pinned-count">0</span></h2>
 <div id="pinned-channels" class="pinned-channels" aria-label="Pinned channels" hidden></div>
-<table aria-label="Pinned conversations"><thead><tr><th scope="col">Conversation</th><th scope="col">Channel</th><th scope="col">Status</th><th scope="col">Last</th><th scope="col">Actions</th></tr></thead><tbody id="pinned-threads"></tbody></table></section>
-<table id="table" hidden><thead><tr><th scope="col">Conversation</th><th scope="col">Channel</th><th scope="col">Status</th><th scope="col">Last</th><th scope="col">Actions</th></tr></thead><tbody id="threads"></tbody></table>
+<table id="pinned-table" aria-label="Pinned conversations">${tableHead()}<tbody id="pinned-threads"></tbody></table></section>
+<table id="table" hidden>${tableHead()}<tbody id="threads"></tbody></table>
 <div id="empty" class="empty" role="status"><div class="empty-symbol" aria-hidden="true">◎</div><h2 id="empty-title">Loading your activity…</h2><p id="empty-copy">Your latest conversations will appear here.</p></div>
 <noscript><p class="js-needed">Enable JavaScript to view live activity.</p></noscript></section>
-<footer class="footer"><div class="footer-actions"><span id="summary" class="summary">Loading activity…</span><button id="group-order" class="link-button" type="button" aria-haspopup="dialog">⇅ Group order</button><button id="mark-all-done" class="link-button" type="button" aria-haspopup="dialog" disabled>✓ Mark All Done</button><button id="load-history" class="link-button" type="button" disabled>Load older threads</button></div><div class="footer-actions"><span id="result-count"></span><span id="updated">Waiting for updates</span></div></footer>
+<footer class="footer"><div class="footer-actions"><span id="summary" class="summary">Loading activity…</span><button id="group-order" class="link-button" type="button" aria-haspopup="dialog">⇅ Group order</button><button id="columns-button" class="link-button" type="button" aria-haspopup="dialog">▤ Columns</button><button id="mark-all-done" class="link-button" type="button" aria-haspopup="dialog" disabled>✓ Mark All Done</button><button id="load-history" class="link-button" type="button" disabled>Load older threads</button></div><div class="footer-actions"><span id="result-count"></span><span id="updated">Waiting for updates</span></div></footer>
 <p class="privacy">Your conversations are private. <a href="/activity/login">sign in again</a> when your session expires.</p>
 </div>`}
 </main>${voiceCalls && view === "activity" ? callOverlayMarkup({ agentName }) : ""}<script nonce="${nonce}">${settingsView

@@ -19,7 +19,8 @@ import { isSlackTs } from "../slack/thread-keys.js";
 import { isLoopbackHost, timingSafeEqualStr } from "./security.js";
 import { readSubscriptionUsage } from "../gateway/subscription-usage.js";
 import { activityPage } from "./activity-page.js";
-import { activityGroupOrder, activityGroupOrderVersion, validActivityGroupOrder, ACTIVITY_THEMES, activityTheme, ACTIVITY_GROUPINGS, activityGrouping } from "./activity-order.js";
+import { activityGroupOrder, activityGroupOrderVersion, validActivityGroupOrder, ACTIVITY_THEMES, activityTheme, ACTIVITY_GROUPINGS, activityGrouping,
+  activityColumns, validActivityColumnOrder, validActivityColumnWidths, activityComments, normalizeActivityComment, ACTIVITY_COMMENT_LIMIT } from "./activity-order.js";
 import { activityAccessPage } from "./activity-access-page.js";
 import { installActivityPasskeys } from "./activity-passkeys.js";
 import { ACTIVITY_APP_ICONS, activityAppCookie, activityAppSessionId, activityManifest } from "./activity-app.js";
@@ -244,6 +245,7 @@ export function createActivityRouter({
     const user = await getUser(session.ownerId);
     const pins = new Set(Array.isArray(user?.activityPinnedThreads) ? user.activityPinnedThreads : []);
     const channelPins = new Set(Array.isArray(user?.activityPinnedChannels) ? user.activityPinnedChannels : []);
+    const comments = activityComments(user?.activityComments);
     const access = await accessContext(client, session.ownerId);
     const pinnedChannels = [];
     for (const channelId of channelPins) {
@@ -256,12 +258,14 @@ export function createActivityRouter({
     return {
       rows: data.rows.map((row) => ({ channelId: row.channel_id, threadTs: row.thread_ts,
         pinned: pins.has(JSON.stringify([row.channel_id, row.thread_ts])), channelPinned: channelPins.has(row.channel_id),
+        comment: Object.hasOwn(comments, JSON.stringify([row.channel_id, row.thread_ts])) ? comments[JSON.stringify([row.channel_id, row.thread_ts])] : "",
         title: row.title, channelName: row.channelName, status: row.status, lastMessageMs: row.last_message_ms,
         ...(Number.isSafeInteger(row.working_since_ms) ? { workingSinceMs: row.working_since_ms } : {}),
         url: `/activity/${id}/open/${encodeURIComponent(row.channel_id)}/${encodeURIComponent(row.thread_ts)}` })),
       pinnedChannels, unavailable: Boolean(data.unavailable || access.unavailable), truncated: Boolean(data.truncated), total: data.total, updatedAt: now(),
       groupBy: activityGrouping(user?.activityGroupBy), groupByVersion: activityGroupOrderVersion(user?.activityGroupByVersion),
       groupOrder: activityGroupOrder(user?.activityGroupOrder), groupOrderVersion: activityGroupOrderVersion(user?.activityGroupOrderVersion),
+      columns: activityColumns(user?.activityColumns), columnsVersion: activityGroupOrderVersion(user?.activityColumnsVersion),
     };
   };
   router.get("/open", (_req, res) => {
@@ -555,6 +559,28 @@ export function createActivityRouter({
       return res.json({ ok: true });
     } catch (error) { return unavailable(res, error.status || 503); }
   });
+  // A private note on one of the viewer's own conversations. Only the owner can read or write it;
+  // an empty comment removes it, and the oldest notes give way past the per-viewer limit.
+  router.post("/:id/api/comment", async (req, res) => {
+    try {
+      const { session, client } = await context(req);
+      if (req.headers.origin !== req.activityOrigin || !timingSafeEqualStr(String(req.headers["x-cg-csrf"] || ""), session.csrf)) return unavailable(res, 403);
+      const { channelId, threadTs } = req.body || {};
+      const comment = normalizeActivityComment(req.body?.comment);
+      if (typeof channelId !== "string" || typeof threadTs !== "string" || comment === null) return unavailable(res, 400);
+      await recheckOwned(req, client, session, channelId, threadTs);
+      const key = JSON.stringify([channelId, threadTs]);
+      await setUser(session.ownerId, (current) => {
+        const comments = activityComments(current?.activityComments);
+        delete comments[key];
+        if (comment) comments[key] = comment; // Re-inserted last: the most recently edited survive.
+        const keys = Object.keys(comments);
+        for (const old of keys.slice(0, Math.max(0, keys.length - ACTIVITY_COMMENT_LIMIT))) delete comments[old];
+        return { activityComments: comments };
+      });
+      return res.json({ comment });
+    } catch (error) { return unavailable(res, error.status || 503); }
+  });
   router.post("/:id/api/channel-pin", async (req, res) => {
     try {
       const { session, client } = await context(req);
@@ -587,6 +613,20 @@ export function createActivityRouter({
       const user = await setUser(session.ownerId, (current) => ({ activityGroupOrder: [...order],
         activityGroupOrderVersion: activityGroupOrderVersion(current?.activityGroupOrderVersion) + 1 }));
       return res.json({ groupOrder: user.activityGroupOrder, groupOrderVersion: user.activityGroupOrderVersion });
+    } catch (error) { return unavailable(res, error.status || 503); }
+  });
+  router.post("/:id/api/columns", async (req, res) => {
+    try {
+      const { session } = await context(req);
+      if (req.headers.origin !== req.activityOrigin || !timingSafeEqualStr(String(req.headers["x-cg-csrf"] || ""), session.csrf)) return unavailable(res, 403);
+      const { order, widths } = req.body || {};
+      if (!validActivityColumnOrder(order) || !validActivityColumnWidths(widths)) return unavailable(res, 400);
+      await context(req);
+      // The viewer's own display preference only; copied field by field, never merged from the body.
+      const user = await setUser(session.ownerId, (current) => ({
+        activityColumns: { order: [...order], widths: Object.fromEntries(Object.entries(widths)) },
+        activityColumnsVersion: activityGroupOrderVersion(current?.activityColumnsVersion) + 1 }));
+      return res.json({ columns: activityColumns(user.activityColumns), columnsVersion: user.activityColumnsVersion });
     } catch (error) { return unavailable(res, error.status || 503); }
   });
   router.post("/:id/api/group-by", async (req, res) => {

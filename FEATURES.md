@@ -1,5 +1,18 @@
 # ChannelGate — Features
 
+## Activity Comment column and movable, resizable columns (2026-11-15)
+
+The Activity conversation table has a **Comment** column: a private one-line note (up to 500
+characters) on each of the viewer's own conversations. Enter or leaving the field saves it,
+Escape restores the saved text, and clearing it removes the note. Comments are stored on the
+viewer's account, never shown to anyone else and never posted to Slack or the agent; search also
+matches comment text. Columns can be rearranged by dragging a header, or with **▤ Columns** in the
+footer (move left/right, Reset order and widths). They can be resized by dragging a header's edge;
+double-click the edge (or press Home on it) to reset a column, and ←/→ resize it from the
+keyboard. Actions can be moved but not resized. The order and widths are saved per viewer, shared
+by the Pinned and main tables, and follow the viewer across sessions and devices. Phones keep the
+stacked layout, with the comment on its own line.
+
 ## Installed Activity window header (2026-11-14)
 
 Installed desktop browsers that support Window Controls Overlay can merge the native title

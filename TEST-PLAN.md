@@ -1,5 +1,27 @@
 # ChannelGate — Test Plan
 
+## Activity Comment column and movable, resizable columns (2026-11-15)
+
+- Engine-independent: Activity browser UI and per-viewer preferences; no Claude/Codex engine is
+  selected or run. Fixture: an approved viewer with at least two owned tracked threads (one
+  pinned) and a second approved viewer with their own threads.
+- Comment: type a note on a row and press Enter, then reload. Expect the note back, matched by
+  search, and absent from the second viewer's Activity. Edit while a live update arrives: the
+  typed text must not be overwritten. Escape restores the saved note; an emptied note is removed.
+  A failed save keeps the typed text with a red border and a retry notice. A note on another
+  person's thread is refused (403); notes over 500 characters are refused (400).
+- Columns: drag the Status header onto the left half of Conversation. Both tables and every row
+  move together with headers aligned over their cells. Drag the Conversation edge narrower, then
+  reload: the order and width remain and the table still fills the width. Double-click the edge
+  to reset it; **▤ Columns** → Reset order and widths → Save restores the defaults. Keyboard:
+  Tab to an edge, ←/→ resize it, Home resets. Narrow the window to phone width: stacked layout,
+  comment visible, no horizontal scroll. Malformed layouts (duplicate or missing columns,
+  out-of-range or Actions widths) are refused (400); writes without a valid session, CSRF token or Origin are refused (401/403).
+- Automated: `test/activity.test.js` (routes, ownership, privacy, validation),
+  `test/activity-page.test.js` (browser script) and `test/activity-columns-browser.test.js` (real
+  Chromium: comment save, edge-drag resize, header drag-reorder, reload persistence, reset, phone
+  width, no CSP errors; runs with `CG_BROWSER_MODULE` and optionally `CG_BROWSER_EXECUTABLE`).
+
 ## Installed Activity window header (2026-11-14)
 
 - Engine-independent: this behavior is browser manifest/CSS/theme rendering and does not
