@@ -17,7 +17,7 @@ const html = readFileSync(new URL("../public/index.html", import.meta.url), "utf
 const app = readFileSync(new URL("../public/app.js", import.meta.url), "utf8");
 const css = readFileSync(new URL("../public/styles.css", import.meta.url), "utf8");
 
-const SECTIONS = ["connection", "agent", "templates", "integrations", "license", "access", "admin-access", "system"];
+const SECTIONS = ["connection", "appearance", "agent", "templates", "integrations", "license", "access", "admin-access", "system"];
 
 // ── The pure matcher ─────────────────────────────────────────────────────────────
 test("query normalization folds the typography the admin markup actually uses", () => {
