@@ -36,6 +36,23 @@ conversation or channel, and keep talking.
    last segment's transcript. One line about the call (date, duration, conversations, tasks) is
    saved to your DM memory, so your personal agent remembers what you were working on.
 
+## Make it talk the way you want
+
+Activity → Settings → **Voice calls** is yours alone and applies to your next call:
+
+- **Language** — the default it speaks; leave it empty and it follows whatever language you use.
+  Switching language mid-call works either way.
+- **Style** — *Brief* (short answers, gets on with it), *Conversational* (a little more, elaborates
+  when asked) or *Thinking partner* (listens while you think aloud, reflects back, asks one
+  question at a time, proposes only when asked).
+- **Patience** — how long it waits after you stop talking: *Quick*, *Normal* or *Patient*, which
+  waits through pauses and asks whether you are done rather than answering a half-sentence.
+- **Your instructions** — free text up to 2,000 characters, read at the start of every call after
+  the gateway's own rules: how to address you, what to confirm before doing, what to keep short.
+
+The voice is also briefed about you on every call: your name and role, your open conversations,
+the current thread's recent messages and your last five calls (from your own DM memory).
+
 ## Who may call, and what the voice can see
 
 The same rule as the Dashboard button: an approved user or admin who may post in that

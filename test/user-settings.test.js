@@ -192,3 +192,27 @@ test("authorize runs before every write and a failed recheck writes nothing", as
   assert.deepEqual((await userSettingsSnapshot("U_ME")).connections.email, []);
   assert.deepEqual((await userSettingsSnapshot("U_ME")).ssh.keys, []);
 });
+
+test("voice preferences are the owner's own, bounded and closed-set, and read back for the page", async () => {
+  const before = (await userSettingsSnapshot("U_ME")).voice;
+  assert.deepEqual({ language: before.language, style: before.style, patience: before.patience, instructions: before.instructions }, { language: "", style: "brief", patience: "normal", instructions: "" });
+  assert.deepEqual(before.styles, ["brief", "conversational", "thinking-partner"]);
+  assert.deepEqual(before.patience_options, ["quick", "normal", "patient"]);
+  assert.deepEqual(before.limits, { language: 60, instructions: 2000 });
+  const saved = await change({ action: "voice.save", language: "  Romanian ", style: "thinking-partner", patience: "patient", instructions: "Call me Tibi.\r\nConfirm before production changes.", userId: "U_OTHER" });
+  assert.match(saved.notice, /next call/);
+  const me = await getUser("U_ME");
+  assert.deepEqual(me.voicePreferences, { language: "Romanian", style: "thinking-partner", patience: "patient", instructions: "Call me Tibi.\nConfirm before production changes." });
+  assert.equal((await getUser("U_OTHER")).voicePreferences, undefined, "another person is untouched");
+  const after = (await userSettingsSnapshot("U_ME")).voice;
+  assert.equal(after.language, "Romanian"); assert.equal(after.style, "thinking-partner"); assert.equal(after.patience, "patient");
+  await refused({ action: "voice.save", language: "x".repeat(61), style: "brief", patience: "normal", instructions: "" }, /under 60/, "language");
+  await refused({ action: "voice.save", language: "", style: "shouty", patience: "normal", instructions: "" }, /Choose a style/, "style");
+  await refused({ action: "voice.save", language: "", style: "brief", patience: "forever", instructions: "" }, /how long to wait/, "patience");
+  await refused({ action: "voice.save", language: "", style: "brief", patience: "normal", instructions: "y".repeat(2001) }, /under 2000/, "instructions");
+  await change({ action: "voice.save", language: "", style: "brief", patience: "quick", instructions: "" });
+  assert.deepEqual((await getUser("U_ME")).voicePreferences, { language: "", style: "brief", patience: "quick", instructions: "" });
+  const { userVoicePreferences } = await import("../src/config/user-preferences.js");
+  assert.deepEqual(userVoicePreferences({ voicePreferences: { language: "Deutsch\u0007", style: "nope", patience: 3, instructions: 42 } }), { language: "Deutsch", style: "brief", patience: "normal", instructions: "" });
+  assert.deepEqual(userVoicePreferences(null), { language: "", style: "brief", patience: "normal", instructions: "" });
+});

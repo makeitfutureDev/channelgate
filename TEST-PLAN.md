@@ -70,8 +70,21 @@
   `next` restricted to `?call=…`, dashboard overlay markup, auto-open target and worklet CSP
   allowance on the Activity view only, legacy `/call` redirect, bound and unbound start, SSE,
   audio, end with CSRF in header or beacon query, owner scoping) and the Slack **📞 Call** button.
+  Per-person preferences: `test/user-settings.test.js` (`voice.save` bounded and closed-set,
+  owner-only, snapshot read-back), `test/activity-settings-page.test.js` (the Voice calls section
+  renders the choices and posts the person's own values with CSRF), `test/voice-gemini-live.test.js`
+  (patience → voice-activity presets, prototype keys refused) and `test/voice-calls.test.js` (the
+  prompt carries style, language, patience and the person's instructions; defaults otherwise; the
+  last five call lines are read from the caller's own DM memory and never another person's).
   Regression neighbours: `test/activity.test.js`, `test/activity-page.test.js`,
   `test/menu.test.js`, `test/review-file-buttons.test.js`, `test/run-escalation.test.js`.
+- Live acceptance of the preferences (engine-independent): in Activity → Settings → Voice calls
+  set language "Romanian", style "Thinking partner", patience "Patient" and an instruction such
+  as "Call me Tibi"; save, reload, confirm the values persist. Start a call: the voice greets in
+  Romanian and uses the name; pause for two seconds mid-sentence and confirm it does not answer
+  the half-sentence; ask "ce am făcut la ultimul apel?" and confirm it recalls the previous call
+  from your DM memory. Switch the language to English mid-call and confirm it follows. Reset the
+  preferences and confirm the next call is brief and answers promptly again.
 - Live acceptance (Claude and Codex, separately, in a disposable Worker channel plus a second
   channel the tester is a member of, with a Public URL over HTTPS): as an admin, Settings → Voice
   calls → enable, paste a Gemini API key, save; confirm `/api/settings` returns
