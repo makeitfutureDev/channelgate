@@ -1,5 +1,31 @@
 # ChannelGate — Test Plan
 
+## Native fork capability and isolated harnesses (2026-11-14)
+
+- Fixtures: approved author in private worker channels with Clean off, network on and completed
+  container source turns. Run separately on Claude, Codex, Codex EU, a connected Enterprise
+  Codex channel account, and Claude Extra with its dedicated subscription or Bedrock setup.
+  Enable opt-in harnesses and verify their own login; never borrow another harness's credentials.
+- Send `Remember FORK-HARNESS-42`, then `@agent /fork Repeat the token and explore another
+  approach`. Expect exactly one linked child that remembers the token, retains the exact source
+  engine and gets a distinct session. Follow up in child and source: each resumes its own ID,
+  and source model/effort and login/state directory are unchanged.
+- Repeat Codex EU → Codex and Codex → Codex EU with configured model shortcuts. Each handoff
+  starts a fresh session on the destination's own login/state, replays bounded Slack history
+  and never resumes or forks the other login's source ID. Repeat a busy Codex EU source fork;
+  queue acknowledgement, completion ordering, Stop and restart guards still apply.
+- Qwen, Qwen EU and OpenCode sources must report that their engine does not support session
+  forks, without posting a child or starting an engine. A source without a live session still
+  requests a completed turn. Sudo/host sources, runtime-scope mismatches and revoked authors
+  retain their existing rejection rules.
+- Disable Codex EU after a completed source turn: `/fork` must refuse before child creation.
+  Disable it between child preparation and run admission, or recover such a child after a
+  restart: no substitute engine receives the EU source ID and no engine process starts.
+- Automated: `test/slack-fork.test.js`, `test/engine-adapter-contract.test.js`,
+  `test/codex-eu.test.js`, `test/queued-fork-recovery.test.js`, `test/queued-fork-handoff.test.js`.
+  Spawned fake-engine regressions are separate from live provider and Slack UI acceptance;
+  record actual results per harness before claiming those live checks passed.
+
 ## Installed Chrome app passkeys and Settings navigation (2026-11-14)
 
 - Engine-independent: browser WebAuthn and Activity session routes invoke no Claude/Codex turn.

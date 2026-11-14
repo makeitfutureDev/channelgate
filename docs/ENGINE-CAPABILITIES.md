@@ -15,6 +15,11 @@ Bedrock records tokens with unknown AWS cost. Claude Extra container terminal ta
 unavailable; chat continuation still resumes its own session. See
 [terminal setup and limitations](PROVIDER-HARNESSES.md).
 
+Slack `/fork` requires the adapter's `supports.nativeFork` capability. Claude and Codex declare
+it; Claude Extra, Codex EU and Codex channel accounts inherit it with their own session state.
+Qwen harnesses and OpenCode do not declare it. A shortcut to a different engine uses a fresh
+child with bounded Slack history, even when both engines share the same CLI.
+
 | Capability | Claude | Codex | Qwen harnesses (Claude Code CLI) |
 | --- | --- | --- | --- |
 | Filesystem confinement | Per-conversation container mounts by default; Claude permissions control tools. Admin-only Slack `/sudo` threads deliberately run on the host | Same default container boundary; Read-only mode adds a CLI read-only sandbox. `/sudo` deliberately runs on the host | Identical to Claude — same CLI, same lockdown file, same resolved runtime |
