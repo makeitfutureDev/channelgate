@@ -1,5 +1,27 @@
 # ChannelGate — Test Plan
 
+## Installed Activity window header (2026-11-14)
+
+- Engine-independent: this behavior is browser manifest/CSS/theme rendering and does not
+  execute or select a Claude/Codex engine. Fixture: isolated Activity Express router with an
+  approved viewer and disposable Chromium profile, plus an installed desktop Chrome/Edge app.
+- In the installed app enable its custom title bar if the browser offers a toggle. Expect
+  one integrated app header, native window buttons and app menu visible and unobstructed.
+  Drag empty header space; navigate Activity/Subscriptions/Settings and use theme and Call
+  controls by mouse and keyboard. Resize to wide and narrow windows; check both macOS left
+  controls and Windows/Linux right controls. Controls must fit inside browser-reported safe
+  bounds, with no horizontal scroll. Fullscreen/overlay toggle restores normal header geometry.
+- Save dark with OS light, and light with OS dark. Reload every view: both theme-color tags
+  must already match the saved theme before scripts. Switch back to System and change the OS
+  theme; page and native control background must follow together. Regular tabs, mobile and
+  browsers without overlay support retain the usual header and working controls.
+- Automated: `test/activity-window-header.test.js`, with `CG_BROWSER_MODULE` and optionally
+  `CG_BROWSER_EXECUTABLE` for browser checks; `CG_BROWSER_WINDOW=1` under a display installs
+  and launches a real disposable Chromium PWA. `test/activity-page.test.js`,
+  `test/activity-settings-page.test.js` and `test/activity.test.js` cover existing behavior.
+  Headless or Linux evidence does not establish physical macOS dragging, window-button
+  behavior or an existing installation's manifest-refresh timing; record those separately.
+
 ## Native fork capability and isolated harnesses (2026-11-14)
 
 - Fixtures: approved author in private worker channels with Clean off, network on and completed

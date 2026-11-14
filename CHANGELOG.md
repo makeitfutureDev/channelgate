@@ -7,6 +7,10 @@
   source rollout`. When a source cannot be found on either side, the thread heals from the chat
   transcript instead of dead-ending.
 
+- Integrate the installed Activity app's title bar into its header on supporting desktop
+  browsers, preserving native window controls and dragging. Keep window colors in sync with
+  the selected Activity theme, with the standard header as the browser/mobile fallback.
+
 - Default personal Activity to **Group by → Channel** for everyone without a saved grouping
   preference. Viewers can still choose Status, and saved choices are preserved.
 

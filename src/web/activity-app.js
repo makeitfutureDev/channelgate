@@ -18,14 +18,14 @@ export const ACTIVITY_APP_ICONS = Object.freeze({
   "icon-maskable-512.png": "activity-icon-maskable-512.png",
 });
 
-const DARK_BG = "#080e0d", LIGHT_BG = "#f6f7f4";
+export const ACTIVITY_APP_COLORS = Object.freeze({ dark: "#080e0d", light: "#f6f7f4" });
 
 /** Tags every Activity page carries in <head>: the manifest, the window colour and the icons. */
-export function activityAppHead(color) {
+export function activityAppHead(color, theme = "system") {
   const query = `?color=${logoColor(color).slice(1)}`;
   return `<link rel="manifest" href="${ACTIVITY_MANIFEST_PATH}${query}">`
-  + `<meta name="theme-color" content="${DARK_BG}" media="(prefers-color-scheme: dark)">`
-  + `<meta name="theme-color" content="${LIGHT_BG}" media="(prefers-color-scheme: light)">`
+  + `<meta id="app-theme-dark" name="theme-color" content="${ACTIVITY_APP_COLORS[theme === "light" ? "light" : "dark"]}" media="(prefers-color-scheme: dark)">`
+  + `<meta id="app-theme-light" name="theme-color" content="${ACTIVITY_APP_COLORS[theme === "dark" ? "dark" : "light"]}" media="(prefers-color-scheme: light)">`
   + `<meta name="mobile-web-app-capable" content="yes"><meta name="apple-mobile-web-app-title" content="Activity">`
   + `<link rel="apple-touch-icon" href="${ACTIVITY_APP_SCOPE}icon-192.png${query}">`
   + `<link rel="icon" type="image/svg+xml" href="${ACTIVITY_APP_SCOPE}icon.svg${query}">`;
@@ -43,8 +43,9 @@ export function activityManifest({ agent = "", color } = {}) {
     start_url: ACTIVITY_APP_START,
     scope: ACTIVITY_APP_SCOPE,
     display: "standalone",
-    background_color: DARK_BG,
-    theme_color: DARK_BG,
+    display_override: ["window-controls-overlay"],
+    background_color: ACTIVITY_APP_COLORS.dark,
+    theme_color: ACTIVITY_APP_COLORS.dark,
     // A Slack Activity link or bookmark opened while the app runs reuses its window.
     launch_handler: { client_mode: ["navigate-existing", "auto"] },
     icons: [
