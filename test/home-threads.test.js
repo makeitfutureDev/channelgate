@@ -6,9 +6,9 @@ ensureTestEnv();
 const { getDb, toJson } = await import("../src/db/index.js");
 const { setUser, upsertChannelEntry, getChannelEntry, saveChannelMeta, patchChannelMeta } = await import("../src/config/store.js");
 const { setThreadSudo } = await import("../src/gateway/thread-engine.js");
-const { getSlackThread, indexSlackThread, trackSlackThread, recordSlackThreadOutcome, setSlackThreadDone, setSlackThreadLater,
+const { getSlackThread, indexSlackThread, indexSlackFork, slackThreadRootOwner, trackSlackThread, recordSlackThreadOutcome, setSlackThreadDone, setSlackThreadLater,
   slackThreadRuntime, slackThreadStatus, updateSlackThreadRootCompletion, slackThreadCandidates, eligibleSlackThreadsForUser, renameSlackThread } = await import("../src/gateway/slack-threads.js");
-const { homeThreadsSnapshot, homeThreadBlocks, registerHomeThreadActions, normalizeThreadView, homeThreadsRefreshKey, activityThreadSnapshot, discoverSlackThreadHistory } = await import("../src/slack/home-threads.js");
+const { homeThreadsSnapshot, homeThreadBlocks, registerHomeThreadActions, normalizeThreadView, homeThreadsRefreshKey, activityThreadSnapshot, discoverSlackThreadHistory, markAllSlackThreadsDone } = await import("../src/slack/home-threads.js");
 const { createHomeThreadReader } = await import("../src/slack/home-thread-reader.js");
 
 let roots;
@@ -1656,4 +1656,51 @@ test("denied senders, revoked private membership and sudo non-admins cannot reop
   await observeSlackThreadMessage(client, { ...event, channel: privateChannel.channelId }, "UGATEWAY");
   assert.equal(getSlackThread(privateChannel.channelId, "100.000001").done_ms, 200000, "revocation during membership lookup wins");
   assert.deepEqual(markerCalls, []);
+});
+
+
+test("registered forks survive history verification and belong only to their creator", async () => {
+  const c = await channel();
+  root(c, "100.000001", "U_OTHER");
+  const fork = { channelId: c.channelId, slug: c.slug, threadTs: "101.000001", sourceThreadTs: "100.000001",
+    creatorId: "U_MINE", botUserId: "UBOT", title: "Fork: Try another approach" };
+  const botRoot = { ts: fork.threadTs, user: "UBOT", bot_id: "B_GATEWAY", text: "↪️ <@U_MINE> Fork: Try another approach" };
+  roots.set(`${c.channelId}:${fork.threadTs}`, botRoot);
+  assert.ok(indexSlackFork(fork));
+  assert.equal(indexSlackFork({ ...fork, creatorId: "U_OTHER" }), null, "replays cannot transfer ownership");
+  await discoverSlackThreadHistory(client, "U_MINE");
+  const mine = await homeThreadsSnapshot(client, "U_MINE", { filter: "all" });
+  assert.deepEqual(mine.rows.map(r => r.thread_ts), [fork.threadTs]);
+  assert.equal((await homeThreadsSnapshot(client, "U_OTHER", { filter: "all" })).rows[0].thread_ts, "100.000001");
+  assert.deepEqual((await activityThreadSnapshot(client, "U_MINE")).rows.map(r => r.thread_ts), [fork.threadTs]);
+  const row = getSlackThread(c.channelId, fork.threadTs);
+  assert.equal(row.starter_id, "U_MINE", "passive reindexing must preserve the authenticated creator");
+  assert.equal(slackThreadRootOwner(c.channelId, { ...botRoot, user: "UOTHERBOT" }), "");
+  assert.equal(slackThreadRootOwner(c.channelId, { ...botRoot, bot_id: undefined }), "");
+  assert.equal(slackThreadRootOwner(c.channelId, { ...botRoot, ts: "102.000001" }), "", "text and mentions cannot establish a fork");
+  assert.equal(slackThreadRootOwner(c.channelId, { ...botRoot, subtype: "tombstone" }), "");
+  const result = await markAllSlackThreadsDone(client, "U_MINE");
+  assert.equal(result.marked, 1);
+  assert.ok(getSlackThread(c.channelId, fork.threadTs).done_ms > 0);
+  assert.equal(getSlackThread(c.channelId, "100.000001").done_ms, 0);
+});
+
+
+test("fork answer feedback marks only the creator's child Done or Later", async () => {
+  const { completeThreadFromFeedback, postponeThreadFromFeedback } = await import("../src/slack/thread-completion.js");
+  const c = await channel();
+  root(c, "100.000001");
+  const threadTs = "101.000001";
+  roots.set(`${c.channelId}:${threadTs}`, { ts: threadTs, user: "UBOT", bot_id: "B_GATEWAY", text: "Fork task" });
+  indexSlackFork({ channelId: c.channelId, slug: c.slug, threadTs, sourceThreadTs: "100.000001",
+    creatorId: "U_MINE", botUserId: "UBOT", title: "Fork task" });
+  const body = { channel: { id: c.channelId }, message: { ts: "102.000001", thread_ts: threadTs }, user: { id: "U_MINE" } };
+  const parsed = { channel: c.channelId, threadTs, verdict: "down" };
+  assert.equal(await postponeThreadFromFeedback({ client, body: { ...body, user: { id: "U_OTHER" } }, parsed }), false);
+  assert.equal(await postponeThreadFromFeedback({ client, body, parsed }), true);
+  assert.ok(getSlackThread(c.channelId, threadTs).later_ms > 0);
+  assert.equal(await completeThreadFromFeedback({ client, body, parsed: { ...parsed, verdict: "up" } }), true);
+  assert.ok(getSlackThread(c.channelId, threadTs).done_ms > 0);
+  assert.equal(getSlackThread(c.channelId, threadTs).later_ms, 0);
+  assert.equal(getSlackThread(c.channelId, "100.000001").done_ms, 0);
 });

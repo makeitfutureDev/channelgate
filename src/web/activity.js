@@ -8,7 +8,7 @@ import express from "express";
 import { getPublicUrl, getLogoColor } from "../config/settings.js";
 import { getChannelEntry, getUser, setUser } from "../config/store.js";
 import { onConfigChange } from "../config/change-events.js";
-import { getSlackThread, isSlackThreadEligible, setSlackThreadLater, setSlackThreadDone } from "../gateway/slack-threads.js";
+import { getSlackThread, slackThreadRootOwner, isSlackThreadEligible, setSlackThreadLater, setSlackThreadDone } from "../gateway/slack-threads.js";
 import { onThreadChanged } from "../gateway/thread-changes.js";
 import { onActiveRunsChanged } from "../gateway/active-runs.js";
 import { syncThreadDoneMarker } from "../slack/thread-done-marker.js";
@@ -498,7 +498,7 @@ export function createActivityRouter({
       // supplies latest_reply; only its absence on a nonempty thread requires pagination.
       const page = await client.conversations.replies({ channel: req.params.channelId, ts: req.params.threadTs, limit: 1 });
       const root = page?.ok !== false && page?.messages?.find((message) => message.ts === req.params.threadTs);
-      if (!root || root.user !== session.ownerId || root.bot_id) return unavailable(res, 403);
+      if (slackThreadRootOwner(req.params.channelId, root) !== session.ownerId) return unavailable(res, 403);
       const latest = await latestMessageTs(client, req.params.channelId, root);
       const link = await reader.permalink(client, req.params.channelId, latest);
       const target = new URL(link.permalink);
@@ -612,7 +612,7 @@ export function createActivityRouter({
       await ownedThread(client, session, channelId, threadTs);
       const result = await client.conversations.replies({ channel: channelId, ts: threadTs, limit: 1 });
       const root = result?.ok !== false && result?.messages?.find((row) => row.ts === threadTs);
-      if (!root || root.user !== session.ownerId || root.bot_id) return unavailable(res, 403);
+      if (slackThreadRootOwner(channelId, root) !== session.ownerId) return unavailable(res, 403);
       await recheckOwned(req, client, session, channelId, threadTs);
       const change = operation === "later" ? setSlackThreadLater : setSlackThreadDone;
       if (!change(channelId, threadTs, session.ownerId, value)) return unavailable(res, 403);

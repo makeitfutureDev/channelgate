@@ -1,6 +1,6 @@
-// Personal App Home thread index. Ownership comes from the Slack root, never from a run's author
-// or a follow-up participant. Runtime state stays in its existing tables; this index keeps only
-// the bounded root preview and explicit completion/outcome facts across restarts.
+// Personal App Home thread index. Ownership comes from the Slack root or an admitted fork's
+// durable creation record, never from a follow-up participant. Runtime state stays in its
+// existing tables; this index keeps bounded root previews and explicit completion/outcome facts.
 import { getDb, fromJson } from "../db/index.js";
 import { slackThreadFor, isSlackTs } from "../slack/thread-keys.js";
 import { messageHasCompletionReaction } from "./completion-reactions.js";
@@ -10,8 +10,39 @@ export function getSlackThread(channelId, threadTs) {
   return getDb().prepare("SELECT * FROM slack_threads WHERE channel_id = ? AND thread_ts = ?").get(channelId, threadTs) || null;
 }
 
+// Called only by /fork after Slack creates its new root, with the authenticated requester.
+// Do not infer fork ownership from root text, mentions, session history or a runtime author.
+export function indexSlackFork({ channelId, slug, threadTs, sourceThreadTs, creatorId, botUserId, title }) {
+  if (!channelId || !slug || !isSlackTs(threadTs) || !isSlackTs(sourceThreadTs)
+    || threadTs === sourceThreadTs || !creatorId || !botUserId || creatorId === botUserId) return null;
+  const at = Math.floor(Number(threadTs) * 1000);
+  getDb().prepare(`INSERT INTO slack_threads(channel_id,thread_ts,slug,starter_id,title,updated_ms,last_message_ms,agent_engaged,fork_source_ts,fork_bot_user_id)
+    VALUES(?,?,?,?,?,?,?,1,?,?) ON CONFLICT(channel_id,thread_ts) DO UPDATE SET
+    starter_id=excluded.starter_id,title=excluded.title,agent_engaged=1,
+    fork_source_ts=excluded.fork_source_ts,fork_bot_user_id=excluded.fork_bot_user_id
+    WHERE slack_threads.starter_id='' AND slack_threads.fork_source_ts=''`)
+    .run(channelId, threadTs, slug, creatorId, String(title || "Fork").replace(/\s+/g, " ").trim().slice(0, 160), at, at, sourceThreadTs, botUserId);
+  const row = getSlackThread(channelId, threadTs);
+  if (row?.starter_id !== creatorId || row.fork_source_ts !== sourceThreadTs || row.fork_bot_user_id !== botUserId) return null;
+  notifyThreadChanged({ channelId, threadTs });
+  return row;
+}
+
+// All readers/actions use the same check against a freshly fetched Slack root. Ordinary bot
+// messages remain excluded, even if they imitate /fork's text or mention the viewer.
+export function slackThreadRootOwner(channelId, root) {
+  if (!root?.user || !isSlackTs(root.ts) || root.subtype === "tombstone") return "";
+  const row = getSlackThread(channelId, root.ts);
+  if (row?.fork_source_ts) {
+    return row.fork_bot_user_id === root.user && (root.bot_id || root.subtype === "bot_message") ? row.starter_id : "";
+  }
+  return !root.bot_id && root.subtype !== "bot_message" ? root.user : "";
+}
+
 export function indexSlackThread({ channelId, slug, root, agentEngaged = false }) {
-  if (!channelId || !slug || !isSlackTs(root?.ts) || !root.user || root.bot_id || root.subtype === "bot_message") return null;
+  if (!channelId || !slug) return null;
+  const owner = slackThreadRootOwner(channelId, root);
+  if (!owner) return null;
   const previous = getSlackThread(channelId, root.ts);
   const title = String(root.text || "").replace(/<@[A-Z0-9]+>/g, "").replace(/\s+/g, " ").trim().slice(0, 160) || "Conversation with attachments";
   const rootDone = messageHasCompletionReaction(root) ? 1 : 0;
@@ -22,7 +53,7 @@ export function indexSlackThread({ channelId, slug, root, agentEngaged = false }
     title=CASE WHEN session_title!='' THEN session_title ELSE excluded.title END,slug=excluded.slug,
     agent_engaged=MAX(agent_engaged,excluded.agent_engaged),
     last_message_ms=MAX(last_message_ms,excluded.last_message_ms)`)
-    .run(channelId, root.ts, slug, root.user, title, Math.floor(Number(root.ts) * 1000), rootDone, lastMessage, agentEngaged === true ? 1 : 0);
+    .run(channelId, root.ts, slug, owner, title, Math.floor(Number(root.ts) * 1000), rootDone, lastMessage, agentEngaged === true ? 1 : 0);
   const current = getSlackThread(channelId, root.ts);
   if (!previous || ["starter_id", "title", "slug", "agent_engaged", "last_message_ms"].some((key) => previous[key] !== current[key])) {
     notifyThreadChanged({ channelId, threadTs: root.ts });
@@ -30,7 +61,7 @@ export function indexSlackThread({ channelId, slug, root, agentEngaged = false }
   return current;
 }
 
-// Slack already authenticated this metadata event. Only update known human roots; an event
+// Slack already authenticated this metadata event. Only update known owned roots; an event
 // never creates ownership/engagement or starts a run. Activity readers still authorize viewers.
 export function renameSlackThread({ channelId, threadTs, title, eventTs } = {}) {
   if (!channelId || !isSlackTs(threadTs) || !isSlackTs(eventTs) || typeof title !== "string") return false;

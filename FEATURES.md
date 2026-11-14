@@ -1,5 +1,15 @@
 # ChannelGate — Features
 
+## Forked conversations in Activity (2026-11-14)
+
+New `/fork` conversations appear as their own rows in the creator's Activity dashboard and
+Slack App Home, including forks of another person's thread. The gateway saves the authenticated
+creator, source thread and bot identity when it creates the child root. These records survive
+restart, history refresh and title changes. Open, Pin, Done, Reopen, Later and Mark all done use
+the same ownership and current channel-access checks as ordinary threads; child choices leave
+the source unchanged. Unregistered bot roots remain excluded. Existing forks without a saved
+creation record are not assigned an owner from mentions or message text.
+
 ## Readable personal conversation names (2026-11-14)
 
 Activity and Slack App Home use **Personal conversation with <name>** for direct messages when

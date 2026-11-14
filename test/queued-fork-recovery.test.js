@@ -14,6 +14,7 @@ const runtime = await useFakeRuntime();
 const { saveSettings } = await import("../src/config/settings.js");
 const { setUser, getChannelEntry } = await import("../src/config/store.js");
 const { getSession } = await import("../src/gateway/sessions.js");
+const { getSlackThread } = await import("../src/gateway/slack-threads.js");
 const { processMessageEvent } = await import("../src/slack/message-pipeline.js");
 const { recordActiveRun, clearActiveRun, takeStaleRuns, reserveRecoveryRuns, recoverRuns } = await import("../src/gateway/active-runs.js");
 const { getDb } = await import("../src/db/index.js");
@@ -88,6 +89,8 @@ for (const engine of ["claude", "codex"]) {
     assert.ok(spawn, "recovery uses the real native fork command");
     assert.ok(spawn.args.includes(f.sourceId));
     const child = f.client.posted.find((m) => /↪️ Fork of/.test(m.text || ""));
+    assert.equal(getSlackThread(f.row.channelId, child.thread_ts).starter_id, f.row.authorId);
+    assert.equal(getSlackThread(f.row.channelId, child.thread_ts).fork_source_ts, f.row.threadKey);
     const childId = await getSession(f.row.slug, child.thread_ts);
     assert.ok(childId);
     assert.notEqual(childId, f.sourceId);

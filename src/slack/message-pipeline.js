@@ -30,7 +30,7 @@ import { createUsageBank } from "../gateway/usage.js";
 import { contextUsageFor } from "../gateway/model-info.js";
 
 import { recordActiveRun, acceptQuestionReply, updateActiveRunRuntime, clearActiveRun, clearActiveRunHandles, clearPendingRunChoices, shouldClearActiveRun } from "../gateway/active-runs.js";
-import { trackSlackThread, recordSlackThreadOutcome } from "../gateway/slack-threads.js";
+import { trackSlackThread, recordSlackThreadOutcome, indexSlackFork } from "../gateway/slack-threads.js";
 import { runAdmissionRefusalKind } from "../gateway/run-admission-result.js";
 import { cancelPendingQuestions, listPendingQuestions, getQuestion } from "../gateway/questions.js";
 import { assertQuestionAccess } from "../gateway/question-access.js";
@@ -930,6 +930,10 @@ export async function processMessageEvent(event, client, { botUserId = "", teamI
           const root = await client.chat.postMessage({ channel: event.channel, text: `↪️ <@${event.user}> Fork: ${task}`, unfurl_links: false, unfurl_media: false });
           if (!root?.ts) throw new Error("Slack did not return a thread timestamp for the fork.");
           const forkKey = String(root.ts);
+          if (!indexSlackFork({ channelId: event.channel, slug: entry.slug, threadTs: forkKey,
+            sourceThreadTs: threadKey, creatorId: event.user, botUserId, title: `Fork: ${task}` })) {
+            throw new Error("Could not record the fork's Activity ownership.");
+          }
           const pendingKey = `${entry.slug}::${forkKey}`;
           pendingForkThreads.add(pendingKey);
           try {

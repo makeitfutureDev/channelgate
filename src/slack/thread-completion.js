@@ -1,5 +1,5 @@
 import { getChannelEntry } from "../config/store.js";
-import { getSlackThread, isSlackThreadEligible, setSlackThreadDone, setSlackThreadLater, updateSlackThreadRootCompletion } from "../gateway/slack-threads.js";
+import { getSlackThread, slackThreadRootOwner, isSlackThreadEligible, setSlackThreadDone, setSlackThreadLater, updateSlackThreadRootCompletion } from "../gateway/slack-threads.js";
 import { inspectThreadCompletion } from "../gateway/thread-completion.js";
 import { isCompletionReaction } from "../gateway/completion-reactions.js";
 import { accessContext } from "./home-threads.js";
@@ -51,7 +51,7 @@ async function changeThreadFromFeedback({ client, body, parsed }, verdict) {
   if (!await access.allows({ ...entry, channelId }, threadTs)) return false;
   const page = await client.conversations.replies({ channel: channelId, ts: threadTs, limit: 1 });
   const root = page?.ok !== false && page?.messages?.find((message) => message.ts === threadTs);
-  if (!root || root.user !== userId || root.bot_id) return false;
+  if (slackThreadRootOwner(channelId, root) !== userId) return false;
   const freshAccess = await accessContext(client, userId);
   const freshEntry = await getChannelEntry(channelId);
   if (!await freshAccess.allows(freshEntry && { ...freshEntry, channelId }, threadTs) || version !== accessVersion) return false;

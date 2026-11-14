@@ -1330,4 +1330,12 @@ export const migrations = [
       }
     },
   },
+  {
+    version: 54,
+    up(db) {
+      // Only the admitted /fork creation path records ownership of a bot-authored root.
+      db.exec("ALTER TABLE slack_threads ADD COLUMN fork_source_ts TEXT NOT NULL DEFAULT ''");
+      db.exec("ALTER TABLE slack_threads ADD COLUMN fork_bot_user_id TEXT NOT NULL DEFAULT ''");
+    },
+  },
 ];

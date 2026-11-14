@@ -6,7 +6,7 @@ import { ensureTestEnv } from "./helpers.js";
 ensureTestEnv();
 const { getDb } = await import("../src/db/index.js");
 const { setUser, getUser, upsertChannelEntry, getChannelEntry, saveChannelMeta } = await import("../src/config/store.js");
-const { indexSlackThread, getSlackThread, setSlackThreadLater, setSlackThreadDone, recordSlackThreadOutcome } = await import("../src/gateway/slack-threads.js");
+const { indexSlackThread, indexSlackFork, getSlackThread, setSlackThreadLater, setSlackThreadDone, recordSlackThreadOutcome } = await import("../src/gateway/slack-threads.js");
 const { registerAgentInterfaceHandlers } = await import("../src/slack/agent-interface.js");
 const { setThreadSudo } = await import("../src/gateway/thread-engine.js");
 const { activityThreadSnapshot } = await import("../src/slack/home-threads.js");
@@ -1280,4 +1280,34 @@ test("Activity DM labels resolve the peer, hide legacy identifiers and apply to 
   data = await snapshot();
   assert.deepEqual(data.rows, []);
   assert.deepEqual(data.pinnedChannels, []);
+});
+
+
+test("fork Activity rows open and support independent Done/Later with fresh creator and bot checks", async (t) => {
+  const f = await fixture(t);
+  const entry = await f.root("G_FORKS", "100.000001", "U_OTHER", true, "private");
+  f.members.set("G_FORKS", ["U_MINE", "U_OTHER"]);
+  const threadTs = "101.000001";
+  const root = { ts: threadTs, user: "UBOT", bot_id: "B_GATEWAY", text: "↪️ <@U_MINE> Fork: Explore another solution" };
+  f.roots.set(`G_FORKS:${threadTs}`, root);
+  indexSlackFork({ channelId: "G_FORKS", slug: entry.slug, threadTs, sourceThreadTs: "100.000001",
+    creatorId: "U_MINE", botUserId: "UBOT", title: "Fork: Explore another solution" });
+  const mine = await f.login(), other = await f.login("U_OTHER");
+  const snapshot = await f.request(mine.url + "/api/threads", { headers: mine.headers });
+  assert.deepEqual((await snapshot.json()).rows.map(r => r.threadTs), [threadTs]);
+  assert.equal((await f.request(mine.url + `/open/G_FORKS/${threadTs}`, { headers: mine.headers })).status, 303);
+  assert.equal((await f.request(other.url + `/open/G_FORKS/${threadTs}`, { headers: other.headers })).status, 403);
+  const action = (user, operation, value) => f.request(user.url + `/api/${operation}`, { method: "POST", headers: user.post,
+    body: JSON.stringify({ channelId: "G_FORKS", threadTs, [operation === "later" ? "later" : "done"]: value }) });
+  assert.equal((await action(other, "completion", true)).status, 403);
+  for (const [operation, value] of [["completion", true], ["completion", false], ["later", true], ["later", false]]) {
+    assert.equal((await action(mine, operation, value)).status, 200);
+  }
+  assert.equal(getSlackThread("G_FORKS", "100.000001").done_ms, 0, "fork choices leave the source unchanged");
+  f.roots.set(`G_FORKS:${threadTs}`, { ...root, user: "UOTHERBOT" });
+  assert.equal((await action(mine, "completion", true)).status, 403);
+  f.roots.set(`G_FORKS:${threadTs}`, root);
+  f.members.set("G_FORKS", ["U_OTHER"]);
+  assert.equal((await action(mine, "completion", true)).status, 403);
+  assert.equal((await f.request(mine.url + `/open/G_FORKS/${threadTs}`, { headers: mine.headers })).status, 403);
 });

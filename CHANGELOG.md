@@ -2,6 +2,9 @@
 
 ## 0.6.5 — candidate, pending approval
 
+- Show new forked conversations as separate Activity and Slack App Home rows owned by their
+  creator, with independent Open, Pin, Done, Reopen and Later actions.
+
 - Show readable Personal conversation labels for DMs in Activity, pinned groups and the voice
   conversation list, with the participant name when available.
 
