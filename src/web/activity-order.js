@@ -20,8 +20,10 @@ export function activityTheme(value) {
   return ACTIVITY_THEMES.includes(value) ? value : "system";
 }
 
+export const DEFAULT_ACTIVITY_GROUPING = "channel";
+
 export const ACTIVITY_GROUPINGS = Object.freeze(["status", "channel"]);
 
 export function activityGrouping(value) {
-  return ACTIVITY_GROUPINGS.includes(value) ? value : "status";
+  return ACTIVITY_GROUPINGS.includes(value) ? value : DEFAULT_ACTIVITY_GROUPING;
 }

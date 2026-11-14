@@ -2,6 +2,9 @@
 
 ## 0.6.5 — candidate, pending approval
 
+- Default personal Activity to **Group by → Channel** for everyone without a saved grouping
+  preference. Viewers can still choose Status, and saved choices are preserved.
+
 - Keep forked Activity rows named after the new child thread, including its creator and new
   request; preserve explicit child renames across history refreshes.
 

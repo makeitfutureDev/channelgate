@@ -4,7 +4,7 @@ import { getLogoColor } from "../config/settings.js";
 import { channelGateLogo } from "../config/appearance.js";
 import { ACTIVITY_THEME_CSS } from "./activity-theme.js";
 import { createSubscriptionUi, SUBSCRIPTION_CSS } from "../../public/subscription-ui.js";
-import { DEFAULT_ACTIVITY_GROUP_ORDER } from "./activity-order.js";
+import { DEFAULT_ACTIVITY_GROUP_ORDER, DEFAULT_ACTIVITY_GROUPING } from "./activity-order.js";
 import { activityAppHead } from "./activity-app.js";
 import { CALL_OVERLAY_CSS, callOverlayBrowser, callOverlayConfig, callOverlayMarkup } from "./call-overlay.js";
 
@@ -45,7 +45,7 @@ function themeBrowser(config, browser) {
 function activityBrowser(config, browser, subscriptionUi, callUi) {
   "use strict";
   callUi = callUi || null;
-  const { base, csrf, defaultGroupOrder } = config;
+  const { base, csrf, defaultGroupOrder, defaultGrouping } = config;
   const voiceCalls = config.voiceCalls === true;
   const teamId = typeof config.teamId === "string" && /^[A-Z0-9]{2,32}$/.test(config.teamId) ? config.teamId : "";
   const { document, location, EventSource } = browser;
@@ -60,7 +60,7 @@ function activityBrowser(config, browser, subscriptionUi, callUi) {
   const orderDialog = el("order-dialog"), orderList = el("order-list"), orderButton = el("group-order");
   const orderNodes = new Map();
   const grouping = el("group-by");
-  let groupBy = "status", groupByVersion = -1, savingGrouping = false;
+  let groupBy = defaultGrouping, groupByVersion = -1, savingGrouping = false;
   const allDoneButton = el("mark-all-done"), allDoneDialog = el("all-done-dialog");
   const historyButton = el("load-history");
   let loadingHistory = false, moreHistory = true;
@@ -1118,7 +1118,7 @@ export function activityPage({ sessionId, csrf, view = "activity", agent = "", t
   const nonce = crypto.randomBytes(16).toString("base64url");
   const launch = callTarget && /^[A-Z0-9_]{1,32}$/.test(String(callTarget.channelId || "")) && (!callTarget.threadTs || /^\d{1,13}\.\d{1,6}$/.test(String(callTarget.threadTs)))
     ? { channelId: String(callTarget.channelId), threadTs: String(callTarget.threadTs || "") } : null;
-  const config = JSON.stringify({ base, csrf, view, teamId: /^[A-Z0-9]{2,32}$/.test(String(teamId)) ? String(teamId) : "", defaultGroupOrder: DEFAULT_ACTIVITY_GROUP_ORDER, voiceCalls: voiceCalls === true,
+  const config = JSON.stringify({ base, csrf, view, teamId: /^[A-Z0-9]{2,32}$/.test(String(teamId)) ? String(teamId) : "", defaultGroupOrder: DEFAULT_ACTIVITY_GROUP_ORDER, defaultGrouping: DEFAULT_ACTIVITY_GROUPING, voiceCalls: voiceCalls === true,
     ...(voiceCalls ? { ...callOverlayConfig({ base, csrf, agent }), callTarget: launch } : {}) }).replaceAll("<", "\\u003c");
   const agentName = String(agent || "").trim() || "ChannelGate";
   const pinned = theme === "dark" || theme === "light" ? ` data-theme="${theme}"` : "";
@@ -1365,7 +1365,7 @@ ${settingsView ? `<section class="settings-page" aria-label="Settings"><div clas
 <dialog id="order-dialog" class="order-dialog" aria-labelledby="order-title" aria-describedby="order-description"><h2 id="order-title">Arrange status groups</h2><p id="order-description">Move groups up or down. Newest conversations appear first within each group. Your order is saved to your account.</p><ol id="order-list" class="order-list"></ol><button id="order-reset" type="button">Reset to default</button><p id="order-error" class="order-error" role="alert"></p><div class="order-footer"><button id="order-cancel" type="button">Cancel</button><button id="order-save" class="order-save" type="button">Save order</button></div></dialog>
 <dialog id="all-done-dialog" class="order-dialog" aria-labelledby="all-done-title" aria-describedby="all-done-description"><h2 id="all-done-title">Mark all your threads done?</h2><p id="all-done-description">This marks all your open tracked agent threads done across all channels, including threads outside the current filter, search, or page. Their main Slack messages get ✅. Running work continues.</p><p id="all-done-error" class="order-error" role="alert"></p><div class="order-footer"><button id="all-done-cancel" type="button" autofocus>Cancel</button><button id="all-done-confirm" class="order-save" type="button">Mark All Done</button></div></dialog>
 <section aria-label="Conversations"><div class="bar"><div id="filters" class="filters" role="group" aria-label="Filter by status">${filters.map(([value, label]) => `<button type="button" class="s-${value}" data-filter="${value}" aria-pressed="${value === "active"}">${["working", "waiting", "error", "idle", "later", "done"].includes(value) ? '<i aria-hidden="true"></i>' : ""}${label}<span>0</span></button>`).join("")}</div>
-<div class="grouping"><label for="group-by">Group by</label><select id="group-by"><option value="status">Status</option><option value="channel">Channel</option></select></div>
+<div class="grouping"><label for="group-by">Group by</label><select id="group-by"><option value="channel">Channel</option><option value="status">Status</option></select></div>
 <div class="search-wrap"><label class="search-label" for="search">Search conversations or channels</label><input type="search" id="search" placeholder="Filter threads…" autocomplete="off" maxlength="300"></div></div>
 <div id="notice" class="notice" role="alert" hidden></div>
 <section id="pinned-section" class="pinned-section" aria-labelledby="pinned-title" hidden><h2 id="pinned-title" class="pinned-heading">Pinned conversations <span id="pinned-count">0</span></h2>

@@ -570,7 +570,9 @@ unavailable data while the other provider remains usable. No additional provider
 
 ## Private live Activity dashboard (2026-11-11)
 
-The personal browser dashboard offers **Group by → Status / Channel** beside the filters.
+The personal browser dashboard offers **Group by → Channel / Status** beside the filters.
+Channel is the default for all viewers without a saved grouping preference, including existing
+users. Explicitly saved Channel or Status choices remain in effect.
 Channel grouping lists channels alphabetically with a heading and visible conversation count,
 keeping the viewer's status order and newest-first ordering within each status. Channels are
 identified by ID even when their names match. Search, filters, live updates and thread actions
@@ -582,7 +584,7 @@ each thread's status color. A channel keeps the same color between visits (eight
 keyed by channel ID); two cards directly above each other never share one. Multi-channel pins use
 the same cards. Status view keeps the flat table with labeled sections.
 
-By default, the personal browser dashboard lists open conversations by status: **Error → Waiting → Working
+Within each channel (or in Status view), open conversations follow **Error → Waiting → Working
 → Idle**, with newest messages first within each group. The footer **Group order** button
 opens a keyboard- and touch-accessible dialog with up/down buttons, Cancel, Save order and Reset
 to default. Saving stores only the authenticated viewer's preference in their user record; the
