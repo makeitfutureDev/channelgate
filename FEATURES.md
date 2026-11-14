@@ -1,5 +1,17 @@
 # ChannelGate — Features
 
+## Installed Activity window header (2026-11-14)
+
+Installed desktop browsers that support Window Controls Overlay can merge the native title
+bar into Activity's existing header. Native window buttons and the browser app menu retain
+their reserved space on either side; empty header areas drag the window while navigation,
+theme and call controls remain clickable. Browser-provided geometry follows resizing and
+overlay changes. Ordinary tabs, mobile and unsupported browsers retain the standard layout.
+Window chrome follows the viewer's saved light/dark theme before scripts run and updates with
+the header switch or System theme changes across Activity, Subscriptions and Settings.
+Existing installed apps may need to reopen after their browser refreshes the shared manifest;
+the browser's custom title-bar control can enable or disable the overlay.
+
 ## Fork support across compatible harnesses (2026-11-14)
 
 Slack `/fork` uses the engine's declared native-fork capability. Codex EU, Codex channel

@@ -5,7 +5,7 @@ import { channelGateLogo } from "../config/appearance.js";
 import { ACTIVITY_THEME_CSS } from "./activity-theme.js";
 import { createSubscriptionUi, SUBSCRIPTION_CSS } from "../../public/subscription-ui.js";
 import { DEFAULT_ACTIVITY_GROUP_ORDER, DEFAULT_ACTIVITY_GROUPING } from "./activity-order.js";
-import { activityAppHead } from "./activity-app.js";
+import { activityAppHead, ACTIVITY_APP_COLORS } from "./activity-app.js";
 import { CALL_OVERLAY_CSS, callOverlayBrowser, callOverlayConfig, callOverlayMarkup } from "./call-overlay.js";
 
 // The header's theme switch, shared by every dashboard view. Matching the system choice clears
@@ -17,6 +17,10 @@ function themeBrowser(config, browser) {
   const themeButton = document.getElementById("theme-toggle"), root = document.documentElement, scheme = browser.matchMedia?.("(prefers-color-scheme: light)");
   const effectiveTheme = () => root?.dataset.theme || (scheme?.matches ? "light" : "dark");
   function paintTheme() {
+    // Native window controls and the standalone fallback must follow the page override too.
+    for (const id of ["app-theme-dark", "app-theme-light"]) {
+      document.getElementById(id)?.setAttribute("content", config.themeColors[effectiveTheme()]);
+    }
     if (!themeButton) return;
     const next = effectiveTheme() === "dark" ? "light" : "dark";
     themeButton.setAttribute("aria-label", "Switch to " + next + " theme");
@@ -1118,13 +1122,13 @@ export function activityPage({ sessionId, csrf, view = "activity", agent = "", t
   const nonce = crypto.randomBytes(16).toString("base64url");
   const launch = callTarget && /^[A-Z0-9_]{1,32}$/.test(String(callTarget.channelId || "")) && (!callTarget.threadTs || /^\d{1,13}\.\d{1,6}$/.test(String(callTarget.threadTs)))
     ? { channelId: String(callTarget.channelId), threadTs: String(callTarget.threadTs || "") } : null;
-  const config = JSON.stringify({ base, csrf, view, teamId: /^[A-Z0-9]{2,32}$/.test(String(teamId)) ? String(teamId) : "", defaultGroupOrder: DEFAULT_ACTIVITY_GROUP_ORDER, defaultGrouping: DEFAULT_ACTIVITY_GROUPING, voiceCalls: voiceCalls === true,
+  const config = JSON.stringify({ base, csrf, view, themeColors: ACTIVITY_APP_COLORS, teamId: /^[A-Z0-9]{2,32}$/.test(String(teamId)) ? String(teamId) : "", defaultGroupOrder: DEFAULT_ACTIVITY_GROUP_ORDER, defaultGrouping: DEFAULT_ACTIVITY_GROUPING, voiceCalls: voiceCalls === true,
     ...(voiceCalls ? { ...callOverlayConfig({ base, csrf, agent }), callTarget: launch } : {}) }).replaceAll("<", "\\u003c");
   const agentName = String(agent || "").trim() || "ChannelGate";
   const pinned = theme === "dark" || theme === "light" ? ` data-theme="${theme}"` : "";
   const filters = [["active", "Active"], ["working", "Working"], ["waiting", "Waiting"], ["error", "Error"], ["idle", "Idle"], ["later", "Later"], ["done", "Completed"], ["open", "All open"]];
   return { nonce, html: `<!doctype html>
-<html lang="en"${pinned}><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="color-scheme" content="dark light"><title>${subscriptionsView ? "Subscriptions" : settingsView ? "Settings" : "Activity"} · ChannelGate</title>${activityAppHead(logoColor)}
+<html lang="en"${pinned}><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="color-scheme" content="dark light"><title>${subscriptionsView ? "Subscriptions" : settingsView ? "Settings" : "Activity"} · ChannelGate</title>${activityAppHead(logoColor, theme)}
 <style nonce="${nonce}">
 ${ACTIVITY_THEME_CSS}
 ${SUBSCRIPTION_CSS}
@@ -1353,6 +1357,13 @@ select.settings-input{height:32px}
   tbody[data-cards] tr[data-group]::after{top:calc(var(--head) + 9px)}
   tbody[data-cards] tr[data-group-end]{background-size:100% 19px}
   tbody[data-cards] tr[data-group][data-group-end]{background-size:100% calc(var(--head) + 14px)}
+}
+/* Only installed apps with the overlay enabled occupy the native title-bar area. The
+   browser supplies both side insets, including macOS traffic lights and its app menu. */
+@media(display-mode:window-controls-overlay){
+  .top{padding-top:calc(env(titlebar-area-y,0px) + 8px);padding-left:calc(env(titlebar-area-x,0px) + 16px);padding-right:calc(100% - env(titlebar-area-x,0px) - env(titlebar-area-width,100%) + 16px);min-height:max(52px,calc(env(titlebar-area-y,0px) + env(titlebar-area-height,0px)));background:var(--bg);-webkit-app-region:drag;app-region:drag;user-select:none}
+  .top a,.top button,.top input,.top select{-webkit-app-region:no-drag;app-region:no-drag}
+  .top .page-nav{min-width:0;max-width:100%;flex-wrap:wrap}
 }
 </style></head><body>
 <header class="top"><div class="agent"><span class="agent-mark" aria-hidden="true">${channelGateLogo(logoColor)}</span><div><span class="agent-name">${escapeHtml(agentName)}</span>${settingsView ? "" : '<div id="connection" class="connection reconnecting" role="status"><span id="connection-text">Connecting…</span></div>'}</div></div>
