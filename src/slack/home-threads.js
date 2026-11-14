@@ -12,7 +12,7 @@ import { clearDone, markDone } from "../gateway/followups.js";
 import { syncThreadDoneMarker } from "./thread-done-marker.js";
 import { inspectThreadCompletion } from "../gateway/thread-completion.js";
 import {
-  getSlackThread, indexSlackThread, skipSlackThreadCandidate, setSlackThreadDone, updateSlackThreadRootCompletion, slackThreadCandidates,
+  getSlackThread, indexSlackThread, slackThreadRootOwner, skipSlackThreadCandidate, setSlackThreadDone, updateSlackThreadRootCompletion, slackThreadCandidates,
   eligibleSlackThreadsForUser, isSlackThreadEligible, slackThreadIsDone, slackThreadRuntime, slackThreadStatus, slackThreadWorkingSince, liveSlackThreadCandidates,
 } from "../gateway/slack-threads.js";
 
@@ -78,7 +78,6 @@ async function readRoot(client, channelId, threadTs) {
 
 const permanentMissing = (error) => ["thread_not_found", "message_not_found"].includes(error?.data?.error || error?.code || error?.message);
 const channelUnavailable = (error) => ["channel_not_found", "not_in_channel", "is_archived"].includes(error?.data?.error || error?.code || error?.message);
-const humanRoot = (root) => root?.user && !root.bot_id && !["bot_message", "tombstone"].includes(root.subtype);
 
 // Explicit history actions share one bounded discovery pass. Ordinary browser refreshes stay local.
 export async function discoverSlackThreadHistory(client, userId, { beforeWrite = async () => {} } = {}) {
@@ -113,7 +112,7 @@ export async function discoverSlackThreadHistory(client, userId, { beforeWrite =
       try {
         const root = await readRoot(client, candidate.channelId, candidate.threadTs);
         if (!await mayWrite(candidate)) continue;
-        if (!humanRoot(root)) skipSlackThreadCandidate(candidate);
+        if (!slackThreadRootOwner(candidate.channelId, root)) skipSlackThreadCandidate(candidate);
         else indexSlackThread({ channelId: candidate.channelId, slug: candidate.slug, root, agentEngaged: true });
       } catch (error) {
         if (error.status === 401 || error.status === 403) throw error;
@@ -152,8 +151,8 @@ export async function homeThreadsSnapshot(client, userId, requested = {}, { read
       ? await reader.inspect(client, row.channel_id, row.thread_ts, { force })
       : await inspectThreadCompletion(client, row.channel_id, row.thread_ts);
     const root = inspected.root;
-    if (!humanRoot(root) || root.user !== userId) {
-      if (humanRoot(root)) indexSlackThread({ channelId: row.channel_id, slug: row.slug, root });
+    if (slackThreadRootOwner(row.channel_id, root) !== userId) {
+      if (slackThreadRootOwner(row.channel_id, root)) indexSlackThread({ channelId: row.channel_id, slug: row.slug, root });
       else skipSlackThreadCandidate({ channelId: row.channel_id, slug: row.slug, threadTs: row.thread_ts });
       eligible.delete(key);
       return false;
@@ -268,7 +267,7 @@ async function discoverLiveRoots(client, userId, access, channels, now, rootRead
     access = currentAccess;
     // Root ownership is verified from Slack, never inferred from a queued run's author.
     if (root && await currentAccess.allows(entry, candidate.threadTs)) {
-      if (humanRoot(root)) indexSlackThread({ channelId: entry.channelId, slug: entry.slug, root, agentEngaged: true });
+      if (slackThreadRootOwner(entry.channelId, root)) indexSlackThread({ channelId: entry.channelId, slug: entry.slug, root, agentEngaged: true });
       // A bot-started thread is a verified exclusion, not missing Slack activity. Retain
       // the discovery tombstone so active automation cannot consume every repair batch.
       else skipSlackThreadCandidate({ channelId: entry.channelId, slug: entry.slug, threadTs: candidate.threadTs });
@@ -395,7 +394,7 @@ export async function markAllSlackThreadsDone(client, userId, { beforeWrite = as
         let entry = await getChannelEntry(candidate.channel_id);
         if (!await access.allows(entry && { ...entry, channelId: candidate.channel_id }, candidate.thread_ts)) { result.skipped++; continue; }
         const root = await readRoot(client, candidate.channel_id, candidate.thread_ts);
-        if (!humanRoot(root) || root.user !== userId) { result.skipped++; continue; }
+        if (slackThreadRootOwner(candidate.channel_id, root) !== userId) { result.skipped++; continue; }
         // Root reads and membership calls can outlive revocation. Recheck the authenticated
         // session and current authorization, rejecting any configuration change during that check.
         const checkedVersion = version;
@@ -451,7 +450,7 @@ export function registerHomeThreadActions(app, { publishHome } = {}) {
         const entry = await getChannelEntry(row.channel_id);
         if (!await access.allows(entry && { ...entry, channelId: row.channel_id }, row.thread_ts)) return;
         const root = await readRoot(client, row.channel_id, row.thread_ts);
-        if (!root || root.user !== userId || root.bot_id) return;
+        if (slackThreadRootOwner(row.channel_id, root) !== userId) return;
         updateSlackThreadRootCompletion(row.channel_id, root);
         setSlackThreadDone(row.channel_id, row.thread_ts, userId, kind === "done");
         if (kind === "done") markDone(userId, row.channel_id, row.thread_ts);

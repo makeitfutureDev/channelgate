@@ -19,6 +19,7 @@ const { buildClaudeArgs } = await import("../src/engines/claude.js");
 const { buildCodexArgs } = await import("../src/engines/codex.js");
 const { createFakeRuntime } = await import("./fixtures/fake-runtime-backend.js");
 const { parseSlashCommand } = await import("../src/slack/message-normalize.js");
+const { getSlackThread } = await import("../src/gateway/slack-threads.js");
 const { processMessageEvent, runQueue, abortRunsInChannel } = await import("../src/slack/message-pipeline.js");
 
 function slack() {
@@ -77,6 +78,11 @@ for (const engine of ["claude", "codex"]) {
     const forkTs = client.posted.find((m) => m.thread_ts === sourceTs && /Fork started/.test(m.text || ""))?.text.match(/p(\d+)/)?.[1];
     assert.ok(forkTs, "source thread links to child");
     const childTs = `${forkTs.slice(0, -3)}.${forkTs.slice(-3)}`;
+    const activity = getSlackThread(channel, childTs);
+    assert.equal(activity.starter_id, user, "fork Activity row belongs to its requester");
+    assert.equal(activity.fork_source_ts, sourceTs);
+    assert.equal(activity.fork_bot_user_id, "UBOT");
+    assert.equal(activity.agent_engaged, 1);
     const firstReply = client.posted.find((m) => m.thread_ts === childTs);
     assert.equal(firstReply.text, `↪️ Fork of <https://slack.test/archives/${channel}/p${sourceTs.replace(".", "")}|this thread>`);
     assert.equal(firstReply.unfurl_links, false);

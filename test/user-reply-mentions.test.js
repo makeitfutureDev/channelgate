@@ -59,7 +59,7 @@ test("v52 backfills existing users once and reopening preserves a later opt-out"
       insertUser(db, id, { replyMentions: value });
     }
     runMigrations(db);
-    assert.equal(db.prepare("PRAGMA user_version").get().user_version, 53);
+    assert.equal(db.prepare("PRAGMA user_version").get().user_version, migrations.at(-1).version);
     assert.deepEqual(readUser(db, "U_EXISTING"), { name: "Existing", approved: true, skills: ["kept"], replyMentions: true });
     assert.equal(readUser(db, "U_OFF").replyMentions, false);
     for (const id of ["U_ON", "U_NULL", "U_STRING", "U_NUMBER"]) assert.equal(readUser(db, id).replyMentions, true);

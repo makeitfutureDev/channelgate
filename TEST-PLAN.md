@@ -1,5 +1,24 @@
 # ChannelGate — Test Plan
 
+## Forked conversations in Activity (2026-11-14)
+
+- For both Claude and Codex, use an approved author in a private worker fixture with a completed
+  source turn: `Remember FORK-ACTIVITY-42`. Send `@agent /fork Repeat the token and explore another
+  approach`. The source and child must be separate rows in the creator's Activity and Slack Home;
+  a second person forking the source owns their child, without taking ownership of the source.
+- Open the child, pin/unpin it, mark it Done, Reopen it, move it to Later and resume. Refresh
+  Slack Home, load history and restart the daemon: the child remains owned and navigable;
+  the source's completion/Later state stays unchanged. Check working and final status.
+- Another viewer must not see or change the child; revoked private membership must hide it and
+  reject Open/Done/Later. An unrelated bot root imitating the fork title or mentioning the viewer
+  must remain excluded. A mismatched/deleted bot root must fail fresh ownership verification.
+- Repeat a queued fork and restart recovery. Native fork fallback and cross-engine history
+  handoff must still create the child row. Pre-change forks without saved provenance are not
+  automatically reassigned from text.
+- Regression: `test/slack-fork.test.js`, `test/queued-fork-recovery.test.js`,
+  `test/home-threads.test.js`, `test/activity.test.js`. Live browser/engine acceptance is separate
+  from these fake-runtime and HTTP regressions; record actual results per engine.
+
 ## Readable personal conversation names (2026-11-14)
 
 - Engine-independent: register a Slack bot DM with an opaque or legacy `dm-*` storage name,
