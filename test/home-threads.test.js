@@ -1704,3 +1704,25 @@ test("fork answer feedback marks only the creator's child Done or Later", async 
   assert.equal(getSlackThread(c.channelId, threadTs).later_ms, 0);
   assert.equal(getSlackThread(c.channelId, "100.000001").done_ms, 0);
 });
+
+
+test("fork titles use the new child label and explicit child renames survive history refresh", async () => {
+  const c = await channel();
+  root(c, "100.000001");
+  renameSlackThread({ channelId: c.channelId, threadTs: "100.000001", title: "Old source title", eventTs: "200.000001" });
+  const threadTs = "101.000001", title = "↪️ Creator Fork: A new direction";
+  indexSlackFork({ channelId: c.channelId, slug: c.slug, threadTs, sourceThreadTs: "100.000001",
+    creatorId: "U_MINE", botUserId: "UBOT", title });
+  const botRoot = { ts: threadTs, user: "UBOT", bot_id: "B_GATEWAY", text: "↪️ <@U_MINE> Fork: A new direction" };
+  roots.set(`${c.channelId}:${threadTs}`, botRoot);
+  indexSlackThread({ channelId: c.channelId, slug: c.slug, root: botRoot });
+  assert.equal(getSlackThread(c.channelId, threadTs).title, title, "passive root text cannot strip the resolved creator");
+  assert.equal(getSlackThread(c.channelId, threadTs).session_title, "", "the default label does not pretend to be a user rename");
+  assert.equal(renameSlackThread({ channelId: c.channelId, threadTs, title: "New fork thread name", eventTs: "201.000001" }), true);
+  indexSlackThread({ channelId: c.channelId, slug: c.slug, root: botRoot });
+  await discoverSlackThreadHistory(client, "U_MINE");
+  assert.equal(getSlackThread(c.channelId, threadTs).title, "New fork thread name");
+  const snapshot = await activityThreadSnapshot(client, "U_MINE", { search: "New fork thread name" });
+  assert.deepEqual(snapshot.rows.map(row => row.title), ["New fork thread name"]);
+  assert.equal(getSlackThread(c.channelId, "100.000001").title, "Old source title");
+});
