@@ -499,7 +499,7 @@ test("Chromium reports the Activity dashboard and its sign-in page as one instal
 
 test("Activity channel grouping persists and stays usable on desktop and mobile in both themes", { skip: !process.env.CG_BROWSER_MODULE, timeout: 30_000 }, async (t) => {
   resetActivityStateForTests();
-  await setUser("UACTIVITYCHANNEL", { approved: true, activityGroupBy: "status", activityGroupByVersion: 0 });
+  await setUser("UACTIVITYCHANNEL", { approved: true, activityGroupBy: null, activityGroupByVersion: 0 });
   let base;
   const rows = [
     { channel_id: "C_BETA", thread_ts: "100", title: "Beta error", channelName: "Beta", status: "error", last_message_ms: 1000 },
@@ -522,7 +522,7 @@ test("Activity channel grouping persists and stays usable on desktop and mobile 
     page.on("pageerror", (error) => errors.push(error.message));
     await page.goto(createActivityGrantUrl({ baseUrl: base, ownerId: "UACTIVITYCHANNEL", teamId: "TCHANNEL" }));
     await page.locator("#result-count").filter({ hasText: "3 conversations" }).waitFor();
-    await page.getByLabel("Group by", { exact: true }).selectOption("channel");
+    assert.equal(await page.getByLabel("Group by", { exact: true }).inputValue(), "channel", "viewers without a saved preference default to Channel");
     await page.waitForFunction(() => globalThis.document.querySelector("#threads").dataset.groupBy === "channel" && !globalThis.document.querySelector("#group-by").disabled);
     assert.deepEqual(await page.locator(".thread-title").allTextContents(), ["Alpha error", "Alpha idle", "Beta error"]);
     assert.deepEqual(await page.locator("tr[data-group]").evaluateAll((trs) => trs.map((tr) => tr.dataset.group)), ["Alpha · 2", "Beta · 1"]);
@@ -536,15 +536,18 @@ test("Activity channel grouping persists and stays usable on desktop and mobile 
     await page.getByLabel("Group by", { exact: true }).selectOption("status");
     await page.waitForFunction(() => globalThis.document.querySelector("#threads").dataset.groupBy === "status" && !globalThis.document.querySelector("#group-by").disabled);
     assert.deepEqual(await page.locator(".thread-title").allTextContents(), ["Alpha error", "Beta error", "Alpha idle"]);
+    await page.reload();
+    await page.waitForFunction(() => globalThis.document.querySelector("#group-by").value === "status");
     assert.deepEqual(errors, []);
     await context.close();
+    await setUser("UACTIVITYCHANNEL", { activityGroupBy: null });
   }
 });
 
 test("Activity pins persist in a matching top table and work on desktop/mobile in both themes", { skip: !process.env.CG_BROWSER_MODULE, timeout: 45_000 }, async (t) => {
   resetActivityStateForTests();
   const ownerId = "UPINFIXTURE", channelId = "CPINFIXTURE", otherId = "UOTHERPINFIXTURE";
-  await setUser(ownerId, { approved: true, activityPinnedThreads: [] });
+  await setUser(ownerId, { approved: true, activityGroupBy: "status", activityPinnedThreads: [] });
   await setUser(otherId, { approved: true, activityPinnedThreads: [] });
   await upsertChannelEntry(channelId, { name: "Pinned browser fixture", type: "channel" });
   const entry = await getChannelEntry(channelId);

@@ -169,7 +169,7 @@ test("status groups are labelled on their first row, and running work shows a li
     { ...row("idle", "older"), threadTs: "3", lastMessageMs: now - 2 * 86_400_000 },
     { ...row("waiting", "ask"), threadTs: "4", workingSinceMs: now - 1000, lastMessageMs: now - 5 * 60_000 },
   ];
-  stream.snapshot(rows);
+  stream.snapshot(rows, { groupBy: "status" });
   const trs = elements.threads.children;
   assert.deepEqual(trs.map((tr) => tr.children[0].textContent), ["ask", "run", "old", "older"]);
   assert.deepEqual(trs.map((tr) => tr.dataset.group), ["Waiting · 1", "Working · 1", "Idle · 2", undefined]);
@@ -617,6 +617,18 @@ test("Activity text stays legible: WCAG AA contrast for secondary text and visib
   assert.match(html, /th\{[^}]*color:var\(--muted\)/);
 });
 
+test("Activity defaults to Channel before snapshots and preserves an explicit Status preference", () => {
+  const { elements, stream, page } = browser(() => new Promise(() => {}));
+  assert.equal(elements["group-by"].value, "channel");
+  assert.match(page.html, /<option value="channel">Channel<\/option><option value="status">Status<\/option>/);
+  stream.snapshot([row()]);
+  assert.equal(elements.threads.dataset.groupBy, "channel");
+  assert.equal(elements.threads.children[0].dataset.group, "Engineering · 1");
+  stream.snapshot([row()], { groupBy: "status", groupByVersion: 1 });
+  assert.equal(elements["group-by"].value, "status");
+  assert.equal(elements.threads.children[0].dataset.group, "Working · 1");
+});
+
 test("channel grouping keeps channel ids distinct, sorts within channels and filters group counts", async () => {
   const { elements, stream, requests } = browser((url, options) => url.endsWith("/group-by")
     ? Promise.resolve(response({ groupBy: JSON.parse(options.body).groupBy, groupByVersion: 1 })) : new Promise(() => {}));
@@ -631,7 +643,7 @@ test("channel grouping keeps channel ids distinct, sorts within channels and fil
   ];
   const titles = () => elements.threads.children.map((tr) => tr.children[0].textContent);
   const groups = () => elements.threads.children.map((tr) => tr.dataset.group);
-  stream.snapshot(rows);
+  stream.snapshot(rows, { groupBy: "status" });
   assert.equal(elements["group-by"].value, "status");
   elements["group-by"].value = "channel"; elements["group-by"].fire("change"); await flush();
   assert.deepEqual(titles(), ["alpha run", "alpha new", "alpha old", "duplicate name", "beta error", "beta idle"]);
@@ -666,11 +678,11 @@ test("failed grouping save restores the view, serializes writes and safely label
   const save = deferred();
   const { elements, stream, requests } = browser((url) => url.endsWith("/group-by") ? save.promise : new Promise(() => {}));
   stream.snapshot([row()]);
-  elements["group-by"].value = "channel"; elements["group-by"].fire("change"); elements["group-by"].fire("change");
+  elements["group-by"].value = "status"; elements["group-by"].fire("change"); elements["group-by"].fire("change");
   assert.equal(elements["group-by"].disabled, true);
   assert.equal(requests.filter((r) => r.url.endsWith("/group-by")).length, 1);
   save.resolve(response({}, 500)); await flush();
-  assert.equal(elements["group-by"].value, "status"); assert.equal(elements["group-by"].disabled, false);
+  assert.equal(elements["group-by"].value, "channel"); assert.equal(elements["group-by"].disabled, false);
   assert.match(elements.notice.textContent, /grouping couldn’t be saved/);
   const name = '<img src=x onerror="alert(1)">';
   stream.snapshot([{ ...row(), channelName: name }], { groupBy: "channel", groupByVersion: 1 });
@@ -683,7 +695,7 @@ test("pins move rows to a matching top table, survive status tabs, filter by sea
   assert.equal(e["pinned-section"].hidden, true);
   const pinned = { ...row("done", "Saved task"), pinned: true };
   const ordinary = { ...row("idle", "Regular task"), threadTs: "2.2" };
-  b.stream.snapshot([pinned, ordinary]);
+  b.stream.snapshot([pinned, ordinary], { groupBy: "status" });
   const tr = e["pinned-threads"].children[0];
   assert.equal(e["pinned-section"].hidden, false);
   assert.equal(e["pinned-count"].textContent, "1");
@@ -766,7 +778,7 @@ test("channel grouping groups multi-channel pins separately with filtered counts
   const ordinary = { ...row("idle", "Alpha regular"), threadTs: "6", channelName: "Alpha" };
   const titles = () => e["pinned-threads"].children.map((tr) => tr.children[0].textContent);
   const groups = () => e["pinned-threads"].children.map((tr) => tr.dataset.group);
-  b.stream.snapshot([...pinned, ordinary]);
+  b.stream.snapshot([...pinned, ordinary], { groupBy: "status" });
   const originalNodes = new Set(e["pinned-threads"].children);
   assert.deepEqual(titles(), ["Beta pinned", "Alpha idle pinned", "Alpha error pinned", "Same name pinned"]);
   assert.deepEqual(groups(), [undefined, undefined, undefined, undefined]);

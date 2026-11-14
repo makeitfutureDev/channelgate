@@ -808,7 +808,9 @@ Slack icon, and the action buttons became icons.
   still line up with the table header on desktop;
   saved status priority and newest-first ordering within each status; search/status filters
   recompute counts. Reload and open a fresh session: Channel remains selected for this viewer;
-  a separate viewer retains Status. Switch back to Status and verify the existing group order.
+  a separate viewer without a saved preference also defaults to Channel. Verify existing users
+  without a preference and new users both start in Channel; an explicit saved Status preference
+  survives reload and a fresh login. Switch back to Status and verify the existing group order.
   Live snapshots update rows and grouping without losing filters or actions. Failed saves keep
   the old view, display retry guidance, and permit retry; expired/revoked sessions disable the
   selector and clear private rows. Forged owner fields cannot change another viewer; invalid
@@ -818,6 +820,8 @@ Slack icon, and the action buttons became icons.
   confirm mobile controls remain reachable with no horizontal page overflow or browser errors.
   Restore the original preference afterward. Proposed private QA definition: ACTIVITY-WEB-CHANNEL-GROUPING
   (registry update and deployed acceptance pending when personal Airtable access is unavailable).
+- Default grouping registry: `ACTIVITY-WEB-CHANNEL-DEFAULT` covers default Channel selection
+  and preservation of explicit saved Status; deployed acceptance is recorded separately.
 - Engine-independent: grouping, preference storage and browser rendering do not call an engine.
   Local browser fixture evidence does not claim deployed Slack/client acceptance.
 

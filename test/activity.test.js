@@ -1099,20 +1099,21 @@ test("Activity grouping persists only for its viewer, streams updates and reject
   const f = await fixture(t), mine = await f.login(), other = await f.login("U_OTHER");
   const endpoint = mine.url + "/api/group-by";
   const snapshot = async (viewer) => (await f.request(viewer.url + "/api/threads", { headers: viewer.headers })).json();
-  assert.equal((await snapshot(mine)).groupBy, "status");
+  assert.equal((await snapshot(mine)).groupBy, "channel");
   const original = await getUser("U_MINE");
   const body = JSON.stringify({ groupBy: "channel", ownerId: "U_OTHER", isAdmin: true });
   const result = await f.request(endpoint, { method: "POST", headers: mine.post, body });
   assert.equal(result.status, 200);
   assert.deepEqual(await result.json(), { groupBy: "channel", groupByVersion: 1 });
   assert.deepEqual(await getUser("U_MINE"), { ...original, activityGroupBy: "channel", activityGroupByVersion: 1 });
-  assert.equal((await snapshot(other)).groupBy, "status");
+  assert.equal((await snapshot(other)).groupBy, "channel");
   assert.equal((await snapshot(await f.login())).groupBy, "channel");
   const stream = await f.request(mine.url + "/stream", { headers: mine.headers });
   const reader = stream.body.getReader(); t.after(() => reader.cancel());
   assert.equal((await nextEvent(reader)).groupBy, "channel");
   assert.equal((await f.request(endpoint, { method: "POST", headers: mine.post, body: JSON.stringify({ groupBy: "status" }) })).status, 200);
   assert.equal((await nextEvent(reader)).groupBy, "status");
+  assert.equal((await snapshot(await f.login())).groupBy, "status", "explicit Status choice survives a new session");
   for (const groupBy of [null, "unknown", [], {}, 1]) {
     assert.equal((await f.request(endpoint, { method: "POST", headers: mine.post, body: JSON.stringify({ groupBy }) })).status, 400);
   }
