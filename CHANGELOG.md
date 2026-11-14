@@ -51,10 +51,12 @@
   cost are posted there when the call ends. Admins enable it under Settings → Voice calls with a
   Gemini API key, model and voice. See `docs/VOICE-CALLS.md`. Both Google key shapes are accepted
   (`AIza…` and the newer dotted `AQ.…`).
-- Minimize an active voice call to a floating phone icon with a timer while using the Activity
-  dashboard. Click it to restore transcript and controls. Clicking another conversation's call
-  button moves the existing call there, keeps its connection and minimized state, and updates
-  the voice's thread context; each thread retains its own transcript segment.
+- Voice calls on the Activity dashboard live in a docked side panel instead of a popup: the
+  dashboard stays usable beside it, and the transcript reads like a chat. During a call the
+  header's **📞 Call** button turns green with the call time (🔇 when muted) and shows or hides
+  the panel; hiding never ends the call. Clicking another conversation's call button moves the
+  existing call there, keeps its connection, and updates the voice's thread context; each thread
+  retains its own transcript segment.
 - Voice calls navigate: the call is an overlay on the personal Activity dashboard (the **📞 Call**
   button there starts a call in no conversation yet), the voice sees your own open conversations
   (eight most recent up front, list and search with a channel filter for more) and can switch

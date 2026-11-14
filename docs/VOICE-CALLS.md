@@ -15,10 +15,11 @@ conversation or channel, and keep talking.
 2. Press **Start call**, allow the microphone and talk. The voice knows your eight most recent
    open conversations (the same list as your Activity page) and, when the call is in a thread,
    its recent messages. You can interrupt it.
-   Press **Minimize** (or Escape) to keep talking while using the dashboard. A small floating
-   phone icon shows the call timer; click it to restore the transcript and controls. While in a
-   call, clicking another row's **Call the agent** icon moves the existing call to that thread
-   and keeps the minimized view. Each thread receives the transcript of the time spent there.
+   The call opens in a side panel on the right; the dashboard stays usable beside it. While you
+   are in a call the header's **📞 Call** button turns green and shows the call time — click it
+   (or the panel's ×, or press Escape) to hide or show the panel and its transcript; hiding never
+   ends the call. While in a call, clicking another row's **Call the agent** icon moves the
+   existing call to that thread. Each thread receives the transcript of the time spent there.
 3. Ask "what am I working on?", "what is waiting in #sales?", or "find the pipeline review": the
    voice lists or searches your own conversations, with a channel filter when you name one. Say
    "open that one" or "switch to #sales": the call moves there. The thread you leave receives the

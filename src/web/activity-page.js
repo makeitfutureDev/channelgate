@@ -722,7 +722,7 @@ function activityBrowser(config, browser, subscriptionUi, callUi) {
   body.addEventListener("click", rowClick);
   pinnedBody.addEventListener("click", rowClick);
   pinnedChannelList.addEventListener("click", rowClick);
-  el("call-agent")?.addEventListener("click", () => { callUi?.open(null); });
+  el("call-agent")?.addEventListener("click", () => { callUi?.toggle(); });
   if (callUi && config.callTarget && config.callTarget.channelId) callUi.open({ channelId: config.callTarget.channelId, threadTs: config.callTarget.threadTs || "" });
   subscriptionButton?.addEventListener("click", () => { void refreshSubscriptions(); });
   document.addEventListener?.("visibilitychange", () => {

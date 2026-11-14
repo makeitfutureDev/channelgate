@@ -566,7 +566,7 @@ test("the dashboard switch route requires session, CSRF, owner and an authorized
   assert.equal(moved.status, 200); assert.equal((await moved.json()).bound.threadTs, "44.000001");
 });
 
-test("Activity minimizes a connected call, switches it from a row and restores transcript and controls", { skip: !process.env.CG_BROWSER_MODULE, timeout: 40_000 }, async (t) => {
+test("Activity keeps a call in a docked side panel the header Call button shows and hides, switches it from a row and keeps transcript and controls", { skip: !process.env.CG_BROWSER_MODULE, timeout: 40_000 }, async (t) => {
   await channel(); await channel("C_SALES");
   const managerFixture = fixture(); t.after(() => managerFixture.manager.endAll());
   const f = await webFixture(t, { manager: managerFixture.manager });
@@ -577,48 +577,59 @@ test("Activity minimizes a connected call, switches it from a row and restores t
   const page = await browser.newPage({ viewport: { width: 1440, height: 1000 } }); page.setDefaultTimeout(6000);
   const errors = []; page.on("pageerror", e => errors.push(e.message));
   await page.goto(createActivityGrantUrl({ baseUrl: f.base, ownerId: "U_MINE", teamId: "T_WORK" }));
+  const panel = page.locator("#call-overlay"), top = page.locator("#call-agent"), hide = page.getByRole("button", { name: "Hide call panel", exact: true });
+  assert.equal(await top.textContent(), "📞 Call");
   await page.locator('a.call-link[data-channel-id="C_WORK"][data-thread-ts="55.000001"]').click();
+  // A docked panel, never a modal: no dialog role, no backdrop, and the dashboard narrows beside it.
+  assert.equal(await page.locator('[role="dialog"]').count(), 0);
+  assert.equal(await top.getAttribute("aria-pressed"), "true");
+  const docked = await page.evaluate(() => ({ pad: parseFloat(globalThis.getComputedStyle(globalThis.document.body).paddingRight), width: globalThis.document.querySelector("#call-overlay").getBoundingClientRect().width }));
+  assert.ok(docked.pad > 300 && Math.abs(docked.pad - docked.width) < 2, JSON.stringify(docked));
   await page.getByRole("button", { name: "Start call", exact: true }).click();
-  await page.getByRole("button", { name: "Minimize", exact: true }).waitFor();
+  await page.getByRole("button", { name: "Hang up", exact: true }).waitFor();
   const session = FakeSession.instances[0]; session.live();
   session.emit("input_transcript", { text: "Keep this transcript" });
   await page.getByText("Keep this transcript", { exact: true }).waitFor();
+  await page.waitForFunction(() => globalThis.document.querySelector("#call-agent").dataset.live === "");
   await page.getByRole("button", { name: "Mute", exact: true }).click();
-  await page.getByRole("button", { name: "Minimize", exact: true }).click();
-  const bubble = page.locator('[data-call="restore"]');
-  assert.equal(await page.locator('[role="dialog"][aria-labelledby="call-title"]').count(), 0);
-  assert.match(await bubble.getAttribute("aria-label"), /muted/);
-  assert.equal(await page.locator(".call-panel").isVisible(), false);
-  // A real dashboard control remains usable with the bubble visible.
+  await hide.click();
+  assert.equal(await panel.isVisible(), false); assert.equal(session.closed, false, "hiding the panel keeps the call");
+  assert.match(await top.getAttribute("aria-label"), /In a call \(muted\).*show the transcript/);
+  assert.match(await top.textContent(), /🔇 In call \d\d:\d\d/);
+  assert.equal(await page.evaluate(() => parseFloat(globalThis.getComputedStyle(globalThis.document.body).paddingRight)), 0);
+  // The dashboard stays usable, and a row's call action switches the hidden call in place.
   await page.locator("#search").fill("Pipeline");
   await page.locator('a.call-link[data-channel-id="C_SALES"]').click();
   await page.waitForFunction(() => globalThis.document.querySelector('[data-call="binding"]').textContent.includes("Pipeline review"));
-  assert.equal(await page.locator(".call-panel").isVisible(), false);
+  assert.equal(await panel.isVisible(), false);
   assert.equal(FakeSession.instances.length, 1); assert.equal(session.closed, false);
   assert.match(session.texts.at(-1), /now in #c_sales/);
-  await page.waitForFunction(() => globalThis.document.querySelector('[data-call="bubble-timer"]').textContent !== "00:00");
-  await bubble.click();
+  await page.waitForFunction(() => /In call (?!00:00)/.test(globalThis.document.querySelector("#call-agent").textContent));
+  await top.click();
+  assert.equal(await panel.isVisible(), true); assert.equal(await top.getAttribute("aria-pressed"), "true");
   assert.equal(await page.getByText("Keep this transcript", { exact: true }).isVisible(), true);
   assert.equal(await page.getByRole("button", { name: "Unmute", exact: true }).getAttribute("aria-pressed"), "true");
-  await page.getByRole("button", { name: "Minimize", exact: true }).focus(); await page.keyboard.press("Escape");
-  assert.equal(await bubble.isVisible(), true);
-  // A denied switch restores the controls and retains the current call.
+  await page.getByRole("button", { name: "Hang up", exact: true }).focus(); await page.keyboard.press("Escape");
+  assert.equal(await panel.isVisible(), false);
+  // A denied switch reopens the panel with the error and retains the current call.
   await page.route("**/call/*/switch", route => route.fulfill({ status: 403, contentType: "application/json", body: JSON.stringify({ error: "Destination access denied" }) }));
   await page.locator("#search").fill("");
   await page.locator('a.call-link[data-channel-id="C_WORK"][data-thread-ts="55.000001"]').click();
   await page.getByText("Destination access denied", { exact: true }).waitFor();
-  assert.equal(await page.locator(".call-panel").isVisible(), true);
+  assert.equal(await panel.isVisible(), true);
   assert.match(await page.locator('[data-call="binding"]').textContent(), /Pipeline review/);
   for (const width of [390, 1440]) {
     await page.setViewportSize({ width, height: 850 });
-    await page.getByRole("button", { name: "Minimize", exact: true }).click();
-    const box = await bubble.boundingBox();
-    assert.ok(box.x >= 0 && box.x + box.width <= width && box.y + box.height <= 850);
-    await bubble.click();
+    const box = await panel.boundingBox();
+    assert.ok(box.x >= 0 && box.x + box.width <= width + 0.5 && box.height <= 850, JSON.stringify(box));
+    assert.equal(await page.evaluate(() => globalThis.document.documentElement.scrollWidth <= globalThis.innerWidth), true);
+    await hide.click(); assert.equal(await top.isVisible(), true);
+    await top.click(); assert.equal(await panel.isVisible(), true);
   }
   await page.getByRole("button", { name: "Hang up", exact: true }).click();
   await page.getByRole("button", { name: "Start call", exact: true }).waitFor();
-  assert.equal(await bubble.isVisible(), false); assert.equal(session.closed, true);
+  assert.equal(await top.textContent(), "📞 Call"); assert.equal(await top.getAttribute("data-live"), null);
+  assert.equal(session.closed, true);
   assert.deepEqual(errors, []);
 });
 
