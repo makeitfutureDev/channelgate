@@ -648,3 +648,14 @@ test("queued switches finish in order and a failed join preserves the current bi
   await f.manager.switchConversation(call.id, "U_MINE", { channelId: "C_WORK", threadTs: "55.000001" });
   assert.equal(f.manager.get(call.id).bound.threadTs, "55.000001");
 });
+
+
+test("voice conversation lists use readable DM labels without channel prefixes", async () => {
+  const f = fixture({ snapshot: async () => ({ rows: [{ channel_id: "D12345678", thread_ts: "55.000001", title: "Private task", channelName: "Personal conversation with Alex Example", isDM: true, status: "idle", last_message_ms: 3000 }] }) });
+  const started = await f.manager.start({ ownerId: "U_MINE", client: f.client });
+  const session = FakeSession.instances[0];
+  assert.match(session.options.systemInstruction, /Personal conversation with Alex Example/);
+  assert.doesNotMatch(session.options.systemInstruction, /#Personal conversation/);
+  assert.match(session.options.systemInstruction, /Never read conversation IDs aloud/);
+  assert.equal(await f.manager.end(started.id, "U_MINE"), true);
+});

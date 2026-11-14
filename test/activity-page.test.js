@@ -851,3 +851,17 @@ test("channel pin controls save once with CSRF, retain row focus and report fail
   assert.match(failed.elements.notice.textContent, /channel pin couldn’t be saved/);
   assert.equal(failed.elements["pinned-section"].hidden, true);
 });
+
+
+test("Activity renders personal conversation labels in channel groups and pinned cards", () => {
+  const { elements, stream } = browser(() => new Promise(() => {}));
+  const name = "Personal conversation with Alex Example";
+  stream.snapshot([{ ...row("idle"), channelId: "D12345678", channelName: name }], {
+    groupBy: "channel", groupByVersion: 1,
+    pinnedChannels: [{ channelId: "D87654321", channelName: "Personal conversation" }],
+  });
+  assert.equal(elements.threads.children[0].dataset.group, name + " · 1");
+  assert.match(elements.threads.textContent, /Personal conversation with Alex Example/);
+  assert.match(elements["pinned-channels"].textContent, /Personal conversation/);
+  assert.doesNotMatch(elements.threads.textContent + elements["pinned-channels"].textContent, /D12345678|D87654321|#Personal/);
+});

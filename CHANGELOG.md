@@ -2,6 +2,9 @@
 
 ## 0.6.5 — candidate, pending approval
 
+- Show readable Personal conversation labels for DMs in Activity, pinned groups and the voice
+  conversation list, with the participant name when available.
+
 - Expand the additional Claude harness to **Claude Extra**: sign in with a separate Claude
   subscription or configure Amazon Bedrock from the same isolated terminal command. Existing
   logins, engine IDs and sessions are retained. Subscription turns use their own account relay;

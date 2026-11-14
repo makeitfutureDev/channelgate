@@ -1,5 +1,19 @@
 # ChannelGate — Test Plan
 
+## Readable personal conversation names (2026-11-14)
+
+- Engine-independent: register a Slack bot DM with an opaque or legacy `dm-*` storage name,
+  metadata identifying the peer, and a registered peer name. Open the owner's Activity and
+  Slack App Home, group by Channel, search the peer name, and pin the DM, including an empty card.
+  Rows, groups, search and pin cards must show Personal conversation with the peer name.
+- Remove the registered peer name: all labels must fall back to Personal conversation.
+  Revoke membership: rows and pins must disappear. Labels must never show a DM ID or a # prefix.
+- With voice configured, ask "What conversations do I have in my personal messages?" Check
+  that the tool list uses the same readable label and spoken output does not read routing IDs.
+  Record actual browser and voice evidence separately from automated regressions.
+- Regression: `test/activity.test.js`, `test/activity-page.test.js`, `test/home-threads.test.js`
+  and `test/voice-calls.test.js`. Claude and Codex do not generate these shared display labels.
+
 ## Deployment app logo color (2026-11-14)
 
 - Automated: `test/activity-logo-color.test.js` checks canonical hex persistence, default/reset
