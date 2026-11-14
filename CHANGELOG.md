@@ -5,6 +5,9 @@
 - Keep forked Activity rows named after the new child thread, including its creator and new
   request; preserve explicit child renames across history refreshes.
 
+- Show Activity channel pins on row hover or keyboard focus, keeping controls visible on touch
+  devices and empty pinned-channel cards.
+
 - Continue installed macOS Chrome Activity sign-in in a browser tab so the usual passkey provider
   is available, then resume the app automatically. Keep passkey management in Settings → General.
 

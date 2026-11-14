@@ -262,8 +262,12 @@
 - Browser fixture: run `test/activity-reuse-browser.test.js` with `CG_BROWSER_MODULE` pointing
   at Playwright and `CG_BROWSER_EXECUTABLE` at Chromium. The channel-pins case serves the real
   Activity router with synthetic public channels, two approved viewers and indexed owned/foreign
-  roots. At 1440/768/390/320 px in both themes require no overflow, visible usable channel pin
-  controls, all open/Later rows in Pinned once, persistence, grouping/search, future SSE rows,
+  roots. At 1440/768/390/320 px in both themes require no overflow and usable channel pin
+  controls: with a fine pointer and hover support, hidden at rest, revealed by hovering anywhere
+  on the row or tabbing into it, and hidden again after both hover and focus leave. Check pinned
+  and ordinary rows, with no channel/status layout shift; empty pinned-channel cards retain
+  visible unpin buttons. On touch devices controls stay visible without hover. Require
+  all open/Later rows in Pinned once, persistence, grouping/search, future SSE rows,
   personal isolation, empty channel cards, and independent thread pins after channel unpinning.
 - Live acceptance: in disposable authorized channels Alpha and Beta, viewer A owns two open
   engaged threads in Alpha (one Later), a completed Alpha thread, and an open Beta thread.
