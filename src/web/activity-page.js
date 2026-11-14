@@ -1230,6 +1230,10 @@ tbody[data-cards] tr[data-hue="6"]{--g:hsl(52 60% 45%)}tbody[data-cards] tr[data
 .channel-cell .channel-link{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis}
 .channel-cell{display:flex;align-items:center;gap:6px}
 .channel-cell .channel-pin{flex:none}
+@media(hover:hover) and (pointer:fine){
+  .channel-cell .channel-pin{opacity:0;transition:opacity .12s}
+  tbody tr:hover .channel-pin,tbody tr:focus-within .channel-pin{opacity:1}
+}
 .channel-link[href]:hover{color:var(--ink);text-decoration:underline}
 .status-cell{min-width:0}
 .pill{display:inline-flex;align-items:center;gap:6px;max-width:100%;height:22px;padding:0 9px;border-radius:999px;font-size:11.5px;font-weight:500;white-space:nowrap;color:var(--c);background:color-mix(in srgb,var(--c) var(--tint),transparent);border:1px solid color-mix(in srgb,var(--c) 28%,transparent)}

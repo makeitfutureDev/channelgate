@@ -147,7 +147,10 @@ open pinned-channel threads beyond the ordinary feed cap. They are independent o
 thread pins: unpinning either never removes the other preference. Pins never grant access,
 expose another viewer's threads, change Slack reactions or complete/postpone work. Channel reads
 and writes enforce current gateway admission and private-conversation membership; inaccessible
-channel names disappear with their rows. Desktop, tablet and mobile show channel pin controls.
+channel names disappear with their rows. Channel pin controls appear when their conversation row
+is hovered or contains keyboard focus on devices with a fine pointer and hover support; their
+space stays reserved to avoid layout shifts. Touch devices and empty pinned-channel cards keep
+the controls visible.
 
 ## Pinned Activity conversations (2026-11-13)
 
