@@ -52,6 +52,10 @@
   the call to another thread or channel. Each thread you leave receives that segment's transcript
   and tasks, the final summary names every conversation visited, and one line about the call is
   saved to your DM memory.
+- Each person can shape how the voice talks to them under Activity → Settings → **Voice calls**:
+  default language, style (brief, conversational or thinking partner), patience before it
+  answers, and free-text instructions. The voice also remembers that person's recent calls from
+  their DM memory.
 
 - Bring the Google Chat `/settings` card in line with Slack's Settings: the pages are now
   **Agent, Access, MCP, Variables, Skills, Schedules, Diagnostics** and **You**, picked from one

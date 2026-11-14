@@ -649,6 +649,53 @@ test("queued switches finish in order and a failed join preserves the current bi
   assert.equal(f.manager.get(call.id).bound.threadTs, "55.000001");
 });
 
+test("the caller's voice preferences and recent calls shape the prompt and the turn-taking", async () => {
+  await channel();
+  await setUser("U_MINE", { approved: true, isAdmin: false, name: "Tiberiu", voicePreferences: { language: "Romanian", style: "thinking-partner", patience: "patient", instructions: "Call me Tibi.\nConfirm before production changes." } });
+  const f = fixture({ loadHistory: async ({ ownerId }) => ownerId === "U_MINE" ? ["Voice call on 2026-11-13 (3 min): worked in #c_work \"Build the voice page\"", "Voice call on 2026-11-14 (1 min): worked in #c_sales"] : [] });
+  const call = await f.manager.start({ ownerId: "U_MINE", channelId: "C_WORK", client: f.client });
+  const session = FakeSession.instances[0];
+  assert.equal(session.options.patience, "patient");
+  const prompt = session.options.systemInstruction;
+  assert.match(prompt, /uses you to think out loud\. Listen more than you talk/);
+  assert.match(prompt, /Speak Romanian by default; if the caller switches language, follow them\./);
+  assert.match(prompt, /The caller may pause mid-thought\. Wait for them to finish/);
+  assert.match(prompt, /The caller's own instructions[^\n]*\nCall me Tibi\.\nConfirm before production changes\./);
+  assert.match(prompt, /their recent calls[^\n]*\n- Voice call on 2026-11-13 \(3 min\): worked in #c_work "Build the voice page"\n- Voice call on 2026-11-14 \(1 min\): worked in #c_sales/);
+  assert.doesNotMatch(prompt, /one to three sentences per reply/, "the brief style is replaced, not stacked");
+  await f.manager.end(call.id, "U_MINE");
+  // Defaults: brief, follow the caller's language, Gemini's own turn-taking, no history block.
+  await setUser("U_MINE", { approved: true, isAdmin: false, name: "Tiberiu", voicePreferences: {} });
+  const plain = fixture();
+  const second = await plain.manager.start({ ownerId: "U_MINE", channelId: "C_WORK", client: plain.client });
+  const defaults = FakeSession.instances.at(-1);
+  assert.equal(defaults.options.patience, "normal");
+  assert.match(defaults.options.systemInstruction, /one to three sentences per reply/);
+  assert.match(defaults.options.systemInstruction, /Speak the language the caller uses\./);
+  assert.doesNotMatch(defaults.options.systemInstruction, /own instructions|recent calls|pause mid-thought/);
+  await plain.manager.end(second.id, "U_MINE");
+  // The recent-call history comes from the caller's own DM folder and nobody else's.
+  const path = await import("node:path"), fs = await import("node:fs");
+  const { effectiveWorkDir } = await import("../src/gateway/folders.js");
+  const { getChannelMeta } = await import("../src/config/store.js");
+  await upsertChannelEntry("D_MINE", { name: "dm", type: "im", isDM: true });
+  const dm = await getChannelEntry("D_MINE");
+  await saveChannelMeta(dm.slug, { isDM: true, dmUserId: "U_MINE", memory: true });
+  const cwd = effectiveWorkDir(dm.slug, await getChannelMeta(dm.slug));
+  fs.mkdirSync(cwd, { recursive: true });
+  fs.writeFileSync(path.join(cwd, "MEMORY.md"), "# Memory\n\n## Project state\n- Something else entirely\n- Voice call on 2026-11-10 (2 min): worked in #old\n- Voice call on 2026-11-11 (2 min): worked in #a\n- Voice call on 2026-11-12 (2 min): worked in #b\n- Voice call on 2026-11-13 (2 min): worked in #c\n- Voice call on 2026-11-14 (2 min): worked in #d\n- Voice call on 2026-11-15 (2 min): worked in #e\n");
+  const real = fixture({ loadHistory: undefined });
+  const third = await real.manager.start({ ownerId: "U_MINE", channelId: "C_WORK", client: real.client });
+  const withHistory = FakeSession.instances.at(-1).options.systemInstruction;
+  assert.match(withHistory, /- Voice call on 2026-11-11 \(2 min\): worked in #a\n[\s\S]*#e/);
+  assert.doesNotMatch(withHistory, /#old|Something else entirely/, "at most the last five call lines, nothing else from memory");
+  await real.manager.end(third.id, "U_MINE");
+  await setUser("U_OTHER", { approved: true, name: "Other" });
+  const other = fixture({ loadHistory: undefined });
+  const fourth = await other.manager.start({ ownerId: "U_OTHER", channelId: "C_WORK", client: other.client });
+  assert.doesNotMatch(FakeSession.instances.at(-1).options.systemInstruction, /Voice call on/, "another person's DM memory is never read");
+  await other.manager.end(fourth.id, "U_OTHER");
+});
 
 test("voice conversation lists use readable DM labels without channel prefixes", async () => {
   const f = fixture({ snapshot: async () => ({ rows: [{ channel_id: "D12345678", thread_ts: "55.000001", title: "Private task", channelName: "Personal conversation with Alex Example", isDM: true, status: "idle", last_message_ms: 3000 }] }) });

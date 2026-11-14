@@ -34,7 +34,18 @@ export function isVoiceModel(value) { return VOICE_MODELS.includes(value); }
 export function isVoiceName(value) { return VOICE_NAMES.includes(value); }
 
 // The first message of every connection. `handle` resumes a session a previous connection carried.
-export function buildSetupMessage({ model = DEFAULT_VOICE_MODEL, voice = DEFAULT_VOICE_NAME, systemInstruction = "", tools = [], handle = "" } = {}) {
+// How long the model waits after the caller stops before answering. "patient" is for people who
+// think aloud: a long silence window and a low end-of-speech sensitivity; "quick" the opposite.
+export const VAD_PRESETS = Object.freeze({
+  quick: { endOfSpeechSensitivity: "END_SENSITIVITY_HIGH", silenceDurationMs: 400, prefixPaddingMs: 100 },
+  patient: { endOfSpeechSensitivity: "END_SENSITIVITY_LOW", silenceDurationMs: 2000, prefixPaddingMs: 300 },
+});
+export function vadConfig(patience) {
+  const preset = Object.hasOwn(VAD_PRESETS, patience) ? VAD_PRESETS[patience] : null;
+  return preset ? { automaticActivityDetection: { ...preset } } : null;
+}
+
+export function buildSetupMessage({ model = DEFAULT_VOICE_MODEL, voice = DEFAULT_VOICE_NAME, systemInstruction = "", tools = [], handle = "", patience = "normal" } = {}) {
   const setup = {
     model: `models/${model}`,
     generationConfig: {
@@ -48,6 +59,8 @@ export function buildSetupMessage({ model = DEFAULT_VOICE_MODEL, voice = DEFAULT
   };
   if (systemInstruction) setup.systemInstruction = { parts: [{ text: String(systemInstruction) }] };
   if (Array.isArray(tools) && tools.length) setup.tools = [{ functionDeclarations: tools.map(normalizeDeclaration) }];
+  const vad = vadConfig(patience);
+  if (vad) setup.realtimeInputConfig = vad;
   return { setup };
 }
 
@@ -123,12 +136,12 @@ export function parseServerMessage(data) {
 //   closed ({ code, reason, resumable })
 //   error (Error)
 export class GeminiLiveSession extends EventEmitter {
-  constructor({ apiKey, model = DEFAULT_VOICE_MODEL, voice = DEFAULT_VOICE_NAME, systemInstruction = "", tools = [],
+  constructor({ apiKey, model = DEFAULT_VOICE_MODEL, voice = DEFAULT_VOICE_NAME, systemInstruction = "", tools = [], patience = "normal",
     WebSocketImpl = globalThis.WebSocket, host = GEMINI_LIVE_HOST, setupTimeoutMs = SETUP_TIMEOUT_MS, now = Date.now } = {}) {
     super();
     if (!apiKey) throw new Error("Gemini API key missing");
     if (typeof WebSocketImpl !== "function") throw new Error("WebSocket client unavailable");
-    this.apiKey = apiKey; this.model = model; this.voice = voice; this.systemInstruction = systemInstruction; this.tools = tools;
+    this.apiKey = apiKey; this.model = model; this.voice = voice; this.systemInstruction = systemInstruction; this.tools = tools; this.patience = patience;
     this.WebSocketImpl = WebSocketImpl; this.host = host; this.setupTimeoutMs = setupTimeoutMs; this.now = now;
     this.socket = null; this.ready = false; this.closed = false; this.handle = ""; this.reconnecting = false;
     this.connections = 0;
@@ -146,7 +159,7 @@ export class GeminiLiveSession extends EventEmitter {
     setupTimer.unref?.();
     socket.addEventListener("open", () => {
       if (this.socket !== socket) return;
-      this._send(buildSetupMessage({ model: this.model, voice: this.voice, systemInstruction: this.systemInstruction, tools: this.tools, handle: this.handle }), socket);
+      this._send(buildSetupMessage({ model: this.model, voice: this.voice, systemInstruction: this.systemInstruction, tools: this.tools, handle: this.handle, patience: this.patience }), socket);
     });
     try { socket.binaryType = "arraybuffer"; } catch { /* a client without the property delivers Blobs, parsed below */ }
     const accept = (message) => {

@@ -108,3 +108,32 @@ test("secret inputs are never prefilled, and access loss clears the page", async
   assert.equal(panel.children.length, 0);
   assert.match(status.textContent, /session has ended/);
 });
+
+test("Voice calls section offers the closed choices and saves the person's own preferences", async () => {
+  let data = snapshot({ voice: { language: "Romanian", style: "conversational", patience: "patient", instructions: "Call me Tibi.", styles: ["brief", "conversational", "thinking-partner"], patience_options: ["quick", "normal", "patient"], limits: { language: 60, instructions: 2000 } } });
+  const { panel, nav, requests, status } = browser(async (url, options) => {
+    if (options.method === "POST") return reply({ notice: "Voice preferences saved. They apply to your next call.", settings: data });
+    return reply(data);
+  }, { hash: "#voice" });
+  await flush();
+  assert.equal(nav.all().find((c) => c.attrs["aria-current"] === "page").textContent, "Voice calls");
+  assert.ok(find(panel, "h2", "How the agent talks to you on a call"));
+  assert.ok(find(panel, "p", "Voice calls are not enabled on this gateway yet; an administrator turns them on under gateway Settings → Voice calls. Your preferences are kept for when they are."), "the settings view is rendered without the gateway flag here");
+  const language = panel.querySelectorAll("input").find((c) => c.attrs.name === "language" || c.name === "language");
+  assert.equal(language.value, "Romanian");
+  const selects = panel.querySelectorAll("select");
+  assert.deepEqual(selects.map((s) => s.name), ["style", "patience"]);
+  assert.deepEqual(selects[0].children.map((o) => o.value), ["brief", "conversational", "thinking-partner"]);
+  assert.equal(selects[0].children.find((o) => o.selected).value, "conversational");
+  assert.equal(selects[1].children.find((o) => o.selected).value, "patient");
+  const textarea = panel.querySelectorAll("textarea")[0];
+  assert.equal(textarea.value, "Call me Tibi."); assert.equal(textarea.attrs.maxlength, "2000");
+  language.value = "English"; selects[1].value = "quick"; textarea.value = "Keep it short.";
+  const form = panel.all().find((c) => c.tag === "form");
+  form.listeners.submit({ preventDefault() {} });
+  await flush();
+  const post = requests.at(-1);
+  assert.equal(post.options.headers["X-CG-CSRF"], "fixture-csrf");
+  assert.deepEqual(JSON.parse(post.options.body), { action: "voice.save", language: "English", style: "conversational", patience: "quick", instructions: "Keep it short." });
+  assert.equal(status.textContent, "Voice preferences saved. They apply to your next call.");
+});

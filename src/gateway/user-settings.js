@@ -6,7 +6,7 @@
 import { getComposioMode, userNudgesEnabled } from "../config/settings.js";
 import { toolboxUrl } from "./mcp-catalog.js";
 import { getUser, setUser } from "../config/store.js";
-import { userReplyMentionsEnabled } from "../config/user-preferences.js";
+import { userReplyMentionsEnabled, userVoicePreferences, VOICE_STYLES, VOICE_PATIENCE, VOICE_LANGUAGE_MAX, VOICE_INSTRUCTIONS_MAX } from "../config/user-preferences.js";
 import { MIN_MASKABLE_LENGTH, assertValidEnvName, assertValidEnvValue } from "../config/channel-env.js";
 import { listUserEnv, patchUserEnv } from "../config/scoped-env.js";
 import { revokeRemoteMcpsForAuthor } from "../mcp/remote-mcp-registry.js";
@@ -65,6 +65,9 @@ export async function userSettingsSnapshot(userId) {
   return {
     account: { id: userId, name: str(user.name, 120), role: isAdmin ? "admin" : user.approved ? "member" : "guest" },
     general: { nudges: userNudgesEnabled(user), replyMentions: userReplyMentionsEnabled(user) },
+    // How the voice talks to this person on a call (gateway/voice/calls.js). Plain preferences,
+    // nothing secret; the closed sets travel with the values so the page offers exactly them.
+    voice: { ...userVoicePreferences(user), styles: [...VOICE_STYLES], patience_options: [...VOICE_PATIENCE], limits: { language: VOICE_LANGUAGE_MAX, instructions: VOICE_INSTRUCTIONS_MAX } },
     connections: {
       composioMode: getComposioMode() === "sdk" ? "sdk" : "personal",
       composio: { ...masked(user.composioToken), label: str(user.composioTokenLabel, 80) },
@@ -115,6 +118,22 @@ export async function applyUserSettingsChange(userId, input = {}, { authorize = 
       await setUser(userId, { replyMentions: input.enabled });
       await logEvent("user_reply_mentions_changed", { author: userId, enabled: input.enabled, via: "activity_settings" });
       return { notice: `Reply mentions are ${input.enabled ? "on" : "off"}.` };
+    }
+    case "voice.save": {
+      // Only the person's own voice preferences change; every field is bounded or closed-set.
+      const language = str(input.language, VOICE_LANGUAGE_MAX + 1);
+      if (language.length > VOICE_LANGUAGE_MAX) fail(`Keep the language under ${VOICE_LANGUAGE_MAX} characters.`, "language");
+      if (/[\u0000-\u001f\u007f]/.test(language)) fail("The language cannot contain control characters.", "language");
+      const style = str(input.style, 40);
+      if (!VOICE_STYLES.includes(style)) fail(`Choose a style: ${VOICE_STYLES.join(", ")}.`, "style");
+      const patience = str(input.patience, 40);
+      if (!VOICE_PATIENCE.includes(patience)) fail(`Choose how long to wait: ${VOICE_PATIENCE.join(", ")}.`, "patience");
+      const instructions = typeof input.instructions === "string" ? input.instructions.replace(/\r\n/g, "\n").trim() : "";
+      if (instructions.length > VOICE_INSTRUCTIONS_MAX) fail(`Keep the instructions under ${VOICE_INSTRUCTIONS_MAX} characters.`, "instructions");
+      await authorize();
+      await setUser(userId, { voicePreferences: { language, style, patience, instructions } });
+      await logEvent("user_voice_preferences_changed", { author: userId, language: Boolean(language), style, patience, instructions: instructions.length, via: "activity_settings" });
+      return { notice: "Voice preferences saved. They apply to your next call." };
     }
     case "composio.save": {
       if (getComposioMode() === "sdk") fail("Composio runs in SDK mode on this gateway; your session is created automatically.");

@@ -165,3 +165,14 @@ test("binary frames are decoded: ArrayBuffer and typed arrays synchronously, Blo
   assert.equal(parseServerMessage("{}") !== null, true);
   assert.equal(parseServerMessage(null), null);
 });
+
+test("patience selects a voice-activity preset; normal leaves Gemini's defaults", async () => {
+  const { vadConfig, VAD_PRESETS } = await import("../src/gateway/voice/gemini-live.js");
+  assert.deepEqual(vadConfig("patient"), { automaticActivityDetection: { endOfSpeechSensitivity: "END_SENSITIVITY_LOW", silenceDurationMs: 2000, prefixPaddingMs: 300 } });
+  assert.deepEqual(vadConfig("quick"), { automaticActivityDetection: VAD_PRESETS.quick });
+  assert.equal(vadConfig("normal"), null); assert.equal(vadConfig(undefined), null); assert.equal(vadConfig("constructor"), null);
+  assert.equal(buildSetupMessage({}).setup.realtimeInputConfig, undefined);
+  assert.deepEqual(buildSetupMessage({ patience: "patient" }).setup.realtimeInputConfig.automaticActivityDetection.silenceDurationMs, 2000);
+  const { socket } = connected({ patience: "quick" });
+  assert.equal(socket.sent[0].setup.realtimeInputConfig.automaticActivityDetection.endOfSpeechSensitivity, "END_SENSITIVITY_HIGH");
+});

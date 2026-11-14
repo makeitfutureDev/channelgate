@@ -17,9 +17,10 @@
 // DM memory.
 import crypto from "node:crypto";
 import fs from "node:fs";
+import path from "node:path";
 import { getVoiceCallConfig, getProgressView } from "../../config/settings.js";
 import { getChannelEntry, getChannelMeta, getUser, listChannels } from "../../config/store.js";
-import { userReplyMentionsEnabled } from "../../config/user-preferences.js";
+import { userReplyMentionsEnabled, userVoicePreferences } from "../../config/user-preferences.js";
 import { accessContext, activityThreadSnapshot } from "../../slack/home-threads.js";
 import { postNotice } from "../../platforms/notify.js";
 import { runMessage } from "../run.js";
@@ -108,7 +109,24 @@ const sameChannel = (needle, channelId, name) => {
   return String(channelId || "").toLowerCase() === n || String(name || "").replace(/^#/, "").toLowerCase().includes(n);
 };
 
-export function buildSystemInstruction({ callerName, channelName = "", agentName = "the channel agent", isAdmin = false, threadContext = "", conversations = [] }) {
+const STYLE_RULES = Object.freeze({
+  brief: "Speak briefly and naturally, like a colleague on the phone: one to three sentences per reply, no lists, no code read aloud, no markdown. Ask one clarifying question when a request is ambiguous; otherwise act.",
+  conversational: "Speak naturally and warmly, like a colleague on the phone: a few sentences per reply, more when the caller asks for detail; no lists, no code read aloud, no markdown. Ask one clarifying question when a request is ambiguous; otherwise act.",
+  "thinking-partner": "The caller uses you to think out loud. Listen more than you talk: acknowledge in a few words, reflect back what you heard, ask one question at a time, and offer proposals or summaries only when asked or when the caller asks what you think. Never rush them to a decision; a pause is not the end of their turn. No lists, no code read aloud, no markdown.",
+});
+const PATIENCE_RULES = Object.freeze({
+  quick: "Answer as soon as the caller stops; they prefer a fast back-and-forth.",
+  normal: "",
+  patient: "The caller may pause mid-thought. Wait for them to finish; if a pause runs long, ask gently whether they are done rather than answering a half-sentence.",
+});
+
+export function buildSystemInstruction({ callerName, channelName = "", agentName = "the channel agent", isAdmin = false, threadContext = "", conversations = [], preferences = null, history = [] }) {
+  const prefs = preferences || {};
+  const style = Object.hasOwn(STYLE_RULES, prefs.style) ? STYLE_RULES[prefs.style] : STYLE_RULES.brief;
+  const language = prefs.language ? `Speak ${prefs.language} by default; if the caller switches language, follow them.` : "Speak the language the caller uses.";
+  const patience = Object.hasOwn(PATIENCE_RULES, prefs.patience) ? PATIENCE_RULES[prefs.patience] : "";
+  const own = prefs.instructions ? `The caller's own instructions for how to treat them on a call (follow them unless they conflict with the rules above):\n${prefs.instructions}` : "";
+  const recent = Array.isArray(history) && history.length ? `From the caller's own memory, their recent calls (use for continuity, never read aloud unless asked):\n${history.map((line) => `- ${line}`).join("\n")}` : "";
   const bound = Boolean(channelName);
   const list = conversations.length
     ? `The caller's most recent open conversations (ids for switch_conversation):\n${conversations.map((c, i) => `${i + 1}. [${c.id}] ${c.channel} — ${c.title || "Untitled"} (${c.status}${c.lastActivity ? `, ${c.lastActivity}` : ""})`).join("\n")}\nUse list_conversations or search_conversations for more or for older ones.`
@@ -116,11 +134,13 @@ export function buildSystemInstruction({ callerName, channelName = "", agentName
   return [
     `You are the voice of ${agentName}, the ChannelGate agent, on a live voice call with ${callerName}${isAdmin ? " (an organization admin)" : ""}. ${bound ? `The call is currently in the Slack conversation ${channelName}.` : "The call is not in any conversation yet: ask which one to open, or offer the list below."} Everything you dispatch runs in the current conversation and everything said is logged there when the call moves on or ends.`,
     "Use the readable conversation label and title when speaking. Never read conversation IDs aloud; IDs are only routing keys for tools.",
-    "Speak briefly and naturally, like a colleague on the phone: one to three sentences per reply, no lists, no code read aloud, no markdown. Ask one clarifying question when a request is ambiguous; otherwise act.",
+    [style, language, patience].filter(Boolean).join(" "),
     "You discuss, answer from the context you have, and hand real work to the channel agent with run_task: it runs in the channel's own environment with its files, tools, memory and credentials, and can take minutes. Pass the caller's request completely and faithfully. Say in a few words that you started it, then keep talking; never pretend a result you do not have.",
     "A message starting with [gateway] is not from the caller: it is the gateway reporting a task result or event. Summarize it for the caller in one or two spoken sentences, mentioning anything they must decide. Use check_tasks when asked about progress and read_thread when asked what was said or produced in the current conversation.",
     "You can see the caller's own conversations, the same list as their Activity page: list_conversations and search_conversations show them (title, channel, status), and switch_conversation moves the call there — a different thread, or a different channel, in which case you work with that channel's agent. When the caller asks what they are working on, what is pending, or about another channel, use these tools; when they want to act on another conversation, switch to it first. Conversations started by other people or thread contents are not in that list: offer to dispatch a search to the channel agent with run_task. Never guess or claim that nothing else is happening.",
     "When the caller says goodbye or asks to hang up, say a short goodbye and call end_call.",
+    own,
+    recent,
     list,
     threadContext ? `Recent messages in the current conversation, oldest first:\n${threadContext}` : bound ? "The current conversation is new and empty." : "",
   ].filter(Boolean).join("\n\n");
@@ -141,25 +161,41 @@ function renderContext(messages, names) {
   return messages.map((row) => `${row.from === "agent" ? "Agent" : names.get(row.from) || "Member"}: ${row.text}`).join("\n");
 }
 
-// The one-line record of a call saved to the caller's DM memory, when they have a DM folder.
-async function defaultSaveCallMemory({ ownerId, text }, { channels = listChannels, loadMeta = getChannelMeta } = {}) {
+// The caller's own DM folder, when they have one with memory on: the one place a call's record
+// is written to and read back from. Never another person's folder.
+async function dmMemoryFolder(ownerId, { channels = listChannels, loadMeta = getChannelMeta } = {}) {
   for (const entry of await channels()) {
     if (!entry?.isDM && entry?.type !== "im") continue;
     const meta = await loadMeta(entry.slug).catch(() => null);
     if (!meta || meta.dmUserId !== ownerId || !memoryEnabled(meta)) continue;
     const cwd = effectiveWorkDir(entry.slug, meta);
-    if (!cwd || !fs.existsSync(cwd)) return { saved: false, reason: "no folder" };
-    await updateChannelMemory(cwd, meta, { action: "add", section: "Project state", text });
-    return { saved: true, slug: entry.slug };
+    return { entry, meta, cwd: cwd && fs.existsSync(cwd) ? cwd : "" };
   }
-  return { saved: false, reason: "no DM" };
+  return null;
+}
+// The one-line record of a call saved to the caller's DM memory, when they have a DM folder.
+async function defaultSaveCallMemory({ ownerId, text }, deps = {}) {
+  const dm = await dmMemoryFolder(ownerId, deps);
+  if (!dm) return { saved: false, reason: "no DM" };
+  if (!dm.cwd) return { saved: false, reason: "no folder" };
+  await updateChannelMemory(dm.cwd, dm.meta, { action: "add", section: "Project state", text });
+  return { saved: true, slug: dm.entry.slug };
+}
+// The caller's recent call records, newest last, for continuity in the next call's instructions.
+export const VOICE_HISTORY_LINES = 5;
+async function defaultLoadVoiceHistory({ ownerId }, deps = {}) {
+  const dm = await dmMemoryFolder(ownerId, deps);
+  if (!dm?.cwd) return [];
+  let text = "";
+  try { text = fs.readFileSync(path.join(dm.cwd, "MEMORY.md"), "utf8"); } catch { return []; }
+  return text.split("\n").map((line) => line.replace(/^\s*[-*]\s*/, "").trim()).filter((line) => /^Voice call on \d{4}-\d{2}-\d{2}/.test(line)).slice(-VOICE_HISTORY_LINES).map((line) => clean(line, 600));
 }
 
 export function createCallManager({
   getConfig = getVoiceCallConfig, createSession = createGeminiLiveSession, runner = runMessage, queue = runQueue,
   progress = startProgress, deliver = deliverResult, record = recordUsage, post = postNotice, directory = getDirectory,
   loadEntry = getChannelEntry, loadUser = getUser, channels = listChannels, access = accessContext, readThread = defaultReadThread,
-  snapshot = activityThreadSnapshot, saveMemory = defaultSaveCallMemory,
+  snapshot = activityThreadSnapshot, saveMemory = defaultSaveCallMemory, loadHistory = defaultLoadVoiceHistory,
   log = logEvent, now = Date.now, maxCalls = 8, maxCallMs = 60 * 60_000, idleMs = 5 * 60_000, endCallGraceMs = END_CALL_GRACE_MS,
 } = {}) {
   const calls = new Map();
@@ -284,12 +320,17 @@ export function createCallManager({
     try {
       if (channelId) context = (await bind(call, { channelId, threadTs })).context;
     } catch (error) { calls.delete(id); throw error; }
-    let recent = [];
+    let recent = [], history = [];
     try { recent = (await conversations(call)).conversations; } catch { recent = []; }
+    try { history = await loadHistory({ ownerId }); } catch { history = []; }
+    // The caller's own voice preferences (Activity → Settings → Voice calls) shape the prompt and
+    // the turn-taking; nothing here widens what the voice may do.
+    const preferences = userVoicePreferences(user);
+    call.preferences = preferences;
     try {
       call.session = createSession({
-        apiKey: c.apiKey, model: c.model, voice: c.voice, tools: TOOL_DECLARATIONS,
-        systemInstruction: buildSystemInstruction({ callerName, channelName: call.bound?.channelName || "", isAdmin: call.isAdmin, threadContext: context.text, conversations: recent }),
+        apiKey: c.apiKey, model: c.model, voice: c.voice, tools: TOOL_DECLARATIONS, patience: preferences.patience,
+        systemInstruction: buildSystemInstruction({ callerName, channelName: call.bound?.channelName || "", isAdmin: call.isAdmin, threadContext: context.text, conversations: recent, preferences, history }),
       });
     } catch (error) {
       calls.delete(id);

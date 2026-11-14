@@ -74,6 +74,18 @@ tasks) is saved to the caller's own DM channel memory when they have a DM folder
 `voice_call_started` / `voice_call_bound` / `voice_call_ended` events are logged. Gateway
 restarts end calls without a summary.
 
+**Per-person voice preferences (2026-11-14).** Activity → Settings → **Voice calls** lets each
+person set how the voice talks to them: a default **language** (empty follows whatever they
+speak), a **style** (brief / conversational / thinking partner — the last listens while they
+think aloud and asks one question at a time), **patience** (quick / normal / patient; mapped to
+Gemini's end-of-speech sensitivity and silence window, so "patient" waits through pauses) and
+free-text **instructions** of up to 2,000 characters, read at the start of every call after the
+gateway's own rules. Stored on the person's own user record (`voicePreferences`, closed sets and
+bounded text; `voice.save` in `src/gateway/user-settings.js`), never on anyone else's. The prompt
+is also dynamic per caller: their name and role, their open conversations, the current thread's
+messages and, for continuity, their last five "Voice call on …" lines read from their own DM
+memory — never another person's folder.
+
 ## Admin controls for parallel agent runs (2026-11-13)
 
 Settings → Agent defaults → **Parallel agent runs** exposes the global agent-run limit and

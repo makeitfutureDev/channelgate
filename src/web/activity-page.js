@@ -762,7 +762,8 @@ function settingsBrowser(config, browser, theme) {
   const { document, location } = browser;
   const el = (id) => document.getElementById(id);
   const panel = el("settings-panel"), nav = el("settings-nav"), status = el("settings-status");
-  const SECTIONS = [["general", "General"], ["connections", "Connections"], ["mcps", "MCP servers"], ["variables", "Variables"], ["skills", "Skills"], ["ssh", "SSH keys"]];
+  const SECTIONS = [["general", "General"], ["voice", "Voice calls"], ["connections", "Connections"], ["mcps", "MCP servers"], ["variables", "Variables"], ["skills", "Skills"], ["ssh", "SSH keys"]];
+  const voiceCalls = config.voiceCalls === true;
   const wanted = String(location?.hash || "").replace(/^#/, "");
   let section = SECTIONS.some(([id]) => id === wanted) ? wanted : "general";
   let data = null, busy = false, ended = false, notice = "", noticeKind = "", editing = null, skillQuery = "";
@@ -911,6 +912,26 @@ function settingsBrowser(config, browser, theme) {
       const link = node("a", "settings-button", "Manage passkeys"); link.href = base + "/passkeys";
       keys.append(link);
       return [account, appearance, reminders, mentions, keys];
+    },
+    voice() {
+      const v = data.voice || { language: "", style: "brief", patience: "normal", instructions: "", styles: ["brief", "conversational", "thinking-partner"], patience_options: ["quick", "normal", "patient"], limits: { language: 60, instructions: 2000 } };
+      const prefs = card("How the agent talks to you on a call", "Your voice calls only. Saved to your account; your next call uses it. The voice always knows who you are, which conversations you have open and what you did on recent calls.");
+      if (!voiceCalls) prefs.append(node("p", "settings-copy", "Voice calls are not enabled on this gateway yet; an administrator turns them on under gateway Settings → Voice calls. Your preferences are kept for when they are."));
+      const styleLabels = { brief: "Brief — short answers, gets on with it", conversational: "Conversational — a little more, elaborates when asked", "thinking-partner": "Thinking partner — listens while you think aloud, asks one question at a time" };
+      const patienceLabels = { quick: "Quick — answers as soon as you stop", normal: "Normal", patient: "Patient — waits through your pauses" };
+      const select = (name, options, current, labels) => {
+        const item = node("select", "settings-input"); item.name = name; item.disabled = busy || ended;
+        for (const value of options) { const option = node("option", "", labels[value] || value); option.value = value; option.selected = value === current; item.append(option); }
+        item.value = current;
+        return item;
+      };
+      prefs.append(form([
+        field("Language", input("language", { value: v.language, max: v.limits.language, placeholder: "e.g. Romanian, English" }), "Leave empty and it follows whatever language you speak."),
+        field("Style", select("style", v.styles, v.style, styleLabels)),
+        field("Patience", select("patience", v.patience_options, v.patience, patienceLabels), "How long it waits after you stop talking before it answers."),
+        field("Your instructions", input("instructions", { multiline: true, value: v.instructions, max: v.limits.instructions, placeholder: "e.g. Call me Tibi. Confirm before starting anything that touches production. Keep summaries to one sentence." }), "Free text the voice reads at the start of every call, after the gateway's own rules."),
+      ], "Save", (values) => ({ action: "voice.save", language: values.language, style: values.style, patience: values.patience, instructions: values.instructions })));
+      return [prefs];
     },
     connections() {
       const c = data.connections, cards = [];
