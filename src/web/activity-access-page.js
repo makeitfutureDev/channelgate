@@ -7,7 +7,38 @@ async function accessBrowser({ mode, base, csrf, adminPasskeysAvailable }, env) 
   const { document, location, history, fetch, confirm, ChannelGatePasskeys: helper } = env;
   const el = id => document.getElementById(id);
   const status = el('status'), signIn = el('sign-in'), add = el('add-passkey');
-  let busy = false;
+  let busy = false, waiting = false, timer;
+  const browserSignIn = Boolean(signIn && mode !== 'browser-login' && helper.needsBrowserSignIn());
+  // Snapshot before any click can open the browser. A live older session must not
+  // complete a new sign-in before the user chooses their passkey/account.
+  const previousSession = browserSignIn
+    ? request('/activity/app/session', undefined, 'GET').then(data => data.url).catch(() => '')
+    : Promise.resolve('');
+  async function resumeApp() {
+    if (!waiting) return;
+    try {
+      const previous = await previousSession;
+      const data = await request('/activity/app/session', undefined, 'GET');
+      if (!waiting || data.url === previous) return;
+      waiting = false; env.clearTimeout(timer); navigate(data);
+    } catch { /* No session yet, or a temporary connection failure. */ }
+  }
+  function waitForBrowser() {
+    waiting = true;
+    const until = Date.now() + 5 * 60_000;
+    status.textContent = 'Complete sign-in in your browser. This app will open automatically.';
+    const check = async () => {
+      await resumeApp();
+      if (!waiting) return;
+      if (Date.now() >= until) {
+        waiting = false; status.textContent = 'Browser sign-in timed out. Please try again.'; return;
+      }
+      timer = env.setTimeout(check, 1500);
+    };
+    void check();
+  }
+  env.addEventListener?.('focus', () => { void resumeApp(); });
+  env.addEventListener?.('pagehide', () => { waiting = false; env.clearTimeout(timer); });
   async function request(url, body, method = 'POST') {
     const response = await fetch(url, { method, credentials: 'same-origin', cache: 'no-store',
       headers: { 'Content-Type': 'application/json', 'X-CG-Request': '1', ...(csrf ? { 'X-CG-CSRF': csrf } : {}) },
@@ -38,20 +69,39 @@ async function accessBrowser({ mode, base, csrf, adminPasskeysAvailable }, env) 
       remove.addEventListener('click', () => {
         if (!confirm('Remove this passkey? You can still open a new Dashboard link from Slack.')) return;
         void run(async () => {
-          render((await request(base + '/api/passkeys/' + encodeURIComponent(key.id), undefined, 'DELETE')).passkeys);
-          status.textContent = 'Passkey removed.';
-        });
+            render((await request(base + '/api/passkeys/' + encodeURIComponent(key.id), undefined, 'DELETE')).passkeys);
+            status.textContent = 'Passkey removed.';
+          });
       });
       row.append(name, remove); list.append(row);
     }
   }
   if (signIn) {
     signIn.disabled = !helper.available();
-    signIn.addEventListener('click', () => void run(async () => {
-      const { options } = await request('/activity/auth/login/options', {});
-      const response = await helper.get(options);
-      navigate(await request('/activity/auth/login/verify', { response }));
-    }));
+    if (browserSignIn) {
+      signIn.textContent = 'Continue in browser';
+      el('login-help').textContent = 'Use your usual passkey in your browser, then return to this app.';
+    }
+    signIn.addEventListener('click', () => {
+      if (browserSignIn) {
+        // Opening synchronously from the click avoids popup blocking. No window features:
+        // Chromium should open a normal tab rather than another app-style popup.
+        env.open('/activity-sign-in', '_blank', 'noopener,noreferrer');
+        if (!waiting) waitForBrowser();
+        return;
+      }
+      void run(async () => {
+        const { options } = await request('/activity/auth/login/options', {});
+        const response = await helper.get(options);
+        const data = await request('/activity/auth/login/verify', { response });
+        if (mode === 'browser-login') {
+          signIn.hidden = true;
+          el('login-help').textContent = 'You are signed in. Return to the Activity app to continue.';
+          el('return-app').hidden = false;
+          status.textContent = '';
+        } else navigate(data);
+      });
+    });
   }
   if (add) {
     add.disabled = !helper.available();
@@ -82,6 +132,6 @@ export function activityAccessPage({ mode = 'login', base = '', csrf = '', admin
   return { nonce, html: `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${manage ? 'Passkeys' : 'Sign in'} · ChannelGate Activity</title>${activityAppHead(getLogoColor())}<style nonce="${nonce}">${ACTIVITY_THEME_CSS}
 body{display:grid;place-items:center;min-height:100dvh;margin:0}main{box-sizing:border-box;margin:20px;padding:28px;width:min(480px,calc(100% - 40px));background:var(--panel);border:1px solid var(--line);border-radius:12px}.brand{margin-bottom:24px}h1{font-size:22px}p{color:var(--muted);line-height:1.6;font-size:14px}a{color:var(--orange);overflow-wrap:anywhere}button,input{box-sizing:border-box;font:inherit;padding:10px 12px;border:1px solid var(--line);border-radius:7px;color:var(--ink);background:var(--panel-2)}button{cursor:pointer}button:disabled{opacity:.5;cursor:default}input{display:block;width:100%;margin:8px 0 12px}label{font-size:14px}#status{min-height:1.6em}ul{list-style:none;padding:0}li{display:flex;align-items:center;justify-content:space-between;gap:12px;margin:12px 0}li span{overflow-wrap:anywhere;min-width:0}li button{flex:none;font-size:13px}.primary{background:var(--orange);color:var(--brand-ink);border-color:var(--orange)}.return{margin-top:24px}#sign-in{width:100%}
 </style></head><body><main>${ACTIVITY_BRAND}<h1>${manage ? 'Your Activity passkeys' : 'Your private Activity'}</h1>
-${manage ? `${adminPasskeysAvailable ? '<p>Your administrator passkeys already work for Activity. You do not need another passkey.</p><p><a href="/settings#set-admin-access">Manage administrator passkeys</a></p><p>Any older Activity-only passkeys are listed below.</p>' : '<p>Save a passkey to sign back in without opening another Slack link.</p>'}<ul id="passkey-list" aria-label="Your passkeys"></ul>${adminPasskeysAvailable ? '' : '<label for="passkey-name">Passkey name</label><input id="passkey-name" maxlength="80" placeholder="My phone or laptop" autocomplete="off"><button id="add-passkey" class="primary" type="button">Add passkey</button>'}<p>Bookmark <a href="/activity/login">Activity sign-in</a> to return later.</p><p class="return"><a href="${base}">Back to Activity</a></p>` : `<p>Sign in with your saved passkey. Your administrator passkey works here too. To set up your first Activity passkey, open Dashboard from Slack, then choose Passkeys.</p><button id="sign-in" class="primary" type="button">Sign in with a passkey</button>`}
+${manage ? `${adminPasskeysAvailable ? '<p>Your administrator passkeys already work for Activity. You do not need another passkey.</p><p><a href="/settings#set-admin-access">Manage administrator passkeys</a></p><p>Any older Activity-only passkeys are listed below.</p>' : '<p>Save a passkey to sign back in without opening another Slack link.</p>'}<ul id="passkey-list" aria-label="Your passkeys"></ul>${adminPasskeysAvailable ? '' : '<label for="passkey-name">Passkey name</label><input id="passkey-name" maxlength="80" placeholder="My phone or laptop" autocomplete="off"><button id="add-passkey" class="primary" type="button">Add passkey</button>'}<p>Bookmark <a href="/activity/login">Activity sign-in</a> to return later.</p><p class="return"><a href="${base}/settings">Back to Settings</a></p>` : `<p id="login-help">Sign in with your saved passkey. Your administrator passkey works here too. To set up your first Activity passkey, open Dashboard from Slack, then go to Settings → General → Manage passkeys.</p><button id="sign-in" class="primary" type="button">Sign in with a passkey</button><p id="return-app" hidden><a href="/activity/app">Open Activity</a></p>`}
 <p id="status" role="status" aria-live="polite"></p><noscript><p>Enable JavaScript to open Activity and use passkeys.</p></noscript></main><script nonce="${nonce}" src="/activity/passkeys.js"></script><script nonce="${nonce}">(${accessBrowser.toString()})(${config}, globalThis);</script></body></html>` };
 }

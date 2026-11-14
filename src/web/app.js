@@ -25,7 +25,7 @@ import { createPublicFileRouter } from "./public-files.js";
 import { createApprovalLinkRouter } from "./routes/approve.js";
 import { createFileUploadRouter } from "./file-upload.js";
 import { createConversationSettingsRouter } from './conversation-settings.js';
-import { createActivityRouter } from "./activity.js";
+import { createActivityRouter, createActivityBrowserLoginHandler } from "./activity.js";
 import { getSessionMap, getSessionRuntime, getSessionEngine } from "../gateway/sessions.js";
 import { poolStats } from "../engines/session-pool.js";
 import { getEngine, isEngineEnabled } from "../config/settings.js";
@@ -274,6 +274,7 @@ export function createWebApp({
   // to edit in writable modes; it has its own one-time grant → HttpOnly cookie exchange and repeats
   // the full Slack authorization/membership/mode check on open, page load, and every save.
   app.use('/conversation-settings', createConversationSettingsRouter());
+  app.get("/activity-sign-in", createActivityBrowserLoginHandler());
   app.use("/activity", createActivityRouter({ getClient: () => slack?.getClient?.(), getTeamId: () => slack?.snapshot?.().teamId,
     getBotIdentity: () => { const snap = slack?.snapshot?.(); return snap ? { userId: snap.botUserId, handle: snap.user } : null; } }));
   app.use("/file-editor", createFileEditorRouter({

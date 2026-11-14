@@ -1,5 +1,31 @@
 # ChannelGate — Test Plan
 
+## Installed Chrome app passkeys and Settings navigation (2026-11-14)
+
+- Engine-independent: browser WebAuthn and Activity session routes invoke no Claude/Codex turn.
+  Fixture `ACTIVITY-PASSKEYS-BROWSER`: disposable candidate gateway/scratch database, admitted
+  users A and B, live Slack stub, secure-context localhost, Chromium virtual internal resident
+  authenticator with user verification. Run `test/activity-passkeys.test.js` with
+  `CG_BROWSER_MODULE=<playwright/index.mjs>` and `CG_BROWSER_EXECUTABLE=<chromium>`.
+- Automated browser acceptance simulates macOS Chrome standalone display for login and expired Slack links with an older live
+  session, clicks **Continue in
+  browser**, verifies the new tab is outside `/activity/` with no opener, signs a real assertion
+  there and observes the original window load its own authenticated Activity. No authentication
+  ceremony starts in the installed window and no admin cookie is issued. Normal browser login,
+  shared admin keys, required verification, expiry, revocation and cross-user rejection still pass.
+- `test/activity.test.js` verifies anonymous/malformed launcher cookies, foreign origins, revoked
+  users and expired sessions cannot use the resume check. That check mints/extends no cookie;
+  the launcher id alone cannot open a dashboard. `test/activity-settings-page.test.js` plus the
+  browser test verify no header/footer Passkeys link and successful Settings → General → Manage
+  passkeys navigation, enrollment and removal.
+- Native macOS acceptance (separate from simulated display detection): use an approved disposable
+  HTTPS gateway and one Chrome profile with a saved iCloud/normal local passkey. Install Activity,
+  expire its session, click **Continue in browser**, and verify a regular tab offers the same
+  authenticator as browser sign-in. Authenticate; return to the original app and verify the right
+  viewer's threads. Cancel/retry; leave it idle five minutes; revoke the user/key before returning;
+  repeat in a normal browser and on Windows/mobile where the existing prompt remains in-app.
+  Pass only with actual device evidence. Headless Chromium does not prove Apple's native picker.
+
 ## Forked conversations in Activity (2026-11-14)
 
 - For both Claude and Codex, use an approved author in a private worker fixture with a completed

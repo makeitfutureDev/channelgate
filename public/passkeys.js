@@ -34,6 +34,12 @@
   function available() {
     return Boolean(window.isSecureContext && window.PublicKeyCredential && navigator.credentials);
   }
+  // Chromium disables iCloud Keychain in macOS app windows. Keep the ceremony in
+  // a regular tab, outside the installed Activity app's URL scope.
+  function needsBrowserSignIn() {
+    return /Macintosh/.test(navigator.userAgent || '') && /Chrome\//.test(navigator.userAgent || '')
+      && Boolean(window.matchMedia?.('(display-mode: standalone)').matches);
+  }
   function requireAvailable() {
     if (!available()) throw new Error("Passkeys need a supported browser and a secure HTTPS connection (or localhost).");
   }
@@ -44,7 +50,7 @@
     return error?.message || "Passkey verification failed. Please try again.";
   }
   window.ChannelGatePasskeys = Object.freeze({
-    available, errorMessage,
+    available, errorMessage, needsBrowserSignIn,
     async create(options) {
       requireAvailable();
       return serialize(await navigator.credentials.create({ publicKey: publicKeyOptions(options) }));

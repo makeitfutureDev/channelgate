@@ -55,7 +55,11 @@ test("settings view serves one nonce script, no Activity stream and no innerHTML
   assert.doesNotMatch(page.html, /new EventSource|id="threads"/);
   const script = /<script nonce="[^"]+">([\s\S]*?)<\/script>/.exec(page.html)[1];
   assert.doesNotMatch(script.slice(script.indexOf("function settingsBrowser")), /innerHTML/);
-  for (const view of ["activity", "subscriptions", "settings"]) assert.match(activityPage({ sessionId: "s", csrf: "c", view }).html, /href="\/activity\/s\/settings"/);
+  for (const view of ["activity", "subscriptions", "settings"]) {
+    const html = activityPage({ sessionId: "s", csrf: "c", view }).html;
+    assert.match(html, /href="\/activity\/s\/settings"/);
+    assert.doesNotMatch(html, /href="\/activity\/s\/passkeys"/);
+  }
 });
 
 test("General renders hostile names as text and saves the reminder preference with CSRF", async () => {
