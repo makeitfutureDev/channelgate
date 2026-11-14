@@ -55,15 +55,20 @@ opens the overlay bound to that thread; the button is admitted by the same
 `accessContext().allows()` rule as Dashboard, and every binding is admitted again by the call
 manager. Older `/activity/<session>/call?…` links redirect to the dashboard.
 
-During a call, **Minimize** (or Escape) hides the transcript and controls into a floating phone
-icon with the elapsed time; the dashboard remains usable while microphone capture, audio and
-events continue. Click the icon to restore the transcript and mute/hang-up controls. Mute state
-and transcript survive minimizing. A row's **Call the agent** action during an active call moves
-that same call to the selected conversation without reconnecting or opening a second voice
-session, preserving the minimized view. The owner-only, CSRF-protected switch rechecks destination
+The call lives in a docked **side panel** on the right, never a modal: the dashboard narrows
+beside it and stays fully usable (on phones the panel covers the page until hidden). It holds the
+binding, Start/Hang up/Mute and the timer, a chat-style transcript (your lines on the right, the
+agent's on the left) and the dispatched tasks. During a call the header's **📞 Call** button
+turns into the call indicator — green **● In call 01:23**, 🔇 when muted, amber while
+reconnecting, red on a voice error — and shows or hides the panel; the panel's × button and
+Escape hide it too. Hiding never ends the call: microphone capture, audio, transcript and mute
+state continue. A row's **Call the agent** action during an active call moves that same call to
+the selected conversation without reconnecting or opening a second voice session, leaving the
+panel shown or hidden as it was. The owner-only, CSRF-protected switch rechecks destination
 access, posts the segment to the thread left behind and supplies the new thread's context to the
 voice. Switches serialize; selecting the current thread creates no duplicate notices. Switch
-errors restore visible controls and retain the current binding; ending removes the floating icon.
+errors reopen the panel with the error and retain the current binding; ending returns the header
+button to **📞 Call** and shows the panel with the end notice.
 
 The daemon holds the Google **Gemini Live** session (`src/gateway/voice/gemini-live.js`: one
 WebSocket, binary frames, 16 kHz PCM in, 24 kHz PCM out, input/output transcription, context

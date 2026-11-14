@@ -121,22 +121,27 @@
 
 ## Voice calls with a channel's agent (2026-11-13, navigation 2026-11-14)
 
-- Minimized view and dashboard switching (2026-11-14): `test/voice-calls.test.js` checks
+- Side panel and dashboard switching (2026-11-14, side panel replaced the floating bubble): `test/voice-calls.test.js` checks
   owner-only, CSRF-protected switching, malformed destinations, revoked caller/destination access,
   unchanged same-thread selection, the original voice session, segment placement, context updates
   and subsequent task routing. Its Chromium case uses the real Activity router, call manager,
   SSE and audio routes with a fake Gemini session and Chromium fake microphone. Enable with
   `CG_BROWSER_MODULE` (absolute Playwright module path) and, if needed, `CG_BROWSER_EXECUTABLE`.
-  At 1440px and 390px, start/mute/minimize, filter the dashboard, select a different row's call
-  icon, restore transcript/controls, use Escape, deny a switch and hang up. Pass: dashboard stays
-  clickable, bubble fits viewport, timer keeps ticking, only one session exists, binding/context
-  move, transcript/mute persist, denied switch restores controls without changing binding, no
-  bubble remains after hang-up and no page errors. UI visibility is engine-independent; synthetic
+  At 1440px and 390px, open a row's call, start, mute, hide the panel (×), filter the dashboard,
+  select a different row's call icon, show the panel from the header button, use Escape, deny a
+  switch and hang up. Pass: no dialog role or backdrop; at 1440px the dashboard narrows by the
+  panel width and widens back when hidden; the header button reads "📞 Call" idle and a green
+  "In call mm:ss" (🔇 when muted, aria-label naming the binding) during the call, with
+  aria-pressed following the panel; hiding keeps the call; the timer keeps ticking; only one
+  session exists; binding/context move while hidden; transcript/mute persist; a denied switch
+  reopens the panel without changing binding; the panel fits the viewport with no horizontal
+  overflow; hang-up restores "📞 Call"; no page errors. UI visibility is engine-independent; synthetic
   Gemini does not establish live speech/provider acceptance.
 - Live switching acceptance (Claude and Codex separately): use the disposable Worker/Auto
   fixtures and approved non-admin caller below. Start in thread A, say "This is the first thread",
-  minimize and click **Call the agent** in thread B. Pass: same call id/session, bubble stays
-  minimized, thread A receives its transcript segment and B receives a join notice. Restore, say
+  hide the panel and click **Call the agent** in thread B. Pass: same call id/session, the panel
+  stays hidden with the header still showing "In call", thread A receives its transcript segment
+  and B receives a join notice. Show the panel from the header button, say
   "Reply with CALL_SWITCH_OK in the current thread"; the caller-authored task and answer must
   appear only in B. Same-thread clicks post no duplicate notices; rapid A/B clicks serialize.
   Inaccessible destinations return 403 and foreign calls 404 without changing the current binding;
