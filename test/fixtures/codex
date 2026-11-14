@@ -284,6 +284,8 @@ if [ "$fork" = "yes" ]; then
   printf '%s\n' '{"type":"thread.started","thread_id":"codex-stub-fork"}'
 elif [ -n "$resume_id" ]; then
   printf '{"type":"thread.started","thread_id":"%s"}\n' "$resume_id"
+elif [ "${CODEX_HOME##*/}" = ".codex-eu" ]; then
+  printf '%s\n' '{"type":"thread.started","thread_id":"codex-eu-stub-session"}'
 else
   printf '%s\n' '{"type":"thread.started","thread_id":"codex-stub-session"}'
 fi

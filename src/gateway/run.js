@@ -829,7 +829,9 @@ async function runMessageImpl({ channelId, authorId, workspaceId = "", text, thr
   // a fresh session on the enabled harness with the thread transcript replayed into it.
   // An explicit unapproved request is refused below, never substituted or announced as running.
   if (!isEngineEnabled(engine) && (!enginePinnedByUser || isChannelEngineApproved(channelMeta, engine))) {
-    if (requireAdapter(engine).channelScoped) {
+    // Native session IDs belong to this exact harness/login. A queued or recovered fork must
+    // never hand its source ID to a substitute if the harness was disabled after preparation.
+    if (forkSourceSessionId || requireAdapter(engine).channelScoped) {
       return {
         slug: entry.slug, cwd: "", model: "", engine,
         content: `${engineLabel(engine)} is disabled in gateway Settings. Enable it or select another harness for this thread.`,

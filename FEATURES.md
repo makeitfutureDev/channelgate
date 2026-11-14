@@ -1,5 +1,17 @@
 # ChannelGate — Features
 
+## Fork support across compatible harnesses (2026-11-14)
+
+Slack `/fork` uses the engine's declared native-fork capability. Codex EU, Codex channel
+accounts and Claude Extra can branch their completed container sessions using the same native
+runner as ordinary Codex or Claude, while retaining their own engine and login/state directory.
+Engines without that capability receive an unsupported-engine explanation. Missing sessions,
+host/sudo sessions, runtime access scopes and current admission checks retain their existing
+guards. Selecting a different engine still starts a fresh child from bounded Slack history.
+Native forks refuse a disabled or unconfigured source harness before posting a child. Run
+admission also rejects a subsequently disabled harness instead of handing its source ID to
+another login or engine.
+
 ## Forked conversations in Activity (2026-11-14)
 
 New `/fork` conversations use their own child-thread label (creator name plus new request),

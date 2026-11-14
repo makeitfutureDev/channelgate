@@ -75,7 +75,7 @@ const claude = validateEngineAdapter({
   // this engine: the provider did not answer the request. Never the limit/credential kinds (their
   // own failover) and never the catch-all "provider" (a rejected request fails the same way twice).
   transientKinds: Object.freeze(["availability", "connection"]),
-  supports: { warmPool: true, interruptSteer: true, permissionPrompt: true, compact: true, realCost: true, usageLimitFallback: true, userSkillOverlay: true, settingsFile: true, networkModes: FULL_NETWORK_MODES },
+  supports: { nativeFork: true, warmPool: true, interruptSteer: true, permissionPrompt: true, compact: true, realCost: true, usageLimitFallback: true, userSkillOverlay: true, settingsFile: true, networkModes: FULL_NETWORK_MODES },
   modelBelongs: (m) => /^(?:best|fable|haiku|opusplan|opus|sonnet|(?:opus|sonnet)\[1m\])$|^claude-/.test(m),
   resumeCommand: (id) => `claude --resume ${id}`,
   sessionState: Object.freeze({
@@ -329,7 +329,7 @@ const codex = validateEngineAdapter({
   ], mintsOwnSessionId: true,
   // The runner's own "the provider did not answer" kind (classifyCodexFailure), replayable in place.
   transientKinds: Object.freeze(["transient"]),
-  supports: { warmPool: false, interruptSteer: false, permissionPrompt: false, compact: false, realCost: false, usageLimitFallback: true, userSkillOverlay: true, networkModes: FULL_NETWORK_MODES },
+  supports: { nativeFork: true, warmPool: false, interruptSteer: false, permissionPrompt: false, compact: false, realCost: false, usageLimitFallback: true, userSkillOverlay: true, networkModes: FULL_NETWORK_MODES },
   modelBelongs: (m) => /^(?:gpt-|o[0-9]|codex)/.test(m),
   resumeCommand: (id) => `codex exec resume ${id}`,
   sessionState: Object.freeze({

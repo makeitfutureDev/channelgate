@@ -880,7 +880,8 @@ export async function processMessageEvent(event, client, { botUserId = "", teamI
           const sourceId = await getSession(entry.slug, threadKey);
           const sourceEngine = await getSessionEngine(entry.slug, threadKey);
           const sourceRuntime = await getSessionRuntime(entry.slug, threadKey);
-          if (!sourceId || !["claude", "codex"].includes(sourceEngine)) { await reply("This thread needs a completed Claude or Codex turn before it can be forked."); return; }
+          if (!sourceId) { await reply("This thread needs a completed Claude or Codex turn before it can be forked."); return; }
+          if (!engineSupports(sourceEngine, "nativeFork")) { await reply("This thread's engine does not support session forks."); return; }
           if (sourceRuntime?.backend !== "container") { await reply("This session's history is outside the channel container. Run another turn here to carry it into the container before forking."); return; }
           const sourceScope = sourceRuntime.scope || "admin";
           if (sourceScope !== (authorIsAdmin ? "admin" : "project")) {
@@ -903,8 +904,8 @@ export async function processMessageEvent(event, client, { botUserId = "", teamI
               await reply(`Invalid effort \`:${forkShortcut.effort}\` for \`${forkTarget.model}\`. Choose ${effortsForModel(forkTarget.engine, forkTarget.model).map(value => `\`:${value}\``).join(", ")}.`); return;
             }
           }
-          if (forkTarget) await assertEngineSelectable(forkTarget.engine, { meta });
           const childEngine = forkTarget ? forkTarget.engine : sourceEngine;
+          await assertEngineSelectable(childEngine, { channelId: event.channel, meta });
           const nativeFork = childEngine === sourceEngine;
           const sourceClean = Boolean(meta.cleanMode || await getThreadClean(entry.slug, threadKey));
           if (nativeFork) abortPooled(runKey); // settle the source transcript before cloning

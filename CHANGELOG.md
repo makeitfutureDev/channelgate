@@ -8,6 +8,10 @@
 - Show Activity channel pins on row hover or keyboard focus, keeping controls visible on touch
   devices and empty pinned-channel cards.
 
+- Allow Slack `/fork` for Codex EU, Codex channel accounts and Claude Extra using their native
+  fork capability. Unsupported engines now receive an accurate explanation instead of being
+  told their completed turn is missing.
+
 - Continue installed macOS Chrome Activity sign-in in a browser tab so the usual passkey provider
   is available, then resume the app automatically. Keep passkey management in Settings → General.
 

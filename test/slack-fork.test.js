@@ -2,6 +2,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
 import assert from "node:assert/strict";
+import { mkdirSync, writeFileSync } from "node:fs";
 import { ensureTestEnv } from "./helpers.js";
 
 ensureTestEnv();
@@ -15,12 +16,20 @@ const { saveSettings } = await import("../src/config/settings.js");
 const { setUser, getChannelEntry, upsertChannelEntry, saveChannelMeta } = await import("../src/config/store.js");
 const { getThreadEngine, getThreadModel, getThreadEffort, getThreadClean, setThreadModel, setThreadEffort, setThreadClean } = await import("../src/gateway/thread-engine.js");
 const { getSession, getSessionEngine, saveSession } = await import("../src/gateway/sessions.js");
+const { codexEuLoginHome } = await import("../src/engines/codex-eu.js");
 const { buildClaudeArgs } = await import("../src/engines/claude.js");
 const { buildCodexArgs } = await import("../src/engines/codex.js");
 const { createFakeRuntime } = await import("./fixtures/fake-runtime-backend.js");
 const { parseSlashCommand } = await import("../src/slack/message-normalize.js");
 const { getSlackThread } = await import("../src/gateway/slack-threads.js");
 const { processMessageEvent, runQueue, abortRunsInChannel } = await import("../src/slack/message-pipeline.js");
+const { runMessage } = await import("../src/gateway/run.js");
+
+// Dedicated scratch login so individual EU test cases also work with --test-name-pattern.
+const euClaims = { exp: Math.floor(Date.now() / 1000) + 864000, "https://api.openai.com/auth": { chatgpt_account_id: "fork-eu-fixture" } };
+const euAccessToken = `${Buffer.from('{"alg":"RS256"}').toString("base64url")}.${Buffer.from(JSON.stringify(euClaims)).toString("base64url")}.fixture`;
+mkdirSync(codexEuLoginHome(), { recursive: true });
+writeFileSync(path.join(codexEuLoginHome(), "auth.json"), JSON.stringify({ tokens: { access_token: euAccessToken, refresh_token: "fixture-refresh", account_id: "fork-eu-fixture" } }), { mode: 0o600 });
 
 function slack() {
   const posted = [], apiCalls = [];
@@ -55,19 +64,21 @@ test("fork command preserves its message and both CLIs receive their native fork
   assert.ok(codex.includes("--ignore-user-config"));
 });
 
-for (const engine of ["claude", "codex"]) {
+for (const engine of ["claude", "codex", "codex-eu"]) {
   test(`${engine} /fork creates a linked Slack root and distinct resumable engine session`, async () => {
-    saveSettings({ engine, composioMode: "personal" });
+    saveSettings({ engine, composioMode: "personal", engineEnabled: { claude: true, codex: true, "codex-eu": true } });
     const user = `U_FORK_${engine.toUpperCase()}`;
     const channel = `D_FORK_${engine.toUpperCase()}`;
     await setUser(user, { name: "Fork User", approved: true });
     const client = slack();
-    const sourceTs = engine === "claude" ? "1000.001" : "1001.001";
+    const sourceTs = { claude: "1000.001", codex: "1001.001", "codex-eu": "1002.001" }[engine];
     const event = { type: "message", channel, channel_type: "im", user, ts: sourceTs, text: "Source task" };
     await processMessageEvent(event, client, { botUserId: "UBOT", teamId: "T_FORK" });
     const entry = await getChannelEntry(channel);
     const sourceId = await getSession(entry.slug, sourceTs);
     assert.ok(sourceId);
+    assert.equal(await getSessionEngine(entry.slug, sourceTs), engine);
+    const beforeFork = runtime.calls.spawn.length;
     await processMessageEvent({ ...event, ts: `${sourceTs.slice(0, 4)}.002`, thread_ts: sourceTs, text: "/fork Explore another solution" }, client, { botUserId: "UBOT", teamId: "T_FORK" });
     const root = client.posted.find((m) => !m.thread_ts && /Fork:/.test(m.text || ""));
     assert.ok(root, "fork gets a new top-level Slack message");
@@ -96,10 +107,21 @@ for (const engine of ["claude", "codex"]) {
     assert.notEqual(childId, sourceId, "fork must not resume or overwrite the original session");
     assert.equal(await getSession(entry.slug, sourceTs), sourceId);
     assert.equal(await getSessionEngine(entry.slug, childTs), engine);
+    if (engine === "codex-eu") {
+      const forkSpawn = runtime.calls.spawn.slice(beforeFork).find(call => call.args.includes("fork"));
+      assert.ok(forkSpawn?.args.includes(sourceId), "EU forks the actual source session");
+      assert.equal(forkSpawn.env.CODEX_HOME, "/home/agent/.codex-eu", "EU fork stays in its isolated login/state home");
+    }
     assert.ok(client.posted.some((m) => m.thread_ts === childTs && /stub .*reply/i.test(m.text || "")), "new request is answered in child thread");
+    const beforeFollowup = runtime.calls.spawn.length;
     await processMessageEvent({ ...event, ts: "9000.002", thread_ts: childTs, text: "Continue the alternative" }, client, { botUserId: "UBOT", teamId: "T_FORK" });
     assert.equal(await getSession(entry.slug, childTs), childId, "follow-up resumes the forked session");
     assert.equal(await getSession(entry.slug, sourceTs), sourceId, "follow-up leaves source untouched");
+    if (engine === "codex-eu") {
+      const resumeSpawn = runtime.calls.spawn.slice(beforeFollowup).find(call => call.args.includes(childId));
+      assert.ok(resumeSpawn?.args.includes("resume"), "EU follow-up resumes the child");
+      assert.equal(resumeSpawn.env.CODEX_HOME, "/home/agent/.codex-eu");
+    }
   });
 }
 
@@ -111,6 +133,63 @@ test("/fork without a completed source session refuses before posting a new Slac
   await processMessageEvent({ type: "message", channel, channel_type: "im", user, ts: "5000.001", text: "/fork Something new" }, client, { botUserId: "UBOT" });
   assert.ok(client.posted.some((m) => m.thread_ts === "5000.001" && /needs a completed/.test(m.text || "")));
   assert.equal(client.posted.some((m) => !m.thread_ts), false);
+});
+
+for (const engine of ["qwen", "qwen-eu", "opencode", "unknown-engine"]) {
+  test(`/fork explains unsupported ${engine} sessions without creating a child`, async () => {
+    const user = `U_FORK_UNSUPPORTED_${engine}`;
+    const channel = `D_FORK_UNSUPPORTED_${engine}`;
+    await setUser(user, { name: "Fork User", approved: true });
+    const entry = await upsertChannelEntry(channel, { name: `unsupported-${engine}`, isDM: true, type: "im" });
+    await saveSession(entry.slug, "5100.001", "unsupported-source", engine, null, JSON.stringify({ backend: "container", scope: "project" }));
+    const client = slack();
+    const before = runtime.calls.spawn.length;
+    await processMessageEvent({ type: "message", channel, channel_type: "im", user, thread_ts: "5100.001", ts: "5100.002", text: "/fork Another approach" }, client, { botUserId: "UBOT" });
+    assert.ok(client.posted.some(message => /does not support session forks/.test(message.text || "")));
+    assert.equal(client.posted.some(message => !message.thread_ts), false);
+    assert.equal(runtime.calls.spawn.length, before);
+    assert.equal(await getSession(entry.slug, "5100.001"), "unsupported-source");
+  });
+}
+
+for (const [name, runtimeStamp, refusal] of [
+  ["host", { backend: "host", scope: "project" }, /history is outside the channel container/],
+  ["admin scope", { backend: "container", scope: "admin" }, /under your own access level/],
+]) {
+  test(`Codex EU /fork still rejects a source from ${name}`, async () => {
+    const user = `U_FORK_EU_GUARD_${runtimeStamp.backend}`;
+    const channel = `D_FORK_EU_GUARD_${runtimeStamp.backend}`;
+    await setUser(user, { name: "Fork User", approved: true });
+    const entry = await upsertChannelEntry(channel, { name: `eu-guard-${runtimeStamp.backend}`, isDM: true, type: "im" });
+    await saveSession(entry.slug, "5200.001", "eu-guard-source", "codex-eu", null, JSON.stringify(runtimeStamp));
+    const client = slack();
+    const before = runtime.calls.spawn.length;
+    await processMessageEvent({ type: "message", channel, channel_type: "im", user, thread_ts: "5200.001", ts: "5200.002", text: "/fork Another approach" }, client, { botUserId: "UBOT" });
+    assert.ok(client.posted.some(message => refusal.test(message.text || "")));
+    assert.equal(client.posted.some(message => !message.thread_ts), false);
+    assert.equal(runtime.calls.spawn.length, before);
+    assert.equal(await getSession(entry.slug, "5200.001"), "eu-guard-source");
+  });
+}
+
+test("disabled EU source refuses before child creation and cannot substitute another login at run admission", async () => {
+  saveSettings({ engine: "claude", engineEnabled: { claude: true, codex: true, "codex-eu": false } });
+  const user = "U_FORK_DISABLED_EU", channel = "D_FORK_DISABLED_EU";
+  await setUser(user, { name: "Fork User", approved: true });
+  const entry = await upsertChannelEntry(channel, { name: "disabled-eu", isDM: true, type: "im" });
+  await saveSession(entry.slug, "5300.001", "disabled-eu-source", "codex-eu", null, JSON.stringify({ backend: "container", scope: "project" }));
+  const client = slack();
+  const before = runtime.calls.spawn.length;
+  await processMessageEvent({ type: "message", channel, channel_type: "im", user, thread_ts: "5300.001", ts: "5300.002", text: "/fork Another approach" }, client, { botUserId: "UBOT" });
+  assert.ok(client.posted.some(message => /Codex EU is disabled/.test(message.text || "")));
+  assert.equal(client.posted.some(message => !message.thread_ts), false);
+  // Simulate a recovered child, or a disable between preparation and run admission.
+  const result = await runMessage({ channelId: channel, authorId: user, threadKey: "5300.003", text: "Recovered fork", origin: "recovery", overrides: { engine: "codex-eu" }, forkSourceSessionId: "disabled-eu-source" });
+  assert.equal(result.engineRefused, true);
+  assert.equal(result.engine, "codex-eu");
+  assert.match(result.content, /disabled/);
+  assert.equal(runtime.calls.spawn.length, before, "no source ID is sent to a substitute engine");
+  assert.equal(await getSession(entry.slug, "5300.001"), "disabled-eu-source");
 });
 
 for (const engine of ["claude", "codex"]) for (const effort of ["", "low"]) {
@@ -191,20 +270,19 @@ test("fork shortcut failures create no child thread or engine turn", async () =>
   }
 });
 
-for (const sourceEngine of ["claude", "codex"]) {
-  test(`${sourceEngine} /fork to another engine starts fresh with source Slack history`, async () => {
-    const childEngine = sourceEngine === "claude" ? "codex" : "claude";
-    const model = childEngine === "codex" ? "gpt-6-astra" : "claude-opus-5-5";
-    saveSettings({ engine: sourceEngine, engineEnabled: { claude: true, codex: true }, modelShortcuts: { other: { engine: childEngine, model } } });
-    const user = `U_FORK_HANDOFF_${sourceEngine}`;
-    const channel = `D_FORK_HANDOFF_${sourceEngine}`;
+for (const [sourceEngine, childEngine] of [["claude", "codex"], ["codex", "claude"], ["codex-eu", "codex"], ["codex", "codex-eu"]]) {
+  test(`${sourceEngine} /fork to ${childEngine} starts fresh with source Slack history`, async () => {
+    const model = childEngine === "claude" ? "claude-opus-5-5" : "gpt-6-astra";
+    saveSettings({ engine: sourceEngine, engineEnabled: { claude: true, codex: true, "codex-eu": true }, modelShortcuts: { other: { engine: childEngine, model } } });
+    const user = `U_FORK_HANDOFF_${sourceEngine}_${childEngine}`;
+    const channel = `D_FORK_HANDOFF_${sourceEngine}_${childEngine}`;
     await setUser(user, { name: "Fork User", approved: true });
     const client = slack();
     const event = { type: "message", channel, channel_type: "im", user, ts: "8000.001", text: "Remember FORK-HISTORY-42" };
     await processMessageEvent(event, client, { botUserId: "UBOT" });
     const entry = await getChannelEntry(channel);
     const sourceId = await getSession(entry.slug, event.ts);
-    const sourceModel = sourceEngine === "codex" ? "gpt-6.1-sol" : "claude-sonnet-4-6";
+    const sourceModel = sourceEngine === "claude" ? "claude-sonnet-4-6" : "gpt-6.1-sol";
     await setThreadModel(entry.slug, event.ts, sourceModel);
     await setThreadEffort(entry.slug, event.ts, "high");
     const historyCalls = [];
@@ -233,6 +311,9 @@ for (const sourceEngine of ["claude", "codex"]) {
     assert.ok(spawn);
     assert.ok(!spawn.args.includes("fork") && !spawn.args.includes("--fork-session") && !spawn.args.includes("resume") && !spawn.args.includes("-r"), "other engine starts fresh");
     assert.ok(!spawn.args.includes(sourceId), "source session ID never reaches the other CLI");
+    if (sourceEngine === "codex-eu" || childEngine === "codex-eu") {
+      assert.equal(spawn.env.CODEX_HOME, childEngine === "codex-eu" ? "/home/agent/.codex-eu" : "/home/agent/.codex", "handoff uses the destination's own state home");
+    }
     const prompt = spawn.args.find((arg) => arg.includes("Continue the decision"));
     assert.match(prompt, /FORK-HISTORY-42/);
     assert.match(prompt, /Our decision was to use SQLite/);
@@ -292,9 +373,9 @@ async function until(check) {
   assert.fail("timed out waiting for queued fork");
 }
 
-for (const engine of ["claude", "codex"]) {
+for (const engine of ["claude", "codex", "codex-eu"]) {
   test(`${engine} busy /fork queues, waits, forks once and releases source ownership`, async () => {
-    saveSettings({ engine, engineEnabled: { claude: true, codex: true } });
+    saveSettings({ engine, engineEnabled: { claude: true, codex: true, "codex-eu": true } });
     const user = `U_QUEUE_FORK_${engine}`;
     const channel = `D_QUEUE_FORK_${engine}`;
     await setUser(user, { name: "Queued Fork", approved: true });

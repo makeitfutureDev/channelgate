@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
 import { PassThrough } from "node:stream";
 import { commandHealth, createAdapterRegistry, validateRunContext } from "../src/engines/contract.js";
-import { engineUiManifest, fallbackTargets, requireAdapter } from "../src/engines/registry.js";
+import { engineSupports, engineUiManifest, fallbackTargets, requireAdapter } from "../src/engines/registry.js";
 
 function fakeAdapter(id = "third") {
   return {
@@ -51,6 +51,15 @@ test("built-in registry publishes safe UI manifests and a generic fallback graph
   assert.ok(!fallbackTargets("claude").includes("qwen"));
   assert.ok(!fallbackTargets("claude").includes("qwen-eu"));
   assert.throws(() => requireAdapter("missing"), /Unknown or unavailable/);
+});
+
+test("native fork capability follows compatible runner variants and excludes unsupported engines", () => {
+  for (const engine of ["claude", "codex", "codex-eu", "codex-channel", "claude-bedrock"]) {
+    assert.equal(engineSupports(engine, "nativeFork"), true, engine);
+  }
+  for (const engine of ["qwen", "qwen-eu", "opencode", "unknown-engine"]) {
+    assert.equal(engineSupports(engine, "nativeFork"), false, engine);
+  }
 });
 
 test("CLI health failures explain the outcome without exposing a numeric process code", async () => {
