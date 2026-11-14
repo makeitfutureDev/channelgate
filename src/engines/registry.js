@@ -63,6 +63,21 @@ export function engineSessionFiles(engine, { cwd = "", sessionId = "" } = {}) {
     .map((entry) => Object.freeze({ rel: String(entry.rel), kind: entry.kind === "dir" ? "dir" : "file" }));
 }
 
+/**
+ * The session this transcript CONTINUES, read from its first line — a paginated Codex fork names
+ * its source rollout there — or `""` for a root session, an engine that declares no such fact, a
+ * legacy transcript or anything unparseable. Never throws: a carry must not fail on a header.
+ */
+export function engineSessionParent(engine, firstLine) {
+  const state = engineSessionState(engine);
+  if (!state || typeof state.parentSession !== "function") return "";
+  try {
+    return String(state.parentSession(String(firstLine || "")) || "").trim();
+  } catch {
+    return "";
+  }
+}
+
 export function modelBelongsToEngine(model, engine) {
   const value = String(model || "").trim().toLowerCase();
   return !value || Boolean(requireAdapter(engine).modelBelongs(value));

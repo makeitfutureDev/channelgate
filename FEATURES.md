@@ -1992,6 +1992,15 @@ accepted model/effort independently of later selections, including across restar
   treating the transfer's own lease as an active occupant that blocks container recreation.
   Preparation reports waits, responds to Stop, and falls back to transcript recovery after a
   bounded preparation timeout. An explicit Stop never starts a replacement engine turn.
+- A Codex `/fork` child is a PAGINATED rollout: it holds only the child's own turns and names the
+  source rollout it was cut from, and that source may name its own. Carrying such a thread across
+  the boundary follows the chain and copies every source the receiving side lacks
+  (`sessionState.parentSession` on the Codex manifest, `engineSessionParent`,
+  `CARRY_LINEAGE_LIMIT`); a source the receiving side already holds is left untouched, because
+  rollouts are append-only and that copy may be live. When the chain cannot be completed, a resume
+  Codex refuses with `thread/resume failed: invalid paginated history lineage … missing source
+  rollout` heals from the chat transcript instead of dead-ending (`isSessionNotFound`). Claude's
+  `--fork-session` copies the history and needs no lineage.
 - Fatal Google Chat receiver errors stop intake and mark the connection as failed; health and
   connector availability no longer report a stopped receiver as connected. Pub/Sub permission
   failures name the Subscriber role and reconnect action. Reconnecting clears the failure, and

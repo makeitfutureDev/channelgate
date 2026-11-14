@@ -144,3 +144,21 @@ test("isForkUnavailable matches Codex's refused thread/fork lineage and nothing 
   assert.equal(isForkUnavailable({ message: "thread/resume failed: list_turns is not supported yet" }), false);
   assert.equal(isForkUnavailable({ details: { stdout: "thread/fork failed: missing source rollout" } }), false, "stdout alone never triggers a fallback");
 });
+
+test("isSessionNotFound heals a resume whose fork lineage is missing on this runtime, and only a resume", async () => {
+  const { isForkUnavailable } = await import("../src/gateway/run.js");
+  // Atlas, int-hubexo-nordics, 2026-11-14: a Codex /fork child switched to /sudo. The carry copied
+  // the child's own rollout to the host, Codex 0.167 walked its paginated lineage and found no
+  // source there. Before: a dead-ended turn, twice. Now: the carry brings the sources, and when it
+  // cannot (the chain is broken on both sides), the thread heals from the Slack transcript.
+  const resume = { message: "Codex failed because it reported a general error: Error: thread/resume: thread/resume failed: invalid paginated history lineage for 01a1d921-e18b-7d21-a2db-230d62d843a0: missing source rollout (code -32600)" };
+  assert.equal(isSessionNotFound(resume), true);
+  assert.equal(isSessionNotFound({ message: "Error: thread/resume: thread/resume failed: invalid paginated history lineage for x: cutoff byte offset is past the source rollout (code -32600)" }), true);
+  assert.equal(isSessionNotFound({ message: "Error: thread/resume: thread/resume failed: invalid paginated history lineage for x: source rollout belongs to another thread (code -32600)" }), true);
+  // A refused FORK is the fresh-session fallback's business (isForkUnavailable), not a heal; and
+  // the same words in the model's own output never reset a thread.
+  const fork = { message: "Codex failed because it reported a general error: Error: thread/fork failed: invalid paginated history lineage for x: missing source rollout (code -32600)" };
+  assert.equal(isSessionNotFound(fork), false);
+  assert.equal(isForkUnavailable(fork), true);
+  assert.equal(isSessionNotFound({ message: "general error", details: { stdout: "thread/resume failed: invalid paginated history lineage" } }), false);
+});

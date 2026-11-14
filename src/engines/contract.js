@@ -87,6 +87,12 @@ export function validateEngineAdapter(adapter) {
     if (state.channelHistory !== undefined && typeof state.channelHistory !== "boolean") {
       throw new TypeError(`EngineAdapter ${adapter.id || "?"} declares a malformed channelHistory fact`);
     }
+    // OPTIONAL: `parentSession(firstLine)` names the session a transcript CONTINUES (a paginated
+    // Codex fork), so a carry brings that source along. Declared → a function; a malformed
+    // declaration must not load, or a carried fork would resume into "missing source rollout".
+    if (state.parentSession !== undefined && typeof state.parentSession !== "function") {
+      throw new TypeError(`EngineAdapter ${adapter.id || "?"} declares a malformed parentSession fact`);
+    }
   }
   // OPTIONAL: the provider-failure kinds the orchestrator may replay in place. Declared → an array
   // of kind names; a malformed declaration must not load, or the retry would silently never fire.
