@@ -2,6 +2,11 @@
 
 ## 0.6.5 — candidate, pending approval
 
+- Carry a forked Codex thread's source rollouts when it switches between its container and a
+  `/sudo` host, so resuming no longer fails with `invalid paginated history lineage … missing
+  source rollout`. When a source cannot be found on either side, the thread heals from the chat
+  transcript instead of dead-ending.
+
 - Default personal Activity to **Group by → Channel** for everyone without a saved grouping
   preference. Viewers can still choose Status, and saved choices are preserved.
 

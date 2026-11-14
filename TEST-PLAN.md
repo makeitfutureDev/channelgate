@@ -4018,6 +4018,27 @@ Record blocked fixtures and unexecuted gates explicitly for both engines.
   `test/container-lifecycle.test.js`, and `test/runtime-integration-run.test.js` cover caller-lease
   forwarding through container→host transfer, stale mount recreation, lease release, Stop during
   preparation, timeout fallback, and cancellation without starting a healed turn.
+- [x] Automated (2026-11-14, fork lineage): `test/session-carry.test.js` — Codex names a paginated
+  fork's source from the rollout header (a legacy rollout, a non-header line, a self-reference and
+  Claude yield none; a non-function `parentSession` fact does not load); container→host carries a
+  fork-of-a-fork plus its legacy root under one lease (3 files, 2 sources, date directories intact),
+  keeps a source the host already holds while still fetching that source's own missing parent, and
+  stops on a cycle and on a chain broken on both sides; host→container reads the chain first, copies
+  once with the sources flagged `ifMissing`, and never replaces the container's live copy.
+  `test/container-carry.test.js` executes the generated `if [ ! -e … ]` guard with the real
+  `/bin/sh`. `test/session-engine.test.js`: `thread/resume failed: invalid paginated history
+  lineage …` heals a resume, a refused `thread/fork` stays the fork fallback, and the same words on
+  stdout never reset a thread.
+- [ ] Live (Codex only — Claude forks copy their history): in a container channel `/fork` a Codex
+  thread with at least two turns, send one message in the child, `/sudo` it, send another. Pass:
+  the journal shows `carried codex session <child> container→host (2 files, 1 fork source)`, the
+  child's and the source's rollouts exist under the host `CODEX_HOME/sessions/YYYY/MM/DD/`, the
+  reply continues the child's context and no `missing source rollout` error is posted. Then
+  `/sudo off` and send again: pass when the log shows `host→container` naming the fork source,
+  the container's own copy of the source is byte-identical to before, and the reply continues.
+  Evidence 2026-11-14 (Atlas, `int-hubexo-nordics`, child `01a1da5e-5f14…`): the error reproduced
+  in a throwaway `CODEX_HOME` holding only the child's rollout and cleared once its two sources
+  were present; the live gate itself runs on the updated daemon.
 - [x] Automated: `test/platform-googlechat.test.js` and `test/platform-transport-manager.test.js`
   cover a real puller receiving a simulated 403 after startup, stopped inbox dispatch, failed
   connection status and absent live connector, reconnect recovery, early failure during startup,

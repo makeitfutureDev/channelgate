@@ -193,7 +193,7 @@ test("carry: host→container copies the session in, leases the runtime, and rep
     target: h.containerTarget, slug: "in", threadKey: "1.1", log: h.log,
   });
 
-  assert.deepEqual(result, { direction: CARRY_DIRECTIONS.IN, files: 2 });
+  assert.deepEqual(result, { direction: CARRY_DIRECTIONS.IN, files: 2, sources: 0 });
   assert.equal(h.calls.copyIn.length, 1);
   assert.equal(h.calls.copyOut.length, 0);
   const key = cwd.replace(/[^a-zA-Z0-9]/g, "-");
@@ -230,7 +230,7 @@ test("carry: container→host copies session history out for a sudo turn", async
     resolveFor: () => h.containerTarget,
   });
 
-  assert.deepEqual(result, { direction: CARRY_DIRECTIONS.OUT, files: 1 });
+  assert.deepEqual(result, { direction: CARRY_DIRECTIONS.OUT, files: 1, sources: 0 });
   assert.equal(h.calls.copyOut.length, 1);
   assert.equal(h.calls.copyIn.length, 0);
   assert.equal(h.calls.leases.length, 1, "the source container stays leased while state is copied out");
@@ -329,4 +329,222 @@ test("carry: a stopped turn never acquires a lease or starts copying", async () 
     signal: controller.signal, log: h.log,
   }), { name: "AbortError" });
   assert.equal(h.calls.leases.length, 0);
+});
+
+// ── Fork lineage: a paginated Codex fork needs its source rollouts on the side that resumes it ──
+
+const { readFirstLine, locateSessionFile, sessionParentOnHost, CARRY_LINEAGE_LIMIT } = await import("../src/gateway/session-carry.js");
+const { engineSessionParent } = await import("../src/engines/registry.js");
+
+// A Codex rollout as 0.162 writes it: the first line is `session_meta`; a fork is `paginated`
+// and names the rollout it was cut from, a root (or a pre-pagination fork) is `legacy`.
+function codexMeta(id, parent = "") {
+  const payload = {
+    id, session_id: id, cli_version: "0.162.1", history_mode: parent ? "paginated" : "legacy",
+    base_instructions: { text: "You are Codex. ".repeat(2000) },
+    ...(parent ? { forked_from_id: parent, forked_from_ordinal_exclusive: 376, history_base: { thread_id: parent, end_ordinal_exclusive: 376, end_byte_offset: 1472466 } } : {}),
+  };
+  return `${JSON.stringify({ timestamp: "2026-11-14T14:03:00.362Z", type: "session_meta", payload })}\n{"type":"response_item","payload":{"type":"message"}}\n`;
+}
+function codexRollout(stateDir, id, day = "2026/11/14") {
+  return path.join(stateDir, "sessions", day, `rollout-2026-11-14T16-03-00-${id}.jsonl`);
+}
+const CHILD = "01a1da5e-5f14-7420-a6dc-71def784eb3d";
+const PARENT = "01a1d921-e18b-7d21-a2db-230d62d843a0";
+const ROOT = "01a1d72a-e785-76b3-872d-7d422597c17a";
+
+test("engine facts: Codex names the source of a paginated fork from the rollout's first line, and nothing else", () => {
+  assert.equal(engineSessionParent("codex", codexMeta(CHILD, PARENT).split("\n")[0]), PARENT);
+  // A legacy rollout holds its whole history: no source to follow, even when it records a fork.
+  const legacy = JSON.stringify({ type: "session_meta", payload: { id: CHILD, forked_from_id: PARENT, history_mode: "legacy" } });
+  assert.equal(engineSessionParent("codex", legacy), "");
+  // Not a header, not JSON, a self-reference, no fact at all: all "no parent", never a throw.
+  assert.equal(engineSessionParent("codex", JSON.stringify({ type: "response_item", payload: { history_mode: "paginated", forked_from_id: PARENT } })), "");
+  assert.equal(engineSessionParent("codex", "{not json"), "");
+  assert.equal(engineSessionParent("codex", JSON.stringify({ type: "session_meta", payload: { id: CHILD, history_mode: "paginated", forked_from_id: CHILD } })), "");
+  assert.equal(engineSessionParent("claude", codexMeta(CHILD, PARENT)), "", "Claude's --fork-session copies the history: nothing to follow");
+  assert.equal(engineSessionParent("opencode", codexMeta(CHILD, PARENT)), "");
+});
+
+test("engine facts: a parentSession fact that is not a function does not load", async () => {
+  const { validateEngineAdapter } = await import("../src/engines/contract.js");
+  const { adapterFor } = await import("../src/engines/registry.js");
+  const base = adapterFor("codex");
+  assert.throws(
+    () => validateEngineAdapter({ ...base, sessionState: { ...base.sessionState, parentSession: "forked_from_id" } }),
+    /malformed parentSession/,
+  );
+});
+
+test("header: the first line is read without loading the rest, and a lineage header is located by pattern", () => {
+  const root = scratch("header");
+  const file = write(codexRollout(root, CHILD), codexMeta(CHILD, PARENT));
+  const line = readFirstLine(file);
+  assert.equal(line.includes("\n"), false);
+  assert.equal(JSON.parse(line).payload.forked_from_id, PARENT);
+  assert.equal(readFirstLine(path.join(root, "absent.jsonl")), "");
+  assert.equal(readFirstLine(file, 16), "", "a line longer than the limit is not a header");
+  assert.equal(locateSessionFile("codex", { stateDir: root, cwd: "/w", sessionId: CHILD }), file);
+  assert.equal(locateSessionFile("codex", { stateDir: root, cwd: "/w", sessionId: PARENT }), "");
+  assert.equal(sessionParentOnHost("codex", { stateDir: root, cwd: "/w", sessionId: CHILD }), PARENT);
+  assert.equal(sessionParentOnHost("codex", { stateDir: root, cwd: "/w", sessionId: PARENT }), "");
+});
+
+test("copy: an ifMissing file is written only where the destination has none — a directory still merges", () => {
+  const root = scratch("ifmissing");
+  const from = path.join(root, "from");
+  const to = path.join(root, "to");
+  write(codexRollout(from, PARENT), "container-copy\n");
+  write(codexRollout(to, PARENT), "live-on-this-side\n");
+  write(codexRollout(from, ROOT), "root-copy\n");
+  const entry = (id) => ({ rel: `sessions/*/*/*/*-${id}.jsonl`, kind: "file", ifMissing: true, from: path.join(from, `sessions/*/*/*/*-${id}.jsonl`), to: path.join(to, `sessions/*/*/*/*-${id}.jsonl`) });
+  assert.equal(expandCarryEntry(entry(PARENT))[0].ifMissing, true, "the flag survives expansion");
+  assert.equal(copyCarryEntries([entry(PARENT), entry(ROOT)]), 1);
+  assert.equal(readFileSync(codexRollout(to, PARENT), "utf8"), "live-on-this-side\n");
+  assert.equal(readFileSync(codexRollout(to, ROOT), "utf8"), "root-copy\n");
+  // Without the flag the rule stays overwrite.
+  assert.equal(copyCarryEntries([{ ...entry(PARENT), ifMissing: false }]), 1);
+  assert.equal(readFileSync(codexRollout(to, PARENT), "utf8"), "container-copy\n");
+});
+
+function hostTargetFor(slug, cwd) {
+  return hostBackend.prepareTarget({
+    slug, platform: "slack", meta: { platform: "slack", sudoMode: true },
+    cwd, workDir: cwd, cleanWorkDir: "", settings: {}, artifactDir: null,
+  });
+}
+
+test("carry: container→host brings a Codex fork's source rollouts along, as far up as the chain goes", async () => {
+  const h = carryHarness("lineage-out");
+  const cwd = "/w/lineage-out";
+  const ctrCodex = path.join(h.ctrDir, ".codex");
+  // The Atlas int-hubexo-nordics shape: a fork of a fork, the root a legacy rollout, every file in
+  // the channel's HOME volume and none of them on the host.
+  write(codexRollout(ctrCodex, CHILD), codexMeta(CHILD, PARENT));
+  write(codexRollout(ctrCodex, PARENT, "2026/11/13"), codexMeta(PARENT, ROOT));
+  write(codexRollout(ctrCodex, ROOT, "2026/11/12"), codexMeta(ROOT));
+
+  const result = await carrySession({
+    engine: "codex", sessionId: CHILD, cwd,
+    storedRuntime: JSON.stringify({ backend: "container", image: "channelgate/runtime:test" }),
+    target: hostTargetFor("lineage-out", cwd), slug: "lineage-out", threadKey: "2.1", log: h.log,
+    resolveFor: () => h.containerTarget,
+  });
+
+  assert.deepEqual(result, { direction: CARRY_DIRECTIONS.OUT, files: 3, sources: 2 });
+  // One copy per link: the daemon cannot read a header until it has arrived on the host.
+  assert.equal(h.calls.copyOut.length, 3);
+  assert.deepEqual(h.calls.copyOut.map((entries) => entries.map((e) => e.rel)), [
+    [`sessions/*/*/*/*-${CHILD}.jsonl`], [`sessions/*/*/*/*-${PARENT}.jsonl`], [`sessions/*/*/*/*-${ROOT}.jsonl`],
+  ]);
+  for (const [id, day] of [[CHILD, "2026/11/14"], [PARENT, "2026/11/13"], [ROOT, "2026/11/12"]]) {
+    assert.equal(existsSync(codexRollout(hostCodexStateDir(), id, day)), true, `${id} arrived with its date directory`);
+  }
+  assert.equal(h.calls.leases.length, 1, "one lease spans the whole chain");
+  assert.equal(h.calls.leases[0].released, true);
+  assert.match(h.logs.join("\n"), /carried codex session .* container→host \(3 files, 2 fork sources\)/);
+});
+
+test("carry: a source the host already holds is kept as it is, but the walk continues past it", async () => {
+  const h = carryHarness("lineage-keep");
+  const cwd = "/w/lineage-keep";
+  const ctrCodex = path.join(h.ctrDir, ".codex");
+  const child = "01a1da5e-aaaa-7420-a6dc-000000000001";
+  const parent = "01a1d921-aaaa-7d21-a2db-000000000002";
+  const root = "01a1d72a-aaaa-76b3-872d-000000000003";
+  write(codexRollout(ctrCodex, child), codexMeta(child, parent));
+  write(codexRollout(ctrCodex, parent), codexMeta(parent, root));
+  write(codexRollout(ctrCodex, root), codexMeta(root));
+  // The parent's own thread was /sudo'd earlier and has run on the host since: its host copy is
+  // the live one (longer than the container's), and it names the same root — which never came.
+  write(codexRollout(hostCodexStateDir(), parent), `${codexMeta(parent, root)}{"type":"response_item","payload":{"host":"turn"}}\n`);
+
+  const result = await carrySession({
+    engine: "codex", sessionId: child, cwd,
+    storedRuntime: JSON.stringify({ backend: "container" }),
+    target: hostTargetFor("lineage-keep", cwd), slug: "lineage-keep", threadKey: "2.2", log: h.log,
+    resolveFor: () => h.containerTarget,
+  });
+
+  assert.deepEqual(result, { direction: CARRY_DIRECTIONS.OUT, files: 2, sources: 1 });
+  assert.deepEqual(h.calls.copyOut.map((entries) => entries.map((e) => e.rel)), [
+    [`sessions/*/*/*/*-${child}.jsonl`], [`sessions/*/*/*/*-${root}.jsonl`],
+  ]);
+  assert.match(readFileSync(codexRollout(hostCodexStateDir(), parent), "utf8"), /"host":"turn"/, "the live host copy was not overwritten");
+  assert.equal(existsSync(codexRollout(hostCodexStateDir(), root)), true);
+});
+
+test("carry: a lineage cycle, a broken chain and a Claude session all stop cleanly", async () => {
+  const cycle = carryHarness("lineage-cycle");
+  const ctrCodex = path.join(cycle.ctrDir, ".codex");
+  const a = "01a1da5e-bbbb-7420-a6dc-000000000001";
+  const b = "01a1d921-bbbb-7d21-a2db-000000000002";
+  write(codexRollout(ctrCodex, a), codexMeta(a, b));
+  write(codexRollout(ctrCodex, b), codexMeta(b, a));
+  const looped = await carrySession({
+    engine: "codex", sessionId: a, cwd: "/w/cycle", storedRuntime: JSON.stringify({ backend: "container" }),
+    target: hostTargetFor("lineage-cycle", "/w/cycle"), slug: "lineage-cycle", threadKey: "2.3", log: cycle.log,
+    resolveFor: () => cycle.containerTarget,
+  });
+  assert.deepEqual(looped, { direction: CARRY_DIRECTIONS.OUT, files: 2, sources: 1 });
+  assert.equal(cycle.calls.copyOut.length, 2);
+
+  const broken = carryHarness("lineage-broken");
+  const c = "01a1da5e-cccc-7420-a6dc-000000000001";
+  write(codexRollout(path.join(broken.ctrDir, ".codex"), c), codexMeta(c, "01a1d921-cccc-7d21-a2db-000000000009"));
+  const partial = await carrySession({
+    engine: "codex", sessionId: c, cwd: "/w/broken", storedRuntime: JSON.stringify({ backend: "container" }),
+    target: hostTargetFor("lineage-broken", "/w/broken"), slug: "lineage-broken", threadKey: "2.4", log: broken.log,
+    resolveFor: () => broken.containerTarget,
+  });
+  // The source is missing on the container side too: the session still arrives (the heal takes
+  // over at resume time), and the walk does not keep asking.
+  assert.deepEqual(partial, { direction: CARRY_DIRECTIONS.OUT, files: 1, sources: 0 });
+  assert.equal(broken.calls.copyOut.length, 2);
+  assert.ok(CARRY_LINEAGE_LIMIT >= 8 && CARRY_LINEAGE_LIMIT <= 64, "bounded, but no hand-made chain reaches it");
+
+  // A Claude transcript declares no parent: exactly the one copy there always was.
+  const claude = carryHarness("lineage-claude");
+  const cwd = "/w/lineage-claude";
+  write(claudeHostFile(SESSION, cwd), "transcript\n");
+  const plain = await carrySession({
+    engine: "claude", sessionId: SESSION, cwd, storedRuntime: "",
+    target: claude.containerTarget, slug: "lineage-claude", threadKey: "2.5", log: claude.log,
+  });
+  assert.deepEqual(plain, { direction: CARRY_DIRECTIONS.IN, files: 1, sources: 0 });
+  assert.equal(claude.calls.copyIn.length, 1);
+});
+
+test("carry: host→container copies a fork and its sources in one go, and never over a source the container has", async () => {
+  const h = carryHarness("lineage-in");
+  const cwd = "/w/lineage-in";
+  const ctrCodex = path.join(h.ctrDir, ".codex");
+  const child = "01a1da5e-dddd-7420-a6dc-000000000001";
+  const parent = "01a1d921-dddd-7d21-a2db-000000000002";
+  const root = "01a1d72a-dddd-76b3-872d-000000000003";
+  // /sudo off: the fork ran on the host (its chain came out with it); the parent's thread kept
+  // running in the container meanwhile, so the container's copy is the live one.
+  write(codexRollout(hostCodexStateDir(), child), codexMeta(child, parent));
+  write(codexRollout(hostCodexStateDir(), parent), codexMeta(parent, root));
+  write(codexRollout(hostCodexStateDir(), root), codexMeta(root));
+  write(codexRollout(ctrCodex, parent), `${codexMeta(parent, root)}{"type":"response_item","payload":{"container":"turn"}}\n`);
+
+  const result = await carrySession({
+    engine: "codex", sessionId: child, cwd, storedRuntime: JSON.stringify({ backend: "host" }),
+    target: h.containerTarget, slug: "lineage-in", threadKey: "2.6", log: h.log,
+  });
+
+  assert.equal(result.direction, CARRY_DIRECTIONS.IN);
+  assert.equal(result.sources, 2);
+  assert.equal(h.calls.copyIn.length, 1, "the chain is read on the host first, then copied once");
+  const entries = h.calls.copyIn[0];
+  assert.deepEqual(entries.map((e) => [e.rel, e.ifMissing === true]), [
+    [`sessions/*/*/*/*-${child}.jsonl`, false],
+    [`sessions/*/*/*/*-${parent}.jsonl`, true],
+    [`sessions/*/*/*/*-${root}.jsonl`, true],
+  ]);
+  assert.match(readFileSync(codexRollout(ctrCodex, child), "utf8"), /"forked_from_id"/);
+  assert.match(readFileSync(codexRollout(ctrCodex, parent), "utf8"), /"container":"turn"/, "the live container copy survived");
+  assert.equal(existsSync(codexRollout(ctrCodex, root)), true);
+  assert.match(h.logs.join("\n"), /host→container \(2 files, 2 fork sources\)/);
 });

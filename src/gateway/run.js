@@ -393,7 +393,11 @@ export function isSessionNotFound(err) {
   // conversation found…", but a MALFORMED one (e.g. a Codex thread_id fed to `claude -r` after a
   // harness switch) prints "--resume requires a valid session ID …/… is not a UUID". Treat both as
   // "unresumable" so the caller starts a fresh session instead of surfacing the error.
-  return /no conversation found|conversation not found|session not found|no such (session|thread|conversation)|(session|thread)[^\n]*\bnot found|could not (find|resume)[^\n]*(session|thread|conversation)|unknown (session|thread)|no rollout found|rollout not found|failed to resolve rollout path[^\n]*file does not exist|--resume requires a valid session|is not a uuid|thread\/resume failed:\s*list_turns is not supported yet/.test(hay);
+  // The last alternative: Codex resumes a forked (paginated) thread by walking its rollout lineage
+  // and refuses when a source rollout is absent or shorter than the fork's cutoff — a history that
+  // only exists on the other runtime backend. The carry brings sources along (session-carry.js);
+  // when it could not, the thread is unresumable here and heals like any other missing session.
+  return /no conversation found|conversation not found|session not found|no such (session|thread|conversation)|(session|thread)[^\n]*\bnot found|could not (find|resume)[^\n]*(session|thread|conversation)|unknown (session|thread)|no rollout found|rollout not found|failed to resolve rollout path[^\n]*file does not exist|--resume requires a valid session|is not a uuid|thread\/resume failed:\s*list_turns is not supported yet|thread\/resume failed:[^\n]*(invalid paginated history lineage|source rollout|lineage)/.test(hay);
 }
 
 // The engine refused to FORK the source session before running anything. Codex reports this for a

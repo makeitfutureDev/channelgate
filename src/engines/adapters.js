@@ -341,6 +341,23 @@ const codex = validateEngineAdapter({
     // recomputed, so the location is a PATTERN — and the date directories must survive the copy,
     // because that tree is how `codex exec resume <id>` finds the file.
     files: ({ sessionId }) => [{ rel: `sessions/*/*/*/*-${sessionId}.jsonl`, kind: "file" }],
+    // A forked thread (`exec fork`) is a PAGINATED rollout: its `session_meta` names the source
+    // rollout it continues and the file holds only the child's own turns, so `exec resume` walks
+    // that chain and refuses ("invalid paginated history lineage … missing source rollout") when a
+    // link is absent. The first line of the rollout is enough to name the next link; a legacy
+    // (non-paginated) rollout carries its whole history and needs nothing.
+    parentSession: (firstLine) => {
+      let record;
+      try {
+        record = JSON.parse(String(firstLine || ""));
+      } catch {
+        return "";
+      }
+      const payload = record?.type === "session_meta" ? record.payload : null;
+      if (!payload || payload.history_mode !== "paginated") return "";
+      const parent = String(payload.history_base?.thread_id || payload.forked_from_id || "").trim();
+      return parent && parent !== String(payload.id || "") ? parent : "";
+    },
   }),
   compileConfinement: (request) => baseCompile("codex", request, FULL_NETWORK_MODES),
   async run(ctx) {

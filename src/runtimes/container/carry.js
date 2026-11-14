@@ -58,13 +58,18 @@ function stagedPath(stagingDir, destination) {
  */
 export function buildCopyInScript(pairs = []) {
   const lines = ["set -e"];
-  for (const { staged, to, kind } of pairs) {
+  for (const { staged, to, kind, ifMissing = false } of pairs) {
     if (kind === "dir") {
       // `cp -a src/. dst/` MERGES: same-named files are replaced, anything else in dst is left
       // alone, and dst is never nested inside itself the way `cp -a src dst` would do when dst
       // already exists.
       lines.push(`mkdir -p ${shellQuote(to)}`);
       lines.push(`cp -a ${shellQuote(`${staged}/.`)} ${shellQuote(`${to}/`)}`);
+    } else if (ifMissing) {
+      // A lineage source (copy.js `ifMissing`): the container's own copy, when it has one, may be
+      // live and is never replaced.
+      lines.push(`mkdir -p ${shellQuote(path.posix.dirname(to))}`);
+      lines.push(`if [ ! -e ${shellQuote(to)} ]; then cp -a ${shellQuote(staged)} ${shellQuote(to)}; fi`);
     } else {
       lines.push(`mkdir -p ${shellQuote(path.posix.dirname(to))}`);
       lines.push(`cp -a ${shellQuote(staged)} ${shellQuote(to)}`);
@@ -184,7 +189,7 @@ export function createContainerCarry({ exec, lifecycle, log = () => {} } = {}) {
           const wrote = copyCarryPair({ from: pair.from, to: staged, kind: pair.kind });
           if (!wrote) continue;
           copied += wrote;
-          pairs.push({ staged, to: pair.to, kind: pair.kind });
+          pairs.push({ staged, to: pair.to, kind: pair.kind, ifMissing: pair.ifMissing === true });
         }
       }
       if (!pairs.length) return { copied: 0 };
