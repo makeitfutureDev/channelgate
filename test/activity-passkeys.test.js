@@ -7,7 +7,7 @@ ensureTestEnv();
 const { setUser } = await import('../src/config/store.js');
 const { saveSettings } = await import('../src/config/settings.js');
 const { getDb } = await import('../src/db/index.js');
-const { createActivityRouter, createActivityGrantUrl, resetActivityStateForTests, ACTIVITY_SESSION_TTL_MS } = await import('../src/web/activity.js');
+const { createActivityRouter, createActivityBrowserLoginHandler, createActivityGrantUrl, resetActivityStateForTests, ACTIVITY_SESSION_TTL_MS } = await import('../src/web/activity.js');
 const { activityAccount, activityPasskeys, activityPasskey } = await import('../src/config/activity-passkeys.js');
 const { createWebApp } = await import('../src/web/app.js');
 
@@ -22,6 +22,7 @@ test('Activity passkeys use real browser signatures, persistent identities and i
   const app = express();
   app.use('/fonts', express.static(fileURLToPath(new URL('../public/fonts', import.meta.url))));
   app.get('/favicon.svg', (_req, res) => res.sendFile('favicon.svg', { root: fileURLToPath(new URL('../public/', import.meta.url)) }));
+  app.get('/activity-sign-in', createActivityBrowserLoginHandler({ getBaseUrl: () => base }));
   app.use('/activity', (req, res, next) => router(req, res, next));
   app.use(createWebApp());
   app.use((error, _req, res, _next) => res.status(error.status || 400).json({ error: 'Fixture request denied' }));
@@ -60,7 +61,10 @@ test('Activity passkeys use real browser signatures, persistent identities and i
   let linkSession, passkeySession, primary;
   await t.test('a Slack link enrolls a discoverable verified passkey through mobile UI', async () => {
     linkSession = await openLink();
-    await page.getByRole('link', { name: 'Passkeys', exact: true }).click();
+    assert.equal(await page.locator('header a').filter({ hasText: 'Passkeys' }).count(), 0);
+    assert.equal(await page.locator('.privacy a').filter({ hasText: /passkeys/i }).count(), 0);
+    await page.getByRole('link', { name: 'Settings', exact: true }).click();
+    await page.getByRole('link', { name: 'Manage passkeys', exact: true }).click();
     await page.locator('#add-passkey').waitFor({ state: 'visible' });
     await page.locator('#passkey-name').fill('Phone <fixture>');
     await page.locator('#add-passkey').click();
@@ -89,6 +93,62 @@ test('Activity passkeys use real browser signatures, persistent identities and i
     const account = activityAccount({ ownerId: 'U_ACTIVITY_KEY', teamId: team, origin: base });
     assert.ok(activityPasskeys(account.id)[0].lastUsedAt);
     assert.equal((await api('/api/auth/me', undefined, { method: 'GET' })).status, 401);
+  });
+  await t.test('installed macOS Chrome signs in in a regular tab and resumes through shared cookies', async () => {
+    for (const entry of ['/activity/login', '/activity/open#' + 'A'.repeat(43)]) {
+      const installed = await ctx.newPage();
+      installed.setDefaultTimeout(7000);
+      await installed.addInitScript(() => {
+        Object.defineProperty(globalThis.navigator, 'userAgent', { value: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) Chrome/142.0.0.0 Safari/537.36' });
+        const match = globalThis.matchMedia.bind(globalThis);
+        globalThis.matchMedia = query => query === '(display-mode: standalone)' ? { matches: true } : match(query);
+      });
+      await installed.goto(base + entry);
+      if (entry.includes('/open')) await installed.locator('#status').filter({ hasText: /private link expired/ }).waitFor();
+      const ceremonyRequests = [];
+      installed.on('request', request => { if (request.url().endsWith('/auth/login/options')) ceremonyRequests.push(request.url()); });
+      const tabOpened = ctx.waitForEvent('page');
+      await installed.getByRole('button', { name: 'Continue in browser' }).click();
+      const tab = await tabOpened; tab.setDefaultTimeout(7000);
+      await tab.waitForURL(base + '/activity-sign-in');
+      await tab.waitForLoadState('domcontentloaded');
+      await installed.waitForResponse(response => response.url().endsWith('/activity/app/session'));
+      assert.equal(new URL(installed.url()).pathname, entry.split('#')[0], 'an older live session must not complete this sign-in');
+      assert.equal(await tab.evaluate(() => globalThis.opener === null), true);
+      assert.equal(new URL(tab.url()).pathname.startsWith('/activity/'), false, 'ceremony page stays outside the app scope');
+      const response = await ctx.request.get(base + '/activity-sign-in');
+      assert.match(response.headers()['cache-control'], /no-store/);
+      assert.match(response.headers()['content-security-policy'], /frame-ancestors 'none'/);
+      const tabCdp = await ctx.newCDPSession(tab);
+      await tabCdp.send('WebAuthn.enable');
+      const { authenticatorId: tabAuthenticator } = await tabCdp.send('WebAuthn.addVirtualAuthenticator', { options: {
+        protocol: 'ctap2', transport: 'internal', hasResidentKey: true, hasUserVerification: true,
+        isUserVerified: true, automaticPresenceSimulation: true,
+      } });
+      const credentials = (await cdp.send('WebAuthn.getCredentials', { authenticatorId })).credentials;
+      for (const credential of credentials) await tabCdp.send('WebAuthn.addCredential', { authenticatorId: tabAuthenticator, credential: { ...credential, signCount: activityPasskey(primary.id).counter } });
+      await tab.bringToFront();
+      const verifiedResponse = tab.waitForResponse(response => response.url().endsWith('/auth/login/verify'));
+      await tab.getByRole('button', { name: 'Sign in with a passkey' }).click();
+      const verified = await verifiedResponse;
+      assert.equal(verified.status(), 200, JSON.stringify(await verified.json()));
+      await tab.getByText('You are signed in. Return to the Activity app to continue.').waitFor();
+      await installed.waitForURL(/\/activity\/[A-Za-z0-9_-]{16}$/);
+      const destination = new URL(installed.url()).pathname;
+      assert.equal((await api(destination + '/api/threads', undefined, { method: 'GET' })).status, 200);
+      assert.equal(lastOwner, 'U_ACTIVITY_KEY');
+      assert.deepEqual(ceremonyRequests, [], 'the installed window never invokes its restricted authenticator');
+      assert.equal((await ctx.cookies()).some(cookie => cookie.name === 'cg_session'), false);
+      const sessionCookie = (await ctx.cookies()).find(cookie => cookie.path === destination);
+      assert.equal(sessionCookie.httpOnly, true);
+      const signed = (await tabCdp.send('WebAuthn.getCredentials', { authenticatorId: tabAuthenticator })).credentials;
+      for (const credential of signed) {
+        await cdp.send('WebAuthn.removeCredential', { authenticatorId, credentialId: credential.credentialId });
+        await cdp.send('WebAuthn.addCredential', { authenticatorId, credential });
+      }
+      await installed.close(); await tab.close();
+      await page.bringToFront();
+    }
   });
   await t.test('the same linked admin key signs into Activity while Activity-only keys remain barred from admin', async () => {
     await page.goto(base + '/activity/login');
@@ -226,7 +286,10 @@ test('Activity passkeys use real browser signatures, persistent identities and i
     await page.locator('#sign-in').click(); await page.waitForURL(/\/activity\/[A-Za-z0-9_-]{16}$/);
     passkeySession = new URL(page.url()).pathname;
     assert.equal((await api(passkeySession + '/api/threads', undefined, { method: 'GET' })).status, 200);
-    await page.getByRole('link', { name: 'Passkeys', exact: true }).click();
+    assert.equal(await page.locator('header a').filter({ hasText: 'Passkeys' }).count(), 0);
+    assert.equal(await page.locator('.privacy a').filter({ hasText: /passkeys/i }).count(), 0);
+    await page.getByRole('link', { name: 'Settings', exact: true }).click();
+    await page.getByRole('link', { name: 'Manage passkeys', exact: true }).click();
     await page.locator('#passkey-list li').waitFor();
     assert.equal(await page.locator('#passkey-list li span').innerText(), 'Phone <fixture>');
   });

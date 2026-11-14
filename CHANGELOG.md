@@ -2,6 +2,9 @@
 
 ## 0.6.5 — candidate, pending approval
 
+- Continue installed macOS Chrome Activity sign-in in a browser tab so the usual passkey provider
+  is available, then resume the app automatically. Keep passkey management in Settings → General.
+
 - Show new forked conversations as separate Activity and Slack App Home rows owned by their
   creator, with independent Open, Pin, Done, Reopen and Later actions.
 

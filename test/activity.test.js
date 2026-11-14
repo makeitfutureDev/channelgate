@@ -1070,6 +1070,17 @@ test("Activity is one installable web app: shared manifest, icons and a launcher
   const resumed = await f.request("/activity/app", { headers: { cookie: launcher.split(";")[0] } });
   assert.equal(resumed.status, 303);
   assert.equal(resumed.headers.get("location"), url);
+  const ready = await f.request('/activity/app/session', { headers: { cookie: launcher.split(';')[0] } });
+  assert.equal(ready.status, 200);
+  assert.deepEqual(await ready.json(), { url });
+  assert.equal(ready.headers.get('set-cookie'), null, 'polling never issues or extends a session');
+  for (const bad of ['cg_activity_app=nope', 'cg_activity_app=AAAAAAAAAAAAAAAA', '']) {
+    assert.equal((await f.request('/activity/app/session', { headers: { cookie: bad } })).status, 401);
+  }
+  assert.equal((await f.request('/activity/app/session', { headers: { cookie: launcher.split(';')[0], Origin: 'https://foreign.example' } })).status, 403);
+  await setUser('U_MINE', { approved: false });
+  assert.equal((await f.request('/activity/app/session', { headers: { cookie: launcher.split(';')[0] } })).status, 401);
+  await setUser('U_MINE', { approved: true });
   // The dashboard still demands the session cookie: the launcher id alone opens nothing.
   const page = await f.request(url, { headers: { cookie: launcher.split(";")[0] } });
   assert.equal(page.status, 401);
@@ -1080,6 +1091,7 @@ test("Activity is one installable web app: shared manifest, icons and a launcher
     assert.equal((await f.request("/activity/app", { headers: { cookie: bad } })).headers.get("location"), "/activity/login", bad);
   }
   f.advance(ACTIVITY_SESSION_TTL_MS + 1);
+  assert.equal((await f.request("/activity/app/session", { headers: { cookie: launcher.split(";")[0] } })).status, 401);
   assert.equal((await f.request("/activity/app", { headers: { cookie: launcher.split(";")[0] } })).headers.get("location"), "/activity/login");
 });
 

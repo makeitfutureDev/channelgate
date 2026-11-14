@@ -250,6 +250,17 @@ Google Chat use it before adding their native requester mention. Explicit mentio
 answer remain available. The `set_my_reply_mentions` tool changes only the verified requester's
 setting; agent principals and untrusted API attribution cannot change another person's preference.
 
+## Installed-app passkey sign-in (2026-11-14)
+
+On macOS, installed Chromium Activity apps continue passkey sign-in in a regular browser tab
+outside the app's scope (`/activity-sign-in`), allowing the browser's usual iCloud/password-manager
+prompt. The app checks for the resulting session for up to five minutes and resumes automatically;
+returning focus also checks immediately. The tab and app must use the same browser profile.
+The existing WebAuthn verifier, required user verification, session lifetime and cookie boundaries
+are retained. Only a destination is returned to the app; no credential or bearer token is passed
+through a URL or window message. Normal browser sign-in remains in the current tab. Passkey
+management is available under **Settings → General**, with no separate header or footer entry.
+
 ## Activity passkey sign-in (2026-11-13)
 
 Existing administrator passkeys also sign into `/activity/login` as the administrator's linked
@@ -267,7 +278,7 @@ including same-site sibling-origin requests without an Origin header. Admins who
 passkeys see an existing-key notice and an admin passkey-management link on the Activity Passkeys
 page, instead of being asked to add another key.
 
-Approved Slack users can open their private Dashboard link, choose **Passkeys**, and save a
+Approved Slack users can open their private Dashboard link, choose **Settings → General → Manage passkeys**, and save a
 passkey for future visits. **Activity sign-in** (`/activity/login`) uses a discoverable passkey
 without asking for a username. Expired launch links and expired dashboard pages offer the same
 sign-in. The Passkeys page lists and removes the viewer's keys, with up to ten keys per account;

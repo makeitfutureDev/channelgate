@@ -88,6 +88,19 @@ function headers(res, nonce = "", { worklet = false } = {}) {
     "X-Content-Type-Options": "nosniff", "X-Frame-Options": "DENY",
     "Content-Security-Policy": `default-src 'none'; ${nonce ? `script-src 'nonce-${nonce}'${worklet ? " 'self'" : ""}; style-src 'nonce-${nonce}'; connect-src 'self'; img-src 'self' data:; font-src 'self';` : ""} manifest-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'` });
 }
+// Outside /activity/ so installed Chrome opens a regular browser tab. This page
+// grants nothing: the existing same-origin WebAuthn endpoints verify the passkey.
+export function createActivityBrowserLoginHandler({ getBaseUrl = getPublicUrl } = {}) {
+  return (req, res) => {
+    headers(res);
+    const base = baseFor(getBaseUrl());
+    if (!base || String(req.headers.host || '').toLowerCase() !== base.host.toLowerCase()
+      || (req.headers.origin && req.headers.origin !== base.origin)) return unavailable(res, 403);
+    const page = activityAccessPage({ mode: 'browser-login' });
+    headers(res, page.nonce);
+    return res.type('html').send(page.html);
+  };
+}
 function unavailable(res, status = 401) {
   return res.status(status).json({ error: "Activity is unavailable. Open a new dashboard link from Slack Activity." });
 }
@@ -416,6 +429,17 @@ export function createActivityRouter({
   router.get(CALL_WORKLET_PATH.replace(/^\/activity/, ""), (_req, res) => {
     res.set("Cache-Control", "public, max-age=3600");
     res.type("application/javascript").send(CALL_WORKLET_SOURCE);
+  });
+  router.get('/app/session', async (req, res) => {
+    const id = activityAppSessionId(req.headers.cookie), session = id && sessions.get(id);
+    const before = configVersion;
+    try {
+      await authorize(session);
+      if (before !== configVersion || sessions.get(id) !== session) return unavailable(res);
+      // This reveals only a destination. Its path-scoped HttpOnly session cookie is
+      // still mandatory on the dashboard; the launcher cookie alone grants no access.
+      return res.json({ url: `/activity/${id}` });
+    } catch { return unavailable(res); }
   });
   router.get("/app", (req, res) => {
     const id = activityAppSessionId(req.headers.cookie), session = id && sessions.get(id);
