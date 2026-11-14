@@ -23,11 +23,11 @@ const { getSlackThread } = await import("../src/gateway/slack-threads.js");
 const { processMessageEvent, runQueue, abortRunsInChannel } = await import("../src/slack/message-pipeline.js");
 
 function slack() {
-  const posted = [];
+  const posted = [], apiCalls = [];
   let nextTs = 2000;
   const ok = async () => ({ ok: true });
   return {
-    posted,
+    posted, apiCalls,
     chat: {
       postMessage: async (message) => {
         posted.push(message);
@@ -39,7 +39,7 @@ function slack() {
     },
     users: { info: async ({ user }) => ({ user: { id: user, real_name: "Fork User" } }), list: async () => ({ members: [], response_metadata: {} }) },
     conversations: { history: async () => ({ messages: [] }), replies: async () => ({ messages: [], response_metadata: {} }) },
-    apiCall: ok,
+    apiCall: async (method, payload) => { apiCalls.push([method, payload]); return { ok: true }; },
   };
 }
 
@@ -80,6 +80,9 @@ for (const engine of ["claude", "codex"]) {
     const childTs = `${forkTs.slice(0, -3)}.${forkTs.slice(-3)}`;
     const activity = getSlackThread(channel, childTs);
     assert.equal(activity.starter_id, user, "fork Activity row belongs to its requester");
+    assert.equal(activity.title, "↪️ Fork User Fork: Explore another solution", "Activity uses the new root label with its creator's name");
+    assert.ok(client.apiCalls.some(([method, payload]) => method === "agents.sessions.rename"
+      && payload.thread_ts === childTs && payload.title === activity.title), "the new Slack session gets the same child title");
     assert.equal(activity.fork_source_ts, sourceTs);
     assert.equal(activity.fork_bot_user_id, "UBOT");
     assert.equal(activity.agent_engaged, 1);

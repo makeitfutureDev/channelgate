@@ -2,6 +2,9 @@
 
 ## Forked conversations in Activity (2026-11-14)
 
+New `/fork` conversations use their own child-thread label (creator name plus new request),
+never the source title. The same label initializes the Slack session; passive history refreshes
+preserve it, while an explicit child rename updates Activity and search independently.
 New `/fork` conversations appear as their own rows in the creator's Activity dashboard and
 Slack App Home, including forks of another person's thread. The gateway saves the authenticated
 creator, source thread and bot identity when it creates the child root. These records survive

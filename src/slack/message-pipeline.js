@@ -926,14 +926,17 @@ export async function processMessageEvent(event, client, { botUserId = "", teamI
             ? { sourceThreadTs: threadKey, currentTs: event.ts, completedReplyCutoff: queuedForkHandle ? forkSnapshotTs : 0, sourceUrl, childEngine }
             : null;
           const handoffNote = nativeFork ? "" : ` · continuing with ${engineLabel(childEngine)}${sourceClean ? " (clean session; no history replay)" : " from Slack history"}`;
+          const creatorName = (await getUser(event.user))?.name || await resolveUserName(client, event.user);
+          const forkTitle = `↪️ ${creatorName} Fork: ${task}`.replace(/\s+/g, " ").trim().slice(0, 160);
           if (queuedForkHandle?.aborted || queuedForkHandle?.controller.signal.aborted || isForceStopping()) return;
           const root = await client.chat.postMessage({ channel: event.channel, text: `↪️ <@${event.user}> Fork: ${task}`, unfurl_links: false, unfurl_media: false });
           if (!root?.ts) throw new Error("Slack did not return a thread timestamp for the fork.");
           const forkKey = String(root.ts);
           if (!indexSlackFork({ channelId: event.channel, slug: entry.slug, threadTs: forkKey,
-            sourceThreadTs: threadKey, creatorId: event.user, botUserId, title: `Fork: ${task}` })) {
+            sourceThreadTs: threadKey, creatorId: event.user, botUserId, title: forkTitle })) {
             throw new Error("Could not record the fork's Activity ownership.");
           }
+          setAssistantTitle(client, event.channel, forkKey, forkTitle);
           const pendingKey = `${entry.slug}::${forkKey}`;
           pendingForkThreads.add(pendingKey);
           try {

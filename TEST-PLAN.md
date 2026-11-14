@@ -28,6 +28,11 @@
 
 ## Forked conversations in Activity (2026-11-14)
 
+- Give the source a distinct title before forking. The child Activity title must match its own
+  new root label with a readable creator name and new request. Load history: the label stays
+  intact. Rename the child in Slack: Activity and search use that name after another history
+  refresh, while the source title remains unchanged. Repeat for Claude and Codex.
+
 - For both Claude and Codex, use an approved author in a private worker fixture with a completed
   source turn: `Remember FORK-ACTIVITY-42`. Send `@agent /fork Repeat the token and explore another
   approach`. The source and child must be separate rows in the creator's Activity and Slack Home;

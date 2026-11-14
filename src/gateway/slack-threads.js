@@ -50,7 +50,7 @@ export function indexSlackThread({ channelId, slug, root, agentEngaged = false }
   getDb().prepare(`INSERT INTO slack_threads(channel_id,thread_ts,slug,starter_id,title,updated_ms,root_done,last_message_ms,agent_engaged)
     VALUES(?,?,?,?,?,?,?,?,?) ON CONFLICT(channel_id,thread_ts) DO UPDATE SET
     starter_id=excluded.starter_id,
-    title=CASE WHEN session_title!='' THEN session_title ELSE excluded.title END,slug=excluded.slug,
+    title=CASE WHEN session_title!='' THEN session_title WHEN fork_source_ts!='' THEN title ELSE excluded.title END,slug=excluded.slug,
     agent_engaged=MAX(agent_engaged,excluded.agent_engaged),
     last_message_ms=MAX(last_message_ms,excluded.last_message_ms)`)
     .run(channelId, root.ts, slug, owner, title, Math.floor(Number(root.ts) * 1000), rootDone, lastMessage, agentEngaged === true ? 1 : 0);

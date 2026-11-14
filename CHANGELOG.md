@@ -2,6 +2,9 @@
 
 ## 0.6.5 — candidate, pending approval
 
+- Keep forked Activity rows named after the new child thread, including its creator and new
+  request; preserve explicit child renames across history refreshes.
+
 - Continue installed macOS Chrome Activity sign-in in a browser tab so the usual passkey provider
   is available, then resume the app automatically. Keep passkey management in Settings → General.
 
