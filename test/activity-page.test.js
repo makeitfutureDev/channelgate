@@ -817,9 +817,9 @@ test("channel pins promote all open conversations once across status filters, re
   b.stream.snapshot(fixtures, { pinnedChannels: [channel] });
   assert.equal(e["pinned-channels"].children[0].children[0].textContent, "Engineering");
   assert.equal(e["pinned-channels"].children[0].children[1].textContent, "2 open");
-  assert.deepEqual(e["pinned-threads"].children.map((tr) => tr.children[0].textContent), ["Open task", "Later task", "Saved task"]);
+  assert.deepEqual(e["pinned-threads"].children.map((tr) => tr.children[0].textContent), ["Saved task", "Open task", "Later task"]);
   assert.equal(e.threads.children.length, 1);
-  const inherited = e["pinned-threads"].children[0];
+  const inherited = e["pinned-threads"].children[1];
   assert.equal(inherited.children[5].children[1].children[2].textContent, "Pin", "inherited placement preserves the individual Pin action");
   assert.equal(inherited.children[2].children[1].attrs["aria-label"], "Unpin channel: Engineering");
   e.filters.fire("click", { target: e.filters.children.find((button) => button.dataset.filter === "open") });
@@ -837,6 +837,50 @@ test("channel pins promote all open conversations once across status filters, re
   b.stream.fire("access-ended");
   assert.equal(e["pinned-section"].hidden, true);
   assert.equal(e["pinned-channels"].children.length, 0);
+});
+
+test("individual pins lead inherited channel pins without splitting channel groups", () => {
+  const b = browser(() => new Promise(() => {})), e = b.elements;
+  const fixtures = [
+    { ...row("error", "Alpha error"), threadTs: "2", channelPinned: true, channelName: "Alpha", lastMessageMs: 500 },
+    { ...row("idle", "Alpha saved"), threadTs: "3", channelPinned: true, channelName: "Alpha", pinned: true, lastMessageMs: 100 },
+    { ...row("idle", "Alpha recent"), threadTs: "4", channelPinned: true, channelName: "Alpha", lastMessageMs: 400 },
+    { ...row("idle", "Beta saved"), threadTs: "5", channelId: "C2", channelName: "Beta", pinned: true, lastMessageMs: 200 },
+  ];
+  const titles = () => e["pinned-threads"].children.map((tr) => tr.children[0].textContent);
+  b.stream.snapshot(fixtures, { groupBy: "channel" });
+  assert.deepEqual(titles(), ["Alpha saved", "Alpha error", "Alpha recent", "Beta saved"]);
+  assert.deepEqual(e["pinned-threads"].children.map((tr) => tr.dataset.group), ["Alpha · 3", undefined, undefined, "Beta · 1"]);
+  const nodes = new Set(e["pinned-threads"].children);
+  b.stream.snapshot(fixtures.map((r) => r.threadTs === "3" ? { ...r, pinned: false } : r), { groupBy: "channel" });
+  assert.deepEqual(titles(), ["Alpha error", "Alpha recent", "Alpha saved", "Beta saved"], "unpin restores status and recency ordering within the channel");
+  assert.ok(e["pinned-threads"].children.every((tr) => nodes.has(tr)), "reordering preserves controls");
+  b.stream.snapshot(fixtures, { groupBy: "status", groupByVersion: 1 });
+  assert.deepEqual(titles(), ["Beta saved", "Alpha saved", "Alpha error", "Alpha recent"], "status view leads with explicit pins, newest first within each tier");
+  e.search.value = "Alpha"; e.search.fire("input");
+  assert.deepEqual(titles(), ["Alpha saved", "Alpha error", "Alpha recent"]);
+});
+
+test("pinning inside a pinned channel promotes the existing row and unpinning restores its position", async () => {
+  let pinned = false;
+  const fixtures = () => [
+    { ...row("error", "Urgent task"), threadTs: "2", channelPinned: true },
+    { ...row("idle", "Saved task"), channelPinned: true, pinned },
+  ];
+  const b = browser(async (url, options) => {
+    if (url.endsWith("/pin")) { pinned = JSON.parse(options.body).pinned; return response({ ok: true }); }
+    return response({ rows: fixtures(), groupBy: "channel" });
+  });
+  await flush();
+  const e = b.elements, tr = e["pinned-threads"].children[1], pin = tr.children[5].children[1].children[2];
+  e["pinned-threads"].fire("click", { target: pin }); await flush();
+  assert.equal(e["pinned-threads"].children[0], tr);
+  assert.equal(e["pinned-count"].textContent, "2");
+  b.stream.snapshot(fixtures(), { groupBy: "channel" });
+  assert.equal(e["pinned-threads"].children[0], tr, "live refresh preserves priority");
+  e["pinned-threads"].fire("click", { target: pin }); await flush();
+  assert.equal(e["pinned-threads"].children[1], tr);
+  assert.equal(e["pinned-count"].textContent, "2");
 });
 
 test("channel pin controls save once with CSRF, retain row focus and report failed saves", async () => {

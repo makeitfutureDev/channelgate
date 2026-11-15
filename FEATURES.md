@@ -181,7 +181,9 @@ for that viewer and moves all their open tracked conversations into **Pinned con
 including Later and future conversations. Like individual pins, open channel pins stay visible
 across status tabs and follow search. Completed conversations return to the ordinary Completed
 view unless individually pinned. Status/channel grouping, counts and row controls still work;
-threads appear once. Channel cards show the channel name, open count and **Unpin channel**, and
+threads appear once. Individually pinned conversations appear above conversations inherited from a
+channel pin within each channel, ahead of status and recency ordering. In Status grouping,
+individual pins lead inherited pins, with each tier ordered newest first. Channel cards show the channel name, open count and **Unpin channel**, and
 remain available with “No open conversations” after the last open thread finishes.
 
 Channel pins persist across sessions, synchronize through Activity's live feed, and retain all
