@@ -46,6 +46,8 @@ import { sshRequestTarget } from "../gateway/ssh-access.js";
 import { register as registerFileSharing, describeDuration } from "./tools/file-sharing.js";
 import { register as registerEmail } from "./tools/email.js";
 import { register as registerCodeChannels } from "./tools/code-channels.js";
+import { register as registerThreadForks } from "./tools/thread-forks.js";
+import { prepareThreadForkApproval, describeThreadForks } from "../gateway/thread-fork-approvals.js";
 import { prepareInstructionApproval } from "../gateway/instruction-approvals.js";
 import { buildControlPlaneAction, describeControlPlaneTier } from "../gateway/control-plane-approvals.js";
 
@@ -419,6 +421,7 @@ export function buildControlPlane({ loadMeta, createdBy, principalTrusted, chann
     // starts a turn there, so the person who asked for it confirms on a card (the model may only
     // relay the request). Archiving is reversible in Slack and open to anyone working in the
     // channel; the in-channel artifact/context updates are open (they land visibly in that channel).
+    ["propose_thread_forks", { authz: "any", tier: "owner", details: () => "" }],
     ["open_code_channel", { authz: "any", tier: "owner", details: ({ task, name, mode }) => {
       const files = mode === "in_place" ? "this channel's own files"
         : mode === "worktree" ? "a new task branch in a git worktree inside this channel's folder"
@@ -463,8 +466,8 @@ export function createGatewayMcpServer(ctx) {
         threadKey: ctx.threadKey,
         toolName,
         toolInput: { details },
-        approveText: "Approve",
-        denyText: "Deny",
+        approveText: toolName === "propose_thread_forks" ? `Create ${durableAction.forks.length} forks` : "Approve",
+        denyText: toolName === "propose_thread_forks" ? "Cancel" : "Deny",
         requiredTier,
         ...(durableAction ? { durableAction } : {}),
       }, { timeoutMs: 280_000 });
@@ -537,7 +540,14 @@ export function createGatewayMcpServer(ctx) {
           // human factor for an admin-tier change must come from an admin, never a bystander.
           const tier = gateCardTier(gate, args);
           let durableAction = null;
-          if (name === "update_channel_instructions") {
+          if (name === "propose_thread_forks") {
+            try {
+              durableAction = await prepareThreadForkApproval(ctx, args);
+              details = describeThreadForks(durableAction.forks);
+            } catch (error) {
+              return text(`Could not propose forks: ${error.message}`);
+            }
+          } else if (name === "update_channel_instructions") {
             try {
               durableAction = await prepareInstructionApproval(ctx, args);
               details = await gate.details(durableAction);
@@ -599,6 +609,7 @@ export function createGatewayMcpServer(ctx) {
     registerFileSharing(server, ctx);
     registerEmail(server, ctx);
     registerCodeChannels(server, ctx);
+    registerThreadForks(server, ctx);
   } else if (ctx.toolset === AGENT_MESSAGE_TOOLSET) {
     registerWorkspaceRead(server, ctx);
     registerMemoryReadTools(server, ctx);

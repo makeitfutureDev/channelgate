@@ -657,6 +657,7 @@ test("every registered gateway tool is consciously classified as gated or open (
   // omission. This inventory forces the classification to be a reviewed decision: an
   // unclassified tool fails here until it is added to exactly one of these lists.
   const GATED = new Set([
+    "propose_thread_forks",
     "create_schedule", "update_schedule", // ordinary schedules return null; sudo work keeps an admin card
     "set_channel_vpn", "set_channel_admin_mode", "allow_channel_ssh_host", "set_channel_network", "set_channel_bash", "set_channel_auto_mode",
     "set_channel_skill_swap", // a channel switch like auto mode: managers, automatic, audited
@@ -1034,4 +1035,31 @@ test("both engines request durable worker approval for SSH egress, including Aut
       assert.equal(stale.ok, false, "even admin UI cannot apply a worker approval in a read-only channel");
     }
   } finally { await saveChannelMeta(SLUG, original); }
+});
+
+test("both engines propose one mandatory durable fork card carrying exact prompts", async () => {
+  const { saveSession } = await import("../src/gateway/sessions.js");
+  const author = "U_CTRL_FORKS";
+  await setUser(author, { approved: true });
+  await upsertChannelEntry(CHANNEL, { name: SLUG, type: "channel", isDM: false });
+  await saveChannelMeta(SLUG, { channelId: CHANNEL, access: "approved", autoMode: true, workDir: tempDir("mcp-forks-") });
+  const forks = [{ title: "One", prompt: "Discuss one" }, { title: "Two", prompt: "Discuss two" }];
+  for (const engine of ["claude", "codex"]) {
+    await saveSession(SLUG, "1.000", `source-${engine}`, engine, null, JSON.stringify({ backend: "container", scope: "project" }));
+    approvalRequests.length = 0;
+    approvalResponse = { pending: true, approvalId: `fork-${engine}` };
+    await withGateway({ author, engine }, async client => {
+      const result = await client.callTool({ name: "propose_thread_forks", arguments: { forks } });
+      assert.match(resultText(result), awaitingCard);
+    });
+    assert.equal(approvalRequests.length, 1);
+    const body = approvalRequests[0].body;
+    assert.equal(body.approvalType, "agent");
+    assert.equal(body.requiredTier, "owner");
+    assert.equal(body.approveText, "Create 2 forks");
+    assert.equal(body.denyText, "Cancel");
+    assert.deepEqual(body.durableAction.forks, forks);
+    assert.equal(body.durableAction.kind, "thread_forks");
+    assert.equal(body.durableAction.sourceSessionId, `source-${engine}`);
+  }
 });

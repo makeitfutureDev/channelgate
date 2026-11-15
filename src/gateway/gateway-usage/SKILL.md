@@ -203,6 +203,7 @@ invite the bot. See `references/messages.md`.
 | Run something long (build, ASR, tests, data)   | `references/background-jobs.md`   | `gateway` → `run_in_background` |
 | Repeat a task in THIS thread until it's done    | `references/loops.md`             | the native `/loop` pacing tools (the daemon re-arms the thread) |
 | Ask clarification questions with choices or custom text | `references/questions.md` | `gateway` → `ask_questions` when available |
+| Split topics into separate discussion threads | `references/thread-forks.md` | `gateway` → `propose_thread_forks` (one approval card for the batch) |
 | Get the user to sign off on a plan / action    | `references/approvals.md`         | `gateway` → `request_approval` |
 | Handle Claude/Codex authentication failures   | `references/administration.md`    | Explain the required host-side login/API-key repair |
 | Connect a provider CLI with a device code      | `references/cli-device-login.md`  | Live TTY/session + interim code/link + same-turn polling + identity verification |

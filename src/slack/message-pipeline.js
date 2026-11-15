@@ -30,7 +30,7 @@ import { createUsageBank } from "../gateway/usage.js";
 import { contextUsageFor } from "../gateway/model-info.js";
 
 import { recordActiveRun, acceptQuestionReply, updateActiveRunRuntime, clearActiveRun, clearActiveRunHandles, clearPendingRunChoices, shouldClearActiveRun } from "../gateway/active-runs.js";
-import { trackSlackThread, recordSlackThreadOutcome, indexSlackFork } from "../gateway/slack-threads.js";
+import { trackSlackThread, recordSlackThreadOutcome } from "../gateway/slack-threads.js";
 import { runAdmissionRefusalKind } from "../gateway/run-admission-result.js";
 import { cancelPendingQuestions, listPendingQuestions, getQuestion } from "../gateway/questions.js";
 import { assertQuestionAccess } from "../gateway/question-access.js";
@@ -80,14 +80,15 @@ import { busyThreadChoices, steerActiveRun, postQueuedMessageControls, retireQue
 import { engineSwitchChoices, engineSwitchChoiceBlocks, engineSwitchChoiceText } from "./engine-switch-choice.js";
 import { cancelSecretHostContinuations } from "../gateway/secret-host-approvals.js";
 
+import { pendingForkThreads, pendingForkSources } from "./fork-state.js";
+import { createForkThread } from "./fork-thread.js";
+
 // In-flight runs by "<slug>::<threadKey>". The queue serializes turns per thread — a second
 // message in the same thread waits FIFO behind the running one instead of racing it in the same
 // cwd/session — and tracks every handle, so a "stop" can abort the running turn AND discard the
 // queued ones, and a finishing run only ever clears its own entry.
 // Last turn's context usage per thread, for /context.
 const lastCtx = new Map();
-const pendingForkThreads = new Set();
-const pendingForkSources = new Set();
 
 async function slackPermalink(client, channel, ts) {
   try {
@@ -930,24 +931,14 @@ export async function processMessageEvent(event, client, { botUserId = "", teamI
           const creatorName = (await getUser(event.user))?.name || await resolveUserName(client, event.user);
           const forkTitle = `↪️ ${creatorName} Fork: ${task}`.replace(/\s+/g, " ").trim().slice(0, 160);
           if (queuedForkHandle?.aborted || queuedForkHandle?.controller.signal.aborted || isForceStopping()) return;
-          const root = await client.chat.postMessage({ channel: event.channel, text: `↪️ <@${event.user}> Fork: ${task}`, unfurl_links: false, unfurl_media: false });
-          if (!root?.ts) throw new Error("Slack did not return a thread timestamp for the fork.");
-          const forkKey = String(root.ts);
-          if (!indexSlackFork({ channelId: event.channel, slug: entry.slug, threadTs: forkKey,
-            sourceThreadTs: threadKey, creatorId: event.user, botUserId, title: forkTitle })) {
-            throw new Error("Could not record the fork's Activity ownership.");
-          }
-          setAssistantTitle(client, event.channel, forkKey, forkTitle);
+          const { forkKey, requestTs } = await createForkThread(client, {
+            channelId: event.channel, slug: entry.slug, sourceThreadTs: threadKey, authorId: event.user, botUserId,
+            title: task, activityTitle: forkTitle, sourceUrl, handoffNote, engine: childEngine,
+            model: forkTarget ? forkTarget.model : await getThreadModel(entry.slug, threadKey),
+            effort: forkTarget ? (forkShortcut.effort || "") : await getThreadEffort(entry.slug, threadKey), clean: sourceClean,
+          });
           const pendingKey = `${entry.slug}::${forkKey}`;
-          pendingForkThreads.add(pendingKey);
           try {
-            await setThreadEngine(entry.slug, forkKey, childEngine);
-            await setThreadModel(entry.slug, forkKey, forkTarget ? forkTarget.model : await getThreadModel(entry.slug, threadKey));
-            // Like ordinary shortcuts, only an explicit effort survives a new model choice.
-            await setThreadEffort(entry.slug, forkKey, forkTarget ? (forkShortcut.effort || "") : await getThreadEffort(entry.slug, threadKey));
-            await setThreadClean(entry.slug, forkKey, sourceClean);
-            const request = await client.chat.postMessage({ channel: event.channel, thread_ts: forkKey, text: `↪️ Fork of <${sourceUrl}|this thread>${handoffNote}`, unfurl_links: false, unfurl_media: false });
-            if (!request?.ts) throw new Error("Slack did not return a message timestamp for the fork request.");
             const forkUrl = await slackPermalink(client, event.channel, forkKey);
             await reply(`↪️ Fork started in <${forkUrl}|a new thread>.`);
             // A fresh engine uses the captured Slack snapshot, so the source may continue now.
@@ -956,7 +947,7 @@ export async function processMessageEvent(event, client, { botUserId = "", teamI
               if (queuedForkHandle) runQueue.release(runKey, queuedForkHandle);
             }
             if (queuedForkHandle?.aborted || queuedForkHandle?.controller.signal.aborted || isForceStopping()) return;
-            await processMessageEvent({ ...event, ts: request.ts, thread_ts: forkKey, text: task, files: [] }, client, {
+            await processMessageEvent({ ...event, ts: requestTs, thread_ts: forkKey, text: task, files: [] }, client, {
               botUserId, teamId, bypassMention: true, syntheticFork: {
                 sourceSessionId: nativeFork ? sourceId : "", sourceRunKey: runKey, threadContext: sourceContext, fallbackHistory,
                 onAccepted: () => { if (queuedForkHandle) clearActiveRun(queuedForkHandle.runId); },

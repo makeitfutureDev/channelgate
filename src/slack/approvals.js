@@ -262,7 +262,7 @@ export async function requestApproval(slack, { channelId, slug, authorId, thread
   const delivery = approvalDeliveryFor(channelId);
   const client = delivery ? { approvalDelivery: delivery } : adapter.capabilities.richCards === "block-kit" ? slack?.getClient?.() || currentClient : null;
   const cardThread = (key) => delivery ? key : slackThreadFor(key);
-  const durable = ["background_shell", INSTRUCTION_ACTION, SECRET_HOST_ACTION, CONTROL_PLANE_ACTION].includes(durableAction?.kind);
+  const durable = ["background_shell", INSTRUCTION_ACTION, SECRET_HOST_ACTION, CONTROL_PLANE_ACTION, "thread_forks"].includes(durableAction?.kind);
   if (durableAction && !durable) return { allow: false, reason: "unsupported durable approval action" };
   // A saved control-plane call never persists an argument that is a secret (a peer gateway's
   // token): it is held in daemon memory under the approval id until the click.

@@ -180,6 +180,7 @@ export const GATEWAY_TOOL_NAMES = [
   "slack_thread_replies",
   "slack_download_file",
   "open_code_channel",
+  "propose_thread_forks",
   "update_code_channel",
   "archive_code_channel",
   "permission_prompt",

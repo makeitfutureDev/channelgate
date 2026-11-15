@@ -505,3 +505,39 @@ test("a Codex native fork the engine refuses falls back to a fresh session on th
   const resumed = runtime.calls.spawn.slice(childBefore).find((call) => call.args.includes("resume"));
   assert.ok(resumed && resumed.args[resumed.args.indexOf("resume") + 1] === "codex-stub-session");
 });
+
+for (const engine of ["claude", "codex"]) {
+  test(`${engine} approved batch creates distinct resumable child sessions from one source`, async () => {
+    const { prepareThreadForkApproval, executeThreadForkApproval } = await import("../src/gateway/thread-fork-approvals.js");
+    const { approvalActionKey, createApprovalRequest } = await import("../src/gateway/approval-requests.js");
+    const { runThreadForkBatch } = await import("../src/slack/thread-fork-batch.js");
+    saveSettings({ engine, composioMode: "personal", engineEnabled: { claude: true, codex: true } });
+    const user = `U_BATCH_${engine.toUpperCase()}`, channel = `D_BATCH_${engine.toUpperCase()}`, sourceTs = engine === "claude" ? "1800.001" : "1801.001";
+    await setUser(user, { name: "Batch User", approved: true });
+    const client = slack();
+    const event = { type: "message", channel, channel_type: "im", user, ts: sourceTs, text: "Source task" };
+    await processMessageEvent(event, client, { botUserId: "UBOT", teamId: "T_FORK" });
+    const entry = await getChannelEntry(channel);
+    const action = await prepareThreadForkApproval({ channelId: channel, slug: entry.slug, createdBy: user, threadKey: sourceTs, toolset: "full", principalTrusted: true, origin: "slack_foreground" }, {
+      forks: [{ title: "First branch", prompt: "BATCH_UNIQUE Discuss first branch" }, { title: "Second branch", prompt: "BATCH_UNIQUE Discuss second branch" }],
+    });
+    const record = createApprovalRequest({ id: `batch-live-${engine}`, actionKey: approvalActionKey(action), status: "executing", channelId: channel, slug: entry.slug, authorId: user, action, decidedBy: user });
+    const children = [];
+    const result = await executeThreadForkApproval(record, { runBatch: saved => runThreadForkBatch(saved, {
+      slack: { snapshot: () => ({ connected: true, botUserId: "UBOT", teamId: "T_FORK" }), getClient: () => client },
+      process: (event, api, options) => { const work = processMessageEvent(event, api, options); children.push({ event, work }); return work; },
+    }) });
+    assert.equal(result.ok, true);
+    assert.match(result.message, /Created 2\/2/);
+    await Promise.all(children.map(child => child.work));
+    const ids = await Promise.all(children.map(child => getSession(entry.slug, child.event.thread_ts)));
+    assert.equal(ids.length, 2);
+    assert.ok(ids.every(Boolean));
+    assert.equal(new Set([...ids, action.sourceSessionId]).size, 3);
+    assert.equal(await getSession(entry.slug, sourceTs), action.sourceSessionId);
+    for (const [index, child] of children.entries()) {
+      await processMessageEvent({ ...event, ts: `990${index}.001`, thread_ts: child.event.thread_ts, text: "Continue this topic" }, client, { botUserId: "UBOT", teamId: "T_FORK" });
+      assert.equal(await getSession(entry.slug, child.event.thread_ts), ids[index]);
+    }
+  });
+}

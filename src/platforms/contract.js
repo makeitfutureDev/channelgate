@@ -88,6 +88,7 @@ export const CAPABILITY_SPEC = Object.freeze({
   // Dedicated one-task agent channels with a channel-wide session, artifact tabs and a context bar
   // (Slack Code). Only a surface with the native API declares it.
   codeChannels: { default: false },
+  threadForks: { default: false },
 });
 
 const CAPABILITY_KEYS = Object.freeze(Object.keys(CAPABILITY_SPEC));

@@ -143,4 +143,7 @@ if [ "$stream_text" = "yes" ]; then
   printf '%s\n' "{\"type\":\"stream_event\",\"event\":{\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"Stub engine reply (resume=$resume; mcp=$mcp; settings=$settings; permprompt=$permprompt; oauth=$oauth; model=$model)\"}}}"
 fi
 if [ "$fork" = "yes" ]; then session_id="11111111-2222-3333-4444-555555555556"; else session_id="stub-session"; fi
+if [ "$fork" = "yes" ]; then
+  case "$*" in *BATCH_UNIQUE*) session_id="11111111-2222-3333-4444-$(printf '%012d' "$$")" ;; esac
+fi
 printf '%s\n' "{\"type\":\"result\",\"subtype\":\"success\",\"result\":\"Stub engine reply (resume=$resume; mcp=$mcp; settings=$settings; permprompt=$permprompt; oauth=$oauth; model=$model)\",\"session_id\":\"$session_id\",\"usage\":{\"input_tokens\":12,\"output_tokens\":4},\"total_cost_usd\":0.001}"

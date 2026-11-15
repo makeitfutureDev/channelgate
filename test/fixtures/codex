@@ -281,7 +281,10 @@ if [ "$fork" = "yes" ] && [ "$fork_unavailable" = "yes" ]; then
   exit 1
 fi
 if [ "$fork" = "yes" ]; then
-  printf '%s\n' '{"type":"thread.started","thread_id":"codex-stub-fork"}'
+  case "$*" in
+    *BATCH_UNIQUE*) printf '%s\n' "{\"type\":\"thread.started\",\"thread_id\":\"codex-stub-fork-$$\"}" ;;
+    *) printf '%s\n' '{"type":"thread.started","thread_id":"codex-stub-fork"}' ;;
+  esac
 elif [ -n "$resume_id" ]; then
   printf '{"type":"thread.started","thread_id":"%s"}\n' "$resume_id"
 elif [ "${CODEX_HOME##*/}" = ".codex-eu" ]; then

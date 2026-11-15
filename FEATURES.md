@@ -6772,3 +6772,7 @@ The daemon, installer, transactional updater and documentation build require Nod
 newer. The runtime image and release workflow use Node 24; CI exercises both the exact minimum
 and the current 24.x release. `.nvmrc` selects the Node 24 development line. Existing operators
 upgrade host Node before updating; rebuilding the image alone does not upgrade the daemon.
+
+## Agent-proposed bulk thread forks
+
+Foreground Slack agents can propose 1–10 titled discussion forks with exact opening prompts. One durable requester/admin approval card is mandatory even in Auto mode; the full proposal must fit its 2400-character preview. After approval, the daemon queues behind the source turn, creates independent native sessions from the same context, indexes each in Activity, and posts child/source links. Normal access, engine, license and run-slot gates apply. Sudo and code-channel sources are refused. Pending proposals deduplicate, clicks execute once, and partial creations retain their IDs; interrupted execution fails closed without automatically recreating threads.

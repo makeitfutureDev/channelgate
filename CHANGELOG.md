@@ -3642,3 +3642,7 @@ Use the sender's workspace for streaming replies in shared channels and clear th
 ### Fixed — rootless Podman system-service setup
 
 Keep container cgroups inside the delegated daemon service, preserve private temporary backing across restarts, and run offline resource-limit probes with distinct runtime failure diagnostics. Preserve operator Podman configuration and document idle recovery for existing stores.
+
+### Added — bulk discussion forks
+
+- Agents can propose multiple topic forks in one approval card. Approved forks inherit the source context, appear separately in Activity and link back to a parent index; duplicate clicks and partial failures are handled explicitly.
