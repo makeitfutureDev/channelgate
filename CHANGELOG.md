@@ -2,6 +2,12 @@
 
 ## 0.6.5 — candidate, pending approval
 
+- Preserve Activity channel cards when pinned, including a single pinned channel. Keep the
+  channel heading, thread guide and controls, with individually pinned threads first.
+
+- Move individually pinned Activity conversations above the other conversations in their pinned
+  channel, while preserving channel groups and restoring normal ordering when unpinned.
+
 - Carry a forked Codex thread's source rollouts when it switches between its container and a
   `/sudo` host, so resuming no longer fails with `invalid paginated history lineage … missing
   source rollout`. When a source cannot be found on either side, the thread heals from the chat

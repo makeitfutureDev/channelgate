@@ -673,7 +673,7 @@ test("pinned conversations group by channel on desktop and mobile and follow sea
     await page.getByRole("searchbox").fill("Shared");
     assert.deepEqual(await groups(), ["Alpha · 1", "Beta · 1"]);
     await page.getByRole("searchbox").fill("Alpha");
-    assert.deepEqual(await groups(), [], "a single visible pinned channel has no redundant heading");
+    assert.deepEqual(await groups(), ["Alpha · 2"], "a single visible pinned channel retains its card heading");
     await page.getByRole("searchbox").fill("");
     await page.getByLabel("Group by", { exact: true }).selectOption("status");
     await page.waitForFunction(() => globalThis.document.querySelector("#pinned-threads").dataset.groupBy === "status");
@@ -721,7 +721,20 @@ test("Activity channel pins collect future open threads, retain empty channels a
   await page.getByRole("button", { name: "Pin channel: Pinned channel with a long name", exact: true }).click();
   await page.waitForFunction(() => globalThis.document.querySelectorAll("#pinned-threads tr").length === 2);
   assert.equal(await page.locator("#threads tr").count(), 1);
-  assert.equal(await page.locator("#pinned-channels .pinned-channel-count").textContent(), "2 open");
+  assert.equal(await page.locator("#pinned-channels").isVisible(), false, "full channel card replaces the duplicate chip");
+  assert.equal(await page.locator("#pinned-threads").getAttribute("data-cards"), "");
+  assert.match(await page.locator("#pinned-threads tr").first().getAttribute("data-group"), / · 2$/);
+  assert.equal(await page.locator("#pinned-threads tr").last().getAttribute("data-group-end"), "");
+  const pinnedTitles = () => page.locator("#pinned-threads .thread-title").allTextContents();
+  await page.getByRole("button", { name: "Pin: " + roots[1].text, exact: true }).click();
+  await page.getByRole("button", { name: "Unpin: " + roots[1].text, exact: true }).waitFor();
+  assert.deepEqual(await pinnedTitles(), [roots[1].text, roots[0].text], "individual Later pin leads inherited Idle conversation");
+  await page.reload();
+  await page.getByRole("button", { name: "Unpin: " + roots[1].text, exact: true }).waitFor();
+  assert.deepEqual(await pinnedTitles(), [roots[1].text, roots[0].text], "priority survives reload");
+  await page.getByRole("button", { name: "Unpin: " + roots[1].text, exact: true }).click();
+  await page.getByRole("button", { name: "Pin: " + roots[1].text, exact: true }).waitFor();
+  assert.deepEqual(await pinnedTitles(), [roots[0].text, roots[1].text], "unpin restores the inherited order");
   await page.getByRole("button", { name: "Pin: " + roots[0].text, exact: true }).click();
   await page.getByRole("button", { name: "Unpin: " + roots[0].text, exact: true }).waitFor();
   for (const theme of ["dark", "light"]) {
@@ -729,6 +742,10 @@ test("Activity channel pins collect future open threads, retain empty channels a
     for (const width of [1440, 768, 390, 320]) {
       await page.setViewportSize({ width, height: 900 });
       assert.equal(await page.evaluate(() => globalThis.document.documentElement.scrollWidth <= globalThis.innerWidth), true, `${theme}/${width}: no page overflow`);
+      assert.equal(await page.locator("#pinned-threads").getAttribute("data-cards"), "", "single pinned channel retains the card at every size");
+      assert.equal(await page.locator("#pinned-channels").isVisible(), false);
+      assert.equal(await page.locator("#pinned-threads tr[data-group]").count(), 1);
+      assert.equal(await page.locator("#pinned-threads tr[data-group-end]").count(), 1);
       for (const button of await page.locator(".channel-pin").all()) {
         if (!await button.isVisible()) continue;
         const box = await button.boundingBox();

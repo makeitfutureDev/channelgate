@@ -794,7 +794,7 @@ test("channel grouping groups multi-channel pins separately with filtered counts
   e.search.value = "Alpha"; e.search.fire("input");
   assert.deepEqual(groups(), ["Alpha · 2", undefined, "Alpha · 1"], "same-named channel ids stay distinct");
   e.search.value = "Beta"; e.search.fire("input");
-  assert.deepEqual(groups(), [undefined], "one visible channel needs no extra heading");
+  assert.deepEqual(groups(), ["Beta · 1"], "a single visible pinned channel retains its card heading");
   e.search.value = ""; e.search.fire("input");
   b.stream.snapshot([{ ...pinned[0], pinned: false }, ...pinned.slice(1), ordinary], { groupBy: "channel", groupByVersion: 1 });
   assert.deepEqual(groups(), ["Alpha · 2", undefined, "Alpha · 1"]);
@@ -817,9 +817,14 @@ test("channel pins promote all open conversations once across status filters, re
   b.stream.snapshot(fixtures, { pinnedChannels: [channel] });
   assert.equal(e["pinned-channels"].children[0].children[0].textContent, "Engineering");
   assert.equal(e["pinned-channels"].children[0].children[1].textContent, "2 open");
-  assert.deepEqual(e["pinned-threads"].children.map((tr) => tr.children[0].textContent), ["Open task", "Later task", "Saved task"]);
+  assert.equal(e["pinned-channels"].hidden, true, "populated channel uses its full card instead of a duplicate chip");
+  assert.equal(e["pinned-threads"].dataset.cards, "");
+  assert.equal(e["pinned-threads"].children[0].dataset.group, "Engineering · 3");
+  assert.equal(e["pinned-threads"].children[2].dataset.groupEnd, "");
+  assert.ok(e["pinned-threads"].children.every((tr) => tr.dataset.hue !== undefined));
+  assert.deepEqual(e["pinned-threads"].children.map((tr) => tr.children[0].textContent), ["Saved task", "Open task", "Later task"]);
   assert.equal(e.threads.children.length, 1);
-  const inherited = e["pinned-threads"].children[0];
+  const inherited = e["pinned-threads"].children[1];
   assert.equal(inherited.children[5].children[1].children[2].textContent, "Pin", "inherited placement preserves the individual Pin action");
   assert.equal(inherited.children[2].children[1].attrs["aria-label"], "Unpin channel: Engineering");
   e.filters.fire("click", { target: e.filters.children.find((button) => button.dataset.filter === "open") });
@@ -832,11 +837,57 @@ test("channel pins promote all open conversations once across status filters, re
   e.search.value = ""; e.search.fire("input");
   b.stream.snapshot([], { pinnedChannels: [channel] });
   assert.equal(e["pinned-section"].hidden, false);
+  assert.equal(e["pinned-channels"].hidden, false, "empty pinned channels retain an accessible unpin control");
   assert.equal(e["pinned-channels"].children[0].children[1].textContent, "No open conversations");
   assert.equal(e["pinned-channels"].children[0].children[2].textContent, "Unpin channel");
   b.stream.fire("access-ended");
   assert.equal(e["pinned-section"].hidden, true);
   assert.equal(e["pinned-channels"].children.length, 0);
+});
+
+test("individual pins lead inherited channel pins without splitting channel groups", () => {
+  const b = browser(() => new Promise(() => {})), e = b.elements;
+  const fixtures = [
+    { ...row("error", "Alpha error"), threadTs: "2", channelPinned: true, channelName: "Alpha", lastMessageMs: 500 },
+    { ...row("idle", "Alpha saved"), threadTs: "3", channelPinned: true, channelName: "Alpha", pinned: true, lastMessageMs: 100 },
+    { ...row("idle", "Alpha recent"), threadTs: "4", channelPinned: true, channelName: "Alpha", lastMessageMs: 400 },
+    { ...row("idle", "Beta saved"), threadTs: "5", channelId: "C2", channelName: "Beta", pinned: true, lastMessageMs: 200 },
+  ];
+  const titles = () => e["pinned-threads"].children.map((tr) => tr.children[0].textContent);
+  b.stream.snapshot(fixtures, { groupBy: "channel" });
+  assert.deepEqual(titles(), ["Alpha saved", "Alpha error", "Alpha recent", "Beta saved"]);
+  assert.deepEqual(e["pinned-threads"].children.map((tr) => tr.dataset.group), ["Alpha · 3", undefined, undefined, "Beta · 1"]);
+  const nodes = new Set(e["pinned-threads"].children);
+  b.stream.snapshot(fixtures.map((r) => r.threadTs === "3" ? { ...r, pinned: false } : r), { groupBy: "channel" });
+  assert.deepEqual(titles(), ["Alpha error", "Alpha recent", "Alpha saved", "Beta saved"], "unpin restores status and recency ordering within the channel");
+  assert.ok(e["pinned-threads"].children.every((tr) => nodes.has(tr)), "reordering preserves controls");
+  b.stream.snapshot(fixtures, { groupBy: "status", groupByVersion: 1 });
+  assert.equal(e["pinned-threads"].dataset.cards, undefined);
+  assert.deepEqual(titles(), ["Beta saved", "Alpha saved", "Alpha error", "Alpha recent"], "status view leads with explicit pins, newest first within each tier");
+  e.search.value = "Alpha"; e.search.fire("input");
+  assert.deepEqual(titles(), ["Alpha saved", "Alpha error", "Alpha recent"]);
+});
+
+test("pinning inside a pinned channel promotes the existing row and unpinning restores its position", async () => {
+  let pinned = false;
+  const fixtures = () => [
+    { ...row("error", "Urgent task"), threadTs: "2", channelPinned: true },
+    { ...row("idle", "Saved task"), channelPinned: true, pinned },
+  ];
+  const b = browser(async (url, options) => {
+    if (url.endsWith("/pin")) { pinned = JSON.parse(options.body).pinned; return response({ ok: true }); }
+    return response({ rows: fixtures(), groupBy: "channel" });
+  });
+  await flush();
+  const e = b.elements, tr = e["pinned-threads"].children[1], pin = tr.children[5].children[1].children[2];
+  e["pinned-threads"].fire("click", { target: pin }); await flush();
+  assert.equal(e["pinned-threads"].children[0], tr);
+  assert.equal(e["pinned-count"].textContent, "2");
+  b.stream.snapshot(fixtures(), { groupBy: "channel" });
+  assert.equal(e["pinned-threads"].children[0], tr, "live refresh preserves priority");
+  e["pinned-threads"].fire("click", { target: pin }); await flush();
+  assert.equal(e["pinned-threads"].children[1], tr);
+  assert.equal(e["pinned-count"].textContent, "2");
 });
 
 test("channel pin controls save once with CSRF, retain row focus and report failed saves", async () => {

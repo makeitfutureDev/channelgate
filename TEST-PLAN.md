@@ -325,6 +325,37 @@
   reads and confirm recovery. Revoke private membership while a bot-root read awaits and verify
   no discovery row is written. Never change a production thread to build this fixture.
 
+## Pinned channel card continuity (2026-11-15)
+
+- Engine-independent: browser layout of saved Activity preferences invokes no engine.
+- Automated: `test/activity-page.test.js` and the pinned-channel cases in
+  `test/activity-reuse-browser.test.js` check single/multiple channel cards, heading/count,
+  closing border, channel hue, search down to one channel, pin priority, reload and unpin.
+- Acceptance: in Channel grouping with disposable Alpha and Beta, pin Alpha. Require the same
+  channel card above ordinary channels, with heading/count, coloured guide, rounded boundary and
+  all open thread controls. With only Alpha pinned it must still be a full card; there must be no
+  duplicate compact Alpha chip. Pin a lower thread and require it first inside Alpha. Search
+  down to one channel, clear, reload and repeat at 1440/390px in both themes: preserve the card.
+  Unpin Alpha and require the normal channel card back in ordinary channels; individually pinned
+  threads remain above. Status grouping retains its existing flat presentation; empty pinned
+  channels retain a visible compact unpin control. Record actual candidate/screenshots; synthetic
+  browser results are not deployed acceptance. Private QA: UI-ACTIVITY-PIN-ORDER-01.
+
+## Individual pin priority inside pinned Activity channels (2026-11-15)
+
+- Engine-independent: this is browser ordering of saved viewer preferences; no engine is invoked.
+- Automated: `node --test test/activity-page.test.js` exercises pin/save/unpin, SSE refresh,
+  row identity and counts, channel boundaries, search, explicit Done pins, and Status grouping.
+- Acceptance fixture: Activity viewer A, disposable channels Alpha and Beta, with Alpha pinned.
+  Alpha has a newer Error thread and an older Idle thread; Beta has an individually pinned thread.
+  Pin Alpha's Idle thread: it must move above Alpha's Error thread within the Alpha group,
+  preserving Beta's separate group, counts, controls and one row per conversation. Reload and
+  receive an SSE refresh: priority persists. Unpin: the row stays in Alpha's pinned channel and
+  returns below Error. In Status grouping explicit pins lead inherited pins; within each tier use
+  newest-first order. Search and clear search, then repeat at 390px; ordering must persist.
+  Capture candidate revision and before/after rows. Local fixture checks do not establish deployed
+  acceptance. Private QA case: UI-ACTIVITY-PIN-ORDER-01.
+
 ## Pinned Activity channels (2026-11-14)
 
 - Engine-independent: Activity preference writes, channel admission, indexed thread state and
