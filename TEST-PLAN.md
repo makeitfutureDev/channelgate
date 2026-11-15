@@ -325,6 +325,21 @@
   reads and confirm recovery. Revoke private membership while a bot-root read awaits and verify
   no discovery row is written. Never change a production thread to build this fixture.
 
+## Individual pin priority inside pinned Activity channels (2026-11-15)
+
+- Engine-independent: this is browser ordering of saved viewer preferences; no engine is invoked.
+- Automated: `node --test test/activity-page.test.js` exercises pin/save/unpin, SSE refresh,
+  row identity and counts, channel boundaries, search, explicit Done pins, and Status grouping.
+- Acceptance fixture: Activity viewer A, disposable channels Alpha and Beta, with Alpha pinned.
+  Alpha has a newer Error thread and an older Idle thread; Beta has an individually pinned thread.
+  Pin Alpha's Idle thread: it must move above Alpha's Error thread within the Alpha group,
+  preserving Beta's separate group, counts, controls and one row per conversation. Reload and
+  receive an SSE refresh: priority persists. Unpin: the row stays in Alpha's pinned channel and
+  returns below Error. In Status grouping explicit pins lead inherited pins; within each tier use
+  newest-first order. Search and clear search, then repeat at 390px; ordering must persist.
+  Capture candidate revision and before/after rows. Local fixture checks do not establish deployed
+  acceptance. Private QA case: UI-ACTIVITY-PIN-ORDER-01.
+
 ## Pinned Activity channels (2026-11-14)
 
 - Engine-independent: Activity preference writes, channel admission, indexed thread state and

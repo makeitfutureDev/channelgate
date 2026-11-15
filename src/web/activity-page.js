@@ -540,7 +540,11 @@ function activityBrowser(config, browser, subscriptionUi, callUi) {
     const filtered = ended ? [] : rows.filter(matches);
     const newest = (a, b) => (Number(b.lastMessageMs) || 0) - (Number(a.lastMessageMs) || 0);
     const compareRows = (a, b) => (groupBy === "channel" ? compareChannel(a, b) : 0) || rank(a.status) - rank(b.status) || newest(a, b);
-    const pinned = filtered.filter(isPinned).sort(groupBy === "channel" ? compareRows : newest);
+    // Individual pins lead the conversations inherited from a channel pin, within each channel.
+    const comparePinned = (a, b) => (groupBy === "channel" ? compareChannel(a, b) : 0)
+      || Number(Boolean(b.pinned)) - Number(Boolean(a.pinned))
+      || (groupBy === "channel" ? rank(a.status) - rank(b.status) : 0) || newest(a, b);
+    const pinned = filtered.filter(isPinned).sort(comparePinned);
     const ordinary = filtered.filter((row) => !isPinned(row)).sort(compareRows);
     const groupPinned = groupBy === "channel" && new Set(pinned.map((row) => row.channelId)).size > 1;
     // A stable hue per channel, nudged when it would match the card directly above it.

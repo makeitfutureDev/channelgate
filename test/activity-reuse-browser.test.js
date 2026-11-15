@@ -722,6 +722,16 @@ test("Activity channel pins collect future open threads, retain empty channels a
   await page.waitForFunction(() => globalThis.document.querySelectorAll("#pinned-threads tr").length === 2);
   assert.equal(await page.locator("#threads tr").count(), 1);
   assert.equal(await page.locator("#pinned-channels .pinned-channel-count").textContent(), "2 open");
+  const pinnedTitles = () => page.locator("#pinned-threads .thread-title").allTextContents();
+  await page.getByRole("button", { name: "Pin: " + roots[1].text, exact: true }).click();
+  await page.getByRole("button", { name: "Unpin: " + roots[1].text, exact: true }).waitFor();
+  assert.deepEqual(await pinnedTitles(), [roots[1].text, roots[0].text], "individual Later pin leads inherited Idle conversation");
+  await page.reload();
+  await page.getByRole("button", { name: "Unpin: " + roots[1].text, exact: true }).waitFor();
+  assert.deepEqual(await pinnedTitles(), [roots[1].text, roots[0].text], "priority survives reload");
+  await page.getByRole("button", { name: "Unpin: " + roots[1].text, exact: true }).click();
+  await page.getByRole("button", { name: "Pin: " + roots[1].text, exact: true }).waitFor();
+  assert.deepEqual(await pinnedTitles(), [roots[0].text, roots[1].text], "unpin restores the inherited order");
   await page.getByRole("button", { name: "Pin: " + roots[0].text, exact: true }).click();
   await page.getByRole("button", { name: "Unpin: " + roots[0].text, exact: true }).waitFor();
   for (const theme of ["dark", "light"]) {
