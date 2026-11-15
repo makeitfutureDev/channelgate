@@ -259,3 +259,11 @@ These tools use the gateway’s Slack bot token and trusted current conversation
 **Scope and result:** After the requester agrees and a human approves the card, posts the wrap-up, shares it to the origin thread, closes the session and archives the current code channel.
 
 **Limits:** Only a code channel. History and artifact tabs remain readable and searchable; the task branch remains on disk. An already archived channel returns a notice.
+
+## propose_thread_forks
+
+**Required:** `forks`, an array of 1–10 objects, each with `title` (one line, 1–100 characters) and `prompt` (1–2,000 characters). The whole formatted proposal must fit 2,400 characters; embedded code fences and control characters are refused.
+
+**Scope and result:** Proposes separate discussion threads from the current Slack thread. One durable card shows every title and opening prompt. The requester or an admin must click **Create N forks**, including in Auto mode. The tool returns pending immediately; the daemon waits for the source turn to finish, creates each child from the same context, requests its opening response, and posts an index. Each child has its own session and Activity entry.
+
+**Limits:** A trusted foreground Slack turn with a supported container session is required. Sudo and code-channel sources are refused. Current requester access, session, runtime scope and working folder are rechecked on execution. Pending proposals reuse one card, and a decision executes once. Partial failures retain created links. Uncertain creates and executions interrupted by a restart are not automatically replayed. Pending unapproved cards survive restarts. Child responses follow ordinary access, license and concurrency limits.
