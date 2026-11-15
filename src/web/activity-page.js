@@ -546,7 +546,7 @@ function activityBrowser(config, browser, subscriptionUi, callUi) {
       || (groupBy === "channel" ? rank(a.status) - rank(b.status) : 0) || newest(a, b);
     const pinned = filtered.filter(isPinned).sort(comparePinned);
     const ordinary = filtered.filter((row) => !isPinned(row)).sort(compareRows);
-    const groupPinned = groupBy === "channel" && new Set(pinned.map((row) => row.channelId)).size > 1;
+    const groupPinned = groupBy === "channel";
     // A stable hue per channel, nudged when it would match the card directly above it.
     const hues = new Map();
     for (const section of groupBy === "channel" ? [pinned, ordinary] : []) {
@@ -655,12 +655,15 @@ function activityBrowser(config, browser, subscriptionUi, callUi) {
       entry.name.textContent = channel.channelName;
       channelLink(entry.name, channel.channelId);
       const open = rows.filter((row) => row.channelId === channel.channelId && row.status !== "done").length;
+      // A populated channel already has its full card above; keep the compact control for
+      // empty channels and for Status grouping, where channel cards are not rendered.
+      entry.card.hidden = groupPinned && open > 0 && pinned.some((row) => row.channelId === channel.channelId);
       entry.count.textContent = open ? open + " open" : "No open conversations";
       entry.card.dataset.channelId = channel.channelId;
       paintChannelPin(entry.button, channel.channelId, channel.channelName, true);
       if (pinnedChannelList.children[index] !== entry.card) pinnedChannelList.insertBefore(entry.card, pinnedChannelList.children[index] || null);
     });
-    pinnedChannelList.hidden = channels.length === 0;
+    pinnedChannelList.hidden = channels.every((channel) => channelNodes.get(channel.channelId).card.hidden);
     el("pinned-section").hidden = pinned.length === 0 && channels.length === 0;
     el("pinned-count").textContent = String(pinned.length);
     el("table").hidden = ordinary.length === 0;
@@ -1494,6 +1497,7 @@ thead tr,tbody tr{display:grid;grid-template-columns:var(--cols,${DEFAULT_COLUMN
 .pinned-heading{display:flex;align-items:center;gap:10px;margin:0;padding:12px 16px;font:600 13px var(--font);color:var(--ink)}
 .pinned-channels{display:flex;flex-wrap:wrap;gap:8px;padding:0 16px 12px}
 .pinned-channel{display:flex;align-items:center;gap:8px;max-width:100%;padding:5px 8px;border:1px solid var(--line);border-radius:9px;background:var(--panel)}
+.pinned-channel[hidden],.pinned-channels[hidden]{display:none}
 .pinned-channel .channel-link{overflow-wrap:anywhere;min-width:0;font-size:12px}
 .pinned-channel-count{color:var(--muted);font:10px var(--mono)}
 .pinned-channel .channel-pin{flex:none}

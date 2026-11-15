@@ -794,7 +794,7 @@ test("channel grouping groups multi-channel pins separately with filtered counts
   e.search.value = "Alpha"; e.search.fire("input");
   assert.deepEqual(groups(), ["Alpha · 2", undefined, "Alpha · 1"], "same-named channel ids stay distinct");
   e.search.value = "Beta"; e.search.fire("input");
-  assert.deepEqual(groups(), [undefined], "one visible channel needs no extra heading");
+  assert.deepEqual(groups(), ["Beta · 1"], "a single visible pinned channel retains its card heading");
   e.search.value = ""; e.search.fire("input");
   b.stream.snapshot([{ ...pinned[0], pinned: false }, ...pinned.slice(1), ordinary], { groupBy: "channel", groupByVersion: 1 });
   assert.deepEqual(groups(), ["Alpha · 2", undefined, "Alpha · 1"]);
@@ -817,6 +817,11 @@ test("channel pins promote all open conversations once across status filters, re
   b.stream.snapshot(fixtures, { pinnedChannels: [channel] });
   assert.equal(e["pinned-channels"].children[0].children[0].textContent, "Engineering");
   assert.equal(e["pinned-channels"].children[0].children[1].textContent, "2 open");
+  assert.equal(e["pinned-channels"].hidden, true, "populated channel uses its full card instead of a duplicate chip");
+  assert.equal(e["pinned-threads"].dataset.cards, "");
+  assert.equal(e["pinned-threads"].children[0].dataset.group, "Engineering · 3");
+  assert.equal(e["pinned-threads"].children[2].dataset.groupEnd, "");
+  assert.ok(e["pinned-threads"].children.every((tr) => tr.dataset.hue !== undefined));
   assert.deepEqual(e["pinned-threads"].children.map((tr) => tr.children[0].textContent), ["Saved task", "Open task", "Later task"]);
   assert.equal(e.threads.children.length, 1);
   const inherited = e["pinned-threads"].children[1];
@@ -832,6 +837,7 @@ test("channel pins promote all open conversations once across status filters, re
   e.search.value = ""; e.search.fire("input");
   b.stream.snapshot([], { pinnedChannels: [channel] });
   assert.equal(e["pinned-section"].hidden, false);
+  assert.equal(e["pinned-channels"].hidden, false, "empty pinned channels retain an accessible unpin control");
   assert.equal(e["pinned-channels"].children[0].children[1].textContent, "No open conversations");
   assert.equal(e["pinned-channels"].children[0].children[2].textContent, "Unpin channel");
   b.stream.fire("access-ended");
@@ -856,6 +862,7 @@ test("individual pins lead inherited channel pins without splitting channel grou
   assert.deepEqual(titles(), ["Alpha error", "Alpha recent", "Alpha saved", "Beta saved"], "unpin restores status and recency ordering within the channel");
   assert.ok(e["pinned-threads"].children.every((tr) => nodes.has(tr)), "reordering preserves controls");
   b.stream.snapshot(fixtures, { groupBy: "status", groupByVersion: 1 });
+  assert.equal(e["pinned-threads"].dataset.cards, undefined);
   assert.deepEqual(titles(), ["Beta saved", "Alpha saved", "Alpha error", "Alpha recent"], "status view leads with explicit pins, newest first within each tier");
   e.search.value = "Alpha"; e.search.fire("input");
   assert.deepEqual(titles(), ["Alpha saved", "Alpha error", "Alpha recent"]);
