@@ -184,7 +184,11 @@ view unless individually pinned. Status/channel grouping, counts and row control
 threads appear once. Individually pinned conversations appear above conversations inherited from a
 channel pin within each channel, ahead of status and recency ordering. In Status grouping,
 individual pins lead inherited pins, with each tier ordered newest first. Channel cards show the channel name, open count and **Unpin channel**, and
-remain available with “No open conversations” after the last open thread finishes.
+remain available with “No open conversations” after the last open thread finishes. In Channel
+grouping, pinning preserves the full channel card (heading, count, colour, thread guide and row
+controls) above ordinary channels, including when only one channel is pinned or search leaves
+just one visible. Populated channel cards replace the compact channel chip; empty pinned
+channels retain their compact unpin control.
 
 Channel pins persist across sessions, synchronize through Activity's live feed, and retain all
 open pinned-channel threads beyond the ordinary feed cap. They are independent of individual

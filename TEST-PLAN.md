@@ -325,6 +325,22 @@
   reads and confirm recovery. Revoke private membership while a bot-root read awaits and verify
   no discovery row is written. Never change a production thread to build this fixture.
 
+## Pinned channel card continuity (2026-11-15)
+
+- Engine-independent: browser layout of saved Activity preferences invokes no engine.
+- Automated: `test/activity-page.test.js` and the pinned-channel cases in
+  `test/activity-reuse-browser.test.js` check single/multiple channel cards, heading/count,
+  closing border, channel hue, search down to one channel, pin priority, reload and unpin.
+- Acceptance: in Channel grouping with disposable Alpha and Beta, pin Alpha. Require the same
+  channel card above ordinary channels, with heading/count, coloured guide, rounded boundary and
+  all open thread controls. With only Alpha pinned it must still be a full card; there must be no
+  duplicate compact Alpha chip. Pin a lower thread and require it first inside Alpha. Search
+  down to one channel, clear, reload and repeat at 1440/390px in both themes: preserve the card.
+  Unpin Alpha and require the normal channel card back in ordinary channels; individually pinned
+  threads remain above. Status grouping retains its existing flat presentation; empty pinned
+  channels retain a visible compact unpin control. Record actual candidate/screenshots; synthetic
+  browser results are not deployed acceptance. Private QA: UI-ACTIVITY-PIN-ORDER-01.
+
 ## Individual pin priority inside pinned Activity channels (2026-11-15)
 
 - Engine-independent: this is browser ordering of saved viewer preferences; no engine is invoked.

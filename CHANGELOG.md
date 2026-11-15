@@ -2,6 +2,9 @@
 
 ## 0.6.5 — candidate, pending approval
 
+- Preserve Activity channel cards when pinned, including a single pinned channel. Keep the
+  channel heading, thread guide and controls, with individually pinned threads first.
+
 - Move individually pinned Activity conversations above the other conversations in their pinned
   channel, while preserving channel groups and restoring normal ordering when unpinned.
 
