@@ -204,7 +204,19 @@ Notes for operators:
 `~/ChannelGate/<platform>/<slug>/`, and, inside the runtime root,
 `channels/<slug>` → `channels/<platform>/<slug>` plus the same for `clean-workspaces/`. It runs
 automatically at boot (before the database opens and before Slack connects) and as a post-update
-step, and it is idempotent.
+step, and it is idempotent. Normal startup and post-update runs first check for a legacy runtime
+root, registered flat metadata/clean workspace folders, unmoved default work folders, or an
+unfinished migration marker. Already migrated installations return without scanning Claude/Codex
+history, clearing run caches or regenerating channel settings. Custom work folders and unrelated
+folders left under `~/Slack Agent` do not trigger the scan. This check also works for installations
+that migrated before completion tracking existed.
+
+A real migration writes `rename-migration.pending` in the runtime root before changing paths.
+The marker moves with the root and remains on failures, collisions or unresolved session state,
+so the next startup retries even if all physical folders already moved. Dry runs and busy refusals
+do not create it. For an installation previously moved by hand or interrupted by an older version
+without this marker, use the explicit `--verify` and `--repath` commands below; normal startup does
+not audit transcript contents.
 
 **What counts as "already migrated" is STATE, not existence.** The migration runs when the old root
 holds a `gateway.db` or a `config/` directory and the new root holds neither. A `~/.channelgate/`

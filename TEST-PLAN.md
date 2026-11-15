@@ -14269,3 +14269,23 @@ Enterprise deployment without deleting saved data. Never record a live pass from
 Regression: `thread-fork-approvals.test.js`, `thread-fork-batch.test.js`, `slack-fork.test.js`, and `mcp-control-plane-approval.test.js`. Cover exact preview/hash, mandatory Auto approval, denial/comment, duplicate request/click, revoked access, changed source/lane/workdir, same-source clone barrier, stop while queued, Activity ownership, partial/uncertain creation, restart without replay, and distinct resumable Claude/Codex children.
 
 Live acceptance (pending, run separately with Claude and Codex in an authorized Slack Auto fixture): complete a source turn containing a unique context marker; ask “Propose forks for pricing, onboarding and support, each asking about our marker.” Verify one card shows all titles/prompts and Create 3 forks/Cancel. Before approval, no child roots exist. Cancel once, then propose again and approve as requester: exactly three roots, independent Activity rows owned by requester, matching parent backlinks and a parent index. Every child recalls the marker and continues independently. Repeat the pending request and double-click: one execution. While a long source turn is active, approve a proposal; no children start until it settles, and all use the same source. Verify another member cannot approve; revoked requester, sudo, session clear or lane change refuse. Use an isolated fake Slack transport to fail one create after another succeeds: preserve successful links, identify failure, and never blindly retry an uncertain POST. Restart a pending proposal and approve it; separately interrupt execution and verify no automatic duplicate roots. Live results must be recorded for each engine; regression fakes do not establish live acceptance.
+
+### Startup rename migration admission (engine-independent)
+
+- Fixture: isolated temporary runtime/workspace roots in `test/migrate-channelgate.test.js`;
+  scratch SQLite plus pre-SQLite channel indexes, current and legacy platform layouts, custom
+  work folders, retained Claude history, runtime caches and an interrupted-migration marker.
+- Action: run `node --test test/migrate-channelgate.test.js`. Boot a current layout without a
+  receipt; migrate a real old layout then boot again; retry interrupted moves and a root-only
+  migration; run explicit repair and dry-run; test busy refusal and a channel named `slack`.
+- Pass: current layouts report `ran:false` without history rewrites/cache deletion/settings
+  regeneration; real legacy layouts migrate; pending markers persist across failure and clear
+  after success; custom/unregistered folders do not trigger scans; dry-run/refusal writes no
+  marker; explicit repair still rewrites stale session paths. No real home or database is used.
+- Live operator acceptance: on the affected already-migrated deployment, time the read-only
+  `channelGateMigrationReason()` check (expect an empty reason), deploy the tested candidate,
+  and request a normal idle-safe restart. Verify a changed instance ID, the expected revision,
+  connected Slack and healthy container runtime, with no `[migrate] ChannelGate rename migration`
+  transcript scan in the new boot log. Record elapsed startup time rather than assuming a fixed
+  machine-independent SLA. This runs before engine selection, so Claude/Codex turns are not
+  required to prove migration admission; existing session repair tests cover both formats.

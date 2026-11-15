@@ -6524,8 +6524,13 @@ are retired, bullet by bullet; everything else stands.
   major behind a single deprecation warning) and `~/ChannelGate/<platform>/<slug>/` (env
   `CG_WORKSPACE_DIR` unchanged). Per-channel metadata and clean-mode workspaces are namespaced by
   platform the same way; a custom per-channel `workDir` is untouched. → TEST-PLAN: ChannelGate rename.
-- **Boot migration `scripts/migrate-channelgate.mjs`**: runs once at boot — before the database
-  opens and before Slack connects — and as the post-update step. Refuses while the pre-rename
+- **Boot migration `scripts/migrate-channelgate.mjs`**: checks for legacy layout at boot — before the database
+  opens and before Slack connects — and as the post-update step. Current installations skip
+  transcript scans, cache deletion and settings regeneration; admission uses read-only channel
+  records and filesystem metadata, including pre-SQLite indexes. A `rename-migration.pending`
+  marker is written before real changes and retained on errors, collisions or unresolved history
+  so interrupted migrations retry even after their folders moved. Explicit `--repath`, `--verify`
+  and `--dry-run` retain full repair/audit behavior. Refuses while the pre-rename
   daemon (`gateway.lock`), a self-update transaction (`update.lock`), or a detached background job
   is still alive (`--dry-run` bypasses that gate and reports it as the first plan line instead,
   staying strictly read-only); prints the plan; moves the runtime root (`rename`, or copy + verify

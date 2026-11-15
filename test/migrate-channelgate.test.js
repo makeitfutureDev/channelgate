@@ -19,6 +19,7 @@ const {
   claudeProjectDirName, CLAUDE_PROJECT_NAME_MAX, rewriteTextOccurrences, rewriteJsonlFile,
   auditLegacyPaths, formatAudit, repathChannelGate, classifyJsonPaths, findTextOccurrences,
   CLAUDE_STATE_KEYPATHS, CODEX_STATE_KEYPATHS, parsePathPairs, mergeRules,
+  migrateChannelGateAtBoot, channelGateMigrationReason, pendingMigrationFile,
 } = await import("../scripts/migrate-channelgate.mjs");
 const { saveChannelMeta, upsertChannelEntry, getChannelMeta } = await import("../src/config/store.js");
 const { getDb, toJson, fromJson } = await import("../src/db/index.js");
@@ -501,6 +502,165 @@ test("re-running the migration is a no-op", async (t) => {
   assert.equal(second.workspaces, 0);
   assert.equal(second.metaFolders, 0);
   assert.equal(second.failed, undefined);
+});
+
+test("automatic migration skips a current layout without a completion receipt or history scan", async (t) => {
+  const fx = await buildLegacyFixture(t);
+  await registerChannels(fx);
+  await migrateChannelGate(runOptions(fx));
+  assert.equal(await exists(pendingMigrationFile(fx.newRoot)), false);
+  // A stale history path deliberately requires explicit repair. Automatic startup must leave
+  // these bytes, runtime caches and settings alone, rather than doing a full rewrite pass.
+  const projects = path.join(fx.newRoot, "engine-state", "claude", "home", ".claude", "projects");
+  const project = path.join(projects, claudeProjectDirName(path.join(fx.legacyWorkspace, "ops")));
+  await mkdir(project, { recursive: true });
+  const transcript = path.join(project, "session.jsonl");
+  const original = JSON.stringify({ cwd: path.join(fx.legacyWorkspace, "ops"), message: "history" }) + "\n";
+  await writeFile(transcript, original);
+  const cache = path.join(fx.newRoot, "channels", "slack", "ops", "runtime", "claude-settings");
+  await mkdir(cache, { recursive: true });
+  await writeFile(path.join(cache, "sentinel.json"), "{}");
+  const settings = path.join(fx.newRoot, "channels", "slack", "ops", ".claude", "settings.json");
+  const before = await stat(settings);
+  const logs = [];
+  const result = await migrateChannelGateAtBoot(runOptions(fx, { log: (line) => logs.push(line) }));
+  assert.equal(result.ran, false);
+  assert.equal(await channelGateMigrationReason(runOptions(fx)), "");
+  assert.equal(await readFile(transcript, "utf8"), original);
+  assert.ok(await exists(path.join(cache, "sentinel.json")));
+  assert.equal((await stat(settings)).mtimeMs, before.mtimeMs);
+  assert.deepEqual(logs, []);
+  // Explicit repair still performs all rewrites despite automatic admission skipping it.
+  const repair = await repathChannelGate(runOptions(fx));
+  assert.equal(repair.claude.renamed, 1);
+  assert.equal(repair.claude.occurrences, 1);
+});
+
+test("boot migrates real legacy state once and then skips", async (t) => {
+  const fx = await buildLegacyFixture(t);
+  await registerChannels(fx);
+  assert.equal(await channelGateMigrationReason(runOptions(fx)), "pre-rename runtime root");
+  const first = await migrateChannelGateAtBoot(runOptions(fx));
+  assert.equal(first.ran, true);
+  assert.equal(first.failed, undefined);
+  assert.equal((await migrateChannelGateAtBoot(runOptions(fx))).ran, false);
+});
+
+test("flat metadata and clean workspaces in a current root still admit migration", async (t) => {
+  const fx = await buildLegacyFixture(t);
+  await registerChannels(fx);
+  await migrateChannelGate(runOptions(fx));
+  for (const tree of ["channels", "clean-workspaces"]) {
+    await rename(path.join(fx.newRoot, tree, "slack", "ops"), path.join(fx.newRoot, tree, "ops"));
+    assert.equal(await channelGateMigrationReason(runOptions(fx)), `flat ${tree} layout`);
+    const result = await migrateChannelGateAtBoot(runOptions(fx));
+    assert.equal(result.failed, undefined);
+    assert.equal(result.ran, true);
+    assert.equal(await channelGateMigrationReason(runOptions(fx)), "");
+  }
+});
+
+test("custom or unregistered legacy workspace folders do not trigger automatic scans", async (t) => {
+  const fx = await buildLegacyFixture(t);
+  await registerChannels(fx);
+  await migrateChannelGate(runOptions(fx));
+  await mkdir(path.join(fx.legacyWorkspace, "unregistered"), { recursive: true });
+  const custom = path.join(fx.legacyWorkspace, "acme");
+  await mkdir(custom, { recursive: true });
+  await saveChannelMeta("acme", { platform: "slack", workDir: custom });
+  assert.equal(await channelGateMigrationReason(runOptions(fx)), "");
+  // A genuine default workspace still needs moving.
+  await rename(path.join(fx.newWorkspace, "slack", "ops"), path.join(fx.legacyWorkspace, "ops"));
+  assert.equal(await channelGateMigrationReason(runOptions(fx)), "pre-rename channel workspace");
+});
+
+test("pending migration survives a failure after the root moves and clears only on success", async (t) => {
+  const fx = await buildLegacyFixture(t);
+  await registerChannels(fx);
+  const result = await migrateChannelGateAtBoot(runOptions(fx, { rename: async (from, to) => {
+    if (from === fx.legacyRoot) return rename(from, to);
+    throw new Error("simulated interrupted channel move");
+  } }));
+  assert.match(result.failed, /simulated interrupted/);
+  assert.ok(await exists(pendingMigrationFile(fx.newRoot)));
+  assert.equal(await channelGateMigrationReason(runOptions(fx)), "unfinished rename migration");
+  const retry = await migrateChannelGateAtBoot(runOptions(fx));
+  assert.equal(retry.failed, undefined);
+  assert.equal(await exists(pendingMigrationFile(fx.newRoot)), false);
+  // Models interruption after ALL folders moved but before transcript rewriting finished.
+  await writeFile(pendingMigrationFile(fx.newRoot), "incomplete\n");
+  assert.equal((await migrateChannelGateAtBoot(runOptions(fx))).ran, true);
+  assert.equal(await exists(pendingMigrationFile(fx.newRoot)), false);
+});
+
+test("refusal and dry-run do not create pending migration state", async (t) => {
+  const fx = await buildLegacyFixture(t);
+  await registerChannels(fx);
+  await writeFile(path.join(fx.legacyRoot, "gateway.lock"), JSON.stringify({ pid: process.pid }));
+  assert.ok((await migrateChannelGateAtBoot(runOptions(fx))).refused);
+  const preview = await migrateChannelGateAtBoot(runOptions(fx, { dryRun: true }));
+  assert.equal(preview.ran, true);
+  assert.ok(preview.audit);
+  assert.equal(await exists(pendingMigrationFile(fx.legacyRoot)), false);
+  assert.equal(await exists(fx.newRoot), false);
+});
+
+test("pre-SQLite pinned roots detect registered flat channel layout without creating a database", async (t) => {
+  const fx = await buildLegacyFixture(t);
+  await rename(fx.legacyRoot, fx.newRoot);
+  await writeFile(path.join(fx.newRoot, "config", "channels.json"), JSON.stringify({ C1: { slug: "ops" } }));
+  // Explicit empty env avoids the shared test database and uses the fixture's legacy JSON.
+  const options = runOptions(fx, { env: {} });
+  assert.equal(await channelGateMigrationReason(options), "flat channels layout");
+  assert.equal(await exists(path.join(fx.newRoot, "gateway.db")), false);
+});
+
+test("an unprovisioned channel named slack does not mistake platform directories for legacy folders", async (t) => {
+  const fx = await buildLegacyFixture(t);
+  await registerChannels(fx);
+  await migrateChannelGate(runOptions(fx));
+  await upsertChannelEntry("C-platform-name", { name: "slack", type: "channel", isDM: false, platform: "slack" });
+  assert.equal(await channelGateMigrationReason(runOptions(fx)), "");
+  assert.equal((await migrateChannelGateAtBoot(runOptions(fx))).ran, false);
+});
+
+test("a pending root-only migration finishes even without a channels directory", async (t) => {
+  const fx = await buildLegacyFixture(t);
+  await rm(fx.legacyRoot, { recursive: true });
+  await rm(fx.legacyWorkspace, { recursive: true });
+  await mkdir(path.join(fx.newRoot, "config"), { recursive: true });
+  await writeFile(pendingMigrationFile(fx.newRoot), "incomplete\n");
+  const retry = await migrateChannelGateAtBoot(runOptions(fx));
+  assert.equal(retry.ran, true);
+  assert.equal(retry.failed, undefined);
+  assert.equal(await exists(pendingMigrationFile(fx.newRoot)), false);
+});
+
+test("incomplete explicit repath does not schedule an automatic rename with different rules", async (t) => {
+  const fx = await buildLegacyFixture(t);
+  await registerChannels(fx);
+  await migrateChannelGate(runOptions(fx));
+  const old = path.join(fx.temp, "old-custom");
+  const target = path.join(fx.temp, "new-custom");
+  const projects = path.join(fx.newRoot, "engine-state", "claude", "home", ".claude", "projects");
+  for (const cwd of [old, target]) {
+    const dir = path.join(projects, claudeProjectDirName(cwd));
+    await mkdir(dir, { recursive: true });
+    await writeFile(path.join(dir, "session.jsonl"), JSON.stringify({ cwd }) + "\n");
+  }
+  const repair = await repathChannelGate(runOptions(fx, { extraRules: [[old, target]] }));
+  assert.equal(repair.claude.collisions.length, 1);
+  assert.equal(await exists(pendingMigrationFile(fx.newRoot)), false);
+  assert.equal((await migrateChannelGateAtBoot(runOptions(fx))).ran, false);
+});
+
+test("a real migration retains pending state when a channel destination collides", async (t) => {
+  const fx = await buildLegacyFixture(t);
+  await registerChannels(fx);
+  await mkdir(path.join(fx.newWorkspace, "slack", "ops"), { recursive: true });
+  const result = await migrateChannelGateAtBoot(runOptions(fx));
+  assert.ok(result.collisions.includes(path.join(fx.legacyWorkspace, "ops")));
+  assert.ok(await exists(pendingMigrationFile(fx.newRoot)));
 });
 
 test("path rewrite rules are boundary-aware and most-specific-first", () => {

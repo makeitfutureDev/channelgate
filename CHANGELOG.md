@@ -2,6 +2,9 @@
 
 ## 0.6.5 — candidate, pending approval
 
+- Skip the obsolete rename-migration history scan during normal startup and updates on migrated
+  installations. Preserve legacy upgrades, interrupted-migration retries and explicit repair tools.
+
 - Preserve Activity channel cards when pinned, including a single pinned channel. Keep the
   channel heading, thread guide and controls, with individually pinned threads first.
 
