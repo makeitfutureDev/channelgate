@@ -1,5 +1,9 @@
 # ChannelGate — Features
 
+## Truthful mode network guidance (2026-11-16)
+
+The informational Slack `/mode` command describes the current container network boundary. Proxy containers report enforced engine/selected-connector exceptions and private-address refusal; legacy bridge and raw-network containers report advisory access. Auto and Lean remain separate options.
+
 ## Activity Comment column and movable, resizable columns (2026-11-15)
 
 The Activity conversation table has a **Comment** column: a private one-line note (up to 500

@@ -13,7 +13,7 @@ import { engineSupports, engineLabel, ENGINE_IDS } from "../engines/registry.js"
 import { plainFailureText, runFailureDiagnostics } from "../util/process-outcome.js";
 import { ensureChannelFolder, effectiveWorkDir } from "../gateway/folders.js";
 import { runMessage, isEmptyResult } from "../gateway/run.js";
-import { modeLabel, MODES, modeSettingsPatch, canManage, isAuthorized, authorizationDenialReason } from "../gateway/modes.js";
+import { modeLabel, modeNetworkGuidance, MODES, modeSettingsPatch, canManage, isAuthorized, authorizationDenialReason } from "../gateway/modes.js";
 import { activeAgentMail, AgentMailError, parseAskDirective } from "../gateway/agent-mail.js";
 
 import { postModelWizard } from "./model-wizard.js";
@@ -1131,7 +1131,7 @@ export async function processMessageEvent(event, client, { botUserId = "", teamI
               "• *worker* — commands and file writes inside the channel container\n" +
               "Auto and Lean are separate options in Settings.\n" +
               "• *admin* — full tools for admins; Worker plus selected options for other members\n" +
-              "_Network is a separate switch (channel settings, or `set_channel_network`). It tells the agent whether this channel is meant to use the internet; the container is not cut off yet, so it is an instruction, not a boundary._"
+              `_${modeNetworkGuidance(meta)}_`
           );
           return;
         }

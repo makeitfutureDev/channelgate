@@ -2,6 +2,8 @@
 
 ## 0.6.5 — candidate, pending approval
 
+- Correct `/mode` network guidance to report enforced proxy boundaries and advisory bridge/raw-network exceptions.
+
 - Skip the obsolete rename-migration history scan during normal startup and updates on migrated
   installations. Preserve legacy upgrades, interrupted-migration retries and explicit repair tools.
 

@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { ensureTestEnv } from "./helpers.js";
 
 ensureTestEnv();
-const { MODE_FLAGS, MODES, channelMode, modeLabel, networkLabel, networkState, PROFILE_FLAGS, PROFILES, channelProfile, canManage, modeSettingsPatch, normalizeModeMeta, authorModeMeta, sudoModeMeta, API_PRINCIPAL, isApiPrincipal, isAuthorized } =
+const { MODE_FLAGS, MODES, channelMode, modeLabel, modeNetworkGuidance, networkLabel, networkState, PROFILE_FLAGS, PROFILES, channelProfile, canManage, modeSettingsPatch, normalizeModeMeta, authorModeMeta, sudoModeMeta, API_PRINCIPAL, isApiPrincipal, isAuthorized } =
   await import("../src/gateway/modes.js");
 const { NETWORK_ADVISORY_NOTE, NETWORK_POLICY_ENFORCED } = await import("../src/engines/network-policy.js");
 const { hasSudoRuntimeAuthority } = await import("../src/runtimes/sudo-authority.js");
@@ -65,6 +65,28 @@ test("with the egress proxy running, the label drops the caveat — except for r
     assert.equal(networkLabel({ rawNetwork: true }, { detail: true }), `network off (${NETWORK_ADVISORY_NOTE})`, "raw bridge beside the proxy: advisory");
     setEgressProvider({ running: () => true, socketDirFor: () => "/gw/eg/abc", caBundlePath: () => "/gw/run/egress-ca.pem", settings: () => ({ egressMode: "bridge" }) });
     assert.equal(networkLabel({}, { detail: true }), `network off (${NETWORK_ADVISORY_NOTE})`, "legacy bridge egress: advisory");
+  } finally {
+    setEgressProvider(null);
+  }
+});
+
+test("mode guidance follows live proxy enforcement and preserves advisory exceptions", () => {
+  let legacy = false;
+  setEgressProvider({ running: () => true, socketDirFor: () => "/gw/eg/abc", caBundlePath: () => "/gw/run/egress-ca.pem", caSpki: () => "spki", settings: () => ({ egressMode: legacy ? "bridge" : "proxy" }) });
+  try {
+    for (const engine of ["claude", "codex"]) {
+      for (const allowNetwork of [false, true]) {
+        const meta = Object.freeze({ engine, allowNetwork });
+        const proxy = modeNetworkGuidance(meta);
+        assert.match(proxy, /gateway proxy enforces/);
+        assert.match(proxy, /off permits only engine endpoints and selected connectors/);
+        assert.match(proxy, /Private, loopback and cloud-metadata addresses are refused/);
+        assert.doesNotMatch(proxy, /advisory|not cut off yet/);
+        assert.match(modeNetworkGuidance({ ...meta, rawNetwork: true }), /advisory, with no OS egress cutoff/);
+      }
+    }
+    legacy = true;
+    assert.match(modeNetworkGuidance({}), /advisory, with no OS egress cutoff/);
   } finally {
     setEgressProvider(null);
   }

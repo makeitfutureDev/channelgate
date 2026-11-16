@@ -1,5 +1,9 @@
 # ChannelGate — Test Plan
 
+## Mode network guidance (2026-11-16)
+
+Engine-independent daemon command: as an approved member, send mentioned `/mode` without arguments in an ordinary proxy fixture and separate isolated legacy bridge/raw-network fixtures. Verify the complete reply matches actual enforcement and mode/Auto/Lean/network, and changes no settings or engine session. Proxy wording must state enforcement, engine/selected-connector exceptions and private/loopback/metadata refusal; bridge/raw-network wording must say advisory with no OS cutoff. Do not use a `/sudo` thread, where text is an engine prompt. Native reply evidence and exact runtime metadata are required; source tests alone do not certify the deployed command.
+
 ## Activity Comment column and movable, resizable columns (2026-11-15)
 
 - Engine-independent: Activity browser UI and per-viewer preferences; no Claude/Codex engine is

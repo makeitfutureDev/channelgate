@@ -96,6 +96,14 @@ export function modeLabel(meta = {}, opts = {}) {
   return [LABELS[channelMode(meta)], meta.autoMode ? "Auto" : "", meta.cleanMode ? "Lean" : "", networkLabel(meta, opts)].filter(Boolean).join(" · ");
 }
 
+// Informational /mode replies use the same live enforcement decision as the detailed label.
+export function modeNetworkGuidance(meta = {}) {
+  const prefix = "Network is a separate switch (channel settings, or `set_channel_network`). ";
+  return prefix + (networkEnforcedFor({ meta })
+    ? "The gateway proxy enforces it: off permits only engine endpoints and selected connectors; on permits public destinations. Private, loopback and cloud-metadata addresses are refused."
+    : "For this container the switch is advisory, with no OS egress cutoff. The agent is instructed to follow it; legacy bridge or raw-network access is not blocked by this switch.");
+}
+
 // ── Capability profiles ───────────────────────────────────────────────────────
 // A profile is a friendly preset that expands to a canonical bundle of the flags above — one
 // dropdown instead of a grid of toggles. "custom" is the escape hatch: the stored flags are used
