@@ -2268,6 +2268,45 @@ function renderChannelDetail(ch) {
     workdirInput.dispatchEvent(new Event("input", { bubbles: true }));
     workdirInput.focus();
   });
+  // Additional folders: one row per entry (path, mode, Browse, Remove). Rows are read back on Save
+  // (collectExtraFolders); an empty path row is dropped there rather than refused here.
+  const extraList = card.querySelector(".ch-extrafolders");
+  const addExtraFolderRow = (entry = { path: "", mode: "rw" }) => {
+    const row = document.createElement("div");
+    row.className = "row ch-extrafolder";
+    const input = document.createElement("input");
+    input.type = "text";
+    input.className = "ch-extrafolder-path";
+    input.placeholder = "/absolute/path/to/folder";
+    input.value = entry.path || "";
+    const mode = document.createElement("select");
+    mode.className = "ch-extrafolder-mode";
+    for (const [value, label] of [["rw", "read-write"], ["ro", "read-only"]]) {
+      const option = document.createElement("option");
+      option.value = value;
+      option.textContent = label;
+      mode.appendChild(option);
+    }
+    mode.value = entry.mode === "ro" ? "ro" : "rw";
+    const browse = document.createElement("button");
+    browse.type = "button";
+    browse.className = "ghost";
+    browse.textContent = "Browse…";
+    browse.addEventListener("click", () => openFolderPicker(input));
+    const remove = document.createElement("button");
+    remove.type = "button";
+    remove.className = "ghost";
+    remove.textContent = "Remove";
+    remove.addEventListener("click", () => { row.remove(); markDirty(); });
+    row.append(input, mode, browse, remove);
+    extraList.appendChild(row);
+    return input;
+  };
+  for (const entry of Array.isArray(meta.extraFolders) ? meta.extraFolders : []) addExtraFolderRow(entry);
+  card.querySelector(".ch-extrafolder-add").addEventListener("click", () => { addExtraFolderRow().focus(); markDirty(); });
+  const collectExtraFolders = () => Array.from(card.querySelectorAll(".ch-extrafolder"))
+    .map((row) => ({ path: row.querySelector(".ch-extrafolder-path").value.trim(), mode: row.querySelector(".ch-extrafolder-mode").value }))
+    .filter((entry) => entry.path);
   card.querySelector(".ch-syncdrive").value = meta.syncDriveFolder || "";
   card.querySelector(".ch-synctest").addEventListener("click", async () => {
     const result = card.querySelector(".ch-synctest-result");
@@ -2566,6 +2605,7 @@ function renderChannelDetail(ch) {
           ...(spendingLimitInput.value !== String(ch.meta?.monthlySpendingLimitUSD ?? "")
             ? { monthlySpendingLimitUSD: spendingLimitInput.value.trim() ? Number(spendingLimitInput.value) : null } : {}),
           workDir: card.querySelector(".ch-workdir").value,
+          extraFolders: collectExtraFolders(),
           syncDriveFolder: card.querySelector(".ch-syncdrive").value,
           model: card.querySelector(".ch-model").value,
           effort: card.querySelector(".ch-effort").value,

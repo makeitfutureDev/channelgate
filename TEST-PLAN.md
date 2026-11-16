@@ -30,6 +30,48 @@
   regressions do not establish live provider execution; these live variants remain unexecuted
   until recorded with the applicable fixture and revision.
 
+## Additional folders (2026-11-16)
+
+- [x] `test/extra-folders.test.js` — normalization (absolute, deduplicated, known mode, the cap);
+  the validator follows a symlink to its real target and refuses relative/missing paths, the
+  gateway root, another conversation's default folder, the channel's own working folder, a
+  subfolder or parent of it, a duplicate and an overlapping entry; the resolver mounts each entry
+  at its identical path with its mode (`:ro` in the create argv) and the mount fingerprint changes
+  with the list and with a mode; a stored entry that no longer passes throws
+  `extra_folder_refused` with the remedy for a turn/job/schedule spawn; the lockdown file lists
+  the mounted folders in `additionalDirectories` in both variants; the run preamble names them
+  and their modes; `add_channel_folder` / `remove_channel_folder` / `list_channel_folders`
+  (admins only, validated, stored as real paths, nothing written on refusal); the admin PUT
+  refuses with `extraFolders refused: …`, validates a changed list against the working folder the
+  same save ends up with, does not re-validate a round-tripped list, keeps the list when the key
+  is omitted and clears on `[]`. `test/channel-workdir-ui.test.js` — the Save body carries the
+  rows. `test/mcp-control-plane-approval.test.js` — `add_channel_folder` is gated,
+  `remove_channel_folder` automatic, `list_channel_folders` open.
+- [x] `npm run check:static`, `npm run secret-scan`.
+- [ ] Live, engine-independent (admin UI + MCP): in a private test channel whose working folder
+  is a project directory, as an admin add `~/.channelgate` and then the working folder itself
+  under *Additional folders* and save. Expected: each save answers 400 `extraFolders refused: …`
+  naming the reason; the stored list is unchanged. Then add an existing sibling directory
+  (e.g. `~/Projects/shared`) read-only and save: accepted. In the channel ask the agent: "Which
+  additional folders are mounted here?" Expected: `list_channel_folders` names the folder as
+  read-only. PASS when all three hold.
+- [ ] Live, Claude AND Codex (Worker channel, network off is fine): with `~/Projects/shared`
+  mounted read-only and containing a file, mention the agent: "List the files in
+  `~/Projects/shared` (the host path) and then try to create `probe.txt` there." Expected: the
+  listing shows the file; the write fails with a read-only filesystem error and the agent reports
+  it as the read-only mount, not as a permission prompt. Switch the entry to read-write (admin UI
+  or `add_channel_folder` after `remove_channel_folder`), send another message (the container is
+  recreated — the progress card may say so), repeat the write: it succeeds and the file appears
+  on the host. Then: "Create a symlink `shared` in the working folder pointing at that folder and
+  list it." Expected: the link resolves and lists the same files. PASS when every step holds for
+  both engines.
+- [ ] Live, engine-independent (two channels): declare the SAME host folder read-write in two
+  channels with different working folders; from channel A create a file in it; from channel B
+  list it. Expected: B sees A's file; each channel's working folder, memory and instructions are
+  unchanged. Then on the host replace the folder with a symlink to another directory and send a
+  message in A. Expected: the turn fails with "ChannelGate never mounts that into a container"
+  naming the folder and `remove_channel_folder`; no container is created or recreated with it.
+
 ## Slack help freshness (2026-11-16)
 
 In an established ordinary thread, send mentioned `/help`, then `/context`. Capture every help chunk and verify current Settings page names (including the DM Access exception), automatic queuing without an Add to Queue click, independent dedicated Codex harness selection, and current MCP/Schedules navigation. Verify context tokens/percentage against the completed native turn and confirm neither control starts an engine or changes settings. Keep Claude and Codex established-thread variants; provider quota may block fresh Claude setup, never count that as a pass.
