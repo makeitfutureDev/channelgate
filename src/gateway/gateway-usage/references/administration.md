@@ -279,7 +279,18 @@ operator runs `sudo bash scripts/install-ssh-access.sh` (docs/SSH-ACCESS.md) —
 ## Working folder & Drive
 - `get_channel_workdir` / `set_channel_workdir` (admin) / `clear_channel_workdir` (admin) — run
   the channel's agent in a real project directory instead of the default folder.
-- `list_folders` (admin) — browse host folders to pick one for `set_channel_workdir`.
+- `list_channel_folders` / `add_channel_folder` (admin) / `remove_channel_folder` (admin) —
+  additional host folders mounted into this channel's container at their identical paths, beside
+  the working folder, read-write (`mode: "rw"`, default) or read-only (`"ro"`). This is how one
+  host folder is shared by several conversations that each keep their own working folder. Each
+  entry must be an existing directory inside the allowed root, outside the gateway's own trees,
+  and must not overlap the working folder or another entry; a symlink is accepted and stored as
+  its real target. The next message recreates the container. Once mounted, a symlink inside the
+  working folder pointing at the folder (`ln -s /host/shared shared`) resolves; a symlink to a
+  folder that is NOT mounted is broken inside the container, and the gateway never follows such a
+  link to decide a mount — say so instead of trying.
+- `list_folders` (admin) — browse host folders to pick one for `set_channel_workdir` or
+  `add_channel_folder`.
 - `get_channel_drive_folder` / `set_channel_drive_folder` (admin) / `clear_channel_drive_folder`
   (admin) — two-way-sync a Google Drive folder with the channel's whole folder. Agent instructions
   and skills (`CLAUDE.md`, `AGENTS.md`, `.claude/`, …), `MEMORY.md`/`memory/`, secrets (`.env`,

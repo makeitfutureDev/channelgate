@@ -17,6 +17,7 @@ import { CODEX_CONTAINER_AUTH_FILE, containerEnvDefaults, settleCredentialModes 
 import { CONTAINER_EGRESS_CA, CONTAINER_EGRESS_DIR, CONTAINER_SOCKET_DIR } from "./image-paths.js";
 import { ensureEgressFor, releaseEgressFor } from "./egress-hook.js";
 import { sweepStaleRunCredentialFiles } from "./stale-run-files.js";
+import { extraFolderMounts } from "../../gateway/extra-folders.js";
 
 // Hardening flags adopted near-verbatim from the Hermes review (plan §10). They are part of the
 // fingerprint, so changing any of them recreates every container on the next run.
@@ -202,6 +203,9 @@ export function buildMounts(base) {
     { kind: "workdir", type: "bind", source: base.workDir, target: base.workDir, mode: "rw" },
     { kind: "clean", type: "bind", source: base.cleanWorkDir, target: base.cleanWorkDir, mode: "rw" },
     { kind: "artifacts", type: "bind", source: base.artifactDir, target: base.artifactDir, mode: "rw" },
+    // Admin-declared additional folders at their identical host paths (src/gateway/extra-folders.js);
+    // the resolver already proved each one exists, is a real directory and overlaps nothing else.
+    ...extraFolderMounts(base),
     // Persistent /tmp and /var/tmp. Nothing an agent leaves in them is lost to a stop or a
     // recreate, which is the difference between a container channel and the host backend.
     ...PERSISTENT_TMP_DIRS.map(({ kind, target }) => ({

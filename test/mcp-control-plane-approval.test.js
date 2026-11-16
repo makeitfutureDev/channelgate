@@ -662,6 +662,8 @@ test("every registered gateway tool is consciously classified as gated or open (
     "set_channel_vpn", "set_channel_admin_mode", "allow_channel_ssh_host", "set_channel_network", "set_channel_bash", "set_channel_auto_mode",
     "set_channel_skill_swap", // a channel switch like auto mode: managers, automatic, audited
     "set_channel_workdir", "clear_channel_workdir", "set_channel_drive_folder", "clear_channel_drive_folder",
+    "add_channel_folder", "remove_channel_folder", // an extra mount keeps a card; removing one narrows and is automatic
+
     "add_channel_mcps", "remove_channel_mcps", "update_channel_instructions",
     "update_gateway", "restart_gateway", "update_gateway_guide", "reset_gateway_guide",
     "set_my_reply_mentions", // own verified preference; automatic, handler rejects untrusted principals
@@ -693,7 +695,7 @@ test("every registered gateway tool is consciously classified as gated or open (
   const OPEN = new Set([
     // read-only
     "get_channel_vpn_status", "query_channel_database", "list_available_mcps", "list_channel_mcps", "list_schedules", "get_schedule_runs", "list_folders",
-    "get_channel_workdir", "get_channel_drive_folder", "get_gateway_guide",
+    "get_channel_workdir", "list_channel_folders", "get_channel_drive_folder", "get_gateway_guide",
     "workspace_list", "workspace_read", "workspace_search", "search_agents", "continue_agent_conversation", // continuing a human-started exchange: open, like answering in a thread
     "search_channel_memory", "read_channel_memory", // channel-scoped read-only retrieval
     "use_skill", // asks the LIVE turn how to honor a skill's preferred model; the turn decides, nothing is persisted here

@@ -1,5 +1,44 @@
 # ChannelGate — Features
 
+## Additional folders mounted beside the working folder (2026-11-16)
+
+A channel can mount additional host folders into its container at their identical absolute paths,
+beside its working folder (`meta.extraFolders`, `src/gateway/extra-folders.js`). This is how one
+host directory — a client project every team channel needs, a mounted file server, a sibling
+repository — is shared by several conversations that each keep their own working folder, memory
+and instructions. Each entry is read-write (default) or read-only; a read-only mount refuses writes
+at the kernel.
+
+- **Declared by admins, never by the agent.** Admin UI: *Additional folders* on the channel's
+  Runtime pane (rows of path + mode + Browse + Remove, saved with the card; the PUT answers 400
+  `extraFolders refused: …` with the reason and writes nothing). MCP: `list_channel_folders` (any
+  member), `add_channel_folder` (admin; an approval card in channels that are not in Admin mode)
+  and `remove_channel_folder` (admin, automatic). Every change is a `channel_meta_changed` audit
+  event. Up to 16 entries.
+- **Validated like the working folder, at every door.** An entry must be an absolute path to an
+  existing directory that realpath-resolves inside the allowlisted root, outside the daemon's own
+  trees (`src/gateway/workdir-boundary.js`: home itself, gateway root, `~/.ssh`, `~/.claude`,
+  `~/.codex`, container storage, artifact trees, the workspace root, another conversation's
+  DEFAULT folder or a parent of any of these). It may not equal, contain or sit inside the
+  channel's working folder, and two entries may not overlap each other — a host tree visible at
+  two container paths is a mount alias Codex's sandbox refuses. Another conversation's CUSTOM
+  project folder stays allowed. A symlink is accepted and stored as its REAL target: the daemon
+  never follows a link it finds in an agent-writable tree to decide a mount
+  (`assertSafeBindSource`), so a symlink an agent plants in the work folder can never become one.
+- **Re-checked at every spawn; fails closed.** The runtime resolver re-validates every stored
+  entry when a turn, background job, schedule or memory review spawns. An entry that no longer
+  passes (deleted, replaced by a link, now overlapping a moved working folder) fails the spawn
+  with the remedy (`remove_channel_folder` / Settings → Additional folders). A list or mode
+  change alters the create-time mount fingerprint, so the next message recreates the container.
+- **The engine is told.** The mounts appear in the lockdown file's
+  `permissions.additionalDirectories` (both variants, so Claude's file tools may work there) and
+  the run preamble names each mounted folder and its mode; nothing else outside the named folders
+  is mounted. A `/sudo` host turn adds nothing — the daemon account sees the host already.
+- **Symlinks on top.** Once a folder is mounted, `ln -s /host/shared shared` inside the working
+  folder resolves in the container; the agent may create such links on request. A link to a
+  folder that is not mounted is broken there, and the `gateway-usage` administration reference
+  tells the agent to say so rather than work around it. → TEST-PLAN: Additional folders.
+
 ## Current Slack help navigation and queue guidance (2026-11-16)
 
 Slack `/help` names the current Settings pages, explains automatic follow-up queuing with Steer/Cancel controls, and describes a dedicated Codex login as an independent harness choice. Schedule and MCP links use the current page names.

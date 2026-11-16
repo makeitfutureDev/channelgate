@@ -37,6 +37,7 @@ function describeDriveSyncStatus(status) {
 }
 import { allowedFsRoot, resolveWithinRoot } from "../../web/security.js";
 import { forbiddenWorkDirReason } from "../../gateway/workdir-boundary.js";
+import { EXTRA_FOLDER_MODES, MAX_EXTRA_FOLDERS, normalizeExtraFolders, validateExtraFolder } from "../../gateway/extra-folders.js";
 import { formatUpdateResult, startUpdate } from "../../gateway/updater.js";
 import { updateGatewayGuide, resetGatewayGuide, readGatewayGuide } from "../../gateway/guide.js";
 import { slackThreadFor } from "../../slack/thread-keys.js";
@@ -372,11 +373,73 @@ export function register(server, ctx) {
     }
   );
 
+  // ── Additional folders (admins only) ─────────────────────────────────────────────
+  // Host directories mounted beside the work folder at their identical paths, so one directory
+  // can be shared by several channels that each keep their own work folder
+  // (src/gateway/extra-folders.js). Validated like the work folder; a symlink in the work folder
+  // pointing at a mounted entry then resolves inside the container.
+  server.registerTool(
+    "list_channel_folders",
+    { description: "Show the additional host folders mounted into this channel's container beside its working folder, with each one's read-write/read-only mode.", inputSchema: {} },
+    async () => {
+      const meta = await loadMeta();
+      const entries = normalizeExtraFolders(meta?.extraFolders);
+      if (!entries.length) return text("This channel mounts no additional folders. Its container sees only its working folder, clean workspace and artifacts.");
+      return text(`Additional folders mounted into this channel's container:\n${entries.map((entry) => `• ${entry.path} — ${entry.mode === "ro" ? "read-only" : "read-write"}`).join("\n")}`);
+    }
+  );
+
+  server.registerTool(
+    "add_channel_folder",
+    {
+      description:
+        "ADMIN ONLY. Mount an additional host folder into this channel's container at its identical ABSOLUTE path, " +
+        "beside the working folder (e.g. a project several channels share, or a mounted file server). `mode` is " +
+        "\"rw\" (default) or \"ro\". The folder must be an existing directory inside the allowed root, outside the " +
+        "daemon's own trees, and must not overlap the working folder or another entry. Takes effect on the next " +
+        "message (the container is recreated). Once mounted, a symlink in the working folder pointing at it resolves.",
+      inputSchema: { path: z.string(), mode: z.enum(EXTRA_FOLDER_MODES).optional() },
+    },
+    async ({ path: dir, mode }) => {
+      if (!(await requireAdmin())) return text("Only admins can change this channel's additional folders.");
+      const meta = await loadMeta();
+      if (!meta) return text("Channel isn't set up yet — send a normal message first.");
+      const current = normalizeExtraFolders(meta.extraFolders);
+      if (current.length >= MAX_EXTRA_FOLDERS) return text(`This channel already mounts ${MAX_EXTRA_FOLDERS} additional folders, the maximum. Remove one first.`);
+      const checked = validateExtraFolder(dir, { slug, workDir: effectiveWorkDir(slug, { ...meta, cleanMode: false }), others: current });
+      if (checked.error) return text(checked.error);
+      const entry = { path: checked.path, mode: mode === "ro" ? "ro" : "rw" };
+      if (!(await patchAuditedMeta((m) => (m ? { extraFolders: [...normalizeExtraFolders(m.extraFolders), entry] } : null)))) {
+        return text("Channel isn't set up yet — send a normal message first.");
+      }
+      return text(`✅ ${entry.path} is now mounted into this channel's container (${entry.mode === "ro" ? "read-only" : "read-write"}) at the same path. Active on the next message, which recreates the container.`);
+    }
+  );
+
+  server.registerTool(
+    "remove_channel_folder",
+    { description: "ADMIN ONLY. Stop mounting an additional host folder into this channel's container (pass the exact path shown by list_channel_folders).", inputSchema: { path: z.string() } },
+    async ({ path: dir }) => {
+      if (!(await requireAdmin())) return text("Only admins can change this channel's additional folders.");
+      const wanted = path.resolve(String(dir || "").trim());
+      let removed = false;
+      const next = await patchAuditedMeta((m) => {
+        if (!m) return null;
+        const current = normalizeExtraFolders(m.extraFolders);
+        const kept = current.filter((entry) => entry.path !== wanted);
+        removed = kept.length !== current.length;
+        return removed ? { extraFolders: kept } : null;
+      });
+      if (!next) return text(removed ? "Channel isn't set up yet." : `${wanted} is not one of this channel's additional folders. Use list_channel_folders to see them.`);
+      return text(`✅ ${wanted} is no longer mounted into this channel's container (on the next message).`);
+    }
+  );
+
   server.registerTool(
     "list_folders",
     {
       description:
-        "ADMIN ONLY. Browse folders on the host machine to find one to use with set_channel_workdir. " +
+        "ADMIN ONLY. Browse folders on the host machine to find one to use with set_channel_workdir or add_channel_folder. " +
         "Pass an absolute `path` to list its sub-folders (defaults to the home directory). Returns the " +
         "resolved path, its parent (to go up), and each sub-folder's full path (to go down or to set).",
       inputSchema: { path: z.string().optional() },

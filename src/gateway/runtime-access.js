@@ -4,6 +4,7 @@ import path from "node:path";
 import { realpathSync } from "node:fs";
 import { gatewayRoot, dbFile } from "../config/paths.js";
 import { networkEnforcedFor } from "../engines/network-policy.js";
+import { describeExtraFolders, extraFolderDirectories } from "./extra-folders.js";
 
 function canonicalHostPath(value) {
   try { return realpathSync(value); } catch { return path.resolve(value); }
@@ -79,7 +80,11 @@ export function containerAccessNote(target) {
   const access = homes.length
     ? `This channel's resolved runtime includes the operator-home mount at ${homes.map((home) => JSON.stringify(home)).join(", ")}. This is an admin-author runtime. Non-admin authors run in a separate project-only container with their normal Worker tools; they cannot see this mounted home or this container's engine state.`
     : "This channel's resolved runtime has no operator-home mount. The working folder, clean workspace and artifacts remain its host directory mounts; non-admin authors keep their normal channel tool permissions and cannot see the operator home.";
-  return `**Container access for this run:** gateway setting \`containerFullAccessHome\` is **${setting}**. ${access} The operator-home mount is available ONLY to a trusted admin author's run in an Admin/Full-access channel while that gateway switch is on; with the switch off, Admin adds no home mount. The container remains the filesystem/process boundary. \`$HOME\` and \`~\` still refer to the channel's own home volume, not the operator's home. See the \`gateway-usage\` skill's \`references/administration.md\` for the boundary and the optional grant.`;
+  const extras = extraFolderDirectories(target);
+  const extraNote = extras.length
+    ? ` Additional folders an admin declared for this channel are mounted at their identical host paths: ${describeExtraFolders(extras)}. A read-only one refuses writes at the kernel. Nothing else outside the folders named here is mounted.`
+    : "";
+  return `**Container access for this run:** gateway setting \`containerFullAccessHome\` is **${setting}**. ${access}${extraNote} The operator-home mount is available ONLY to a trusted admin author's run in an Admin/Full-access channel while that gateway switch is on; with the switch off, Admin adds no home mount. The container remains the filesystem/process boundary. \`$HOME\` and \`~\` still refer to the channel's own home volume, not the operator's home. See the \`gateway-usage\` skill's \`references/administration.md\` for the boundary and the optional grant.`;
 }
 
 // The launcher supplies its resolved decision. Channel mode, writable tools and mounted home
