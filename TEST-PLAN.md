@@ -1,5 +1,35 @@
 # ChannelGate — Test Plan
 
+## Activity call history (2026-11-16)
+
+- Automated: `test/call-history.test.js` verifies persistence from a fresh process and licensed
+  cost visibility; `test/voice-calls.test.js` covers A → B → A segment aggregation, exact call
+  duration, voice-only cost, slow accounting, failed summary delivery and idempotent hangup.
+  `test/activity.test.js` covers owner/workspace isolation, cursor pagination during a new
+  completion, disabled voice, private membership loss and denied channel access.
+  `test/call-history-browser.test.js` exercises the real page in Chromium: empty state,
+  31 receipts, expansion, literal hostile text, summary retry, failed older-page retry, reload
+  and phone width without horizontal overflow. Set `CG_BROWSER_MODULE` to Playwright's ESM
+  entry and `CG_BROWSER_EXECUTABLE` to the installed Chromium binary.
+- Engine-independent UI/storage fixture: approved users A and B, workspace W, one private
+  channel with both users and one channel available to A. Complete a call as A, visiting thread
+  X → Y → X. Open Activity → Calls. Expect one newest-first receipt, duration matching the
+  hangup usage row, estimated voice USD matching that row (task costs excluded), an expandable
+  summary with task outcomes/highlights, and exactly two thread links with aggregated time.
+  Click each link: expect its last segment post in the correct Slack thread. Restart, sign in
+  again, and disable calling: the same receipt remains. Earlier calls without receipts are
+  explicitly outside this history. No engine executes for these UI/storage assertions.
+- Security: B cannot list/read/open A's receipt; a different workspace cannot see it. Revoke A's
+  Activity approval/session: requests fail. Remove private membership, deny channel access or
+  mark a visited thread admin-only for a non-admin: its redirect fails. Revocation during
+  permalink lookup must fail before redirect. Disallowed permalink hosts must never redirect.
+- Dual-engine dispatch acceptance: in separate Claude and Codex fixture threads, say “Review
+  this thread and report what remains,” wait for the posted result, then switch and hang up.
+  Verify the spoken request, engine result and segment transcript in each linked thread and
+  the call's task outcomes. Capture actual browser/native-thread evidence. Automated fake-engine
+  regressions do not establish live provider execution; these live variants remain unexecuted
+  until recorded with the applicable fixture and revision.
+
 ## Slack help freshness (2026-11-16)
 
 In an established ordinary thread, send mentioned `/help`, then `/context`. Capture every help chunk and verify current Settings page names (including the DM Access exception), automatic queuing without an Add to Queue click, independent dedicated Codex harness selection, and current MCP/Schedules navigation. Verify context tokens/percentage against the completed native turn and confirm neither control starts an engine or changes settings. Keep Claude and Codex established-thread variants; provider quota may block fresh Claude setup, never count that as a pass.

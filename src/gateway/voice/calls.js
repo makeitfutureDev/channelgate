@@ -34,6 +34,7 @@ import { logEvent } from "../../util/logger.js";
 import { effectiveWorkDir } from "../folders.js";
 import { memoryEnabled, updateChannelMemory } from "../channel-memory.js";
 import { createGeminiLiveSession, estimateVoiceCost } from "./gemini-live.js";
+import { saveCallHistory } from "./history.js";
 
 export const VOICE_CALL_ORIGIN = "voice_call";
 export const VOICE_ENGINE = "gemini-live";
@@ -196,7 +197,7 @@ export function createCallManager({
   progress = startProgress, deliver = deliverResult, record = recordUsage, post = postNotice, directory = getDirectory,
   loadEntry = getChannelEntry, loadUser = getUser, channels = listChannels, access = accessContext, readThread = defaultReadThread,
   snapshot = activityThreadSnapshot, saveMemory = defaultSaveCallMemory, loadHistory = defaultLoadVoiceHistory,
-  log = logEvent, now = Date.now, maxCalls = 8, maxCallMs = 60 * 60_000, idleMs = 5 * 60_000, endCallGraceMs = END_CALL_GRACE_MS,
+  log = logEvent, saveHistory = saveCallHistory, now = Date.now, maxCalls = 8, maxCallMs = 60 * 60_000, idleMs = 5 * 60_000, endCallGraceMs = END_CALL_GRACE_MS,
 } = {}) {
   const calls = new Map();
   const config = () => {
@@ -522,7 +523,7 @@ export function createCallManager({
 
   // Post what was said in the current conversation to its thread: when the call moves on, as a
   // segment; when it ends, as the final summary with the whole call's figures.
-  async function leaveSegment(call, { moved = false, durationMs = 0, costUSD = 0, reason = "" } = {}) {
+  async function leaveSegment(call, { moved = false, durationMs = 0, costUSD = 0, reason = "", endedMs = now() } = {}) {
     const bound = call.bound;
     if (!bound) return;
     const here = [...call.tasks.values()].filter((t) => t.threadTs === bound.threadTs && t.channelId === bound.channelId);
@@ -538,7 +539,12 @@ export function createCallManager({
     if (here.length) lines.push("*Tasks here:* " + here.map((t) => `${t.id}. ${mdToMrkdwn(clean(t.request, 120))} — ${t.status}`).join(" · "));
     const transcript = transcriptLines(call, call.segmentStart);
     if (transcript.length) lines.push("*Transcript*" + (call.transcriptTruncated && call.segmentStart === 0 ? " _(earliest part dropped)_" : ""), transcript.join("\n"));
-    try { await post(call.client, { conversationId: bound.channelId, threadKey: bound.threadTs, text: lines.join("\n") }); }
+    const visit = call.visited.at(-1);
+    if (visit) visit.durationMs = Math.max(0, endedMs - bound.since);
+    try {
+      const posted = await post(call.client, { conversationId: bound.channelId, threadKey: bound.threadTs, text: lines.join("\n") });
+      if (visit) visit.messageTs = posted?.messageId || "";
+    }
     catch (error) { await log("voice_call_error", { id: call.id, stage: moved ? "segment" : "summary", error: error?.message || String(error) }).catch(() => {}); }
     if (moved) { call.bound = null; call.segmentStart = call.transcript.length; }
   }
@@ -568,7 +574,23 @@ export function createCallManager({
       await record({ channelId: call.bound?.channelId || first?.channelId || "", slug: call.bound?.slug || "", authorId: call.ownerId, engine: VOICE_ENGINE, model: call.model, taskKind: "voice-call",
         result: { usage: { input_tokens: call.usage.audioIn + call.usage.textIn, output_tokens: call.usage.audioOut + call.usage.textOut }, costUSD, durationMs, model: call.model } });
     } catch { /* accounting is best-effort */ }
-    await leaveSegment(call, { durationMs, costUSD, reason });
+    await leaveSegment(call, { durationMs, costUSD, reason, endedMs: call.startedMs + durationMs });
+    const threads = [...new Map(call.visited.map((v) => [`${v.channelId}:${v.threadTs}`, {
+      channelId: v.channelId, channelName: v.channelName, threadTs: v.threadTs, title: v.title,
+    }])).values()].map((v) => {
+      const visits = call.visited.filter((x) => x.channelId === v.channelId && x.threadTs === v.threadTs);
+      return { ...v, durationMs: visits.reduce((sum, x) => sum + (x.durationMs || 0), 0),
+        messageTs: visits.map((x) => x.messageTs).filter(Boolean).at(-1) || "" };
+    });
+    const highlights = call.transcript.map((row) => `${row.who === "caller" ? "You" : "Agent"}: ${clean(row.text, 500)}`);
+    const outcomes = [...call.tasks.values()].map((task) => `${clean(task.request, 200)} — ${task.status}${task.summary ? `: ${clean(task.summary, 700)}` : ""}`);
+    const summary = [memoryLine(call, { durationMs }), ...(outcomes.length ? ["", "Tasks and results", ...outcomes] : []),
+      ...(highlights.length ? ["", "Conversation highlights", ...highlights.slice(0, 20)] : []),
+      ...(call.transcriptTruncated || highlights.length > 20 ? ["Some conversation highlights were omitted. See the thread posts for more."] : [])].join("\n");
+    try {
+      await saveHistory({ id, ownerId: call.ownerId, teamId: call.teamId || "", startedMs: call.startedMs,
+        endedMs: call.startedMs + durationMs, durationMs, costUSD, model: call.model, summary, reason: clean(reason, 200), threads });
+    } catch (error) { await log("voice_call_error", { id, stage: "history", error: error?.message || String(error) }).catch(() => {}); }
     let memory = { saved: false };
     try { memory = await saveMemory({ ownerId: call.ownerId, text: memoryLine(call, { durationMs }) }); }
     catch (error) { await log("voice_call_error", { id, stage: "memory", error: error?.message || String(error) }).catch(() => {}); }

@@ -2,6 +2,9 @@
 
 ## 0.6.5 — candidate, pending approval
 
+- Add Activity → Calls with private completed-call history, duration, estimated voice cost,
+  expandable summaries and links to visited threads. History starts with newly completed calls.
+
 - Document the enforced network-off refusal as HTTP 403 `network-off`, while preserving engine and selected connector access.
 
 - Clarify that the optional operator-home mount is restricted to trusted admin runs in Admin channels; other members retain project mounts.
