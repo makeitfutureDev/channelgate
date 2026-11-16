@@ -1,5 +1,9 @@
 # ChannelGate — Test Plan
 
+## Slack help freshness (2026-11-16)
+
+In an established ordinary thread, send mentioned `/help`, then `/context`. Capture every help chunk and verify current Settings page names (including the DM Access exception), automatic queuing without an Add to Queue click, independent dedicated Codex harness selection, and current MCP/Schedules navigation. Verify context tokens/percentage against the completed native turn and confirm neither control starts an engine or changes settings. Keep Claude and Codex established-thread variants; provider quota may block fresh Claude setup, never count that as a pass.
+
 ## Mode network guidance (2026-11-16)
 
 Engine-independent daemon command: as an approved member, send mentioned `/mode` without arguments in an ordinary proxy fixture and separate isolated legacy bridge/raw-network fixtures. Verify the complete reply matches actual enforcement and mode/Auto/Lean/network, and changes no settings or engine session. Proxy wording must state enforcement, engine/selected-connector exceptions and private/loopback/metadata refusal; bridge/raw-network wording must say advisory with no OS cutoff. Do not use a `/sudo` thread, where text is an engine prompt. Native reply evidence and exact runtime metadata are required; source tests alone do not certify the deployed command.

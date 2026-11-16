@@ -1,5 +1,9 @@
 # ChannelGate — Features
 
+## Current Slack help navigation and queue guidance (2026-11-16)
+
+Slack `/help` names the current Settings pages, explains automatic follow-up queuing with Steer/Cancel controls, and describes a dedicated Codex login as an independent harness choice. Schedule and MCP links use the current page names.
+
 ## Truthful mode network guidance (2026-11-16)
 
 The informational Slack `/mode` command describes the current container network boundary. Proxy containers report enforced engine/selected-connector exceptions and private-address refusal; legacy bridge and raw-network containers report advisory access. Auto and Lean remain separate options.

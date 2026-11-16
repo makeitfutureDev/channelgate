@@ -2,6 +2,8 @@
 
 ## 0.6.5 — candidate, pending approval
 
+- Refresh Slack help for the current Settings pages, automatic follow-up queue and independent Codex harness selection.
+
 - Correct `/mode` network guidance to report enforced proxy boundaries and advisory bridge/raw-network exceptions.
 
 - Skip the obsolete rename-migration history scan during normal startup and updates on migrated
