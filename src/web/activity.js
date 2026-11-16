@@ -30,6 +30,7 @@ import { adminSession } from "./auth.js";
 import { applyUserSettingsChange, userSettingsSnapshot, UserSettingsError } from "../gateway/user-settings.js";
 import { CALL_WORKLET_PATH, CALL_WORKLET_SOURCE } from "./call-overlay.js";
 import { callManager as defaultCallManager } from "../gateway/voice/calls.js";
+import { listCallHistory, readCallHistory } from "../gateway/voice/history.js";
 import { voiceCallsAvailable } from "../config/settings.js";
 
 export const ACTIVITY_GRANT_TTL_MS = 10 * 60_000;
@@ -315,7 +316,7 @@ export function createActivityRouter({
       const { session, client } = await context(req);
       const agent = await agentName(client).catch(() => "");
       const theme = activityTheme((await getUser(session.ownerId))?.activityTheme);
-      const view = req.path.endsWith("/subscriptions") ? "subscriptions" : req.path.endsWith("/settings") ? "settings" : "activity";
+      const view = req.path.endsWith("/calls") ? "calls" : req.path.endsWith("/subscriptions") ? "subscriptions" : req.path.endsWith("/settings") ? "settings" : "activity";
       const voiceCalls = voiceAvailable();
       // `?call=<channel>[&thread=<ts>]` opens the voice-call overlay bound to that conversation.
       const launch = view === "activity" && voiceCalls && typeof req.query?.call === "string" ? callTarget({ query: { channel: req.query.call, thread: req.query.thread } }) : null;
@@ -453,6 +454,53 @@ export function createActivityRouter({
   router.get("/:id", serveDashboard);
   router.get("/:id/subscriptions", serveDashboard);
   router.get("/:id/settings", serveDashboard);
+  router.get("/:id/calls", serveDashboard);
+
+  router.get("/:id/api/calls", async (req, res) => {
+    try {
+      const { session } = await context(req);
+      let before = null;
+      if (req.query.before !== undefined) {
+        if (typeof req.query.before !== "string" || req.query.before.length > 512) return unavailable(res, 400);
+        try { before = JSON.parse(Buffer.from(req.query.before, "base64url").toString("utf8")); } catch { return unavailable(res, 400); }
+        if (!before || !Number.isSafeInteger(before.startedMs) || before.startedMs < 0 || typeof before.id !== "string" || !/^[A-Za-z0-9_-]{1,128}$/.test(before.id)) return unavailable(res, 400);
+      }
+      return res.json(listCallHistory(session.ownerId, session.teamId, { before }));
+    } catch (error) { return unavailable(res, error.status || 503); }
+  });
+  router.get("/:id/api/calls/:callId", async (req, res) => {
+    try {
+      const { session } = await context(req);
+      const call = readCallHistory(req.params.callId, session.ownerId, session.teamId);
+      return call ? res.json(call) : unavailable(res, 404);
+    } catch (error) { return unavailable(res, error.status || 503); }
+  });
+  // Calls can visit threads started by the bot or another member. The receipt proves the
+  // caller visited it; current channel access is checked again before resolving any permalink.
+  router.get("/:id/calls/:callId/thread/:index", async (req, res) => {
+    try {
+      const { session, client } = await context(req);
+      const call = readCallHistory(req.params.callId, session.ownerId, session.teamId);
+      const index = Number(req.params.index);
+      const thread = Number.isSafeInteger(index) && index >= 0 ? call?.threads[index] : null;
+      if (!thread) return unavailable(res, 404);
+      const check = async () => {
+        const entry = await getChannelEntry(thread.channelId);
+        const access = await accessContext(client, session.ownerId);
+        if (!entry || !await access.allows({ ...entry, channelId: thread.channelId }, thread.threadTs)) throw Object.assign(new Error("Thread denied"), { status: 403 });
+      };
+      const version = configVersion;
+      await check();
+      const link = await reader.permalink(client, thread.channelId, thread.messageTs || thread.threadTs);
+      const target = new URL(link.permalink);
+      if (target.protocol !== "https:" || target.username || target.password || !target.hostname.endsWith(".slack.com") || !target.pathname.startsWith("/archives/")) return unavailable(res, 403);
+      target.searchParams.set("thread_ts", thread.threadTs);
+      target.searchParams.set("cid", thread.channelId);
+      await check(); await context(req);
+      if (version !== configVersion) return unavailable(res, 403);
+      return res.redirect(303, target.toString());
+    } catch (error) { return unavailable(res, error.status || 503); }
+  });
   // The viewer's OWN settings, masked. Secret values never leave the process (write-only).
   router.get("/:id/api/settings", async (req, res) => {
     try {

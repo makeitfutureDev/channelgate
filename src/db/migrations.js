@@ -1338,4 +1338,25 @@ export const migrations = [
       db.exec("ALTER TABLE slack_threads ADD COLUMN fork_bot_user_id TEXT NOT NULL DEFAULT ''");
     },
   },
+  {
+    version: 55,
+    up(db) {
+      db.exec(`
+        CREATE TABLE voice_calls (
+          id TEXT PRIMARY KEY,
+          owner_id TEXT NOT NULL,
+          team_id TEXT NOT NULL,
+          started_ms INTEGER NOT NULL,
+          ended_ms INTEGER NOT NULL,
+          duration_ms INTEGER NOT NULL,
+          cost_usd REAL NOT NULL,
+          model TEXT NOT NULL,
+          summary TEXT NOT NULL,
+          reason TEXT NOT NULL,
+          threads TEXT NOT NULL
+        );
+        CREATE INDEX idx_voice_calls_owner ON voice_calls(owner_id, team_id, started_ms DESC, id DESC);
+      `);
+    },
+  },
 ];

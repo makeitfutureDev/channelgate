@@ -1388,3 +1388,70 @@ test("Activity column layout persists per viewer and rejects malformed layouts, 
   await setUser("U_MINE", { approved: false, isAdmin: false });
   assert.equal((await send(custom)).status, 403);
 });
+
+test("Activity call history paginates privately and opens actual segment posts after current access checks", async (t) => {
+  const { saveCallHistory } = await import("../src/gateway/voice/history.js");
+  getDb().exec("DELETE FROM voice_calls");
+  const f = await fixture(t, { voiceAvailable: () => false });
+  const entry = await f.root("G_CALL", "100.000001", "U_OTHER", true, "private");
+  f.members.set("G_CALL", ["U_MINE", "U_OTHER"]);
+  const startedMs = Date.now();
+  const receipt = { ownerId: "U_MINE", teamId: "T_WORK", startedMs, endedMs: startedMs + 75000, durationMs: 75000,
+    costUSD: 0.0123, model: "gemini-3.8-live", summary: "Discussed the plan <script>literal text</script>", reason: "the caller hung up",
+    threads: [{ channelId: "G_CALL", channelName: "Private project", threadTs: "100.000001", messageTs: "100.000099", title: "Quarterly plan", durationMs: 75000 }] };
+  for (let i = 0; i < 31; i++) saveCallHistory({ ...receipt, id: `call-${i}`, startedMs: startedMs + i });
+  saveCallHistory({ ...receipt, id: "foreign", ownerId: "U_OTHER" });
+  saveCallHistory({ ...receipt, id: "other-team", teamId: "T_OTHER" });
+  const mine = await f.login(), other = await f.login("U_OTHER");
+  const page = await f.request(mine.url + "/calls", { headers: mine.headers });
+  assert.equal(page.status, 200);
+  const html = await page.text();
+  assert.match(html, /Calls · ChannelGate/); assert.match(html, /aria-current="page">Calls/);
+  assert.doesNotMatch(html, /id="connection"|id="activity-view"|id="call-agent"/);
+  let response = await f.request(mine.url + "/api/calls", { headers: mine.headers });
+  const first = await response.json();
+  assert.equal(first.calls.length, 30); assert.ok(first.nextCursor); assert.equal(first.calls[0].id, "call-30");
+  assert.equal(first.calls[0].costUSD, 0.0123); assert.equal(first.calls[0].summary, undefined);
+  saveCallHistory({ ...receipt, id: "new-call", startedMs: startedMs + 100 });
+  response = await f.request(mine.url + "/api/calls?before=" + first.nextCursor, { headers: mine.headers });
+  const second = await response.json(); assert.equal(second.calls.length, 1); assert.equal(second.nextCursor, null);
+  response = await f.request(mine.url + "/api/calls/call-30", { headers: mine.headers });
+  assert.equal((await response.json()).summary, receipt.summary);
+  for (const id of ["foreign", "other-team", "missing"]) assert.equal((await f.request(mine.url + "/api/calls/" + id, { headers: mine.headers })).status, 404);
+  assert.equal((await f.request(other.url + "/api/calls/call-30", { headers: other.headers })).status, 404);
+  assert.equal((await f.request(mine.url + "/api/calls")).status, 401);
+  assert.equal((await f.request(mine.url + "/api/calls?before=invalid", { headers: mine.headers })).status, 400);
+  const link = mine.url + "/calls/call-30/thread/0";
+  response = await f.request(link, { headers: mine.headers });
+  assert.equal(response.status, 303);
+  assert.match(response.headers.get("location"), /p100000099\?thread_ts=100\.000001&cid=G_CALL/);
+  assert.equal((await f.request(mine.url + "/calls/foreign/thread/0", { headers: mine.headers })).status, 404);
+  f.members.set("G_CALL", ["U_OTHER"]);
+  assert.equal((await f.request(link, { headers: mine.headers })).status, 403);
+  f.members.set("G_CALL", ["U_MINE"]);
+  await saveChannelMeta(entry.slug, { access: "admins" });
+  assert.equal((await f.request(link, { headers: mine.headers })).status, 403);
+  await setUser("U_MINE", { approved: false });
+  assert.equal((await f.request(mine.url + "/api/calls", { headers: mine.headers })).status, 403);
+});
+
+test("call post links refuse sudo threads and recheck revocation during permalink lookup", async (t) => {
+  const { saveCallHistory } = await import("../src/gateway/voice/history.js");
+  getDb().exec("DELETE FROM voice_calls");
+  const f = await fixture(t);
+  const entry = await f.root("C_CALL", "100.000001");
+  saveCallHistory({ id: "race-call", ownerId: "U_MINE", teamId: "T_WORK", startedMs: Date.now(), endedMs: Date.now(), durationMs: 1,
+    costUSD: 0, model: "gemini-3.8-live", summary: "Hello", reason: "hangup",
+    threads: [{ channelId: "C_CALL", threadTs: "100.000001", messageTs: "100.000002", durationMs: 1 }] });
+  const mine = await f.login();
+  const target = mine.url + "/calls/race-call/thread/0";
+  await setThreadSudo(entry.slug, "100.000001", true);
+  assert.equal((await f.request(target, { headers: mine.headers })).status, 403);
+  await setThreadSudo(entry.slug, "100.000001", false);
+  const started = defer(), gate = defer();
+  f.client.chat.getPermalink = async () => { started.resolve(); await gate.promise; return { permalink: "https://example.slack.com/archives/C_CALL/p100000002" }; };
+  const pending = f.request(target, { headers: mine.headers });
+  await started.promise;
+  await setUser("U_MINE", { approved: false }); gate.resolve();
+  assert.equal((await pending).status, 403);
+});

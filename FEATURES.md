@@ -1,5 +1,17 @@
 # ChannelGate — Features
 
+## Activity call history (2026-11-16)
+
+Activity has a **Calls** page for the signed-in person's completed agent calls, newest first,
+with exact elapsed duration and estimated voice cost in USD. Expand a call for its overview,
+task results, conversation highlights and a unique list of visited threads with time spent in
+each. Thread links open the last call segment posted there and recheck current channel access,
+including private membership and admin-only thread restrictions. Receipts belong to the caller
+and workspace, survive restarts and remain viewable when calling is disabled. Older pages use
+a stable cursor; refresh picks up new calls. Voice cost excludes separately billed dispatched
+agent tasks and follows the existing licensed cost-history window. History starts with calls
+completed after this feature is installed; earlier memory notes cannot reconstruct full receipts.
+
 ## Additional folders mounted beside the working folder (2026-11-16)
 
 A channel can mount additional host folders into its container at their identical absolute paths,

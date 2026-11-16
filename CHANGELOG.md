@@ -2,6 +2,9 @@
 
 ## 0.6.5 — candidate, pending approval
 
+- Add Activity → Calls with private completed-call history, duration, estimated voice cost,
+  expandable summaries and links to visited threads. History starts with newly completed calls.
+
 - Mount additional host folders into a channel's container beside its working folder, read-write
   or read-only, so several conversations can share one directory while keeping their own working
   folders (Settings → Additional folders; `add_channel_folder` / `remove_channel_folder` /
