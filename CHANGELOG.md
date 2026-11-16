@@ -2,6 +2,8 @@
 
 ## 0.6.5 — candidate, pending approval
 
+- Document the enforced network-off refusal as HTTP 403 `network-off`, while preserving engine and selected connector access.
+
 - Clarify that the optional operator-home mount is restricted to trusted admin runs in Admin channels; other members retain project mounts.
 
 - Refresh Slack help for the current Settings pages, automatic follow-up queue and independent Codex harness selection.
