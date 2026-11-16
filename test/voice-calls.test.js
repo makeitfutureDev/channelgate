@@ -717,3 +717,46 @@ test("voice conversation lists use readable DM labels without channel prefixes",
   assert.match(session.options.systemInstruction, /Never read conversation IDs aloud/);
   assert.equal(await f.manager.end(started.id, "U_MINE"), true);
 });
+
+test("completed calls persist caller-owned receipts with exact duration, voice cost and deduplicated segment posts", async () => {
+  await channel(); await channel("C_SALES");
+  let time = Date.now();
+  const f = fixture({ now: () => time });
+  const { readCallHistory, listCallHistory } = await import("../src/gateway/voice/history.js");
+  const call = await f.manager.start({ ownerId: "U_MINE", channelId: "C_WORK", threadTs: "55.000001", teamId: "T_WORK", client: f.client });
+  const session = FakeSession.instances[0]; session.live();
+  session.emit("input_transcript", { text: "Discuss the quarterly plan" });
+  session.emit("usage", { delta: { audioIn: 1000, textIn: 100, audioOut: 500, textOut: 50 } });
+  time += 25_000;
+  await f.manager.switchConversation(call.id, "U_MINE", { channelId: "C_SALES", threadTs: "44.000001" });
+  time += 35_000;
+  await f.manager.switchConversation(call.id, "U_MINE", { channelId: "C_WORK", threadTs: "55.000001" });
+  time += 15_250;
+  await f.manager.end(call.id, "U_MINE", "the caller hung up");
+  const saved = readCallHistory(call.id, "U_MINE", "T_WORK");
+  assert.equal(saved.durationMs, 75_250); assert.equal(saved.costUSD, 0.0093);
+  assert.match(saved.summary, /Discuss the quarterly plan/);
+  assert.equal(saved.threads.length, 2);
+  assert.equal(saved.threads[0].durationMs, 40_250); assert.equal(saved.threads[1].durationMs, 35_000);
+  assert.equal(saved.threads[0].messageTs, `${f.posted.length}00.000100`);
+  assert.equal(readCallHistory(call.id, "U_OTHER", "T_WORK"), null);
+  assert.equal(readCallHistory(call.id, "U_MINE", "T_OTHER"), null);
+  assert.ok(listCallHistory("U_MINE", "T_WORK").calls.some((row) => row.id === call.id));
+  assert.equal(f.manager.get(call.id), null, "receipt survives disposal of the live call");
+  assert.equal(await f.manager.end(call.id, "U_MINE"), false, "repeated hangup cannot duplicate a receipt");
+});
+
+test("hangup duration excludes slow accounting and a failed summary post still saves history", async () => {
+  await channel();
+  let time = Date.now();
+  const f = fixture({ now: () => time, record: async () => { time += 9000; },
+    post: async (_client, args) => { if (/Voice call ended/.test(args.text)) throw new Error("post unavailable"); return { messageId: "100.000002" }; } });
+  const call = await f.manager.start({ ownerId: "U_MINE", channelId: "C_WORK", threadTs: "55.000001", teamId: "T_WORK", client: f.client });
+  time += 20_000;
+  await f.manager.end(call.id, "U_MINE");
+  const { readCallHistory } = await import("../src/gateway/voice/history.js");
+  const saved = readCallHistory(call.id, "U_MINE", "T_WORK");
+  assert.equal(saved.durationMs, 20_000); assert.equal(saved.threads[0].durationMs, 20_000);
+  assert.equal(saved.threads[0].messageTs, "");
+  assert.ok(f.logs.some(([event, data]) => event === "voice_call_error" && data.stage === "summary"));
+});
