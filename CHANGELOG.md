@@ -2,6 +2,8 @@
 
 ## 0.6.5 — candidate, pending approval
 
+- Clarify that the optional operator-home mount is restricted to trusted admin runs in Admin channels; other members retain project mounts.
+
 - Refresh Slack help for the current Settings pages, automatic follow-up queue and independent Codex harness selection.
 
 - Correct `/mode` network guidance to report enforced proxy boundaries and advisory bridge/raw-network exceptions.

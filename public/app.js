@@ -316,7 +316,7 @@ const PROFILE_FLAGS = {
 const PROFILE_HELP = {
   read: "Reads files. Edits and commands need approval. Selecting Read-only turns Auto off.",
   worker: "Runs commands and edits files in this channel’s folder only. Auto approves tool requests automatically; Lean removes optional skills and connectors.",
-  admin: "Admins get all tools without approval prompts. Other members get Worker with the selected Auto and Lean options. Confined to the channel folder unless “Admin channels can access the host home” is enabled in Settings → Container runtime. That setting shares the gateway user’s home with all admitted members; it does not grant host root access.",
+  admin: "Admins get all tools without approval prompts. Other members get Worker with the selected Auto and Lean options. Confined to the channel folder unless “Admin channels can access the host home” is enabled in Settings → Container runtime. That setting adds the home mount only to trusted admin runs in Admin channels; other members retain their project mounts. It does not grant host root access.",
 };
 // Per-option descriptions for the two access dropdowns (shown live under each, like the profile help).
 const ACCESS_HELP = {
