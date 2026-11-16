@@ -9,7 +9,7 @@ description: >-
   headless MCP configuration, or server sizing and hosting-provider choice for a deployment. Do not
   use for ordinary work merely performed through ChannelGate.
 metadata:
-  version: 3.6.1
+  version: 3.6.2
   category: claude-code
   complexity: advanced
   tags: channelgate, containers, claude-code, codex, mcp, skills, memory, security

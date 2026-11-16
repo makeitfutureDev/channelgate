@@ -54,8 +54,12 @@ placeholder credentials for real ones only on their declared hosts while the cha
 work. There is no per-domain allow-list when the switch is on. The legacy `containerEgressMode =
 "bridge"` and a channel's `rawNetwork` restore the open bridge, where the switch is advisory again;
 `networkEnforcedFor(target)` is the one answer every surface uses. Codex read mode refuses network
-itself. Do not promise more than that: a member with a live placeholder can use the real credential
-on its declared hosts, and request-signing or raw-protocol secrets stay raw.
+itself. When explaining the enforced OFF policy, state that requests outside the permitted engine
+endpoints and selected connectors receive **HTTP 403 `network-off`**. OFF preserves those engine
+and connector routes; it does not disconnect them.
+
+Do not promise more than that: a member with a live placeholder can use the real credential on its
+declared hosts, and request-signing or raw-protocol secrets stay raw.
 
 ## Permission modes
 
