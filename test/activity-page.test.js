@@ -2,7 +2,12 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import vm from "node:vm";
 import { createSubscriptionUi } from "../public/subscription-ui.js";
-import { activityPage } from "../src/web/activity-page.js";
+import { ensureTestEnv } from "./helpers.js";
+
+// The renderer reads deployment branding by default. Pin its settings to scratch state before
+// importing it so a developer's configured logo cannot change these browser fixtures.
+ensureTestEnv();
+const { activityPage } = await import("../src/web/activity-page.js");
 
 // Exercise the generated browser script (including asynchronous responses), rather than a second
 // implementation of dashboard state. Browser layout/CSP are also covered by manual acceptance.
@@ -210,6 +215,9 @@ test("page shows the agent name safely and pins only a saved explicit theme", ()
   const hostile = activityPage({ sessionId: "s", csrf: "c", agent: '<img src=x onerror="alert(1)">Atlas' }).html;
   assert.match(hostile, /<span class="agent-name">&lt;img src=x onerror=&quot;alert\(1\)&quot;&gt;Atlas<\/span>/);
   assert.match(hostile, /<span class="agent-mark" aria-hidden="true"><svg viewBox="0 0 48 48"[^>]*><rect[^>]*fill="#ff642f"/, "the ChannelGate gate mark");
+  assert.match(activityPage({ sessionId: "s", csrf: "c", logoColor: "#ff0000" }).html,
+    /<span class="agent-mark" aria-hidden="true"><svg viewBox="0 0 48 48"[^>]*><rect[^>]*fill="#ff0000"/,
+    "an explicit deployment color remains supported");
   assert.match(hostile, /<th scope="col" data-col="actions" draggable="true"[^>]*><span class="col-label">Actions<\/span><\/th>/);
   assert.match(activityPage({ sessionId: "s", csrf: "c" }).html, /agent-name">ChannelGate</);
   assert.match(activityPage({ sessionId: "s", csrf: "c", theme: "light" }).html, /<html lang="en" data-theme="light">/);
