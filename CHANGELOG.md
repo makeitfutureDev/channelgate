@@ -34,6 +34,9 @@
   through a media element so a locked screen keeps the audio session, lock-screen call controls,
   and leaving the page only suspends the call for 45 seconds instead of hanging up.
 
+- Cap voice-dispatched tasks per conversation instead of per call: three may be in flight in one
+  thread, while tasks in other conversations start immediately and run in parallel.
+
 - Sort Activity channel groups by their latest conversation activity, updating their order live.
 
 - Add Activity → Calls with private completed-call history, duration, estimated voice cost,

@@ -46,7 +46,10 @@ export const INITIAL_CONVERSATIONS = 8;
 export const MAX_LISTED_CONVERSATIONS = 20;
 const MAX_TRANSCRIPT_ENTRIES = 400;
 const MAX_TASKS_PER_CALL = 20;
-const MAX_RUNNING_TASKS = 3;
+// Tasks in ONE thread wait on that thread's run queue like typed messages, so more than three
+// pending there only delays them; tasks in different threads run in parallel and must never be
+// held back by another thread's backlog (the global run slots are the only shared limit).
+const MAX_RUNNING_TASKS_PER_THREAD = 3;
 const CONTEXT_MESSAGES = 40;
 const CONTEXT_MESSAGE_CHARS = 600;
 const RESULT_TO_MODEL_CHARS = 1_500;
@@ -427,8 +430,9 @@ export function createCallManager({
         const request = clean(args?.request, MAX_REQUEST_CHARS);
         if (!request) return respond({ error: "The request was empty." }, "SILENT");
         if (call.tasks.size >= MAX_TASKS_PER_CALL) return respond({ error: "This call has reached its task limit; end the call and start a new one for more." }, "WHEN_IDLE");
-        if ([...call.tasks.values()].filter((t) => ["queued", "running"].includes(t.status)).length >= MAX_RUNNING_TASKS) return respond({ error: "Three tasks are already in progress; wait for one to finish." }, "WHEN_IDLE");
         const thread = await openTaskThread(call, request);
+        const inFlightHere = [...call.tasks.values()].filter((t) => ["queued", "running"].includes(t.status) && t.channelId === call.bound.channelId && t.threadTs === thread.threadTs).length;
+        if (inFlightHere >= MAX_RUNNING_TASKS_PER_THREAD) return respond({ error: "Three tasks are already in progress in this conversation; wait for one to finish, or switch to another conversation — tasks there run in parallel." }, "WHEN_IDLE");
         const task = { id: call.nextTask++, request, status: "queued", startedMs: now(), summary: "", channelId: call.bound.channelId, slug: call.bound.slug, isDM: call.bound.isDM, threadTs: thread.threadTs, channelName: call.bound.channelName, title: call.bound.title || "", requestPosted: thread.opened };
         call.tasks.set(task.id, task);
         broadcast(call, { type: "task", ...taskView(task) });
