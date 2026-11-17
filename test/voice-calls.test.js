@@ -535,6 +535,13 @@ test("a launch may carry the call destination, and the dashboard serves the over
   assert.match(html, /createMediaStreamDestination/); assert.match(html, /wakeLock\.request\("screen"\)/);
   assert.match(html, /mediaSession/); assert.match(html, /setActionHandler\?\.\("hangup"/);
   assert.match(html, /\/end\?csrf=" \+ encodeURIComponent\(csrf\) \+ "&grace=1"/);
+  // Playback is a jitter buffer on device-rate contexts: no forced sample rates (the iOS
+  // route-change garble), a lead before the first chunk, re-anchoring after a gap, a backlog cap,
+  // and a flush when the OS interrupts a context or the audio device changes.
+  assert.doesNotMatch(html, /new AudioContext\(\{ ?sampleRate/);
+  assert.match(html, /JITTER_S = 0\.15, MAX_BACKLOG_S = 3/);
+  assert.match(html, /watchAudioRoute\(player\)/); assert.match(html, /watchAudioRoute\(capture\)/);
+  assert.match(html, /addEventListener\?\.\("devicechange", onDeviceChange\)/);
   assert.match(html, /"callTarget":\{"channelId":"C_WORK","threadTs":"100.000001"\}/);
   assert.match(html, /"callAgent":"Atlas"/);
   assert.match(html, /registerProcessor|callOverlayBrowser|data-call="start"/);
@@ -706,6 +713,12 @@ test("Activity keeps a call in a docked side panel the header Call button shows 
   const session = FakeSession.instances[0]; session.live();
   session.emit("input_transcript", { text: "Keep this transcript" });
   await page.getByText("Keep this transcript", { exact: true }).waitFor();
+  // A burst of 60 reply chunks (about 1.2 s of 24 kHz PCM arriving at once, as after a stall) and
+  // an interruption must play through the jitter buffer without a page error.
+  for (let i = 0; i < 60; i++) session.emit("audio", Buffer.alloc(960, i % 2 ? 0x10 : 0xf0));
+  session.emit("interrupted");
+  for (let i = 0; i < 5; i++) session.emit("audio", Buffer.alloc(960, 0x20));
+  await page.waitForTimeout(300);
   await page.waitForFunction(() => globalThis.document.querySelector("#call-agent").dataset.live === "");
   await page.getByRole("button", { name: "Mute", exact: true }).click();
   await hide.click();
