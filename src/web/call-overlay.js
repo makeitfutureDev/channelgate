@@ -6,17 +6,6 @@
 // POSTs up (`…/audio`, ~120 ms of audio each). Both ride the same reverse proxies and cookies the
 // dashboard already uses, so a deployment needs no WebSocket upgrade support.
 export const CALL_WORKLET_PATH = "/activity/call-worklet.js";
-// A half second of 8 kHz silence, looped by a media element for the whole call. iOS and Android
-// keep a page's audio session (and with it the microphone) alive while it is playing media; the
-// agent's voice itself plays straight from the AudioContext, never through this element.
-export const CALL_SILENCE_PATH = "/activity/call-silence.wav";
-export const CALL_SILENCE_WAV = (() => {
-  const samples = 4000, header = Buffer.alloc(44);
-  header.write("RIFF", 0); header.writeUInt32LE(36 + samples, 4); header.write("WAVEfmt ", 8); header.writeUInt32LE(16, 16);
-  header.writeUInt16LE(1, 20); header.writeUInt16LE(1, 22); header.writeUInt32LE(8000, 24); header.writeUInt32LE(8000, 28);
-  header.writeUInt16LE(1, 32); header.writeUInt16LE(8, 34); header.write("data", 36); header.writeUInt32LE(samples, 40);
-  return Buffer.concat([header, Buffer.alloc(samples, 0x80)]);
-})();
 const INPUT_RATE = 16000, OUTPUT_RATE = 24000;
 
 // Served as a classic module at CALL_WORKLET_PATH. It batches ~120 ms of mono audio, resamples to
@@ -50,7 +39,7 @@ registerProcessor("cg-capture", CgCaptureProcessor);
 `;
 
 export function callOverlayConfig({ base, csrf, agent = "" }) {
-  return { callBase: base, callCsrf: csrf, callAgent: String(agent || "").trim() || "ChannelGate", workletPath: CALL_WORKLET_PATH, silencePath: CALL_SILENCE_PATH, inputRate: INPUT_RATE, outputRate: OUTPUT_RATE };
+  return { callBase: base, callCsrf: csrf, callAgent: String(agent || "").trim() || "ChannelGate", workletPath: CALL_WORKLET_PATH, inputRate: INPUT_RATE, outputRate: OUTPUT_RATE };
 }
 
 export const CALL_OVERLAY_CSS = `
@@ -98,7 +87,6 @@ export function callOverlayMarkup({ agentName = "ChannelGate" } = {}) {
 <div class="call-transcript" data-call="transcript" aria-label="Transcript" aria-live="polite"></div>
 <section class="call-tasks" data-call="tasks-section" hidden><h3>Tasks sent to the agent</h3><ul data-call="tasks"></ul></section>
 <p class="call-foot">Everything said is logged into the Slack conversation the call is in. Say which conversation to open, or ask what you are working on.</p>
-<audio data-call="keepalive" playsinline loop hidden></audio>
 </div></aside>`;
 }
 
@@ -108,21 +96,13 @@ export function callOverlayMarkup({ agentName = "ChannelGate" } = {}) {
 // shows the panel bound to a conversation ({ channelId, threadTs, channelName, title }) or to none
 // (the voice then lists the caller's conversations). During a call, open(target) switches it and
 // keeps the panel as it is; open(null) shows the panel. A call starts only when Start is pressed.
-//
-// On a phone the call has to behave like a call: a Screen Wake Lock keeps the display from
-// locking while the call is up (re-acquired whenever the page is shown again), a looping silent
-// media element holds the page's audio session (so iOS and Android keep it — and the microphone —
-// alive when the screen does lock or the app goes to the background) while the agent's voice plays
-// straight from the AudioContext, the lock screen shows the call through the Media Session API, and leaving the page
-// only SUSPENDS the call on the server for a grace window instead of hanging up, because a locking
-// phone fires the same pagehide as a closing tab.
 export function callOverlayBrowser(config, env) {
   const { document, fetch, EventSource, navigator, AudioContext, AudioWorkletNode, atob } = env;
-  const { callBase: base, callCsrf: csrf, callAgent: agent, workletPath, silencePath, inputRate, outputRate } = config;
+  const { callBase: base, callCsrf: csrf, callAgent: agent, workletPath, inputRate, outputRate } = config;
   const root = document.getElementById("call-overlay");
   if (!root) return { open() {}, active: () => false };
   const q = (name) => root.querySelector('[data-call="' + name + '"]');
-  const binding = q("binding"), status = q("status"), start = q("start"), hangup = q("hangup"), mute = q("mute"), closeButton = q("close"), transcript = q("transcript"), tasks = q("tasks"), tasksSection = q("tasks-section"), timer = q("timer"), keepalive = q("keepalive");
+  const binding = q("binding"), status = q("status"), start = q("start"), hangup = q("hangup"), mute = q("mute"), closeButton = q("close"), transcript = q("transcript"), tasks = q("tasks"), tasksSection = q("tasks-section"), timer = q("timer");
   const topButton = document.getElementById("call-agent");
   let callId = "", target = null, events = null, capture = null, player = null, workletNode = null, processor = null, stream = null, muted = false, startedAt = 0, tick = null, wakeLock = null;
   let playhead = 0; const playing = new Set();
@@ -163,28 +143,15 @@ export function callOverlayBrowser(config, env) {
     binding.append("In ", strong, bound.title ? " · " + bound.title : bound.threadTs ? " · thread" : " · your first request opens a new thread here");
     updateTop();
   }
-  // Phone behaviour: keep the screen on, and tell the OS this is a call it should not interrupt.
+  // Keep the phone's screen on while the call is up (re-acquired when the page is shown again).
+  // This is the one phone-specific behaviour kept: the audio path itself is the plain
+  // AudioContext player, which proved fluid; the media-element and jitter-buffer variants of
+  // 2026-11-17 were rolled back after they made speech scattered.
   async function holdWakeLock() {
     if (!callId || !navigator.wakeLock?.request || document.visibilityState === "hidden") return;
     try { wakeLock = await navigator.wakeLock.request("screen"); wakeLock.addEventListener?.("release", () => { wakeLock = null; }); } catch (e) { wakeLock = null; }
   }
   function releaseWakeLock() { const lock = wakeLock; wakeLock = null; try { void lock?.release(); } catch (e) { /* released already */ } }
-  function announceCall() {
-    const session = navigator.mediaSession;
-    if (!session) return;
-    try {
-      if (env.MediaMetadata) session.metadata = new env.MediaMetadata({ title: "Call with " + agent, artist: binding.textContent || "ChannelGate" });
-      session.playbackState = "playing";
-      session.setActionHandler?.("hangup", () => { void finish(); });
-      session.setActionHandler?.("pause", () => { if (!muted) mute.click?.(); });
-      session.setActionHandler?.("play", () => { if (muted) mute.click?.(); });
-    } catch (e) { /* a platform without the call actions still gets the metadata */ }
-  }
-  function clearAnnouncement() {
-    const session = navigator.mediaSession;
-    if (!session) return;
-    try { session.metadata = null; session.playbackState = "none"; for (const action of ["hangup", "pause", "play"]) session.setActionHandler?.(action, null); } catch (e) { /* fine */ }
-  }
   function line(who, text, ms) {
     const row = document.createElement("div"); row.className = "line " + who;
     const name = document.createElement("span"); name.className = "who"; name.textContent = who === "caller" ? "You" : agent;
@@ -209,42 +176,18 @@ export function callOverlayBrowser(config, env) {
     if (task.summary) { const summary = document.createElement("div"); summary.className = "call-summary"; summary.textContent = task.summary; row.append(summary); }
     tasksSection.hidden = false;
   }
-  // Playback is a jitter buffer over the audio clock. Each reply arrives as many small PCM chunks;
-  // they are chained on `playhead`, which starts JITTER_S ahead of the clock so Bluetooth output
-  // latency and SSE jitter cannot push a chunk into the past (a chunk started "now" while the
-  // previous one is still sounding is the chopped "t-t-t" noise). A gap re-anchors the timeline;
-  // a backlog longer than MAX_BACKLOG_S (the stream catching up after the page or the audio
-  // device stalled) is dropped so the conversation stays live instead of replaying the stall.
-  // The audio clock itself stops when the OS interrupts the context (headphones connecting, a
-  // phone call, a lock): see watchAudioRoute, which flushes and re-anchors when it comes back.
-  const JITTER_S = 0.15, MAX_BACKLOG_S = 3;
   function playAudio(base64) {
-    if (!player || player.state !== "running") return;
+    if (!player) return;
     const bytes = atob(base64), samples = new Float32Array(bytes.length >> 1);
     for (let i = 0; i < samples.length; i++) { const lo = bytes.charCodeAt(2 * i), hi = bytes.charCodeAt(2 * i + 1); const v = (hi << 8) | lo; samples[i] = (v >= 0x8000 ? v - 0x10000 : v) / 32768; }
     if (!samples.length) return;
-    // The buffer carries its own rate: the context resamples it to whatever the device runs at.
     const buffer = player.createBuffer(1, samples.length, outputRate); buffer.copyToChannel(samples, 0);
     const source = player.createBufferSource(); source.buffer = buffer; source.connect(player.destination);
-    const now = player.currentTime;
-    if (playhead < now + 0.03) playhead = now + JITTER_S;
-    else if (playhead - now > MAX_BACKLOG_S) { stopPlayback(); playhead = player.currentTime + JITTER_S; }
-    source.start(playhead); playhead += buffer.duration;
+    const at = Math.max(player.currentTime + 0.02, playhead);
+    source.start(at); playhead = at + buffer.duration;
     playing.add(source); source.onended = () => playing.delete(source);
   }
   function stopPlayback() { for (const source of playing) { try { source.stop(); } catch (e) { /* ended */ } } playing.clear(); if (player) playhead = player.currentTime; }
-  // The OS can pause either context under us: iOS reports "interrupted" when AirPods connect or a
-  // phone call comes in, every platform "suspended" when the page is hidden. Whatever was queued
-  // was scheduled against a clock that stopped, so flush it and resume; new audio re-anchors.
-  function watchAudioRoute(context) {
-    context.onstatechange = () => {
-      if (!callId) return;
-      if (context.state === "running") { if (context === player) stopPlayback(); return; }
-      stopPlayback();
-      if (document.visibilityState !== "hidden") void context.resume?.().catch?.(() => {});
-    };
-  }
-  function onDeviceChange() { if (!callId) return; stopPlayback(); void resumeAudio(); }
   async function send(buffer) {
     if (!callId || muted) return;
     try {
@@ -254,11 +197,7 @@ export function callOverlayBrowser(config, env) {
   }
   async function openCapture() {
     stream = await navigator.mediaDevices.getUserMedia({ audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true, autoGainControl: true } });
-    // Both contexts run at the device's own rate. Forcing 16 kHz / 24 kHz contexts is what garbles
-    // audio on iOS after a route change (AirPods switch the hardware rate under a fixed-rate
-    // context); the worklet resamples the capture and buffers carry their rate on playback.
-    capture = new AudioContext({ latencyHint: "interactive" });
-    watchAudioRoute(capture);
+    try { capture = new AudioContext({ sampleRate: inputRate }); } catch (e) { capture = new AudioContext(); }
     const source = capture.createMediaStreamSource(stream);
     try {
       await capture.audioWorklet.addModule(workletPath);
@@ -280,37 +219,20 @@ export function callOverlayBrowser(config, env) {
       };
       source.connect(processor); processor.connect(capture.destination);
     }
-    player = new AudioContext({ latencyHint: "playback" });
-    watchAudioRoute(player);
-    playhead = 0;
-    navigator.mediaDevices?.addEventListener?.("devicechange", onDeviceChange);
+    player = new AudioContext({ sampleRate: outputRate });
     await player.resume();
-    // The voice plays straight from the context (routing it through a media element added
-    // latency and crackle). A looping silent track is what keeps the page's audio session alive
-    // when a phone locks; it fails quietly on browsers that do not need or allow it.
-    if (keepalive && silencePath) {
-      try { keepalive.src = silencePath; keepalive.volume = 0.01; await keepalive.play?.(); } catch (e) { /* no keepalive; the call still works in the foreground */ }
-    }
-  }
-  // After the page was hidden the browser may have suspended the audio graph: wake it back up.
-  async function resumeAudio() {
-    try { await capture?.resume?.(); await player?.resume?.(); if (keepalive?.src && keepalive.paused) await keepalive.play?.(); } catch (e) { /* the next user gesture resumes it */ }
   }
   function closeCapture() {
     try { workletNode?.disconnect(); processor?.disconnect(); } catch (e) { /* fine */ }
     for (const track of stream?.getTracks?.() || []) track.stop();
-    navigator.mediaDevices?.removeEventListener?.("devicechange", onDeviceChange);
-    if (capture) capture.onstatechange = null;
-    if (player) player.onstatechange = null;
     stopPlayback();
-    try { if (keepalive) { keepalive.pause?.(); keepalive.removeAttribute?.("src"); keepalive.load?.(); } } catch (e) { /* fine */ }
     try { capture?.close(); player?.close(); } catch (e) { /* fine */ }
     capture = player = workletNode = processor = stream = null;
   }
   function endLocal(message) {
     if (events) { events.close(); events = null; }
     closeCapture();
-    releaseWakeLock(); clearAnnouncement();
+    releaseWakeLock();
     if (tick) { clearInterval(tick); tick = null; }
     callId = "";
     start.hidden = false; hangup.hidden = true; mute.hidden = true;
@@ -329,7 +251,7 @@ export function callOverlayBrowser(config, env) {
       if (event.type === "transcript") { updateLine(event); return; }
       if (event.type === "task") { showTask(event); return; }
       if (event.type === "error") { say("Voice service: " + event.message, "error"); return; }
-      if (event.type === "suspended") { say("Phone in the background — the call stays up for a moment; come back to continue.", "warn"); return; }
+      if (event.type === "suspended") { say("Page in the background — the call stays up for a moment; come back to continue.", "warn"); return; }
       if (event.type === "resumed") { say("Connected — start talking", "live"); return; }
       if (event.type === "ended") { endLocal("Call ended (" + (event.reason || "hung up") + "). The transcript is in the Slack conversation."); }
     };
@@ -352,7 +274,7 @@ export function callOverlayBrowser(config, env) {
       start.hidden = true; hangup.hidden = false; mute.hidden = false;
       tick = setInterval(() => { timer.textContent = fmt(Date.now() - startedAt); updateTop(); }, 1000);
       say("Connecting to the voice service…", "");
-      void holdWakeLock(); announceCall();
+      void holdWakeLock();
     } catch (error) {
       closeCapture();
       say(error && error.message ? error.message : "The call could not start.", "error");
@@ -371,13 +293,13 @@ export function callOverlayBrowser(config, env) {
   closeButton.addEventListener("click", () => setVisible(false));
   root.addEventListener("keydown", (event) => { if (event.key === "Escape") setVisible(false); });
   mute.addEventListener("click", () => { muted = !muted; mute.textContent = muted ? "Unmute" : "Mute"; mute.setAttribute("aria-pressed", String(muted)); workletNode?.port.postMessage({ muted }); updateTop(); });
-  // Leaving the page: a closing tab, but also a phone locking its screen or switching apps. The
-  // beacon asks the server to SUSPEND the call (it hangs up by itself after a grace window) so a
-  // lock does not kill the call; audio resuming, or the event stream reconnecting, cancels it.
+  // Leaving the page (a closing tab, but also a phone locking or switching apps) only SUSPENDS
+  // the call on the server for a grace window; audio resuming or the event stream reconnecting
+  // cancels it, otherwise it ends by itself.
   env.addEventListener?.("pagehide", () => { if (callId) navigator.sendBeacon?.(base + "/call/" + callId + "/end?csrf=" + encodeURIComponent(csrf) + "&grace=1"); });
   document.addEventListener?.("visibilitychange", () => {
     if (!callId || document.visibilityState === "hidden") return;
-    void holdWakeLock(); void resumeAudio();
+    void holdWakeLock();
     if (events && events.readyState === 2) connectEvents();
   });
   const supported = Boolean(navigator.mediaDevices?.getUserMedia) && typeof AudioContext === "function";
